@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  assertSafeResend,
+  assertResendable,
   createTerminalInputQueue,
   keysRetryingNotice,
+  resendScope,
   TerminalInputCancelledError,
+  TerminalInputMaybeTypedError,
+  terminalInputRetryDelayMs,
   withoutKeysRetryingNotice,
 } from './terminal-input-queue';
 
@@ -81,55 +84,38 @@ test('a synchronous send failure is retried and later input follows it', async (
   assert.deepEqual(sent, ['x', 'x', 'x', 'y', 'ok']);
 });
 
-// A lost reply after the frame went out: the pane may already have run the command.
-test('input that failed after it was sent is held, never resent on its own', async () => {
-  const pane: string[] = [];
-  const holds: Array<string | null> = [];
-  let loseReply = true;
-  const queue = createTerminalInputQueue(
-    async (data, _assertActive, markSent) => {
-      pane.push(data);
-      markSent();
-      if (loseReply) {
-        loseReply = false;
-        throw new Error('Request terminal.input timed out after 10000ms');
-      }
-    },
-    { retryDelayMs: () => 0, onHold: (held) => holds.push(held ? held.data : null) },
-  );
-  const once = queue.write('echo ONCE\r');
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  const next = queue.write('pwd\r');
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.deepEqual(pane, ['echo ONCE\r'], 'nothing goes out while input is held');
-  assert.deepEqual(holds, ['echo ONCE\r']);
-
-  queue.resend();
-  await Promise.all([once, next]);
-  assert.deepEqual(pane, ['echo ONCE\r', 'echo ONCE\rpwd\r'], 'resend keeps the typed order');
-  assert.deepEqual(holds, ['echo ONCE\r', null]);
-});
-
-test('discarding held input drops only it; the keys typed since go out', async () => {
-  const pane: string[] = [];
-  let loseReply = true;
-  const queue = createTerminalInputQueue(async (data, _assertActive, markSent) => {
-    pane.push(data);
-    markSent();
-    if (loseReply) {
-      loseReply = false;
-      throw new Error('Connection closed');
-    }
-  });
-  const held = queue.write('make deploy\r');
-  const discarded = assert.rejects(held, TerminalInputCancelledError);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  const next = queue.write('ls\r');
-  queue.discard();
-  await discarded;
-  await next;
-  assert.deepEqual(pane, ['make deploy\r', 'ls\r']);
-});
+// A gateway without numbered input cannot tell a resend from new keys: the batch it may have typed
+// is dropped with a notice, never sent twice, and the keys typed since go out.
+test(
+  'a gateway without numbering: input that failed after it was sent is dropped, not resent',
+  { timeout: 5_000 },
+  async () => {
+    const pane: string[] = [];
+    let loseReply = true;
+    const queue = createTerminalInputQueue(
+      async (data, _assertActive, markSent) => {
+        pane.push(data);
+        markSent('nowhere');
+        if (loseReply) {
+          loseReply = false;
+          throw new Error('Request terminal.input timed out after 10000ms');
+        }
+      },
+      { retryDelayMs: () => 0 },
+    );
+    const once = queue.write('echo ONCE\r');
+    const dropped = assert.rejects(once, (error: unknown) => {
+      assert.ok(error instanceof TerminalInputMaybeTypedError);
+      assert.equal(error.message, 'Keys not resent; check the terminal');
+      assert.match(String((error.cause as Error).message), /timed out/);
+      return true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await queue.write('pwd\r');
+    await dropped;
+    assert.deepEqual(pane, ['echo ONCE\r', 'pwd\r']);
+  },
+);
 
 test('keys waiting to be retried are dropped only when their target goes away', async () => {
   const sent: string[] = [];
@@ -173,7 +159,7 @@ test('disconnect or target disposal rejects buffered input and never replays it 
 test('keys still waiting are mentioned from the second failure and cleared once they go through', () => {
   assert.equal(keysRetryingNotice(new Error('Not connected'), 0), null, 'one failure is a blip');
   const notice = keysRetryingNotice(new Error('Not connected'), 1);
-  assert.equal(notice, 'Keys not delivered yet, retrying in order: Not connected');
+  assert.equal(notice, 'Sending…');
   assert.equal(withoutKeysRetryingNotice(notice), null);
   assert.equal(withoutKeysRetryingNotice('Pane gone'), 'Pane gone', 'other errors stay');
 });
@@ -184,24 +170,19 @@ test(
   { timeout: 5_000 },
   async () => {
     const requests: Array<{ data: string; n: number; stream: string }> = [];
-    const holds: unknown[] = [];
     let loseReply = true;
     const typedDuringRetry = deferred();
     const queue = createTerminalInputQueue(
       async (data, _assertActive, markSent, seq) => {
         requests.push({ data, n: seq.n, stream: seq.stream });
-        markSent('gw1');
+        markSent('anywhere');
         if (loseReply) {
           loseReply = false;
           await typedDuringRetry.promise;
           throw new Error('Request terminal.input timed out after 10000ms');
         }
       },
-      {
-        retryDelayMs: () => 0,
-        stream: 'q1',
-        onHold: (h) => holds.push(h),
-      },
+      { retryDelayMs: () => 0, stream: 'q1' },
     );
     const once = queue.write('echo ONCE\r');
     const next = queue.write('pwd\r');
@@ -212,7 +193,6 @@ test(
       { data: 'echo ONCE\r', n: 1, stream: 'q1' },
       { data: 'pwd\r', n: 2, stream: 'q1' },
     ]);
-    assert.deepEqual(holds, [], 'nothing to resend or discard by hand');
   },
 );
 
@@ -242,56 +222,175 @@ test(
   },
 );
 
-test('a batch the gateway reports uncertain, or one bound for another instance, is held for the user', async () => {
-  const holds: Array<string | null> = [];
-  const uncertain = createTerminalInputQueue(
-    async (_data, _assertActive, markSent) => {
-      markSent('gw1');
-      throw Object.assign(new Error('may already be in the terminal'), {
-        code: 'TERMINAL_INPUT_UNCERTAIN',
-      });
-    },
-    { retryDelayMs: () => 0, onHold: (held) => holds.push(held && held.data) },
-  );
-  void uncertain.write('make deploy\r');
-  await new Promise<void>((resolve) => setImmediate(resolve));
+// The pane records what it was typed, so a restarted gateway drops the repeat itself.
+test(
+  'a batch whose reply was lost goes to a restarted gateway as is',
+  { timeout: 5_000 },
+  async () => {
+    const requests: Array<{ data: string; n: number }> = [];
+    let restarts = 1;
+    const queue = createTerminalInputQueue(
+      async (data, _assertActive, markSent, seq) => {
+        requests.push({ data, n: seq.n });
+        markSent('anywhere');
+        if (restarts-- > 0) throw new Error('Connection closed');
+      },
+      { retryDelayMs: () => 0 },
+    );
+    await queue.write('make deploy\r');
+    await queue.write('ls\r');
+    assert.deepEqual(requests, [
+      { data: 'make deploy\r', n: 1 },
+      { data: 'make deploy\r', n: 1 },
+      { data: 'ls\r', n: 2 },
+    ]);
+  },
+);
 
-  // The gateway restarted between attempts: the new instance has no record of number 1.
-  const attempts: Array<string | null | undefined> = [];
-  const restarted = createTerminalInputQueue(
-    async (_data, _assertActive, markSent, _seq, sentTo) => {
-      attempts.push(sentTo);
-      assertSafeResend(sentTo, attempts.length === 1 ? 'gw1' : 'gw2');
-      markSent(attempts.length === 1 ? 'gw1' : 'gw2');
-      throw new Error('Connection closed');
-    },
-    { retryDelayMs: () => 0, onHold: (held) => holds.push(held && held.data) },
-  );
-  void restarted.write('pwd\r');
-  for (let wait = 0; holds.length < 2 && wait < 100; wait++)
-    await new Promise<void>((resolve) => setTimeout(resolve, 5));
-  assert.deepEqual(attempts, [undefined, 'gw1']);
-  assert.deepEqual(holds, ['make deploy\r', 'pwd\r']);
+// A gateway from before pane records keeps them in its process: a restart cannot drop the repeat.
+test(
+  'a batch taken by a gateway without durable records goes again only to that instance',
+  { timeout: 5_000 },
+  async () => {
+    const requests: string[] = [];
+    let instance = 'gw1';
+    const queue = createTerminalInputQueue(
+      async (data, _assertActive, markSent, _seq, sentTo) => {
+        assertResendable(sentTo, { instance, durable: false });
+        requests.push(data);
+        markSent(resendScope({ instance, durable: false }));
+        if (requests.length === 1) {
+          instance = 'gw2';
+          throw new Error('Connection closed');
+        }
+      },
+      { retryDelayMs: () => 0 },
+    );
+    const dropped = assert.rejects(queue.write('make deploy\r'), (error: unknown) => {
+      assert.ok(error instanceof TerminalInputMaybeTypedError);
+      assert.match(String((error.cause as Error).message), /the gateway restarted/);
+      return true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await queue.write('ls\r');
+    await dropped;
+    assert.deepEqual(requests, ['make deploy\r', 'ls\r']);
+  },
+);
+
+test('a batch goes again only to a gateway that can drop it as a repeat', () => {
+  const durable = { instance: 'gw2', durable: true };
+  const memory = { instance: 'gw2', durable: false };
+  const refused = (sentTo: Parameters<typeof assertResendable>[0], to: typeof durable | null) =>
+    assert.throws(() => assertResendable(sentTo, to), TerminalInputMaybeTypedError);
+  // Never written: anywhere.
+  assertResendable(undefined, null);
+  // Taken by a durable gateway: to any durable instance, not to a rolled-back or unnumbered one.
+  assertResendable('anywhere', durable);
+  refused('anywhere', memory);
+  refused('anywhere', null);
+  // Taken by a gateway that keeps records in memory: to that instance only.
+  assertResendable({ onlyTo: 'gw2' }, memory);
+  refused({ onlyTo: 'gw1' }, memory);
+  refused({ onlyTo: 'gw1' }, durable);
+  refused('nowhere', durable);
 });
 
-// A refusal comes back the same every time; retrying it would stall the keys behind it.
-test('a batch the gateway refused with an error code is held, not retried every few seconds', async () => {
-  const attempts: string[] = [];
-  const holds: Array<string | null> = [];
-  const queue = createTerminalInputQueue(
-    async (data, _assertActive, markSent) => {
-      attempts.push(data);
-      markSent('gw1');
-      throw Object.assign(new Error('Open the worktree terminal before typing'), {
-        code: 'INTERNAL_ERROR',
-      });
+for (const [code, message] of [
+  ['INVALID_PARAMS', 'seq needs a stream'],
+  ['TERMINAL_INPUT_UNSUPPORTED', 'Needs tmux 3.0 or later on this host'],
+] as const)
+  test(
+    `a ${code} refusal is dropped with its own error; later keys go out`,
+    { timeout: 5_000 },
+    async () => {
+      const requests: string[] = [];
+      const invalid = Object.assign(new Error(message), { code });
+      const queue = createTerminalInputQueue(
+        async (data, _assertActive, markSent) => {
+          requests.push(data);
+          markSent('anywhere');
+          if (requests.length === 1) throw invalid;
+        },
+        { retryDelayMs: () => 0 },
+      );
+      const dropped = assert.rejects(queue.write('x'), (error: unknown) => error === invalid);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await queue.write('y');
+      await dropped;
+      assert.deepEqual(requests, ['x', 'y']);
     },
-    { retryDelayMs: () => 0, onHold: (held) => holds.push(held && held.data) },
   );
-  void queue.write('ls\r');
-  for (let wait = 0; holds.length === 0 && wait < 100; wait++)
-    await new Promise<void>((resolve) => setTimeout(resolve, 5));
-  await new Promise<void>((resolve) => setTimeout(resolve, 5));
-  assert.deepEqual(attempts, ['ls\r']);
-  assert.deepEqual(holds, ['ls\r']);
+
+// Only a node predating numbered input answers this: the batch is dropped, the keys behind it go.
+test(
+  'a batch the gateway reports uncertain is dropped with a notice; later keys go out',
+  { timeout: 5_000 },
+  async () => {
+    const requests: string[] = [];
+    const queue = createTerminalInputQueue(
+      async (data, _assertActive, markSent) => {
+        requests.push(data);
+        markSent('anywhere');
+        if (requests.length === 1)
+          throw Object.assign(new Error('may already be in the terminal'), {
+            code: 'TERMINAL_INPUT_UNCERTAIN',
+          });
+      },
+      { retryDelayMs: () => 0 },
+    );
+    const uncertain = assert.rejects(queue.write('make deploy\r'), TerminalInputMaybeTypedError);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await queue.write('ls\r');
+    await uncertain;
+    assert.deepEqual(requests, ['make deploy\r', 'ls\r']);
+  },
+);
+
+// The gateway proves a refusal wrote nothing: it is retried, more slowly, until the pane is ready.
+test(
+  'a batch the gateway refused is retried on the longer backoff, then the keys behind it',
+  { timeout: 5_000 },
+  async () => {
+    const requests: string[] = [];
+    const delays: Array<[number, boolean]> = [];
+    const retries: string[] = [];
+    const queue = createTerminalInputQueue(
+      async (data, _assertActive, markSent) => {
+        requests.push(data);
+        markSent('anywhere');
+        if (requests.length <= 2)
+          throw Object.assign(new Error('No PTY or agent available for slot demo-work-1'), {
+            code: 'INTERNAL_ERROR',
+          });
+      },
+      {
+        retryDelayMs: (attempt, answered) => {
+          delays.push([attempt, answered]);
+          return 0;
+        },
+        onRetry: (error, attempt) => retries.push(keysRetryingNotice(error, attempt) ?? 'quiet'),
+      },
+    );
+    const first = queue.write('ls\r');
+    const second = queue.write('pwd\r');
+    await Promise.all([first, second]);
+    assert.deepEqual(requests, ['ls\r', 'ls\r', 'ls\r', 'pwd\r']);
+    assert.deepEqual(delays, [
+      [0, true],
+      [1, true],
+    ]);
+    assert.deepEqual(retries, ['quiet', 'Sending…']);
+  },
+);
+
+test('retries back off to 4 s without an answer and 30 s after a refusal', () => {
+  assert.deepEqual(
+    [0, 1, 4, 10].map((attempt) => terminalInputRetryDelayMs(attempt, false)),
+    [250, 500, 4_000, 4_000],
+  );
+  assert.deepEqual(
+    [0, 4, 6, 10].map((attempt) => terminalInputRetryDelayMs(attempt, true)),
+    [250, 4_000, 16_000, 30_000],
+  );
 });

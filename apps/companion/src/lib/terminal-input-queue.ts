@@ -8,14 +8,55 @@ export class TerminalInputCancelledError extends Error {
 }
 
 /**
- * Thrown by a send, before the frame is written, when a batch that may already be in the pane
- * would go to a gateway instance that cannot drop it as a repeat: the user decides instead.
+ * Keys that may already be in the pane and cannot be sent again without risking typing them
+ * twice: written to a gateway that does not number input, or refused as uncertain by one whose
+ * node predates numbered input.
  */
-export class TerminalInputNeedsDecisionError extends Error {
-  constructor() {
-    super('This input may already have reached the terminal');
-    this.name = 'TerminalInputNeedsDecisionError';
+export class TerminalInputMaybeTypedError extends Error {
+  constructor(cause: unknown) {
+    super('Keys not resent; check the terminal', { cause });
+    this.name = 'TerminalInputMaybeTypedError';
   }
+}
+
+/** A gateway's terminal input numbering. */
+export interface TerminalInputSequencing {
+  instance: string;
+  /** The pane keeps the record, so any instance drops a repeat; otherwise only `instance`. */
+  durable: boolean;
+}
+
+/** Where a batch whose frame was written may be sent again. */
+export type TerminalInputResend = 'anywhere' | 'nowhere' | { onlyTo: string };
+
+export function inputSequenceOf(
+  capability: { instance: string; durable?: boolean } | undefined,
+): TerminalInputSequencing | null {
+  return capability
+    ? { instance: capability.instance, durable: capability.durable === true }
+    : null;
+}
+
+/** What a batch written to a gateway with `sequencing` allows on a later attempt. */
+export function resendScope(sequencing: TerminalInputSequencing | null): TerminalInputResend {
+  if (!sequencing) return 'nowhere';
+  return sequencing.durable ? 'anywhere' : { onlyTo: sequencing.instance };
+}
+
+/**
+ * Before a batch is written again: only a gateway with durable records drops a repeat whichever
+ * instance took the batch. One from before pane records (#1667) keeps them in its process, so
+ * only that instance can; one without numbering cannot at all.
+ */
+export function assertResendable(
+  sentTo: TerminalInputResend | undefined,
+  sequencing: TerminalInputSequencing | null,
+): void {
+  const dropsRepeat =
+    sentTo === undefined ||
+    (sentTo === 'anywhere' && sequencing?.durable === true) ||
+    (typeof sentTo === 'object' && sequencing?.instance === sentTo.onlyTo);
+  if (!dropsRepeat) throw new TerminalInputMaybeTypedError(new Error('the gateway restarted'));
 }
 
 interface InputWaiter {
@@ -30,83 +71,77 @@ interface InputBatch {
 
 interface NumberedBatch extends InputBatch {
   seq: TerminalInputSequence;
-  /** Gateway instance an attempt was written to (null: one without deduplication). */
-  sentTo?: string | null;
+  /** Where an attempt that reached the gateway allows it to go again. */
+  sentTo?: TerminalInputResend;
 }
 
 export interface TerminalInputQueue {
   write: (data: string) => Promise<void>;
-  /** Sends held input again, ahead of anything typed since. */
-  resend: () => void;
-  /** Drops held input; anything typed since goes out. */
-  discard: () => void;
   dispose: () => void;
 }
 
-/** A terminal's input: `write` queues keys; `resend` and `discard` settle held input. */
+/** A terminal's input: `write` queues keys. */
 export interface TerminalInput {
   write: (data: string) => Promise<void>;
-  resend: () => void;
-  discard: () => void;
-}
-
-/** Input whose request reached the socket and then failed, so the pane may already have it. */
-export interface HeldTerminalInput {
-  data: string;
-  error: unknown;
 }
 
 export interface TerminalInputQueueOptions {
   /** Called after each failed request, before its retry. */
   onRetry?: (error: unknown, attempt: number) => void;
-  /** Input is held, or (`null`) no longer held after a resend or discard. */
-  onHold?: (held: HeldTerminalInput | null) => void;
-  /** Wait before retry `attempt` (0 for the first). */
-  retryDelayMs?: (attempt: number) => number;
+  /** Wait before retry `attempt` (0 for the first); `answered`: the gateway answered an error. */
+  retryDelayMs?: (attempt: number, answered: boolean) => number;
   /** This queue's input stream; random by default. */
   stream?: string;
 }
 
 /** Shown once a request has failed twice; cleared when the keys go through. */
-const KEYS_RETRYING_MESSAGE = 'Keys not delivered yet, retrying in order';
+const KEYS_RETRYING_MESSAGE = 'Sending…';
 
 /** The notice for retry `attempt` of keys not yet sent, or null while it is still a blip. */
-export function keysRetryingNotice(error: unknown, attempt: number): string | null {
-  if (attempt < 1) return null;
-  return `${KEYS_RETRYING_MESSAGE}: ${error instanceof Error ? error.message : String(error)}`;
+export function keysRetryingNotice(_error: unknown, attempt: number): string | null {
+  return attempt < 1 ? null : KEYS_RETRYING_MESSAGE;
+}
+
+/** The keys-waiting notice, shown muted: nothing has failed yet. */
+export function isKeysRetryingNotice(current: string | null): boolean {
+  return current === KEYS_RETRYING_MESSAGE;
 }
 
 /** Clears the keys-retrying notice once the keys go through; any other error stays. */
 export function withoutKeysRetryingNotice(current: string | null): string | null {
-  return current?.startsWith(KEYS_RETRYING_MESSAGE) ? null : current;
+  return isKeysRetryingNotice(current) ? null : current;
 }
 
-const retryBackoffMs = (attempt: number) => Math.min(250 * 2 ** attempt, 4_000);
+/** Refusals that never change: the batch is dropped with the gateway's own error. */
+const NEVER_TAKEN = new Set(['INVALID_PARAMS', 'TERMINAL_INPUT_UNSUPPORTED']);
+
+/** A gateway's error answer (a refusal, a pane not ready) waits longer than a lost connection. */
+export const terminalInputRetryDelayMs = (attempt: number, answered: boolean) =>
+  Math.min(250 * 2 ** attempt, answered ? 30_000 : 4_000);
 
 /**
  * Live input. One request at a time; keys typed while it is on its way share the next one, and
  * each batch is numbered in this queue's stream. Once numbered, a batch's keys never change: keys
- * typed later form the next batch. A keystroke is never dropped or typed twice on its own:
- * - a batch that failed before it was written (`markSent` not called) is resent as is;
- * - a batch written to a gateway instance that drops repeated numbers (`markSent(instance)`) is
- *   resent as is to that instance, which acknowledges it without typing it again;
- * - a batch written to a gateway without that (`markSent(null)`), one the gateway answered with
- *   an error code (a refusal, or TERMINAL_INPUT_UNCERTAIN), or one that would go to another
- *   instance (`TerminalInputNeedsDecisionError`) is held: nothing else goes out until the user
- *   resends or discards it.
+ * typed later form the next batch. A failed batch is sent again, as is, ahead of anything typed
+ * since: a gateway that numbers input durably (`markSent('anywhere')`) types each number once,
+ * even across its restarts. A keystroke is never typed twice on its own: a batch written to a
+ * gateway without numbering (`markSent('nowhere')`), one bound for another instance than the one
+ * that took it (`assertResendable`), or one answered TERMINAL_INPUT_UNCERTAIN by a gateway whose
+ * node predates numbering, is dropped with TerminalInputMaybeTypedError and the queue moves on.
+ * A request the gateway can never take (INVALID_PARAMS, or TERMINAL_INPUT_UNSUPPORTED on a host
+ * whose tmux keeps no record of typed input) is dropped with its error.
  */
 export function createTerminalInputQueue(
   send: (
     data: string,
     assertActive: () => void,
-    markSent: (instance?: string | null) => void,
+    markSent: (resend: TerminalInputResend) => void,
     seq: TerminalInputSequence,
-    sentTo: string | null | undefined,
+    sentTo: TerminalInputResend | undefined,
   ) => Promise<void>,
   {
     onRetry,
-    onHold,
-    retryDelayMs = retryBackoffMs,
+    retryDelayMs = terminalInputRetryDelayMs,
     stream = newStreamId(),
   }: TerminalInputQueueOptions = {},
 ): TerminalInputQueue {
@@ -114,7 +149,6 @@ export function createTerminalInputQueue(
   let inFlight = false;
   let pending: InputBatch | null = null;
   let resending: NumberedBatch | null = null;
-  let held: InputBatch | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let failures = 0;
   let lastNumber = 0;
@@ -129,18 +163,6 @@ export function createTerminalInputQueue(
     return batch;
   }
 
-  /** Puts held keys back ahead of the keys typed since, as one new batch. */
-  function requeueFirst(batch: InputBatch) {
-    const typedSince = takePending();
-    pending = typedSince
-      ? { data: batch.data + typedSince.data, waiters: [...batch.waiters, ...typedSince.waiters] }
-      : { data: batch.data, waiters: batch.waiters };
-  }
-
-  function rejectPending(error: unknown) {
-    takePending()?.waiters.forEach((waiter) => waiter.reject(error));
-  }
-
   function nextBatch(): NumberedBatch | null {
     if (resending) {
       const batch = resending;
@@ -152,17 +174,17 @@ export function createTerminalInputQueue(
   }
 
   async function drain(): Promise<void> {
-    if (inFlight || retryTimer || held || disposed) return;
+    if (inFlight || retryTimer || disposed) return;
     const batch = nextBatch();
     if (!batch) return;
     inFlight = true;
-    let sentNow: string | null | undefined;
+    let sent: TerminalInputResend | undefined;
     try {
       await send(
         batch.data,
         assertActive,
-        (instance = null) => {
-          sentNow = instance;
+        (resend) => {
+          sent = resend;
         },
         batch.seq,
         batch.sentTo,
@@ -174,22 +196,32 @@ export function createTerminalInputQueue(
         batch.waiters.forEach((waiter) => waiter.reject(new TerminalInputCancelledError()));
         return;
       }
-      if (sentNow !== undefined) batch.sentTo = sentNow;
-      // The gateway answered with an error (a refusal, or a remote write that may have typed the
-      // keys); the same answer would come back, so the user decides. Only a failure without an
-      // answer (closed socket, background pause, timeout) is resent on its own.
-      const refused = sentNow !== undefined && hasGatewayCode(error);
-      if (batch.sentTo === null || refused || needsDecision(error)) {
-        held = batch;
-        onHold?.({ data: batch.data, error });
+      if (sent !== undefined) batch.sentTo = sent;
+      const code = gatewayCode(error);
+      const neverTaken = code !== undefined && NEVER_TAKEN.has(code);
+      if (
+        batch.sentTo === 'nowhere' ||
+        code === 'TERMINAL_INPUT_UNCERTAIN' ||
+        neverTaken ||
+        error instanceof TerminalInputMaybeTypedError
+      ) {
+        const dropped =
+          neverTaken || error instanceof TerminalInputMaybeTypedError
+            ? error
+            : new TerminalInputMaybeTypedError(error);
+        batch.waiters.forEach((waiter) => waiter.reject(dropped));
+        failures = 0;
         return;
       }
       resending = batch;
       onRetry?.(error, failures);
-      retryTimer = setTimeout(() => {
-        retryTimer = null;
-        void drain();
-      }, retryDelayMs(failures++));
+      retryTimer = setTimeout(
+        () => {
+          retryTimer = null;
+          void drain();
+        },
+        retryDelayMs(failures++, sent !== undefined && Boolean(code)),
+      );
     } finally {
       inFlight = false;
       void drain();
@@ -209,50 +241,21 @@ export function createTerminalInputQueue(
         void drain();
       });
     },
-    resend() {
-      if (!held || disposed) return;
-      requeueFirst(held);
-      held = null;
-      failures = 0;
-      onHold?.(null);
-      void drain();
-    },
-    discard() {
-      if (!held || disposed) return;
-      held.waiters.forEach((waiter) => waiter.reject(new TerminalInputCancelledError()));
-      held = null;
-      onHold?.(null);
-      void drain();
-    },
     dispose() {
       disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = null;
-      for (const batch of [held, resending]) {
-        batch?.waiters.forEach((waiter) => waiter.reject(new TerminalInputCancelledError()));
-      }
-      if (held) onHold?.(null);
-      held = null;
+      resending?.waiters.forEach((waiter) => waiter.reject(new TerminalInputCancelledError()));
       resending = null;
-      rejectPending(new TerminalInputCancelledError());
+      takePending()?.waiters.forEach((waiter) => waiter.reject(new TerminalInputCancelledError()));
     },
   };
 }
 
-/**
- * Before a batch is written again: only the gateway instance that already has it can drop the
- * repeat, so anywhere else the user decides.
- */
-export function assertSafeResend(sentTo: string | null | undefined, instance: string | null): void {
-  if (sentTo !== undefined && sentTo !== instance) throw new TerminalInputNeedsDecisionError();
-}
-
-function hasGatewayCode(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && Boolean(error.code);
-}
-
-function needsDecision(error: unknown): boolean {
-  return error instanceof TerminalInputNeedsDecisionError;
+function gatewayCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String(error.code || '') || undefined
+    : undefined;
 }
 
 function newStreamId(): string {

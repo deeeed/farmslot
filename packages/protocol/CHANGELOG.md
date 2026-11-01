@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `GatewayAuthConnectResult.capabilities.terminalInputSequence.durable` says panes keep the typed-input record across gateway restarts; otherwise `instance` names the process that has it. `NodeInfo.terminalInputSequence` marks a node whose `tmux.send` takes `seq`. The pane record helpers (`terminalInputRecordOption`, `parseTerminalInputRecord`, `staleTerminalInputRecords`, `isTerminalInputStream`) define the `@farmslot-input-<stream>` tmux pane option both write.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.9 - 2026-11-01

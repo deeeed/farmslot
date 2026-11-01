@@ -35,7 +35,6 @@ import {
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
-import { TerminalHeldInput } from '../../components/TerminalHeldInput';
 import {
   TerminalInputLine,
   type TerminalInputLineHandle,
@@ -48,7 +47,7 @@ import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-acti
 import { getResourceCache } from '../../lib/resource-cache';
 import { savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
 import {
-  type HeldTerminalInput,
+  isKeysRetryingNotice,
   keysRetryingNotice,
   TerminalInputCancelledError,
   withoutKeysRetryingNotice,
@@ -407,11 +406,11 @@ export default function WorkerTerminalScreen() {
     }, [selectedVoiceModelId]),
   );
 
-  const [heldInput, setHeldInput] = useState<HeldTerminalInput | null>(null);
+  // While the connection is down the screen's own status says so: no keys-waiting notice too.
+  const visibleError = status === 'connected' ? error : withoutKeysRetryingNotice(error);
   const workerInput = useWorkerTerminalInput(client, worker, {
     onRetry: (failure, attempt) =>
       setError((current) => keysRetryingNotice(failure, attempt) ?? current),
-    onHold: setHeldInput,
   });
   const writeWorkerInput = workerInput.write;
   const sendInput = useCallback(
@@ -426,7 +425,10 @@ export default function WorkerTerminalScreen() {
       writeWorkerInput(data).then(
         () => setError(withoutKeysRetryingNotice),
         (err: unknown) => {
-          if (!(err instanceof TerminalInputCancelledError)) setError(getErrorMessage(err));
+          if (err instanceof TerminalInputCancelledError) return;
+          // Keys that failed for good never reached the pane as typed: the line starts over.
+          inputLineRef.current?.reset();
+          setError(getErrorMessage(err));
         },
       );
     },
@@ -837,7 +839,11 @@ export default function WorkerTerminalScreen() {
             </Pressable>
           </View>
         ) : null}
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {visibleError ? (
+          <Text style={isKeysRetryingNotice(visibleError) ? styles.notice : styles.error}>
+            {visibleError}
+          </Text>
+        ) : null}
         <View style={styles.terminalArea}>
           <TerminalViewSurface
             ref={terminalRef}
@@ -1002,14 +1008,6 @@ export default function WorkerTerminalScreen() {
           onSelect={selectWindow}
         />
         <View style={styles.keyBar}>
-          <TerminalHeldInput
-            held={heldInput}
-            onResend={workerInput.resend}
-            onDiscard={() => {
-              inputLineRef.current?.reset();
-              workerInput.discard();
-            }}
-          />
           {terminalDirectInput ? null : (
             <TerminalInputLine ref={inputLineRef} disabled={!workerReady} onSend={sendInput} />
           )}

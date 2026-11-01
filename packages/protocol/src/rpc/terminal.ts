@@ -39,7 +39,7 @@ export interface TerminalSnapshotParams extends SlotAgentTargetParams {
  * acknowledged without being typed again.
  */
 export interface TerminalInputSequence {
-  /** Random per client input queue; a new queue starts a new stream. */
+  /** Random per client input queue; a new queue starts a new stream. 1-64 of `A-Za-z0-9_-`. */
   stream: string;
   /** Increases by one per batch in the stream. */
   n: number;
