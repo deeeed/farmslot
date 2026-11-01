@@ -79,19 +79,28 @@ test('a transition queued past the warning interval names the operation holding 
   const warnings: string[] = [];
   t.mock.method(console, 'warn', (message: string) => warnings.push(message));
   const coordinator = new RunTransitionCoordinator(async () => 'machine-a', 5);
-  const releaseMachine = deferred();
+  const releaseRun = deferred();
   const held = deferred();
-  const machine = coordinator.withMachine('machine-a', async function heldMachineOperation() {
-    held.resolve();
-    await releaseMachine.promise;
-  });
+  async function heldRunOperation() {
+    return coordinator.withRun('run-a', async () => {
+      held.resolve();
+      await releaseRun.promise;
+    });
+  }
+  const holder = heldRunOperation();
   await held.promise;
-  const run = coordinator.withRun('run-a', async () => {});
-  while (!warnings.length) await new Promise((resolve) => setTimeout(resolve, 5));
+  const waiters = [
+    coordinator.withRun('run-b', async () => {}),
+    coordinator.withMachine('machine-a', async () => {}),
+  ];
+  const deadline = Date.now() + 2_000;
+  while (!warnings.length && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  releaseRun.resolve();
+  await Promise.all([holder, ...waiters]);
   assert.match(
-    warnings[0]!,
-    /has waited \d+s for machine:machine-a; held by .*transition-coordinator\.test/,
+    warnings[0] ?? '',
+    /has waited \d+s for machine:machine-a; held by .*heldRunOperation/,
+    'the holder is named by the operation that took the key',
   );
-  releaseMachine.resolve();
-  await Promise.all([machine, run]);
 });

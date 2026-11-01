@@ -56,6 +56,7 @@ import {
   resetPublishGateApprovalForReplay,
   rollbackReclaimedSlotReleaseOptions,
   runReplayStep,
+  type RunReplayStepHooks,
   shouldRerouteEvalReplayToPrepare,
 } from './replay-step.js';
 
@@ -2526,7 +2527,8 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
   );
 });
 
-test('a gate replay that fails while its engine was still preparing the decision resumes that gate', async (t) => {
+/** A human-gating run whose engine is packaging after a passing review: no decision is open (ba397e2c). */
+async function preparingGateRun(t: test.TestContext): Promise<Run> {
   const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
   const taskFile = '/tmp/farmslot-human-gate-preparing/TASK.md';
   const slotOwner = createRun({
@@ -2548,7 +2550,6 @@ test('a gate replay that fails while its engine was still preparing the decision
     'review',
     'complete',
   ]);
-  // The gate's engine is packaging after a passing review, so no decision is open (ba397e2c).
   updateRun(run.id, {
     status: 'human-gating',
     taskFile,
@@ -2582,10 +2583,23 @@ test('a gate replay that fails while its engine was still preparing the decision
       }
     }
   });
+  return run;
+}
+
+const replayGate = (run: Run, hooks: RunReplayStepHooks) =>
+  runReplayStep(
+    { runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' },
+    () => {},
+    hooks,
+  );
+
+test('a gate replay that fails after cancelling the engine preparing its decision resumes that gate', async (t) => {
+  const run = await preparingGateRun(t);
   const resumed: string[] = [];
   await assert.rejects(
     () =>
-      runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}, {
+      replayGate(run, {
+        engineDriven: () => true,
         startEngine: async (runId) => {
           resumed.push(runId);
         },
@@ -2594,6 +2608,46 @@ test('a gate replay that fails while its engine was still preparing the decision
   );
   assert.deepEqual(resumed, [run.id], 'the gate gets its engine back');
   assert.equal(getRun(run.id)?.status, 'human-gating');
+});
+
+test('a failed gate replay with no live engine to cancel leaves the run to its owner', async (t) => {
+  const run = await preparingGateRun(t);
+  const resumed: string[] = [];
+  await assert.rejects(
+    () =>
+      replayGate(run, {
+        engineDriven: () => false,
+        startEngine: async (runId) => {
+          resumed.push(runId);
+        },
+      }),
+    /no longer safely reclaimable/,
+  );
+  assert.deepEqual(resumed, [], 'a recovery holding the gate keeps it');
+});
+
+test('overlapping failed gate replays resume the gate once, at the newest generation', async (t) => {
+  const run = await preparingGateRun(t);
+  const resumed: string[] = [];
+  const startEngine = async (runId: string) => {
+    resumed.push(runId);
+  };
+  // The first replay cancels the live engine. A second replay starts and fails while the first is
+  // still in flight; the first then fails on the generation the second took and leaves last.
+  await assert.rejects(() =>
+    replayGate(run, {
+      engineDriven: () => true,
+      startEngine,
+      afterGenerationBump: async () => {
+        await assert.rejects(
+          () => replayGate(run, { engineDriven: () => false, startEngine }),
+          /no longer safely reclaimable/,
+        );
+        assert.deepEqual(resumed, [], 'the first replay is still in flight');
+      },
+    }),
+  );
+  assert.deepEqual(resumed, [run.id]);
 });
 
 test('slot activation persists its dispatch baseline and ordinary prepare replay clears the intent', async (t) => {

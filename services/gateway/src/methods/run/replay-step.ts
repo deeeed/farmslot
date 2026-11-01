@@ -56,6 +56,7 @@ import {
 import {
   bumpRunGeneration,
   cancelRunEngine,
+  isRunEngineDriven,
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
@@ -122,6 +123,8 @@ export interface RunReplayStepHooks {
   afterSlotPlanning?(): Promise<void>;
   /** Test-only: retain a controlled engine observer without starting workers. */
   startEngine?(runId: string): Promise<void>;
+  /** Test-only: whether an engine loop drives the run when the replay cancels it. */
+  engineDriven?(runId: string): boolean;
   /**
    * A blocked monitor accepts the blocked attempt running again as live
    * (resumeBlockedRunWhoseWorkerContinued), not only finished.
@@ -937,10 +940,20 @@ const pendingReviewReplays = new Map<
  * those replays to finish reopens them when none revived the run, so overlapping
  * replays cannot strand them (TAT-4158 4237202e, 2026-10-20).
  */
-const gateReentries = new Map<
-  string,
-  { decisionIds: Set<string>; inFlight: number; revived: boolean }
->();
+const gateReentries = new Map<string, GateReentry>();
+
+/**
+ * Overlapping replays of one run share this: the last to finish decides for all of them, at the
+ * newest generation any of them took, and resumes the gate only if one of them cancelled a live
+ * engine there.
+ */
+interface GateReentry {
+  decisionIds: Set<string>;
+  inFlight: number;
+  revived: boolean;
+  generation?: number;
+  cancelledEngine?: boolean;
+}
 
 export async function runReplayStep(
   params: RunReplayStepParams,
@@ -1415,7 +1428,8 @@ async function replayRunStep(
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   const entryStatus = existing.status;
-  let gateReentry: { decisionIds: Set<string>; inFlight: number; revived: boolean } | undefined;
+  let gateReentry: GateReentry | undefined;
+  let cancelledEngine = false;
   // A replay that fails before any replay revives the run leaves the run as it found
   // it, so the gate decisions superseded meanwhile open again. Otherwise a blocked run
   // is left with nothing to resolve. A status change since means another action owns
@@ -1445,15 +1459,32 @@ async function replayRunStep(
     );
     return true;
   };
-  // A gate whose engine was still preparing its decision has none to reopen. The replay cancelled
-  // that engine, so the run gets it back at the gate instead of sitting with neither.
-  const resumeGateEngine = (error: unknown) => {
+  // Re-drive the engine under the run's stored ownership, not as the caller whose request or event
+  // started this replay. Test contexts can disable the start (the same switch runCreate honors).
+  const startReplayEngine = (): Promise<void> | undefined => {
+    if (
+      !hooks.startEngine &&
+      process.env.NODE_TEST_CONTEXT === '1' &&
+      process.env.FARMSLOT_DISABLE_RUN_ENGINE_START === '1'
+    )
+      return undefined;
+    return runWithSystemOriginator(() => (hooks.startEngine ?? startRun)(params.runId)).catch(
+      (err: unknown) => {
+        console.error(`[run] replay failed: ${(err as Error).message}`);
+      },
+    );
+  };
+  // A gate whose live engine was still preparing its decision has none to reopen. A replay
+  // cancelled that engine, so the run gets it back at the gate instead of sitting with neither.
+  // Runs no engine was driving (a recovery holding the gate) are left to their owner.
+  const resumeGateEngine = (entry: GateReentry, error: unknown) => {
     const current = getRun(params.runId);
     if (
       replayStepName !== PS.HUMAN_GATE ||
+      !entry.cancelledEngine ||
       !current ||
       current.status !== entryStatus ||
-      current.engineState?.generation !== nativeReplayGeneration ||
+      current.engineState?.generation !== entry.generation ||
       current.decisions.some((decision) => !decision.resolvedAt) ||
       !current.steps.some((step) => step.name === PS.HUMAN_GATE && step.status === 'running')
     )
@@ -1461,17 +1492,7 @@ async function replayRunStep(
     console.warn(
       `[run] replay of ${params.runId.slice(0, 8)} from ${replayStepName} failed (${error instanceof Error ? error.message : String(error)}); resuming its gate`,
     );
-    // The same switch the replay's own engine start honours in test contexts.
-    if (
-      !hooks.startEngine &&
-      process.env.NODE_TEST_CONTEXT === '1' &&
-      process.env.FARMSLOT_DISABLE_RUN_ENGINE_START === '1'
-    )
-      return;
-    void runWithSystemOriginator(() => (hooks.startEngine ?? startRun)(params.runId)).catch(
-      (err: unknown) =>
-        console.error(`[run] gate resume after a failed replay failed: ${(err as Error).message}`),
-    );
+    void startReplayEngine();
   };
   const leaveGateReentry = async (failed: boolean, error?: unknown) => {
     const entry = gateReentry;
@@ -1481,7 +1502,7 @@ async function replayRunStep(
     if (entry.inFlight > 0) return;
     gateReentries.delete(params.runId);
     if (failed && !entry.revived && !(await reopenGateDecisions(entry.decisionIds)))
-      resumeGateEngine(error);
+      resumeGateEngine(entry, error);
   };
   const rollBackReclaimedSlot = async (err: unknown) => {
     if (
@@ -1583,6 +1604,7 @@ async function replayRunStep(
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
     // Do this only after replay entry validation so rejected replays do not leave a
     // synthetic in-progress recovery lane behind.
+    cancelledEngine = (hooks.engineDriven ?? isRunEngineDriven)(params.runId);
     cancelRunEngine(params.runId);
     // Capture immediately: sampling generation after later awaits reads a
     // force-complete bump and makes the fence compare equal to itself.
@@ -1642,6 +1664,8 @@ async function replayRunStep(
     };
     for (const decision of supersededGateAudit) gateReentry.decisionIds.add(decision.id);
     gateReentry.inFlight += 1;
+    gateReentry.generation = ownedGeneration;
+    gateReentry.cancelledEngine ||= cancelledEngine;
     gateReentries.set(params.runId, gateReentry);
 
     // Test-only pause after sync supersession. Do not `await` a missing hook:
@@ -2398,23 +2422,9 @@ async function replayRunStep(
       setRunFlags(params.runId, { skipPrepare: true });
     }
 
-    // Re-drive the engine from the reset step. Test contexts can disable the
-    // engine start (same switch runCreate honors) to assert the primed
-    // pipeline state deterministically.
-    if (
-      hooks.startEngine ||
-      process.env.NODE_TEST_CONTEXT !== '1' ||
-      process.env.FARMSLOT_DISABLE_RUN_ENGINE_START !== '1'
-    ) {
-      // The engine continues the run under its stored ownership, not as the
-      // caller whose request or event started this replay.
-      const driver = runWithSystemOriginator(() =>
-        (hooks.startEngine ?? startRun)(params.runId),
-      ).catch((err) => {
-        console.error(`[run] replay failed: ${(err as Error).message}`);
-      });
-      if (reviewFlight) reviewFlight.driver = driver;
-    }
+    // Re-drive the engine from the reset step.
+    const driver = startReplayEngine();
+    if (driver && reviewFlight) reviewFlight.driver = driver;
 
     console.log(`[run] replaying ${params.runId.slice(0, 8)} from step ${replayStepName}`);
     await leaveGateReentry(false);

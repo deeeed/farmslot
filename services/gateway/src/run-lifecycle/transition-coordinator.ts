@@ -3,12 +3,19 @@ import { getRun } from '../runs/store.js';
 
 type TransitionOperation<T> = () => Promise<T>;
 
+interface TransitionHolder {
+  /** Captured at the entry point; formatted only when a wait is reported. */
+  site: Error;
+  since: number;
+  warnedAt?: number;
+}
+
 /** A transition queued this long names the operation holding its key, and again each interval. */
 const TRANSITION_WAIT_WARN_MS = 60_000;
 
-/** The first caller frame outside this module: which operation took a key. */
-function transitionCallerSite(): string {
-  const frames = new Error().stack?.split('\n').slice(1) ?? [];
+/** The first caller frame outside this module, formatted only when a wait is reported. */
+function transitionCallerSite(site: Error): string {
+  const frames = site.stack?.split('\n').slice(1) ?? [];
   const caller = frames.find((frame) => !/transition-coordinator\.[jt]s:/u.test(frame));
   return caller?.trim().replace(/^at /u, '') ?? 'unknown caller';
 }
@@ -21,42 +28,49 @@ function transitionCallerSite(): string {
 export class RunTransitionCoordinator {
   private readonly tails = new Map<string, Promise<void>>();
   /** Who holds each key and since when, so a stalled queue can name its holder. */
-  private readonly holders = new Map<string, { site: string; since: number }>();
+  private readonly holders = new Map<string, TransitionHolder>();
 
   constructor(
     private readonly resolveMachine: (runId: string) => Promise<string | null> = resolveRunMachine,
     private readonly waitWarnMs = TRANSITION_WAIT_WARN_MS,
   ) {}
 
+  // Each entry point records its caller before any await, while the caller's frames still exist.
   withMachine<T>(machine: string, operation: TransitionOperation<T>): Promise<T> {
-    return this.withKey(machineKey(machine), operation);
+    return this.withKey(machineKey(machine), operation, new Error());
   }
 
   async withRun<T>(runId: string, operation: TransitionOperation<T>): Promise<T> {
+    const site = new Error();
     const machine = await this.resolveMachine(runId);
-    if (!machine) return this.withRunWhileMachineHeld(runId, operation);
-    return this.withMachine(machine, () => this.withRunWhileMachineHeld(runId, operation));
+    const run = () => this.withKey(runKey(runId), operation, site);
+    return machine ? this.withKey(machineKey(machine), run, site) : run();
   }
 
   withRunWhileMachineHeld<T>(runId: string, operation: TransitionOperation<T>): Promise<T> {
-    return this.withKey(runKey(runId), operation);
+    return this.withKey(runKey(runId), operation, new Error());
   }
 
   withReviewBudget<T>(scope: string, operation: TransitionOperation<T>): Promise<T> {
-    return this.withKey(`review-budget:${scope}`, operation);
+    return this.withKey(`review-budget:${scope}`, operation, new Error());
   }
 
-  private async withKey<T>(key: string, operation: TransitionOperation<T>): Promise<T> {
-    const site = transitionCallerSite();
-    const previous = this.tails.get(key) ?? Promise.resolve();
+  private async withKey<T>(
+    key: string,
+    operation: TransitionOperation<T>,
+    site: Error,
+  ): Promise<T> {
+    const queued = this.tails.get(key);
+    const previous = queued ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => {
       release = resolve;
     });
     const tail = previous.then(() => current);
     this.tails.set(key, tail);
-    await this.waitTurn(key, previous, site);
-    const holder = { site, since: Date.now() };
+    if (queued) await this.waitTurn(key, queued, site);
+    else await previous;
+    const holder: TransitionHolder = { site, since: Date.now() };
     this.holders.set(key, holder);
     try {
       return await operation();
@@ -67,22 +81,29 @@ export class RunTransitionCoordinator {
     }
   }
 
-  /** Wait for the key; a long wait names the holder instead of stalling silently. */
-  private async waitTurn(key: string, previous: Promise<void>, site: string): Promise<void> {
+  /**
+   * Wait for a queued key. A long wait names the holder instead of stalling silently: one line
+   * per holder per interval, however many transitions wait behind it.
+   */
+  private async waitTurn(key: string, previous: Promise<void>, site: Error): Promise<void> {
     const enqueuedAt = Date.now();
+    const turn = previous.then(() => true as const);
     for (;;) {
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const turn = await Promise.race([
-        previous.then(() => true),
+      const ready = await Promise.race([
+        turn,
         new Promise<false>((resolve) => {
           timer = setTimeout(() => resolve(false), this.waitWarnMs);
           timer.unref?.();
         }),
       ]).finally(() => clearTimeout(timer));
-      if (turn) return;
+      if (ready) return;
       const holder = this.holders.get(key);
+      const now = Date.now();
+      if (!holder || now - (holder.warnedAt ?? 0) < this.waitWarnMs) continue;
+      holder.warnedAt = now;
       console.warn(
-        `[run-transition] ${site} has waited ${Math.round((Date.now() - enqueuedAt) / 1000)}s for ${key}; ${holder ? `held by ${holder.site} for ${Math.round((Date.now() - holder.since) / 1000)}s` : 'queued behind earlier waiters'}`,
+        `[run-transition] ${transitionCallerSite(site)} has waited ${Math.round((now - enqueuedAt) / 1000)}s for ${key}; held by ${transitionCallerSite(holder.site)} for ${Math.round((now - holder.since) / 1000)}s`,
       );
     }
   }
