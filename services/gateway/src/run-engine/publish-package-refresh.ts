@@ -162,10 +162,14 @@ function isEvidenceRefusal(error: unknown): boolean {
   return false;
 }
 
-/** One bounded line: a node failure can carry a command's whole output. */
 function refreshFailureMessage(error: unknown): string {
-  const message = (error instanceof Error ? error.message : String(error)).replace(/\s+/gu, ' ');
-  return message.length > 500 ? `${message.slice(0, 500)}…` : message;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** One bounded log line: a node failure can carry a command's whole output. */
+function refreshFailureLogLine(message: string): string {
+  const line = message.replace(/\s+/gu, ' ');
+  return line.length > 2000 ? `${line.slice(0, 2000)}…` : line;
 }
 
 /** Coalesce polling readers, and never snapshot a worker that is still progressing. */
@@ -181,8 +185,11 @@ export function reconcilePublicationPackageForInspection(
     !['dev', 'fix-bug'].includes(run.flowType) ||
     run.readOnly ||
     publicationStatusForRun(run) !== 'not_published'
-  )
+  ) {
+    // A gate that closed, or moved past refreshing, has no refusal left to show.
+    refreshRefusals.delete(run.id);
     return Promise.resolve(run);
+  }
   const existing = inspectionRefreshes.get(run.id);
   if (existing) return existing;
   const readers: PublicationInspectionReaders = {
@@ -240,8 +247,9 @@ export function reconcilePublicationPackageForInspection(
         return getRun(run.id) ?? run;
       const progress = await readers.progress(getRun(run.id) ?? run);
       if (progress.kind !== 'idle') {
-        // The worker is acting on the gate (re-recording, say), so its result gets a fresh refresh.
-        refreshRefusals.delete(run.id);
+        // A worker acting on the gate (re-recording, say) gets its result refreshed. An unproven
+        // read under node load is not the worker working, so the refusal is kept through it.
+        if (progress.kind === 'making-progress') refreshRefusals.delete(run.id);
         return collecting(
           bundleAvailable
             ? 'Publication HEAD changed; waiting for the owned worker to be idle before refreshing its package.'
@@ -388,7 +396,7 @@ export async function refreshPublishPackage(
     // refusal again only once its inputs change, so this is one line per attempt, not per poll.
     const message = refreshFailureMessage(error);
     console.warn(
-      `[run-engine] run ${params.runId.slice(0, 8)} — publish package refresh refused after ${Math.round((Date.now() - startedAt) / 1000)}s: ${message}`,
+      `[run-engine] run ${params.runId.slice(0, 8)} — publish package refresh refused after ${Math.round((Date.now() - startedAt) / 1000)}s: ${refreshFailureLogLine(message)}`,
     );
     // The gate shows the latest evidence refusal, not an older remembered one.
     const remembered = refreshRefusals.get(params.runId);

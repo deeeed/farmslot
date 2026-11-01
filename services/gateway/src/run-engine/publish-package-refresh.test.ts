@@ -515,7 +515,7 @@ test('polling shows an evidence refusal again without re-running it until its in
   updateRun(run.id, { status: 'human-gating', decisions: [decision] });
   let refreshes = 0;
   let refusal: Error = new OwnedWorkerBusyError();
-  let progress: 'idle' | 'making-progress' = 'idle';
+  let progress: 'idle' | 'making-progress' | 'unproven' = 'idle';
   const readers = {
     head: async () => 'new-head',
     bundleAvailable: async () => true,
@@ -540,14 +540,24 @@ test('polling shows an evidence refusal again without re-running it until its in
     await poll();
   }
   assert.equal(refreshes, 6);
-  // ba397e2c: each refresh held the machine's transition key for 29-170 s, once per poll.
-  refusal = new PublishPackageRefusedError('Artifact mirror refresh failed', {
-    cause: new RecordedEvidenceReadError(
-      'evidence-selection-invalid',
-      'Before evidence needs an attestation',
-    ),
-  });
-  for (let i = 0; i < 3; i++) assert.match(await poll(), /Artifact mirror refresh failed/);
+  // ba397e2c: each refresh held the machine's transition key for 29-170 s, once per poll. Its
+  // refusal is about 700 characters; the gate shows all of it, the attestation command included.
+  const remedy = `Before evidence artifacts/recipe-runs/attempts/20261101125912114-62272/screenshots/main-flows.files.png comes from recipe attempt recipe-runs/attempts/20261101125912114-62272, recorded at ${'b'.repeat(40)}, not the unchanged base ${'9'.repeat(40)}. Re-record it on the base, or have an operator attest the attempt as before evidence: farmslot run gate ${run.id} --action attest-before-attempt --recipe-run attempts/20261101125912114-62272 --reason "<why the base cannot run it>" (artifact-manifest.json sha256 ${'1'.repeat(64)}).`;
+  refusal = new PublishPackageRefusedError(
+    `Artifact mirror refresh failed; cannot build an authoritative publish package: ${remedy}`,
+    { cause: new RecordedEvidenceReadError('evidence-selection-invalid', remedy) },
+  );
+  for (let i = 0; i < 3; i++)
+    assert.ok(
+      (await poll()).endsWith(`(artifact-manifest.json sha256 ${'1'.repeat(64)}).`),
+      'the whole remedy survives the memo',
+    );
+  assert.equal(refreshes, 7);
+  // An unproven progress read under node load is not the worker working; the refusal is kept.
+  progress = 'unproven';
+  await poll();
+  progress = 'idle';
+  await poll();
   assert.equal(refreshes, 7);
   // The worker working again (re-recording the before attempt, say) forgets the refusal.
   progress = 'making-progress';
