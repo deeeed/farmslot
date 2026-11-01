@@ -726,11 +726,11 @@ export async function executeFindSlotStep(
   generation: number,
   context: FindSlotStepContext,
 ): Promise<StepIO> {
-  const automaticLoadPinned = isPinnedSlotSelection(run);
-  // A slot within a wider allowlist (the queue's own pick) is not the caller's pin: a lost claim
-  // there selects again within the allowlist instead of waiting for the winner's whole run.
+  let automaticLoadPinned = isPinnedSlotSelection(run);
+  // The queue's own pick within a wider allowlist is not the caller's pin: a lost claim there
+  // selects again within the allowlist instead of waiting for the winner's whole run.
   const conflictPinned =
-    run.allowedSlots && run.allowedSlots.length > 1 ? false : automaticLoadPinned;
+    run.queuedAt && run.allowedSlots && run.allowedSlots.length > 1 ? false : automaticLoadPinned;
   const requestedSlotId = run.slotId;
   let hostLoadWaitReason: string | undefined;
   let slotClaimWaitReason: string | undefined;
@@ -754,6 +754,8 @@ export async function executeFindSlotStep(
           ? { slotId: requestedSlotId ?? conflict.slotId }
           : { slotId: null, pressureAdmissionRef: undefined },
       );
+      // Later attempts select under the policy of what they now are: a pin or a fresh pick.
+      automaticLoadPinned = pinned;
       updateRunStep(runId, 'find-slot', {
         inputs: {
           ...getRun(runId)?.steps.find((step) => step.name === 'find-slot')?.inputs,
@@ -790,24 +792,26 @@ export async function executeFindSlotStep(
   }
 }
 
-/** The slot an operator picked in the run's latest resolved slot decision, if any. */
+/** The slot an operator picked in this find-slot attempt's latest resolved slot decision, if any. */
 function operatorPickedSlot(run: Run): string | undefined {
+  const since = run.steps.find((step) => step.name === 'find-slot')?.startedAt ?? '';
   const picked = [...run.decisions]
     .reverse()
     .find(
       (decision) =>
         (decision.type === 'engine_no_suitable_slot' ||
           decision.type === 'engine_branch_affinity_nudge') &&
-        decision.resolvedAt,
+        decision.resolvedAt &&
+        decision.createdAt >= since,
     )?.selectionData?.slotId;
   return typeof picked === 'string' && picked ? picked : undefined;
 }
 
 /**
  * Poll the slot row (no selection work) until the slot can be claimed. A live holder ends by
- * itself, so that wait is unbounded; its teardown after it ends (a release, or a slot still busy
- * under an ended run) is bounded like an explicit pick's. A cancelled holder is reclaimed by
- * selection, and any other blocker is left for selection to report.
+ * itself, so that wait is unbounded; the slot still busy under the ended run is bounded like an
+ * explicit pick's release. A release in progress is left to the explicit pick's own bounded wait,
+ * a cancelled holder to selection's reclaim, and any other blocker to selection to report.
  */
 async function waitUntilSlotClaimable(slotId: string, runId: string, generation: number) {
   let teardownSince: number | undefined;
@@ -818,12 +822,13 @@ async function waitUntilSlotClaimable(slotId: string, runId: string, generation:
     const owner =
       row && typeof row.current_run_id === 'string' ? getRun(row.current_run_id) : undefined;
     const tearingDown =
-      blocker?.kind === 'releasing' ||
-      (row?.lifecycle !== 'ready' &&
-        owner !== undefined &&
-        isTerminalRunStatus(owner.status) &&
-        owner.status !== 'cancelled');
-    if (blocker?.kind !== 'live-owner') {
+      !blocker &&
+      row?.lifecycle !== 'ready' &&
+      owner !== undefined &&
+      isTerminalRunStatus(owner.status) &&
+      owner.status !== 'cancelled';
+    if (blocker?.kind === 'live-owner') teardownSince = undefined;
+    else {
       if (!tearingDown) return;
       teardownSince ??= Date.now();
       if (Date.now() - teardownSince >= EXPLICIT_SLOT_RELEASE_WAIT_MS) return;
