@@ -16,6 +16,7 @@ import {
 import {
   nativeProfileLoginReason,
   nativeProfileReference,
+  nativeProfileSelectionReady,
   nativeResumeRequest,
   sessionNativeProfile,
   validateNativeProfileStatus,
@@ -339,4 +340,21 @@ test('worker history, live or unconfirmed processes and unsupported saved sessio
   const session = savedSession();
   session.capabilities.resume = false;
   assert.throws(() => nativeResumeRequest(session, reference), /cannot be resumed/);
+});
+
+test('the node default account is ready before the profile list is read; a selected profile is not', () => {
+  const base = { enabled: true, connected: true, selected: false, current: false };
+  assert.equal(nativeProfileSelectionReady(base), true);
+  assert.equal(nativeProfileSelectionReady({ ...base, connected: false }), false);
+  assert.equal(nativeProfileSelectionReady({ ...base, selected: true }), false);
+  assert.equal(nativeProfileSelectionReady({ ...base, selected: true, current: true }), true);
+  assert.equal(
+    nativeProfileSelectionReady({
+      ...base,
+      selected: true,
+      current: true,
+      reason: 'Checking profile login.',
+    }),
+    false,
+  );
 });
