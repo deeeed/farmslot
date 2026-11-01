@@ -12,6 +12,9 @@ import {
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
+  nativeImplementableKey,
+  nativeImplementPrompt,
+  nativeImplementSession,
   nativeMessageCancelable,
   nativeMessageDropped,
   nativeMessagePreview,
@@ -752,6 +755,66 @@ test('a finished turn gets one summary row below its tools; nothing above it mov
   assert(fold?.kind === 'work');
   assert.equal(nativeFoldWatched(fold, watched), true);
   assert.equal(nativeFoldWatched(fold, new Set()), false);
+});
+
+test('Implement is offered on the proposal that ended the latest turn of an idle plan-mode session', () => {
+  const planning = { ...page([]).session, mode: 'plan' as const };
+  const proposal = (sequence: number, text: string, commandId = 'first') => ({
+    ...event(sequence, 'plan.updated'),
+    commandId,
+    plan: { kind: 'proposal' as const, text },
+  });
+  const turn = [
+    { ...event(1, 'command.submitted', 'Plan a README.'), commandId: 'first' },
+    proposal(2, '1. Write it.'),
+    { ...event(3, 'turn.completed'), commandId: 'first' },
+  ];
+  const rows = (events: NativeSessionEvent[]) => nativeTimelineRows(nativeTimeline(events));
+  assert.equal(nativeImplementableKey(planning, rows(turn)), 2);
+  // Not while the turn runs, nor for a default-mode session, a busy one, a pinned worker's, or
+  // with a request pending.
+  assert.equal(nativeImplementableKey(planning, rows(turn.slice(0, 2))), undefined);
+  assert.equal(nativeImplementableKey({ ...planning, mode: 'default' }, rows(turn)), undefined);
+  assert.equal(nativeImplementableKey({ ...planning, state: 'running' }, rows(turn)), undefined);
+  assert.equal(nativeImplementableKey({ ...planning, workerManaged: true }, rows(turn)), undefined);
+  assert.equal(
+    nativeImplementableKey(planning, rows(turn), [event(4, 'approval.requested')]),
+    undefined,
+  );
+  // A message sent since then starts a later turn; a later proposal replaces the offer.
+  const later = [...turn, { ...event(4, 'command.submitted', 'Shorter.'), commandId: 'second' }];
+  assert.equal(nativeImplementableKey(planning, rows(later)), undefined);
+  assert.equal(
+    nativeImplementableKey(
+      planning,
+      rows([
+        ...later,
+        proposal(5, '1. Write a short one.', 'second'),
+        { ...event(6, 'turn.completed'), commandId: 'second' },
+      ]),
+    ),
+    5,
+  );
+  assert.equal(nativeImplementPrompt('1. Write it.'), 'PLEASE IMPLEMENT THIS PLAN:\n1. Write it.');
+  // The new session: same node, runner, model, effort, profile and directory, in default mode.
+  assert.deepEqual(
+    nativeImplementSession({
+      ...planning,
+      model: 'gpt-fixture',
+      effort: 'low',
+      profileId: 'work',
+      accountContextId: 'context',
+    }),
+    {
+      executionNodeId: 'local',
+      runner: 'fixture',
+      cwd: '/fixture',
+      model: 'gpt-fixture',
+      effort: 'low',
+      profileId: 'work',
+      accountContextId: 'context',
+    },
+  );
 });
 
 test('a plan updates in place in its turn, folds to its progress when the turn ends', () => {

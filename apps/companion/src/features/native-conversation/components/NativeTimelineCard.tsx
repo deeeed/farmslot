@@ -23,6 +23,7 @@ export function NativeTimelineCard({
   onDisclosure,
   hidden = false,
   planOpen = true,
+  onImplement,
 }: {
   entry: NativeTimelineEntry;
   /** Called before the card opens or closes, so the conversation keeps the reader's place. */
@@ -31,6 +32,8 @@ export function NativeTimelineCard({
   hidden?: boolean;
   /** A checklist starts showing its steps (`nativePlanOpen`). */
   planOpen?: boolean;
+  /** On the proposal Implement is offered on (`nativeImplementableKey`). */
+  onImplement?: () => void;
 }) {
   const [expanded, setExpanded] = useState(entry.kind === 'plan' && planOpen);
   const [raw, setRaw] = useState(false);
@@ -66,6 +69,7 @@ export function NativeTimelineCard({
           open={expanded}
           onToggle={toggle}
           onDisclosure={onDisclosure}
+          onImplement={onImplement}
         />
       ) : entry.kind === 'tool' ? (
         <>
@@ -117,7 +121,7 @@ export function NativeTimelineCard({
   );
 }
 
-/** A checklist's progress and steps, or a proposed plan with a copy action. */
+/** A checklist's progress and steps, or a proposed plan with copy and implement actions. */
 function NativePlanBody({
   plan,
   text,
@@ -125,6 +129,7 @@ function NativePlanBody({
   open,
   onToggle,
   onDisclosure,
+  onImplement,
 }: {
   plan: NativeSessionPlan;
   text: string;
@@ -132,6 +137,7 @@ function NativePlanBody({
   open: boolean;
   onToggle: () => void;
   onDisclosure: () => void;
+  onImplement?: () => void;
 }) {
   const [copied, setCopied] = useState<boolean>();
   if (plan.kind === 'proposal')
@@ -151,6 +157,16 @@ function NativePlanBody({
         >
           <Text style={styles.buttonText}>{nativePlanCopyLabel(copied)}</Text>
         </Pressable>
+        {onImplement ? (
+          <Pressable
+            testID="companion-native-plan-implement"
+            accessibilityRole="button"
+            style={styles.messageToggle}
+            onPress={onImplement}
+          >
+            <Text style={styles.buttonText}>Implement</Text>
+          </Pressable>
+        ) : null}
       </>
     );
   return (

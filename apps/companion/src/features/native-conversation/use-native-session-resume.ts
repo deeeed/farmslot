@@ -1,12 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { Methods, type NativeProfileReference, type NativeSessionInfo } from '@farmslot/protocol';
+import {
+  Methods,
+  type NativeProfileReference,
+  nativeProfileSessionParams,
+  type NativeSessionCreateParams,
+  type NativeSessionInfo,
+} from '@farmslot/protocol';
+import { nativeImplementSession } from '@farmslot/protocol/client-cache';
 
 import { nativeResumeRequest, sessionNativeProfile } from '../../lib/native-profile';
 import { useConnectionStore } from '../../store/connection';
 
 import { useNativeProfileSelection } from './use-native-profile-selection';
 
+/**
+ * Starts a session from this one, on its node, runner and validated account profile: Resume
+ * continues a stopped conversation, and Implement carries out a plan-mode session's proposal in
+ * a new default-mode session.
+ */
 export function useNativeSessionResume(
   session: NativeSessionInfo | undefined,
   enabled: boolean,
@@ -22,9 +34,11 @@ export function useNativeSessionResume(
   const mutation = useRef(false);
   let profile: NativeProfileReference | undefined;
   let available = false;
+  let implementable = false;
   if (session && eligible) {
     try {
       profile = sessionNativeProfile(session);
+      implementable = session.mode === 'plan' && !session.workerManaged;
       nativeResumeRequest(session, profile);
       available = true;
     } catch {
@@ -32,7 +46,7 @@ export function useNativeSessionResume(
     }
   }
   const profiles = useNativeProfileSelection({
-    enabled: available && enabled,
+    enabled: (available || implementable) && enabled,
     node: session?.executionNodeId ?? 'local',
     runner: session?.runner ?? '',
     supported: !!profile,
@@ -45,6 +59,7 @@ export function useNativeSessionResume(
     session?.generation,
     profile,
     available,
+    implementable,
     enabled,
   ]);
   const keyRef = useRef(key);
@@ -55,11 +70,58 @@ export function useNativeSessionResume(
       alive.current = false;
     };
   }, []);
+  const ready = enabled && profiles.viewModel.ready && connection === 'connected' && !busy;
+  const start = async (
+    allowed: boolean,
+    request: (
+      from: NativeSessionInfo,
+      selected: NativeProfileReference | undefined,
+    ) => NativeSessionCreateParams,
+  ): Promise<NativeSessionInfo | undefined> => {
+    if (
+      !enabled ||
+      !allowed ||
+      !session ||
+      !client ||
+      !profiles.viewModel.ready ||
+      mutation.current
+    )
+      return;
+    mutation.current = true;
+    setBusy(true);
+    setError('');
+    const generation = client.connectionGeneration;
+    try {
+      assertCurrent();
+      const selected = await profiles.actions.validate();
+      if (!alive.current || keyRef.current !== key || client.connectionGeneration !== generation)
+        throw new Error('Conversation changed before the session started.');
+      assertCurrent();
+      const result = await client.request<{ session: NativeSessionInfo }>(
+        Methods.NATIVE_SESSION_CREATE,
+        request(session, selected),
+        30_000,
+      );
+      if (
+        alive.current &&
+        keyRef.current === key &&
+        client.connectionGeneration === generation &&
+        (client.authenticatedPrincipal?.id ?? null) === principalId
+      )
+        return result.session;
+    } catch (cause) {
+      if (alive.current && keyRef.current === key) setError(String(cause));
+    } finally {
+      mutation.current = false;
+      if (alive.current) setBusy(false);
+    }
+  };
   return {
     viewModel: {
       available,
-      ready:
-        enabled && available && profiles.viewModel.ready && connection === 'connected' && !busy,
+      implementable,
+      ready: available && ready,
+      implementReady: implementable && ready,
       profiles: profiles.viewModel,
       busy,
       error,
@@ -72,49 +134,12 @@ export function useNativeSessionResume(
           profiles.actions.refresh();
         },
       },
-      resume: async (): Promise<NativeSessionInfo | undefined> => {
-        if (
-          !enabled ||
-          !available ||
-          !session ||
-          !client ||
-          !profiles.viewModel.ready ||
-          mutation.current
-        )
-          return;
-        mutation.current = true;
-        setBusy(true);
-        setError('');
-        const generation = client.connectionGeneration;
-        try {
-          assertCurrent();
-          const selected = await profiles.actions.validate();
-          if (
-            !alive.current ||
-            keyRef.current !== key ||
-            client.connectionGeneration !== generation
-          )
-            throw new Error('Conversation changed before resume.');
-          assertCurrent();
-          const result = await client.request<{ session: NativeSessionInfo }>(
-            Methods.NATIVE_SESSION_CREATE,
-            nativeResumeRequest(session, selected),
-            30_000,
-          );
-          if (
-            alive.current &&
-            keyRef.current === key &&
-            client.connectionGeneration === generation &&
-            (client.authenticatedPrincipal?.id ?? null) === principalId
-          )
-            return result.session;
-        } catch (cause) {
-          if (alive.current && keyRef.current === key) setError(String(cause));
-        } finally {
-          mutation.current = false;
-          if (alive.current) setBusy(false);
-        }
-      },
+      resume: () => start(available, nativeResumeRequest),
+      implement: () =>
+        start(implementable, (from, selected) => ({
+          ...nativeImplementSession(from),
+          ...nativeProfileSessionParams(selected),
+        })),
     },
   };
 }

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `nativeImplementableKey` picks the proposed plan a client can offer Implement on (the latest turn of an idle, standalone plan-mode session ended with it, nothing pending); `nativeImplementSession` gives the new default-mode session's create parameters (the planning session's node, runner, model, effort, profile and directory) and `nativeImplementPrompt` its first message (ADR-057 Amendment 9).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.9 - 2026-11-01

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   Methods,
+  type NativeSessionInfo,
   type NativeSessionListResult,
   type NativeSessionResponse,
   type NativeSessionSendParams,
@@ -15,6 +16,8 @@ import {
   nativeHistoryCanAct,
   nativeHistoryCanSend,
   nativeHistoryQuery,
+  nativeImplementableKey,
+  nativeImplementPrompt,
   nativeMessageCancelable,
   nativeMessageDropped,
   nativeMessageShown,
@@ -470,6 +473,21 @@ export function useNativeConversationController(params: NativeConversationParams
           30_000,
         );
     });
+  /** What another conversation opens with: a draft carried over, or its first pending message. */
+  const saveConversation = (
+    next: NativeSessionInfo,
+    content: { draft: string; pending?: PendingCommand; responses: string[] },
+  ) =>
+    conversationStorage.write(
+      nativeConversationStorageKey({
+        profile,
+        gatewayUrl,
+        principalId,
+        node: next.executionNodeId,
+        sessionId: next.id,
+      }),
+      JSON.stringify(content),
+    );
   const entries = nativeTimeline(transcript.events);
   const rows = nativeTimelineRows(entries);
   const work = nativeWork(transcript.events);
@@ -562,6 +580,11 @@ export function useNativeConversationController(params: NativeConversationParams
       writable,
       canSend,
       canSteer: canSend && nativeSteerAvailable(session, snapshot?.pendingRequests),
+      /** The proposal Implement is offered on, while a new session can start. */
+      implementKey:
+        session && resume.viewModel.implementReady && writable
+          ? nativeImplementableKey(session, rows, snapshot?.pendingRequests)
+          : undefined,
       steerable: !!session?.capabilities.steer,
       sendLabel: sendLabel ?? 'Send',
       canStop:
@@ -585,16 +608,7 @@ export function useNativeConversationController(params: NativeConversationParams
           const next = await resume.actions.resume();
           if (!next || !alive.current || client?.connectionGeneration !== generation) return;
           try {
-            await conversationStorage.write(
-              nativeConversationStorageKey({
-                profile,
-                gatewayUrl,
-                principalId,
-                node: next.executionNodeId,
-                sessionId: next.id,
-              }),
-              JSON.stringify({ draft: draftRef.current, responses: [] }),
-            );
+            await saveConversation(next, { draft: draftRef.current, responses: [] });
             if (alive.current && client?.connectionGeneration === generation) return next;
           } catch (cause) {
             if (alive.current)
@@ -602,6 +616,41 @@ export function useNativeConversationController(params: NativeConversationParams
                 `Conversation resumed, but the draft could not be saved: ${message(cause)}. Open it from the session list.`,
               );
           }
+        },
+        /**
+         * Implement: a new default-mode session whose first message is the plan, kept as that
+         * conversation's pending message before it is sent, as a typed one is.
+         */
+        implement: async (plan: string) => {
+          const generation = client?.connectionGeneration;
+          const next = await resume.actions.implement();
+          if (!next || !alive.current || client?.connectionGeneration !== generation) return;
+          const command: PendingCommand = {
+            sessionId: next.id,
+            executionNodeId: next.executionNodeId,
+            generation: next.generation,
+            commandId: `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            text: nativeImplementPrompt(plan),
+          };
+          try {
+            await saveConversation(next, { draft: '', pending: command, responses: [] });
+          } catch (cause) {
+            if (alive.current)
+              setError(
+                `The plan's session started, but its message could not be saved: ${message(cause)}. Open it from the session list.`,
+              );
+            return next;
+          }
+          try {
+            const { generation: _, ...request } = command;
+            await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
+          } catch (cause) {
+            if (alive.current)
+              setError(
+                `The plan's message was not confirmed: ${message(cause)}. It will not be resent.`,
+              );
+          }
+          return next;
         },
       },
       refresh: () => refreshRef.current(),

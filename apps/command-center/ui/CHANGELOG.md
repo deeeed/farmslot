@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A plan-mode native conversation's proposed plan has an Implement button: it starts a new session on the same runner and directory in default mode, sends it the plan to carry out, and opens it. Codex stays in plan mode within a conversation, so the plan runs in a new one.
 - A native conversation shows what each finished turn changed in a Git working tree ("Changed 3 files · +12 −4"), and each file opens its diff for that turn. Sessions on an older native host show nothing new.
 - A native conversation on a runner that can take a message mid-turn (Codex) has a Steer button next to "Queue message": while a turn runs, it adds your message to that turn instead of waiting for the next. Its label reads "Added to the running turn". The composer frees as soon as the runner accepted your message and the conversation shows it, so you can steer or queue while your own turn runs.
 - A native conversation shows a Codex or ACP runner's plan: its checklist inside the turn, updated as the runner works and folded to "3 of 5 steps" when the turn ends (unless you watched it run), and a proposed plan as a card with a Copy plan button.
