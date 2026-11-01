@@ -3,6 +3,7 @@
   "date": "2026-11-01",
   "items": [
     "Type in any terminal from an input line under it; keys arrive once and in order, even through reconnects.",
+    "Open every terminal, from Terminals or a slot, in the same simple screen.",
     "See connection status once, in a few muted words.",
     "Steer a running Codex turn, or edit a queued message, from a native conversation.",
     "Follow a runner's plan as a checklist inside the turn.",
