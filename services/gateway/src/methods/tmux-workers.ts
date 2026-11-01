@@ -23,6 +23,7 @@ import {
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
@@ -803,13 +804,23 @@ export async function tmuxWorkerObservedList(
   // A requested but unknown source is an error, never an empty authoritative inventory.
   for (const machine of requested) if (!nodeIds.includes(machine)) nodeIds.push(machine);
   const admitted = new Map<string, AdmittedWorkerSource>();
-  for (const nodeId of nodeIds) admitted.set(nodeId, requireWorkerObservation(nodeId));
+  const unavailable = new Map<string, string>();
+  for (const nodeId of nodeIds) {
+    try {
+      admitted.set(nodeId, requireWorkerObservation(nodeId));
+    } catch (error) {
+      // A named source stays an error. In the all-nodes read, a node without a current
+      // observation is reported on its own entry instead of emptying every node's inventory.
+      if (requested.has(nodeId) || !(error instanceof GatewayMethodError)) throw error;
+      unavailable.set(nodeId, error.message);
+    }
+  }
   const result = await buildTmuxWorkerListFromSources({
     pools,
     fleet,
     activeRuns: correlationRuns(),
     nodeIds,
-    connectedNodeIds: new Set(nodeIds),
+    connectedNodeIds: new Set(admitted.keys()),
     includeDisconnected: params.includeDisconnected,
     observedAt: Date.now(),
     requestPanes: async (nodeId) => {
@@ -820,7 +831,14 @@ export async function tmuxWorkerObservedList(
     },
   });
   for (const source of admitted.values()) assertWorkerObservationCurrent(source);
-  return result;
+  if (!unavailable.size) return result;
+  return {
+    ...result,
+    nodes: result.nodes.map((node) => {
+      const error = unavailable.get(node.nodeId);
+      return error ? { ...node, connected: Boolean(getNode(node.nodeId)), error } : node;
+    }),
+  };
 }
 
 export async function buildTmuxWorkerUpdateFromNodeSnapshot(payload: {
