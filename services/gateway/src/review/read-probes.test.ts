@@ -428,6 +428,7 @@ test('a late closeout from a replaced connection leaves the replacement probe in
   confirm();
   await flush();
   const shared = read();
+  await flush();
   assert.equal(launches, 2, 'the old closeout did not drop the replacement flight');
   hold.release();
   assert.equal((await inFlight).stdout, 'replacement');
