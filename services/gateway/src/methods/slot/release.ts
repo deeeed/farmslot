@@ -1032,6 +1032,7 @@ async function slotReleaseImpl(
           destination,
           taskRelativeDir: taskRel,
           beforeRemove: assertReleaseClaim,
+          excludeArtifacts: !skipArtifacts,
         });
         step(
           'scaffolding',

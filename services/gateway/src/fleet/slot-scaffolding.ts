@@ -107,6 +107,11 @@ export interface SlotScaffoldingArchiveOptions {
   destination: string;
   beforeRemove: () => Promise<void>;
   taskRelativeDir: string | null;
+  /**
+   * The release already collected the task's `artifacts/`. Archiving them again downloaded
+   * the same 0.5-1 GB a second time and outlasted the teardown timeout (F298).
+   */
+  excludeArtifacts?: boolean;
 }
 
 /** Copy all sources before removing any; leave warm runtime resources in place. */
@@ -171,9 +176,15 @@ export async function archiveSlotScaffolding(
   try {
     const remoteArchive = path.posix.join(temporary, 'scaffolding.tar');
     const checkoutSources = sources.filter((source) => source.absolute !== external);
+    const excluded = options.excludeArtifacts
+      ? checkoutSources
+          .filter((source) => taskRoots.includes(source.relative))
+          .map((source) => `--exclude ${shellQuote(`${source.relative}/artifacts`)} `)
+          .join('')
+      : '';
     const packed = await execOnSlot(
       vars,
-      `tar -C ${shellQuote(vars.remoteRepo)} -cf ${shellQuote(remoteArchive)} ${checkoutSources.length ? `-- ${checkoutSources.map((source) => shellQuote(source.relative)).join(' ')}` : '-T /dev/null'}`,
+      `tar -C ${shellQuote(vars.remoteRepo)} ${excluded}-cf ${shellQuote(remoteArchive)} ${checkoutSources.length ? `-- ${checkoutSources.map((source) => shellQuote(source.relative)).join(' ')}` : '-T /dev/null'}`,
       { timeout: 120_000 },
     );
     if (packed.exitCode !== 0) throw new Error(`Cannot pack scaffolding: ${packed.stderr}`);

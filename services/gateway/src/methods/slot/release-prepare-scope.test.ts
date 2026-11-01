@@ -36,6 +36,7 @@ let claimDuringPaneProbe = false;
 let claimAfterTaskClean = false;
 let hasMirrorArtifacts = false;
 let copyOptions: Record<string, unknown> | undefined;
+let scaffoldingExcludesArtifacts: boolean | undefined;
 let claimAfterReap = false;
 let cdpPort: string | undefined;
 /** The browser session a cancelled run left on the slot's CDP port: pid -> survives SIGKILL. */
@@ -148,8 +149,13 @@ mock.module('../../fleet/slot-scaffolding.js', {
     archiveSlotScaffolding: async (
       _vars: unknown,
       _project: unknown,
-      options: { destination: string; beforeRemove?: () => Promise<void> },
+      options: {
+        destination: string;
+        beforeRemove?: () => Promise<void>;
+        excludeArtifacts?: boolean;
+      },
     ) => {
+      scaffoldingExcludesArtifacts = options.excludeArtifacts;
       await options.beforeRemove?.();
       return { roots: 0, directory: options.destination };
     },
@@ -287,6 +293,7 @@ beforeEach(async () => {
   claimAfterTaskClean = false;
   hasMirrorArtifacts = false;
   copyOptions = undefined;
+  scaffoldingExcludesArtifacts = undefined;
   claimAfterReap = false;
   cdpPort = undefined;
   browserSession = new Map();
@@ -528,6 +535,7 @@ test('release copyback keeps artifacts the completion mirror already holds', asy
   await slotRelease({ slotId: SLOT_ID }, emit);
   assert.ok(events.includes('mirror-complete'));
   assert.equal(copyOptions?.skipUnchanged, true);
+  assert.equal(scaffoldingExcludesArtifacts, true, 'the scaffolding archive skips them too');
 });
 
 test('a claim during task deletion refuses the following storage cleanup', async () => {
