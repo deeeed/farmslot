@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useRef } from 'react';
-import { StyleSheet, TextInput } from 'react-native';
+import { StyleSheet, TextInput, type TextInputInstance } from 'react-native';
 
 import { inputLineDelta, TERMINAL_BACKSPACE } from '../lib/terminal-input-line';
 import { colors, fonts, radii, spacing } from '../lib/theme';
@@ -23,7 +23,7 @@ type TerminalInputLineProps = {
  */
 export const TerminalInputLine = forwardRef<TerminalInputLineHandle, TerminalInputLineProps>(
   function TerminalInputLine({ autoFocus = false, disabled = false, onSend }, ref) {
-    const inputRef = useRef<TextInput>(null);
+    const inputRef = useRef<TextInputInstance>(null);
     // What the pane already has from this line. The field stays uncontrolled: a controlled value
     // would fight fast typing while the JS thread is busy.
     const sent = useRef('');

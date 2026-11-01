@@ -1,5 +1,12 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  type ScrollViewInstance,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import { colors, fonts, radii, spacing } from '../lib/theme';
@@ -18,7 +25,7 @@ export function GestureProofSurface() {
   const [sliderValue, setSliderValue] = useState(20);
   const [sliderMoved, setSliderMoved] = useState(false);
   const [held, setHeld] = useState(false);
-  const listRef = useRef<ScrollView>(null);
+  const listRef = useRef<ScrollViewInstance>(null);
   const sliderStart = useRef(sliderValue);
   const sliderValueRef = useRef(sliderValue);
   const markPanMoved = useCallback(() => setPanMoved(true), []);

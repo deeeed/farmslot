@@ -5,6 +5,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   StatusBar,
   StyleSheet,
   Text,
@@ -108,7 +109,7 @@ export function MediaViewer({
     Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight ?? 0),
   );
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const suppliedItems: MediaViewerItem[] = items?.length
     ? items
     : uri
@@ -462,7 +463,7 @@ function FullscreenVideo({
 }) {
   const [model, setModel] = useState<EvidenceReviewModel | null>(item.evidenceModel ?? null);
   const [openGroups, setOpenGroups] = useState<ReadonlyMap<string, boolean>>(() => new Map());
-  const groupScrolls = useRef(new Map<string, ScrollView>());
+  const groupScrolls = useRef(new Map<string, ScrollViewInstance>());
   const focusedFailures = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const [uri, setUri] = useState(item.uri);
@@ -840,7 +841,7 @@ function TextSlide({ uri, width, height, authHeaders, isActive }: TextSlideProps
             Showing the first {TEXT_PREVIEW_MAX_BYTES.toLocaleString()} of{' '}
             {content.totalBytes.toLocaleString()} bytes.
           </Text>
-        ) : null
+        ) : undefined
       }
       renderItem={({ item }) => (
         // Blocks follow one another, so the newline that ends a block is not drawn twice.

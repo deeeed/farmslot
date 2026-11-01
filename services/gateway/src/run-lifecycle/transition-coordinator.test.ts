@@ -74,3 +74,33 @@ test('different machines and runs do not block each other', async () => {
   gate.resolve();
   await first;
 });
+
+test('a transition queued past the warning interval names the operation holding its key', async (t) => {
+  const warnings: string[] = [];
+  t.mock.method(console, 'warn', (message: string) => warnings.push(message));
+  const coordinator = new RunTransitionCoordinator(async () => 'machine-a', 5);
+  const releaseRun = deferred();
+  const held = deferred();
+  async function heldRunOperation() {
+    return coordinator.withRun('run-a', async () => {
+      held.resolve();
+      await releaseRun.promise;
+    });
+  }
+  const holder = heldRunOperation();
+  await held.promise;
+  const waiters = [
+    coordinator.withRun('run-b', async () => {}),
+    coordinator.withMachine('machine-a', async () => {}),
+  ];
+  const deadline = Date.now() + 2_000;
+  while (!warnings.length && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  releaseRun.resolve();
+  await Promise.all([holder, ...waiters]);
+  assert.match(
+    warnings[0] ?? '',
+    /has waited \d+s for machine:machine-a; held by .*heldRunOperation/,
+    'the holder is named by the operation that took the key',
+  );
+});
