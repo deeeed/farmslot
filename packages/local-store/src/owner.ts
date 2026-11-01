@@ -56,6 +56,7 @@ export class ResourceCacheOwner {
   /** Revoked scopes whose retirement failed, so their deletion may not have happened. */
   private readonly undeleted = new Map<string, ResourceStoreMetadata>();
   private pendingBinding?: { client: ResourceClientConnection; key: string; id: string | number };
+  private renderKeyMemo?: { inputs: readonly unknown[]; key: string | undefined };
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly options: ResourceCacheOwnerOptions) {}
@@ -93,14 +94,22 @@ export class ResourceCacheOwner {
   }
   /** Stable through transport loss; changes only when the rendered owner's scope or roles change. */
   get renderKey(): string | undefined {
-    const metadata = this.renderMetadata;
-    if (!metadata) return undefined;
-    return canonicalResourceJson({
-      authMode: this.owned?.authentication?.authMode ?? this.owned?.renderIdentity?.authMode,
-      scope: resourceStoreScopeId(metadata.scope),
-      access: metadata.authority.workspaceAccess,
-      roles: [...new Set(metadata.authority.roles.map(canonicalResourceJson))].sort(),
-    });
+    // Screens read this on every render; rebuild it only when an input it derives from changes.
+    const owned = this.owned;
+    const inputs = [owned, owned?.input, owned?.authentication, owned?.renderIdentity];
+    const memo = this.renderKeyMemo;
+    if (memo && memo.inputs.every((value, index) => value === inputs[index])) return memo.key;
+    const metadata = this.metadataOf(owned);
+    const key = metadata
+      ? canonicalResourceJson({
+          authMode: owned?.authentication?.authMode ?? owned?.renderIdentity?.authMode,
+          scope: resourceStoreScopeId(metadata.scope),
+          access: metadata.authority.workspaceAccess,
+          roles: [...new Set(metadata.authority.roles.map(canonicalResourceJson))].sort(),
+        })
+      : undefined;
+    this.renderKeyMemo = { inputs, key };
+    return key;
   }
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -117,6 +126,7 @@ export class ResourceCacheOwner {
     if (!previous) return;
     const revoked = terminal.has(reason) ? this.metadataOf(previous) : undefined;
     this.owned = undefined;
+    this.renderKeyMemo = undefined;
     // dispose cancels listeners/reads before its first await. New storage awaits the whole cleanup.
     this.retirement = previous.cache.dispose(reason);
     void this.retirement.catch((error: unknown) => {
