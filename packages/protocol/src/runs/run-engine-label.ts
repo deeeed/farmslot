@@ -1,11 +1,17 @@
-import { primaryRoleForFlow } from '../agents/roles.js';
+import { workerRoleForFlow } from '../agents/roles.js';
 import type { AgentRole } from '../contracts/agents.js';
+
+/** The runner and model a run is shown with. */
+export interface RunEngine {
+  runner?: string | null;
+  model?: string | null;
+}
 
 /** The fields of a run that can name its worker's effort; a full Run satisfies it. */
 export interface RunEffortSource {
   flowType?: string | null;
   effort?: string | null;
-  metrics?: { runner?: string | null; model?: string | null };
+  metrics?: RunEngine;
   agentContexts?: readonly {
     role: AgentRole;
     effort?: string | null;
@@ -24,9 +30,10 @@ export interface RunEffortSource {
  */
 export function runWorkerEffort(
   run: RunEffortSource,
-  engine: { runner?: string | null; model?: string | null } = run.metrics ?? {},
+  engine: RunEngine = run.metrics ?? {},
 ): string | null {
-  const role = workerRole(run.flowType);
+  // A flow type this client doesn't know has no worker role to read.
+  const role = workerRoleForFlow(run.flowType);
   const worker = role ? run.agentContexts?.find((context) => context.role === role) : undefined;
   const choice = run.workflowExecution?.models.find(
     (entry) => entry.runner === engine.runner && (entry.model ?? null) === (engine.model ?? null),
@@ -36,16 +43,6 @@ export function runWorkerEffort(
     if (effort) return effort;
   }
   return null;
-}
-
-// A flow type this client doesn't know has no worker role to read; a display detail never
-// throws out of a list render.
-function workerRole(flowType: string | null | undefined): AgentRole | null {
-  try {
-    return primaryRoleForFlow(flowType);
-  } catch {
-    return null;
-  }
 }
 
 /** "runner/model · effort"; the effort only when known. Null when neither runner nor model is. */
