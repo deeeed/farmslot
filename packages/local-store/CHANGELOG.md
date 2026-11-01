@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The native storage peers follow Expo SDK 58: `expo-sqlite` ~58.0.15 and `expo-file-system` ~58.0.13.
+
 - Schema 5 stores run-list rows beside their query entry (`resource_rows`): `getRows` reads the entry and its rows in one serial job, `mergeRows` writes the entry, deletes and upserts in one transaction, `putQuery` keeps the rows, and deleting the entry, store or scope removes them. Older schemas are rebuilt; drafts are unaffected.
 
 - Add the drafts store (`@farmslot/local-store/drafts`): one draft per scope, slot, run and path, IndexedDB and memory adapters, and a 30-day sweep once a slot or run can no longer be read.

@@ -1,6 +1,6 @@
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, Text, useWindowDimensions, View } from 'react-native';
-import { Gesture, GestureDetector, type ScrollView } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, type LegacyScrollView } from 'react-native-gesture-handler';
 
 import type { VisualReviewAnnotation } from '@farmslot/protocol';
 
@@ -52,7 +52,7 @@ function Marker({
   number: number;
   stage: Size;
   selected: boolean;
-  scrollRef: RefObject<ScrollView | null>;
+  scrollRef: RefObject<LegacyScrollView | null>;
   onSelect: (annotationId: string) => void;
   onMove: (annotationId: string, delta: { x: number; y: number }) => void;
 }) {
@@ -152,7 +152,7 @@ export function AnnotationCanvas({
   selectedAnnotationId: string | null;
   mode: VisualReviewAnnotationMode;
   fullWidth: boolean;
-  scrollRef: RefObject<ScrollView | null>;
+  scrollRef: RefObject<LegacyScrollView | null>;
   onAdd: (input: VisualReviewAnnotationInput) => void;
   onSelect: (annotationId: string) => void;
   onMove: (annotationId: string, delta: { x: number; y: number }) => void;

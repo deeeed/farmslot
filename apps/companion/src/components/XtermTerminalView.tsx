@@ -43,7 +43,7 @@ export const XtermTerminalView = forwardRef<XtermTerminalViewHandle, XtermTermin
     { directInput = false, initialText, onInput, onResize, readOnlyReason = null },
     ref,
   ) {
-    const webViewRef = useRef<WebView>(null);
+    const webViewRef = useRef<WebView<object>>(null);
     const readyRef = useRef(false);
     const pendingMessagesRef = useRef<Array<{ type: string; payload: unknown }>>([]);
     const inspectionId = useRef(0);
