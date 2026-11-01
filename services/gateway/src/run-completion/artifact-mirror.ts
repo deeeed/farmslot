@@ -70,7 +70,7 @@ import {
   scanPublishPackage,
   selectPublishPackageEntries,
 } from './publish-package-scope.js';
-import type { RunArtifactAcquisition } from './retained-artifacts.js';
+import { recordRunTaskAcquisition, type RunArtifactAcquisition } from './retained-artifacts.js';
 
 // Push only executable recipe inputs (recipe.json + recipe-library/) from
 // the gateway-owned mirror to a slot's worker task dir, so a run loaded onto
@@ -702,6 +702,8 @@ export async function refreshArtifactMirror(
     failed = true;
     failure = error;
   }
+  // Charge the task dir what the mirror left in it, a failed copy's effects included.
+  await recordRunTaskAcquisition(taskDir);
   let after: string;
   try {
     after = await artifactMirrorSignature(localArtifactsDir);

@@ -58,6 +58,7 @@ import {
 import { readBlindTrialMarker, restoreBlindTrialGit } from '../../evals/blind-trial.js';
 import { archiveSlotScaffolding, excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
+import { recordRunTaskAcquisition } from '../../run-completion/retained-artifacts.js';
 import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
@@ -966,6 +967,7 @@ async function slotReleaseImpl(
         } else {
           step('artifacts', `Artifacts collected to ${localArtifactsDir}/`);
         }
+        await recordRunTaskAcquisition(orchTaskDir);
       } else {
         step('artifacts', 'No artifacts directory');
       }

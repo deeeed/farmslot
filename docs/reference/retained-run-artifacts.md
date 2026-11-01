@@ -154,6 +154,18 @@ copies remain charged, including preserved unique media of deleted runs. Do not
 exclude legacy bytes to create apparent capacity. Admission reserves all selected
 media for a capture together; it does not rescan those trees for each media file.
 
+Admission does not walk those trees at all. Each gateway task dir
+(`<task root>/<flow>/<task>`) is charged the bytes recorded for it under
+`run-bundles/acquisition/`; admission lists the task roots two levels deep and
+reads one record per task dir. The writers that add or remove a task's files
+re-measure that task dir: task creation, the artifact mirror refresh, the
+worker-artifact copies before review and at slot release, and every capture or
+import once its commit has released media. A task dir without a record, such as
+one written before records existed, is measured once. A removed or archived task
+dir stops being charged at the next admission. Metadata that other gateway
+writers add (signals, decisions, review notes) is charged at that task's next
+re-measure, at the latest its next capture.
+
 Capture and commit the report, manifests, ledger, trace/timeline and review
 metadata before media admission. Review metadata includes the result artifact
 of every publish-gate review, whether the pipeline, a dispatch or a human gate

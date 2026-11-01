@@ -597,6 +597,25 @@ test('capacity usage reads store accounting under the store lock', async (t) => 
   assert.equal(total, store + reservations + acquisition);
 });
 
+test('a capture charges its task dir what remains after the commit releases media', async (t) => {
+  const f = await fixture(t);
+  await materializeRunBundle({
+    ...f.request,
+    // Like the gateway, release the staged video once the bundle holds it.
+    commit: async (_ref, missingData) => {
+      if (!missingData.some((entry) => entry.endsWith(':artifacts/capture.mp4')))
+        await rm(path.join(f.taskDir, 'artifacts/capture.mp4'), { force: true });
+    },
+  });
+  assert.equal(await treeBytes(f.taskDir), Buffer.byteLength('<h1>Retained report</h1>'));
+  const digest = createHash('sha256').update(f.taskDir).digest('hex');
+  const record = path.join(f.store.root, 'acquisition', `${digest}.json`);
+  assert.deepEqual(JSON.parse(await readFile(record, 'utf8')), {
+    path: f.taskDir,
+    bytes: await treeBytes(f.taskDir),
+  });
+});
+
 test('a repair re-derives a stale record from the manifest before charging restored media', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);

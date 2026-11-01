@@ -400,9 +400,17 @@ function concurrencyLimit(max: number) {
   };
 }
 
-async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<number> {
-  const limit = concurrencyLimit(PHYSICAL_SCAN_CONCURRENCY);
-  const walk = async (directory: string): Promise<number> => {
+async function physicalBytes(
+  root: string,
+  options: {
+    scan?: AcquisitionScan;
+    limit?: ReturnType<typeof concurrencyLimit>;
+    /** Charges each directory two levels below `root` instead of walking it. */
+    taskDirBytes?: (directory: string) => Promise<number>;
+  } = {},
+): Promise<number> {
+  const { scan, limit = concurrencyLimit(PHYSICAL_SCAN_CONCURRENCY), taskDirBytes } = options;
+  const walk = async (directory: string, depth: number): Promise<number> => {
     let entries;
     try {
       entries = await limit(() => readdir(directory, { withFileTypes: true }));
@@ -413,7 +421,8 @@ async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<numb
     const sizes = await Promise.all(
       entries.map(async (entry) => {
         const file = path.join(directory, entry.name);
-        if (entry.isDirectory()) return walk(file);
+        if (entry.isDirectory())
+          return depth === 1 && taskDirBytes ? taskDirBytes(file) : walk(file, depth + 1);
         if (!entry.isFile()) return 0;
         try {
           return (
@@ -430,7 +439,7 @@ async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<numb
     );
     return sizes.reduce((total, size) => total + size, 0);
   };
-  return walk(root);
+  return walk(root, 0);
 }
 
 /**
@@ -492,8 +501,8 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
           : await movedBundleBytes(store, path.join(file, name));
       continue;
     }
-    // Records are bookkeeping for the bundles above, not stored payload.
-    if (entry.name === 'usage') continue;
+    // Records are bookkeeping for the bundles above and the acquisition trees, not stored payload.
+    if (entry.name === 'usage' || entry.name === 'acquisition') continue;
     if (entry.name !== 'staging' || !entry.isDirectory()) {
       bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
       continue;
@@ -513,35 +522,124 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
   return bytes;
 }
 
+/**
+ * A gateway task dir (`<task root>/<flow>/<task>`) charges its recorded bytes, so admission
+ * lists the task roots two levels deep instead of stat-ing every task file. A writer that
+ * changes a task dir's bytes re-measures it (`recordRunBundleAcquisition`); a task dir
+ * without a record is measured once.
+ */
+const ACQUISITION_RECORD = /^[a-f0-9]{64}\.json$/;
+
+function acquisitionUsagePath(store: RunBundleStore, taskDir: string): string {
+  return path.join(store.root, 'acquisition', `${sha256Text(taskDir)}.json`);
+}
+
+async function readAcquisitionRecord(store: RunBundleStore, taskDir: string) {
+  const raw = await readOptional(acquisitionUsagePath(store, taskDir));
+  const record = raw ? (JSON.parse(raw) as { path?: unknown; bytes?: unknown }) : {};
+  return record.path === taskDir &&
+    typeof record.bytes === 'number' &&
+    Number.isSafeInteger(record.bytes) &&
+    record.bytes >= 0
+    ? record.bytes
+    : undefined;
+}
+
+const acquisitionRecords = new Map<string, Promise<number>>();
+
+/** Measures after any record of the same task dir already in flight, so the last write is current. */
+function recordAcquisitionBytes(
+  store: RunBundleStore,
+  taskDir: string,
+  options: Parameters<typeof physicalBytes>[1] = {},
+): Promise<number> {
+  const file = acquisitionUsagePath(store, taskDir);
+  const recorded = (acquisitionRecords.get(file) ?? Promise.resolve(0))
+    .catch(() => 0)
+    .then(async () => {
+      const bytes = await physicalBytes(taskDir, options);
+      await atomicJson(file, { path: taskDir, bytes });
+      return bytes;
+    });
+  acquisitionRecords.set(file, recorded);
+  const settle = () => {
+    if (acquisitionRecords.get(file) === recorded) acquisitionRecords.delete(file);
+  };
+  recorded.then(settle, settle);
+  return recorded;
+}
+
+/**
+ * Charge a gateway task dir its current bytes after a writer added or removed files in it.
+ * A dir deeper in a task dir (an eval candidate's) re-measures the task dir holding it; a
+ * flow-level dir re-measures each task dir in it.
+ */
+export async function recordRunBundleAcquisition(
+  store: RunBundleStore,
+  taskDir: string,
+): Promise<void> {
+  const directory = path.resolve(taskDir);
+  const segments = directory.split(path.sep);
+  const taskRoot = segments.lastIndexOf(ORCHESTRATOR_TASK_DIR);
+  if (taskRoot < 0 || segments.length < taskRoot + 2) return;
+  if (segments.length > taskRoot + 2) {
+    await recordAcquisitionBytes(store, segments.slice(0, taskRoot + 3).join(path.sep));
+    return;
+  }
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (hasCode(error, 'ENOENT')) return;
+    throw error;
+  }
+  for (const entry of entries)
+    if (entry.isDirectory()) await recordAcquisitionBytes(store, path.join(directory, entry.name));
+}
+
 const acquisitionScans = new Map<string, Promise<AcquisitionScan>>();
-// A busy gateway's complete acquisition inventory can exceed thirty seconds.
+// Measuring every task dir once (the first pass after deploy) can exceed thirty seconds.
 const ACQUISITION_ADMISSION_TIMEOUT_MS = 120_000;
 
-/** Share only an in-flight scan, never a stale footprint or a separate accounting store. */
-async function acquisitionBytes(root: string): Promise<AcquisitionScan> {
-  let scan = acquisitionScans.get(root);
+/** Concurrent admissions share one in-flight pass. */
+async function acquisitionBytes(store: RunBundleStore, root: string): Promise<AcquisitionScan> {
+  const key = `${store.root}\0${root}`;
+  let scan = acquisitionScans.get(key);
   if (!scan) {
-    scan = scanAcquisitionBytes(root).finally(() => acquisitionScans.delete(root));
-    acquisitionScans.set(root, scan);
+    scan = scanAcquisitionBytes(store, root).finally(() => acquisitionScans.delete(key));
+    acquisitionScans.set(key, scan);
   }
   return scan;
 }
 
 /** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
-async function scanAcquisitionBytes(root: string): Promise<AcquisitionScan> {
+async function scanAcquisitionBytes(store: RunBundleStore, root: string): Promise<AcquisitionScan> {
   const started = performance.now();
   const scan: AcquisitionScan = { bytes: 0, fileCount: 0, durationMs: 0 };
+  const limit = concurrencyLimit(PHYSICAL_SCAN_CONCURRENCY);
+  const listed = new Set<string>();
+  const taskDirBytes = async (directory: string) => {
+    const taskDir = path.resolve(directory);
+    listed.add(path.basename(acquisitionUsagePath(store, taskDir)));
+    return (
+      (await limit(() => readAcquisitionRecord(store, taskDir))) ??
+      // Never recorded, e.g. written before records existed: measured once, then kept current.
+      recordAcquisitionBytes(store, taskDir, { scan, limit })
+    );
+  };
+  const taskRootBytes = (taskRoot: string) =>
+    physicalBytes(taskRoot, { scan, limit, taskDirBytes });
   let bytes = 0;
   const layout = { farmslotRoot: root, projectsDir: resolveProjectsDir(root) };
   // A projects dir inside .sandbox (desktop validation) is charged once, not again below.
   const counted = new Set<string>();
   for (const { root: taskRoot } of await listProjectTaskRoots(layout)) {
     counted.add(path.resolve(taskRoot));
-    bytes += await physicalBytes(taskRoot, scan);
+    bytes += await taskRootBytes(taskRoot);
   }
   const sandbox = async (directory: string): Promise<number> => {
     if (path.basename(directory) === ORCHESTRATOR_TASK_DIR)
-      return counted.has(path.resolve(directory)) ? 0 : physicalBytes(directory, scan);
+      return counted.has(path.resolve(directory)) ? 0 : taskRootBytes(directory);
     let sum = 0;
     try {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -554,6 +652,17 @@ async function scanAcquisitionBytes(root: string): Promise<AcquisitionScan> {
     return sum;
   };
   scan.bytes = bytes + (await sandbox(path.join(root, '.sandbox')));
+  // A task dir archived or deleted since leaves no record to charge a later dir at its path.
+  const records = path.join(store.root, 'acquisition');
+  let names: string[] = [];
+  try {
+    names = await readdir(records);
+  } catch (error) {
+    if (!hasCode(error, 'ENOENT')) throw error;
+  }
+  for (const name of names)
+    if (ACQUISITION_RECORD.test(name) && !listed.has(name))
+      await rm(path.join(records, name), { force: true });
   scan.durationMs = performance.now() - started;
   return scan;
 }
@@ -631,7 +740,7 @@ export async function runBundleAdmissionUsage(
     stored: await chargedStoreBytes(store),
     reservations: await reservedMetadataBytes(store),
   }));
-  const acquisition = (await acquisitionBytes(farmslotRoot)).bytes;
+  const acquisition = (await acquisitionBytes(store, farmslotRoot)).bytes;
   return { store: stored, reservations, acquisition, total: stored + reservations + acquisition };
 }
 
@@ -650,7 +759,7 @@ export async function reserveRunBundleMetadata(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const acquisitionSize = farmslotRoot
     ? await Promise.race([
-        acquisitionBytes(farmslotRoot).then((scan) => scan.bytes),
+        acquisitionBytes(store, farmslotRoot).then((scan) => scan.bytes),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
             () =>
@@ -1336,7 +1445,7 @@ export async function materializeRunBundle(
   await assertStorePairing(store);
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   assertPolicy(policy);
-  const acquisitionScan = await acquisitionBytes(request.farmslotRoot);
+  const acquisitionScan = await acquisitionBytes(store, request.farmslotRoot);
   const acquisitionSize = acquisitionScan.bytes;
   const capture = { label: `capture of run ${run.id}` };
   const captured = await withBundleLock(store, STORE_LOCK, capture, async () => {
@@ -1567,7 +1676,8 @@ export async function materializeRunBundle(
     }
   });
   const repair = { label: `repair of run ${run.id}`, holdLimitMs: REPAIR_LOCK_HOLD_LIMIT_MS };
-  return withBundleLock(store, repairLockName(captured.ref.bundleDigest), repair, async () => {
+  const repairLock = repairLockName(captured.ref.bundleDigest);
+  const result = await withBundleLock(store, repairLock, repair, async () => {
     const missingData = await completeRetainedPayloads(
       request,
       captured.ref,
@@ -1590,4 +1700,13 @@ export async function materializeRunBundle(
       return { ...captured, missingData, acquisitionScan };
     });
   });
+  // The commit may have released the task's media; charge its task dir what remains. The
+  // capture is committed either way; a failed re-measure leaves the older record.
+  if (run.taskFile)
+    await recordRunBundleAcquisition(store, path.dirname(run.taskFile)).catch((error: unknown) =>
+      console.warn(
+        `[run-bundle] task dir of run ${run.id} keeps its last recorded bytes: ${String(error)}`,
+      ),
+    );
+  return result;
 }

@@ -25,6 +25,7 @@ import { appendReviewFindingBodies } from '../review-publication/validate-commen
 import {
   createRunArtifactAcquisition,
   readOptionalRetainedRunText,
+  recordRunTaskAcquisition,
   retainedRunTaskDirectory,
 } from '../run-completion/retained-artifacts.js';
 import { getRun } from '../runs/store.js';
@@ -185,6 +186,7 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
           label: `${document}.worker`,
         });
       }
+      await recordRunTaskAcquisition(taskDir);
       console.log(`[run-engine] copied worker artifacts for ${runId.slice(0, 8)}`);
     }
   }

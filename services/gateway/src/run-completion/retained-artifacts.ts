@@ -31,6 +31,7 @@ import {
   parseRunBundleMissingData,
   readRetainedRunBundle,
   readRunBundleAvailability,
+  recordRunBundleAcquisition,
   reserveRunBundleMetadata,
   resolveRetainedRunBundleRef as localBundleRef,
   runBundleAdmissionUsage,
@@ -386,6 +387,20 @@ export async function warnRunBundleCapacity(): Promise<void> {
       );
   } catch (error) {
     console.error(`[run-retention] run-bundle capacity check failed: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Re-measure a run's task dir after its files were added or removed, so admission charges
+ * the change without walking the task trees. Accounting never fails the writer.
+ */
+export async function recordRunTaskAcquisition(taskDir: string): Promise<void> {
+  try {
+    await recordRunBundleAcquisition(await runBundleStore(true), taskDir);
+  } catch (error) {
+    console.error(
+      `[run-retention] task dir ${taskDir} keeps its last recorded bytes: ${(error as Error).message}`,
+    );
   }
 }
 

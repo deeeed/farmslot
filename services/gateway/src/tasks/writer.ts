@@ -75,6 +75,7 @@ import { getPRRawData, parseJsonLines } from '../methods/pr/raw-cache.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
+import { recordRunTaskAcquisition } from '../run-completion/retained-artifacts.js';
 import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { persistRunNow, updateRun } from '../runs/store.js';
@@ -1447,6 +1448,8 @@ export async function writeTaskFile(
     }
   }
 
+  // Charge the new task dir its inputs, inherited artifacts and attachments.
+  await recordRunTaskAcquisition(taskAbsDir);
   console.log(`[task-writer] froze task initialization for ${taskFilePath}`);
   return taskFilePath;
 }

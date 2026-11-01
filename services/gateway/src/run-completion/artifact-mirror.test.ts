@@ -1,11 +1,13 @@
 // @farmslot:serial — creates and removes real JSON under the shared repo `pool/`.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
@@ -33,7 +35,7 @@ import {
   resolvePublicationManifest,
   scanArtifacts,
 } from './publication-artifacts.js';
-import { createRunArtifactAcquisition } from './retained-artifacts.js';
+import { createRunArtifactAcquisition, runBundleStore } from './retained-artifacts.js';
 import { makeRun } from './test-fixtures.js';
 
 test('refreshArtifactMirror preserves gateway-owned review artifacts while clearing stale worker files', async (t) => {
@@ -596,6 +598,24 @@ test('a prune-only mirror notifies even when it transfers no files', async (t) =
   assert.equal(resourceRevisions.revision(key), revision + 1);
   assert.equal(await refreshArtifactMirror(run), 0);
   assert.equal(resourceRevisions.revision(key), revision + 1);
+});
+
+test('a mirror refresh records what it left in the task dir for capture admission', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-acquisition');
+  await put('report.md', 'report');
+  await put('capture.mp4', Buffer.alloc(4_096));
+  await refreshArtifactMirror(run);
+  const digest = createHash('sha256').update(path.resolve(taskDir)).digest('hex');
+  const record = path.join((await runBundleStore(true)).root, 'acquisition', `${digest}.json`);
+  t.after(() => rm(record, { force: true }));
+  let bytes = 0;
+  for (const entry of await readdir(taskDir, { recursive: true, withFileTypes: true }))
+    if (entry.isFile()) bytes += (await stat(path.join(entry.parentPath, entry.name))).size;
+  assert.ok(bytes > 4_096);
+  assert.deepEqual(JSON.parse(await readFile(record, 'utf8')), {
+    path: path.resolve(taskDir),
+    bytes,
+  });
 });
 
 test('a refused media copy still publishes its completed pruning without claiming success', async (t) => {
