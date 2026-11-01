@@ -3990,8 +3990,8 @@ test('a failed replay of a live gate gives the gate its engine back, which prese
 test('a failed replay of a live gate with another open decision reopens its card for the owner', async (t) => {
   const other: RunDecision = {
     ...holdGate('blocked-alert'),
-    type: 'slot_picker',
-    title: 'Pick a slot',
+    type: 'blocked_alert',
+    title: 'Worker blocked',
   };
   const run = await blockedGateRun(t, 'gate-live-other', [holdGate('pending-gate-other'), other]);
   const resumed: string[] = [];
