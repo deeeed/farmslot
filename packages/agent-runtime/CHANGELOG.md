@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- The native supervisor recognizes the previous supervisor and host by the state root in their argv, not by PID alone. After macpro's macOS upgrade reboot, the stopped supervisor's recorded PID belonged to an unrelated shell, so every new supervisor took the lock as held, exited without a word, and each native request failed after 10 s with "Native host unavailable" (18:19-18:51). A supervisor that does not start now says why in `host.log`.
+- The native supervisor records its own and its host's start identity, and judges a previous supervisor, host or pending cleanup by it rather than by PID alone, so a PID reused after a reboot or PID wrap no longer blocks the host. A supervisor that does not start says why in `host.log`.
 - Task retention takes an optional `pinSelection` hook. Once the inputs are copied into the task pin, the host can rebind its recorded selection (`inputs/recipe-binding.json` and the receipt's `bindingIdentity`) to the retained copies. A rerun of task init verifies the recorded pin first, then requires the same pinned selection. `retainedPathFor` and `retainedSourceFor` map between a retained source and its copy.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

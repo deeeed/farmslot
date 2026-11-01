@@ -18,6 +18,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { Methods, type NativeSessionEvent, type NativeSessionInfo } from '@farmslot/protocol';
 
@@ -25,7 +26,15 @@ import { NativeSessionClient } from './client.js';
 import { decodeRequest, type HostIdentity, requestHost, socketDirectory } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
 import { routeNativeSession } from './service.js';
-import { alive, appendDurable, matchesProcess, privateDirectory, readJson } from './storage.js';
+import {
+  alive,
+  appendDurable,
+  matchesProcess,
+  privateDirectory,
+  processStartIdentity,
+  readJson,
+  type RecordedProcess,
+} from './storage.js';
 import {
   decodeNativeWorkerLaunch,
   NATIVE_WORKER_CANCEL_COMMAND,
@@ -162,21 +171,50 @@ test('a supervisor whose home is removed stops its host instead of running on', 
   }
 });
 
-test('a lock whose recorded supervisor PID now belongs to another process does not block the host', async () => {
+test('a reboot that leaves the stopped supervisor and host PIDs to other processes does not block the host', async () => {
   const fixture = setup();
-  // After a reboot or PID wrap the stopped supervisor's PID can belong to any process;
-  // here it is this test runner. The next supervisor must not treat it as the owner.
+  // A reboot leaves the lock, the host record and a pending cleanup behind, and their PIDs
+  // can belong to any process afterwards: here this test runner and a stand-in child.
+  const standIn = spawn('sleep', ['30'], { stdio: 'ignore' });
   privateDirectory(join(fixture.root, 'lock'));
-  writeFileSync(join(fixture.root, 'lock/owner.json'), JSON.stringify({ pid: process.pid }), {
-    mode: 0o600,
-  });
+  privateDirectory(join(fixture.root, 'sessions'));
+  const write = (name: string, value: unknown) =>
+    writeFileSync(join(fixture.root, name), JSON.stringify(value), { mode: 0o600 });
+  write('lock/owner.json', { pid: process.pid, identity: 'the stopped supervisor start' });
+  write('worker.json', { pid: standIn.pid, identity: 'the stopped host start' });
+  write('cleanup.json', { hostPid: standIn.pid, state: 'pending' });
   try {
     await new NativeSessionClient(fixture.root).list('owner');
     const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
     assert.notEqual(supervisor, process.pid);
-    assert.ok(matchesProcess(supervisor, fixture.root), 'a new supervisor owns the host');
+    assert.equal(readJson<RecordedProcess>(join(fixture.root, 'lock/owner.json')).pid, supervisor);
   } finally {
+    standIn.kill('SIGKILL');
     await stopNativeStack(fixture);
+  }
+});
+
+test('a recorded supervisor that is still running keeps the host, with or without a start identity', () => {
+  const fixture = setup();
+  const entry = fileURLToPath(new URL('./supervisor.ts', import.meta.url));
+  try {
+    for (const owner of [
+      { pid: process.pid, identity: processStartIdentity(process.pid) },
+      { pid: process.pid },
+    ]) {
+      privateDirectory(join(fixture.root, 'lock'));
+      writeFileSync(join(fixture.root, 'lock/owner.json'), JSON.stringify(owner), { mode: 0o600 });
+      const started = spawnSync(
+        process.execPath,
+        ['--import', import.meta.resolve('tsx'), entry, fixture.root],
+        { encoding: 'utf8', timeout: 20_000 },
+      );
+      assert.equal(started.status, 0);
+      assert.match(started.stderr, new RegExp(`supervisor ${process.pid} owns the host`));
+      assert.equal(existsSync(join(fixture.root, 'host.json')), false);
+    }
+  } finally {
+    fixture.restore();
   }
 });
 
