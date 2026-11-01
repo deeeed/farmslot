@@ -119,6 +119,8 @@ export interface RunCreateParams {
   /** Initial engine linkage/state that must exist before the run engine starts. */
   engineState?: import('../contracts/index.js').RunEngineState;
   completionPolicy?: import('../contracts/index.js').RunCompletionPolicy;
+  /** `none` skips the pipeline review; only with completionPolicy 'artifact-only' (validation runs). */
+  pipelineReview?: import('../contracts/index.js').RunPipelineReviewPolicy;
   /**
    * Artifact-only comparison replay base. V1 accepts this only for
    * flowType='dev' or 'fix-bug' + lane='comparison' + explicit variant +

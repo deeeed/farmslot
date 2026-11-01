@@ -17,6 +17,7 @@ import { withProgress } from '../progress.js';
 import {
   buildQaDispatchParams,
   buildReviewDispatchParams,
+  buildValidationRunParams,
   executeRunCreate,
   type RunCreateCliOptions,
   runWizardDispatch,
@@ -177,6 +178,10 @@ export function registerDispatchCommand(program: Command): void {
     .option('--mode <mode>', 'Run mode (interactive, autonomous, validation)')
     .option('--execution-template <id>', 'Exact execution-template id')
     .option('--domain <name>', 'Domain overlay carried by the dispatch')
+    .option(
+      '--no-pipeline-review',
+      'Validation run: close on the retained output (artifact-only) with no pipeline review',
+    )
     .action(async (opts: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
@@ -198,6 +203,7 @@ export function registerDispatchCommand(program: Command): void {
               ...(opts.mode ? { mode: parseDispatchMode(opts.mode) } : {}),
               ...(opts.executionTemplate ? { executionTemplateId: opts.executionTemplate } : {}),
               ...(opts.domain ? { domain: opts.domain } : {}),
+              ...buildValidationRunParams(opts),
             }),
           !emit.machine,
         );
@@ -217,6 +223,7 @@ export function registerDispatchCommand(program: Command): void {
               `  Runner:    ${p.runner}:${p.model}`,
               `  Task:      ${p.taskId}`,
               ...(p.domain ? [`  Domain:    ${p.domain}`] : []),
+              ...(p.pipelineReview ? [`  Review:    ${dim('off (validation run)')}`] : []),
               ...(p.executionTemplate
                 ? [
                     `  Template:  ${green(p.executionTemplate.id)}`,

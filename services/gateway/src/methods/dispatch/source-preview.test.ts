@@ -160,3 +160,30 @@ test('an RPC-shaped sourcePlans field cannot forge gateway planning authority', 
     /gateway-owned/,
   );
 });
+
+test('a validation dispatch that turns the pipeline review off sees it on the preview', async () => {
+  const result = await dispatchPreview(
+    {
+      project: 'demo',
+      flowType: 'dev',
+      ticketOrPr: 'TAT-1',
+      completionPolicy: 'artifact-only',
+      pipelineReview: 'none',
+    },
+    { sourcePlans: readyPlans(), includeProfileFit: false },
+  );
+  assert.deepEqual(result.preview.pipelineReview, {
+    policy: 'none',
+    reason: 'Pipeline review is off for this validation run (pipelineReview none, artifact-only).',
+  });
+  // Without the validation run's completion policy the request is refused before any preview work.
+  await assert.rejects(
+    dispatchPreview({ project: 'demo', flowType: 'dev', ticketOrPr: 'TAT-1', pipelineReview: 'none' }),
+    /pipelineReview none is only for validation runs: set completionPolicy artifact-only/,
+  );
+  const plain = await dispatchPreview(
+    { project: 'demo', flowType: 'dev', ticketOrPr: 'TAT-1' },
+    { sourcePlans: readyPlans(), includeProfileFit: false },
+  );
+  assert.equal(plain.preview.pipelineReview, undefined);
+});

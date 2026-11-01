@@ -467,6 +467,15 @@ export interface RunCreateCliOptions {
   pressureMachine?: string;
   pressureGeneration?: string;
   pressureOverrideReason?: string;
+  /** `--no-pipeline-review` sets this false. */
+  pipelineReview?: boolean;
+}
+
+/** `--no-pipeline-review`: a validation run that closes on its retained output with no pipeline review. */
+export function buildValidationRunParams(opts: { pipelineReview?: boolean }): Record<string, unknown> {
+  return opts.pipelineReview === false
+    ? { completionPolicy: 'artifact-only', pipelineReview: 'none' }
+    : {};
 }
 
 function optionalPositiveInteger(value: string | undefined, field: string): number | undefined {
@@ -661,6 +670,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     lane: opts.lane || undefined,
     variant: opts.variant || undefined,
     ...buildPressureAdmissionParams(opts),
+    ...buildValidationRunParams(opts),
   };
 
   if (opts.task) {
@@ -1422,6 +1432,10 @@ export function registerRunCommand(program: Command): void {
     .option(
       '--review-sequence-context <json>',
       'Lineage provenance aligned with review sequence rows',
+    )
+    .option(
+      '--no-pipeline-review',
+      'Validation run: close on the retained output (artifact-only) with no pipeline review',
     )
     .option('--skip-prepare', 'Skip slot preparation entirely (operator owns slot state)')
     .option(

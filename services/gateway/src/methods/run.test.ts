@@ -236,6 +236,23 @@ test('run creation holds its task directory against retention until it registers
   assert.equal(isTaskDirectoryAdmitting(taskDir), false, 'a refused admission releases it');
 });
 
+test('run.create refuses a pipeline review turned off outside a validation run', async () => {
+  const before = getAllRuns().length;
+  await assert.rejects(
+    runCreate(
+      {
+        flowType: 'dev',
+        project: 'farmslot-farm',
+        ticketOrPr: `TAT-${Date.now()}`,
+        pipelineReview: 'none',
+      },
+      () => {},
+    ),
+    /pipelineReview none is only for validation runs: set completionPolicy artifact-only/,
+  );
+  assert.equal(getAllRuns().length, before, 'nothing is created');
+});
+
 test('planning resolves the same dispatch defaults without creating a run or consuming a queue claim', async () => {
   const before = getAllRuns().map((run) => run.id);
   let claimed = true;

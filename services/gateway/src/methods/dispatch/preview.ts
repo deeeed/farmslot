@@ -7,6 +7,8 @@ import {
   type FlowType,
   isPressureAdmissionRejected,
   nativeWorkerBindingIsHeld,
+  pipelineReviewOffReason,
+  pipelineReviewPolicyError,
   PR_BOUND_FLOW_TYPES,
   type PressureAdmissionDecision,
   primaryRoleForFlow,
@@ -977,7 +979,23 @@ export async function dispatchCandidates(
 
 // ─── Dispatch Preview ───
 
+type DispatchPreviewInternalOptions = Parameters<typeof previewDispatch>[1];
+
+/** The preview, with a turned-off pipeline review checked and echoed like run.create does. */
 export async function dispatchPreview(
+  params: DispatchPreviewParams,
+  internalOptions: DispatchPreviewInternalOptions = {},
+): Promise<DispatchPreviewResult> {
+  const pipelineReviewError = pipelineReviewPolicyError(params);
+  if (pipelineReviewError) throw new Error(pipelineReviewError);
+  const result = await previewDispatch(params, internalOptions);
+  const reason = pipelineReviewOffReason(params);
+  return reason
+    ? { ...result, preview: { ...result.preview, pipelineReview: { policy: 'none', reason } } }
+    : result;
+}
+
+async function previewDispatch(
   params: DispatchPreviewParams,
   internalOptions: {
     /**

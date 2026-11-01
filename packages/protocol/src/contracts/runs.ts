@@ -1875,6 +1875,30 @@ export interface RunMetrics {
 
 export type RunCompletionPolicy = 'default' | 'artifact-only';
 
+/** `none`: the REVIEW step's pipeline code review does not run. Only for validation runs. */
+export type RunPipelineReviewPolicy = 'default' | 'none';
+
+/**
+ * Why a run's pipeline review is off, or null when it runs. Only a validation run may turn it
+ * off: it is artifact-only, so it closes on its retained output and never publishes.
+ */
+export function pipelineReviewOffReason(
+  run: Partial<Pick<Run, 'pipelineReview' | 'completionPolicy'>>,
+): string | null {
+  return run.pipelineReview === 'none' && run.completionPolicy === 'artifact-only'
+    ? 'Pipeline review is off for this validation run (pipelineReview none, artifact-only).'
+    : null;
+}
+
+/** The refusal for a create or preview request that turns the pipeline review off elsewhere. */
+export function pipelineReviewPolicyError(
+  params: Partial<Pick<Run, 'pipelineReview' | 'completionPolicy'>>,
+): string | null {
+  return params.pipelineReview === 'none' && params.completionPolicy !== 'artifact-only'
+    ? 'pipelineReview none is only for validation runs: set completionPolicy artifact-only.'
+    : null;
+}
+
 export type RunStartRefSource =
   | { kind: 'manual' }
   | { kind: 'package'; packagePath: string }
@@ -2905,6 +2929,8 @@ export interface Run {
   branch: string | null;
   /** Completion pipeline side effects. Separate requested review publication uses prWork.publication. */
   completionPolicy?: RunCompletionPolicy;
+  /** `none` turns this validation run's pipeline review off (`pipelineReviewOffReason`). */
+  pipelineReview?: RunPipelineReviewPolicy;
   /** Local retained output; viewing or acknowledging it never changes the verdict. */
   output?: RunOutput;
   /** Most recent explicit retained capture. Historical decisions keep their own refs. */

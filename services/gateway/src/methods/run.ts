@@ -37,6 +37,7 @@ import {
   NATIVE_WORKER_RESUME_ACTION,
   needsGateParkRestore,
   parseGitHubRef,
+  pipelineReviewPolicyError,
   pipelineStepsForRun,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
@@ -577,6 +578,8 @@ export async function planRunCreation(
       );
     params.completionPolicy = 'artifact-only';
   }
+  const pipelineReviewError = pipelineReviewPolicyError(params);
+  if (pipelineReviewError) throw new Error(pipelineReviewError);
   const devInteractiveProfile = interactiveDevProfileFor(params);
   if (devInteractiveProfile) params.devInteractiveProfile = devInteractiveProfile;
 
