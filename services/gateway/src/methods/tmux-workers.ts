@@ -804,15 +804,15 @@ export async function tmuxWorkerObservedList(
   // A requested but unknown source is an error, never an empty authoritative inventory.
   for (const machine of requested) if (!nodeIds.includes(machine)) nodeIds.push(machine);
   const admitted = new Map<string, AdmittedWorkerSource>();
-  const unavailable = new Map<string, string>();
+  const unavailable = new Map<string, GatewayMethodError>();
   for (const nodeId of nodeIds) {
     try {
       admitted.set(nodeId, requireWorkerObservation(nodeId));
     } catch (error) {
       // A named source stays an error. In the all-nodes read, a node without a current
-      // observation is reported on its own entry instead of emptying every node's inventory.
+      // observation gets its own failed row instead of emptying every node's inventory.
       if (requested.has(nodeId) || !(error instanceof GatewayMethodError)) throw error;
-      unavailable.set(nodeId, error.message);
+      unavailable.set(nodeId, error);
     }
   }
   const result = await buildTmuxWorkerListFromSources({
@@ -820,25 +820,22 @@ export async function tmuxWorkerObservedList(
     fleet,
     activeRuns: correlationRuns(),
     nodeIds,
-    connectedNodeIds: new Set(admitted.keys()),
+    connectedNodeIds: new Set(
+      nodeIds.filter((nodeId) => admitted.has(nodeId) || getNode(nodeId)?.ws.readyState === 1),
+    ),
     includeDisconnected: params.includeDisconnected,
     observedAt: Date.now(),
     requestPanes: async (nodeId) => {
-      const source = admitted.get(nodeId)!;
+      const source = admitted.get(nodeId);
+      // A connected node without a current observation: its row carries the reason.
+      if (!source) throw unavailable.get(nodeId)!;
       assertWorkerObservationCurrent(source);
       scheduleWorkerStatusExpiry(nodeId, source.panes);
       return source.panes;
     },
   });
   for (const source of admitted.values()) assertWorkerObservationCurrent(source);
-  if (!unavailable.size) return result;
-  return {
-    ...result,
-    nodes: result.nodes.map((node) => {
-      const error = unavailable.get(node.nodeId);
-      return error ? { ...node, connected: Boolean(getNode(node.nodeId)), error } : node;
-    }),
-  };
+  return result;
 }
 
 export async function buildTmuxWorkerUpdateFromNodeSnapshot(payload: {
