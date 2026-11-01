@@ -13,8 +13,11 @@ import {
   durableWrite,
   matchesProcess,
   privateDirectory,
+  processStartIdentity,
   readJournal,
   readJson,
+  type RecordedProcess,
+  recordedProcessAlive,
   signalGroup,
 } from './storage.js';
 
@@ -22,25 +25,35 @@ const root = process.argv[2]!;
 process.umask(0o077);
 privateDirectory(root);
 const lock = join(root, 'lock');
+/** A supervisor that does not start says why; host.log is all an operator has. */
+function log(reason: string): void {
+  process.stderr.write(`${new Date().toISOString()} Native supervisor not started: ${reason}\n`);
+}
 // Serializes stale-lock reclamation as well as first start. A torn claim fails closed.
 const claim = join(root, 'claim');
 try {
   mkdirSync(claim, { mode: 0o700 });
 } catch (error) {
-  if ((error as NodeJS.ErrnoException).code === 'EEXIST') process.exit(0);
+  if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+    log('another start holds the claim');
+    process.exit(0);
+  }
   throw error;
 }
 let acquired = false;
 try {
   let occupied = false;
   if (existsSync(lock)) {
-    const previous = readJson<{ pid: number }>(join(lock, 'owner.json'));
-    occupied = alive(previous.pid);
+    const previous = readJson<RecordedProcess>(join(lock, 'owner.json'));
+    // A recorded PID outlives its process: after a reboot or PID wrap another process can
+    // hold it. The recorded start identity tells the two apart.
+    occupied = recordedProcessAlive(previous);
+    if (occupied) log(`supervisor ${previous.pid} owns the host`);
     if (!occupied) {
       const previousHost = existsSync(join(root, 'worker.json'))
-        ? readJson<{ pid: number }>(join(root, 'worker.json'))
+        ? readJson<RecordedProcess>(join(root, 'worker.json'))
         : undefined;
-      if (previousHost && alive(previousHost.pid))
+      if (previousHost && recordedProcessAlive(previousHost))
         throw new Error('Native host survived its supervisor; refusing competing ownership');
       const cleanupPath = join(root, 'cleanup.json');
       if (
@@ -48,14 +61,19 @@ try {
         readJson<{ state: string }>(cleanupPath).state !== 'complete'
       ) {
         if (!previousHost) throw new Error('Previous native cleanup has no recorded host identity');
-        recoverStoppedNativeHost(root, previous.pid, previousHost.pid);
+        recoverStoppedNativeHost(root, previous.pid, previousHost.pid, {
+          supervisor: previous.identity,
+          host: previousHost.identity,
+        });
       }
       rmSync(lock, { recursive: true });
     }
   }
   if (!occupied) {
+    // Read before taking the lock: a failed read must not leave a lock without an owner.
+    const identity = processStartIdentity(process.pid);
     mkdirSync(lock, { mode: 0o700 });
-    durableWrite(join(lock, 'owner.json'), { pid: process.pid });
+    durableWrite(join(lock, 'owner.json'), { pid: process.pid, identity });
     acquired = true;
   }
 } finally {
@@ -154,7 +172,10 @@ child.once('close', () => {
 for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => stopHost());
 
 try {
-  durableWrite(join(root, 'worker.json'), { pid: child.pid });
+  durableWrite(join(root, 'worker.json'), {
+    pid: child.pid,
+    ...(child.pid ? { identity: processStartIdentity(child.pid) } : {}),
+  });
   durableWrite(join(root, 'cleanup.json'), { hostPid: child.pid, state: 'pending' });
   if (!child.pid) throw new Error('Native host did not obtain a process identity');
   tree = new NativeProcessTree(child.pid);

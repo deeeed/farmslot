@@ -18,6 +18,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { Methods, type NativeSessionEvent, type NativeSessionInfo } from '@farmslot/protocol';
 
@@ -25,7 +26,15 @@ import { NativeSessionClient } from './client.js';
 import { decodeRequest, type HostIdentity, requestHost, socketDirectory } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
 import { routeNativeSession } from './service.js';
-import { alive, appendDurable, matchesProcess, privateDirectory, readJson } from './storage.js';
+import {
+  alive,
+  appendDurable,
+  matchesProcess,
+  privateDirectory,
+  processStartIdentity,
+  readJson,
+  type RecordedProcess,
+} from './storage.js';
 import {
   decodeNativeWorkerLaunch,
   NATIVE_WORKER_CANCEL_COMMAND,
@@ -114,15 +123,39 @@ function setup() {
   };
 }
 
+// Supervisor and host carry the unique home in their argv, so a failed or slow start
+// can still be found and killed even before host.json names them.
+function nativeStack(root: string): number[] {
+  return (spawnSync('pgrep', ['-f', root], { encoding: 'utf8' }).stdout ?? '')
+    .split('\n')
+    .filter(Boolean)
+    .map(Number);
+}
+/**
+ * The detached supervisor leads its own process group, which its host and census
+ * `ps` join; killing the group reaches a host forked after a snapshot. A host whose
+ * group is gone is killed directly. Teardown is confirmed, never assumed.
+ */
+async function stopNativeStack(fixture: ReturnType<typeof setup>): Promise<void> {
+  const kill = (pid: number) => {
+    for (const target of [-pid, pid])
+      try {
+        process.kill(target, 'SIGKILL');
+      } catch (error) {
+        if (!['ESRCH', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      }
+  };
+  const deadline = Date.now() + 3_000;
+  while (nativeStack(fixture.root).length && Date.now() < deadline) {
+    nativeStack(fixture.root).forEach(kill);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  fixture.restore();
+  assert.deepEqual(nativeStack(fixture.root), [], 'no supervisor or host outlives the test');
+}
+
 test('a supervisor whose home is removed stops its host instead of running on', async () => {
   const fixture = setup();
-  // Supervisor and host carry the unique home in their argv, so a failed or slow start
-  // can still be found and killed even before host.json names them.
-  const stack = () =>
-    (spawnSync('pgrep', ['-f', fixture.root], { encoding: 'utf8' }).stdout ?? '')
-      .split('\n')
-      .filter(Boolean)
-      .map(Number);
   try {
     await new NativeSessionClient(fixture.root).list('owner');
     const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
@@ -134,25 +167,82 @@ test('a supervisor whose home is removed stops its host instead of running on', 
     assert.equal(alive(host), false, 'the host stopped');
     assert.equal(alive(supervisor), false, 'the supervisor exited');
   } finally {
-    // The detached supervisor leads its own process group, which its host and census
-    // `ps` join; killing the group reaches a host forked after a snapshot. A host whose
-    // group is gone is killed directly. Teardown is confirmed, never assumed.
-    const kill = (pid: number) => {
-      for (const target of [-pid, pid])
-        try {
-          process.kill(target, 'SIGKILL');
-        } catch (error) {
-          if (!['ESRCH', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? ''))
-            throw error;
-        }
-    };
-    const deadline = Date.now() + 3_000;
-    while (stack().length && Date.now() < deadline) {
-      stack().forEach(kill);
-      await new Promise((resolve) => setTimeout(resolve, 25));
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a reboot that leaves the stopped supervisor and host PIDs to other processes does not block the host', async () => {
+  const fixture = setup();
+  let standIn: ReturnType<typeof spawn> | undefined;
+  try {
+    // A reboot leaves the lock, the host record and a pending cleanup behind, and their PIDs
+    // can belong to any process afterwards: here this test runner and a stand-in child.
+    standIn = spawn('sleep', ['30'], { stdio: 'ignore' });
+    privateDirectory(join(fixture.root, 'lock'));
+    privateDirectory(join(fixture.root, 'sessions'));
+    const write = (name: string, value: unknown) =>
+      writeFileSync(join(fixture.root, name), JSON.stringify(value), { mode: 0o600 });
+    write('lock/owner.json', { pid: process.pid, identity: 'the stopped supervisor start' });
+    write('worker.json', { pid: standIn.pid, identity: 'the stopped host start' });
+    write('cleanup.json', { hostPid: standIn.pid, state: 'pending' });
+    await new NativeSessionClient(fixture.root).list('owner');
+    const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
+    assert.notEqual(supervisor, process.pid);
+    assert.equal(readJson<RecordedProcess>(join(fixture.root, 'lock/owner.json')).pid, supervisor);
+  } finally {
+    standIn?.kill('SIGKILL');
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a supervisor that cannot read its own start identity leaves no lock behind', async () => {
+  const fixture = setup();
+  const entry = fileURLToPath(new URL('./supervisor.ts', import.meta.url));
+  const marker = join(fixture.cwd, 'fail-next-lstart');
+  try {
+    // One failed `ps -o lstart=` read, as a timeout on a loaded node would give; every other
+    // `ps` call reaches the real one. The fixture directory leads PATH for this test.
+    writeFileSync(
+      join(fixture.cwd, 'ps'),
+      `#!/bin/sh\ncase "$*" in *lstart=*) if [ -f '${marker}' ]; then rm -f '${marker}'; exit 1; fi;; esac\nexec /bin/ps "$@"\n`,
+      { mode: 0o700 },
+    );
+    writeFileSync(marker, '');
+    const failed = spawnSync(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx'), entry, fixture.root],
+      { encoding: 'utf8', timeout: 20_000 },
+    );
+    assert.notEqual(failed.status, 0);
+    assert.equal(existsSync(join(fixture.root, 'lock')), false, 'no lock without an owner');
+    await new NativeSessionClient(fixture.root).list('owner');
+    assert.ok(existsSync(join(fixture.root, 'host.json')), 'the next start owns the host');
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a recorded supervisor that is still running keeps the host, with or without a start identity', () => {
+  const fixture = setup();
+  const entry = fileURLToPath(new URL('./supervisor.ts', import.meta.url));
+  try {
+    for (const owner of [
+      { pid: process.pid, identity: processStartIdentity(process.pid) },
+      { pid: process.pid },
+    ]) {
+      privateDirectory(join(fixture.root, 'lock'));
+      writeFileSync(join(fixture.root, 'lock/owner.json'), JSON.stringify(owner), { mode: 0o600 });
+      const started = spawnSync(
+        process.execPath,
+        ['--import', import.meta.resolve('tsx'), entry, fixture.root],
+        { encoding: 'utf8', timeout: 20_000 },
+      );
+      assert.equal(started.status, 0);
+      assert.match(started.stderr, new RegExp(`supervisor ${process.pid} owns the host`));
+      assert.equal(existsSync(join(fixture.root, 'host.json')), false);
     }
+  } finally {
     fixture.restore();
-    assert.deepEqual(stack(), [], 'no supervisor or host outlives the test');
   }
 });
 

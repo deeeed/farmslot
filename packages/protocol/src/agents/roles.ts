@@ -70,6 +70,13 @@ export const AGENT_ROLE_RANKS: Record<AgentRole, number> = {
 };
 
 export function primaryRoleForFlow(flowType?: FlowType | string | null): AgentRole {
+  const role = workerRoleForFlow(flowType);
+  if (role) return role;
+  throw new Error(`primaryRoleForFlow: unknown flow type '${flowType}'`);
+}
+
+/** The worker role of a flow, or null for a flow type this build doesn't know. */
+export function workerRoleForFlow(flowType?: FlowType | string | null): AgentRole | null {
   if (flowType === 'dev') return 'dev';
   if (flowType === 'fix-bug') return 'fix-bug';
   if (flowType === 'review-pr') return 'review';
@@ -78,7 +85,7 @@ export function primaryRoleForFlow(flowType?: FlowType | string | null): AgentRo
   // chained run directly to its parent's flow-owned window.
   if (!flowType || flowType === 'qa' || flowType === 'pr-complete' || flowType === 'update-branch')
     return 'primary';
-  throw new Error(`primaryRoleForFlow: unknown flow type '${flowType}'`);
+  return null;
 }
 
 export function contextIdFor(role: AgentRole): string {
