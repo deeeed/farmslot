@@ -199,7 +199,10 @@ test('captureRunEpisode copies the pinned provider and library revisions from th
       recordedAt: NOW,
     });
     const output = { capturedAt: NOW, workerFinished: true } as Run['output'];
-    const afterRepin = await captureRunEpisode(run({ id: 'run-repinned', taskFile, output }));
+    const completed = [{ name: 'complete', status: 'done' as const, startedAt: NOW }];
+    const afterRepin = await captureRunEpisode(
+      run({ id: 'run-repinned', taskFile, output, steps: completed }),
+    );
     assert.deepEqual(afterRepin?.provenance, {
       source: 'artifacts/harness-provenance.json',
       provider: null,
@@ -207,6 +210,19 @@ test('captureRunEpisode copies the pinned provider and library revisions from th
       recordedAt: NOW,
       mirrored: true,
     });
+    // A refresh while monitoring, then a cancel: the completion step never captured,
+    // so the receipt may predate a later repin.
+    const refreshed = { capturedAt: NOW, workerFinished: false } as Run['output'];
+    const cancelled = await captureRunEpisode(
+      run({
+        id: 'run-cancelled',
+        status: 'cancelled',
+        taskFile,
+        output: refreshed,
+        steps: [{ name: 'monitor', status: 'running', startedAt: NOW }],
+      }),
+    );
+    assert.equal(cancelled?.provenance?.mirrored, false);
     await rm(path.join(taskDir, 'artifacts/harness-provenance.json'));
 
     // An unbound task, a wrongly shaped binding and invalid JSON give null, never a throw.

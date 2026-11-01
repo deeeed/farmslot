@@ -12,6 +12,7 @@ import path from 'node:path';
 import {
   type AgentContext,
   isTerminalRunStatus,
+  PipelineSteps,
   type Run,
   type RunArtifactBundleRef,
   type RunBundleEntryMeta,
@@ -108,9 +109,10 @@ export interface RunEpisodeProvenance {
   /** When the receipt was written on the node; null when the libraries came from the binding. */
   recordedAt: string | null;
   /**
-   * Whether the run's output was mirrored at completion, which refreshes the
-   * receipt. False for a run that ended without it (for example cancelled while
-   * monitoring): a repin after `recordedAt` is then not reflected.
+   * Whether the completion step captured the output after the worker finished,
+   * which refreshes the receipt. False otherwise (for example cancelled while
+   * monitoring, even after a manual mirror refresh): a repin after `recordedAt`
+   * is then not reflected.
    */
   mirrored: boolean;
 }
@@ -370,6 +372,18 @@ export function readRunEpisode(runId: string): Promise<RunEpisode | undefined> {
   return readJson<RunEpisode>(episodeFile(runId));
 }
 
+/** The completion step captured the output after the worker finished. */
+function mirroredAtCompletion(run: Run): boolean {
+  const started = run.steps.find((step) => step.name === PipelineSteps.COMPLETE)?.startedAt;
+  const output = run.output;
+  return (
+    !!started &&
+    !!output?.workerFinished &&
+    !output.captureError &&
+    Date.parse(output.capturedAt) >= Date.parse(started)
+  );
+}
+
 /** Writes the run's episode; returns null for a run that has not ended. */
 export async function captureRunEpisode(run: Run, now = new Date()): Promise<RunEpisode | null> {
   if (!isTerminalRunStatus(run.status)) return null;
@@ -416,7 +430,7 @@ export async function captureRunEpisode(run: Run, now = new Date()): Promise<Run
   const receipt = await advisory<BindingReceiptDocument>(BINDING_RECEIPT_FILE);
   const provenance =
     binding || receipt
-      ? episodeProvenance(binding, receipt, !!run.output && !run.output.captureError)
+      ? episodeProvenance(binding, receipt, mirroredAtCompletion(run))
       : ((await readRunEpisode(run.id).catch(() => undefined))?.provenance ?? null);
   const episode = buildRunEpisode(run, bundles, unreadable, now.toISOString(), provenance);
   await writeAtomicJSON(episodeFile(run.id), episode);

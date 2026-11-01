@@ -518,6 +518,7 @@ gateway computes neither.
   ADR-069). Null for an unbound task or an unreadable binding; a re-capture after
   the task copy is archived keeps the recorded value. Offline tools use it to tell
   which recipe library a run used, never inferring it from text.
-  `mirrored` is false for a run that ended without the completion mirror (for
-  example cancelled while monitoring); a repin after the receipt's `recordedAt`
-  is then not reflected.
+  `mirrored` is true only when the completion step captured the output after
+  the worker finished. It is false otherwise (for example cancelled while
+  monitoring, even after a manual mirror refresh); a repin after the receipt's
+  `recordedAt` is then not reflected.
