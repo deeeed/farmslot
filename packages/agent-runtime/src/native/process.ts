@@ -1,6 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { createInterface } from 'node:readline';
 
 import type { NativeProcessExitEvidence } from '@farmslot/protocol';
 
@@ -117,8 +116,10 @@ export class JsonLineProcess {
     );
     this.child.stderr.on('data', (chunk: Buffer) => this.stderr.write(chunk));
     this.child.stderr.on('end', () => this.stderr.end());
-    const lines = createInterface({ input: this.child.stdout });
-    lines.on('line', (line) => {
+    // Records end at LF only. readline also ends lines at U+2028 and U+2029, which a
+    // JSON string may carry unescaped, so runner text containing them broke the session.
+    let buffered = '';
+    const receive = (line: string) => {
       if (this.closed) return;
       let message: Record<string, unknown>;
       try {
@@ -153,6 +154,20 @@ export class JsonLineProcess {
         this.fail(new Error('Native runner protocol event failed', { cause: error }));
         this.beginStop();
       }
+    };
+    this.child.stdout.setEncoding('utf8');
+    this.child.stdout.on('data', (chunk: string) => {
+      buffered += chunk;
+      for (let end = buffered.indexOf('\n'); end >= 0; end = buffered.indexOf('\n')) {
+        const line = buffered.slice(0, end);
+        buffered = buffered.slice(end + 1);
+        receive(line.endsWith('\r') ? line.slice(0, -1) : line);
+      }
+    });
+    // A final record without a trailing newline still counts, as it did with readline.
+    this.child.stdout.on('end', () => {
+      if (buffered) receive(buffered);
+      buffered = '';
     });
     this.child.on('error', (error) => {
       this.fail(error);
@@ -213,7 +228,11 @@ export class JsonLineProcess {
 
   write(message: unknown): void {
     if (this.closed) throw new Error('Native runner is closed');
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    // Escaped separators are the same JSON, and a runner that frames with readline keeps them.
+    const record = JSON.stringify(message).replace(/[\u2028\u2029]/g, (separator) =>
+      separator === '\u2028' ? '\\u2028' : '\\u2029',
+    );
+    this.child.stdin.write(`${record}\n`);
   }
 
   request(method: string, params: unknown): Promise<unknown> {

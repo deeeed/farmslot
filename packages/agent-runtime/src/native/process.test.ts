@@ -155,6 +155,50 @@ function runLines(t: TestContext, lines: string[]) {
   return { child, messages, exited };
 }
 
+test('runner text with Unicode line separators stays one record', async (t) => {
+  const { child, messages, exited } = runLines(t, [
+    JSON.stringify({ type: 'text', text: 'a\u2028b\u2029c' }),
+    `${JSON.stringify({ type: 'crlf' })}\r`,
+    JSON.stringify({ type: 'after' }),
+  ]);
+  const runner: { stopped?: Error } = {};
+  void exited.then((error) => (runner.stopped = error ?? new Error('runner closed')));
+  const deadline = Date.now() + 10_000;
+  while (messages.length < 3 && !runner.stopped && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(runner.stopped, undefined, `runner stopped: ${runner.stopped?.message}`);
+  assert.deepEqual(messages, [
+    { type: 'text', text: 'a\u2028b\u2029c' },
+    { type: 'crlf' },
+    { type: 'after' },
+  ]);
+  await child.close();
+  assert.equal(await exited, undefined);
+});
+
+test('records sent to a runner escape Unicode line separators', async (t) => {
+  const messages: Array<Record<string, unknown>> = [];
+  const child = new JsonLineProcess(
+    process.execPath,
+    [
+      '-e',
+      // Echo each stdin line back as a record, the way a readline-framed runner reads it.
+      `require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => { if (line.trim()) process.stdout.write(JSON.stringify({ line }) + '\\n'); });`,
+    ],
+    { cwd: process.cwd() },
+    (message) => messages.push(message),
+    () => {},
+  );
+  t.after(() => child.close());
+  child.write({ text: 'a\u2028b\u2029c' });
+  const deadline = Date.now() + 10_000;
+  while (messages.length < 1 && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(messages.length, 1);
+  assert.deepEqual(JSON.parse(String(messages[0].line)), { text: 'a\u2028b\u2029c' });
+  await child.close();
+});
+
 test('an oversized image read keeps the runner and records the image size, not its bytes', async (t) => {
   const { child, messages, exited } = runLines(t, ['read', '{"type":"after"}']);
   const runner: { stopped?: Error } = {};
