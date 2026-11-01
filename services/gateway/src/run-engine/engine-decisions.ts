@@ -814,7 +814,7 @@ export async function createEngineDecision(
       run,
       payload.kind === 'ready' ? (payload.prPackage ?? null) : null,
     );
-    const projection = projectRunGateActions(actions, assessment);
+    const projection = projectRunGateActions(actions, assessment, payload);
     readiness = projection.readiness;
     actions = projection.actions;
     payload = { ...payload, gateReadiness: readiness };

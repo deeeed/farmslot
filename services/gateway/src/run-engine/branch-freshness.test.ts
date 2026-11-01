@@ -9,11 +9,14 @@ import type { ReadyGatePayload } from '@farmslot/protocol';
 
 import {
   applyBranchFreshnessToReadyGatePayload,
+  approvalBaseMergeConflict,
+  type BranchFreshnessSummary,
   buildBranchFreshnessProbeScript,
   formatBranchFreshnessHint,
   parseBranchFreshnessProbeOutput,
   parseMergeTreeConflictPaths,
   parseRevListCount,
+  type probeRunBaseFreshness,
   resolveBranchUpdateStrategy,
   sanitizeDefaultBranch,
 } from './branch-freshness.js';
@@ -349,4 +352,48 @@ test('real git: write-tree probe reports conflicts only when origin ref exists',
   assert.equal(failFetch.mergeConflicts, undefined);
   assert.match(failFetch.hint, /fetch origin main failed/);
   assert.doesNotMatch(failFetch.hint, /up to date/);
+});
+
+test('approval re-probes the publication base and counts only a known result at the package HEAD (F302)', async () => {
+  const run = { slotId: 'gate-slot', project: 'fixture', parentRunId: null };
+  const summary = (mergeConflicts?: boolean, headSha = 'abc1234'): BranchFreshnessSummary => ({
+    ...(mergeConflicts === undefined ? {} : { mergeConflicts }),
+    mergeConflictPaths: mergeConflicts ? ['package.json', 'yarn.lock'] : [],
+    defaultBranch: 'main',
+    headSha,
+    remoteRefOk: mergeConflicts !== undefined,
+    fetchOk: mergeConflicts !== undefined,
+    hint: 'behindMain: 3, mergeConflicts: true. Next: `git fetch origin main && git rebase origin/main` (rebase project).',
+  });
+  const gate = { prPackage: { headSha: 'abc1234' } };
+  const timeouts: (number | undefined)[] = [];
+  const probe =
+    (result: BranchFreshnessSummary | null | Error): typeof probeRunBaseFreshness =>
+    async (_run, options) => {
+      timeouts.push(options?.timeoutMs);
+      if (result instanceof Error) throw result;
+      return { base: 'main', defaultBranch: 'main', freshness: result };
+    };
+  // A conflict at the package's HEAD refuses, with the project's own next step, and is returned
+  // so the card can stop offering approval.
+  const found = await approvalBaseMergeConflict(run, gate, probe(summary(true)));
+  assert.match(
+    found?.refusal ?? '',
+    /in package\.json, yarn\.lock, .* Next: `git fetch origin main && git rebase origin\/main`/,
+  );
+  assert.equal(found?.observed.mergeConflicts, true);
+  // Clean, unknown, unavailable, failed, or at another HEAD: approval has nothing new to refuse
+  // (the gate's recorded result is enforced by assertRunGateReady).
+  for (const result of [
+    summary(false),
+    summary(),
+    null,
+    new Error('node offline'),
+    summary(true, 'other-head'),
+  ])
+    assert.equal(await approvalBaseMergeConflict(run, gate, probe(result)), undefined);
+  assert.ok(
+    timeouts.every((ms) => ms === 15_000),
+    'approval waits a short probe',
+  );
 });

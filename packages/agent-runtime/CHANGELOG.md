@@ -6,6 +6,12 @@
 - Pi and OpenCode run as native sessions and farm workers (ADR-057 Amendment 12). OpenCode runs through ACP (`opencode acp`) and asks before each tool at the sandboxed tier. Pi runs through its JSONL RPC mode (`pi --mode rpc`), which asks before no tool, as in its terminal. Profiles set Pi's agent directory or OpenCode's data home.
 - ACP adapters share one permission predicate and one config-option helper (Cursor, Grok, OpenCode).
 
+## 0.39.23 - 2026-11-02
+
+- Publishes against `@farmslot/protocol` 0.74.10.
+- Align `@farmslot/adapter-sdk` 0.26.0 (recipe-runner 0.46.3).
+- A native session no longer fails when runner output carries U+2028 or U+2029 inside a JSON string: records split on LF only (Node's readline also split at those separators and broke the record into invalid JSON). Records sent to a runner escape both, so a runner that frames with readline keeps them too.
+
 ## 0.39.22 - 2026-11-02
 
 - Publishes against `@farmslot/protocol` 0.74.10.
