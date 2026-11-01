@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Native chat and dispatch enable "Node default account" without waiting for the node's profile list; a pending or failed read only affects the profile choices, and its error shows beside the picker. A selected profile still waits for its login status. The add control reads "Add another account" (ADR-057 Amendment 11).
 - The Runs list's Runner / model cell names the worker's effort when a record has it (`grok/grok-4.7 · medium`); runs without one show runner and model as before.
 - AC rows name the recording their verdict comes from. After a re-recording, the gate's older evidence reads "Evidence replaced" instead of red "Not proven" or an invalid package next to passing steps.
 - A plan-mode native conversation's proposed plan has an Implement button: it starts a new session on the same runner and directory in default mode, sends it the plan to carry out, and opens it. Codex stays in plan mode within a conversation, so the plan runs in a new one.

@@ -4,7 +4,6 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- Native chat and dispatch enable "Node default account" without waiting for the node's profile list; a pending or failed read only affects the profile choices, and its error shows beside the picker. A selected profile still waits for its login status. The add control reads "Add another account" (ADR-057 Amendment 11).
 - Give an owned gateway outage 90 seconds to restart, so a slow watcher restart no longer reads as a lost gateway.
 - Prove acceptance criteria stay absent before task creation and real read errors remain visible afterward.
 - Add a recorded browser recipe for remembered worker panel disclosure and stable conversation read status.
