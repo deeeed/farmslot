@@ -12,7 +12,7 @@ import {
 } from '../../security/native-worker-owner.js';
 import { runnerNativeResultSchemas } from '../registry.js';
 
-import { resolveNativeExecutionNode } from './node.js';
+import { offlineAssignedNativeOwner, resolveNativeExecutionNode } from './node.js';
 
 /** Reviewer sessions use their execution owner's profile without changing the producing worker. */
 export function nativeReviewerOwner(
@@ -25,9 +25,12 @@ export function nativeReviewerOwner(
     return run.nativeOwnerPrincipalId;
   }
   const local = isLocal(vars.host, vars.machine);
+  // A gateway reload starts recovery before remote nodes reconnect. The node's issued assignment
+  // still names the owner, and resolveNativeExecutionNode reads that offline node as a wait.
   const owner = local
     ? process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID
-    : getNode(vars.machine)?.nativeSessions?.ownerPrincipalId;
+    : (getNode(vars.machine)?.nativeSessions?.ownerPrincipalId ??
+      offlineAssignedNativeOwner(vars.machine));
   if (!owner) throw new Error('The review slot has no native execution owner');
   if (!local) {
     const node = resolveNativeExecutionNode(owner, vars.machine);
