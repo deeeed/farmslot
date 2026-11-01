@@ -6,20 +6,25 @@ import { createNativeSqliteResourceStore } from '@farmslot/local-store/native';
 import {
   createResourceCacheTransport,
   type GatewayResourceCache,
+  RESOURCE_SCOPE_DELETION_REASONS,
   type ResourceConnectionInputs,
+  type ResourceConnectionReason,
+  resourceStoreScopeId,
 } from '@farmslot/protocol/client-cache';
 
 import { useConnectionStore } from '../store/connection';
 
 import { artifactUrl, setHeldArtifactLookup } from './artifact-url';
 import { startContentPrefetch } from './content-prefetch';
-import { createEvidenceMediaHolder } from './evidence-media';
+import { createEvidenceMediaHolder, type EvidenceMediaHolder } from './evidence-media';
 import { nativeEvidenceMediaFiles } from './evidence-media-files';
 import { gatewayResourceSource } from './gateway-http-auth';
 import { fetchRunArtifactBytes } from './held-content';
 
 let notice: string | undefined;
-let prefetch: { cache: GatewayResourceCache; farm: boolean; stop: () => void } | undefined;
+let prefetch:
+  | { cache: GatewayResourceCache; farm: boolean; media?: EvidenceMediaHolder; stop: () => void }
+  | undefined;
 let stopStore: (() => void) | undefined;
 let stopAppState: (() => void) | undefined;
 const listeners = new Set<() => void>();
@@ -49,35 +54,64 @@ const owner = new ResourceCacheOwner({
   },
 });
 owner.subscribe(notify);
+owner.subscribe(bindMedia);
 owner.subscribe(bindPrefetch);
 
 /**
- * Pending gates' videos and large images, kept as files by digest. They download only on a LAN
- * route: without a network-type API in this binary, that is how the app knows it is on Wi-Fi.
+ * Pending gates' videos and large images, kept as files by digest for the rendered offline store
+ * scope and deleted with it (ADR-071). They download only on a LAN route: without a network-type
+ * API in this binary, that is how the app knows it is on Wi-Fi.
  */
-const evidenceMedia = createEvidenceMediaHolder({
-  files: nativeEvidenceMediaFiles(),
-  source(entry) {
-    const state = useConnectionStore.getState();
-    return gatewayResourceSource(
-      artifactUrl(
-        state.gatewayUrl,
-        entry.runId,
-        entry.path,
-        undefined,
-        undefined,
-        entry.bundleDigest,
-      ),
-      state.activeProfileHttpAuthHeaders,
+let media: { scope: string; holder: EvidenceMediaHolder } | undefined;
+let lastReason: ResourceConnectionReason | undefined;
+
+function scopeMedia(scopeId: string): EvidenceMediaHolder {
+  return createEvidenceMediaHolder({
+    files: nativeEvidenceMediaFiles(scopeId),
+    source(entry) {
+      const state = useConnectionStore.getState();
+      return gatewayResourceSource(
+        artifactUrl(
+          state.gatewayUrl,
+          entry.runId,
+          entry.path,
+          undefined,
+          undefined,
+          entry.bundleDigest,
+        ),
+        state.activeProfileHttpAuthHeaders,
+      );
+    },
+    allowed() {
+      const state = useConnectionStore.getState();
+      return state.profiles.find((profile) => profile.id === state.activeProfileId)?.kind === 'lan';
+    },
+    log: (message) => console.info(message),
+  });
+}
+
+/** One holder per rendered store scope; a profile switch keeps the previous scope's files. */
+function bindMedia(): void {
+  const scope = useConnectionStore.getState().signedOut ? undefined : owner.renderMetadata?.scope;
+  const scopeId = scope ? resourceStoreScopeId(scope) : undefined;
+  if (media?.scope === scopeId) return;
+  media?.holder.dispose();
+  media = scopeId ? { scope: scopeId, holder: scopeMedia(scopeId) } : undefined;
+  setHeldArtifactLookup(media?.holder);
+}
+
+/** A reason that deletes the scope's offline store deletes its held evidence too. */
+function deleteMedia(): void {
+  const current = media;
+  media = undefined;
+  setHeldArtifactLookup(undefined);
+  current?.holder.destroy().catch((error: unknown) => {
+    // Reported, not retried: the lookup is already gone, so nothing reads these files again.
+    console.warn(
+      `Held evidence could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
     );
-  },
-  allowed() {
-    const state = useConnectionStore.getState();
-    return state.profiles.find((profile) => profile.id === state.activeProfileId)?.kind === 'lan';
-  },
-  log: (message) => console.info(message),
-});
-setHeldArtifactLookup(evidenceMedia.localUri);
+  });
+}
 
 function connectionInputs(): ResourceConnectionInputs {
   const state = useConnectionStore.getState();
@@ -97,12 +131,19 @@ function connectionInputs(): ResourceConnectionInputs {
 
 function sync(): void {
   const state = useConnectionStore.getState();
-  if (state.signedOut) void evidenceMedia.keep(new Set());
+  const reason = state.client?.resourceConnectionReason;
+  // The store such a reason deletes is the one rendered before this update; act once per reason.
+  const deleting =
+    state.signedOut ||
+    (reason !== lastReason && reason !== undefined && RESOURCE_SCOPE_DELETION_REASONS.has(reason));
+  lastReason = reason;
+  if (deleting && media) deleteMedia();
   owner.update({
     client: state.client,
     signedOut: state.signedOut,
     connection: connectionInputs(),
   });
+  bindMedia();
   // Authentication can change farm access without a new cache.
   bindPrefetch();
 }
@@ -114,7 +155,13 @@ function sync(): void {
 function bindPrefetch(): void {
   const cache = owner.cache;
   const farm = getResourceWorkspaceAccess() === 'farm';
-  if (prefetch ? prefetch.cache === cache && prefetch.farm === farm : !cache) return;
+  const holder = media?.holder;
+  if (
+    prefetch
+      ? prefetch.cache === cache && prefetch.farm === farm && prefetch.media === holder
+      : !cache
+  )
+    return;
   prefetch?.stop();
   prefetch = undefined;
   const client = useConnectionStore.getState().client;
@@ -122,10 +169,11 @@ function bindPrefetch(): void {
   prefetch = {
     cache,
     farm,
+    media: holder,
     stop: startContentPrefetch({
       cache,
       farm,
-      media: evidenceMedia,
+      media: holder,
       transport: createResourceCacheTransport(client, connectionInputs),
       request: (method, params, signal) => client.request(method, params, undefined, { signal }),
       readArtifact(artifact, signal) {

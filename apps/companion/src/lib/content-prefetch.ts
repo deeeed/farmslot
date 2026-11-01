@@ -111,7 +111,13 @@ export function startContentPrefetch(
     prefetcher.setTargets(contentPrefetchTargets(active, decisions));
     // A decided gate's media goes.
     const keep = heldGateRunIds(active, decisions);
-    if (media && keep) void media.keep(keep);
+    if (media && keep)
+      media.keep(keep).catch((error: unknown) => {
+        // The next decision update keeps again; a failed drop leaves files inside the bound.
+        console.warn(
+          `Held evidence was not trimmed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
   };
   const stops = [
     cache.observe(nativeActiveRunsQuery, update),

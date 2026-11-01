@@ -1,24 +1,27 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import { base64Bytes } from '@farmslot/protocol/client-cache';
+import { base64Bytes, createSha256 } from '@farmslot/protocol/client-cache';
 
 import type { EvidenceMediaFiles } from './evidence-media';
 
-/** Held gate evidence in the app's documents directory, which the OS does not purge. */
-export function nativeEvidenceMediaFiles(): EvidenceMediaFiles {
-  const directory = `${FileSystem.documentDirectory}evidence-media/`;
+/**
+ * One offline store scope's held gate evidence, in the cache directory: backups skip it, the OS
+ * may reclaim it, and it is deleted with the scope's offline store (ADR-071).
+ */
+export function nativeEvidenceMediaFiles(scopeId: string): EvidenceMediaFiles {
+  const hash = createSha256();
+  hash.update(new TextEncoder().encode(scopeId));
+  const directory = `${FileSystem.cacheDirectory}evidence-media/${hash.hex().slice(0, 16)}/`;
   let ready: Promise<void> | undefined;
+  // `intermediates` makes an existing directory no error, so only a real failure rejects.
   const ensure = () =>
-    (ready ??= FileSystem.makeDirectoryAsync(directory, { intermediates: true }).catch(
-      () => undefined,
-    ));
+    (ready ??= FileSystem.makeDirectoryAsync(directory, { intermediates: true }));
   const size = async (uri: string) => {
     const info = await FileSystem.getInfoAsync(uri);
     return info.exists ? info.size : undefined;
   };
   return {
     directory,
-    size,
     async download(source, to) {
       await ensure();
       const result = await FileSystem.downloadAsync(source.uri, to, { headers: source.headers });
@@ -42,6 +45,10 @@ export function nativeEvidenceMediaFiles(): EvidenceMediaFiles {
     async writeText(uri, text) {
       await ensure();
       await FileSystem.writeAsStringAsync(uri, text);
+    },
+    async clear() {
+      ready = undefined;
+      await FileSystem.deleteAsync(directory, { idempotent: true });
     },
   };
 }

@@ -162,6 +162,29 @@ for (const [name, { open, body }] of Object.entries(hooks)) {
   });
 }
 
+test('an image held as a verified file shows from the device with no read, offline too', async (t) => {
+  const reads = fakeFetch(t);
+  const file = 'file:///cache/evidence-media/scope/a.png';
+  artifactUrl.setHeldArtifactLookup({
+    byPath: () => undefined,
+    byDigest: (sha256) => (sha256 === IMAGE.sha256 ? file : undefined),
+  });
+  try {
+    const { live, hook } = mount('useArtifactImageSource');
+    live.connected = false;
+    const render = () =>
+      hook.render(IMAGE_URI, live.headers, IMAGE) as { source: unknown; read: ArtifactImageRead };
+    render();
+    await flush();
+    const shown = render() as { source: { uri?: string }; read: ArtifactImageRead };
+    assert.equal(shown.source.uri, file);
+    assert.equal(shown.read, 'ready');
+    assert.equal(reads.length, 0);
+  } finally {
+    artifactUrl.setHeldArtifactLookup(undefined);
+  }
+});
+
 test('a ready image keeps its source object when equal headers are set again', async (t) => {
   const reads = fakeFetch(t);
   const { live, hook } = mount('useArtifactImageSource');
