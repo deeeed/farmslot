@@ -1282,14 +1282,11 @@ if (phase === 'terminal-context') {
     phases.push({ name, startedAt: phaseStart, endedAt: Date.now() });
     phaseStart = Date.now();
   };
-  const route = `workspace/slot/${fixture.slotId}/terminal?runId=${fixture.runId}&keys=1&details=1`;
+  // The slot's Terminal tab is the shared terminal, resolved to the run's pane.
+  const route = `workspace/slot/${fixture.slotId}/terminal?runId=${fixture.runId}`;
   proofRef = `runs-cache:terminal:${fixture.runId}`;
   const current = (value) =>
-    value.slotProjectionMatches &&
-    value.slotRecipesMatch &&
-    value.detail?.status === 'ready' &&
-    value.slotRecipes?.status === 'ready' &&
-    value.terminalReady;
+    value.slotProjectionMatches && value.detail?.status === 'ready' && value.terminalReady;
   let ownedSession;
   let cold;
   const tag = `native-terminal-${randomUUID().slice(0, 8)}`;
@@ -1301,7 +1298,7 @@ if (phase === 'terminal-context') {
         value.terminalStream === 'live' &&
         !value.terminalInputDisabledReason &&
         value.terminalBufferText?.includes(path.basename(workerRepo)),
-      'The actual terminal must subscribe only after current shared run inputs',
+      'The shared terminal must subscribe only after its current run resolves a pane',
     );
     assert.deepEqual(initial.terminalTarget, { slotId: fixture.slotId, bareSession: true });
     ownedSession = await sessionInfo();
@@ -1340,14 +1337,11 @@ if (phase === 'terminal-context') {
     assert(committed.storedDetail.bytes > 0);
     await capture('native-terminal-current.png');
     await withOwnedGatewayOffline(async () => {
+      // Keys are never gated offline: they queue, and the terminal says Offline after the grace.
       const stale = await until(
-        (value) =>
-          value.detail?.status === 'stale' &&
-          value.slotProjectionMatches &&
-          value.terminalInputDisabledReason,
-        'A disconnected terminal must retain run facts and pause its commands',
+        (value) => value.detail?.status === 'stale' && value.slotProjectionMatches,
+        'A disconnected terminal must retain its run facts',
       );
-      await button(false);
       await capture('native-terminal-stale.png');
       await restartNative();
       await inbox(route);
@@ -1355,19 +1349,11 @@ if (phase === 'terminal-context') {
         (value) =>
           value.startedAt > initial.startedAt &&
           value.detail?.status === 'stale' &&
-          value.slotProjectionMatches &&
-          value.terminalInputDisabledReason,
-        'A cold terminal must restore its actual saved run with commands paused',
+          value.slotProjectionMatches,
+        'A cold terminal must restore its actual saved run while offline',
       );
       assert.equal(cold.detail.observedAt, stale.detail.observedAt);
       assert.equal(cold.diagnostics.integrity, 'ok');
-
-      const screen = await nativeScreen();
-      assert(
-        screen.nodes.some((node) => node.label?.includes('Saved terminal run')),
-        'The actual cold terminal must display its saved age',
-      );
-      await button(false);
       await capture('native-terminal-cold.png');
     });
     await until(

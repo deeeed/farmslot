@@ -5,7 +5,7 @@
   "proofTargets": [
     {
       "id": "native-terminal-shared",
-      "claim": "The actual terminal uses canonical full-run and recipe observations; an external write refreshes facts without restarting its stream."
+      "claim": "The slot's Terminal tab is the shared terminal: it resolves the run's pane from the canonical full-run observation, and an external write refreshes facts without restarting its stream."
     },
     {
       "id": "native-terminal-command",
@@ -13,11 +13,11 @@
     },
     {
       "id": "native-terminal-cold",
-      "claim": "A cold offline terminal restores the exact saved run timestamp and age with commands disabled; reconnect never replays its key."
+      "claim": "A cold offline terminal restores the exact saved run timestamp; reconnect never replays its key."
     },
     {
       "id": "native-terminal-pinned",
-      "claim": "An unavailable explicit actor is refused by the gateway, never falls back to another target, and clears the actual previous pane buffer."
+      "claim": "An unavailable explicit actor is refused, never falls back to another target, and clears the actual previous pane buffer."
     }
   ],
   "workflow": {
@@ -41,7 +41,7 @@
         "source": "prove",
         "stream": "stdout",
         "match": "\"nativeTerminalShared\":true",
-        "intent": "Require canonical context and updates without stream restarts.",
+        "intent": "Require the canonical run and updates without stream restarts.",
         "proves": ["native-terminal-shared"],
         "next": "command"
       },
@@ -59,7 +59,7 @@
         "source": "prove",
         "stream": "stdout",
         "match": "\"nativeTerminalCold\":true",
-        "intent": "Require cold saved facts, disabled commands and no key replay.",
+        "intent": "Require cold saved facts and no key replay.",
         "proves": ["native-terminal-cold"],
         "next": "pin"
       },

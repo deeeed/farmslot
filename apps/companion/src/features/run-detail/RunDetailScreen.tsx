@@ -530,7 +530,7 @@ export default function RunDetailScreen() {
     router.push({
       pathname: terminal.target.slotId
         ? '/workspace/slot/[slotId]/terminal'
-        : '/run-terminal/[runId]',
+        : '/terminal/worker',
       params: {
         ...terminal.target,
         ...targetRouteContext('terminal'),

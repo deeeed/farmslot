@@ -245,7 +245,7 @@ export function AskReviewer({ run }: { run: Run | null }) {
         router.push({
           pathname: reviewer.target.slotId
             ? '/workspace/slot/[slotId]/terminal'
-            : '/run-terminal/[runId]',
+            : '/terminal/worker',
           params: { ...reviewer.target, contextId: reviewer.context.id },
         });
       }}

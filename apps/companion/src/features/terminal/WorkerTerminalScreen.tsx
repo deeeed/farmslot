@@ -8,9 +8,9 @@ import {
   type WaveformPoint,
 } from '@siteed/audio-ui';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useIsFocused, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   type CopilotFormatInstructionResult,
   Methods,
+  type SlotAgentTargetParams,
   type TerminalData,
   type TerminalWorkerSnapshotResult,
   type TmuxWorkerListResult,
@@ -33,6 +34,7 @@ import {
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { type OperatorMessageInput, operatorMessageInput } from '@farmslot/review-dispatch';
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import {
@@ -58,8 +60,9 @@ import {
   terminalTailLinesFromText,
   trimTrailingTerminalBlankLines,
 } from '../../lib/terminal-tail';
+import { terminalTextRequest } from '../../lib/terminal-text-request';
 import { colors, spacing } from '../../lib/theme';
-import { inventoryLacksPane, tmuxWorkerRefFromRouteParams } from '../../lib/tmux-workers';
+import { inventoryLacksPane } from '../../lib/tmux-workers';
 import {
   getConfiguredSherpaAsrModelId,
   getPreferredVoiceAsrModelId,
@@ -72,6 +75,12 @@ import {
   type VoiceAsrModelState,
   type VoiceCopilotStatus,
 } from '../../lib/voice-copilot';
+import {
+  buildPersistedVoiceDraft,
+  parsePersistedVoiceDraft,
+  voiceDraftPane,
+  voiceDraftStorageKey,
+} from '../../lib/voice-draft-storage';
 import {
   buildWorkerVoiceFormatRequest,
   workerVoiceInstructionInput,
@@ -127,11 +136,43 @@ function takeVoiceLiveWindow(points: WaveformPoint[]): WaveformPoint[] {
   return points.slice(Math.max(0, points.length - VOICE_LIVE_BARS_WINDOW));
 }
 
-export default function WorkerTerminalScreen() {
+/** What a slot or run link reads back from the pane in development proofs. */
+export interface TerminalPaneProof {
+  stream: 'connecting' | 'live';
+  inputs: number;
+  subscriptionStarts: number;
+  error: string | null;
+  readOnlyReason: string | null;
+  readText: () => string;
+}
+
+/**
+ * The one terminal: Terminals opens it on a pane, and every slot, run or decision link opens it
+ * on the pane it resolves to. Typing always writes to the pane; Send from a slot or run link
+ * goes through the runner's own submission, which a PR-completion run records as an instruction.
+ */
+export function TerminalPane({
+  worker,
+  title: titleText,
+  slotTarget = null,
+  embedded = false,
+  initialDraft = '',
+  unavailableReason,
+  proof,
+}: {
+  worker: TmuxWorkerRef | null;
+  title?: string;
+  slotTarget?: SlotAgentTargetParams | null;
+  /** Inside the slot workspace tabs, which own back navigation and the top inset. */
+  embedded?: boolean;
+  initialDraft?: string;
+  /** Why there is no pane yet, in a few words. */
+  unavailableReason?: string;
+  proof?: MutableRefObject<TerminalPaneProof>;
+}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams();
-  const draftParam = (Array.isArray(params.draft) ? params.draft[0] : params.draft)?.trim() ?? '';
+  const draftParam = initialDraft.trim();
   const focused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
   const status = useConnectionStore((s) => s.status);
@@ -168,46 +209,10 @@ export default function WorkerTerminalScreen() {
   const tmuxPrefix = TMUX_PREFIX_BYTES[tmuxPrefixOption];
   const orientationControls = useTerminalOrientationControls(terminalFullscreen);
 
-  const workerRefParam = Array.isArray(params.workerRef) ? params.workerRef[0] : params.workerRef;
-  const nodeIdParam = Array.isArray(params.nodeId) ? params.nodeId[0] : params.nodeId;
-  const sessionParam = Array.isArray(params.session) ? params.session[0] : params.session;
-  const targetParam = Array.isArray(params.target) ? params.target[0] : params.target;
-  const windowParam = Array.isArray(params.window) ? params.window[0] : params.window;
-  const windowNameParam = Array.isArray(params.windowName)
-    ? params.windowName[0]
-    : params.windowName;
-  const paneParam = Array.isArray(params.pane) ? params.pane[0] : params.pane;
-  const paneIdParam = Array.isArray(params.paneId) ? params.paneId[0] : params.paneId;
-  const titleParam = Array.isArray(params.title) ? params.title[0] : params.title;
-
-  const worker = useMemo(
-    (): TmuxWorkerRef | null =>
-      tmuxWorkerRefFromRouteParams({
-        workerRef: workerRefParam,
-        nodeId: nodeIdParam,
-        session: sessionParam,
-        target: targetParam,
-        window: windowParam,
-        windowName: windowNameParam,
-        pane: paneParam,
-        paneId: paneIdParam,
-      }),
-    [
-      nodeIdParam,
-      paneIdParam,
-      paneParam,
-      sessionParam,
-      targetParam,
-      windowNameParam,
-      windowParam,
-      workerRefParam,
-    ],
-  );
-
-  const title = titleParam || worker?.target || 'Worker terminal';
+  const title = titleText || worker?.target || 'Terminal';
   const workerSubtitle = worker
     ? `${worker.nodeId} · ${worker.session}:${worker.windowName ?? worker.window ?? '0'}.${worker.pane ?? '0'}`
-    : 'Missing worker target';
+    : (unavailableReason ?? 'Missing worker target');
   // Connected, or within a short reconnect: the pane stays usable and keys queue.
   const heldConnected = useHeldConnection();
   const connectionReady = heldConnected && Boolean(client);
@@ -335,6 +340,10 @@ export default function WorkerTerminalScreen() {
   useEffect(() => {
     if (!client || status !== 'connected' || !worker) return;
     let mounted = true;
+    if (proof) {
+      proof.current.subscriptionStarts++;
+      proof.current.stream = 'connecting';
+    }
     const matches = (data: TerminalData) =>
       data.worker?.nodeId === worker.nodeId && data.worker?.target === worker.target;
     const unsub = client.subscribe(TERMINAL_DATA_EVENT, (payload) => {
@@ -347,11 +356,13 @@ export default function WorkerTerminalScreen() {
     client
       .request(Methods.TERMINAL_WORKER_SUBSCRIBE, { worker }, 10_000)
       .then(() => {
+        if (mounted && proof) proof.current.stream = 'live';
         setError(null);
       })
       .catch(requestFailed);
     return () => {
       mounted = false;
+      if (proof) proof.current.stream = 'connecting';
       unsub();
       client.request(Methods.TERMINAL_WORKER_UNSUBSCRIBE, { worker }, 5_000).catch((err: Error) => {
         // Unsubscribe can race with tmux pane teardown; after unmount there is no visible
@@ -359,7 +370,7 @@ export default function WorkerTerminalScreen() {
         console.warn(`[terminal-worker] unsubscribe failed for ${worker.target}: ${err.message}`);
       });
     };
-  }, [appendTerminalTail, client, requestFailed, status, worker]);
+  }, [appendTerminalTail, client, proof, requestFailed, status, worker]);
 
   useEffect(() => {
     let disposed = false;
@@ -431,6 +442,7 @@ export default function WorkerTerminalScreen() {
         setError(getErrorMessage(error));
         return;
       }
+      if (proof) proof.current.inputs++;
       writeWorkerInput(data).then(
         () => setError(withoutKeysRetryingNotice),
         (err: unknown) => {
@@ -441,7 +453,7 @@ export default function WorkerTerminalScreen() {
         },
       );
     },
-    [client, worker, requireWorkerInventory, writeWorkerInput],
+    [client, proof, worker, requireWorkerInventory, writeWorkerInput],
   );
 
   // A key from the key bar or tmux shortcuts changes the pane's line, so the input line starts over.
@@ -530,19 +542,34 @@ export default function WorkerTerminalScreen() {
     [sendInput, tmuxPrefix],
   );
 
+  // A retried Send keeps its operator message, so the runner can tell it from a new one.
+  const pendingOperatorMessage = useRef<OperatorMessageInput | null>(null);
   const sendReviewedVoiceInstruction = useCallback(async (): Promise<boolean> => {
-    const data = workerVoiceInstructionInput(
-      quickVoiceInstruction(voiceContext, voiceEditableInstruction),
-    );
+    const instruction = quickVoiceInstruction(voiceContext, voiceEditableInstruction);
+    const data = workerVoiceInstructionInput(instruction);
     if (!data || !client || !worker || isSending) return false;
     setIsSending(true);
     try {
       requireWorkerInventory();
-      const sending = writeWorkerInput(data);
-      // The instruction ends the pane's line with Enter, so the input line starts over as soon
-      // as it is queued; keys typed while it is on its way belong to the next line.
-      inputLineRef.current?.reset();
-      await sending;
+      if (slotTarget) {
+        const text = instruction.trim();
+        const message =
+          pendingOperatorMessage.current?.text === text
+            ? pendingOperatorMessage.current
+            : operatorMessageInput(text);
+        pendingOperatorMessage.current = message;
+        const request = terminalTextRequest(slotTarget, message);
+        await client.request(request.method, request.params, undefined, {
+          onSent: () => inputLineRef.current?.reset(),
+        });
+        if (pendingOperatorMessage.current === message) pendingOperatorMessage.current = null;
+      } else {
+        const sending = writeWorkerInput(data);
+        // The instruction ends the pane's line with Enter, so the input line starts over as
+        // soon as it is queued; keys typed while it is on its way belong to the next line.
+        inputLineRef.current?.reset();
+        await sending;
+      }
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setVoiceStatus('idle');
       setVoiceMessage('Instruction sent. Tap mic for the next worker nudge.');
@@ -562,6 +589,7 @@ export default function WorkerTerminalScreen() {
   }, [
     client,
     isSending,
+    slotTarget,
     voiceContext,
     voiceEditableInstruction,
     worker,
@@ -747,6 +775,45 @@ export default function WorkerTerminalScreen() {
     Boolean(worker),
   );
 
+  // An unsent draft stays with its pane across restarts, whichever link opened the pane.
+  const draftPane = worker ? voiceDraftPane(worker) : '';
+  const [draftHydratedPane, setDraftHydratedPane] = useState('');
+  useEffect(() => {
+    if (!draftPane) return;
+    let disposed = false;
+    AsyncStorage.getItem(voiceDraftStorageKey(draftPane))
+      .then((raw) => {
+        if (disposed) return;
+        const persisted = draftParam ? null : parsePersistedVoiceDraft(raw, draftPane);
+        if (persisted) {
+          setVoiceTranscript((current) => (current.trim() ? current : persisted.transcript));
+          setVoiceDraft((current) => (current.trim() ? current : persisted.draft));
+          setVoiceComposerOpen(true);
+        }
+        setDraftHydratedPane(draftPane);
+      })
+      .catch(() => {
+        if (!disposed) setDraftHydratedPane(draftPane);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [draftPane, draftParam]);
+  useEffect(() => {
+    if (!draftPane || draftHydratedPane !== draftPane) return;
+    if (voiceStatus === 'recording' || voiceStatus === 'transcribing') return;
+    const key = voiceDraftStorageKey(draftPane);
+    const persisted = buildPersistedVoiceDraft({
+      pane: draftPane,
+      transcript: voiceTranscript,
+      draft: voiceDraft,
+    });
+    (persisted
+      ? AsyncStorage.setItem(key, JSON.stringify(persisted))
+      : AsyncStorage.removeItem(key)
+    ).catch((err: Error) => setVoiceWarning(`Draft not saved: ${err.message}`));
+  }, [draftPane, draftHydratedPane, voiceDraft, voiceStatus, voiceTranscript]);
+
   const discardVoiceDraft = useCallback(() => {
     setVoiceStatus('idle');
     setVoiceMessage('Draft discarded. Tap mic to dictate again.');
@@ -757,6 +824,18 @@ export default function WorkerTerminalScreen() {
     setVoiceComposerOpen(false);
   }, []);
 
+  const readOnlyReason = !worker
+    ? (unavailableReason ?? 'Missing worker target')
+    : !heldConnected
+      ? 'Offline'
+      : null;
+  useEffect(() => {
+    if (!proof) return;
+    proof.current.error = visibleError;
+    proof.current.readOnlyReason = readOnlyReason;
+    proof.current.readText = () => terminalTailTextRef.current;
+  }, [proof, readOnlyReason, visibleError]);
+
   return (
     <KeyboardAvoidingView
       testID="companion-screen-worker-terminal"
@@ -765,12 +844,19 @@ export default function WorkerTerminalScreen() {
       style={styles.container}
     >
       <StatusBar hidden={terminalFullscreen} style="light" />
-      <View style={[styles.content, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View
+        style={[
+          styles.content,
+          { paddingTop: embedded ? 0 : insets.top, paddingBottom: insets.bottom },
+        ]}
+      >
         {terminalFullscreen ? (
           <View style={[styles.fullscreenOverlay, { top: insets.top + spacing.xs }]}>
-            <Pressable style={styles.fullscreenBackButton} onPress={() => router.back()}>
-              <Text style={styles.fullscreenBackText}>‹</Text>
-            </Pressable>
+            {embedded ? null : (
+              <Pressable style={styles.fullscreenBackButton} onPress={() => router.back()}>
+                <Text style={styles.fullscreenBackText}>‹</Text>
+              </Pressable>
+            )}
             <View style={styles.titleBlock}>
               <Text style={styles.title} numberOfLines={1}>
                 {title}
@@ -800,10 +886,12 @@ export default function WorkerTerminalScreen() {
           </View>
         ) : (
           <View style={styles.header}>
-            <Pressable style={styles.headerButton} onPress={() => router.back()}>
-              <Ionicons name="chevron-back" size={18} color={colors.accent} />
-              <Text style={styles.headerButtonText}>Back</Text>
-            </Pressable>
+            {embedded ? null : (
+              <Pressable style={styles.headerButton} onPress={() => router.back()}>
+                <Ionicons name="chevron-back" size={18} color={colors.accent} />
+                <Text style={styles.headerButtonText}>Back</Text>
+              </Pressable>
+            )}
             <View style={styles.titleBlock}>
               <Text style={styles.title} numberOfLines={1}>
                 {title}
@@ -863,7 +951,7 @@ export default function WorkerTerminalScreen() {
             onInput={sendInput}
             onResize={resize}
             rawHistoryText={terminalTailTextRef.current}
-            readOnlyReason={!worker ? 'Missing worker target' : !heldConnected ? 'Offline' : null}
+            readOnlyReason={readOnlyReason}
           />
         </View>
         {showVoiceComposer ? (

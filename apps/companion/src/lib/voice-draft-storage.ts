@@ -1,33 +1,41 @@
-export const VOICE_DRAFT_STORAGE_PREFIX = '@farmslot:voiceCopilot:draft:';
+import type { TmuxWorkerRef } from '@farmslot/protocol';
+
+/** Unsent terminal drafts, one per tmux pane. Older per-slot drafts are not read. */
+export const VOICE_DRAFT_STORAGE_PREFIX = '@farmslot:terminal:draft:';
 
 export interface PersistedVoiceDraft {
-  slotId: string;
+  pane: string;
   transcript: string;
   draft: string;
   updatedAt: string;
 }
 
-export function voiceDraftStorageKey(slotId: string): string {
-  return `${VOICE_DRAFT_STORAGE_PREFIX}${encodeURIComponent(slotId)}`;
+/** A pane keeps its draft whichever link opened it. */
+export function voiceDraftPane(worker: Pick<TmuxWorkerRef, 'nodeId' | 'paneId' | 'target'>) {
+  return `${worker.nodeId}:${worker.paneId ?? worker.target}`;
+}
+
+export function voiceDraftStorageKey(pane: string): string {
+  return `${VOICE_DRAFT_STORAGE_PREFIX}${encodeURIComponent(pane)}`;
 }
 
 export function buildPersistedVoiceDraft({
-  slotId,
+  pane,
   transcript,
   draft,
   now = new Date(),
 }: {
-  slotId: string;
+  pane: string;
   transcript: string;
   draft: string;
   now?: Date;
 }): PersistedVoiceDraft | null {
-  const normalizedSlotId = slotId.trim();
+  const normalizedPane = pane.trim();
   const normalizedTranscript = transcript.trim();
   const normalizedDraft = draft.trim();
-  if (!normalizedSlotId || (!normalizedTranscript && !normalizedDraft)) return null;
+  if (!normalizedPane || (!normalizedTranscript && !normalizedDraft)) return null;
   return {
-    slotId: normalizedSlotId,
+    pane: normalizedPane,
     transcript: normalizedTranscript,
     draft: normalizedDraft,
     updatedAt: now.toISOString(),
@@ -36,14 +44,14 @@ export function buildPersistedVoiceDraft({
 
 export function parsePersistedVoiceDraft(
   raw: string | null,
-  expectedSlotId: string,
+  expectedPane: string,
 ): PersistedVoiceDraft | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<PersistedVoiceDraft> | null;
-    if (!parsed || parsed.slotId !== expectedSlotId) return null;
+    if (!parsed || parsed.pane !== expectedPane) return null;
     return buildPersistedVoiceDraft({
-      slotId: parsed.slotId,
+      pane: parsed.pane,
       transcript: typeof parsed.transcript === 'string' ? parsed.transcript : '',
       draft: typeof parsed.draft === 'string' ? parsed.draft : '',
       now: parsePersistedDate(parsed.updatedAt),
