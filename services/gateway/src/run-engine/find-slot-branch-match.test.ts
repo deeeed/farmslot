@@ -160,7 +160,20 @@ mock.module('../sources/runtime.js', {
     withRunSources,
   },
 });
+// A second dispatch that claims this slot between our selection and our claim (F283).
+let rivalClaim: { slot: string; rival: Run } | undefined;
 const claim: typeof core.claimSlotStatusIf = async (id, predicate, fields) => {
+  if (rivalClaim?.slot === id) {
+    const { rival } = rivalClaim;
+    rivalClaim = undefined;
+    cancelledHolder = rival;
+    liveRows.set(id, { ...liveRows.get(id), current_run_id: rival.id, lifecycle: 'busy' });
+    Object.assign(slots.find((slot) => slot.slot === id)!, {
+      lifecycle: 'busy',
+      currentRunId: rival.id,
+    });
+    return { claimed: false, epoch: null };
+  }
   const row: Record<string, unknown> = {
     slot: id,
     lifecycle: 'ready',
@@ -374,6 +387,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   freshPreview = false;
   afterReuse = undefined;
   liveRows.clear();
+  rivalClaim = undefined;
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -957,4 +971,68 @@ test('an explicit wizard fresh dispatch records the CPU-idle bypass warning befo
   assert.match(JSON.stringify(result.inputs?.hostLoadSelection), /"skipped":false/);
   assert.deepEqual(freshTeardowns, [selected.slot]);
   assert.deepEqual(loadWaits, []);
+});
+
+const rival = (): Run =>
+  makeRun({
+    id: 'rival-dispatch',
+    project,
+    status: 'writing-task',
+    engineState: { generation: 0 },
+  });
+
+test('a claim another dispatch won selects again instead of failing the run', async () => {
+  reset('fix-bug', 'TAT-4137');
+  run.allowedSlots = ['macpro-mmt-1', 'macpro-mmt-2'];
+  rivalClaim = { slot: 'macpro-mmt-1', rival: rival() };
+  afterLoadWait = () => {
+    assert.match(
+      String(run.steps[0]!.inputs?.slotClaimWaitReason),
+      /Lost slot macpro-mmt-1: slot is claimed by live run rival-dispatch \(writing-task\)/,
+    );
+    assert.equal(run.slotId, null, 'the lost claim no longer binds the run');
+    // The branch-matching slot is gone, so selection falls back to a scored pick.
+    expectedSlot = 'macpro-mmt-2';
+    expectedTarget = undefined;
+  };
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-2');
+  assert.deepEqual(claims, ['macpro-mmt-2']);
+  assert.deepEqual(loadWaits, [1_000]);
+});
+
+test('a pinned run whose slot another dispatch won waits for it, then claims it', async () => {
+  reset('fix-bug', 'TAT-4137');
+  run.allowedSlots = ['macpro-mmt-1'];
+  const holder = rival();
+  rivalClaim = { slot: 'macpro-mmt-1', rival: holder };
+  let polls = 0;
+  afterLoadWait = () => {
+    assert.match(
+      String(run.steps[0]!.inputs?.slotClaimWaitReason),
+      /Waiting for slot macpro-mmt-1: slot is claimed by live run rival-dispatch/,
+    );
+    assert.ok(run.steps[0]!.queuedSince, 'the wait is queue time');
+    // The rival finishes and releases the slot on the second poll.
+    if (++polls < 2) return;
+    holder.status = 'done';
+    liveRows.set('macpro-mmt-1', { current_run_id: null, lifecycle: 'ready' });
+    Object.assign(slots[0]!, { lifecycle: 'ready', currentRunId: null });
+  };
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-1');
+  assert.deepEqual(claims, ['macpro-mmt-1']);
+  assert.deepEqual(loadWaits, [5_000, 5_000]);
+  assert.equal(run.steps[0]!.queuedSince, undefined);
+});
+
+test('a pinned run cancelled while it waits for its slot stops without claiming', async () => {
+  reset('fix-bug', 'TAT-4137');
+  run.allowedSlots = ['macpro-mmt-1'];
+  rivalClaim = { slot: 'macpro-mmt-1', rival: rival() };
+  afterLoadWait = () => {
+    run.status = 'cancelled';
+  };
+  await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /changed while waiting/);
+  assert.deepEqual(claims, []);
 });

@@ -68,6 +68,7 @@ import {
   isCdpLive,
   isFreeSlot,
   isReplaceableWarmSlot,
+  isSlotClaimRefusedError,
   parkPreservedSlotIds,
   pickedSlotIneligibility,
   prepareProfileNeedsCompanionResource,
@@ -397,6 +398,7 @@ export async function commitSlotClaim(
       blocker
         ? await describeSlotClaimBlocker(slotId, blocker, listSlotRuns)
         : 'slot changed hands during the claim',
+      !blocker || blocker.kind === 'live-owner',
     );
   }
   // The predicate passed, but a cancel, pause or replay can still land while
@@ -452,12 +454,24 @@ export async function commitSlotClaim(
 export const EXPLICIT_SLOT_RELEASE_WAIT_MS = 5 * 60 * 1000;
 const EXPLICIT_SLOT_RELEASE_POLL_MS = 2000;
 
-function slotClaimRefusedError(slotId: string, holder: string): Error {
+/**
+ * A refused claim. `conflict` marks a slot another live run holds (or that changed hands):
+ * that run ends by itself, so find-slot selects again rather than failing the run.
+ */
+function slotClaimRefusedError(slotId: string, holder: string, conflict = false): Error {
   return Object.assign(
     new Error(`Slot ${slotId} cannot be claimed: ${holder} — pick a slot again`),
-    { code: SLOT_CLAIM_REFUSED_CODE },
+    { code: SLOT_CLAIM_REFUSED_CODE, ...(conflict ? { claimConflict: { slotId, holder } } : {}) },
   );
 }
+
+function slotClaimConflict(error: unknown): { slotId: string; holder: string } | undefined {
+  const conflict = (error as { claimConflict?: { slotId: string; holder: string } } | null)
+    ?.claimConflict;
+  return isSlotClaimRefusedError(error) ? conflict : undefined;
+}
+
+const SLOT_CLAIM_CONFLICT_POLL_MS = 5_000;
 
 /** The attempt lost the run (cancel, pause, replay); it never owned the slot. */
 function runChangedError(runId: string, slotId: string): Error {
@@ -530,8 +544,8 @@ async function describeSlotClaimBlocker(
  * land right after the previous run on that slot ended, and its teardown runs
  * after the cancel returns. A release ends by itself, so wait for it
  * (bounded, as queue time); every other holder — a live run, a handoff, an
- * occupancy hold — only ends by an operator or by that run, so it fails at
- * once, named. A cancel, pause or replay while waiting owns the run: stop
+ * occupancy hold — is refused at once, named. A live run's refusal is a claim
+ * conflict: find-slot waits for that run to release the slot instead of failing. A cancel, pause or replay while waiting owns the run: stop
  * without previewing or claiming. Scored picks (no slotId) preview directly.
  */
 export async function previewWhenSlotClaimable<T>(
@@ -567,7 +581,11 @@ export async function previewWhenSlotClaimable<T>(
   const blockerOf = (row: Readonly<Record<string, unknown>> | null) =>
     row ? slotClaimBlocker(row, runId, runLookup) : null;
   const refuse = async (blocker: NonNullable<ReturnType<typeof slotClaimBlocker>>) =>
-    slotClaimRefusedError(slotId, await describeSlotClaimBlocker(slotId, blocker, listSlotRuns));
+    slotClaimRefusedError(
+      slotId,
+      await describeSlotClaimBlocker(slotId, blocker, listSlotRuns),
+      blocker.kind === 'live-owner',
+    );
 
   await reclaimCancelled(slotId, runId);
   assertRunUnchanged();
@@ -708,9 +726,39 @@ export async function executeFindSlotStep(
   context: FindSlotStepContext,
 ): Promise<StepIO> {
   const automaticLoadPinned = isPinnedSlotSelection(run);
+  const requestedSlotId = run.slotId;
   let hostLoadWaitReason: string | undefined;
+  let slotClaimWaitReason: string | undefined;
   for (;;) {
-    const result = await findSlotAttempt(runId, run, generation, context, automaticLoadPinned);
+    let result: FindSlotAttempt;
+    try {
+      result = await findSlotAttempt(runId, run, generation, context, automaticLoadPinned);
+    } catch (error) {
+      const conflict = slotClaimConflict(error);
+      if (!conflict || runSupersededSince(getRun(runId), generation)) throw error;
+      // Another run claimed the slot first (two dispatches picked it together). Selection runs
+      // again instead of failing the run; a pinned run waits for its slot to be released.
+      slotClaimWaitReason = `${automaticLoadPinned ? 'Waiting for' : 'Lost'} slot ${conflict.slotId}: ${conflict.holder}`;
+      // The lost claim bound the slot to the run first; selection starts from the request again.
+      if (getRun(runId)?.slotId !== requestedSlotId) updateRun(runId, { slotId: requestedSlotId });
+      updateRunStep(runId, 'find-slot', {
+        inputs: {
+          ...getRun(runId)?.steps.find((step) => step.name === 'find-slot')?.inputs,
+          slotClaimWaitReason,
+        },
+      });
+      await awaitAsQueueTime(runId, 'find-slot', () =>
+        automaticLoadPinned
+          ? waitWhileSlotHeldByLiveRun(conflict.slotId, runId, generation)
+          : delay(1_000),
+      );
+      if (runSupersededSince(getRun(runId), generation))
+        throw runChangedError(runId, conflict.slotId);
+      run = getRun(runId)!;
+      continue;
+    }
+    if (slotClaimWaitReason)
+      result = { ...result, inputs: { ...result.inputs, slotClaimWaitReason } };
     if (!result.hostLoadWait)
       return hostLoadWaitReason
         ? { ...result, inputs: { ...result.inputs, hostLoadWaitReason } }
@@ -728,6 +776,22 @@ export async function executeFindSlotStep(
     // Retry full selection so source refusals, capabilities and fleet eligibility
     // recover together, without retaining a snapshot across load waits.
     run = getRun(runId)!;
+  }
+}
+
+/** Poll the slot row (no selection work) until no live run other than this one holds it. */
+async function waitWhileSlotHeldByLiveRun(
+  slotId: string,
+  runId: string,
+  generation: number,
+  deps: { readRow?: typeof readSlotRow; sleep?: (ms: number) => Promise<unknown> } = {},
+): Promise<void> {
+  const { readRow = readSlotRow, sleep = delay } = deps;
+  for (;;) {
+    if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+    const row = await readRow(slotId);
+    if (!row || slotClaimBlocker(row, runId, getRun)?.kind !== 'live-owner') return;
+    await sleep(SLOT_CLAIM_CONFLICT_POLL_MS);
   }
 }
 
