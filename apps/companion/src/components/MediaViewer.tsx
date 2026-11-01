@@ -54,6 +54,9 @@ import { videoSourceLoadDurationMs } from '../lib/video-source-load';
 import { ArtifactImage } from './ArtifactImage';
 import { type EvidenceAcceptanceReview, EvidenceAcOverlay } from './EvidenceAcOverlay';
 
+/** Room for the player's native controls (time, progress, settings) at the video's foot. */
+const NATIVE_CONTROLS_CLEARANCE = 84;
+
 export interface MediaViewerItem {
   uri: string;
   title?: string;
@@ -624,6 +627,118 @@ function FullscreenVideo({
   const review = recordingAcceptanceReview(acceptance, item.evidenceKey);
   const timeline = model?.recordings.find((recording) => recording.videoPath === videoPath);
   const groups = model?.timelineGroups(videoPath, undefined, durationMs) ?? [];
+  const steps = timeline ? (
+    <ScrollView
+      horizontal
+      nestedScrollEnabled
+      contentContainerStyle={{ gap: 8, alignItems: 'flex-start' }}
+    >
+      {groups.map((group) => {
+        const expanded = openGroups.get(group.id) ?? group.defaultOpen;
+        return (
+          <View key={group.id} style={styles.timelineGroup}>
+            <View style={styles.groupRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={group.summary}
+                style={[styles.navButton, group.failed > 0 && styles.failedMarker]}
+                disabled={group.startMs === null}
+                testID="evidence-timeline-group"
+                onPress={() => {
+                  if (!model) return;
+                  const effect = model.selectTimelineGroup(videoPath, group.id, durationMs);
+                  if (effect.seekMs === null) return;
+                  onViewSelectionChange(item.uri);
+                  resumePlayback.current = true;
+                  applyPlayback(effect);
+                  updateSelection((value) => value + 1);
+                  player.play();
+                }}
+              >
+                <Text style={styles.detailText}>{group.summary}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={expanded ? 'Hide steps' : 'Show steps'}
+                accessibilityState={{ expanded }}
+                hitSlop={8}
+                style={styles.groupToggle}
+                onPress={() =>
+                  setOpenGroups((previous) => new Map(previous).set(group.id, !expanded))
+                }
+              >
+                <Text style={styles.detailText}>{expanded ? '▴' : '▾'}</Text>
+              </Pressable>
+            </View>
+            {expanded ? (
+              <ScrollView
+                nestedScrollEnabled
+                style={{ maxHeight: height * 0.32 }}
+                ref={(scroll) => {
+                  if (scroll) groupScrolls.current.set(group.id, scroll);
+                  else groupScrolls.current.delete(group.id);
+                }}
+              >
+                {group.markers.map((marker) => {
+                  const seek = model?.markerSeekMs(
+                    videoPath,
+                    marker.traceIndex,
+                    'start',
+                    durationMs,
+                  );
+                  return (
+                    <View
+                      key={marker.traceIndex}
+                      onLayout={
+                        marker.traceIndex === group.firstFailureTraceIndex
+                          ? (event) => {
+                              const scroll = groupScrolls.current.get(group.id);
+                              if (scroll && !focusedFailures.current.has(group.id)) {
+                                focusedFailures.current.add(group.id);
+                                scroll.scrollTo({
+                                  y: event.nativeEvent.layout.y,
+                                  animated: false,
+                                });
+                              }
+                            }
+                          : undefined
+                      }
+                    >
+                      <Pressable
+                        style={[styles.navButton, !marker.ok && styles.failedMarker]}
+                        disabled={seek === null || seek === undefined}
+                        testID={`evidence-marker-${marker.traceIndex}`}
+                        onPress={() => {
+                          if (
+                            !model?.selectOccurrence(marker.traceIndex, {
+                              videoPath,
+                              mediaDurationMs: durationMs,
+                            })
+                          )
+                            return;
+                          onViewSelectionChange(item.uri);
+                          resumePlayback.current = true;
+                          applyPlayback(model.cueClip(0));
+                          updateSelection((value) => value + 1);
+                          player.play();
+                        }}
+                      >
+                        <Text style={styles.detailText}>
+                          {seek == null ? 'Unrecorded' : formatEvidenceReviewVideoTime(seek / 1000)}{' '}
+                          · {marker.intent ?? marker.nodeId}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            ) : null}
+          </View>
+        );
+      })}
+    </ScrollView>
+  ) : null;
+
   return (
     <View style={[styles.media, { width, height }]}>
       <VideoView
@@ -636,9 +751,10 @@ function FullscreenVideo({
         allowsPictureInPicture={false}
         contentFit="contain"
       />
-      <View style={{ position: 'absolute', bottom: 16, left: 12, right: 12 }}>
+      <View style={styles.controls}>
         {error ? <Text style={styles.detailText}>{error}</Text> : null}
-        {model?.selection?.caption ? (
+        {/* With the criteria overlay its pill names the criterion; the header has its verdict. */}
+        {model?.selection?.caption && !review ? (
           <Text style={styles.detailText}>{model.selection.caption}</Text>
         ) : null}
         {model?.selection?.message ? (
@@ -652,114 +768,12 @@ function FullscreenVideo({
             review={review}
             maxListHeight={height * 0.28}
             onChoose={chooseClaim}
-          />
-        ) : null}
-        {timeline ? (
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            contentContainerStyle={{ gap: 8, alignItems: 'flex-start' }}
           >
-            {groups.map((group) => {
-              const expanded = openGroups.get(group.id) ?? group.defaultOpen;
-              return (
-                <View key={group.id} style={styles.timelineGroup}>
-                  <Pressable
-                    style={[styles.navButton, group.failed > 0 && styles.failedMarker]}
-                    disabled={group.startMs === null}
-                    testID="evidence-timeline-group"
-                    onPress={() => {
-                      if (!model) return;
-                      const effect = model.selectTimelineGroup(videoPath, group.id, durationMs);
-                      if (effect.seekMs === null) return;
-                      onViewSelectionChange(item.uri);
-                      resumePlayback.current = true;
-                      applyPlayback(effect);
-                      updateSelection((value) => value + 1);
-                      player.play();
-                    }}
-                  >
-                    <Text style={styles.detailText}>{group.summary}</Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ expanded }}
-                    onPress={() =>
-                      setOpenGroups((previous) => new Map(previous).set(group.id, !expanded))
-                    }
-                  >
-                    <Text style={styles.detailText}>{expanded ? 'Hide nodes' : 'Show nodes'}</Text>
-                  </Pressable>
-                  {expanded ? (
-                    <ScrollView
-                      nestedScrollEnabled
-                      style={{ maxHeight: height * 0.32 }}
-                      ref={(scroll) => {
-                        if (scroll) groupScrolls.current.set(group.id, scroll);
-                        else groupScrolls.current.delete(group.id);
-                      }}
-                    >
-                      {group.markers.map((marker) => {
-                        const seek = model?.markerSeekMs(
-                          videoPath,
-                          marker.traceIndex,
-                          'start',
-                          durationMs,
-                        );
-                        return (
-                          <View
-                            key={marker.traceIndex}
-                            onLayout={
-                              marker.traceIndex === group.firstFailureTraceIndex
-                                ? (event) => {
-                                    const scroll = groupScrolls.current.get(group.id);
-                                    if (scroll && !focusedFailures.current.has(group.id)) {
-                                      focusedFailures.current.add(group.id);
-                                      scroll.scrollTo({
-                                        y: event.nativeEvent.layout.y,
-                                        animated: false,
-                                      });
-                                    }
-                                  }
-                                : undefined
-                            }
-                          >
-                            <Pressable
-                              style={[styles.navButton, !marker.ok && styles.failedMarker]}
-                              disabled={seek === null || seek === undefined}
-                              testID={`evidence-marker-${marker.traceIndex}`}
-                              onPress={() => {
-                                if (
-                                  !model?.selectOccurrence(marker.traceIndex, {
-                                    videoPath,
-                                    mediaDurationMs: durationMs,
-                                  })
-                                )
-                                  return;
-                                onViewSelectionChange(item.uri);
-                                resumePlayback.current = true;
-                                applyPlayback(model.cueClip(0));
-                                updateSelection((value) => value + 1);
-                                player.play();
-                              }}
-                            >
-                              <Text style={styles.detailText}>
-                                {seek == null
-                                  ? 'Unrecorded'
-                                  : formatEvidenceReviewVideoTime(seek / 1000)}{' '}
-                                · {marker.intent ?? marker.nodeId}
-                              </Text>
-                            </Pressable>
-                          </View>
-                        );
-                      })}
-                    </ScrollView>
-                  ) : null}
-                </View>
-              );
-            })}
-          </ScrollView>
-        ) : null}
+            {steps}
+          </EvidenceAcOverlay>
+        ) : (
+          steps
+        )}
       </View>
     </View>
   );
@@ -834,13 +848,25 @@ function TextSlide({ uri, width, height, authHeaders, isActive }: TextSlideProps
 
 const styles = StyleSheet.create({
   timelineGroup: { maxWidth: 340, gap: 6 },
+  groupRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  groupToggle: { minWidth: 32, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  // Above the player's own control bar, and drawn and hit-tested above the native player view.
+  controls: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: NATIVE_CONTROLS_CLEARANCE,
+    gap: 6,
+    zIndex: 10,
+    elevation: 10,
+  },
   failedMarker: { borderLeftWidth: 3, borderLeftColor: colors.statusFail },
   modalRoot: {
     flex: 1,
   },
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.95)',
+    backgroundColor: '#000',
   },
   slide: {
     flex: 1,

@@ -27,7 +27,8 @@ export interface EvidenceAcceptanceReview {
 /**
  * The recording's criteria over the player, opened by one tap: the current one with its
  * verdict controls, previous / next, and every criterion at the moment the recording reaches
- * it. The same table of contents Command Center's evidence review shows.
+ * it. The same table of contents Command Center's evidence review shows. The toggle leads
+ * the player's one row of controls (`children`); the panel opens above that row.
  */
 export function EvidenceAcOverlay({
   model,
@@ -36,6 +37,7 @@ export function EvidenceAcOverlay({
   review,
   maxListHeight,
   onChoose,
+  children,
 }: {
   model: EvidenceReviewModel;
   videoPath: string;
@@ -44,13 +46,15 @@ export function EvidenceAcOverlay({
   maxListHeight: number;
   /** Select the criterion and play from its moment (null: the recording misses it). */
   onChoose: (claimId: string, startMs: number | null) => void;
+  /** The rest of the row: the recording's step groups. */
+  children?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const toc = useMemo(
     () => evidenceReviewToc(model, videoPath, { mediaDurationMs: durationMs || undefined }),
     [model, videoPath, durationMs],
   );
-  if (!toc.length) return null;
+  if (!toc.length) return <>{children}</>;
   // Nothing selected (a step opened on its own): no current criterion, › starts at the first.
   const claimId = model.selection?.claimId;
   const row = claimId ? review.rows.find((candidate) => candidate.id === claimId) : undefined;
@@ -61,20 +65,26 @@ export function EvidenceAcOverlay({
   const previous = claimId ? adjacentEvidenceReviewClaim(toc, claimId, -1) : null;
   const next = claimId ? adjacentEvidenceReviewClaim(toc, claimId, 1) : (toc[0]?.claim.id ?? null);
 
+  const toggle = (
+    <Pressable
+      testID="evidence-ac-toggle"
+      accessibilityRole="button"
+      accessibilityLabel={
+        open ? 'Hide criteria' : claimId ? `Criteria, on ${claimId}` : 'Show criteria'
+      }
+      accessibilityState={{ expanded: open }}
+      hitSlop={8}
+      style={styles.pill}
+      onPress={() => setOpen((value) => !value)}
+    >
+      <Text style={styles.pillText}>
+        {open ? 'Hide ACs' : claimId ? `ACs · ${claimId}` : 'ACs'}
+      </Text>
+    </Pressable>
+  );
+
   return (
     <View style={styles.wrap}>
-      <Pressable
-        testID="evidence-ac-toggle"
-        accessibilityRole="button"
-        accessibilityLabel={open ? 'Hide criteria' : 'Show criteria'}
-        accessibilityState={{ expanded: open }}
-        style={styles.pill}
-        onPress={() => setOpen((value) => !value)}
-      >
-        <Text style={styles.pillText}>
-          {open ? 'Hide ACs' : claimId ? `ACs · ${claimId}` : 'ACs'}
-        </Text>
-      </Pressable>
       {open ? (
         <View style={styles.panel} testID="evidence-ac-overlay">
           {review.stale ? (
@@ -86,7 +96,9 @@ export function EvidenceAcOverlay({
             <Pressable
               testID="evidence-ac-previous"
               accessibilityRole="button"
-              accessibilityLabel="Previous criterion"
+              accessibilityLabel={
+                previous ? `Previous criterion, ${previous}` : 'Previous criterion'
+              }
               disabled={!previous}
               style={[styles.step, !previous && styles.stepDisabled]}
               onPress={() => choose(previous)}
@@ -108,7 +120,7 @@ export function EvidenceAcOverlay({
             <Pressable
               testID="evidence-ac-next"
               accessibilityRole="button"
-              accessibilityLabel="Next criterion"
+              accessibilityLabel={next ? `Next criterion, ${next}` : 'Next criterion'}
               disabled={!next}
               style={[styles.step, !next && styles.stepDisabled]}
               onPress={() => choose(next)}
@@ -119,20 +131,22 @@ export function EvidenceAcOverlay({
           <ScrollView nestedScrollEnabled style={{ maxHeight: maxListHeight }}>
             {toc.map(({ claim, startMs }) => {
               const match = review.rows.find((candidate) => candidate.id === claim.id);
-              const state = match ? ` · ${acceptanceClaimLabel(match)}` : '';
+              const state = match ? acceptanceClaimLabel(match) : '';
+              const at =
+                startMs === null ? 'not recorded' : formatEvidenceReviewVideoTime(startMs / 1000);
               return (
                 <Pressable
                   key={claim.id}
                   testID={`evidence-ac-${claim.id}`}
                   accessibilityRole="button"
+                  accessibilityLabel={`${claim.id}, ${at}${state ? `, ${state}` : ''}`}
                   accessibilityState={{ selected: claim.id === claimId }}
                   style={[styles.entry, claim.id === claimId && styles.entrySelected]}
                   onPress={() => choose(claim.id)}
                 >
                   <Text style={styles.entryText} numberOfLines={1}>
-                    {startMs === null ? '–' : formatEvidenceReviewVideoTime(startMs / 1000)} ·{' '}
-                    {claim.id}
-                    {state}
+                    {startMs === null ? '–' : at} · {claim.id}
+                    {state ? ` · ${state}` : ''}
                   </Text>
                 </Pressable>
               );
@@ -140,20 +154,27 @@ export function EvidenceAcOverlay({
           </ScrollView>
         </View>
       ) : null}
+      <View style={styles.row}>
+        {toggle}
+        <View style={styles.rest}>{children}</View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: 6, alignItems: 'flex-start' },
+  wrap: { gap: 6 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  rest: { flex: 1, minWidth: 0 },
+  // The look of the viewer's other controls (Prev / Next, step groups).
   pill: {
-    minHeight: 32,
-    paddingHorizontal: 12,
+    minHeight: 36,
+    paddingHorizontal: 14,
     justifyContent: 'center',
     borderRadius: 999,
-    backgroundColor: 'rgba(18,18,26,0.82)',
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
-  pillText: { color: colors.textMuted, fontSize: fonts.sizeSm },
+  pillText: { color: 'rgba(255,255,255,0.85)', fontSize: fonts.sizeSm, fontWeight: '600' },
   panel: {
     alignSelf: 'stretch',
     gap: 6,
