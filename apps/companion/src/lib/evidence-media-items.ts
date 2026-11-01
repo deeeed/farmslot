@@ -1,4 +1,7 @@
-import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import type {
+  EvidenceReviewModel,
+  EvidenceReviewPlaybackEffect,
+} from '@farmslot/adapter-sdk/evidence';
 import type { SharedRunArtifactOwner } from '@farmslot/protocol/surfaces/view-links';
 
 import type { MediaViewerItem } from '../components/MediaViewer';
@@ -121,3 +124,27 @@ export function evidenceViewerSelection(
 }
 
 export { mediaShareView } from './media-share-view';
+
+/**
+ * Moving a recording's review to another criterion: select it, cue its clip on this
+ * recording, and play from `startMs`, its moment in the table of contents (else the clip's
+ * start). Undefined when the run has no such criterion; a null effect when it has nothing
+ * to play here, so only the caption changes.
+ */
+export function evidenceClaimPlayback(
+  model: EvidenceReviewModel,
+  claimId: string,
+  videoPath: string,
+  startMs: number | null,
+): { effect: EvidenceReviewPlaybackEffect | null } | undefined {
+  if (!model.selectClaim(claimId)) return undefined;
+  const clipIndex = model.selection?.clips.findIndex((clip) => clip.videoPath === videoPath) ?? -1;
+  const cued = clipIndex >= 0 ? model.cueClip(clipIndex) : null;
+  const seekMs = startMs ?? cued?.seekMs ?? null;
+  return {
+    effect:
+      seekMs === null
+        ? null
+        : { clip: cued?.clip ?? null, sourceChanged: false, pause: false, seekMs },
+  };
+}
