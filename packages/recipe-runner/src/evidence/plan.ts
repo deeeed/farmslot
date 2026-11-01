@@ -7,7 +7,9 @@ import {
 
 import {
   collectProofNodes,
+  isProofObservation,
   potentiallyEligibleProof,
+  proofAssertionSource,
   type ProofDocument,
   type ProofNode,
 } from './assertions.js';
@@ -118,4 +120,61 @@ export function planRecipeEvidence(
     if (node.proves?.length && !potentiallyEligibleProof(id, nodes))
       throw new Error(`Node ${id} declares proof without an observation-bound expectation.`);
   return { declarations: [...declarations.values()], nodes };
+}
+
+/** Built-in observations that never appear on the app's recording: shell output and log reads. */
+const OFF_SCREEN_OBSERVATIONS: ReadonlySet<string> = new Set(['command', 'watch_logs']);
+
+/**
+ * A visual or mixed claim is judged on the recording. One whose proof rests only on shell output
+ * and file or log checks can never be confirmed there, so the gate would refuse it after the run:
+ * it is refused here instead, before anything runs. The closure is every node the claim's proof
+ * can rest on: the proving nodes of the claim and of its child claims, what they call, and the
+ * sources they assert or re-read. Control and assertion nodes observe nothing themselves. Any
+ * other observation, including an adapter's own app or UI query, keeps the declared mode.
+ */
+export function assertVisualClaimsObserveUi(plan: RecipeEvidencePlan): void {
+  const refused: string[] = [];
+  for (const claim of plan.declarations) {
+    if (claim.proofMode !== 'visual' && claim.proofMode !== 'mixed') continue;
+    const claims = new Set([claim.id]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const child of plan.declarations)
+        if (child.parentId && claims.has(child.parentId) && !claims.has(child.id)) {
+          claims.add(child.id);
+          grew = true;
+        }
+    }
+    const closure = new Set<string>();
+    const add = (id: string) => {
+      if (closure.has(id)) return;
+      closure.add(id);
+      const node = plan.nodes.get(id);
+      if (node?.action === 'call')
+        for (const child of plan.nodes.keys()) if (child.startsWith(`${id}/`)) add(child);
+      if (node?.action === 'assert_output' || node?.action === 'state_read')
+        add(proofAssertionSource(id, node));
+    };
+    for (const [id, node] of plan.nodes)
+      if (node.proves?.some((proved) => claims.has(proved))) add(id);
+    // A claim nothing proves is reported as missing by claim derivation, not here.
+    if (!closure.size) continue;
+    const onScreen = [...closure].some((id) => {
+      const node = plan.nodes.get(id);
+      // An unresolved source (a state_read nothing checks at plan time) never refuses here.
+      if (!node) return true;
+      if (node.action.startsWith('ui.')) return true;
+      return (
+        isProofObservation(node.action) &&
+        node.action !== 'state_read' &&
+        !OFF_SCREEN_OBSERVATIONS.has(node.action)
+      );
+    });
+    if (!onScreen) refused.push(`${claim.id} (${claim.proofMode})`);
+  }
+  if (refused.length)
+    throw new Error(
+      `Only shell commands and file or log checks prove these visual or mixed claims, so the recording cannot show them: ${refused.join(', ')}. Prove each with a UI observation (ui.wait_for, or assert_output on a UI query), or declare proofMode state.`,
+    );
 }

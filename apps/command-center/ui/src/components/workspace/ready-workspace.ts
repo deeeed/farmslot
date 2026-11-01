@@ -991,6 +991,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         })),
         judgmentRows: controls.judgmentRows,
         pendingVisualClaimIds: model.pendingVisualClaimIds,
+        recording: model.recording,
       }),
       busy: controls.busy,
       feedback: controls.feedback,
