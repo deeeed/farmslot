@@ -25,10 +25,15 @@ const { createRunArtifactAcquisition, retainedRunTaskDirectory } =
   await import('./retained-artifacts.js');
 const { createRetrospectiveForRun } = await import('./retrospective.js');
 
-/** An acquisition that waits in acquireMedia, before its capture commits, until released. */
+/**
+ * An acquisition that waits in acquireMedia until released. A capture acquires its media after
+ * the bundle's metadata commit and before its final commit.
+ */
 function gatedAcquisition(runId: string) {
   let release = () => {};
+  let reach = () => {};
   const gate = new Promise<void>((resolve) => (release = resolve));
+  const reached = new Promise<void>((resolve) => (reach = resolve));
   const inner = createRunArtifactAcquisition(getRun(runId)!);
   const acquisition: RunArtifactAcquisition = {
     get media() {
@@ -36,11 +41,12 @@ function gatedAcquisition(runId: string) {
     },
     beforeCopy: (locality) => inner.beforeCopy(locality),
     acquireMedia: async (artifact, destination, maxBytes) => {
+      reach();
       await gate;
       return inner.acquireMedia(artifact, destination, maxBytes);
     },
   };
-  return { acquisition, release: () => release() };
+  return { acquisition, reached, release: () => release() };
 }
 
 const output: RunOutput = {
@@ -569,11 +575,18 @@ test('two overlapping captures of one run both succeed, the later one committed 
   });
   const gated = gatedAcquisition(run.id);
   const first = captureRunOutput(run.id, false, false, { acquisition: gated.acquisition });
+  await gated.reached;
   await writeFile(path.join(dir, 'artifacts/second.png'), 'second image bytes');
   const second = captureRunOutput(run.id, false);
-  // Unserialized, the second capture commits while the first waits; serialized, it queues.
+  // Unserialized, the second capture commits while the first waits, and the first then fails its
+  // final commit; serialized, the second queues behind the first.
+  let secondSettled = false;
+  void second.then(
+    () => (secondSettled = true),
+    () => (secondSettled = true),
+  );
   const deadline = Date.now() + 500;
-  while (!getRun(run.id)!.artifactBundle && Date.now() < deadline)
+  while (!secondSettled && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 10));
   gated.release();
   await first;
