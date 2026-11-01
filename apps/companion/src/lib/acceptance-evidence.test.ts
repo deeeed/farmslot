@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import type { AcceptanceStatusLedger } from '@farmslot/protocol';
+import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import {
+  type AcceptanceStatusLedger,
+  recordedEvidenceClosureIdentity,
+  type RecordedEvidencePackageInput,
+} from '@farmslot/protocol';
 
 import {
   acceptanceEvidenceHref,
   acceptanceEvidenceStrip,
   acceptanceEvidenceViewer,
+  recordedEvidenceKey,
+  recordingAcceptanceReview,
 } from './acceptance-evidence';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
 import { acceptanceLedgerView } from './task-progress-view';
@@ -123,4 +131,98 @@ test('the evidence route opens the run files viewer on the task artifact', () =>
       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
     },
   });
+});
+
+test('verdicts over a recording act only on the evidence it opened on', async () => {
+  const recorded: string[] = [];
+  const live = (key: string | null) => ({
+    rows: [],
+    evidenceKey: key,
+    record: async (id: string) => {
+      recorded.push(`${key}:${id}`);
+    },
+  });
+  // A verdict refreshes the rows and callback but keeps the evidence: the next one still acts.
+  const first = recordingAcceptanceReview(live('A'), 'A');
+  await first?.record?.('AC-1', 'confirmed');
+  const second = recordingAcceptanceReview(live('A'), 'A');
+  assert.equal(second?.stale, undefined);
+  await second?.record?.('AC-2', 'rejected');
+  assert.deepEqual(recorded, ['A:AC-1', 'A:AC-2']);
+  // Newer evidence while the recording stays on the old files: no verdicts, a reopen hint.
+  const replaced = recordingAcceptanceReview(live('B'), 'A');
+  assert.equal(replaced?.record, undefined);
+  assert.equal(replaced?.stale, true);
+  // A recording opened without knowing its evidence keeps the live review as it is.
+  assert.equal(recordingAcceptanceReview(live('B'), undefined)?.stale, undefined);
+  assert.equal(recordingAcceptanceReview(undefined, 'A'), undefined);
+});
+
+test('the evidence key comes only from a verified read, never a throw', () => {
+  const { input }: { input: RecordedEvidencePackageInput } = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../../packages/recipe-runner/test/fixtures/visual-review-package.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  const key = recordedEvidenceKey({ input, errors: [] });
+  assert.equal(typeof key, 'string');
+  // A pruned retained file: the package still lists it, without a digest, and the read says so.
+  const [pruned] = Object.keys(input.artifactDigests);
+  assert.ok(pruned);
+  const { [pruned]: _dropped, ...artifactDigests } = input.artifactDigests;
+  const unverifiable = {
+    ...input,
+    artifactPaths: input.artifactPaths ?? Object.keys(input.artifactDigests),
+    artifactDigests,
+  };
+  assert.throws(() => recordedEvidenceClosureIdentity(unverifiable));
+  assert.equal(
+    recordedEvidenceKey({ input: unverifiable, errors: ['Retained artifact is missing'] }),
+    null,
+  );
+  assert.equal(
+    recordedEvidenceKey({ input, errors: [], failureCode: 'evidence-package-unverifiable' }),
+    null,
+  );
+  assert.equal(recordedEvidenceKey({ input: { ...input, claims: undefined }, errors: [] }), null);
+  assert.equal(recordedEvidenceKey(undefined), null);
+});
+
+test('Review evidence opens on a path of the same evidence read it came from', () => {
+  // The shape of a done run with a pending output review (sanitized): the run screen reads
+  // the review's snapshot, which maps package files under artifacts/recipe-runs/run-2/;
+  // the run-scoped read maps the same files under artifacts/.
+  const { input }: { input: RecordedEvidencePackageInput } = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../../packages/recipe-runner/test/fixtures/visual-review-package.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  const read = (artifactPrefix: string) =>
+    createEvidenceReviewModel({ package: input, artifactPrefix, packagePath: 'recipe-runs/run-2' });
+  const snapshot = read('artifacts/recipe-runs/run-2/');
+  const runScoped = read('artifacts/');
+  const claimId = snapshot.claims.find((claim) => snapshot.claimFocusPath(claim.id))?.id;
+  assert.ok(claimId, 'the fixture has a criterion with evidence to open');
+  const focus = snapshot.claimFocusPath(claimId)!;
+  assert.ok(focus.startsWith('artifacts/recipe-runs/run-2/'));
+  const ledger: AcceptanceStatusLedger = { schemaVersion: 1, criteria: [] };
+  const row = (model: typeof snapshot) =>
+    acceptanceLedgerView(ledger, model.claims, [], model).rows.find(
+      (candidate) => candidate.criterion.id === claimId,
+    )!;
+  const opened = acceptanceEvidenceViewer(row(snapshot), focus, (path) => path, snapshot);
+  assert.equal(opened?.items[opened.initialIndex]?.path, focus);
+  // The failure the phone showed: the same path against the other read is not its evidence.
+  assert.equal(
+    acceptanceEvidenceViewer(row(runScoped), focus, (path) => path, runScoped),
+    null,
+  );
 });

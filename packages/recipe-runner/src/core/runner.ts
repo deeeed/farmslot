@@ -39,7 +39,11 @@ import {
 } from '../evidence/comparisons.js';
 import { occurrenceRecordingCoverage } from '../evidence/moments.js';
 import { selectedRecipeClaims, validateRecordedEvidencePackage } from '../evidence/package.js';
-import { planRecipeEvidence, type RecipeEvidencePlan } from '../evidence/plan.js';
+import {
+  assertVisualClaimsObserveUi,
+  planRecipeEvidence,
+  type RecipeEvidencePlan,
+} from '../evidence/plan.js';
 import { materializeEvidenceStill } from '../evidence/stills.js';
 import {
   JsonArtifactWriter,
@@ -350,6 +354,8 @@ class DefaultRecipeRunner implements RecipeRunner {
       ),
       request.claims,
     );
+    // Only here, before a run: re-deriving an existing recording must not refuse it.
+    assertVisualClaimsObserveUi(evidencePlan);
     // Full-run capture binds before the first node that can prove something: a UI action or
     // an assertion, including one inside a called recipe. Setup before it stays unrecorded.
     const proofNodeIds = new Set(
