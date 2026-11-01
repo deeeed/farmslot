@@ -38,6 +38,8 @@ let hasMirrorArtifacts = false;
 let copyOptions: Record<string, unknown> | undefined;
 let scaffoldingExcludesArtifacts: boolean | undefined;
 let copyFailure = false;
+let copyTotals: { files: number; bytes: number } | undefined;
+let teardownExtensions: number[] = [];
 let claimAfterReap = false;
 let cdpPort: string | undefined;
 /** The browser session a cancelled run left on the slot's CDP port: pid -> survives SIGKILL. */
@@ -137,6 +139,16 @@ const execForTest = async (_vars: unknown, cmd: string) => {
   }
   return ok();
 };
+const realTeardown = await import('../../run-engine/terminal-teardown-registry.js');
+mock.module('../../run-engine/terminal-teardown-registry.js', {
+  namedExports: {
+    ...realTeardown,
+    extendTerminalTeardown: (ms: number) => {
+      teardownExtensions.push(ms);
+      realTeardown.extendTerminalTeardown(ms);
+    },
+  },
+});
 const realExec = await import('../../core/exec.js');
 mock.module('../../core/exec.js', { namedExports: { ...realExec, execOnSlot: execForTest } });
 
@@ -230,6 +242,7 @@ mock.module('../../core/slot-io.js', {
       options: Record<string, unknown>,
     ) => {
       copyOptions = options;
+      if (copyTotals) (options.onTotals as (totals: unknown) => void)(copyTotals);
       if (copyFailure)
         (options.onEntryFailure as (error: unknown) => void)({
           sourcePath: '/slot/.task/dev/proof/artifacts/new.png',
@@ -278,7 +291,8 @@ mock.module('../../runners/native/worker.js', {
 
 const realRuns = await import('../../runs/store.js');
 
-const { slotRelease, slotReleasePreflight } = await import('./release.js');
+const { releaseArtifactCopyBudgetMs, slotRelease, slotReleasePreflight } =
+  await import('./release.js');
 const { runArchive, runCleanup, runDelete } = await import('../run/admin.js');
 const { activePrepareAborts } = await import('./shared.js');
 const { slotPrepare } = await import('./prepare.js');
@@ -301,6 +315,8 @@ beforeEach(async () => {
   copyOptions = undefined;
   scaffoldingExcludesArtifacts = undefined;
   copyFailure = false;
+  copyTotals = undefined;
+  teardownExtensions = [];
   claimAfterReap = false;
   cdpPort = undefined;
   browserSession = new Map();
@@ -543,6 +559,22 @@ test('release copyback keeps artifacts the completion mirror already holds', asy
   assert.ok(events.includes('mirror-complete'));
   assert.equal(copyOptions?.skipUnchanged, true);
   assert.equal(scaffoldingExcludesArtifacts, true, 'the scaffolding archive skips them too');
+});
+
+// F298 follow-up: after #1726, 9dd08510's release still copied 851 MB of APKs the mirror never
+// indexed, inside the 300 s teardown budget. The copy now adds a budget for its own bytes.
+test('a release copying 1.6 GB of unindexed artifacts adds their transfer time to the teardown', async () => {
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  hasMirrorArtifacts = true;
+  const bytes = 1.6 * 1024 ** 3;
+  copyTotals = { files: 2, bytes };
+  await slotRelease({ slotId: SLOT_ID }, emit);
+  assert.deepEqual(teardownExtensions, [releaseArtifactCopyBudgetMs(bytes)]);
+  assert.ok(
+    teardownExtensions[0]! > (bytes / (5 * 1024 * 1024)) * 1000,
+    'longer than the copy takes at the measured 5 MB/s',
+  );
+  assert.equal(releaseArtifactCopyBudgetMs(1024), 60_000, 'a small copy gets the floor');
 });
 
 test('a copyback with a failed file keeps the artifacts in the scaffolding archive', async () => {

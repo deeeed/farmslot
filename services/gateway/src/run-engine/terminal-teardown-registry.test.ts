@@ -7,7 +7,9 @@ import { assertCleanupCurrent } from '../core/cleanup-scope.js';
 import {
   beginTerminalTeardown,
   endTerminalTeardown,
+  extendTerminalTeardown,
   isTerminalTeardownInFlight,
+  TERMINAL_TEARDOWN_TIMEOUT_MS,
   withTerminalTeardown,
 } from './terminal-teardown-registry.js';
 
@@ -102,5 +104,31 @@ test('a parent deadline also unwinds a nested release and its registry count', a
   t.mock.timers.tick(100);
   await refused;
   await setImmediate();
+  assert.equal(isTerminalTeardownInFlight(slot), false);
+});
+
+// F298: 9dd08510's release copied 851 MB of artifacts the mirror never indexed inside the
+// 300 s budget. A copy of more than 1.5 GB now extends the run teardown and the nested release.
+test('an artifact copy extends every enclosing teardown, which keeps its 300 s', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const slot = 'f298-big-copy';
+  const copyMs = 800_000; // 1.6 GB at 2 MB/s, longer than the whole teardown budget
+  let copied!: () => void;
+  let tornDown!: () => void;
+  const release = withTerminalTeardown(slot, () =>
+    withTerminalTeardown(slot, async () => {
+      extendTerminalTeardown(copyMs + 20_000);
+      await new Promise<void>((resolve) => (copied = resolve));
+      await new Promise<void>((resolve) => (tornDown = resolve));
+      return 'released';
+    }),
+  );
+  await setImmediate();
+  t.mock.timers.tick(copyMs);
+  copied();
+  await setImmediate();
+  t.mock.timers.tick(TERMINAL_TEARDOWN_TIMEOUT_MS - 10_000);
+  tornDown();
+  assert.equal(await release, 'released');
   assert.equal(isTerminalTeardownInFlight(slot), false);
 });

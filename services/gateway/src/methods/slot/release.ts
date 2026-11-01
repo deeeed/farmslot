@@ -63,6 +63,7 @@ import {
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import {
+  extendTerminalTeardown,
   TerminalTeardownTimeoutError,
   withTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
@@ -151,6 +152,15 @@ async function logDiscardedWork(
 export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
 /** Progress while waiting, so a CLI idle timeout does not end the release first. */
 const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
+
+/**
+ * Teardown time a release's artifact copy adds for its bytes. Copybacks measured about
+ * 5 MB/s (audiolab-6, F298; 851 MB of unindexed APKs on audiolab-4 after #1726); the
+ * budget assumes 2 MB/s for a loaded node. The floor covers listing and hashing.
+ */
+export function releaseArtifactCopyBudgetMs(bytes: number): number {
+  return Math.max(60_000, Math.ceil(bytes / (2 * 1024 * 1024)) * 1000);
+}
 
 export interface SlotReleaseOptions {
   restartRunId?: string;
@@ -989,6 +999,9 @@ async function slotReleaseImpl(
             // again (about 900 MB on the Audiolab release slots) outlasted the teardown
             // timeout, so the slot never reset (F298).
             skipUnchanged: true,
+            // Files the mirror never indexed (two 425 MB APKs on audiolab-4) still transfer
+            // here, so the copy adds its own budget instead of spending the teardown's.
+            onTotals: ({ bytes }) => extendTerminalTeardown(releaseArtifactCopyBudgetMs(bytes)),
             // Stamp run/slot so transfer progress binds to run detail / pipeline UI.
             phase: 'mirror',
             runId: releaseRunId,
