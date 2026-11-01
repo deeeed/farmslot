@@ -53,6 +53,7 @@ mock.module('../methods/slot/recover-workspace.js', {
       options: Parameters<typeof recovery.recoverSlotWorkspace>[3],
     ) => {
       modes.push(params.mode);
+      parkRunIds.push(options?.parkRunId);
       assert.equal(options?.skipRecycle, true, 'automatic recovery explicitly keeps runtime cold');
       assert.ok(params.expectedWorkspace);
       recovered.push(workspace);
@@ -60,6 +61,12 @@ mock.module('../methods/slot/recover-workspace.js', {
     },
   },
 });
+const state = await import('../core/state.js');
+let slotRow: Record<string, unknown> | null = null;
+mock.module('../core/state.js', {
+  namedExports: { ...state, readSlotRow: async () => slotRow },
+});
+let parkRunIds: (string | undefined)[];
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
@@ -73,7 +80,8 @@ mock.module('../runs/store.js', {
     },
   },
 });
-const { reuseSafeIdleSlot, checkoutBeforeIdleReturn } = await import('./safe-idle-slot.js');
+const { reuseSafeIdleSlot, checkoutBeforeIdleReturn, returnReleasedCheckoutToIdle } =
+  await import('./safe-idle-slot.js');
 beforeEach(() => {
   workspace = {
     epoch: 7,
@@ -100,6 +108,8 @@ beforeEach(() => {
   recovered = [];
   modes = [];
   failure = undefined;
+  parkRunIds = [];
+  slotRow = null;
 });
 for (const publication of ['baseline', 'merged', 'pushed'] as const) {
   test(`clean ${publication} work uses fenced safe recovery`, async () => {
@@ -134,6 +144,92 @@ for (const kind of ['dirty', 'unpushed'] as const) {
     assert.deepEqual(recovered, []);
   });
 }
+// F291 (c9562e49 on mini-mmt-3): a finished artifact-only run's own commits kept the next dispatch
+// off its slot. Its idle return now asks the release to park them (the release owns the git).
+const validationRun = (overrides: Partial<Run> = {}) =>
+  makeRun({
+    id: 'validation',
+    slotId: 'proof',
+    flowType: 'dev',
+    completionPolicy: 'artifact-only',
+    branch: 'TAT-4146-feat-farm-validation',
+    status: 'done',
+    worktreeHeadAtDispatch: 'd'.repeat(40),
+    steps: [{ name: 'prepare', status: 'done' }],
+    ...overrides,
+  });
+const releaseFor = (runId: string) =>
+  reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null, recordRunId: runId });
+
+test("a finished artifact-only run's own unpushed checkout returns to idle through a parking release", async () => {
+  const run = validationRun();
+  runs = [run];
+  workspace.branch = run.branch!;
+  workspace.publication = 'unpushed';
+  assert.deepEqual(await releaseFor(run.id), { kind: 'ready' });
+  assert.deepEqual(modes, ['force']);
+  assert.deepEqual(parkRunIds, ['validation']);
+});
+
+test("work that isn't a finished artifact-only run's own is still kept", async () => {
+  workspace.publication = 'unpushed';
+  for (const [label, run, setup] of [
+    ['a publishing run', validationRun({ completionPolicy: 'default' }), () => {}],
+    ['a run still working', validationRun({ status: 'monitoring' }), () => {}],
+    ['another branch', validationRun(), () => (workspace.branch = 'someone-else')],
+    ['dirty files', validationRun(), () => (workspace.dirtyCount = 1)],
+    ['the default branch', validationRun({ branch: 'main' }), () => {}],
+  ] as const) {
+    runs = [run];
+    workspace.branch = run.branch!;
+    workspace.dirtyCount = 0;
+    setup();
+    assert.equal((await releaseFor(run.id)).kind, 'local-work', label);
+  }
+  // Without a named run nothing is parked, however parkable the checkout looks.
+  runs = [validationRun()];
+  workspace.branch = 'TAT-4146-feat-farm-validation';
+  assert.equal(
+    (await reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null })).kind,
+    'local-work',
+  );
+  assert.deepEqual(recovered, []);
+});
+
+test('a checkout COMPLETE already released returns to idle when its run closes', async () => {
+  const run: Run = {
+    ...validationRun(),
+    releasedCheckout: {
+      slotId: 'proof',
+      branch: 'TAT-4146-feat-farm-validation',
+      headSha: 'a'.repeat(40),
+      at: '2026-11-01T10:00:00.000Z',
+    },
+  };
+  runs = [run];
+  workspace.branch = run.branch!;
+  workspace.publication = 'unpushed';
+  for (const owner of ['successor', null] as const) {
+    slotRow = { slot_epoch: 7, current_run_id: owner, cleanup_run_id: null, handoff_run_id: null };
+    const result = await returnReleasedCheckoutToIdle(run, () => {});
+    if (owner) assert.equal(result, null, 'a slot another run owns is left alone');
+    else assert.deepEqual(result, { kind: 'ready' });
+  }
+  assert.deepEqual(parkRunIds, ['validation']);
+  assert.equal(
+    await returnReleasedCheckoutToIdle({ ...run, status: 'completing' }, () => {}),
+    null,
+  );
+  // Without the head COMPLETE recorded, or with another head checked out, nothing parks.
+  assert.equal(
+    await returnReleasedCheckoutToIdle({ ...run, releasedCheckout: undefined }, () => {}),
+    null,
+  );
+  workspace.headSha = 'e'.repeat(40);
+  assert.equal((await returnReleasedCheckoutToIdle(run, () => {}))?.kind, 'local-work');
+  assert.deepEqual(parkRunIds, ['validation']);
+});
+
 test('unknown publication and a deleted remote ref never grant reset authority', async () => {
   workspace.publication = 'unknown';
   workspace.error = 'Publication ref is absent';

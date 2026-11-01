@@ -79,6 +79,7 @@ export {
 } from './slot-io.js';
 export {
   claimSlotStatusIf,
+  markRunSlotHeld,
   markSlotBusy,
   markSlotHeld,
   markSlotStatusIf,
