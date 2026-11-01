@@ -945,24 +945,28 @@ async function slotReleaseImpl(
           params.expectedRunId ??
           ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ??
           undefined;
-        await slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
-          excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES],
-          excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
-          // Stamp run/slot so transfer progress binds to run detail / pipeline UI.
-          phase: 'mirror',
-          runId: releaseRunId,
-          slotId: params.slotId,
-          labelPrefix: 'release-artifacts',
-          // Release-time copyback is best-effort: one transient EACCES on a
-          // screenshot must not block reset of the whole slot. Per-file errors
-          // are surfaced in the step breadcrumb so operators see partial copies.
-          onEntryFailure: (err) => {
-            entryFailures.push(err);
-            console.warn(
-              `[slot.release] artifact copy entry failure ${err.sourcePath}: ${err.message.slice(0, 200)}`,
-            );
-          },
-        });
+        // An ended run's dir gets these files with no update of that run.
+        const { withTaskDirWrite } = await import('../../run-completion/retained-artifacts.js');
+        await withTaskDirWrite(orchTaskDir, () =>
+          slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
+            excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES],
+            excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
+            // Stamp run/slot so transfer progress binds to run detail / pipeline UI.
+            phase: 'mirror',
+            runId: releaseRunId,
+            slotId: params.slotId,
+            labelPrefix: 'release-artifacts',
+            // Release-time copyback is best-effort: one transient EACCES on a
+            // screenshot must not block reset of the whole slot. Per-file errors
+            // are surfaced in the step breadcrumb so operators see partial copies.
+            onEntryFailure: (err) => {
+              entryFailures.push(err);
+              console.warn(
+                `[slot.release] artifact copy entry failure ${err.sourcePath}: ${err.message.slice(0, 200)}`,
+              );
+            },
+          }),
+        );
         if (entryFailures.length > 0) {
           step(
             'artifacts',

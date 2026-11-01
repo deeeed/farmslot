@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - The refusals from `slot.release`, `slot.prepare` and `slot.refresh` for a slot with recovery in flight now name the exit: `farmslot slot refresh <slot> --recover`.
 
+- Capture, admission and the hourly capacity warning charge gateway task dirs whose runs have all ended (live or archived records) and have not been updated for 15 minutes, or that no run names, from a footprint measured once; any later update to one of those runs measures the dir again. Dirs of runs still going, dirs being admitted, dirs a slot release or an explicit backfill is writing (which also drop their kept footprint first), and eval experiment roots are walked on every read.
 - Publication receipts fence their reasons with the shared protocol `markdownFence`; line endings inside a reason are normalised.
 - Run progress ignores an agent context whose native session was released, or closed with no recovery pending: nothing runs there, so it can no longer make an idle worker read unproven. On 22b57685 a blocked reviewer with a closed and released session kept the publication gate at `run-progress-unconfirmed` while the worker sat idle at its prompt.
 - A reviewer's task document states its round ("Review round N of M"), counted the same way as the publication review budget, so project review templates can relax blocking from round 3 as the review convergence rule requires. Before, only an operator-extended round said which attempt it was.

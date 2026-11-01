@@ -14,7 +14,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { projectTaskRoots } from '../core/config.js';
+import { EVAL_TASK_FLOW, projectTaskRoots } from '../core/config.js';
 import {
   EXPERIMENT_MANIFEST_FILENAME,
   fileExists,
@@ -289,13 +289,13 @@ export async function findReferenceOnlyExperiments(
     if (project && rootProject !== project) continue;
     let cases: string[];
     try {
-      cases = await readdir(path.join(root, 'evals'));
+      cases = await readdir(path.join(root, EVAL_TASK_FLOW));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
       throw err;
     }
     for (const name of cases) {
-      const manifestPath = path.join(root, 'evals', name, EXPERIMENT_MANIFEST_RELATIVE_PATH);
+      const manifestPath = path.join(root, EVAL_TASK_FLOW, name, EXPERIMENT_MANIFEST_RELATIVE_PATH);
       if (!(await fileExists(manifestPath))) continue;
       const parsed = JSON.parse(await readFile(manifestPath, 'utf8'));
       if (isEvalExperimentManifest(parsed) && parsed.familyId === familyId)
