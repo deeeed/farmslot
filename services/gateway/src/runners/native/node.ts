@@ -68,6 +68,16 @@ function hasIssuedOfflineAssignment(owner: string, machine: string, principalId?
   );
 }
 
+/** The owner a machine's node keeps while it is offline, only while that assignment stays issued. */
+export function offlineAssignedNativeOwner(machine: string): string | undefined {
+  const nodes = loadCredentialStore().principals.filter(
+    (principal) => principal.subject.type === 'node' && principal.subject.machine === machine,
+  );
+  const subject = nodes.length === 1 ? nodes[0]!.subject : undefined;
+  const owner = subject?.type === 'node' ? subject.nativeOwnerPrincipalId : undefined;
+  return owner && hasIssuedOfflineAssignment(owner, machine) ? owner : undefined;
+}
+
 /** An offline assignment permits waiting only; it never authorizes a request without a live node. */
 export function resolveNativeExecutionNode(owner: string, machine: string): AuthorizedNativeNode {
   // The shared remote routing boundary: a replacement at a reused id never owns a node.

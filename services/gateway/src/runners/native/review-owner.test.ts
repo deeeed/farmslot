@@ -1,21 +1,57 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { mock, test } from 'node:test';
 
 import { WebSocket } from 'ws';
 
 import type { SlotVars } from '../../core/config.js';
-import { registerNode, unregisterByWs } from '../../fleet/machine-registry.js';
-import {
-  isNodeTransportUnavailableError,
-  NodeTransportUnavailableError,
-} from '../../fleet/node-rpc.js';
-import { makeRun } from '../../run-engine/test-fixtures.js';
 
-import { nativeReviewerOwner, waitForNativeReviewerOwner } from './review-owner.js';
+const machine = 'f303-remote';
+const owner = 'farm-automation';
+const nodePrincipal = 'node-f303-remote';
+let credentials: Array<{ principalId: string; revokedAt?: string }> = [];
+
+const credentialStore = await import('../../security/credential-store.js');
+mock.module('../../security/credential-store.js', {
+  namedExports: {
+    ...credentialStore,
+    loadCredentialStore: () => ({
+      principals: [
+        { id: owner, subject: { type: 'person' } },
+        {
+          id: nodePrincipal,
+          subject: { type: 'node', machine, nativeOwnerPrincipalId: owner },
+        },
+      ],
+      credentials,
+    }),
+  },
+});
+const nativeNode = await import('../../security/native-node.js');
+mock.module('../../security/native-node.js', {
+  namedExports: {
+    ...nativeNode,
+    nativeOwnerAssignedMachines: () => new Set([machine]),
+    requireGenerationZeroOwner: (principal: string) => principal,
+  },
+});
+// Owner checks for the review workspace need a session principal; this test is about the node.
+const workerOwner = await import('../../security/native-worker-owner.js');
+mock.module('../../security/native-worker-owner.js', {
+  namedExports: {
+    ...workerOwner,
+    resolveReviewWorkspaceOwner: (principal: string) => principal,
+  },
+});
+
+const { registerNode, unregisterByWs } = await import('../../fleet/machine-registry.js');
+const { isNodeTransportUnavailableError, resolveAfterNodeReconnect, withNodeReconnectWait } =
+  await import('../../fleet/node-rpc.js');
+const { makeRun } = await import('../../run-engine/test-fixtures.js');
+const { nativeReviewerOwner } = await import('./review-owner.js');
 
 const vars: SlotVars = {
   slotId: 'f303-mm-3',
-  machine: 'f303-remote',
+  machine,
   host: 'f303-remote.example',
   repo: '/fixture',
   remoteRepo: '/fixture',
@@ -37,14 +73,32 @@ const vars: SlotVars = {
   resourceVars: {},
 };
 const run = makeRun({ id: 'f303-run', slotId: vars.slotId });
-const notReconnected = () =>
-  new NodeTransportUnavailableError(
-    vars.machine,
-    'not-connected',
-    'Native execution node is temporarily unavailable',
+const socket = () =>
+  ({
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      void raw;
+    },
+  }) as WebSocket;
+const registerReviewNode = (ws: WebSocket) =>
+  registerNode(
+    machine,
+    1,
+    ws,
+    undefined,
+    undefined,
+    { ownerPrincipalId: owner, supportsWorkers: true, supportsEnsure: true },
+    { principalId: nodePrincipal, valid: () => true },
+  );
+// The review agent's own wiring: reconnect wait scoped to the run still being current.
+const reattachOwner = (assertCurrent: () => void = () => {}) =>
+  withNodeReconnectWait(
+    async () => resolveAfterNodeReconnect(machine, () => nativeReviewerOwner(run, vars)),
+    assertCurrent,
   );
 
-test('a review node that has not reconnected after a reload is a wait, not a missing owner', () => {
+test('an offline review node with an issued assignment is a wait, not a missing owner', () => {
+  credentials = [{ principalId: nodePrincipal }];
   assert.throws(
     () => nativeReviewerOwner(run, vars),
     (error: unknown) =>
@@ -52,113 +106,39 @@ test('a review node that has not reconnected after a reload is a wait, not a mis
   );
 });
 
-test('a connected review node without an owner is still a permanent refusal', () => {
-  const ws = {
-    readyState: WebSocket.OPEN,
-    send(raw: string) {
-      void raw;
-    },
-  } as WebSocket;
-  registerNode(vars.machine, 1, ws);
+test('an offline review node without an issued assignment still has no owner', () => {
+  credentials = [{ principalId: nodePrincipal, revokedAt: '2026-11-01T00:00:00.000Z' }];
+  assert.throws(
+    () => nativeReviewerOwner(run, vars),
+    (error: unknown) =>
+      !isNodeTransportUnavailableError(error) &&
+      error instanceof Error &&
+      /no native execution owner/.test(error.message),
+  );
+});
+
+test('a reload re-entering REVIEW waits for the review node and resolves its owner', async () => {
+  credentials = [{ principalId: nodePrincipal }];
+  const ws = socket();
   try {
-    assert.throws(
-      () => nativeReviewerOwner(run, vars),
-      (error: unknown) =>
-        !isNodeTransportUnavailableError(error) &&
-        error instanceof Error &&
-        /no native execution owner/.test(error.message),
-    );
+    const pending = reattachOwner();
+    setTimeout(() => registerReviewNode(ws), 150);
+    assert.equal(await pending, owner);
   } finally {
     unregisterByWs(ws);
   }
 });
 
-test('a reload re-entering REVIEW waits for the node and then resolves its owner', async () => {
-  // Reload sequence: the reviewer reattach asks for the owner twice before the node reconnects.
-  let attempts = 0;
-  let checks = 0;
-  const owner = await waitForNativeReviewerOwner(run, vars, {
-    intervalMs: 1,
-    check: () => checks++,
-    resolve: () => {
-      attempts++;
-      if (attempts < 3) throw notReconnected();
-      return 'farm-automation';
-    },
-  });
-  assert.equal(owner, 'farm-automation');
-  assert.equal(attempts, 3);
-  assert.equal(checks, 2);
-});
-
-test('the wait re-reads the node registry, so a node that returns without an owner refuses', async () => {
-  const ws = {
-    readyState: WebSocket.OPEN,
-    send(raw: string) {
-      void raw;
-    },
-  } as WebSocket;
-  let attempts = 0;
-  try {
-    await assert.rejects(
-      waitForNativeReviewerOwner(run, vars, {
-        intervalMs: 1,
-        resolve: (current, slot) => {
-          attempts++;
-          if (attempts === 2) registerNode(vars.machine, 1, ws);
-          return nativeReviewerOwner(current, slot);
-        },
-      }),
-      /no native execution owner/,
-    );
-    assert.equal(attempts, 2);
-  } finally {
-    unregisterByWs(ws);
-  }
-});
-
-test('a permanent owner refusal is not retried', async () => {
-  let attempts = 0;
+test('a review superseded while its node reconnects stops waiting', async () => {
+  credentials = [{ principalId: nodePrincipal }];
+  let current = true;
+  setTimeout(() => {
+    current = false;
+  }, 150);
   await assert.rejects(
-    waitForNativeReviewerOwner(run, vars, {
-      intervalMs: 1,
-      resolve: () => {
-        attempts++;
-        throw new Error('The review node does not support owned native sessions');
-      },
-    }),
-    /does not support owned native sessions/,
-  );
-  assert.equal(attempts, 1);
-});
-
-test('an outage longer than the wait still fails the review', async () => {
-  await assert.rejects(
-    waitForNativeReviewerOwner(run, vars, {
-      intervalMs: 1,
-      timeoutMs: 20,
-      resolve: () => {
-        throw notReconnected();
-      },
-    }),
-    (error: unknown) => isNodeTransportUnavailableError(error),
-  );
-});
-
-test('a review superseded while it waits stops waiting', async () => {
-  let attempts = 0;
-  await assert.rejects(
-    waitForNativeReviewerOwner(run, vars, {
-      intervalMs: 1,
-      check: () => {
-        throw new Error('Native review was superseded by another run action');
-      },
-      resolve: () => {
-        attempts++;
-        throw notReconnected();
-      },
+    reattachOwner(() => {
+      if (!current) throw new Error('Native review was superseded by another run action');
     }),
     /superseded/,
   );
-  assert.equal(attempts, 1);
 });

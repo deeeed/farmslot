@@ -15,16 +15,17 @@ import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { readEvalReviewContribution, recordEvalJudgeResult } from '../evals/judge.js';
-import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
+import {
+  isNodeTransportUnavailableError,
+  resolveAfterNodeReconnect,
+  withNodeReconnectWait,
+} from '../fleet/node-rpc.js';
 import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
 import { validateNativeRunner } from '../runners/native/manager.js';
-import {
-  nativeReviewerResultSchema,
-  waitForNativeReviewerOwner,
-} from '../runners/native/review-owner.js';
+import { nativeReviewerOwner, nativeReviewerResultSchema } from '../runners/native/review-owner.js';
 import { cancelNativeWorkerContext, dispatchNativeWorker } from '../runners/native/worker.js';
 import {
   readNativeWorkerCommandError,
@@ -239,7 +240,10 @@ async function runNativeReviewAttempt(
     return run;
   };
   // A reload re-enters REVIEW before the review node reconnects; wait for it, not fail the run.
-  const ownerPrincipalId = await waitForNativeReviewerOwner(original, vars, { check: admit });
+  const ownerPrincipalId = await withNodeReconnectWait(
+    async () => resolveAfterNodeReconnect(vars.machine, () => nativeReviewerOwner(original, vars)),
+    admit,
+  );
   admit();
   const allocated = allocateReviewerContext({ runId, runner, model });
   const contextPrefix = nativeReviewerContextPrefix({

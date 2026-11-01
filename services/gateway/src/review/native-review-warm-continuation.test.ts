@@ -81,7 +81,6 @@ mock.module('../runners/native/review-owner.js', {
   namedExports: {
     nativeReviewerOwner: () => owner.id,
     nativeReviewerResultSchema: () => undefined,
-    waitForNativeReviewerOwner: async () => owner.id,
   },
 });
 mock.module('../runners/native/worker.js', {

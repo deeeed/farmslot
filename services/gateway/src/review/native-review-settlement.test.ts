@@ -21,7 +21,7 @@ const { upsertAgentContext } = await import('../agents/contexts.js');
 const { rewriteStatusFile } = await import('../core/state.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 const { runWithSessionOriginator } = await import('../security/work-originator.js');
-const { NodeRpcTimeoutError } = await import('../fleet/node-rpc.js');
+const { NodeRpcTimeoutError, NodeTransportUnavailableError } = await import('../fleet/node-rpc.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
 const { NativeWorkerOperationUncertainError } = await import('../runners/native/worker-error.js');
 const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
@@ -83,6 +83,7 @@ const stopped: string[] = [];
 let stopFails = false;
 let snapshotRange: ReviewSnapshotRange | undefined;
 let judgeRecordedBeforeStop = false;
+let reviewNodeOffline = false;
 const completionCommands: string[] = [];
 let loseCompletionReply = false;
 let completionLaunches = 0;
@@ -177,9 +178,16 @@ mock.module('../run-engine/stack-base.js', { namedExports: { stackPrBase: async 
 mock.module('../runners/native/manager.js', { namedExports: { validateNativeRunner: () => {} } });
 mock.module('../runners/native/review-owner.js', {
   namedExports: {
-    nativeReviewerOwner: () => owner.id,
+    nativeReviewerOwner: () => {
+      if (reviewNodeOffline)
+        throw new NodeTransportUnavailableError(
+          'review-node',
+          'not-connected',
+          'Native execution node is temporarily unavailable',
+        );
+      return owner.id;
+    },
     nativeReviewerResultSchema: () => undefined,
-    waitForNativeReviewerOwner: async () => owner.id,
   },
 });
 mock.module('../runners/native/worker.js', {
@@ -570,6 +578,21 @@ test('an eval pins the blind range and records its only judge before settling th
     getRun(run.id)?.agentContexts?.find(({ id }) => id === receipt?.contextId)?.status,
     'complete',
   );
+});
+
+test('a review re-entered before its node reconnects waits for it and stops when superseded', async (t) => {
+  // F303: a reload re-enters REVIEW while the review node is still reconnecting.
+  const run = await nativeRun(t);
+  reviewNodeOffline = true;
+  t.after(() => {
+    reviewNodeOffline = false;
+  });
+  const before = dispatchCalls;
+  const pending = review(run.id);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  updateRun(run.id, { status: 'cancelled' });
+  await assert.rejects(pending, /superseded/);
+  assert.equal(dispatchCalls, before);
 });
 
 test('a failed native turn with valid findings receives one completion turn in the same admission', async (t) => {
