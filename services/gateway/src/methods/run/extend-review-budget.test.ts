@@ -83,6 +83,7 @@ test('five spent rounds stay spent; durable grant admits sixth/seventh and block
   assert.equal(result.budget.used, 5);
   assert.equal(result.budget.remaining, 2);
   const upcoming = await nextReviewBudgetScopeBrief(getRun(run.id)!);
+  assert.match(upcoming, /Review round 6 of 7\./);
   assert.match(upcoming, /Attempt 6\/7/);
   assert.match(upcoming, /scoped correction/);
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 5);
@@ -203,7 +204,8 @@ test('a parent PR grant preserves the update-branch limit, gate refusal and inst
     current.engineState?.publishGate?.reviewLaunchRejection?.code,
     'REVIEW_ROUND_LIMIT_REACHED',
   );
-  assert.equal(reviewBudgetScopeBrief(current), '');
+  // The current reviewer is told its round; a spent budget has no next round to state.
+  assert.equal(reviewBudgetScopeBrief(current), '\n## Review round\n\nReview round 2 of 2.\n');
   assert.equal(await nextReviewBudgetScopeBrief(current), '');
   await assert.rejects(
     runExtendReviewBudget({ ...update.params, expectedLimit: 2, limit: 4 }, emit, update.deps),

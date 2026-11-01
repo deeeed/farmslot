@@ -29,7 +29,9 @@ import {
   assertReviewRoundAvailable,
   attachReviewRoundBudget,
   clearReviewRoundSettlement,
+  nextReviewBudgetScopeBrief,
   prepareReviewRoundAvailabilityCheck,
+  reviewBudgetScopeBrief,
   reviewLaunchStartedAt,
   reviewNoVerdictCapReason,
   reviewRoundAdmissionId,
@@ -59,6 +61,25 @@ function fixture(
   });
   return getRun(run.id)!;
 }
+
+test('the reviewer task states its review round so the round-3 rule can apply', async (t) => {
+  const run = fixture(t);
+  const { limit } = await runReviewRoundBudget(run);
+  assert.match(
+    await nextReviewBudgetScopeBrief(getRun(run.id)!),
+    new RegExp(`Review round 1 of ${limit}\\.`),
+  );
+  for (let index = 0; index < 3; index++) await admitReviewRound(run.id, `round-${index}`);
+  // A launched reviewer is admitted before its task document is written.
+  assert.match(
+    reviewBudgetScopeBrief(getRun(run.id)!),
+    new RegExp(`Review round 3 of ${limit}\\.`),
+  );
+  assert.match(
+    await nextReviewBudgetScopeBrief(getRun(run.id)!),
+    new RegExp(`Review round 4 of ${limit}\\.`),
+  );
+});
 
 test('normalized issue references do not pool pre-PR rounds or contaminate a later PR', async (t) => {
   const ref = `example/issue-${randomUUID()}#42`;
