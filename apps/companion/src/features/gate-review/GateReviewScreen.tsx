@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   Text,
   useColorScheme,
   useWindowDimensions,
@@ -56,7 +57,7 @@ export function GateReviewScreen({
   }, [initialClaimId]);
   const viewport = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
   const evidenceOffset = useRef(0);
   if (state.status !== 'ready') {
     return (

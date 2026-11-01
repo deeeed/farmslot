@@ -6,6 +6,7 @@ import {
   type LayoutChangeEvent,
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   Text,
   useWindowDimensions,
   View,
@@ -308,7 +309,7 @@ export default function DecisionDetailScreen({
   const [selectedSlot, setSelectedSlot] = useState<{ decisionId: string; slotId: string } | null>(
     null,
   );
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const sectionOffsetsRef = useRef<Partial<Record<DecisionSectionKey, number>>>({});
   const documentAbortRef = useRef<AbortController | null>(null);
   const requestedArtifactPath = routeParamString(routeArtifactPath).trim();

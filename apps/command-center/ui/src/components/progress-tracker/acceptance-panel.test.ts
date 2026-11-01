@@ -406,3 +406,17 @@ test('the gate can show every registered criterion before evidence has loaded', 
     true,
   );
 });
+
+test('each AC row names the recording its verdict comes from', () => {
+  const text = litText(
+    renderAcceptancePanel(
+      ledger([
+        criterion({ evidence: ['artifacts/recipe-runs/20261101072653297-84101/trace.json'] }),
+      ]),
+    ),
+  );
+  // The run directory stamp is UTC; the row shows the viewer's local time.
+  const time = new Date('2026-11-01T07:26:00Z');
+  const pad = (value: number) => String(value).padStart(2, '0');
+  assert.ok(text.includes(`Recording ${pad(time.getHours())}:${pad(time.getMinutes())}`));
+});

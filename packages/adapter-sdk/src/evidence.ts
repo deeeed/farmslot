@@ -19,6 +19,7 @@ export type {
   EvidenceReviewOccurrence,
   EvidenceReviewPlaybackEffect,
   EvidenceReviewProofKind,
+  EvidenceReviewRecording,
   EvidenceReviewRecordingInput,
   EvidenceReviewRecordingSelection,
   EvidenceReviewSelection,

@@ -699,6 +699,7 @@ export function renderAcceptancePanel(
             claims: rows.map(({ view, link }) => ({ ...view, evidenceLinked: Boolean(link) })),
             judgmentRows: options.judgments?.rows ?? model.judgmentRows(null),
             pendingVisualClaimIds: model.pendingVisualClaimIds,
+            recording: model.recording,
           }),
           {
             ...options.judgments,
@@ -775,9 +776,9 @@ export function renderAcceptancePanel(
               ${model.displayWarnings.map((warning) => html`<p>${warning}</p>`)}
             </details>`
           : nothing}
-        ${options.showOccurrences && model?.occurrences.length
+        ${options.showOccurrences && model?.currentOccurrences.length
           ? html`<div class="ac-step-groups" data-testid="recipe-proof-steps">
-              ${proofStepGroups(model.occurrences).map(
+              ${proofStepGroups(model.currentOccurrences).map(
                 (group) =>
                   html`<details class="ac-step-group" ?open=${group.failed > 0}>
                     <summary>

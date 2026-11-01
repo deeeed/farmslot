@@ -138,7 +138,7 @@ export default function RoadmapScreen({ screen }: { screen: RoadmapScreenModel }
             <ActivityIndicator color={colors.accent} />
           ) : state.deliveryView.items.length === 0 ? (
             <Text style={styles.empty}>No roadmap items in this scope.</Text>
-          ) : null
+          ) : undefined
         }
         renderItem={({ item }) => renderCard(item)}
         ListFooterComponent={
@@ -167,7 +167,7 @@ export default function RoadmapScreen({ screen }: { screen: RoadmapScreenModel }
                 </>
               ) : null}
             </View>
-          ) : null
+          ) : undefined
         }
       />
     </View>

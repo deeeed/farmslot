@@ -1099,3 +1099,57 @@ test('criterion statuses use the five operator outcomes while preserving engine 
     ['proven', 'proven', 'pending', 'issue', 'untestable'],
   );
 });
+
+test('each AC row names its recording, and a replaced recording never reads as a pass or a failure', () => {
+  const claim = (
+    id: string,
+    verdict: AcceptanceVerdict,
+    proofMode: 'review' | 'state' | 'mixed' = 'mixed',
+  ): PublicationGateClaim => ({
+    id,
+    text: id,
+    status: { id, text: id, verdict, proofMode, evidence: [], recipeNodes: [] },
+  });
+  const claims = [
+    claim('AC-1', 'proven'),
+    claim('AC-2', 'failed'),
+    claim('AC-3', 'awaiting-review'),
+    claim('AC-4', 'awaiting-review', 'review'),
+    claim('AC-5', 'untestable'),
+    // A repair package keeps this verdict from its original execution.
+    { ...claim('AC-6', 'proven'), retained: { recipeRunId: 'original', revision: 'abcdef123' } },
+  ];
+  const current = acceptanceClaimRows({ claims, recording: { label: 'Recording 07:26' } });
+  assert.deepEqual(
+    current.map((row) => [row.state, row.detail]),
+    [
+      ['Proven in app', 'Recording 07:26'],
+      ['Not proven', 'Recording 07:26'],
+      ['Needs your look', 'Recording 07:26'],
+      ['Not proven', 'Recording 07:26'],
+      ['Skipped', 'Recording 07:26'],
+      ['Proven in app', 'Earlier proof · abcdef1'],
+    ],
+  );
+  const replaced = acceptanceClaimRows({
+    claims,
+    pendingVisualClaimIds: ['AC-3'],
+    recording: { label: 'Recording 07:26', replacedBy: 'Recording 08:27' },
+  });
+  assert.deepEqual(
+    replaced.map((row) => [row.state, row.tone, row.pending, row.detail]),
+    [
+      ['Evidence replaced', 'pending', false, 'Recording 07:26, replaced by 08:27'],
+      ['Evidence replaced', 'pending', false, 'Recording 07:26, replaced by 08:27'],
+      // Nothing is left to judge on a replaced recording.
+      ['Evidence replaced', 'pending', false, 'Recording 07:26, replaced by 08:27'],
+      ['Evidence replaced', 'pending', false, 'Recording 07:26, replaced by 08:27'],
+      ['Skipped', 'untestable', false, 'Recording 07:26, replaced by 08:27'],
+      ['Evidence replaced', 'pending', false, 'Earlier proof · abcdef1'],
+    ],
+  );
+  assert.deepEqual(
+    acceptanceClaimRows({ claims }).map((row) => row.detail),
+    ['', '', '', '', '', 'Earlier proof · abcdef1'],
+  );
+});

@@ -8,7 +8,7 @@ import {
   type TabTriggerSlotProps,
 } from 'expo-router/ui';
 import { forwardRef, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { type HostInstance, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HeaderBackButton } from '../../components/FallbackHeaderBack';
@@ -119,7 +119,7 @@ interface WorkspaceTabProps extends TabTriggerSlotProps {
   children: ReactNode;
 }
 
-const WorkspaceTab = forwardRef<View, WorkspaceTabProps>(function WorkspaceTab(
+const WorkspaceTab = forwardRef<HostInstance, WorkspaceTabProps>(function WorkspaceTab(
   { children, isFocused, style: _style, ...props },
   ref,
 ) {

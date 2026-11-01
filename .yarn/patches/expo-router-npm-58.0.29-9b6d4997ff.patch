@@ -1,0 +1,78 @@
+diff --git a/build/fork/extractPathFromURL.js b/build/fork/extractPathFromURL.js
+index 9513000808f69bb8e688038eb5bb4039c8994ec7..672d641e46b2430f063a3cd9f0416c0efc0ef764 100644
+--- a/build/fork/extractPathFromURL.js
++++ b/build/fork/extractPathFromURL.js
+@@ -107,9 +107,8 @@ function fromDeepLink(url) {
+     if (res.pathname) {
+         results += res.pathname;
+     }
+-    const qs = !res.search ? '' : [
+-        ...res.searchParams.entries()
+-    ].map(([k, v])=>`${k}=${(0, _url.safeDecodeURIComponent)(v)}`).join('&');
++    // Preserve query escapes until the query parser consumes them.
++    const qs = res.searchParams.toString();
+     if (qs) {
+         results += '?' + qs;
+     }
+diff --git a/build/global-state/getRouteInfoFromState.js b/build/global-state/getRouteInfoFromState.js
+index dae9c59a7a744d8f65b3979db899955b489752b2..ecbdff2282f96725bc24f620695d0eec68e486ca 100644
+--- a/build/global-state/getRouteInfoFromState.js
++++ b/build/global-state/getRouteInfoFromState.js
+@@ -79,7 +79,8 @@ function getRouteInfoFromState(state) {
+         throw new Error(`Expected the first route to be ${_constants.INTERNAL_SLOT_NAME}, but got ${route.name}`);
+     }
+     const { segments, params: mergedParams } = collectRouteState(route.state);
+-    const params = decodeParams(mergedParams);
++    // The route parser already decoded pathname and query parameters.
++    const params = mergedParams;
+     const { pathname, pathParams } = resolvePathname(segments, params);
+     const { searchParams, pathnameWithParams } = serializeQueryAndHash(pathname, params, pathParams);
+     return {
+diff --git a/build/hooks/useLocalSearchParams.js b/build/hooks/useLocalSearchParams.js
+index 58fab6aa3c1f9c00552c7ffe07333980dd8fa76a..8b0cffb8219fde95011796523adca14aa0e55def 100644
+--- a/build/hooks/useLocalSearchParams.js
++++ b/build/hooks/useLocalSearchParams.js
+@@ -42,41 +42,8 @@ function useLocalSearchParams() {
+             state = child.state;
+         }
+     }
+-    return Object.fromEntries(Object.entries(previewParams ?? params).map(([key, value])=>{
+-        // React Navigation doesn't remove `undefined` values from the params object, and you cannot remove them via
+-        // `navigation.setParams()` as it shallow merges. Hence, we hide them here. We also pass `null` through unchanged
+-        // for the same reason; running it through `decodeURIComponent()` would otherwise stringify it to `null`.
+-        if (value == null) {
+-            return [
+-                key,
+-                value
+-            ];
+-        }
+-        if (Array.isArray(value)) {
+-            return [
+-                key,
+-                value.map((v)=>{
+-                    try {
+-                        return decodeURIComponent(v);
+-                    } catch  {
+-                        return v;
+-                    }
+-                })
+-            ];
+-        } else {
+-            try {
+-                return [
+-                    key,
+-                    decodeURIComponent(value)
+-                ];
+-            } catch  {
+-                return [
+-                    key,
+-                    value
+-                ];
+-            }
+-        }
+-    }));
++    // The route parser already decoded pathname and query parameters.
++    return Object.fromEntries(Object.entries(previewParams ?? params));
+ }
+ 
+ //# sourceMappingURL=useLocalSearchParams.js.map
