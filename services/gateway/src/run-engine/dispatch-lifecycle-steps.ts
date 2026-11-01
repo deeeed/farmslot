@@ -38,6 +38,7 @@ import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
 import { ensureRunStack } from './stack-base.js';
 import { createSubStepCollector, type SubStepCollector } from './sub-step-collector.js';
 import { completeRunTaskInitialization } from './task-sync.js';
+import { WorkerLaunchInputsChangedError } from './worker-launch-preflight.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
@@ -847,6 +848,9 @@ export async function executeDispatchStep(
       preferredLabel && eligible.includes(preferredLabel) ? preferredLabel : eligible[0];
   }
 
+  // A configuration reload during preflight (a pool or project rewrite) refuses before anything
+  // launches; the dispatch re-reads its inputs and checks once more instead of failing the run.
+  let launchInputsRetried = false;
   for (;;) {
     if (forcedLabel) triedLabels.push(forcedLabel);
     try {
@@ -875,6 +879,17 @@ export async function executeDispatchStep(
       }
       break;
     } catch (err) {
+      if (err instanceof WorkerLaunchInputsChangedError && !launchInputsRetried) {
+        launchInputsRetried = true;
+        console.warn(
+          `[dispatch] run ${runId.slice(0, 8)}: launch inputs changed during preflight; dispatching once more with the current configuration`,
+        );
+        collector.emit('dispatch.step', {
+          name: 'preflight-retry',
+          detail: 'Launch inputs changed during preflight; re-reading them and checking again',
+        });
+        continue;
+      }
       if (!supportsBind || !isProviderUsageLimitError(err) || !slotVars) {
         throw err;
       }
