@@ -20,7 +20,9 @@ import {
   resolveRunSlotId,
   runDisplayStatus,
   runElapsedTimeView,
+  runEngineLabel,
   type RunFamilyGroup,
+  runWorkerEffort,
   slotMachineMap,
   sourceObservationAge,
   summarizeRunEvidence,
@@ -879,9 +881,7 @@ export class RunList extends RunListState {
       (run.status === 'failed' &&
         !run.autoRecoveryDisabled &&
         (hasAutoRecoveryAttempt || Boolean(run.recoveryProposal)));
-    const runnerLabel = engine.model
-      ? `${engine.runner ?? 'runner'}/${engine.model}`
-      : (engine.runner ?? '—');
+    const runnerLabel = runEngineLabel({ ...engine, effort: runWorkerEffort(run) }) ?? '—';
     const taskObservation = this.progressQueries.get(
       runChecklistProgressTarget(run)?.key ?? '',
     )?.state;
