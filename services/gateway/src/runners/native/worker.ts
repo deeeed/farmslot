@@ -551,33 +551,14 @@ export async function dispatchNativeWorker(input: {
       !(reservedNow || hostLacksReservation)
     )
       return;
-    await upsertAgentContext(
-      run.id,
-      input.role,
-      { id: contextId },
-      {
-        resolvePatch: (latest) => {
-          // A replay that superseded this attempt may already be reusing the reservation.
-          checkRun();
-          const live = latest?.nativeSession;
-          if (
-            !live ||
-            live.sessionId !== binding.sessionId ||
-            live.leaseId !== binding.leaseId ||
-            live.generation
-          )
-            return null;
-          // History keeps the retired session visible to the leftovers probe.
-          return {
-            nativeSession: undefined,
-            nativeSessionHistory: [...(latest.nativeSessionHistory ?? []), live],
-            status: 'idle',
-            target: null,
-          };
-        },
-      },
-    );
-    await persistRunNow(ownedRun(run.id), 'unsent native reservation retired');
+    const { retireUnsentNativeReservation } = await import('./worker-unsent-reservation.js');
+    await retireUnsentNativeReservation({
+      runId: run.id,
+      role: input.role,
+      contextId,
+      binding,
+      checkRun,
+    });
     throw error;
   };
   const admission = async () => {

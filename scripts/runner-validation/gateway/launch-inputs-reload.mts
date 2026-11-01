@@ -31,6 +31,7 @@ import {
   cleanupOnExit,
   freePort,
   poll,
+  startReaper,
   startWorkspaceProcess,
   stopProcess,
 } from '../lib/isolated-stack.mjs';
@@ -58,6 +59,11 @@ const baseEnv: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: tmuxDir };
 delete baseEnv.TMUX;
 delete baseEnv.TMUX_PANE;
 const stack = (env: NodeJS.ProcessEnv) => ({ root, evidence, env: { ...baseEnv, ...env } });
+// A cancelled recipe SIGKILLs this process within a second; the reaper then stops what it owned.
+const reaper = startReaper();
+reaper.path(fixture);
+reaper.path(tmuxDir);
+reaper.command(['tmux', 'kill-server'], baseEnv);
 // What the worker's shell saw for the rewritten value: the retry must launch on the new inputs.
 const workerPin = path.join(fixture, 'worker-pin');
 let gateway: ChildProcess | undefined;
@@ -82,6 +88,7 @@ const cleanup = cleanupOnExit(async () => {
   spawnSync('tmux', ['kill-server'], { stdio: 'ignore', env: baseEnv });
   await attempt(() => rm(fixture, { recursive: true, force: true }));
   await attempt(() => rm(tmuxDir, { recursive: true, force: true }));
+  reaper.done();
 });
 
 async function json(file: string, value: unknown) {
@@ -197,6 +204,7 @@ gateway = startWorkspaceProcess(
   '@farmslot/gateway',
   'gateway.log',
 );
+reaper.group(gateway.pid);
 let failure: unknown;
 let result: Record<string, unknown> | undefined;
 try {
@@ -243,6 +251,7 @@ try {
     '@farmslot/node',
     'node.log',
   );
+  reaper.group(node.pid);
 
   run = (
     await gw.call<{ run: Run }>('run.create', {
