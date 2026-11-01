@@ -35,6 +35,7 @@ interface Picker {
   error: string;
   refresh(): Promise<void>;
   add(): Promise<void>;
+  removeProfile(profile: NativeProfileInfo): Promise<void>;
 }
 
 // Built from the prototype so no DOM or render cycle is needed.
@@ -85,6 +86,24 @@ test('the node default account is ready while the profile list is loading or fai
   assert.equal(selections.at(-1)?.ready, false);
   refuse(new Error("This is the node's own login; no profile is needed"));
   await adding;
+  assert.equal(selections.at(-1)?.ready, true);
+  // Removing the selected profile releases the default only when the removal ends.
+  const work = {
+    id: 'work',
+    runner: 'claude',
+    directory: '/profiles/work',
+    accountContextId: 'context',
+    state: 'active' as const,
+  };
+  let removed!: () => void;
+  Object.assign(view, {
+    selected: 'work',
+    api: { request: () => new Promise<void>((resolve) => (removed = resolve)) },
+  });
+  const removing = view.removeProfile(work);
+  assert.equal(selections.at(-1)?.ready, false);
+  removed();
+  await removing;
   assert.equal(selections.at(-1)?.ready, true);
   // An explicitly selected profile never falls back to the default account.
   view.selected = 'work';
