@@ -1420,11 +1420,11 @@ async function replayRunStep(
   // it, so the gate decisions superseded meanwhile open again. Otherwise a blocked run
   // is left with nothing to resolve. A status change since means another action owns
   // the run; then they stay superseded.
-  const reopenGateDecisions = async (decisionIds: Set<string>) => {
+  const reopenGateDecisions = async (decisionIds: Set<string>): Promise<boolean> => {
     const current = getRun(params.runId);
-    if (!current || current.status !== entryStatus) return;
+    if (!current || current.status !== entryStatus) return false;
     const { decisions, reopened } = reopenSupersededGateDecisions(current.decisions, decisionIds);
-    if (!reopened.length) return;
+    if (!reopened.length) return false;
     // Their engine loop was cancelled at a generation the replay since bumped: woken, it
     // returns 'abort'. Retiring it routes the reopened card through the lost-engine
     // continuation instead of a waiter that would swallow the person's choice.
@@ -1443,15 +1443,45 @@ async function replayRunStep(
     console.log(
       `[run] replay of ${params.runId.slice(0, 8)} failed; reopened ${reopened.length} superseded gate decision(s)`,
     );
+    return true;
   };
-  const leaveGateReentry = async (failed: boolean) => {
+  // A gate whose engine was still preparing its decision has none to reopen. The replay cancelled
+  // that engine, so the run gets it back at the gate instead of sitting with neither.
+  const resumeGateEngine = (error: unknown) => {
+    const current = getRun(params.runId);
+    if (
+      replayStepName !== PS.HUMAN_GATE ||
+      !current ||
+      current.status !== entryStatus ||
+      current.engineState?.generation !== nativeReplayGeneration ||
+      current.decisions.some((decision) => !decision.resolvedAt) ||
+      !current.steps.some((step) => step.name === PS.HUMAN_GATE && step.status === 'running')
+    )
+      return;
+    console.warn(
+      `[run] replay of ${params.runId.slice(0, 8)} from ${replayStepName} failed (${error instanceof Error ? error.message : String(error)}); resuming its gate`,
+    );
+    // The same switch the replay's own engine start honours in test contexts.
+    if (
+      !hooks.startEngine &&
+      process.env.NODE_TEST_CONTEXT === '1' &&
+      process.env.FARMSLOT_DISABLE_RUN_ENGINE_START === '1'
+    )
+      return;
+    void runWithSystemOriginator(() => (hooks.startEngine ?? startRun)(params.runId)).catch(
+      (err: unknown) =>
+        console.error(`[run] gate resume after a failed replay failed: ${(err as Error).message}`),
+    );
+  };
+  const leaveGateReentry = async (failed: boolean, error?: unknown) => {
     const entry = gateReentry;
     if (!entry) return;
     gateReentry = undefined;
     entry.inFlight -= 1;
     if (entry.inFlight > 0) return;
     gateReentries.delete(params.runId);
-    if (failed && !entry.revived) await reopenGateDecisions(entry.decisionIds);
+    if (failed && !entry.revived && !(await reopenGateDecisions(entry.decisionIds)))
+      resumeGateEngine(error);
   };
   const rollBackReclaimedSlot = async (err: unknown) => {
     if (
@@ -2397,7 +2427,7 @@ async function replayRunStep(
         await rollBackReclaimedSlot(err);
       } finally {
         // Retire this replay even when queue persistence or slot rollback fails.
-        await leaveGateReentry(true).catch((reopenErr: unknown) =>
+        await leaveGateReentry(true, err).catch((reopenErr: unknown) =>
           console.warn(
             `[run] replay of ${params.runId.slice(0, 8)} could not reopen its gate decisions: ${(reopenErr as Error).message}`,
           ),

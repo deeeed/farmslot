@@ -3,6 +3,16 @@ import { getRun } from '../runs/store.js';
 
 type TransitionOperation<T> = () => Promise<T>;
 
+/** A transition queued this long names the operation holding its key, and again each interval. */
+const TRANSITION_WAIT_WARN_MS = 60_000;
+
+/** The first caller frame outside this module: which operation took a key. */
+function transitionCallerSite(): string {
+  const frames = new Error().stack?.split('\n').slice(1) ?? [];
+  const caller = frames.find((frame) => !/transition-coordinator\.[jt]s:/u.test(frame));
+  return caller?.trim().replace(/^at /u, '') ?? 'unknown caller';
+}
+
 /**
  * Serializes machine- and run-scoped lifecycle mutations. Public run actions
  * acquire machine then run; machine workflows already holding the machine key
@@ -10,9 +20,12 @@ type TransitionOperation<T> = () => Promise<T>;
  */
 export class RunTransitionCoordinator {
   private readonly tails = new Map<string, Promise<void>>();
+  /** Who holds each key and since when, so a stalled queue can name its holder. */
+  private readonly holders = new Map<string, { site: string; since: number }>();
 
   constructor(
     private readonly resolveMachine: (runId: string) => Promise<string | null> = resolveRunMachine,
+    private readonly waitWarnMs = TRANSITION_WAIT_WARN_MS,
   ) {}
 
   withMachine<T>(machine: string, operation: TransitionOperation<T>): Promise<T> {
@@ -34,6 +47,7 @@ export class RunTransitionCoordinator {
   }
 
   private async withKey<T>(key: string, operation: TransitionOperation<T>): Promise<T> {
+    const site = transitionCallerSite();
     const previous = this.tails.get(key) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => {
@@ -41,12 +55,35 @@ export class RunTransitionCoordinator {
     });
     const tail = previous.then(() => current);
     this.tails.set(key, tail);
-    await previous;
+    await this.waitTurn(key, previous, site);
+    const holder = { site, since: Date.now() };
+    this.holders.set(key, holder);
     try {
       return await operation();
     } finally {
+      if (this.holders.get(key) === holder) this.holders.delete(key);
       release();
       if (this.tails.get(key) === tail) this.tails.delete(key);
+    }
+  }
+
+  /** Wait for the key; a long wait names the holder instead of stalling silently. */
+  private async waitTurn(key: string, previous: Promise<void>, site: string): Promise<void> {
+    const enqueuedAt = Date.now();
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const turn = await Promise.race([
+        previous.then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(() => resolve(false), this.waitWarnMs);
+          timer.unref?.();
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (turn) return;
+      const holder = this.holders.get(key);
+      console.warn(
+        `[run-transition] ${site} has waited ${Math.round((Date.now() - enqueuedAt) / 1000)}s for ${key}; ${holder ? `held by ${holder.site} for ${Math.round((Date.now() - holder.since) / 1000)}s` : 'queued behind earlier waiters'}`,
+      );
     }
   }
 }

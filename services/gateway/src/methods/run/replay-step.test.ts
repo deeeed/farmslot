@@ -2526,6 +2526,76 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
   );
 });
 
+test('a gate replay that fails while its engine was still preparing the decision resumes that gate', async (t) => {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const taskFile = '/tmp/farmslot-human-gate-preparing/TASK.md';
+  const slotOwner = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}1`,
+  });
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}2`,
+  });
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+    'complete',
+  ]);
+  // The gate's engine is packaging after a passing review, so no decision is open (ba397e2c).
+  updateRun(run.id, {
+    status: 'human-gating',
+    taskFile,
+    slotId: 'macwork-ff-9',
+    decisions: [],
+    steps: run.steps.map((step) =>
+      doneThroughComplete.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'human-gate'
+          ? { ...step, status: 'running', detail: 'Running human-gate claude review (1/1)' }
+          : step,
+    ),
+  });
+  // The slot is owned by another live run, so the replay fails after cancelling the engine.
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      { slots: [{ slot: 'macwork-ff-9', lifecycle: 'busy', current_run_id: slotOwner.id }] },
+      null,
+      2,
+    ) + '\n',
+  );
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+    for (const r of [run, slotOwner]) {
+      if (getRun(r.id)) {
+        updateRun(r.id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(r.id);
+      }
+    }
+  });
+  const resumed: string[] = [];
+  await assert.rejects(
+    () =>
+      runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}, {
+        startEngine: async (runId) => {
+          resumed.push(runId);
+        },
+      }),
+    /no longer safely reclaimable/,
+  );
+  assert.deepEqual(resumed, [run.id], 'the gate gets its engine back');
+  assert.equal(getRun(run.id)?.status, 'human-gating');
+});
+
 test('slot activation persists its dispatch baseline and ordinary prepare replay clears the intent', async (t) => {
   const baseline = 'a'.repeat(40);
   const taskFile = '/tmp/activation-baseline-fixture/TASK.md';
