@@ -26,7 +26,7 @@
         "YARN_ENABLE_GLOBAL_CACHE": "false",
         "YARN_ENABLE_IMMUTABLE_INSTALLS": "false",
         "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a",
-        "GRADLE_OPTS": "-Dorg.gradle.jvmargs=\"-XX:MaxMetaspaceSize=1g -Xmx4g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8\" -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
+        "GRADLE_OPTS": "-Dorg.gradle.jvmargs=\"-XX:MaxMetaspaceSize=1g -Xmx4g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8\" -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=1 -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process"
       }
     },
     "preview_apk": {
@@ -40,7 +40,7 @@
         "YARN_ENABLE_GLOBAL_CACHE": "false",
         "YARN_ENABLE_IMMUTABLE_INSTALLS": "false",
         "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a",
-        "GRADLE_OPTS": "-Dorg.gradle.jvmargs=\"-XX:MaxMetaspaceSize=1g -Xmx4g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8\" -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
+        "GRADLE_OPTS": "-Dorg.gradle.jvmargs=\"-XX:MaxMetaspaceSize=1g -Xmx4g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8\" -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=1 -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process"
       }
     },
     "production": {
@@ -51,7 +51,7 @@
         "YARN_ENABLE_GLOBAL_CACHE": "false",
         "YARN_ENABLE_IMMUTABLE_INSTALLS": "false",
         "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a",
-        "GRADLE_OPTS": "-Dorg.gradle.jvmargs=\"-XX:MaxMetaspaceSize=1g -Xmx4g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8\" -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
+        "GRADLE_OPTS": "-Dorg.gradle.jvmargs=\"-XX:MaxMetaspaceSize=1g -Xmx4g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8\" -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=1 -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process"
       }
     },
     "production_apk": {
@@ -65,7 +65,7 @@
         "YARN_ENABLE_GLOBAL_CACHE": "false",
         "YARN_ENABLE_IMMUTABLE_INSTALLS": "false",
         "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a",
-        "GRADLE_OPTS": "-Dorg.gradle.jvmargs=\"-XX:MaxMetaspaceSize=1g -Xmx4g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8\" -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
+        "GRADLE_OPTS": "-Dorg.gradle.jvmargs=\"-XX:MaxMetaspaceSize=1g -Xmx4g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8\" -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=1 -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process"
       }
     }
   },

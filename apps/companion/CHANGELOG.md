@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Store and preview builds carry native code for ARM devices only (arm64-v8a and armeabi-v7a); x86 and x86_64 devices, such as emulators and x86 Chromebooks, can't install them. They also run at most two Gradle workers. Every Expo SDK 58 cloud build ran out of memory: with four ABIs the Gradle daemon was killed, and with two a parallel Skia compile was. Development builds still include every ABI.
+- Store and preview builds carry native code for ARM devices only (arm64-v8a and armeabi-v7a); x86 devices without ARM translation, such as older emulator images, can't run them. They also build one Gradle task at a time and compile Kotlin inside the Gradle JVM, to fit the cloud build worker's memory with Expo SDK 58's native modules. Development builds are unchanged.
 - AC rows name the recording their verdict comes from. After a re-recording, the gate's older evidence reads "Evidence replaced" instead of red "Not proven" or an invalid package next to passing steps.
 
 ## 0.10.0 - 2026-11-01
