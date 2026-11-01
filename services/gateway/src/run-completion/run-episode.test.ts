@@ -223,6 +223,28 @@ test('captureRunEpisode copies the pinned provider and library revisions from th
       }),
     );
     assert.equal(cancelled?.provenance?.mirrored, false);
+    // Completion captured, then a review fix began and the run was cancelled during it.
+    const fixing = await captureRunEpisode(
+      run({
+        id: 'run-fix-after-complete',
+        status: 'cancelled',
+        taskFile,
+        output,
+        steps: completed,
+        agentContexts: [
+          {
+            id: 'ctx-fix',
+            role: 'review-fix',
+            label: 'Review fix',
+            status: 'working',
+            slotId: 'host-demo-1',
+            runId: 'run-fix-after-complete',
+            attemptStartedAt: '2026-11-01T13:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    assert.equal(fixing?.provenance?.mirrored, false);
     await rm(path.join(taskDir, 'artifacts/harness-provenance.json'));
 
     // An unbound task, a wrongly shaped binding and invalid JSON give null, never a throw.

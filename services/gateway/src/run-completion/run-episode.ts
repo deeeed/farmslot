@@ -109,10 +109,10 @@ export interface RunEpisodeProvenance {
   /** When the receipt was written on the node; null when the libraries came from the binding. */
   recordedAt: string | null;
   /**
-   * Whether the completion step captured the output after the worker finished,
-   * which refreshes the receipt. False otherwise (for example cancelled while
-   * monitoring, even after a manual mirror refresh): a repin after `recordedAt`
-   * is then not reflected.
+   * Whether the completion step captured the output, which refreshes the
+   * receipt, and no agent attempt began after it. False otherwise (cancelled
+   * while monitoring, even after a manual mirror refresh, or during a review fix
+   * after completion): a repin after `recordedAt` is then not reflected.
    */
   mirrored: boolean;
 }
@@ -372,16 +372,19 @@ export function readRunEpisode(runId: string): Promise<RunEpisode | undefined> {
   return readJson<RunEpisode>(episodeFile(runId));
 }
 
-/** The completion step captured the output after the worker finished. */
+/** The completion step captured the output, and no agent attempt began after it. */
 function mirroredAtCompletion(run: Run): boolean {
   const started = run.steps.find((step) => step.name === PipelineSteps.COMPLETE)?.startedAt;
   const output = run.output;
-  return (
-    !!started &&
-    !!output?.workerFinished &&
-    !output.captureError &&
-    Date.parse(output.capturedAt) >= Date.parse(started)
+  if (!started || !output?.workerFinished || output.captureError) return false;
+  const captured = Date.parse(output.capturedAt);
+  // Work resumed after the capture (a review fix, a send-back) may have repinned.
+  const resumed = (run.agentContexts ?? []).some((context) =>
+    [context.startedAt, context.attemptStartedAt, context.promptDeliveryStartedAt].some(
+      (at) => !!at && Date.parse(at) > captured,
+    ),
   );
+  return captured >= Date.parse(started) && !resumed;
 }
 
 /** Writes the run's episode; returns null for a run that has not ended. */
