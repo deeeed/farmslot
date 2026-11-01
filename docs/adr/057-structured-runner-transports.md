@@ -520,7 +520,7 @@ Pi and OpenCode get native adapters on the same path as the other runners, so ev
   - the model must be the one requested: a `provider/id` must match exactly, and a bare ID leaves the provider to Pi. Native pickers name Pi's provider-qualified IDs.
 - **Pi tools.** Pi asks before no tool and has no sandbox of its own, in RPC mode as in its terminal. The session reports `approvals: false`, and every tier runs Pi's tools unasked, matching the tmux Pi launch, whose tier flags are empty. Extension dialogs are answered `cancelled` until a native surface exists.
 - **Accounts.** Both sign in per provider and have no account status command:
-  - a profile sets Pi's agent directory (`PI_CODING_AGENT_DIR`) or OpenCode's data home (`XDG_DATA_HOME`);
+  - a profile sets Pi's agent directory (`PI_CODING_AGENT_DIR`) or OpenCode's data home (`XDG_DATA_HOME`). Their standard directories (the variable when set, else `~/.pi/agent` or `~/.local/share`) are the node's own login and are refused as profiles (Amendment 11);
   - provider keys in the environment still apply;
   - account observation reads the runner's model listing: any usable model reads as signed in. OpenCode's own free models need no login, so OpenCode always reads as signed in.
 - **Executables.** An OpenCode slot with no `opencode_path` uses the adapter's own `opencode`, never the Codex path. Amendment 10 already made the pool path the only override; the old fallback ran OpenCode's arguments through Codex.

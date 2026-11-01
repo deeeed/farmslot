@@ -203,6 +203,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'opencode',
     supportsWorkers: true,
     account: {
+      standardDirectory: (env) => env.XDG_DATA_HOME || join(env.HOME || homedir(), '.local/share'),
       environment: opencodeProfileEnvironment,
       unset: ['OPENCODE_AUTH_CONTENT'],
       loginArgs: ['auth', 'login'],
@@ -214,6 +215,8 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'pi',
     supportsWorkers: true,
     account: {
+      standardDirectory: (env) =>
+        env.PI_CODING_AGENT_DIR || join(env.HOME || homedir(), '.pi/agent'),
       environment: piProfileEnvironment,
       unset: [],
       // Pi signs in from its own `/login` command.
