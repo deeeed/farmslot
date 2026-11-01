@@ -142,7 +142,9 @@ export class NativeHostObservation {
       const change = this.changes;
       const before = this.scan();
       // A failed profile sample affects only profile reads (ADR-057 Amendment 11).
-      const accounts = await this.observeAccounts().catch(() => undefined);
+      const accounts = await this.observeAccounts().catch((error: unknown) =>
+        this.sampleFailed(error),
+      );
       if (generation !== this.generation || this.stopped) return;
       const after = this.scan();
       if (this.failed || change !== this.changes || before.digest !== after.digest)
@@ -256,6 +258,19 @@ export class NativeHostObservation {
     this.accountDigest = accountsDigest(accounts);
   }
 
+  /** Logs a failed profile sample once per outage; sessions stay observable. */
+  private sampleFailed(error: unknown): undefined {
+    if (this.accountsAvailable || !this.receipt.ready)
+      console.warn(
+        '[native-observation]',
+        JSON.stringify({
+          code: 'NATIVE_PROFILES_UNAVAILABLE',
+          reason: error instanceof Error ? error.message : String(error),
+          nodeId: this.client.executionNodeId,
+        }),
+      );
+    return undefined;
+  }
   private fail(reason: string): void {
     if (!this.failed)
       console.warn(
@@ -343,7 +358,7 @@ export class NativeHostObservation {
     void Promise.resolve()
       .then(async () => {
         before = this.scan();
-        return this.observeAccounts().catch(() => undefined);
+        return this.observeAccounts().catch((error: unknown) => this.sampleFailed(error));
       })
       .then((accounts) => {
         if (generation !== this.generation || this.stopped) return;

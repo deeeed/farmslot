@@ -34,6 +34,7 @@ interface Picker {
   selected: string;
   error: string;
   refresh(): Promise<void>;
+  add(): Promise<void>;
 }
 
 // Built from the prototype so no DOM or render cycle is needed.
@@ -70,6 +71,21 @@ test('the node default account is ready while the profile list is loading or fai
   });
   assert.equal(selections.at(-1)?.ready, true);
   assert.equal(view.error, 'Native observation source unavailable');
+  // An add in progress keeps the default account unready through stale or failed reads.
+  let refuse!: (error: Error) => void;
+  Object.assign(view, {
+    name: 'work',
+    directory: '',
+    api: { request: () => new Promise((_resolve, reject) => (refuse = reject)) },
+  });
+  const adding = view.add();
+  listChanged!({ status: 'stale' });
+  assert.equal(selections.at(-1)?.ready, false);
+  listChanged!({ status: 'error', error: { code: 'unavailable', message: 'Profile list failed' } });
+  assert.equal(selections.at(-1)?.ready, false);
+  refuse(new Error("This is the node's own login; no profile is needed"));
+  await adding;
+  assert.equal(selections.at(-1)?.ready, true);
   // An explicitly selected profile never falls back to the default account.
   view.selected = 'work';
   listChanged!({ status: 'loading' });

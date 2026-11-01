@@ -193,10 +193,11 @@ export class NativeProfiles extends LitElement {
         (profile) => !this.runnerOnly || profile.runner === this.runner,
       );
       this.error = state.error?.message ?? '';
-      // The node default account needs no profile, so it never waits for this read.
+      // The node default account needs no profile, so it never waits for this read, only for
+      // an add or remove in progress.
       this.selection(
         this.profiles.find((profile) => profile.id === this.selected),
-        !this.selected,
+        !this.selected && !this.mutating,
       );
       this.busy = state.status === 'loading';
       if (this.listCurrent) void this.choose(this.selected, this.selectedContextId);
@@ -225,7 +226,7 @@ export class NativeProfiles extends LitElement {
     this.status = undefined;
     this.error = '';
     const profile = this.profiles.find((item) => item.id === id);
-    this.selection(profile, !id);
+    this.selection(profile, !id && !this.mutating);
     if (!profile) {
       if (id)
         this.error = 'Profile is unavailable. Choose another profile or the node default account.';
@@ -280,6 +281,10 @@ export class NativeProfiles extends LitElement {
       );
     });
   }
+  /** Reads during an add or remove kept the default account unready; release it once it ends. */
+  private defaultReadyAfterMutation() {
+    if (!this.selected) this.selection(undefined, Boolean(getResourceNativeOwnerId()));
+  }
   private async add() {
     this.mutating = true;
     this.busy = true;
@@ -313,6 +318,7 @@ export class NativeProfiles extends LitElement {
     } finally {
       this.mutating = false;
       if (revision === this.revision) this.busy = false;
+      this.defaultReadyAfterMutation();
     }
   }
   private async removeProfile(profile: NativeProfileInfo) {
@@ -335,6 +341,7 @@ export class NativeProfiles extends LitElement {
     } finally {
       this.mutating = false;
       if (revision === this.revision) this.busy = false;
+      this.defaultReadyAfterMutation();
     }
   }
   render() {

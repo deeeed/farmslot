@@ -256,7 +256,7 @@ A native worker, dispatched or static-review, starts through its runner's native
 A native session or worker without `profileId` runs on the node's own login for its runner (ADR-057 Amendment 11). That login lives in the runner's standard directory, the one such a session uses: `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` when the node sets it, otherwise `~/.claude`, `~/.codex` or `~/.grok`; for Cursor, the home directory. Each runner definition exposes it once as `account.standardDirectory`.
 
 - No registration is needed for it, and clients enable it without reading the profile list.
-- A failed profile sample on the node (an unreadable profile file or a failing login probe) leaves session observation ready; observed profile reads fail with `NATIVE_PROFILES_UNAVAILABLE` until a later sample succeeds.
+- A failed profile sample on the node (an unreadable profile file, or a profile removed during the sample) leaves session observation ready; observed profile reads fail with `NATIVE_PROFILES_UNAVAILABLE` until a later sample succeeds.
 - `native.profile.add` refuses the standard directory with "This is the node's own login; no profile is needed". It compares canonical paths (`~/` expanded, symlinks resolved), before the existing-profile check.
 - Profiles register additional configuration directories only.
 

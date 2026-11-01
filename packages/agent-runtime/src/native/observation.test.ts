@@ -9,7 +9,12 @@ import type { NativeProfileStatusResult } from '@farmslot/protocol';
 
 import { NativeSessionClient } from './client.js';
 import { type HostIdentity, socketDirectory } from './ipc.js';
-import { NativeHostObservation, NativeSourceUnavailable, sameNativeSource } from './observation.js';
+import {
+  NativeHostObservation,
+  type NativeSourceReceipt,
+  NativeSourceUnavailable,
+  sameNativeSource,
+} from './observation.js';
 import { alive, appendDurable, readJson } from './storage.js';
 
 function setup() {
@@ -149,7 +154,10 @@ test('partial append revokes admission without truncation; fresh armed receipt r
 
 test('a failed profile sample keeps sessions observable; profile reads recover on a later sample', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
+  const warnings: unknown[] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => warnings.push(args));
   const fixture = setup();
+  const receipts: NativeSourceReceipt[] = [];
   let fail = true;
   const status: NativeProfileStatusResult = {
     profile: {
@@ -172,7 +180,7 @@ test('a failed profile sample keeps sessions observable; profile reads recover o
   const source = new NativeHostObservation(
     new NativeSessionClient(fixture.root),
     'A',
-    () => undefined,
+    (receipt) => receipts.push(receipt),
     fixture.home,
     async () => {
       if (fail) throw new Error('Account capability unavailable');
@@ -183,10 +191,14 @@ test('a failed profile sample keeps sessions observable; profile reads recover o
     await source.start();
     assert.equal(source.fence().ready, true);
     assert.throws(() => source.profileStatus('profile'), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
+    assert.match(JSON.stringify(warnings), /Account capability unavailable/);
     fail = false;
-    // The next 60 s account sample; setImmediate is not mocked, so it lets that sample settle.
+    const before = receipts.length;
+    // The next 60 s account sample. setImmediate is not mocked, so polling lets it settle.
     t.mock.timers.tick(60_000);
-    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+    for (let i = 0; i < 50 && receipts.length === before; i++)
+      await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(receipts.at(-1)?.changed, ['profiles']);
     assert.equal(source.profileStatus('profile').account.login, 'authenticated');
     assert.equal(source.fence().ready, true);
   } finally {
@@ -195,10 +207,12 @@ test('a failed profile sample keeps sessions observable; profile reads recover o
   }
 });
 
-test('an unreadable profile file leaves sessions observable', async () => {
+test('an unreadable profile file leaves sessions observable until it is repaired', async (t) => {
+  t.mock.method(console, 'warn', () => undefined);
   const fixture = setup();
   try {
-    writeFileSync(join(fixture.home, 'provider-accounts.json'), '{not json', { mode: 0o600 });
+    const file = join(fixture.home, 'provider-accounts.json');
+    writeFileSync(file, '{not json', { mode: 0o600 });
     const source = new NativeHostObservation(
       new NativeSessionClient(fixture.root),
       'A',
@@ -209,6 +223,19 @@ test('an unreadable profile file leaves sessions observable', async () => {
       await source.start();
       assert.equal(source.fence().ready, true);
       assert.throws(() => source.profileStatus('profile'), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
+      // The repaired file re-arms the source through its watcher; profile reads come back.
+      writeFileSync(file, JSON.stringify({ version: 1, accounts: {} }), { mode: 0o600 });
+      for (let i = 0; i < 100; i++) {
+        try {
+          source.profileStatus('profile');
+        } catch (error) {
+          // Re-arming briefly reports the whole source unavailable, then profiles return.
+          if ((error as { code?: string }).code === 'NOT_FOUND') break;
+        }
+        await delay(20);
+      }
+      assert.throws(() => source.profileStatus('profile'), { code: 'NOT_FOUND' });
+      assert.equal(source.fence().ready, true);
     } finally {
       source.stop();
     }

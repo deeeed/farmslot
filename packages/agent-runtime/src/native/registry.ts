@@ -34,6 +34,8 @@ export interface NativeWorkspaceTrustOptions {
 
 const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-trust.cjs') as {
   claudeReadOnlyReviewArgs: readonly string[];
+  codexHome(environment: NodeJS.ProcessEnv): string;
+  grokHome(environment: NodeJS.ProcessEnv): string;
   reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
   workspaceTrustByRunner: Record<
@@ -91,9 +93,7 @@ export interface NativeRunnerDefinition {
 }
 
 const claudeDirectory = (env: NodeJS.ProcessEnv) =>
-  env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude');
-const grokDirectory = (env: NodeJS.ProcessEnv) =>
-  env.GROK_HOME ?? join(env.HOME ?? homedir(), '.grok');
+  env.CLAUDE_CONFIG_DIR || join(env.HOME || homedir(), '.claude');
 
 /** Native profile mechanics stay with the runner definition, not client workflows. */
 export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
@@ -105,7 +105,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     supportsReadOnlyWorkspace: true,
     defaultEffort: 'low',
     account: {
-      standardDirectory: (env) => env.CODEX_HOME ?? join(env.HOME ?? homedir(), '.codex'),
+      standardDirectory: workspaceTrust.codexHome,
       environment: (directory) => ({ CODEX_HOME: directory }),
       unset: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
       loginArgs: ['login'],
@@ -157,7 +157,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'cursor-agent',
     supportsWorkers: true,
     account: {
-      standardDirectory: (env) => env.HOME ?? homedir(),
+      standardDirectory: (env) => env.HOME || homedir(),
       environment: cursorProfileEnvironment,
       unset: [
         'CURSOR_API_KEY',
@@ -180,12 +180,12 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.grok,
     trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
-    reviewRuntimeRoots: (env) => [grokDirectory(env)],
+    reviewRuntimeRoots: (env) => [workspaceTrust.grokHome(env)],
     adapter: grokNativeAdapter,
     binary: 'grok',
     supportsWorkers: true,
     account: {
-      standardDirectory: grokDirectory,
+      standardDirectory: workspaceTrust.grokHome,
       environment: grokProfileEnvironment,
       unset: ['GROK_API_KEY', 'XAI_API_KEY'],
       loginArgs: ['login'],

@@ -105,6 +105,14 @@ test("a runner's standard directory is the node's own login and cannot be regist
       home,
       codexEnv,
     );
+    // Codex ignores an empty CODEX_HOME, so ~/.codex is its own login then.
+    await assert.rejects(
+      addNativeProfile({ profileId: 'own', runner: 'codex', directory: '~/.codex' }, home, {
+        HOME: home,
+        CODEX_HOME: '',
+      }),
+      refused,
+    );
     assert.equal(extra.directory, join(realpathSync(home), '.codex'));
   } finally {
     rmSync(home, { recursive: true, force: true });
