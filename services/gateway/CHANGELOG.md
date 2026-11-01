@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The farmslot-farm review template carries the round-3 review rule (from round 3, only blocker or major findings block; minors and nits are follow-ups), and the review goldens include it.
 - A reviewer still `launching` that no session accepted (a lost WARM handoff, a hung dispatch, a restart mid-launch) is marked failed with the reason at the next recovery pass after 10 minutes, and its round settled with no verdict, so a new review request can start; a launch the host did accept is adopted as working instead. 22b57685 had one stuck since 14:21Z that every recovery pass skipped.
 - A run never carries two open human-gate decisions: a gate (or review-posting) decision supersedes any gate decision still open when it is created, in the same step that appends it, recording the new decision as `supersededBy`. Run 7e88468f had an "unavailable package" gate left open beside a later package gate, so gate actions were ambiguous. A gate action on a gate decision another one replaced is refused (`RUN_GATE_NOT_READY`, naming the current decision) instead of returning ok with nothing waiting to act on it; on 7e88468f a request-review on the replaced decision reported ok and started no review.
 - `native.session.turn.diff` returns a file's diff for one native turn, for a standalone session or a pinned worker through the same read fence as the workspace reads.
