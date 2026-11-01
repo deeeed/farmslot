@@ -246,7 +246,10 @@ The previous script paths in `@farmslot/skills` and `scripts/quality/` remain co
 
 ## Native worker launch
 
-A native worker starts through its runner's native adapter, as a standalone session does (ADR-057 Amendment 10). The gateway's worker launch names an executable only when the slot's pool configures one for that runner. Otherwise the host uses the adapter's own. Native runs and queue items for a runner without a native adapter are refused at creation.
+A native worker, dispatched or static-review, starts through its runner's native adapter, as a standalone session does (ADR-057 Amendment 10).
+
+- The gateway's launch names an executable only when the machine's pool configures one for that runner. Otherwise the host uses the adapter's own.
+- A native run for a runner without a native adapter is refused before its slot is claimed or prepared.
 
 ## Managed native reviewer approval policy
 

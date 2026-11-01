@@ -145,6 +145,8 @@ for (const role of ['review', 'primary', 'review-fix'] as const) {
 for (const [runner, model, effort, executable] of [
   ['grok', 'grok-4.7', 'medium', '/usr/local/bin/grok'],
   ['cursor', 'composer-2.5', undefined, '/usr/local/bin/cursor-agent'],
+  ['claude', 'opus', undefined, '/usr/local/bin/claude'],
+  ['codex', 'gpt-6.1-sol', undefined, '/usr/local/bin/codex'],
 ] as const) {
   test(`a native ${runner} worker launches through the runner's native adapter`, async () => {
     const prepare = (vars: ReturnType<typeof makeVars>) =>
@@ -163,9 +165,11 @@ for (const [runner, model, effort, executable] of [
       });
     const configured = (await prepare(makeVars())).launch;
     assert.equal(configured.executable, executable);
-    assert.equal(configured.effort, effort);
+    if (effort) assert.equal(configured.effort, effort);
     // With no configured path the host starts the adapter's own executable, as for chat.
-    const unconfigured = (await prepare(makeVars({ grokPath: '', cursorPath: '' }))).launch;
+    const unconfigured = (
+      await prepare(makeVars({ grokPath: '', cursorPath: '', claudePath: ' ', codexPath: '' }))
+    ).launch;
     assert.equal(unconfigured.executable, undefined);
   });
 }

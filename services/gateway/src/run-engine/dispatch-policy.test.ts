@@ -4,6 +4,7 @@ import test from 'node:test';
 import { DEFAULT_CURSOR_MODEL } from '@farmslot/protocol';
 
 import {
+  assertNativeRunForSlot,
   buildDispatchPreviewParamsForRun,
   resolveCIWatchChainFlowType,
   resolveCIWatchTerminalPatch,
@@ -124,4 +125,30 @@ test('runtime review depth reaches the slot-selection preview', () => {
   );
   assert.equal(params.reviewValidationDepth, 'full-live');
   assert.equal(params.slotId, 'runtime');
+});
+
+test('a native run that names no runner is refused on a slot whose runner has no native mode', () => {
+  const metrics = {
+    nudgeCount: 0,
+    model: null,
+    runnerSessionId: null,
+    runnerSessionPath: null,
+  };
+  const deferred = {
+    ...makeRun({ metrics: { ...metrics, runner: null } }),
+    transport: 'native' as const,
+  };
+  assert.throws(
+    () => assertNativeRunForSlot(deferred, 'scripted'),
+    /Runner has no native transport: scripted/,
+  );
+  assertNativeRunForSlot(deferred, 'grok');
+  // With no recorded runner the slot falls back to the default runner, as the preview does.
+  assertNativeRunForSlot(deferred, undefined);
+  const named = {
+    ...makeRun({ metrics: { ...metrics, runner: 'claude' } }),
+    transport: 'native' as const,
+  };
+  assertNativeRunForSlot(named, 'scripted');
+  assertNativeRunForSlot(makeRun({ metrics: { ...metrics, runner: null } }), 'scripted');
 });

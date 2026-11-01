@@ -164,7 +164,7 @@ export async function prepareNativeWorkerLaunch(input: {
   }
   // The host starts the runner's native adapter, as a chat session does.
   // Only the slot's configured executable overrides the adapter's default.
-  const executable = resolveRunnerPath(vars, runner);
+  const executable = resolveRunnerPath(vars, runner).trim();
   return {
     accountLabel,
     launch: {
