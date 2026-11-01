@@ -9,6 +9,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Review evidence from a run with an output review pending opens that review's evidence, the files the run screen listed, instead of failing with "… is not evidence for AC-n".
 - A recording opened from Review evidence has an "ACs" toggle over the player: every criterion at the moment the recording reaches it (the table of contents Command Center's review shows), the current one with Looks right / Issue, and previous / next. Tapping one plays from there.
 - AC rows name the recording their verdict comes from. After a re-recording, the gate's older evidence reads "Evidence replaced" instead of red "Not proven" or an invalid package next to passing steps.
+- Start on "Node default account" no longer waits for the node's profile list; a slow or failed list read only affects the profile choices. A selected profile still waits for its login status (ADR-057 Amendment 11).
+- Bottom-tab presses and idle screens no longer stall: Review re-renders only the runs that changed (a run's pipeline clock and checklist re-render on their own), fleet, decision and filter refreshes leave it alone, and Terminals keeps its rows while hidden instead of rebuilding them on every return. Filter sources sort with one shared collator instead of `localeCompare`, which Hermes makes build a collator per call.
 
 ## 0.10.0 - 2026-11-01
 

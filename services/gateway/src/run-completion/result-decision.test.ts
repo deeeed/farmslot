@@ -27,6 +27,9 @@ import { makeRun } from '../run-engine/test-fixtures.js';
 let run: Run;
 let replays: RunReplayStepParams[] = [];
 let releases: SlotReleaseParams[] = [];
+/** COMPLETE may already have released the slot, so the named discard finds nothing to release. */
+let slotStillOwned = true;
+let idleReturns: string[] = [];
 let starts: string[] = [];
 let replayError: Error | null = null;
 let onReplay: (() => void) | null = null;
@@ -141,7 +144,17 @@ mock.module('../methods/slot/release.js', {
     ...release,
     slotRelease: async (params: SlotReleaseParams) => {
       releases.push(params);
-      return { released: true };
+      return { released: slotStillOwned };
+    },
+  },
+});
+const safeIdle = await import('../run-lifecycle/safe-idle-slot.js');
+mock.module('../run-lifecycle/safe-idle-slot.js', {
+  namedExports: {
+    ...safeIdle,
+    returnReleasedCheckoutToIdle: async (released: Run) => {
+      idleReturns.push(released.id);
+      return { kind: 'ready' as const };
     },
   },
 });
@@ -178,6 +191,8 @@ beforeEach(() => {
   onReplay = null;
   replays = [];
   releases = [];
+  slotStillOwned = true;
+  idleReturns = [];
   starts = [];
   slotOwner = undefined;
   delivery = 'confirmed';
@@ -375,6 +390,19 @@ test('Close of a refused completion is the named discard and is not a success', 
   assert.deepEqual(releases, [
     { slotId: 'macwork-mmt-1', forceReset: true, expectedRunId: run.id },
   ]);
+  assert.deepEqual(idleReturns, [], 'the release itself returned the slot');
+});
+
+test('Close of a refused completion whose slot COMPLETE already released returns that checkout', async () => {
+  await heldQa();
+  slotStillOwned = false;
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: pending().id,
+    actionId: 'close-result',
+  });
+  assert.equal(releases.length, 1);
+  assert.deepEqual(idleReturns, [run.id]);
 });
 
 test('Send back delivers the refusal to the retained worker and resumes only monitoring', async () => {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `ResourceCacheOwner.renderKey` is rebuilt only when the owner, its input, authentication or render identity changes, not on every read.
+
 - The native storage peers follow Expo SDK 58: `expo-sqlite` ~58.0.15 and `expo-file-system` ~58.0.13.
 
 - Schema 5 stores run-list rows beside their query entry (`resource_rows`): `getRows` reads the entry and its rows in one serial job, `mergeRows` writes the entry, deletes and upserts in one transaction, `putQuery` keeps the rows, and deleting the entry, store or scope removes them. Older schemas are rebuilt; drafts are unaffected.

@@ -10,6 +10,7 @@ import {
   createGatewayResourceCache,
   createMemoryResourceStore,
   gitBlobHash,
+  gitBlobHashInSlices,
   RESOURCE_CONTENT_LIMITS,
   type ResourceContentCohort,
   type ResourceContentOrigin,
@@ -18,6 +19,7 @@ import {
   resourceQuery,
   type ResourceStore,
   verifyResourceContent,
+  verifyResourceContentInSlices,
 } from '../../src/client-cache/index.js';
 import { reviewDiffHash, reviewSnapshotIdentityText } from '../../src/runs/review-diff-identity.js';
 
@@ -115,6 +117,20 @@ test('identities verify a diff with its untracked manifest, a git blob and an ar
   assert.ok(verifyResourceContent({ kind: 'artifact', id: abc }, encoder.encode('abc')));
   assert.ok(!verifyResourceContent({ kind: 'artifact', id: abc }, encoder.encode('abd')));
   assert.ok(!verifyResourceContent({ kind: 'blob', id: abc }, encoder.encode('abc')));
+});
+
+test('hashing in slices gives the same ids as hashing at once', async () => {
+  // Larger than one slice and not a multiple of it, so the last slice is partial.
+  const data = new Uint8Array(40_000).map((_, index) => index % 251);
+  assert.equal(await gitBlobHashInSlices(data), gitBlobHash(data));
+  assert.equal(await gitBlobHashInSlices(new Uint8Array()), gitBlobHash(new Uint8Array()));
+  assert.ok(await verifyResourceContentInSlices({ kind: 'blob', id: gitBlobHash(data) }, data));
+  assert.ok(
+    !(await verifyResourceContentInSlices({ kind: 'blob', id: gitBlobHash(data) }, data.slice(1))),
+  );
+  const artifact = { kind: 'artifact' as const, id: bytesToHex(sha256(data)) };
+  assert.ok(await verifyResourceContentInSlices(artifact, data));
+  assert.ok(!(await verifyResourceContentInSlices(artifact, data.slice(1))));
 });
 
 test('a legacy raw SHA-256 package diffHash verifies and keeps its recorded id', async () => {

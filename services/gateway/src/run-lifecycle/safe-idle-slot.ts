@@ -9,6 +9,8 @@ import { isRecord } from '@farmslot/protocol/recipe';
 
 import type { EventEmitter } from '../methods/slot/shared.js';
 
+import { parksBranchCommits } from './validation-run-commits.js';
+
 export interface RetainedIdleCheckout {
   slotId: string;
   branch: string;
@@ -71,6 +73,8 @@ export async function reuseSafeIdleSlot(
     recordRunId?: string;
     /** A finished blind trial: its commits are a retained branch and its first output is frozen. */
     retainedCandidate?: boolean;
+    /** Only this head may be parked (an ownerless checkout COMPLETE already released). */
+    parkHeadSha?: string;
   },
 ): Promise<SafeIdleSlotResult> {
   try {
@@ -91,11 +95,27 @@ export async function reuseSafeIdleSlot(
     const eligibility = slotRecoveryEligibility(slot ? { ...slot, workspace } : undefined);
     if (!eligibility.allowed)
       return { kind: 'unavailable', reason: eligibility.detail ?? 'Slot is protected' };
-    if (eligibility.confirmationRequired && !expected?.retainedCandidate)
-      return {
-        kind: 'local-work',
-        reason: workspace.dirtyCount ? 'dirty files' : 'unpushed commits',
-      };
+    // A finished artifact-only run's own commits are retained output: the release parks them
+    // (durable ref, SHAs on the run) and refuses if they turn out not to be the run's own.
+    let parkRunId: string | undefined;
+    if (eligibility.confirmationRequired && !expected?.retainedCandidate) {
+      const { getRun } = await import('../runs/store.js');
+      const owner = expected?.recordRunId ? getRun(expected.recordRunId) : undefined;
+      if (
+        parksBranchCommits(owner) &&
+        !workspace.dirtyCount &&
+        workspace.publication === 'unpushed' &&
+        workspace.branch === owner.branch &&
+        workspace.branch !== workspace.defaultBranch &&
+        (!expected?.parkHeadSha || workspace.headSha === expected.parkHeadSha)
+      )
+        parkRunId = owner.id;
+      else
+        return {
+          kind: 'local-work',
+          reason: workspace.dirtyCount ? 'dirty files' : 'unpushed commits',
+        };
+    }
     // No cleanup is necessary for an unowned primary checkout already at the verified default.
     if (
       !workspace.currentRunId &&
@@ -115,7 +135,10 @@ export async function reuseSafeIdleSlot(
       },
       emit,
       undefined,
-      { skipRecycle: true },
+      {
+        skipRecycle: true,
+        ...(parkRunId ? { parkRunId, parkHeadSha: expected?.parkHeadSha } : {}),
+      },
     );
     if (result.refreshed) emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
     return result.refreshed
@@ -128,4 +151,38 @@ export async function reuseSafeIdleSlot(
     // A candidate failure is an explicit result: selection tries others; settlement reports retention.
     return { kind: 'unavailable', reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * COMPLETE releases an artifact-only run's slot ownership but keeps its checkout, so the run's
+ * close or archive finds no slot to release while the picker and prepare still refuse its
+ * unpushed commits (c9562e49 on mini-mmt-3). For an unowned slot still on the finished run's
+ * branch, return it to idle through the same fenced recovery, parking those commits.
+ */
+export async function returnReleasedCheckoutToIdle(
+  run: Run,
+  emit: EventEmitter,
+): Promise<SafeIdleSlotResult | null> {
+  const released = run.releasedCheckout;
+  if (
+    !run.slotId ||
+    !isTerminalRunStatus(run.status) ||
+    !parksBranchCommits(run) ||
+    released?.slotId !== run.slotId
+  )
+    return null;
+  const { readSlotRow } = await import('../core/state.js');
+  const row = await readSlotRow(run.slotId);
+  if (!row || row.current_run_id || row.cleanup_run_id || row.handoff_run_id) return null;
+  const result = await reuseSafeIdleSlot(run.slotId, emit, {
+    epoch: Number(row.slot_epoch) || 0,
+    runId: null,
+    recordRunId: run.id,
+    parkHeadSha: released.headSha,
+  });
+  if (result.kind !== 'ready')
+    console.warn(
+      `[slot.release] ${run.slotId}: released checkout of run ${run.id.slice(0, 8)} stays: ${result.reason}`,
+    );
+  return result;
 }

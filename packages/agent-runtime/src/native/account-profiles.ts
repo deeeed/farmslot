@@ -150,6 +150,7 @@ export function inspectNativeProfile<T>(
 export function addNativeProfile(
   params: NativeProfileAddParams,
   home = farmslotHome(),
+  environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NativeProfileInfo> {
   profileId(params.profileId);
   if (!Object.hasOwn(nativeRunnerDefinitions, params.runner))
@@ -165,9 +166,15 @@ export function addNativeProfile(
     if (!isAbsolute(requested) && !requested.startsWith('~/'))
       throw new Error('Native profile directory must be absolute or start with ~/');
     const directory = resolve(
-      requested.startsWith('~/') ? join(homedir(), requested.slice(2)) : requested,
+      requested.startsWith('~/')
+        ? join(environment.HOME ?? homedir(), requested.slice(2))
+        : requested,
     );
     const canonical = canonicalDirectory(directory);
+    // Sessions without a profile already use the standard directory.
+    const standard = nativeRunnerDefinitions[params.runner].account.standardDirectory(environment);
+    if (canonical === canonicalDirectory(resolve(standard)))
+      throw new Error("This is the node's own login; no profile is needed");
     if (existing) {
       if (
         existing.runner === params.runner &&

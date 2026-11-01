@@ -7,7 +7,11 @@ import { isRunArtifactImagePath } from '../runs/artifact-media.js';
 import { reviewDiffHash } from '../runs/review-diff-identity.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
-import { gitBlobHash, RESOURCE_CONTENT_LIMITS, resourceContentWithinLimits } from './content.js';
+import {
+  gitBlobHashInSlices,
+  RESOURCE_CONTENT_LIMITS,
+  resourceContentWithinLimits,
+} from './content.js';
 import { applyUnifiedDiff, parseUnifiedDiff, type UnifiedDiffFile } from './diff-apply.js';
 import { type ResourceQuery, resourceQuery } from './registry.js';
 import type { ContentKey, ResourceContentCohort } from './store.js';
@@ -371,7 +375,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       );
       const entry = page.entries[0];
       const data = entry?.status === 'ok' && base64Bytes(entry.content ?? '');
-      return data && gitBlobHash(data) === expected ? data : undefined;
+      return data && (await gitBlobHashInSlices(data)) === expected ? data : undefined;
     } catch (error) {
       if (isRefusal(error) || input.signal.aborted) throw error;
       return undefined;
@@ -395,9 +399,13 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       const text = applyUnifiedDiff(decoder.decode(base), file);
       data = text === undefined ? undefined : encoder.encode(text);
     }
-    if (data && expected && gitBlobHash(data) !== expected) data = undefined;
-    data ??= await readByPath(file.newPath, expected, input);
-    return !data || store({ kind: 'blob', id: gitBlobHash(data) }, data, input);
+    // Prefetch hashes a rebuilt file once (storage still verifies it): a match is its stored id.
+    let id = data && (await gitBlobHashInSlices(data));
+    if (expected && id !== expected) {
+      data = await readByPath(file.newPath, expected, input);
+      id = expected;
+    }
+    return !data || !id || store({ kind: 'blob', id }, data, input);
   }
 
   /** Base sides through batched `git.show`, then new sides. False when the cache refused. */
@@ -439,7 +447,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
         let data: Uint8Array | undefined;
         if (entry.status === 'ok') {
           data = base64Bytes(entry.content ?? '');
-          if (gitBlobHash(data) !== entry.id) continue;
+          if ((await gitBlobHashInSlices(data)) !== entry.id) continue;
           if (!(await store(key, data, input))) return false;
         }
         // A held base is read only when one of its new sides is not held.
