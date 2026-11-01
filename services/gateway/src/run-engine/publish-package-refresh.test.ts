@@ -5,11 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot/protocol';
+import {
+  type ReadyGatePayload,
+  RecordedEvidenceReadError,
+  type ReviewGatePayload,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
+import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
 import {
   commitRunBeforeAttemptAttestation,
@@ -20,7 +26,7 @@ import {
   updateRun,
 } from '../runs/store.js';
 
-import { OwnedWorkerBusyError } from './errors.js';
+import { BlockedRunError, OWNED_WORKER_NOT_IDLE, OwnedWorkerBusyError } from './errors.js';
 import {
   ensureCurrentPublishPackage,
   reconcilePublicationPackageForInspection,
@@ -480,7 +486,7 @@ test('inspection repairs a missing bundle at unchanged HEAD, defers busy work an
   assert.deepEqual(getRun(run.id)!.decisions, [decision]);
 });
 
-test('polling shows a refused refresh again without re-running it until its inputs change', async (t) => {
+test('polling shows an evidence refusal again without re-running it until its inputs change', async (t) => {
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
@@ -509,10 +515,11 @@ test('polling shows a refused refresh again without re-running it until its inpu
   updateRun(run.id, { status: 'human-gating', decisions: [decision] });
   let refreshes = 0;
   let refusal: Error = new OwnedWorkerBusyError();
+  let progress: 'idle' | 'making-progress' = 'idle';
   const readers = {
     head: async () => 'new-head',
     bundleAvailable: async () => true,
-    progress: async () => ({ kind: 'idle' as const }),
+    progress: async () => ({ kind: progress }),
     refresh: async () => {
       refreshes++;
       throw refusal;
@@ -521,15 +528,34 @@ test('polling shows a refused refresh again without re-running it until its inpu
   const poll = async (overrides: Partial<typeof readers> = {}) =>
     (await reconcilePublicationPackageForInspection(getRun(run.id)!, { ...readers, ...overrides }))
       .decisions[0].description;
-  // A worker that resumed between the reads is waited for, not remembered.
-  await poll();
-  await poll();
-  assert.equal(refreshes, 2);
+  // A worker that resumed between the reads, an unproven progress read and a node timeout are
+  // not the same on the next poll, so none is remembered.
+  for (const transient of [
+    new OwnedWorkerBusyError(),
+    new BlockedRunError(OWNED_WORKER_NOT_IDLE),
+    new Error('Node macpro timeout after 60000ms'),
+  ]) {
+    refusal = transient;
+    await poll();
+    await poll();
+  }
+  assert.equal(refreshes, 6);
   // ba397e2c: each refresh held the machine's transition key for 29-170 s, once per poll.
-  refusal = new Error('Before evidence needs an attestation');
-  for (let i = 0; i < 3; i++) assert.match(await poll(), /Before evidence needs an attestation/);
-  assert.equal(refreshes, 3);
-  // An operator's attestation and a new HEAD are new inputs.
+  refusal = new PublishPackageRefusedError('Artifact mirror refresh failed', {
+    cause: new RecordedEvidenceReadError(
+      'evidence-selection-invalid',
+      'Before evidence needs an attestation',
+    ),
+  });
+  for (let i = 0; i < 3; i++) assert.match(await poll(), /Artifact mirror refresh failed/);
+  assert.equal(refreshes, 7);
+  // The worker working again (re-recording the before attempt, say) forgets the refusal.
+  progress = 'making-progress';
+  await poll();
+  progress = 'idle';
+  await poll();
+  assert.equal(refreshes, 8);
+  // An operator's attestation, a new HEAD, a new generation and a new decision are new inputs.
   await commitRunBeforeAttemptAttestation(
     run.id,
     () => ({
@@ -545,14 +571,22 @@ test('polling shows a refused refresh again without re-running it until its inpu
     () => {},
   );
   await poll();
-  assert.equal(refreshes, 4);
+  assert.equal(refreshes, 9);
   await poll({ head: async () => 'newer-head' });
-  assert.equal(refreshes, 5);
+  assert.equal(refreshes, 10);
+  updateRun(run.id, { engineState: { ...getRun(run.id)!.engineState, generation: 3 } });
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 11);
+  updateRun(run.id, { decisions: [{ ...decision, id: 'refused-again' }] });
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 12);
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 12);
   // Artifact edits leave HEAD alone, so an old refusal is retried.
   const now = Date.now();
   t.mock.method(Date, 'now', () => now + 5 * 60_000 + 1);
   await poll({ head: async () => 'newer-head' });
-  assert.equal(refreshes, 6);
+  assert.equal(refreshes, 13);
 });
 
 test('an explicit refresh logs its refusal, so a caller that timed out does not lose it', async (t) => {

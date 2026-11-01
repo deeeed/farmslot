@@ -1177,6 +1177,7 @@ export async function runCompletionPipeline(
       if (options?.requireArtifactMirror) {
         throw new PublishPackageRefusedError(
           `Artifact mirror refresh failed; cannot build an authoritative publish package: ${(err as Error).message}`,
+          { cause: err },
         );
       }
       console.warn(

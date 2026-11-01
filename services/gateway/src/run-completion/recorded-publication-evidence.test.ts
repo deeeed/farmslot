@@ -1033,8 +1033,26 @@ test('a before attempt recorded off the base names the attestation that admits i
   await assert.rejects(
     readEvidenceManifest(f.run),
     new RegExp(
-      `Before evidence artifacts/recipe-runs/attempts/base-run/proof\\.png comes from recipe attempt recipe-runs/attempts/base-run, recorded at ${f.headSha}, not the unchanged base ${f.run.worktreeHeadAtDispatch}\\. .*attest-before-attempt --recipe-run attempts/base-run \\(artifact-manifest\\.json sha256 ${digest(manifest)}\\)`,
+      `Before evidence artifacts/recipe-runs/attempts/base-run/proof\\.png comes from recipe attempt recipe-runs/attempts/base-run, recorded at ${f.headSha}, not the unchanged base ${f.run.worktreeHeadAtDispatch}\\. .*farmslot run gate ${f.run.id} --action attest-before-attempt --recipe-run attempts/base-run --reason ".*" \\(artifact-manifest\\.json sha256 ${digest(manifest)}\\)`,
     ),
+  );
+  // The attestation the message names, as run.attestBeforeAttempt records it, admits the attempt.
+  f.run.beforeAttemptAttestations = [
+    {
+      id: 'attestation',
+      runId: f.run.id,
+      decisionId: 'gate',
+      attemptRoot: 'recipe-runs/attempts/base-run',
+      manifestSha256: digest(manifest),
+      approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'credential' },
+      reason: 'The recipe needs files this change adds.',
+      attestedAt: '2026-11-01T14:00:00.000Z',
+    },
+  ];
+  const effective = await readEvidenceManifest(f.run);
+  assert.equal(
+    effective?.before_after_pairs?.[0]?.before,
+    'recipe-runs/attempts/base-run/proof.png',
   );
 });
 

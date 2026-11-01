@@ -9,6 +9,7 @@ import {
   latestExhaustedReview,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  RecordedEvidenceReadError,
   reviewPolicySatisfied,
   reviewRetryCapReason,
   type ReviewStatus,
@@ -23,6 +24,7 @@ import {
   prepareCompletionPackageTransitionLocked,
   publicationStatusForRun,
 } from '../run-completion/orchestrator.js';
+import { publicationBaselineContext } from '../run-completion/publication-artifacts.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
 import {
   computeReadyGateReviewSubjectHash,
@@ -132,10 +134,11 @@ interface PublicationInspectionReaders {
 const inspectionRefreshes = new Map<string, Promise<Run>>();
 
 /**
- * A refused refresh is kept until its inputs change. Every run.get and decision list inspects the
+ * An evidence refusal is kept until its inputs change. Every run.get and decision list inspects the
  * gate, and each refresh holds the machine's transition key while it reads the worker's checkout,
  * so re-running a refusal on every poll would starve the machine's other runs. Artifact edits
- * leave HEAD alone, so a refusal is also retried once it is a few minutes old.
+ * leave HEAD alone, so a refusal is also retried once it is a few minutes old, and as soon as the
+ * worker has worked again.
  */
 const refreshRefusals = new Map<string, { inputs: string; message: string; at: number }>();
 const REFRESH_REFUSAL_RETRY_MS = 5 * 60_000;
@@ -145,12 +148,24 @@ function refreshInputs(run: Run, decisionId: string, head: string): string {
     decisionId,
     head,
     run.engineState?.generation ?? 0,
+    run.slotId,
+    run.branch,
+    publicationBaselineContext(run).baseSha,
     (run.beforeAttemptAttestations ?? []).map((attestation) => attestation.id),
   ]);
 }
 
+/** Only an evidence refusal repeats on the next poll; a node timeout or a busy worker does not. */
+function isEvidenceRefusal(error: unknown): boolean {
+  for (let cause = error; cause instanceof Error; cause = cause.cause)
+    if (cause instanceof RecordedEvidenceReadError) return true;
+  return false;
+}
+
+/** One bounded line: a node failure can carry a command's whole output. */
 function refreshFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = (error instanceof Error ? error.message : String(error)).replace(/\s+/gu, ' ');
+  return message.length > 500 ? `${message.slice(0, 500)}…` : message;
 }
 
 /** Coalesce polling readers, and never snapshot a worker that is still progressing. */
@@ -224,24 +239,24 @@ export function reconcilePublicationPackageForInspection(
       )
         return getRun(run.id) ?? run;
       const progress = await readers.progress(getRun(run.id) ?? run);
-      if (progress.kind !== 'idle')
+      if (progress.kind !== 'idle') {
+        // The worker is acting on the gate (re-recording, say), so its result gets a fresh refresh.
+        refreshRefusals.delete(run.id);
         return collecting(
           bundleAvailable
             ? 'Publication HEAD changed; waiting for the owned worker to be idle before refreshing its package.'
             : 'Retained publication evidence is missing; waiting for the owned worker to be idle before refreshing its package.',
           head,
         );
+      }
       const inputs = refreshInputs(getRun(run.id) ?? run, pending.id, head);
       const refused = refreshRefusals.get(run.id);
       if (refused?.inputs === inputs && Date.now() - refused.at < REFRESH_REFUSAL_RETRY_MS)
         return collecting(`Publication package refresh could not finish: ${refused.message}`);
       try {
-        const refreshed = await readers.refresh(run.id, pending.id);
-        refreshRefusals.delete(run.id);
-        return refreshed;
+        return await readers.refresh(run.id, pending.id);
       } catch (error) {
-        // A worker that resumed between the reads is waited for, not remembered as a refusal.
-        if (!(error instanceof OwnedWorkerBusyError))
+        if (isEvidenceRefusal(error))
           refreshRefusals.set(run.id, {
             inputs,
             message: refreshFailureMessage(error),
@@ -365,17 +380,20 @@ export async function refreshPublishPackage(
 ): ReturnType<typeof refreshPublishPackageTransitionLocked> {
   const startedAt = Date.now();
   try {
-    const result = await withRunTransition(params.runId, () =>
+    return await withRunTransition(params.runId, () =>
       refreshPublishPackageTransitionLocked(params, false, readers.progress, readers.source),
     );
-    refreshRefusals.delete(params.runId);
-    return result;
   } catch (error) {
     // A caller that timed out never sees this refusal, so the log keeps it. Inspection runs a
     // refusal again only once its inputs change, so this is one line per attempt, not per poll.
+    const message = refreshFailureMessage(error);
     console.warn(
-      `[run-engine] run ${params.runId.slice(0, 8)} — publish package refresh refused after ${Math.round((Date.now() - startedAt) / 1000)}s: ${refreshFailureMessage(error)}`,
+      `[run-engine] run ${params.runId.slice(0, 8)} — publish package refresh refused after ${Math.round((Date.now() - startedAt) / 1000)}s: ${message}`,
     );
+    // The gate shows the latest evidence refusal, not an older remembered one.
+    const remembered = refreshRefusals.get(params.runId);
+    if (remembered && isEvidenceRefusal(error))
+      refreshRefusals.set(params.runId, { ...remembered, message, at: Date.now() });
     throw error;
   }
 }
@@ -679,6 +697,7 @@ async function refreshPublishPackageTransitionLocked(
   // The preparation owner commits the package only after all projection I/O.
   // A late source refusal therefore preserves the previous canonical pointer.
   await prepared.commit!();
+  refreshRefusals.delete(params.runId);
   const nextDecision: RunDecision | undefined = decision
     ? {
         ...decision,
