@@ -15,6 +15,7 @@ import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../run
 
 import {
   ensureCurrentPublishPackage,
+  markPreparedPackageStale,
   reconcilePublicationPackageForInspection,
   refreshPublishPackage,
   reviewPolicyForPublishPackageRefresh,
@@ -470,4 +471,55 @@ test('inspection repairs a missing bundle at unchanged HEAD, defers busy work an
     ['hold'],
   );
   assert.deepEqual(getRun(run.id)!.decisions, [decision]);
+});
+
+test('a package marked stale by refused evidence is refreshed, not shown again, at the same HEAD', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-STALE',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const prepared = makeReadyGatePackage();
+  const decision: RunDecision = {
+    id: 'stale',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    createdAt: prepared.createdAt,
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      branch: prepared.branch,
+      workerReport: '',
+      diffStat: prepared.diffStat,
+      prPackage: prepared,
+    },
+  };
+  updateRun(run.id, { status: 'human-gating', decisions: [decision] });
+  let refreshes = 0;
+  const readers = {
+    head: async () => prepared.headSha ?? null,
+    bundleAvailable: async () => true,
+    progress: async () => ({ kind: 'idle' as const }),
+    refresh: async () => {
+      refreshes++;
+      throw new Error('Before evidence comes from recipe attempt recipe-runs/attempts/base');
+    },
+  };
+  await reconcilePublicationPackageForInspection(getRun(run.id)!, readers);
+  assert.equal(refreshes, 0, 'an unchanged package is shown as is');
+  // A human-gate replay's mirror refresh refused the worker's evidence after this package.
+  markPreparedPackageStale(run.id);
+  const shown = await reconcilePublicationPackageForInspection(getRun(run.id)!, readers);
+  assert.equal(refreshes, 1);
+  assert.deepEqual(
+    shown.decisions[0].actions.map((action) => action.id),
+    [],
+    'the stale package cannot be approved',
+  );
+  assert.match(shown.decisions[0].description, /Before evidence comes from recipe attempt/);
 });

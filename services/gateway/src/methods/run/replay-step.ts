@@ -62,6 +62,7 @@ import {
   startRun,
 } from '../../run-engine/orchestrator.js';
 import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
+import { markPreparedPackageStale } from '../../run-engine/publish-package-refresh.js';
 import {
   probeWorkerSignalForRun,
   signalMatchesMonitorContext,
@@ -1483,13 +1484,12 @@ async function replayRunStep(
       },
     );
   };
-  // A replay that cancelled the gate's live engine gives it back, whether or not the gate had a
-  // decision to reopen: a reopened card has no engine waiting on it, and a gate action only
-  // resumes the run while it reads blocked or human-gating (ba397e2c read monitoring while its
-  // worker worked). The resumed engine supersedes the reopened card on gate entry. Runs no
-  // engine was driving (a recovery holding the gate) are left to their owner, and so is a run
-  // with any other open decision.
-  const resumeGateEngine = (entry: GateReentry, error: unknown) => {
+  // A replay that cancelled the gate's live engine gives it back, and that engine presents its
+  // own card. Reopening the superseded card instead leaves it with no engine, and a gate action
+  // resumes the run only while it reads blocked or human-gating (ba397e2c read monitoring while
+  // its worker worked). Runs no engine was driving (a recovery holding the gate), and runs with
+  // any other open decision, get their cards reopened for their owner instead.
+  const resumeGateEngine = async (entry: GateReentry, error: unknown): Promise<boolean> => {
     const current = getRun(params.runId);
     if (
       replayStepName !== PS.HUMAN_GATE ||
@@ -1497,16 +1497,23 @@ async function replayRunStep(
       !current ||
       current.status !== entryStatus ||
       current.engineState?.generation !== entry.generation ||
-      current.decisions.some(
-        (decision) => !decision.resolvedAt && !entry.decisionIds.has(decision.id),
-      ) ||
+      current.decisions.some((decision) => !decision.resolvedAt) ||
       !current.steps.some((step) => step.name === PS.HUMAN_GATE && step.status === 'running')
     )
-      return;
+      return false;
     console.warn(
       `[run] replay of ${params.runId.slice(0, 8)} from ${replayStepName} failed (${error instanceof Error ? error.message : String(error)}); resuming its gate`,
     );
+    // The cancelled loop's waiters on the superseded cards return 'abort'.
+    for (const decisionId of entry.decisionIds) resolveEngineDecision(decisionId, 'superseded');
+    // The engine finalizes a blocked run as terminal on entry; the gate it resumes is waiting.
+    if (current.status !== 'human-gating')
+      await persistRunNow(
+        updateRun(params.runId, { status: 'human-gating' }),
+        'replay-resume-gate',
+      );
     void startReplayEngine();
+    return true;
   };
   const leaveGateReentry = async (failed: boolean, error?: unknown) => {
     const entry = gateReentry;
@@ -1516,8 +1523,8 @@ async function replayRunStep(
     if (entry.inFlight > 0) return;
     gateReentries.delete(params.runId);
     if (!failed || entry.revived) return;
-    await reopenGateDecisions(entry.decisionIds, error);
-    resumeGateEngine(entry, error);
+    if (!(await resumeGateEngine(entry, error)))
+      await reopenGateDecisions(entry.decisionIds, error);
   };
   const rollBackReclaimedSlot = async (err: unknown) => {
     if (
@@ -1955,6 +1962,8 @@ async function replayRunStep(
         // it the same way and presents the reason with an engine waiting. Failing the replay
         // here left ba397e2c's gate with no engine.
         if (!(error instanceof RecordedEvidenceReadError)) throw error;
+        // The package prepared before it no longer describes the worker's evidence.
+        markPreparedPackageStale(params.runId);
         console.warn(
           `[run] replay from ${replayStepName} — publication evidence refused; the gate presents it: ${error.message}`,
         );
