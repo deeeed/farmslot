@@ -25,10 +25,7 @@ import {
 } from '../../backlog/dispatch-queue.js';
 import { isolatedTestPath } from '../../core/isolated-test-path.js';
 import { statusFile, updateSlotStatus } from '../../core/state.js';
-import {
-  clearPreparedPackageStale,
-  preparedPackageIsStale,
-} from '../../run-completion/prepared-package-stale.js';
+import { preparedPackageIsStale } from '../../run-completion/prepared-package-stale.js';
 import {
   createEngineDecision,
   hasEngineDecisionWaiter,
@@ -4020,8 +4017,11 @@ test('a failed replay of a live gate with another open decision reopens its card
 
 test('a gate replay whose publication evidence is refused rebuilds the gate instead of failing', async (t) => {
   const run = await blockedGateRun(t, 'gate-evidence', [holdGate('pending-gate-evidence')]);
-  // No frozen dispatch contract in this fixture's task.
-  updateRun(run.id, { recordedEvidenceContractVersion: 0 });
+  // No frozen dispatch contract in this fixture's task; a package was prepared before.
+  updateRun(run.id, {
+    recordedEvidenceContractVersion: 0,
+    engineState: { ...run.engineState, publishGate: { packageId: 'pkg-before' } },
+  });
   const started: string[] = [];
   const hooks = (refusal: Error): RunReplayStepHooks => ({
     startEngine: async (runId) => {
@@ -4059,7 +4059,6 @@ test('a gate replay whose publication evidence is refused rebuilds the gate inst
   assert.deepEqual(started, [run.id]);
   // The package prepared before the refusal is not offered again.
   assert.equal(preparedPackageIsStale(getRun(run.id)!), true);
-  clearPreparedPackageStale(run.id);
 });
 
 test('the enclosing human gate cannot mark a replay-restored held slot busy', async (t) => {

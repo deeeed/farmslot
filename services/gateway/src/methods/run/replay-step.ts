@@ -1970,7 +1970,7 @@ async function replayRunStep(
         // here left ba397e2c's gate with no engine.
         if (!(error instanceof RecordedEvidenceReadError)) throw error;
         // The package prepared before it no longer describes the worker's evidence.
-        markPreparedPackageStale(params.runId);
+        await markPreparedPackageStale(params.runId);
         console.warn(
           `[run] replay from ${replayStepName} — publication evidence refused; the gate presents it: ${error.message}`,
         );

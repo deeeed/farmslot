@@ -1,31 +1,27 @@
 import type { Run } from '@farmslot/protocol';
 
+import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+
 /**
- * A run's prepared publication package no longer describes its worker's evidence: a human-gate
- * replay's mirror refresh refused that evidence after the package was built. Neither the gate nor
- * inspection reuses the package until one is committed again. In memory for this process; across
- * a restart the gate's own "unavailable" card (`latestGateHadNoPackage`) carries the same signal.
+ * A human-gate replay's mirror refresh refused the worker's evidence after the run's package was
+ * prepared, so that package no longer describes the evidence. The refusal is recorded against the
+ * package itself: neither the gate nor inspection reuses it, across restarts, until another
+ * package replaces it.
  */
-const stale = new Set<string>();
-
-export function markPreparedPackageStale(runId: string): void {
-  stale.add(runId);
+export async function markPreparedPackageStale(runId: string): Promise<void> {
+  const run = getRun(runId);
+  const gate = run?.engineState?.publishGate;
+  if (!run || !gate?.packageId || gate.refusedEvidencePackageId === gate.packageId) return;
+  const marked = updateRun(runId, {
+    engineState: {
+      ...run.engineState,
+      publishGate: { ...gate, refusedEvidencePackageId: gate.packageId },
+    },
+  });
+  await persistRunNow(marked, 'refused-evidence-package');
 }
 
-export function clearPreparedPackageStale(runId: string): void {
-  stale.delete(runId);
-}
-
-/** The newest ready gate decision carries no package: its gate could not build one. */
-function latestGateHadNoPackage(run: Pick<Run, 'decisions'>): boolean {
-  const latest = run.decisions
-    .filter(
-      (decision) => decision.type === 'engine_human_gate' && decision.payload?.kind === 'ready',
-    )
-    .at(-1);
-  return latest?.payload?.kind === 'ready' && !latest.payload.prPackage;
-}
-
-export function preparedPackageIsStale(run: Pick<Run, 'id' | 'decisions'>): boolean {
-  return stale.has(run.id) || latestGateHadNoPackage(run);
+export function preparedPackageIsStale(run: Pick<Run, 'engineState'>): boolean {
+  const gate = run.engineState?.publishGate;
+  return !!gate?.packageId && gate.refusedEvidencePackageId === gate.packageId;
 }

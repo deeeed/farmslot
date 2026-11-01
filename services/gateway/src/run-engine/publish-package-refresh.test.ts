@@ -10,7 +10,6 @@ import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
 import {
-  clearPreparedPackageStale,
   markPreparedPackageStale,
   preparedPackageIsStale,
 } from '../run-completion/prepared-package-stale.js';
@@ -517,7 +516,8 @@ test('a package marked stale by refused evidence is refreshed, not shown again, 
   await reconcilePublicationPackageForInspection(getRun(run.id)!, readers);
   assert.equal(refreshes, 0, 'an unchanged package is shown as is');
   // A human-gate replay's mirror refresh refused the worker's evidence after this package.
-  markPreparedPackageStale(run.id);
+  updateRun(run.id, { engineState: { publishGate: { packageId: prepared.id } } });
+  await markPreparedPackageStale(run.id);
   const shown = await reconcilePublicationPackageForInspection(getRun(run.id)!, readers);
   assert.equal(refreshes, 1);
   assert.deepEqual(
@@ -528,45 +528,25 @@ test('a package marked stale by refused evidence is refreshed, not shown again, 
   assert.match(shown.decisions[0].description, /Before evidence comes from recipe attempt/);
 });
 
-test('a prepared package stays stale until one is committed, and across a restart while its gate shows no package', () => {
-  const prepared = makeReadyGatePackage();
-  const gate = (id: string, withPackage: boolean): RunDecision => ({
-    id,
-    type: 'engine_human_gate',
-    title: 'Gate',
-    description: '',
-    createdAt: prepared.createdAt,
-    actions: [{ id: 'hold', label: 'Retry Gate', style: 'secondary' }],
-    payload: {
-      kind: 'ready',
-      prNumber: null,
-      repo: null,
-      branch: prepared.branch,
-      workerReport: '',
-      diffStat: prepared.diffStat,
-      ...(withPackage ? { prPackage: prepared } : { stale: true }),
+test('a refused package stays stale, across a restart, until another package replaces it', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-STALE-2',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, { engineState: { publishGate: { packageId: 'pkg-old' } } });
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), false);
+  await markPreparedPackageStale(run.id);
+  // Durable: the run record names the refused package, so a restarted gateway reads it too.
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.refusedEvidencePackageId, 'pkg-old');
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), true);
+  // A package built after the refusal is not stale.
+  updateRun(run.id, {
+    engineState: {
+      publishGate: { ...getRun(run.id)!.engineState!.publishGate, packageId: 'pkg-new' },
     },
   });
-  const run = { id: 'stale-package-run', decisions: [gate('built', true)] };
-  assert.equal(preparedPackageIsStale(run), false);
-  markPreparedPackageStale(run.id);
-  assert.equal(preparedPackageIsStale(run), true);
-  clearPreparedPackageStale(run.id);
-  assert.equal(preparedPackageIsStale(run), false);
-  // After a restart the mark is gone, but the gate's "unavailable" card, resolved or not, still
-  // says its package could not be built, so Retry Gate rebuilds instead of reusing the old one.
-  assert.equal(
-    preparedPackageIsStale({
-      ...run,
-      decisions: [gate('built', true), gate('unavailable', false)],
-    }),
-    true,
-  );
-  assert.equal(
-    preparedPackageIsStale({
-      ...run,
-      decisions: [gate('built', true), gate('unavailable', false), gate('rebuilt', true)],
-    }),
-    false,
-  );
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), false);
 });
