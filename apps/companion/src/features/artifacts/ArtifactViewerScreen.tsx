@@ -83,6 +83,7 @@ export default function ArtifactViewerScreen() {
           label={item.label}
           mimeType={item.mimeType}
           sizeBytes={item.sizeBytes}
+          sha256={item.sha256}
           authHeaders={artifactAuthHeaders}
           onPressImage={mediaType === 'image' ? () => openVisualArtifact(url) : undefined}
           onPressVideo={mediaType === 'video' ? () => openVisualArtifact(url) : undefined}

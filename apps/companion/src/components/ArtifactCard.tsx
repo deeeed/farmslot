@@ -22,6 +22,8 @@ interface ArtifactCardProps {
   label?: string;
   mimeType?: string;
   sizeBytes?: number;
+  /** The manifest digest: a held copy plays from the device, offline too. */
+  sha256?: string;
   onPressImage?: () => void;
   onPressVideo?: () => void;
   onPressDocument?: () => void;
@@ -47,6 +49,7 @@ export function ArtifactCard({
   label,
   mimeType,
   sizeBytes,
+  sha256,
   onPressImage,
   onPressVideo,
   onPressDocument,
@@ -60,7 +63,7 @@ export function ArtifactCard({
   const purposeColor = purpose ? (PURPOSE_COLORS[purpose] ?? colors.textMuted) : colors.textMuted;
   const { width } = useWindowDimensions();
   const thumbSize = (width - spacing.xl * 2 - spacing.md) / 2;
-  const imageSource = useArtifactSource(url, authHeaders);
+  const imageSource = useArtifactSource(url, authHeaders, sha256);
 
   return (
     <View style={[styles.card, { width: thumbSize }]}>
@@ -75,6 +78,7 @@ export function ArtifactCard({
       )}
       {mediaType === 'video' && (
         <VideoPlayer
+          sha256={sha256}
           url={url}
           height={thumbSize * 0.75}
           authHeaders={authHeaders}
@@ -119,13 +123,15 @@ function VideoPlayer({
   height,
   onOpen,
   authHeaders,
+  sha256,
 }: {
   url: string;
   height: number;
   onOpen?: () => void;
   authHeaders?: ArtifactHttpHeaders;
+  sha256?: string;
 }) {
-  const source = useArtifactSource(url, authHeaders);
+  const source = useArtifactSource(url, authHeaders, sha256);
   const player = useVideoPlayer(source);
 
   return (

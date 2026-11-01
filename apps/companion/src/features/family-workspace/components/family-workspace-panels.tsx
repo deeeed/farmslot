@@ -2437,6 +2437,7 @@ export function EvidenceGroupCard({
                 path={artifact.path}
                 purpose={artifact.purpose}
                 sizeBytes={artifact.sizeBytes}
+                sha256={artifact.sha256}
                 authHeaders={artifactAuthHeaders}
                 onPressImage={mediaType === 'image' ? () => onOpenVisual(url) : undefined}
                 onPressVideo={mediaType === 'video' ? () => onOpenVisual(url) : undefined}

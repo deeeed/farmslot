@@ -24,6 +24,9 @@ type Sheet = { kind: 'another-round'; text: string };
  * What blocks publish, at the top of the gate: each blocker with its one plain action,
  * from the same shared rule as desktop.
  */
+/** Actions that only show evidence or findings: offline, with commands not ready, they still work. */
+const READ_ONLY_ACTIONS = new Set(['review-evidence', 'see-findings']);
+
 export function GateBlockers({
   run,
   decision,
@@ -167,12 +170,12 @@ export function GateBlockers({
                   key={action.kind}
                   accessibilityRole="button"
                   testID={`companion-blocker-${action.kind}`}
-                  disabled={disabled}
+                  disabled={disabled && !READ_ONLY_ACTIONS.has(action.kind)}
                   onPress={() => choose(blocker, action)}
                   style={[
                     styles.action,
                     { borderColor: palette.border, backgroundColor: palette.surface },
-                    disabled && styles.disabled,
+                    disabled && !READ_ONLY_ACTIONS.has(action.kind) && styles.disabled,
                   ]}
                 >
                   <Text style={[styles.actionLabel, { color: palette.text }]}>{action.label}</Text>

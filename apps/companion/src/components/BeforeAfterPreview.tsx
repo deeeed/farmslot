@@ -505,7 +505,7 @@ function ComparisonVideo<T extends ArtifactManifestEntry>({
   authHeaders?: ArtifactHttpHeaders;
   height: number;
 }) {
-  const source = useArtifactSource(artifact.url, authHeaders);
+  const source = useArtifactSource(artifact.url, authHeaders, artifact.sha256);
   const player = useVideoPlayer(source);
   return (
     <VideoView

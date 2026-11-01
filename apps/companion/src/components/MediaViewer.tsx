@@ -441,7 +441,7 @@ function FullscreenVideo({
   const [videoPath, setVideoPath] = useState('');
   const [durationMs, setDurationMs] = useState(0);
   const [, updateSelection] = useState(0);
-  const source = useArtifactSource(uri, item.authHeaders);
+  const source = useArtifactSource(uri, item.authHeaders, item.sha256);
   const player = useVideoPlayer(source, (value) => {
     value.timeUpdateEventInterval = 0.1;
     value.bufferOptions = { preferredForwardBufferDuration: 2, maxBufferBytes: 4 * 1024 * 1024 };
