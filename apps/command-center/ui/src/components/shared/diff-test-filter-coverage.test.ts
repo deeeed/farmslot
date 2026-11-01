@@ -29,6 +29,7 @@ const FILE_LIST_MARKERS = [
 
 /** Diff views that must be found, so a scanner regression cannot pass silently. */
 const KNOWN_DIFF_VIEWS = [
+  'components/chat/native-session-view.ts',
   'components/chat/native-workspace.ts',
   'components/decisions/decision-inbox.ts',
   'components/shared/diff-viewer-modal.ts',

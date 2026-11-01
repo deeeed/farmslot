@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -68,14 +68,15 @@ async function transcript(t: TestContext) {
   const file = path.join(root, `${sessionId}.jsonl`);
   const write = (records: unknown[]) =>
     writeFile(file, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
-  const read = (limit?: number): { state: string; observedAt?: number } =>
+  // The probe keeps its per-transcript cache under HOME; keep it inside this test's root.
+  const read = (limit?: number): { state: string; observedAt?: number; bytesRead?: number } =>
     JSON.parse(
       execFileSync('sh', ['-c', buildClaudeBackgroundProbeCommand(sessionId, file, limit)], {
         encoding: 'utf8',
-        env: probeEnvironment,
+        env: { ...probeEnvironment, HOME: root },
       }),
     );
-  return { file, write, read };
+  return { root, file, write, read };
 }
 
 test('native background work remains active after a Stop and settles only on its own completion', async (t) => {
@@ -279,4 +280,65 @@ test('background state is bound to the root session, exact pane and a live runne
     exec: async () => assert.fail('foreign pane must not read the transcript'),
   });
   assert.equal(changed.value, 'unknown');
+});
+
+test('a later read parses only the bytes appended since the last one', async (t) => {
+  const f = await transcript(t);
+  await f.write([launch()]);
+  const first = f.read();
+  assert.equal(first.state, 'active');
+  assert.equal(first.bytesRead, (await stat(f.file)).size);
+  const appended = JSON.stringify(completed()) + '\n';
+  await appendFile(f.file, appended);
+  const second = f.read();
+  assert.equal(second.state, 'idle', 'the cached launch meets its appended completion');
+  assert.equal(second.bytesRead, Buffer.byteLength(appended));
+  assert.equal(f.read().bytesRead, 0, 'nothing new, nothing parsed');
+});
+
+test('truncation, rotation and an in-place rewrite restart from byte zero', async (t) => {
+  const f = await transcript(t);
+  await f.write([launch(), completed()]);
+  assert.equal(f.read().state, 'idle');
+  // Truncated to a shorter journal whose task is unfinished.
+  await f.write([launch('background-2', 'tool-2')]);
+  const truncated = f.read();
+  assert.equal(truncated.state, 'active');
+  assert.equal(truncated.bytesRead, (await stat(f.file)).size);
+  // Rotated: a new file (new inode) at the same path.
+  const next = path.join(f.root, 'next.jsonl');
+  await writeFile(
+    next,
+    [launch('background-3', 'tool-3'), completed('background-3', 'tool-3'), launch()]
+      .map((record) => JSON.stringify(record))
+      .join('\n') + '\n',
+  );
+  await rename(next, f.file);
+  const rotated = f.read();
+  assert.equal(rotated.state, 'active');
+  assert.equal(rotated.bytesRead, (await stat(f.file)).size);
+  // Rewritten in place, longer, with a different beginning: the tail check catches it.
+  await f.write([
+    { type: 'system', sessionId, subtype: 'rewritten-history-record' },
+    launch(),
+    completed(),
+    launch('background-3', 'tool-3'),
+    completed('background-3', 'tool-3'),
+  ]);
+  const rewritten = f.read();
+  assert.equal(rewritten.state, 'idle');
+  assert.equal(rewritten.bytesRead, (await stat(f.file)).size);
+});
+
+test('a partial trailing line is read once it is complete, not before', async (t) => {
+  const f = await transcript(t);
+  await f.write([launch()]);
+  assert.equal(f.read().state, 'active');
+  const line = JSON.stringify(completed());
+  await appendFile(f.file, line.slice(0, 20));
+  assert.equal(f.read().state, 'unknown', 'a line still being written proves nothing');
+  await appendFile(f.file, line.slice(20) + '\n');
+  const completedRead = f.read();
+  assert.equal(completedRead.state, 'idle');
+  assert.equal(completedRead.bytesRead, Buffer.byteLength(line) + 1);
 });

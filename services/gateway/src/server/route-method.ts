@@ -789,6 +789,7 @@ async function routeAuthorizedMethod(
     case Methods.NATIVE_SESSION_WORKSPACE_READ:
     case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
     case Methods.NATIVE_SESSION_WORKSPACE_DIFF:
+    case Methods.NATIVE_SESSION_TURN_DIFF:
     case Methods.NATIVE_SESSION_CLOSE:
       return nativeSessionRoute(
         method,
