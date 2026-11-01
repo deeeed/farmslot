@@ -49,23 +49,34 @@ type AuthorizedNativeNode = ConnectedNode & {
   nativeAuthority: NonNullable<ConnectedNode['nativeAuthority']>;
 };
 
-function hasIssuedOfflineAssignment(owner: string, machine: string, principalId?: string): boolean {
+/** A machine's single node principal and its owner, while that assignment stays issued. */
+function issuedOfflineNode(machine: string): { owner: string; principalId: string } | undefined {
   const store = loadCredentialStore();
   const nodes = store.principals.filter(
     (principal) => principal.subject.type === 'node' && principal.subject.machine === machine,
   );
   const node = nodes.length === 1 ? nodes[0] : undefined;
-  return Boolean(
+  const owner = node?.subject.type === 'node' ? node.subject.nativeOwnerPrincipalId : undefined;
+  return node &&
+    owner &&
     store.principals.some(
       (principal) => principal.id === owner && principal.subject.type !== 'node',
     ) &&
-    node?.subject.type === 'node' &&
-    node.subject.nativeOwnerPrincipalId === owner &&
-    (!principalId || node.id === principalId) &&
     store.credentials.some(
       (credential) => credential.principalId === node.id && !credential.revokedAt,
-    ),
-  );
+    )
+    ? { owner, principalId: node.id }
+    : undefined;
+}
+
+function hasIssuedOfflineAssignment(owner: string, machine: string, principalId?: string): boolean {
+  const issued = issuedOfflineNode(machine);
+  return issued?.owner === owner && (!principalId || issued.principalId === principalId);
+}
+
+/** The owner a machine's node keeps while it is offline, only while that assignment stays issued. */
+export function offlineAssignedNativeOwner(machine: string): string | undefined {
+  return issuedOfflineNode(machine)?.owner;
 }
 
 /** An offline assignment permits waiting only; it never authorizes a request without a live node. */
