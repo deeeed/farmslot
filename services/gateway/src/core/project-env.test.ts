@@ -9,6 +9,7 @@ import {
   buildMachineEnvPrefix,
   buildProjectCommandEnvPrefix,
   machineShellEnv,
+  pinRecipeLibraryPath,
   resolveProjectCommandEnv,
   withMachineEnv,
 } from './project-env.js';
@@ -166,4 +167,38 @@ test('remote machine shells target the gateway URL their node dials, never a cre
   } finally {
     unregisterByWs(ws);
   }
+});
+
+test('a bound task resolves its named RECIPE_LIBRARY_PATH entries to the retained copies', () => {
+  const project = {
+    command_env: {
+      domains: {
+        perps: { set: { RECIPE_LIBRARY_PATH: 'perps={{perps}}:shared=/libraries/shared:/plain' } },
+      },
+    },
+  };
+  const options = {
+    domain: 'perps',
+    expandDomainValue: (value: string) => value.replace('{{perps}}', '/dev/recipe-perps'),
+  };
+  const pins = new Map([['perps', '/home/task-pins/p1/inputs/39/recipe-perps']]);
+  assert.equal(
+    resolveProjectCommandEnv(project, { ...options, taskLibraries: pins }).set.RECIPE_LIBRARY_PATH,
+    'perps=/home/task-pins/p1/inputs/39/recipe-perps:shared=/libraries/shared:/plain',
+  );
+  assert.equal(
+    resolveProjectCommandEnv(project, options).set.RECIPE_LIBRARY_PATH,
+    'perps=/dev/recipe-perps:shared=/libraries/shared:/plain',
+    'an unbound run keeps the shared checkout',
+  );
+  assert.equal(
+    resolveProjectCommandEnv(project, {
+      ...options,
+      taskLibraries: pins,
+      overrides: { RECIPE_LIBRARY_PATH: 'perps=/frozen' },
+    }).set.RECIPE_LIBRARY_PATH,
+    'perps=/frozen',
+    'a frozen launch binding still wins',
+  );
+  assert.equal(pinRecipeLibraryPath('=/odd:perps', pins), '=/odd:perps');
 });

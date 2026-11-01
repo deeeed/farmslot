@@ -52,6 +52,8 @@ export async function prepareNativeWorkerLaunch(input: {
   profile?: NativeProfileReference;
   stateDirectory?: string;
   recordAccount?: (label: string | undefined) => Promise<void>;
+  /** A bound run's pinned recipe libraries (pinnedTaskLibraries). */
+  taskLibraries?: ReadonlyMap<string, string>;
 }): Promise<{ launch: NativeWorkerLaunch; accountLabel?: string }> {
   const { vars } = input;
   const runner = normalizeRunner(input.runner);
@@ -70,6 +72,7 @@ export async function prepareNativeWorkerLaunch(input: {
     domain: input.domain,
     expandDomainValue: (value) =>
       expandTemplate(value, vars, input.projectVars, { domain: input.domain ?? '' }),
+    ...(input.taskLibraries ? { taskLibraries: input.taskLibraries } : {}),
   });
   // Static reviewers need the selected home and pool for retained marker commands.
   // Unrelated pool tool selections must not change their launch identity.

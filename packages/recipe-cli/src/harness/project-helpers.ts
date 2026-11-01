@@ -4,6 +4,8 @@ import path from 'node:path';
 import {
   repinTask,
   resumeTaskRepin,
+  retainedPathFor,
+  retainedSourceFor,
   type TaskExecutionInput,
   type TaskExecutionProvenance,
   type TaskRecipeBindingIdentity,
@@ -12,7 +14,7 @@ import {
 import { isRecord, type RecipeConformanceSource } from '@farmslot/protocol';
 
 import { optionValues } from './command-contract.js';
-import { recipeConformanceIdentity } from './conformance.js';
+import { libraryIdentity, recipeConformanceIdentity } from './conformance.js';
 import {
   readProject,
   readProjectPool,
@@ -20,7 +22,6 @@ import {
   resolveHarnessContext,
 } from './context.js';
 import { ProjectBindingError } from './context-state.js';
-import { inputSourceSnapshot, sourceIsDirty } from './execution-provenance.js';
 import { isPathWithin } from './paths.js';
 import {
   type ProjectRecipeHost,
@@ -239,14 +240,9 @@ export async function projectTaskExecution(
             library.path && !isPathWithin(binding.provider.root, library.path)
               ? copy(library.path)
               : undefined;
-          if (!retained) return library;
-          const snapshot = inputSourceSnapshot(retained.staged);
-          return {
-            name: library.name,
-            path: retained.pinned,
-            ...snapshot,
-            dirtyDigest: sourceIsDirty(snapshot) ? snapshot.sourceFingerprint : null,
-          };
+          return retained
+            ? libraryIdentity(library.name, retained.pinned, retained.staged)
+            : library;
         }),
       };
       return {
@@ -371,11 +367,7 @@ export async function repinSelectedTask(
 
 /** The source a retained copy was taken from; any other path is its own source. */
 function retainedSource(receipt: TaskExecutionProvenance, file: string): string {
-  if (!isPathWithin(receipt.pin, file)) return file;
-  const input = receipt.retainedInputs.find(
-    (entry) => entry.source !== entry.path && isPathWithin(entry.path, file),
-  );
-  return input ? path.join(input.source, path.relative(input.path, file)) : file;
+  return retainedSourceFor(receipt.retainedInputs, file) ?? file;
 }
 
 export async function withTaskProjectHost<T>(
@@ -426,11 +418,9 @@ export async function withTaskProjectHost<T>(
       return path.join(poolProviderRoot, path.relative(provider.root, file));
     // A selection pinned at task init already names the retained copy.
     if (isPathWithin(receipt.pin, file)) return file;
-    const input =
-      receipt.retainedInputs.find((entry) => entry.source === file) ??
-      receipt.retainedInputs.find((entry) => file.startsWith(`${entry.source}${path.sep}`));
-    if (!input) throw new Error(`Task input was not retained: ${file}`);
-    return path.join(input.path, path.relative(input.source, file));
+    const copy = retainedPathFor(receipt.retainedInputs, file);
+    if (!copy) throw new Error(`Task input was not retained: ${file}`);
+    return copy;
   };
   const mismatch: (flag: string) => never = (flag) => {
     throw new ProjectBindingError(

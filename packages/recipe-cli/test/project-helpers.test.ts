@@ -317,13 +317,6 @@ test('a shared library checkout moved during the run leaves the task on its pinn
     fs.readFileSync(path.join(f.taskDir, 'inputs/recipe-binding.json'), 'utf8'),
   ) as { identity: typeof receipt.bindingIdentity };
   assert.deepEqual(binding.identity, receipt.bindingIdentity);
-  // An SDK that resolves recorded paths through their sources (one bundled in a provider)
-  // finds the pinned copy as a retained input of its own.
-  assert.ok(
-    receipt.retainedInputs.some(
-      (entry) => entry.source === bound.path && entry.path === bound.path,
-    ),
-  );
   // A rollout moves the shared checkout while the run is in flight.
   fs.writeFileSync(path.join(shared, 'recipes', 'flow.md'), 'version rolled out mid-run\n');
   git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qam', 'rollout');
