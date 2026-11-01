@@ -36,6 +36,7 @@ import {
   type RunTransitionRequest,
   type RunTransitionSyncEffect,
 } from './transition-router.js';
+import { parksBranchCommits } from './validation-run-commits.js';
 
 interface SkippedSlotRelease {
   skipped: string;
@@ -318,13 +319,15 @@ export function defaultCancelCollaborators({
         const kept = await releaseRunSlotOwnership(run, fence, releaseBlocker, { keepForReplay });
         if (releaseBlocker) return { skipped: releaseBlocker };
         if (!kept) return { skipped: 'Slot ownership changed during cancellation' };
-        if (!keepForReplay && run.engineState?.evalExperiment?.blind?.firstOutput) {
+        const blindCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
+        // A reclaimed artifact-only run cannot replay any more: its own commits are parked.
+        if (!keepForReplay && (blindCandidate || parksBranchCommits(run))) {
           const { reuseSafeIdleSlot } = await import('./safe-idle-slot.js');
           const result = await reuseSafeIdleSlot(run.slotId!, broadcastTransitionEvent, {
             epoch: Number(fence.before?.slot_epoch) || 0,
             runId: null,
             recordRunId: run.id,
-            retainedCandidate: true,
+            retainedCandidate: blindCandidate,
           });
           if (result.kind !== 'ready')
             await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);

@@ -20,15 +20,22 @@ import {
   subscribeResourceCache,
 } from './resource-cache';
 
+function sameRows<T>(previous: readonly T[], next: readonly T[]): boolean {
+  return previous.length === next.length && previous.every((row, index) => row === next[index]);
+}
+
 const collections = new NativeRunCollections((snapshot) => {
   useFleetStore.setState({
     observation: snapshot.fleet,
     fleet: snapshot.fleet.data?.fleet ?? null,
     loading: snapshot.fleet.status === 'loading',
   });
+  const runs = snapshot.runs.data?.runs ?? [];
+  const previousRuns = useRunStore.getState().runs;
   useRunStore.setState({
     observation: snapshot.runs,
-    runs: snapshot.runs.data?.runs ?? [],
+    // Fleet and decision updates republish the same rows; an unchanged list keeps its identity.
+    runs: sameRows(previousRuns, runs) ? previousRuns : runs,
     activeLoading: snapshot.active.status === 'loading',
     historyLoading: snapshot.history?.status === 'loading',
     historyLoaded: Boolean(snapshot.history && snapshot.history.status !== 'loading'),

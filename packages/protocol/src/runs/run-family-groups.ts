@@ -1,4 +1,5 @@
 import { isActiveListRun, type Run } from '../contracts/runs.js';
+import { compareText } from '../text-order.js';
 
 import { buildFamilySummary } from './family-readiness.js';
 
@@ -23,16 +24,16 @@ function isFamilyRoot(run: Run): boolean {
 }
 
 function sortByCreatedAtDesc(runs: readonly Run[]): Run[] {
-  return [...runs].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  return [...runs].sort((left, right) => compareText(right.createdAt, left.createdAt));
 }
 
 export function sortRunsForFamilyView(runs: readonly Run[]): Run[] {
   return [...runs].sort((left, right) => {
     if (isFamilyRoot(left) !== isFamilyRoot(right)) return isFamilyRoot(left) ? -1 : 1;
     if ((left.variant ?? null) !== (right.variant ?? null)) {
-      return (left.variant ?? '').localeCompare(right.variant ?? '');
+      return compareText(left.variant ?? '', right.variant ?? '');
     }
-    return right.createdAt.localeCompare(left.createdAt);
+    return compareText(right.createdAt, left.createdAt);
   });
 }
 
@@ -89,7 +90,7 @@ export function groupRunsByFamily(runs: readonly Run[]): RunFamilyGroup[] {
         variants,
       } satisfies RunFamilyGroup;
     })
-    .sort((left, right) => right.latestCreatedAt.localeCompare(left.latestCreatedAt));
+    .sort((left, right) => compareText(right.latestCreatedAt, left.latestCreatedAt));
 }
 
 export function selectRecentRunFamilyGroups(runs: readonly Run[], limit: number): RunFamilyGroup[] {

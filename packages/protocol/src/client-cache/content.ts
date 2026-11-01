@@ -30,6 +30,39 @@ export function gitBlobHash(data: Uint8Array): string {
   return bytesToHex(sha1.create().update(header).update(data).digest());
 }
 
+const HASH_SLICE_BYTES = 16 * 1024;
+
+/** Feeds `data` to `hash` one slice per macrotask, so hashing a large file never holds the JS
+ * thread for more than a frame. */
+async function updateInSlices(hash: { update(chunk: Uint8Array): unknown }, data: Uint8Array) {
+  for (let offset = 0; offset < data.byteLength; offset += HASH_SLICE_BYTES) {
+    if (offset > 0) await new Promise((resolve) => setTimeout(resolve, 0));
+    hash.update(data.subarray(offset, offset + HASH_SLICE_BYTES));
+  }
+}
+
+/** `gitBlobHash` for background work, yielding between slices. */
+export async function gitBlobHashInSlices(data: Uint8Array): Promise<string> {
+  const hash = sha1.create().update(new TextEncoder().encode(`blob ${data.byteLength}\0`));
+  await updateInSlices(hash, data);
+  return bytesToHex(hash.digest());
+}
+
+/** `verifyResourceContent` for background work: blobs and artifacts hash between slices. */
+export async function verifyResourceContentInSlices(
+  key: ContentKey,
+  data: Uint8Array,
+  untrackedFiles: ReviewDiffSnapshot['untrackedFiles'] = [],
+): Promise<boolean> {
+  if (key.kind === 'blob') return (await gitBlobHashInSlices(data)) === key.id;
+  if (key.kind === 'artifact') {
+    const hash = sha256.create();
+    await updateInSlices(hash, data);
+    return bytesToHex(hash.digest()) === key.id;
+  }
+  return verifyResourceContent(key, data, untrackedFiles);
+}
+
 /** Content rules 1 and 2: bytes are stored only under the identity they hash to. A diff also
  * verifies against a legacy package's raw SHA-256 `diffHash`. */
 export function verifyResourceContent(
