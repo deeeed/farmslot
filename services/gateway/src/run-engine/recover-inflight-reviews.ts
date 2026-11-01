@@ -37,7 +37,7 @@ import { execOnSlot } from '../core/exec.js';
 import { slotCopyFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { REQUESTED_REVIEW_SOURCE } from '../quality/review-sources.js';
-import { readReviewFeedback } from '../review/feedback.js';
+import { logRecommendationCorrection, readReviewFeedback } from '../review/feedback.js';
 import { withNativeReviewOperation } from '../review/native-review-operation.js';
 import type { ReviewResult } from '../review/orchestrator.js';
 import {
@@ -944,6 +944,8 @@ async function ingestRecoveredReviewer(
       : appendRecoveredContinuationAttempt(existingReview, review)
     : review;
   if (!recovered) return null;
+  // Once per ingested result: recovery passes re-read results they then skip.
+  logRecommendationCorrection(ctx.id, feedback);
   const output = await persistReviewOutputArtifacts({
     vars,
     taskDir,

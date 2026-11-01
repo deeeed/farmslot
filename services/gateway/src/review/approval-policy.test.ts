@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { ReviewIssue } from '@farmslot/protocol';
 import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
 import { farmslotRoot } from '../core/config.js';
@@ -13,21 +14,58 @@ import { parseStructuredReviewFeedback } from './feedback.js';
 const issue = { file: 'src/a.ts', line: 1, description: 'Incorrect value', severity: 'minor' };
 
 test('paired review results cannot approve a minor or hide a defect in a pass verdict', () => {
-  const parse = (verdict: string, severity: string, recommendation: string) =>
+  const parse = (
+    verdict: string,
+    severity: string,
+    recommendation?: string,
+    additionalIssues?: ReviewIssue[],
+  ) =>
     parseStructuredReviewFeedback(
       JSON.stringify({
         schemaVersion: 1,
         verdict,
         issues: [{ ...issue, severity }],
-        recommendation,
+        ...(recommendation === undefined ? {} : { recommendation }),
       }),
       'review-result.json',
+      undefined,
+      additionalIssues,
     );
-  assert.equal(parse('issues', 'minor', 'APPROVE').incomplete, true);
-  assert.equal(parse('pass', 'minor', 'APPROVE').incomplete, true);
-  assert.equal(parse('issues', 'minor', 'COMMENT').incomplete, undefined);
+  // A conflict reads at the strictest of the policy's verdict, the reviewer's own recommendation
+  // and, for an issues verdict, COMMENT (ba397e2c: pass/APPROVE with minor findings). It keeps
+  // the findings and never approves them.
+  for (const [verdict, severity, recommendation, read] of [
+    ['pass', 'minor', 'APPROVE', 'COMMENT'],
+    ['issues', 'minor', 'APPROVE', 'COMMENT'],
+    ['pass', 'minor', undefined, 'COMMENT'],
+    ['pass', 'minor', 'approve', 'COMMENT'],
+    ['pass', 'minor', 'LGTM', 'COMMENT'],
+    ['pass', 'major', 'COMMENT', 'REQUEST_CHANGES'],
+    ['issues', 'blocker', 'COMMENT', 'REQUEST_CHANGES'],
+    ['pass', 'minor', 'REQUEST_CHANGES', 'REQUEST_CHANGES'],
+    ['issues', 'minor', 'REQUEST_CHANGES', 'REQUEST_CHANGES'],
+    ['issues', 'nit', 'COMMENT', 'COMMENT'],
+    // The issues-verdict floor alone, and a lowercase stricter recommendation.
+    ['issues', 'nit', 'APPROVE', 'COMMENT'],
+    ['pass', 'minor', 'request_changes', 'REQUEST_CHANGES'],
+  ] as const)
+    assert.deepEqual(parse(verdict, severity, recommendation), {
+      verdict: 'issues',
+      issues: [{ ...issue, severity }],
+      recommendation: read,
+      recommendationCorrection: {
+        verdict,
+        ...(recommendation === undefined ? {} : { recommendation }),
+        read,
+      },
+    });
+  // Consistent results read as they are.
+  assert.equal(parse('issues', 'minor', 'COMMENT').recommendationCorrection, undefined);
   assert.equal(parse('issues', 'major', 'REQUEST_CHANGES').recommendation, 'REQUEST_CHANGES');
   assert.equal(parse('pass', 'nit', 'APPROVE').verdict, 'pass');
+  // Nothing reads as an approval, and line comments from elsewhere still refuse.
+  assert.equal(parse('pass', 'nit', 'LGTM').incomplete, true);
+  assert.equal(parse('pass', 'minor', 'APPROVE', []).incomplete, true);
 });
 
 test('policy changes are read without restarting or waiting for the project cache', async (t) => {
