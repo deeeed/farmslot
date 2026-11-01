@@ -375,6 +375,8 @@ const RUN_BUNDLE_WARN_RATIO = 0.7;
 const SETTLED_TASK_DIR_QUIET_MS = 15 * 60_000;
 
 const writingTaskDirs = new Map<string, number>();
+/** Writes begun per dir in this process; part of the token, so a walk spanning one keeps nothing. */
+const taskDirWrites = new Map<string, number>();
 
 /**
  * Holds a task dir live while the gateway writes it with no update of a run that names it
@@ -384,10 +386,16 @@ const writingTaskDirs = new Map<string, number>();
 export async function withTaskDirWrite<T>(directory: string, write: () => Promise<T>): Promise<T> {
   const dir = path.resolve(directory);
   writingTaskDirs.set(dir, (writingTaskDirs.get(dir) ?? 0) + 1);
+  taskDirWrites.set(dir, (taskDirWrites.get(dir) ?? 0) + 1);
   try {
     // A sandbox gateway never writes the owning gateway's store, so it keeps no footprints.
     if (!process.env.FARMSLOT_SANDBOX_HOME)
-      await forgetAcquisitionFootprints(await runBundleStore(true), [dir]);
+      await forgetAcquisitionFootprints(await runBundleStore(true), [dir]).catch((error) =>
+        // The write count still changes the dir's token in this process. The copy must not fail on it.
+        console.warn(
+          `[run-bundle] could not drop the kept footprint of ${dir}: ${(error as Error).message}`,
+        ),
+      );
     return await write();
   } finally {
     const holds = writingTaskDirs.get(dir)! - 1;
@@ -416,8 +424,10 @@ export async function acquisitionTaskDirToken(now = Date.now()): Promise<Acquisi
       path.basename(path.dirname(dir)) === EVAL_TASK_FLOW
     )
       return undefined;
+    const writes = taskDirWrites.get(dir);
+    const written = writes ? ` #w${writes}` : '';
     const runs = owners.get(dir);
-    if (!runs) return 'unowned';
+    if (!runs) return `unowned${written}`;
     if (
       runs.some(
         (run) =>
@@ -426,10 +436,12 @@ export async function acquisitionTaskDirToken(now = Date.now()): Promise<Acquisi
       )
     )
       return undefined;
-    return runs
-      .map((run) => `${run.id}@${run.updatedAt}`)
-      .sort()
-      .join(' ');
+    return (
+      runs
+        .map((run) => `${run.id}@${run.updatedAt}`)
+        .sort()
+        .join(' ') + written
+    );
   };
 }
 

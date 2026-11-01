@@ -463,14 +463,22 @@ test('a dir stays live while the gateway writes it, and eval experiment roots ar
   await withTaskDirWrite(released, async () => {
     assert.equal((await acquisitionTaskDirToken())(released), undefined);
   });
-  assert.equal((await acquisitionTaskDirToken())(released), 'unowned');
+  assert.equal(
+    (await acquisitionTaskDirToken())(released),
+    'unowned #w1',
+    'a write changes the token, so a walk that spans it keeps nothing',
+  );
   await assert.rejects(
     withTaskDirWrite(released, async () => {
       throw new Error('copy failed');
     }),
     /copy failed/,
   );
-  assert.equal((await acquisitionTaskDirToken())(released), 'unowned', 'a failed write releases');
+  assert.equal(
+    (await acquisitionTaskDirToken())(released),
+    'unowned #w2',
+    'a failed write releases',
+  );
   const evalRoot = path.join(root, 'projects/example/tasks/evals/case-abc-0123456789ab');
   assert.equal((await acquisitionTaskDirToken())(evalRoot), undefined);
 });

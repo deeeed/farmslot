@@ -598,12 +598,28 @@ function loadKeptFootprints(store: RunBundleStore) {
   return kept;
 }
 
-async function saveKeptFootprints(store: RunBundleStore, footprints: Map<string, KeptFootprint>) {
-  const dirs = Object.fromEntries(
-    [...footprints].map(([directory, { token, bytes }]) => [directory, { token, bytes }]),
-  );
-  await atomicJson(footprintFile(store), { v: 1, dirs });
-  for (const kept of footprints.values()) delete kept.unsaved;
+const footprintSaves = new Map<string, Promise<void>>();
+
+/**
+ * One save at a time per store, each writing the map as it is when its turn comes, so an
+ * earlier snapshot can never land over a later forget. Only the entries it wrote are clean.
+ */
+function saveKeptFootprints(
+  store: RunBundleStore,
+  footprints: Map<string, KeptFootprint>,
+): Promise<void> {
+  const save = (footprintSaves.get(store.root) ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(async () => {
+      const saved = [...footprints];
+      const dirs = Object.fromEntries(
+        saved.map(([directory, { token, bytes }]) => [directory, { token, bytes }]),
+      );
+      await atomicJson(footprintFile(store), { v: 1, dirs });
+      for (const [, kept] of saved) delete kept.unsaved;
+    });
+  footprintSaves.set(store.root, save);
+  return save;
 }
 
 /**
@@ -698,6 +714,7 @@ function taskRootBytes(
   settled?: SettledTaskDirs,
 ): Promise<number> {
   const TASK_DEPTH = 2;
+  const walking = new Map<string, string>();
   return physicalBytes(
     taskRoot,
     scan,
@@ -708,14 +725,19 @@ function taskRootBytes(
         if (token === undefined) return undefined;
         settled.seen.add(directory);
         const kept = settled.footprints.get(directory);
-        if (kept?.token !== token) return undefined;
-        scan.settledDirs++;
-        return kept.bytes;
+        if (kept?.token === token) {
+          scan.settledDirs++;
+          return kept.bytes;
+        }
+        walking.set(directory, token);
+        return undefined;
       },
       walked: (directory, depth, bytes) => {
-        // Classified again: a write hold may have made the dir live while it was walked.
-        const token = depth === TASK_DEPTH ? settled.token(directory) : undefined;
-        if (token !== undefined) settled.footprints.set(directory, { token, bytes, unsaved: true });
+        const token = depth === TASK_DEPTH ? walking.get(directory) : undefined;
+        walking.delete(directory);
+        // A token that changed during the walk (a write began, even one already over) keeps nothing.
+        if (token !== undefined && settled.token(directory) === token)
+          settled.footprints.set(directory, { token, bytes, unsaved: true });
       },
     },
   );

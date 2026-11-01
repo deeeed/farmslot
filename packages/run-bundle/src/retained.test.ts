@@ -1455,3 +1455,24 @@ test('settled task dirs under .sandbox are kept, and a forgotten footprint is me
   assert.equal(remeasured.settledDirs, 0);
   assert.equal((await materializeRunBundle(request)).acquisitionScan.bytes, remeasured.bytes);
 });
+
+test('a measurement whose token changed during its walk is not kept', async (t) => {
+  const f = await fixture(t);
+  const settledDir = path.join(f.root, 'projects/demo/tasks/qa/released');
+  await mkdir(settledDir, { recursive: true });
+  await writeFile(path.join(settledDir, 'TASK.md'), 'task');
+  // As if a slot release began (and maybe ended) while the first walk was under way.
+  let calls = 0;
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    acquisitionTaskDirs: async () => (directory) =>
+      directory === settledDir ? (calls++ === 0 ? 'unowned' : 'unowned #w1') : undefined,
+  };
+  assert.equal((await materializeRunBundle(request)).acquisitionScan.settledDirs, 0);
+  assert.equal(
+    (await materializeRunBundle(request)).acquisitionScan.settledDirs,
+    0,
+    'nothing was kept from the spanning walk',
+  );
+  assert.equal((await materializeRunBundle(request)).acquisitionScan.settledDirs, 1);
+});
