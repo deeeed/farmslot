@@ -674,11 +674,14 @@ export function wrapWorkerShellCommand(
     vars: Awaited<ReturnType<typeof loadSlotVars>>;
     projectVars?: ProjectVars;
     runDomain?: string | null;
+    /** A bound run's pinned recipe libraries (pinnedTaskLibraries). */
+    taskLibraries?: ReadonlyMap<string, string>;
   },
 ): string {
   const domain = resolveEffectiveDomain(context.runDomain, context.vars.domain);
   return applyProjectCommandEnv(context.projectJson, `${WORKER_ENV_PREFIX} && ${command}`, {
     ...(domain ? { domain } : {}),
+    ...(context.taskLibraries ? { taskLibraries: context.taskLibraries } : {}),
     expandDomainValue: (value) =>
       expandTemplate(value, context.vars, context.projectVars, { domain: domain ?? '' }),
   });
