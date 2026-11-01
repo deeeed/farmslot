@@ -107,6 +107,12 @@ export interface SlotScaffoldingArchiveOptions {
   destination: string;
   beforeRemove: () => Promise<void>;
   taskRelativeDir: string | null;
+  /**
+   * The release copied every file of the configured task root's `artifacts/`. Archiving
+   * them again downloaded the same 0.5-1 GB a second time and outlasted the teardown
+   * timeout (F298). Legacy task roots were not copied, so they stay in the archive.
+   */
+  artifactsCollected?: boolean;
 }
 
 /** Copy all sources before removing any; leave warm runtime resources in place. */
@@ -171,9 +177,16 @@ export async function archiveSlotScaffolding(
   try {
     const remoteArchive = path.posix.join(temporary, 'scaffolding.tar');
     const checkoutSources = sources.filter((source) => source.absolute !== external);
+    const collected = taskRelativeDir && `${task}/${relativeNamespace(taskRelativeDir)}`;
+    const excluded =
+      options.artifactsCollected &&
+      collected &&
+      checkoutSources.some((source) => source.relative === collected)
+        ? `--exclude ${shellQuote(`${collected}/artifacts`)} `
+        : '';
     const packed = await execOnSlot(
       vars,
-      `tar -C ${shellQuote(vars.remoteRepo)} -cf ${shellQuote(remoteArchive)} ${checkoutSources.length ? `-- ${checkoutSources.map((source) => shellQuote(source.relative)).join(' ')}` : '-T /dev/null'}`,
+      `tar -C ${shellQuote(vars.remoteRepo)} ${excluded}-cf ${shellQuote(remoteArchive)} ${checkoutSources.length ? `-- ${checkoutSources.map((source) => shellQuote(source.relative)).join(' ')}` : '-T /dev/null'}`,
       { timeout: 120_000 },
     );
     if (packed.exitCode !== 0) throw new Error(`Cannot pack scaffolding: ${packed.stderr}`);

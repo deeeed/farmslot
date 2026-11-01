@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { beforeEach, mock, test } from 'node:test';
 
-import { NATIVE_WORKER_ENSURE } from '@farmslot/agent-runtime/native';
+import { NATIVE_WORKER_ENSURE, NATIVE_WORKER_STATE } from '@farmslot/agent-runtime/native';
 import {
   type NativeWorkerLaunch,
   nativeWorkerLaunchDigest,
@@ -87,8 +87,21 @@ mock.module('./worker-launch.js', {
     },
   },
 });
+// A pool or project rewrite during preflight: the launch's later admission checks refuse.
+let inputsChanged = false;
+/** The rewrite lands while the preflight probes themselves run. */
+let probesSeeChange = false;
+class WorkerLaunchInputsChangedError extends Error {}
 mock.module('../../run-engine/worker-launch-preflight.js', {
-  namedExports: { admitWorkerLaunch: async () => async () => {} },
+  namedExports: {
+    WorkerLaunchInputsChangedError,
+    admitWorkerLaunch: async () => {
+      if (probesSeeChange) throw new WorkerLaunchInputsChangedError('Worker launch inputs changed');
+      return async () => {
+        if (inputsChanged) throw new WorkerLaunchInputsChangedError('Worker launch inputs changed');
+      };
+    },
+  },
 });
 mock.module('./node.js', {
   namedExports: {
@@ -104,6 +117,7 @@ mock.module('./node.js', {
             : {}),
         };
       }
+      if (method === NATIVE_WORKER_STATE) return { stateDirectory: '/owned/state' };
       if (method === NATIVE_WORKER_ENSURE) throw stop;
       throw new Error('Unexpected native operation: ' + method);
     },
@@ -146,9 +160,12 @@ beforeEach(() => {
   runtimeError = undefined;
   listUnavailable = false;
   afterList = undefined;
+  inputsChanged = false;
+  probesSeeChange = false;
   calls.length = 0;
   launchInputs.length = 0;
 });
+const reservation = () => run.agentContexts![0].nativeSession;
 const dispatch = () =>
   dispatchNativeWorker({
     runId: run.id,
@@ -221,6 +238,61 @@ test('unavailable host presence and cancelled observations never authorize ENSUR
   calls.length = 0;
   await assert.rejects(dispatch(), /no longer admitted/);
   assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST]);
+});
+test('a rewrite during LIST forgets the unsent launch, so the retry ENSUREs once on the new inputs', async () => {
+  afterList = () => {
+    inputsChanged = true;
+  };
+  await assert.rejects(dispatch(), WorkerLaunchInputsChangedError);
+  assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST]);
+  assert.equal(reservation()?.sessionId, 'pending-session', 'the same reservation');
+  assert.equal(reservation()?.launchDigest, undefined, 'its launch is forgotten');
+  assert.equal(run.agentContexts![0].nativeSessionHistory, undefined, 'no session is invented');
+  // The engine's one retry re-reads the inputs: the launch it now prepares differs.
+  afterList = undefined;
+  inputsChanged = false;
+  calls.length = 0;
+  const original = launch.environment;
+  launch.environment = { set: { LAUNCH_RELOAD_PIN: 'after' }, unset: [] };
+  try {
+    await assert.rejects(dispatch(), /Reached ENSURE boundary/);
+  } finally {
+    launch.environment = original;
+  }
+  assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST, 'runtime-ready', NATIVE_WORKER_ENSURE]);
+  assert.equal(reservation()?.sessionId, 'pending-session');
+});
+test('a rewrite during the preflight probes leaves the new reservation with no launch recorded', async () => {
+  run.agentContexts![0].nativeSession = undefined;
+  probesSeeChange = true;
+  await assert.rejects(dispatch(), WorkerLaunchInputsChangedError);
+  assert.deepEqual(
+    calls,
+    [NATIVE_WORKER_STATE],
+    'nothing reached the host but its state directory',
+  );
+  assert.ok(reservation(), 'the retry reuses it');
+  assert.equal(reservation()?.launchDigest, undefined);
+});
+test('a superseded attempt never touches the reservation its replay may be reusing', async () => {
+  afterList = () => {
+    inputsChanged = true;
+    run.engineState = { ...run.engineState, generation: (run.engineState?.generation ?? 0) + 1 };
+  };
+  await assert.rejects(dispatch(), /generation changed/);
+  assert.equal(reservation()?.sessionId, 'pending-session');
+  assert.ok(reservation()?.launchDigest, 'its launch record stays');
+});
+test('a rewrite while the host may hold the reservation keeps it for reconciliation', async () => {
+  listUnavailable = true;
+  afterList = () => {
+    inputsChanged = true;
+  };
+  await assert.rejects(
+    dispatch(),
+    (error: Error) => error.name === 'NativeWorkerOperationUncertainError',
+  );
+  assert.equal(reservation()?.sessionId, 'pending-session');
 });
 test('a bound run launches its native worker on the libraries its task pinned', async (t) => {
   const taskDir = mkdtempSync(path.join(tmpdir(), 'native-pinned-libraries-'));

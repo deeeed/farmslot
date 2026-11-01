@@ -32,6 +32,28 @@ test('native registration binds pid generation and an explicit native turn state
     assert.equal(claudeProcessRegistration(value, '42', 900), null);
 });
 
+test('a turn that ended with background shells running reads as idle', () => {
+  // The shape Claude Code 2.1.312 writes to ~/.claude/sessions/<pid>.json, with values replaced.
+  const shell = {
+    pid: 42,
+    sessionId: 'saved-review',
+    cwd: '/repo',
+    startedAt: 1000,
+    procStart: 'Sun Nov  1 22:00:00 2026',
+    version: '2.1.312',
+    kind: 'interactive',
+    entrypoint: 'cli',
+    updatedAt: 2000,
+    status: 'shell',
+    statusUpdatedAt: 2000,
+  };
+  assert.deepEqual(claudeProcessRegistration(shell, '42', 900), {
+    sessionId: 'saved-review',
+    status: 'idle',
+    observedAt: 2000,
+  });
+});
+
 test('waiting registration binds the question session without changing busy/idle observations', async () => {
   const vars = makeVars();
   const readers = {

@@ -87,14 +87,15 @@ export class DispatchNativeProfiles extends LitElement {
       const explicitChange =
         changed.has('runner') || changed.has('slotId') || changed.has('chosenNode');
       if (explicitChange || !this.profile) {
+        // The node default account needs no profile read.
         this.profile = undefined;
-        this.ready = !this.supportsProfiles();
+        this.ready = true;
       } else {
         // Catalog loss must not silently turn an explicit profile into a default-account run.
         this.ready = false;
       }
     }
-    if (changed.has('refreshVersion') && this.supportsProfiles()) this.ready = false;
+    if (changed.has('refreshVersion') && this.profile) this.ready = false;
     if (this.profile && !this.supportsProfiles()) this.ready = false;
     this.publish();
   }
@@ -118,7 +119,7 @@ export class DispatchNativeProfiles extends LitElement {
           @change=${(event: Event) => {
             this.chosenNode = (event.target as HTMLSelectElement).value;
             this.profile = undefined;
-            this.ready = !this.chosenNode;
+            this.ready = true;
             this.publish();
           }}
         >

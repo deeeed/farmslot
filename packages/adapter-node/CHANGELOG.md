@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.8.3 - 2026-11-02
+
+- Align `@farmslot/recipe-runner` 0.46.3 and `@farmslot/adapter-sdk` 0.26.0.
+
 ## 0.8.2 - 2026-10-29
 
 - Align adapter-sdk 0.25.2 and recorder runtime 0.46.2.
