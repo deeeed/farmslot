@@ -35,6 +35,7 @@ let markerWrites = 0;
 let claimDuringPaneProbe = false;
 let claimAfterTaskClean = false;
 let hasMirrorArtifacts = false;
+let copyOptions: Record<string, unknown> | undefined;
 let claimAfterReap = false;
 let cdpPort: string | undefined;
 /** The browser session a cancelled run left on the slot's CDP port: pid -> survives SIGKILL. */
@@ -215,7 +216,13 @@ const realCopy = await import('../../core/slot-io.js');
 mock.module('../../core/slot-io.js', {
   namedExports: {
     ...realCopy,
-    slotCopyDir: async () => {
+    slotCopyDir: async (
+      _vars: unknown,
+      _from: string,
+      _to: string,
+      options: Record<string, unknown>,
+    ) => {
+      copyOptions = options;
       events.push('mirror-complete');
     },
   },
@@ -279,6 +286,7 @@ beforeEach(async () => {
   claimDuringPaneProbe = false;
   claimAfterTaskClean = false;
   hasMirrorArtifacts = false;
+  copyOptions = undefined;
   claimAfterReap = false;
   cdpPort = undefined;
   browserSession = new Map();
@@ -510,6 +518,16 @@ test('a claim during artifact collection refuses task deletion and storage clean
   assert.ok(!events.includes('storage-clean'));
   assert.equal(slotRow.current_run_id, 'incoming');
   assert.equal(slotRow.slot_epoch, 2);
+});
+
+// F298: macpro-audiolab-6's release copied its 882 MB of artifacts again, though the completion
+// mirror held all but the excluded recipe runs, and the teardown timed out after 300 s every time.
+test('release copyback keeps artifacts the completion mirror already holds', async () => {
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  hasMirrorArtifacts = true;
+  await slotRelease({ slotId: SLOT_ID }, emit);
+  assert.ok(events.includes('mirror-complete'));
+  assert.equal(copyOptions?.skipUnchanged, true);
 });
 
 test('a claim during task deletion refuses the following storage cleanup', async () => {

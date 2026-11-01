@@ -984,6 +984,10 @@ async function slotReleaseImpl(
           slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
             excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES],
             excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
+            // The completion mirror already holds most of these files. Copying them all
+            // again (about 900 MB on the Audiolab release slots) outlasted the teardown
+            // timeout, so the slot never reset (F298).
+            skipUnchanged: true,
             // Stamp run/slot so transfer progress binds to run detail / pipeline UI.
             phase: 'mirror',
             runId: releaseRunId,
