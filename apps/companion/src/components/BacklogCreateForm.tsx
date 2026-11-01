@@ -527,8 +527,12 @@ export function BacklogCreateForm({
         </Text>
       </PlanningSection>
 
-      <ResourceReadStatus observation={planning} label="backlog" />
-      <ResourceReadStatus observation={projectsObservation} label="projects" />
+      <ResourceReadStatus
+        observations={[
+          { observation: planning, label: 'backlog' },
+          { observation: projectsObservation, label: 'projects' },
+        ]}
+      />
       {error || templateObservation.error ? (
         <Text style={styles.error}>
           {error || readErrorMessage(templateObservation, heldConnectionCurrent())}

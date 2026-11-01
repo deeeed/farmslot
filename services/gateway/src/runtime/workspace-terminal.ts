@@ -7,6 +7,8 @@ import { reviewTmuxOperation, reviewTmuxSession } from '../runners/review-tmux.j
 import { getRun } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
+import { type PaneInputRecord, tmuxPaneInputRecord } from './terminal-input-sequence.js';
+
 export function isWorkspaceTerminal(
   params: Pick<SlotAgentTargetParams, 'slotId' | 'runId'>,
 ): boolean {
@@ -73,6 +75,22 @@ else if(input.action==='send'){
  if(input.enter)checked(tmux(['send-keys','-t',target,'Enter']));
 }
 `;
+
+/** The review shell pane's input record, read and written through the run owner's node. */
+export function workspacePaneInputRecord(run: Run, session: string): PaneInputRecord {
+  assertNativeRunOwner(run);
+  const workspace = run.reviewWorkspace!;
+  return tmuxPaneInputRecord(session, (command) =>
+    workspace.executionNodeId === 'local'
+      ? execFileArgv(['bash', '-c', command], { timeout: 5_000 })
+      : execNativeNodeArgv(
+          run.nativeOwnerPrincipalId!,
+          workspace.machine,
+          ['bash', '-c', command],
+          5_000,
+        ),
+  );
+}
 
 export async function workspaceTerminalOperation(
   run: Run,

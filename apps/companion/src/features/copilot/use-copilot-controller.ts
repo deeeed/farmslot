@@ -29,7 +29,8 @@ export function useCopilotController() {
       loading: state.status === 'loading',
       // A read outcome on this connection, never a saved row still awaiting its read.
       settled: state.status === 'ready' || state.status === 'unsupported' || Boolean(state.error),
-      error: visibleReadError(state, saved)?.message ?? '',
+      // Offline, the connection banner already says why the read failed.
+      error: (connected && visibleReadError(state, saved)?.message) || '',
       connected,
       ready: heldDataUsable(state, connected),
       saved,

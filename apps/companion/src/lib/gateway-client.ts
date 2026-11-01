@@ -33,6 +33,7 @@ import {
 } from './gateway-http-auth';
 import { nativeCollectionReadTimeout } from './gateway-run-sync';
 import { createOfflineClientStoreBaseline } from './offline-client-store-baseline';
+import { inputSequenceOf, type TerminalInputSequencing } from './terminal-input-queue';
 import {
   type WorkspaceAccess,
   workspaceAccessFromAuth,
@@ -150,7 +151,7 @@ export class GatewayClient {
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
-    this.inputSequenceInstance = result.capabilities?.terminalInputSequence?.instance ?? null;
+    this.inputSequence = inputSequenceOf(result.capabilities?.terminalInputSequence);
     if (this.state === 'connected') this.setState('connected', true);
     return result;
   }
@@ -164,13 +165,10 @@ export class GatewayClient {
   private wasConnectedBeforeBackground = false;
   private lastConnectionError: string | null = null;
   private pingSupported: boolean | null = null;
-  private inputSequenceInstance: string | null = null;
-  /**
-   * The gateway instance that writes each terminal input sequence number once, or null when it
-   * does not: a batch whose reply was lost can be resent on its own only to that instance.
-   */
-  get terminalInputSequenceInstance(): string | null {
-    return this.inputSequenceInstance;
+  private inputSequence: TerminalInputSequencing | null = null;
+  /** How the gateway types each terminal input sequence number once, or null when it does not. */
+  get terminalInputSequence(): TerminalInputSequencing | null {
+    return this.inputSequence;
   }
   private generation = 0;
   private principal: SelfPrincipalSummary | null = null;
@@ -229,7 +227,7 @@ export class GatewayClient {
     this.authRequired = false;
     const generation = this.generation;
     this.pingSupported = null;
-    this.inputSequenceInstance = null;
+    this.inputSequence = null;
     this.clearAuthority();
     this.cancelReconnect();
     this.rejectAllPending('Gateway profile changed');
@@ -383,7 +381,7 @@ export class GatewayClient {
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
-    this.inputSequenceInstance = result.capabilities?.terminalInputSequence?.instance ?? null;
+    this.inputSequence = inputSequenceOf(result.capabilities?.terminalInputSequence);
     this.backoff = 1000;
     this.lastConnectionError = null;
     this.setState('connected');
@@ -699,7 +697,7 @@ export class GatewayClient {
   private invalidateTransportCapability(): void {
     this.generation += 1;
     this.pingSupported = null;
-    this.inputSequenceInstance = null;
+    this.inputSequence = null;
   }
 
   private clearAuthority(): void {

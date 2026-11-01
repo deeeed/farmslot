@@ -5,14 +5,16 @@ import { Methods, type TmuxWorkerRef } from '@farmslot/protocol';
 
 import { mountHook } from '../../hooks/hook-harness.fixtures';
 import {
-  assertSafeResend,
+  assertResendable,
   createTerminalInputQueue,
+  resendScope,
   TerminalInputCancelledError,
 } from '../../lib/terminal-input-queue';
 
 interface FakeClient {
   connectionGeneration: number;
-  terminalInputSequenceInstance?: string | null;
+  terminalInputSequence?: { instance: string; durable: boolean } | null;
+  connectionState?: string;
   request(
     method: string,
     params: { worker: TmuxWorkerRef; data: string; seq?: { stream: string; n: number } },
@@ -30,8 +32,9 @@ const connectionStore = Object.assign(
 const dependencies = {
   '@farmslot/protocol': { Methods },
   '../../lib/terminal-input-queue': {
-    assertSafeResend,
+    assertResendable,
     createTerminalInputQueue,
+    resendScope,
     TerminalInputCancelledError,
   },
   '../../store/connection': { useConnectionStore: connectionStore },
@@ -201,17 +204,16 @@ test('worker keys held across a profile switch never go out under the new sign-i
   }
 });
 
-// The gateway instance that received the batch drops a repeat: a lost reply is resent on its own.
+// A gateway that numbers input drops a repeat: a lost reply is resent on its own.
 test(
   'worker keys whose reply was lost are resent with the same number, with nothing to resolve by hand',
   { timeout: 5_000 },
   async () => {
     const pane: Array<{ data: string; n?: number }> = [];
-    const holds: unknown[] = [];
     let loseReply = true;
     const client: FakeClient = {
       connectionGeneration: 1,
-      terminalInputSequenceInstance: 'gw1',
+      terminalInputSequence: { instance: 'gw1', durable: true },
       async request(_method, params, _timeout, options) {
         options?.onSent?.();
         pane.push({ data: params.data, n: params.seq?.n });
@@ -223,15 +225,13 @@ test(
       },
     };
     const worker: TmuxWorkerRef = { nodeId: 'mini', session: 'mmt-3', target: '%19' };
-    const hook = mountHook<[FakeClient, TmuxWorkerRef, { onHold: (held: unknown) => void }]>(
+    const hook = mountHook<[FakeClient, TmuxWorkerRef]>(
       new URL('./use-worker-terminal-input.ts', import.meta.url),
       'useWorkerTerminalInput',
       dependencies,
     );
     try {
-      const { write } = hook.render(client, worker, {
-        onHold: (held) => holds.push(held),
-      }) as Input;
+      const { write } = hook.render(client, worker) as Input;
       await write('echo ONCE\r');
       await write('pwd\r');
       // The gateway drops the repeated number 1, so the pane runs each command once.
@@ -240,7 +240,6 @@ test(
         { data: 'echo ONCE\r', n: 1 },
         { data: 'pwd\r', n: 2 },
       ]);
-      assert.deepEqual(holds, []);
     } finally {
       hook.cleanup();
     }

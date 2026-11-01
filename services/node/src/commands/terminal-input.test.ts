@@ -1,0 +1,218 @@
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { test } from 'node:test';
+import { promisify } from 'node:util';
+
+import {
+  createTerminalInputWriter,
+  requireInputSequence,
+  tmuxKeepsPaneOptions,
+} from './terminal-input.js';
+
+const execFileAsync = promisify(execFile);
+
+/** tmux as the writer drives it: keys typed per pane, and pane user options. */
+function fakeTmux() {
+  const typed: string[] = [];
+  const options = new Map<string, Map<string, string>>();
+  let failRecord = false;
+  let failRead = false;
+  const run = async (args: string[]): Promise<string> => {
+    const [command, ...rest] = args;
+    const pane = rest[rest.indexOf('-t') + 1]!;
+    const paneOptions = options.get(pane) ?? new Map<string, string>();
+    options.set(pane, paneOptions);
+    if (command === 'send-keys') {
+      typed.push(`${pane} ${rest[2]}`);
+      return '';
+    }
+    if (command === 'show-options' && rest[0] === '-pqv') {
+      if (failRead) throw new Error('tmux timed out');
+      return paneOptions.get(rest.at(-1)!) ?? '';
+    }
+    if (command === 'show-options')
+      return [...paneOptions].map(([name, value]) => `${name} ${value}\n`).join('');
+    if (command === 'set-option') {
+      if (failRecord) throw new Error('set-option failed');
+      if (rest.includes('-u')) paneOptions.delete(rest.at(-1)!);
+      else paneOptions.set(rest.at(-2)!, rest.at(-1)!);
+      return '';
+    }
+    throw new Error(`unexpected tmux ${command}`);
+  };
+  let clock = 0;
+  return {
+    typed,
+    options,
+    run,
+    now: () => ++clock,
+    failRecords: () => (failRecord = true),
+    failReads: (fail: boolean) => (failRead = fail),
+  };
+}
+
+test('a batch sent again after a lost reply is acknowledged without typing', async () => {
+  const tmux = fakeTmux();
+  const sendOnce = createTerminalInputWriter(tmux.run, tmux.now);
+  assert.equal(await sendOnce('%7', 'make deploy\r', false, { stream: 'q1', n: 1 }), true);
+  assert.equal(await sendOnce('%7', 'make deploy\r', false, { stream: 'q1', n: 1 }), false);
+  assert.equal(await sendOnce('%7', 'ls\r', false, { stream: 'q1', n: 2 }), true);
+  // Another stream, or another pane, keeps its own numbers.
+  assert.equal(await sendOnce('%7', 'pwd\r', false, { stream: 'q2', n: 1 }), true);
+  assert.equal(await sendOnce('%8', 'pwd\r', false, { stream: 'q1', n: 1 }), true);
+  assert.deepEqual(tmux.typed, ['%7 make deploy\r', '%7 ls\r', '%7 pwd\r', '%8 pwd\r']);
+});
+
+// The record lives on the pane, so a node or gateway restart between the write and its resend
+// still finds it.
+test('a restarted writer finds the batch recorded on the pane', async () => {
+  const tmux = fakeTmux();
+  await createTerminalInputWriter(tmux.run, tmux.now)('%7', 'make deploy\r', false, {
+    stream: 'q1',
+    n: 1,
+  });
+  const restarted = createTerminalInputWriter(tmux.run, tmux.now);
+  assert.equal(await restarted('%7', 'make deploy\r', false, { stream: 'q1', n: 1 }), false);
+  assert.deepEqual(tmux.typed, ['%7 make deploy\r']);
+});
+
+test('a resend that arrives while the original is being typed waits for it', async () => {
+  const tmux = fakeTmux();
+  let release!: () => void;
+  const slow = new Promise<void>((resolve) => (release = resolve));
+  const run = async (args: string[]) => {
+    if (args[0] === 'send-keys') await slow;
+    return tmux.run(args);
+  };
+  const sendOnce = createTerminalInputWriter(run, tmux.now);
+  const original = sendOnce('%7', 'echo once\r', false, { stream: 'q1', n: 1 });
+  const resend = sendOnce('%7', 'echo once\r', false, { stream: 'q1', n: 1 });
+  release();
+  assert.deepEqual(await Promise.all([original, resend]), [true, false]);
+  assert.deepEqual(tmux.typed, ['%7 echo once\r']);
+});
+
+// The keys are in the pane, so the node still answers typed, and remembers them itself.
+test('keys typed but not recorded report typed, and their resend is not typed', async () => {
+  const tmux = fakeTmux();
+  const sendOnce = createTerminalInputWriter(tmux.run, tmux.now);
+  tmux.failRecords();
+  assert.equal(await sendOnce('%7', 'ls\r', false, { stream: 'q1', n: 1 }), true);
+  assert.equal(await sendOnce('%7', 'ls\r', false, { stream: 'q1', n: 1 }), false);
+  assert.deepEqual(tmux.typed, ['%7 ls\r']);
+});
+
+// Not knowing what the pane has, typing could type it twice: the batch fails for a retry.
+test('a record that cannot be read fails the batch untyped; a later read decides', async () => {
+  const tmux = fakeTmux();
+  await createTerminalInputWriter(tmux.run, tmux.now)('%7', 'make\r', false, {
+    stream: 'q1',
+    n: 1,
+  });
+  const restarted = createTerminalInputWriter(tmux.run, tmux.now);
+  tmux.failReads(true);
+  await assert.rejects(restarted('%7', 'make\r', false, { stream: 'q1', n: 1 }), /timed out/);
+  tmux.failReads(false);
+  assert.equal(await restarted('%7', 'make\r', false, { stream: 'q1', n: 1 }), false);
+  assert.deepEqual(tmux.typed, ['%7 make\r']);
+});
+
+test('the node offers numbered input only on tmux that keeps pane options', () => {
+  assert.equal(tmuxKeepsPaneOptions('tmux 3.5a\n'), true);
+  assert.equal(tmuxKeepsPaneOptions('tmux next-3.6'), true);
+  assert.equal(tmuxKeepsPaneOptions('tmux master'), true);
+  assert.equal(tmuxKeepsPaneOptions('tmux 2.9a'), false);
+  assert.equal(tmuxKeepsPaneOptions(''), false);
+});
+
+test('a pane keeps records for its 16 most recently written streams', async () => {
+  const tmux = fakeTmux();
+  const sendOnce = createTerminalInputWriter(tmux.run, tmux.now);
+  for (let stream = 0; stream < 20; stream++)
+    await sendOnce('%7', 'k', false, { stream: `s${stream}`, n: 1 });
+  await sendOnce('%7', 'k', false, { stream: 's0', n: 2 });
+  const kept = [...tmux.options.get('%7')!.keys()].sort();
+  assert.equal(kept.length, 16);
+  assert.ok(kept.includes('@farmslot-input-s0'), 'rewritten stream kept');
+  assert.ok(!kept.includes('@farmslot-input-s1'), 'least recently written dropped');
+  assert.ok(kept.includes('@farmslot-input-s19'));
+});
+
+test('a malformed seq is refused', () => {
+  for (const seq of [
+    null,
+    { stream: '', n: 1 },
+    { stream: 'a b', n: 1 },
+    { stream: 'x'.repeat(65), n: 1 },
+    { stream: 'a', n: -1 },
+    { stream: 'a', n: 1.5 },
+  ])
+    assert.throws(() => requireInputSequence(seq), /seq needs a stream/);
+  assert.deepEqual(requireInputSequence({ stream: 'mfx1-ab', n: 3 }), { stream: 'mfx1-ab', n: 3 });
+});
+
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs).
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX ===
+    `${process.env.TMUX_TMPDIR}/tmux-${process.getuid?.() ?? 0}/default`
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+
+test('real tmux types a resent batch once and keeps the record on the pane', async (t) => {
+  if (!tmuxSandbox) {
+    t.skip('needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)');
+    return;
+  }
+  const tmux = async (args: string[]) =>
+    (await execFileAsync('tmux', ['-S', tmuxSandbox, ...args], { timeout: 2000 })).stdout;
+  try {
+    await tmux(['-V']);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      t.skip('tmux is not installed');
+      return;
+    }
+    throw error;
+  }
+  const session = `farmslot_input_once_${process.pid}_${Date.now()}`;
+  // Other test files share the server, which exits with their last session: a session created
+  // as it exits is lost, so it is checked and created again.
+  let pane = '';
+  for (let attempt = 1; !pane; attempt++) {
+    try {
+      pane = (
+        await tmux(['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', session, 'cat'])
+      ).trim();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await tmux(['has-session', '-t', session]);
+    } catch (error) {
+      pane = '';
+      if (attempt === 3) throw error;
+    }
+  }
+  try {
+    const sendOnce = createTerminalInputWriter(tmux);
+    assert.equal(await sendOnce(pane, 'ONCE', false, { stream: 'q1', n: 1 }), true);
+    assert.equal(
+      await createTerminalInputWriter(tmux)(pane, 'ONCE', false, { stream: 'q1', n: 1 }),
+      false,
+    );
+    assert.equal(await sendOnce(pane, 'NEXT', false, { stream: 'q1', n: 2 }), true);
+    // NEXT went in after any second ONCE would have, so once it shows, ONCE has its final count.
+    let screen = '';
+    for (let tries = 0; tries < 100 && !screen.includes('NEXT'); tries++) {
+      screen = await tmux(['capture-pane', '-p', '-t', pane]);
+      if (!screen.includes('NEXT')) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(screen.match(/ONCE/g)?.length, 1, screen);
+    assert.match(
+      await tmux(['show-options', '-pqv', '-t', pane, '@farmslot-input-q1']),
+      /^2:\d+\n?$/,
+    );
+  } finally {
+    // The runner's private server; a session that already ended leaves nothing to kill.
+    await tmux(['kill-session', '-t', session]).catch(() => undefined);
+  }
+});

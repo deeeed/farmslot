@@ -1,29 +1,65 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { staleTerminalInputRecords } from '@farmslot/protocol';
+
+import { execLocal } from '../core/exec.js';
+import { tmuxSendTextCommand } from '../core/tmux.js';
+
 import {
+  type InputLanding,
+  inputRecordsSettledForTests,
   inputSequenceSizeForTests,
+  type PaneInputRecord,
   resetInputSequencesForTests,
   runInputInOrder,
+  STALE_RECORDS_FILTER,
+  tmuxInputRecordArgs,
+  tmuxPaneInputRecord,
   writeSequencedInput,
 } from './terminal-input-sequence.js';
 
 type Seq = { stream: string; n: number };
+type Outcome = 'ok' | 'local-error' | 'remote-timeout' | 'remote-lost-before-typing';
 
 /** What terminal.worker.input does for one batch: in order, written at most once. */
-function writer(pane: string, typed: string[]) {
-  return (data: string, seq?: Seq, outcome: 'ok' | 'local-error' | 'remote-timeout' = 'ok') =>
+function writer(
+  pane: string,
+  typed: string[],
+  landing: Omit<InputLanding, 'write'> = {},
+  typedOnPane?: Map<string, number>,
+) {
+  return (data: string, seq?: Seq, outcome: Outcome = 'ok') =>
     runInputInOrder(pane, () =>
-      writeSequencedInput(pane, seq, (dispatched) => {
-        if (outcome === 'local-error') throw new Error('node mini is not connected');
-        if (outcome === 'remote-timeout') {
-          dispatched();
+      writeSequencedInput(pane, seq, {
+        ...landing,
+        write: async (dispatched) => {
+          if (outcome === 'local-error') throw new Error('node mini is not connected');
+          if (outcome !== 'ok') dispatched();
+          if (outcome === 'remote-lost-before-typing')
+            throw new Error('Request tmux.send timed out');
+          // A host that types each number once, as a capable node does.
+          if (landing.typesOnce && seq && (typedOnPane?.get(seq.stream) ?? 0) >= seq.n) return;
           typed.push(data);
-          throw new Error('Request tmux.send timed out');
-        }
-        typed.push(data);
+          if (landing.typesOnce && seq) typedOnPane?.set(seq.stream, seq.n);
+          // Slot send-keys records the batch in the same command that types it.
+          if (landing.recordsOnWrite && seq) await landing.record?.write(seq);
+          if (outcome === 'remote-timeout') throw new Error('Request tmux.send timed out');
+        },
       }),
     );
+}
+
+/** A pane record held outside the gateway's memory, as tmux holds it. */
+function paneRecord(): PaneInputRecord & { recorded: Map<string, number> } {
+  const recorded = new Map<string, number>();
+  return {
+    recorded,
+    read: async (stream) => recorded.get(stream) ?? null,
+    write: async ({ stream, n }) => {
+      recorded.set(stream, n);
+    },
+  };
 }
 
 test('a batch resent after a lost reply is acknowledged without being typed again', async () => {
@@ -50,8 +86,9 @@ test('a batch that failed before reaching the pane is written by its resend', as
   assert.deepEqual(typed, ['make\r']);
 });
 
-// A remote node may have typed the batch even though its answer never came back.
-test('a batch whose remote write ended without an answer is never written again by a resend', async () => {
+// A node predating `terminalInputSequence` may have typed the batch even though its answer never
+// came back, and nothing can tell: the resend is refused.
+test('an older node: a batch whose remote write ended without an answer is not written again', async () => {
   resetInputSequencesForTests();
   const typed: string[] = [];
   const write = writer('mini:%7', typed);
@@ -75,10 +112,16 @@ test('a resend that arrives while the original is still being written waits for 
   const slow = new Promise<void>((resolve) => (release = resolve));
   const pane = 'mini:%4';
   const original = runInputInOrder(pane, () =>
-    writeSequencedInput(pane, { stream: 'a', n: 1 }, async () => {
-      await slow;
-      typed.push('echo once\r');
-    }),
+    writeSequencedInput(
+      pane,
+      { stream: 'a', n: 1 },
+      {
+        write: async () => {
+          await slow;
+          typed.push('echo once\r');
+        },
+      },
+    ),
   );
   const resend = writer(pane, typed)('echo once\r', { stream: 'a', n: 1 });
   release();
@@ -93,6 +136,7 @@ test('a malformed sequence is refused before anything is written', async () => {
   for (const seq of [
     { stream: '', n: 1 },
     { stream: 'x'.repeat(65), n: 1 },
+    { stream: 'a b', n: 1 },
     { stream: 'a', n: Number.POSITIVE_INFINITY },
     { stream: 'a', n: -1 },
     { stream: 'a', n: 1.5 },
@@ -116,4 +160,269 @@ test('remembered streams and panes stay bounded', async () => {
   await writer('p599', typed)('k', { stream: 'a', n: 1 });
   await writer('p0', typed)('k', { stream: 'a', n: 1 });
   assert.equal(typed.length, before + 1);
+});
+
+// The node records each batch on the pane and drops a repeat, so the gateway sends it again.
+test('a capable node: a batch whose write ended without an answer is resent, typed once', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  const onPane = new Map<string, number>();
+  const write = writer('mini:%7', typed, { typesOnce: true }, onPane);
+  await assert.rejects(
+    write('make deploy\r', { stream: 'a', n: 1 }, 'remote-timeout'),
+    /timed out/,
+  );
+  await write('make deploy\r', { stream: 'a', n: 1 });
+  await write('ls\r', { stream: 'a', n: 2 });
+  assert.deepEqual(typed, ['make deploy\r', 'ls\r']);
+});
+
+test('a capable node: a batch lost before it was typed is typed by its resend', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  const write = writer('mini:%7', typed, { typesOnce: true }, new Map());
+  await assert.rejects(
+    write('make\r', { stream: 'a', n: 1 }, 'remote-lost-before-typing'),
+    /timed out/,
+  );
+  await write('make\r', { stream: 'a', n: 1 });
+  assert.deepEqual(typed, ['make\r']);
+});
+
+// A gateway restart forgets everything in memory; the pane still knows what it was sent.
+test('after a restart, a batch the pane recorded is acknowledged without typing', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  const record = paneRecord();
+  await writer('slot:mmt-3', typed, { record })('make deploy\r', { stream: 'a', n: 1 });
+  await inputRecordsSettledForTests();
+  resetInputSequencesForTests();
+  await writer('slot:mmt-3', typed, { record })('make deploy\r', { stream: 'a', n: 1 });
+  await writer('slot:mmt-3', typed, { record })('ls\r', { stream: 'a', n: 2 });
+  await inputRecordsSettledForTests();
+  assert.deepEqual(typed, ['make deploy\r', 'ls\r']);
+  assert.equal(record.recorded.get('a'), 2);
+});
+
+// Slot send-keys records in the command that types: a reply lost after typing leaves the record.
+test('a pane record decides a resend after a remote write ended without an answer', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  const record = paneRecord();
+  const write = writer('slot:mmt-4', typed, { record, recordsOnWrite: true });
+  await assert.rejects(write('make\r', { stream: 'a', n: 1 }, 'remote-timeout'), /timed out/);
+  await write('make\r', { stream: 'a', n: 1 });
+  // Lost before it was typed: nothing recorded, so the resend types it.
+  await assert.rejects(
+    write('pwd\r', { stream: 'a', n: 2 }, 'remote-lost-before-typing'),
+    /timed out/,
+  );
+  await write('pwd\r', { stream: 'a', n: 2 });
+  assert.deepEqual(typed, ['make\r', 'pwd\r']);
+  assert.equal(record.recorded.get('a'), 2);
+});
+
+// Typing without knowing what the pane has could type it twice: the batch fails for a retry.
+test('an unreadable pane record fails the batch untyped; an unwritable one never blocks it', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  const unreadable: PaneInputRecord = {
+    read: async () => {
+      throw new Error('node mini is not connected');
+    },
+    write: async () => {},
+  };
+  await assert.rejects(
+    writer('slot:mmt-5', typed, { record: unreadable })('ls\r', { stream: 'a', n: 1 }),
+    /not connected/,
+  );
+  assert.deepEqual(typed, []);
+  const unwritable: PaneInputRecord = {
+    read: async () => null,
+    write: async () => {
+      throw new Error('node mini is not connected');
+    },
+  };
+  const write = writer('slot:mmt-5', typed, { record: unwritable });
+  await write('ls\r', { stream: 'a', n: 1 });
+  await write('ls\r', { stream: 'a', n: 1 });
+  await inputRecordsSettledForTests();
+  assert.deepEqual(typed, ['ls\r']);
+});
+
+// A PTY that went away mid-typing: its batch's record must not land after the next batch's.
+test('a record still on its way never lowers the record of a later batch', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  const record = paneRecord();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const slowRecord: PaneInputRecord = {
+    read: record.read,
+    write: async (seq) => {
+      if (seq.n === 1) await held;
+      await record.write(seq);
+    },
+  };
+  await writer('slot:mmt-7', typed, { record: slowRecord })('make\r', { stream: 'a', n: 1 });
+  const fallback = writer('slot:mmt-7', typed, { record: slowRecord, recordsOnWrite: true })(
+    'deploy\r',
+    { stream: 'a', n: 2 },
+  );
+  // The fallback's write would land now, before the first batch's record.
+  for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await fallback;
+  await inputRecordsSettledForTests();
+  assert.equal(record.recorded.get('a'), 2);
+  // After a restart, the pane still says batch 2 was typed.
+  resetInputSequencesForTests();
+  await writer('slot:mmt-7', typed, { record })('deploy\r', { stream: 'a', n: 2 });
+  assert.deepEqual(typed, ['make\r', 'deploy\r']);
+});
+
+// tmux before 3.0 keeps no pane options: nothing typed there is recorded, so a restarted gateway
+// could not tell a resend from new keys. Numbered input there is refused, never typed blind.
+test('a host without pane options refuses numbered input', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  const old = tmuxPaneInputRecord('dev:0', async () => ({
+    exitCode: 1,
+    stdout: '',
+    stderr: 'show-options: unknown option -- p\nusage: show-options [-gqsvw] [-t target]',
+  }));
+  const unsupported = (error: unknown) => {
+    assert.equal((error as { code?: string }).code, 'TERMINAL_INPUT_UNSUPPORTED');
+    assert.match((error as Error).message, /tmux 3\.0 or later/);
+    return true;
+  };
+  await assert.rejects(old.read('a'), unsupported);
+  const write = writer('slot:mmt-8', typed, { record: old });
+  await assert.rejects(write('ls\r', { stream: 'a', n: 1 }), unsupported);
+  // Unnumbered input (an older client) is typed as before.
+  await write('ls\r');
+  assert.deepEqual(typed, ['ls\r']);
+});
+
+test('the shell prune and the node pick the same stale records', async () => {
+  const lines = [
+    '@farmslot-review-workspace ws-1',
+    ...Array.from(
+      { length: 18 },
+      (_, i) => `@farmslot-input-s${i} ${i + 1}:${1_000 + ((i * 7) % 18)}`,
+    ),
+    '@farmslot-input-quoted "4:999"',
+  ];
+  const listing = `${lines.join('\n')}\n`;
+  const shell = await execLocal(`printf '%s' '${listing}' | ${STALE_RECORDS_FILTER}`, {
+    timeout: 5_000,
+  });
+  assert.equal(shell.exitCode, 0, shell.stderr);
+  const fromShell = shell.stdout.trim().split('\n').sort();
+  assert.equal(fromShell.length, 3);
+  assert.deepEqual(fromShell, staleTerminalInputRecords(listing).sort());
+});
+
+// The pane record says nothing of a write whose host does not record with the keys.
+test('a write that may have typed unrecorded is not resent, even where a record exists', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  await assert.rejects(
+    writer('mini:%9', typed)('make\r', { stream: 'a', n: 1 }, 'remote-timeout'),
+    /timed out/,
+  );
+  await assert.rejects(
+    writer('mini:%9', typed, { record: paneRecord() })('make\r', { stream: 'a', n: 1 }),
+    (error: unknown) => (error as { code?: string }).code === 'TERMINAL_INPUT_UNCERTAIN',
+  );
+  assert.deepEqual(typed, ['make\r']);
+});
+
+test('a known repeat is acknowledged without resolving where it would land', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  await writer('slot:mmt-6', typed)('ls\r', { stream: 'a', n: 1 });
+  await writeSequencedInput('slot:mmt-6', { stream: 'a', n: 1 }, async () => {
+    throw new Error('Slot mmt-6 has no agent target');
+  });
+  assert.deepEqual(typed, ['ls\r']);
+});
+
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs).
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX ===
+    `${process.env.TMUX_TMPDIR}/tmux-${process.getuid?.() ?? 0}/default`
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+
+test('real tmux: slot send-keys types and records once; records stay bounded', async (t) => {
+  const shell = async (command: string) => {
+    const result = await execLocal(command, { timeout: 5_000 });
+    if (result.exitCode !== 0) throw new Error(result.stderr || `exit ${result.exitCode}`);
+    return result.stdout;
+  };
+  if (!tmuxSandbox || !(await shell('command -v tmux || true')).trim()) {
+    t.skip('needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX) and tmux');
+    return;
+  }
+  const session = `farmslot_slot_input_${process.pid}_${Date.now()}`;
+  // Other test files share the server, which exits with their last session: a session created
+  // as it exits is lost, so it is checked and created again.
+  let pane = '';
+  for (let attempt = 1; !pane; attempt++) {
+    try {
+      pane = (await shell(`tmux new-session -d -P -F '#{pane_id}' -s ${session} cat`)).trim();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await shell(`tmux has-session -t ${session}`);
+    } catch (error) {
+      pane = '';
+      if (attempt === 3) throw error;
+    }
+  }
+  try {
+    const record = tmuxPaneInputRecord(pane, (command) => execLocal(command, { timeout: 5_000 }));
+    // The slot write: keys and record in one command, as terminal.input sends it.
+    const sendOnce = (text: string, n: number) =>
+      shell(
+        [
+          tmuxSendTextCommand(pane, text, { typeFailureExitCode: 1 }),
+          `"$TMUX_BIN" ${tmuxInputRecordArgs(pane, { stream: 'q1', n })}`,
+        ].join('\n'),
+      );
+    assert.equal(await record.read('q1'), null);
+    await sendOnce('ONCE', 1);
+    assert.equal(await record.read('q1'), 1);
+    // Seventeen older streams: the next write keeps itself and the 15 most recent of them.
+    await shell(
+      `for i in $(seq 0 16); do tmux set-option -p -t ${pane} @farmslot-input-s$i 1:$((1000 + i)); done`,
+    );
+    await sendOnce('NEXT', 2);
+    const kept =
+      (await shell(`tmux show-options -p -t ${pane}`)).match(/@farmslot-input-\S+/g) ?? [];
+    assert.equal(kept.length, 16, kept.join(' '));
+    assert.ok(kept.includes('@farmslot-input-q1') && kept.includes('@farmslot-input-s16'));
+    assert.ok(!kept.includes('@farmslot-input-s0') && !kept.includes('@farmslot-input-s1'));
+    let screen = '';
+    for (let tries = 0; tries < 100 && !screen.includes('NEXT'); tries++) {
+      screen = await shell(`tmux capture-pane -p -t ${pane}`);
+      if (!screen.includes('NEXT')) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(screen.match(/ONCE/g)?.length, 1, screen);
+    assert.equal(await record.read('q1'), 2);
+  } finally {
+    // The runner's private server; a session that already ended leaves nothing to kill.
+    await execLocal(`tmux kill-session -t ${session}`, { timeout: 5_000 });
+  }
+});
+
+test('a pane record that tmux cannot read fails', async () => {
+  const failing = tmuxPaneInputRecord('dev:0', async () => ({
+    exitCode: 1,
+    stdout: '',
+    stderr: "can't find pane: dev:0",
+  }));
+  await assert.rejects(failing.read('q1'), /can't find pane/);
+  await assert.rejects(failing.write({ stream: 'q1', n: 1 }), /can't find pane/);
 });

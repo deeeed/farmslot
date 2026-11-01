@@ -5,7 +5,7 @@ import { useEffect, useMemo } from 'react';
 import { Methods, type TmuxWorkerListResult, tmuxWorkerRefsMatch } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
-import { heldDataUsable, savedForDisplay, visibleReadError } from '../lib/resource-read-status';
+import { heldDataUsable } from '../lib/resource-read-status';
 import {
   paneRunnerContext,
   type TerminalRunnerContext,
@@ -19,7 +19,6 @@ import { useResourceQuery } from './useResourceQuery';
 
 export interface PaneRunnerContextState {
   context: TerminalRunnerContext;
-  error: string | null;
 }
 
 export function usePaneRunnerContext(pane: TerminalRunnerPane | null): PaneRunnerContextState {
@@ -42,22 +41,13 @@ export function usePaneRunnerContext(pane: TerminalRunnerPane | null): PaneRunne
   );
   const observation = useResourceQuery(focused ? query : undefined);
   // A reread in flight keeps the held inventory usable; only saved or missing data gates
-  // runner keys, and loading or a reread never shows an error.
+  // runner keys. A gated pane falls back to no runner, which the runner chip already shows.
   const ready = Boolean(client && query && heldDataUsable(observation, connected));
-  const saved = savedForDisplay(observation, connected);
   const summary = ready
     ? (observation.data?.workers.find((worker) =>
         tmuxWorkerRefsMatch(worker.ref, { nodeId: nodeId!, target: target! }),
       ) ?? null)
     : null;
-  const error = !query
-    ? null
-    : (visibleReadError(observation, saved)?.message ??
-      (observation.status === 'unsupported'
-        ? 'Worker observations are unsupported.'
-        : saved
-          ? 'Runner keys wait for current worker inventory.'
-          : null));
   // Forgetting saved pane preferences is destructive, so only a current read may prune them:
   // held inventory can miss a pane that another read already shows.
   const current = Boolean(client && transport && observation.status === 'ready');
@@ -75,5 +65,5 @@ export function usePaneRunnerContext(pane: TerminalRunnerPane | null): PaneRunne
     () => paneRunnerContext(nodeId && target ? { nodeId, target } : null, summary),
     [nodeId, summary, target],
   );
-  return { context, error };
+  return { context };
 }

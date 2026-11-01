@@ -1290,6 +1290,7 @@ async function routeAuthorizedMethod(
         gatewayUrl,
         execCancellation,
         conditionalWrites,
+        terminalInputSequence,
         observationCapabilities,
       } = p as {
         machine: string;
@@ -1299,6 +1300,7 @@ async function routeAuthorizedMethod(
         gatewayUrl?: unknown;
         execCancellation?: unknown;
         conditionalWrites?: unknown;
+        terminalInputSequence?: unknown;
         observationCapabilities?: import('@farmslot/protocol').NodeObservationCapabilities;
       };
       const resolved = authRuntime.resolver.resolveSessionPrincipal(state);
@@ -1387,6 +1389,7 @@ async function routeAuthorizedMethod(
           );
         },
         conditionalWrites === true,
+        terminalInputSequence === true,
       );
       nativeObservations.registrationChanged(
         machine,
