@@ -214,6 +214,8 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     adapter: piNativeAdapter,
     binary: 'pi',
     supportsWorkers: true,
+    // The tmux launch's default thinking level (DEFAULT_PI_THINKING).
+    defaultEffort: 'medium',
     account: {
       standardDirectory: (env) =>
         env.PI_CODING_AGENT_DIR || join(env.HOME || homedir(), '.pi/agent'),

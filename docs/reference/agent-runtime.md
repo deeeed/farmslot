@@ -264,9 +264,9 @@ A native session or worker without `profileId` runs on the node's own login for 
 
 Pi and OpenCode run natively for chat and workers (ADR-057 Amendment 12).
 
-- OpenCode runs `opencode acp` through the shared ACP adapter. With no model, a session uses the model OpenCode is configured with. At the sandboxed tier, or with none, each tool asks through native approvals; `full-auto` and `dangerous` allow tools.
-- Pi runs `pi --mode rpc`. Pi never asks before a tool, so its sessions report no approvals, as its terminal does. A `provider/id` model must match exactly; a bare ID leaves the provider to Pi.
-- A Pi profile is an agent directory (`PI_CODING_AGENT_DIR`); an OpenCode profile is a data home (`XDG_DATA_HOME`). Either reads as signed in while it lists a usable model.
+- OpenCode runs `opencode acp` through the shared ACP adapter. With no model, a session uses the model OpenCode is configured with. At the sandboxed tier, or with none, each tool asks through native approvals. Other tiers keep OpenCode's own permission rules.
+- Pi runs `pi --mode rpc`. Pi never asks before a tool, so its sessions report no approvals, as its terminal does. A turn fails only when Pi's last answer is an error, so a retry Pi makes itself can still complete it. Stop clears Pi's queued steering first. A `provider/id` model must match exactly; a bare ID leaves the provider to Pi.
+- A Pi profile is an agent directory (`PI_CODING_AGENT_DIR`); an OpenCode profile is a data home (`XDG_DATA_HOME`). Pi reads as signed in while its RPC model list is not empty. OpenCode reads as signed in when its ACP login succeeds.
 
 ## Managed native reviewer approval policy
 

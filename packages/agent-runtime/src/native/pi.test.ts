@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { piAccountState } from './account-pi.js';
+import { observePiAccount, piAccountState } from './account-pi.js';
 import { piNativeAdapter } from './pi.js';
 import type { NativeEventInput } from './types.js';
 
@@ -24,12 +24,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  if(!line.trim())return;
  const m=JSON.parse(line);fs.appendFileSync('wire',line+'\\n');
  if(m.type==='get_state')return reply(m,{sessionId:session,model:{provider,id},isStreaming:false});
+ if(m.type==='get_available_models')return reply(m,{models:process.env.PI_FIXTURE_NO_MODELS?[]:[{provider,id}]});
+ if(m.type==='clear_queue')return reply(m,{steering:[],followUp:[]});
  if(m.type==='abort'){settle(true);return reply(m)}
  if(m.type==='steer')return reply(m,{disposition:'queued'});
  if(m.type==='extension_ui_response'){fs.writeFileSync('dialog',line);return settle()}
  if(m.type!=='prompt')return;
  const text=m.message;
- if(text==='reject')return send({id:m.id,type:'response',command:'prompt',success:false,error:'busy'});
+ if(text==='reject'){send({type:'queue_update',steering:[],followUp:[]});return send({id:m.id,type:'response',command:'prompt',success:false,error:'busy'})}
  if(text==='handled')return reply(m,{disposition:'handled'});
  if(text==='events-first'){send({type:'agent_start'});reply(m,{disposition:'started'});return settle()}
  reply(m,{disposition:'started'});
@@ -37,6 +39,15 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  if(text==='wait')return;
  if(text==='dialog')return send({type:'extension_ui_request',id:'ui1',method:'confirm',title:'Allow?'});
  if(text==='error'){send({type:'message_end',message:{role:'assistant',content:[],stopReason:'error',errorMessage:'quota exceeded'}});return settle()}
+ if(text==='retry'){
+  send({type:'message_end',message:{role:'assistant',content:[],stopReason:'error',errorMessage:'529 overloaded'}});
+  send({type:'agent_end',messages:[],willRetry:true});
+  send({type:'auto_retry_start',attempt:1,maxAttempts:3,delayMs:10,errorMessage:'529 overloaded'});
+  send({type:'agent_start'});
+  send({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'ok'}],stopReason:'stop'}});
+  send({type:'auto_retry_end',success:true,attempt:1});
+  return settle();
+ }
  send({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:'ANSWER'}});
  send({type:'tool_execution_start',toolCallId:'t1',toolName:'bash',args:{command:'npm test'}});
  send({type:'tool_execution_end',toolCallId:'t1',toolName:'bash',result:{content:[{type:'text',text:'ok'}]},isError:false});
@@ -140,7 +151,8 @@ test('a bare Pi model ID matches the model Pi selected for it', async () => {
       piNativeAdapter.start({ ...f, model: 'flash' }, () => undefined),
       /Pi model is unavailable: flash/,
     );
-    const session = await piNativeAdapter.start({ ...f, model: 'default' }, () => undefined);
+    // A bare ID matches the model Pi selected for it; a `:<thinking>` suffix sets the level.
+    const session = await piNativeAdapter.start({ ...f, model: 'default:high' }, () => undefined);
     await session.close();
   } finally {
     f.cleanup();
@@ -191,49 +203,74 @@ test('Pi interrupts, steers and fails turns from its own records', async () => {
     await until(() => completed().length === 1);
     assert.equal(completed()[0].status, 'interrupted');
 
+    // Stop clears the steer Pi still holds, so it cannot run in a later turn.
+    assert.deepEqual(
+      wire(f.cwd)
+        .map(({ type }) => type)
+        .filter((type) => type === 'steer' || type === 'clear_queue' || type === 'abort'),
+      ['steer', 'clear_queue', 'abort'],
+    );
+
     await session.send('error', 'c3');
     await until(() => completed().length === 2);
     assert.equal(completed()[1].status, 'failed');
-    assert.equal(events.find((e) => e.type === 'error')?.text, 'quota exceeded');
+    assert.deepEqual(
+      events.filter((e) => e.type === 'error').map((e) => e.text),
+      ['quota exceeded'],
+    );
+
+    // A failed attempt that Pi retried successfully completes the turn.
+    await session.send('retry', 'c3b');
+    await until(() => completed().length === 3);
+    assert.equal(completed()[2].status, 'completed');
+    assert.equal(events.filter((e) => e.type === 'error').length, 1);
 
     // An event before the prompt reply still accepts the command first.
     await session.send('events-first', 'c4');
-    await until(() => completed().length === 3);
+    await until(() => completed().length === 4);
     assert.deepEqual(
       events.filter((e) => e.commandId === 'c4').map((e) => e.type),
       ['command.accepted', 'turn.started', 'turn.completed'],
     );
 
     await session.send('handled', 'c5');
-    assert.equal(completed()[3].status, 'completed');
+    assert.equal(completed()[4].status, 'completed');
+    // A queue notice before a refused prompt does not accept it.
     await assert.rejects(session.send('reject', 'c6'), /Pi prompt failed: busy/);
+    assert.equal(events.filter((e) => e.commandId === 'c6').length, 0);
     await session.send('dialog', 'c7');
-    await until(() => completed().length === 5);
+    await until(() => completed().length === 6);
     assert.deepEqual(JSON.parse(readFileSync(join(f.cwd, 'dialog'), 'utf8')), {
       type: 'extension_ui_response',
       id: 'ui1',
       cancelled: true,
     });
-    assert.deepEqual(
-      wire(f.cwd)
-        .filter((record) => record.type === 'steer')
-        .map(({ message }) => message),
-      ['look here'],
-    );
   } finally {
     await session.close();
     f.cleanup();
   }
 });
 
-test('Pi account state reads its model listing', () => {
+test('Pi account state reads its RPC model list', async (t) => {
+  const listing = (models: unknown) => ({ type: 'response', success: true, data: { models } });
   assert.equal(
-    piAccountState('provider  model  context\nlitellm   DeepSeek-V4-Flash  1.0M\n').login,
+    piAccountState(listing([{ provider: 'litellm', id: 'flash' }])).login,
     'authenticated',
   );
-  assert.equal(
-    piAccountState('No models available. Use /login to log into a provider.\n').login,
-    'signed-out',
-  );
-  assert.throws(() => piAccountState('unexpected'), /malformed-status|AccountProbeError/);
+  assert.equal(piAccountState(listing([])).login, 'signed-out');
+  assert.throws(() => piAccountState({ type: 'response', success: false, error: 'x' }));
+  const f = setup();
+  t.after(f.cleanup);
+  for (const [env, login] of [
+    [{}, 'authenticated'],
+    [{ PI_FIXTURE_NO_MODELS: '1' }, 'signed-out'],
+  ] as const) {
+    const observed = await observePiAccount({
+      cwd: f.cwd,
+      executable: f.executable,
+      env: { ...process.env, ...env },
+    });
+    assert.equal(observed.login, login);
+    assert.equal(observed.version, '1.4.0');
+  }
 });

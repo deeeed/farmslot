@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { observeOpenCodeAccount } from './account-opencode.js';
 import { acpPermission, cursorRequest } from './acp-requests.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
-import { opencodeNativeAdapter } from './opencode.js';
+import { opencodeEnvironment, opencodeNativeAdapter } from './opencode.js';
 import type { NativeEventInput } from './types.js';
 
 const fixture = `#!/usr/bin/env node
@@ -134,23 +135,44 @@ for (const [runner, adapter] of [
   });
 }
 
-test('OpenCode asks before each tool at the sandboxed tier and allows tools at the others', async () => {
+test('OpenCode asks before each tool only at the sandboxed tier', () => {
   for (const [safetyTier, permission] of [
-    [undefined, 'ask'],
-    ['sandboxed', 'ask'],
-    ['full-auto', 'allow'],
-    ['dangerous', 'allow'],
-  ] as const) {
-    const f = setup();
-    const session = await opencodeNativeAdapter.start({ ...f, safetyTier }, () => undefined);
-    try {
-      assert.deepEqual(JSON.parse(readFileSync(join(f.cwd, 'opencode-permission'), 'utf8')), {
-        '*': permission,
-      });
-    } finally {
-      await session.close();
-      f.cleanup();
-    }
+    [undefined, '{"*":"ask"}'],
+    ['sandboxed', '{"*":"ask"}'],
+    // Other tiers keep OpenCode's own rules, as the tmux launch does.
+    ['full-auto', undefined],
+    ['dangerous', undefined],
+  ] as const)
+    assert.equal(
+      opencodeEnvironment({ cwd: '/w', executable: 'opencode', safetyTier }).OPENCODE_PERMISSION,
+      permission,
+      String(safetyTier),
+    );
+});
+
+test('the OpenCode permission override reaches the runner process', async () => {
+  const f = setup();
+  const session = await opencodeNativeAdapter.start(
+    { ...f, safetyTier: 'sandboxed' },
+    () => undefined,
+  );
+  try {
+    assert.deepEqual(JSON.parse(readFileSync(join(f.cwd, 'opencode-permission'), 'utf8')), {
+      '*': 'ask',
+    });
+  } finally {
+    await session.close();
+    f.cleanup();
+  }
+});
+
+test('OpenCode account observation signs in over ACP', async () => {
+  const f = setup();
+  try {
+    const observed = await observeOpenCodeAccount({ cwd: f.cwd, executable: f.executable });
+    assert.deepEqual([observed.installed, observed.login], [true, 'authenticated']);
+  } finally {
+    f.cleanup();
   }
 });
 

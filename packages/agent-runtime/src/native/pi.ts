@@ -2,16 +2,25 @@ import { randomUUID } from 'node:crypto';
 
 import type { NativeSessionTool, NativeToolKind } from '@farmslot/protocol';
 
+import { acpObject as piObject } from './acp-rpc.js';
 import { JsonLineProcess, NativeRequestRefused } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
 
 type PiRecord = Record<string, unknown>;
-function piObject(value: unknown): PiRecord {
-  if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('Expected a Pi RPC object');
-  return value as PiRecord;
-}
 const piString = (value: unknown) => (typeof value === 'string' ? value : undefined);
+
+// Records that belong to the running agent loop; queue, retry and extension notices do not
+// show that Pi took the prompt.
+const RUN_EVENTS = new Set([
+  'agent_start',
+  'turn_start',
+  'message_update',
+  'message_end',
+  'tool_execution_start',
+  'tool_execution_end',
+  'agent_settled',
+]);
+const PI_THINKING = /:(off|minimal|low|medium|high|xhigh|max)$/;
 
 // Pi's built-in tools. Extension tools read as `other`.
 const PI_TOOL_KINDS: Record<string, NativeToolKind> = {
@@ -59,6 +68,8 @@ export const piNativeAdapter: NativeAdapter = {
       | undefined;
     let closed = false;
     let nextId = 0;
+    // A reply that arrives after its request timed out is dropped, not a protocol failure.
+    const expired = new Set<string>();
     // Pi sends a tool's arguments only when it starts.
     const toolArgs = new Map<string, unknown>();
     const pending = new Map<
@@ -87,6 +98,7 @@ export const piNativeAdapter: NativeAdapter = {
         const type = message.type;
         if (type === 'response') {
           const id = piString(message.id);
+          if (id !== undefined && expired.delete(id)) return;
           const request = id === undefined ? undefined : pending.get(id);
           // A response without a known ID (such as a parse failure) breaks correlation.
           if (!request) throw new Error(`Pi sent an unmatched ${String(message.command)} response`);
@@ -108,7 +120,7 @@ export const piNativeAdapter: NativeAdapter = {
             process.write({ type: 'extension_ui_response', id: message.id, cancelled: true });
           return;
         }
-        if (!command) return;
+        if (!command || !RUN_EVENTS.has(String(type))) return;
         accept();
         switch (type) {
           case 'agent_start':
@@ -121,11 +133,13 @@ export const piNativeAdapter: NativeAdapter = {
             break;
           }
           case 'message_end': {
+            // Pi retries a failed model request itself, so only the last answer decides.
             const final = piObject(message.message);
-            if (final.role === 'assistant' && final.stopReason === 'error') {
-              command.failure = piString(final.errorMessage) ?? 'Pi model request failed';
-              publish({ type: 'error', text: command.failure });
-            }
+            if (final.role === 'assistant')
+              command.failure =
+                final.stopReason === 'error'
+                  ? (piString(final.errorMessage) ?? 'Pi model request failed')
+                  : undefined;
             break;
           }
           case 'tool_execution_start':
@@ -148,6 +162,8 @@ export const piNativeAdapter: NativeAdapter = {
             });
             break;
           case 'agent_settled':
+            if (command.failure && message.aborted !== true)
+              publish({ type: 'error', text: command.failure });
             publish({
               type: 'turn.completed',
               status:
@@ -176,14 +192,18 @@ export const piNativeAdapter: NativeAdapter = {
     const request = (record: PiRecord): Promise<unknown> => {
       const id = `farmslot-pi-${++nextId}`;
       return new Promise((resolve, reject) => {
-        // `abort` waits for Pi to settle, so only the state and prompt replies are bounded.
+        // Pi replies to `prompt` only after its pre-run work, such as compaction, so the prompt
+        // waits like ACP's session/prompt. `abort` replies once Pi has settled.
+        const timeoutMs =
+          record.type === 'prompt' ? undefined : record.type === 'abort' ? 60_000 : 30_000;
         const timer =
-          record.type === 'abort'
+          timeoutMs === undefined
             ? undefined
             : setTimeout(() => {
                 pending.delete(id);
+                expired.add(id);
                 reject(new Error(`Pi ${String(record.type)} timed out; acceptance is unknown`));
-              }, 30_000);
+              }, timeoutMs);
         pending.set(id, { resolve, reject, timer });
         try {
           process.write({ id, ...record });
@@ -201,14 +221,14 @@ export const piNativeAdapter: NativeAdapter = {
       if (options.resumeSessionId && nativeSessionId !== options.resumeSessionId)
         throw new Error('Pi loaded a different native session');
       // Set the exact requested model, never a silent fallback. A bare ID leaves the
-      // provider to Pi, as its own `--model` does.
+      // provider to Pi, and a `:<thinking>` suffix sets the level, as Pi's own `--model` does.
       if (options.model) {
+        const requested = options.model.replace(PI_THINKING, '');
         const model = state.model === undefined ? {} : piObject(state.model);
-        const selected = options.model.includes('/')
+        const selected = requested.includes('/')
           ? `${String(model.provider)}/${String(model.id)}`
           : model.id;
-        if (selected !== options.model)
-          throw new Error(`Pi model is unavailable: ${options.model}`);
+        if (selected !== requested) throw new Error(`Pi model is unavailable: ${options.model}`);
       }
       publish({
         type: 'session.started',
@@ -255,6 +275,8 @@ export const piNativeAdapter: NativeAdapter = {
       async interrupt() {
         if (closed) throw new Error('Pi session is closed');
         if (!command) throw new Error('No active native turn to interrupt');
+        // Pi keeps queued steering through an abort; a stopped turn's steer must not run later.
+        await request({ type: 'clear_queue' });
         await request({ type: 'abort' });
       },
       close: () => process.close(),

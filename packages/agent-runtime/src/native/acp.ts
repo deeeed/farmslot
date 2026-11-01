@@ -70,6 +70,14 @@ export interface AcpAdapterConfig {
   extensionRequest?: (method: string, params: AcpObject) => AcpPendingRequest | undefined;
 }
 
+/** A runner may run its tools without asking: inside the host review sandbox, or above the sandboxed tier. */
+export function acpRunsToolsUnasked(options: NativeAdapterOptions): boolean {
+  return (
+    Boolean(options.processSandbox) ||
+    Boolean(options.safetyTier && options.safetyTier !== 'sandboxed')
+  );
+}
+
 /** Common ACP v1 flow, confirmed against the installed Cursor and Grok servers. */
 export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
   const capabilities = {

@@ -5,9 +5,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { DEFAULT_PI_MODEL } from '@farmslot/protocol';
+
 import { readWorkspaceText, WORKSPACE_TEXT_LIMIT, workspacePath } from '../core/workspace-files.js';
+import { getRunnerDefinition } from '../runners/registry.js';
 
 import {
+  nativeModelPreferences,
   nativeWorkspaceChanges,
   nativeWorkspaceDiff,
   nativeWorkspaceList,
@@ -126,4 +130,26 @@ test('large change lists are capped without hiding a directly requested file dif
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Pi's native picker offers its provider-qualified default unless an operator saved one", async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'native-pi-picker-'));
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = home;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  });
+  const pi = getRunnerDefinition('pi').nativeChoices!;
+  const picker = nativeModelPreferences('pi', pi.models, pi.defaultModel);
+  assert.equal(picker.defaultModel, `xai/${DEFAULT_PI_MODEL}`);
+  assert.ok(!picker.models.includes(DEFAULT_PI_MODEL), 'no bare terminal default');
+  // A runner whose native default is its terminal default keeps it.
+  const claude = getRunnerDefinition('claude');
+  assert.equal(
+    nativeModelPreferences('claude', claude.nativeChoices!.models, claude.defaultModel)
+      .defaultModel,
+    claude.defaultModel,
+  );
 });

@@ -1,4 +1,4 @@
-import { createAcpAdapter } from './acp.js';
+import { acpRunsToolsUnasked, createAcpAdapter } from './acp.js';
 import { cursorRequest } from './acp-requests.js';
 import { configureCursorModel } from './cursor-model.js';
 
@@ -18,9 +18,7 @@ export const cursorNativeAdapter = createAcpAdapter({
             ...options.filesystemPolicy.writableRoots.flatMap((root) => ['--add-dir', root]),
           ]
         : []),
-      ...(options.processSandbox || (options.safetyTier && options.safetyTier !== 'sandboxed')
-        ? ['--force']
-        : []),
+      ...(acpRunsToolsUnasked(options) ? ['--force'] : []),
       'acp',
     ];
   },

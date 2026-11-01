@@ -1,18 +1,21 @@
-import { type AcpObject, acpObject, acpString } from './acp-rpc.js';
-
-type Request = (method: string, params: AcpObject) => Promise<unknown>;
+import {
+  acpConfigChoices,
+  type AcpObject,
+  acpObject,
+  type AcpRequest,
+  acpString,
+  setAcpConfigOption,
+} from './acp-rpc.js';
 
 /** Cursor ACP's parameterized model API; CLI --model is ignored by its ACP command. */
 export async function configureCursorModel(
   sessionId: string,
   session: AcpObject,
   requested: string,
-  request: Request,
+  request: AcpRequest,
 ): Promise<void> {
-  const initial = (session.configOptions as AcpObject[] | undefined) ?? [];
-  const models = initial.find((option) => option.id === 'model')?.options;
-  if (!Array.isArray(models)) throw new Error('Cursor did not advertise model choices');
-  const ids = models.map((option) => acpString(acpObject(option).value));
+  const ids = acpConfigChoices(session, 'model');
+  if (!ids) throw new Error('Cursor did not advertise model choices');
   let model = requested;
   const parameters = new Map<string, string>();
   const explicit = /^([^\[\]]+)\[([^\[\]]*)\]$/.exec(requested);
@@ -45,14 +48,8 @@ export async function configureCursorModel(
     }
   }
   if (!ids.includes(model)) throw new Error(`Cursor model is unavailable: ${requested}`);
-  const update = async (id: string, value: string) => {
-    const result = acpObject(
-      await request('session/set_config_option', { sessionId, configId: id, value }),
-    );
-    if (!Array.isArray(result.configOptions))
-      throw new Error('Cursor did not confirm model settings');
-    return result.configOptions.map(acpObject);
-  };
+  const update = (id: string, value: string) =>
+    setAcpConfigOption(request, sessionId, id, value, 'Cursor');
   let choices = await update('model', model);
   for (const [key, value] of parameters) {
     const option =
