@@ -48,7 +48,7 @@ import {
 import { unwatchContext } from '../tasks/watcher.js';
 
 import { finishReviewCleanup } from './cleanup.js';
-import { readReviewFeedback } from './feedback.js';
+import { logRecommendationCorrection, readReviewFeedback } from './feedback.js';
 import { continueNativeReviewCompletion } from './native-review-completion.js';
 import {
   assertNativeReviewOperationCurrent,
@@ -875,6 +875,7 @@ async function runNativeReviewAttempt(
       await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath),
       terminal,
     );
+    logRecommendationCorrection(contextId, feedback);
     const error = terminalReviewArtifactErrorForCompletion(
       contextId,
       feedback.terminalInvalidReason,

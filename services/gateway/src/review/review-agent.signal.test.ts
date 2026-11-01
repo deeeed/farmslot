@@ -89,7 +89,8 @@ test('structured result parser preserves schema v1 issues and fails closed on co
       issues: [{ file: 'src/review.ts', description: 'Keep this finding.' }],
     },
   );
-  const invalidCardinality = parseStructuredReviewFeedback(
+  // A pass with a finding conflicts with it; a finding without a severity counts as major.
+  const passWithFinding = parseStructuredReviewFeedback(
     JSON.stringify({
       schemaVersion: 1,
       verdict: 'PASS',
@@ -97,7 +98,9 @@ test('structured result parser preserves schema v1 issues and fails closed on co
     }),
     'artifacts/review-result.json',
   );
-  assert.equal(invalidCardinality.incomplete, true);
+  assert.equal(passWithFinding.verdict, 'issues');
+  assert.equal(passWithFinding.recommendation, 'REQUEST_CHANGES');
+  assert.equal(passWithFinding.incomplete, undefined);
   const corrupt = parseStructuredReviewFeedback('{', 'artifacts/review-result.json');
   assert.equal(corrupt.verdict, 'issues');
   assert.equal(corrupt.incomplete, true);

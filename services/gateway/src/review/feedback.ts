@@ -4,6 +4,7 @@ import {
   isReviewSeverity,
   type ReviewApprovalPolicy,
   ReviewApprovalPolicyError,
+  type ReviewRecommendation,
   reviewRecommendation,
   type ReviewSeverity,
 } from '@farmslot/protocol/review-approval-policy.cjs';
@@ -12,7 +13,11 @@ import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
-import { loadReviewApprovalPolicy } from './approval-policy.js';
+import {
+  loadReviewApprovalPolicy,
+  normalizeReviewRecommendation,
+  stricterReviewRecommendation,
+} from './approval-policy.js';
 import { parseReviewIssueBullets } from './issues.js';
 import type { ReviewAgentResult } from './review-agent.js';
 
@@ -113,19 +118,52 @@ export function parseStructuredReviewFeedback(
       ),
     ];
     const required = reviewRecommendation(findings, policy);
-    const recommendation =
-      candidate.recommendation === undefined
-        ? required
-        : assertReviewRecommendation(findings, candidate.recommendation, policy);
-    if ((verdict === 'pass') !== (required === 'APPROVE'))
-      throw new ReviewApprovalPolicyError(recommendation);
-    return {
-      verdict,
-      issues: normalizedIssues,
-      ...(candidate.recommendation !== undefined || additionalIssues !== undefined
-        ? { recommendation }
-        : {}),
-    };
+    try {
+      const recommendation =
+        candidate.recommendation === undefined
+          ? required
+          : assertReviewRecommendation(findings, candidate.recommendation, policy);
+      if ((verdict === 'pass') !== (required === 'APPROVE'))
+        throw new ReviewApprovalPolicyError(required);
+      return {
+        verdict,
+        issues: normalizedIssues,
+        ...(candidate.recommendation !== undefined || additionalIssues !== undefined
+          ? { recommendation }
+          : {}),
+      };
+    } catch (conflict) {
+      // A reviewer whose verdict or recommendation conflicts with its own findings (ba397e2c:
+      // pass and APPROVE with 3 minor findings) is read at the strictest of what the policy
+      // requires, what it recommended and, for an issues verdict, COMMENT. That never approves
+      // a finding, and the run continues on a valid issues result instead of stranding. Line
+      // comments from elsewhere (additionalIssues) still refuse: that is how a stale gate's
+      // approval is withdrawn.
+      if (!(conflict instanceof ReviewApprovalPolicyError) || additionalIssues !== undefined)
+        throw conflict;
+      const stated = normalizeReviewRecommendation(candidate.recommendation);
+      const floors: Array<ReviewRecommendation | null> = [
+        stated,
+        verdict === 'issues' ? 'COMMENT' : null,
+      ];
+      const read = floors.reduce<ReviewRecommendation>(
+        (strictest, next) => (next ? stricterReviewRecommendation(strictest, next) : strictest),
+        required,
+      );
+      if (read === 'APPROVE' || !normalizedIssues.length) throw conflict;
+      return {
+        verdict: 'issues',
+        issues: normalizedIssues,
+        recommendation: read,
+        recommendationCorrection: {
+          verdict,
+          ...(candidate.recommendation === undefined
+            ? {}
+            : { recommendation: String(candidate.recommendation) }),
+          read,
+        },
+      };
+    }
   } catch (error) {
     return {
       verdict: 'issues',
@@ -137,6 +175,15 @@ export function parseStructuredReviewFeedback(
       terminalInvalidReason: `${resultRelPath}: ${(error as Error).message}`,
     };
   }
+}
+
+/** Once per reviewer completion: the reviewer's own words, and how the policy read them. */
+export function logRecommendationCorrection(reviewerId: string, feedback: ReviewAgentResult): void {
+  const correction = feedback.recommendationCorrection;
+  if (!correction) return;
+  console.warn(
+    `[review] ${reviewerId}: verdict ${correction.verdict}${correction.recommendation === undefined ? '' : ` / ${correction.recommendation}`} conflicts with its findings; read as issues / ${correction.read}`,
+  );
 }
 
 export async function readReviewFeedback(

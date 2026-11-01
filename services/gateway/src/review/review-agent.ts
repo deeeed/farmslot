@@ -70,7 +70,7 @@ import { unwatchContext } from '../tasks/watcher.js';
 import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { finishReviewCleanup } from './cleanup.js';
-import { readReviewFeedback } from './feedback.js';
+import { logRecommendationCorrection, readReviewFeedback } from './feedback.js';
 import { startProgressWatcher } from './progress.js';
 import { reviewContextRoundId } from './review-round-budget.js';
 import { reviewPRIdentity, WarmReviewRefusal } from './session-mode.js';
@@ -745,6 +745,15 @@ export interface ReviewAgentResult {
   incomplete?: boolean; // true when feedback file was never written (agent didn't finish)
   /** Stable invalid artifact: recovery must stop and ask the operator, not poll again. */
   terminalInvalidReason?: string;
+  /**
+   * The reviewer's own verdict and recommendation, when they conflicted with its findings and the
+   * result was read at the stricter recommendation `read`.
+   */
+  recommendationCorrection?: {
+    verdict: string;
+    recommendation?: string;
+    read: ReviewRecommendation;
+  };
 }
 
 export async function persistReviewOutputArtifacts(params: {
@@ -998,6 +1007,7 @@ async function recoverRunningReviewAgent(params: {
       await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath, resultRelPath),
       terminalSignal,
     );
+    logRecommendationCorrection(context.id, feedback);
     const terminalArtifactError = terminalReviewArtifactErrorForCompletion(
       context.id,
       feedback.terminalInvalidReason,
