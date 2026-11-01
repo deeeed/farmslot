@@ -1370,6 +1370,23 @@ if (phase === 'terminal-context') {
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(text.split('\n').slice(-8))}`);
   };
+  // Every cleanup step runs even when another fails. The proof's first failure is the result:
+  // cleanup failures are reported after it and never replace it (a gateway still restarting
+  // from the outage step used to mask the real error).
+  const settle = async (proofError, steps) => {
+    const failures = [];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    for (const error of failures)
+      console.error(`Cleanup also failed: ${error instanceof Error ? error.message : error}`);
+    if (proofError) throw proofError;
+    if (failures.length) throw failures[0];
+  };
   // Two review-round routing fixes, on runs this proof seeds into the private gateway home and
   // removes again: a CI-fix context saved as {window: null, target: '<session>:<window>'} opens
   // and sends to that window's pane, and a native review worktree opened by run id takes the
@@ -1451,6 +1468,7 @@ if (phase === 'terminal-context') {
     });
     let seeded = false;
     let windowOpen = false;
+    let proofError;
     try {
       await sessionInfo();
       await execute('tmux', [
@@ -1536,15 +1554,24 @@ if (phase === 'terminal-context') {
       await inbox(`terminal/worker?runId=${reviewRunId}`);
       await until(openedNative, 'A native review worktree must open its conversation, not a pane');
       await capture('native-terminal-native-review.png');
-    } finally {
-      proofRef = `runs-cache:terminal:${fixture.runId}`;
-      await inbox('runs');
-      if (seeded)
-        await withOwnedGatewayOffline(async () => {
-          for (const file of files) await rm(file, { force: true });
-        });
-      if (windowOpen) await execute('tmux', ['kill-window', '-t', `=${sessionName}:${window}`]);
+    } catch (error) {
+      proofError = error;
     }
+    await settle(proofError, [
+      async () => {
+        proofRef = `runs-cache:terminal:${fixture.runId}`;
+        await inbox('runs');
+      },
+      async () => {
+        if (seeded)
+          await withOwnedGatewayOffline(async () => {
+            for (const file of files) await rm(file, { force: true });
+          });
+      },
+      async () => {
+        if (windowOpen) await execute('tmux', ['kill-window', '-t', `=${sessionName}:${window}`]);
+      },
+    ]);
   };
 
   // The shared terminal must create the missing slot session itself (terminal.reinit); a
@@ -1757,20 +1784,11 @@ if (phase === 'terminal-context') {
   } catch (error) {
     proofError = error;
   }
-  // The proof's first failure is the result: cleanup failures are reported after it and never
-  // replace it (a gateway still restarting from the outage step used to mask the real error).
-  const cleanupErrors = [];
-  const cleanup = async (step) => {
-    try {
-      await step();
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
-  };
-  await cleanup(() => rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] }));
-  await cleanup(() => inbox('runs'));
-  if (!existed)
-    await cleanup(async () => {
+  await settle(proofError, [
+    () => rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] }),
+    () => inbox('runs'),
+    async () => {
+      if (existed) return;
       const rows = (await execute('tmux', ['list-sessions', '-F', '#{pid}|#{session_name}'])).stdout
         .trim()
         .split('\n');
@@ -1783,11 +1801,8 @@ if (phase === 'terminal-context') {
         if (ownedSession) assert.equal(idle.id, ownedSession.id);
         await execute('tmux', ['kill-session', '-t', idle.id]);
       }
-    });
-  for (const error of cleanupErrors)
-    console.error(`Cleanup also failed: ${error instanceof Error ? error.message : error}`);
-  if (proofError) throw proofError;
-  if (cleanupErrors.length) throw cleanupErrors[0];
+    },
+  ]);
   process.exit(0);
 }
 
