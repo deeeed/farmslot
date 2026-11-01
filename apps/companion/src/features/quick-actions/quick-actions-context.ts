@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useCallback, useContext, useSyncExternalStore } from 'react';
 
 import type { CompanionViewLocation } from '@farmslot/protocol/surfaces/view-links';
 
@@ -41,13 +41,54 @@ interface QuickActionsContextValue {
   registerOutlet(owner: symbol): () => void;
 }
 
-export const QuickActionsContext = createContext<QuickActionsContextValue | null>(null);
+/**
+ * The provider's value behind a subscription. It changes on every navigation, and as a context
+ * value each change made React walk every mounted screen looking for readers; a store re-renders
+ * only the components that read the changed value.
+ */
+export interface QuickActionsStore {
+  get(): QuickActionsContextValue;
+  set(value: QuickActionsContextValue): void;
+  subscribe(listener: () => void): () => void;
+}
+
+export function createQuickActionsStore(initial: QuickActionsContextValue): QuickActionsStore {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set(next) {
+      if (next === value) return;
+      value = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+export const QuickActionsContext = createContext<QuickActionsStore | null>(null);
+
+const noStore = { get: () => null, subscribe: () => () => {} };
 
 export function useQuickActions() {
-  const context = useContext(QuickActionsContext);
+  const context = useOptionalQuickActions();
   if (!context) throw new Error('Quick actions require their root provider.');
   return context;
 }
-export function useOptionalQuickActions() {
-  return useContext(QuickActionsContext);
+export function useOptionalQuickActions(): QuickActionsContextValue | null {
+  const store = useContext(QuickActionsContext) ?? noStore;
+  return useSyncExternalStore(store.subscribe, store.get, store.get);
+}
+/** One field, so a screen re-renders only when that field changes. */
+export function useQuickActionsField<K extends keyof QuickActionsContextValue>(
+  key: K,
+): QuickActionsContextValue[K] | undefined {
+  const store = useContext(QuickActionsContext) ?? noStore;
+  const read = useCallback(() => store.get()?.[key], [store, key]);
+  return useSyncExternalStore(store.subscribe, read, read);
 }
