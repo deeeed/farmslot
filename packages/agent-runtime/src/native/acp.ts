@@ -64,6 +64,8 @@ export interface AcpAdapterConfig {
     request: (method: string, params: AcpObject) => Promise<unknown>,
   ) => Promise<void>;
   defaultModeId?: string;
+  /** Runner settings that have no CLI flag, added to the session's environment. */
+  environment?: (options: NativeAdapterOptions) => Record<string, string>;
   modes: Array<'default' | 'plan'>;
   extensionRequest?: (method: string, params: AcpObject) => AcpPendingRequest | undefined;
 }
@@ -108,7 +110,9 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
         }
       };
       const rpc = new AcpRpc(
-        options,
+        config.environment
+          ? { ...options, env: { ...(options.env ?? process.env), ...config.environment(options) } }
+          : options,
         config.args(options),
         (message) => {
           const method = typeof message.method === 'string' ? message.method : undefined;

@@ -437,3 +437,38 @@ A native farm worker is a native session started through the runner's native ada
 Workers and standalone sessions already shared one host launch path: the adapter registry and `NativeSessionManager`, with Cursor and Grok declaring worker support. The split was in the gateway. Its worker launch picked the executable for Claude and Codex itself and refused every other runner, so a Grok worker failed after its slot was prepared (run e57cded9).
 
 Removing that choice leaves one path. A runner gains worker support by having a native adapter, and the pool path stays the only override.
+
+## Amendment 12: Pi and OpenCode native sessions, 2026-11-02
+
+**Status:** Proposed.
+
+### Decision
+
+Pi and OpenCode get native adapters on the same path as the other runners, so every CLI the farm runs has a native mode for chat and farm workers. tmux stays first-class for both.
+
+- **OpenCode** speaks ACP v1 (`opencode acp`) and uses the shared ACP adapter, like Cursor and Grok:
+  - it signs in with `opencode-login`;
+  - the model is the `model` session config option, confirmed after it is set;
+  - a new session with no model uses the model OpenCode is configured with, so the gateway seeds no picker models.
+- **OpenCode tools.** OpenCode runs its tools without asking by default. The adapter sets `OPENCODE_PERMISSION`: at the sandboxed tier (and with no tier) every tool asks through ACP approvals; at `full-auto` and `dangerous` tools are allowed. This is the tier mapping Cursor already uses.
+- **Pi** has no ACP. Its adapter speaks Pi's JSONL RPC mode (`pi --mode rpc`):
+  - `prompt`, `steer` and `abort` map to send, steer and interrupt;
+  - a turn completes on `agent_settled`, as `interrupted` when Pi reports the run aborted and `failed` when the assistant message stopped on an error;
+  - resume passes `--session <id>` and must report the same session;
+  - the model must be the one requested: a `provider/id` must match exactly, and a bare ID leaves the provider to Pi. Native pickers name Pi's provider-qualified IDs.
+- **Pi tools.** Pi asks before no tool and has no sandbox of its own, in RPC mode as in its terminal. The session reports `approvals: false`, and every tier runs Pi's tools unasked, matching the tmux Pi launch, whose tier flags are empty. Extension dialogs are answered `cancelled` until a native surface exists.
+- **Accounts.** Both sign in per provider and have no account status command:
+  - a profile sets Pi's agent directory (`PI_CODING_AGENT_DIR`) or OpenCode's data home (`XDG_DATA_HOME`);
+  - provider keys in the environment still apply;
+  - account observation reads the runner's model listing: any usable model reads as signed in. OpenCode's own free models need no login, so OpenCode always reads as signed in.
+- **Executables.** An OpenCode slot with no `opencode_path` uses the adapter's own `opencode`, never the Codex path. Amendment 10 already made the pool path the only override; the old fallback ran OpenCode's arguments through Codex.
+
+### Rationale and consequences
+
+Both runners already ran in tmux, and both have a documented machine interface, so a native mode needs no terminal parsing. T3's `provider-pi` and `provider-opencode` packages were a reference; no code is copied. T3 drives OpenCode through its HTTP server. ACP reuses the adapter Cursor and Grok already prove.
+
+Pi's lack of approvals is a property of Pi, not of the native path: a sandboxed native Pi session is no less contained than a sandboxed tmux one, and no more. Containing Pi needs an operating-system boundary, such as the host review sandbox, and is left to a later decision.
+
+### Public surface
+
+`opencodeNativeAdapter` and `piNativeAdapter`, and the `opencode` and `pi` runner definitions in `@farmslot/agent-runtime`; the `opencode-acp` and `pi-rpc` native transports in the gateway runner registry; `resolveRunnerPath` in `@farmslot/slot-config`.

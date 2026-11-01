@@ -724,6 +724,21 @@ test('expandDispatchCmd falls back to {runner} when the path placeholder resolve
   assert.equal(command, 'cd /repo && cursor --model gpt-5.6-sol-max --force');
 });
 
+test('an OpenCode dispatch without opencode_path never runs the Codex binary', () => {
+  // A pool that configures codex_path but not opencode_path must still run
+  // OpenCode, not hand OpenCode's arguments to Codex.
+  const command = expandDispatchCmd(
+    runnerArgsSlotVars({
+      codexPath: '/opt/codex/bin/codex',
+      opencodePath: '',
+      dispatchCmd: 'cd {repo} && {runner_path}{runner} {safety_flags}',
+    }),
+    { runner: 'opencode', runnerArgs: '--model openai/gpt-5.5', safetyFlags: '' },
+  );
+
+  assert.equal(command, 'cd /repo && opencode --model openai/gpt-5.5');
+});
+
 test('a leased device identity beats the slot resource field for every device placeholder', () => {
   // ADR-054 item 3: a re-targeted capability lease passes its device identity as
   // extraVars, and the provider hook must drive THAT device, not the one the

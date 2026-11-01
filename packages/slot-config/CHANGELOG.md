@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- `resolveRunnerPath` no longer gives an OpenCode slot the Codex path when `opencode_path` is unset; the runner's own `opencode` runs instead.
 - Export `resolveRunnerPath`, the slot's configured executable for a runner (`''` when the pool sets none), so native worker launches use the same lookup as dispatch commands.
 - `EVAL_TASK_FLOW` names the task-root flow dir that holds eval experiment roots, for the gateway's eval layout and acquisition accounting.
 - Validate project `slot_selection.physical_devices` (`any` or `on-request`, default `any`); `normalizeRawSlotSelection` returns the parsed policy.

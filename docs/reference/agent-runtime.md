@@ -251,6 +251,14 @@ A native worker, dispatched or static-review, starts through its runner's native
 - The gateway's launch names an executable only when the machine's pool configures one for that runner. Otherwise the host uses the adapter's own.
 - A native run for a runner without a native adapter is refused before its slot is claimed or prepared.
 
+## Pi and OpenCode native sessions
+
+Pi and OpenCode run natively for chat and workers (ADR-057 Amendment 12).
+
+- OpenCode runs `opencode acp` through the shared ACP adapter. With no model, a session uses the model OpenCode is configured with. At the sandboxed tier, or with none, each tool asks through native approvals; `full-auto` and `dangerous` allow tools.
+- Pi runs `pi --mode rpc`. Pi never asks before a tool, so its sessions report no approvals, as its terminal does. A `provider/id` model must match exactly; a bare ID leaves the provider to Pi.
+- A Pi profile is an agent directory (`PI_CODING_AGENT_DIR`); an OpenCode profile is a data home (`XDG_DATA_HOME`). Either reads as signed in while it lists a usable model.
+
 ## Managed native reviewer approval policy
 
 The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. Reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.

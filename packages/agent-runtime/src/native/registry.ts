@@ -7,11 +7,15 @@ import { claudeProfileEnvironment, observeClaudeAccount } from './account-claude
 import { observeCodexAccount } from './account-codex.js';
 import { cursorProfileEnvironment, observeCursorAccount } from './account-cursor.js';
 import { observeGrokAccount } from './account-grok.js';
+import { observeOpenCodeAccount, opencodeProfileEnvironment } from './account-opencode.js';
+import { observePiAccount, piProfileEnvironment } from './account-pi.js';
 import type { NativeAccountObservation, NativeAccountProbeOptions } from './account-types.js';
 import { claudeNativeAdapter } from './claude.js';
 import { codexNativeAdapter } from './codex.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
+import { opencodeNativeAdapter } from './opencode.js';
+import { piNativeAdapter } from './pi.js';
 import { hostReviewSandboxAvailable, type NativeProcessSandbox } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
 
@@ -179,6 +183,31 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
       unset: ['GROK_API_KEY', 'XAI_API_KEY'],
       loginArgs: ['login'],
       observe: observeGrokAccount,
+    },
+  },
+  // Pi and OpenCode sign in per provider: a profile separates their own login stores,
+  // while provider keys in the environment still apply.
+  opencode: {
+    adapter: opencodeNativeAdapter,
+    binary: 'opencode',
+    supportsWorkers: true,
+    account: {
+      environment: opencodeProfileEnvironment,
+      unset: ['OPENCODE_AUTH_CONTENT'],
+      loginArgs: ['auth', 'login'],
+      observe: observeOpenCodeAccount,
+    },
+  },
+  pi: {
+    adapter: piNativeAdapter,
+    binary: 'pi',
+    supportsWorkers: true,
+    account: {
+      environment: piProfileEnvironment,
+      unset: [],
+      // Pi signs in from its own `/login` command.
+      loginArgs: [],
+      observe: observePiAccount,
     },
   },
 };
