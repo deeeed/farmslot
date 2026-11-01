@@ -492,6 +492,8 @@ export async function dispatchNativeWorker(input: {
         executionNodeId: node,
         ...(selectedProfile ? { profile: selectedProfile } : {}),
       };
+  // The host has never received a reservation this call created, until ENSURE is sent.
+  let reservedNow = false;
   const context = await upsertAgentContext(
     run.id,
     input.role,
@@ -499,6 +501,7 @@ export async function dispatchNativeWorker(input: {
     {
       resolvePatch: (existing) => {
         checkRun();
+        reservedNow = !existing?.nativeSession;
         if (existing?.nativeSession) {
           if (
             existing.taskFile !== input.taskFile ||
@@ -533,6 +536,31 @@ export async function dispatchNativeWorker(input: {
   await persistRunNow(ownedRun(run.id), 'native worker reservation');
 
   let assertPreflightCurrent: () => Promise<void> = async () => {};
+  // A pool or project rewrite during preflight refuses with WorkerLaunchInputsChangedError. Before
+  // ENSURE, a reservation the host never received (created by this call, or absent from the host's
+  // session list) forgets the launch it was prepared for, so the engine's one retry records the new
+  // inputs instead of refusing a stale launch digest. A reservation the host may hold is kept as is.
+  let hostLacksReservation = false;
+  let ensureSent = false;
+  const refuseUnsentLaunch = async (error: unknown): Promise<void> => {
+    const { WorkerLaunchInputsChangedError } =
+      await import('../../run-engine/worker-launch-preflight.js');
+    if (
+      !(error instanceof WorkerLaunchInputsChangedError) ||
+      ensureSent ||
+      !(reservedNow || hostLacksReservation)
+    )
+      return;
+    const { forgetUnsentNativeLaunch } = await import('./worker-unsent-reservation.js');
+    await forgetUnsentNativeLaunch({
+      runId: run.id,
+      role: input.role,
+      contextId,
+      binding,
+      checkRun,
+    });
+    throw error;
+  };
   const admission = async () => {
     await input.beforeInput();
     await assertPreflightCurrent();
@@ -703,7 +731,12 @@ export async function dispatchNativeWorker(input: {
     safetyTier: prepared.launch.safetyTier,
     launchRequestedAt: binding.launchRequestedAt ?? new Date().toISOString(),
   });
-  await admission();
+  try {
+    await admission();
+  } catch (error) {
+    await refuseUnsentLaunch(error);
+    throw error;
+  }
   if (binding.handoffFrom && !binding.handoffCompletedAt) {
     try {
       const from = binding.handoffFrom;
@@ -811,14 +844,16 @@ export async function dispatchNativeWorker(input: {
           executionNodeId: binding.executionNodeId,
         },
       )) as NativeSessionListResult;
+      const retainedSession = listed.sessions.find((session) => session.id === binding.sessionId);
+      hostLacksReservation = !retainedSession && !listed.unavailableExecutionNodes?.length;
       await admission();
       if (listed.unavailableExecutionNodes?.length)
         throw new Error('Native worker presence is unavailable; reconcile before launch');
-      const retainedSession = listed.sessions.find((session) => session.id === binding.sessionId);
       if (retainedSession) checkedSession(retainedSession, binding);
       else await input.beforeFreshLaunch();
       await admission();
     }
+    ensureSent = true;
     const created = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_ENSURE, {
       ...target(binding),
       ...nativeProfileSessionParams(binding.profile),
@@ -830,6 +865,7 @@ export async function dispatchNativeWorker(input: {
     })) as { session: NativeSessionInfo };
     info = checkedSession(created.session, binding);
   } catch (error) {
+    await refuseUnsentLaunch(error);
     throw new NativeWorkerOperationUncertainError(
       'launch',
       `Native worker launch is unconfirmed: ${(error as Error).message}`,
