@@ -187,6 +187,8 @@ test('captureRunEpisode copies the pinned provider and library revisions from th
         { name: 'perps', revision: 'a'.repeat(40), fingerprint: 'f1', dirty: false },
         { name: 'bundled', revision: null, fingerprint: 'f2', dirty: true },
       ],
+      recordedAt: null,
+      mirrored: false,
     });
 
     // After a repin the receipt is refreshed and the binding is not: libraries come
@@ -194,12 +196,16 @@ test('captureRunEpisode copies the pinned provider and library revisions from th
     const repinned = { ...LIB_A, head: 'b'.repeat(40) };
     await write('artifacts/harness-provenance.json', {
       bindingIdentity: { libraries: [repinned] },
+      recordedAt: NOW,
     });
-    const afterRepin = await captureRunEpisode(run({ id: 'run-repinned', taskFile }));
+    const output = { capturedAt: NOW, workerFinished: true } as Run['output'];
+    const afterRepin = await captureRunEpisode(run({ id: 'run-repinned', taskFile, output }));
     assert.deepEqual(afterRepin?.provenance, {
       source: 'artifacts/harness-provenance.json',
       provider: null,
       libraries: [{ name: 'perps', revision: 'b'.repeat(40), fingerprint: 'f1', dirty: false }],
+      recordedAt: NOW,
+      mirrored: true,
     });
     await rm(path.join(taskDir, 'artifacts/harness-provenance.json'));
 

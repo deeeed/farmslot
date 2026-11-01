@@ -476,7 +476,7 @@ run.
 An episode lists references, not copies. Each file is a task-relative path plus
 the sha256 that the run's output inventory or a retained bundle manifest already
 recorded, with the bundle digest when a retained copy holds the bytes. Capture
-reads only those small manifests. It never opens, re-reads or re-hashes an
+reads only those small manifests and the task's binding and receipt. It never opens, re-reads or re-hashes an
 artifact, and an inventory entry without a recorded digest is counted, not hashed.
 Media is counted and follows the existing retention policy.
 
@@ -518,3 +518,6 @@ gateway computes neither.
   ADR-069). Null for an unbound task or an unreadable binding; a re-capture after
   the task copy is archived keeps the recorded value. Offline tools use it to tell
   which recipe library a run used, never inferring it from text.
+  `mirrored` is false for a run that ended without the completion mirror (for
+  example cancelled while monitoring); a repin after the receipt's `recordedAt`
+  is then not reflected.

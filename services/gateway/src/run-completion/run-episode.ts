@@ -105,6 +105,14 @@ export interface RunEpisodeProvenance {
     fingerprint: string | null;
     dirty: boolean;
   }[];
+  /** When the receipt was written on the node; null when the libraries came from the binding. */
+  recordedAt: string | null;
+  /**
+   * Whether the run's output was mirrored at completion, which refreshes the
+   * receipt. False for a run that ended without it (for example cancelled while
+   * monitoring): a repin after `recordedAt` is then not reflected.
+   */
+  mirrored: boolean;
 }
 
 interface BindingIdentity {
@@ -118,6 +126,7 @@ export interface RecipeBindingDocument {
 /** The node-verified receipt; release refreshes the gateway copy, also after a repin. */
 export interface BindingReceiptDocument {
   bindingIdentity?: BindingIdentity | null;
+  recordedAt?: unknown;
 }
 
 export const RECIPE_BINDING_FILE = 'inputs/recipe-binding.json';
@@ -299,8 +308,9 @@ export function buildRunEpisode(
 const text = (value: unknown): string | null => (typeof value === 'string' && value ? value : null);
 
 function libraryList(identity: BindingIdentity | null | undefined) {
-  if (!identity || !Array.isArray(identity.libraries)) return null;
-  return (identity.libraries as unknown[])
+  const entries: unknown = identity?.libraries;
+  if (!Array.isArray(entries)) return null;
+  return entries
     .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
     .filter((library) => text(library.name))
     .map((library) => ({
@@ -319,6 +329,7 @@ function libraryList(identity: BindingIdentity | null | undefined) {
 export function episodeProvenance(
   binding: RecipeBindingDocument | undefined,
   receipt: BindingReceiptDocument | undefined,
+  mirrored: boolean,
 ): RunEpisodeProvenance | null {
   const bound = libraryList(binding?.identity);
   const verified = libraryList(receipt?.bindingIdentity);
@@ -331,6 +342,8 @@ export function episodeProvenance(
     source: verified ? BINDING_RECEIPT_FILE : RECIPE_BINDING_FILE,
     provider: name && version && !repinned ? { package: name, version } : null,
     libraries,
+    recordedAt: verified ? text(receipt?.recordedAt) : null,
+    mirrored,
   };
 }
 
@@ -403,7 +416,7 @@ export async function captureRunEpisode(run: Run, now = new Date()): Promise<Run
   const receipt = await advisory<BindingReceiptDocument>(BINDING_RECEIPT_FILE);
   const provenance =
     binding || receipt
-      ? episodeProvenance(binding, receipt)
+      ? episodeProvenance(binding, receipt, !!run.output && !run.output.captureError)
       : ((await readRunEpisode(run.id).catch(() => undefined))?.provenance ?? null);
   const episode = buildRunEpisode(run, bundles, unreadable, now.toISOString(), provenance);
   await writeAtomicJSON(episodeFile(run.id), episode);
