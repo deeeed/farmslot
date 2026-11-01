@@ -97,6 +97,31 @@ The HUD contract is deliberately strict: one concise intent line for the human f
 
 Run `yarn recipe:doctor` after enabling bridge actions. The doctor fails if the manifest declares app/HUD actions but the bridge provider is missing or not dev-gated.
 
+## Performance capture (Android)
+
+`app.performance_capture` measures native UI frames on the slot's Android device. It polls `adb shell dumpsys gfxinfo <FARMSLOT_RECIPE_APP_ID> framestats`, so the app needs no patch and the build can be a release one. Declare it in the project manifest with `"execution_capabilities": []` and the runner registers it:
+
+```json
+{
+  "action": "app.performance_capture",
+  "phase": "start",
+  "id": "tab-presses",
+  "intent": "Start measuring the tab presses.",
+  "next": "press-review"
+}
+```
+
+- `phase: "start"` opens a window. One window is open at a time.
+- `phase: "end"` closes it and writes `performance/<id>-summary.json`: the frame summary (`activeFps`, p50/p95/p99, `longestFrameMs`, `overBudgetFramePercent`, `refreshRateHz`), `sustainedFps`, and the latency of every `ui.press` and `ui.key_press` inside the window, overall and per press target. An optional `budget` (`min_sustained_fps`, `max_press_p95_ms`, `max_press_ms`, `min_frames`) gives the window a verdict; optional `targets` (`fps`, `press_ms`) are reported, never failed on.
+- `phase: "report"` writes `performance/report.json` and `report.md`, one row per window, and fails the node when any window broke its budget. Each failure names the limit, the measured value and where: `press p95 142 ms > 130 ms (tab-presses; slowest companion-tab-terminals 160 ms)`. Bind the recipe's proof to an `assert_output` on the report's `$.verdict`.
+
+How the numbers are read:
+
+- **Sustained FPS** is the lowest active FPS over any `sustained_window_ms` (500 ms by default) of continuous rendering. One long frame barely moves it; a stretch of slow frames does. A window that rendered nothing (an idle screen) has none and does not fail.
+- **Press latency** runs from the first frame that handled the touch to the end of the frame that answered it: the frame with the most UI-thread work within `response_window_ms` (600 ms by default) after the touch, when it stands out (at least 4 ms and three times the window's median). That is the frame that mounts and draws the new screen, as in the atrace tab-press measure (the biggest Fabric mount within 600 ms). Touch ripples run on the render thread and are not counted. When no frame stands out the screen was already mounted, and the press is timed to the first frame after the touch and marked `first-frame`. A press with no input frame or no frame after it is untimed, and `max_press_ms` fails it. Each window also writes `performance/<id>-frames.json`, the frames and node spans the latencies were read from.
+
+Run performance recipes with video off (`--record-video=off --recording-reason=...`): `screenrecord`'s encoder competes with the app for the frames being measured. Hosts that open their own capture windows (mm-harness) import the sources from `@farmslot/adapter-rn/performance-observer`: `createAndroidGfxinfoPerformanceBackend({ serial, packageId, adbPath })` and, for a CDP host such as Hermes on iOS, `createReactNativeTracePerformanceBackend(client, { kind, platform, markerPrefix })`.
+
 ## Farmslot hook
 
 Expose the runner through a thin project hook:

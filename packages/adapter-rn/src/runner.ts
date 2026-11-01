@@ -12,6 +12,7 @@ import {
   type RecipeClaimLedger,
 } from '@farmslot/protocol';
 import {
+  type ActionHandler,
   applyTaskLocalInvocationTrust,
   createCaptureHelperVideoRecorder,
   createRecipeRunner,
@@ -45,6 +46,11 @@ import {
   createMetroRecipeBridgeUiTransport,
   resolveMetroRecipeBridgePort,
 } from './metro-recipe-bridge-transport.js';
+import {
+  createPerformanceCaptureSession,
+  PERFORMANCE_CAPTURE_ACTION,
+  type PerformanceCaptureSession,
+} from './performance-capture.js';
 import { createRedactingCoreAdapters } from './redaction.js';
 import { createIosSimulatorVideoRecorder } from './simctl-video-recorder.js';
 import { ADAPTER_RN_PACKAGE_VERSIONS } from './version.js';
@@ -128,13 +134,20 @@ export async function runExpoRecipeDocument(
     await assertNativeRecipeContext(recipeAbsolutePath, librarySources, process.env);
   }
   const transport = createExpoUiTransport(options);
-  const adapters = [
-    ...createRedactingCoreAdapters(actions),
-    ...createStandardUiAdapters({
-      actions,
-      transport,
-    }),
-  ];
+  const performance = actions.includes(PERFORMANCE_CAPTURE_ACTION)
+    ? createPerformanceCaptureSession({ env: process.env, dryRun: options.dryRun === true })
+    : undefined;
+  const adapters = withNodeEvents(
+    [
+      ...createRedactingCoreAdapters(actions),
+      ...createStandardUiAdapters({
+        actions,
+        transport,
+      }),
+      ...(performance ? [performance.handler] : []),
+    ],
+    performance,
+  );
 
   const runner = createRecipeRunner({
     actionManifest: manifest,
@@ -196,8 +209,44 @@ export async function runExpoRecipeDocument(
     }
     return result;
   } finally {
+    await performance?.close().catch((error: unknown) => {
+      console.warn(
+        `Performance capture cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
     await closeUiTransportQuietly(transport);
   }
+}
+
+// Performance windows attribute presses to nodes, so every action reports its
+// node boundaries to the capture session.
+function withNodeEvents(
+  adapters: ActionHandler[],
+  performance: PerformanceCaptureSession | undefined,
+): ActionHandler[] {
+  if (!performance) return adapters;
+  return adapters.map((adapter) => ({
+    ...adapter,
+    async execute(node, context) {
+      const target = [node.test_id, node.testID, node.selector, node.text, node.key].find(
+        (value): value is string => typeof value === 'string' && value.length > 0,
+      );
+      const event = {
+        nodeId: context.nodeId,
+        action: adapter.action,
+        ...(target ? { target } : {}),
+      };
+      performance.recordNodeEvent({ ...event, status: 'running' });
+      try {
+        const result = await adapter.execute(node, context);
+        performance.recordNodeEvent({ ...event, status: 'passed' });
+        return result;
+      } catch (error) {
+        performance.recordNodeEvent({ ...event, status: 'failed' });
+        throw error;
+      }
+    },
+  }));
 }
 
 async function assertNativeRecipeContext(

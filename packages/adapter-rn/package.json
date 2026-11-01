@@ -29,6 +29,11 @@
     "./metro/metro-config.cjs": "./metro/metro-config.cjs",
     "./metro/metro-log-generation.cjs": "./metro/metro-log-generation.cjs",
     "./package.json": "./package.json",
+    "./performance-observer": {
+      "types": "./dist/performance-observer.d.ts",
+      "import": "./dist/performance-observer.js",
+      "default": "./dist/performance-observer.js"
+    },
     "./recipe-hud": {
       "types": "./react-native/RecipeHud.tsx",
       "default": "./react-native/RecipeHud.tsx"
