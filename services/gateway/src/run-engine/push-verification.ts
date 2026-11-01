@@ -176,6 +176,8 @@ export async function inspectWorktreeWithRetry(
     return result;
   };
   for (let backoff = INSPECTION_RETRY_BACKOFF_MS; ; backoff *= 2) {
+    // Only this attempt's own timeout retries; a thrown exec is not a timeout.
+    exitCode = 0;
     try {
       return await inspectWorktreePublishState(branch, mode, probe);
     } catch (err) {
@@ -184,7 +186,9 @@ export async function inspectWorktreeWithRetry(
       if (signal?.aborted) return 'aborted';
       if (exitCode !== EXEC_TIMEOUT_EXIT_CODE || Date.now() + backoff >= deadline) throw err;
     }
-    await timers.setTimeout(backoff, undefined, { signal }).catch(() => undefined);
+    await timers.setTimeout(backoff, undefined, { signal }).catch((err: unknown) => {
+      if (!signal?.aborted) throw err;
+    });
     if (signal?.aborted) return 'aborted';
   }
 }
@@ -257,7 +261,9 @@ export async function verifyWorkerPushedBranch(
     return { verified: true };
   }
   const vars = await loadSlotVars(slotId);
-  const execute: GitExecutor = (command) => execOnSlot(vars, command, { timeout: 30_000, signal });
+  // No cancel signal on the exec, as before: nodeExec keeps its one-shot retry of a
+  // dropped transport. Cancellation is checked between attempts.
+  const execute: GitExecutor = (command) => execOnSlot(vars, command, { timeout: 30_000 });
   // The worker has finished: a slow first inspection gets the same bounded wait
   // a publish nudge gets before the run fails on it.
   let state = await inspectWorktreeWithRetry(

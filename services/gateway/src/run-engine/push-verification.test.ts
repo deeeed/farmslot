@@ -308,6 +308,29 @@ test('an inspection that keeps timing out fails with the probe message at its de
   assert.equal(execs, 2);
 });
 
+test('a thrown exec after a timed-out attempt fails at once instead of retrying', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let execs = 0;
+
+  const rejected = assert.rejects(
+    inspectWorktreeWithRetry(
+      'feature',
+      'commit',
+      async () => {
+        if (++execs === 1) return TIMED_OUT;
+        throw new Error('node transport closed');
+      },
+      Date.now() + 60_000,
+    ),
+    /node transport closed/,
+  );
+  await settle();
+  t.mock.timers.tick(5_000);
+  await rejected;
+
+  assert.equal(execs, 2);
+});
+
 test('a git error fails the inspection at once without a retry', async (t) => {
   const slot = shellExecutor(tempDir(t));
 
