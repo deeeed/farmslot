@@ -24,13 +24,13 @@ export async function baselineFixture(
   t: TestContext,
   baselineLog?: string,
   provenanceBranch?: string,
+  baselineRoot = 'recipe-baseline-run',
 ) {
   const { createRecipeRunner, createStandardCoreAdapters, readRecordedEvidencePackage } =
     await import('@farmslot/recipe-runner');
   const { buildRunRecord } = await import('../runs/store.js');
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'baseline-publication-'));
   t.after(() => rm(taskDir, { recursive: true, force: true }));
-  const baselineRoot = 'recipe-baseline-run';
   const headRoot = 'recipe-runs/current';
   const { RECIPE_ACTION_MANIFEST_SCHEMA_URL } = await import('@farmslot/protocol');
   const runner = createRecipeRunner({
@@ -195,8 +195,13 @@ export async function baselineFixture(
   };
 }
 
-export async function sameHeadFixture(t: TestContext, extraLog?: string, headSha = 'c'.repeat(40)) {
-  const f = await baselineFixture(t, extraLog);
+export async function sameHeadFixture(
+  t: TestContext,
+  extraLog?: string,
+  headSha = 'c'.repeat(40),
+  baselineRoot?: string,
+) {
+  const f = await baselineFixture(t, extraLog, undefined, baselineRoot);
   const { readRecordedEvidencePackage } = await import('@farmslot/recipe-runner');
   for (const root of [f.baselineRoot, f.headRoot]) {
     const directory = path.join(f.taskDir, 'artifacts', root);

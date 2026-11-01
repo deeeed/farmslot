@@ -699,7 +699,7 @@ test('publication preflight admits a clean base-commit before attempt the run ha
   await put(`${before}/product-provenance.json`, JSON.stringify({ ...provenance, dirty: true }));
   await assert.rejects(
     refreshArtifactMirror(uncaptured, { forPublication: true }),
-    /failed dirty validation/,
+    /comes from recipe attempt recipe-runs\/base-attempt, recorded with uncommitted changes\. .*--action attest-before-attempt --recipe-run base-attempt/,
   );
   assert.deepEqual(
     JSON.parse(

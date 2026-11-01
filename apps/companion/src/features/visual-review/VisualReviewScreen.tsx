@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
-import { ScrollView } from 'react-native-gesture-handler';
+import { LegacyScrollView } from 'react-native-gesture-handler';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { colors } from '../../lib/theme';
@@ -81,7 +81,7 @@ function ReadyVisualReview({
   commandsReady: boolean;
   observations: React.ReactNode;
 }) {
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<LegacyScrollView>(null);
   const [fullWidth, setFullWidth] = useState(false);
   const { source, draft, surfaceId, captureId } = state;
   const links = useMemo(() => visualReviewSurfaceLinks(source, surfaceId), [source, surfaceId]);
@@ -103,7 +103,7 @@ function ReadyVisualReview({
   const noteCount = Object.values(draft.surfaceNotes).filter((body) => body.trim()).length;
 
   return (
-    <ScrollView
+    <LegacyScrollView
       ref={scrollRef}
       testID="companion-screen-visual-review"
       style={styles.screen}
@@ -207,6 +207,6 @@ function ReadyVisualReview({
         onSend={actions.submit}
         commandsReady={commandsReady}
       />
-    </ScrollView>
+    </LegacyScrollView>
   );
 }
