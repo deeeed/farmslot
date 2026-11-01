@@ -7,6 +7,7 @@ import { ResourceCollectorAdmission } from './collector-admission.js';
 import {
   resourceBudgetEvictions,
   resourceContentWithinLimits,
+  verifyResourceContent,
   verifyResourceContentInSlices,
 } from './content.js';
 import {
@@ -1172,13 +1173,16 @@ export function createGatewayResourceCache(
   async function storeContent(input: ResourceContentInput): Promise<boolean> {
     const key = contentKey(input.key);
     const { data, origin, cohort } = input;
-    // Verification yields between slices; the write still answers to the owner it was asked under.
+    // Prefetch verifies between frames, so the write still answers to the owner it was asked under.
     const token = input.token ?? contentWriteToken();
-    if (
-      !resourceContentWithinLimits(key, data) ||
-      !(await verifyResourceContentInSlices(key, data, input.untrackedFiles))
-    )
-      return false;
+    if (!resourceContentWithinLimits(key, data)) return false;
+    // Prefetch is background work; content a person opened is on their critical path and
+    // verifies at once, as before.
+    const verified =
+      origin === 'prefetch'
+        ? await verifyResourceContentInSlices(key, data, input.untrackedFiles)
+        : verifyResourceContent(key, data, input.untrackedFiles);
+    if (!verified) return false;
     return writeContent(token, async (target, current) => {
       const accessedAt = Date.now();
       const content = await target.listContent();

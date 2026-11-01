@@ -102,7 +102,22 @@ export function RunElapsedTime({ run }: { run: Run }) {
 }
 
 /** The mini pipeline's derived state, recomputed only when the run changes. */
-function runPipelineMiniView(run: Run) {
+interface RunPipelineMiniView {
+  activity: ReturnType<typeof runActivityView>;
+  isCancelled: boolean;
+  reasons: Map<string, string>;
+  visible: RunStep[];
+  statuses: RunStepDisplayStatus[];
+  active: RunStep | undefined;
+  remaining: number;
+  allDone: boolean;
+  hasFailed: boolean;
+  blocked: RunStep | undefined;
+  detail: string | undefined;
+  lifecycleLabel: string | undefined;
+}
+
+function runPipelineMiniView(run: Run): RunPipelineMiniView {
   const activity = runActivityView(run);
   const isCancelled = run.status === 'cancelled';
   const failures = runRecoveredReviewFailures(run);
@@ -140,13 +155,7 @@ function runPipelineMiniView(run: Run) {
 }
 
 /** Only the label re-renders on the clock, for the running step's duration. */
-function RunPipelineMiniSummary({
-  view,
-  held,
-}: {
-  view: ReturnType<typeof runPipelineMiniView>;
-  held: boolean;
-}) {
+function RunPipelineMiniSummary({ view, held }: { view: RunPipelineMiniView; held: boolean }) {
   const { activity, isCancelled, active, remaining, allDone, hasFailed, blocked, detail } = view;
   usePipelineClock(Boolean(activity));
   const duration = active ? stepDuration(active) : null;

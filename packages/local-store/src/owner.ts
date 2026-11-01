@@ -126,6 +126,7 @@ export class ResourceCacheOwner {
     if (!previous) return;
     const revoked = terminal.has(reason) ? this.metadataOf(previous) : undefined;
     this.owned = undefined;
+    this.renderKeyMemo = undefined;
     // dispose cancels listeners/reads before its first await. New storage awaits the whole cleanup.
     this.retirement = previous.cache.dispose(reason);
     void this.retirement.catch((error: unknown) => {

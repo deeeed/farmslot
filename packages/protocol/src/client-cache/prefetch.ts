@@ -399,7 +399,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       const text = applyUnifiedDiff(decoder.decode(base), file);
       data = text === undefined ? undefined : encoder.encode(text);
     }
-    // Hashed once: a match with the expected id is the id it is stored under.
+    // Prefetch hashes a rebuilt file once (storage still verifies it): a match is its stored id.
     let id = data && (await gitBlobHashInSlices(data));
     if (expected && id !== expected) {
       data = await readByPath(file.newPath, expected, input);

@@ -101,7 +101,8 @@ export default function WorkersScreen() {
   );
   const live = useResourceQuery(focused ? query : undefined);
   // Blur drops the subscription, not the rows: the hidden tab keeps its last list, so coming back
-  // does not rebuild every row while the reread is in flight.
+  // does not rebuild every row while the reread is in flight. The ref only ever holds a snapshot
+  // this render already read, so writing it here is safe.
   const lastFocused = useRef(live);
   if (focused) lastFocused.current = live;
   const observation = focused ? live : lastFocused.current;
