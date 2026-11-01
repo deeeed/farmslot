@@ -454,3 +454,18 @@ test('a cache that cannot be written is reported once per transcript', async (t)
     new RegExp(`offset cache for ${transcriptPath}`),
   );
 });
+
+test('a resumed read after a record over 4 KB parses only the appended bytes', async (t) => {
+  const f = await transcript(t);
+  await f.write([launch(), { type: 'system', sessionId, subtype: 'x'.repeat(8 * 1024) }]);
+  assert.equal(f.read().state, 'active');
+  const appended = JSON.stringify(completed()) + '\n';
+  await appendFile(f.file, appended);
+  const resumed = f.read();
+  assert.equal(resumed.state, 'idle');
+  assert.equal(
+    resumed.bytesRead,
+    Buffer.byteLength(appended),
+    'the tail of the long record matched',
+  );
+});

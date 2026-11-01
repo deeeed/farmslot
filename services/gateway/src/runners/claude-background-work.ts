@@ -104,7 +104,7 @@ def save_cache(st, offset, tail):
             try:
                 os.unlink(temporary)
             except OSError:
-                pass  # already gone: nothing else to clean up
+                pass  # best effort; the verdict does not depend on it
         return False  # the next read resumes from the last cache written, or from byte zero
 try:
     with open(transcript, 'rb') as stream:
