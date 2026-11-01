@@ -538,11 +538,11 @@ export async function dispatchNativeWorker(input: {
   let assertPreflightCurrent: () => Promise<void> = async () => {};
   // A pool or project rewrite during preflight refuses with WorkerLaunchInputsChangedError. Before
   // ENSURE, a reservation the host never received (created by this call, or absent from the host's
-  // session list) is retired, so the engine's one retry reserves against the new inputs instead of
-  // reconciling a stale launch digest. A reservation the host may hold is kept as before.
+  // session list) forgets the launch it was prepared for, so the engine's one retry records the new
+  // inputs instead of refusing a stale launch digest. A reservation the host may hold is kept as is.
   let hostLacksReservation = false;
   let ensureSent = false;
-  const refuseUnsentReservation = async (error: unknown): Promise<void> => {
+  const refuseUnsentLaunch = async (error: unknown): Promise<void> => {
     const { WorkerLaunchInputsChangedError } =
       await import('../../run-engine/worker-launch-preflight.js');
     if (
@@ -551,8 +551,8 @@ export async function dispatchNativeWorker(input: {
       !(reservedNow || hostLacksReservation)
     )
       return;
-    const { retireUnsentNativeReservation } = await import('./worker-unsent-reservation.js');
-    await retireUnsentNativeReservation({
+    const { forgetUnsentNativeLaunch } = await import('./worker-unsent-reservation.js');
+    await forgetUnsentNativeLaunch({
       runId: run.id,
       role: input.role,
       contextId,
@@ -670,20 +670,14 @@ export async function dispatchNativeWorker(input: {
   });
   if (input.role !== 'review') {
     const { admitWorkerLaunch } = await import('../../run-engine/worker-launch-preflight.js');
-    try {
-      assertPreflightCurrent = await admitWorkerLaunch({
-        runId: input.runId,
-        vars,
-        projectVars: input.projectVars,
-        environment: prepared.launch.environment,
-        record: (name, detail, outcome) => input.emit?.('dispatch.step', { name, detail, outcome }),
-        assertCurrent: input.assertCurrent,
-      });
-    } catch (error) {
-      // The probes' own window: a rewrite there refuses the reservation this call created.
-      await refuseUnsentReservation(error);
-      throw error;
-    }
+    assertPreflightCurrent = await admitWorkerLaunch({
+      runId: input.runId,
+      vars,
+      projectVars: input.projectVars,
+      environment: prepared.launch.environment,
+      record: (name, detail, outcome) => input.emit?.('dispatch.step', { name, detail, outcome }),
+      assertCurrent: input.assertCurrent,
+    });
   }
   const digest = nativeWorkerLaunchDigest(prepared.launch);
   if (binding.launchDigest && binding.launchDigest !== digest)
@@ -740,7 +734,7 @@ export async function dispatchNativeWorker(input: {
   try {
     await admission();
   } catch (error) {
-    await refuseUnsentReservation(error);
+    await refuseUnsentLaunch(error);
     throw error;
   }
   if (binding.handoffFrom && !binding.handoffCompletedAt) {
@@ -871,7 +865,7 @@ export async function dispatchNativeWorker(input: {
     })) as { session: NativeSessionInfo };
     info = checkedSession(created.session, binding);
   } catch (error) {
-    await refuseUnsentReservation(error);
+    await refuseUnsentLaunch(error);
     throw new NativeWorkerOperationUncertainError(
       'launch',
       `Native worker launch is unconfirmed: ${(error as Error).message}`,

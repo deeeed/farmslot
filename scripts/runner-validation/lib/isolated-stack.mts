@@ -105,12 +105,14 @@ process.stdin.on('data', (chunk) => {
 process.stdin.on('end', () => {
   if (done) return;
   const signal = (name) => {
+    // ESRCH is the only expected failure: that group already exited.
     for (const group of plan.group) try { process.kill(-group, name); } catch {}
   };
   signal('SIGTERM');
   setTimeout(() => {
     signal('SIGKILL');
     for (const { argv, env } of plan.command)
+      // The expected failure is a server that is already gone; there is nowhere to report others.
       try { execFileSync(argv[0], argv.slice(1), { env, stdio: 'ignore', timeout: 10000 }); } catch {}
     for (const path of plan.path) rmSync(path, { recursive: true, force: true });
   }, 3000);

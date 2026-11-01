@@ -239,27 +239,30 @@ test('unavailable host presence and cancelled observations never authorize ENSUR
   await assert.rejects(dispatch(), /no longer admitted/);
   assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST]);
 });
-test('a rewrite during LIST retires the unsent reservation, so the retry ENSUREs once on fresh inputs', async () => {
+test('a rewrite during LIST forgets the unsent launch, so the retry ENSUREs once on the new inputs', async () => {
   afterList = () => {
     inputsChanged = true;
   };
   await assert.rejects(dispatch(), WorkerLaunchInputsChangedError);
   assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST]);
-  assert.equal(reservation(), undefined, 'the host never had it');
-  // The engine's one retry re-reads the inputs and reserves fresh.
+  assert.equal(reservation()?.sessionId, 'pending-session', 'the same reservation');
+  assert.equal(reservation()?.launchDigest, undefined, 'its launch is forgotten');
+  assert.equal(run.agentContexts![0].nativeSessionHistory, undefined, 'no session is invented');
+  // The engine's one retry re-reads the inputs: the launch it now prepares differs.
   afterList = undefined;
   inputsChanged = false;
   calls.length = 0;
-  await assert.rejects(dispatch(), /Reached ENSURE boundary/);
-  assert.deepEqual(calls, [
-    NATIVE_WORKER_STATE,
-    Methods.NATIVE_SESSION_LIST,
-    'runtime-ready',
-    NATIVE_WORKER_ENSURE,
-  ]);
-  assert.notEqual(reservation()?.sessionId, 'pending-session');
+  const original = launch.environment;
+  launch.environment = { set: { LAUNCH_RELOAD_PIN: 'after' }, unset: [] };
+  try {
+    await assert.rejects(dispatch(), /Reached ENSURE boundary/);
+  } finally {
+    launch.environment = original;
+  }
+  assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST, 'runtime-ready', NATIVE_WORKER_ENSURE]);
+  assert.equal(reservation()?.sessionId, 'pending-session');
 });
-test('a rewrite during the preflight probes retires the reservation this dispatch created', async () => {
+test('a rewrite during the preflight probes leaves the new reservation with no launch recorded', async () => {
   run.agentContexts![0].nativeSession = undefined;
   probesSeeChange = true;
   await assert.rejects(dispatch(), WorkerLaunchInputsChangedError);
@@ -268,16 +271,17 @@ test('a rewrite during the preflight probes retires the reservation this dispatc
     [NATIVE_WORKER_STATE],
     'nothing reached the host but its state directory',
   );
-  assert.equal(reservation(), undefined);
-  assert.equal(run.agentContexts![0].nativeSessionHistory?.length, 1, 'kept visible as history');
+  assert.ok(reservation(), 'the retry reuses it');
+  assert.equal(reservation()?.launchDigest, undefined);
 });
-test('a superseded attempt never retires the reservation its replay may be reusing', async () => {
+test('a superseded attempt never touches the reservation its replay may be reusing', async () => {
   afterList = () => {
     inputsChanged = true;
     run.engineState = { ...run.engineState, generation: (run.engineState?.generation ?? 0) + 1 };
   };
   await assert.rejects(dispatch(), /generation changed/);
   assert.equal(reservation()?.sessionId, 'pending-session');
+  assert.ok(reservation()?.launchDigest, 'its launch record stays');
 });
 test('a rewrite while the host may hold the reservation keeps it for reconciliation', async () => {
   listUnavailable = true;

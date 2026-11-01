@@ -58,7 +58,7 @@ writer.issueCredential(owner.id, 'fixture');
 const { runWithSessionOriginator } = await import('../../security/work-originator.js');
 const { createRun, deleteRun, getRun, persistRunNow, updateRun } =
   await import('../../runs/store.js');
-const { retireUnsentNativeReservation } = await import('./worker-unsent-reservation.js');
+const { forgetUnsentNativeLaunch } = await import('./worker-unsent-reservation.js');
 const contextId = contextIdFor('primary');
 
 /** A native dispatch's reservation recorded through the real store, before ENSURE was sent. */
@@ -78,6 +78,8 @@ function reservedRun(): { run: Run; binding: NativeWorkerSessionBinding } {
     commandId: randomUUID(),
     ownerPrincipalId: owner.id,
     executionNodeId: 'local',
+    launchDigest: 'digest-of-the-refused-launch',
+    safetyTier: 'sandboxed',
   };
   const context: AgentContext = {
     id: contextId,
@@ -94,9 +96,9 @@ function reservedRun(): { run: Run; binding: NativeWorkerSessionBinding } {
   return { run: updateRun(run.id, { slotId: 'unsent-slot', agentContexts: [context] }), binding };
 }
 
-test('an unsent reservation is released, then moved to history, past the store guard', async () => {
+test('an unsent launch is forgotten in one write the store guard admits', async () => {
   const { run, binding } = reservedRun();
-  // The guard the retire must pass: a held reservation is never dropped in one write.
+  // The store never lets a held reservation be dropped; forgetting keeps its session and lease.
   assert.throws(
     () =>
       updateRun(run.id, {
@@ -104,7 +106,7 @@ test('an unsent reservation is released, then moved to history, past the store g
       }),
     /Native worker ownership cannot be discarded/,
   );
-  await retireUnsentNativeReservation({
+  await forgetUnsentNativeLaunch({
     runId: run.id,
     role: 'primary',
     contextId,
@@ -112,17 +114,17 @@ test('an unsent reservation is released, then moved to history, past the store g
     checkRun: () => {},
   });
   const context = getRun(run.id)!.agentContexts![0]!;
-  assert.equal(context.nativeSession, undefined);
-  assert.equal(context.status, 'idle');
-  assert.equal(context.nativeSessionHistory?.length, 1);
-  assert.equal(context.nativeSessionHistory![0]!.sessionId, binding.sessionId);
-  assert.ok(context.nativeSessionHistory![0]!.releasedAt, 'its lease was released first');
+  assert.equal(context.nativeSession?.sessionId, binding.sessionId);
+  assert.equal(context.nativeSession?.leaseId, binding.leaseId);
+  assert.equal(context.nativeSession?.launchDigest, undefined);
+  assert.equal(context.nativeSession?.safetyTier, undefined);
+  assert.equal(context.nativeSessionHistory, undefined, 'no session is invented for history');
 });
 
 test('a superseded attempt leaves the reservation its replay may be reusing', async () => {
   const { run, binding } = reservedRun();
   await assert.rejects(
-    retireUnsentNativeReservation({
+    forgetUnsentNativeLaunch({
       runId: run.id,
       role: 'primary',
       contextId,
@@ -134,6 +136,5 @@ test('a superseded attempt leaves the reservation its replay may be reusing', as
     /generation changed/,
   );
   const context = getRun(run.id)!.agentContexts![0]!;
-  assert.equal(context.nativeSession?.sessionId, binding.sessionId);
-  assert.equal(context.nativeSession?.releasedAt, undefined);
+  assert.equal(context.nativeSession?.launchDigest, binding.launchDigest);
 });

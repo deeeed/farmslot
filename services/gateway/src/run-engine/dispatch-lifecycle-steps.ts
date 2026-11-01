@@ -849,8 +849,8 @@ export async function executeDispatchStep(
   }
 
   // A configuration reload during preflight (a pool or project rewrite) refuses before the task
-  // reaches a worker (a runner already started is stopped first, an unsent native reservation is
-  // retired); the dispatch re-reads its inputs and checks once more instead of failing the run.
+  // reaches a worker (a runner already started is stopped first, an unsent native reservation
+  // forgets its launch); the dispatch re-reads its inputs and checks once more instead of failing.
   let launchInputsRetried = false;
   for (;;) {
     if (forcedLabel && !triedLabels.includes(forcedLabel)) triedLabels.push(forcedLabel);
