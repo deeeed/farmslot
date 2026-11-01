@@ -45,6 +45,9 @@ test('paired review results cannot approve a minor or hide a defect in a pass ve
     ['pass', 'minor', 'REQUEST_CHANGES', 'REQUEST_CHANGES'],
     ['issues', 'minor', 'REQUEST_CHANGES', 'REQUEST_CHANGES'],
     ['issues', 'nit', 'COMMENT', 'COMMENT'],
+    // The issues-verdict floor alone, and a lowercase stricter recommendation.
+    ['issues', 'nit', 'APPROVE', 'COMMENT'],
+    ['pass', 'minor', 'request_changes', 'REQUEST_CHANGES'],
   ] as const)
     assert.deepEqual(parse(verdict, severity, recommendation), {
       verdict: 'issues',

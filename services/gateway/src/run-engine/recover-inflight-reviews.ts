@@ -882,7 +882,6 @@ async function ingestRecoveredReviewer(
     reviewerFeedbackRelPath(ctx.id),
     ctx.reviewResultFile,
   );
-  logRecommendationCorrection(ctx.id, feedback);
   if (options.shouldAbort?.()) return null;
   const completedContextIsFresh = completedReviewerContextIsFresh(ctx, signal);
   if (
@@ -945,6 +944,8 @@ async function ingestRecoveredReviewer(
       : appendRecoveredContinuationAttempt(existingReview, review)
     : review;
   if (!recovered) return null;
+  // Once per ingested result: recovery passes re-read results they then skip.
+  logRecommendationCorrection(ctx.id, feedback);
   const output = await persistReviewOutputArtifacts({
     vars,
     taskDir,
