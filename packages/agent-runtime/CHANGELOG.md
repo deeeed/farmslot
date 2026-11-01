@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A native session no longer fails when runner output carries U+2028 or U+2029 inside a JSON string: records split on LF only (Node's readline also split at those separators and broke the record into invalid JSON). Records sent to a runner escape both, so a runner that frames with readline keeps them too.
 
 ## 0.39.22 - 2026-11-02
 
