@@ -27,7 +27,10 @@ const claim = join(root, 'claim');
 try {
   mkdirSync(claim, { mode: 0o700 });
 } catch (error) {
-  if ((error as NodeJS.ErrnoException).code === 'EEXIST') process.exit(0);
+  if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+    process.stderr.write('Native supervisor not started: another start holds the claim\n');
+    process.exit(0);
+  }
   throw error;
 }
 let acquired = false;
@@ -35,12 +38,18 @@ try {
   let occupied = false;
   if (existsSync(lock)) {
     const previous = readJson<{ pid: number }>(join(lock, 'owner.json'));
-    occupied = alive(previous.pid);
+    // A recorded PID outlives its process: after a reboot or PID wrap another process can
+    // hold it. Supervisor and host carry this home in their argv, so match that, not the PID.
+    occupied = matchesProcess(previous.pid, root);
+    if (occupied)
+      process.stderr.write(
+        `Native supervisor not started: supervisor ${previous.pid} owns the host\n`,
+      );
     if (!occupied) {
       const previousHost = existsSync(join(root, 'worker.json'))
         ? readJson<{ pid: number }>(join(root, 'worker.json'))
         : undefined;
-      if (previousHost && alive(previousHost.pid))
+      if (previousHost && matchesProcess(previousHost.pid, root))
         throw new Error('Native host survived its supervisor; refusing competing ownership');
       const cleanupPath = join(root, 'cleanup.json');
       if (

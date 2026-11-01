@@ -114,15 +114,39 @@ function setup() {
   };
 }
 
+// Supervisor and host carry the unique home in their argv, so a failed or slow start
+// can still be found and killed even before host.json names them.
+function nativeStack(root: string): number[] {
+  return (spawnSync('pgrep', ['-f', root], { encoding: 'utf8' }).stdout ?? '')
+    .split('\n')
+    .filter(Boolean)
+    .map(Number);
+}
+/**
+ * The detached supervisor leads its own process group, which its host and census
+ * `ps` join; killing the group reaches a host forked after a snapshot. A host whose
+ * group is gone is killed directly. Teardown is confirmed, never assumed.
+ */
+async function stopNativeStack(fixture: ReturnType<typeof setup>): Promise<void> {
+  const kill = (pid: number) => {
+    for (const target of [-pid, pid])
+      try {
+        process.kill(target, 'SIGKILL');
+      } catch (error) {
+        if (!['ESRCH', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      }
+  };
+  const deadline = Date.now() + 3_000;
+  while (nativeStack(fixture.root).length && Date.now() < deadline) {
+    nativeStack(fixture.root).forEach(kill);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  fixture.restore();
+  assert.deepEqual(nativeStack(fixture.root), [], 'no supervisor or host outlives the test');
+}
+
 test('a supervisor whose home is removed stops its host instead of running on', async () => {
   const fixture = setup();
-  // Supervisor and host carry the unique home in their argv, so a failed or slow start
-  // can still be found and killed even before host.json names them.
-  const stack = () =>
-    (spawnSync('pgrep', ['-f', fixture.root], { encoding: 'utf8' }).stdout ?? '')
-      .split('\n')
-      .filter(Boolean)
-      .map(Number);
   try {
     await new NativeSessionClient(fixture.root).list('owner');
     const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
@@ -134,25 +158,25 @@ test('a supervisor whose home is removed stops its host instead of running on', 
     assert.equal(alive(host), false, 'the host stopped');
     assert.equal(alive(supervisor), false, 'the supervisor exited');
   } finally {
-    // The detached supervisor leads its own process group, which its host and census
-    // `ps` join; killing the group reaches a host forked after a snapshot. A host whose
-    // group is gone is killed directly. Teardown is confirmed, never assumed.
-    const kill = (pid: number) => {
-      for (const target of [-pid, pid])
-        try {
-          process.kill(target, 'SIGKILL');
-        } catch (error) {
-          if (!['ESRCH', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? ''))
-            throw error;
-        }
-    };
-    const deadline = Date.now() + 3_000;
-    while (stack().length && Date.now() < deadline) {
-      stack().forEach(kill);
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    fixture.restore();
-    assert.deepEqual(stack(), [], 'no supervisor or host outlives the test');
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a lock whose recorded supervisor PID now belongs to another process does not block the host', async () => {
+  const fixture = setup();
+  // After a reboot or PID wrap the stopped supervisor's PID can belong to any process;
+  // here it is this test runner. The next supervisor must not treat it as the owner.
+  privateDirectory(join(fixture.root, 'lock'));
+  writeFileSync(join(fixture.root, 'lock/owner.json'), JSON.stringify({ pid: process.pid }), {
+    mode: 0o600,
+  });
+  try {
+    await new NativeSessionClient(fixture.root).list('owner');
+    const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
+    assert.notEqual(supervisor, process.pid);
+    assert.ok(matchesProcess(supervisor, fixture.root), 'a new supervisor owns the host');
+  } finally {
+    await stopNativeStack(fixture);
   }
 });
 
