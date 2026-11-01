@@ -88,6 +88,7 @@ import {
 } from '../tasks/worker-terminal-contract.js';
 
 import { assessRecordedAcceptance } from './acceptance-proof.js';
+import { baseMergeConflictMessage } from './branch-freshness.js';
 import { readVisualReviewPolicy } from './claim-reviews.js';
 import { readReviewInputSnapshot } from './diff-artifacts.js';
 import {
@@ -1037,10 +1038,37 @@ export type GatePrerequisiteAssertion = (
 ) => Promise<RunGateReadiness | void>;
 
 /** A prerequisite remedy is actionable only when the same gate offers it. */
+/**
+ * The gate's own freshness probe found the package's branch conflicting with its base: the
+ * publication push would refuse with PUBLICATION_MERGE_CONFLICT after approval (ba397e2c), so no
+ * advancing action is offered until the worker merges the base and the package is refreshed.
+ */
+function withBaseMergeConflict(
+  readiness: RunGateReadiness,
+  payload: RunDecision['payload'] | undefined,
+): RunGateReadiness {
+  if (payload?.kind !== 'ready' || payload.mergeConflicts !== true) return readiness;
+  return {
+    ...readiness,
+    state: readiness.state === 'ready' ? 'not-ready' : readiness.state,
+    reasons: [
+      ...readiness.reasons,
+      {
+        code: 'base-merge-conflict',
+        prerequisite: 'lifecycle',
+        actionId: 'hold',
+        message: baseMergeConflictMessage(payload.mergeConflictPaths ?? []),
+      },
+    ],
+  };
+}
+
 export function projectRunGateActions(
   definitions: DecisionAction[],
-  readiness: RunGateReadiness,
+  assessed: RunGateReadiness,
+  payload?: RunDecision['payload'],
 ): { actions: DecisionAction[]; readiness: RunGateReadiness } {
+  const readiness = withBaseMergeConflict(assessed, payload);
   const actions = gateActionsForReadiness(definitions, readiness).map((action) =>
     action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION &&
     evidenceAttestationAvailable(readiness, action.id)
@@ -1100,7 +1128,7 @@ export async function refreshRunGateReadiness(
         progress: async () => progress,
       });
       const definitions = runGateDefinitionActions(decision);
-      const { actions, readiness } = projectRunGateActions(definitions, assessment);
+      const { actions, readiness } = projectRunGateActions(definitions, assessment, payload);
       return {
         ...decision,
         actions,

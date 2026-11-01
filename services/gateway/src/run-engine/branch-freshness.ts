@@ -5,9 +5,9 @@
 // Fail-closed: when origin/<branch> is missing or a count cannot be computed,
 // fields are omitted (unknown) — never treated as ahead=0 or mergeConflicts=true.
 
-import type { ReadyGatePayload } from '@farmslot/protocol';
+import { DEFAULT_BRANCH, type ReadyGatePayload, type Run } from '@farmslot/protocol';
 
-import type { SlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import {
@@ -363,4 +363,50 @@ export function applyBranchFreshnessToReadyGatePayload(
   next.mergeConflictPaths = [...freshness.mergeConflictPaths];
   next.branchFreshnessHint = freshness.hint;
   return next;
+}
+
+/** Why a branch that conflicts with its base must not be approved for publication (F302). */
+export function baseMergeConflictMessage(paths: readonly string[]): string {
+  const where = paths.length
+    ? ` in ${paths.slice(0, 5).join(', ')}${paths.length > 5 ? ` and ${paths.length - 5} more` : ''}`
+    : '';
+  return `Merge the base branch first: this branch conflicts with it${where}, so publishing would fail. Have the worker merge it and re-record what changed, then refresh the package.`;
+}
+
+/**
+ * The base can move after the gate built its package (ba397e2c went behind main by 3), so
+ * approval probes again. Returns the refusal when the branch now conflicts with its base; an
+ * unavailable probe leaves that to the publication push, which refuses it as before.
+ */
+export async function approvalBaseMergeConflict(
+  run: Pick<Run, 'slotId' | 'project'>,
+  deps: {
+    target?: (slotId: string, project: string) => Promise<ApprovalProbeTarget>;
+    probe?: typeof probeSlotBranchFreshness;
+  } = {},
+): Promise<string | undefined> {
+  if (!run.slotId) return undefined;
+  const { vars, base, strategy } = await (deps.target ?? approvalProbeTarget)(
+    run.slotId,
+    run.project,
+  );
+  const freshness = await (deps.probe ?? probeSlotBranchFreshness)(vars, base, strategy);
+  return freshness?.mergeConflicts === true
+    ? baseMergeConflictMessage(freshness.mergeConflictPaths)
+    : undefined;
+}
+
+interface ApprovalProbeTarget {
+  vars: SlotVars;
+  base: string;
+  strategy: MergeMainStrategy;
+}
+
+async function approvalProbeTarget(slotId: string, project: string): Promise<ApprovalProbeTarget> {
+  const { projectJson } = await loadProjectVars(project);
+  return {
+    vars: await loadSlotVars(slotId),
+    base: String(getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH),
+    strategy: resolveBranchUpdateStrategy(projectJson),
+  };
 }

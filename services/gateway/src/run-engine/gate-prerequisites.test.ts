@@ -9,22 +9,31 @@ import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
 import {
   type AcceptanceStatusLedger,
+  APPROVE_PUBLISH_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  type DecisionAction,
   digestRecipeDocument,
   gateActionsForReadiness,
   isEvidencePolicyReason,
+  type ReadyGatePayload,
   type RecipeClaimDeclaration,
   type RecipeClaimEvidence,
   type RecipeClaimLedger,
   type RecordedEvidencePackageInput,
   type ReviewStatus,
   type RunDecision,
+  type RunGateReadiness,
 } from '@farmslot/protocol';
 
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
 
 await import('../runtime/mock-pty.test-support.js');
-const { collectRunGateAssessment, collectRunGateReadiness, refreshRunGateReadiness } =
-  await import('./gate-prerequisites.js');
+const {
+  collectRunGateAssessment,
+  collectRunGateReadiness,
+  projectRunGateActions,
+  refreshRunGateReadiness,
+} = await import('./gate-prerequisites.js');
 const { makeRun, makeReadyGatePackage, deleteTestRunIfPresent } =
   await import('./test-fixtures.js');
 const { certifyingReview, openFindingAtHead, PASSING_REVIEW_RESULT, writeReviewClaimPackage } =
@@ -1853,4 +1862,46 @@ test('PR completion still refuses failed worker-derived requirements', async () 
   });
   assert.equal(assessed.readiness.state, 'not-ready');
   assert.ok(assessed.readiness.reasons.some(({ code }) => code === 'acceptance-incomplete'));
+});
+
+test('a package branch that conflicts with its base offers no publish action (F302)', () => {
+  // ba397e2c: approve-publish was offered, then finalize failed PUBLICATION_MERGE_CONFLICT.
+  const definitions: DecisionAction[] = [
+    { id: APPROVE_PUBLISH_ACTION, label: 'Approve Publish', style: 'primary' },
+    { id: APPROVE_PUBLISH_UNRESOLVED_ACTION, label: 'Accept Review Findings', style: 'danger' },
+    { id: 'hold', label: 'Hold', style: 'secondary' },
+    { id: 'request-review', label: 'Request Review', style: 'secondary' },
+  ];
+  const ready: RunGateReadiness = {
+    state: 'ready',
+    identity: { runId: 'base-conflict', generation: 0 },
+    reasons: [],
+  };
+  const payload = (mergeConflicts: boolean): ReadyGatePayload => ({
+    kind: 'ready',
+    prNumber: null,
+    repo: null,
+    diffStat: { files: 2, additions: 3, deletions: 1 },
+    workerReport: '',
+    branch: 'feat/expo-sdk-58',
+    mergeConflicts,
+    mergeConflictPaths: mergeConflicts ? ['package.json', 'yarn.lock'] : [],
+  });
+  const conflicted = projectRunGateActions(definitions, ready, payload(true));
+  assert.deepEqual(
+    conflicted.actions.map(({ id }) => id),
+    ['hold', 'request-review'],
+  );
+  assert.equal(conflicted.readiness.state, 'not-ready');
+  assert.equal(conflicted.readiness.reasons[0]?.code, 'base-merge-conflict');
+  assert.match(
+    conflicted.readiness.reasons[0]!.message,
+    /Merge the base branch first: .* in package\.json, yarn\.lock/,
+  );
+  // A clean or unknown probe leaves the gate as its other prerequisites decide.
+  for (const clean of [payload(false), undefined])
+    assert.deepEqual(
+      projectRunGateActions(definitions, ready, clean).actions.map(({ id }) => id),
+      [APPROVE_PUBLISH_ACTION, 'hold', 'request-review'],
+    );
 });

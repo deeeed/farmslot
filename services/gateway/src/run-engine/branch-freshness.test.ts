@@ -7,8 +7,12 @@ import test from 'node:test';
 
 import type { ReadyGatePayload } from '@farmslot/protocol';
 
+import { makeVars } from '../runners/test-fixtures.js';
+
 import {
   applyBranchFreshnessToReadyGatePayload,
+  approvalBaseMergeConflict,
+  type BranchFreshnessSummary,
   buildBranchFreshnessProbeScript,
   formatBranchFreshnessHint,
   parseBranchFreshnessProbeOutput,
@@ -349,4 +353,41 @@ test('real git: write-tree probe reports conflicts only when origin ref exists',
   assert.equal(failFetch.mergeConflicts, undefined);
   assert.match(failFetch.hint, /fetch origin main failed/);
   assert.doesNotMatch(failFetch.hint, /up to date/);
+});
+
+test('approval probes the base again and refuses a branch that now conflicts with it (F302)', async () => {
+  const summary = (mergeConflicts?: boolean): BranchFreshnessSummary => ({
+    ...(mergeConflicts === undefined ? {} : { mergeConflicts }),
+    mergeConflictPaths: mergeConflicts ? ['package.json', 'yarn.lock'] : [],
+    defaultBranch: 'main',
+    remoteRefOk: mergeConflicts !== undefined,
+    fetchOk: mergeConflicts !== undefined,
+    hint: '',
+  });
+  const probes: string[] = [];
+  const approval = (result: BranchFreshnessSummary | null) =>
+    approvalBaseMergeConflict(
+      { slotId: 'gate-slot', project: 'fixture' },
+      {
+        target: async () => ({
+          vars: makeVars({ slotId: 'gate-slot' }),
+          base: 'main',
+          strategy: 'merge',
+        }),
+        probe: async (_vars, base) => {
+          probes.push(base);
+          return result;
+        },
+      },
+    );
+  assert.match(
+    (await approval(summary(true))) ?? '',
+    /^Merge the base branch first: .* in package\.json, yarn\.lock/,
+  );
+  // Clean, unknown (ref missing) or an unavailable probe: the publication push still decides.
+  assert.equal(await approval(summary(false)), undefined);
+  assert.equal(await approval(summary()), undefined);
+  assert.equal(await approval(null), undefined);
+  assert.deepEqual(probes, ['main', 'main', 'main', 'main']);
+  assert.equal(await approvalBaseMergeConflict({ slotId: null, project: 'fixture' }), undefined);
 });

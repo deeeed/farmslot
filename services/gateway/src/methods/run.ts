@@ -2037,6 +2037,12 @@ export async function resolveRunDecision(
     const reviewBlock = publicationReviewBlockingReason(existing);
     if (reviewBlock) throw new GatewayMethodError('RUN_GATE_NOT_READY', reviewBlock);
   }
+  // The base can move after the package was built; publishing a conflicting branch fails finalize.
+  if (requiresPublicationApproval(existing) && isPublishApprovalAction(params.actionId)) {
+    const { approvalBaseMergeConflict } = await import('../run-engine/branch-freshness.js');
+    const conflict = await approvalBaseMergeConflict(existing);
+    if (conflict) throw new GatewayMethodError('RUN_GATE_NOT_READY', conflict);
+  }
 
   let decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
