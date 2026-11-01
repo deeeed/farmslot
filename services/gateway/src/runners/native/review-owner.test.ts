@@ -117,6 +117,23 @@ test('an offline review node without an issued assignment still has no owner', (
   );
 });
 
+test('a connected review node without a native declaration refuses at once', () => {
+  credentials = [{ principalId: nodePrincipal }];
+  const ws = socket();
+  registerNode(machine, 1, ws);
+  try {
+    assert.throws(
+      () => nativeReviewerOwner(run, vars),
+      (error: unknown) =>
+        !isNodeTransportUnavailableError(error) &&
+        error instanceof Error &&
+        /unavailable for this owner/.test(error.message),
+    );
+  } finally {
+    unregisterByWs(ws);
+  }
+});
+
 test('a reload re-entering REVIEW waits for the review node and resolves its owner', async () => {
   credentials = [{ principalId: nodePrincipal }];
   const ws = socket();
