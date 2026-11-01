@@ -76,6 +76,12 @@ export interface RunEpisode {
     recipeQuality: RunEpisodeFile[];
     evidence: RunEpisodeFile[];
   };
+  /**
+   * The pinned recipe sources the run executed: the provider package and each
+   * library revision, copied from the task's recipe binding (ADR-069); null
+   * when the task has no binding. Never inferred from text.
+   */
+  provenance: RunEpisodeProvenance | null;
   sources: {
     bundles: string[];
     unreadableBundles: UnreadableEpisodeBundle[];
@@ -85,6 +91,24 @@ export interface RunEpisode {
     media: number;
   };
 }
+
+export interface RunEpisodeProvenance {
+  /** Task-relative file the values were copied from. */
+  source: typeof RECIPE_BINDING_FILE;
+  harness: { package: string; version: string } | null;
+  /** `revision` is the library's git commit; a packaged library has only its fingerprint. */
+  libraries: { name: string; revision: string | null; fingerprint: string | null }[];
+}
+
+/** The binding fields the episode copies; written by task init on the node. */
+export interface RecipeBindingDocument {
+  provider?: { package?: string; version?: string };
+  identity?: {
+    libraries?: { name?: string; head?: string | null; sourceFingerprint?: string | null }[];
+  };
+}
+
+export const RECIPE_BINDING_FILE = 'inputs/recipe-binding.json';
 
 /** A referenced bundle whose manifest could not be read, with the reason. */
 export interface UnreadableEpisodeBundle {
@@ -152,6 +176,7 @@ export function buildRunEpisode(
   bundles: readonly EpisodeBundle[],
   unreadableBundles: readonly UnreadableEpisodeBundle[],
   capturedAt: string,
+  binding?: RecipeBindingDocument,
 ): RunEpisode {
   const { files, undigested } = collectFiles(run, bundles);
   const paths = [...files.keys()].sort();
@@ -248,12 +273,28 @@ export function buildRunEpisode(
       recipeQuality,
       evidence,
     },
+    provenance: binding ? episodeProvenance(binding) : null,
     sources: {
       bundles: bundles.map(({ digest }) => digest),
       unreadableBundles: [...unreadableBundles],
       undigested,
       media,
     },
+  };
+}
+
+function episodeProvenance(binding: RecipeBindingDocument): RunEpisodeProvenance {
+  const { package: name, version } = binding.provider ?? {};
+  return {
+    source: RECIPE_BINDING_FILE,
+    harness: name && version ? { package: name, version } : null,
+    libraries: (binding.identity?.libraries ?? [])
+      .filter((library) => typeof library.name === 'string')
+      .map((library) => ({
+        name: library.name!,
+        revision: library.head ?? null,
+        fingerprint: library.sourceFingerprint ?? null,
+      })),
   };
 }
 
@@ -312,7 +353,17 @@ export async function captureRunEpisode(run: Run, now = new Date()): Promise<Run
       }
     }
   }
-  const episode = buildRunEpisode(run, bundles, unreadable, now.toISOString());
+  // The binding is a small JSON file the gateway's task copy already holds. An
+  // unreadable one leaves provenance null rather than losing the episode.
+  const binding = run.taskFile
+    ? await readJson<RecipeBindingDocument>(
+        path.join(path.dirname(run.taskFile), RECIPE_BINDING_FILE),
+      ).catch((error: unknown) => {
+        console.warn(`[run-episode] ${run.id}: recipe binding unreadable: ${String(error)}`);
+        return undefined;
+      })
+    : undefined;
+  const episode = buildRunEpisode(run, bundles, unreadable, now.toISOString(), binding);
   await writeAtomicJSON(episodeFile(run.id), episode);
   return episode;
 }

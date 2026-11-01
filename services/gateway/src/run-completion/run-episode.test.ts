@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -156,6 +157,46 @@ test('captureRunEpisode writes ended runs only', async () => {
     (await readdir(runEpisodeDir())).filter((name) => name.endsWith('.tmp')),
     [],
   );
+});
+
+test('captureRunEpisode copies the pinned provider and library revisions from the task binding', async () => {
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'run-episode-binding-'));
+  try {
+    await mkdir(path.join(taskDir, 'inputs'), { recursive: true });
+    const taskFile = path.join(taskDir, 'TASK.md');
+    await writeFile(
+      path.join(taskDir, 'inputs/recipe-binding.json'),
+      JSON.stringify({
+        provider: { package: '@demo/harness', version: '1.2.3', module: '/abs/provider.js' },
+        identity: {
+          provider: { head: null },
+          libraries: [
+            { name: 'perps', path: '/abs/perps', head: 'a'.repeat(40), sourceFingerprint: 'f1' },
+            { name: 'bundled', head: null, sourceFingerprint: 'f2' },
+          ],
+        },
+      }),
+    );
+    const bound = await captureRunEpisode(run({ id: 'run-bound', taskFile }));
+    assert.deepEqual(bound?.provenance, {
+      source: 'inputs/recipe-binding.json',
+      harness: { package: '@demo/harness', version: '1.2.3' },
+      libraries: [
+        { name: 'perps', revision: 'a'.repeat(40), fingerprint: 'f1' },
+        { name: 'bundled', revision: null, fingerprint: 'f2' },
+      ],
+    });
+
+    // An unreadable binding leaves provenance null and still writes the episode.
+    await writeFile(path.join(taskDir, 'inputs/recipe-binding.json'), '{not json');
+    const unreadable = await captureRunEpisode(run({ id: 'run-bad-binding', taskFile }));
+    assert.equal(unreadable?.provenance, null);
+    assert.equal((await readRunEpisode('run-bad-binding'))?.runId, 'run-bad-binding');
+
+    assert.equal((await captureRunEpisode(run({ id: 'run-no-task' })))?.provenance, null);
+  } finally {
+    await rm(taskDir, { recursive: true, force: true });
+  }
 });
 
 test('the retry pass visits runs updated since its watermark and keeps it at a failure', async () => {

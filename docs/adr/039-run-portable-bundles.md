@@ -511,3 +511,8 @@ gateway computes neither.
 - `farmslot runs bundle retain <runId>` also rewrites that run's episode, so a
   backfilled capture's digests reach it.
 - The `episode-capture` effect outcome appears on terminal transition results.
+- Each episode carries `provenance`: the recipe provider package and version, and
+  every library's pinned revision (or packaged fingerprint), copied from the
+  task's `inputs/recipe-binding.json` (ADR-069). It is null when the task has no
+  readable binding. Offline tools use it to tell which recipe library a run used,
+  never inferring it from text.
