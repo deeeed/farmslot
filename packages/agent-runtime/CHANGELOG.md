@@ -3,6 +3,11 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A native session no longer fails when runner output carries U+2028 or U+2029 inside a JSON string: records split on LF only (Node's readline also split at those separators and broke the record into invalid JSON). Records sent to a runner escape both, so a runner that frames with readline keeps them too.
+
+## 0.39.22 - 2026-11-02
+
+- Publishes against `@farmslot/protocol` 0.74.10.
 - `native.profile.add` refuses a runner's standard directory (the one a session without a profile uses: `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` when set, else `~/.claude`, `~/.codex` or `~/.grok`; the home directory for Cursor) with "This is the node's own login; no profile is needed". The comparison expands `~/` and resolves symlinks. Each runner definition exposes the directory once as `account.standardDirectory` (ADR-057 Amendment 11).
 - A failed profile sample (an unreadable `provider-accounts.json`, or a profile removed during the sample) no longer takes the node's native observation source down: sessions stay observable, observed profile reads fail with `NATIVE_PROFILES_UNAVAILABLE`, and the next 60 s sample recovers them.
 
