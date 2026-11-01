@@ -44,12 +44,12 @@ Human mode renders the same information as an `Error:` line followed by
 
 ## Gateway reload wait
 
-A reloading gateway refuses its port, drops the upgrade or answers it with 503 for a minute or two. A call that fails that way before its socket opens has sent nothing. The CLI keeps opening a new socket for up to 120 s, then reports the failure as before. It writes one stderr line when it starts waiting.
+A reloading gateway refuses its port, drops the upgrade or answers it with 503 for a minute or two. A `farmslot` command that fails that way before its socket opens has sent nothing. It keeps opening a new socket for up to 90 s, then reports the failure as before. That is under Claude Code's default 120 s Bash tool timeout, so a worker still gets the command's own envelope. On a terminal it writes one stderr line when it starts waiting.
 
 - A failure after the socket opened is never retried, so no request is sent twice.
 - A wrong host, a timeout or a refused credential fails at once.
-- Reachability probes (`doctor`, `auth status`, the `up` credential check) fail at once.
-- `FARMSLOT_GATEWAY_RECONNECT_MS` sets the wait; `0` fails at once.
+- Only commands wait. A `GatewayClient` built without `reconnectWindowMs` fails at once, as probes (`doctor`, `auth status`, `up`) and scripts build it.
+- `FARMSLOT_GATEWAY_RECONNECT_MS` sets a command's wait; `0` fails at once.
 
 ## Exit codes
 

@@ -46,8 +46,6 @@ export async function probeGatewayAuth(
     url,
     timeout: timeoutMs,
     credential: credential?.personSession ? credential : null,
-    // A probe reports an unreachable gateway; it does not wait out a reload.
-    reconnectWindowMs: 0,
   });
   try {
     const current = credential?.personSession ? await client.currentCredentials() : credential;

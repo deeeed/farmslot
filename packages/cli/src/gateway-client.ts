@@ -17,16 +17,19 @@ export interface GatewayClientOpts {
    * Absent credentials never trigger discovery.
    */
   credential?: GatewayCredential | null;
-  /** How long a call waits out a gateway reload; 0 fails at once. */
+  /** How long a call waits out a gateway reload. Absent or 0 fails at once. */
   reconnectWindowMs?: number;
 }
 
-/** A gateway reload takes a minute or two, as long as native node RPC waits for a node. */
-export const GATEWAY_RECONNECT_WINDOW_MS = 120_000;
+/**
+ * How long a `farmslot` command waits out a gateway reload, which takes a minute or two. It stays
+ * under Claude Code's default 120 s Bash tool timeout, so a worker still gets the CLI's own failure.
+ */
+export const GATEWAY_RECONNECT_WINDOW_MS = 90_000;
 
-/** `FARMSLOT_GATEWAY_RECONNECT_MS` sets the wait for scripts and tests; 0 fails at once. */
-function defaultReconnectWindowMs(): number {
-  const configured = process.env.FARMSLOT_GATEWAY_RECONNECT_MS?.trim();
+/** `FARMSLOT_GATEWAY_RECONNECT_MS` sets a command's wait; 0 fails at once. */
+export function cliReconnectWindowMs(environment: NodeJS.ProcessEnv = process.env): number {
+  const configured = environment.FARMSLOT_GATEWAY_RECONNECT_MS?.trim();
   const value = Number(configured);
   return configured && Number.isFinite(value) && value >= 0 ? value : GATEWAY_RECONNECT_WINDOW_MS;
 }
@@ -124,7 +127,7 @@ export class GatewayClient {
     this.url = opts.url;
     this.timeout = opts.timeout;
     this.credential = effectiveCredential(opts.credential);
-    this.reconnectWindowMs = opts.reconnectWindowMs ?? defaultReconnectWindowMs();
+    this.reconnectWindowMs = opts.reconnectWindowMs ?? 0;
   }
 
   /**
@@ -143,9 +146,10 @@ export class GatewayClient {
           Date.now() + delay > deadline
         )
           throw error;
-        if (!waiting)
+        // Progress lines go to a terminal only (cli-machine-envelope.md).
+        if (!waiting && process.stderr.isTTY)
           process.stderr.write(
-            `farmslot: the gateway is not accepting connections (reloading?); retrying for up to ${Math.round(this.reconnectWindowMs / 1000)}s\n`,
+            `\nfarmslot: the gateway is not accepting connections (reloading?); retrying for up to ${Math.round(this.reconnectWindowMs / 1000)}s\n`,
           );
         waiting = true;
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -172,6 +176,7 @@ export class GatewayClient {
             url: this.url,
             timeout: this.timeout,
             credential: accessToken ? { token: accessToken } : null,
+            reconnectWindowMs: this.reconnectWindowMs,
           }).call(method, params),
         onAccess: async (grant) => {
           if (this.activeConnection)

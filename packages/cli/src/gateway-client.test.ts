@@ -6,7 +6,13 @@ import test, { type TestContext } from 'node:test';
 
 import { WebSocketServer } from 'ws';
 
-import { connectionFailed, GatewayClient, GatewayConnectionError } from './gateway-client.js';
+import {
+  cliReconnectWindowMs,
+  connectionFailed,
+  GATEWAY_RECONNECT_WINDOW_MS,
+  GatewayClient,
+  GatewayConnectionError,
+} from './gateway-client.js';
 
 type Upgrade = 'answer' | 'refuse-503' | 'drop' | 'hang';
 
@@ -132,9 +138,8 @@ for (const [name, target, reason] of [
     async (t) => {
       const url = await target(t);
       for (const open of [
-        () =>
-          new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 0 }).call('gateway.status'),
-        () => new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 0 }).connect(),
+        () => new GatewayClient({ url, timeout: 2000 }).call('gateway.status'),
+        () => new GatewayClient({ url, timeout: 2000 }).connect(),
       ]) {
         await assert.rejects(open(), (error: unknown) => {
           assert.ok(error instanceof GatewayConnectionError);
@@ -187,9 +192,9 @@ test('the failure reason lists every address tried and skips empty causes', () =
 async function reloadingGateway(t: TestContext, afterMs: number) {
   const url = await closedPort();
   const requests: string[] = [];
+  let wss: WebSocketServer | undefined;
   const timer = setTimeout(() => {
-    const wss = new WebSocketServer({ host: '127.0.0.1', port: Number(new URL(url).port) });
-    t.after(() => wss.close());
+    wss = new WebSocketServer({ host: '127.0.0.1', port: Number(new URL(url).port) });
     wss.on('connection', (ws) =>
       ws.on('message', (raw) => {
         const { id, method } = JSON.parse(String(raw)) as { id: string; method: string };
@@ -198,20 +203,30 @@ async function reloadingGateway(t: TestContext, afterMs: number) {
       }),
     );
   }, afterMs);
-  t.after(() => clearTimeout(timer));
+  t.after(() => {
+    clearTimeout(timer);
+    for (const client of wss?.clients ?? []) client.terminate();
+    wss?.close();
+  });
   return { url, requests };
 }
 
-test('both entry points wait out a gateway reload and reach it once it listens', async (t) => {
-  t.mock.method(process.stderr, 'write', () => true);
+const waiting = (url: string) =>
+  new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 10_000 });
+
+test('a one-shot call waits out a gateway reload and reaches it once it listens', async (t) => {
   const { url, requests } = await reloadingGateway(t, 600);
-  const client = () => new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 10_000 });
-  assert.deepEqual(await client().call('fleet.status'), { served: true });
-  const connection = await client().connect();
+  assert.deepEqual(await waiting(url).call('fleet.status'), { served: true });
+  // The request reached the gateway once.
+  assert.deepEqual(requests, ['fleet.status']);
+});
+
+test('a long-lived connection waits out a gateway reload too', async (t) => {
+  const { url, requests } = await reloadingGateway(t, 600);
+  const connection = await waiting(url).connect();
+  t.after(() => connection.close());
   assert.deepEqual(await connection.call('gateway.status'), { served: true });
-  connection.close();
-  // Each request reached the gateway once.
-  assert.deepEqual(requests, ['fleet.status', 'gateway.status']);
+  assert.deepEqual(requests, ['gateway.status']);
 });
 
 test('a reload that outlasts the wait fails with the transport reason', async (t) => {
@@ -219,6 +234,12 @@ test('a reload that outlasts the wait fails with the transport reason', async (t
   t.mock.method(process.stderr, 'write', (text: string) => {
     notices.push(text);
     return true;
+  });
+  const tty = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY');
+  Object.defineProperty(process.stderr, 'isTTY', { configurable: true, value: true });
+  t.after(() => {
+    if (tty) Object.defineProperty(process.stderr, 'isTTY', tty);
+    else Reflect.deleteProperty(process.stderr, 'isTTY');
   });
   const url = await closedPort();
   const started = Date.now();
@@ -236,19 +257,16 @@ test('a reload that outlasts the wait fails with the transport reason', async (t
   assert.match(notices[0], /not accepting connections \(reloading\?\); retrying for up to 1s/);
 });
 
-test('FARMSLOT_GATEWAY_RECONNECT_MS=0 fails a refused call at once', async (t) => {
-  const previous = process.env.FARMSLOT_GATEWAY_RECONNECT_MS;
-  process.env.FARMSLOT_GATEWAY_RECONNECT_MS = '0';
-  t.after(() => {
-    if (previous === undefined) delete process.env.FARMSLOT_GATEWAY_RECONNECT_MS;
-    else process.env.FARMSLOT_GATEWAY_RECONNECT_MS = previous;
-  });
+test('only farmslot commands wait, for FARMSLOT_GATEWAY_RECONNECT_MS or 90 s', async () => {
+  assert.equal(cliReconnectWindowMs({}), GATEWAY_RECONNECT_WINDOW_MS);
+  assert.equal(GATEWAY_RECONNECT_WINDOW_MS, 90_000);
+  assert.equal(cliReconnectWindowMs({ FARMSLOT_GATEWAY_RECONNECT_MS: '0' }), 0);
+  assert.equal(cliReconnectWindowMs({ FARMSLOT_GATEWAY_RECONNECT_MS: '5000' }), 5000);
+  assert.equal(cliReconnectWindowMs({ FARMSLOT_GATEWAY_RECONNECT_MS: 'soon' }), 90_000);
+  // A client built without a window, as probes and scripts build it, fails at once.
   const url = await closedPort();
   const started = Date.now();
-  await assert.rejects(
-    new GatewayClient({ url, timeout: 2000 }).call('gateway.status'),
-    GatewayConnectionError,
-  );
+  await assert.rejects(new GatewayClient({ url, timeout: 2000 }).call('gateway.status'));
   assert.ok(Date.now() - started < 200);
 });
 
