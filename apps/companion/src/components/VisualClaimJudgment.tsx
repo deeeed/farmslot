@@ -5,6 +5,8 @@ import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import { validVisualJudgmentReason } from '@farmslot/protocol';
 import { publicationGateColors } from '@farmslot/theme';
 
+import { visualJudgmentAvailable } from '../lib/visual-claim-review';
+
 /** Shared by the gate and Compare by AC. Only Issue asks a person for prose. */
 export function VisualClaimJudgment({
   row,
@@ -26,7 +28,8 @@ export function VisualClaimJudgment({
   const [changing, setChanging] = useState(false);
   const checked = row.claim.proofKinds.includes('person-reviewed') && !row.pending;
   const delegated = row.reviewKind === 'lead-agent-reviewed';
-  const blocked = disabled || busy || !row.reviewKind || !onRecord;
+  const available = visualJudgmentAvailable(row, onRecord, disabled);
+  const blocked = busy || !available;
   const record = async (verdict: 'confirmed' | 'rejected') => {
     if (!onRecord || busy) return;
     setBusy(true);
@@ -58,6 +61,8 @@ export function VisualClaimJudgment({
     borderRadius: 8,
     backgroundColor: palette.surface,
   };
+  // Unavailable reads as unavailable, here and wherever the row is shown.
+  const controlStyle = available ? buttonStyle : { ...buttonStyle, opacity: 0.4 };
   return (
     <View style={{ gap: 8 }} accessibilityState={{ busy }}>
       {checked && !changing && !busy ? (
@@ -93,7 +98,8 @@ export function VisualClaimJudgment({
                 !validVisualJudgmentReason(row.reviewKind ?? undefined, 'confirmed', reason)
               }
               onPress={() => void record('confirmed')}
-              style={buttonStyle}
+              style={controlStyle}
+              accessibilityState={{ disabled: blocked }}
             >
               {busy ? <ActivityIndicator size="small" color={palette.text} /> : null}
               <Text style={{ color: palette.text }}>{busy ? 'Checking…' : 'Looks right'}</Text>
@@ -102,8 +108,9 @@ export function VisualClaimJudgment({
               accessibilityRole="button"
               accessibilityLabel={`Issue for ${row.claim.id}`}
               disabled={blocked}
+              accessibilityState={{ disabled: blocked }}
               onPress={() => setIssue(!issue)}
-              style={buttonStyle}
+              style={controlStyle}
             >
               <Text style={{ color: palette.text }}>Issue</Text>
             </Pressable>

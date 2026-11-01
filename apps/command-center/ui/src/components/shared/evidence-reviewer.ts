@@ -5,6 +5,8 @@ import {
   type EvidenceReviewClaim,
   type EvidenceReviewModel,
   type EvidenceReviewOccurrence,
+  evidenceReviewToc,
+  type EvidenceReviewTocEntry,
   formatEvidenceReviewVideoTime,
 } from '@farmslot/adapter-sdk/evidence';
 import { acceptanceClaimLabel, type AcceptanceClaimRow } from '@farmslot/review-dispatch';
@@ -14,7 +16,6 @@ import './proof-step-details.js';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceClaimListActions } from '../progress-tracker/acceptance-claim-list.js';
-import { proofStepGroups } from '../progress-tracker/proof-step-groups.js';
 import {
   renderVisualClaimJudgment,
   visualClaimJudgmentStyles,
@@ -388,12 +389,31 @@ export class EvidenceReviewer extends LitElement {
     return (modelRecording(model, recording.path) ?? model.recordings[0])?.videoPath;
   }
 
+  /** Built once per model, recording and order: render and selection read it many times. */
+  private tocs?: {
+    model: EvidenceReviewModel;
+    videoPath: string | undefined;
+    byOrder: Map<'video' | 'criteria', EvidenceReviewTocEntry[]>;
+  };
+
+  /** The recording's table of contents, the one both clients' reviews read. */
+  private toc(order: 'video' | 'criteria' = 'criteria'): EvidenceReviewTocEntry[] {
+    const model = this.model;
+    if (!model) return [];
+    const videoPath = this.videoPath;
+    if (this.tocs?.model !== model || this.tocs.videoPath !== videoPath)
+      this.tocs = { model, videoPath, byOrder: new Map() };
+    let entries = this.tocs.byOrder.get(order);
+    if (!entries) {
+      entries = evidenceReviewToc(model, videoPath, { order });
+      this.tocs.byOrder.set(order, entries);
+    }
+    return entries;
+  }
+
   /** The steps that prove the criterion, the same grouping the proof step list shows. */
-  private steps(claim: EvidenceReviewClaim): EvidenceReviewOccurrence[] {
-    return (
-      proofStepGroups(this.model?.occurrences ?? []).find((group) => group.label === claim.id)
-        ?.steps ?? []
-    );
+  private steps(claim: EvidenceReviewClaim): readonly EvidenceReviewOccurrence[] {
+    return this.toc().find((entry) => entry.claim.id === claim.id)?.steps ?? [];
   }
 
   private stepMs(step: EvidenceReviewOccurrence): number | null {
@@ -416,11 +436,7 @@ export class EvidenceReviewer extends LitElement {
 
   /** Where the criterion's first recorded step starts, or null when none is in the recording. */
   private startMs(claim: EvidenceReviewClaim): number | null {
-    return (
-      this.steps(claim)
-        .map((step) => this.stepMs(step))
-        .find((ms) => ms !== null) ?? null
-    );
+    return this.toc().find((entry) => entry.claim.id === claim.id)?.startMs ?? null;
   }
 
   private claimStartMs(): number | null {
@@ -433,13 +449,8 @@ export class EvidenceReviewer extends LitElement {
   }
 
   /** Video order: by first recorded step, criteria the recording misses last. */
-  private orderedClaims(model: EvidenceReviewModel) {
-    const rows = model.claims.map((claim) => ({ claim, start: this.startMs(claim) }));
-    return this.order === 'criteria'
-      ? rows
-      : rows.sort(
-          (a, b) => (a.start ?? Number.POSITIVE_INFINITY) - (b.start ?? Number.POSITIVE_INFINITY),
-        );
+  private orderedClaims() {
+    return this.toc(this.order).map(({ claim, startMs }) => ({ claim, start: startMs }));
   }
 
   /** The selection last applied; host re-renders that keep it change nothing. */
@@ -784,7 +795,7 @@ export class EvidenceReviewer extends LitElement {
                 </button>`,
             )}
           </div>
-          ${this.orderedClaims(model).map(({ claim, start }) => {
+          ${this.orderedClaims().map(({ claim, start }) => {
             const selected = claim.id === this.claimId;
             return html`<button
                 class="claim"
