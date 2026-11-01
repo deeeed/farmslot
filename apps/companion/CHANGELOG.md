@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- AC rows name the recording their verdict comes from. After a re-recording, the gate's older evidence reads "Evidence replaced" instead of red "Not proven" or an invalid package next to passing steps.
 - Start on "Node default account" no longer waits for the node's profile list; a slow or failed list read only affects the profile choices. A selected profile still waits for its login status (ADR-057 Amendment 11).
 
 ## 0.10.0 - 2026-11-01
