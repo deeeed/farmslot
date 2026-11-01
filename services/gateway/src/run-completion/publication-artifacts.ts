@@ -1067,6 +1067,16 @@ export async function assertPublicationManifestOwnership(
                   provenance.branch !== baseline.branch &&
                   provenance.branch !== 'detached' &&
                   'branch'));
+            // Before evidence recorded off the base is admitted only by an operator's attestation.
+            if (
+              beforeOnly &&
+              invalidProvenanceField === 'git_ref' &&
+              directory.startsWith('recipe-runs/')
+            )
+              throw new RecordedEvidenceReadError(
+                'evidence-selection-invalid',
+                `Before evidence ${file} comes from recipe attempt ${directory}, recorded at ${typeof provenance.git_ref === 'string' ? provenance.git_ref : 'an unknown commit'}, not the unchanged base ${expectedSha ?? '(unknown)'}. Re-record it on the base, or have an operator attest the attempt as before evidence: run gate --action attest-before-attempt --recipe-run ${directory.slice('recipe-runs/'.length)} (artifact-manifest.json sha256 ${manifestDigest}).`,
+              );
             if (invalidProvenanceField)
               throw new RecordedEvidenceReadError(
                 'evidence-selection-invalid',

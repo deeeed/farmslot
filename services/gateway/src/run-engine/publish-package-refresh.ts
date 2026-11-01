@@ -131,6 +131,28 @@ interface PublicationInspectionReaders {
 
 const inspectionRefreshes = new Map<string, Promise<Run>>();
 
+/**
+ * A refused refresh is kept until its inputs change. Every run.get and decision list inspects the
+ * gate, and each refresh holds the machine's transition key while it reads the worker's checkout,
+ * so re-running a refusal on every poll would starve the machine's other runs. Artifact edits
+ * leave HEAD alone, so a refusal is also retried once it is a few minutes old.
+ */
+const refreshRefusals = new Map<string, { inputs: string; message: string; at: number }>();
+const REFRESH_REFUSAL_RETRY_MS = 5 * 60_000;
+
+function refreshInputs(run: Run, decisionId: string, head: string): string {
+  return JSON.stringify([
+    decisionId,
+    head,
+    run.engineState?.generation ?? 0,
+    (run.beforeAttemptAttestations ?? []).map((attestation) => attestation.id),
+  ]);
+}
+
+function refreshFailureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Coalesce polling readers, and never snapshot a worker that is still progressing. */
 export function reconcilePublicationPackageForInspection(
   run: Run,
@@ -209,10 +231,27 @@ export function reconcilePublicationPackageForInspection(
             : 'Retained publication evidence is missing; waiting for the owned worker to be idle before refreshing its package.',
           head,
         );
-      return await readers.refresh(run.id, pending.id);
+      const inputs = refreshInputs(getRun(run.id) ?? run, pending.id, head);
+      const refused = refreshRefusals.get(run.id);
+      if (refused?.inputs === inputs && Date.now() - refused.at < REFRESH_REFUSAL_RETRY_MS)
+        return collecting(`Publication package refresh could not finish: ${refused.message}`);
+      try {
+        const refreshed = await readers.refresh(run.id, pending.id);
+        refreshRefusals.delete(run.id);
+        return refreshed;
+      } catch (error) {
+        // A worker that resumed between the reads is waited for, not remembered as a refusal.
+        if (!(error instanceof OwnedWorkerBusyError))
+          refreshRefusals.set(run.id, {
+            inputs,
+            message: refreshFailureMessage(error),
+            at: Date.now(),
+          });
+        throw error;
+      }
     } catch (error) {
       return collecting(
-        `Publication package refresh could not finish: ${error instanceof Error ? error.message : String(error)}`,
+        `Publication package refresh could not finish: ${refreshFailureMessage(error)}`,
       );
     } finally {
       inspectionRefreshes.delete(run.id);
@@ -320,13 +359,25 @@ export function restampReviewsForRefreshedPackage(
   });
 }
 
-export function refreshPublishPackage(
+export async function refreshPublishPackage(
   params: Parameters<typeof refreshPublishPackageTransitionLocked>[0],
   readers: { progress?: typeof readRunProgress; source?: typeof capturePublicationSource } = {},
 ): ReturnType<typeof refreshPublishPackageTransitionLocked> {
-  return withRunTransition(params.runId, () =>
-    refreshPublishPackageTransitionLocked(params, false, readers.progress, readers.source),
-  );
+  const startedAt = Date.now();
+  try {
+    const result = await withRunTransition(params.runId, () =>
+      refreshPublishPackageTransitionLocked(params, false, readers.progress, readers.source),
+    );
+    refreshRefusals.delete(params.runId);
+    return result;
+  } catch (error) {
+    // A caller that timed out never sees this refusal, so the log keeps it. Inspection runs a
+    // refusal again only once its inputs change, so this is one line per attempt, not per poll.
+    console.warn(
+      `[run-engine] run ${params.runId.slice(0, 8)} — publish package refresh refused after ${Math.round((Date.now() - startedAt) / 1000)}s: ${refreshFailureMessage(error)}`,
+    );
+    throw error;
+  }
 }
 
 async function refreshPublishPackageTransitionLocked(

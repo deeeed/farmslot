@@ -1023,6 +1023,21 @@ test('an operator attestation admits a dirty PR-head attempt as before-only evid
   await assert.rejects(preflight(), /product-provenance\.json.*git_ref/);
 });
 
+test('a before attempt recorded off the base names the attestation that admits it', async (t) => {
+  const f = await sameHeadFixture(t, undefined, undefined, 'recipe-runs/attempts/base-run');
+  await retainRunFixture(f.run);
+  const manifest = await readFile(
+    path.join(f.taskDir, 'artifacts', f.baselineRoot, 'artifact-manifest.json'),
+  );
+  // ba397e2c: the base build ran from the head checkout, so its provenance names the head.
+  await assert.rejects(
+    readEvidenceManifest(f.run),
+    new RegExp(
+      `Before evidence artifacts/recipe-runs/attempts/base-run/proof\\.png comes from recipe attempt recipe-runs/attempts/base-run, recorded at ${f.headSha}, not the unchanged base ${f.run.worktreeHeadAtDispatch}\\. .*attest-before-attempt --recipe-run attempts/base-run \\(artifact-manifest\\.json sha256 ${digest(manifest)}\\)`,
+    ),
+  );
+});
+
 test('only the same run attesting that attempt manifest waives, labels and binds the package', async (t) => {
   const f = await sameHeadFixture(t);
   const directory = path.join(f.taskDir, 'artifacts', f.baselineRoot);

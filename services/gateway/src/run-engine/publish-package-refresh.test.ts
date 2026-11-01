@@ -11,8 +11,16 @@ import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
-import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../runs/store.js';
+import {
+  commitRunBeforeAttemptAttestation,
+  createRun,
+  getRun,
+  loadAllRuns,
+  persistRunNow,
+  updateRun,
+} from '../runs/store.js';
 
+import { OwnedWorkerBusyError } from './errors.js';
 import {
   ensureCurrentPublishPackage,
   reconcilePublicationPackageForInspection,
@@ -470,4 +478,100 @@ test('inspection repairs a missing bundle at unchanged HEAD, defers busy work an
     ['hold'],
   );
   assert.deepEqual(getRun(run.id)!.decisions, [decision]);
+});
+
+test('polling shows a refused refresh again without re-running it until its inputs change', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-2',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const prepared = makeReadyGatePackage();
+  const decision: RunDecision = {
+    id: 'refused',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    createdAt: prepared.createdAt,
+    actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      branch: prepared.branch,
+      workerReport: '',
+      diffStat: prepared.diffStat,
+      prPackage: prepared,
+    },
+  };
+  updateRun(run.id, { status: 'human-gating', decisions: [decision] });
+  let refreshes = 0;
+  let refusal: Error = new OwnedWorkerBusyError();
+  const readers = {
+    head: async () => 'new-head',
+    bundleAvailable: async () => true,
+    progress: async () => ({ kind: 'idle' as const }),
+    refresh: async () => {
+      refreshes++;
+      throw refusal;
+    },
+  };
+  const poll = async (overrides: Partial<typeof readers> = {}) =>
+    (await reconcilePublicationPackageForInspection(getRun(run.id)!, { ...readers, ...overrides }))
+      .decisions[0].description;
+  // A worker that resumed between the reads is waited for, not remembered.
+  await poll();
+  await poll();
+  assert.equal(refreshes, 2);
+  // ba397e2c: each refresh held the machine's transition key for 29-170 s, once per poll.
+  refusal = new Error('Before evidence needs an attestation');
+  for (let i = 0; i < 3; i++) assert.match(await poll(), /Before evidence needs an attestation/);
+  assert.equal(refreshes, 3);
+  // An operator's attestation and a new HEAD are new inputs.
+  await commitRunBeforeAttemptAttestation(
+    run.id,
+    () => ({
+      id: 'attestation',
+      runId: run.id,
+      decisionId: decision.id,
+      attemptRoot: 'recipe-runs/attempts/base',
+      manifestSha256: 'a'.repeat(64),
+      approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'credential' },
+      reason: 'The base cannot run this recipe.',
+      attestedAt: '2026-11-01T14:00:00.000Z',
+    }),
+    () => {},
+  );
+  await poll();
+  assert.equal(refreshes, 4);
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 5);
+  // Artifact edits leave HEAD alone, so an old refusal is retried.
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now + 5 * 60_000 + 1);
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 6);
+});
+
+test('an explicit refresh logs its refusal, so a caller that timed out does not lose it', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-3',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const warn = t.mock.method(console, 'warn', () => {});
+  await assert.rejects(
+    refreshPublishPackage({ runId: run.id }),
+    /No pending ready publish package/,
+  );
+  assert.match(
+    String(warn.mock.calls.at(-1)?.arguments[0]),
+    new RegExp(
+      `run ${run.id.slice(0, 8)} — publish package refresh refused after \\d+s: No pending ready publish package`,
+    ),
+  );
 });
