@@ -9,11 +9,7 @@ import { isRecord } from '@farmslot/protocol/recipe';
 
 import type { EventEmitter } from '../methods/slot/shared.js';
 
-import {
-  dropParkedValidationBranch,
-  type ParkedValidationCommits,
-  parkValidationRunCommits,
-} from './validation-run-commits.js';
+import { parksBranchCommits } from './validation-run-commits.js';
 
 export interface RetainedIdleCheckout {
   slotId: string;
@@ -97,15 +93,20 @@ export async function reuseSafeIdleSlot(
     const eligibility = slotRecoveryEligibility(slot ? { ...slot, workspace } : undefined);
     if (!eligibility.allowed)
       return { kind: 'unavailable', reason: eligibility.detail ?? 'Slot is protected' };
-    let parked: ParkedValidationCommits | null = null;
+    // A finished artifact-only run's own commits are retained output: the release parks them
+    // (durable ref, SHAs on the run) and refuses if they turn out not to be the run's own.
+    let parkRunId: string | undefined;
     if (eligibility.confirmationRequired && !expected?.retainedCandidate) {
-      // A validation run's own commits are its retained output: parked under a durable ref with
-      // their SHAs recorded, they no longer keep the next dispatch off this slot.
       const { getRun } = await import('../runs/store.js');
       const owner = expected?.recordRunId ? getRun(expected.recordRunId) : undefined;
-      if (owner && !workspace.dirtyCount && workspace.publication === 'unpushed')
-        parked = await parkValidationRunCommits(owner, slotId, workspace);
-      if (!parked)
+      if (
+        parksBranchCommits(owner) &&
+        !workspace.dirtyCount &&
+        workspace.publication === 'unpushed' &&
+        workspace.branch === owner.branch
+      )
+        parkRunId = owner.id;
+      else
         return {
           kind: 'local-work',
           reason: workspace.dirtyCount ? 'dirty files' : 'unpushed commits',
@@ -130,9 +131,8 @@ export async function reuseSafeIdleSlot(
       },
       emit,
       undefined,
-      { skipRecycle: true },
+      { skipRecycle: true, ...(parkRunId ? { parkRunId } : {}) },
     );
-    if (result.refreshed && parked) await dropParkedValidationBranch(parked);
     if (result.refreshed) emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
     return result.refreshed
       ? { kind: 'ready' }
@@ -144,4 +144,30 @@ export async function reuseSafeIdleSlot(
     // A candidate failure is an explicit result: selection tries others; settlement reports retention.
     return { kind: 'unavailable', reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * COMPLETE releases an artifact-only run's slot ownership but keeps its checkout, so the run's
+ * close or archive finds no slot to release while the picker and prepare still refuse its
+ * unpushed commits (c9562e49 on mini-mmt-3). For an unowned slot still on the finished run's
+ * branch, return it to idle through the same fenced recovery, parking those commits.
+ */
+export async function returnReleasedCheckoutToIdle(
+  run: Run,
+  emit: EventEmitter,
+): Promise<SafeIdleSlotResult | null> {
+  if (!run.slotId || !isTerminalRunStatus(run.status) || !parksBranchCommits(run)) return null;
+  const { readSlotRow } = await import('../core/state.js');
+  const row = await readSlotRow(run.slotId);
+  if (!row || row.current_run_id || row.cleanup_run_id || row.handoff_run_id) return null;
+  const result = await reuseSafeIdleSlot(run.slotId, emit, {
+    epoch: Number(row.slot_epoch) || 0,
+    runId: null,
+    recordRunId: run.id,
+  });
+  if (result.kind !== 'ready')
+    console.warn(
+      `[slot.release] ${run.slotId}: released checkout of run ${run.id.slice(0, 8)} stays: ${result.reason}`,
+    );
+  return result;
 }

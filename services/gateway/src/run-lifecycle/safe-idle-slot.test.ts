@@ -53,6 +53,7 @@ mock.module('../methods/slot/recover-workspace.js', {
       options: Parameters<typeof recovery.recoverSlotWorkspace>[3],
     ) => {
       modes.push(params.mode);
+      parkRunIds.push(options?.parkRunId);
       assert.equal(options?.skipRecycle, true, 'automatic recovery explicitly keeps runtime cold');
       assert.ok(params.expectedWorkspace);
       recovered.push(workspace);
@@ -60,29 +61,12 @@ mock.module('../methods/slot/recover-workspace.js', {
     },
   },
 });
-const config = await import('../core/config.js');
-const exec = await import('../core/exec.js');
-let gitCommands: string[];
-let notAncestor = false;
-mock.module('../core/config.js', {
-  namedExports: {
-    ...config,
-    loadSlotVars: async (slotId: string) => ({ slotId, remoteRepo: '/slot/repo' }),
-  },
+const state = await import('../core/state.js');
+let slotRow: Record<string, unknown> | null = null;
+mock.module('../core/state.js', {
+  namedExports: { ...state, readSlotRow: async () => slotRow },
 });
-mock.module('../core/exec.js', {
-  namedExports: {
-    ...exec,
-    execOnSlot: async (_vars: unknown, cmd: string) => {
-      gitCommands.push(cmd);
-      if (cmd.includes('merge-base --is-ancestor'))
-        return { stdout: '', stderr: '', exitCode: notAncestor ? 1 : 0 };
-      if (cmd.includes('rev-list'))
-        return { stdout: `${'e'.repeat(40)}\n${'f'.repeat(40)}\n`, stderr: '', exitCode: 0 };
-      return { stdout: '', stderr: '', exitCode: 0 };
-    },
-  },
-});
+let parkRunIds: (string | undefined)[];
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
@@ -96,7 +80,8 @@ mock.module('../runs/store.js', {
     },
   },
 });
-const { reuseSafeIdleSlot, checkoutBeforeIdleReturn } = await import('./safe-idle-slot.js');
+const { reuseSafeIdleSlot, checkoutBeforeIdleReturn, returnReleasedCheckoutToIdle } =
+  await import('./safe-idle-slot.js');
 beforeEach(() => {
   workspace = {
     epoch: 7,
@@ -123,8 +108,8 @@ beforeEach(() => {
   recovered = [];
   modes = [];
   failure = undefined;
-  gitCommands = [];
-  notAncestor = false;
+  parkRunIds = [];
+  slotRow = null;
 });
 for (const publication of ['baseline', 'merged', 'pushed'] as const) {
   test(`clean ${publication} work uses fenced safe recovery`, async () => {
@@ -159,8 +144,8 @@ for (const kind of ['dirty', 'unpushed'] as const) {
     assert.deepEqual(recovered, []);
   });
 }
-// F291 (c9562e49 on mini-mmt-3): a closed validation run's own commits kept the next dispatch off
-// its slot. They are parked under a durable ref, SHAs recorded, and the slot returns to idle.
+// F291 (c9562e49 on mini-mmt-3): a finished artifact-only run's own commits kept the next dispatch
+// off its slot. Its idle return now asks the release to park them (the release owns the git).
 const validationRun = (overrides: Partial<Run> = {}) =>
   makeRun({
     id: 'validation',
@@ -176,58 +161,56 @@ const validationRun = (overrides: Partial<Run> = {}) =>
 const releaseFor = (runId: string) =>
   reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null, recordRunId: runId });
 
-test("a validation run's own unpushed commits are parked with their SHAs and the slot returns to idle", async () => {
+test("a finished artifact-only run's own unpushed checkout returns to idle through a parking release", async () => {
   const run = validationRun();
   runs = [run];
   workspace.branch = run.branch!;
   workspace.publication = 'unpushed';
   assert.deepEqual(await releaseFor(run.id), { kind: 'ready' });
   assert.deepEqual(modes, ['force']);
-  const head = 'a'.repeat(40);
-  assert.deepEqual(gitCommands, [
-    `git -C '/slot/repo' merge-base --is-ancestor '${'d'.repeat(40)}' '${head}'`,
-    `git -C '/slot/repo' rev-list '${'d'.repeat(40)}..${head}'`,
-    `git -C '/slot/repo' update-ref 'refs/farmslot/parked/validation' '${head}'`,
-    // After the idle reset: only the unchanged branch is dropped; the parked ref keeps its commits.
-    `git -C '/slot/repo' update-ref -d 'refs/heads/TAT-4146-feat-farm-validation' '${head}'`,
-  ]);
-  const parked = run.steps.find((step) => step.name === 'prepare')?.outputs
-    ?.parkedValidationCommits;
-  assert.deepEqual(
-    { ...(parked as Record<string, unknown>), parkedAt: undefined },
-    {
-      slotId: 'proof',
-      ref: 'refs/farmslot/parked/validation',
-      branch: 'TAT-4146-feat-farm-validation',
-      baseSha: 'd'.repeat(40),
-      headSha: head,
-      commits: ['e'.repeat(40), 'f'.repeat(40)],
-      parkedAt: undefined,
-    },
-  );
+  assert.deepEqual(parkRunIds, ['validation']);
 });
 
-test("work that isn't a validation run's own is still kept", async () => {
+test("work that isn't a finished artifact-only run's own is still kept", async () => {
   workspace.publication = 'unpushed';
   for (const [label, run, setup] of [
     ['a publishing run', validationRun({ completionPolicy: 'default' }), () => {}],
+    ['a run still working', validationRun({ status: 'monitoring' }), () => {}],
     ['another branch', validationRun(), () => (workspace.branch = 'someone-else')],
-    ['not from its baseline', validationRun(), () => (notAncestor = true)],
     ['dirty files', validationRun(), () => (workspace.dirtyCount = 1)],
   ] as const) {
     runs = [run];
     workspace.branch = run.branch!;
     workspace.dirtyCount = 0;
-    notAncestor = false;
     setup();
-    const result = await releaseFor(run.id);
-    assert.equal(result.kind, 'local-work', label);
-    assert.ok(
-      !gitCommands.some((cmd) => cmd.includes('update-ref')),
-      `${label}: nothing is parked or dropped`,
-    );
+    assert.equal((await releaseFor(run.id)).kind, 'local-work', label);
   }
+  // Without a named run nothing is parked, however parkable the checkout looks.
+  runs = [validationRun()];
+  workspace.branch = 'TAT-4146-feat-farm-validation';
+  assert.equal(
+    (await reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null })).kind,
+    'local-work',
+  );
   assert.deepEqual(recovered, []);
+});
+
+test('a checkout COMPLETE already released returns to idle when its run closes', async () => {
+  const run = validationRun();
+  runs = [run];
+  workspace.branch = run.branch!;
+  workspace.publication = 'unpushed';
+  for (const owner of ['successor', null] as const) {
+    slotRow = { slot_epoch: 7, current_run_id: owner, cleanup_run_id: null, handoff_run_id: null };
+    const result = await returnReleasedCheckoutToIdle(run, () => {});
+    if (owner) assert.equal(result, null, 'a slot another run owns is left alone');
+    else assert.deepEqual(result, { kind: 'ready' });
+  }
+  assert.deepEqual(parkRunIds, ['validation']);
+  assert.equal(
+    await returnReleasedCheckoutToIdle({ ...run, status: 'completing' }, () => {}),
+    null,
+  );
 });
 
 test('unknown publication and a deleted remote ref never grant reset authority', async () => {

@@ -41,6 +41,7 @@ import {
   routeRunTransition,
   type RunTransitionEffectOutcome,
 } from '../../run-lifecycle/transition-router.js';
+import { parksBranchCommits } from '../../run-lifecycle/validation-run-commits.js';
 import {
   isRunnerPaneRetired,
   normalizeRunner,
@@ -408,7 +409,12 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
       if (blocker) await recordSlotTeardownSkipped(run, blocker);
     }
     const retainedCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
-    if (!blocker && (run.status === 'done' || retainedCandidate)) {
+    // A finished artifact-only run's checkout returns to idle with its own commits parked.
+    const returnsToIdle =
+      run.status === 'done' ||
+      retainedCandidate ||
+      (isTerminalRunStatus(run.status) && parksBranchCommits(run));
+    if (!blocker && returnsToIdle) {
       const before = await readSlotRow(slotId);
       const { ownsRunSlotCleanup, updateSlotStatusIf } = await import('../../core/index.js');
       const { reuseSafeIdleSlot } = await import('../../run-lifecycle/safe-idle-slot.js');
@@ -446,7 +452,7 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     const released = await releaseRunSlotOwnership(run, fence, blocker, {
       stopUnconfirmed: !workerBlocker && unconfirmedStops.length > 0,
     });
-    if (released && (run.status === 'done' || retainedCandidate) && !checkoutHasLocalWork) {
+    if (released && returnsToIdle && !checkoutHasLocalWork) {
       const { reuseSafeIdleSlot } = await import('../../run-lifecycle/safe-idle-slot.js');
       const result = await reuseSafeIdleSlot(slotId, broadcastEvent, {
         epoch: Number(fence.before?.slot_epoch) || 0,

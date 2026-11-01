@@ -36,12 +36,6 @@ import {
   routeRunTransition,
   RunTransitionRefusedError,
 } from '../run-lifecycle/transition-router.js';
-import {
-  dropParkedValidationBranch,
-  isValidationRun,
-  type ParkedValidationCommits,
-  parkValidationRunCommits,
-} from '../run-lifecycle/validation-run-commits.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionPrincipal } from '../security/work-originator.js';
 
@@ -562,29 +556,16 @@ async function sendBack(
   );
 }
 
-async function parkDiscardedValidationCommits(run: Run): Promise<ParkedValidationCommits | null> {
-  if (!run.slotId || !isValidationRun(run)) return null;
-  const { inspectSlotWorkspace } = await import('../methods/slot/workspace.js');
-  const workspace = await inspectSlotWorkspace(run.slotId);
-  return workspace.publication === 'unpushed'
-    ? parkValidationRunCommits(run, run.slotId, workspace)
-    : null;
-}
-
 async function releaseSettledSlot(run: Run, discard: boolean): Promise<void> {
   try {
     if (discard) {
       // Close of a retained refused completion is the Amendment 6 named discard.
       const { slotRelease } = await import('../methods/slot/release.js');
       const { broadcastEvent } = await import('../server.js');
-      // A validation run's own commits are parked, SHAs recorded, rather than reset away and left
-      // on a branch that refuses the next prepare of the same ticket.
-      const parked = await parkDiscardedValidationCommits(run);
-      const { released } = await slotRelease(
+      await slotRelease(
         { slotId: run.slotId!, forceReset: true, expectedRunId: run.id },
         broadcastEvent,
       );
-      if (released && parked) await dropParkedValidationBranch(parked);
       return;
     }
     const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
@@ -592,6 +573,24 @@ async function releaseSettledSlot(run: Run, discard: boolean): Promise<void> {
   } catch (error) {
     console.warn(
       `[result-decision] slot release after ${run.id.slice(0, 8)} deferred: ${(error as Error).message}`,
+    );
+  } finally {
+    await returnClosedCheckoutToIdle(run);
+  }
+}
+
+/** COMPLETE released an artifact-only run's slot early; its close still returns the checkout. */
+async function returnClosedCheckoutToIdle(run: Run): Promise<void> {
+  try {
+    const latest = getRun(run.id) ?? run;
+    const { returnReleasedCheckoutToIdle } = await import('../run-lifecycle/safe-idle-slot.js');
+    const { broadcastEvent } = await import('../server.js');
+    const result = await returnReleasedCheckoutToIdle(latest, broadcastEvent);
+    if (result && result.kind !== 'ready')
+      updateRun(run.id, { slotTeardownSkipped: `Checkout retained: ${result.reason}` });
+  } catch (error) {
+    console.warn(
+      `[result-decision] checkout return after ${run.id.slice(0, 8)} deferred: ${(error as Error).message}`,
     );
   }
 }

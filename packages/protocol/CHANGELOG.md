@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `Run.parkedCommits` (`ParkedRunCommits[]`): an artifact-only run's own branch commits, parked under `refs/farmslot/parked/<run>/<head>` when its slot returned to idle (append-only).
 - `RunEngineState.publishGate.refusedEvidencePackageId`: the prepared package a human-gate replay found the worker's evidence refused against; while it is still `packageId`, the gate rebuilds rather than reuses it.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

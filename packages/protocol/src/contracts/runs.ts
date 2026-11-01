@@ -1874,6 +1874,17 @@ export interface RunMetrics {
 }
 
 export type RunCompletionPolicy = 'default' | 'artifact-only';
+/** One parking of an artifact-only run's own branch commits (see `Run.parkedCommits`). */
+export interface ParkedRunCommits {
+  slotId: string;
+  ref: string;
+  branch: string;
+  baseSha: string;
+  headSha: string;
+  /** The parked commits not on any remote, newest first. */
+  commits: string[];
+  parkedAt: string;
+}
 
 export type RunStartRefSource =
   | { kind: 'manual' }
@@ -2884,6 +2895,11 @@ export interface Run {
   slotId: string | null;
   /** A cancelled replay hold was released on demand for another run, preserving its record. */
   slotReclaimed?: { slotId: string; byRunId: string; at: string };
+  /**
+   * Branch commits of this artifact-only run, parked when its slot returned to idle (append-only).
+   * Each `ref` (`refs/farmslot/parked/<run>/<head>`) keeps `headSha` reachable on the slot.
+   */
+  parkedCommits?: ParkedRunCommits[];
   /** Explicit workspace placement, mutually exclusive with a slot binding. */
   reviewWorkspaceTarget?: import('./review-workspace.js').ReviewWorkspaceTarget;
   /** Trusted runtime-owned checkout and output locations. Requires slotId=null. */

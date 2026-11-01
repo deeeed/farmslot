@@ -68,6 +68,8 @@ function identityOwnsRow(
 interface SlotRecoveryOptions {
   /** Automatic reuse/settlement keeps the runtime cold; manual RPCs keep their existing policy. */
   skipRecycle?: boolean;
+  /** A finished artifact-only run whose own branch commits the release parks before resetting. */
+  parkRunId?: string;
 }
 
 export async function recoverSlotWorkspace(
@@ -284,6 +286,7 @@ export async function recoverSlotWorkspace(
               verifyWork,
               discardLocalWork: params.mode === 'force',
               skipRecycle: options?.skipRecycle,
+              ...(options?.parkRunId ? { parkRunId: options.parkRunId } : {}),
             },
           },
         );

@@ -69,6 +69,11 @@ import {
 import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
 import {
+  dropParkedBranch,
+  parkRunBranchCommits,
+  parksBranchCommits,
+} from '../../run-lifecycle/validation-run-commits.js';
+import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
   retireNativeWorkersForSlot,
@@ -159,6 +164,8 @@ export interface SlotReleaseOptions {
     verifyWork: () => Promise<void>;
     discardLocalWork: boolean;
     skipRecycle?: boolean;
+    /** The finished artifact-only run whose own branch commits this recovery parks. */
+    parkRunId?: string;
   };
 }
 
@@ -899,7 +906,21 @@ async function slotReleaseImpl(
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
   await assertReleaseClaim();
   if (options?.workspaceRecovery) await options.workspaceRecovery.verifyWork();
-  if (!keepWork && !forceReset && !options?.workspaceRecovery) {
+  // An artifact-only run's own commits are parked under a durable ref (SHAs on the run) before
+  // any reset, so they neither block the next dispatch nor vanish with the reset.
+  const parkOwnerId = options?.workspaceRecovery?.parkRunId ?? params.expectedRunId ?? boundOwner;
+  const parkOwner = !keepWork && parkOwnerId ? await getRunWithArchived(parkOwnerId) : undefined;
+  const parked = parksBranchCommits(parkOwner)
+    ? await parkRunBranchCommits(parkOwner, vars, execOnSlot)
+    : null;
+  // A recovery started to park a run's commits never resets a checkout that turned out not to be them.
+  if (options?.workspaceRecovery?.parkRunId && !parked) {
+    await markSlotBusy(params.slotId, 'working');
+    throw new Error(
+      `Slot ${params.slotId} holds work that is not run ${options.workspaceRecovery.parkRunId}'s own branch commits; nothing was parked or reset.`,
+    );
+  }
+  if (!keepWork && !forceReset && !options?.workspaceRecovery && !parked) {
     const unmergedWork = await findReleaseUnmergedWork(
       vars,
       projectJson,
@@ -910,7 +931,7 @@ async function slotReleaseImpl(
       await markSlotBusy(params.slotId, 'working');
       throw unmergedWorkError(unmergedWork);
     }
-  } else if (!keepWork) {
+  } else if (!keepWork && !parked) {
     await logDiscardedWork(vars, params.slotId, boundOwner);
   }
 
@@ -1059,6 +1080,13 @@ async function slotReleaseImpl(
     });
     idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
+    if (parked) {
+      const kept = await dropParkedBranch(parked, vars, execOnSlot);
+      step(
+        'git',
+        `Parked ${parked.commits.length} unpushed commit(s) of ${parked.branch} at ${parked.ref}${kept ? `; ${kept}` : '; branch dropped'}`,
+      );
+    }
 
     // Automatic recovery stays cold. Explicit manual recovery keeps its recycle policy.
     if (options?.workspaceRecovery?.skipRecycle) {
