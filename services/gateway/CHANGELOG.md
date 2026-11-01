@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A gate action that no engine waits for (after a gateway restart the re-presented gate has none) is refused with `RUN_GATE_NOT_READY` when the resume that applies it could not run: the run is not waiting at its gate (`reconciling`, `review-failed`, `done`...) or still waits on another, non-gate decision. Before, the action returned ok, the decision was recorded as resolved, and the deferred resume skipped it silently. An action that passes is applied by that resume, whose log line now names it (`resuming engine to apply approve-publish`); a blocker that appears only after the action commits is logged as an error.
 - The refusals from `slot.release`, `slot.prepare` and `slot.refresh` for a slot with recovery in flight now name the exit: `farmslot slot refresh <slot> --recover`.
 
 - Completion push verification inspects the slot worktree in one exec instead of one per git probe (six to nine), and commit mode (autonomous dev) no longer walks untracked files, which cannot block it. An inspection that times out is retried after 5 s, doubling, within the verification's 5-minute wait, then fails with the same error; a git error still fails at once and a cancel still wins. Run e4d0cc24 failed after its worker finished because the untracked-files probe timed out at 30 s on a briefly overloaded slot host; it answered in under a second later.

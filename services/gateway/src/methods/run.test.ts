@@ -625,8 +625,10 @@ test('runResolveDecision clears a prior launch rejection after successful gate r
     ],
     createdAt: '2026-08-03T00:00:00.000Z',
   };
-  updateRun(run.id, { status: 'done', decisions: [decision] });
+  // A run waits at its gate for an action to apply; the resume that applies it is stubbed.
+  updateRun(run.id, { status: 'human-gating', decisions: [decision] });
   t.after(async () => {
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
     await deleteRun(run.id);
   });
 
@@ -640,7 +642,7 @@ test('runResolveDecision clears a prior launch rejection after successful gate r
       actionId: 'request-review',
     },
     () => {},
-    { assertReviewLaunchAllowed: async () => {} },
+    { assertReviewLaunchAllowed: async () => {}, resumeRun: async () => {} },
   );
 
   const persisted = getRun(run.id)!;
@@ -673,10 +675,15 @@ test('runResolveDecision retains a launch rejection for non-review gate actions'
     actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
     createdAt: '2026-08-03T00:00:00.000Z',
   };
-  updateRun(run.id, { status: 'done', decisions: [decision] });
-  t.after(async () => deleteRun(run.id));
+  updateRun(run.id, { status: 'human-gating', decisions: [decision] });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
 
-  await runResolveDecision({ runId: run.id, decisionId: decision.id, actionId: 'hold' }, () => {});
+  await runResolveDecision({ runId: run.id, decisionId: decision.id, actionId: 'hold' }, () => {}, {
+    resumeRun: async () => {},
+  });
 
   assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, rejection);
 });
@@ -713,8 +720,11 @@ function sendBackFixture(t: import('node:test').TestContext, ticket: string) {
     actions: [{ id: SEND_BACK_TO_AGENT_ACTION, label: 'Send back to agent', style: 'primary' }],
     createdAt: '2026-10-16T00:00:00.000Z',
   });
-  updateRun(run.id, { status: 'done', decisions: [gate('gate-1')] });
-  t.after(async () => deleteRun(run.id));
+  updateRun(run.id, { status: 'human-gating', decisions: [gate('gate-1')] });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
   const packageHash = 'b'.repeat(64);
   const scope: RecipeRepairScope = {
     schemaVersion: 1,
@@ -812,7 +822,7 @@ test('Send back preserves operator feedback without accepting client-supplied fi
       selectionData: { feedback },
     },
     () => {},
-    { admitVisualRepair: admission },
+    { admitVisualRepair: admission, resumeRun: async () => {} },
   );
   const persisted = getRun(run.id)!;
   assert.deepEqual(persisted.decisions[0]?.selectionData, { feedback });
@@ -825,7 +835,7 @@ test('Send back reserves one fix round when the gate is consumed and a retry reu
   await runResolveDecision(
     { runId: run.id, decisionId: 'gate-1', actionId: SEND_BACK_TO_AGENT_ACTION },
     () => {},
-    { admitVisualRepair: admission },
+    { admitVisualRepair: admission, resumeRun: async () => {} },
   );
   let persisted = getRun(run.id)!;
   assert.equal(persisted.decisions[0]?.resolvedAction, SEND_BACK_TO_AGENT_ACTION);
@@ -837,7 +847,7 @@ test('Send back reserves one fix round when the gate is consumed and a retry reu
   await runResolveDecision(
     { runId: run.id, decisionId: 'gate-2', actionId: SEND_BACK_TO_AGENT_ACTION },
     () => {},
-    { admitVisualRepair: admission },
+    { admitVisualRepair: admission, resumeRun: async () => {} },
   );
   persisted = getRun(run.id)!;
   assert.equal(persisted.decisions[1]?.resolvedAction, SEND_BACK_TO_AGENT_ACTION);
@@ -1048,6 +1058,89 @@ test('with no engine waiting, acting on the newest gate supersedes the other orp
   const older = getRun(run.id)!.decisions.find((decision) => decision.id === 'older')!;
   assert.equal(older.resolvedAction, 'superseded');
   assert.equal(older.context?.supersededBy, 'newer');
+});
+
+test('a gate action no engine waits for is refused, not acknowledged, when no resume could apply it', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `GATE-UNCARRIED-${Date.now().toString(16).toUpperCase()}`,
+    mode: 'autonomous',
+    initialContext: 'The gate lost its engine in a gateway restart (8a768552, 7e88468f)',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  const gate: RunDecision = {
+    id: 'restarted-gate',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: 'Re-presented after a restart; no engine waits on it.',
+    actions: [{ id: 'hold', label: 'Retry Gate', style: 'secondary' }],
+    createdAt: new Date().toISOString(),
+  };
+  const monitor: RunDecision = {
+    id: 'monitor-wait',
+    type: 'monitor_timeout',
+    title: 'Monitor',
+    description: 'Still open.',
+    actions: [{ id: 'extend', label: 'Extend', style: 'primary' }],
+    createdAt: new Date().toISOString(),
+  };
+  const resumed: string[] = [];
+  for (const [status, decisions, reason] of [
+    ['reconciling', [gate], /the run is reconciling, not waiting at its gate/],
+    ['blocked', [gate, monitor], /also waits on its monitor_timeout decision monitor-wait/],
+  ] as const) {
+    updateRun(run.id, { status, decisions: decisions.map((decision) => ({ ...decision })) });
+    await assert.rejects(
+      runResolveDecision({ runId: run.id, decisionId: gate.id, actionId: 'hold' }, () => {}, {
+        resumeRun: async (id) => {
+          resumed.push(id);
+        },
+      }),
+      (error: unknown) =>
+        error instanceof GatewayMethodError &&
+        error.code === 'RUN_GATE_NOT_READY' &&
+        reason.test(error.message),
+    );
+    assertDecisionStillUnresolved(run.id, gate.id);
+  }
+  // Let a wrongly scheduled resume fire before checking that none was.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(resumed, []);
+});
+
+test('a gate action an engine waits for is taken by it whatever the run status', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `GATE-WAITED-${Date.now().toString(16).toUpperCase()}`,
+    mode: 'autonomous',
+    initialContext: 'A live engine owns the gate while progress is unproven',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  const waiting = createEngineDecision(
+    run.id,
+    'human_gate',
+    'Package ready',
+    [{ id: 'abort', label: 'Abort', style: 'danger' }],
+    undefined,
+    { readProgress: async () => ({ kind: 'unproven', reason: 'run-progress-unconfirmed' }) },
+  );
+  await Promise.resolve();
+  const live = getRun(run.id)!.decisions.at(-1)!;
+  assert.equal(getRun(run.id)!.status, 'reconciling');
+  await runResolveDecision({ runId: run.id, decisionId: live.id, actionId: 'abort' }, () => {});
+  assert.equal(await waiting, 'abort');
 });
 
 test('publication RPC refuses unresolved findings without a pending decision, including an active fix', async (t) => {
