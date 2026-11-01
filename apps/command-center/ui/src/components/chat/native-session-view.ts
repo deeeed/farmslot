@@ -18,6 +18,7 @@ import {
   type NativeSessionResponse,
   type NativeSessionSendResult,
   type NativeSessionTool,
+  type NativeSessionTurnDiffResult,
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
 import {
@@ -34,13 +35,18 @@ import {
   nativeFollowScrolled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
+  nativeMessageCancelable,
   nativeMessageDropped,
   type NativeMessagePreview,
   nativeMessagePreview,
   nativeMessageShown,
   nativeMessageToggleLabel,
   nativeObservationQuery,
+  nativePlanCopyLabel,
+  nativePlanOpen,
+  nativePlanStepMark,
   nativeSendLabel,
+  nativeSteerAvailable,
   nativeTimeline,
   type NativeTimelineEntry,
   type NativeTimelineRow,
@@ -57,6 +63,7 @@ import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/revi
 
 import '../shared/review-dispatch-picker.js';
 import './chat-message.js';
+// Also registers <diff-review>, which shows a turn's file diffs.
 import './native-workspace.js';
 import './native-profiles.js';
 
@@ -67,8 +74,10 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from '../../resource-cache.js';
+import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-controller.js';
 
 import { draftWithContext, takeNativeChatContext } from './native-chat-context.js';
@@ -196,6 +205,15 @@ export class NativeSessionView extends LitElement {
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
   /** Long messages the reader expanded, by command, so a send keeps its state once confirmed. */
   @state() private expandedMessages = new Set<string>();
+  /** The proposed plan last copied, by entry key, and whether the copy worked. */
+  @state() private planCopy?: { key: number; copied: boolean };
+  /** Turn file diffs fetched, by `sequence:path`; a diff never changes, so each is fetched once. */
+  @state() private turnDiffs = new Map<string, { diff?: string; error?: string }>();
+  /** Turn files whose diff is open, by `sequence:path`. */
+  @state() private openTurnFiles = new Set<string>();
+  // A turn's changed files hide tests like every diff list. Native sessions carry no project,
+  // so the default test globs apply.
+  private readonly testFilter = new DiffTestFilterController(this);
   @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
   /** The selection the timeline DOM was last rendered for. */
   private renderedRevision = -1;
@@ -437,8 +455,18 @@ export class NativeSessionView extends LitElement {
       : nothing;
   }
 
-  private renderEntry(entry: NativeTimelineEntry, session: NativeSessionInfo, hidden = false) {
-    return html`<article class=${entry.kind} data-sequence=${entry.key} ?hidden=${hidden}>
+  private renderEntry(
+    entry: NativeTimelineEntry,
+    session: NativeSessionInfo,
+    hidden = false,
+    planOpen = true,
+  ) {
+    const proposal = entry.event.plan?.kind === 'proposal';
+    return html`<article
+      class="${entry.kind}${proposal ? ' proposal' : ''}"
+      data-sequence=${entry.key}
+      ?hidden=${hidden}
+    >
       ${entry.kind === 'tool'
         ? html`<details>
             <summary>
@@ -449,36 +477,175 @@ export class NativeSessionView extends LitElement {
             </summary>
             ${this.renderToolBody(entry.event.tool)}
           </details>`
-        : html`<span class="meta"
-              >${entry.kind === 'user'
-                ? 'You'
-                : entry.kind === 'assistant'
-                  ? session.runner
-                  : entry.event.at}</span
-            >
-            <div class="text">
-              ${entry.kind === 'assistant'
-                ? html`<chat-message
-                    .message=${{
-                      id: `${entry.event.sessionId}:${entry.key}`,
-                      role: 'assistant',
-                      content: entry.text,
-                      timestamp: entry.event.at,
-                    } satisfies ChatMessage}
-                  ></chat-message>`
-                : this.renderMessageBody(
-                    entry.text,
-                    nativeEntryPreview(entry),
-                    entry.event.commandId ?? String(entry.key),
-                  )}
-            </div>
-            ${entry.event.type === 'error' && entry.event.data
-              ? html`<details>
-                  <summary>Error details</summary>
-                  <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
-                </details>`
-              : nothing}`}
+        : entry.kind === 'plan'
+          ? this.renderPlan(entry, planOpen)
+          : entry.kind === 'changes'
+            ? this.renderTurnChanges(entry)
+            : html`<span class="meta"
+                  >${entry.kind === 'user'
+                    ? 'You'
+                    : entry.kind === 'assistant'
+                      ? session.runner
+                      : entry.event.at}</span
+                >
+                <div class="text">
+                  ${entry.kind === 'assistant'
+                    ? this.renderMarkdown(entry, entry.text)
+                    : this.renderMessageBody(
+                        entry.text,
+                        nativeEntryPreview(entry),
+                        entry.event.commandId ?? String(entry.key),
+                      )}
+                </div>
+                ${entry.event.type === 'error' && entry.event.data
+                  ? html`<details>
+                      <summary>Error details</summary>
+                      <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
+                    </details>`
+                  : nothing}`}
     </article>`;
+  }
+
+  private renderMarkdown(entry: NativeTimelineEntry, content: string) {
+    return html`<chat-message
+      .message=${{
+        id: `${entry.event.sessionId}:${entry.key}`,
+        role: 'assistant',
+        content,
+        timestamp: entry.event.at,
+      } satisfies ChatMessage}
+    ></chat-message>`;
+  }
+
+  /**
+   * A checklist shows its steps while its turn runs, then folds to its progress unless the reader
+   * watched it run. A proposed plan is a card: markdown, collapsed when long, with a copy action.
+   */
+  private renderPlan(entry: NativeTimelineEntry, open: boolean) {
+    const plan = entry.event.plan!;
+    if (plan.kind === 'checklist')
+      return html`<details ?open=${open}>
+        <summary>Plan · ${entry.text}</summary>
+        ${plan.text
+          ? html`<div class="text"><span class="body">${plan.text}</span></div>`
+          : nothing}
+        <ol class="plan-steps">
+          ${plan.steps.map(
+            (step) =>
+              html`<li class=${step.status} data-mark=${nativePlanStepMark(step.status)}>
+                ${step.text}
+              </li>`,
+          )}
+        </ol>
+      </details>`;
+    const copied = this.planCopy?.key === entry.key ? this.planCopy.copied : undefined;
+    return html`<span class="meta">Proposed plan</span>
+      <div class="text">
+        ${this.renderMessageBody(
+          entry.text,
+          nativeEntryPreview(entry),
+          `plan:${entry.key}`,
+          (text) => this.renderMarkdown(entry, text),
+        )}
+      </div>
+      <button
+        class="plan-copy"
+        data-testid="native-plan-copy"
+        @click=${() =>
+          copyTextToClipboard(plan.text).then(
+            () => (this.planCopy = { key: entry.key, copied: true }),
+            () => (this.planCopy = { key: entry.key, copied: false }),
+          )}
+      >
+        ${nativePlanCopyLabel(copied)}
+      </button>`;
+  }
+
+  /** What a turn changed in the working tree; each file opens its diff between the turn's checkpoints. */
+  private renderTurnChanges(entry: NativeTimelineEntry) {
+    const changes = entry.event.changes!;
+    if (!changes.files.length) return html`<span class="meta">${entry.text}</span>`;
+    const split = this.testFilter.split(
+      changes.files.map((file) => ({
+        file,
+        path: file.path,
+        additions: file.additions ?? 0,
+        deletions: file.deletions ?? 0,
+      })),
+    );
+    return html`<details>
+      <summary>${entry.text}</summary>
+      ${this.testFilter.renderControls(split.summary)}
+      <ul class="turn-files">
+        ${split.visible.map(({ file }) => {
+          const key = `${entry.event.sequence}:${file.path}`;
+          const opened = this.openTurnFiles.has(key);
+          const fetched = this.turnDiffs.get(key);
+          return html`<li>
+            <button
+              class="turn-file"
+              data-testid="native-turn-file"
+              aria-expanded=${opened ? 'true' : 'false'}
+              @click=${(event: Event) =>
+                void this.toggleInPlace(event.currentTarget, opened, () =>
+                  this.toggleTurnDiff(entry.event.sequence, file.path),
+                )}
+            >
+              ${file.status === 'added'
+                ? 'Added'
+                : file.status === 'deleted'
+                  ? 'Deleted'
+                  : 'Changed'}
+              ${file.path}
+              ${file.additions === undefined
+                ? nothing
+                : html`<span class="meta">+${file.additions} −${file.deletions}</span>`}
+            </button>
+            ${!opened
+              ? nothing
+              : fetched?.diff
+                ? html`<diff-review .filename=${file.path} .diff=${fetched.diff}></diff-review>`
+                : html`<p class="meta">
+                    ${fetched?.error ??
+                    (fetched?.diff === ''
+                      ? 'No text changes (a binary or mode change).'
+                      : 'Loading…')}
+                  </p>`}
+          </li>`;
+        })}
+      </ul>
+    </details>`;
+  }
+
+  private toggleTurnDiff(sequence: number, path: string) {
+    const key = `${sequence}:${path}`;
+    const open = new Set(this.openTurnFiles);
+    if (open.delete(key)) {
+      this.openTurnFiles = open;
+      return;
+    }
+    this.openTurnFiles = open.add(key);
+    const session = this.session;
+    // A fetched or pending diff is kept; a failed fetch is tried again when the file is reopened.
+    const known = this.turnDiffs.get(key);
+    if (!session || (known && !known.error)) return;
+    const revision = this.revision;
+    const settle = (value: { diff?: string; error?: string }) => {
+      if (revision === this.revision) this.turnDiffs = new Map(this.turnDiffs).set(key, value);
+    };
+    this.turnDiffs = new Map(this.turnDiffs).set(key, {});
+    this.api
+      .request<NativeSessionTurnDiffResult>(Methods.NATIVE_SESSION_TURN_DIFF, {
+        sessionId: session.id,
+        executionNodeId: session.executionNodeId,
+        sequence,
+        path,
+        ...(this.worker ? { worker: this.workerControl } : {}),
+      })
+      .then(
+        (result) => settle({ diff: result.diff }),
+        (error: unknown) => settle({ error: (error as Error).message }),
+      );
   }
 
   /** A command shows what it ran and its last lines, its raw input and output one tap away. */
@@ -503,10 +670,16 @@ ${JSON.stringify(
       : raw;
   }
 
-  private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: string) {
-    if (!preview) return html`<span class="body">${text}</span>`;
+  /** `full` renders the whole text; a collapsed preview is always plain text. */
+  private renderMessageBody(
+    text: string,
+    preview: NativeMessagePreview | undefined,
+    key: string,
+    full: (text: string) => unknown = (body) => html`<span class="body">${body}</span>`,
+  ) {
+    if (!preview) return full(text);
     const expanded = this.expandedMessages.has(key);
-    return html`<span class="body">${expanded ? text : preview.text}</span>
+    return html`${expanded ? full(text) : html`<span class="body">${preview.text}</span>`}
       <button
         class="message-toggle"
         data-testid="native-message-toggle"
@@ -921,6 +1094,9 @@ ${JSON.stringify(
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
     this.expandedMessages = new Set();
+    this.planCopy = undefined;
+    this.turnDiffs = new Map();
+    this.openTurnFiles = new Set();
     this.watchedTools = new Set();
     this.foldOpen = new Map();
     this.follow = NATIVE_FOLLOW_LATEST;
@@ -1018,7 +1194,8 @@ ${JSON.stringify(
     );
   }
 
-  private async send() {
+  /** `steer`: the message joins the running turn when the host can take it there. */
+  private async send(delivery?: 'steer') {
     if (!this.canSend || !this.draft.trim() || !this.session) return;
     const command: LocalCommand = {
       sessionId: this.session.id,
@@ -1043,6 +1220,7 @@ ${JSON.stringify(
         executionNodeId: command.executionNodeId,
         commandId: command.commandId,
         text: command.text,
+        ...(delivery ? { delivery } : {}),
         ...(this.worker ? { worker: this.workerControl } : {}),
       });
     } catch (error) {
@@ -1054,7 +1232,11 @@ ${JSON.stringify(
   }
 
   private async sessionAction(
-    method: typeof Methods.NATIVE_SESSION_INTERRUPT | typeof Methods.NATIVE_SESSION_CLOSE,
+    method:
+      | typeof Methods.NATIVE_SESSION_INTERRUPT
+      | typeof Methods.NATIVE_SESSION_CLOSE
+      | typeof Methods.NATIVE_SESSION_CANCEL,
+    params: { commandId?: string } = {},
   ) {
     if (!this.session || this.busy || !this.connected || !this.inputAllowed) return;
     const revision = this.revision;
@@ -1064,6 +1246,7 @@ ${JSON.stringify(
       await this.api.request(method, {
         sessionId: this.session.id,
         executionNodeId: this.session.executionNodeId,
+        ...params,
         ...(this.worker ? { worker: this.workerControl } : {}),
       });
     } catch (error) {
@@ -1072,6 +1255,14 @@ ${JSON.stringify(
       if (revision === this.revision) this.busy = false;
       this.schedule(0);
     }
+  }
+
+  /** Edit: the host removes the queued message, and its release puts the text back here. */
+  private async editQueued() {
+    const commandId = this.localCommand?.commandId;
+    const receipt = this.receipts.find((item) => item.commandId === commandId);
+    if (commandId && nativeMessageCancelable(this.session, receipt))
+      await this.sessionAction(Methods.NATIVE_SESSION_CANCEL, { commandId });
   }
 
   private async respond(event: NativeSessionEvent, response: NativeSessionResponse) {
@@ -1432,6 +1623,7 @@ ${JSON.stringify(
                                 row.entry,
                                 session,
                                 row.fold !== undefined && !this.foldIsOpen(row.fold),
+                                nativePlanOpen(row, this.watchedTools),
                               ),
                       ),
                     )}
@@ -1446,6 +1638,16 @@ ${JSON.stringify(
                               this.localCommand.commandId,
                             )}
                           </div>
+                          ${nativeMessageCancelable(session, lastReceipt)
+                            ? html`<button
+                                class="message-toggle"
+                                data-testid="native-edit"
+                                ?disabled=${!this.connected || !this.inputAllowed || this.busy}
+                                @click=${() => this.editQueued()}
+                              >
+                                Edit
+                              </button>`
+                            : nothing}
                         </article>`
                       : nothing}
                     ${!this.transcript.events.length
@@ -1505,10 +1707,22 @@ ${JSON.stringify(
                         class="primary"
                         data-testid="native-send"
                         ?disabled=${!this.canSend || !this.draft.trim()}
-                        @click=${this.send}
+                        @click=${() => this.send()}
                       >
                         ${nativeSendLabel(session.state) ?? 'Send'}
                       </button>
+                      ${session.capabilities.steer
+                        ? html`<button
+                            data-testid="native-steer"
+                            title="Add this message to the running turn"
+                            ?disabled=${!this.canSend ||
+                            !this.draft.trim() ||
+                            !nativeSteerAvailable(session, this.requests)}
+                            @click=${() => this.send('steer')}
+                          >
+                            Steer
+                          </button>`
+                        : nothing}
                       <button
                         data-testid="native-stop"
                         ?disabled=${!this.connected ||

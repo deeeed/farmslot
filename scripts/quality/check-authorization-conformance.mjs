@@ -188,11 +188,13 @@ const nativeOwnerMethods = new Set([
   'native.session.send',
   'native.session.respond',
   'native.session.interrupt',
+  'native.session.cancel',
   'native.session.close',
   'native.session.workspace.list',
   'native.session.workspace.read',
   'native.session.workspace.changes',
   'native.session.workspace.diff',
+  'native.session.turn.diff',
 ]);
 for (const method of nativeOwnerMethods) {
   if (!registrySet.has(method) || !routed.has(method))

@@ -10,6 +10,8 @@ export interface NodeInfo {
   execCancellation?: boolean;
   /** This node checks `expectedHash` on file writes, renames and deletes. */
   conditionalWrites?: boolean;
+  /** This node types a `tmux.send` carrying `seq` once per (pane, stream, n). */
+  terminalInputSequence?: boolean;
 }
 
 export interface NodesListResult {

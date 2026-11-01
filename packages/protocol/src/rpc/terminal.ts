@@ -33,8 +33,21 @@ export interface TerminalSnapshotParams extends SlotAgentTargetParams {
   lines?: number;
 }
 
+/**
+ * Numbers one input batch within a client's stream for a pane. A gateway that advertises
+ * `terminalInputSequence` writes each number once, so a batch resent after a lost reply is
+ * acknowledged without being typed again.
+ */
+export interface TerminalInputSequence {
+  /** Random per client input queue; a new queue starts a new stream. 1-64 of `A-Za-z0-9_-`. */
+  stream: string;
+  /** Increases by one per batch in the stream. */
+  n: number;
+}
+
 export interface TerminalInputParams extends SlotAgentTargetParams {
   data: string; // raw keystroke data from xterm.js onData
+  seq?: TerminalInputSequence;
 }
 
 export interface TerminalResizeParams extends SlotAgentTargetParams {
@@ -65,6 +78,7 @@ export interface TerminalWorkerUnsubscribeParams {
 export interface TerminalWorkerInputParams {
   worker: TmuxWorkerRef;
   data: string;
+  seq?: TerminalInputSequence;
 }
 
 export interface TerminalWorkerResizeParams {

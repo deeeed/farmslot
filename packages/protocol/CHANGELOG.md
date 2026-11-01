@@ -5,9 +5,29 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - `markdownFence(content, info?)` fences text as a Markdown code block that it cannot close early, and `nativeTailLines(lines, max)` keeps the last lines after a "… N earlier lines" line; the command card, recipe-cli artifacts, publication receipts and Command Center's terminal context share them.
+- `GatewayAuthConnectResult.capabilities.terminalInputSequence.durable` says panes keep the typed-input record across gateway restarts; otherwise `instance` names the process that has it. `NodeInfo.terminalInputSequence` marks a node whose `tmux.send` takes `seq`. The pane record helpers (`terminalInputRecordOption`, `parseTerminalInputRecord`, `staleTerminalInputRecords`, `isTerminalInputStream`) define the `@farmslot-input-<stream>` tmux pane option both write.
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.74.9 - 2026-11-01
+
+- `turn.changes` (`NativeTurnChanges`, `NativeTurnFile`) lists the files a native turn changed in its Git working tree, with line counts, between the host's checkpoints before and after it (`from`, `to`), or why they are `unavailable`. `native.session.turn.diff` (`NativeSessionTurnDiffParams`, `NativeSessionTurnDiffResult`) returns one listed file's diff between those checkpoints. The client-cache timeline has a `changes` entry (none for a turn that changed nothing) with `nativeTurnChangesText` ("Changed 3 files · +12 −4"), and the history projection is bumped so cached histories are read again once (ADR-057 Amendment 9).
+- `TerminalInputSequence` and an optional `seq` on `TerminalInputParams` and `TerminalWorkerInputParams`; `GatewayAuthConnectResult.capabilities.terminalInputSequence` (`{ instance }`) names the gateway process that writes each number once.
+
+## 0.74.8 - 2026-11-01
+
+- `NativeSessionSendParams.delivery: 'steer'` adds a message to the running turn when the session reports `NativeSessionCapabilities.steer`; its receipt carries `steered: true` and settles with that turn. `nativeSteerAvailable` says when to offer Steer (the capability and a running turn), and `nativeDeliveryLabel` reads a steered, accepted message as "Added to the running turn". `nativeCommandLockSettled` also releases a client's held message once the runner accepted it and the conversation shows it, instead of only when its turn ends.
+
+## 0.74.7 - 2026-11-01
+
+- `plan.updated` (`NativeSessionPlan`, `NativePlanStep`) carries a runner's whole plan: a `checklist` of steps (`pending`, `in-progress`, `completed`, with an optional note) or a `proposal` in markdown. The client-cache timeline has a `plan` entry, one per turn and kind, updated in place under the key of its first update; `nativePlanText` gives a checklist's progress ("3 of 5 steps"); `nativeTimelineRows` marks a plan whose turn ended (`ended`), `nativeWatchTools` also watches running plans, and `nativePlanOpen` keeps a watched plan open. A long proposal collapses like a long message. The history projection is bumped, so cached histories that dropped plans are read again once.
+- `RunAttestBeforeAttemptParams.recipeRunId` documents the attempt path under `artifacts/recipe-runs/`, including the harness's `attempts/<id>` layout.
+
+## 0.74.6 - 2026-11-01
+
+- `native.session.cancel` removes a native message still queued for the next turn: it takes a session target and `commandId` and returns the receipt, failed and never submitted, with outcome `cancelled`. `NativeSessionCapabilities.cancelQueued` says the session's host supports it, and `nativeMessageCancelable` says whether a client can take a sent message back (ADR-057 Amendment 9).
+- `run.attestBeforeAttempt` (`RunAttestBeforeAttemptParams`, `RunAttestBeforeAttemptResult`), `BeforeAttemptAttestation`, `Run.beforeAttemptAttestations` and `ReadyGatePrPackage.beforeAttemptAttestationIds` record a person's attestation of a same-run recipe attempt as before-only evidence. `buildRunDecisionActionRequest` routes the `attest-before-attempt` gate action (`ATTEST_BEFORE_ATTEMPT_ACTION`) to it with the displayed package hash (ADR-062 Amendment 21).
 - `ProjectConfig.slotSelection` (`ProjectSlotSelectionConfig`, `PhysicalDeviceSlotPolicy`) carries project.json `slot_selection.physical_devices`. `RunCreateParams.requiredCapabilities` names capability ids the run's slot must provide; `RunSlotCapabilityRequirements.sourceSlotId` is optional, unset for create-time requirements.
 - `nativeMessageShown` says whether a native conversation shows a sent message yet (its submission or acceptance, with the text), the rule `nativeTimeline` uses for user entries, so a client can show a message it sent until then. `nativeMessageDropped` says from its receipt that the host failed a sent message without submitting it (a queued message when the session closes or its worker lease changes), so a client can give the text back.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.5 - 2026-10-31
 

@@ -16,6 +16,7 @@ import {
 } from '../../security/native-worker-owner.js';
 
 import { routeNativeExecution } from './node.js';
+import { nativeWorkerRecordsAcceptance } from './worker-input.js';
 
 export const NATIVE_WORKER_READ_METHODS: readonly string[] = [
   Methods.NATIVE_SESSION_READ,
@@ -23,6 +24,7 @@ export const NATIVE_WORKER_READ_METHODS: readonly string[] = [
   Methods.NATIVE_SESSION_WORKSPACE_READ,
   Methods.NATIVE_SESSION_WORKSPACE_CHANGES,
   Methods.NATIVE_SESSION_WORKSPACE_DIFF,
+  Methods.NATIVE_SESSION_TURN_DIFF,
 ];
 
 function readTarget(value: unknown): NativeWorkerControlTarget {
@@ -117,7 +119,7 @@ export async function authorizeNativeWorkerHistory(
         'Current workspace is unavailable for task history',
       );
     if (run.transport !== 'native') resolveReviewWorkspaceOwner(binding.ownerPrincipalId);
-    return selected;
+    return { ...selected, run };
   };
   return current();
 }
@@ -145,7 +147,7 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
     NATIVE_WORKER_READ,
     nativeParams,
   )) as NativeSessionReadResult;
-  await current();
+  const { run } = await current();
   if (
     !result.scope ||
     result.scope.leaseId !== binding.leaseId ||
@@ -155,5 +157,13 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
     result.session.executionNodeId !== binding.executionNodeId
   )
     throw new GatewayMethodError('NATIVE_SESSION_ERROR', 'Native worker history scope changed');
-  return result;
+  const context = run.agentContexts?.find((item) => item.id === target.contextId);
+  if (!nativeWorkerRecordsAcceptance(run, context)) return result;
+  // Removal and steering are refused here, so a client must not offer them.
+  const {
+    cancelQueued: _cancelWithheld,
+    steer: _steerWithheld,
+    ...capabilities
+  } = result.session.capabilities;
+  return { ...result, session: { ...result.session, capabilities } };
 }

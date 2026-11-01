@@ -296,25 +296,33 @@ export async function assertReviewRoundAvailable(run: Run): Promise<void> {
 
 export function reviewBudgetScopeBrief(run: Run): string {
   const budget = budgetFor(run, [run]);
-  return formatReviewBudgetScopeBrief(budget.used, budget.extensions ?? []);
+  return formatReviewBudgetScopeBrief(budget.used, budget.limit, budget.extensions ?? []);
 }
 
 /** Static task inputs freeze before dispatch reserves its next admission. */
 export async function nextReviewBudgetScopeBrief(run: Run): Promise<string> {
   const budget = await runReviewRoundBudget(run);
-  return formatReviewBudgetScopeBrief(budget.used + 1, budget.extensions ?? []);
+  return formatReviewBudgetScopeBrief(budget.used + 1, budget.limit, budget.extensions ?? []);
 }
 
+/** States the reviewer's round (project review templates relax blocking from round 3). */
 function formatReviewBudgetScopeBrief(
   used: number,
+  limit: number,
   extensions: readonly ReviewBudgetExtension[],
 ): string {
   const extension = [...extensions]
     .reverse()
     .find((entry) => used > entry.previousLimit && used <= entry.limit);
-  return extension
+  const roundLimit = extension?.limit ?? limit;
+  const round =
+    used >= 1 && used <= roundLimit
+      ? `\n## Review round\n\nReview round ${used} of ${roundLimit}.\n`
+      : '';
+  const scope = extension
     ? `\n## Authorized additional-review scope\n\nAttempt ${used}/${extension.limit}, granted by ${extension.principalId} (${extension.principalSubject.type}) at ${extension.approvedAt}. Grant-time head ${extension.headSha} is provenance; review the current captured head on this owned branch.\n\n${extension.scopeBrief}\n\nThis grants review scope only. Retain the immutable input/session and publication contracts.\n`
     : '';
+  return round + scope;
 }
 
 /** Load history first, then check fresh live state synchronously at consumption. */

@@ -8,6 +8,7 @@ import {
   type AgentRole,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   assertPRReviewOptions,
+  ATTEST_BEFORE_ATTEMPT_ACTION,
   buildRunDecisionActionRequest,
   buildRunResolveDecisionParams,
   CONFIRM_VISUAL_CLAIM_ACTION,
@@ -888,7 +889,7 @@ export function registerRunCommand(program: Command): void {
     .description('List or resolve pending human-gate decisions for a run')
     .option(
       '--action <id>',
-      'Gate action (approve-publish|hold|confirm-visual|reject-visual|mark-untestable|…)',
+      'Gate action (approve-publish|hold|confirm-visual|reject-visual|mark-untestable|attest-before-attempt|…)',
     )
     .option('--decision <id>', 'Decision id when several are pending')
     .option(
@@ -1056,7 +1057,10 @@ export function registerRunCommand(program: Command): void {
         if (!decision) {
           throw new Error(`Decision ${decisionId} was not found on run ${runId}.`);
         }
-        if (actionId === MARK_CLAIM_UNTESTABLE_ACTION) {
+        if (
+          actionId === MARK_CLAIM_UNTESTABLE_ACTION ||
+          actionId === ATTEST_BEFORE_ATTEMPT_ACTION
+        ) {
           const request = buildRunDecisionActionRequest({
             runId: current.id,
             decision,
@@ -1064,6 +1068,7 @@ export function registerRunCommand(program: Command): void {
             claimId: opts.claim,
             recipeRunId: opts.recipeRun,
             claimOverrideReason: opts.reason,
+            reason: opts.reason,
           });
           const result = await client.call(request.method, request.params);
           emit.ok(result);

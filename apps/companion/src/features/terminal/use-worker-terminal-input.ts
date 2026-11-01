@@ -1,0 +1,84 @@
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+
+import { Methods, type TmuxWorkerRef } from '@farmslot/protocol';
+
+import type { GatewayClient } from '../../lib/gateway-client';
+import {
+  assertResendable,
+  createTerminalInputQueue,
+  resendScope,
+  type TerminalInput,
+  TerminalInputCancelledError,
+  type TerminalInputQueue,
+  type TerminalInputQueueOptions,
+} from '../../lib/terminal-input-queue';
+import { useConnectionStore } from '../../store/connection';
+
+/** One worker-pane request at a time, so keys reach the pane in the order typed. */
+export function useWorkerTerminalInput(
+  client: GatewayClient | null,
+  worker: TmuxWorkerRef | null,
+  events: Pick<TerminalInputQueueOptions, 'onRetry'> = {},
+): TerminalInput {
+  const profileId = useConnectionStore((state) => state.activeProfileId);
+  const principalId = useConnectionStore((state) => state.principalId);
+  const queueRef = useRef<{ key: string; queue: TerminalInputQueue } | null>(null);
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+  useEffect(
+    () => () => {
+      queueRef.current?.queue.dispose();
+      queueRef.current = null;
+    },
+    [client, worker, profileId, principalId],
+  );
+  const write = useCallback(
+    (data: string) => {
+      if (!client || !worker) return Promise.reject(new TerminalInputCancelledError());
+      // One queue per client, sign-in and pane: keys typed during a short reconnect wait in it
+      // and go out once it is back, and never under another profile or principal.
+      const key = JSON.stringify([profileId, principalId, worker]);
+      if (queueRef.current?.key !== key) {
+        queueRef.current?.queue.dispose();
+        queueRef.current = {
+          key,
+          queue: createTerminalInputQueue(
+            async (batch, assertActive, markSent, seq, sentTo) => {
+              const generation = client.connectionGeneration;
+              // Rechecked after any wait for the connection or a token refresh, before sending.
+              const assertCurrent = () => {
+                assertActive();
+                const current = useConnectionStore.getState();
+                if (
+                  client.connectionGeneration !== generation ||
+                  current.activeProfileId !== profileId ||
+                  current.principalId !== principalId
+                )
+                  throw new TerminalInputCancelledError();
+                // Only a live connection says which gateway would receive the frame; the last
+                // check runs connected, just before the frame is written.
+                if (client.connectionState === 'connected')
+                  assertResendable(sentTo, client.terminalInputSequence);
+              };
+              assertCurrent();
+              // Older gateways ignore `seq`, so a batch they received is not sent again.
+              await client.request(
+                Methods.TERMINAL_WORKER_INPUT,
+                { worker, data: batch, seq },
+                10_000,
+                {
+                  assertCurrent,
+                  onSent: () => markSent(resendScope(client.terminalInputSequence)),
+                },
+              );
+            },
+            { onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt) },
+          ),
+        };
+      }
+      return queueRef.current.queue.write(data);
+    },
+    [client, worker, profileId, principalId],
+  );
+  return useMemo(() => ({ write }), [write]);
+}

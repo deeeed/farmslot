@@ -74,6 +74,10 @@ export const workerTerminalStyles = StyleSheet.create({
     color: colors.statusFail,
     padding: spacing.sm,
   },
+  notice: {
+    color: colors.textMuted,
+    paddingHorizontal: spacing.sm,
+  },
   terminalArea: { flex: 1 },
   voicePanel: {
     backgroundColor: colors.bgSurface,

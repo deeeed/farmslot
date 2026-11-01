@@ -59,6 +59,7 @@ export async function holdWorkspaceReview(runId: string) {
       ],
       payload,
       {
+        generation,
         canReplay: (decision) =>
           !retryError &&
           isDeepStrictEqual((decision.payload as ReviewGatePayload)?.reviewMd, result.reviewMd) &&

@@ -2217,6 +2217,85 @@ test('runReplayStep clears stale publish approval when replaying human gate', as
   assert.equal(replayed.engineState?.publishGate?.reviewRecovery, undefined);
 });
 
+// 05b37f1c: a COMPLETE replay dropped the run's output review, then COMPLETE refused
+// "A captured output review is required".
+test('runReplayStep keeps the captured output review when replaying complete', async (t) => {
+  const taskFile = '/tmp/farmslot-complete-replay-task/TASK.md';
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const outputReview: RunDecision = {
+    id: 'captured-output-review',
+    type: 'engine_output_review',
+    title: 'Review run output',
+    description: 'The worker has produced a report.',
+    actions: [{ id: 'close-run', label: 'Close run', style: 'primary' as const }],
+    createdAt: '2026-04-15T00:00:00.000Z',
+    payload: { kind: 'output-review' } as any,
+  };
+  const staleApproval: RunDecision = {
+    id: 'stale-approve-publish',
+    type: 'engine_human_gate',
+    title: 'Ready to publish?',
+    description: 'Old approval from a prior gate generation',
+    actions: [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }],
+    createdAt: '2026-04-15T00:05:00.000Z',
+    resolvedAt: '2026-04-15T00:10:00.000Z',
+    resolvedAction: 'approve-publish',
+    payload: { kind: 'ready' } as any,
+  };
+  const staleResult: RunDecision = {
+    id: 'stale-result-decision',
+    type: 'engine_result_decision',
+    title: 'Completion refused',
+    description: 'Old refusal',
+    actions: [{ id: 'send-back', label: 'Send back', style: 'primary' as const }],
+    createdAt: '2026-04-15T00:20:00.000Z',
+  };
+  const doneThroughReview = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+  ]);
+  updateRun(run.id, {
+    status: 'failed',
+    taskFile,
+    decisions: [outputReview, staleApproval, staleResult],
+    steps: run.steps.map((step) =>
+      doneThroughReview.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'complete'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (getRun(run.id)) {
+      await evictTestRun(run.id, 'failed');
+    }
+  });
+
+  await runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {});
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.deepEqual(
+    replayed.decisions.filter((decision) => !decision.resolvedAt).map(({ id }) => id),
+    ['captured-output-review'],
+  );
+  assert.equal(
+    replayed.decisions.some(({ id }) => id === 'stale-approve-publish'),
+    false,
+  );
+});
+
 test('runReplayStep supersedes a pending human-gate decision instead of deleting it', async (t) => {
   const taskFile = '/tmp/farmslot-human-gate-pending/TASK.md';
   const run = createRun({
@@ -2285,6 +2364,66 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
   assert.deepEqual(replayed.metrics.terminalEvidence, {
     reportPath: 'artifacts/no-change-report.md',
   });
+});
+
+test('runReplayStep keeps a superseded gate decision when an output recapture clones the decisions', async (t) => {
+  const taskFile = '/tmp/farmslot-human-gate-recapture/TASK.md';
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const pendingGate: RunDecision = {
+    id: 'pending-gate-recapture',
+    type: 'engine_human_gate',
+    title: 'Ready to publish?',
+    description: 'Pending decision owned by a dead engine loop',
+    actions: [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }],
+    createdAt: '2026-07-18T10:00:00.000Z',
+  };
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+    'complete',
+  ]);
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile,
+    decisions: [pendingGate],
+    steps: run.steps.map((step) =>
+      doneThroughComplete.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'human-gate'
+          ? { ...step, status: 'running' }
+          : step,
+    ),
+  });
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (getRun(run.id)) {
+      await evictTestRun(run.id, 'failed');
+    }
+  });
+
+  // A gate replay on a connected slot recaptures the output, whose commit rewrites
+  // the decisions as clones (outputReviewDecisions).
+  await runReplayStep(
+    { runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' },
+    () => {},
+    {
+      afterGenerationBump: async () => {
+        updateRun(run.id, { decisions: structuredClone(getRun(run.id)!.decisions) });
+      },
+    },
+  );
+
+  const superseded = getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-recapture');
+  assert.ok(superseded, 'pending gate decision must be retained');
+  assert.equal(superseded.resolvedAction, 'superseded');
 });
 
 test('runReplayStep supersedes pending gate decisions before its first awaited operation and reopens them when it fails', async (t) => {

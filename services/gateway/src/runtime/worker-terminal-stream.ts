@@ -1,6 +1,6 @@
 // worker-terminal-stream.ts — Poll node tmux panes by worker ref and stream terminal.data
 
-import type { TerminalData, TmuxWorkerRef } from '@farmslot/protocol';
+import type { TerminalData, TerminalInputSequence, TmuxWorkerRef } from '@farmslot/protocol';
 
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
@@ -42,12 +42,32 @@ export async function captureWorkerTerminal(
   return payload.lines.filter((line): line is string => typeof line === 'string');
 }
 
-export async function sendWorkerTerminalInput(worker: TmuxWorkerRef, data: string): Promise<void> {
+/** The worker's node types a `tmux.send` carrying `seq` once per (pane, stream, n). */
+export function workerNodeTypesInputOnce(worker: TmuxWorkerRef): boolean {
+  return getNode(worker.nodeId)?.terminalInputSequence === true;
+}
+
+/**
+ * `dispatched` runs just before the request is written to the node's open socket. `seq` goes to a
+ * node that types each number once; an older node gets the keys alone.
+ */
+export async function sendWorkerTerminalInput(
+  worker: TmuxWorkerRef,
+  data: string,
+  dispatched?: () => void,
+  seq?: TerminalInputSequence,
+): Promise<void> {
+  const node = requireNode(worker);
   await sendNodeRequest(
-    requireNode(worker),
+    node,
     'tmux.send',
-    { session: worker.target, text: data, enter: false },
-    { timeout: 5_000 },
+    {
+      session: worker.target,
+      text: data,
+      enter: false,
+      ...(seq && node.terminalInputSequence ? { seq } : {}),
+    },
+    { timeout: 5_000, onRequestId: () => dispatched?.() },
   );
 }
 

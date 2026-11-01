@@ -181,6 +181,7 @@ test('operator cancel settles the backlog and ticks the work graph', async () =>
       'work-graph-tick:ok',
       'runtime-capabilities:ok',
       'slot-release:ok',
+      'episode-capture:ok',
     ],
   );
   assert.ok(h.calls.includes('settleBacklog'), 'backlog must be settled by the transition itself');

@@ -318,3 +318,91 @@ Hosts keep their loaded code until stopped, so a session started on an older hos
 ### Public surface
 
 `NativeSessionTool` and `NativeToolKind` in `@farmslot/protocol`, with the shared presenters `nativeToolLabel` and `nativeCommandText` in its client cache. No RPC, CLI flag or harness change. `@farmslot/agent-runtime` sets the fields, so it needs a release. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) lists each adapter's mapping.
+
+## Amendment 9: queued messages, steering, plans and per-turn changes, 2026-10-31
+
+**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in #1658; part 2 (plan updates: checklists and proposed plans) implemented in #1668; part 3 (steer) implemented in #1671; part 4 (per-turn changes) implemented in this change; Implement follows in its own change.
+
+### Decision
+
+**Remove a queued message.** `native.session.cancel` takes a session target and a `commandId`.
+
+- The host fails a command that is still queued and was never submitted: `state: 'failed'`, `submitted: false`, `accepted: false`, `outcome: 'cancelled'`, persisted before the reply. It returns that receipt, and a repeated call returns the same receipt.
+- It refuses a command that was submitted, is unknown, failed for another reason, or belongs to another generation or worker lease. The client offers Stop instead.
+- Removal and the queue's own submission are each decided synchronously on the host's event loop, so exactly one of them wins.
+- A worker call carries the same pinned target and passes the same gateway fence as a worker message, then the host's lease check (`native.worker.cancelCommand`; `native.worker.cancel` still cancels a worker launch). The gateway refuses command IDs it issued itself (task, subtask, recovery, run instruction and completion feedback IDs), and messages on a run that records them through acceptance registration, until that ledger can withdraw an instruction.
+
+**Edit a queued message** = remove, then send again with a new command ID. The removed text returns to the composer through the existing dropped-message path (`nativeMessageDropped`), and the edited text goes to the end of the queue. There is no in-place edit: a command ID stays bound to its text, which keeps retries idempotent.
+
+Clients show Edit on the queued message they sent while `nativeMessageCancelable` holds: the session reports `capabilities.cancelQueued`, and the receipt is queued, unsubmitted and of the session's current generation. The host reports the capability; the gateway withholds it from a pinned worker's read on a run whose worker messages are acceptance sources, since it refuses removal there.
+
+**Steer.** `native.session.send` accepts `delivery: 'steer'`. The host adds the message to the running turn only if all of these hold, and otherwise sends it as usual:
+
+- the adapter declares `capabilities.steer`;
+- the session is `running` (its turn is known);
+- no request is pending and no submission is in flight.
+
+The intent is journaled before the write to the runner, as for any submission. The runner's reply is acceptance; a refusal (an error reply, such as when the turn ended first) fails the command, and nothing is resent. A lost reply (the runner stopped, or the request timed out) stays unknown. The receipt carries `steered: true`, and the command completes or fails with the turn it joined, so it never holds up queued input. The turn's own events stay stamped with the command that started it.
+
+Codex declares `steer` and calls `turn/steer` with the turn as `expectedTurnId` and the command ID as `clientUserMessageId` (`turn/steer` exists from Codex 0.156.1; the fleet runs 0.166.0, and an older Codex answers it with an error, which fails the command visibly). Claude and ACP declare nothing: Claude's "now" priority ends the turn, and ACP has no mid-turn input. Clients offer Steer next to "Queue message" while `nativeSteerAvailable` holds (the capability and a running turn); a session that cannot steer keeps "Queue message" and Stop. **Stop and send:** clients without steer offer "Stop and send": interrupt, then send; the send queues and runs once the interrupted turn ends. It needs no contract change and follows in its own change. A client releases the one message it holds once the runner accepted it and the conversation shows it (`nativeCommandLockSettled`), not only when its turn ends, so the reader can steer or queue while their own turn runs.
+
+Steering reaches the host as its own method (`steer`, and `native.worker.steer` under the worker's lease), so a host started before this change refuses it as an unknown method instead of dropping the field and queueing the message. A pinned worker's steer passes the same gateway fence as its other messages. On a run that records worker messages for acceptance the gateway refuses it, since that ledger records an instruction for the next turn, and withholds `steer` from that worker's read.
+
+**Plan updates.** A `plan.updated` event carries a `plan` of one of two kinds:
+
+- `kind: 'checklist'`: the runner's working steps, `steps: [{ text, status: 'pending' | 'in-progress' | 'completed' }]`, with an optional note in `text`.
+- `kind: 'proposal'`: a plan proposed before acting, as markdown in `text`.
+
+Each event carries the whole plan and replaces the earlier plan of the same kind in that turn. Adapters map:
+
+- Codex `turn/plan/updated` to a checklist (its `explanation` is the note). The app-server leaves Codex's plan tool off unless the thread enables it, so the adapter starts every thread with `tools.update_plan.enabled`: on 0.166 a three-step prompt sent no plan updates without it and four with it. The tool only reports progress;
+- a completed Codex `plan` item to a proposal; its streamed deltas are ignored, since they need not match the final text;
+- an ACP `plan` update to a checklist; entry `priority` is dropped.
+
+Claude's TodoWrite and ExitPlanMode come later, after a live check of what Claude's headless mode sends.
+
+A checklist is one timeline entry per turn and kind, at the place and key of its first update, holding the latest plan. It shows its steps while its turn runs and folds to its progress ("3 of 5 steps") once the turn ends, unless the reader watched it run. A proposal is a card: markdown, collapsed when long, with a copy action. Implement (a mode switch) comes with its own change.
+
+**Per-turn changes.** For a session whose working directory is in a Git working tree, the host takes a checkpoint before and after each turn:
+
+1. when it submits the turn's first command, after journaling it and before writing to the runner;
+2. when the turn ends.
+
+- A checkpoint is a commit of the working tree's content, untracked files Git does not ignore included, with `HEAD` as parent. It is built in the session's own index, kept in the host's state directory, seeded from the worktree's index and reseeded only when that changes. It is kept under `refs/farmslot/native/<sessionId>/` and touches no file, index, `HEAD` or branch of the worktree. An untracked file over 10 MiB when first seen is left out, and one removed while a checkpoint lists it is skipped. A checkpoint whose tree equals the previous one reuses it, so an unchanged worktree adds no commit or ref. A session's checkpoint steps run one at a time.
+- A turn's first command is journaled after the previous turn's `turn.changes`, so each turn's changes sit under its own message, and its start checkpoint is taken before the runner write. Delivery waits for both at most 3 s in all, then proceeds. A previous turn's checkpoint still running then is reported unavailable, so it cannot take in the next turn's edits, and a start checkpoint still running leaves that turn's changes unavailable. A failed checkpoint never fails a turn. The approved text said checkpoints never block delivery; a start taken after the runner's first write would give that write to the previous turn, so delivery waits, bounded, instead.
+- After the end checkpoint the host appends `turn.changes` for the turn's command: `changes: { from, to, files: [{ path, status: 'added' | 'modified' | 'deleted', additions?, deletions? }], truncated?, unavailable? }`. Paths are relative to the repository root, a binary file has no counts, and at most 500 files are listed (`truncated` past that). `unavailable` says why a turn has no changes to show.
+- `native.session.turn.diff` takes a session target, the `sequence` of a `turn.changes` event and a `path` it lists, and returns that file's diff between the two checkpoints, within the workspace diff's 1 MiB limit. It is served with the workspace reads, behind their worker fence.
+- The host keeps a session's last 100 checkpoints and deletes its refs and index when the session closes, including a session that failed or was restored after a host restart. A failure to delete them is shown as an `error` event, and closing again retries. A diff whose checkpoints are no longer under the session's refs is refused as no longer retained.
+- A session whose working directory is read-only (a sandboxed reviewer) takes no checkpoints. Edits made between turns fall outside both checkpoints; changes made during a turn by background processes, or by a pull or rebase, count as the turn's.
+
+Command Center shows what each finished turn changed ("Changed 3 files · +12 −4"), and each file opens its diff in the shared diff viewer; a turn that changed nothing adds no row. Companion, and diffs after a session closes, come later.
+
+### Rationale and consequences
+
+A queued message could be dropped only by closing the session. The queue lives in the host, so removal needs no runner support.
+
+Hosts keep their loaded code until stopped. A session on an older host reports no `cancelQueued`, so clients hide Edit and keep "Queue message" and Stop; that host refuses `native.session.cancel` as an unknown method. Older clients show a removed message as "Failed" and return its text to the composer.
+
+Waiting for the turn to end delayed a correction until the work it corrected was done. Steering lets the reader adjust a running turn. Older clients never send `delivery`, and a client never offers Steer without the capability.
+
+Codex and ACP runners already sent their plans; adapters dropped them, so a reader saw only the prose around them. A plan is shown, never acted on, so it needs no capability: an older host sends no `plan.updated`, and older clients skip the event. Cached histories saved before this change dropped plan events, so the history projection number is bumped and they are read again once.
+
+The workspace pane answers "what differs from `HEAD` now", not "what did this message change", and shows nothing once the worker commits. A checkpoint taken by the host gives every Git-backed runner the same answer; Codex's own turn diff covers only Codex and is not used. The cost is Git work at each turn boundary and hidden refs in the repository's Git directory, which linked worktrees share; deleting a session's refs at close stops them piling up. No Farmslot flow mirror-pushes or prunes refs, and hidden refs already exist under `refs/farmslot/`.
+
+Measured with this change's code on a shared clone of mini's MetaMask Mobile checkout (15,240 tracked files, uncommitted edits left in place, load about 3): the first checkpoint, which seeds the session's index, took 0.24 to 0.25 s, one with nothing changed since the last 0.14 to 0.15 s, one after a turn's edits 0.23 s, and the file summary 0.03 s. A read-only run of the same Git steps on macpro's six MetaMask Mobile worker checkouts (17,120 to 18,503 files, load about 13) took 0.34 to 0.79 s, and 0.23 to 0.39 s with nothing changed. The start checkpoint delays delivery by that much; the end checkpoint runs after the turn. Work avoided (COMMON "Extreme performance, clean architecture"):
+
+- No rescan: the session's index persists between checkpoints, so Git's stat cache hashes only files changed since the previous one, untracked files included. It is reseeded only when the worktree's index changes, and the copy keeps that index's timestamp, so entries written in the same second are still re-checked.
+- No recopy: a checkpoint is a Git tree; unchanged blobs are shared by hash with every earlier checkpoint and with the repository.
+- No per-file spawns: one Git invocation per step. The file list and its counts come from one tree-to-tree diff, and a file's diff is computed only when a reader opens it.
+
+An older host sends no `turn.changes`, so clients offer no turn diffs for its sessions, and an older node service refuses `native.session.turn.diff` as an unknown method. Older clients skip the event.
+
+### Public surface
+
+`native.session.cancel` (`NativeSessionCancelParams`, `NativeSessionCancelResult`), the receipt outcome `cancelled`, `NativeSessionCapabilities.cancelQueued` and the client-cache predicate `nativeMessageCancelable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `cancelCommand` and `native.worker.cancelCommand`, so it needs a release; native hosts started after it support removal. The gateway adds the method to its worker input fence, authorization map and native method lists, and withholds the capability where it refuses removal; Companion adds it to its workspace method list. No CLI flag or harness change. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) defines the boundary.
+
+Steer: `NativeSessionSendParams.delivery`, `NativeSessionCapabilities.steer`, the receipt flag `steered` and the client-cache predicate `nativeSteerAvailable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `steer` and `native.worker.steer` and the Codex `turn/steer` call, so it needs a release; sessions started on a host after it can steer. The gateway routes a worker steer through its input fence and withholds the capability where it refuses it. No new gateway method.
+
+Plan updates: the event type `plan.updated` with `NativeSessionPlan` and `NativePlanStep`, the `plan` timeline entry, `nativePlanText` and `nativePlanOpen` in the client cache, and the history projection bump, in `@farmslot/protocol`. `@farmslot/agent-runtime` maps the Codex and ACP plans and needs a release; native hosts started after it send plans. The gateway passes events through unchanged.
+
+Per-turn changes: the event type `turn.changes` with `NativeTurnChanges` and `NativeTurnFile`, the method `native.session.turn.diff` (`NativeSessionTurnDiffParams`, `NativeSessionTurnDiffResult`), the `changes` timeline entry and `nativeTurnChangesText` in the client cache, and another history projection bump, in `@farmslot/protocol`. `@farmslot/agent-runtime` takes the checkpoints and serves the diff, so it needs a release; native hosts and node services started after it support them. The gateway adds the method to its routes, worker read fence and authorization map. No CLI flag or harness change.

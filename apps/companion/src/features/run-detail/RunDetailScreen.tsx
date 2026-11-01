@@ -49,6 +49,7 @@ import { diffArtifactCandidate } from '../../lib/diff';
 import { gateReviewHref, openHumanGateDecision } from '../../lib/gate-review';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { assertNativeRunReady } from '../../lib/run-collections';
 import {
   runWorkspaceDiffValue,
@@ -78,6 +79,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
+import { heldConnectionCurrent } from '../../store/held-connection';
 import DecisionDetailScreen from '../decision-workspace/DecisionWorkspaceScreen';
 import { GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
 import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
@@ -184,16 +186,17 @@ export default function RunDetailScreen() {
   const taskProgress = progressObservation.data?.structured ?? null;
   const acceptanceStatus = progressObservation.data?.acceptanceStatus ?? null;
   const acceptanceCriteria = progressObservation.data?.acceptanceCriteria ?? null;
-  const acceptanceStatusError =
-    progressObservation.error?.message ?? progressObservation.data?.acceptanceStatusError ?? null;
-  const taskProgressError = progressObservation.error
-    ? `Task progress unavailable: ${progressObservation.error.message}`
+  const progressReadError = readErrorMessage(progressObservation, heldConnectionCurrent());
+  const taskProgressError = progressReadError
+    ? `Task progress unavailable: ${progressReadError}`
     : null;
+  const acceptanceStatusError =
+    progressReadError ?? progressObservation.data?.acceptanceStatusError ?? null;
   const error =
     actionError ??
-    runObservation.error?.message ??
-    recipeObservation.error?.message ??
-    progressObservation.error?.message ??
+    readErrorMessage(runObservation, heldConnectionCurrent()) ??
+    readErrorMessage(recipeObservation, heldConnectionCurrent()) ??
+    progressReadError ??
     null;
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [replayingStepName, setReplayingStepName] = useState<string | null>(null);

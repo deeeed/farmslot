@@ -307,6 +307,26 @@ Session journals append events and changed metadata/receipts, fsyncing command
 intent before submission. Receipts distinguish pending, unknown, accepted, failed
 and completed. `submitted` records a submission attempt; only `accepted` records
 native acknowledgement. A lost reply or unknown receipt never triggers a resend.
+`native.session.cancel` (host method `cancelCommand`; `native.worker.cancelCommand` under
+the worker's generation and lease) removes a command still queued for the next turn. The
+host persists it as `failed`, never submitted, with outcome `cancelled`, before it replies;
+a repeated call returns the same receipt. It refuses a command that was submitted, is
+unknown, settled otherwise, or belongs to another generation or worker lease. Removal and
+the queue's own submission are each decided synchronously on the host's event loop, so
+exactly one wins. Sessions on a host that removes queued commands report
+`capabilities.cancelQueued`, except in a pinned worker read the gateway serves for a run
+whose worker messages are acceptance sources, where the gateway refuses removal. An older
+host refuses the method as unknown
+([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)).
+A send with `delivery: 'steer'` (host method `steer`; `native.worker.steer` under the
+worker's lease) adds the message to the running turn when the adapter declares
+`capabilities.steer`, the session is `running`, no request is pending and no submission is in
+flight; otherwise it is an ordinary send. The intent is journaled before the runner write. The
+runner's reply is acceptance, an error reply fails the command without a resend, and a lost reply
+(the runner stopped, or the request timed out) stays unknown. The receipt carries `steered: true` and settles with the turn it
+joined. Codex steers with `turn/steer` (`expectedTurnId`, the command ID as
+`clientUserMessageId`); Claude and ACP do not declare `steer`. An older host refuses the method
+as unknown.
 `read` accepts `after` and `limit`, returns a cursor and `hasMore`, and exposes the
 latest 100 receipts. Older IDs remain deduplicated across process generations;
 a missing receipt in a page does not mean the command was never submitted. Consume each page once and
@@ -330,6 +350,33 @@ item to `other`. ACP maps the tool call's `kind`: `execute` to `command` (with
 `search` to `search`, `fetch` to `web` and any other value to `other`, with its
 `locations` as paths. An ACP update that omits them keeps the call's earlier values, and a
 call that never sends a kind has none.
+
+A `plan.updated` event carries the runner's whole plan, which replaces its earlier plan of
+the same kind in that turn
+([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)):
+a `checklist` of steps (`pending`, `in-progress` or `completed`, with an optional note) or a
+`proposal` in markdown. Codex maps `turn/plan/updated` to a checklist (its `explanation` is
+the note) and a completed `plan` item to a proposal, ignoring the item's streamed deltas; it
+starts each thread with `tools.update_plan.enabled`, without which the app-server sends no
+plan updates. ACP
+maps a `plan` update to a checklist, dropping entry `priority`. Claude sends no plans yet.
+
+For a session whose working directory is in a Git working tree and not read-only, the
+host checkpoints the working tree before each turn (after journaling its first command,
+which follows the previous turn's `turn.changes`, and before the runner write) and after it
+([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)).
+Delivery waits for the previous turn's checkpoint and its own at most 3 s in all; a slower
+one is reported unavailable. A checkpoint is a commit built in the session's own index (in
+the host's state directory, seeded from the worktree's index and reseeded when that
+changes), with `HEAD` as parent and untracked files Git does not ignore (each up to 10 MiB
+when first seen), kept under `refs/farmslot/native/<sessionId>/`; the worktree, its index,
+`HEAD` and branches are untouched. After the turn the host appends `turn.changes` with both
+checkpoints and the changed files (repository-relative paths, line counts, at most 500), or
+why they are `unavailable`. `native.session.turn.diff` returns one listed file's diff
+between them; a pinned worker reads the event within its lease. A session keeps its last
+100 checkpoints and deletes its refs and index at close, also after a failure or a host
+restart (a failed deletion is an `error` event; closing again retries); a diff whose
+checkpoints are no longer under the session's refs is refused as no longer retained.
 
 After runner or host failure, reads expose failure and recovery instructions.
 Explicit `create` with the recorded `resumeSessionId` retains the Farmslot session

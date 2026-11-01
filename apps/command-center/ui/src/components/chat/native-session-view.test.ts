@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import type { NativeCommandReceipt, NativeSessionReadResult } from '@farmslot/protocol';
+import {
+  Methods,
+  type NativeCommandReceipt,
+  type NativeSessionReadResult,
+} from '@farmslot/protocol';
 
 // The view keeps its command and draft in localStorage, which node lacks.
 const stored = new Map<string, string>();
@@ -24,6 +28,7 @@ interface View {
   draft: string;
   localCommand?: { commandId: string; text: string };
   poll(): Promise<void>;
+  editQueued(): Promise<void>;
   sessionKey(suffix: string): string;
 }
 
@@ -182,4 +187,58 @@ test('terminal text added before a worker conversation opens lands in that conve
   Object.assign(view, { storageScope: 'fixture' });
   assert.equal(stored.get(view.sessionKey('draft:worker-session')), view.draft);
   assert.equal(stored.has(view.sessionKey('draft:other-session')), false);
+});
+
+test('Edit removes the queued message, and the composer gets its text back', async () => {
+  const queued: NativeCommandReceipt = {
+    commandId: 'queued',
+    generation: 'generation',
+    state: 'pending',
+    queued: true,
+    submitted: false,
+    accepted: false,
+  };
+  const removed = {
+    ...queued,
+    queued: false,
+    state: 'failed' as const,
+    outcome: 'cancelled' as const,
+  };
+  const requests: Array<[string, unknown]> = [];
+  const edit = async (cancelQueued: boolean) => {
+    const view = makeView(removed, 'typed meanwhile');
+    const session = page(queued).session;
+    Object.assign(view, {
+      session: {
+        ...session,
+        state: 'running',
+        capabilities: { ...session.capabilities, cancelQueued },
+      },
+      receipts: [queued],
+      caughtUp: true,
+      busy: false,
+      api: {
+        request: async (method: string, params: unknown) => {
+          requests.push([method, params]);
+          return { receipt: removed };
+        },
+      },
+    });
+    await view.editQueued();
+    return view;
+  };
+  // A session on an older host cannot remove it: no request, and the message stays.
+  const older = await edit(false);
+  assert.deepEqual(requests, []);
+  assert.equal(older.localCommand?.commandId, 'queued');
+  const view = await edit(true);
+  assert.deepEqual(requests, [
+    [
+      Methods.NATIVE_SESSION_CANCEL,
+      { sessionId: 'session', executionNodeId: 'local', commandId: 'queued' },
+    ],
+  ]);
+  await view.poll();
+  assert.equal(view.localCommand, undefined);
+  assert.equal(view.draft, `${text}\n\ntyped meanwhile`);
 });

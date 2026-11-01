@@ -53,6 +53,10 @@ import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
+import {
+  TerminalInputLine,
+  type TerminalInputLineHandle,
+} from '../../components/TerminalInputLine';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   type ArtifactManifestEntry,
@@ -67,6 +71,7 @@ import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import {
   hasRunWorkspaceDiff,
   selectSlotRecipeArtifactsForPreviewScope,
@@ -78,8 +83,8 @@ import {
   isWorkerProgressActive,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
-import { slotTerminalRunnerPane, type TerminalControlKey } from '../../lib/terminal-controls';
-import { TerminalInputCancelledError } from '../../lib/terminal-input-queue';
+import { slotTerminalRunnerPane } from '../../lib/terminal-controls';
+import { isKeysRetryingNotice, withoutKeysRetryingNotice } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import { appendTerminalTailText, terminalTailLinesFromText } from '../../lib/terminal-tail';
 import {
@@ -125,6 +130,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
+import { heldConnectionCurrent, useHeldConnection } from '../../store/held-connection';
 import { useTerminalPrefsStore } from '../../store/terminal-prefs';
 import { useQuickActionVoiceTarget } from '../quick-actions/QuickActionsProvider';
 import { useQuickActionComposerInset } from '../quick-actions/use-quick-action-composer-inset';
@@ -147,7 +153,7 @@ import {
   type XtermTerminalViewHandle,
 } from './components/terminal-history-viewer';
 import { slotTerminalStyles as styles } from './styles/slot-terminal.styles';
-import { useTerminalInput } from './use-terminal-input';
+import { useSlotTerminalTyping } from './use-slot-terminal-typing';
 import { useTerminalProof, useTerminalRunContext } from './use-terminal-run-context';
 
 const LINE_COUNT_OPTIONS = [25, 50, 100, 200] as const;
@@ -269,13 +275,15 @@ export default function TerminalScreen() {
   const { height: windowHeight } = useWindowDimensions();
   const client = useConnectionStore((s) => s.client);
   const connectionStatus = useConnectionStore((s) => s.status);
+  const heldConnected = useHeldConnection();
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const slot = useFleetStore((s) => s.fleet?.slots.find((entry) => entry.slot === slotId));
-  const allowTerminalTouchKeyboard = useTerminalPrefsStore((s) => s.allowTerminalTouchKeyboard);
-  const setAllowTerminalTouchKeyboard = useTerminalPrefsStore(
-    (s) => s.setAllowTerminalTouchKeyboard,
-  );
+  const terminalDirectInput = useTerminalPrefsStore((s) => s.terminalDirectInput);
+  const setTerminalDirectInput = useTerminalPrefsStore((s) => s.setTerminalDirectInput);
+  const inputLineRef = useRef<TerminalInputLineHandle>(null);
+  const resetInputLine = useCallback(() => inputLineRef.current?.reset(), []);
+  const [focusInputLineOnOpen, setFocusInputLineOnOpen] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
   const [lineCount, setLineCount] = useState<(typeof LINE_COUNT_OPTIONS)[number]>(50);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -286,12 +294,10 @@ export default function TerminalScreen() {
     'connecting',
   );
   const [controlError, setControlError] = useState<string | null>(null);
-  const [activeControlKey, setActiveControlKey] = useState<string | null>(null);
   const [tmuxWindows, setTmuxWindows] = useState<TmuxWindow[]>([]);
   const [tmuxError, setTmuxError] = useState<string | null>(null);
   const [activeTmuxAction, setActiveTmuxAction] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
-  const [isSendingControl, setIsSendingControl] = useState(false);
   const [showTerminalControls, setShowTerminalControls] = useState(
     routeParamString(keysParam) === '1',
   );
@@ -327,8 +333,9 @@ export default function TerminalScreen() {
   }, [targetRun?.id, targetRun?.slotId, targetRun?.reviewWorkspace?.workspaceId, contextId, role]);
   const progressObservation = useResourceQuery(progressQuery);
   const taskProgress = progressObservation.data?.structured ?? null;
-  const taskProgressError = progressObservation.error
-    ? `Task progress unavailable: ${progressObservation.error.message}`
+  const progressReadError = readErrorMessage(progressObservation, heldConnectionCurrent());
+  const taskProgressError = progressReadError
+    ? `Task progress unavailable: ${progressReadError}`
     : null;
   const terminalTargetParams = slotId || runId ? terminalContext.target : null;
   const contextRef = useRef(terminalContext);
@@ -347,19 +354,23 @@ export default function TerminalScreen() {
   const subscriptionStarts = useRef(0);
   const inputCommands = useRef(0);
   const commandRequests = useRef(new Map<string, object>());
-  const requireTerminalTarget = useCallback(() => {
-    const context = contextRef.current;
-    if (context.scopeKey !== terminalContext.scopeKey)
-      throw new Error('The terminal target changed. Review it before acting.');
-    context.requireRun();
-    const target = terminalTargetParamsRef.current;
-    if (!target || JSON.stringify(target) !== JSON.stringify(context.target))
-      throw new Error('Wait for the selected terminal target before acting.');
-    return { target, ...context.capture() };
-  }, [terminalContext.scopeKey]);
+  const requireTerminalTarget = useCallback(
+    (input = false) => {
+      const context = contextRef.current;
+      if (context.scopeKey !== terminalContext.scopeKey)
+        throw new Error('The terminal target changed. Review it before acting.');
+      if (input) context.requireInput();
+      else context.requireRun();
+      const target = terminalTargetParamsRef.current;
+      if (!target || JSON.stringify(target) !== JSON.stringify(context.target))
+        throw new Error('Wait for the selected terminal target before acting.');
+      return { target, ...context.capture() };
+    },
+    [terminalContext.scopeKey],
+  );
   const beginTerminalCommand = useCallback(
-    (kind: string) => {
-      const captured = requireTerminalTarget();
+    (kind: string, input = false) => {
+      const captured = requireTerminalTarget(input);
       if (commandRequests.current.has(kind)) return;
       const request = {};
       commandRequests.current.set(kind, request);
@@ -377,8 +388,6 @@ export default function TerminalScreen() {
   useLayoutEffect(() => {
     commandRequests.current.clear();
     setIsSending(false);
-    setIsSendingControl(false);
-    setActiveControlKey(null);
     setActiveTmuxAction(null);
     setControlError(null);
     setTmuxError(null);
@@ -470,32 +479,23 @@ export default function TerminalScreen() {
     native.target?.label ??
     (streamMode === 'connecting' ? 'Connecting' : streamMode === 'ended' ? 'Ended' : 'Live');
   const terminalLabel = slotId || targetRun?.reviewWorkspace?.machine || 'Run terminal';
-  const terminalInputDisabledReason = !terminalContext.ready
+  const terminalInputDisabledReason = !terminalContext.inputReady
     ? 'Wait for current terminal run data'
     : streamMode === 'ended'
       ? 'Read-only · terminal ended'
       : null;
 
-  useTerminalProof({
-    focused,
-    run: targetRun,
-    recipes: terminalContext.recipes,
-    terminalReady: terminalContext.ready,
-    terminalTarget: terminalContext.target ?? undefined,
-    terminalInputDisabledReason,
-    terminalStream: streamMode,
-    terminalControlBusy: isSendingControl,
-    terminalControlError: controlError,
-    terminalSnapshotError: snapshotError,
-    readTerminalText: () => terminalViewRef.current?.inspect?.() ?? Promise.resolve(''),
-    terminalInputCommands: inputCommands.current,
-    terminalSubscriptionStarts: subscriptionStarts.current,
+  const typing = useSlotTerminalTyping({
+    connected: Boolean(client),
+    target: terminalTargetParams,
+    targetRef: terminalTargetParamsRef,
+    disabledReason: terminalInputDisabledReason,
+    requireTarget: requireTerminalTarget,
+    setControlError,
+    setInputError: setSnapshotError,
+    onKeysDropped: resetInputLine,
+    commandCount: inputCommands,
   });
-  const sendTerminalInput = useTerminalInput(
-    terminalTargetParams,
-    terminalTargetParamsRef,
-    terminalInputDisabledReason,
-  );
 
   const loadInitialSnapshot = useCallback(async () => {
     const target = terminalTargetParamsRef.current;
@@ -524,29 +524,12 @@ export default function TerminalScreen() {
     }
   }, [client, replaceTerminalTail, terminalContext.scopeKey]);
 
-  const handleTerminalInput = useCallback(
-    (data: string) => {
-      if (terminalInputDisabledReason || !client) return;
-      try {
-        const captured = requireTerminalTarget();
-        sendTerminalInput(data).catch((error: unknown) => {
-          // Navigation/disconnect deliberately discards unsent input.
-          if (!(error instanceof TerminalInputCancelledError) && captured.current())
-            setSnapshotError(`Terminal input failed: ${getErrorMessage(error)}`);
-        });
-      } catch (error) {
-        setSnapshotError(getErrorMessage(error));
-      }
-    },
-    [client, requireTerminalTarget, sendTerminalInput, terminalInputDisabledReason],
-  );
-
   const handleTerminalResize = useCallback(
     (size: TerminalSize) => {
       terminalSizeRef.current = size;
-      if (!client || !contextRef.current.ready) return;
+      if (!client || !contextRef.current.inputReady) return;
       try {
-        const captured = requireTerminalTarget();
+        const captured = requireTerminalTarget(true);
         client
           .request('terminal.resize', { ...captured.target, ...size }, 10_000)
           .catch((error: Error) => {
@@ -563,8 +546,12 @@ export default function TerminalScreen() {
     if (!focused || !client || (!slotId && !runId)) return;
     if (!terminalContext.streamReady || connectionStatus !== 'connected') {
       setStreamMode('connecting');
-      setSnapshotError('Waiting for gateway connection.');
-      terminalViewRef.current?.setStatus('Waiting for gateway connection.');
+      // A short reconnect is routine: the terminal says so quietly and typing keeps queuing.
+      // Only an outage past the shared grace raises the error line.
+      setSnapshotError(heldConnected ? null : 'Waiting for gateway connection.');
+      terminalViewRef.current?.setStatus(
+        heldConnected ? 'Reconnecting…' : 'Waiting for gateway connection.',
+      );
       return;
     }
     if (native.target || native.unavailable || (contextId && !targetRun)) return;
@@ -654,6 +641,7 @@ export default function TerminalScreen() {
     appendTerminalTail,
     client,
     connectionStatus,
+    heldConnected,
     focused,
     terminalContext.streamReady,
     terminalContext.scopeKey,
@@ -696,40 +684,21 @@ export default function TerminalScreen() {
     return contextRef.current.requireRun();
   }, []);
 
-  const sendControlKey = useCallback(
-    async (control: TerminalControlKey) => {
-      if (!client || isSendingControl || terminalInputDisabledReason) return;
-      let command: ReturnType<typeof beginTerminalCommand>;
-      try {
-        command = beginTerminalCommand('control');
-        if (!command) return;
-        setIsSendingControl(true);
-        setActiveControlKey(control.label);
-        setControlError(null);
-        inputCommands.current++;
-        await sendTerminalInput(control.data);
-        if (!command.current()) return;
-        await Haptics.impactAsync(
-          control.danger ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light,
-        );
-      } catch (error) {
-        if (!(error instanceof TerminalInputCancelledError) && (!command || command.current()))
-          setControlError(`Control failed: ${getErrorMessage(error)}`);
-      } finally {
-        command?.finish(() => {
-          setIsSendingControl(false);
-          setActiveControlKey(null);
-        });
-      }
-    },
-    [
-      beginTerminalCommand,
-      client,
-      isSendingControl,
-      sendTerminalInput,
-      terminalInputDisabledReason,
-    ],
-  );
+  useTerminalProof({
+    focused,
+    run: targetRun,
+    recipes: terminalContext.recipes,
+    terminalReady: terminalContext.ready,
+    terminalTarget: terminalContext.target ?? undefined,
+    terminalInputDisabledReason,
+    terminalStream: streamMode,
+    terminalControlBusy: typing.controlKeys.busy,
+    terminalControlError: controlError,
+    terminalSnapshotError: snapshotError,
+    readTerminalText: () => terminalViewRef.current?.inspect?.() ?? Promise.resolve(''),
+    terminalInputCommands: inputCommands.current,
+    terminalSubscriptionStarts: subscriptionStarts.current,
+  });
 
   const refreshTmuxWindows = useCallback(async () => {
     if (!client || !slotId || connectionStatus !== 'connected' || !contextRef.current.ready) {
@@ -807,12 +776,16 @@ export default function TerminalScreen() {
   ]);
 
   const sendTerminalText = useCallback(
-    async (text: string, setError: (message: string | null) => void): Promise<boolean> => {
+    async (
+      text: string,
+      setError: (message: string | null) => void,
+      onSent?: () => void,
+    ): Promise<boolean> => {
       const trimmedText = text.trim();
       if (!client || !trimmedText || isSending || terminalInputDisabledReason) return false;
       let command: ReturnType<typeof beginTerminalCommand>;
       try {
-        command = beginTerminalCommand('send');
+        command = beginTerminalCommand('send', true);
         if (!command) return false;
         const message =
           pendingOperatorMessage.current?.text === trimmedText
@@ -822,7 +795,7 @@ export default function TerminalScreen() {
         setIsSending(true);
         inputCommands.current++;
         const request = terminalTextRequest(command.target, message);
-        await client.request(request.method, request.params);
+        await client.request(request.method, request.params, undefined, { onSent });
         if (!command.current()) return false;
         if (pendingOperatorMessage.current === message) pendingOperatorMessage.current = null;
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -911,8 +884,11 @@ export default function TerminalScreen() {
     voiceStatus !== 'recording' &&
     voiceStatus !== 'transcribing' &&
     !voiceRecorderBusy;
+  // While the connection is down the terminal's own status says so: no keys-waiting notice too.
+  const visibleControlError =
+    connectionStatus === 'connected' ? controlError : withoutKeysRetryingNotice(controlError);
   const showInputBar =
-    !native.target && !native.unavailable && (showTerminalControls || Boolean(controlError));
+    !native.target && !native.unavailable && (showTerminalControls || Boolean(visibleControlError));
   const showVoiceComposer =
     !native.target &&
     !native.unavailable &&
@@ -1364,7 +1340,11 @@ export default function TerminalScreen() {
       setVoiceMessage('Open the suggested target before sending this voice draft.');
       return;
     }
-    const sent = await sendTerminalText(voiceEditableInstruction, setVoiceWarning);
+    // The draft is sent as a submitted line, so the input line starts over once it has gone out;
+    // a refused send leaves it as it was.
+    const sent = await sendTerminalText(voiceEditableInstruction, setVoiceWarning, () =>
+      inputLineRef.current?.reset(),
+    );
     if (sent) {
       resetVoiceCopilotAfterSend('Sent. Tap mic to dictate another instruction.');
     }
@@ -1671,11 +1651,15 @@ export default function TerminalScreen() {
             targetWarning={targetWarning}
             terminalInputDisabled={Boolean(terminalInputDisabledReason)}
             voiceRecorderBusy={voiceRecorderBusy}
-            onOpenTmux={() => setShowTerminalControls(true)}
+            onOpenTmux={() => {
+              setFocusInputLineOnOpen(false);
+              setShowTerminalControls(true);
+            }}
             onOpenContext={() => setShowTerminalOptions(true)}
             onOpenVoice={handleFloatingVoicePress}
             onOpenKeyboard={() => {
-              setAllowTerminalTouchKeyboard(true);
+              if (showTerminalControls) inputLineRef.current?.focus();
+              setFocusInputLineOnOpen(true);
               setShowTerminalControls(true);
             }}
           />
@@ -1852,10 +1836,10 @@ export default function TerminalScreen() {
         onTmuxAction={runTmuxAction}
         terminal={{
           ref: terminalViewRef,
-          allowTouchKeyboard: allowTerminalTouchKeyboard,
+          directInput: terminalDirectInput,
           initialText: lines.join('\r\n'),
           mode: terminalViewMode,
-          onInput: handleTerminalInput,
+          onInput: typing.typeKeys,
           onResize: handleTerminalResize,
           rawHistoryText: terminalTailTextRef.current,
           readOnlyReason: terminalInputDisabledReason,
@@ -2010,15 +1994,24 @@ export default function TerminalScreen() {
         <View style={[styles.composer, { paddingBottom: spacing.sm + insets.bottom }]}>
           {showTerminalControls && (
             <View style={styles.controlPanel}>
+              {terminalDirectInput ? null : (
+                <TerminalInputLine
+                  ref={inputLineRef}
+                  autoFocus={focusInputLineOnOpen}
+                  disabled={Boolean(terminalInputDisabledReason)}
+                  onSend={typing.typeKeys}
+                />
+              )}
               <TerminalControlKeyBar
-                activeLabel={activeControlKey}
-                disabled={isSendingControl || Boolean(terminalInputDisabledReason)}
-                touchKeyboardEnabled={allowTerminalTouchKeyboard}
-                onPress={(control) => void sendControlKey(control)}
+                activeLabel={typing.controlKeys.activeLabel}
+                disabled={Boolean(terminalInputDisabledReason)}
+                directInput={terminalDirectInput}
+                onPress={(control) => {
+                  inputLineRef.current?.reset();
+                  typing.controlKeys.press(control);
+                }}
                 runnerPane={slotTerminalRunnerPane(slot, tmuxWindows)}
-                onToggleTouchKeyboard={() =>
-                  setAllowTerminalTouchKeyboard(!allowTerminalTouchKeyboard)
-                }
+                onToggleDirectInput={() => setTerminalDirectInput(!terminalDirectInput)}
               />
               {slotId ? (
                 <TmuxControlPanel
@@ -2031,8 +2024,16 @@ export default function TerminalScreen() {
               ) : null}
             </View>
           )}
-          {(controlError || tmuxError) && (
-            <Text style={styles.sendErrorText}>{controlError ?? tmuxError}</Text>
+          {(visibleControlError || tmuxError) && (
+            <Text
+              style={
+                isKeysRetryingNotice(visibleControlError)
+                  ? styles.sendNoticeText
+                  : styles.sendErrorText
+              }
+            >
+              {visibleControlError ?? tmuxError}
+            </Text>
           )}
         </View>
       )}

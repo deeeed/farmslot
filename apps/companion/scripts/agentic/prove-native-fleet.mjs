@@ -383,6 +383,7 @@ async function prove() {
       'native.session.respond',
       'native.session.close',
       'native.session.interrupt',
+      'native.session.cancel',
     ])
       assert.equal(
         finalCounts.counts[method] || 0,

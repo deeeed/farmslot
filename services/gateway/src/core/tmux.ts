@@ -247,13 +247,12 @@ export interface ResolveTmuxSessionOpts {
   strict?: boolean;
 }
 
-export async function resolveTmuxSession(
+/** Session names a slot may run under, in lookup order, and the pool's configured one. */
+export function tmuxSessionCandidates(
   slotId: string,
-  varsArg?: Awaited<ReturnType<typeof loadSlotVars>>,
-  opts?: ResolveTmuxSessionOpts,
-): Promise<string> {
-  const vars = varsArg ?? (await loadSlotVars(slotId));
-  const pools = await loadPoolConfigs();
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  pools: Awaited<ReturnType<typeof loadPoolConfigs>>,
+): { configured: string; candidates: string[] } {
   let configured = vars.session || slotId;
   for (const pool of pools) {
     const slot = pool.slots.find((s) => s.id === slotId);
@@ -265,6 +264,16 @@ export async function resolveTmuxSession(
   const candidates = Array.from(
     new Set([configured, vars.session, slotId, path.basename(vars.remoteRepo)].filter(Boolean)),
   ) as string[];
+  return { configured, candidates };
+}
+
+export async function resolveTmuxSession(
+  slotId: string,
+  varsArg?: Awaited<ReturnType<typeof loadSlotVars>>,
+  opts?: ResolveTmuxSessionOpts,
+): Promise<string> {
+  const vars = varsArg ?? (await loadSlotVars(slotId));
+  const { configured, candidates } = tmuxSessionCandidates(slotId, vars, await loadPoolConfigs());
 
   for (const candidate of candidates) {
     const result = await execTmuxDiscovery(

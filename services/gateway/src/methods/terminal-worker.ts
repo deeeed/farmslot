@@ -10,6 +10,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { isLocal } from '../core/exec.js';
+import { getNode } from '../fleet/machine-registry.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import {
   hasPty,
@@ -19,9 +20,17 @@ import {
   writePty,
 } from '../runtime/pty-stream.js';
 import {
+  type InputLanding,
+  machinePaneInputRecord,
+  runInputInOrder,
+  UNRECORDED_PANE,
+  writeSequencedInput,
+} from '../runtime/terminal-input-sequence.js';
+import {
   captureWorkerTerminal,
   resizeWorkerTerminal,
   sendWorkerTerminalInput,
+  workerNodeTypesInputOnce,
 } from '../runtime/worker-terminal-stream.js';
 
 import { assertTmuxWorkerControlAllowed } from './tmux-workers.js';
@@ -67,13 +76,33 @@ export function terminalWorkerUnsubscribeKey(params: {
 }
 
 export async function terminalWorkerInput(params: TerminalWorkerInputParams): Promise<void> {
-  await assertTmuxWorkerControlAllowed(params.worker);
   const key = terminalWorkerSubscriptionKey(params);
+  // In order per pane, so a batch resent after a lost reply waits for the original.
+  await runInputInOrder(`worker:${key}`, async () => {
+    await assertTmuxWorkerControlAllowed(params.worker);
+    await writeSequencedInput(key, params.seq, () => workerInputLanding(key, params));
+  });
+}
+
+async function workerInputLanding(
+  key: string,
+  { worker, data, seq }: TerminalWorkerInputParams,
+): Promise<InputLanding> {
   if (hasPty(key)) {
-    writePty(key, params.data);
-    return;
+    const local = !(await resolveWorkerPtyOptions(worker)).sshTarget;
+    // The worker pane keeps its own record of typed input, on the worker's machine.
+    return {
+      write: () => writePty(key, data),
+      record: machinePaneInputRecord(worker.target, worker.nodeId, local),
+    };
   }
-  await sendWorkerTerminalInput(params.worker, params.data);
+  if (!getNode(worker.nodeId)) throw new Error(`node ${worker.nodeId} is not connected`);
+  const typesOnce = workerNodeTypesInputOnce(worker);
+  return {
+    write: (dispatched) => sendWorkerTerminalInput(worker, data, dispatched, seq),
+    typesOnce,
+    ...(typesOnce ? {} : { record: UNRECORDED_PANE }),
+  };
 }
 
 export async function terminalWorkerResize(params: TerminalWorkerResizeParams): Promise<void> {

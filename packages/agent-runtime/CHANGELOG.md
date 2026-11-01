@@ -4,6 +4,22 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.19 - 2026-11-01
+
+- The native host checkpoints a session's Git working tree before and after each turn, as commits under `refs/farmslot/native/<sessionId>/` built in the session's own index (the worktree, its index, `HEAD` and branches are untouched), and appends `turn.changes` after the turn; a queued message is journaled after the previous turn's changes. Delivery waits for the checkpoints at most 3 s in all. A session keeps its last 100 checkpoints, and its refs are deleted at close, also after a failure or host restart. The node service answers `native.session.turn.diff` for a file a `turn.changes` event lists while its checkpoints are retained. Read-only reviewer sessions take no checkpoints.
+
+## 0.39.18 - 2026-11-01
+
+- The native host steers: `steer` (and `native.worker.steer` under the worker's lease) adds a message to the running turn when the adapter declares `capabilities.steer`, the session runs and no request is pending; otherwise it is an ordinary send. The intent is journaled first; a runner's error reply fails the command without a resend, while a lost reply (exit, timeout) stays unknown; and a steered command settles with its turn. Worker reads keep `steered` on receipts. Codex declares `steer` and uses `turn/steer`. A host started before the upgrade refuses the method as unknown.
+
+## 0.39.17 - 2026-11-01
+
+- Codex and ACP adapters send `plan.updated`: Codex `turn/plan/updated` and ACP `plan` updates as checklists, a completed Codex `plan` item as a proposal. They were dropped before. Codex threads start with its plan tool enabled (`tools.update_plan.enabled`), which the app-server otherwise leaves off.
+
+## 0.39.16 - 2026-11-01
+
+- The native host removes a queued message on request (`cancelCommand`, and `native.worker.cancelCommand` under the worker's lease), persisting it as failed, never submitted and `cancelled` before it replies. A message already submitted, unknown, settled or of another lease is refused. Sessions on this host report `capabilities.cancelQueued`; a host started before the upgrade refuses the request as an unknown method.
+
 ## 0.39.15 - 2026-10-31
 
 - A native session supervisor stops its host and exits when its home directory is removed, instead of running on with its process census (`ps` about ten times a second). Tests and smokes that delete their temp home no longer leak native host stacks.

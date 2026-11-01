@@ -158,6 +158,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `native.profile.list`                   | native-owner   |                                                                                    |
 | `native.profile.remove`                 | native-owner   |                                                                                    |
 | `native.profile.status`                 | native-owner   |                                                                                    |
+| `native.session.cancel`                 | native-owner   |                                                                                    |
 | `native.session.catalog`                | native-owner   |                                                                                    |
 | `native.session.close`                  | native-owner   |                                                                                    |
 | `native.session.create`                 | native-owner   |                                                                                    |
@@ -167,6 +168,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `native.session.read`                   | native-owner   |                                                                                    |
 | `native.session.respond`                | native-owner   |                                                                                    |
 | `native.session.send`                   | native-owner   |                                                                                    |
+| `native.session.turn.diff`              | native-owner   |                                                                                    |
 | `native.session.workspace.changes`      | native-owner   |                                                                                    |
 | `native.session.workspace.diff`         | native-owner   |                                                                                    |
 | `native.session.workspace.list`         | native-owner   |                                                                                    |
@@ -254,6 +256,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.adopt`                             | admin          |                                                                                    |
 | `run.adoptPublishedPr`                  | admin          |                                                                                    |
 | `run.archive`                           | admin          |                                                                                    |
+| `run.attestBeforeAttempt`               | admin          |                                                                                    |
 | `run.autoRecovery.stop`                 | admin          |                                                                                    |
 | `run.backfillSummaries`                 | admin          |                                                                                    |
 | `run.bulkDelete`                        | admin          |                                                                                    |

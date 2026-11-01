@@ -2,6 +2,7 @@ import { Stack, useRouter } from 'expo-router';
 import { useMemo } from 'react';
 import { Pressable, Text } from 'react-native';
 
+import { OfflineShown } from '../../components/offline-shown';
 import { useSharedViewSelection } from '../quick-actions/QuickActionsProvider';
 
 import { NativeConversationScreen } from './NativeConversationScreen';
@@ -53,20 +54,23 @@ export function NativeConversation({
           }}
         />
       ) : null}
-      <NativeConversationScreen
-        {...screen}
-        selected={!!params.sessionId}
-        onSelect={(session) =>
-          router.push({
-            pathname: '/native',
-            params: {
-              sessionId: session.id,
-              executionNodeId: session.executionNodeId,
-              ...(params.draft ? { draft: params.draft } : {}),
-            },
-          })
-        }
-      />
+      {/* Its heading says "Offline", so its read-status slots need not. */}
+      <OfflineShown.Provider value={true}>
+        <NativeConversationScreen
+          {...screen}
+          selected={!!params.sessionId}
+          onSelect={(session) =>
+            router.push({
+              pathname: '/native',
+              params: {
+                sessionId: session.id,
+                executionNodeId: session.executionNodeId,
+                ...(params.draft ? { draft: params.draft } : {}),
+              },
+            })
+          }
+        />
+      </OfflineShown.Provider>
     </>
   );
 }

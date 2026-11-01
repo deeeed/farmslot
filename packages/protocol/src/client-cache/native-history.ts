@@ -1,11 +1,15 @@
 import type {
   NativeCommandReceipt,
+  NativePlanStep,
   NativeSessionEvent,
+  NativeSessionInfo,
+  NativeSessionPlan,
   NativeSessionReadResult,
   NativeSessionResponse,
   NativeSessionTargetParams,
   NativeSessionTool,
   NativeToolKind,
+  NativeTurnChanges,
 } from '../rpc/native-session.js';
 import { Methods } from '../rpc/registry.js';
 
@@ -17,7 +21,7 @@ import type { ResourceQueryState, ResourceReadResult } from './types.js';
 
 export interface NativeTimelineEntry {
   key: number;
-  kind: 'user' | 'assistant' | 'tool' | 'resolution' | 'status';
+  kind: 'user' | 'assistant' | 'tool' | 'resolution' | 'plan' | 'status' | 'changes';
   event: NativeSessionEvent;
   text: string;
 }
@@ -26,6 +30,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
   const entries: NativeTimelineEntry[] = [];
   const userCommands = new Set<string>();
   const tools = new Map<string, NativeTimelineEntry>();
+  const plans = new Map<string, NativeTimelineEntry>();
   const prompts = new Map<string, NativeSessionEvent>();
   for (const event of events) {
     if (nativePrompt(event) && !prompts.has(event.commandId)) prompts.set(event.commandId, event);
@@ -78,6 +83,36 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
         entries.push(entry);
         if (identity) tools.set(identity, entry);
       }
+    } else if (event.type === 'plan.updated' && event.plan) {
+      // Each update is the whole plan of its kind in that turn: it replaces the entry in place,
+      // keeping its sequence, so cached history keeps only the latest plan under the same key.
+      const identity = JSON.stringify([event.generation, event.commandId, event.plan.kind]);
+      const previous = plans.get(identity);
+      if (previous) {
+        previous.event = { ...event, sequence: previous.key };
+        previous.text = nativePlanText(event.plan);
+      } else {
+        const entry: NativeTimelineEntry = {
+          key: event.sequence,
+          kind: 'plan',
+          event,
+          text: nativePlanText(event.plan),
+        };
+        entries.push(entry);
+        plans.set(identity, entry);
+      }
+    } else if (
+      event.type === 'turn.changes' &&
+      event.changes &&
+      // A turn that changed nothing adds no row; one whose changes are unavailable says why.
+      (event.changes.files.length || event.changes.unavailable)
+    ) {
+      entries.push({
+        key: event.sequence,
+        kind: 'changes',
+        event,
+        text: nativeTurnChangesText(event.changes),
+      });
     } else if (event.type === 'approval.resolved' && event.request) {
       entries.push({
         key: event.sequence,
@@ -101,6 +136,33 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
     }
   }
   return entries;
+}
+
+/** A checklist's progress, "3 of 5 steps"; a proposal's markdown. */
+export function nativePlanText(plan: NativeSessionPlan): string {
+  if (plan.kind === 'proposal') return plan.text;
+  const done = plan.steps.filter((step) => step.status === 'completed').length;
+  return `${done} of ${plan.steps.length} ${plan.steps.length === 1 ? 'step' : 'steps'}`;
+}
+
+/** The mark before a checklist step: done, current or waiting. */
+export function nativePlanStepMark(status: NativePlanStep['status']): string {
+  return status === 'completed' ? '✓' : status === 'in-progress' ? '●' : '○';
+}
+
+/** A proposal's copy action, before a copy (`undefined`), after it, and when it failed. */
+export function nativePlanCopyLabel(copied?: boolean): string {
+  return copied === undefined ? 'Copy plan' : copied ? 'Copied' : 'Copy failed';
+}
+
+/** "Changed 3 files · +12 −4", "No file changes", or why the turn's changes are unavailable. */
+export function nativeTurnChangesText(changes: NativeTurnChanges): string {
+  if (changes.unavailable) return `Changes unavailable: ${changes.unavailable}`;
+  if (!changes.files.length) return 'No file changes';
+  const sum = (key: 'additions' | 'deletions') =>
+    changes.files.reduce((total, file) => total + (file[key] ?? 0), 0);
+  const count = `${changes.files.length}${changes.truncated ? '+' : ''}`;
+  return `Changed ${count} ${changes.files.length === 1 && !changes.truncated ? 'file' : 'files'} · +${sum('additions')} −${sum('deletions')}`;
 }
 
 /**
@@ -135,7 +197,7 @@ export interface NativeHistorySnapshot extends NativeSessionReadResult {
 }
 
 /** Bumped when retention keeps more: a snapshot saved by an older reader is read again from its start, once. */
-const NATIVE_HISTORY_PROJECTION = 3;
+const NATIVE_HISTORY_PROJECTION = 5;
 
 export const NATIVE_HISTORY_MESSAGES = 200;
 export const NATIVE_HISTORY_SESSIONS = 10;
@@ -490,10 +552,23 @@ export function nativeSendLabel(
   return undefined;
 }
 
+/**
+ * Steer is offered while a turn runs, with no request waiting for an answer, on a session whose
+ * runner can take a message into it. The host would queue it otherwise.
+ */
+export function nativeSteerAvailable(
+  session: NativeSessionInfo | undefined,
+  pendingRequests: readonly unknown[] = [],
+): boolean {
+  return !!session?.capabilities.steer && session.state === 'running' && !pendingRequests.length;
+}
+
 export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {
   if (!receipt) return 'Delivery unknown';
   if (receipt.queued) return 'Queued for the next turn';
   if (receipt.outcome === 'interrupted') return 'Interrupted';
+  if (receipt.outcome === 'cancelled') return 'Removed';
+  if (receipt.steered && receipt.state === 'accepted') return 'Added to the running turn';
   switch (receipt.state) {
     case 'pending':
       return 'Submitting';
@@ -537,19 +612,44 @@ export function nativeMessageDropped(receipt?: NativeCommandReceipt): boolean {
   return receipt?.state === 'failed' && !receipt.submitted;
 }
 
-/** A confirmed replacement generation must not inherit the old browser input lock. */
+/**
+ * Whether a sent message can still be taken back: its host removes queued messages, and this one
+ * waits in the current generation's queue, unsubmitted. Removing it drops it, so
+ * `nativeMessageDropped` returns its text to the composer: that is how a client edits it.
+ */
+export function nativeMessageCancelable(
+  session: Pick<NativeSessionInfo, 'generation' | 'capabilities'> | undefined,
+  receipt?: NativeCommandReceipt,
+): boolean {
+  return (
+    !!session?.capabilities.cancelQueued &&
+    !!receipt?.queued &&
+    !receipt.submitted &&
+    receipt.generation === session.generation
+  );
+}
+
+/**
+ * Whether a client may release the one message it holds. It settles when its turn ends, and
+ * earlier once the runner accepted it and the conversation shows it: nothing is left to hold it
+ * for, so the reader can queue or steer the next message while that turn runs. A confirmed
+ * replacement generation must not inherit the old browser input lock.
+ */
 export function nativeCommandLockSettled(
   command: { commandId: string; generation: string },
   currentGeneration: string,
   receipt?: NativeCommandReceipt,
   events: NativeSessionEvent[] = [],
 ): boolean {
+  const own =
+    !!receipt &&
+    receipt.commandId === command.commandId &&
+    receipt.generation === command.generation;
   return (
     command.generation !== currentGeneration ||
-    (!!receipt &&
-      receipt.commandId === command.commandId &&
-      receipt.generation === command.generation &&
-      ['completed', 'failed'].includes(receipt.state)) ||
+    (own &&
+      (['completed', 'failed'].includes(receipt.state) ||
+        (receipt.accepted && nativeMessageShown(events, command.commandId)))) ||
     events.some(
       (event) =>
         event.type === 'turn.completed' &&
@@ -620,9 +720,14 @@ function nativeClip(text: string, max: number): string {
     .trimEnd()}…`;
 }
 
-/** Only the reader's own messages collapse; assistant, tool and status entries show in full. */
+/**
+ * The reader's own messages and proposed plans collapse when long; assistant, tool and status
+ * entries show in full.
+ */
 export function nativeEntryPreview(entry: NativeTimelineEntry): NativeMessagePreview | undefined {
-  return entry.kind === 'user' ? nativeMessagePreview(entry.text) : undefined;
+  return entry.kind === 'user' || entry.event.plan?.kind === 'proposal'
+    ? nativeMessagePreview(entry.text)
+    : undefined;
 }
 
 export function nativeMessageToggleLabel(preview: NativeMessagePreview, expanded: boolean): string {
@@ -769,8 +874,11 @@ function nativeOutputText(output: unknown): string | undefined {
 }
 
 export type NativeTimelineRow =
-  /** `fold`: the summary row that hides this tool while folded. */
-  | { kind: 'entry'; key: number; entry: NativeTimelineEntry; fold?: number }
+  /**
+   * `fold`: the summary row that hides this tool while folded. `ended`: a plan whose turn has
+   * ended, shown folded to its progress.
+   */
+  | { kind: 'entry'; key: number; entry: NativeTimelineEntry; fold?: number; ended?: true }
   /** Keyed by the entry that ended its turn; `tools` are the keys it hides. */
   | { kind: 'work'; key: number; label: string; tools: number[] };
 
@@ -798,6 +906,7 @@ export function nativeTimelineRows(entries: NativeTimelineEntry[]): NativeTimeli
         key: item.key,
         entry: item,
         ...(tools.length && item.kind === 'tool' ? { fold: entry.key } : {}),
+        ...(item.kind === 'plan' ? { ended: true as const } : {}),
       });
     if (tools.length) {
       const prompt =
@@ -831,15 +940,27 @@ export function nativeTimelineRows(entries: NativeTimelineEntry[]): NativeTimeli
 }
 
 /**
- * Tools shown running in a live read here. A turn the reader watched starts open when it
- * finishes, so its tools don't fold away under them. A stored snapshot is not live: a turn that
- * finished while the reader was away starts folded.
+ * Tools and plans shown running in a live read here. A turn the reader watched starts open when
+ * it finishes, so its tools and plan don't fold away under them. A stored snapshot is not live: a
+ * turn that finished while the reader was away starts folded.
  */
 export function nativeWatchTools(rows: NativeTimelineRow[], watched: Set<number>, live: boolean) {
   if (!live) return;
   for (const row of rows)
-    if (row.kind === 'entry' && row.entry.kind === 'tool' && row.fold === undefined)
+    if (
+      row.kind === 'entry' &&
+      ((row.entry.kind === 'tool' && row.fold === undefined) ||
+        (row.entry.kind === 'plan' && !row.ended))
+    )
       watched.add(row.key);
+}
+
+/** A plan shows its steps while its turn runs, or when the reader watched it run. */
+export function nativePlanOpen(
+  row: Extract<NativeTimelineRow, { kind: 'entry' }>,
+  watched: ReadonlySet<number>,
+): boolean {
+  return !row.ended || watched.has(row.key);
 }
 
 export function nativeFoldWatched(

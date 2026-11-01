@@ -126,7 +126,7 @@ export function TerminalHistoryPanel({ rawText }: { rawText: string }) {
 export const TerminalViewSurface = forwardRef<
   XtermTerminalViewHandle,
   {
-    allowTouchKeyboard?: boolean;
+    directInput?: boolean;
     initialText: string;
     mode: TerminalViewMode;
     onInput: (data: string) => void;
@@ -135,14 +135,14 @@ export const TerminalViewSurface = forwardRef<
     readOnlyReason?: string | null;
   }
 >(function TerminalViewSurface(
-  { allowTouchKeyboard, initialText, mode, onInput, onResize, rawHistoryText, readOnlyReason },
+  { directInput, initialText, mode, onInput, onResize, rawHistoryText, readOnlyReason },
   ref,
 ) {
   if (mode === 'history') return <TerminalHistoryPanel rawText={rawHistoryText} />;
   return (
     <XtermTerminalView
       ref={ref}
-      allowTouchKeyboard={allowTouchKeyboard}
+      directInput={directInput}
       initialText={initialText}
       onInput={onInput}
       onResize={onResize}

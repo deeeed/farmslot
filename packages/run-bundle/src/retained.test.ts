@@ -5,7 +5,9 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
+  stat,
   symlink,
   utimes,
   writeFile,
@@ -27,7 +29,9 @@ import {
   readRunBundleAvailability,
   reserveRunBundleMetadata,
   resolveRunBundleEntry,
+  runBundleAdmissionUsage,
   runBundleHousekeepingPaths,
+  withRunBundleStoreLock,
 } from './retained.js';
 
 async function fixture(t: TestContext) {
@@ -486,6 +490,126 @@ test('metadata admission refuses exhausted capacity before work and releases the
   await reserveRunBundleMetadata(f.store, second, policy);
 });
 
+async function treeBytes(directory: string): Promise<number> {
+  let bytes = 0;
+  for (const entry of await readdir(directory, { withFileTypes: true, recursive: true }))
+    if (entry.isFile()) bytes += (await stat(path.join(entry.parentPath, entry.name))).size;
+  return bytes;
+}
+
+test('admission charges a bundle its recorded bytes and measures only a bundle without a record', async (t) => {
+  const f = await fixture(t);
+  const result = await materializeRunBundle(f.request);
+  const bundle = path.join(f.store.root, 'sha256', result.ref.bundleDigest);
+  const usage = path.join(f.store.root, 'usage', `${result.ref.bundleDigest}.json`);
+  const recorded = async () =>
+    (JSON.parse(await readFile(usage, 'utf8')) as { bytes: number }).bytes;
+  // Publish and the media repair that followed both kept the record exact.
+  assert.equal(await recorded(), await treeBytes(bundle));
+  // Admission reads the record instead of walking payloads, so bytes nothing recorded stay unseen.
+  await writeFile(path.join(bundle, 'unrecorded.bin'), Buffer.alloc(60_000));
+  const policy = {
+    maxBundleBytes: 64_000,
+    maxStoreBytes: 64_000,
+    metadataReserveBytes: 4_000,
+    mediaRetentionDays: 30,
+  };
+  const admitted = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee';
+  await reserveRunBundleMetadata(f.store, admitted, policy);
+  // Each reservation claims the whole metadata reserve; release it as a capture would.
+  await rm(path.join(f.store.root, 'reservations', `${admitted}.json`));
+  // A bundle without a record, e.g. one published before records existed, is measured once.
+  await rm(usage);
+  await assert.rejects(
+    reserveRunBundleMetadata(f.store, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee', policy),
+    /capacity is exhausted/,
+  );
+  assert.equal(await recorded(), await treeBytes(bundle));
+});
+
+test('a bundle retention has moved aside stays charged until archived, without a record', async (t) => {
+  const f = await fixture(t);
+  const aside = path.join(f.store.root, 'sha256', '.retention-0f1e2d3c');
+  await mkdir(aside, { recursive: true });
+  await writeFile(path.join(aside, 'payload.bin'), Buffer.alloc(60_000));
+  const policy = {
+    maxBundleBytes: 64_000,
+    maxStoreBytes: 64_000,
+    metadataReserveBytes: 4_000,
+    mediaRetentionDays: 30,
+  };
+  await assert.rejects(
+    reserveRunBundleMetadata(f.store, f.run.id, policy),
+    /capacity is exhausted/,
+  );
+  await rm(aside, { recursive: true });
+  await reserveRunBundleMetadata(f.store, f.run.id, policy);
+});
+
+test('a bundle retention has moved aside is charged its record, measured once if it had none', async (t) => {
+  const f = await fixture(t);
+  const result = await materializeRunBundle(f.request);
+  const aside = path.join(f.store.root, 'sha256', '.retention-1a2b3c4d');
+  await rename(path.join(f.store.root, 'sha256', result.ref.bundleDigest), aside);
+  await writeFile(path.join(aside, 'unrecorded.bin'), Buffer.alloc(60_000));
+  const policy = {
+    maxBundleBytes: 64_000,
+    maxStoreBytes: 64_000,
+    metadataReserveBytes: 4_000,
+    mediaRetentionDays: 30,
+  };
+  const admitted = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee';
+  await reserveRunBundleMetadata(f.store, admitted, policy);
+  // Moved aside before it had a record: measured once, then charged from the new record.
+  await rm(path.join(f.store.root, 'reservations', `${admitted}.json`));
+  await rm(path.join(aside, 'unrecorded.bin'));
+  await rm(path.join(f.store.root, 'usage', `${result.ref.bundleDigest}.json`));
+  await reserveRunBundleMetadata(f.store, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee', policy);
+  await rm(path.join(f.store.root, 'reservations', 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee.json'));
+  await writeFile(path.join(aside, 'unrecorded.bin'), Buffer.alloc(60_000));
+  await reserveRunBundleMetadata(f.store, 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee', policy);
+});
+
+test('capacity usage reads store accounting under the store lock', async (t) => {
+  const f = await fixture(t);
+  let release!: () => void;
+  let entered!: () => void;
+  const holding = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const holder = withRunBundleStoreLock(f.store, async () => {
+    entered();
+    await new Promise<void>((done) => {
+      release = done;
+    });
+  });
+  await holding;
+  let settled = false;
+  const usage = runBundleAdmissionUsage(f.store, f.root).then((result) => {
+    settled = true;
+    return result;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(settled, false, 'a usage read waits for the store lock');
+  release();
+  await holder;
+  const { store, reservations, acquisition, total } = await usage;
+  assert.equal(total, store + reservations + acquisition);
+});
+
+test('a repair re-derives a stale record from the manifest before charging restored media', async (t) => {
+  const f = await fixture(t);
+  const result = await materializeRunBundle(f.request);
+  const bundle = path.join(f.store.root, 'sha256', result.ref.bundleDigest);
+  const usage = path.join(f.store.root, 'usage', `${result.ref.bundleDigest}.json`);
+  // As if a crash had left the record behind the payloads, with the video to restore again.
+  await rm(path.join(bundle, `tasks/${result.ref.taskKey}/artifacts/capture.mp4`));
+  await writeFile(usage, JSON.stringify({ bytes: 1 }));
+  await materializeRunBundle(f.request);
+  const { bytes } = JSON.parse(await readFile(usage, 'utf8')) as { bytes: number };
+  assert.equal(bytes, await treeBytes(bundle));
+});
+
 test('a dead store lease is recovered and concurrent retries publish the same immutable capture', async (t) => {
   const f = await fixture(t);
   const lock = path.join(f.store.runsDir, 'bundle-store.lock');
@@ -909,6 +1033,109 @@ test('acquisition media under FARMSLOT_PROJECTS_DIR is charged like the default 
   });
   assert.equal(transfers, 0);
   assert.ok(result.missingData.includes('media-capacity:artifacts/capture.mp4'));
+});
+
+test('a recapture copies media the run already retained instead of fetching it from the slot', async (t) => {
+  const f = await fixture(t);
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(120_000, 3);
+  const digest = createHash('sha256').update(video).digest('hex');
+  let transfers = 0;
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    artifacts: [
+      f.artifacts[0]!,
+      { path: 'artifacts/capture.mp4', purpose: 'video', sha256: digest, sizeBytes: video.length },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      transfers++;
+      await writeFile(destination, video);
+      return { sha256: digest, bytes: video.length };
+    },
+  };
+  const first = await materializeRunBundle(request);
+  assert.equal(transfers, 1);
+  const second = await materializeRunBundle({
+    ...request,
+    run: { ...f.run, artifactBundle: first.ref },
+    captureKey: 'generation-2:original-inventory',
+  });
+  assert.notEqual(second.ref.bundleDigest, first.ref.bundleDigest);
+  assert.equal(transfers, 1, 'the recapture reused the retained video');
+  assert.deepEqual(second.missingData, []);
+  const video2 = await resolveRunBundleEntry({
+    store: f.store,
+    ref: second.ref,
+    runId: f.run.id,
+    path: 'artifacts/capture.mp4',
+  });
+  assert.deepEqual(await readFile(video2.path), video);
+});
+
+test('a later bundle that deferred the media does not hide an earlier stored copy', async (t) => {
+  const f = await fixture(t);
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(120_000, 4);
+  const digest = createHash('sha256').update(video).digest('hex');
+  let transfers = 0;
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    artifacts: [
+      f.artifacts[0]!,
+      { path: 'artifacts/capture.mp4', purpose: 'video', sha256: digest, sizeBytes: video.length },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      transfers++;
+      await writeFile(destination, video);
+      return { sha256: digest, bytes: video.length };
+    },
+  };
+  const stored = await materializeRunBundle(request);
+  // Quota-deferred: the manifest lists the video but the bundle never stored it.
+  const deferred = await materializeRunBundle({
+    ...request,
+    captureKey: 'generation-2:original-inventory',
+    policy: {
+      maxBundleBytes: 60_000,
+      maxStoreBytes: 1_000_000,
+      metadataReserveBytes: 4_000,
+      mediaRetentionDays: 30,
+    },
+  });
+  assert.ok(deferred.missingData.includes('media-capacity:artifacts/capture.mp4'));
+  assert.equal(transfers, 1);
+  const output = (ref: RunArtifactBundleRef) => ({
+    artifactBundle: ref,
+    capturedAt: f.run.createdAt,
+    workerFinished: true,
+    artifactManifest: [...request.artifacts],
+    manifestDigest: 'original-inventory',
+  });
+  // The deferred bundle is looked up first; its listed-but-absent video is skipped.
+  await materializeRunBundle({
+    ...request,
+    run: { ...f.run, artifactBundle: deferred.ref, output: output(stored.ref) },
+    captureKey: 'generation-3:original-inventory',
+  });
+  assert.equal(transfers, 1, 'the stored copy was used, not the slot');
+  // A referenced bundle that has left the store (no manifest, nothing cached) is skipped too.
+  const archived = { ...stored.ref, bundleDigest: 'f'.repeat(64) };
+  await materializeRunBundle({
+    ...request,
+    run: { ...f.run, artifactBundle: archived, output: output(stored.ref) },
+    captureKey: 'generation-4:original-inventory',
+  });
+  assert.equal(transfers, 1, 'an archived candidate falls through to the next copy');
+  // Once capacity recovers, a repair stores the deferred video in that same bundle; its
+  // manifest still lists it as deferred, and a later recapture uses it all the same.
+  await materializeRunBundle({ ...request, captureKey: 'generation-2:original-inventory' });
+  assert.equal(transfers, 2);
+  await materializeRunBundle({
+    ...request,
+    run: { ...f.run, artifactBundle: deferred.ref },
+    captureKey: 'generation-5:original-inventory',
+  });
+  assert.equal(transfers, 2, 'the repaired copy in the deferred bundle was used');
 });
 
 test('a projects dir inside the root sandbox is charged once', async (t) => {

@@ -27,11 +27,13 @@ import { ReviewDispatchPicker } from '../features/review-dispatch/ReviewDispatch
 import { useConfigurationProjects } from '../hooks/useConfigurationProjects';
 import { useResourceQuery } from '../hooks/useResourceQuery';
 import { backlogExecutionDefaults } from '../lib/backlog-review-dispatch';
+import { readErrorMessage } from '../lib/resource-read-status';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
 import { useConnectionStore } from '../store/connection';
 import { useFilterStore } from '../store/filters';
 import { useFleetStore } from '../store/fleet';
+import { heldConnectionCurrent } from '../store/held-connection';
 
 import { FormSheetHeader } from './FormSheetHeader';
 import { ResourceReadStatus } from './ResourceReadStatus';
@@ -525,10 +527,16 @@ export function BacklogCreateForm({
         </Text>
       </PlanningSection>
 
-      <ResourceReadStatus observation={planning} label="backlog" />
-      <ResourceReadStatus observation={projectsObservation} label="projects" />
+      <ResourceReadStatus
+        observations={[
+          { observation: planning, label: 'backlog' },
+          { observation: projectsObservation, label: 'projects' },
+        ]}
+      />
       {error || templateObservation.error ? (
-        <Text style={styles.error}>{error || templateObservation.error?.message}</Text>
+        <Text style={styles.error}>
+          {error || readErrorMessage(templateObservation, heldConnectionCurrent())}
+        </Text>
       ) : null}
       {createdLabel ? (
         <Text style={styles.success}>

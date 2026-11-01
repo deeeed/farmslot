@@ -15,10 +15,12 @@ import {
   nativeHistoryCanAct,
   nativeHistoryCanSend,
   nativeHistoryQuery,
+  nativeMessageCancelable,
   nativeMessageDropped,
   nativeMessageShown,
   nativeObservationQuery,
   nativeSendLabel,
+  nativeSteerAvailable,
   nativeTimeline,
   nativeTimelineRows,
   type NativeTranscript,
@@ -46,7 +48,9 @@ import { getResourceCache, getResourceNativeOwnerId } from '../../lib/resource-c
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { canOpenNativeConversation } from '../../lib/workspace-access';
 import { useConnectionStore } from '../../store/connection';
+import { useHeldConnection } from '../../store/held-connection';
 
+import { nativeConversationError } from './native-conversation-error';
 import { useNativeSessionResume } from './use-native-session-resume';
 import { useNativeSessionSetup } from './use-native-session-setup';
 
@@ -67,6 +71,8 @@ export function useNativeConversationController(params: NativeConversationParams
   const focused = useIsFocused();
   const client = useConnectionStore((state) => state.client);
   const connection = useConnectionStore((state) => state.status);
+  // Connected, or within a short reconnect: the composer stays editable and quiet.
+  const heldConnected = useHeldConnection();
   const profile = useConnectionStore((state) => state.activeProfileId);
   const gatewayUrl = useConnectionStore((state) => state.gatewayUrl);
   const principalId = useConnectionStore((state) => state.principalId);
@@ -287,7 +293,7 @@ export function useNativeConversationController(params: NativeConversationParams
   const writable = nativeConversationWritable({
     allowed,
     ready,
-    connected: connection === 'connected',
+    connected: heldConnected,
     history: historyObservation,
     snapshot,
     run: params.runId ? runObservation : undefined,
@@ -357,7 +363,8 @@ export function useNativeConversationController(params: NativeConversationParams
       }
     }
   };
-  const send = () =>
+  /** `steer`: the message joins the running turn when the host can take it there. */
+  const send = (delivery?: 'steer') =>
     mutate(async () => {
       if (!session || !nativeSendLabel(session.state) || pendingRef.current || !draft.trim())
         return;
@@ -377,7 +384,11 @@ export function useNativeConversationController(params: NativeConversationParams
         assertCurrentControls('current');
         issued = true;
         const { generation: _, ...request } = command;
-        await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
+        await client!.request(
+          Methods.NATIVE_SESSION_SEND,
+          { ...request, ...(delivery ? { delivery } : {}) },
+          30_000,
+        );
       } catch (cause) {
         // Never sent: the message goes back to the composer instead of waiting on a delivery.
         if (!issued) {
@@ -447,6 +458,18 @@ export function useNativeConversationController(params: NativeConversationParams
         }
         throw cause;
       }
+    });
+  /** Edit: the host removes the queued message, and reconciling its receipt restores the text. */
+  const edit = () =>
+    mutate(async () => {
+      const command = pendingRef.current;
+      const queued = snapshot?.commands.find((item) => item.commandId === command?.commandId);
+      if (command && nativeMessageCancelable(session, queued))
+        await client!.request(
+          Methods.NATIVE_SESSION_CANCEL,
+          { ...target, commandId: command.commandId },
+          30_000,
+        );
     });
   const entries = nativeTimeline(transcript.events);
   const rows = nativeTimelineRows(entries);
@@ -532,12 +555,24 @@ export function useNativeConversationController(params: NativeConversationParams
       pendingText,
       receipt,
       canRetry: nativeRetryAvailable(receipt),
-      error: error || pollError || creation.viewModel.error || resume.viewModel.error,
+      canEdit: nativeMessageCancelable(session, receipt),
+      error: nativeConversationError(
+        {
+          action: error,
+          read: pollError,
+          creation: creation.viewModel.error,
+          resume: resume.viewModel.error,
+        },
+        heldConnected,
+        allowed,
+      ),
       busy,
       ready,
-      connected: connection === 'connected',
+      connected: heldConnected,
       writable,
       canSend,
+      canSteer: canSend && nativeSteerAvailable(session, snapshot?.pendingRequests),
+      steerable: !!session?.capabilities.steer,
       sendLabel: sendLabel ?? 'Send',
       canStop:
         writable &&
@@ -592,6 +627,7 @@ export function useNativeConversationController(params: NativeConversationParams
       },
       send,
       retry,
+      edit,
       respond,
       setDraft: (value: string) => {
         draftRef.current = value;

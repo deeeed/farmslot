@@ -5,7 +5,7 @@ import {
   type RoadmapListResult,
   type WorkGraphListResult,
 } from '@farmslot/protocol';
-import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
+import { canActOn, type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { getResourceCache, getResourceWorkspaceKey } from '../../lib/resource-cache';
@@ -33,7 +33,8 @@ export function currentPlanningRead<T>(query: ResourceQuery<T>, expected: T | un
   if (
     !client ||
     !cache ||
-    state?.status !== 'ready' ||
+    !state ||
+    !canActOn(state, true) ||
     state.data === undefined ||
     state.data !== expected
   )

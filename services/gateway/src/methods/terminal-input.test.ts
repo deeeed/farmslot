@@ -88,6 +88,41 @@ mock.module('../runtime/tmux-stream.js', {
     },
   },
 });
+// The slot host for sequenced remote input: one tmux pane per target, with its user options.
+const slotHost = {
+  options: new Map<string, string>(),
+  /** Runs the command, then loses its reply. */
+  loseNextReply: false,
+};
+const unquote = (quoted: string) => quoted.slice(1, -1).replaceAll(`'\\''`, `'`);
+const quoted = `'(?:[^']|'\\\\'')*'`;
+mock.module('../core/config.js', {
+  namedExports: {
+    ...(await import('../core/config.js')),
+    loadSlotVars: async (slotId: string) => ({ slotId, machine: pool.machine, host: pool.host }),
+  },
+});
+mock.module('../core/exec.js', {
+  namedExports: {
+    ...(await import('../core/exec.js')),
+    execOnSlot: async (_vars: unknown, command: string) => {
+      const read = new RegExp(`show-options -pqv -t ${quoted} (${quoted})`).exec(command);
+      if (read)
+        return { exitCode: 0, stdout: slotHost.options.get(unquote(read[1]!)) ?? '', stderr: '' };
+      const typed = new RegExp(`send-keys -t ${quoted} -l (${quoted})`).exec(command);
+      assert(typed, `unexpected slot command: ${command}`);
+      await beforeSend(unquote(typed[1]!));
+      sent.push(unquote(typed[1]!));
+      const record = new RegExp(`set-option -p -t ${quoted} (${quoted}) (${quoted})`).exec(command);
+      if (record) slotHost.options.set(unquote(record[1]!), unquote(record[2]!));
+      if (slotHost.loseNextReply) {
+        slotHost.loseNextReply = false;
+        throw new Error('Request exec timed out');
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    },
+  },
+});
 const workspace = await import('../runtime/workspace-terminal.js');
 mock.module('../runtime/workspace-terminal.js', {
   namedExports: {
@@ -95,11 +130,27 @@ mock.module('../runtime/workspace-terminal.js', {
     resolveWorkspaceTerminal: async (params: TerminalInputParams) => {
       assert(params.runId);
       await workspaceBeforeResolve(params.runId);
-      return { key: workspace.workspaceTerminalKey(params.runId) };
+      return {
+        key: workspace.workspaceTerminalKey(params.runId),
+        run: { id: params.runId },
+        session: `review-shell-${params.runId}`,
+      };
     },
+    // The review shell's pane record, as the owner's node keeps it.
+    workspacePaneInputRecord: (_run: unknown, session: string) => ({
+      read: async (stream: string) => {
+        const value = slotHost.options.get(`${session} ${stream}`);
+        return value === undefined ? null : Number(value);
+      },
+      write: async ({ stream, n }: { stream: string; n: number }) => {
+        slotHost.options.set(`${session} ${stream}`, String(n));
+      },
+    }),
   },
 });
 const { terminalInput } = await import('./terminal.js');
+const { inputRecordsSettledForTests, resetInputSequencesForTests } =
+  await import('../runtime/terminal-input-sequence.js');
 
 function deferred() {
   let resolve!: () => void;
@@ -167,6 +218,46 @@ test('a refused input rejects its caller without poisoning the next input', asyn
   await good;
   await terminalInput({ slotId: 'failure', data: 'later' });
   assert.deepEqual(sent, ['good', 'later']);
+});
+
+// A batch the phone resends after a lost reply must not be typed into the slot pane twice.
+test('slot input writes each sequenced batch once and still writes unsequenced input', async () => {
+  sent.length = 0;
+  await terminalInput({ slotId: 'routing', data: 'make deploy\r', seq: { stream: 's1', n: 1 } });
+  await terminalInput({ slotId: 'routing', data: 'make deploy\r', seq: { stream: 's1', n: 1 } });
+  await terminalInput({ slotId: 'routing', data: 'ls\r', seq: { stream: 's1', n: 2 } });
+  await terminalInput({ slotId: 'routing', data: 'x' });
+  await terminalInput({ slotId: 'routing', data: 'x' });
+  assert.deepEqual(sent, ['make deploy\r', 'ls\r', 'x', 'x']);
+});
+
+// The slot host records the batch in the command that types it, so the resend finds it there.
+test('slot input whose reply was lost after typing is not typed again by its resend', async () => {
+  sent.length = 0;
+  slotHost.loseNextReply = true;
+  const batch = { slotId: 'failure', data: 'make deploy\r', seq: { stream: 's2', n: 1 } };
+  await assert.rejects(terminalInput(batch), /timed out/);
+  await terminalInput(batch);
+  await terminalInput({ ...batch, data: 'ls\r', seq: { stream: 's2', n: 2 } });
+  assert.deepEqual(sent, ['make deploy\r', 'ls\r']);
+  assert.match(slotHost.options.get('@farmslot-input-s2') ?? '', /^2:\d+$/);
+});
+
+// A gateway restart forgets what it typed; the review shell's pane still knows.
+test('worktree input recorded on its pane is not typed again after a restart', async () => {
+  sent.length = 0;
+  const batch = {
+    slotId: '',
+    runId: 'recorded-workspace',
+    data: 'make\r',
+    seq: { stream: 'w1', n: 1 },
+  };
+  await terminalInput(batch);
+  await inputRecordsSettledForTests();
+  resetInputSequencesForTests();
+  await terminalInput(batch);
+  assert.deepEqual(sent, ['make\r']);
+  assert.equal(slotHost.options.get('review-shell-recorded-workspace w1'), '1');
 });
 
 test('workspace input reserves each run before delayed resolution and leaves other runs independent', async () => {

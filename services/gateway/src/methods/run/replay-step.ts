@@ -2127,9 +2127,16 @@ async function replayRunStep(
     // The supersession itself already happened synchronously right after the
     // generation bump (before the first awaited operation); this just selects
     // which decisions the reset below carries forward.
-    const clearedDecisions =
-      replaysTaskGeneration || replaysCompletionOrGate
-        ? supersededGateAudit
+    // A completion replay keeps the output review: it records the capture COMPLETE
+    // reads, not a gate verdict. A task-generation replay recaptures, so it drops it.
+    // Match by id: an output recapture during the replay clones the decision list.
+    const supersededIds = new Set(supersededGateAudit.map(({ id }) => id));
+    const clearedDecisions = replaysTaskGeneration
+      ? supersededGateAudit
+      : replaysCompletionOrGate
+        ? existing.decisions.filter(
+            (d) => supersededIds.has(d.id) || d.payload?.kind === 'output-review',
+          )
         : replaysPostGate
           ? existing.decisions
           : existing.decisions.filter((d) => {

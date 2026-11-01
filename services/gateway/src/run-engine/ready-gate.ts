@@ -96,6 +96,7 @@ import {
   readyGateCurrentDescription,
 } from '../run-completion/ready-gate-package.js';
 import { runnerDefaultModel } from '../runners/registry.js';
+import { readRunProgress } from '../runners/run-progress.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
@@ -116,7 +117,7 @@ import {
 } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { createEngineDecision } from './engine-decisions.js';
-import { BlockedRunError } from './errors.js';
+import { BlockedRunError, OwnedWorkerBusyError } from './errors.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
@@ -926,6 +927,59 @@ interface ReadyGatePackageDependencies {
   createDecision?: typeof createEngineDecision;
   rebindSlot?: typeof rebindUnownedPublicationSlot;
   readReviewFixSignal?: ReviewFixSignalReader;
+  readProgress?: typeof readRunProgress;
+  /** Bounded wait for a busy owned worker; tests shorten it. */
+  workerIdleWait?: { pollMs: number; maxPollMs: number; timeoutMs: number };
+  /**
+   * The human-gate step's start generation. A re-present after slow work (a review plan,
+   * a resumed review, a visual repair) is fenced to it, so a driver a replay superseded
+   * meanwhile cannot open a gate over the live one.
+   */
+  generation?: number;
+}
+
+// A compaction or a last turn finishes in minutes; past this the operator sees why. Polls
+// back off (10 s, 20 s, 40 s, then every 60 s): each reads the worker's transcript state.
+const WORKER_IDLE_WAIT = { pollMs: 10_000, maxPollMs: 60_000, timeoutMs: 15 * 60_000 };
+
+/**
+ * Waits for a worker that is making progress to go idle, so the gate builds its own
+ * package instead of leaving an "unavailable" card only Retry Gate clears. A worker that
+ * cannot go idle by itself (at a prompt, pane unproven) or a gate park ends the wait at
+ * once with the card; a replay, pause or cancel aborts it.
+ */
+async function waitForOwnedWorkerIdle(
+  runId: string,
+  generation: number,
+  dependencies: ReadyGatePackageDependencies,
+): Promise<'idle' | 'abort' | 'timeout'> {
+  const { pollMs, maxPollMs, timeoutMs } = dependencies.workerIdleWait ?? WORKER_IDLE_WAIT;
+  const readProgress = dependencies.readProgress ?? readRunProgress;
+  const deadline = Date.now() + timeoutMs;
+  updateRunStep(runId, S.HUMAN_GATE, {
+    detail: 'Preparing operator decision: waiting for the owned worker to be idle',
+  });
+  for (let delay = pollMs; Date.now() < deadline; delay = Math.min(delay * 2, maxPollMs)) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(delay, deadline - Date.now())));
+    const before = getRun(runId);
+    if (runSupersededSince(before, generation)) return 'abort';
+    if (isGateParkInFlightOrFreed(before!)) return 'timeout';
+    const progress = await readProgress(before!);
+    // The probe awaited a remote read: an operator may have replayed or cancelled meanwhile.
+    if (runSupersededSince(getRun(runId), generation)) return 'abort';
+    if (progress.kind === 'idle') return 'idle';
+    if (progress.kind !== 'making-progress') return 'timeout';
+  }
+  return 'timeout';
+}
+
+/** A publication the operator adopted ends this gate; its continuation is checked first. */
+async function adoptedPublicationGateEnd(run: Run): Promise<string | undefined> {
+  if (!run.engineState?.publishGate?.humanPublicationAdoption) return undefined;
+  const { assertAdoptedPublicationContinuation } =
+    await import('../run-completion/human-publication.js');
+  await assertAdoptedPublicationContinuation(run);
+  return 'superseded-by-publication-adoption';
 }
 
 export async function executeReadyGate(
@@ -933,13 +987,9 @@ export async function executeReadyGate(
   dependencies: ReadyGatePackageDependencies = {},
 ): Promise<string> {
   let current = getRun(runId)!;
-  const generation = current.engineState?.generation ?? 0;
-  if (current.engineState?.publishGate?.humanPublicationAdoption) {
-    const { assertAdoptedPublicationContinuation } =
-      await import('../run-completion/human-publication.js');
-    await assertAdoptedPublicationContinuation(current);
-    return 'superseded-by-publication-adoption';
-  }
+  const generation = dependencies.generation ?? current.engineState?.generation ?? 0;
+  const adoptedAtEntry = await adoptedPublicationGateEnd(current);
+  if (adoptedAtEntry) return adoptedAtEntry;
   const artifactOnly = isArtifactOnlyRun(current);
 
   // Find PR + CI repo
@@ -951,6 +1001,7 @@ export async function executeReadyGate(
   const decide = dependencies.createDecision ?? createEngineDecision;
   let preparedPackage: ReadyGatePrPackage | undefined;
   let recoveredAction: string | undefined;
+  let workerIdleWaited = false;
   if (publicationApprovalGate) {
     for (;;) {
       updateRunStep(runId, S.HUMAN_GATE, {
@@ -981,6 +1032,19 @@ export async function executeReadyGate(
         preparedPackage = await (dependencies.ensurePackage ?? ensureCurrentPublishPackage)(runId);
         break;
       } catch (error) {
+        if (error instanceof OwnedWorkerBusyError && !workerIdleWaited) {
+          // Once per gate pass: a worker still busy after the bounded wait gets the card below.
+          workerIdleWaited = true;
+          const waited = await waitForOwnedWorkerIdle(runId, generation, dependencies);
+          if (waited === 'abort') return 'abort';
+          if (waited === 'idle') {
+            current = getRun(runId)!;
+            // An adoption can land while the gate waited for the worker.
+            const adopted = await adoptedPublicationGateEnd(current);
+            if (adopted) return adopted;
+            continue;
+          }
+        }
         // Unavailable source is a durable operator wait, never permission to fail
         // the run and tear down its retained worker, slot or proof.
         const message = `Publication package is unavailable: ${error instanceof Error ? error.message : String(error)}. Restore the owned source and retry this gate.`;
@@ -1005,7 +1069,7 @@ export async function executeReadyGate(
             diffStat: { files: 0, additions: 0, deletions: 0 },
             stale: true,
           },
-          { canReplay: () => false },
+          { canReplay: () => false, generation },
         );
         // Keep the live resolution instead of replaying a cached action. Some
         // explicit actions, including Continue Fixing, intentionally never replay.
@@ -1019,6 +1083,7 @@ export async function executeReadyGate(
           return 'abort';
         if (recoveredAction === CONTINUE_REVIEW_FIX_ACTION) return recoveredAction;
         current = latest!;
+        workerIdleWaited = false; // a Retry Gate waits for a busy worker again
       }
     }
     const approved = getRun(runId)!;
@@ -1449,6 +1514,7 @@ export async function executeReadyGate(
         !isPublishApprovalAction(prior.resolvedAction ?? '') ||
         (prior.payload?.kind === 'ready' &&
           prior.payload.prPackage?.packageHash === preparedPackage?.packageHash),
+      generation,
     }));
 
   if (actionId === 'abort' || runSupersededSince(getRun(runId), generation)) return 'abort';

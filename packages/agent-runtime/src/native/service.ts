@@ -2,9 +2,11 @@ import {
   isNativeResultSchema,
   Methods,
   type NativeSessionCreateParams,
+  type NativeSessionInfo,
   type NativeSessionResponse,
 } from '@farmslot/protocol';
 
+import { nativeTurnDiff } from './checkpoint.js';
 import type { NativeSessionClient } from './client.js';
 import { NATIVE_PROFILE_METHODS, routeNativeProfile } from './profile-service.js';
 import { nativeWorkspaceChanges, nativeWorkspaceDiff, nativeWorkspaceList } from './workspace.js';
@@ -18,6 +20,46 @@ export class NativeSessionMethodError extends Error {
     super(message);
     this.name = 'NativeSessionMethodError';
   }
+}
+
+/**
+ * One changed file's diff between the checkpoints of the `turn.changes` event at `sequence`. A
+ * pinned worker reads that event within its own lease, as it reads the rest of its history.
+ */
+async function turnDiff(
+  client: NativeSessionClient,
+  principal: string,
+  session: NativeSessionInfo,
+  params: Record<string, unknown>,
+  path: string,
+): Promise<string> {
+  const sequence = params.sequence;
+  if (typeof sequence !== 'number' || !Number.isInteger(sequence) || sequence < 1)
+    throw new NativeSessionMethodError('INVALID_PARAMS', 'sequence must be a positive integer');
+  const lease = session.workerManaged ? session.workerLeaseId : undefined;
+  const page = lease
+    ? // A sequence outside the lease's window is not this worker's.
+      await client
+        .readWorker(principal, session.id, lease, sequence - 1, 1)
+        .catch((error: unknown) => {
+          if (/history cursor/.test((error as Error).message)) return undefined;
+          throw error;
+        })
+    : await client.read(principal, session.id, sequence - 1, 1);
+  const [event] = page?.events ?? [];
+  const changes = event?.sequence === sequence && event.type === 'turn.changes' && event.changes;
+  if (!changes || !changes.from || !changes.to || !changes.files.some((file) => file.path === path))
+    throw new NativeSessionMethodError('INVALID_PARAMS', 'That turn lists no such changed file');
+  const diff = await nativeTurnDiff(session.cwd, session.id, changes.from, changes.to, path);
+  if (diff === undefined)
+    throw new NativeSessionMethodError('NOT_FOUND', "This turn's changes are no longer retained");
+  return diff;
+}
+
+/** A send's `delivery`: `steer`, or none for an ordinary send. */
+export function nativeSendDelivery(params: Record<string, unknown>): 'steer' | undefined {
+  if (params.delivery === undefined || params.delivery === 'steer') return params.delivery;
+  throw new NativeSessionMethodError('INVALID_PARAMS', "delivery must be 'steer'");
 }
 
 function string(params: Record<string, unknown>, key: string): string {
@@ -53,7 +95,8 @@ export async function routeNativeSession(
       case Methods.NATIVE_SESSION_WORKSPACE_LIST:
       case Methods.NATIVE_SESSION_WORKSPACE_READ:
       case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
-      case Methods.NATIVE_SESSION_WORKSPACE_DIFF: {
+      case Methods.NATIVE_SESSION_WORKSPACE_DIFF:
+      case Methods.NATIVE_SESSION_TURN_DIFF: {
         const sessionId = string(p, 'sessionId');
         const inspect = async () => {
           const { session } = await client.read(principal, sessionId, undefined, 1);
@@ -80,7 +123,9 @@ export async function routeNativeSession(
           result = await nativeWorkspaceChanges(session.cwd);
         else {
           const path = string(p, 'path');
-          if (method === Methods.NATIVE_SESSION_WORKSPACE_LIST)
+          if (method === Methods.NATIVE_SESSION_TURN_DIFF)
+            result = { path, diff: await turnDiff(client, principal, session, p, path) };
+          else if (method === Methods.NATIVE_SESSION_WORKSPACE_LIST)
             result = await nativeWorkspaceList(session.cwd, path);
           else if (method === Methods.NATIVE_SESSION_WORKSPACE_DIFF)
             result = { path, diff: await nativeWorkspaceDiff(session.cwd, path) };
@@ -144,7 +189,9 @@ export async function routeNativeSession(
         );
       case Methods.NATIVE_SESSION_SEND: {
         const commandId = string(p, 'commandId');
-        return await client.send(principal, string(p, 'sessionId'), commandId, string(p, 'text'));
+        return nativeSendDelivery(p) === 'steer'
+          ? await client.steer(principal, string(p, 'sessionId'), commandId, string(p, 'text'))
+          : await client.send(principal, string(p, 'sessionId'), commandId, string(p, 'text'));
       }
       case Methods.NATIVE_SESSION_RESPOND: {
         const response: NativeSessionResponse = {};
@@ -180,6 +227,14 @@ export async function routeNativeSession(
       case Methods.NATIVE_SESSION_INTERRUPT:
         await client.interrupt(principal, string(p, 'sessionId'));
         return { interrupted: true };
+      case Methods.NATIVE_SESSION_CANCEL:
+        return {
+          receipt: await client.cancelCommand(
+            principal,
+            string(p, 'sessionId'),
+            string(p, 'commandId'),
+          ),
+        };
       case Methods.NATIVE_SESSION_CLOSE:
         await client.close(principal, string(p, 'sessionId'));
         return {

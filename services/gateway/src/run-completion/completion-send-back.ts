@@ -5,6 +5,7 @@ import { readSlotField } from '../core/state.js';
 import { continuePRCompletionStep } from '../methods/run/replay-step.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
+import { completionSendBackCommandId } from '../runners/native/worker-control.js';
 import { deliverOperatorInstructionWithIntent } from '../runners/operator-instruction-intent.js';
 import { getRun, persistRunNow, updateRunStep } from '../runs/store.js';
 import {
@@ -134,7 +135,7 @@ export async function sendBackCompletion(
     throw new Error(`Cannot establish the worker signal before send-back: ${probe.message}`);
   const baseline = delivery && recorded.ok ? recorded.signal : probe.signal;
   delivery ??= {
-    key: `completion-send-back:${decisionId}`,
+    key: completionSendBackCommandId(decisionId),
     slotId,
     contextId: context.id,
     confirmed: false,

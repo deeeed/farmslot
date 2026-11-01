@@ -47,7 +47,7 @@ import {
   ensureWorkerRoleTarget,
   isRunnerAliveInAnyPane,
 } from './execute.js';
-import { terminalizePriorRunOnSlot } from './nudge.js';
+import { captureSupersededRunEpisode, terminalizePriorRunOnSlot } from './nudge.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
 import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
 import { recordRetainedPrBaseline } from './worktree-baseline.js';
@@ -430,7 +430,7 @@ export async function warmSessionHandoffDispatch(
   const priorOwnerContext = binding.context;
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;
 
-  await terminalizePriorRunOnSlot(params.slotId, params.runId, 'warm-handoff');
+  const prior = await terminalizePriorRunOnSlot(params.slotId, params.runId, 'warm-handoff');
   const handoffClaim = await claimSlotStatusIf(
     params.slotId,
     // Prefer the FIND_SLOT handoff reservation when present; allow claim when
@@ -463,6 +463,8 @@ export async function warmSessionHandoffDispatch(
       { code: SLOT_CLAIM_REFUSED_CODE },
     );
   }
+  // The superseded run's episode, now that the new run owns the slot.
+  await captureSupersededRunEpisode(prior);
 
   const workingContext = await upsertAgentContext(params.runId, workerRole, {
     status: 'working',

@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.74.5`
+Protocol version: `0.74.9`
 
 ## WebSocket frame shape
 
@@ -204,6 +204,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `native.profile.list`                   | native           | read-only     | —      | —      | Native Profile List gateway method.                   |
 | `native.profile.remove`                 | native           | bounded-write | —      | —      | Native Profile Remove gateway method.                 |
 | `native.profile.status`                 | native           | read-only     | —      | —      | Native Profile Status gateway method.                 |
+| `native.session.cancel`                 | native           | bounded-write | —      | —      | Native Session Cancel gateway method.                 |
 | `native.session.catalog`                | native           | bounded-write | —      | —      | Native Session Catalog gateway method.                |
 | `native.session.close`                  | native           | bounded-write | —      | —      | Native Session Close gateway method.                  |
 | `native.session.create`                 | native           | bounded-write | —      | —      | Native Session Create gateway method.                 |
@@ -213,6 +214,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `native.session.read`                   | native           | read-only     | —      | —      | Native Session Read gateway method.                   |
 | `native.session.respond`                | native           | bounded-write | —      | —      | Native Session Respond gateway method.                |
 | `native.session.send`                   | native           | bounded-write | —      | —      | Native Session Send gateway method.                   |
+| `native.session.turn.diff`              | native           | bounded-write | —      | —      | Native Session Turn Diff gateway method.              |
 | `native.session.workspace.changes`      | native           | bounded-write | —      | —      | Native Session Workspace Changes gateway method.      |
 | `native.session.workspace.diff`         | native           | bounded-write | —      | —      | Native Session Workspace Diff gateway method.         |
 | `native.session.workspace.list`         | native           | read-only     | —      | —      | Native Session Workspace List gateway method.         |
@@ -299,6 +301,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.adopt`                             | run              | bounded-write | —      | —      | Run Adopt gateway method.                             |
 | `run.adoptPublishedPr`                  | run              | bounded-write | —      | —      | Run AdoptPublishedPr gateway method.                  |
 | `run.archive`                           | run              | bounded-write | —      | —      | Run Archive gateway method.                           |
+| `run.attestBeforeAttempt`               | run              | bounded-write | —      | —      | Run AttestBeforeAttempt gateway method.               |
 | `run.autoRecovery.stop`                 | run              | bounded-write | —      | —      | Run AutoRecovery Stop gateway method.                 |
 | `run.backfillSummaries`                 | run              | bounded-write | —      | —      | Run BackfillSummaries gateway method.                 |
 | `run.bulkDelete`                        | run              | bounded-write | —      | —      | Run BulkDelete gateway method.                        |

@@ -17,6 +17,10 @@ export interface NativeSessionCapabilities {
   resumeUnavailableReason?: string;
   /** Schemas accepted and validated through provider-native constrained results. */
   structuredResultSchemas?: NativeResultSchema[];
+  /** Set by the host: `native.session.cancel` removes a queued message. Absent on older hosts. */
+  cancelQueued?: boolean;
+  /** Set by the adapter: a send with `delivery: 'steer'` can join the running turn. */
+  steer?: boolean;
 }
 
 export interface NativeSessionCreateParams {
@@ -84,6 +88,12 @@ export interface NativeSessionReadParams extends NativeSessionTargetParams {
 export interface NativeSessionSendParams extends NativeSessionTargetParams {
   commandId: string;
   text: string;
+  /**
+   * `steer`: add the message to the running turn when the session can take it there
+   * (`capabilities.steer`, a running turn, no pending request); otherwise it is sent as usual.
+   * An older host refuses it rather than queueing it.
+   */
+  delivery?: 'steer';
 }
 export interface NativeSessionSendResult {
   commandId: string;
@@ -94,6 +104,16 @@ export interface NativeSessionSendResult {
   state: NativeCommandState;
   /** True only after native protocol evidence confirms acceptance. */
   accepted: boolean;
+  /** Added to the running turn; it completes with that turn. */
+  steered?: true;
+}
+/** Removes a message still queued for the next turn. A submitted message is refused: stop the turn. */
+export interface NativeSessionCancelParams extends NativeSessionTargetParams {
+  commandId: string;
+}
+export interface NativeSessionCancelResult {
+  /** Failed, never submitted, with outcome `cancelled`. A repeated call returns the same receipt. */
+  receipt: NativeCommandReceipt;
 }
 export type NativeCommandState = 'pending' | 'unknown' | 'accepted' | 'failed' | 'completed';
 export interface NativeCommandReceipt {
@@ -103,7 +123,10 @@ export interface NativeCommandReceipt {
   submitted: boolean;
   accepted: boolean;
   queued?: boolean;
-  outcome?: 'completed' | 'failed' | 'interrupted';
+  /** Added to the running turn; it completes with that turn. */
+  steered?: true;
+  /** `cancelled`: removed from the queue by `native.session.cancel` before submission. */
+  outcome?: 'completed' | 'failed' | 'interrupted' | 'cancelled';
   structuredResult?: NativeStructuredResult;
 }
 
@@ -169,7 +192,9 @@ export const NativeSessionEventTypes = {
   APPROVAL_REQUESTED: 'approval.requested',
   APPROVAL_RESOLVED: 'approval.resolved',
   QUESTION_REQUESTED: 'question.requested',
+  PLAN_UPDATED: 'plan.updated',
   TURN_COMPLETED: 'turn.completed',
+  TURN_CHANGES: 'turn.changes',
   SESSION_CLOSED: 'session.closed',
   ERROR: 'error',
 } as const;
@@ -187,6 +212,40 @@ export interface NativeSessionTool {
   command?: string;
   /** Files the tool reads, edits or searches. */
   paths?: string[];
+}
+
+export interface NativePlanStep {
+  text: string;
+  status: 'pending' | 'in-progress' | 'completed';
+}
+/**
+ * A runner's plan, normalized by its adapter. Each `plan.updated` carries the whole plan and
+ * replaces the earlier plan of the same kind in that turn.
+ */
+export type NativeSessionPlan =
+  /** The runner's working steps, with an optional note. */
+  | { kind: 'checklist'; steps: NativePlanStep[]; text?: string }
+  /** A plan proposed before acting, as markdown. */
+  | { kind: 'proposal'; text: string };
+export interface NativeTurnFile {
+  /** Relative to the repository root. */
+  path: string;
+  status: 'added' | 'modified' | 'deleted';
+  /** Absent for a binary file. */
+  additions?: number;
+  deletions?: number;
+}
+/**
+ * What a turn changed in the session's Git working tree: the host's checkpoints before and after
+ * it (`from`, `to`) and the files that differ. `unavailable` says why there are none to show.
+ */
+export interface NativeTurnChanges {
+  from?: string;
+  to?: string;
+  files: NativeTurnFile[];
+  /** More files changed than are listed. */
+  truncated?: boolean;
+  unavailable?: string;
 }
 
 export interface NativeSessionEvent {
@@ -219,6 +278,10 @@ export interface NativeSessionEvent {
    * runner resolved the request without one, so its decision is unknown.
    */
   response?: NativeSessionResponse;
+  /** On `plan.updated`. */
+  plan?: NativeSessionPlan;
+  /** On `turn.changes`, for the turn of `commandId`. */
+  changes?: NativeTurnChanges;
   status?: 'completed' | 'failed' | 'interrupted';
   /** Only a schema-bound completed provider turn may supply this value. */
   structuredResult?: NativeStructuredResult;
@@ -281,6 +344,16 @@ export interface NativeWorkspaceListResult {
 export interface NativeWorkspaceChangesResult {
   files: Array<{ path: string; status: string }>;
   truncated?: boolean;
+}
+/** One file's diff between a turn's checkpoints: the `turn.changes` event at `sequence`. */
+export interface NativeSessionTurnDiffParams extends NativeSessionTargetParams {
+  sequence: number;
+  /** One of that event's `files`. */
+  path: string;
+}
+export interface NativeSessionTurnDiffResult {
+  path: string;
+  diff: string;
 }
 export interface NativeWorkspaceReadResult {
   path: string;

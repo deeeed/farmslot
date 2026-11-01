@@ -33,6 +33,7 @@ import {
 } from './gateway-http-auth';
 import { nativeCollectionReadTimeout } from './gateway-run-sync';
 import { createOfflineClientStoreBaseline } from './offline-client-store-baseline';
+import { inputSequenceOf, type TerminalInputSequencing } from './terminal-input-queue';
 import {
   type WorkspaceAccess,
   workspaceAccessFromAuth,
@@ -65,6 +66,11 @@ interface PendingRequest {
 export interface GatewayRequestOptions extends ResourceReadOptions {
   /** Recheck caller lifetime after authentication/reconnection waits, before writing the frame. */
   assertCurrent?: () => void;
+  /**
+   * Called once the request frame is written to the socket. A failure before it means the gateway
+   * never got the request; after it, the gateway may have applied it.
+   */
+  onSent?: () => void;
 }
 
 const DEFAULT_TIMEOUT = 15_000;
@@ -145,15 +151,25 @@ export class GatewayClient {
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
+    this.inputSequence = inputSequenceOf(result.capabilities?.terminalInputSequence);
     if (this.state === 'connected') this.setState('connected', true);
     return result;
   }
   private disposed = false;
   private pausedForBackground = false;
+  /** The socket is closed because the app is in the background, not because of an outage. */
+  get backgroundPaused(): boolean {
+    return this.pausedForBackground;
+  }
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
   private wasConnectedBeforeBackground = false;
   private lastConnectionError: string | null = null;
   private pingSupported: boolean | null = null;
+  private inputSequence: TerminalInputSequencing | null = null;
+  /** How the gateway types each terminal input sequence number once, or null when it does not. */
+  get terminalInputSequence(): TerminalInputSequencing | null {
+    return this.inputSequence;
+  }
   private generation = 0;
   private principal: SelfPrincipalSummary | null = null;
   private access: WorkspaceAccess = 'none';
@@ -211,6 +227,7 @@ export class GatewayClient {
     this.authRequired = false;
     const generation = this.generation;
     this.pingSupported = null;
+    this.inputSequence = null;
     this.clearAuthority();
     this.cancelReconnect();
     this.rejectAllPending('Gateway profile changed');
@@ -364,6 +381,7 @@ export class GatewayClient {
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
+    this.inputSequence = inputSequenceOf(result.capabilities?.terminalInputSequence);
     this.backoff = 1000;
     this.lastConnectionError = null;
     this.setState('connected');
@@ -510,6 +528,7 @@ export class GatewayClient {
 
       this.offlineBaseline?.sent(frame);
       this.ws!.send(JSON.stringify(frame));
+      options?.onSent?.();
     });
     if (generation !== this.generation) throw new Error('Gateway identity changed during request');
     return result;
@@ -678,6 +697,7 @@ export class GatewayClient {
   private invalidateTransportCapability(): void {
     this.generation += 1;
     this.pingSupported = null;
+    this.inputSequence = null;
   }
 
   private clearAuthority(): void {

@@ -16,16 +16,24 @@ import fs, {
 import { syncBuiltinESMExports } from 'node:module';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import test from 'node:test';
 
-import type { NativeSessionEvent } from '@farmslot/protocol';
+import { Methods, type NativeSessionEvent, type NativeSessionInfo } from '@farmslot/protocol';
 
 import { NativeSessionClient } from './client.js';
 import { decodeRequest, type HostIdentity, requestHost, socketDirectory } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
+import { routeNativeSession } from './service.js';
 import { alive, appendDurable, matchesProcess, privateDirectory, readJson } from './storage.js';
-import { decodeNativeWorkerLaunch, type NativeWorkerLaunch } from './worker-launch.js';
+import {
+  decodeNativeWorkerLaunch,
+  NATIVE_WORKER_CANCEL_COMMAND,
+  NATIVE_WORKER_STEER,
+  type NativeWorkerLaunch,
+} from './worker-launch.js';
+import { routeNativeWorkerSession } from './worker-service.js';
+import { gitEnvironment } from './workspace.js';
 
 const fixture = `#!/usr/bin/env node
 if (process.argv.includes('--version')) { console.log('fixture 1'); process.exit(0); }
@@ -59,9 +67,29 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   },600);
  }
  if(m.id===7 && !m.method){fs.appendFileSync('decisions',JSON.stringify(m.result)+'\\n');send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'completed'}}});}
+ if(m.method==='turn/steer'){fs.appendFileSync('steers',m.params.input[0].text+'\\n');if(m.params.input[0].text==='exit')process.exit(1);if(m.params.input[0].text==='refuse')return send({id:m.id,error:{code:-32600,message:'no active turn to steer'}});return send({id:m.id,result:{turnId:m.params.expectedTurnId}});}
  if(m.method==='turn/interrupt'){clearTimeout(timer);send({id:m.id,result:{}});send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'interrupted'}}});}
 });`;
 const delay = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Git in a test repository, with a fixed identity. */
+const gitIn =
+  (cwd: string) =>
+  (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@localhost', ...args], {
+      cwd,
+      env: gitEnvironment(),
+      encoding: 'utf8',
+    });
+/** Every event of a session, page by page. */
+const allEvents = (manager: NativeSessionManager, id: string) => {
+  const all: NativeSessionEvent[] = [];
+  for (let after = 0; ; ) {
+    const page = manager.read('owner', id, after, 500);
+    all.push(...page.events);
+    if (!page.hasMore) return all;
+    after = page.cursor;
+  }
+};
 async function until(predicate: () => boolean | Promise<boolean>) {
   const deadline = Date.now() + 12_000;
   while (!(await predicate())) {
@@ -846,6 +874,31 @@ test('worker host rejects public input and accepts only leased commands and perm
     );
     assert.equal(existsSync(join(fixture.cwd, 'inputs')), false);
     await client.sendWorker('owner', target, 'leased-approval', 'approval');
+    assert.equal((await client.sendWorker('owner', target, 'removed', 'removed')).queued, true);
+    const removal = { sessionId: session.id, commandId: 'removed' };
+    await assert.rejects(
+      routeNativeSession(client, 'owner', Methods.NATIVE_SESSION_CANCEL, removal),
+      /requires its run context/,
+    );
+    await assert.rejects(
+      client.cancelCommandWorker('owner', { ...target, leaseId: randomUUID() }, 'removed'),
+      /lease changed/,
+    );
+    const leased = { ...removal, generation: session.generation, leaseId: launch.leaseId };
+    assert.deepEqual(
+      await routeNativeWorkerSession(client, 'owner', NATIVE_WORKER_CANCEL_COMMAND, leased),
+      {
+        receipt: {
+          commandId: 'removed',
+          generation: session.generation,
+          state: 'failed',
+          queued: false,
+          submitted: false,
+          accepted: false,
+          outcome: 'cancelled',
+        },
+      },
+    );
     await until(async () => (await client.read('owner', session.id)).pendingRequests.length === 1);
     const pending = (await client.read('owner', session.id)).pendingRequests[0]!.request!.id;
     await assert.rejects(
@@ -861,6 +914,7 @@ test('worker host rejects public input and accepts only leased commands and perm
     assert.equal((await client.read('owner', session.id)).pendingRequests.length, 1);
     await client.respondWorker('owner', target, pending, { decision: 'deny' });
     await until(async () => (await client.read('owner', session.id)).session.state === 'idle');
+    assert.equal(readFileSync(join(fixture.cwd, 'inputs'), 'utf8'), 'approval\n');
     assert.equal((await client.closeWorker('owner', target)).processStopped, true);
   } finally {
     const file = join(fixture.root, 'host.json');
@@ -1714,6 +1768,417 @@ test('a resolved request records the response this host delivered, and none for 
     assert.deepEqual(resolved(journal), expected);
   } finally {
     for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('host IPC decodes a queued command removal, leased for a worker', () => {
+  const removal = { owner: 'owner', id: 'session', commandId: 'queued' };
+  assert.deepEqual(decodeRequest({ method: 'cancelCommand', ...removal, text: 'ignored' }), {
+    method: 'cancelCommand',
+    ...removal,
+  });
+  assert.throws(
+    () => decodeRequest({ method: 'cancelCommand', owner: 'owner', id: 'session' }),
+    /Invalid IPC commandId/,
+  );
+  const lease = { generation: 'generation', leaseId: 'lease' };
+  assert.deepEqual(decodeRequest({ method: NATIVE_WORKER_CANCEL_COMMAND, ...removal, ...lease }), {
+    method: NATIVE_WORKER_CANCEL_COMMAND,
+    ...removal,
+    ...lease,
+  });
+  assert.throws(
+    () => decodeRequest({ method: NATIVE_WORKER_CANCEL_COMMAND, ...removal, leaseId: 'lease' }),
+    /Invalid IPC generation/,
+  );
+});
+
+test('a queued command is removed durably, once, and only while it waits in its lease', () => {
+  const root = mkdtempSync(join(tmpdir(), 'native-cancel-'));
+  const info: NativeSessionInfo = {
+    id: 'session',
+    generation: 'generation',
+    hostPid: process.pid,
+    runner: 'codex',
+    nativeSessionId: 'conversation',
+    ownerPrincipalId: 'owner',
+    executionNodeId: 'local',
+    accountContextId: 'account',
+    cwd: root,
+    executable: 'codex',
+    version: 'fixture',
+    mode: 'default',
+    accountMode: 'native',
+    workerManaged: true,
+    workerLeaseId: 'lease',
+    state: 'failed',
+    capabilities: {
+      modes: ['default'],
+      streaming: true,
+      tools: true,
+      approvals: true,
+      questions: false,
+      interrupt: true,
+      resume: true,
+    },
+  };
+  const command = (commandId: string, fields: object = {}) => ({
+    commandId,
+    text: commandId,
+    generation: 'generation',
+    leaseId: 'lease',
+    state: 'pending',
+    queued: true,
+    submitted: false,
+    accepted: false,
+    ...fields,
+  });
+  try {
+    appendDurable(join(root, 'session.journal'), {
+      info,
+      context: {},
+      commands: [
+        command('queued'),
+        command('submitted', { state: 'unknown', queued: false, submitted: true }),
+        command('interrupted', { state: 'failed', queued: false, outcome: 'interrupted' }),
+        command('other-lease', { leaseId: 'previous' }),
+        command('other-generation', { generation: 'previous' }),
+      ],
+    });
+    const manager = new NativeSessionManager(root);
+    assert.equal(manager.read('owner', info.id).session.capabilities.cancelQueued, true);
+    const removed = manager.cancelCommand('owner', info.id, 'queued');
+    assert.deepEqual(removed, {
+      commandId: 'queued',
+      generation: 'generation',
+      state: 'failed',
+      queued: false,
+      submitted: false,
+      accepted: false,
+      outcome: 'cancelled',
+    });
+    // Persisted before the reply, and a repeated call returns the same receipt.
+    const reloaded = new NativeSessionManager(root);
+    assert.deepEqual(reloaded.cancelCommand('owner', info.id, 'queued'), removed);
+    for (const [commandId, refusal] of [
+      ['submitted', /no longer queued/],
+      ['interrupted', /no longer queued/],
+      ['other-lease', /different generation or worker lease/],
+      ['other-generation', /different generation or worker lease/],
+      ['unsent', /unknown to this session/],
+    ] as const)
+      assert.throws(() => reloaded.cancelCommand('owner', info.id, commandId), refusal);
+    assert.throws(() => reloaded.cancelCommand('another-owner', info.id, 'queued'), /not found/);
+    assert.equal(
+      new NativeSessionManager(root)
+        .read('owner', info.id)
+        .commands.find((receipt) => receipt.commandId === 'other-lease')?.queued,
+      true,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a removal is durable, and the removed message never reaches the runner', async (t) => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  try {
+    const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    const removed = (reader: NativeSessionManager) =>
+      reader.read('owner', session.id).commands.find((command) => command.commandId === 'removed');
+    await manager.send('owner', session.id, 'running', 'running');
+    assert.equal((await manager.send('owner', session.id, 'removed', 'removed')).queued, true);
+    assert.equal((await manager.send('owner', session.id, 'kept', 'kept')).queued, true);
+    // A removal its journal did not record fails and leaves the message queued.
+    const fault = t.mock.method(fs, 'openSync', () => {
+      throw Object.assign(new Error('Journal append failed'), { code: 'EIO' });
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => manager.cancelCommand('owner', session.id, 'removed'), { code: 'EIO' });
+    } finally {
+      fault.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.equal(removed(manager)?.queued, true);
+    assert.equal(manager.cancelCommand('owner', session.id, 'removed').outcome, 'cancelled');
+    assert.throws(() => manager.cancelCommand('owner', session.id, 'running'), /no longer queued/);
+    // A retried send of the removed message returns its receipt instead of queueing it again.
+    assert.deepEqual(await manager.send('owner', session.id, 'removed', 'removed'), {
+      commandId: 'removed',
+      state: 'failed',
+      submitted: false,
+      accepted: false,
+    });
+    const inputs = join(fixture.cwd, 'inputs');
+    await until(() => existsSync(inputs) && readFileSync(inputs, 'utf8').includes('kept'));
+    assert.equal(readFileSync(inputs, 'utf8'), 'running\nkept\n');
+    assert.throws(() => manager.cancelCommand('owner', session.id, 'kept'), /no longer queued/);
+    // The journal holds the removal, so a restarted host never submits it either.
+    await manager.close('owner', session.id);
+    const reloaded = removed(new NativeSessionManager(fixture.root));
+    assert.equal(reloaded?.outcome, 'cancelled');
+    assert.equal(reloaded?.queued, false);
+    assert.equal(reloaded?.submitted, false);
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('each turn reports what it changed in its Git working tree, and close drops its checkpoints', async () => {
+  const fixture = setup();
+  const { repo, git } = testRepository();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: repo });
+  const refs = () =>
+    git('for-each-ref', '--format=%(refname)', `refs/farmslot/native/${session.id}/`).trim();
+  // The turn streams hundreds of deltas: read every page.
+  const events = () => allEvents(manager, session.id);
+  try {
+    await manager.send('owner', session.id, 'first', 'first');
+    await until(() => events().some((event) => event.type === 'turn.changes'));
+    const event = events().find((item) => item.type === 'turn.changes')!;
+    assert.equal(event.commandId, 'first');
+    // What the runner wrote during the turn; the file it wrote before the turn is not the turn's.
+    assert.deepEqual(event.changes!.files.map((file) => [file.path, file.status]).sort(), [
+      ['descendant', 'added'],
+      ['effects', 'added'],
+      ['inputs', 'added'],
+      ['native-turn.json', 'added'],
+    ]);
+    assert.ok(event.changes!.from && event.changes!.to);
+    // The reader's index and HEAD never moved.
+    assert.equal(git('diff', '--cached', '--name-only'), '');
+    assert.equal(git('rev-list', '--count', 'HEAD').trim(), '1');
+    assert.notEqual(refs(), '');
+    await manager.close('owner', session.id);
+    assert.equal(refs(), '');
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+/** A committed test repository, and Git in it. */
+function testRepository() {
+  const repo = mkdtempSync(join(tmpdir(), 'native-turn-repo-'));
+  const git = gitIn(repo);
+  git('init', '-q', '-b', 'main');
+  writeFileSync(join(repo, 'README.md'), 'base\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  return { repo, git };
+}
+
+test("a queued message is journaled after its previous turn's changes", async () => {
+  const fixture = setup();
+  const { repo } = testRepository();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: repo });
+  const events = () => allEvents(manager, session.id);
+  try {
+    await manager.send('owner', session.id, 'first', 'first');
+    await until(() => events().some((event) => event.type === 'turn.started'));
+    assert.equal((await manager.send('owner', session.id, 'second', 'second')).queued, true);
+    const at = (type: string, commandId: string) =>
+      events().find((event) => event.type === type && event.commandId === commandId)?.sequence;
+    await until(() => at('command.submitted', 'second') !== undefined);
+    // The first turn's changes come before the queued message, so a reader sees them under it.
+    assert.ok(at('turn.changes', 'first')! < at('command.submitted', 'second')!);
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('turn.changes follows its turn.completed in the journal, and a turn outside Git reports none', async () => {
+  const fixture = setup();
+  const { repo } = testRepository();
+  const plain = mkdtempSync(join(tmpdir(), 'native-turn-plain-'));
+  const manager = new NativeSessionManager(fixture.root);
+  const git = await manager.create('owner', { runner: 'codex', cwd: repo });
+  const outside = await manager.create('owner', { runner: 'codex', cwd: plain });
+  // A file where the session's index directory goes: its start checkpoint fails, so the end of
+  // the turn reports at once, inside the turn.completed path.
+  const blocked = join(fixture.root, 'checkpoints', git.id);
+  mkdirSync(dirname(blocked), { recursive: true });
+  writeFileSync(blocked, '');
+  try {
+    await Promise.all([
+      manager.send('owner', git.id, 'first', 'first'),
+      manager.send('owner', outside.id, 'first', 'first'),
+    ]);
+    await until(() =>
+      [git, outside].every((session) =>
+        allEvents(manager, session.id).some((event) => event.type === 'turn.completed'),
+      ),
+    );
+    await until(() => allEvents(manager, git.id).some((event) => event.type === 'turn.changes'));
+    rmSync(blocked);
+    for (const session of [git, outside]) await manager.close('owner', session.id);
+    // After a host restart each history reads back in order, with no gap.
+    const restarted = new NativeSessionManager(fixture.root);
+    for (const session of [git, outside]) {
+      const sequences = allEvents(restarted, session.id).map((event) => event.sequence);
+      assert.deepEqual(
+        sequences,
+        sequences.map((_, index) => index + 1),
+      );
+    }
+    const changes = allEvents(restarted, git.id).find((event) => event.type === 'turn.changes')!;
+    assert.match(changes.changes!.unavailable!, /^The checkpoint before this turn failed/);
+    assert.equal(
+      allEvents(restarted, outside.id).some((event) => event.type === 'turn.changes'),
+      false,
+    );
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(plain, { recursive: true, force: true });
+  }
+});
+
+test('a failed session closed after a host restart deletes its checkpoints', async () => {
+  const fixture = setup();
+  const { repo, git } = testRepository();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: repo });
+  const refs = () =>
+    git('for-each-ref', '--format=%(refname)', `refs/farmslot/native/${session.id}/`).trim();
+  try {
+    // The runner dies in the turn, after its start checkpoint; the session fails, process stopped.
+    await assert.rejects(manager.send('owner', session.id, 'unknown', 'unknown'), /exited|closed/);
+    await until(() => {
+      const { state, processStopped } = manager.read('owner', session.id).session;
+      return state === 'failed' && processStopped === true;
+    });
+    assert.notEqual(refs(), '');
+    // Restored after a restart, the session has no checkpoints open; closing it finds them.
+    await new NativeSessionManager(fixture.root).close('owner', session.id);
+    assert.equal(refs(), '');
+    assert.equal(existsSync(join(fixture.root, 'checkpoints', session.id)), false);
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('host IPC decodes a steered message, leased for a worker', () => {
+  const steer = { owner: 'owner', id: 'session', commandId: 'more', text: 'Also check the tests.' };
+  assert.deepEqual(decodeRequest({ method: 'steer', ...steer }), { method: 'steer', ...steer });
+  const lease = { generation: 'generation', leaseId: 'lease' };
+  assert.deepEqual(decodeRequest({ method: NATIVE_WORKER_STEER, ...steer, ...lease }), {
+    method: NATIVE_WORKER_STEER,
+    ...steer,
+    ...lease,
+  });
+  assert.throws(
+    () => decodeRequest({ method: NATIVE_WORKER_STEER, ...steer, generation: 'generation' }),
+    /Invalid IPC leaseId/,
+  );
+});
+
+test('a steered message joins the running turn, ends with it, and never holds up the queue', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const receipt = (commandId: string) =>
+    manager.read('owner', session.id).commands.find((command) => command.commandId === commandId);
+  const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+  try {
+    assert.equal(session.capabilities.steer, true);
+    // No turn runs: steering is an ordinary send, which starts one.
+    assert.equal((await manager.steer('owner', session.id, 'first', 'first')).steered, undefined);
+    await until(() => manager.read('owner', session.id).session.state === 'running');
+    assert.deepEqual(await manager.steer('owner', session.id, 'more', 'more'), {
+      commandId: 'more',
+      submitted: true,
+      accepted: true,
+      state: 'accepted',
+      steered: true,
+    });
+    // Durable before the runner got it: the submission precedes the runner's acceptance.
+    const events = manager.read('owner', session.id).events;
+    const at = (type: string) =>
+      events.findIndex((event) => event.type === type && event.commandId === 'more');
+    assert.ok(at('command.submitted') >= 0 && at('command.submitted') < at('command.accepted'));
+    assert.equal((await manager.send('owner', session.id, 'next', 'next')).queued, true);
+    const inputs = join(fixture.cwd, 'inputs');
+    await until(() => existsSync(inputs) && readFileSync(inputs, 'utf8').includes('next'));
+    assert.deepEqual(
+      ['first', 'more'].map((id) => [receipt(id)?.state, receipt(id)?.steered]),
+      [
+        ['completed', undefined],
+        ['completed', true],
+      ],
+    );
+    assert.equal(readFileSync(inputs, 'utf8'), 'first\nnext\n');
+    // A runner refusal fails the message, and it is never resent.
+    await until(() => manager.read('owner', session.id).session.state === 'running');
+    assert.equal((await manager.steer('owner', session.id, 'refuse', 'refuse')).state, 'failed');
+    assert.equal(
+      (await manager.steer('owner', session.id, 'refuse', 'refuse')).state,
+      'failed',
+      'a retry returns the receipt',
+    );
+    await until(() => manager.read('owner', session.id).session.state === 'idle');
+    assert.equal(readFileSync(join(fixture.cwd, 'steers'), 'utf8'), 'more\nrefuse\n');
+    assert.equal(readFileSync(inputs, 'utf8'), 'first\nnext\n');
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+  }
+});
+
+test('while a request waits for an answer, a steered message is queued instead', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+  try {
+    await manager.send('owner', session.id, 'approval', 'approval');
+    await until(() => manager.read('owner', session.id).pendingRequests.length > 0);
+    const queued = await manager.steer('owner', session.id, 'later', 'later');
+    assert.equal(queued.queued, true);
+    assert.equal(queued.steered, undefined);
+    assert.equal(existsSync(join(fixture.cwd, 'steers')), false);
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+  }
+});
+
+test('a steer whose runner stopped before replying stays unknown, and is never resent', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+  const receipt = () =>
+    manager.read('owner', session.id).commands.find((command) => command.commandId === 'exit');
+  try {
+    await manager.send('owner', session.id, 'first', 'first');
+    await until(() => manager.read('owner', session.id).session.state === 'running');
+    // The runner exits with a tool child still running: the reply is lost, not a refusal.
+    assert.equal((await manager.steer('owner', session.id, 'exit', 'exit')).state, 'unknown');
+    await until(() =>
+      ['closed', 'failed'].includes(manager.read('owner', session.id).session.state),
+    );
+    assert.deepEqual([receipt()?.state, receipt()?.steered], ['unknown', true]);
+    assert.equal(readFileSync(join(fixture.cwd, 'steers'), 'utf8'), 'exit\n');
+    const reloaded = new NativeSessionManager(fixture.root)
+      .read('owner', session.id)
+      .commands.find((command) => command.commandId === 'exit');
+    assert.equal(reloaded?.state, 'unknown');
+  } finally {
+    // The tool child outlives its runner here; never leave it running.
+    const descendant = join(fixture.cwd, 'descendant');
+    const pid = existsSync(descendant) ? Number(readFileSync(descendant, 'utf8')) : 0;
+    if (pid && alive(pid)) process.kill(pid, 'SIGKILL');
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
     fixture.restore();
   }
 });

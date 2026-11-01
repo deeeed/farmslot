@@ -574,6 +574,10 @@
       "surface": "rpc-only",
       "note": "Read runner-reported login state and the native login command for a configuration."
     },
+    "native.session.cancel": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owning principal and execution node."
+    },
     "native.session.catalog": {
       "surface": "rpc-only",
       "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
@@ -615,6 +619,10 @@
       "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
     },
     "native.session.workspace.diff": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.turn.diff": {
       "surface": "rpc-only",
       "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
     },
@@ -1538,6 +1546,11 @@
       "surface": "typed-command",
       "note": "farmslot run gate --action mark-untestable records a verified human exception without resolving the gate.",
       "command": "farmslot run gate --action mark-untestable"
+    },
+    "run.attestBeforeAttempt": {
+      "surface": "typed-command",
+      "note": "Records a verified person attestation of a same-run before-only attempt without resolving the gate.",
+      "command": "farmslot run gate --action attest-before-attempt"
     },
     "run.reviewVisualClaim": {
       "surface": "typed-command",

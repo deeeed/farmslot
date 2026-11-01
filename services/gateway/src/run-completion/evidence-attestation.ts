@@ -17,6 +17,7 @@ import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.j
 import { validatePackageApprovalSelection } from '../run-engine/gate-policy.js';
 import { buildReviewSummary } from '../run-engine/gate-summary.js';
 
+import { plain } from './inert-text.js';
 import { replaceMarkdownSection } from './publication-artifacts.js';
 import { withPublicationReceipt } from './publication-details.js';
 
@@ -89,13 +90,6 @@ export function withPublicationProvenance(run: Run, body: string): string {
       body = replaceMarkdownSection(body, `## ${heading}`, null);
     }
     const approval = decision?.publicationApproval;
-    const plain = (value: string) =>
-      value
-        .replace(/[\r\n]+/gu, ' ')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/([`*_[\]\\])/gu, '\\$1');
     if (
       approval &&
       (approval.packageHash !== prepared.packageHash ||

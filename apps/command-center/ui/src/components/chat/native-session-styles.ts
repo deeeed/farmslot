@@ -256,6 +256,46 @@ export const nativeSessionStyles = css`
     max-height: 240px;
     overflow: auto;
   }
+  /* A runner's checklist: done, current and waiting steps. */
+  .plan-steps {
+    margin: 6px 0 0;
+    padding-left: 22px;
+    list-style: none;
+  }
+  /* The mark is generated content, so copying the steps copies their text only. */
+  .plan-steps li::before {
+    display: inline-block;
+    width: 18px;
+    margin-left: -18px;
+    content: attr(data-mark);
+  }
+  .plan-steps li.completed {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  article.proposal {
+    background: ${unsafeCSS(colors.bgCard)};
+    border-radius: 6px;
+    padding: 10px;
+  }
+  .plan-copy {
+    min-height: 44px;
+  }
+  /* A turn's changed files; each opens its diff below it. */
+  .turn-files {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+  }
+  .turn-file {
+    min-height: 44px;
+    width: 100%;
+    text-align: left;
+  }
+  .turn-files diff-review {
+    display: block;
+    max-height: 480px;
+    overflow: auto;
+  }
   .composer {
     flex-shrink: 0;
     max-height: 70%;

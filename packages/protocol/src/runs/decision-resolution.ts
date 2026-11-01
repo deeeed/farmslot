@@ -6,13 +6,18 @@ import type {
   SlotPickerPayload,
 } from '../contracts/runs.js';
 import {
+  ATTEST_BEFORE_ATTEMPT_ACTION,
   MARK_CLAIM_UNTESTABLE_ACTION,
   runClaimOverrideSnapshotIdentity,
 } from '../recipe/claim-overrides.js';
 import { SEND_BACK_TO_AGENT_ACTION } from '../recipe/repair.js';
 import type { ImprovementApplyParams, ImprovementApplyResult } from '../rpc/intelligence.js';
 import { Methods } from '../rpc/registry.js';
-import type { RunOverrideClaimParams, RunResolveDecisionParams } from '../rpc/run.js';
+import type {
+  RunAttestBeforeAttemptParams,
+  RunOverrideClaimParams,
+  RunResolveDecisionParams,
+} from '../rpc/run.js';
 
 import { evidenceAttestationReason } from './publish-approval.js';
 import { reviewPostingFingerprint } from './review-curation.js';
@@ -39,8 +44,9 @@ export interface RunDecisionActionInput {
   claimOverrideReason?: string;
   evidenceAttestationReason?: string;
   /**
-   * Written reason for a result decision (`accept-result`, ADR-065 Amendment 7) or for
-   * accepting review findings (`approve-publish-unresolved`, Amendment 8); both require one.
+   * Written reason for a result decision (`accept-result`, ADR-065 Amendment 7), for
+   * accepting review findings (`approve-publish-unresolved`, Amendment 8) or for a
+   * before attestation (`attest-before-attempt`, ADR-062 Amendment 21); all require one.
    */
   reason?: string;
   selectionData?: Record<string, unknown>;
@@ -49,6 +55,7 @@ export interface RunDecisionActionInput {
 
 export type RunDecisionActionRequest =
   | { method: typeof Methods.RUN_OVERRIDE_CLAIM; params: RunOverrideClaimParams }
+  | { method: typeof Methods.RUN_ATTEST_BEFORE_ATTEMPT; params: RunAttestBeforeAttemptParams }
   | { method: typeof Methods.IMPROVEMENT_APPLY; params: ImprovementApplyParams }
   | { method: typeof Methods.RUN_RESOLVE_DECISION; params: RunResolveDecisionParams };
 
@@ -68,6 +75,24 @@ export function buildRunDecisionActionRequest(
         recipeRunId: input.recipeRunId,
         reason: input.claimOverrideReason.trim(),
         snapshotIdentity: runClaimOverrideSnapshotIdentity(input.decision),
+      },
+    };
+  }
+  if (input.actionId === ATTEST_BEFORE_ATTEMPT_ACTION) {
+    if (!input.recipeRunId || !input.reason?.trim())
+      throw new TypeError('A before attestation requires a recipe execution and reason.');
+    const packageHash =
+      input.decision.payload?.kind === 'ready'
+        ? input.decision.payload.prPackage?.packageHash
+        : undefined;
+    return {
+      method: Methods.RUN_ATTEST_BEFORE_ATTEMPT,
+      params: {
+        runId: input.runId,
+        decisionId: input.decision.id,
+        recipeRunId: input.recipeRunId,
+        reason: input.reason.trim(),
+        ...(packageHash ? { packageHash } : {}),
       },
     };
   }

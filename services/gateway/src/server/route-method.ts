@@ -779,6 +779,7 @@ async function routeAuthorizedMethod(
     case Methods.NATIVE_SESSION_SEND:
     case Methods.NATIVE_SESSION_RESPOND:
     case Methods.NATIVE_SESSION_INTERRUPT:
+    case Methods.NATIVE_SESSION_CANCEL:
     case Methods.NATIVE_PROFILE_LIST:
     case Methods.NATIVE_PROFILE_ADD:
     case Methods.NATIVE_PROFILE_STATUS:
@@ -788,6 +789,7 @@ async function routeAuthorizedMethod(
     case Methods.NATIVE_SESSION_WORKSPACE_READ:
     case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
     case Methods.NATIVE_SESSION_WORKSPACE_DIFF:
+    case Methods.NATIVE_SESSION_TURN_DIFF:
     case Methods.NATIVE_SESSION_CLOSE:
       return nativeSessionRoute(
         method,
@@ -1288,6 +1290,7 @@ async function routeAuthorizedMethod(
         gatewayUrl,
         execCancellation,
         conditionalWrites,
+        terminalInputSequence,
         observationCapabilities,
       } = p as {
         machine: string;
@@ -1297,6 +1300,7 @@ async function routeAuthorizedMethod(
         gatewayUrl?: unknown;
         execCancellation?: unknown;
         conditionalWrites?: unknown;
+        terminalInputSequence?: unknown;
         observationCapabilities?: import('@farmslot/protocol').NodeObservationCapabilities;
       };
       const resolved = authRuntime.resolver.resolveSessionPrincipal(state);
@@ -1385,6 +1389,7 @@ async function routeAuthorizedMethod(
           );
         },
         conditionalWrites === true,
+        terminalInputSequence === true,
       );
       nativeObservations.registrationChanged(
         machine,

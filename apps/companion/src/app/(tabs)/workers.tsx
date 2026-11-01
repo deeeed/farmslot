@@ -11,7 +11,6 @@ import {
   Methods,
   reconcileTmuxWorkerWatchlist,
   removeTmuxWorkerWatchItem,
-  sourceObservationAge,
   type TmuxWorkerListResult,
   type TmuxWorkerRef,
   type TmuxWorkerSummary,
@@ -21,6 +20,7 @@ import {
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { getResourceCache } from '../../lib/resource-cache';
 import { colors, fonts, radii, spacing } from '../../lib/theme';
@@ -450,7 +450,7 @@ export default function WorkersScreen() {
         : workerFilter === 'adhoc'
           ? 'No non-Farmslot tmux panes reported by registered nodes.'
           : 'No tmux panes reported by registered nodes.'
-      : 'Not connected.';
+      : '';
 
   return (
     <View
@@ -460,11 +460,11 @@ export default function WorkersScreen() {
     >
       <View style={styles.summaryRow}>
         <Text style={styles.summaryTitle}>Terminals</Text>
-        {observation.status !== 'ready' ? (
+        {observation.status !== 'ready' && status === 'connected' ? (
           <Pressable
             style={styles.refreshButton}
             onPress={() => void refresh()}
-            disabled={refreshing || status !== 'connected'}
+            disabled={refreshing}
           >
             <Text style={styles.refreshText}>{refreshing ? 'Reading…' : 'Retry'}</Text>
           </Pressable>
@@ -492,16 +492,7 @@ export default function WorkersScreen() {
           </Pressable>
         ))}
       </View>
-      {observation.status !== 'ready' ? (
-        <Text style={styles.errorText}>
-          {observation.error?.message ??
-            (observation.status === 'unsupported'
-              ? 'Worker observations are unsupported.'
-              : observation.data
-                ? `Saved workers, ${sourceObservationAge(observation.observedAt)}.`
-                : 'Waiting for current worker inventory.')}
-        </Text>
-      ) : null}
+      <ResourceReadStatus observation={observation} label="workers" />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       <FlashList
         data={items}

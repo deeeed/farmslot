@@ -18,6 +18,7 @@ import {
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
+  nativePlanOpen,
   nativeWatchTools,
 } from '@farmslot/protocol/client-cache';
 
@@ -93,19 +94,19 @@ export function NativeConversationScreen({
         <View style={styles.row}>
           <Text style={styles.muted}>
             {!vm.connected
-              ? 'Gateway disconnected'
+              ? 'Offline'
               : vm.session
                 ? `${vm.session.runner} · ${vm.session.model ?? 'Default model'}`
                 : 'Start a conversation or continue an existing one.'}
           </Text>
-          {vm.historyObservation.error || vm.inventoryObservation.error ? (
+          {vm.connected && (vm.historyObservation.error || vm.inventoryObservation.error) ? (
             <Pressable
               testID="companion-native-refresh"
               accessibilityRole="button"
               style={styles.button}
               onPress={() => void actions.refresh()}
             >
-              <Text style={styles.buttonText}>Retry reading conversation</Text>
+              <Text style={styles.buttonText}>Retry</Text>
             </Pressable>
           ) : null}
         </View>
@@ -119,7 +120,7 @@ export function NativeConversationScreen({
         {vm.runObservation ? (
           <ResourceReadStatus observation={vm.runObservation} label="conversation run" />
         ) : null}
-        {vm.runObservation?.error ? (
+        {vm.connected && vm.runObservation?.error ? (
           <Pressable
             testID="companion-native-run-retry"
             accessibilityRole="button"
@@ -280,6 +281,7 @@ export function NativeConversationScreen({
                     entry={row.entry}
                     onDisclosure={disclose}
                     hidden={row.fold !== undefined && !foldIsOpen(row.fold)}
+                    planOpen={nativePlanOpen(row, watchedTools.current)}
                   />
                 ),
               )}
@@ -289,6 +291,11 @@ export function NativeConversationScreen({
                   text={vm.pendingText}
                   delivery={nativeDeliveryLabel(vm.receipt)}
                   onDisclosure={disclose}
+                  edit={
+                    vm.canEdit
+                      ? { disabled: !vm.writable || vm.busy, onPress: () => void actions.edit() }
+                      : undefined
+                  }
                 />
               ) : null}
               {vm.requests.map((request) => (
@@ -327,11 +334,10 @@ export function NativeConversationScreen({
       </View>
       {selected ? (
         <View style={styles.composer}>
-          {!vm.writable ? (
+          {/* Offline, the heading already says so. */}
+          {!vm.writable && vm.connected ? (
             <Text testID="companion-native-read-only" style={styles.muted}>
-              {!vm.connected
-                ? 'Reconnect to continue.'
-                : 'Read-only until this conversation has a live, current input owner.'}
+              Read-only: no live input owner
             </Text>
           ) : null}
           <TextInput
@@ -374,6 +380,18 @@ export function NativeConversationScreen({
             >
               <Text style={styles.buttonText}>{vm.sendLabel}</Text>
             </Pressable>
+            {vm.steerable ? (
+              <Pressable
+                testID="companion-native-steer"
+                accessibilityRole="button"
+                accessibilityHint="Adds this message to the running turn"
+                disabled={!vm.canSteer}
+                style={[styles.button, !vm.canSteer && styles.disabled]}
+                onPress={() => void actions.send('steer')}
+              >
+                <Text style={styles.buttonText}>Steer</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               testID="companion-native-stop"
               accessibilityRole="button"
