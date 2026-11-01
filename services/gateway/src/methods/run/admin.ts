@@ -59,6 +59,7 @@ import {
   getRun,
   listRuns,
   listRunTags as storeListRunTags,
+  persistRunNow,
   runsDirectory,
   updateRun,
 } from '../../runs/store.js';
@@ -290,6 +291,7 @@ async function releaseKeptSlot(
         const retained = updateRun(run.id, {
           slotTeardownSkipped: `Checkout retained: ${result.reason}`,
         });
+        await persistRunNow(retained, 'released checkout retained');
         emit(Events.RUN_UPDATED, { run: retained });
       }
     }

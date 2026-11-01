@@ -2900,6 +2900,11 @@ export interface Run {
    * Each `ref` (`refs/farmslot/parked/<run>/<head>`) keeps `headSha` reachable on the slot.
    */
   parkedCommits?: ParkedRunCommits[];
+  /**
+   * The checkout an artifact-only run left on its slot when COMPLETE released the slot's
+   * ownership. A later ownerless return to idle parks only this exact head.
+   */
+  releasedCheckout?: { slotId: string; branch: string; headSha: string; at: string };
   /** Explicit workspace placement, mutually exclusive with a slot binding. */
   reviewWorkspaceTarget?: import('./review-workspace.js').ReviewWorkspaceTarget;
   /** Trusted runtime-owned checkout and output locations. Requires slotId=null. */

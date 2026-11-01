@@ -70,6 +70,7 @@ import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
 import {
   dropParkedBranch,
+  ownsArtifactOnlyBranch,
   parkRunBranchCommits,
   parksBranchCommits,
 } from '../../run-lifecycle/validation-run-commits.js';
@@ -166,6 +167,8 @@ export interface SlotReleaseOptions {
     skipRecycle?: boolean;
     /** The finished artifact-only run whose own branch commits this recovery parks. */
     parkRunId?: string;
+    /** The exact head an ownerless return to idle may park (`Run.releasedCheckout`). */
+    parkHeadSha?: string;
   };
 }
 
@@ -910,8 +913,17 @@ async function slotReleaseImpl(
   // any reset, so they neither block the next dispatch nor vanish with the reset.
   const parkOwnerId = options?.workspaceRecovery?.parkRunId ?? params.expectedRunId ?? boundOwner;
   const parkOwner = !keepWork && parkOwnerId ? await getRunWithArchived(parkOwnerId) : undefined;
-  const parked = parksBranchCommits(parkOwner)
-    ? await parkRunBranchCommits(parkOwner, vars, execOnSlot)
+  // A named discard parks the run's commits whatever its phase (a run held at a refused COMPLETE).
+  const namedDiscard = forceReset && !!parkOwnerId && parkOwnerId === params.expectedRunId;
+  const parkable = namedDiscard ? ownsArtifactOnlyBranch(parkOwner) : parksBranchCommits(parkOwner);
+  // The park reads the checkout as clean the way the workspace probe does: scaffolding ignored.
+  if (parkable) await excludeSlotScaffolding(vars, projectJson);
+  const parked = parkable
+    ? await parkRunBranchCommits(parkOwner!, vars, execOnSlot, {
+        defaultBranch,
+        headSha: options?.workspaceRecovery?.parkHeadSha,
+        discard: namedDiscard,
+      })
     : null;
   // A recovery started to park a run's commits never resets a checkout that turned out not to be them.
   if (options?.workspaceRecovery?.parkRunId && !parked) {

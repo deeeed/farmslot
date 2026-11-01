@@ -178,6 +178,7 @@ test("work that isn't a finished artifact-only run's own is still kept", async (
     ['a run still working', validationRun({ status: 'monitoring' }), () => {}],
     ['another branch', validationRun(), () => (workspace.branch = 'someone-else')],
     ['dirty files', validationRun(), () => (workspace.dirtyCount = 1)],
+    ['the default branch', validationRun({ branch: 'main' }), () => {}],
   ] as const) {
     runs = [run];
     workspace.branch = run.branch!;
@@ -196,7 +197,15 @@ test("work that isn't a finished artifact-only run's own is still kept", async (
 });
 
 test('a checkout COMPLETE already released returns to idle when its run closes', async () => {
-  const run = validationRun();
+  const run: Run = {
+    ...validationRun(),
+    releasedCheckout: {
+      slotId: 'proof',
+      branch: 'TAT-4146-feat-farm-validation',
+      headSha: 'a'.repeat(40),
+      at: '2026-11-01T10:00:00.000Z',
+    },
+  };
   runs = [run];
   workspace.branch = run.branch!;
   workspace.publication = 'unpushed';
@@ -211,6 +220,18 @@ test('a checkout COMPLETE already released returns to idle when its run closes',
     await returnReleasedCheckoutToIdle({ ...run, status: 'completing' }, () => {}),
     null,
   );
+  // Without the head COMPLETE recorded, or with another head checked out, nothing parks.
+  assert.equal(
+    await returnReleasedCheckoutToIdle({ ...run, releasedCheckout: undefined }, () => {}),
+    null,
+  );
+  workspace.headSha = 'e'.repeat(40);
+  assert.equal((await returnReleasedCheckoutToIdle(run, () => {}))?.kind, 'local-work');
+  // A later run of the same branch on this slot owns whatever checkout is there now.
+  workspace.headSha = 'a'.repeat(40);
+  runs = [run, { ...validationRun({ id: 'later' }), createdAt: '2099-01-01T00:00:00.000Z' }];
+  assert.equal(await returnReleasedCheckoutToIdle(run, () => {}), null);
+  assert.deepEqual(parkRunIds, ['validation']);
 });
 
 test('unknown publication and a deleted remote ref never grant reset authority', async () => {

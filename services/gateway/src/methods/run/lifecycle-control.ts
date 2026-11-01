@@ -41,7 +41,10 @@ import {
   routeRunTransition,
   type RunTransitionEffectOutcome,
 } from '../../run-lifecycle/transition-router.js';
-import { parksBranchCommits } from '../../run-lifecycle/validation-run-commits.js';
+import {
+  parksBranchCommits,
+  recordReleasedCheckout,
+} from '../../run-lifecycle/validation-run-commits.js';
 import {
   isRunnerPaneRetired,
   normalizeRunner,
@@ -394,6 +397,27 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
   let blocker: string | null = workerBlocker;
   const { readSlotRow } = await import('../../core/index.js');
+  // A finished artifact-only run's checkout returns to idle with its own commits parked. A
+  // failed run keeps it for "replay the failed step" until it is closed or archived.
+  const parksOnRelease =
+    isTerminalRunStatus(run.status) && run.status !== 'failed' && parksBranchCommits(run);
+  // COMPLETE already released the slot but kept the checkout: return that exact head to idle.
+  if (parksOnRelease) {
+    const row = await readSlotRow(slotId);
+    if (row && !row.current_run_id) {
+      const { returnReleasedCheckoutToIdle } =
+        await import('../../run-lifecycle/safe-idle-slot.js');
+      const { broadcastEvent } = await import('../../server.js');
+      const result = await returnReleasedCheckoutToIdle(getRun(run.id) ?? run, broadcastEvent);
+      if (result) {
+        if (result.kind !== 'ready')
+          await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
+        return result.kind === 'ready'
+          ? { released: true }
+          : { released: false, skipped: result.reason };
+      }
+    }
+  }
   let fence = { before: await readSlotRow(slotId) };
   let checkoutHasLocalWork = false;
   const unconfirmedStops: string[] = [];
@@ -409,11 +433,7 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
       if (blocker) await recordSlotTeardownSkipped(run, blocker);
     }
     const retainedCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
-    // A finished artifact-only run's checkout returns to idle with its own commits parked.
-    const returnsToIdle =
-      run.status === 'done' ||
-      retainedCandidate ||
-      (isTerminalRunStatus(run.status) && parksBranchCommits(run));
+    const returnsToIdle = run.status === 'done' || retainedCandidate || parksOnRelease;
     if (!blocker && returnsToIdle) {
       const before = await readSlotRow(slotId);
       const { ownsRunSlotCleanup, updateSlotStatusIf } = await import('../../core/index.js');
@@ -446,6 +466,11 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
         if ((await readSlotRow(slotId))?.workspace_recovery)
           return { released: false, skipped: result.reason };
       }
+    }
+    // COMPLETE keeps an artifact-only run's checkout; name the head it leaves while it owns it.
+    if (!blocker && !returnsToIdle && parksBranchCommits(run)) {
+      const { loadSlotVars } = await import('../../core/config.js');
+      await recordReleasedCheckout(run, await loadSlotVars(slotId), execOnSlot);
     }
     fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');

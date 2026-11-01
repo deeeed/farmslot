@@ -19,9 +19,11 @@ import {
   parkedBranchHead,
   parkRunBranchCommits,
   parksBranchCommits,
+  recordReleasedCheckout,
 } from './validation-run-commits.js';
 
 const run = promisify(execFile);
+const checks = { defaultBranch: 'main' };
 /** The slot's git, run on a real repository in this process. */
 const localExec: typeof execOnSlot = async (_vars, cmd) => {
   try {
@@ -75,7 +77,13 @@ async function fixture(t: test.TestContext) {
 
 test("a finished artifact-only run's own commits are parked under a ref that never moves, recorded on the run", async (t) => {
   const { git, vars, base, head, validation } = await fixture(t);
-  const parked = await parkRunBranchCommits(validation, vars, localExec);
+  // COMPLETE names the head it leaves while the run still owns the slot.
+  await recordReleasedCheckout(validation, vars, localExec);
+  assert.deepEqual(
+    { ...getRun(validation.id)?.releasedCheckout, at: undefined },
+    { slotId: 'proof-slot', branch: 'TAT-4146-validation', headSha: head, at: undefined },
+  );
+  const parked = await parkRunBranchCommits(validation, vars, localExec, checks);
   assert.ok(parked);
   assert.equal(parked.ref, `refs/farmslot/parked/${validation.id}/${head}`);
   assert.equal(git('rev-parse', parked.ref), head);
@@ -86,7 +94,7 @@ test("a finished artifact-only run's own commits are parked under a ref that nev
     [parked.ref],
   );
   // Parking the same head again keeps one record and the same ref.
-  await parkRunBranchCommits(getRun(validation.id)!, vars, localExec);
+  await parkRunBranchCommits(getRun(validation.id)!, vars, localExec, checks);
   assert.equal(getRun(validation.id)?.parkedCommits?.length, 1);
 
   // After the idle reset the unchanged branch is dropped; the parked ref keeps its commits.
@@ -105,13 +113,35 @@ test("a checkout that isn't the run's own is never parked", async (t) => {
   // Dirty files, another branch, and history that doesn't descend from the run's baseline.
   git('commit', '-q', '--allow-empty', '-m', 'x');
   execFileSync('sh', ['-c', `echo edit > ${path.join(vars.remoteRepo, 'note.txt')}`]);
-  assert.equal(await parkRunBranchCommits(validation, vars, localExec), null, 'dirty');
+  assert.equal(await parkRunBranchCommits(validation, vars, localExec, checks), null, 'dirty');
   execFileSync('rm', [path.join(vars.remoteRepo, 'note.txt')]);
   git('checkout', '-q', '-b', 'someone-else');
-  assert.equal(await parkRunBranchCommits(validation, vars, localExec), null, 'another branch');
+  assert.equal(
+    await parkRunBranchCommits(validation, vars, localExec, checks),
+    null,
+    'another branch',
+  );
   git('checkout', '-q', 'TAT-4146-validation');
   const foreign = updateRun(validation.id, { worktreeHeadAtDispatch: 'f'.repeat(40) });
-  assert.equal(await parkRunBranchCommits(foreign, vars, localExec), null, 'not from its baseline');
+  assert.equal(
+    await parkRunBranchCommits(foreign, vars, localExec, checks),
+    null,
+    'not from its baseline',
+  );
+  // An ownerless return names the head COMPLETE left; a commit stacked on top is not the run's.
+  assert.equal(
+    await parkRunBranchCommits(validation, vars, localExec, { ...checks, headSha: 'e'.repeat(40) }),
+    null,
+    'not the released head',
+  );
+  // A run on the default branch never has that branch parked or dropped.
+  assert.equal(
+    await parkRunBranchCommits(validation, vars, localExec, {
+      defaultBranch: 'TAT-4146-validation',
+    }),
+    null,
+    'the default branch',
+  );
   assert.equal(git('for-each-ref', 'refs/farmslot/'), '');
   assert.equal(getRun(validation.id)?.parkedCommits, undefined);
   // A moved branch is kept rather than deleted.
@@ -131,6 +161,18 @@ test("a checkout that isn't the run's own is never parked", async (t) => {
   );
 });
 
+test('a named discard parks the commits of a run held at a refused COMPLETE', async (t) => {
+  const { git, vars, head, validation } = await fixture(t);
+  const held = updateRun(validation.id, {
+    status: 'monitoring',
+    steps: [{ name: 'complete', status: 'failed' }],
+  });
+  assert.equal(await parkRunBranchCommits(held, vars, localExec, checks), null, 'not finished');
+  const parked = await parkRunBranchCommits(held, vars, localExec, { ...checks, discard: true });
+  assert.equal(parked?.headSha, head);
+  assert.equal(git('rev-parse', parked!.ref), head);
+});
+
 test('only a finished artifact-only dev or fix-bug run parks its branch commits', () => {
   const run = (patch: Partial<Run> = {}) =>
     makeRun({
@@ -144,6 +186,35 @@ test('only a finished artifact-only dev or fix-bug run parks its branch commits'
   assert.equal(parksBranchCommits(run()), true);
   assert.equal(parksBranchCommits(run({ completionPolicy: 'default' })), false);
   assert.equal(parksBranchCommits(run({ flowType: 'update-branch' })), false);
+  // A blind trial's release restores its isolated Git and keeps the candidate branch.
+  const blind: Run = {
+    ...run(),
+    engineState: {
+      evalExperiment: {
+        experimentId: 'experiment',
+        experimentKey: 'key',
+        experimentManifestPath: '/eval/manifest.json',
+        packagePath: '/eval/package',
+        candidateStrategyFingerprint: 'fingerprint',
+        trialId: 'trial',
+        blind: {
+          version: 1,
+          baseSha: 'a'.repeat(40),
+          problemDigest: 'problem',
+          referenceCommits: ['c'.repeat(40)],
+          referencePatchId: 'reference-patch',
+          forbiddenInputs: [],
+          isolation: {
+            slotId: 'slot-1',
+            slotEpoch: 1,
+            capsulePath: '/eval/capsule',
+            verifiedAt: '2026-10-30T00:00:00Z',
+          },
+        },
+      },
+    },
+  };
+  assert.equal(parksBranchCommits(blind), false);
   assert.equal(parksBranchCommits(run({ status: 'monitoring', steps: [] })), false);
   assert.equal(
     parksBranchCommits(

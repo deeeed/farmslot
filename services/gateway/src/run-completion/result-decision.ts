@@ -562,10 +562,20 @@ async function releaseSettledSlot(run: Run, discard: boolean): Promise<void> {
       // Close of a retained refused completion is the Amendment 6 named discard.
       const { slotRelease } = await import('../methods/slot/release.js');
       const { broadcastEvent } = await import('../server.js');
-      await slotRelease(
+      const { released } = await slotRelease(
         { slotId: run.slotId!, forceReset: true, expectedRunId: run.id },
         broadcastEvent,
       );
+      // COMPLETE may already have released the slot; its kept checkout still returns to idle.
+      if (!released) {
+        const { returnReleasedCheckoutToIdle } = await import('../run-lifecycle/safe-idle-slot.js');
+        const result = await returnReleasedCheckoutToIdle(getRun(run.id) ?? run, broadcastEvent);
+        if (result && result.kind !== 'ready')
+          await persistRunNow(
+            updateRun(run.id, { slotTeardownSkipped: `Checkout retained: ${result.reason}` }),
+            'released checkout retained',
+          );
+      }
       return;
     }
     const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
@@ -573,24 +583,6 @@ async function releaseSettledSlot(run: Run, discard: boolean): Promise<void> {
   } catch (error) {
     console.warn(
       `[result-decision] slot release after ${run.id.slice(0, 8)} deferred: ${(error as Error).message}`,
-    );
-  } finally {
-    await returnClosedCheckoutToIdle(run);
-  }
-}
-
-/** COMPLETE released an artifact-only run's slot early; its close still returns the checkout. */
-async function returnClosedCheckoutToIdle(run: Run): Promise<void> {
-  try {
-    const latest = getRun(run.id) ?? run;
-    const { returnReleasedCheckoutToIdle } = await import('../run-lifecycle/safe-idle-slot.js');
-    const { broadcastEvent } = await import('../server.js');
-    const result = await returnReleasedCheckoutToIdle(latest, broadcastEvent);
-    if (result && result.kind !== 'ready')
-      updateRun(run.id, { slotTeardownSkipped: `Checkout retained: ${result.reason}` });
-  } catch (error) {
-    console.warn(
-      `[result-decision] checkout return after ${run.id.slice(0, 8)} deferred: ${(error as Error).message}`,
     );
   }
 }

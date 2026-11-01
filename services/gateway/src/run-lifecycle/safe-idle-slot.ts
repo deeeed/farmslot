@@ -73,6 +73,8 @@ export async function reuseSafeIdleSlot(
     recordRunId?: string;
     /** A finished blind trial: its commits are a retained branch and its first output is frozen. */
     retainedCandidate?: boolean;
+    /** Only this head may be parked (an ownerless checkout COMPLETE already released). */
+    parkHeadSha?: string;
   },
 ): Promise<SafeIdleSlotResult> {
   try {
@@ -103,7 +105,9 @@ export async function reuseSafeIdleSlot(
         parksBranchCommits(owner) &&
         !workspace.dirtyCount &&
         workspace.publication === 'unpushed' &&
-        workspace.branch === owner.branch
+        workspace.branch === owner.branch &&
+        workspace.branch !== workspace.defaultBranch &&
+        (!expected?.parkHeadSha || workspace.headSha === expected.parkHeadSha)
       )
         parkRunId = owner.id;
       else
@@ -131,7 +135,10 @@ export async function reuseSafeIdleSlot(
       },
       emit,
       undefined,
-      { skipRecycle: true, ...(parkRunId ? { parkRunId } : {}) },
+      {
+        skipRecycle: true,
+        ...(parkRunId ? { parkRunId, parkHeadSha: expected?.parkHeadSha } : {}),
+      },
     );
     if (result.refreshed) emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
     return result.refreshed
@@ -156,7 +163,26 @@ export async function returnReleasedCheckoutToIdle(
   run: Run,
   emit: EventEmitter,
 ): Promise<SafeIdleSlotResult | null> {
-  if (!run.slotId || !isTerminalRunStatus(run.status) || !parksBranchCommits(run)) return null;
+  const released = run.releasedCheckout;
+  if (
+    !run.slotId ||
+    !isTerminalRunStatus(run.status) ||
+    !parksBranchCommits(run) ||
+    released?.slotId !== run.slotId
+  )
+    return null;
+  // A later run of the same branch on this slot may have left this head; it is not this run's.
+  const { getAllRuns } = await import('../runs/store.js');
+  if (
+    getAllRuns().some(
+      (other) =>
+        other.id !== run.id &&
+        other.slotId === run.slotId &&
+        other.branch === run.branch &&
+        other.createdAt > run.createdAt,
+    )
+  )
+    return null;
   const { readSlotRow } = await import('../core/state.js');
   const row = await readSlotRow(run.slotId);
   if (!row || row.current_run_id || row.cleanup_run_id || row.handoff_run_id) return null;
@@ -164,6 +190,7 @@ export async function returnReleasedCheckoutToIdle(
     epoch: Number(row.slot_epoch) || 0,
     runId: null,
     recordRunId: run.id,
+    parkHeadSha: released.headSha,
   });
   if (result.kind !== 'ready')
     console.warn(
