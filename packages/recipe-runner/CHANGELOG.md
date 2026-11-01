@@ -16,6 +16,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.46.3 - 2026-11-02
 
+- Align `@farmslot/protocol` 0.74.10 (0.46.2 was published against 0.73.1).
+
 - A run refuses at plan time (`--plan` and the run itself) a visual or mixed proof target whose proof rests only on shell commands and file or log checks: "Only shell commands and file or log checks prove these visual or mixed claims, so the recording cannot show them: AC-1 (mixed). Prove each with a UI observation (ui.wait_for, or assert_output on a UI query), or declare proofMode state." Every refused claim is named in one error. The proof followed includes called recipes, re-read (`state_read`) and asserted sources, and child claims. Before, the run recorded such a claim and the gate's visual review could only reject it (EchoBridge ba397e2c AC-1/AC-2). Re-deriving an existing recording is unchanged.
 
 - `rebindRecipeLibraryPath(value, pins)` rebinds named `RECIPE_LIBRARY_PATH` entries to pinned roots, reading entry names exactly as `parseRecipeLibraryPath` does and leaving other entries verbatim. The gateway uses it to point a bound task's worker at its pinned library copies.

@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## 0.17.3 - 2026-11-02
 
-- Align `@farmslot/recipe-runner` 0.46.3 and `@farmslot/adapter-sdk` 0.26.0.
+- Align `@farmslot/recipe-runner` 0.46.3, `@farmslot/adapter-sdk` 0.26.0 and `@farmslot/protocol` 0.74.10.
 
 ## 0.17.2 - 2026-10-29
 

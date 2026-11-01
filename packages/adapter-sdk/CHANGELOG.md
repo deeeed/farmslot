@@ -10,7 +10,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - `evidenceReviewToc` lists a recording's criteria with the moment it reaches each one (video order, unrecorded criteria last, or the run's own order), and `adjacentEvidenceReviewClaim` steps through it. `proofStepGroups` moves here from Command Center, so both clients' evidence reviews read one table of contents.
 - The evidence review model names the recording AC verdicts come from (`recording`: "Recording 15:26", the run directory's UTC stamp in local time). When the worker re-recorded after the gate package was taken, that package reads `Replaced` ("Evidence replaced by recording 16:27", with any other issues and the refresh action kept), not `Invalid`, and `currentOccurrences` (panel-level evidence details) is empty; the package's own steps stay with its rows and clips. Validity is unchanged: the mismatch still refuses measured proof.
-- Align `@farmslot/recipe-runner` 0.46.3 (plan-time refusal of a visual or mixed claim only shell output proves), so the engine the SDK creates plans with it.
+- Align `@farmslot/recipe-runner` 0.46.3 (plan-time refusal of a visual or mixed claim only shell output proves), so the engine the SDK creates plans with it, and `@farmslot/protocol` 0.74.10.
 
 ## 0.25.2 - 2026-10-29
 
