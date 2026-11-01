@@ -12,3 +12,18 @@ export class BlockedRunError extends Error {
     this.detail = detail;
   }
 }
+
+/**
+ * The owned worker is making progress (a turn or a compaction); its publication package
+ * can be built once it goes idle. A worker at a prompt or without a proven pane is not
+ * this: it cannot go idle by itself, so it keeps the plain blocked refusal.
+ */
+export const OWNED_WORKER_NOT_IDLE =
+  'Wait for the owned worker to be idle before refreshing its publication package';
+
+export class OwnedWorkerBusyError extends BlockedRunError {
+  constructor() {
+    super(OWNED_WORKER_NOT_IDLE);
+    this.name = 'OwnedWorkerBusyError';
+  }
+}
