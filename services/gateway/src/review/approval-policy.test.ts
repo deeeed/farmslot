@@ -12,19 +12,35 @@ import { parseStructuredReviewFeedback } from './feedback.js';
 
 const issue = { file: 'src/a.ts', line: 1, description: 'Incorrect value', severity: 'minor' };
 
-test('paired review results cannot approve a minor or hide a defect in a pass verdict', () => {
-  const parse = (verdict: string, severity: string, recommendation: string) =>
+test('paired review results cannot approve a minor or hide a defect in a pass verdict', (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const parse = (verdict: string, severity: string, recommendation?: string) =>
     parseStructuredReviewFeedback(
       JSON.stringify({
         schemaVersion: 1,
         verdict,
         issues: [{ ...issue, severity }],
-        recommendation,
+        ...(recommendation === undefined ? {} : { recommendation }),
       }),
       'review-result.json',
     );
-  assert.equal(parse('issues', 'minor', 'APPROVE').incomplete, true);
-  assert.equal(parse('pass', 'minor', 'APPROVE').incomplete, true);
+  // ba397e2c: a reviewer that under-reads its findings is read at the policy's verdict, with its
+  // findings, instead of leaving the run on an invalid result.
+  for (const [verdict, severity, recommendation, required] of [
+    ['pass', 'minor', 'APPROVE', 'COMMENT'],
+    ['issues', 'minor', 'APPROVE', 'COMMENT'],
+    ['pass', 'minor', undefined, 'COMMENT'],
+    ['pass', 'major', 'COMMENT', 'REQUEST_CHANGES'],
+    ['issues', 'blocker', 'COMMENT', 'REQUEST_CHANGES'],
+  ] as const)
+    assert.deepEqual(parse(verdict, severity, recommendation), {
+      verdict: 'issues',
+      issues: [{ ...issue, severity }],
+      recommendation: required,
+    });
+  // A recommendation stricter than the findings, or one that isn't a recommendation, stays invalid.
+  assert.equal(parse('issues', 'minor', 'REQUEST_CHANGES').incomplete, true);
+  assert.equal(parse('issues', 'minor', 'LGTM').incomplete, true);
   assert.equal(parse('issues', 'minor', 'COMMENT').incomplete, undefined);
   assert.equal(parse('issues', 'major', 'REQUEST_CHANGES').recommendation, 'REQUEST_CHANGES');
   assert.equal(parse('pass', 'nit', 'APPROVE').verdict, 'pass');

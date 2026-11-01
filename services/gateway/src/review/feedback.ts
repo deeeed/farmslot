@@ -32,6 +32,14 @@ interface StructuredReviewIssueCandidate {
   severity?: unknown;
 }
 
+const RECOMMENDATION_ORDER: readonly unknown[] = ['APPROVE', 'COMMENT', 'REQUEST_CHANGES'];
+
+/** A known recommendation below the one the findings require. */
+function weakerRecommendation(recommendation: unknown, required: string): boolean {
+  const index = RECOMMENDATION_ORDER.indexOf(recommendation);
+  return index >= 0 && index < RECOMMENDATION_ORDER.indexOf(required);
+}
+
 export function parseStructuredReviewFeedback(
   raw: string,
   resultRelPath: string,
@@ -113,6 +121,22 @@ export function parseStructuredReviewFeedback(
       ),
     ];
     const required = reviewRecommendation(findings, policy);
+    // A reviewer that reads its own findings as weaker than the policy does (ba397e2c: pass and
+    // APPROVE with 3 minor findings) is read at the policy's verdict. That never approves those
+    // findings, and the run is not stranded on an invalid result. Findings from elsewhere
+    // (additional issues) still refuse a stale approval, and findings without a severity stay
+    // invalid: they say nothing about how the reviewer weighed them.
+    if (
+      required !== 'APPROVE' &&
+      !additionalIssues?.length &&
+      normalizedIssues.every((issue) => issue.severity !== undefined) &&
+      (verdict === 'pass' || weakerRecommendation(candidate.recommendation, required))
+    ) {
+      console.warn(
+        `[review] ${resultRelPath}: verdict ${verdict}${candidate.recommendation === undefined ? '' : ` / ${String(candidate.recommendation)}`} is weaker than its findings require; read as issues / ${required}`,
+      );
+      return { verdict: 'issues', issues: normalizedIssues, recommendation: required };
+    }
     const recommendation =
       candidate.recommendation === undefined
         ? required
