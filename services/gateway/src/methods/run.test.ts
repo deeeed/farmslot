@@ -29,8 +29,10 @@ import { admitReviewRound } from '../review/review-round-budget.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { jiraTicketData, manualTicketData } from '../run-completion/test-fixtures.js';
 import { createEngineDecision } from '../run-engine/engine-decisions.js';
+import { CONTINUE_REVIEW_FIX_ACTION } from '../run-engine/gate-policy.js';
 import { overwriteRetainedFixture, retainRunFixture } from '../run-engine/test-fixtures.js';
 import type { VisualRepairAdmission } from '../run-engine/visual-repair.js';
+import type { RunProgressObservation } from '../runners/run-progress.js';
 import {
   createRun,
   deleteRun,
@@ -832,18 +834,24 @@ test('Send back preserves operator feedback without accepting client-supplied fi
 
 test('Send back reserves one fix round when the gate is consumed and a retry reuses it', async (t) => {
   const { run, admission, gate } = sendBackFixture(t, 'PROJ-SEND-BACK-RESERVED');
+  let resumed!: () => void;
+  const resume = new Promise<void>((resolve) => (resumed = resolve));
   await runResolveDecision(
     { runId: run.id, decisionId: 'gate-1', actionId: SEND_BACK_TO_AGENT_ACTION },
     () => {},
-    { admitVisualRepair: admission, resumeRun: async () => {} },
+    { admitVisualRepair: admission, resumeRun: async () => resumed() },
   );
+  await resume;
   let persisted = getRun(run.id)!;
   assert.equal(persisted.decisions[0]?.resolvedAction, SEND_BACK_TO_AGENT_ACTION);
   assert.equal(persisted.engineState?.publishGate?.reviews?.[0]?.retryCount, 1);
   assert.equal(persisted.engineState?.publishGate?.visualRepairs?.length, 1);
   assert.equal(persisted.engineState?.publishGate?.visualRepairs?.[0]?.status, 'reserved');
   // An undelivered repair re-presented at a new gate keeps the same identity and charge.
-  updateRun(run.id, { decisions: [...getRun(run.id)!.decisions, gate('gate-2')] });
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [...getRun(run.id)!.decisions, gate('gate-2')],
+  });
   await runResolveDecision(
     { runId: run.id, decisionId: 'gate-2', actionId: SEND_BACK_TO_AGENT_ACTION },
     () => {},
@@ -1091,13 +1099,24 @@ test('a gate action no engine waits for is refused, not acknowledged, when no re
     createdAt: new Date().toISOString(),
   };
   const resumed: string[] = [];
-  for (const [status, decisions, reason] of [
-    ['reconciling', [gate], /the run is reconciling, not waiting at its gate/],
-    ['blocked', [gate, monitor], /also waits on its monitor_timeout decision monitor-wait/],
+  const continueFixing: RunDecision = {
+    ...gate,
+    actions: [{ id: CONTINUE_REVIEW_FIX_ACTION, label: 'Continue Fixing', style: 'primary' }],
+  };
+  for (const [status, decisions, actionId, reason] of [
+    ['reconciling', [gate], 'hold', /the run is reconciling, not waiting at its gate/],
+    ['blocked', [gate, monitor], 'hold', /also waits on its monitor_timeout decision monitor-wait/],
+    // A resumed gate never replays Continue Fixing, so no fix would start.
+    [
+      'human-gating',
+      [continueFixing],
+      CONTINUE_REVIEW_FIX_ACTION,
+      /a resumed gate does not apply continue-review-fix/,
+    ],
   ] as const) {
     updateRun(run.id, { status, decisions: decisions.map((decision) => ({ ...decision })) });
     await assert.rejects(
-      runResolveDecision({ runId: run.id, decisionId: gate.id, actionId: 'hold' }, () => {}, {
+      runResolveDecision({ runId: run.id, decisionId: gate.id, actionId }, () => {}, {
         resumeRun: async (id) => {
           resumed.push(id);
         },
@@ -1114,7 +1133,7 @@ test('a gate action no engine waits for is refused, not acknowledged, when no re
   assert.deepEqual(resumed, []);
 });
 
-test('a gate action an engine waits for is taken by it whatever the run status', async (t) => {
+test('a gate action an engine waits for is taken by it, unless the run ended', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
@@ -1128,19 +1147,38 @@ test('a gate action an engine waits for is taken by it whatever the run status',
       await deleteRun(run.id);
     }
   });
-  const waiting = createEngineDecision(
-    run.id,
-    'human_gate',
-    'Package ready',
-    [{ id: 'abort', label: 'Abort', style: 'danger' }],
-    undefined,
-    { readProgress: async () => ({ kind: 'unproven', reason: 'run-progress-unconfirmed' }) },
+  const openGate = async (readProgress: () => Promise<RunProgressObservation>) => {
+    const waiting = createEngineDecision(
+      run.id,
+      'human_gate',
+      'Package ready',
+      [{ id: 'abort', label: 'Abort', style: 'danger' }],
+      undefined,
+      { readProgress },
+    );
+    for (let poll = 0; !getRun(run.id)!.decisions.some((d) => !d.resolvedAt); poll++) {
+      assert.ok(poll < 100, 'the gate decision was not presented');
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    return { waiting, live: getRun(run.id)!.decisions.find((d) => !d.resolvedAt)! };
+  };
+  for (const progress of [
+    { kind: 'unproven', reason: 'run-progress-unconfirmed' },
+    { kind: 'idle' },
+  ] as const) {
+    const { waiting, live } = await openGate(async () => progress);
+    assert.equal(getRun(run.id)!.status, progress.kind === 'idle' ? 'human-gating' : 'reconciling');
+    await runResolveDecision({ runId: run.id, decisionId: live.id, actionId: 'abort' }, () => {});
+    assert.equal(await waiting, 'abort');
+  }
+  // A cancelled run's waiting engine would abort instead of acting: refused, not acknowledged.
+  const { live } = await openGate(async () => ({ kind: 'idle' }));
+  updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  await assert.rejects(
+    runResolveDecision({ runId: run.id, decisionId: live.id, actionId: 'abort' }, () => {}),
+    /abort would not be applied: the run is cancelled/,
   );
-  await Promise.resolve();
-  const live = getRun(run.id)!.decisions.at(-1)!;
-  assert.equal(getRun(run.id)!.status, 'reconciling');
-  await runResolveDecision({ runId: run.id, decisionId: live.id, actionId: 'abort' }, () => {});
-  assert.equal(await waiting, 'abort');
+  assertDecisionStillUnresolved(run.id, live.id);
 });
 
 test('publication RPC refuses unresolved findings without a pending decision, including an active fix', async (t) => {
