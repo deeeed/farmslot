@@ -47,18 +47,15 @@ export function EvidenceAcOverlay({
     [model, videoPath, durationMs],
   );
   if (!toc.length) return null;
-  const claimId = model.selection?.claimId ?? toc[0]?.claim.id ?? '';
-  const row = review.rows.find((candidate) => candidate.id === claimId);
-  const label = (id: string) => {
-    const match = review.rows.find((candidate) => candidate.id === id);
-    return match ? acceptanceClaimLabel(match) : '';
-  };
+  // Nothing selected (a step opened on its own): no current criterion, › starts at the first.
+  const claimId = model.selection?.claimId;
+  const row = claimId ? review.rows.find((candidate) => candidate.id === claimId) : undefined;
   const choose = (id: string | null) => {
     if (!id) return;
     onChoose(id, toc.find((entry) => entry.claim.id === id)?.startMs ?? null);
   };
-  const previous = adjacentEvidenceReviewClaim(toc, claimId, -1);
-  const next = adjacentEvidenceReviewClaim(toc, claimId, 1);
+  const previous = claimId ? adjacentEvidenceReviewClaim(toc, claimId, -1) : null;
+  const next = claimId ? adjacentEvidenceReviewClaim(toc, claimId, 1) : (toc[0]?.claim.id ?? null);
 
   return (
     <View style={styles.wrap}>
@@ -70,7 +67,9 @@ export function EvidenceAcOverlay({
         style={styles.pill}
         onPress={() => setOpen((value) => !value)}
       >
-        <Text style={styles.pillText}>{open ? 'Hide ACs' : `ACs · ${claimId}`}</Text>
+        <Text style={styles.pillText}>
+          {open ? 'Hide ACs' : claimId ? `ACs · ${claimId}` : 'ACs'}
+        </Text>
       </Pressable>
       {open ? (
         <View style={styles.panel} testID="evidence-ac-overlay">
@@ -93,9 +92,9 @@ export function EvidenceAcOverlay({
                   canFocus={() => false}
                   testIDPrefix="evidence-ac-current"
                 />
-              ) : (
+              ) : claimId ? (
                 <Text style={styles.entryText}>{claimId}</Text>
-              )}
+              ) : null}
             </View>
             <Pressable
               testID="evidence-ac-next"
@@ -109,22 +108,26 @@ export function EvidenceAcOverlay({
             </Pressable>
           </View>
           <ScrollView nestedScrollEnabled style={{ maxHeight: maxListHeight }}>
-            {toc.map(({ claim, startMs }) => (
-              <Pressable
-                key={claim.id}
-                testID={`evidence-ac-${claim.id}`}
-                accessibilityRole="button"
-                accessibilityState={{ selected: claim.id === claimId }}
-                style={[styles.entry, claim.id === claimId && styles.entrySelected]}
-                onPress={() => choose(claim.id)}
-              >
-                <Text style={styles.entryText} numberOfLines={1}>
-                  {startMs === null ? '–' : formatEvidenceReviewVideoTime(startMs / 1000)} ·{' '}
-                  {claim.id}
-                  {label(claim.id) ? ` · ${label(claim.id)}` : ''}
-                </Text>
-              </Pressable>
-            ))}
+            {toc.map(({ claim, startMs }) => {
+              const match = review.rows.find((candidate) => candidate.id === claim.id);
+              const state = match ? ` · ${acceptanceClaimLabel(match)}` : '';
+              return (
+                <Pressable
+                  key={claim.id}
+                  testID={`evidence-ac-${claim.id}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: claim.id === claimId }}
+                  style={[styles.entry, claim.id === claimId && styles.entrySelected]}
+                  onPress={() => choose(claim.id)}
+                >
+                  <Text style={styles.entryText} numberOfLines={1}>
+                    {startMs === null ? '–' : formatEvidenceReviewVideoTime(startMs / 1000)} ·{' '}
+                    {claim.id}
+                    {state}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </ScrollView>
         </View>
       ) : null}

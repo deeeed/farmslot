@@ -91,7 +91,6 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
         authHeaders,
         path: item.path,
         evidenceModel: acceptance.evidenceModel ?? undefined,
-        acceptance: review,
         resolveArtifactUrl,
         sharedArtifact: {
           runId,
@@ -107,7 +106,6 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
       authHeaders,
       criterionId,
       resolveArtifactUrl,
-      review,
       run?.slotId,
       runId,
       viewer,
@@ -131,6 +129,7 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
   return {
     visible: open && items.length > 0,
     items,
+    review,
     initialIndex: viewer?.initialIndex ?? 0,
     error,
     close,

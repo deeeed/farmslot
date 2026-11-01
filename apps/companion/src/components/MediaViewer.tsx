@@ -68,8 +68,6 @@ export interface MediaViewerItem {
   evidenceModel?: EvidenceReviewModel;
   initialTraceIndex?: number;
   sharedArtifact?: SharedRunArtifactSelection;
-  /** The run's criteria: a recording shows them over the player to move between and judge. */
-  acceptance?: EvidenceAcceptanceReview;
 }
 
 interface MediaViewerProps {
@@ -80,6 +78,11 @@ interface MediaViewerProps {
   onClose: () => void;
   authHeaders?: ArtifactHttpHeaders;
   testID?: string;
+  /**
+   * The run's criteria over a recording, to move between and judge. Read live, unlike the
+   * items the viewer keeps while open: verdicts must show, and act on, the current evidence.
+   */
+  acceptance?: EvidenceAcceptanceReview;
 }
 
 export function MediaViewer({
@@ -90,6 +93,7 @@ export function MediaViewer({
   onClose,
   authHeaders,
   testID,
+  acceptance,
 }: MediaViewerProps) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -185,6 +189,7 @@ export function MediaViewer({
                   panEnabled={zoomedUri === item.uri}
                   onZoomChange={(zoomed) => setZoomedUri(zoomed ? item.uri : null)}
                   onViewSelectionChange={markVideoSelectionChanged}
+                  acceptance={acceptance}
                 />
               </View>
             ))}
@@ -252,6 +257,7 @@ function MediaSlide({
   panEnabled,
   onZoomChange,
   onViewSelectionChange,
+  acceptance,
 }: {
   isActive: boolean;
   item: MediaViewerItem;
@@ -260,6 +266,7 @@ function MediaSlide({
   panEnabled?: boolean;
   onZoomChange?: (zoomed: boolean) => void;
   onViewSelectionChange: (uri: string) => void;
+  acceptance?: EvidenceAcceptanceReview;
 }) {
   const mediaType = item.mediaType ?? classifyArtifact(item.title ?? item.uri);
   if (mediaType === 'document') {
@@ -281,6 +288,7 @@ function MediaSlide({
         width={width}
         height={height}
         onViewSelectionChange={onViewSelectionChange}
+        acceptance={acceptance}
       />
     );
   }
@@ -432,11 +440,13 @@ function FullscreenVideo({
   width,
   height,
   onViewSelectionChange,
+  acceptance,
 }: {
   item: MediaViewerItem;
   width: number;
   height: number;
   onViewSelectionChange: (uri: string) => void;
+  acceptance?: EvidenceAcceptanceReview;
 }) {
   const [model, setModel] = useState<EvidenceReviewModel | null>(item.evidenceModel ?? null);
   const [openGroups, setOpenGroups] = useState<ReadonlyMap<string, boolean>>(() => new Map());
@@ -630,12 +640,12 @@ function FullscreenVideo({
         {model?.selection?.message ? (
           <Text style={styles.detailText}>{model.selection.message}</Text>
         ) : null}
-        {model && timeline && item.acceptance ? (
+        {model && timeline && acceptance ? (
           <EvidenceAcOverlay
             model={model}
             videoPath={videoPath}
             durationMs={durationMs}
-            review={item.acceptance}
+            review={acceptance}
             maxListHeight={height * 0.28}
             onChoose={chooseClaim}
           />

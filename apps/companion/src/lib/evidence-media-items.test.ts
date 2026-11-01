@@ -207,13 +207,23 @@ test("choosing a criterion from the recording's contents plays from its moment",
     (entry) => entry.startMs !== null,
   );
   assert.ok(recorded.length > 0, 'the fixture recording reaches at least one criterion');
+  let clipped = 0;
   for (const entry of recorded) {
     const chosen = evidenceClaimPlayback(model, entry.claim.id, recording.videoPath, entry.startMs);
     assert.equal(model.selection?.claimId, entry.claim.id);
     assert.equal(chosen?.effect?.seekMs, entry.startMs);
     assert.equal(chosen?.effect?.sourceChanged, false);
     assert.equal(chosen?.effect?.pause, false);
+    // The moment sits inside the clip the model now plays, so its playback keeps the seek.
+    const clip = chosen?.effect?.clip;
+    if (clip && entry.startMs !== null) {
+      clipped++;
+      assert.ok(entry.startMs >= clip.startMs && entry.startMs <= clip.endMs, entry.claim.id);
+      const kept = model.playbackAt(recording.videoPath, entry.startMs);
+      assert.notEqual(kept.pause, true, `${entry.claim.id} plays on from its moment`);
+    }
   }
+  assert.ok(clipped > 0, 'at least one criterion plays a clip of this recording');
   // Without a moment, the criterion's own clip on this recording is where it plays from.
   const first = recorded[0]!;
   const fallback = evidenceClaimPlayback(model, first.claim.id, recording.videoPath, null);

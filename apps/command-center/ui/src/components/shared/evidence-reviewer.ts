@@ -389,9 +389,26 @@ export class EvidenceReviewer extends LitElement {
     return (modelRecording(model, recording.path) ?? model.recordings[0])?.videoPath;
   }
 
+  /** Built once per model, recording and order: render and selection read it many times. */
+  private tocs?: {
+    model: EvidenceReviewModel;
+    videoPath: string | undefined;
+    byOrder: Map<'video' | 'criteria', EvidenceReviewTocEntry[]>;
+  };
+
   /** The recording's table of contents, the one both clients' reviews read. */
   private toc(order: 'video' | 'criteria' = 'criteria'): EvidenceReviewTocEntry[] {
-    return this.model ? evidenceReviewToc(this.model, this.videoPath, { order }) : [];
+    const model = this.model;
+    if (!model) return [];
+    const videoPath = this.videoPath;
+    if (this.tocs?.model !== model || this.tocs.videoPath !== videoPath)
+      this.tocs = { model, videoPath, byOrder: new Map() };
+    let entries = this.tocs.byOrder.get(order);
+    if (!entries) {
+      entries = evidenceReviewToc(model, videoPath, { order });
+      this.tocs.byOrder.set(order, entries);
+    }
+    return entries;
   }
 
   /** The steps that prove the criterion, the same grouping the proof step list shows. */
