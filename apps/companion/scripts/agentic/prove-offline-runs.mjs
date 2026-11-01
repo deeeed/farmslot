@@ -1270,7 +1270,46 @@ if (phase === 'terminal-context') {
   const selection = { session: devices[0].name, platform, target: 'mobile' };
   const nativeScreen = () =>
     device.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
+  // A cold relaunch needs the app's own gateway mapping back as well as Metro's.
+  const relaunch = async () => {
+    await restartNative();
+    if (platform === 'android')
+      await execute('adb', [
+        '-s',
+        deviceId,
+        'reverse',
+        `tcp:${gateway.port}`,
+        `tcp:${gateway.port}`,
+      ]);
+  };
+  // The soft keyboard covers the key bar; BACK hides it only while it is showing.
+  const hideKeyboard = async () => {
+    if (platform !== 'android') return;
+    const { stdout } = await execute('adb', ['-s', deviceId, 'shell', 'dumpsys', 'window']);
+    if (stdout.includes('mImeShowing=true'))
+      await execute('adb', ['-s', deviceId, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+  };
+  // Send stays disabled until the pane is in the machine's inventory; press it once enabled.
+  const pressEnabled = async (identifier) => {
+    await hideKeyboard();
+    const deadline = Date.now() + 30000;
+    let found;
+    do {
+      found = (await nativeScreen()).nodes.find((node) => node.identifier === identifier);
+      if (found?.enabled && found.rect) {
+        await device.interactions.press({
+          ...selection,
+          x: found.rect.x + found.rect.width / 2,
+          y: found.rect.y + found.rect.height / 2,
+        });
+        return;
+      }
+      await delay(250);
+    } while (Date.now() < deadline);
+    assert.fail(`${identifier} must become enabled: ${JSON.stringify(found)}`);
+  };
   const button = async (enabled, label = '^L') => {
+    await hideKeyboard();
     const deadline = Date.now() + 15000;
     let found;
     do {
@@ -1417,7 +1456,6 @@ if (phase === 'terminal-context') {
       );
       const opened = await until(
         (value) =>
-          value.focused &&
           value.terminalReady &&
           value.terminalStream === 'live' &&
           value.terminalDraft === `echo ${sent}`,
@@ -1429,7 +1467,7 @@ if (phase === 'terminal-context') {
         contextId: 'ot-ci-fix',
         role: 'ci-fix',
       });
-      await device.interactions.press({ ...selection, selector: 'id="worker-voice-send"' });
+      await pressEnabled('worker-voice-send');
       await until(
         (value) => sentThroughRunner(value, opened.terminalSends?.length ?? 0),
         "The saved target's Send must go through terminal.send",
@@ -1484,7 +1522,19 @@ if (phase === 'terminal-context') {
   // previous run of this proof retires the session it created.
   assert(!existed, `Start without the private proof session ${sessionName}`);
   try {
-    await inbox(route);
+    // A clean launch: screens left stacked by an earlier run keep their own input lines. A link
+    // sent while the relaunched app is still starting can be dropped, so it is sent again.
+    await relaunch();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await inbox(route);
+      const deadline = Date.now() + 15000;
+      let opened;
+      do {
+        opened = (await snapshot())?.terminalReady !== undefined;
+        if (!opened) await delay(250);
+      } while (!opened && Date.now() < deadline);
+      if (opened) break;
+    }
     const initial = await until(
       (value) =>
         current(value) &&
@@ -1518,26 +1568,33 @@ if (phase === 'terminal-context') {
       'The actual terminal key must send through the verified private idle shell',
     );
 
-    // Typing once: the input line types the line, the key bar's Enter runs it, exactly once.
+    // Typing once: the input line types the line and the keyboard's Return runs it, once.
     const typed = shortTag('ot');
     await sessionInfo();
-    await device.interactions.fill({
-      ...selection,
-      selector: 'id="terminal-input-line"',
-      text: `echo ${typed}`,
-    });
-    const enter = await button(true, 'Enter');
-    await device.interactions.press({
-      ...selection,
-      x: enter.rect.x + enter.rect.width / 2,
-      y: enter.rect.y + enter.rect.height / 2,
-    });
+    if (platform === 'android') {
+      // Typed at a person's pace into the focused line: keys injected microseconds apart race
+      // the emulator's input method and arrive garbled.
+      await device.interactions.press({ ...selection, selector: 'id="terminal-input-line"' });
+      const keys = [...`echo ${typed}`]
+        .map((key) => `input text '${key === ' ' ? '%s' : key}'; sleep 0.12;`)
+        .join(' ');
+      await execute('adb', ['-s', deviceId, 'shell', keys]);
+      await execute('adb', ['-s', deviceId, 'shell', 'input', 'keyevent', 'KEYCODE_ENTER']);
+    } else {
+      await device.interactions.fill({
+        ...selection,
+        selector: 'id="terminal-input-line"',
+        text: `echo ${typed}\n`,
+      });
+    }
     await untilPane((text) => typedOnce(text, typed), 'The input line must type its line once');
+    await hideKeyboard();
     await capture('native-terminal-typed-once.png');
 
     // An old /terminal/<slot> link opens the same shared terminal on that slot.
     await inbox('runs');
-    await until((value) => !value.focused, 'Leave the terminal before the old link');
+    // The proof reads only the focused terminal: on another screen it has no terminal frame.
+    await until((value) => value.terminalReady === undefined, 'Leave the terminal first');
     await inbox(`terminal/${fixture.slotId}?runId=${fixture.runId}`);
     await until(
       (value) => value.slotProjectionMatches && openOnSlot(value, fixture.slotId),
@@ -1553,7 +1610,7 @@ if (phase === 'terminal-context') {
       (value) => openOnSlot(value, fixture.slotId) && value.terminalDraft === draftText,
       'A handed-over draft must reach the shared terminal composer',
     );
-    await restartNative();
+    await relaunch();
     await inbox(route);
     const restored = await until(
       (value) => openOnSlot(value, fixture.slotId) && draftRestored(value, draftText),
@@ -1562,7 +1619,7 @@ if (phase === 'terminal-context') {
     await capture('native-terminal-draft-restored.png');
     const sendsBefore = restored.terminalSends?.length ?? 0;
     await sessionInfo();
-    await device.interactions.press({ ...selection, selector: 'id="worker-voice-send"' });
+    await pressEnabled('worker-voice-send');
     await until(
       (value) => sentThroughRunner(value, sendsBefore) && value.terminalDraft === '',
       "Send from a slot-opened terminal must go through the runner's terminal.send once",
@@ -1601,7 +1658,7 @@ if (phase === 'terminal-context') {
         'A disconnected terminal must retain its run facts',
       );
       await capture('native-terminal-stale.png');
-      await restartNative();
+      await relaunch();
       await inbox(route);
       cold = await until(
         (value) =>

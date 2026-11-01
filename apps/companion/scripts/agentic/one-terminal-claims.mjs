@@ -14,11 +14,10 @@ export function typedOnce(paneText, tag) {
   return commands === 1 && outputs === 1;
 }
 
-/** The terminal resolved a pane for this slot and streams it. */
+/** The focused terminal (the only frame the proof reads) resolved a pane for this slot and streams it. */
 export function openOnSlot(frame, slotId) {
   return Boolean(
-    frame?.focused &&
-    frame.terminalReady &&
+    frame?.terminalReady &&
     frame.terminalStream === 'live' &&
     frame.terminalTarget?.slotId === slotId,
   );
@@ -54,5 +53,5 @@ export function sentWhereShown(frame, paneId, paneText, otherPaneText, tag) {
 
 /** A native actor's link takes the conversation branch, never a terminal pane. */
 export function openedNative(frame) {
-  return frame?.focused === true && frame.terminalNative === true && !frame.terminalReady;
+  return frame?.terminalNative === true && !frame.terminalReady;
 }

@@ -60,7 +60,7 @@
       "prove": {
         "action": "command",
         "cmd": "node scripts/agentic/prove-offline-runs.mjs terminal-context",
-        "timeout_ms": 240000,
+        "timeout_ms": 480000,
         "intent": "Prove session, typing, links, drafts, Send, cold restore and pins.",
         "next": "shared"
       },

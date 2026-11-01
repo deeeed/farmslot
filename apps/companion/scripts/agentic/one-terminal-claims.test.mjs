@@ -13,7 +13,6 @@ import {
 
 const slot = 'offline-proof-1';
 const open = {
-  focused: true,
   terminalReady: true,
   terminalStream: 'live',
   terminalTarget: { slotId: slot, bareSession: true },
@@ -73,7 +72,9 @@ test("a saved target's pane is the one shown and the one Send typed into", () =>
 });
 
 test('a native actor opens the conversation branch, not a pane', () => {
-  assert.equal(openedNative({ focused: true, terminalNative: true, terminalReady: false }), true);
-  assert.equal(openedNative({ focused: true, terminalNative: false, terminalReady: true }), false);
-  assert.equal(openedNative({ focused: true, terminalNative: false, terminalReady: false }), false);
+  assert.equal(openedNative({ terminalNative: true, terminalReady: false }), true);
+  assert.equal(openedNative({ terminalNative: false, terminalReady: true }), false);
+  assert.equal(openedNative({ terminalNative: false, terminalReady: false }), false);
+  // No terminal frame at all (another screen is focused).
+  assert.equal(openedNative({}), false);
 });
