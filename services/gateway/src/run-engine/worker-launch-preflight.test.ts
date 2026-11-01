@@ -139,9 +139,10 @@ mock.module('../core/exec.js', {
   },
 });
 const modulePath: string = './worker-launch-preflight.js?binding-regression';
-const { admitWorkerLaunch }: typeof import('./worker-launch-preflight.js') = await import(
-  modulePath
-);
+const {
+  admitWorkerLaunch,
+  WorkerLaunchInputsChangedError,
+}: typeof import('./worker-launch-preflight.js') = await import(modulePath);
 
 test('native realpath-normalized checkout admits and still fences a later config change', async () => {
   const nativeVars = { ...vars, remoteRepo: await realpath(configuredPath) };
@@ -155,7 +156,12 @@ test('native realpath-normalized checkout admits and still fences a later config
   assert.equal(commands.length, 2);
   assert.ok(commands.every((command) => command.includes(nativeVars.remoteRepo)));
   selectedVars = { ...vars, remoteRepo: path.join(root, 'other-checkout') };
-  await assert.rejects(fence(), /Worker launch inputs changed during preflight/);
+  await assert.rejects(
+    fence(),
+    (error) =>
+      error instanceof WorkerLaunchInputsChangedError &&
+      /Worker launch inputs changed during preflight/.test(error.message),
+  );
 });
 
 test('a returned relaunch fence rejects cancellation during its last asynchronous read', async () => {
