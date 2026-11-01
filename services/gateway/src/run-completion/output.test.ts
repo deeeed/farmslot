@@ -549,6 +549,83 @@ test('QA with every step done or skipped keeps close available after acknowledge
   assert.equal(closed.decisions.filter((decision) => !decision.resolvedAt).length, 0);
 });
 
+// F304: run 67feec52's parity evidence included `queryUiTarget__textContains-Tokens-…json`. The
+// retained bundle skips any name containing `token`, so every close and acknowledgement refused
+// with "Run output changed" although nothing had changed.
+test('a capture holding a file the bundle never retains still reviews and closes', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'output-review-excluded-'));
+  await mkdir(path.join(dir, 'artifacts/parity'), { recursive: true });
+  await writeFile(path.join(dir, 'artifacts/report.md'), '# Spike report\nAll criteria pass.\n');
+  await writeFile(
+    path.join(dir, 'artifacts/parity/queryUiTarget__textContains-Tokens-tree.json'),
+    '{"present":true}\n',
+  );
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'F304' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+    await rm(dir, { recursive: true, force: true });
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile: path.join(dir, 'TASK.md'),
+    completionPolicy: 'artifact-only',
+    completedAt: new Date().toISOString(),
+    metrics: { ...run.metrics, outcome: 'success' },
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'complete', status: 'skipped' },
+    ],
+  });
+  await captureRunOutput(run.id, false);
+  const captured = getRun(run.id)!;
+  assert.equal(captured.output?.artifactManifest.length, 2, 'the capture lists both files');
+  const review = captured.decisions.find((decision) => !decision.resolvedAt)!;
+  const acknowledged = await runResolveDecision(
+    { runId: run.id, decisionId: review.id, actionId: 'mark-reviewed' },
+    () => {},
+  );
+  const close = acknowledged.run.decisions.find((decision) => !decision.resolvedAt)!;
+  const closed = await closeRunOutput(run.id, close.id, {
+    publish: async (run) => run,
+    releaseSlot: async () => ({ released: false }),
+    slotOwner: async () => null,
+  });
+  assert.equal(closed.status, 'done');
+
+  // Any other difference from the reviewed capture still refuses.
+  const reopened = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'F304b' });
+  t.after(async () => {
+    updateRun(reopened.id, { status: 'done' });
+    await deleteRun(reopened.id);
+  });
+  updateRun(reopened.id, {
+    status: 'blocked',
+    taskFile: path.join(dir, 'TASK.md'),
+    completionPolicy: 'artifact-only',
+    completedAt: new Date().toISOString(),
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'complete', status: 'skipped' },
+    ],
+  });
+  await captureRunOutput(reopened.id, false);
+  const pending = getRun(reopened.id)!.decisions.find((decision) => !decision.resolvedAt)!;
+  const tampered = getRun(reopened.id)!.output!;
+  updateRun(reopened.id, {
+    output: {
+      ...tampered,
+      artifactManifest: tampered.artifactManifest.map((artifact) =>
+        artifact.path === 'artifacts/report.md' ? { ...artifact, sizeBytes: 1 } : artifact,
+      ),
+    },
+  });
+  await assert.rejects(
+    verifyRunOutputReview(reopened.id, pending.id),
+    /Run output changed; refresh the report before reviewing/,
+  );
+});
+
 // F305: run e8f6b0bc's replayed review and its recovered review gate captured the output at the
 // same time. Both started from the same committed bundle, and the one that committed second
 // failed the review step with "A newer retained capture committed".
