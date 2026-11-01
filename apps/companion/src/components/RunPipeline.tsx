@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -101,37 +101,72 @@ export function RunElapsedTime({ run }: { run: Run }) {
   );
 }
 
-export function RunPipelineMini({ run }: { run: Run }) {
-  const { steps, status: runStatus } = run;
-  const checklist = useRunChecklistProgress(run);
+/** False while the list holding these pipelines is hidden: clocks and checklist reads pause. */
+export const RunPipelineLiveContext = createContext(true);
+
+/** The mini pipeline's derived state, recomputed only when the run changes. */
+interface RunPipelineMiniView {
+  activity: ReturnType<typeof runActivityView>;
+  isCancelled: boolean;
+  reasons: Map<string, string>;
+  visible: RunStep[];
+  statuses: RunStepDisplayStatus[];
+  active: RunStep | undefined;
+  remaining: number;
+  allDone: boolean;
+  hasFailed: boolean;
+  blocked: RunStep | undefined;
+  detail: string | undefined;
+  lifecycleLabel: string | undefined;
+}
+
+function runPipelineMiniView(run: Run): RunPipelineMiniView {
   const activity = runActivityView(run);
-  usePipelineClock(Boolean(activity));
-  const isCancelled = runStatus === 'cancelled';
+  const isCancelled = run.status === 'cancelled';
   const failures = runRecoveredReviewFailures(run);
   const reasons = new Map(failures.map((step) => [step.name, step.reason]));
-  const visible = (activity?.steps ?? steps)
+  const visible = (activity?.steps ?? run.steps)
     .filter((s) => s.status !== 'skipped')
     .flatMap((step) => (step.name === 'review' ? [step, ...failures] : [step]));
-  if (visible.length === 0) return null;
-
-  const eff = (s: RunStep) => runActivityStepStatus(run, s);
-  const runningIdx = visible.findIndex((s) => eff(s) === 'running');
-  const nextIdx = visible.findIndex((s) => eff(s) === 'pending');
+  const statuses = visible.map((s) => runActivityStepStatus(run, s));
+  const runningIdx = statuses.indexOf('running');
+  const nextIdx = statuses.indexOf('pending');
   const labelIdx = runningIdx >= 0 ? runningIdx : nextIdx >= 0 ? nextIdx : visible.length - 1;
   const active = visible[labelIdx];
   const remaining = active
-    ? visible.slice(labelIdx + 1).filter((s) => eff(s) === 'pending').length
+    ? statuses.slice(labelIdx + 1).filter((status) => status === 'pending').length
     : 0;
-  const allDone = visible.every((s) => eff(s) === 'done' || reasons.has(s.name));
-  const hasFailed = visible.some((s) => eff(s) === 'failed' && !reasons.has(s.name));
-  const blocked = visible.find((s) => eff(s) === 'blocked');
+  const allDone = visible.every((s, i) => statuses[i] === 'done' || reasons.has(s.name));
+  const hasFailed = visible.some((s, i) => statuses[i] === 'failed' && !reasons.has(s.name));
+  const blockedIdx = statuses.indexOf('blocked');
+  const blocked = blockedIdx >= 0 ? visible[blockedIdx] : undefined;
   const shown = blocked ?? active;
-  const detail = shown ? runStepDisplayDetail(run, shown) : active?.detail;
+  return {
+    activity,
+    isCancelled,
+    reasons,
+    visible,
+    statuses,
+    active,
+    remaining,
+    allDone,
+    hasFailed,
+    blocked,
+    detail: shown ? runStepDisplayDetail(run, shown) : active?.detail,
+    lifecycleLabel: isCancelled || activity ? undefined : deriveRunLifecycleView(run).activityLabel,
+  };
+}
+
+/** Only the label re-renders on the clock, for the running step's duration. */
+function RunPipelineMiniSummary({ view, held }: { view: RunPipelineMiniView; held: boolean }) {
+  const { activity, isCancelled, active, remaining, allDone, hasFailed, blocked, detail } = view;
+  const live = useContext(RunPipelineLiveContext);
+  usePipelineClock(Boolean(activity) && live);
   const duration = active ? stepDuration(active) : null;
   const label = isCancelled
     ? 'cancelled'
     : ((activity ? `${activity.label}${duration ? ` · ${duration}` : ''}` : undefined) ??
-      deriveRunLifecycleView(run).activityLabel ??
+      view.lifecycleLabel ??
       (allDone
         ? 'done'
         : hasFailed
@@ -139,14 +174,57 @@ export function RunPipelineMini({ run }: { run: Run }) {
           : active
             ? `${shortName(active.name)}${duration ? ` · ${duration}` : ''}${remaining > 0 ? ` · +${remaining}` : ''}`
             : ''));
+  return (
+    <View style={miniStyles.summary}>
+      <Text
+        style={[
+          miniStyles.label,
+          allDone && { color: colors.statusOk },
+          // A held run's failed step is what it waits on a person for, not a failure.
+          hasFailed && !held && { color: colors.statusFail },
+          blocked && { color: colors.statusWarn },
+          isCancelled && { color: colors.statusFail },
+        ]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      {/* A blocked run's label already carries its reason. */}
+      {!activity && !allDone && !isCancelled && detail && !label.includes(detail) ? (
+        <Text style={miniStyles.detail} numberOfLines={2}>
+          {detail}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/** Checklist reads refresh on their own cadence; only this row re-renders for them. */
+function RunPipelineMiniChecklist({ run }: { run: Run }) {
+  const live = useContext(RunPipelineLiveContext);
+  const checklist = useRunChecklistProgress(run, live);
+  return (
+    <RunChecklistProgress
+      run={run}
+      progress={checklist?.progress}
+      error={checklist?.error}
+      stale={checklist?.stale}
+      observedAt={checklist?.observedAt}
+    />
+  );
+}
+
+export function RunPipelineMini({ run }: { run: Run }) {
+  const view = useMemo(() => runPipelineMiniView(run), [run]);
+  if (view.visible.length === 0) return null;
 
   return (
     <View>
       <View style={miniStyles.container}>
         <View style={miniStyles.bars}>
-          {visible.map((step, i) => {
-            const vis = eff(step);
-            const reason = reasons.get(step.name);
+          {view.visible.map((step, i) => {
+            const vis = view.statuses[i];
+            const reason = view.reasons.get(step.name);
             return (
               <Pressable
                 accessibilityLabel={reason ?? step.name}
@@ -166,35 +244,9 @@ export function RunPipelineMini({ run }: { run: Run }) {
             );
           })}
         </View>
-        <View style={miniStyles.summary}>
-          <Text
-            style={[
-              miniStyles.label,
-              allDone && { color: colors.statusOk },
-              // A held run's failed step is what it waits on a person for, not a failure.
-              hasFailed && runStatus !== 'needs-decision' && { color: colors.statusFail },
-              blocked && { color: colors.statusWarn },
-              isCancelled && { color: colors.statusFail },
-            ]}
-            numberOfLines={1}
-          >
-            {label}
-          </Text>
-          {/* A blocked run's label already carries its reason. */}
-          {!activity && !allDone && !isCancelled && detail && !label.includes(detail) ? (
-            <Text style={miniStyles.detail} numberOfLines={2}>
-              {detail}
-            </Text>
-          ) : null}
-        </View>
+        <RunPipelineMiniSummary view={view} held={run.status === 'needs-decision'} />
       </View>
-      <RunChecklistProgress
-        run={run}
-        progress={checklist?.progress}
-        error={checklist?.error}
-        stale={checklist?.stale}
-        observedAt={checklist?.observedAt}
-      />
+      <RunPipelineMiniChecklist run={run} />
       <RunCIWatchStatus run={run} />
     </View>
   );

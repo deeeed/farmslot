@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "A pool rewrite during launch preflight does not fail the run",
+  "description": "Use an isolated gateway, node, pool, project, runs and private tmux server to dispatch a scripted dev run while a pool rewrite lands during its launch preflight's code probe. The engine records the retry, re-reads the inputs, launches the worker and reaches MONITOR. No operator runs, slots or tmux sessions are used.",
+  "workflow": {
+    "entry": "launch-inputs-reload",
+    "nodes": {
+      "launch-inputs-reload": {
+        "action": "command",
+        "cmd": "yarn tsx scripts/runner-validation/gateway/launch-inputs-reload.mts",
+        "timeout_ms": 300000,
+        "intent": "A configuration reload during preflight is retried once on the re-read inputs instead of failing the dispatch.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

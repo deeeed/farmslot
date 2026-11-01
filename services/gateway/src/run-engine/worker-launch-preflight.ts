@@ -79,6 +79,17 @@ function workerTaskDir(run: Run | undefined, vars: SlotVars, project: ProjectVar
     : path.posix.join(vars.remoteRepo, resolveProjectTaskDirName(project.projectJson), relative);
 }
 
+/**
+ * The slot's or project's configured launch inputs changed while the launch was being checked
+ * (a pool or project file rewrite). No worker has received the task: a tmux runner that already
+ * started is stopped before this escapes, and a native reservation the host never received
+ * forgets the launch it was prepared for. A fresh attempt re-reads the inputs. (A native worker
+ * that already accepted the task is reconciled on retry instead.)
+ */
+export class WorkerLaunchInputsChangedError extends Error {
+  override name = 'WorkerLaunchInputsChangedError';
+}
+
 export interface WorkerLaunchPreflightInput {
   runId?: string;
   vars: SlotVars;
@@ -138,7 +149,7 @@ export async function admitWorkerLaunch(
       !isDeepStrictEqual(vars, originalVars) ||
       !isDeepStrictEqual(latestProject.projectJson, originalConfig)
     )
-      throw new Error(
+      throw new WorkerLaunchInputsChangedError(
         'Worker launch inputs changed during preflight; retry this run with its current slot/source selection.',
       );
     const slot = await readSlotRow(input.vars.slotId);
