@@ -1,4 +1,7 @@
-import { resolveApprovalPolicy } from '@farmslot/protocol/review-approval-policy.cjs';
+import {
+  resolveApprovalPolicy,
+  type ReviewRecommendation,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
 import { loadProjectVars } from '../core/config.js';
@@ -14,4 +17,27 @@ export async function loadReviewApprovalPolicy(project: string) {
       return resolveApprovalPolicy();
     throw error;
   }
+}
+
+const REVIEW_RECOMMENDATION_RANK: Record<ReviewRecommendation, number> = {
+  APPROVE: 0,
+  COMMENT: 1,
+  REQUEST_CHANGES: 2,
+};
+
+function isReviewRecommendation(value: string): value is ReviewRecommendation {
+  return Object.hasOwn(REVIEW_RECOMMENDATION_RANK, value);
+}
+
+/** A known recommendation, case-insensitive, or null. */
+export function normalizeReviewRecommendation(value: unknown): ReviewRecommendation | null {
+  const normalized = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  return isReviewRecommendation(normalized) ? normalized : null;
+}
+
+export function stricterReviewRecommendation(
+  left: ReviewRecommendation,
+  right: ReviewRecommendation,
+): ReviewRecommendation {
+  return REVIEW_RECOMMENDATION_RANK[right] > REVIEW_RECOMMENDATION_RANK[left] ? right : left;
 }

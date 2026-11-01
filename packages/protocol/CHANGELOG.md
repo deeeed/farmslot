@@ -6,6 +6,9 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - `RunEngineState.publishGate.refusedEvidencePackageId`: the prepared package a human-gate replay found the worker's evidence refused against; while it is still `packageId`, the gate rebuilds rather than reuses it.
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `compareText` orders strings as `localeCompare` does, through one shared `Intl.Collator`. Run lists and family groups sort with it.
+- Content prefetch hashes files and artifacts in 16 KB slices, one per macrotask, so a large file no longer blocks a frame; content a person opens still verifies at once.
+- Change notifications match queries by dependency ids computed when the query is first observed.
 
 ## 0.74.10 - 2026-11-01
 

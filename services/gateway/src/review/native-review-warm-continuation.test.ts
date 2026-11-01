@@ -199,6 +199,7 @@ mock.module('../tasks/checklist-target.js', {
 mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop, watchContext: noop } });
 mock.module('./feedback.js', {
   namedExports: {
+    logRecommendationCorrection: () => {},
     readReviewFeedback: async () => ({
       verdict: 'issues',
       issues: [{ file: 'a.ts', line: 3, description: 'finding' }],
