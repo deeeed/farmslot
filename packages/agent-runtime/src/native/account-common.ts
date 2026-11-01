@@ -9,6 +9,7 @@ import type {
   NativeAccountProbeOptions,
   NativeAccountState,
 } from './account-types.js';
+import { AcpRpc } from './acp-rpc.js';
 
 export class AccountProbeError extends Error {
   constructor(readonly reason: NonNullable<NativeAccountObservation['reason']>) {
@@ -180,4 +181,69 @@ export async function accountProtocolProbe(
   if (failure) throw failure;
   if (!result) throw new AccountProbeError('status-unavailable');
   return result;
+}
+
+/**
+ * An ACP runner's login from a headless `authenticate`, without opening a session. Grok and
+ * OpenCode supply their arguments, login method and how the result reads.
+ */
+export function observeAcpAccount(
+  runner: NativeAccountObservation['runner'],
+  binary: string,
+  options: NativeAccountProbeOptions,
+  probe: {
+    args: string[];
+    env?: Record<string, string>;
+    authMethod: string;
+    state(result: unknown): NativeAccountState;
+  },
+): Promise<NativeAccountObservation> {
+  return observeNativeAccount(runner, binary, options, async (context) => {
+    let exited = false;
+    let cleanupConfirmed = false;
+    const child = new AcpRpc(
+      { ...context, env: { ...context.env, ...probe.env } },
+      probe.args,
+      (message) => {
+        if (message.id !== undefined && message.method)
+          child.write({
+            id: message.id,
+            error: {
+              code: -32601,
+              message: 'Account observation does not implement client operations',
+            },
+          });
+      },
+      (_error, stopped) => {
+        exited = true;
+        cleanupConfirmed = stopped;
+      },
+    );
+    return accountProtocolProbe(
+      child,
+      async () => {
+        const init = accountObject(
+          await child.request('initialize', {
+            protocolVersion: 1,
+            clientCapabilities: {},
+            clientInfo: { name: 'farmslot-account-status', version: '1' },
+          }),
+        );
+        if (init.protocolVersion !== 1) throw new AccountProbeError('malformed-status');
+        if (
+          !Array.isArray(init.authMethods) ||
+          !init.authMethods.map(accountObject).some((method) => method.id === probe.authMethod)
+        )
+          return { ...unavailableAccount(), reason: 'native-auth-unavailable' };
+        // Never select an interactive login or an API-key fallback during observation.
+        return probe.state(
+          await child.request('authenticate', {
+            methodId: probe.authMethod,
+            _meta: { headless: true },
+          }),
+        );
+      },
+      () => exited && cleanupConfirmed,
+    );
+  });
 }

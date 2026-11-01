@@ -145,6 +145,15 @@ test("Pi's native picker offers its provider-qualified default unless an operato
   const picker = nativeModelPreferences('pi', pi.models, pi.defaultModel);
   assert.equal(picker.defaultModel, `xai/${DEFAULT_PI_MODEL}`);
   assert.ok(!picker.models.includes(DEFAULT_PI_MODEL), 'no bare terminal default');
+  // An operator's saved default still wins.
+  await writeFile(
+    path.join(home, 'runner-visible-models.json'),
+    JSON.stringify({ version: 1, byRunner: {}, defaults: { pi: 'anthropic/claude-opus-5' } }),
+  );
+  assert.equal(
+    nativeModelPreferences('pi', pi.models, pi.defaultModel).defaultModel,
+    'anthropic/claude-opus-5',
+  );
   // A runner whose native default is its terminal default keeps it.
   const claude = getRunnerDefinition('claude');
   assert.equal(

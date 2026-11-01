@@ -151,9 +151,19 @@ test('a bare Pi model ID matches the model Pi selected for it', async () => {
       piNativeAdapter.start({ ...f, model: 'flash' }, () => undefined),
       /Pi model is unavailable: flash/,
     );
-    // A bare ID matches the model Pi selected for it; a `:<thinking>` suffix sets the level.
-    const session = await piNativeAdapter.start({ ...f, model: 'default:high' }, () => undefined);
+    // A bare ID matches the model Pi selected for it; a `:<thinking>` suffix sets the level and
+    // wins over the session's effort.
+    const session = await piNativeAdapter.start(
+      { ...f, model: 'default:high', effort: 'medium' },
+      () => undefined,
+    );
     await session.close();
+    assert.deepEqual(JSON.parse(readFileSync(join(f.cwd, 'argv'), 'utf8')), [
+      '--mode',
+      'rpc',
+      '--model',
+      'default:high',
+    ]);
   } finally {
     f.cleanup();
   }
@@ -252,13 +262,12 @@ test('Pi interrupts, steers and fails turns from its own records', async () => {
 });
 
 test('Pi account state reads its RPC model list', async (t) => {
-  const listing = (models: unknown) => ({ type: 'response', success: true, data: { models } });
   assert.equal(
-    piAccountState(listing([{ provider: 'litellm', id: 'flash' }])).login,
+    piAccountState({ models: [{ provider: 'litellm', id: 'flash' }] }).login,
     'authenticated',
   );
-  assert.equal(piAccountState(listing([])).login, 'signed-out');
-  assert.throws(() => piAccountState({ type: 'response', success: false, error: 'x' }));
+  assert.equal(piAccountState({ models: [] }).login, 'signed-out');
+  assert.throws(() => piAccountState({}));
   const f = setup();
   t.after(f.cleanup);
   for (const [env, login] of [

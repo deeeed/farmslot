@@ -3,6 +3,8 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { DEFAULT_PI_THINKING } from '@farmslot/protocol';
+
 import { claudeProfileEnvironment, observeClaudeAccount } from './account-claude.js';
 import { observeCodexAccount } from './account-codex.js';
 import { cursorProfileEnvironment, observeCursorAccount } from './account-cursor.js';
@@ -214,8 +216,8 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     adapter: piNativeAdapter,
     binary: 'pi',
     supportsWorkers: true,
-    // The tmux launch's default thinking level (DEFAULT_PI_THINKING).
-    defaultEffort: 'medium',
+    // The tmux launch's default thinking level.
+    defaultEffort: DEFAULT_PI_THINKING,
     account: {
       standardDirectory: (env) =>
         env.PI_CODING_AGENT_DIR || join(env.HOME || homedir(), '.pi/agent'),

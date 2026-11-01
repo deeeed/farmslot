@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
-import type { NativeSessionTool, NativeToolKind } from '@farmslot/protocol';
+import {
+  type NativeSessionTool,
+  type NativeToolKind,
+  PI_THINKING_LEVELS,
+} from '@farmslot/protocol';
 
 import { acpObject as piObject } from './acp-rpc.js';
-import { JsonLineProcess, NativeRequestRefused } from './process.js';
+import { type PiRecord, PiRpc } from './pi-rpc.js';
+import { NativeRequestRefused } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
 
-type PiRecord = Record<string, unknown>;
 const piString = (value: unknown) => (typeof value === 'string' ? value : undefined);
 
 // Records that belong to the running agent loop; queue, retry and extension notices do not
@@ -20,7 +24,7 @@ const RUN_EVENTS = new Set([
   'tool_execution_end',
   'agent_settled',
 ]);
-const PI_THINKING = /:(off|minimal|low|medium|high|xhigh|max)$/;
+const PI_THINKING = new RegExp(`:(${PI_THINKING_LEVELS.join('|')})$`);
 
 // Pi's built-in tools. Extension tools read as `other`.
 const PI_TOOL_KINDS: Record<string, NativeToolKind> = {
@@ -67,15 +71,8 @@ export const piNativeAdapter: NativeAdapter = {
       | { id: string; turnId: string; text: string; accepted: boolean; failure?: string }
       | undefined;
     let closed = false;
-    let nextId = 0;
-    // A reply that arrives after its request timed out is dropped, not a protocol failure.
-    const expired = new Set<string>();
     // Pi sends a tool's arguments only when it starts.
     const toolArgs = new Map<string, unknown>();
-    const pending = new Map<
-      string,
-      { resolve(value: unknown): void; reject(error: Error): void; timer?: NodeJS.Timeout }
-    >();
     const publish = (event: NativeEventInput) =>
       emit({ commandId: command?.id, turnId: command?.turnId, ...event });
     // The prompt reply and the run's first event can arrive in either order.
@@ -84,40 +81,25 @@ export const piNativeAdapter: NativeAdapter = {
       command.accepted = true;
       publish({ type: 'command.accepted', text: command.text });
     };
-    const process = new JsonLineProcess(
-      options.executable,
+    const rpc = new PiRpc(
+      options,
       [
         '--mode',
         'rpc',
         ...(options.model ? ['--model', options.model] : []),
-        ...(options.effort ? ['--thinking', options.effort] : []),
+        // A `:<thinking>` model suffix is the more specific choice; Pi lets `--thinking` win.
+        ...(options.effort && !PI_THINKING.test(options.model ?? '')
+          ? ['--thinking', options.effort]
+          : []),
         ...(options.resumeSessionId ? ['--session', options.resumeSessionId] : []),
       ],
-      options,
       (message) => {
         const type = message.type;
-        if (type === 'response') {
-          const id = piString(message.id);
-          if (id !== undefined && expired.delete(id)) return;
-          const request = id === undefined ? undefined : pending.get(id);
-          // A response without a known ID (such as a parse failure) breaks correlation.
-          if (!request) throw new Error(`Pi sent an unmatched ${String(message.command)} response`);
-          pending.delete(id!);
-          clearTimeout(request.timer);
-          if (message.success === true) request.resolve(message.data);
-          else
-            request.reject(
-              new NativeRequestRefused(
-                `Pi ${String(message.command)} failed: ${String(message.error)}`,
-              ),
-            );
-          return;
-        }
         if (type === 'extension_ui_request') {
           const method = message.method;
           // Extension dialogs have no native surface yet; answer so Pi does not wait.
           if (['select', 'confirm', 'input', 'editor'].includes(String(method)))
-            process.write({ type: 'extension_ui_response', id: message.id, cancelled: true });
+            rpc.write({ type: 'extension_ui_response', id: message.id, cancelled: true });
           return;
         }
         if (!command || !RUN_EVENTS.has(String(type))) return;
@@ -177,11 +159,6 @@ export const piNativeAdapter: NativeAdapter = {
       },
       (error, processStopped, evidence) => {
         closed = true;
-        for (const request of pending.values()) {
-          clearTimeout(request.timer);
-          request.reject(error ?? new Error('Pi process closed'));
-        }
-        pending.clear();
         publish({
           type: 'session.closed',
           ...(error ? { status: 'failed' as const } : {}),
@@ -189,31 +166,13 @@ export const piNativeAdapter: NativeAdapter = {
         });
       },
     );
-    const request = (record: PiRecord): Promise<unknown> => {
-      const id = `farmslot-pi-${++nextId}`;
-      return new Promise((resolve, reject) => {
-        // Pi replies to `prompt` only after its pre-run work, such as compaction, so the prompt
-        // waits like ACP's session/prompt. `abort` replies once Pi has settled.
-        const timeoutMs =
-          record.type === 'prompt' ? undefined : record.type === 'abort' ? 60_000 : 30_000;
-        const timer =
-          timeoutMs === undefined
-            ? undefined
-            : setTimeout(() => {
-                pending.delete(id);
-                expired.add(id);
-                reject(new Error(`Pi ${String(record.type)} timed out; acceptance is unknown`));
-              }, timeoutMs);
-        pending.set(id, { resolve, reject, timer });
-        try {
-          process.write({ id, ...record });
-        } catch (error) {
-          clearTimeout(timer);
-          pending.delete(id);
-          reject(error);
-        }
-      });
-    };
+    // Pi replies to `prompt` only after its pre-run work, such as compaction, so the prompt
+    // waits like ACP's session/prompt. `abort` replies once Pi has settled.
+    const request = (record: PiRecord) =>
+      rpc.request(
+        record,
+        record.type === 'prompt' ? undefined : record.type === 'abort' ? 60_000 : 30_000,
+      );
     try {
       const state = piObject(await request({ type: 'get_state' }));
       nativeSessionId = piString(state.sessionId) ?? '';
@@ -236,7 +195,7 @@ export const piNativeAdapter: NativeAdapter = {
         data: { identityConfirmed: true },
       });
     } catch (error) {
-      await process.close();
+      await rpc.close();
       throw error;
     }
     return {
@@ -279,7 +238,7 @@ export const piNativeAdapter: NativeAdapter = {
         await request({ type: 'clear_queue' });
         await request({ type: 'abort' });
       },
-      close: () => process.close(),
+      close: () => rpc.close(),
     };
   },
 };
