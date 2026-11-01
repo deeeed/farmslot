@@ -14,7 +14,7 @@ import {
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
 
-import { heldDataUsable, savedForDisplay, visibleReadError } from '../lib/resource-read-status';
+import { heldDataUsable } from '../lib/resource-read-status';
 import { paneRunnerContext, type TerminalRunnerPane } from '../lib/terminal-controls';
 
 import { mountHook } from './hook-harness.fixtures';
@@ -31,7 +31,8 @@ const inventory: TmuxWorkerListResult = {
   workers: [worker],
 };
 
-// Pixel 6: "Runner keys wait for current worker inventory." came back in red on every reread.
+// Pixel 6: "Runner keys wait for current worker inventory." came back in red on every reread,
+// and a node's read failure stacked a red line under a live terminal. The key bar shows none.
 test('runner keys stay usable and quiet while the worker inventory rereads', () => {
   let state: ResourceQueryState<TmuxWorkerListResult> = { status: 'loading' };
   const connection = { client: { connectionState: 'connected' }, status: 'connected' };
@@ -45,7 +46,7 @@ test('runner keys stay usable and quiet while the worker inventory rereads', () 
       'expo-router': { useIsFocused: () => true },
       '@farmslot/protocol': { Methods, tmuxWorkerRefsMatch },
       '@farmslot/protocol/client-cache': { canActOn, heldDataIsSaved, resourceQuery },
-      '../lib/resource-read-status': { heldDataUsable, savedForDisplay, visibleReadError },
+      '../lib/resource-read-status': { heldDataUsable },
       '../lib/terminal-controls': { paneRunnerContext },
       '../store/connection': {
         useConnectionStore: (select: (value: typeof connection) => unknown) => select(connection),
@@ -63,15 +64,14 @@ test('runner keys stay usable and quiet while the worker inventory rereads', () 
   const render = (selected: TerminalRunnerPane | null = pane) =>
     hook.render(selected) as PaneRunnerContextState;
   try {
-    assert.equal(render().error, null, 'The first read is loading, not an error');
+    assert.deepEqual(Object.keys(render()), ['context'], 'The key bar gets no read error');
+    assert.equal(render().context.linkedRunner, null, 'The first read is loading');
     state = { status: 'ready', data: inventory, observedAt: 1_000 };
     assert.equal(render().context.linkedRunner, 'claude');
     assert.deepEqual(forgotten, [['%19']], 'A current read prunes closed panes');
 
     state = { status: 'stale', data: inventory, observedAt: 1_000 };
-    const rereading = render();
-    assert.equal(rereading.error, null);
-    assert.equal(rereading.context.linkedRunner, 'claude', 'Runner keys keep the held inventory');
+    assert.equal(render().context.linkedRunner, 'claude', 'Runner keys keep the held inventory');
     // Held inventory that lacks a pane a newer read shows must never prune its saved keys.
     state = {
       status: 'stale',
@@ -90,27 +90,24 @@ test('runner keys stay usable and quiet while the worker inventory rereads', () 
         message: 'The file observation changed during this read.',
       },
     };
-    assert.equal(render().error, null, 'A fresh superseded read is not an error either');
+    assert.equal(render().context.linkedRunner, 'claude', 'A fresh superseded read keeps it too');
 
-    // Saved inventory still says so: a failed read, or no connection.
+    // Saved inventory gates runner keys: a failed read, or no connection.
     state = {
       status: 'stale',
       data: inventory,
       observedAt: 1_000,
       error: { code: 'TIMEOUT', message: 'Request tmux.worker.list timed out after 10000ms' },
     };
-    assert.equal(render().error, 'Request tmux.worker.list timed out after 10000ms');
     assert.equal(render().context.linkedRunner, null);
     state = { status: 'stale', data: inventory, observedAt: 1_000 };
     // A short reconnect keeps the held inventory and stays quiet.
     connection.status = 'connecting';
     connection.client.connectionState = 'connecting';
-    const reconnecting = render();
-    assert.equal(reconnecting.error, null);
-    assert.equal(reconnecting.context.linkedRunner, 'claude');
+    assert.equal(render().context.linkedRunner, 'claude');
     // Offline past the grace, the held inventory is saved data.
     held = false;
-    assert.equal(render().error, 'Runner keys wait for current worker inventory.');
+    assert.equal(render().context.linkedRunner, null);
     held = true;
     // Only a current read on a connected transport prunes; held data never does.
     state = {
@@ -127,7 +124,7 @@ test('runner keys stay usable and quiet while the worker inventory rereads', () 
     // A slot terminal without a worker pane has no inventory to wait for.
     connection.status = 'connected';
     state = { status: 'loading' };
-    assert.equal(render(null).error, null);
+    assert.equal(render(null).context.linkedRunner, null);
   } finally {
     hook.cleanup();
   }

@@ -72,3 +72,5 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
   ```bash
   {{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} complete --mark-last
   ```
+
+**Round 3 and later:** block only on blocker or major findings (a real defect in the delta, or an unmet AC). Minors and nits are listed as follow-ups and do not block; with no blocker or major, the verdict is APPROVE.

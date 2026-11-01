@@ -2,8 +2,9 @@ import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef } from 'r
 
 import type { GatewayClient } from '../../lib/gateway-client';
 import {
-  assertSafeResend,
+  assertResendable,
   createTerminalInputQueue,
+  resendScope,
   type TerminalInput,
   TerminalInputCancelledError,
   type TerminalInputQueue,
@@ -27,7 +28,7 @@ export function useTerminalInput(
   target: CompanionTerminalTargetParams | null,
   targetRef: RefObject<CompanionTerminalTargetParams | null>,
   disabledReason: string | null,
-  events: Pick<TerminalInputQueueOptions, 'onRetry' | 'onHold'> = {},
+  events: Pick<TerminalInputQueueOptions, 'onRetry'> = {},
 ): TerminalInput {
   const client = useConnectionStore((state) => state.client);
   const profileId = useConnectionStore((state) => state.activeProfileId);
@@ -84,10 +85,10 @@ export function useTerminalInput(
             const assertCurrent = () => {
               assertActive();
               if (!isCurrent(generation)) throw new TerminalInputCancelledError();
-              // Only a live connection says which instance would receive the frame; the last
+              // Only a live connection says which gateway would receive the frame; the last
               // check runs connected, just before the frame is written.
               if (selectedClient.connectionState === 'connected')
-                assertSafeResend(sentTo, selectedClient.terminalInputSequenceInstance);
+                assertResendable(sentTo, selectedClient.terminalInputSequence);
             };
             assertCurrent();
             await selectedClient.request(
@@ -96,14 +97,11 @@ export function useTerminalInput(
               10_000,
               {
                 assertCurrent,
-                onSent: () => markSent(selectedClient.terminalInputSequenceInstance),
+                onSent: () => markSent(resendScope(selectedClient.terminalInputSequence)),
               },
             );
           },
-          {
-            onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt),
-            onHold: (held) => eventsRef.current.onHold?.(held),
-          },
+          { onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt) },
         );
         queueRef.current = { key: selectedKey, client: selectedClient, queue };
       }
@@ -118,7 +116,5 @@ export function useTerminalInput(
     },
     [targetRef],
   );
-  const resend = useCallback(() => queueRef.current?.queue.resend(), []);
-  const discard = useCallback(() => queueRef.current?.queue.discard(), []);
-  return useMemo(() => ({ write, resend, discard }), [write, resend, discard]);
+  return useMemo(() => ({ write }), [write]);
 }

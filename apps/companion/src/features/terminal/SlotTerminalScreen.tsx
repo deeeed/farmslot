@@ -53,7 +53,6 @@ import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
-import { TerminalHeldInput } from '../../components/TerminalHeldInput';
 import {
   TerminalInputLine,
   type TerminalInputLineHandle,
@@ -85,6 +84,7 @@ import {
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { slotTerminalRunnerPane } from '../../lib/terminal-controls';
+import { isKeysRetryingNotice, withoutKeysRetryingNotice } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import { appendTerminalTailText, terminalTailLinesFromText } from '../../lib/terminal-tail';
 import {
@@ -282,6 +282,7 @@ export default function TerminalScreen() {
   const terminalDirectInput = useTerminalPrefsStore((s) => s.terminalDirectInput);
   const setTerminalDirectInput = useTerminalPrefsStore((s) => s.setTerminalDirectInput);
   const inputLineRef = useRef<TerminalInputLineHandle>(null);
+  const resetInputLine = useCallback(() => inputLineRef.current?.reset(), []);
   const [focusInputLineOnOpen, setFocusInputLineOnOpen] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
   const [lineCount, setLineCount] = useState<(typeof LINE_COUNT_OPTIONS)[number]>(50);
@@ -492,6 +493,7 @@ export default function TerminalScreen() {
     requireTarget: requireTerminalTarget,
     setControlError,
     setInputError: setSnapshotError,
+    onKeysDropped: resetInputLine,
     commandCount: inputCommands,
   });
 
@@ -882,10 +884,11 @@ export default function TerminalScreen() {
     voiceStatus !== 'recording' &&
     voiceStatus !== 'transcribing' &&
     !voiceRecorderBusy;
+  // While the connection is down the terminal's own status says so: no keys-waiting notice too.
+  const visibleControlError =
+    connectionStatus === 'connected' ? controlError : withoutKeysRetryingNotice(controlError);
   const showInputBar =
-    !native.target &&
-    !native.unavailable &&
-    (showTerminalControls || Boolean(controlError) || Boolean(typing.heldInput));
+    !native.target && !native.unavailable && (showTerminalControls || Boolean(visibleControlError));
   const showVoiceComposer =
     !native.target &&
     !native.unavailable &&
@@ -1989,14 +1992,6 @@ export default function TerminalScreen() {
 
       {showInputBar && (
         <View style={[styles.composer, { paddingBottom: spacing.sm + insets.bottom }]}>
-          <TerminalHeldInput
-            held={typing.heldInput}
-            onResend={typing.resend}
-            onDiscard={() => {
-              inputLineRef.current?.reset();
-              typing.discard();
-            }}
-          />
           {showTerminalControls && (
             <View style={styles.controlPanel}>
               {terminalDirectInput ? null : (
@@ -2029,8 +2024,16 @@ export default function TerminalScreen() {
               ) : null}
             </View>
           )}
-          {(controlError || tmuxError) && (
-            <Text style={styles.sendErrorText}>{controlError ?? tmuxError}</Text>
+          {(visibleControlError || tmuxError) && (
+            <Text
+              style={
+                isKeysRetryingNotice(visibleControlError)
+                  ? styles.sendNoticeText
+                  : styles.sendErrorText
+              }
+            >
+              {visibleControlError ?? tmuxError}
+            </Text>
           )}
         </View>
       )}

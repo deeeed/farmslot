@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import React, { useMemo } from 'react';
+import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { connectionHealthCanRetry } from '../lib/connection-liveness';
@@ -7,131 +7,34 @@ import { retryNativeDecisions } from '../lib/run-collections';
 import { colors, fonts, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
 import { useHeldConnection } from '../store/held-connection';
-import { useRunStore } from '../store/runs';
 
-import { useVisibleConnectionBanner } from './connection-banner-visibility';
+import {
+  OUTAGE_BANNER,
+  resolveBannerContent,
+  useVisibleConnectionBanner,
+} from './connection-banner-visibility';
 
 interface ConnectionBannerProps {
   compact?: boolean;
-}
-
-type BannerTone = 'healthy' | 'connecting' | 'syncError' | 'disconnected';
-
-interface BannerContent {
-  title: string;
-  detail: string;
-  tone: BannerTone;
-}
-
-function outageBannerContent(lastProbeError: string | null): BannerContent {
-  return {
-    title: 'Disconnected from gateway',
-    detail: lastProbeError ?? 'Retry, or switch to another LAN, tailnet, or remote profile.',
-    tone: 'disconnected',
-  };
-}
-
-function resolveBannerContent(
-  healthStatus: ReturnType<typeof useConnectionStore.getState>['healthStatus'],
-  lastProbeError: string | null,
-  lastSyncError: string | null,
-  runsSyncMessage: string | null,
-  gatewayCompatibilityHint: string | null,
-  gatewayUrl: string,
-  activeProfileAuthMode: string,
-): BannerContent | null {
-  if (healthStatus === 'disconnected') return outageBannerContent(lastProbeError);
-  if (healthStatus === 'connecting') {
-    return {
-      title: 'Connecting to gateway…',
-      detail: 'Waiting for authentication',
-      tone: 'connecting',
-    };
-  }
-  if (healthStatus === 'socket-up-not-proven') {
-    return {
-      title: 'Gateway socket connected — proving response…',
-      detail: 'Waiting for an authenticated gateway.ping response.',
-      tone: 'connecting',
-    };
-  }
-  if (healthStatus === 'degraded') {
-    return {
-      title: 'Gateway connection degraded',
-      detail: lastProbeError ?? 'The socket is open, but the gateway did not answer.',
-      tone: 'syncError',
-    };
-  }
-  if (runsSyncMessage) {
-    return {
-      title: runsSyncMessage,
-      detail: 'Gateway is connected — downloading run data',
-      tone: 'connecting',
-    };
-  }
-  if (lastSyncError) {
-    return {
-      title: lastSyncError,
-      detail: 'Gateway is connected — data sync failed. Retry this sync.',
-      tone: 'syncError',
-    };
-  }
-  if (gatewayCompatibilityHint) {
-    return {
-      title: 'Connected to an older gateway',
-      detail: gatewayCompatibilityHint,
-      tone: 'syncError',
-    };
-  }
-  return {
-    title: `Healthy · ${gatewayUrl}`,
-    detail: activeProfileAuthMode !== 'none' ? `${activeProfileAuthMode} auth` : 'Ready',
-    tone: 'healthy',
-  };
 }
 
 export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   const router = useRouter();
   const healthStatus = useConnectionStore((s) => s.healthStatus);
   const transportStatus = useConnectionStore((s) => s.status);
-  const lastProbeError = useConnectionStore((s) => s.lastProbeError);
   const probeInProgress = useConnectionStore((s) => s.probeInProgress);
   const retryConnection = useConnectionStore((s) => s.retryConnection);
   const retryDecisionSync = retryNativeDecisions;
   const lastSyncError = useConnectionStore((s) => s.lastSyncError);
   const gatewayCompatibilityHint = useConnectionStore((s) => s.gatewayCompatibilityHint);
-  const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
-  const profiles = useConnectionStore((s) => s.profiles);
-  const activeProfileId = useConnectionStore((s) => s.activeProfileId);
-  const activeProfileAuthMode = useConnectionStore((s) => s.activeProfileAuthMode);
-  const activeLoading = useRunStore((s) => s.activeLoading);
-  const historyLoading = useRunStore((s) => s.historyLoading);
 
-  const activeProfile = useMemo(
-    () => profiles.find((profile) => profile.id === activeProfileId) ?? null,
-    [activeProfileId, profiles],
-  );
-  const runsSyncMessage = historyLoading
-    ? 'Downloading run history…'
-    : activeLoading
-      ? 'Downloading active runs…'
-      : null;
-
-  const banner = resolveBannerContent(
-    healthStatus,
-    lastProbeError,
-    lastSyncError,
-    runsSyncMessage,
-    gatewayCompatibilityHint,
-    activeProfile?.name ?? gatewayUrl,
-    activeProfileAuthMode ?? 'none',
-  );
+  const banner = resolveBannerContent(healthStatus, lastSyncError, gatewayCompatibilityHint);
 
   const heldConnected = useHeldConnection();
   const visible = useVisibleConnectionBanner(banner, {
     held: heldConnected,
     stuck: banner?.tone === 'syncError' || healthStatus === 'socket-up-not-proven',
-    outage: outageBannerContent(lastProbeError),
+    outage: OUTAGE_BANNER,
   });
   if (!visible) return null;
   const canRetry = connectionHealthCanRetry(
@@ -148,17 +51,7 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   };
 
   return (
-    <View
-      style={[
-        styles.banner,
-        compact && styles.compactBanner,
-        visible.tone === 'connecting'
-          ? styles.connecting
-          : visible.tone === 'syncError'
-            ? styles.syncError
-            : styles.disconnected,
-      ]}
-    >
+    <View style={[styles.banner, compact && styles.compactBanner]}>
       <View style={styles.contentRow}>
         <View
           style={[
@@ -173,16 +66,9 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
             },
           ]}
         />
-        <View style={styles.textBlock}>
-          <Text style={styles.text} numberOfLines={2}>
-            {visible.title}
-          </Text>
-          {!compact && (
-            <Text style={styles.detailText} numberOfLines={2}>
-              {visible.detail}
-            </Text>
-          )}
-        </View>
+        <Text style={styles.text} numberOfLines={1}>
+          {visible.title}
+        </Text>
         <View style={styles.actions}>
           {canRetryDecisionSync ? (
             <Pressable style={styles.actionButton} onPress={() => void retryDecisionSync()}>
@@ -200,7 +86,7 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
           ) : null}
           {!canRetryDecisionSync ? (
             <Pressable style={styles.actionButton} onPress={openProfiles}>
-              <Text style={styles.actionText}>{compact ? 'Profiles' : 'Switch profile'}</Text>
+              <Text style={styles.actionText}>Profiles</Text>
             </Pressable>
           ) : null}
         </View>
@@ -217,15 +103,6 @@ const styles = StyleSheet.create({
   compactBanner: {
     paddingVertical: spacing.xs,
   },
-  connecting: {
-    backgroundColor: colors.statusWarn + '30',
-  },
-  disconnected: {
-    backgroundColor: colors.statusFail + '30',
-  },
-  syncError: {
-    backgroundColor: colors.statusWarn + '30',
-  },
   contentRow: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -236,12 +113,8 @@ const styles = StyleSheet.create({
     height: 8,
     width: 8,
   },
-  textBlock: {
-    flex: 1,
-    minWidth: 0,
-  },
   actions: {
-    alignItems: 'flex-end',
+    flexDirection: 'row',
     gap: spacing.xs,
   },
   actionButton: {
@@ -249,14 +122,10 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   text: {
-    color: colors.textPrimary,
-    fontSize: fonts.sizeSm,
-    fontWeight: '600',
-  },
-  detailText: {
-    color: colors.textMuted,
+    color: colors.textSecondary,
+    flex: 1,
     fontSize: fonts.sizeXs,
-    marginTop: 2,
+    minWidth: 0,
   },
   actionText: {
     color: colors.accent,

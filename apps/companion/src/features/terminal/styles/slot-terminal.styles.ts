@@ -623,6 +623,10 @@ export const slotTerminalStyles = StyleSheet.create({
     color: colors.statusFail,
     fontSize: fonts.sizeSm,
   },
+  sendNoticeText: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeSm,
+  },
   disabledButton: {
     opacity: 0.5,
   },

@@ -61,7 +61,7 @@ test('a visible floating button on disconnected Review is not a restored profile
     nodes: [
       { identifier: 'companion-quick-actions' },
       { identifier: 'companion-screen-review' },
-      { label: 'Disconnected from gateway' },
+      { label: 'Gateway offline' },
     ],
   };
   assert.equal(viewSharingProfileReady(screen, expected), false);

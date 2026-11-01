@@ -821,21 +821,28 @@ test(
 
 /**
  * Types `make deploy` through the worker hook on a gateway that numbers input as instance gw1,
- * closes the socket after the frame went out, and reconnects to `nextInstance`.
+ * closes the socket after the frame went out, and reconnects to `nextInstance`. `durable`: both
+ * gateways keep the record on the pane.
  */
-async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
+async function lostReplyThenReconnect(
+  t: TestContext,
+  nextInstance: string,
+  durable: boolean,
+  nextDurable = durable,
+) {
   const original = globalThis.WebSocket;
   Object.assign(globalThis, { WebSocket: Socket });
   const { GatewayClient } = await import('./gateway-client');
   const client = new GatewayClient('ws://localhost:19779', { token: 'admin' });
-  const numbered = (instance: string) => ({
+  const numbered = (instance: string, keepsRecords = durable) => ({
     ...auth('admin', 'farm'),
-    capabilities: { ...auth('admin', 'farm').capabilities, terminalInputSequence: { instance } },
+    capabilities: {
+      ...auth('admin', 'farm').capabilities,
+      terminalInputSequence: { instance, durable: keepsRecords },
+    },
   });
   const connection = { activeProfileId: 'arthur-lan', principalId: 'arthur' };
-  const hook = mountHook<
-    [typeof client, { nodeId: string; session: string; target: string }, object]
-  >(
+  const hook = mountHook<[typeof client, { nodeId: string; session: string; target: string }]>(
     new URL('../features/terminal/use-worker-terminal-input.ts', import.meta.url),
     'useWorkerTerminalInput',
     {
@@ -849,7 +856,6 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
       },
     },
   );
-  const holds: unknown[] = [];
   const cleanup = () => {
     hook.cleanup();
     client.disconnect();
@@ -862,14 +868,14 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
     first.response(first.sent[0].id, numbered('gw1'));
     await settle();
     t.mock.timers.enable({ apis: ['setTimeout'] });
-    const { write } = hook.render(
-      client,
-      { nodeId: 'mini', session: 'mmt-3', target: '%19' },
-      {
-        onHold: (held: unknown) => holds.push(held),
-      },
-    ) as { write: (data: string) => Promise<void> };
+    const { write } = hook.render(client, {
+      nodeId: 'mini',
+      session: 'mmt-3',
+      target: '%19',
+    }) as { write: (data: string) => Promise<void> };
     const typed = write('make deploy\r');
+    // Handled here so a drop during the reconnect waits for the test's own assertion.
+    typed.catch(() => undefined);
     await settle();
     const sent = first.sent.find((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT)!;
     first.close(1006);
@@ -879,14 +885,14 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
     const second = Socket.sockets.at(-1)!;
     assert.notEqual(second, first);
     second.open();
-    second.response(second.sent[0].id, numbered(nextInstance));
+    second.response(second.sent[0].id, numbered(nextInstance, nextDurable));
     await settle();
     // The queue retried while the socket was down; let its backoff run out.
     for (let step = 0; step < 8; step++) {
       t.mock.timers.tick(1_000);
       await settle();
     }
-    return { sent, second, holds, typed, cleanup };
+    return { sent, second, typed, cleanup };
   } catch (error) {
     cleanup();
     throw error;
@@ -894,42 +900,63 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
 }
 
 // A socket close after the frame went out: the capability is gone by the time the request fails,
-// so the safety of a resend must come from the instance that received the frame.
-test(
-  'worker keys cut off by a socket close are resent with the same number to the same gateway',
-  { timeout: 4000 },
-  async (t) => {
-    const run = await lostReplyThenReconnect(t, 'gw1');
-    try {
-      const resent = run.second.sent.find(
-        (frame) => frame.method === Methods.TERMINAL_WORKER_INPUT,
-      )!;
-      assert.deepEqual(resent.params, run.sent.params, 'same keys, same stream and number');
-      run.second.response(resent.id, { sent: true });
-      await run.typed;
-      assert.deepEqual(run.holds, []);
-    } finally {
-      run.cleanup();
-    }
-  },
-);
+// so the safety of a resend must come from the gateway that received the frame. The pane records
+// each number it was typed, so a restarted gateway drops the repeat as the same one would.
+for (const [nextInstance, durable, gateway] of [
+  ['gw1', false, 'the same gateway'],
+  ['gw2', true, 'a restarted gateway that keeps records on the pane'],
+] as const)
+  test(
+    `worker keys cut off by a socket close are resent with the same number to ${gateway}`,
+    { timeout: 4000 },
+    async (t) => {
+      const run = await lostReplyThenReconnect(t, nextInstance, durable);
+      try {
+        const resent = run.second.sent.find(
+          (frame) => frame.method === Methods.TERMINAL_WORKER_INPUT,
+        )!;
+        assert.deepEqual(resent.params, run.sent.params, 'same keys, same stream and number');
+        run.second.response(resent.id, { sent: true });
+        await run.typed;
+      } finally {
+        run.cleanup();
+      }
+    },
+  );
 
-// After a gateway restart the new process has no record of number 1, so it must not get it.
+// A gateway from before pane records (#1667) kept them in its process: after its restart the
+// batch may already be in the pane, so it is dropped with a message instead of typed twice.
 test(
-  'worker keys cut off by a socket close are held when a different gateway instance answers',
+  'worker keys cut off by a socket close are dropped when a gateway without durable records restarted',
   { timeout: 4000 },
   async (t) => {
-    const run = await lostReplyThenReconnect(t, 'gw2');
+    const run = await lostReplyThenReconnect(t, 'gw2', false);
     try {
       assert.equal(
         run.second.sent.some((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT),
         false,
       );
-      assert.equal(run.holds.length, 1);
     } finally {
       run.cleanup();
     }
-    // Held keys stay pending until the user decides or the terminal goes away.
-    await assert.rejects(run.typed, inputQueue.TerminalInputCancelledError);
+    await assert.rejects(run.typed, inputQueue.TerminalInputMaybeTypedError);
+  },
+);
+
+// Rolled back to a gateway that keeps records in memory: it has none of the durable gateway's.
+test(
+  'worker keys cut off by a socket close are dropped when the gateway rolled back to memory records',
+  { timeout: 4000 },
+  async (t) => {
+    const run = await lostReplyThenReconnect(t, 'gw2', true, false);
+    try {
+      assert.equal(
+        run.second.sent.some((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT),
+        false,
+      );
+    } finally {
+      run.cleanup();
+    }
+    await assert.rejects(run.typed, inputQueue.TerminalInputMaybeTypedError);
   },
 );
