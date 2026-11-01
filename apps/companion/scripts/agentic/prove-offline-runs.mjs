@@ -1540,6 +1540,7 @@ if (phase === 'terminal-context') {
   // The shared terminal must create the missing slot session itself (terminal.reinit); a
   // previous run of this proof retires the session it created.
   assert(!existed, `Start without the private proof session ${sessionName}`);
+  let proofError;
   try {
     // A clean launch: screens left stacked by an earlier run keep their own input lines. A link
     // sent while the relaunched app is still starting can be dropped, so it is sent again.
@@ -1743,12 +1744,23 @@ if (phase === 'terminal-context') {
         observedAt: cold.detail.observedAt,
       }),
     );
+  } catch (error) {
+    proofError = error;
   } finally {
-    try {
-      await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
-      await inbox('runs');
-    } finally {
-      if (!existed) {
+    // The proof's first failure is the result: cleanup failures are reported after it and never
+    // replace it (a gateway still restarting from the outage step used to mask the real error).
+    const cleanupErrors = [];
+    const cleanup = async (step) => {
+      try {
+        await step();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    };
+    await cleanup(() => rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] }));
+    await cleanup(() => inbox('runs'));
+    if (!existed)
+      await cleanup(async () => {
         const rows = (
           await execute('tmux', ['list-sessions', '-F', '#{pid}|#{session_name}'])
         ).stdout
@@ -1763,8 +1775,11 @@ if (phase === 'terminal-context') {
           if (ownedSession) assert.equal(idle.id, ownedSession.id);
           await execute('tmux', ['kill-session', '-t', idle.id]);
         }
-      }
-    }
+      });
+    for (const error of cleanupErrors)
+      console.error(`Cleanup also failed: ${error instanceof Error ? error.message : error}`);
+    if (proofError) throw proofError;
+    if (cleanupErrors.length) throw cleanupErrors[0];
   }
   process.exit(0);
 }
