@@ -8,6 +8,7 @@ import {
 import {
   collectProofNodes,
   potentiallyEligibleProof,
+  proofAssertionSource,
   type ProofDocument,
   type ProofNode,
 } from './assertions.js';
@@ -118,4 +119,41 @@ export function planRecipeEvidence(
     if (node.proves?.length && !potentiallyEligibleProof(id, nodes))
       throw new Error(`Node ${id} declares proof without an observation-bound expectation.`);
   return { declarations: [...declarations.values()], nodes };
+}
+
+/** Nodes whose observation never appears on the app's recording: shell output and file reads. */
+const offScreenProof = (action: string) =>
+  action === 'call' ||
+  action === 'command' ||
+  action === 'assert_output' ||
+  action === 'assert_json' ||
+  action === 'assert_file';
+
+/**
+ * A visual or mixed claim is judged on the recording. One whose proof rests only on shell output
+ * and file reads can never be confirmed there, so the gate would refuse it after the run: it is
+ * refused here instead, before anything runs. The closure is every node the claim's proof can
+ * rest on (its proving nodes, what they call, the observations they assert). Any other action,
+ * including an adapter's own app or UI query, keeps the declared mode.
+ */
+export function assertVisualClaimsObserveUi(plan: RecipeEvidencePlan): void {
+  for (const claim of plan.declarations) {
+    if (claim.proofMode !== 'visual' && claim.proofMode !== 'mixed') continue;
+    const closure = new Set<string>();
+    const add = (id: string) => {
+      if (closure.has(id)) return;
+      closure.add(id);
+      const node = plan.nodes.get(id);
+      if (node?.action === 'call')
+        for (const child of plan.nodes.keys()) if (child.startsWith(`${id}/`)) add(child);
+      if (node?.action === 'assert_output') add(proofAssertionSource(id, node));
+    };
+    for (const [id, node] of plan.nodes) if (node.proves?.includes(claim.id)) add(id);
+    // A claim nothing proves is reported as missing by claim derivation, not here.
+    if (!closure.size) continue;
+    if ([...closure].every((id) => offScreenProof(plan.nodes.get(id)?.action ?? '')))
+      throw new Error(
+        `Claim ${claim.id} is declared ${claim.proofMode}, but only shell commands and file checks prove it, so the recording cannot show it; declare proofMode state.`,
+      );
+  }
 }

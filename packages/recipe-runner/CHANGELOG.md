@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- A run refuses at plan time (`--plan` and the run itself) a visual or mixed proof target whose proof rests only on shell commands and file checks: "Claim AC-1 is declared mixed, but only shell commands and file checks prove it, so the recording cannot show it; declare proofMode state." Before, the run recorded it and the gate's visual review could only reject it (EchoBridge ba397e2c AC-1/AC-2). Re-deriving an existing recording is unchanged.
+
 - `rebindRecipeLibraryPath(value, pins)` rebinds named `RECIPE_LIBRARY_PATH` entries to pinned roots, reading entry names exactly as `parseRecipeLibraryPath` does and leaving other entries verbatim. The gateway uses it to point a bound task's worker at its pinned library copies.
 
 - Consumer harness 0.94.8 sends Extension background market orders' `usdAmount` as the notional (margin × leverage), so orders above 1x fill the requested size instead of failing the fill-size check.

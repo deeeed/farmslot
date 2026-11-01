@@ -18,7 +18,7 @@ import {
   deriveReviewedRecipeClaims,
   validateRecordedEvidencePackage,
 } from '../src/evidence/package.js';
-import { planRecipeEvidence } from '../src/evidence/plan.js';
+import { assertVisualClaimsObserveUi, planRecipeEvidence } from '../src/evidence/plan.js';
 
 const nodes = new Map<string, ProofNode>([
   ['read', { action: 'state_read' }],
@@ -288,6 +288,44 @@ test('ordinary repetitions retain failure; only a declared retry may supersede i
   const retryNodes = new Map(nodes);
   retryNodes.set('assert', { ...nodes.get('assert')!, retryGroup: 'counter-check' });
   assert.equal(deriveRecipeClaims({ ...base, nodes: retryNodes, trace })[0]?.verdict, 'proven');
+});
+
+test('a visual or mixed claim that only shell output proves is refused before the run', () => {
+  const recipe = (proofMode: 'visual' | 'mixed' | 'state') => ({
+    proofTargets: [
+      { id: 'AC1', claim: 'The SDK is current.', proofMode },
+      { id: 'AC2', claim: 'The screen shows the list.', proofMode: 'mixed' as const },
+    ],
+    workflow: {
+      nodes: {
+        // AC1 rests only on a command's output (ba397e2c: SDK version and expo-doctor checks).
+        sdk: { action: 'command', cmd: 'node -p 1' },
+        'assert-sdk': {
+          action: 'assert_output',
+          source: 'sdk',
+          assert: { path: '$', operator: 'eq', value: 1 },
+          proves: ['AC1'],
+        },
+        // An adapter's own UI query counts as on-screen proof (ba397e2c: echobridge.ui.query).
+        list: { action: 'echobridge.ui.query', target: 'list' },
+        'assert-list': {
+          action: 'assert_output',
+          source: 'list',
+          assert: { path: '$', operator: 'contains', value: 'two rows' },
+          proves: ['AC2'],
+        },
+      },
+    },
+  });
+  for (const mode of ['visual', 'mixed'] as const)
+    assert.throws(
+      () => assertVisualClaimsObserveUi(planRecipeEvidence(recipe(mode), new Map())),
+      new RegExp(
+        `Claim AC-1 is declared ${mode}, but only shell commands and file checks prove it.*declare proofMode state`,
+      ),
+    );
+  // A state claim, and a mixed claim asserted on an app's UI query, plan as before.
+  assertVisualClaimsObserveUi(planRecipeEvidence(recipe('state'), new Map()));
 });
 
 test('two composed calls retain separate claims and explicit parent bindings', () => {
