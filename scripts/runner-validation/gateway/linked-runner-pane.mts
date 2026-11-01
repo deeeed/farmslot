@@ -10,7 +10,7 @@
 // Run: yarn tsx scripts/runner-validation/gateway/linked-runner-pane.mts [evidence-dir]
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +32,7 @@ import type {
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const evidence = path.resolve(root, process.argv[2] ?? `temp/linked-runner-pane/${Date.now()}`);
 await mkdir(evidence, { recursive: true });
-const fixture = await mkdtemp(path.join(tmpdir(), 'linked-runner-pane-'));
+const fixture = await realpath(await mkdtemp(path.join(tmpdir(), 'linked-runner-pane-')));
 const machine = 'linked-runner-node';
 const slotId = 'linked-runner-slot';
 const session = path.basename(fixture);
@@ -61,6 +61,7 @@ await json(path.join(project, 'project.json'), {
   name: 'linked-runner',
   repo_url: root,
   paths: { runtime_dir: '.agent', artifact_dir: '.task' },
+  execution_templates: { sources: [] },
   // Keeps the worker process alive while the panes are read; the run is cancelled afterwards.
   scripted: { commands: { hold: { command: 'sleep 300', timeout_ms: 330_000 } } },
   monitoring: { poll_interval_min: 0.02, total_timeout_min: 10 },

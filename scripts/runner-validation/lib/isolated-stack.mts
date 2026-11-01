@@ -6,7 +6,7 @@
 // gateway and node on a fixture root.
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { closeSync, openSync } from 'node:fs';
+import { closeSync, existsSync, openSync } from 'node:fs';
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import path from 'node:path';
@@ -172,6 +172,10 @@ export async function linkCheckout(root: string, dir: string, note: string): Pro
   execFileSync('git', ['clone', '--shared', '--no-checkout', root, dir], { stdio: 'pipe' });
   for (const entry of ['scripts', 'services', 'packages', 'node_modules', 'package.json'])
     await symlink(path.join(root, entry), path.join(dir, entry));
+  // The launch preflight checks a slot's package manager the way a worker would run it.
+  for (const entry of ['.yarnrc.yml', '.yarn', 'yarn.lock', '.nvmrc'])
+    if (existsSync(path.join(root, entry)))
+      await symlink(path.join(root, entry), path.join(dir, entry));
   await writeFile(path.join(dir, 'CLAUDE.md'), `# ${note}\n`);
 }
 

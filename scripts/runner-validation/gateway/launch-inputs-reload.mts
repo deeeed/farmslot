@@ -90,10 +90,6 @@ const tmux = (...args: string[]) =>
 
 await linkCheckout(root, fixture, 'Isolated launch-inputs reload fixture');
 await linkCheckout(root, repo, 'Isolated launch-inputs reload checkout');
-// The launch preflight checks the slot's package manager the way a worker would run it.
-for (const entry of ['.yarnrc.yml', '.yarn', 'yarn.lock', '.nvmrc'])
-  if (existsSync(path.join(root, entry)))
-    await symlink(path.join(root, entry), path.join(repo, entry));
 await symlink(path.join(fixture, 'projects'), path.join(repo, 'projects'));
 const project = path.join(fixture, 'projects/launch-reload');
 await mkdir(path.join(project, 'templates/prompts'), { recursive: true });
