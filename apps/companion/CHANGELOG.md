@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Bottom-tab presses and idle screens no longer stall: Review re-renders only the runs that changed (a run's pipeline clock and checklist re-render on their own), fleet, decision and filter refreshes leave it alone, and Terminals keeps its rows while hidden instead of rebuilding them on every return. Filter sources sort with one shared collator instead of `localeCompare`, which Hermes makes build a collator per call.
 
 ## 0.10.0 - 2026-11-01
 

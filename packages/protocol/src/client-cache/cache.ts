@@ -7,7 +7,7 @@ import { ResourceCollectorAdmission } from './collector-admission.js';
 import {
   resourceBudgetEvictions,
   resourceContentWithinLimits,
-  verifyResourceContent,
+  verifyResourceContentInSlices,
 } from './content.js';
 import {
   isKnownResourceFamily,
@@ -71,6 +71,8 @@ interface PendingRead {
 }
 interface QueryEntry {
   query: ResourceQuery;
+  /** Canonical ids of `query.dependencies`, which every change notification is matched against. */
+  dependencyIds: ReadonlySet<string>;
   state: ResourceQueryState;
   listeners: Set<(state: ResourceQueryState) => void>;
   hydration: Promise<void>;
@@ -520,9 +522,7 @@ export function createGatewayResourceCache(
       const id = resourceKeyId(change.key);
       if (change.revision <= (revisions.get(id) ?? -1)) continue;
       revisions.set(id, change.revision);
-      const affected = [...entries.values()].filter((entry) =>
-        entry.query.dependencies.some((key) => resourceKeyId(key) === id),
-      );
+      const affected = [...entries.values()].filter((entry) => entry.dependencyIds.has(id));
       // Coverage counts declared dependencies only, so a known key that no entry declares (another
       // slot, an unopened workspace) changes nothing held. Only a family this client cannot name might.
       if (!affected.length && isKnownResourceFamily(change.key?.family)) continue;
@@ -557,6 +557,7 @@ export function createGatewayResourceCache(
     }
     const entry: QueryEntry = {
       query,
+      dependencyIds: new Set(query.dependencies.map(resourceKeyId)),
       state: { status: 'loading' },
       listeners: new Set(),
       hydration: Promise.resolve(),
@@ -1163,16 +1164,22 @@ export function createGatewayResourceCache(
     return written;
   }
 
+  function contentWriteToken(): ResourceContentWriteToken {
+    return { connectionId: connection.id, ownerVersion: hydrationOwnerVersion, storeVersion };
+  }
+
   /** Stores verified bytes within the caps and the shared budget. */
-  function storeContent(input: ResourceContentInput): Promise<boolean> {
+  async function storeContent(input: ResourceContentInput): Promise<boolean> {
     const key = contentKey(input.key);
     const { data, origin, cohort } = input;
+    // Verification yields between slices; the write still answers to the owner it was asked under.
+    const token = input.token ?? contentWriteToken();
     if (
       !resourceContentWithinLimits(key, data) ||
-      !verifyResourceContent(key, data, input.untrackedFiles)
+      !(await verifyResourceContentInSlices(key, data, input.untrackedFiles))
     )
-      return Promise.resolve(false);
-    return writeContent(input.token, async (target, current) => {
+      return false;
+    return writeContent(token, async (target, current) => {
       const accessedAt = Date.now();
       const content = await target.listContent();
       if (content.some((row) => row.kind === key.kind && row.id === key.id)) {
@@ -1320,11 +1327,7 @@ export function createGatewayResourceCache(
       readContentBytes((target) => target.getContentByAlias(alias), true),
     storeContent,
     retainContent,
-    contentWriteToken: (): ResourceContentWriteToken => ({
-      connectionId: connection.id,
-      ownerVersion: hydrationOwnerVersion,
-      storeVersion,
-    }),
+    contentWriteToken,
     async dispose(reason?: ResourceConnectionReason) {
       if (disposed) return;
       const withdrawing = collectors.close();

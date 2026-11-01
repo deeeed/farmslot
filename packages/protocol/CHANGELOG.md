@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `compareText` orders strings as `localeCompare` does through one shared `Intl.Collator`; run lists and family groups sort with it. Content prefetch and `storeContent` hash blobs and artifacts in 16 KB slices, one per macrotask (`gitBlobHashInSlices`, `verifyResourceContentInSlices`), and a rebuilt file is hashed once. Change notifications match queries by dependency ids computed when the query is first observed.
 
 ## 0.74.10 - 2026-11-01
 

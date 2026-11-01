@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useShallow } from 'zustand/react/shallow';
 
 import {
   extractRunArtifactManifest,
@@ -104,7 +105,8 @@ type RunsListRow =
       isLastFamilyRun: boolean;
     };
 
-function RunCard({
+// Rows re-render only when their run changes, not on every list or store update.
+const RunCard = React.memo(function RunCard({
   run,
   familyRunIndex,
   familyRunCount,
@@ -123,10 +125,14 @@ function RunCard({
 }) {
   const router = useRouter();
   const statusColor = STATUS_COLORS[run.status] ?? colors.accent;
-  const artifactManifest = extractRunArtifactManifest(run);
-  const visualPairSummary = groupVisualArtifactPairs(artifactManifest, (artifact) =>
-    artifactUrlForEntry(gatewayUrl, run.id, artifact),
+  const visualPairSummary = useMemo(
+    () =>
+      groupVisualArtifactPairs(extractRunArtifactManifest(run), (artifact) =>
+        artifactUrlForEntry(gatewayUrl, run.id, artifact),
+      ),
+    [gatewayUrl, run],
   );
+  const tags = useMemo(() => normalizeRunTags(run.tags), [run.tags]);
   const primaryVisualPair = visualPairSummary.pairs[0] ?? null;
   const isSingletonFamily = familyRunCount === 1;
   const runPositionLabel =
@@ -215,9 +221,9 @@ function RunCard({
         </View>
         <RunLinkedTickets key={run.id} run={run} compact />
         {run.summary ? <RunTitle style={styles.runSummary} title={run.summary} /> : null}
-        {normalizeRunTags(run.tags).length > 0 ? (
+        {tags.length > 0 ? (
           <View style={styles.tagRow}>
-            {normalizeRunTags(run.tags).map((tag) => (
+            {tags.map((tag) => (
               <Text key={tag} style={styles.tagChip}>
                 #{tag}
               </Text>
@@ -258,11 +264,11 @@ function RunCard({
       </Pressable>
     </View>
   );
-}
+});
 
 function RunEvidenceSignals({ run, compact = false }: { run: Run; compact?: boolean }) {
   const router = useRouter();
-  const signals = summarizeRunEvidenceSignals(run);
+  const signals = useMemo(() => summarizeRunEvidenceSignals(run), [run]);
   if (signals.length === 0) return null;
 
   const openSignal = (signal: RunEvidenceSignal) => {
@@ -653,12 +659,18 @@ function NoActiveRunsWorkspace({
   );
 }
 
+/** The read status re-renders on every refresh; the list above it only when its rows change. */
+function RunsReadStatus() {
+  const observation = useRunStore((s) => s.observation);
+  return <ResourceReadStatus observation={observation} label="runs" />;
+}
+
 export default function RunsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const runs = useRunStore((s) => s.runs);
   const activeLoading = useRunStore((s) => s.activeLoading);
-  const observation = useRunStore((s) => s.observation);
+  const hasRunData = useRunStore((s) => Boolean(s.observation.data));
   const historyLoading = useRunStore((s) => s.historyLoading);
   const status = useConnectionStore((s) => s.status);
   const lastSyncError = useConnectionStore((s) => s.lastSyncError);
@@ -667,7 +679,8 @@ export default function RunsScreen() {
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const filters = useFilterStore((s) => s.filters);
   const clearFilters = useFilterStore((s) => s.clearAll);
-  const fleet = useFleetStore((s) => s.fleet);
+  // Slot status changes many times a minute; the list only needs which machine holds each slot.
+  const slotMachines = useFleetStore(useShallow((s) => slotMachineMap(s.fleet?.slots ?? [])));
   const runFilters = useRunFilterStore((s) => s.filters);
   const runFilterCount = useRunFilterStore((s) => s.activeCount)();
   const initRunFilters = useRunFilterStore((s) => s.init);
@@ -707,7 +720,6 @@ export default function RunsScreen() {
       ? 'Downloading active runs…'
       : null;
 
-  const slotMachines = useMemo(() => slotMachineMap(fleet?.slots ?? []), [fleet]);
   const filteredRuns = useMemo(
     () =>
       selectRunList(runs, {
@@ -818,8 +830,8 @@ export default function RunsScreen() {
 
   return (
     <View testID="companion-screen-review" collapsable={false} style={baseStyles.container}>
-      <ResourceReadStatus observation={observation} label="runs" />
-      {status === 'connected' || observation.data ? runScopeHeader : null}
+      <RunsReadStatus />
+      {status === 'connected' || hasRunData ? runScopeHeader : null}
       {runRows.length === 0 ? (
         status === 'connected' && runsSyncMessage ? (
           <View style={[styles.emptyContainer, { paddingBottom: insets.bottom }]}>
@@ -851,11 +863,7 @@ export default function RunsScreen() {
         ) : (
           <View style={[styles.emptyContainer, { paddingBottom: insets.bottom }]}>
             <Text style={baseStyles.textSecondary}>
-              {status === 'connected'
-                ? showAllRuns
-                  ? 'No runs found'
-                  : 'No active runs'
-                : ''}
+              {status === 'connected' ? (showAllRuns ? 'No runs found' : 'No active runs') : ''}
             </Text>
           </View>
         )
