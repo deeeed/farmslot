@@ -476,7 +476,7 @@ run.
 An episode lists references, not copies. Each file is a task-relative path plus
 the sha256 that the run's output inventory or a retained bundle manifest already
 recorded, with the bundle digest when a retained copy holds the bytes. Capture
-reads only those small manifests. It never opens, re-reads or re-hashes an
+reads only those small manifests and the task's binding and receipt. It never opens, re-reads or re-hashes an
 artifact, and an inventory entry without a recorded digest is counted, not hashed.
 Media is counted and follows the existing retention policy.
 
@@ -511,3 +511,14 @@ gateway computes neither.
 - `farmslot runs bundle retain <runId>` also rewrites that run's episode, so a
   backfilled capture's digests reach it.
 - The `episode-capture` effect outcome appears on terminal transition results.
+- Each episode carries `provenance`: the recipe provider package and version and
+  every library's pinned revision (or packaged fingerprint), copied from the
+  task's node-verified receipt (`artifacts/harness-provenance.json`, refreshed at
+  release, also after a repin) or else its binding (`inputs/recipe-binding.json`,
+  ADR-069). Null for an unbound task or an unreadable binding; a re-capture after
+  the task copy is archived keeps the recorded value. Offline tools use it to tell
+  which recipe library a run used, never inferring it from text.
+  `mirrored` is true only when the completion step captured the output and no
+  agent attempt began after that capture. It is false otherwise (cancelled while
+  monitoring, even after a manual mirror refresh, or during a review fix after
+  completion); a repin after the receipt's `recordedAt` is then not reflected.
