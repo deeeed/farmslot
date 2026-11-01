@@ -9,6 +9,7 @@ import {
   Events,
   isCompletionPrerequisiteFailure,
   type Principal,
+  RecordedEvidenceReadError,
   type Run,
   type RunDecision,
   type RuntimeCapabilityStatusResult,
@@ -3958,6 +3959,67 @@ test('a failed replay of a live gate retires the stale engine waiter of the deci
   assert.equal(await waiting, 'abort');
   assert.equal(hasEngineDecisionWaiter(gateId), false);
   assert.equal(getRun(run.id)?.decisions.find((d) => d.id === gateId)?.resolvedAt, undefined);
+});
+
+test('a failed replay of a live gate reopens its decision and gives the gate its engine back', async (t) => {
+  const run = await blockedGateRun(t, 'gate-live-resume', [holdGate('pending-gate-live')]);
+  const resumed: string[] = [];
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}, {
+      engineDriven: () => true,
+      startEngine: async (runId) => {
+        resumed.push(runId);
+      },
+      afterGenerationBump: async () => {
+        throw new Error('refresh failed');
+      },
+    }),
+    /refresh failed/,
+  );
+  // ba397e2c: the reopened card had no engine, and a gate action resumes only a blocked run.
+  assert.equal(
+    getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-live')?.resolvedAt,
+    undefined,
+  );
+  assert.deepEqual(resumed, [run.id], 'the gate gets its engine back');
+});
+
+test('a gate replay whose publication evidence is refused rebuilds the gate instead of failing', async (t) => {
+  const run = await blockedGateRun(t, 'gate-evidence', [holdGate('pending-gate-evidence')]);
+  // No frozen dispatch contract in this fixture's task.
+  updateRun(run.id, { recordedEvidenceContractVersion: 0 });
+  const started: string[] = [];
+  const hooks = (refusal: Error): RunReplayStepHooks => ({
+    startEngine: async (runId) => {
+      started.push(runId);
+    },
+    captureOutput: async () => {
+      throw refusal;
+    },
+  });
+  // A node failure still fails the replay before it touches the gate.
+  await assert.rejects(
+    runReplayStep(
+      { runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' },
+      () => {},
+      hooks(new Error('Node macpro timeout after 60000ms')),
+    ),
+    /Node macpro timeout/,
+  );
+  assert.deepEqual(started, []);
+  // ba397e2c: the before attempt awaits an attestation. The gate's own package refresh refuses
+  // it the same way and shows why, so the replay goes on and an engine waits at the gate.
+  await runReplayStep(
+    { runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' },
+    () => {},
+    hooks(
+      new RecordedEvidenceReadError(
+        'evidence-selection-invalid',
+        'Before evidence comes from recipe attempt recipe-runs/attempts/base',
+      ),
+    ),
+  );
+  assert.deepEqual(started, [run.id]);
 });
 
 test('the enclosing human gate cannot mark a replay-restored held slot busy', async (t) => {
