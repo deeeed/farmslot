@@ -951,6 +951,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   ): NonNullable<RunReviewVisualClaimParams['kind']> | null => {
     const authority = input.visualReviewAuthority;
     if (
+      // Nothing is left to judge on a replaced recording.
+      replaced ||
       !pkg ||
       !input.visualReviewContext ||
       !authority ||
@@ -1118,7 +1120,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
           .at(-1);
         return {
           claim,
-          pending: pendingVisualClaimIds.includes(claim.id),
+          pending: !replaced && pendingVisualClaimIds.includes(claim.id),
           reviewKind: visualReviewKind(claim.id, principal),
           prevalidation: delegated?.reason
             ? {

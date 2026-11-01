@@ -1689,6 +1689,8 @@ test('a gate package the worker re-recorded reads as replaced, with no details f
   assert.deepEqual(replaced.currentOccurrences, []);
   assert.deepEqual(replaced.displayWarnings, []);
   assert.equal(replaced.occurrences.length, current.occurrences.length);
+  // Nothing is left to judge on a replaced recording.
+  assert.ok(replaced.judgmentRows(null).every((row) => !row.pending && !row.reviewKind));
   // Validity is unchanged: the mismatch still refuses measured proof.
   assert.ok(replaced.errors.includes('The task ledger belongs to another recipe execution.'));
 });

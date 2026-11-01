@@ -67,9 +67,10 @@ export function acceptancePanelPresentation(
     counts: replaced
       ? `${summary.total} criteria · evidence replaced${pending.length ? ' · acceptance update pending' : ''}`
       : `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}${pending.length ? ' · acceptance update pending' : ''}`,
-    countsTooltip:
-      `proven ${summary.proven} · weak ${summary.weak} · missing ${summary.missing} · ` +
-      `untestable ${summary.untestable} · not assessed ${summary.unrecorded}`,
+    countsTooltip: replaced
+      ? `evidence replaced · ${summary.total} criteria`
+      : `proven ${summary.proven} · weak ${summary.weak} · missing ${summary.missing} · ` +
+        `untestable ${summary.untestable} · not assessed ${summary.unrecorded}`,
     defaultOpen:
       pending.length > 0 || (assessed > 0 && summary.proven + summary.untestable < summary.total),
     ...(registration
