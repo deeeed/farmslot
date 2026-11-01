@@ -39,9 +39,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  if(text==='error'){send({type:'message_end',message:{role:'assistant',content:[],stopReason:'error',errorMessage:'quota exceeded'}});return settle()}
  send({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:'ANSWER'}});
  send({type:'tool_execution_start',toolCallId:'t1',toolName:'bash',args:{command:'npm test'}});
- send({type:'tool_execution_end',toolCallId:'t1',toolName:'bash',args:{command:'npm test'},result:{content:[{type:'text',text:'ok'}]},isError:false});
+ send({type:'tool_execution_end',toolCallId:'t1',toolName:'bash',result:{content:[{type:'text',text:'ok'}]},isError:false});
  send({type:'tool_execution_start',toolCallId:'t2',toolName:'read',args:{path:'src/a.ts'}});
- send({type:'tool_execution_end',toolCallId:'t2',toolName:'read',args:{path:'src/a.ts'},result:{content:[]},isError:true});
+ send({type:'tool_execution_end',toolCallId:'t2',toolName:'read',result:{content:[]},isError:true});
  settle();
 });`;
 

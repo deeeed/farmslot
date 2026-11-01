@@ -59,6 +59,8 @@ export const piNativeAdapter: NativeAdapter = {
       | undefined;
     let closed = false;
     let nextId = 0;
+    // Pi sends a tool's arguments only when it starts.
+    const toolArgs = new Map<string, unknown>();
     const pending = new Map<
       string,
       { resolve(value: unknown): void; reject(error: Error): void; timer?: NodeJS.Timeout }
@@ -127,6 +129,7 @@ export const piNativeAdapter: NativeAdapter = {
             break;
           }
           case 'tool_execution_start':
+            toolArgs.set(String(message.toolCallId), message.args);
             publish({
               type: 'tool.started',
               nativeId: piString(message.toolCallId),
@@ -138,7 +141,7 @@ export const piNativeAdapter: NativeAdapter = {
               type: 'tool.completed',
               nativeId: piString(message.toolCallId),
               tool: {
-                ...piTool(String(message.toolName), message.args),
+                ...piTool(String(message.toolName), toolArgs.get(String(message.toolCallId))),
                 output: message.result,
                 status: message.isError === true ? 'failed' : 'completed',
               },
@@ -152,6 +155,7 @@ export const piNativeAdapter: NativeAdapter = {
               data: { aborted: message.aborted === true },
             });
             command = undefined;
+            toolArgs.clear();
             break;
         }
       },
