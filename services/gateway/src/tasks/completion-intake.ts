@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   type AcceptanceCriterionRef,
   type AcceptanceDerivationSource,
+  type DispatchPreview,
   isRecord,
   type PRCompletionIntakeIdentity,
   registeredAcceptanceCriteria,
@@ -19,7 +20,7 @@ export interface PRCompletionIntake {
 
 /** Empty is an explicit registration; unavailable original obligations refuse. */
 export async function originalPRCompletionCriteria(
-  run: Run,
+  run: Pick<Run, 'acceptanceRegistration' | 'parentRunId' | 'project' | 'ticketData'>,
   getParent = getRunWithArchived,
 ): Promise<AcceptanceCriterionRef[]> {
   if (run.acceptanceRegistration) return run.acceptanceRegistration.original;
@@ -38,6 +39,23 @@ export async function originalPRCompletionCriteria(
   if (!run.ticketData || !Array.isArray(run.ticketData.acceptanceCriteria))
     throw new Error('PR completion: original ticket acceptance registration is unavailable');
   return registeredAcceptanceCriteria(run.ticketData.acceptanceCriteria);
+}
+
+/**
+ * What a pr-complete run following `parentRunId` will be held to, for the dispatch preview: the
+ * parent's original criteria, or why they can't be read (the task writer then refuses).
+ */
+export async function inheritedPRCompletionAcceptance(
+  parentRunId: string,
+  project: string,
+  getParent = getRunWithArchived,
+): Promise<NonNullable<DispatchPreview['inheritedAcceptance']>> {
+  try {
+    const criteria = await originalPRCompletionCriteria({ parentRunId, project }, getParent);
+    return { fromRunId: parentRunId, criteria: criteria.map(({ id, text }) => ({ id, text })) };
+  } catch (error) {
+    return { fromRunId: parentRunId, criteria: [], unavailable: (error as Error).message };
+  }
 }
 
 function text(value: unknown, field: string): string {

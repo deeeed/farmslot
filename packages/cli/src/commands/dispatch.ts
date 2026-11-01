@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 
 import type {
   DispatchPressureAdmissionMode,
+  DispatchPreview,
   DispatchPreviewResult,
   DispatchQueueListResult,
   PressureAdmissionDecision,
@@ -59,6 +60,23 @@ export function renderAdmissionControl(state: {
       ? ''
       : `  ${yellow('Dispatches are NOT pressure-gated. Sampling, history, and charts continue.')}`,
   ].filter(Boolean);
+}
+
+/** A pr-complete run is held to its parent's original criteria; say so before launch. */
+export function renderInheritedAcceptance(
+  inherited: NonNullable<DispatchPreview['inheritedAcceptance']>,
+): string[] {
+  const from = `run ${inherited.fromRunId.slice(0, 8)}`;
+  if (inherited.unavailable)
+    return [
+      `  ${yellow('Acceptance:')} inherited from ${from}, unreadable: ${inherited.unavailable}`,
+    ];
+  return [
+    `  ${yellow('Acceptance:')} ${inherited.criteria.length} criteria inherited from ${from}; any given with this run are not used`,
+    ...inherited.criteria.map(
+      ({ id, text }) => `    ${id}: ${text.length > 110 ? `${text.slice(0, 109)}…` : text}`,
+    ),
+  ];
 }
 
 export function renderPressureAdmission(decision: PressureAdmissionDecision): string[] {
@@ -216,6 +234,7 @@ export function registerDispatchCommand(program: Command): void {
               `  Branch:    ${p.branch || dim('(none)')}`,
               `  Runner:    ${p.runner}:${p.model}`,
               `  Task:      ${p.taskId}`,
+              ...(p.inheritedAcceptance ? renderInheritedAcceptance(p.inheritedAcceptance) : []),
               ...(p.domain ? [`  Domain:    ${p.domain}`] : []),
               ...(p.executionTemplate
                 ? [

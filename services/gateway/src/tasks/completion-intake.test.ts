@@ -4,7 +4,11 @@ import test from 'node:test';
 import type { ghRequest } from '../integrations/github-client.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
-import { fetchPRCompletionIntake, originalPRCompletionCriteria } from './completion-intake.js';
+import {
+  fetchPRCompletionIntake,
+  inheritedPRCompletionAcceptance,
+  originalPRCompletionCriteria,
+} from './completion-intake.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const { completionCommentRows, renderCommentSummary } = await import('./writer.js');
@@ -200,4 +204,44 @@ test('completion comment previews keep conversation and review-summary reply ide
   assert.equal(rows[1].id, undefined);
   assert.equal(rows[1].reviewId, '2');
   assert.match(renderCommentSummary(rows), /review-summary.*review 2/);
+});
+
+test("the dispatch preview names the parent's original criteria a pr-complete run inherits (F286)", async () => {
+  // 9f0b6812: a CI-fix pr-complete was held to family 8a768552's AC1-AC4 without the preview saying so.
+  const parent = makeRun({
+    id: 'family-parent',
+    project: 'echobridge',
+    ticketData: {
+      source: 'manual',
+      title: 'Dependency update',
+      description: '',
+      affectedArea: '',
+      acceptanceCriteria: [
+        'Every direct dependency is on its latest stable version.',
+        'Tests pass.',
+      ],
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+    },
+  });
+  const inherited = await inheritedPRCompletionAcceptance(
+    'family-parent',
+    'echobridge',
+    async (id) => (id === parent.id ? parent : undefined),
+  );
+  assert.equal(inherited.fromRunId, 'family-parent');
+  assert.deepEqual(
+    inherited.criteria.map(({ text }) => text),
+    ['Every direct dependency is on its latest stable version.', 'Tests pass.'],
+  );
+  assert.equal(inherited.unavailable, undefined);
+  // A parent that can't be read is named, not dropped: the task writer would refuse it.
+  const missing = await inheritedPRCompletionAcceptance(
+    'gone',
+    'echobridge',
+    async () => undefined,
+  );
+  assert.deepEqual(missing.criteria, []);
+  assert.match(missing.unavailable ?? '', /original parent acceptance registration is unavailable/);
 });

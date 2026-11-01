@@ -174,4 +174,14 @@ export interface DispatchPreview {
   /** Exact template snapshot the gateway will use if this preview is dispatched. */
   executionTemplate?: import('./execution-templates.js').ExecutionTemplateReference;
   profileFit?: ProfileFitSuggestion;
+  /**
+   * A pr-complete run is held to its parent run's original acceptance criteria, not any given
+   * with it; the preview names them before launch. `unavailable` when they can't be read (the
+   * dispatch then refuses at task writing).
+   */
+  inheritedAcceptance?: {
+    fromRunId: string;
+    criteria: { id: string; text: string }[];
+    unavailable?: string;
+  };
 }

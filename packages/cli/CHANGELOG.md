@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot dispatch preview` prints the criteria a pr-complete run inherits from its parent run, and that criteria given with the run are not used.
 - `farmslot slot refresh [slot] --recover` resumes a held slot's failed workspace recovery through the fenced `slot.refresh` path, sending the slot's current workspace identity from `fleet.status`. It refuses when the slot has no workspace identity.
 
 - `farmslot run gate <runId> --action attest-before-attempt --recipe-run <id> --reason <text>` attests a recipe attempt from the same run as before-only evidence at a publish gate (ADR-062 Amendment 21).

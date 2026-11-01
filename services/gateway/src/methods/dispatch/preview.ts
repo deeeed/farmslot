@@ -57,6 +57,7 @@ import {
   withSourceRequestPlanning,
 } from '../../sources/runtime.js';
 import type { SourceSlotPlans } from '../../sources/slot-planning.js';
+import { inheritedPRCompletionAcceptance } from '../../tasks/completion-intake.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -1193,8 +1194,9 @@ export async function dispatchPreview(
       )
       .map((slot) => slot.slot),
   );
+  const family = resolveDispatchFamilyContext(enriched);
   const result = resolveDispatchPreviewFromFleet(
-    { ...enriched, ...resolveDispatchFamilyContext(enriched) },
+    { ...enriched, ...family },
     fleet.slots,
     projectConfigs,
     {
@@ -1230,6 +1232,13 @@ export async function dispatchPreview(
       // still drive resource filtering and profile-fit suggestions are simply omitted.
     }
     if (scopedPlan && 'params' in scopedPlan) params = scopedPlan.params;
+    // The task writer holds a pr-complete run to its parent's original criteria, not those given
+    // with it: name them before launch (F286, 9f0b6812 inherited family 8a768552's AC1-AC4).
+    if (params.flowType === 'pr-complete' && family.parentRunId)
+      result.preview.inheritedAcceptance = await inheritedPRCompletionAcceptance(
+        family.parentRunId,
+        params.project,
+      );
     const configuredProject = sourcePlans
       ? (await loadProjectConfig(params.project))?.executionTemplates
       : projectConfigList.find((project) => project.name === params.project)?.executionTemplates;
