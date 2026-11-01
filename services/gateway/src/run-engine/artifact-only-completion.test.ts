@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -19,7 +19,7 @@ async function trial(t: test.TestContext, proofMode: 'state' | 'review' | 'visua
   t.after(() => rm(taskDir, { recursive: true, force: true }));
   const result = await createArtifactOnlyTrial(taskDir, 'generic-project', proofMode);
   t.after(() => deleteTestRunIfPresent(result.run.id));
-  return result;
+  return { ...result, taskDir };
 }
 
 test('artifact-only comparison evidence completes without an output-review decision', async (t) => {
@@ -153,7 +153,15 @@ test('a self-blocked eval output completes without the verdicts and proof it nev
 // awaiting-review claims, which only that output review can judge.
 test('an output review judges claims awaiting review; other verdicts still refuse', async (t) => {
   const reviewed = async (proofMode: 'review' | 'visual') => {
-    const { run } = await trial(t, proofMode);
+    const { run, taskDir } = await trial(t, proofMode);
+    const claims = JSON.parse(
+      await readFile(
+        path.join(taskDir, 'artifacts/recipe-runs/proof/acceptance-status.json'),
+        'utf8',
+      ),
+    ) as { criteria: Array<{ verdict: string }>; recording: { status: string } };
+    assert.equal(claims.criteria[0]?.verdict, proofMode === 'visual' ? 'weak' : 'awaiting-review');
+    assert.equal(claims.recording.status, 'not-required');
     updateRun(run.id, { lane: 'validation', variant: null });
     await captureRunOutput(run.id, false, true);
     const current = getRun(run.id)!;
