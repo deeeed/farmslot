@@ -1153,14 +1153,15 @@ export interface ReadyGatePayload {
    */
   evidenceRefreshOverride?: EvidenceRefreshOverrideRecord;
   /**
-   * Soft gate: commits the slot branch is behind origin/<defaultBranch>
-   * (`git rev-list --count HEAD..origin/<branch>`). Chip only — not a hard fail.
+   * Soft gate: commits the slot branch is behind its publication base (a stacked run's upstream
+   * branch, else origin/<defaultBranch>; `git rev-list --count HEAD..origin/<base>`). Chip only.
    * Absent when the probe could not run.
    */
   behindMain?: number;
   /**
-   * Soft gate: non-destructive merge-tree conflict probe against origin/<defaultBranch>.
-   * Chip only — not a hard fail. Absent when the probe could not run.
+   * Non-destructive merge-tree conflict probe against the publication base. `true` on a
+   * publication gate blocks every advancing action (`base-merge-conflict`), since the push would
+   * refuse it. Absent when the probe could not run.
    */
   mergeConflicts?: boolean;
   /** Sample conflict paths from the merge-tree probe (capped). */

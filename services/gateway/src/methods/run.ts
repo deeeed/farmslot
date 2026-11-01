@@ -1648,6 +1648,7 @@ type TriageAssessmentPrice = NonNullable<NonNullable<AssessmentRecord['reservati
 
 export interface RunResolveDecisionDependencies {
   assertGatePrerequisites?: import('../run-engine/gate-prerequisites.js').GatePrerequisiteAssertion;
+  probePublicationBase?: typeof import('../run-engine/branch-freshness.js').probeRunBaseFreshness;
   /** Supplied only by the authenticated ingress, never RPC parameters or background callers. */
   authorizeEvidenceAttestation?: (action?: string) => EvidenceAttestationApprover;
   triageSnapshot?: (
@@ -2019,6 +2020,42 @@ export function continueResolvedRunDecision(
 
 const ACCEPTING_FINDINGS = 'Accepting review findings';
 
+/**
+ * Refuse approval of a package whose branch conflicts with its publication base. The conflict is
+ * written to the decision first, so the gate stops offering approval.
+ */
+async function assertPublicationBaseMergeable(
+  run: Run,
+  decisionId: string,
+  payload: ReadyGatePayload,
+  emit: Emit,
+  probe?: RunResolveDecisionDependencies['probePublicationBase'],
+): Promise<void> {
+  const { approvalBaseMergeConflict, applyBranchFreshnessToReadyGatePayload } =
+    await import('../run-engine/branch-freshness.js');
+  const conflict = await approvalBaseMergeConflict(run, payload, probe);
+  if (!conflict) return;
+  // A package refresh during the probe keeps the decision id; its own probe result stands.
+  const gate = getRun(run.id)?.decisions.find((entry) => entry.id === decisionId);
+  if (gate && !gate.resolvedAt && gate.payload === payload) {
+    updateRun(run.id, {
+      decisions: getRun(run.id)!.decisions.map((entry) =>
+        entry === gate
+          ? {
+              ...entry,
+              payload: applyBranchFreshnessToReadyGatePayload(payload, conflict.observed),
+            }
+          : entry,
+      ),
+    });
+    const { refreshRunGateReadiness } = await import('../run-engine/gate-prerequisites.js');
+    const refreshed = await refreshRunGateReadiness(getRun(run.id)!);
+    await persistRunNow(refreshed, 'publication base conflict found at approval');
+    emit(Events.RUN_UPDATED, { run: refreshed });
+  }
+  throw new GatewayMethodError('RUN_GATE_NOT_READY', conflict.refusal);
+}
+
 export async function resolveRunDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
@@ -2223,6 +2260,7 @@ export async function resolveRunDecision(
       getRun(existing.id)!,
       decision.payload.kind === 'ready' ? (decision.payload.prPackage ?? null) : null,
       params.actionId,
+      decision.payload,
     );
   }
   const gateParkRestore = await restoreGateParkForResolution(params.runId, existing, dependencies);
@@ -2319,7 +2357,22 @@ export async function resolveRunDecision(
         getRun(existing.id)!,
         gatePayload.kind === 'ready' ? (gatePayload.prPackage ?? null) : null,
         params.actionId,
+        gatePayload,
       );
+      // The base can move after the package was built: a conflicting branch would fail finalize.
+      // Probed only here, after any park restore, so it reads this run's own checkout.
+      if (
+        isPublishApprovalAction(params.actionId) &&
+        gatePayload.kind === 'ready' &&
+        requiresPublicationApproval(existing)
+      )
+        await assertPublicationBaseMergeable(
+          getRun(existing.id)!,
+          decision.id,
+          gatePayload,
+          emit,
+          dependencies.probePublicationBase,
+        );
       if (
         readiness &&
         acceptingFindings &&

@@ -3,6 +3,11 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.39.23 - 2026-11-02
+
+- Publishes against `@farmslot/protocol` 0.74.10.
+- Align `@farmslot/adapter-sdk` 0.26.0 (recipe-runner 0.46.3).
 - A native session no longer fails when runner output carries U+2028 or U+2029 inside a JSON string: records split on LF only (Node's readline also split at those separators and broke the record into invalid JSON). Records sent to a runner escape both, so a runner that frames with readline keeps them too.
 
 ## 0.39.22 - 2026-11-02
