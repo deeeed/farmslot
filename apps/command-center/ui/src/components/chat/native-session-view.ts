@@ -230,6 +230,8 @@ export class NativeSessionView extends LitElement {
     return this.timelineEntries;
   }
 
+  /** The proposal Implement is offered on in this render (`nativeImplementableKey`). */
+  private implementKey?: number;
   private rowsEntries?: NativeTimelineEntry[];
   private rows: NativeTimelineRow[] = [];
   private folds = new Map<number, Extract<NativeTimelineRow, { kind: 'work' }>>();
@@ -560,8 +562,7 @@ export class NativeSessionView extends LitElement {
       >
         ${nativePlanCopyLabel(copied)}
       </button>
-      ${this.session &&
-      nativeImplementableKey(this.session, this.timelineRows(), this.requests) === entry.key
+      ${this.implementKey === entry.key
         ? html`<button
             class="plan-copy"
             data-testid="native-plan-implement"
@@ -1092,6 +1093,23 @@ ${JSON.stringify(
     }
   }
 
+  /** Selects a session and keeps it in the page address, so a refresh reopens it. */
+  private selectRouted(id: string, executionNodeId = 'local') {
+    this.select(id, executionNodeId);
+    if (this.worker || this.fixture || parseHashRoute().route !== 'native') return;
+    this.initialSessionId = id;
+    this.initialExecutionNodeId = executionNodeId;
+    const params = hashParams();
+    if (id) {
+      params.set('sessionId', id);
+      params.set('executionNodeId', executionNodeId);
+    } else {
+      params.delete('sessionId');
+      params.delete('executionNodeId');
+    }
+    history.replaceState(null, '', buildHash('native', params));
+  }
+
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
     this.expandedMessages = new Set();
@@ -1223,7 +1241,16 @@ ${JSON.stringify(
    */
   private async implement(plan: string) {
     const source = this.session;
-    if (!source || this.worker || this.busy || !this.connected) return;
+    if (
+      !source ||
+      this.worker ||
+      this.busy ||
+      !this.connected ||
+      !this.historyCurrent ||
+      !this.inputAllowed ||
+      this.localCommand
+    )
+      return;
     const revision = this.revision;
     this.busy = true;
     this.error = '';
@@ -1249,7 +1276,7 @@ ${JSON.stringify(
       text: nativeImplementPrompt(plan),
     };
     const stored = safeLsSet(this.sessionKey(`command:${created.id}`), JSON.stringify(command));
-    this.select(created.id, created.executionNodeId);
+    this.selectRouted(created.id, created.executionNodeId);
     this.session = created;
     void this.refreshSessions();
     if (!stored) {
@@ -1396,6 +1423,15 @@ ${JSON.stringify(
 
   render() {
     const session = this.session;
+    this.implementKey =
+      session && !this.worker && this.historyCurrent && this.inputAllowed
+        ? nativeImplementableKey(
+            session,
+            this.timelineRows(),
+            this.requests,
+            Boolean(this.localCommand),
+          )
+        : undefined;
     const lastReceipt = this.localCommand
       ? this.receipts.find((receipt) => receipt.commandId === this.localCommand?.commandId)
       : this.receipts.at(-1);
@@ -1425,21 +1461,7 @@ ${JSON.stringify(
         toggleFullscreen: () => void this.toggleFullscreen(),
         requestCount: this.requests.length,
         sessionChoice: (item) => this.sessionChoice(item),
-        select: (id, node = 'local') => {
-          this.select(id, node);
-          if (this.worker || this.fixture || parseHashRoute().route !== 'native') return;
-          this.initialSessionId = id;
-          this.initialExecutionNodeId = node;
-          const params = hashParams();
-          if (id) {
-            params.set('sessionId', id);
-            params.set('executionNodeId', node);
-          } else {
-            params.delete('sessionId');
-            params.delete('executionNodeId');
-          }
-          history.replaceState(null, '', buildHash('native', params));
-        },
+        select: (id, node = 'local') => this.selectRouted(id, node),
         readError: this.pollError || this.inventoryError || this.catalogError,
         unavailableSince: this.readUnavailableSince,
         observedAt: this.historyObservation.observedAt,

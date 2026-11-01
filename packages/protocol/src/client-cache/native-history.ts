@@ -162,21 +162,32 @@ export function nativeImplementPrompt(plan: string): string {
 }
 
 /**
+ * Whether a session's proposals can be implemented: it plans, and it is not a pinned worker's,
+ * whose view cannot start sessions. Implement starts a new default-mode session with the plan,
+ * because Codex keeps a thread in plan mode once it entered it.
+ */
+export function nativeImplementAvailable(
+  session: Pick<NativeSessionInfo, 'mode' | 'workerManaged'>,
+): boolean {
+  return session.mode === 'plan' && !session.workerManaged;
+}
+
+/**
  * The key of the proposal a reader can implement: the latest turn of an idle plan-mode session
- * ended with it, and nothing is pending. Implement starts a new default-mode session with the
- * plan, because Codex keeps a thread in plan mode once it entered it; a pinned worker's view
- * cannot start sessions, so it offers none.
+ * ended with it, nothing is pending, and the client's own last message has settled (`unsettled`
+ * otherwise: a refinement may still change the plan).
  */
 export function nativeImplementableKey(
   session: Pick<NativeSessionInfo, 'mode' | 'state' | 'workerManaged'>,
   rows: readonly NativeTimelineRow[],
   pendingRequests: readonly NativeSessionEvent[] = [],
+  unsettled = false,
 ): number | undefined {
   if (
-    session.mode !== 'plan' ||
-    session.workerManaged ||
+    !nativeImplementAvailable(session) ||
     session.state !== 'idle' ||
-    pendingRequests.length
+    pendingRequests.length ||
+    unsettled
   )
     return undefined;
   for (let index = rows.length - 1; index >= 0; index--) {
@@ -199,6 +210,7 @@ export function nativeImplementSession(session: NativeSessionInfo): NativeSessio
     executionNodeId: session.executionNodeId,
     runner: session.runner,
     cwd: session.cwd,
+    mode: 'default',
     ...(session.model ? { model: session.model } : {}),
     ...(session.effort ? { effort: session.effort } : {}),
     ...(session.profileId

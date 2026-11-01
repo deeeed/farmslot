@@ -13,6 +13,7 @@ import {
   nativeFollowLabel,
   nativeFollowScrolled,
   nativeImplementableKey,
+  nativeImplementAvailable,
   nativeImplementPrompt,
   nativeImplementSession,
   nativeMessageCancelable,
@@ -781,6 +782,14 @@ test('Implement is offered on the proposal that ended the latest turn of an idle
     nativeImplementableKey(planning, rows(turn), [event(4, 'approval.requested')]),
     undefined,
   );
+  // Nor while the client's own last message is unsettled: a refinement may change the plan.
+  assert.equal(nativeImplementableKey(planning, rows(turn), [], true), undefined);
+  assert.deepEqual(
+    [planning, { ...planning, mode: 'default' as const }, { ...planning, workerManaged: true }].map(
+      nativeImplementAvailable,
+    ),
+    [true, false, false],
+  );
   // A message sent since then starts a later turn; a later proposal replaces the offer.
   const later = [...turn, { ...event(4, 'command.submitted', 'Shorter.'), commandId: 'second' }];
   assert.equal(nativeImplementableKey(planning, rows(later)), undefined);
@@ -809,6 +818,7 @@ test('Implement is offered on the proposal that ended the latest turn of an idle
       executionNodeId: 'local',
       runner: 'fixture',
       cwd: '/fixture',
+      mode: 'default',
       model: 'gpt-fixture',
       effort: 'low',
       profileId: 'work',

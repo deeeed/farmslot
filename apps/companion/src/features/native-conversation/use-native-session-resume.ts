@@ -7,7 +7,7 @@ import {
   type NativeSessionCreateParams,
   type NativeSessionInfo,
 } from '@farmslot/protocol';
-import { nativeImplementSession } from '@farmslot/protocol/client-cache';
+import { nativeImplementAvailable, nativeImplementSession } from '@farmslot/protocol/client-cache';
 
 import { nativeResumeRequest, sessionNativeProfile } from '../../lib/native-profile';
 import { useConnectionStore } from '../../store/connection';
@@ -38,7 +38,7 @@ export function useNativeSessionResume(
   if (session && eligible) {
     try {
       profile = sessionNativeProfile(session);
-      implementable = session.mode === 'plan' && !session.workerManaged;
+      implementable = nativeImplementAvailable(session);
       nativeResumeRequest(session, profile);
       available = true;
     } catch {

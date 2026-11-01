@@ -24,6 +24,7 @@ export function NativeTimelineCard({
   hidden = false,
   planOpen = true,
   onImplement,
+  implementing = false,
 }: {
   entry: NativeTimelineEntry;
   /** Called before the card opens or closes, so the conversation keeps the reader's place. */
@@ -34,6 +35,8 @@ export function NativeTimelineCard({
   planOpen?: boolean;
   /** On the proposal Implement is offered on (`nativeImplementableKey`). */
   onImplement?: () => void;
+  /** Implement is starting its session. */
+  implementing?: boolean;
 }) {
   const [expanded, setExpanded] = useState(entry.kind === 'plan' && planOpen);
   const [raw, setRaw] = useState(false);
@@ -70,6 +73,7 @@ export function NativeTimelineCard({
           onToggle={toggle}
           onDisclosure={onDisclosure}
           onImplement={onImplement}
+          implementing={implementing}
         />
       ) : entry.kind === 'tool' ? (
         <>
@@ -130,6 +134,7 @@ function NativePlanBody({
   onToggle,
   onDisclosure,
   onImplement,
+  implementing,
 }: {
   plan: NativeSessionPlan;
   text: string;
@@ -138,6 +143,7 @@ function NativePlanBody({
   onToggle: () => void;
   onDisclosure: () => void;
   onImplement?: () => void;
+  implementing?: boolean;
 }) {
   const [copied, setCopied] = useState<boolean>();
   if (plan.kind === 'proposal')
@@ -161,10 +167,12 @@ function NativePlanBody({
           <Pressable
             testID="companion-native-plan-implement"
             accessibilityRole="button"
+            accessibilityState={{ disabled: implementing }}
+            disabled={implementing}
             style={styles.messageToggle}
             onPress={onImplement}
           >
-            <Text style={styles.buttonText}>Implement</Text>
+            <Text style={styles.buttonText}>{implementing ? 'Implementing…' : 'Implement'}</Text>
           </Pressable>
         ) : null}
       </>
