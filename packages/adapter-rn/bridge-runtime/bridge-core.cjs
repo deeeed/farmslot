@@ -1212,6 +1212,11 @@ function runBridgeCli(config = {}) {
   const teachingByErrorCode = config.teachingByErrorCode || {};
   const appLabel = config.appLabel || 'React Native';
   const usagePath = config.usagePath || path.basename(process.argv[1] || 'bridge.cjs');
+  // Optional injected runtime (bridge-runtime/injected): `ensure(client)` runs
+  // its version-stamped install before each command, so a reloaded or
+  // restarted JS runtime gets the bridge back on the next command.
+  const injectedRuntime = config.injectedRuntime || null;
+  const platformExpression = config.platformExpression || 'globalThis.__AGENTIC__?.platform';
   const builtins = createBuiltinCommands({
     routes: config.routes || {},
     perfMarkerPrefixes: config.perfMarkerPrefixes || [],
@@ -1440,9 +1445,12 @@ Environment:
     const client = await clientFor(wsUrl);
 
     try {
+      if (injectedRuntime && !command.endsWith('-deferred')) {
+        await injectedRuntime.ensure(client, { command });
+      }
       const platform = command.endsWith('-deferred')
         ? ''
-        : (await cdpEval(client, 'globalThis.__AGENTIC__?.platform')) || '';
+        : (await cdpEval(client, platformExpression)) || '';
       const runtimeIdentity =
         command === 'status-selected' ? (generation ? `${wsUrl}:${generation}` : wsUrl) : undefined;
       const result = await handler(client, args.slice(1), {

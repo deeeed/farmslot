@@ -9,6 +9,16 @@ const {
 const { createWSClient } = require('./ws-client.cjs');
 const { BRIDGE_ERROR_CODES, coded } = require('./bridge-errors.cjs');
 
+// A JS runtime that can take the injected bridge (Metro registry + DevTools
+// hook) counts as agentic when the host opts in, so builds without an in-app
+// __AGENTIC__ are still selected. See injected-runtime.cjs.
+const INJECTABLE_RUNTIME_EXPRESSION =
+  "(function(){var r=globalThis.__r;var h=globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__;return typeof r==='function'&&typeof r.getModules==='function'&&!!(h&&h.renderers&&h.renderers.size>0);})()";
+
+function injectedRuntimeAccepted() {
+  return process.env.FARMSLOT_RN_INJECTED_RUNTIME === '1';
+}
+
 const FETCH_TIMEOUT_MS = Number.parseInt(process.env.CDP_TIMEOUT || '30000', 10);
 const DISCOVERY_RETRY_DELAY_MS = 500;
 const FETCH_RETRIES = Number.parseInt(
@@ -80,7 +90,9 @@ async function probeTargetDetailed(wsUrl) {
     const client = await createWSClient(wsUrl, 3000);
     try {
       const result = await client.send('Runtime.evaluate', {
-        expression: '(function(){ return typeof globalThis.__AGENTIC__; })()',
+        expression: injectedRuntimeAccepted()
+          ? `(function(){ return typeof globalThis.__AGENTIC__ === 'object' || ${INJECTABLE_RUNTIME_EXPRESSION} ? 'object' : 'undefined'; })()`
+          : '(function(){ return typeof globalThis.__AGENTIC__; })()',
         returnByValue: true,
         awaitPromise: false,
       });
@@ -433,4 +445,9 @@ async function discoverAllTargets(port) {
   return results;
 }
 
-module.exports = { discoverTarget, discoverAllTargets, rankRuntimeCandidates };
+module.exports = {
+  INJECTABLE_RUNTIME_EXPRESSION,
+  discoverTarget,
+  discoverAllTargets,
+  rankRuntimeCandidates,
+};
