@@ -1,16 +1,19 @@
 import type { Command } from 'commander';
 
-import type {
-  EventFrame,
-  ScriptActionResult,
-  SlotActionListResult,
-  SlotActionRunResult,
-  SlotAutoRefreshResult,
-  SlotCheckResult,
-  SlotCommandResult,
-  SlotFixtureRefreshResult,
-  SlotMonitorResult,
-  SlotRefreshResult,
+import {
+  type EventFrame,
+  type FleetStatusResult,
+  type ScriptActionResult,
+  type SlotActionListResult,
+  type SlotActionRunResult,
+  type SlotAutoRefreshResult,
+  type SlotCheckResult,
+  type SlotCommandResult,
+  type SlotFixtureRefreshResult,
+  type SlotMonitorResult,
+  type SlotRefreshParams,
+  type SlotRefreshResult,
+  slotWorkspaceIdentity,
 } from '@farmslot/protocol';
 
 import { resolveContext } from '../context.js';
@@ -40,6 +43,7 @@ interface ReleaseOptions {
 
 interface RefreshOptions {
   force?: boolean;
+  recover?: boolean;
 }
 
 interface FixtureOptions {
@@ -93,8 +97,17 @@ function actionParams(id: string, opts: Record<string, unknown>): Record<string,
   return params;
 }
 
+// Dirty or unpushed work refuses recovery until --force confirms the discard (as the
+// Command Center's "Discard local work" does); other refusals are fenced, --force cannot pass.
+function recoverUserAction(result: SlotRefreshResult): string {
+  return result.reason === 'dirty' || result.reason === 'unpushed'
+    ? 'Publish the local work, or re-run `farmslot slot refresh <slot> --recover --force` to discard it.'
+    : 'Resolve the refusal above, then re-run `farmslot slot refresh <slot> --recover`.';
+}
+
 function refreshFailureMessage(slotId: string, result: SlotRefreshResult): string {
-  return `Refresh skipped for ${slotId}: ${result.reason ?? 'not refreshed'}`;
+  const detail = result.detail ? `: ${result.detail}` : '';
+  return `Refresh skipped for ${slotId}: ${result.reason ?? 'not refreshed'}${detail}`;
 }
 
 export function registerSlotCommand(program: Command): void {
@@ -239,20 +252,39 @@ export function registerSlotCommand(program: Command): void {
     .description('Refresh a ready slot to the project default branch without full prepare')
     .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
     .option('--force', 'Hard-reset through dirty or stale branch state')
+    .option(
+      '--recover',
+      "Resume a held slot's failed workspace recovery (fenced to its current workspace identity)",
+    )
     .action(async (id: string | undefined, opts: RefreshOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
-        const params = { slotId, mode: opts.force ? 'force' : 'safe' };
+        let params: SlotRefreshParams = { slotId, mode: opts.force ? 'force' : 'safe' };
+        if (opts.recover) {
+          const { fleet } = await client.call<FleetStatusResult>('fleet.status');
+          const workspace = fleet.slots.find((slot) => slot.slot === slotId)?.workspace;
+          if (!workspace) {
+            throw new Error(
+              `Slot ${slotId} has no workspace identity to recover; check \`farmslot fleet status\`.`,
+            );
+          }
+          params = {
+            ...params,
+            release: true,
+            expectedWorkspace: slotWorkspaceIdentity(workspace),
+          };
+        }
         if (emit.machine) {
           const result = await client.call<SlotRefreshResult>('slot.refresh', params);
           if (!result.refreshed) {
             emit.fail(
               Object.assign(new Error(refreshFailureMessage(slotId, result)), {
                 code: 'SLOT_REFRESH_SKIPPED',
-                userAction:
-                  'Re-run with `--force` to refresh anyway, or `farmslot slot release <slot>` first.',
+                userAction: opts.recover
+                  ? recoverUserAction(result)
+                  : 'Re-run with `--force` to refresh anyway, or `farmslot slot release <slot>` first.',
                 details: result,
               }),
             );

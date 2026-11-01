@@ -4,6 +4,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- `run` takes `--recording-reason=<why>` and passes it to the recipe runner, which requires a reason to run a UI recipe with `--record-video=off` (for example on a physical phone, where nothing outside the app may be recorded).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.29.2 - 2026-10-29

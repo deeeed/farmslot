@@ -2348,6 +2348,9 @@ export function isMockModeProject(projectJson?: RawProjectJson | null): boolean 
 
 export { ORCHESTRATOR_TASK_DIR } from '@farmslot/protocol/node/farm-layout';
 
+/** The flow dir under a project's task root that holds eval experiment roots. */
+export const EVAL_TASK_FLOW = 'evals';
+
 /** Where the gateway keeps a project's run task folders (the protocol farm layout). */
 export function getOrchestratorTaskRoot(
   projectName: string,

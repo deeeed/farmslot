@@ -2,11 +2,7 @@ import { useRouter } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
 
 import type { Run } from '@farmslot/protocol';
-import {
-  nativeWorkerTarget,
-  nativeWorkerTargets,
-  runTerminalView,
-} from '@farmslot/review-dispatch';
+import { nativeWorkerTargets } from '@farmslot/review-dispatch';
 
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
@@ -19,8 +15,6 @@ export function NativeWorkerLinks({ run }: { run: Run }) {
       <Text style={styles.heading}>Worker conversations</Text>
       {targets.map((target) => {
         const { binding } = target;
-        const context = run.agentContexts?.find((candidate) => candidate.id === target.contextId);
-        const terminal = runTerminalView(run, target.contextId);
         return (
           <Pressable
             accessibilityRole="button"
@@ -28,19 +22,6 @@ export function NativeWorkerLinks({ run }: { run: Run }) {
             testID={`companion-native-worker-${target.contextId}-${binding.leaseId}`}
             style={styles.button}
             onPress={() => {
-              if (
-                context &&
-                nativeWorkerTarget(run.agentContexts ?? [], context)?.binding === binding &&
-                terminal.target
-              ) {
-                router.push({
-                  pathname: terminal.target.slotId
-                    ? '/workspace/slot/[slotId]/terminal'
-                    : '/run-terminal/[runId]',
-                  params: { ...terminal.target, contextId: target.contextId },
-                });
-                return;
-              }
               router.push({
                 pathname: '/native',
                 params: {

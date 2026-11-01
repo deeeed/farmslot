@@ -45,7 +45,6 @@ test('native task surfaces keep one panel for structured and waiting progress', 
     'features/decision-workspace/DecisionWorkspaceScreen.tsx',
     'features/family-workspace/components/family-workspace-panels.tsx',
     'features/slot-workspace/components/slot-workspace-panels.tsx',
-    'features/terminal/SlotTerminalScreen.tsx',
   ]) {
     const content = source(`apps/companion/src/${path}`);
     assert.ok(/<TaskProgressPanel[\s>]/.test(content), `${path} must use TaskProgressPanel`);

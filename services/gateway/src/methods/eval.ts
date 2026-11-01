@@ -34,7 +34,7 @@ import {
 } from '@farmslot/protocol';
 
 import { getQueueSnapshot, tryDispatchNext } from '../backlog/dispatch-queue.js';
-import { loadProjectVars } from '../core/config.js';
+import { EVAL_TASK_FLOW, loadProjectVars } from '../core/config.js';
 import { getOrchestratorTaskRoot } from '../core/index.js';
 import {
   assertBlindProblem,
@@ -257,7 +257,7 @@ function buildEvalRoot(
 ): string {
   return path.join(
     getOrchestratorTaskRoot(project, projectJson),
-    'evals',
+    EVAL_TASK_FLOW,
     `${sourceSlug(source)}-${experimentKey.slice(0, 12)}`,
   );
 }

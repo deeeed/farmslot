@@ -1,0 +1,57 @@
+// Claims the shared terminal's device proof asserts (prove-offline-runs.mjs terminal-context).
+// Pure, so each can be shown to fail on a broken frame or pane without a device.
+
+/** Lines of a pane capture, without the blank tail tmux pads it with. */
+function paneLines(paneText) {
+  return paneText.split('\n').filter((line) => line.trim() !== '');
+}
+
+/** `echo <tag>` ran exactly once: one command line and one output line, nothing repeated. */
+export function typedOnce(paneText, tag) {
+  const lines = paneLines(paneText);
+  const commands = lines.filter((line) => line.trimEnd().endsWith(`echo ${tag}`)).length;
+  const outputs = lines.filter((line) => line.trim() === tag).length;
+  return commands === 1 && outputs === 1;
+}
+
+/** The focused terminal (the only frame the proof reads) resolved a pane for this slot and streams it. */
+export function openOnSlot(frame, slotId) {
+  return Boolean(
+    frame?.terminalReady &&
+    frame.terminalStream === 'live' &&
+    frame.terminalTarget?.slotId === slotId,
+  );
+}
+
+/** A missing slot session was created through terminal.reinit, and now exists. */
+export function sessionRecreated(frame, sessionExists) {
+  return frame?.terminalReinit === 'done' && sessionExists === true;
+}
+
+/** The unsent draft came back after a relaunch, on the same pane. */
+export function draftRestored(frame, text) {
+  return frame?.terminalReady === true && frame.terminalDraft === text;
+}
+
+/** Send from a slot-opened terminal went through the runner's terminal.send, once. */
+export function sentThroughRunner(frame, sendsBefore) {
+  const sends = frame?.terminalSends ?? [];
+  return sends.length === sendsBefore + 1 && sends.at(-1) === 'terminal.send';
+}
+
+/**
+ * The pane the terminal opened is the saved target's pane, and the runner's Send typed the line
+ * there once (and nowhere else in the session).
+ */
+export function sentWhereShown(frame, paneId, paneText, otherPaneText, tag) {
+  return (
+    frame?.terminalWorker?.target === paneId &&
+    typedOnce(paneText, tag) &&
+    !paneLines(otherPaneText).some((line) => line.includes(tag))
+  );
+}
+
+/** A native actor's link takes the conversation branch, never a terminal pane. */
+export function openedNative(frame) {
+  return frame?.terminalNative === true && !frame.terminalReady;
+}

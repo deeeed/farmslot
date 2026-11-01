@@ -29,7 +29,7 @@ import {
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
 } from './git-cleanup-commands.js';
 import { recoverSlotWorkspace } from './recover-workspace.js';
-import { activePrepareSlots, type EventEmitter } from './shared.js';
+import { activePrepareSlots, type EventEmitter, RECOVER_HINT } from './shared.js';
 import {
   assertSlotNotOperatorRoot,
   detectLinkedWorktree,
@@ -70,7 +70,8 @@ export function refreshSyncUsesIdleReset(mode: 'safe' | 'force', linkedWorktree:
 
 export function slotRefreshBlockedReason(slot: SlotStatus | undefined): string | null {
   if (!slot) return null;
-  if (slot.workspace?.recovery) return `Slot ${slot.slot} requires verified recovery`;
+  if (slot.workspace?.recovery)
+    return `Slot ${slot.slot} requires verified recovery. ${RECOVER_HINT}`;
   const lc = slot.lifecycle;
   if (lc !== 'busy' && lc !== 'held' && !slot.currentRunId) return null;
   const runRef = slot.currentRunId ? ` (run ${slot.currentRunId.slice(0, 8)})` : '';

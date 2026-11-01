@@ -24,6 +24,15 @@ import {
   d05NativeControl,
   resolveD05Inputs,
 } from './d05-fixture.mjs';
+import {
+  draftRestored,
+  openedNative,
+  openOnSlot,
+  sentThroughRunner,
+  sentWhereShown,
+  sessionRecreated,
+  typedOnce,
+} from './one-terminal-claims.mjs';
 
 const execute = promisify(execFile);
 // adb shell joins argv into a remote shell command, so a URL's query separators
@@ -105,6 +114,14 @@ const metro = process.env.METRO_PORT;
 const platform = process.env.PLATFORM;
 assert(/^\d+$/.test(metro ?? ''));
 assert(['ios', 'android'].includes(platform));
+// Android proofs run on an emulator. A physical phone is used only when explicitly named, and
+// every command still targets the development bundle alone.
+const assertProofDevice = (serial) =>
+  assert(
+    serial?.startsWith('emulator-') ||
+      (Boolean(serial) && serial === process.env.FARMSLOT_PROOF_PHYSICAL_SERIAL),
+    'Use an emulator, or name the physical device in FARMSLOT_PROOF_PHYSICAL_SERIAL',
+  );
 assert(
   process.env.FARMSLOT_HOME &&
     process.env.FARMSLOT_GATEWAY_PROFILE &&
@@ -164,7 +181,7 @@ async function inbox(route = 'inbox') {
     await execute('xcrun', ['simctl', 'openurl', process.env.IOS_SIMULATOR, url]);
   } else {
     const serial = process.env.ADB_SERIAL ?? process.env.ANDROID_SERIAL;
-    assert(serial?.startsWith('emulator-'));
+    assertProofDevice(serial);
     await execute('adb', ['-s', serial, 'wait-for-device'], { timeout: 15000 });
     await execute('adb', [
       '-s',
@@ -201,7 +218,7 @@ async function restartNative() {
     await execute('xcrun', ['simctl', 'openurl', process.env.IOS_SIMULATOR, link]);
   } else {
     const serial = process.env.ADB_SERIAL ?? process.env.ANDROID_SERIAL;
-    assert(serial?.startsWith('emulator-'));
+    assertProofDevice(serial);
     // A cold launch needs the owned Metro tunnel as well as the selected gateway route.
     // Keep the gateway mapping intact: the wire proof temporarily routes it through its proxy.
     await execute('adb', ['-s', serial, 'reverse', `tcp:${metro}`, `tcp:${metro}`]);
@@ -235,7 +252,7 @@ if (phase === 'recorded-visual-context') {
   const owner = new D05FixtureOwner([projectDir, path.join(home, 'projects', project), runFile]);
   const deviceId = platform === 'ios' ? process.env.IOS_SIMULATOR : process.env.ADB_SERIAL;
   assert(deviceId, 'Select the single owned native device');
-  if (platform === 'android') assert(deviceId.startsWith('emulator-'));
+  if (platform === 'android') assertProofDevice(deviceId);
   let originalIOSProfile;
   if (platform === 'ios') {
     assert(
@@ -1261,11 +1278,61 @@ if (phase === 'terminal-context') {
   const selection = { session: devices[0].name, platform, target: 'mobile' };
   const nativeScreen = () =>
     device.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
-  const button = async (enabled) => {
+  // A cold relaunch needs the app's own gateway mapping back as well as Metro's.
+  const relaunch = async () => {
+    await restartNative();
+    if (platform === 'android')
+      await execute('adb', [
+        '-s',
+        deviceId,
+        'reverse',
+        `tcp:${gateway.port}`,
+        `tcp:${gateway.port}`,
+      ]);
+  };
+  // Raw keys (BACK, typed text, Return) go only to the development app's own window, never to
+  // another app that a relaunch briefly brings forward.
+  const devAppFocused = async () => {
+    const { stdout } = await execute('adb', ['-s', deviceId, 'shell', 'dumpsys', 'window']);
+    const focus = stdout.split('\n').find((line) => line.includes('mCurrentFocus=')) ?? '';
+    return { focused: focus.includes('net.siteed.farmslot.development/'), window: stdout };
+  };
+  const sendKeys = async (...args) => {
+    assert((await devAppFocused()).focused, 'Keys go only to the development app');
+    await execute('adb', ['-s', deviceId, 'shell', ...args]);
+  };
+  // The soft keyboard covers the key bar; BACK hides it only while it is showing.
+  const hideKeyboard = async () => {
+    if (platform !== 'android') return;
+    const { focused, window } = await devAppFocused();
+    if (focused && window.includes('mImeShowing=true'))
+      await execute('adb', ['-s', deviceId, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+  };
+  // Send stays disabled until the pane is in the machine's inventory; press it once enabled.
+  const pressEnabled = async (identifier) => {
+    await hideKeyboard();
+    const deadline = Date.now() + 30000;
+    let found;
+    do {
+      found = (await nativeScreen()).nodes.find((node) => node.identifier === identifier);
+      if (found?.enabled && found.rect) {
+        await device.interactions.press({
+          ...selection,
+          x: found.rect.x + found.rect.width / 2,
+          y: found.rect.y + found.rect.height / 2,
+        });
+        return;
+      }
+      await delay(250);
+    } while (Date.now() < deadline);
+    assert.fail(`${identifier} must become enabled: ${JSON.stringify(found)}`);
+  };
+  const button = async (enabled, label = '^L') => {
+    await hideKeyboard();
     const deadline = Date.now() + 15000;
     let found;
     do {
-      found = (await nativeScreen()).nodes.find((node) => node.label === '^L');
+      found = (await nativeScreen()).nodes.find((node) => node.label === label);
       if (found?.enabled === enabled && found.rect) return found;
       await delay(100);
     } while (Date.now() < deadline);
@@ -1282,29 +1349,263 @@ if (phase === 'terminal-context') {
     phases.push({ name, startedAt: phaseStart, endedAt: Date.now() });
     phaseStart = Date.now();
   };
-  const route = `workspace/slot/${fixture.slotId}/terminal?runId=${fixture.runId}&keys=1&details=1`;
+  // The slot's Terminal tab is the shared terminal, resolved to the run's pane.
+  const route = `workspace/slot/${fixture.slotId}/terminal?runId=${fixture.runId}`;
   proofRef = `runs-cache:terminal:${fixture.runId}`;
   const current = (value) =>
-    value.slotProjectionMatches &&
-    value.slotRecipesMatch &&
-    value.detail?.status === 'ready' &&
-    value.slotRecipes?.status === 'ready' &&
-    value.terminalReady;
+    value.slotProjectionMatches && value.detail?.status === 'ready' && value.terminalReady;
   let ownedSession;
   let cold;
   const tag = `native-terminal-${randomUUID().slice(0, 8)}`;
+  const shortTag = (prefix) => `${prefix}${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const paneText = async () =>
+    (await execute('tmux', ['capture-pane', '-p', '-J', '-S', '-80', '-t', sessionName])).stdout;
+  const untilPane = async (ready, label) => {
+    const deadline = Date.now() + 30000;
+    let text = '';
+    do {
+      text = await paneText();
+      if (ready(text)) return text;
+      await delay(200);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(text.split('\n').slice(-8))}`);
+  };
+  // Every cleanup step runs even when another fails. The proof's first failure is the result:
+  // cleanup failures are reported after it and never replace it (a gateway still restarting
+  // from the outage step used to mask the real error).
+  const settle = async (proofError, steps) => {
+    const failures = [];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    for (const error of failures)
+      console.error(`Cleanup also failed: ${error instanceof Error ? error.message : error}`);
+    if (proofError) throw proofError;
+    if (failures.length) throw failures[0];
+  };
+  // Two review-round routing fixes, on runs this proof seeds into the private gateway home and
+  // removes again: a CI-fix context saved as {window: null, target: '<session>:<window>'} opens
+  // and sends to that window's pane, and a native review worktree opened by run id takes the
+  // conversation branch instead of a worktree pane.
+  const proveSeededRouting = async () => {
+    const template = JSON.parse(await readFile(fixture.runFile, 'utf8'));
+    const now = new Date().toISOString();
+    const fixRunId = randomUUID();
+    const reviewRunId = randomUUID();
+    const files = [fixRunId, reviewRunId].map((id) => path.join(home, 'runs', `${id}.json`));
+    const window = 'ot-fix';
+    const seededRun = (id, overrides) => ({
+      ...template,
+      id,
+      flowType: 'fix-bug',
+      status: 'monitoring',
+      tags: [],
+      steps: [],
+      decisions: [],
+      readOnly: false,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: undefined,
+      ...overrides,
+    });
+    const fixRun = seededRun(fixRunId, {
+      slotId: fixture.slotId,
+      agentContexts: [
+        {
+          id: 'ci-fix',
+          role: 'ci-fix',
+          label: 'CI fix',
+          status: 'working',
+          slotId: fixture.slotId,
+          runId: fixRunId,
+          runner: 'claude',
+          // The shape services/gateway/src/ci-monitor/inline-fix.ts saves; context ids are the
+          // role's own (contextIdFor), as the gateway requires.
+          target: {
+            session: sessionName,
+            window: null,
+            pane: null,
+            target: `${sessionName}:${window}`,
+          },
+        },
+      ],
+    });
+    // A native run is readable only with a recorded owner; the operator who reads it owns it.
+    const { principals } = await rpc('principal.list');
+    const operator = principals.find(
+      (principal) =>
+        principal.subject.type === 'person' &&
+        principal.roles.some((grant) => grant.role === 'admin'),
+    );
+    assert(operator, 'The sandbox must have an admin person for the native review run');
+    const reviewRun = seededRun(reviewRunId, {
+      slotId: null,
+      transport: 'native',
+      nativeOwnerPrincipalId: operator.id,
+      reviewWorkspace: {
+        workspaceId: `ot-${reviewRunId.slice(0, 8)}`,
+        machine: pool.machine,
+        executionNodeId: 'local',
+        checkoutPath: workerRepo,
+        taskPath: template.taskFile,
+        artifactPath: path.dirname(template.taskFile),
+      },
+      agentContexts: [
+        {
+          id: 'review',
+          role: 'review',
+          label: 'Review',
+          status: 'working',
+          slotId: null,
+          runId: reviewRunId,
+          runner: 'claude',
+        },
+      ],
+    });
+    let seeded = false;
+    let windowOpen = false;
+    let proofError;
+    try {
+      await sessionInfo();
+      await execute('tmux', [
+        'new-window',
+        '-d',
+        '-t',
+        `=${sessionName}:`,
+        '-n',
+        window,
+        '-c',
+        workerRepo,
+      ]);
+      windowOpen = true;
+      const paneOf = async (target) =>
+        (
+          await execute('tmux', ['display-message', '-p', '-t', target, '#{pane_id}'])
+        ).stdout.trim();
+      const fixPane = await paneOf(`=${sessionName}:${window}`);
+      const shellPane = await paneOf(`=${sessionName}:^`);
+      assert.notEqual(fixPane, shellPane);
+      await withOwnedGatewayOffline(async () => {
+        await writeFile(files[0], JSON.stringify(fixRun), { flag: 'wx', mode: 0o600 });
+        await writeFile(files[1], JSON.stringify(reviewRun), { flag: 'wx', mode: 0o600 });
+        seeded = true;
+      });
+
+      // Saved target: the pane shown and the pane terminal.send types into are the same.
+      const sent = shortTag('os');
+      proofRef = `runs-cache:terminal:${fixRunId}`;
+      await inbox(
+        `workspace/slot/${fixture.slotId}/terminal?runId=${fixRunId}&contextId=ci-fix&draft=${encodeURIComponent(`echo ${sent}`)}`,
+      );
+      const opened = await until(
+        (value) =>
+          value.terminalReady &&
+          value.terminalStream === 'live' &&
+          value.terminalDraft === `echo ${sent}`,
+        'The saved CI-fix target must open its own window',
+      );
+      assert.deepEqual(opened.terminalTarget, {
+        slotId: fixture.slotId,
+        runId: fixRunId,
+        contextId: 'ci-fix',
+        role: 'ci-fix',
+      });
+      await pressEnabled('worker-voice-send');
+      await until(
+        (value) => sentThroughRunner(value, opened.terminalSends?.length ?? 0),
+        "The saved target's Send must go through terminal.send",
+      );
+      const capturePane = async (pane) =>
+        (await execute('tmux', ['capture-pane', '-p', '-J', '-S', '-80', '-t', pane])).stdout;
+      const deadline = Date.now() + 30000;
+      let shown;
+      do {
+        shown = await snapshot();
+        if (
+          sentWhereShown(
+            shown,
+            fixPane,
+            await capturePane(fixPane),
+            await capturePane(shellPane),
+            sent,
+          )
+        )
+          break;
+        await delay(200);
+      } while (Date.now() < deadline);
+      assert(
+        sentWhereShown(
+          shown,
+          fixPane,
+          await capturePane(fixPane),
+          await capturePane(shellPane),
+          sent,
+        ),
+        `The pane shown must be the pane terminal.send typed into: ${JSON.stringify(shown?.terminalWorker)} vs ${fixPane}`,
+      );
+      await capture('native-terminal-saved-target.png');
+
+      // Native review worktree: the run link takes the conversation branch.
+      proofRef = `runs-cache:terminal:${reviewRunId}`;
+      await inbox(`terminal/worker?runId=${reviewRunId}`);
+      await until(openedNative, 'A native review worktree must open its conversation, not a pane');
+      await capture('native-terminal-native-review.png');
+    } catch (error) {
+      proofError = error;
+    }
+    await settle(proofError, [
+      async () => {
+        proofRef = `runs-cache:terminal:${fixture.runId}`;
+        await inbox('runs');
+      },
+      async () => {
+        if (seeded)
+          await withOwnedGatewayOffline(async () => {
+            for (const file of files) await rm(file, { force: true });
+          });
+      },
+      async () => {
+        if (windowOpen) await execute('tmux', ['kill-window', '-t', `=${sessionName}:${window}`]);
+      },
+    ]);
+  };
+
+  // The shared terminal must create the missing slot session itself (terminal.reinit); a
+  // previous run of this proof retires the session it created.
+  assert(!existed, `Start without the private proof session ${sessionName}`);
+  let proofError;
   try {
-    await inbox(route);
+    // A clean launch: screens left stacked by an earlier run keep their own input lines. A link
+    // sent while the relaunched app is still starting can be dropped, so it is sent again.
+    await relaunch();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await inbox(route);
+      const deadline = Date.now() + 15000;
+      let opened;
+      do {
+        opened = (await snapshot())?.terminalReady !== undefined;
+        if (!opened) await delay(250);
+      } while (!opened && Date.now() < deadline);
+      if (opened) break;
+    }
     const initial = await until(
       (value) =>
         current(value) &&
         value.terminalStream === 'live' &&
         !value.terminalInputDisabledReason &&
         value.terminalBufferText?.includes(path.basename(workerRepo)),
-      'The actual terminal must subscribe only after current shared run inputs',
+      'The shared terminal must subscribe only after its current run resolves a pane',
     );
     assert.deepEqual(initial.terminalTarget, { slotId: fixture.slotId, bareSession: true });
     ownedSession = await sessionInfo();
+    assert(
+      sessionRecreated(initial, Boolean(ownedSession)),
+      `The missing slot session must be created through terminal.reinit: ${initial.terminalReinit}`,
+    );
     if (!existed)
       assert(
         Number(ownedSession.created) >= Math.floor(phaseStart / 1000),
@@ -1323,6 +1624,74 @@ if (phase === 'terminal-context') {
         !value.terminalControlError,
       'The actual terminal key must send through the verified private idle shell',
     );
+
+    // Typing once: the input line types the line and the keyboard's Return runs it, once.
+    const typed = shortTag('ot');
+    await sessionInfo();
+    if (platform === 'android') {
+      // Typed at a person's pace into the focused line: keys injected microseconds apart race
+      // the emulator's input method and arrive garbled.
+      await device.interactions.press({ ...selection, selector: 'id="terminal-input-line"' });
+      const keys = [...`echo ${typed}`]
+        .map((key) => `input text '${key === ' ' ? '%s' : key}'; sleep 0.12;`)
+        .join(' ');
+      await sendKeys(keys);
+      await sendKeys('input', 'keyevent', 'KEYCODE_ENTER');
+    } else {
+      await device.interactions.fill({
+        ...selection,
+        selector: 'id="terminal-input-line"',
+        text: `echo ${typed}\n`,
+      });
+    }
+    await untilPane((text) => typedOnce(text, typed), 'The input line must type its line once');
+    await hideKeyboard();
+    await capture('native-terminal-typed-once.png');
+
+    // An old /terminal/<slot> link opens the same shared terminal on that slot.
+    await inbox('runs');
+    // The proof reads only the focused terminal: on another screen it has no terminal frame.
+    await until((value) => value.terminalReady === undefined, 'Leave the terminal first');
+    await inbox(`terminal/${fixture.slotId}?runId=${fixture.runId}`);
+    await until(
+      (value) => value.slotProjectionMatches && openOnSlot(value, fixture.slotId),
+      'The old /terminal/<slot> link must open the shared terminal on its slot',
+    );
+
+    // A draft is kept per pane: it comes back after a relaunch, and Send from a slot-opened
+    // terminal goes through the runner's terminal.send (typed by the gateway, once).
+    const drafted = shortTag('od');
+    const draftText = `echo ${drafted}`;
+    await inbox(`${route}&draft=${encodeURIComponent(draftText)}`);
+    await until(
+      (value) => openOnSlot(value, fixture.slotId) && value.terminalDraft === draftText,
+      'A handed-over draft must reach the shared terminal composer',
+    );
+    await relaunch();
+    await inbox(route);
+    const restored = await until(
+      (value) => openOnSlot(value, fixture.slotId) && draftRestored(value, draftText),
+      'The unsent draft must come back on the same pane after a relaunch',
+    );
+    await capture('native-terminal-draft-restored.png');
+    const sendsBefore = restored.terminalSends?.length ?? 0;
+    await sessionInfo();
+    await pressEnabled('worker-voice-send');
+    await until(
+      (value) => sentThroughRunner(value, sendsBefore) && value.terminalDraft === '',
+      "Send from a slot-opened terminal must go through the runner's terminal.send once",
+    );
+    await untilPane(
+      (text) => typedOnce(text, drafted),
+      'The runner must type the sent line into the pane once',
+    );
+    await capture('native-terminal-runner-send.png');
+
+    // The relaunch above mounted a new terminal: the stream baseline is its current one.
+    const beforeWrite = await until(
+      (value) => current(value) && value.terminalStream === 'live',
+      'The relaunched terminal must be live before the external write',
+    );
     await rpc('run.tags.set', { runId: fixture.runId, tags: [...(original.tags ?? []), tag] });
     const updated = await until(
       (value) => current(value) && value.detail.data.run.tags?.includes(tag),
@@ -1330,7 +1699,7 @@ if (phase === 'terminal-context') {
     );
     assert.equal(
       updated.terminalSubscriptionStarts,
-      initial.terminalSubscriptionStarts,
+      beforeWrite.terminalSubscriptionStarts,
       'Ordinary run invalidation must not restart the terminal stream',
     );
     const committed = await until(
@@ -1340,34 +1709,23 @@ if (phase === 'terminal-context') {
     assert(committed.storedDetail.bytes > 0);
     await capture('native-terminal-current.png');
     await withOwnedGatewayOffline(async () => {
+      // Keys are never gated offline: they queue, and the terminal says Offline after the grace.
       const stale = await until(
-        (value) =>
-          value.detail?.status === 'stale' &&
-          value.slotProjectionMatches &&
-          value.terminalInputDisabledReason,
-        'A disconnected terminal must retain run facts and pause its commands',
+        (value) => value.detail?.status === 'stale' && value.slotProjectionMatches,
+        'A disconnected terminal must retain its run facts',
       );
-      await button(false);
       await capture('native-terminal-stale.png');
-      await restartNative();
+      await relaunch();
       await inbox(route);
       cold = await until(
         (value) =>
           value.startedAt > initial.startedAt &&
           value.detail?.status === 'stale' &&
-          value.slotProjectionMatches &&
-          value.terminalInputDisabledReason,
-        'A cold terminal must restore its actual saved run with commands paused',
+          value.slotProjectionMatches,
+        'A cold terminal must restore its actual saved run while offline',
       );
       assert.equal(cold.detail.observedAt, stale.detail.observedAt);
       assert.equal(cold.diagnostics.integrity, 'ok');
-
-      const screen = await nativeScreen();
-      assert(
-        screen.nodes.some((node) => node.label?.includes('Saved terminal run')),
-        'The actual cold terminal must display its saved age',
-      );
-      await button(false);
       await capture('native-terminal-cold.png');
     });
     await until(
@@ -1382,7 +1740,12 @@ if (phase === 'terminal-context') {
     );
     await inbox(`${route}&contextId=offline-proof-missing-actor`);
     const pinned = await until(
-      (value) => current(value) && value.terminalStream === 'ended' && value.terminalSnapshotError,
+      // A refused actor has current run facts but no pane.
+      (value) =>
+        value.slotProjectionMatches &&
+        value.detail?.status === 'ready' &&
+        value.terminalStream === 'ended' &&
+        value.terminalSnapshotError,
       'An unavailable explicit actor must show the real gateway refusal',
     );
     assert.equal(pinned.terminalTarget.contextId, 'offline-proof-missing-actor');
@@ -1395,6 +1758,7 @@ if (phase === 'terminal-context') {
       'Changing the terminal actor must clear the actual previous pane buffer',
     );
     await capture('native-terminal-pin-refused.png');
+    await proveSeededRouting();
     console.log(
       JSON.stringify({
         result: 'PASS',
@@ -1405,34 +1769,40 @@ if (phase === 'terminal-context') {
         nativeTerminalSqlTimestamp: committed.storedDetail.observedAt,
         nativeTerminalPinRefused: true,
         nativeTerminalClearsPane: true,
+        nativeTerminalReinit: true,
+        nativeTerminalTypedOnce: true,
+        nativeTerminalLegacyRoute: true,
+        nativeTerminalDraftRestored: true,
+        nativeTerminalRunnerSend: true,
+        nativeTerminalSavedTarget: true,
+        nativeTerminalNativeReview: true,
         noTerminalReplay: true,
         nativePhases: phases,
         observedAt: cold.detail.observedAt,
       }),
     );
-  } finally {
-    try {
-      await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
-      await inbox('runs');
-    } finally {
-      if (!existed) {
-        const rows = (
-          await execute('tmux', ['list-sessions', '-F', '#{pid}|#{session_name}'])
-        ).stdout
-          .trim()
-          .split('\n');
-        assert(
-          rows.every((row) => row.split('|')[0] === serverPid),
-          'Never change the tmux server',
-        );
-        if (rows.some((row) => row.split('|')[1] === sessionName)) {
-          const idle = await sessionInfo();
-          if (ownedSession) assert.equal(idle.id, ownedSession.id);
-          await execute('tmux', ['kill-session', '-t', idle.id]);
-        }
-      }
-    }
+  } catch (error) {
+    proofError = error;
   }
+  await settle(proofError, [
+    () => rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] }),
+    () => inbox('runs'),
+    async () => {
+      if (existed) return;
+      const rows = (await execute('tmux', ['list-sessions', '-F', '#{pid}|#{session_name}'])).stdout
+        .trim()
+        .split('\n');
+      assert(
+        rows.every((row) => row.split('|')[0] === serverPid),
+        'Never change the tmux server',
+      );
+      if (rows.some((row) => row.split('|')[1] === sessionName)) {
+        const idle = await sessionInfo();
+        if (ownedSession) assert.equal(idle.id, ownedSession.id);
+        await execute('tmux', ['kill-session', '-t', idle.id]);
+      }
+    },
+  ]);
   process.exit(0);
 }
 

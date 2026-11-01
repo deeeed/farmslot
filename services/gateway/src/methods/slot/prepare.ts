@@ -111,6 +111,7 @@ import {
   applySelectedApp,
   type EventEmitter,
   type PrepareCommandError,
+  RECOVER_HINT,
   sanitizePhaseName,
   type SlotPrepareInternalOptions,
   type SlotPrepareResult,
@@ -187,7 +188,7 @@ async function assertWorkspaceRecoverySettled(
 ): Promise<void> {
   // Recovery's internal release path already validates its owner and epoch.
   if (!duringRelease && (await readSlotRow(slotId))?.workspace_recovery)
-    throw new Error('Slot recovery must be retried through slot.refresh');
+    throw new Error(`Slot recovery must be retried through slot.refresh. ${RECOVER_HINT}`);
 }
 
 export async function slotPrepare(

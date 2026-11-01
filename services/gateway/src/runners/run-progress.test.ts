@@ -170,6 +170,62 @@ test('the owned primary worker keeps progressing between turns while its backgro
   }
 });
 
+test('a reviewer whose native session was closed and released does not keep the worker busy', async () => {
+  // 22b57685: the worker is idle at its prompt; a blocked reviewer's session was closed
+  // (04:30Z) and released (07:24Z), and reading it made the whole run unproven.
+  const run: Run = {
+    ...makeRun({ status: 'reconciling' }),
+    transport: 'tmux',
+    steps: [{ name: 'dispatch', status: 'done' }],
+    agentContexts: [
+      {
+        id: 'dev',
+        role: 'dev',
+        runId: 'run-1',
+        slotId: 'slot-1',
+        label: 'Worker',
+        target: { target: 'audiolab-4:dev', session: 'audiolab-4', paneId: '%24' },
+        runner: 'claude',
+        status: 'waiting',
+      },
+      {
+        id: 'rev-closed',
+        role: 'review',
+        runId: 'run-1',
+        slotId: 'slot-1',
+        label: 'Reviewer',
+        runner: 'claude',
+        status: 'blocked',
+        nativeSession: {
+          sessionId: 'reviewer-session',
+          commandId: 'review-command',
+          generation: 'review-generation',
+          leaseId: 'lease',
+          executionNodeId: 'node',
+          ownerPrincipalId: 'owner',
+          closedAt: '2026-10-31T04:30:30.359Z',
+          releasedAt: '2026-10-31T07:24:05.889Z',
+        },
+      },
+    ],
+  };
+  let nativeReads = 0;
+  const progress = await readRunProgress(run, {
+    slot: async () => slot,
+    target: async () => ({ target: 'audiolab-4:dev', session: 'audiolab-4' }),
+    taskProgress: async () => null,
+    activity: async () => reading('idle'),
+    turn: async () => reading('idle'),
+    background: async () => reading('idle'),
+    native: async () => {
+      nativeReads++;
+      throw new Error('Native worker session, generation or task lease changed');
+    },
+  });
+  assert.equal(progress.kind, 'idle');
+  assert.equal(nativeReads, 0, 'a released session is not read');
+});
+
 test('a publication gate recovers only a confirmed vanished worker', async () => {
   const run = fixRun('tmux', 'waiting');
   run.flowType = 'fix-bug';

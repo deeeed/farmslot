@@ -1,11 +1,10 @@
-import { OfflineShown } from '../../../../components/offline-shown';
-import SlotTerminalScreen from '../../../../features/terminal/SlotTerminalScreen';
+import { useLocalSearchParams } from 'expo-router';
 
-/** The slot terminal shows the connection banner, so its read-status slot need not. */
+import { ResolvedTerminal } from '../../../../features/terminal/ResolvedTerminal';
+import { terminalLinkFromParams } from '../../../../features/terminal/TerminalScreen';
+
+/** The slot's Terminal tab is the same terminal as Terminals, on the pane the link names. */
 export default function SlotTerminalRoute() {
-  return (
-    <OfflineShown.Provider value={true}>
-      <SlotTerminalScreen />
-    </OfflineShown.Provider>
-  );
+  const { selector, draft } = terminalLinkFromParams(useLocalSearchParams());
+  return <ResolvedTerminal selector={selector} embedded initialDraft={draft} />;
 }

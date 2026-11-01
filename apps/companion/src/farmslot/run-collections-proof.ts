@@ -125,7 +125,9 @@ interface DiffProofFrame {
   recipes: ResourceQueryState<RunRecipeRunsForRunResult>;
 }
 const diffFrames = new Map<string, Set<() => DiffProofFrame>>();
-export interface SlotProofFrame extends DiffProofFrame {
+export interface SlotProofFrame extends Omit<DiffProofFrame, 'recipes'> {
+  /** The slot and diff frames read recipes; the terminal frame has none. */
+  recipes?: ResourceQueryState<RunRecipeRunsForRunResult>;
   // Dev-only render evidence. These fields never fetch or adopt query data.
   ac4SlotId?: string;
   ac4Slot?: SlotStatus;
@@ -141,7 +143,7 @@ export interface SlotProofFrame extends DiffProofFrame {
   historyRuns?: readonly ResourceQueryState<RunGetResult>[];
   historyRecipes?: readonly ResourceQueryState<RunRecipeRunsForRunResult>[];
   terminalReady?: boolean;
-  terminalTarget?: import('../lib/terminal-target').CompanionTerminalTargetParams;
+  terminalTarget?: import('@farmslot/protocol').SlotAgentTargetParams;
   terminalInputDisabledReason?: string | null;
   terminalStream?: string;
   terminalControlBusy?: boolean;
@@ -150,6 +152,11 @@ export interface SlotProofFrame extends DiffProofFrame {
   readTerminalText?: () => Promise<string>;
   terminalInputCommands?: number;
   terminalSubscriptionStarts?: number;
+  terminalDraft?: string;
+  terminalSends?: readonly string[];
+  terminalReinit?: string;
+  terminalWorker?: import('@farmslot/protocol').TmuxWorkerRef | null;
+  terminalNative?: boolean;
 }
 const slotFrames = new Map<string, Set<() => SlotProofFrame>>();
 
@@ -502,6 +509,11 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
               terminalBufferText: await slotFrame.readTerminalText?.(),
               terminalInputCommands: slotFrame.terminalInputCommands,
               terminalSubscriptionStarts: slotFrame.terminalSubscriptionStarts,
+              terminalDraft: slotFrame.terminalDraft,
+              terminalSends: slotFrame.terminalSends,
+              terminalReinit: slotFrame.terminalReinit,
+              terminalWorker: slotFrame.terminalWorker,
+              terminalNative: slotFrame.terminalNative,
               slotHistory: slotFrame.history,
               slotHistoryReadCount: slotFrame.historyRunIds?.length,
               slotHistoryReadsReady: Boolean(

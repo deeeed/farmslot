@@ -1,16 +1,7 @@
-import { Stack } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 
-import { OfflineShown } from '../../components/offline-shown';
-import TerminalScreen from '../../features/terminal/SlotTerminalScreen';
-
-export default function RunTerminalRoute() {
-  return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      {/* The terminal shows the connection banner, so its read-status slot need not. */}
-      <OfflineShown.Provider value={true}>
-        <TerminalScreen />
-      </OfflineShown.Provider>
-    </>
-  );
+/** Old review-worktree terminal links open the one terminal on that run's pane. */
+export default function LegacyRunTerminalRoute() {
+  const params = useLocalSearchParams();
+  return <Redirect href={{ pathname: '/terminal/worker', params }} />;
 }
