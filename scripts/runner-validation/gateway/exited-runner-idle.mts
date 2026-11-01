@@ -18,6 +18,57 @@ const socketDir = await mkdtemp('/tmp/eri-');
 process.env.TMUX_TMPDIR = socketDir;
 process.env.TMUX = '';
 const tmux = (...args: string[]) => execute('tmux', args, { env: process.env });
+const grok = path.join(scratch, 'bin', 'grok');
+
+/** True when no process of this proof's server or its workers is left. */
+async function proofProcessesGone(): Promise<boolean> {
+  const { stdout } = await execute('ps', ['-axo', 'command=']);
+  return !stdout.split('\n').some((line) => line.includes(socketDir) || line.includes(scratch));
+}
+
+let cleaning: Promise<void> | undefined;
+/** Stop the proof's tmux server, confirm its processes are gone, then remove its files. */
+function cleanup(): Promise<void> {
+  cleaning ??= (async () => {
+    let refused: unknown;
+    try {
+      await tmux('kill-server');
+    } catch (error) {
+      // An absent server (never started, or already stopped) is expected. Any other refusal
+      // fails the cleanup unless the server and its workers are confirmed gone below.
+      const stderr = String((error as { stderr?: unknown }).stderr ?? '');
+      if (!/no server running|error connecting to/u.test(stderr)) refused = error;
+    }
+    const deadline = Date.now() + 5_000;
+    while (!(await proofProcessesGone())) {
+      if (Date.now() > deadline)
+        throw new Error('Proof tmux server or workers are still running', { cause: refused });
+      await pause(100);
+    }
+    // The socket directory goes only once nothing can still listen on it.
+    await rm(scratch, { recursive: true, force: true });
+    await rm(socketDir, { recursive: true, force: true });
+  })();
+  return cleaning;
+}
+
+// A cancelled or timed-out recipe still tears the server down: signals and the proof's own
+// deadline (inside the recipe's 60 s) run the same cleanup, then fail the run.
+async function abort(reason: string): Promise<never> {
+  process.stderr.write(`${reason}\n`);
+  try {
+    await cleanup();
+  } catch (error) {
+    process.stderr.write(
+      `Proof cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  } finally {
+    process.exit(1);
+  }
+}
+process.once('SIGINT', () => void abort('Interrupted; proof server stopped'));
+process.once('SIGTERM', () => void abort('Terminated; proof server stopped'));
+const proofDeadline = setTimeout(() => void abort('Proof timed out after 45 s'), 45_000);
 
 const { buildRoleLaunchCommandWithDiagnosticHold } =
   await import('../../../services/gateway/src/methods/dispatch/execute.js');
@@ -43,8 +94,11 @@ try {
   await mkdir(repo, { recursive: true });
   await mkdir(bin, { recursive: true });
   // A stand-in runner named like Grok: `live` keeps running, anything else exits 0.
-  const grok = path.join(bin, 'grok');
-  await writeFile(grok, '#!/bin/sh\nif [ "$1" = live ]; then sleep 300; fi\nexit 0\n');
+  // The live loop stays in this process, so stopping the pane leaves no long-lived child.
+  await writeFile(
+    grok,
+    '#!/bin/sh\nif [ "$1" = live ]; then while :; do sleep 1; done; fi\nexit 0\n',
+  );
   await chmod(grok, 0o755);
   const vars = makeVars({ remoteRepo: repo, repo });
   const worker = async (session: string, command: string): Promise<AgentContext> => {
@@ -91,6 +145,8 @@ try {
       (await probeRunnerDescendantPid(vars, await panePid(live), 'grok')).state === 'present',
     'the live runner is running',
   );
+  // Cleanup checks interrupt the proof here, with both workers running.
+  await pause(Number(process.env.EXITED_RUNNER_IDLE_HOLD_MS ?? 0));
   const liveState = await readRetainedWorkerProgressTarget(vars, live);
   assert.equal(liveState.state, 'unknown', 'a running runner stays unconfirmed');
 
@@ -99,8 +155,7 @@ try {
   );
   passed = true;
 } finally {
-  await tmux('kill-server').catch(() => undefined);
-  await rm(scratch, { recursive: true, force: true });
-  await rm(socketDir, { recursive: true, force: true });
+  clearTimeout(proofDeadline);
+  await cleanup();
 }
 if (!passed) process.exitCode = 1;
