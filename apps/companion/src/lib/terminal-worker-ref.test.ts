@@ -352,3 +352,58 @@ test('a gone pin, an offline machine and a loading run never open a pane', () =>
     { status: 'waiting', reason: 'Loading…' },
   );
 });
+
+test('a CI-fix context saved as session:window with no window field opens that window', () => {
+  // services/gateway/src/ci-monitor/inline-fix.ts saves {session, window: null, pane: null,
+  // target}; the pane shown and typed into must be the one Send names.
+  const run = makeRun({
+    agentContexts: [
+      context({
+        id: 'ci-fix-1',
+        role: 'ci-fix',
+        target: { session: 'mini-ff-1', window: null, pane: null, target: 'mini-ff-1:dev' },
+      }),
+    ],
+  });
+  const shell = pane('%8', { linkedSlotId: 'mini-ff-1', active: true }, { windowName: 'shell' });
+  const dev = pane('%9', { linkedSlotId: 'mini-ff-1' }, { windowName: 'dev', window: '1' });
+  const resolved = resolveTerminalWorkerRef({
+    selector: { slotId: 'mini-ff-1', runId: 'run-1', contextId: 'ci-fix-1' },
+    run,
+    slotMachine: 'mini',
+    inventory: inventory('mini', [shell, dev]),
+  });
+  assert.equal(resolved.status === 'ready' && resolved.worker.target, '%9');
+  assert.deepEqual(resolved.status === 'ready' && resolved.target, {
+    slotId: 'mini-ff-1',
+    runId: 'run-1',
+    contextId: 'ci-fix-1',
+    role: 'ci-fix',
+  });
+});
+
+test('a native reviewer on a review worktree opens its conversation, not the worktree shell', () => {
+  const run = makeRun({
+    id: 'run-2',
+    slotId: null,
+    transport: 'native',
+    reviewWorkspace: {
+      workspaceId: 'ws-1',
+      machine: 'macpro',
+      executionNodeId: 'local',
+      checkoutPath: '/w',
+      taskPath: '/t',
+      artifactPath: '/a',
+    },
+    agentContexts: [context({ id: 'rev-1', role: 'review', slotId: null, runId: 'run-2' })],
+  });
+  assert.deepEqual(
+    resolveTerminalWorkerRef({
+      selector: { runId: 'run-2' },
+      run,
+      slotMachine: undefined,
+      inventory: undefined,
+    }),
+    { status: 'native' },
+  );
+});

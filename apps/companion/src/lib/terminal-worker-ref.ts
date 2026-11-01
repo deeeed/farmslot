@@ -66,7 +66,8 @@ export function resolveTerminalWorkerRef({
 
   const bare = !review && (Boolean(selector.shell) || bareSlotSession(selector, run));
   let context: AgentContext | null = null;
-  if (run && !bare && !review) {
+  // A review worktree still names its actor: a native reviewer opens its conversation.
+  if (run && !bare) {
     const view = runTerminalView(run, selector.contextId);
     if (selector.contextId && !view.context)
       return { status: 'unavailable', reason: view.disabledReason ?? 'Session gone.' };
@@ -92,7 +93,8 @@ export function resolveTerminalWorkerRef({
           ...(context ? { contextId: context.id, role: context.role } : {}),
         };
 
-  const recorded = context?.target ?? null;
+  // A review worktree's terminal is its worktree pane, found below; its context only routes.
+  const recorded = review ? null : (context?.target ?? null);
   if (recorded?.paneId && PANE_ID.test(recorded.paneId))
     return { status: 'ready', worker: recordedPane(machine, recorded), target };
 
@@ -127,11 +129,22 @@ function recordedPane(machine: string, recorded: AgentContextTarget): TmuxWorker
   };
 }
 
+/**
+ * Whether a pane is the one a context recorded. Explicit window and pane win; without them the
+ * recorded tmux target (`%N`, `session:window` or `session:window.pane`, as CI-fix contexts save
+ * it) says where.
+ */
 function inRecordedWindow(ref: TmuxWorkerRef, recorded: AgentContextTarget): boolean {
   if (ref.session !== recorded.session) return false;
-  const window = recorded.window;
+  const saved = recorded.target?.trim() ?? '';
+  if (PANE_ID.test(saved) && !recorded.window && !recorded.pane)
+    return ref.paneId === saved || ref.target === saved;
+  const [, windowPart = ''] = saved.split(':', 2);
+  const [savedWindow, savedPane] = windowPart.split('.', 2);
+  const window = recorded.window || savedWindow;
+  const paneIndex = recorded.pane || savedPane;
   if (window && ref.window !== window && ref.windowName !== window) return false;
-  return !recorded.pane || ref.pane === recorded.pane;
+  return !paneIndex || ref.pane === paneIndex;
 }
 
 /**
@@ -153,9 +166,7 @@ function bareSlotSession(selector: TerminalSelector, run: Run | null): boolean {
 
 /** The pane running the worker first, then the session's active pane. */
 function bestPane(panes: TmuxWorkerSummary[]): TmuxWorkerSummary | undefined {
-  return (
-    panes.find((pane) => pane.linkedRunner) ?? panes.find((pane) => pane.active) ?? panes[0]
-  );
+  return panes.find((pane) => pane.linkedRunner) ?? panes.find((pane) => pane.active) ?? panes[0];
 }
 
 /**
