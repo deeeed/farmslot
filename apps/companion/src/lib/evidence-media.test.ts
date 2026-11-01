@@ -23,17 +23,23 @@ const signal = new AbortController().signal;
 function memoryFiles(served: Map<string, Uint8Array>) {
   const disk = new Map<string, Uint8Array | string>();
   const downloads: string[] = [];
-  const control: { gate?: Promise<void>; removal?: Promise<void> } = {};
+  const control: { gate?: Promise<void>; removal?: Promise<void>; stall?: boolean } = {};
   const files: EvidenceMediaFiles = {
     directory: DIRECTORY,
     async size(uri) {
       const value = disk.get(uri);
       return value instanceof Uint8Array ? value.length : undefined;
     },
-    async download(source, to) {
+    async download(source, to, signal) {
       downloads.push(source.uri);
       const body = served.get(source.uri);
       if (!body) throw new Error('HTTP 404');
+      if (control.stall) {
+        // Half the body arrives, then the transfer waits until it is cancelled.
+        disk.set(to, body.slice(0, body.length / 2));
+        await new Promise((resolve) => signal.addEventListener('abort', resolve));
+        throw new Error('Download cancelled');
+      }
       disk.set(to, body);
       return body.length;
     },
@@ -68,11 +74,13 @@ function setup({ limitBytes = 1000, allowed = true } = {}) {
   const served = new Map<string, Uint8Array>();
   const memory = memoryFiles(served);
   const network = { allowed };
+  const logs: string[] = [];
   const holder = createEvidenceMediaHolder({
     files: memory.files,
     source: (entry) => ({ uri: `https://gw/${entry.runId}/${entry.bundleDigest}/${entry.path}` }),
     allowed: () => network.allowed,
     limitBytes,
+    log: (message) => logs.push(message),
   });
   const entry = (
     runId: string,
@@ -83,7 +91,7 @@ function setup({ limitBytes = 1000, allowed = true } = {}) {
     served.set(`https://gw/${runId}/${bundleDigest}/${path}`, body);
     return { runId, path, bundleDigest, sha256, sizeBytes: body.length, gateAt };
   };
-  return { holder, entry, network, ...memory };
+  return { holder, entry, network, logs, ...memory };
 }
 
 test('a decided gate drops its media; a file another gate still uses stays', async () => {
@@ -199,6 +207,19 @@ test('sign-out while a file is verifying keeps nothing, and destroy deletes ever
   assert.deepEqual(media(), []);
   assert.equal(holder.byPath('a', 'kept.mp4', 'b1'), undefined);
   assert.equal(holder.byDigest(digest(bytes(14, 20))), undefined);
+});
+
+test('sign-out cancels a download in flight and deletes its partial file', async () => {
+  const { holder, entry, control, disk, logs } = setup();
+  control.stall = true;
+  const pending = holder.hold(entry('a', 'run.mp4', bytes(17, 20)), signal);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok([...disk.keys()].some((key) => key.endsWith('.part')));
+  await holder.destroy();
+  assert.equal(await pending, false);
+  assert.deepEqual([...disk.keys()], []);
+  // A cancelled transfer is no download failure.
+  assert.deepEqual(logs, ['[evidence-media] cleared']);
 });
 
 test('the index survives a restart; an unreadable one is cleared rather than trusted', async () => {

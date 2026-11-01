@@ -23,10 +23,19 @@ export function nativeEvidenceMediaFiles(scopeId: string): EvidenceMediaFiles {
   return {
     directory,
     size,
-    async download(source, to) {
+    async download(source, to, signal) {
       await ensure();
-      const result = await FileSystem.downloadAsync(source.uri, to, { headers: source.headers });
-      if (result.status !== 200) throw new Error(`HTTP ${result.status}`);
+      if (signal.aborted) throw new Error('Download cancelled');
+      const task = FileSystem.createDownloadResumable(source.uri, to, { headers: source.headers });
+      const cancel = () => void task.cancelAsync();
+      signal.addEventListener('abort', cancel);
+      try {
+        const result = await task.downloadAsync();
+        if (!result) throw new Error('Download cancelled');
+        if (result.status !== 200) throw new Error(`HTTP ${result.status}`);
+      } finally {
+        signal.removeEventListener('abort', cancel);
+      }
       return (await size(to)) ?? 0;
     },
     async read(uri, position, length) {

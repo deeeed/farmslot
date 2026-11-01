@@ -13,7 +13,12 @@ export interface EvidenceMediaFiles {
   directory: string;
   /** Bytes on disk, or undefined when the file is gone (the OS may reclaim the cache). */
   size(uri: string): Promise<number | undefined>;
-  download(source: { uri: string; headers?: Record<string, string> }, to: string): Promise<number>;
+  /** Rejects once `signal` aborts; the partial file may be left at `to`. */
+  download(
+    source: { uri: string; headers?: Record<string, string> },
+    to: string,
+    signal: AbortSignal,
+  ): Promise<number>;
   read(uri: string, position: number, length: number): Promise<Uint8Array>;
   move(from: string, to: string): Promise<void>;
   /** Idempotent: a file that is already gone is no error. */
@@ -74,6 +79,8 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
   const indexUri = `${files.directory}index.json`;
   let index: Index = { files: {}, runs: {} };
   let disposed = false;
+  // Aborts the holder's downloads when it is disposed or destroyed.
+  const stopped = new AbortController();
   /** The gates the last decision list still waits on; undefined until one is known. */
   let wanted: ReadonlySet<string> | undefined;
   const inflight = new Map<string, Promise<boolean>>();
@@ -186,11 +193,12 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
     const part = `${files.directory}${entry.sha256}.part`;
     let bytes: number;
     try {
-      bytes = await files.download(options.source(entry), part);
+      bytes = await files.download(options.source(entry), part, stopped.signal);
     } catch (error) {
       // An entry that cannot download now is skipped; the gate's other evidence still loads.
       await files.remove(part);
-      log(`[evidence-media] download failed ${entry.path}: ${String(error)}`);
+      if (!stopped.signal.aborted)
+        log(`[evidence-media] download failed ${entry.path}: ${String(error)}`);
       return false;
     }
     const verified = !signal.aborted && (await verify(part, bytes, entry.sha256));
@@ -310,9 +318,11 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
     },
     dispose() {
       disposed = true;
+      stopped.abort();
     },
     async destroy() {
       disposed = true;
+      stopped.abort();
       await loaded;
       await serialized(async () => {
         index = { files: {}, runs: {} };
