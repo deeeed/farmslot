@@ -173,23 +173,51 @@ test('a supervisor whose home is removed stops its host instead of running on', 
 
 test('a reboot that leaves the stopped supervisor and host PIDs to other processes does not block the host', async () => {
   const fixture = setup();
-  // A reboot leaves the lock, the host record and a pending cleanup behind, and their PIDs
-  // can belong to any process afterwards: here this test runner and a stand-in child.
-  const standIn = spawn('sleep', ['30'], { stdio: 'ignore' });
-  privateDirectory(join(fixture.root, 'lock'));
-  privateDirectory(join(fixture.root, 'sessions'));
-  const write = (name: string, value: unknown) =>
-    writeFileSync(join(fixture.root, name), JSON.stringify(value), { mode: 0o600 });
-  write('lock/owner.json', { pid: process.pid, identity: 'the stopped supervisor start' });
-  write('worker.json', { pid: standIn.pid, identity: 'the stopped host start' });
-  write('cleanup.json', { hostPid: standIn.pid, state: 'pending' });
+  let standIn: ReturnType<typeof spawn> | undefined;
   try {
+    // A reboot leaves the lock, the host record and a pending cleanup behind, and their PIDs
+    // can belong to any process afterwards: here this test runner and a stand-in child.
+    standIn = spawn('sleep', ['30'], { stdio: 'ignore' });
+    privateDirectory(join(fixture.root, 'lock'));
+    privateDirectory(join(fixture.root, 'sessions'));
+    const write = (name: string, value: unknown) =>
+      writeFileSync(join(fixture.root, name), JSON.stringify(value), { mode: 0o600 });
+    write('lock/owner.json', { pid: process.pid, identity: 'the stopped supervisor start' });
+    write('worker.json', { pid: standIn.pid, identity: 'the stopped host start' });
+    write('cleanup.json', { hostPid: standIn.pid, state: 'pending' });
     await new NativeSessionClient(fixture.root).list('owner');
     const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
     assert.notEqual(supervisor, process.pid);
     assert.equal(readJson<RecordedProcess>(join(fixture.root, 'lock/owner.json')).pid, supervisor);
   } finally {
-    standIn.kill('SIGKILL');
+    standIn?.kill('SIGKILL');
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a supervisor that cannot read its own start identity leaves no lock behind', async () => {
+  const fixture = setup();
+  const entry = fileURLToPath(new URL('./supervisor.ts', import.meta.url));
+  const marker = join(fixture.cwd, 'fail-next-lstart');
+  try {
+    // One failed `ps -o lstart=` read, as a timeout on a loaded node would give; every other
+    // `ps` call reaches the real one. The fixture directory leads PATH for this test.
+    writeFileSync(
+      join(fixture.cwd, 'ps'),
+      `#!/bin/sh\ncase "$*" in *lstart=*) if [ -f '${marker}' ]; then rm -f '${marker}'; exit 1; fi;; esac\nexec /bin/ps "$@"\n`,
+      { mode: 0o700 },
+    );
+    writeFileSync(marker, '');
+    const failed = spawnSync(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx'), entry, fixture.root],
+      { encoding: 'utf8', timeout: 20_000 },
+    );
+    assert.notEqual(failed.status, 0);
+    assert.equal(existsSync(join(fixture.root, 'lock')), false, 'no lock without an owner');
+    await new NativeSessionClient(fixture.root).list('owner');
+    assert.ok(existsSync(join(fixture.root, 'host.json')), 'the next start owns the host');
+  } finally {
     await stopNativeStack(fixture);
   }
 });

@@ -70,11 +70,10 @@ try {
     }
   }
   if (!occupied) {
+    // Read before taking the lock: a failed read must not leave a lock without an owner.
+    const identity = processStartIdentity(process.pid);
     mkdirSync(lock, { mode: 0o700 });
-    durableWrite(join(lock, 'owner.json'), {
-      pid: process.pid,
-      identity: processStartIdentity(process.pid),
-    });
+    durableWrite(join(lock, 'owner.json'), { pid: process.pid, identity });
     acquired = true;
   }
 } finally {
