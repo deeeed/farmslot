@@ -193,9 +193,10 @@ export class NativeProfiles extends LitElement {
         (profile) => !this.runnerOnly || profile.runner === this.runner,
       );
       this.error = state.error?.message ?? '';
+      // The node default account needs no profile, so it never waits for this read.
       this.selection(
         this.profiles.find((profile) => profile.id === this.selected),
-        false,
+        !this.selected,
       );
       this.busy = state.status === 'loading';
       if (this.listCurrent) void this.choose(this.selected, this.selectedContextId);
@@ -224,7 +225,7 @@ export class NativeProfiles extends LitElement {
     this.status = undefined;
     this.error = '';
     const profile = this.profiles.find((item) => item.id === id);
-    this.selection(profile, !id && this.listCurrent);
+    this.selection(profile, !id);
     if (!profile) {
       if (id)
         this.error = 'Profile is unavailable. Choose another profile or the node default account.';
@@ -411,7 +412,7 @@ export class NativeProfiles extends LitElement {
             </details>`
         : nothing}
       <details>
-        <summary>Add a ${this.runner} profile</summary>
+        <summary>Add another account</summary>
         <label
           >Profile name<input
             data-testid="native-profile-name"

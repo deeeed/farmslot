@@ -81,12 +81,19 @@ export interface NativeRunnerDefinition {
   /** Default for new standalone conversations; worker launch settings stay authoritative. */
   defaultEffort?: string;
   account: {
+    /** Where a session without a profile reads this runner's login under the node's environment. */
+    standardDirectory(environment: NodeJS.ProcessEnv): string;
     environment(directory: string, base?: NodeJS.ProcessEnv): Record<string, string>;
     unset: readonly string[];
     loginArgs: readonly string[];
     observe(options: NativeAccountProbeOptions): Promise<NativeAccountObservation>;
   };
 }
+
+const claudeDirectory = (env: NodeJS.ProcessEnv) =>
+  env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude');
+const grokDirectory = (env: NodeJS.ProcessEnv) =>
+  env.GROK_HOME ?? join(env.HOME ?? homedir(), '.grok');
 
 /** Native profile mechanics stay with the runner definition, not client workflows. */
 export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
@@ -98,6 +105,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     supportsReadOnlyWorkspace: true,
     defaultEffort: 'low',
     account: {
+      standardDirectory: (env) => env.CODEX_HOME ?? join(env.HOME ?? homedir(), '.codex'),
       environment: (directory) => ({ CODEX_HOME: directory }),
       unset: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
       loginArgs: ['login'],
@@ -110,7 +118,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     trustWorkspace: workspaceTrustByRunner.claude,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [
-      env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude'),
+      claudeDirectory(env),
       // Claude Code creates its tool-runner scratch directory outside
       // CLAUDE_CONFIG_DIR. Keep that state writable inside the review sandbox.
       ...(typeof process.getuid === 'function' ? [join('/tmp', `claude-${process.getuid()}`)] : []),
@@ -119,6 +127,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'claude',
     supportsWorkers: true,
     account: {
+      standardDirectory: claudeDirectory,
       environment: claudeProfileEnvironment,
       unset: [
         'ANTHROPIC_API_KEY',
@@ -148,6 +157,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'cursor-agent',
     supportsWorkers: true,
     account: {
+      standardDirectory: (env) => env.HOME ?? homedir(),
       environment: cursorProfileEnvironment,
       unset: [
         'CURSOR_API_KEY',
@@ -170,11 +180,12 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.grok,
     trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
-    reviewRuntimeRoots: (env) => [env.GROK_HOME ?? join(env.HOME ?? homedir(), '.grok')],
+    reviewRuntimeRoots: (env) => [grokDirectory(env)],
     adapter: grokNativeAdapter,
     binary: 'grok',
     supportsWorkers: true,
     account: {
+      standardDirectory: grokDirectory,
       environment: grokProfileEnvironment,
       unset: ['GROK_API_KEY', 'XAI_API_KEY'],
       loginArgs: ['login'],

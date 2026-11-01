@@ -251,6 +251,14 @@ A native worker, dispatched or static-review, starts through its runner's native
 - The gateway's launch names an executable only when the machine's pool configures one for that runner. Otherwise the host uses the adapter's own.
 - A native run for a runner without a native adapter is refused before its slot is claimed or prepared.
 
+## Native account default
+
+A native session or worker without `profileId` runs on the node's own login for its runner (ADR-057 Amendment 11). That login lives in the runner's standard directory, the one such a session uses: `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` when the node sets it, otherwise `~/.claude`, `~/.codex` or `~/.grok`; for Cursor, the home directory. Each runner definition exposes it once as `account.standardDirectory`.
+
+- No registration is needed for it, and clients enable it without reading the profile list.
+- `native.profile.add` refuses the standard directory with "This is the node's own login; no profile is needed". It compares canonical paths (`~/` expanded, symlinks resolved), before the existing-profile check.
+- Profiles register additional configuration directories only.
+
 ## Managed native reviewer approval policy
 
 The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. Reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.
