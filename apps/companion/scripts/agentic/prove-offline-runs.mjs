@@ -1756,41 +1756,38 @@ if (phase === 'terminal-context') {
     );
   } catch (error) {
     proofError = error;
-  } finally {
-    // The proof's first failure is the result: cleanup failures are reported after it and never
-    // replace it (a gateway still restarting from the outage step used to mask the real error).
-    const cleanupErrors = [];
-    const cleanup = async (step) => {
-      try {
-        await step();
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    };
-    await cleanup(() => rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] }));
-    await cleanup(() => inbox('runs'));
-    if (!existed)
-      await cleanup(async () => {
-        const rows = (
-          await execute('tmux', ['list-sessions', '-F', '#{pid}|#{session_name}'])
-        ).stdout
-          .trim()
-          .split('\n');
-        assert(
-          rows.every((row) => row.split('|')[0] === serverPid),
-          'Never change the tmux server',
-        );
-        if (rows.some((row) => row.split('|')[1] === sessionName)) {
-          const idle = await sessionInfo();
-          if (ownedSession) assert.equal(idle.id, ownedSession.id);
-          await execute('tmux', ['kill-session', '-t', idle.id]);
-        }
-      });
-    for (const error of cleanupErrors)
-      console.error(`Cleanup also failed: ${error instanceof Error ? error.message : error}`);
-    if (proofError) throw proofError;
-    if (cleanupErrors.length) throw cleanupErrors[0];
   }
+  // The proof's first failure is the result: cleanup failures are reported after it and never
+  // replace it (a gateway still restarting from the outage step used to mask the real error).
+  const cleanupErrors = [];
+  const cleanup = async (step) => {
+    try {
+      await step();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  };
+  await cleanup(() => rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] }));
+  await cleanup(() => inbox('runs'));
+  if (!existed)
+    await cleanup(async () => {
+      const rows = (await execute('tmux', ['list-sessions', '-F', '#{pid}|#{session_name}'])).stdout
+        .trim()
+        .split('\n');
+      assert(
+        rows.every((row) => row.split('|')[0] === serverPid),
+        'Never change the tmux server',
+      );
+      if (rows.some((row) => row.split('|')[1] === sessionName)) {
+        const idle = await sessionInfo();
+        if (ownedSession) assert.equal(idle.id, ownedSession.id);
+        await execute('tmux', ['kill-session', '-t', idle.id]);
+      }
+    });
+  for (const error of cleanupErrors)
+    console.error(`Cleanup also failed: ${error instanceof Error ? error.message : error}`);
+  if (proofError) throw proofError;
+  if (cleanupErrors.length) throw cleanupErrors[0];
   process.exit(0);
 }
 
