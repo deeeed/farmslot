@@ -142,6 +142,34 @@ for (const role of ['review', 'primary', 'review-fix'] as const) {
   });
 }
 
+for (const [runner, model, effort, executable] of [
+  ['grok', 'grok-4.7', 'medium', '/usr/local/bin/grok'],
+  ['cursor', 'composer-2.5', undefined, '/usr/local/bin/cursor-agent'],
+] as const) {
+  test(`a native ${runner} worker launches through the runner's native adapter`, async () => {
+    const prepare = (vars: ReturnType<typeof makeVars>) =>
+      prepareNativeWorkerLaunch({
+        vars,
+        project: {},
+        runner,
+        model,
+        effort,
+        role: 'primary',
+        safetyTier: 'sandboxed',
+        taskDir: 'tasks/proof',
+        leaseId: 'proof-lease',
+        sessionId: 'proof-session',
+        prepareAccount: false,
+      });
+    const configured = (await prepare(makeVars())).launch;
+    assert.equal(configured.executable, executable);
+    assert.equal(configured.effort, effort);
+    // With no configured path the host starts the adapter's own executable, as for chat.
+    const unconfigured = (await prepare(makeVars({ grokPath: '', cursorPath: '' }))).launch;
+    assert.equal(unconfigured.executable, undefined);
+  });
+}
+
 test('review launch identity ignores unrelated pool selections and keeps explicit project settings', async () => {
   const prepare = (
     version: string,

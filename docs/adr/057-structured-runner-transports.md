@@ -412,3 +412,27 @@ Plan updates: the event type `plan.updated` with `NativeSessionPlan` and `Native
 Implement: `nativeImplementableKey`, `nativeImplementPrompt` and `nativeImplementSession` in the client cache. Clients create and send through the existing `native.session.create` and `native.session.send`; no host, gateway or contract change.
 
 Per-turn changes: the event type `turn.changes` with `NativeTurnChanges` and `NativeTurnFile`, the method `native.session.turn.diff` (`NativeSessionTurnDiffParams`, `NativeSessionTurnDiffResult`), the `changes` timeline entry and `nativeTurnChangesText` in the client cache, and another history projection bump, in `@farmslot/protocol`. `@farmslot/agent-runtime` takes the checkpoints and serves the diff, so it needs a release; native hosts and node services started after it support them. The gateway adds the method to its routes, worker read fence and authorization map. No CLI flag or harness change.
+
+## Amendment 10: farm workers launch through the native adapters, 2026-11-01
+
+**Status:** Proposed.
+
+### Decision
+
+A native farm worker is a native session started through the same runner adapter as a standalone session. The task binding sits on top: lease, launch environment, account setup, safety tier and approval policy.
+
+- **No executable choice in the gateway.** The worker launch carries an executable only when the slot's pool configures one for that runner (`<runner>_path`). Otherwise the host starts the adapter's own executable, as it does for a standalone session.
+- **Every native runner works as a worker.** Claude, Codex, Cursor and Grok run as native workers. This replaces "Cursor/Grok standalone adapters" in the implementation status above.
+- **Fail fast.** A native run or queue item whose runner has no native adapter is refused at creation, before a slot is found or prepared.
+- **Unchanged:**
+  - Codex workers without a profile keep the farm-provisioned `codex-home`. That is account setup, not launch.
+  - tmux stays first-class for every runner.
+
+### Rationale
+
+Standalone sessions and workers had two launch paths:
+
+- the host's adapter registry, for chat;
+- a per-runner executable switch in the gateway, for workers.
+
+The gateway switch knew only Claude and Codex, so Grok chat worked while a Grok worker failed after its slot was prepared. One path removes the switch, and with it the class of runner that works in chat but not as a worker.

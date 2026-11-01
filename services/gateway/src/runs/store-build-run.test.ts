@@ -51,3 +51,17 @@ test('run.create requiredCapabilities become the capability requirements FIND_SL
     /requiredCapabilities must be an array of non-empty capability ids/,
   );
 });
+
+test('a native run is refused at creation, before a slot is found, when its runner has no native mode', () => {
+  assert.throws(
+    () =>
+      buildRunRecord({
+        flowType: 'dev',
+        project: 'fixture',
+        ticketOrPr: 'NATIVE-SCRIPTED',
+        transport: 'native',
+        runner: 'scripted',
+      }),
+    /Runner has no native transport: scripted/,
+  );
+});

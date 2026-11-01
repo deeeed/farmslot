@@ -411,7 +411,8 @@ export function quoteRunnerArgValue(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function resolveRunnerPath(slotVars: SlotVars, runner?: string): string {
+/** The slot's configured executable for a runner, or '' to use the runner's own default. */
+export function resolveRunnerPath(slotVars: SlotVars, runner?: string): string {
   const normalized = normalizeRunner(runner);
   let runnerPath = '';
   switch (normalized) {
