@@ -117,7 +117,7 @@ test('an artifact copy extends every enclosing teardown, which keeps its 300 s',
   let tornDown!: () => void;
   const release = withTerminalTeardown(slot, () =>
     withTerminalTeardown(slot, async () => {
-      extendTerminalTeardown(copyMs + 20_000);
+      extendTerminalTeardown(slot, copyMs + 20_000);
       await new Promise<void>((resolve) => (copied = resolve));
       await new Promise<void>((resolve) => (tornDown = resolve));
       return 'released';
@@ -130,5 +130,25 @@ test('an artifact copy extends every enclosing teardown, which keeps its 300 s',
   t.mock.timers.tick(TERMINAL_TEARDOWN_TIMEOUT_MS - 10_000);
   tornDown();
   assert.equal(await release, 'released');
+  assert.equal(isTerminalTeardownInFlight(slot), false);
+});
+
+test('work started inside a teardown cannot extend that teardown from another slot', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const slot = 'f298-copying-slot';
+  let sibling: Promise<void> | undefined;
+  // A release's status update can dispatch a run whose release of another slot inherits this context.
+  const copying = withTerminalTeardown(slot, () => {
+    sibling = withTerminalTeardown('f298-sibling-slot', async () => {
+      extendTerminalTeardown('f298-sibling-slot', 60 * 60_000);
+    });
+    return new Promise<void>(() => {});
+  });
+  let failure: unknown;
+  void copying.catch((error: unknown) => (failure = error));
+  await sibling;
+  t.mock.timers.tick(TERMINAL_TEARDOWN_TIMEOUT_MS);
+  for (let turn = 0; turn < 10 && !failure; turn += 1) await setImmediate();
+  assert.match(String(failure), /timed out after 300000ms/);
   assert.equal(isTerminalTeardownInFlight(slot), false);
 });

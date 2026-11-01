@@ -1001,7 +1001,8 @@ async function slotReleaseImpl(
             skipUnchanged: true,
             // Files the mirror never indexed (two 425 MB APKs on audiolab-4) still transfer
             // here, so the copy adds its own budget instead of spending the teardown's.
-            onTotals: ({ bytes }) => extendTerminalTeardown(releaseArtifactCopyBudgetMs(bytes)),
+            onTotals: ({ bytes }) =>
+              extendTerminalTeardown(params.slotId, releaseArtifactCopyBudgetMs(bytes)),
             // Stamp run/slot so transfer progress binds to run detail / pipeline UI.
             phase: 'mirror',
             runId: releaseRunId,

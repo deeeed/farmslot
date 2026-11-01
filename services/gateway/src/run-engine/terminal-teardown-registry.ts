@@ -65,15 +65,20 @@ export class TerminalTeardownTimeoutError extends Error {
 }
 
 /** Deadline extenders of the bounded teardowns this call runs inside, outermost first. */
-const teardownDeadlines = new AsyncLocalStorage<Array<(ms: number) => void>>();
+const teardownDeadlines = new AsyncLocalStorage<
+  Array<{ slotId: string; extend: (ms: number) => void }>
+>();
 
 /**
- * Give every bounded teardown this call runs inside `ms` more time. A release's artifact
- * copy takes as long as its bytes do, so it adds its own budget and the teardown keeps
- * the rest (F298). A nested release extends the run teardown around it as well.
+ * Give every bounded teardown of `slotId` this call runs inside `ms` more time. A release's
+ * artifact copy takes as long as its bytes do, so it adds its own budget and the teardown
+ * keeps the rest (F298). A nested release extends the run teardown around it as well. Only
+ * that slot's deadlines move: work dispatched from inside a teardown inherits its context,
+ * and its own release must not postpone another slot's.
  */
-export function extendTerminalTeardown(ms: number): void {
-  for (const extend of teardownDeadlines.getStore() ?? []) extend(ms);
+export function extendTerminalTeardown(slotId: string, ms: number): void {
+  for (const deadline of teardownDeadlines.getStore() ?? [])
+    if (deadline.slotId === slotId) deadline.extend(ms);
 }
 
 /** Bound the awaited teardown, not just its marker. A late result owns no new work. */
@@ -120,7 +125,7 @@ export async function withTerminalTeardown<T>(
     arm();
   };
   if (timeoutMs !== null) arm();
-  const deadlines = [...(teardownDeadlines.getStore() ?? []), extend];
+  const deadlines = [...(teardownDeadlines.getStore() ?? []), { slotId, extend }];
   beginTerminalTeardown(slotId);
   try {
     signal.throwIfAborted();

@@ -39,7 +39,7 @@ let copyOptions: Record<string, unknown> | undefined;
 let scaffoldingExcludesArtifacts: boolean | undefined;
 let copyFailure = false;
 let copyTotals: { files: number; bytes: number } | undefined;
-let teardownExtensions: number[] = [];
+let teardownExtensions: Array<{ slotId: string; ms: number }> = [];
 let claimAfterReap = false;
 let cdpPort: string | undefined;
 /** The browser session a cancelled run left on the slot's CDP port: pid -> survives SIGKILL. */
@@ -143,9 +143,9 @@ const realTeardown = await import('../../run-engine/terminal-teardown-registry.j
 mock.module('../../run-engine/terminal-teardown-registry.js', {
   namedExports: {
     ...realTeardown,
-    extendTerminalTeardown: (ms: number) => {
-      teardownExtensions.push(ms);
-      realTeardown.extendTerminalTeardown(ms);
+    extendTerminalTeardown: (slotId: string, ms: number) => {
+      teardownExtensions.push({ slotId, ms });
+      realTeardown.extendTerminalTeardown(slotId, ms);
     },
   },
 });
@@ -569,9 +569,11 @@ test('a release copying 1.6 GB of unindexed artifacts adds their transfer time t
   const bytes = 1.6 * 1024 ** 3;
   copyTotals = { files: 2, bytes };
   await slotRelease({ slotId: SLOT_ID }, emit);
-  assert.deepEqual(teardownExtensions, [releaseArtifactCopyBudgetMs(bytes)]);
+  assert.deepEqual(teardownExtensions, [
+    { slotId: SLOT_ID, ms: releaseArtifactCopyBudgetMs(bytes) },
+  ]);
   assert.ok(
-    teardownExtensions[0]! > (bytes / (5 * 1024 * 1024)) * 1000,
+    teardownExtensions[0]!.ms > (bytes / (5 * 1024 * 1024)) * 1000,
     'longer than the copy takes at the measured 5 MB/s',
   );
   assert.equal(releaseArtifactCopyBudgetMs(1024), 60_000, 'a small copy gets the floor');
