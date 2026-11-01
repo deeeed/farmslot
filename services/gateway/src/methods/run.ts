@@ -53,6 +53,7 @@ import {
   runClaimOverrideSnapshotIdentity,
   type RunCreateParams,
   type RunCreateResult,
+  type RunDecision,
   type RunInteractiveDevResolveParams,
   type RunInteractiveDevResolveResult,
   type RunProbeWorkerSignalParams,
@@ -122,7 +123,11 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { buildCIWatchChainedRunParams } from '../run-engine/ci-watch-chain.js';
 import { isHumanGateReviewRequestAction } from '../run-engine/decision-replay.js';
-import { recordDecisionResolution, resolveEngineDecision } from '../run-engine/engine-decisions.js';
+import {
+  hasEngineDecisionWaiter,
+  recordDecisionResolution,
+  resolveEngineDecision,
+} from '../run-engine/engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
@@ -130,8 +135,10 @@ import {
   assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
   assertUnavailableSnapshotOverrideAvailable,
+  isGateDecision,
   isPublishApprovalAction,
   publicationReviewBlockingReason,
+  supersedeStaleHumanGateDecisions,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
 import { assertRunGateReady, runGateDefinitionActions } from '../run-engine/gate-prerequisites.js';
@@ -1580,8 +1587,28 @@ export async function runProbeWorkerSignal(
  * the caller's reference. Exported for tests.
  */
 export function assertDecisionStillUnresolved(runId: string, decisionId: string): void {
-  const fresh = getRun(runId)?.decisions.find((d) => d.id === decisionId);
+  const run = getRun(runId);
+  const fresh = run?.decisions.find((d) => d.id === decisionId);
   if (!fresh || fresh.resolvedAt) throw new Error(`Decision already resolved`);
+  assertCurrentGateDecision(run!, fresh);
+}
+
+/**
+ * With more than one open gate decision, only the one an engine waits on takes a gate
+ * action (the newest when no engine waits). An action on another would report ok and
+ * then be dropped, so it is refused with the decision to act on instead.
+ */
+function assertCurrentGateDecision(run: Run, decision: RunDecision): void {
+  if (!isGateDecision(decision)) return;
+  const open = run.decisions.filter((d) => isGateDecision(d) && !d.resolvedAt);
+  if (open.length <= 1) return;
+  const current =
+    [...open].reverse().find((d) => hasEngineDecisionWaiter(d.id)) ?? open[open.length - 1];
+  if (current && current.id !== decision.id)
+    throw new GatewayMethodError(
+      'RUN_GATE_NOT_READY',
+      `Gate decision ${decision.id} has been replaced by ${current.id}; act on the current gate.`,
+    );
 }
 
 type TriageAssessmentPrice = NonNullable<NonNullable<AssessmentRecord['reservation']>['price']>;
@@ -1830,6 +1857,20 @@ export function continueResolvedRunDecision(
         );
         return;
       }
+      // No engine took this gate action, so the resume below must carry it. Other open gate
+      // decisions have no engine either (one with an engine would have refused this action);
+      // left open they would keep the run from resuming and the action would be dropped.
+      const resolvedGate = afterResolve.decisions.find((d) => d.id === params.decisionId);
+      if (
+        resolvedGate &&
+        isGateDecision(resolvedGate) &&
+        supersedeStaleHumanGateDecisions(
+          afterResolve.decisions.filter((d) => !hasEngineDecisionWaiter(d.id)),
+          new Date().toISOString(),
+          params.decisionId,
+        ) > 0
+      )
+        updateRun(params.runId, { decisions: afterResolve.decisions });
       const stillUnresolved = afterResolve.decisions.filter((d) => !d.resolvedAt);
       if (stillUnresolved.length === 0) {
         if (afterResolve.engineState?.publishGate?.humanPublicationAdoption) {
@@ -1964,6 +2005,7 @@ export async function resolveRunDecision(
 
   let decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
+  if (!decision.resolvedAt) assertCurrentGateDecision(existing, decision);
   const attestationReason = evidenceAttestationReason(
     params.actionId,
     params.evidenceAttestationReason,
