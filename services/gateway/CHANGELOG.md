@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Run episodes record `provenance`: the recipe provider and each library's pinned revision, from the task's binding receipt or binding (ADR-039 Amendment 4).
 - Native farm workers launch through the runner's native adapter, as chat sessions do (ADR-057 Amendment 10), so Grok and Cursor run as native workers as well as Claude and Codex.
   - The gateway no longer picks the runner executable for a dispatched worker or a static review. The launch names one only when the machine's pool sets `<runner>_path`.
   - A native run for a runner with no native adapter is refused before its slot is claimed or prepared. That happens at creation and queue admission when the run names the runner, at FIND_SLOT when it takes the slot's runner, and on a dispatch replay that changes it.

@@ -12,6 +12,7 @@ import path from 'node:path';
 import {
   type AgentContext,
   isTerminalRunStatus,
+  PipelineSteps,
   type Run,
   type RunArtifactBundleRef,
   type RunBundleEntryMeta,
@@ -76,6 +77,13 @@ export interface RunEpisode {
     recipeQuality: RunEpisodeFile[];
     evidence: RunEpisodeFile[];
   };
+  /**
+   * The pinned recipe sources the run executed: the provider package and each
+   * library revision, copied from the task's recipe binding and its
+   * node-verified receipt (ADR-069). Null for an unbound task or an unreadable
+   * binding; absent on episodes written before it existed. Never inferred from text.
+   */
+  provenance?: RunEpisodeProvenance | null;
   sources: {
     bundles: string[];
     unreadableBundles: UnreadableEpisodeBundle[];
@@ -85,6 +93,46 @@ export interface RunEpisode {
     media: number;
   };
 }
+
+export interface RunEpisodeProvenance {
+  /** Task-relative file the libraries were copied from. */
+  source: typeof RECIPE_BINDING_FILE | typeof BINDING_RECEIPT_FILE;
+  /** The recipe provider; null when it is not a versioned package or the task was repinned. */
+  provider: { package: string; version: string } | null;
+  /** `revision` is the library's git commit; a packaged library has only its fingerprint. */
+  libraries: {
+    name: string;
+    revision: string | null;
+    fingerprint: string | null;
+    dirty: boolean;
+  }[];
+  /** When the receipt was written on the node; null when the libraries came from the binding. */
+  recordedAt: string | null;
+  /**
+   * Whether the completion step captured the output, which refreshes the
+   * receipt, and no agent attempt began after it. False otherwise (cancelled
+   * while monitoring, even after a manual mirror refresh, or during a review fix
+   * after completion): a repin after `recordedAt` is then not reflected.
+   */
+  mirrored: boolean;
+}
+
+interface BindingIdentity {
+  libraries?: unknown;
+}
+/** The binding fields the episode copies; written by task init on the node. */
+export interface RecipeBindingDocument {
+  provider?: { package?: unknown; version?: unknown };
+  identity?: BindingIdentity | null;
+}
+/** The node-verified receipt; release refreshes the gateway copy, also after a repin. */
+export interface BindingReceiptDocument {
+  bindingIdentity?: BindingIdentity | null;
+  recordedAt?: unknown;
+}
+
+export const RECIPE_BINDING_FILE = 'inputs/recipe-binding.json';
+export const BINDING_RECEIPT_FILE = 'artifacts/harness-provenance.json';
 
 /** A referenced bundle whose manifest could not be read, with the reason. */
 export interface UnreadableEpisodeBundle {
@@ -152,6 +200,7 @@ export function buildRunEpisode(
   bundles: readonly EpisodeBundle[],
   unreadableBundles: readonly UnreadableEpisodeBundle[],
   capturedAt: string,
+  provenance: RunEpisodeProvenance | null = null,
 ): RunEpisode {
   const { files, undigested } = collectFiles(run, bundles);
   const paths = [...files.keys()].sort();
@@ -248,12 +297,55 @@ export function buildRunEpisode(
       recipeQuality,
       evidence,
     },
+    provenance,
     sources: {
       bundles: bundles.map(({ digest }) => digest),
       unreadableBundles: [...unreadableBundles],
       undigested,
       media,
     },
+  };
+}
+
+const text = (value: unknown): string | null => (typeof value === 'string' && value ? value : null);
+
+function libraryList(identity: BindingIdentity | null | undefined) {
+  const entries: unknown = identity?.libraries;
+  if (!Array.isArray(entries)) return null;
+  return entries
+    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+    .filter((library) => text(library.name))
+    .map((library) => ({
+      name: text(library.name)!,
+      revision: text(library.head),
+      fingerprint: text(library.sourceFingerprint),
+      dirty: text(library.dirtyDigest) !== null,
+    }));
+}
+
+/**
+ * Libraries come from the receipt when it holds them: a repin refreshes the
+ * receipt on the gateway but not the binding. The provider is copied only while
+ * both name the same libraries. An unbound task (`identity: null`) has none.
+ */
+export function episodeProvenance(
+  binding: RecipeBindingDocument | undefined,
+  receipt: BindingReceiptDocument | undefined,
+  mirrored: boolean,
+): RunEpisodeProvenance | null {
+  const bound = libraryList(binding?.identity);
+  const verified = libraryList(receipt?.bindingIdentity);
+  const libraries = verified ?? bound;
+  if (!libraries) return null;
+  const repinned = !!verified && !!bound && JSON.stringify(verified) !== JSON.stringify(bound);
+  const name = text(binding?.provider?.package);
+  const version = text(binding?.provider?.version);
+  return {
+    source: verified ? BINDING_RECEIPT_FILE : RECIPE_BINDING_FILE,
+    provider: name && version && !repinned ? { package: name, version } : null,
+    libraries,
+    recordedAt: verified ? text(receipt?.recordedAt) : null,
+    mirrored,
   };
 }
 
@@ -278,6 +370,21 @@ async function readJson<T>(file: string): Promise<T | undefined> {
 
 export function readRunEpisode(runId: string): Promise<RunEpisode | undefined> {
   return readJson<RunEpisode>(episodeFile(runId));
+}
+
+/** The completion step captured the output, and no agent attempt began after it. */
+function mirroredAtCompletion(run: Run): boolean {
+  const started = run.steps.find((step) => step.name === PipelineSteps.COMPLETE)?.startedAt;
+  const output = run.output;
+  if (!started || !output?.workerFinished || output.captureError) return false;
+  const captured = Date.parse(output.capturedAt);
+  // Work resumed after the capture (a review fix, a send-back) may have repinned.
+  const resumed = (run.agentContexts ?? []).some((context) =>
+    [context.startedAt, context.attemptStartedAt, context.promptDeliveryStartedAt].some(
+      (at) => !!at && Date.parse(at) > captured,
+    ),
+  );
+  return captured >= Date.parse(started) && !resumed;
 }
 
 /** Writes the run's episode; returns null for a run that has not ended. */
@@ -312,7 +419,23 @@ export async function captureRunEpisode(run: Run, now = new Date()): Promise<Run
       }
     }
   }
-  const episode = buildRunEpisode(run, bundles, unreadable, now.toISOString());
+  // The binding and its receipt are small JSON files in the gateway's task copy.
+  // Once retention archives that copy, the earlier episode's provenance is kept.
+  const taskDir = run.taskFile ? path.dirname(run.taskFile) : null;
+  const advisory = <T>(file: string): Promise<T | undefined> =>
+    taskDir
+      ? readJson<T>(path.join(taskDir, file)).catch((error: unknown) => {
+          console.warn(`[run-episode] ${run.id}: ${file} unreadable: ${String(error)}`);
+          return undefined;
+        })
+      : Promise.resolve(undefined);
+  const binding = await advisory<RecipeBindingDocument>(RECIPE_BINDING_FILE);
+  const receipt = await advisory<BindingReceiptDocument>(BINDING_RECEIPT_FILE);
+  const provenance =
+    binding || receipt
+      ? episodeProvenance(binding, receipt, mirroredAtCompletion(run))
+      : ((await readRunEpisode(run.id).catch(() => undefined))?.provenance ?? null);
+  const episode = buildRunEpisode(run, bundles, unreadable, now.toISOString(), provenance);
   await writeAtomicJSON(episodeFile(run.id), episode);
   return episode;
 }
