@@ -162,7 +162,7 @@ export function assertVisualClaimsObserveUi(plan: RecipeEvidencePlan): void {
     if (!closure.size) continue;
     const onScreen = [...closure].some((id) => {
       const node = plan.nodes.get(id);
-      // An unresolved source is the recipe's own validation to report; it never refuses here.
+      // An unresolved source (a state_read nothing checks at plan time) never refuses here.
       if (!node) return true;
       if (node.action.startsWith('ui.')) return true;
       return (
