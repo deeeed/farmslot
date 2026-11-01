@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "An artifact-only run turns its pipeline review off",
+  "description": "Start an isolated gateway with engine start disabled. Through the checkout-local CLI, preview and create an artifact-only dev run with --no-pipeline-review, read it back with run.get, and check that dispatch.preview and run.create refuse pipelineReview none on update-branch, without artifact-only and for an unknown value. No worker, reviewer, operator tmux server, run or slot is used.",
+  "workflow": {
+    "entry": "no-pipeline-review",
+    "nodes": {
+      "no-pipeline-review": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/no-pipeline-review.mts",
+        "timeout_ms": 300000,
+        "intent": "An artifact-only dev run keeps its pipeline review off and reads it back; every request it could not honor is refused and creates nothing.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

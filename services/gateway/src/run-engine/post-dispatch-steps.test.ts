@@ -2793,7 +2793,7 @@ test('a requested gate review whose package meets a stale CI receipt returns to 
   assert.equal(gates, 2, 'the requested review returns to the gate');
 });
 
-test('a validation run with its pipeline review off records the skip and launches no reviewer', async (t) => {
+test('an artifact-only run with its pipeline review off records the skip and launches no reviewer', async (t) => {
   const run = createRun({
     flowType: 'dev',
     project: 'generic-project',
@@ -2804,17 +2804,17 @@ test('a validation run with its pipeline review off records the skip and launche
     pipelineReview: 'none',
   });
   t.after(() => deleteTestRunIfPresent(run.id));
-  assert.equal(run.pipelineReview, 'none', 'run.create reads the policy back');
+  assert.equal(run.pipelineReview, 'none', 'the stored run keeps the policy');
   const result = await executeReviewStep(run.id, {
     ...restartReplayContext(),
-    executeReviewForRun: async () => assert.fail('a validation run with no pipeline review'),
+    executeReviewForRun: async () => assert.fail('an artifact-only run with no pipeline review'),
     createEngineDecision: async () => assert.fail('no review decision'),
   });
   assert.deepEqual(result.outputs, {
     skipped: true,
     reason: 'pipeline-review-off',
     source: 'run-policy',
-    detail: 'Pipeline review is off for this validation run (pipelineReview none, artifact-only).',
+    detail: 'Pipeline review is off for this artifact-only run (pipelineReview none).',
   });
   assert.equal(result.inputs?.enabled, false);
 });

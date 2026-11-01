@@ -1027,7 +1027,7 @@ async function previewDispatch(
       { ...params, ...(params.targetBranch ? { branch: params.targetBranch } : {}) },
       'preview',
       (_plan, planning) =>
-        dispatchPreview(params, {
+        previewDispatch(params, {
           ...internalOptions,
           automaticLoadPinned,
           sourcePlanning: planning,
@@ -1043,7 +1043,7 @@ async function previewDispatch(
   )
     return withSourcePlanning(
       params.project,
-      () => dispatchPreview(params, { ...internalOptions, automaticLoadPinned }),
+      () => previewDispatch(params, { ...internalOptions, automaticLoadPinned }),
       {
         nodeId: params.reviewWorkspaceTarget.machine,
       },

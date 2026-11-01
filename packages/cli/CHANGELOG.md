@@ -4,7 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
-- `farmslot run create` and `farmslot dispatch preview` take `--no-pipeline-review`: an artifact-only validation run with no pipeline review. The preview prints `Review: off (validation run)`.
+- `farmslot run create` and `farmslot dispatch preview` take `--no-pipeline-review`: an artifact-only dev or fix-bug run with no pipeline review. The preview prints `Review: off (artifact-only run)`. The flag is refused on a backlog dispatch, which would drop it.
 - `farmslot slot refresh [slot] --recover` resumes a held slot's failed workspace recovery through the fenced `slot.refresh` path, sending the slot's current workspace identity from `fleet.status`. It refuses when the slot has no workspace identity.
 
 - `farmslot run gate <runId> --action attest-before-attempt --recipe-run <id> --reason <text>` attests a recipe attempt from the same run as before-only evidence at a publish gate (ADR-062 Amendment 21).

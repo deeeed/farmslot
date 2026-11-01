@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- `RunPipelineReviewPolicy` (`'default' | 'none'`) on `Run`, `RunCreateParams` and `DispatchPreviewParams` (with `completionPolicy`), `DispatchPreview.pipelineReview`, and the shared `pipelineReviewOffReason` / `pipelineReviewPolicyError` rule: only an artifact-only validation run may turn its pipeline review off.
+- `RunPipelineReviewPolicy` (`'default' | 'none'`) on `Run`, `RunCreateParams` and `DispatchPreviewParams` (with `completionPolicy`), `DispatchPreview.pipelineReview`, and the shared `pipelineReviewOffReason` / `pipelineReviewPolicyError` rule. Only an artifact-only dev or fix-bug run may turn its pipeline review off, and not alongside `reviewSequence`, `reviewPolicy` or an eval experiment; an unknown value is refused.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.10 - 2026-11-01

@@ -161,7 +161,7 @@ test('an RPC-shaped sourcePlans field cannot forge gateway planning authority', 
   );
 });
 
-test('a validation dispatch that turns the pipeline review off sees it on the preview', async () => {
+test('an artifact-only dispatch that turns the pipeline review off sees it on the preview', async () => {
   const result = await dispatchPreview(
     {
       project: 'demo',
@@ -174,12 +174,27 @@ test('a validation dispatch that turns the pipeline review off sees it on the pr
   );
   assert.deepEqual(result.preview.pipelineReview, {
     policy: 'none',
-    reason: 'Pipeline review is off for this validation run (pipelineReview none, artifact-only).',
+    reason: 'Pipeline review is off for this artifact-only run (pipelineReview none).',
   });
-  // Without the validation run's completion policy the request is refused before any preview work.
+  // Without artifact-only, or on a flow that pushes, the request is refused before any preview work.
   await assert.rejects(
-    dispatchPreview({ project: 'demo', flowType: 'dev', ticketOrPr: 'TAT-1', pipelineReview: 'none' }),
-    /pipelineReview none is only for validation runs: set completionPolicy artifact-only/,
+    dispatchPreview({
+      project: 'demo',
+      flowType: 'dev',
+      ticketOrPr: 'TAT-1',
+      pipelineReview: 'none',
+    }),
+    /pipelineReview none is only for artifact-only runs: set completionPolicy artifact-only/,
+  );
+  await assert.rejects(
+    dispatchPreview({
+      project: 'demo',
+      flowType: 'update-branch',
+      ticketOrPr: 'org/repo#1',
+      completionPolicy: 'artifact-only',
+      pipelineReview: 'none',
+    }),
+    /only for dev and fix-bug runs; a update-branch run/,
   );
   const plain = await dispatchPreview(
     { project: 'demo', flowType: 'dev', ticketOrPr: 'TAT-1' },
