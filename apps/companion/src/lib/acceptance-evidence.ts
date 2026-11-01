@@ -10,6 +10,8 @@ import {
   type EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
 
+import type { EvidenceAcceptanceReview } from '../components/EvidenceAcOverlay';
+
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
 import type { AcceptanceLedgerRow, AcceptanceLedgerView } from './task-progress-view';
 
@@ -123,4 +125,18 @@ export function acceptanceEvidenceHref(
       ...(decisionId ? { evidenceDecision: decisionId } : {}),
     },
   };
+}
+
+/**
+ * The criteria a recording's overlay may act on. The viewer keeps the evidence it opened on;
+ * when the run has recorded newer evidence since, verdicts would judge files the screen does
+ * not show, so they wait for a reopen.
+ */
+export function recordingAcceptanceReview(
+  review: EvidenceAcceptanceReview | undefined,
+  openedEvidenceKey: string | null | undefined,
+): EvidenceAcceptanceReview | undefined {
+  if (!review || openedEvidenceKey === undefined || review.evidenceKey === openedEvidenceKey)
+    return review;
+  return { ...review, record: undefined, stale: true };
 }

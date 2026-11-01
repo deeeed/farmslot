@@ -12,6 +12,7 @@ import {
   type AcceptanceStatusLedger,
   Methods,
   type OutputReviewPayload,
+  recordedEvidenceClosureIdentity,
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -45,6 +46,11 @@ export interface RunAcceptance {
     reason?: string,
   ): Promise<void>;
   recipeRunId: string | null;
+  /**
+   * Which recorded evidence the model shows: its execution and checked files. Verdicts
+   * leave it unchanged; a newer recording replaces it. Null without recorded evidence.
+   */
+  evidenceKey: string | null;
   acceptanceStatus: AcceptanceStatusLedger | null;
   acceptanceCriteria: AcceptanceCriterionRef[] | null;
   acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null;
@@ -211,6 +217,7 @@ export function useRunAcceptance(
         await recordVisualClaimReview(client, runId, evidenceModel, claimId, verdict, reason);
       },
       recipeRunId: evidence?.selectedRecipeRunId ?? null,
+      evidenceKey: recordedEvidenceKey(evidence?.recordedEvidence?.input),
       acceptanceStatus,
       acceptanceCriteria,
       acceptanceEvidenceLinks,
@@ -245,4 +252,11 @@ export function useRunAcceptance(
     gate,
     options.reportSnapshot,
   ]);
+}
+
+function recordedEvidenceKey(
+  input: Parameters<typeof recordedEvidenceClosureIdentity>[0] | undefined,
+): string | null {
+  if (!input?.claims?.recipeRunId) return null;
+  return recordedEvidenceClosureIdentity(input);
 }

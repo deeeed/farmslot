@@ -18,6 +18,10 @@ export interface EvidenceAcceptanceReview {
   rows: readonly AcceptanceClaimRow[];
   /** Records Looks right / Issue; absent while the run takes no verdicts. */
   record?: (id: string, verdict: 'confirmed' | 'rejected', reason?: string) => Promise<void>;
+  /** The recorded evidence the rows and verdicts belong to (`useRunAcceptance().evidenceKey`). */
+  evidenceKey: string | null;
+  /** The run recorded newer evidence than the recording on screen: judge after reopening. */
+  stale?: boolean;
 }
 
 /**
@@ -73,6 +77,11 @@ export function EvidenceAcOverlay({
       </Pressable>
       {open ? (
         <View style={styles.panel} testID="evidence-ac-overlay">
+          {review.stale ? (
+            <Text style={styles.entryText} testID="evidence-ac-stale">
+              Evidence changed · reopen to judge
+            </Text>
+          ) : null}
           <View style={styles.stepRow}>
             <Pressable
               testID="evidence-ac-previous"

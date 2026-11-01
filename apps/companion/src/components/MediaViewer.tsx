@@ -29,6 +29,7 @@ import {
 import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
 import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
+import { recordingAcceptanceReview } from '../lib/acceptance-evidence';
 import {
   type ArtifactHttpHeaders,
   type ArtifactMediaType,
@@ -68,6 +69,8 @@ export interface MediaViewerItem {
   evidenceModel?: EvidenceReviewModel;
   initialTraceIndex?: number;
   sharedArtifact?: SharedRunArtifactSelection;
+  /** The recorded evidence this item opened on; verdicts over it need the same evidence. */
+  evidenceKey?: string | null;
 }
 
 interface MediaViewerProps {
@@ -618,6 +621,7 @@ function FullscreenVideo({
     [applyPlayback, item.uri, model, onViewSelectionChange, player, videoPath],
   );
 
+  const review = recordingAcceptanceReview(acceptance, item.evidenceKey);
   const timeline = model?.recordings.find((recording) => recording.videoPath === videoPath);
   const groups = model?.timelineGroups(videoPath, undefined, durationMs) ?? [];
   return (
@@ -640,12 +644,12 @@ function FullscreenVideo({
         {model?.selection?.message ? (
           <Text style={styles.detailText}>{model.selection.message}</Text>
         ) : null}
-        {model && timeline && acceptance ? (
+        {model && timeline && review ? (
           <EvidenceAcOverlay
             model={model}
             videoPath={videoPath}
             durationMs={durationMs}
-            review={acceptance}
+            review={review}
             maxListHeight={height * 0.28}
             onChoose={chooseClaim}
           />

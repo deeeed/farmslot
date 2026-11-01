@@ -79,6 +79,7 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
         pendingVisualClaimIds: evidenceModel.pendingVisualClaimIds,
       }),
       record: acceptance.commandsReady ? acceptance.recordVisualReview : undefined,
+      evidenceKey: acceptance.evidenceKey,
     };
   }, [acceptance]);
   const items = useMemo<MediaViewerItem[]>(
@@ -91,6 +92,7 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
         authHeaders,
         path: item.path,
         evidenceModel: acceptance.evidenceModel ?? undefined,
+        evidenceKey: acceptance.evidenceKey,
         resolveArtifactUrl,
         sharedArtifact: {
           runId,
@@ -101,6 +103,7 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
         },
       })),
     [
+      acceptance.evidenceKey,
       acceptance.evidenceModel,
       acceptance.recipeRunId,
       authHeaders,

@@ -7,6 +7,7 @@ import {
   acceptanceEvidenceHref,
   acceptanceEvidenceStrip,
   acceptanceEvidenceViewer,
+  recordingAcceptanceReview,
 } from './acceptance-evidence';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
 import { acceptanceLedgerView } from './task-progress-view';
@@ -123,4 +124,29 @@ test('the evidence route opens the run files viewer on the task artifact', () =>
       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
     },
   });
+});
+
+test('verdicts over a recording act only on the evidence it opened on', async () => {
+  const recorded: string[] = [];
+  const live = (key: string | null) => ({
+    rows: [],
+    evidenceKey: key,
+    record: async (id: string) => {
+      recorded.push(`${key}:${id}`);
+    },
+  });
+  // A verdict refreshes the rows and callback but keeps the evidence: the next one still acts.
+  const first = recordingAcceptanceReview(live('A'), 'A');
+  await first?.record?.('AC-1', 'confirmed');
+  const second = recordingAcceptanceReview(live('A'), 'A');
+  assert.equal(second?.stale, undefined);
+  await second?.record?.('AC-2', 'rejected');
+  assert.deepEqual(recorded, ['A:AC-1', 'A:AC-2']);
+  // Newer evidence while the recording stays on the old files: no verdicts, a reopen hint.
+  const replaced = recordingAcceptanceReview(live('B'), 'A');
+  assert.equal(replaced?.record, undefined);
+  assert.equal(replaced?.stale, true);
+  // A recording opened without knowing its evidence keeps the live review as it is.
+  assert.equal(recordingAcceptanceReview(live('B'), undefined)?.stale, undefined);
+  assert.equal(recordingAcceptanceReview(undefined, 'A'), undefined);
 });
