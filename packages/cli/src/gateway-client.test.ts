@@ -132,8 +132,9 @@ for (const [name, target, reason] of [
     async (t) => {
       const url = await target(t);
       for (const open of [
-        () => new GatewayClient({ url, timeout: 2000 }).call('gateway.status'),
-        () => new GatewayClient({ url, timeout: 2000 }).connect(),
+        () =>
+          new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 0 }).call('gateway.status'),
+        () => new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 0 }).connect(),
       ]) {
         await assert.rejects(open(), (error: unknown) => {
           assert.ok(error instanceof GatewayConnectionError);
@@ -180,4 +181,123 @@ test('the failure reason lists every address tried and skips empty causes', () =
   ] as const) {
     assert.equal(connectionFailed(cause).message, message);
   }
+});
+
+/** Starts answering on a refused port after `afterMs`, as a reloaded gateway does. */
+async function reloadingGateway(t: TestContext, afterMs: number) {
+  const url = await closedPort();
+  const requests: string[] = [];
+  const timer = setTimeout(() => {
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: Number(new URL(url).port) });
+    t.after(() => wss.close());
+    wss.on('connection', (ws) =>
+      ws.on('message', (raw) => {
+        const { id, method } = JSON.parse(String(raw)) as { id: string; method: string };
+        requests.push(method);
+        ws.send(JSON.stringify({ type: 'res', id, ok: true, payload: { served: true } }));
+      }),
+    );
+  }, afterMs);
+  t.after(() => clearTimeout(timer));
+  return { url, requests };
+}
+
+test('both entry points wait out a gateway reload and reach it once it listens', async (t) => {
+  t.mock.method(process.stderr, 'write', () => true);
+  const { url, requests } = await reloadingGateway(t, 600);
+  const client = () => new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 10_000 });
+  assert.deepEqual(await client().call('fleet.status'), { served: true });
+  const connection = await client().connect();
+  assert.deepEqual(await connection.call('gateway.status'), { served: true });
+  connection.close();
+  // Each request reached the gateway once.
+  assert.deepEqual(requests, ['fleet.status', 'gateway.status']);
+});
+
+test('a reload that outlasts the wait fails with the transport reason', async (t) => {
+  const notices: string[] = [];
+  t.mock.method(process.stderr, 'write', (text: string) => {
+    notices.push(text);
+    return true;
+  });
+  const url = await closedPort();
+  const started = Date.now();
+  await assert.rejects(
+    new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 700 }).call('gateway.status'),
+    (error: unknown) =>
+      error instanceof GatewayConnectionError &&
+      /^Connection failed — is the gateway running\? \(connect ECONNREFUSED 127\.0\.0\.1:\d+\)$/.test(
+        error.message,
+      ),
+  );
+  assert.ok(Date.now() - started >= 250, 'it retried before giving up');
+  assert.ok(Date.now() - started < 2000, 'the wait is bounded');
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /not accepting connections \(reloading\?\); retrying for up to 1s/);
+});
+
+test('FARMSLOT_GATEWAY_RECONNECT_MS=0 fails a refused call at once', async (t) => {
+  const previous = process.env.FARMSLOT_GATEWAY_RECONNECT_MS;
+  process.env.FARMSLOT_GATEWAY_RECONNECT_MS = '0';
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_GATEWAY_RECONNECT_MS;
+    else process.env.FARMSLOT_GATEWAY_RECONNECT_MS = previous;
+  });
+  const url = await closedPort();
+  const started = Date.now();
+  await assert.rejects(
+    new GatewayClient({ url, timeout: 2000 }).call('gateway.status'),
+    GatewayConnectionError,
+  );
+  assert.ok(Date.now() - started < 200);
+});
+
+test('a failure after the socket opened is not retried, so no request is sent twice', async (t) => {
+  const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(wss, 'listening');
+  t.after(() => wss.close());
+  let requests = 0;
+  wss.on('connection', (ws) =>
+    ws.on('message', () => {
+      requests += 1;
+      ws.terminate();
+    }),
+  );
+  const url = `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`;
+  await assert.rejects(
+    new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 10_000 }).call('run.create'),
+    (error: unknown) => error instanceof GatewayConnectionError && !error.reconnectable,
+  );
+  assert.equal(requests, 1);
+});
+
+test('only a reload-shaped failure before the socket opens is worth waiting for', () => {
+  for (const [cause, beforeOpen, reconnectable] of [
+    [new Error('connect ECONNREFUSED 127.0.0.1:7801'), true, true],
+    [new Error('Unexpected server response: 503'), true, true],
+    [new Error('socket hang up'), true, true],
+    [
+      new AggregateError([
+        new Error('connect ECONNREFUSED ::1:7801'),
+        new Error('connect ECONNREFUSED 127.0.0.1:7801'),
+      ]),
+      true,
+      true,
+    ],
+    // A wrong host, a timeout or a refused credential will not fix itself.
+    [new Error('getaddrinfo ENOTFOUND gateway.invalid'), true, false],
+    [new Error('connect ETIMEDOUT 10.0.0.9:7801'), true, false],
+    [new Error('Unexpected server response: 401'), true, false],
+    [
+      new AggregateError([
+        new Error('connect ETIMEDOUT fe80::1:7801'),
+        new Error('connect ECONNREFUSED 127.0.0.1:7801'),
+      ]),
+      true,
+      false,
+    ],
+    [new Error('connect ECONNREFUSED 127.0.0.1:7801'), false, false],
+    [undefined, true, false],
+  ] as const)
+    assert.equal(connectionFailed(cause, beforeOpen).reconnectable, reconnectable, String(cause));
 });
