@@ -249,8 +249,10 @@ function terminalHtml(): string {
       background: rgba(18,18,26,0.96);
       font: 12px/1.3 ${JSON.stringify(fonts.mono)}, Menlo, Monaco, Consolas, monospace;
     }
+    /* One corner for both: the screen's floating actions cover the bottom right. */
     #status, #readonly {
       position: absolute;
+      top: 8px;
       right: 8px;
       z-index: 4;
       max-width: 70%;
@@ -261,11 +263,7 @@ function terminalHtml(): string {
       font: 10px/1.2 ${JSON.stringify(fonts.mono)}, Menlo, Monaco, Consolas, monospace;
       pointer-events: none;
     }
-    #status {
-      top: 8px;
-    }
     #readonly {
-      bottom: max(8px, env(safe-area-inset-bottom));
       display: none;
       opacity: 0.55;
     }
@@ -326,9 +324,14 @@ function terminalHtml(): string {
         window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(message));
       }
 
+      // A read-only reason outranks a passing status in the shared corner.
+      function showStatus() {
+        status.style.display = status.textContent && !readOnly ? 'block' : 'none';
+      }
+
       function setStatus(text) {
         status.textContent = text || '';
-        status.style.display = text ? 'block' : 'none';
+        showStatus();
       }
 
       // Keys reach the terminal only in direct input mode; otherwise the screen's input line sends them.
@@ -352,6 +355,7 @@ function terminalHtml(): string {
         readOnly = Boolean(text);
         readonly.textContent = text || '';
         readonly.style.display = text ? 'block' : 'none';
+        showStatus();
         applyInputMode();
       }
 

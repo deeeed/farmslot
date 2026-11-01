@@ -250,6 +250,7 @@ export default function SlotDiffViewerScreen() {
             { observation: slotRunObservation, label: 'slot context' },
             { observation: runObservation, label: 'slot diff run' },
             { observation: recipeObservation, label: 'slot diff recipe inventory' },
+            { observation: diffObservation, label: 'workspace diff' },
           ]}
           onRetry={() => void retryRead()}
           retryLabel="Retry slot diff reads"
@@ -320,12 +321,6 @@ export default function SlotDiffViewerScreen() {
             />
           </View>
         ) : null}
-        <ResourceReadStatus
-          observation={diffObservation}
-          label="workspace diff"
-          onRetry={() => void retryRead()}
-          retryLabel="Retry slot diff reads"
-        />
         {pathParamError ? <Text style={styles.errorText}>{pathParamError}</Text> : null}
         {diffText ? (
           <MobileDiffViewer

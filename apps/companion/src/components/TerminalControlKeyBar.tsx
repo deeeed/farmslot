@@ -90,7 +90,7 @@ function RunnerKeyRows({
   pane: TerminalRunnerPane | null;
   renderKey: RenderKey;
 }) {
-  const { context, error } = usePaneRunnerContext(pane);
+  const { context } = usePaneRunnerContext(pane);
   const overrides = useTerminalPrefsStore((s) => s.runnerKeyOverrides);
   const customKeys = useTerminalPrefsStore((s) => s.customKeys);
   const setRunnerKeyOverride = useTerminalPrefsStore((s) => s.setRunnerKeyOverride);
@@ -117,7 +117,6 @@ function RunnerKeyRows({
         >
           <Text style={styles.chipText}>＋ Your keys</Text>
         </Pressable>
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
       </View>
       {terminalExtraKeyRows(resolved.profile, customKeys).map((row) => (
         <View key={row.id} testID={`terminal-${row.id}-keys-row`} style={styles.extraRow}>
@@ -216,5 +215,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   dangerText: { color: colors.statusFail },
-  errorText: { color: colors.statusFail, fontSize: fonts.sizeXs },
 });

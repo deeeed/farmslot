@@ -300,6 +300,15 @@ export default function WorkerTerminalScreen() {
     );
   }, []);
 
+  // A request the dropped socket rejected belongs to the outage: quiet within the reconnect
+  // grace, and the terminal's own status past it. Only a failure on a live socket shows here.
+  const requestFailed = useCallback(
+    (err: unknown) => {
+      if (client?.connectionState === 'connected') setError(getErrorMessage(err));
+    },
+    [client],
+  );
+
   const loadSnapshot = useCallback(async () => {
     if (!client || status !== 'connected' || !worker) return;
     try {
@@ -315,9 +324,9 @@ export default function WorkerTerminalScreen() {
       terminalRef.current?.reset(text);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      requestFailed(err);
     }
-  }, [client, status, worker]);
+  }, [client, requestFailed, status, worker]);
 
   useEffect(() => {
     void loadSnapshot();
@@ -340,7 +349,7 @@ export default function WorkerTerminalScreen() {
       .then(() => {
         setError(null);
       })
-      .catch((err: Error) => setError(err.message));
+      .catch(requestFailed);
     return () => {
       mounted = false;
       unsub();
@@ -350,7 +359,7 @@ export default function WorkerTerminalScreen() {
         console.warn(`[terminal-worker] unsubscribe failed for ${worker.target}: ${err.message}`);
       });
     };
-  }, [appendTerminalTail, client, status, worker]);
+  }, [appendTerminalTail, client, requestFailed, status, worker]);
 
   useEffect(() => {
     let disposed = false;
@@ -482,7 +491,7 @@ export default function WorkerTerminalScreen() {
         paneGone
           ? paneGoneMessage
           : !connectionReady
-            ? 'Not connected to the gateway.'
+            ? 'Offline'
             : (inventoryError?.message ??
               'The window list is still loading. Try again in a moment.'),
       );
@@ -578,9 +587,9 @@ export default function WorkerTerminalScreen() {
           { worker, cols: size.cols, rows: size.rows },
           10_000,
         )
-        .catch((err: Error) => setError(err.message));
+        .catch(requestFailed);
     },
-    [client, worker, requireWorkerInventory],
+    [client, worker, requireWorkerInventory, requestFailed],
   );
 
   useEffect(() => {
@@ -822,7 +831,8 @@ export default function WorkerTerminalScreen() {
             </Pressable>
           </View>
         )}
-        {paneGone || inventoryError || inventory.status === 'unsupported' ? (
+        {/* Offline, the terminal's own status says so; a failed read would only repeat it. */}
+        {paneGone || (heldConnected && (inventoryError || inventory.status === 'unsupported')) ? (
           <View>
             <Text style={styles.error}>
               {paneGone
@@ -835,7 +845,7 @@ export default function WorkerTerminalScreen() {
                 if (workerQuery) void getResourceCache()?.retry(workerQuery);
               }}
             >
-              <Text style={styles.headerButtonText}>Retry worker inventory</Text>
+              <Text style={styles.headerButtonText}>Retry</Text>
             </Pressable>
           </View>
         ) : null}
@@ -853,9 +863,7 @@ export default function WorkerTerminalScreen() {
             onInput={sendInput}
             onResize={resize}
             rawHistoryText={terminalTailTextRef.current}
-            readOnlyReason={
-              !worker ? 'Missing worker target' : !heldConnected ? 'Not connected' : null
-            }
+            readOnlyReason={!worker ? 'Missing worker target' : !heldConnected ? 'Offline' : null}
           />
         </View>
         {showVoiceComposer ? (

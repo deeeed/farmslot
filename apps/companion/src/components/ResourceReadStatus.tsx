@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { type ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -11,6 +11,8 @@ import {
 } from '../lib/resource-read-status';
 import { baseStyles, colors, spacing } from '../lib/theme';
 import { useHeldConnection } from '../store/held-connection';
+
+import { OfflineShown } from './offline-shown';
 
 type ResourceReadStatusProps = {
   /** A persistent condition of the view itself, shown in the same fixed slot. */
@@ -36,6 +38,7 @@ export function ResourceReadStatus({
   const [now, setNow] = useState(Date.now());
   const [details, setDetails] = useState(false);
   const connected = useHeldConnection();
+  const offlineShown = useContext(OfflineShown);
   const reads = observations ?? (observation && label ? [{ observation, label }] : []);
   const stale = reads.some((read) => read.observation.status === 'stale' && read.observation.data);
   useEffect(() => {
@@ -44,7 +47,10 @@ export function ResourceReadStatus({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [stale]);
-  const messages = [...resourceReadMessages(reads, now, connected), ...(notice ? [notice] : [])];
+  const messages = [
+    ...resourceReadMessages(reads, now, connected, !offlineShown),
+    ...(notice ? [notice] : []),
+  ];
   const text = messages.join(' · ');
   useEffect(() => {
     if (!text) setDetails(false);
@@ -64,6 +70,7 @@ export function ResourceReadStatus({
             </Text>
           </Pressable>
           {onRetry &&
+          connected &&
           reads.some((read) =>
             visibleReadError(read.observation, savedForDisplay(read.observation, connected, now)),
           ) ? (
