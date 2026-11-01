@@ -1,1 +1,1 @@
-export { default } from '../../features/terminal/WorkerTerminalScreen';
+export { default } from '../../features/terminal/TerminalScreen';

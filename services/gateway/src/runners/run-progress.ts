@@ -2,6 +2,7 @@ import {
   ACTIVE_RUN_STATUSES,
   type AgentContext,
   type AgentRole,
+  nativeWorkerBindingIsHeld,
   normalizeRunner,
   type Run,
   type RunGateReadiness,
@@ -106,6 +107,14 @@ async function observeContext(
 ): Promise<RunProgressObservation> {
   const activeRole = context?.role;
   if (run.reviewWorkspace?.cleanedAt) return { kind: 'idle', activeRole };
+  // A released binding, or a closed one with no recovery pending, has no runner left. A
+  // blocked reviewer whose session was closed must not keep the worker from reading idle.
+  if (
+    context?.nativeSession &&
+    !run.reviewWorkspace &&
+    !nativeWorkerBindingIsHeld(context.nativeSession)
+  )
+    return { kind: 'idle', activeRole };
   if (run.transport === 'native' || context?.nativeSession) {
     const snapshot = run.reviewWorkspace
       ? await source.workspace(run.id, { allowGate: true })

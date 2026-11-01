@@ -49,13 +49,18 @@ export function readErrorMessage(
   return visibleReadError(observation, savedForDisplay(observation, connected, now))?.message;
 }
 
-/** A connected reread in flight, or one the gateway superseded within its grace, stays quiet. */
+/**
+ * A connected reread in flight, or one the gateway superseded within its grace, stays quiet.
+ * Offline, a read error is the outage's: a read with nothing to show says "Offline" once, and
+ * not at all (`offlineNotice` false) where the banner or the screen itself already says so.
+ */
 export function resourceReadMessages(
   reads: readonly LabelledReadObservation[],
   now: number,
   connected: boolean,
+  offlineNotice = true,
 ): string[] {
-  return reads.flatMap(({ label, observation }) => {
+  const messages = reads.flatMap(({ label, observation }) => {
     if (observation.status === 'ready' || observation.status === 'loading') return [];
     const messages: string[] = [];
     const saved = savedForDisplay(observation, connected, now);
@@ -63,13 +68,15 @@ export function resourceReadMessages(
       ? observation.sourceObservation.observedAt
       : observation.observedAt;
     if (saved && observedAt !== undefined)
-      messages.push(
-        `Saved ${label}, ${sourceObservationAge(observedAt, now)}. Actions wait for a current read.`,
-      );
-    if (observation.status === 'unsupported')
-      messages.push(`Live ${label} updates are unavailable on this gateway.`);
-    const error = visibleReadError(observation, saved);
+      messages.push(`Saved ${label} · ${sourceObservationAge(observedAt, now)}`);
+    if (observation.status === 'unsupported') messages.push(`No live ${label} updates`);
+    const error = connected ? visibleReadError(observation, saved) : undefined;
     if (error) messages.push(`Could not read ${label}: ${error.message}`);
     return messages;
   });
+  const offline =
+    offlineNotice &&
+    !connected &&
+    reads.some(({ observation }) => observation.error && observation.data === undefined);
+  return offline ? ['Offline', ...messages] : messages;
 }

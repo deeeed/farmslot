@@ -542,6 +542,41 @@ test('slotRefreshBlockedReason rejects busy lifecycle even without currentRunId'
   assert.match(reason ?? '', /refresh would discard/);
 });
 
+test('slotRefreshBlockedReason names the --recover exit for a slot with recovery in flight', () => {
+  const identity = {
+    epoch: 3,
+    currentRunId: null,
+    cleanupRunId: null,
+    handoffRunId: null,
+    branch: 'main',
+    headSha: 'abc123',
+    dirtyFingerprint: 'clean',
+    recoveryId: 'rec-1',
+  };
+  const reason = slotRefreshBlockedReason(
+    makeSlot({
+      slot: 'demo-1',
+      lifecycle: 'held',
+      workspace: {
+        ...identity,
+        observedAt: '2026-01-01T00:00:00.000Z',
+        localDefaultSha: null,
+        defaultFetchedAt: null,
+        remoteDefaultSha: null,
+        remoteObservedAt: null,
+        behind: null,
+        remoteAdvanced: false,
+        publication: 'baseline',
+        dirtyCount: 0,
+        unpublishedCount: 0,
+        recovery: { id: 'rec-1', identity, completed: [], phase: 'reset' },
+      },
+    }),
+  );
+  assert.match(reason ?? '', /demo-1 requires verified recovery/);
+  assert.match(reason ?? '', /farmslot slot refresh <slot> --recover/);
+});
+
 test('slotRefreshBlockedReason rejects held lifecycle and includes run reference', () => {
   const reason = slotRefreshBlockedReason(
     makeSlot({

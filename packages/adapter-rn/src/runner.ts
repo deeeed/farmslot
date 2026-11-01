@@ -65,6 +65,8 @@ export interface ExpoRecipeRunOptions {
   dryRun?: boolean;
   json?: boolean;
   recordVideo?: boolean | RecipeVideoRecordingOptions;
+  /** Why a UI recipe runs without video (the runner requires one to turn it off). */
+  recordingReason?: string;
   metroHost?: string;
   metroPort?: number;
   params?: Record<string, unknown>;
@@ -168,6 +170,7 @@ export async function runExpoRecipeDocument(
         FARMSLOT_RECIPE_ARTIFACTS_DIR: artifactsDir,
       },
       recordVideo: options.recordVideo,
+      ...(options.recordingReason ? { recordingReason: options.recordingReason } : {}),
       ...trust,
       ...(claims ? { claims } : {}),
     });

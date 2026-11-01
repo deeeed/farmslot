@@ -16,10 +16,11 @@ import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 import { GatewayMethodError } from '../core/method-error.js';
 import { admitReviewRound, settleReviewRoundNoVerdict } from '../review/review-round-budget.js';
 import { TerminalReviewArtifactError } from '../review/terminal-result.js';
+import type { RunProgressObservation } from '../runners/run-progress.js';
 import { createRun, getAllRuns, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { resolveEngineDecision, setEngineDecisionRuntime } from './engine-decisions.js';
-import { BlockedRunError } from './errors.js';
+import { BlockedRunError, OwnedWorkerBusyError } from './errors.js';
 import {
   executePublishGateReviewPlan,
   executeReadyGate,
@@ -983,6 +984,146 @@ test(
     assert.notEqual(held.status, 'failed');
     assert.equal(resolveEngineDecision(card.id, 'abort'), true);
     assert.equal(await execution, 'abort');
+  },
+);
+
+test('a gate that finds its worker busy waits for it to go idle and builds the package itself', async (t) => {
+  const { run, next } = sourceGateFixture(t);
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  let builds = 0;
+  const progress: RunProgressObservation['kind'][] = ['making-progress', 'idle'];
+  const execution = executeReadyGate(run.id, {
+    ensurePackage: async () => {
+      if (++builds === 1) throw new OwnedWorkerBusyError(); // compacting when the gate opened
+      return prepared;
+    },
+    readProgress: async (): Promise<RunProgressObservation> => ({
+      kind: progress.shift() ?? 'idle',
+    }),
+    workerIdleWait: { pollMs: 1, maxPollMs: 1, timeoutMs: 2_000 },
+  });
+  const card = await next(execution);
+  assert.equal(builds, 2, 'the package was built once the worker went idle');
+  assert.equal(progress.length, 0, 'it waited through the busy reading');
+  assert.doesNotMatch(card.description, /unavailable/);
+  assert.ok(card.payload?.kind === 'ready' && card.payload.prPackage);
+  assert.equal(resolveEngineDecision(card.id, 'abort'), true);
+  assert.equal(await execution, 'abort');
+});
+
+test('a worker still busy after the bounded wait leaves the visible Retry Gate card', async (t) => {
+  const { run, next } = sourceGateFixture(t);
+  const execution = executeReadyGate(run.id, {
+    ensurePackage: async () => {
+      throw new OwnedWorkerBusyError();
+    },
+    readProgress: async (): Promise<RunProgressObservation> => ({ kind: 'making-progress' }),
+    workerIdleWait: { pollMs: 1, maxPollMs: 1, timeoutMs: 20 },
+  });
+  const card = await next(execution);
+  assert.match(card.description, /Wait for the owned worker to be idle/);
+  assert.deepEqual(
+    card.actions.map((entry) => entry.id),
+    ['hold'],
+  );
+  assert.equal(resolveEngineDecision(card.id, 'abort'), true);
+  assert.equal(await execution, 'abort');
+});
+
+test('a worker that cannot go idle by itself gets the card without waiting out the bound', async (t) => {
+  const { run, next } = sourceGateFixture(t);
+  let reads = 0;
+  const execution = executeReadyGate(run.id, {
+    ensurePackage: async () => {
+      throw new OwnedWorkerBusyError();
+    },
+    readProgress: async (): Promise<RunProgressObservation> => {
+      reads++;
+      return { kind: 'unproven' }; // its pane vanished, e.g. after a slot reboot
+    },
+    workerIdleWait: { pollMs: 1, maxPollMs: 1, timeoutMs: 60_000 },
+  });
+  const card = await next(execution);
+  assert.equal(reads, 1);
+  assert.match(card.description, /Wait for the owned worker to be idle/);
+  assert.equal(resolveEngineDecision(card.id, 'abort'), true);
+  assert.equal(await execution, 'abort');
+});
+
+test('a replay during the worker probe stops the wait without preparing again', async (t) => {
+  const { run } = sourceGateFixture(t);
+  let builds = 0;
+  const before = getRun(run.id)!.decisions.length;
+  const result = await executeReadyGate(run.id, {
+    ensurePackage: async () => {
+      builds++;
+      throw new OwnedWorkerBusyError();
+    },
+    readProgress: async (): Promise<RunProgressObservation> => {
+      const latest = getRun(run.id)!;
+      updateRun(run.id, {
+        engineState: {
+          ...latest.engineState,
+          generation: (latest.engineState?.generation ?? 0) + 1,
+        },
+      });
+      return { kind: 'idle' };
+    },
+    workerIdleWait: { pollMs: 1, maxPollMs: 1, timeoutMs: 2_000 },
+  });
+  assert.equal(result, 'abort');
+  assert.equal(builds, 1, 'the stale gate prepared nothing after the replay');
+  assert.equal(getRun(run.id)!.decisions.length, before, 'no card was opened');
+});
+
+test('Retry Gate on a worker that stayed busy waits for it again', async (t) => {
+  const { run, next } = sourceGateFixture(t);
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  let builds = 0;
+  let retried = false;
+  let probesAfterRetry = 0;
+  const execution = executeReadyGate(run.id, {
+    ensurePackage: async () => {
+      builds++;
+      if (builds < 3) throw new OwnedWorkerBusyError();
+      return prepared;
+    },
+    readProgress: async (): Promise<RunProgressObservation> => {
+      if (!retried) return { kind: 'making-progress' };
+      // Still busy right after Retry Gate, idle on the next probe.
+      return { kind: ++probesAfterRetry < 2 ? 'making-progress' : 'idle' };
+    },
+    workerIdleWait: { pollMs: 1, maxPollMs: 1, timeoutMs: 20 },
+  });
+  const timedOut = await next(execution);
+  assert.match(timedOut.description, /Wait for the owned worker to be idle/);
+  retried = true;
+  assert.equal(resolveEngineDecision(timedOut.id, 'hold'), true);
+  // The step re-presents the gate after a hold; here the package was built first.
+  assert.equal(await execution, 'hold');
+  assert.equal(probesAfterRetry, 2, 'Retry Gate waited for the worker again');
+  assert.equal(builds, 3);
+});
+test(
+  'a gate re-presented after a replay superseded its step presents nothing',
+  { timeout: 5_000 },
+  async (t) => {
+    const { run } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    // The step started at generation 0; a replay moved the run on during its slow review work.
+    updateRun(run.id, { engineState: { ...getRun(run.id)!.engineState, generation: 1 } });
+    const before = getRun(run.id)!.decisions.length;
+    assert.equal(
+      await executeReadyGate(run.id, { ensurePackage: async () => prepared, generation: 0 }),
+      'abort',
+    );
+    assert.equal(getRun(run.id)!.decisions.length, before, 'no gate decision was opened');
   },
 );
 

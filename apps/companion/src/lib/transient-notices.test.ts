@@ -8,7 +8,7 @@ import { readErrorMessage, resourceReadMessages, savedForDisplay } from './resou
 /** Every notice Companion raised from a routine refresh before the held-data audit. */
 const TRANSIENT_TEXTS = [
   /Actions wait for a current read/,
-  /Saved \w+, \d+\w? old/,
+  /Saved \w+ · \d+\w? old/,
   /Runner keys wait for current worker inventory/,
   /Fleet source is stale/,
   /The file observation changed during this read/,
@@ -59,7 +59,7 @@ test('no saved, stale or wait notice renders for a routine refresh or a short re
   }
   // A real, persistent failure still says so, once.
   const outage = resourceReadMessages([{ label: 'runs', observation: routine[0]![1] }], now, false);
-  assert.deepEqual(outage, ['Saved runs, 5s old. Actions wait for a current read.']);
+  assert.deepEqual(outage, ['Saved runs · 5s old']);
   // Reads that keep failing past the shared threshold are saved data and say so.
   const failing = routine[1]![1];
   assert.match(

@@ -255,14 +255,6 @@ const FEATURES = [
     stylesFile: 'run-detail.styles',
     stylesExport: 'runDetailStyles',
   },
-  {
-    route: 'app/terminal/[slotId].tsx',
-    featureDir: 'features/terminal',
-    screenFile: 'SlotTerminalScreen',
-    panelsFile: 'slot-terminal-panels',
-    stylesFile: 'slot-terminal.styles',
-    stylesExport: 'slotTerminalStyles',
-  },
 ];
 
 for (const entry of FEATURES) {

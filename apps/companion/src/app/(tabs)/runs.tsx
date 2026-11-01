@@ -855,7 +855,7 @@ export default function RunsScreen() {
                 ? showAllRuns
                   ? 'No runs found'
                   : 'No active runs'
-                : 'Connect to gateway to see runs'}
+                : ''}
             </Text>
           </View>
         )

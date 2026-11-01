@@ -1,12 +1,7 @@
-import { Stack } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 
-import TerminalScreen from '../../features/terminal/SlotTerminalScreen';
-
-export default function RunTerminalRoute() {
-  return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      <TerminalScreen />
-    </>
-  );
+/** Old review-worktree terminal links open the one terminal on that run's pane. */
+export default function LegacyRunTerminalRoute() {
+  const params = useLocalSearchParams();
+  return <Redirect href={{ pathname: '/terminal/worker', params }} />;
 }

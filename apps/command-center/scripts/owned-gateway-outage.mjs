@@ -98,7 +98,8 @@ export async function withOwnedGatewayOffline(prove, { beforeStop } = {}) {
     return true;
   }
   async function waitForPort(expected) {
-    const deadline = Date.now() + 30000;
+    // A restarting gateway on a loaded host has taken 38 s to listen again.
+    const deadline = Date.now() + 90000;
     while (Date.now() < deadline) {
       if ((await listening()) === expected) return;
       await delay(50);

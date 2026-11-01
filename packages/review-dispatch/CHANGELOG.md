@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `nativeWorkerTargetLive` says whether a worker conversation still takes input (not history, closed, released or recovering); `selectedNativeWorkerTarget` uses it.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.21.2 - 2026-10-29
