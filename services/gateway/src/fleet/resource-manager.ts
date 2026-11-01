@@ -619,6 +619,13 @@ function buildBrowserOwnsCdpFunction(cdpPort: number | null): string {
     '  kill -0 "$1" 2>/dev/null || return 1',
     '  [ "$(cdp_listeners "$1")" = "$1" ]',
     '}',
+    // A host-wide lsof walks every process's descriptors. An idle slot's watch ran one
+    // every poll for a port nothing listened on, on a node with 1,685 processes (F309).
+    'cdp_port_open() {',
+    '  nc_bin="$(command -v nc 2>/dev/null || true)"',
+    '  [ -n "$nc_bin" ] || return 0',
+    `  "$nc_bin" -z 127.0.0.1 ${cdpPort} >/dev/null 2>&1 || "$nc_bin" -z ::1 ${cdpPort} >/dev/null 2>&1`,
+    '}',
   ].join('\n');
 }
 
@@ -648,6 +655,7 @@ async function recoverBrowserPidFromCdp(
 function buildBrowserPidRecoverySteps(pidDir: string): string[] {
   return [
     `pid_dir=${shellQuote(pidDir)}`,
+    'cdp_port_open',
     'pid="$(cdp_listeners)"',
     '[ -n "$pid" ]',
     'browser_owns_cdp "$pid"',

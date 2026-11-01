@@ -233,8 +233,9 @@ test('shouldProbeResourceForSlot suppresses simulator probes without an active r
   assert.equal(shouldProbeResourceForSlot(slot(null, 'ready'), metroResource), true);
 });
 
-// Runs a generated browser probe with fake `lsof` (printing `listeners`) and
-// `capture-helper` (recording that it ran) first on PATH.
+// Runs a generated browser probe with fake `lsof` (printing `listeners`, recording host-wide
+// scans), `nc` (the port is open when anything listens) and `capture-helper` (recording that
+// it ran) first on PATH.
 function runBrowserProbe(
   build: (dir: string) => string,
   {
@@ -260,6 +261,7 @@ function runBrowserProbe(
       [
         '#!/bin/sh',
         'intersect=0; pid=; port=; listen=0',
+        'args="$*"',
         'while [ "$#" -gt 0 ]; do',
         '  case "$1" in',
         '    -a) intersect=1 ;;',
@@ -269,6 +271,7 @@ function runBrowserProbe(
         '  esac',
         '  shift',
         'done',
+        `case "$args" in *-p*) ;; *) touch '${dir}/host-scan-ran' ;; esac`,
         ...(refuseHostScan
           ? [
               'if [ "$intersect" != 1 ] || [ -z "$pid" ]; then',
@@ -289,11 +292,13 @@ function runBrowserProbe(
         '',
       ].join('\n'),
     );
+    writeFileSync(path.join(bin, 'nc'), `#!/bin/sh\nexit ${listeners.length > 0 ? 0 : 1}\n`);
     writeFileSync(
       path.join(bin, 'capture-helper'),
       `#!/bin/sh\ntouch '${dir}/capture-helper-ran'\n`,
     );
     chmodSync(path.join(bin, 'lsof'), 0o755);
+    chmodSync(path.join(bin, 'nc'), 0o755);
     chmodSync(path.join(bin, 'capture-helper'), 0o755);
     if (pidFile !== undefined) writeFileSync(path.join(dir, 'browser.pid'), pidFile);
     const result = spawnSync(shell[0], [...shell.slice(1), build(dir)], {
@@ -309,6 +314,7 @@ function runBrowserProbe(
       browserPid: read('browser.pid'),
       chromiumPid: read('chromium.pid'),
       captureHelperRan: existsSync(path.join(dir, 'capture-helper-ran')),
+      hostScanRan: existsSync(path.join(dir, 'host-scan-ran')),
     };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -438,6 +444,33 @@ test('buildBrowserNodeWatchCommand keeps an owning pid file and repairs a stale 
     runBrowserProbe(pidFileOnly, { pidFile: String(deadPid), listeners: [] }).status,
     0,
   );
+});
+
+// F309: macwork-mmedev-5/-6 had no browser, and their watch ran a host-wide lsof for an unused
+// CDP port every poll. On a node with 1,685 processes each scan took seconds.
+test('an idle browser slot checks its CDP port without scanning the host', () => {
+  const watch = (dir: string) =>
+    buildBrowserNodeWatchCommand(path.join(dir, 'browser.pid'), '7666');
+  const shells: string[][] = [['/bin/sh', '-c']];
+  // The node runs watch commands with `zsh -f -c`.
+  if (existsSync('/bin/zsh')) shells.push(['/bin/zsh', '-f', '-c']);
+  for (const shell of shells) {
+    for (const pidFile of [undefined, String(deadPid)]) {
+      const idle = runBrowserProbe(watch, { pidFile, listeners: [], shell });
+      assert.notEqual(idle.status, 0);
+      assert.equal(idle.hostScanRan, false, `no host scan (${shell[0]}, pid file ${pidFile})`);
+    }
+  }
+  const recovery = runBrowserProbe((dir) => buildBrowserPidRecoveryCommand(7666, dir), {
+    listeners: [],
+  });
+  assert.notEqual(recovery.status, 0);
+  assert.equal(recovery.hostScanRan, false);
+  // A listener without a valid pid file still gets its owner from the host scan.
+  const repaired = runBrowserProbe(watch, { listeners: [livePid] });
+  assert.equal(repaired.status, 0);
+  assert.equal(repaired.browserPid, String(livePid));
+  assert.equal(repaired.hostScanRan, true);
 });
 
 test('a resource with no health hook is unknown, never running', () => {
