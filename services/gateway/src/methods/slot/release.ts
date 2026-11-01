@@ -63,6 +63,7 @@ import {
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import {
+  extendTerminalTeardown,
   TerminalTeardownTimeoutError,
   withTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
@@ -151,6 +152,15 @@ async function logDiscardedWork(
 export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
 /** Progress while waiting, so a CLI idle timeout does not end the release first. */
 const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
+
+/**
+ * Teardown time a release's artifact copy adds for its bytes. Copybacks measured about
+ * 5 MB/s (audiolab-6, F298; 851 MB of unindexed APKs on audiolab-4 after #1726); the
+ * budget assumes 2 MB/s for a loaded node. The floor covers listing and hashing.
+ */
+export function releaseArtifactCopyBudgetMs(bytes: number): number {
+  return Math.max(60_000, Math.ceil(bytes / (2 * 1024 * 1024)) * 1000);
+}
 
 export interface SlotReleaseOptions {
   restartRunId?: string;
@@ -950,6 +960,7 @@ async function slotReleaseImpl(
   // 3. Collect artifacts + clean task files + git reset
   const taskDirName = resolveProjectTaskDirName(projectJson);
   let idleBranchAfterRelease: string | undefined;
+  let artifactsCollected = false;
   if (!keepWork) {
     // Legacy slots may predate prepare exclusions; keep warm runtime files out of Git clean.
     await assertReleaseClaim();
@@ -984,6 +995,14 @@ async function slotReleaseImpl(
           slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
             excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES],
             excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
+            // The completion mirror already holds most of these files. Copying them all
+            // again (about 900 MB on the Audiolab release slots) outlasted the teardown
+            // timeout, so the slot never reset (F298).
+            skipUnchanged: true,
+            // Files the mirror never indexed (two 425 MB APKs on audiolab-4) still transfer
+            // here, so the copy adds its own budget instead of spending the teardown's.
+            onTotals: ({ bytes }) =>
+              extendTerminalTeardown(params.slotId, releaseArtifactCopyBudgetMs(bytes)),
             // Stamp run/slot so transfer progress binds to run detail / pipeline UI.
             phase: 'mirror',
             runId: releaseRunId,
@@ -1000,6 +1019,8 @@ async function slotReleaseImpl(
             },
           }),
         );
+        // A file that failed to copy is only kept by the scaffolding archive.
+        artifactsCollected = entryFailures.length === 0;
         if (entryFailures.length > 0) {
           step(
             'artifacts',
@@ -1028,6 +1049,7 @@ async function slotReleaseImpl(
           destination,
           taskRelativeDir: taskRel,
           beforeRemove: assertReleaseClaim,
+          artifactsCollected,
         });
         step(
           'scaffolding',
