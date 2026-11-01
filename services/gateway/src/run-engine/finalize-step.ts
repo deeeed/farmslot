@@ -14,7 +14,7 @@ import {
 
 import { farmslotRoot, getProjectField, loadSlotVars } from '../core/config.js';
 import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
-import { markSlotHeld } from '../core/index.js';
+import { markRunSlotHeld } from '../core/index.js';
 import { SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
@@ -284,7 +284,8 @@ export async function executeFinalizeStep(
       const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
       await releaseCompletedRunSlot(current);
     } else {
-      await markSlotHeld(current.slotId, 'ci-watch');
+      // COMPLETE may already have released an artifact-only run's slot; only an owned one is held.
+      await markRunSlotHeld(current.slotId, current.id, 'ci-watch');
     }
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
   } catch (err) {
