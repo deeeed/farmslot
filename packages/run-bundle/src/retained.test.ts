@@ -22,6 +22,7 @@ import { exportRunsToBundle } from './export.js';
 import { importBundle } from './import.js';
 import {
   collectRunBundleGarbage,
+  forgetAcquisitionFootprints,
   materializeRunBundle,
   type MaterializeRunBundleRequest,
   openRunBundleStore,
@@ -1322,4 +1323,156 @@ test('GC preserves a historical capture while its missing media is being repaire
   assert.deepEqual(repaired.ref, original.ref);
   assert.deepEqual(repaired.missingData, []);
   assert.equal(await readFile(payload.path, 'utf8'), 'video bytes');
+});
+
+test('a settled task dir is charged its kept footprint and only live task dirs are walked', async (t) => {
+  const f = await fixture(t);
+  const settledDir = path.join(f.root, 'projects/demo/tasks/qa/ended');
+  await mkdir(path.join(settledDir, 'artifacts'), { recursive: true });
+  for (const name of ['a', 'b', 'c'])
+    await writeFile(path.join(settledDir, 'artifacts', name), Buffer.alloc(1000));
+  let token = 'ended@1';
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    acquisitionTaskDirs: async () => (directory) => (directory === settledDir ? token : undefined),
+  };
+  const first = (await materializeRunBundle(request)).acquisitionScan;
+  assert.equal(first.settledDirs, 0, 'measured the first time');
+  const second = (await materializeRunBundle(request)).acquisitionScan;
+  assert.equal(second.settledDirs, 1);
+  assert.equal(second.fileCount, first.fileCount - 3, 'the settled dir is not walked again');
+  assert.equal(second.bytes, first.bytes);
+  await writeFile(path.join(f.taskDir, 'artifacts/new.bin'), Buffer.alloc(500));
+  assert.equal(
+    (await materializeRunBundle(request)).acquisitionScan.bytes,
+    first.bytes + 500,
+    'a live dir is charged as it is now',
+  );
+  await writeFile(path.join(settledDir, 'artifacts/d'), Buffer.alloc(2000));
+  token = 'ended@2';
+  const remeasured = (await materializeRunBundle(request)).acquisitionScan;
+  assert.equal(remeasured.settledDirs, 0, 'a new token measures it again');
+  assert.equal(remeasured.bytes, first.bytes + 2500);
+  const kept = JSON.parse(
+    await readFile(path.join(f.store.root, 'usage', 'acquisition-footprints.json'), 'utf8'),
+  ) as { dirs: Record<string, unknown> };
+  assert.deepEqual(kept.dirs, { [settledDir]: { token: 'ended@2', bytes: 5000 } });
+});
+
+test('kept footprints load from the store, and a dir that goes live or is removed drops its own', async (t) => {
+  const f = await fixture(t);
+  const settledDir = path.join(f.root, 'projects/demo/tasks/qa/ended');
+  await mkdir(settledDir, { recursive: true });
+  await writeFile(path.join(settledDir, 'TASK.md'), Buffer.alloc(1000));
+  const file = path.join(f.store.root, 'usage', 'acquisition-footprints.json');
+  await mkdir(path.dirname(file), { recursive: true });
+  // Kept by an earlier gateway process.
+  await writeFile(
+    file,
+    JSON.stringify({ v: 1, dirs: { [settledDir]: { token: 'ended@1', bytes: 7777 } } }),
+  );
+  let token: string | undefined = 'ended@1';
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    acquisitionTaskDirs: async () => (directory) => (directory === settledDir ? token : undefined),
+  };
+  const loaded = (await materializeRunBundle(request)).acquisitionScan;
+  const walked = (await materializeRunBundle(f.request)).acquisitionScan;
+  assert.equal(loaded.settledDirs, 1);
+  assert.equal(walked.settledDirs, 0, 'no classifier walks every dir');
+  assert.equal(loaded.bytes - 7777, walked.bytes - 1000, 'the kept footprint is charged');
+  const keptDirs = async () =>
+    Object.keys((JSON.parse(await readFile(file, 'utf8')) as { dirs: object }).dirs);
+  token = undefined;
+  await materializeRunBundle(request);
+  assert.deepEqual(await keptDirs(), [], 'a live dir keeps no footprint');
+  token = 'ended@1';
+  await materializeRunBundle(request);
+  assert.deepEqual(await keptDirs(), [settledDir]);
+  await rm(settledDir, { recursive: true });
+  await materializeRunBundle(request);
+  assert.deepEqual(await keptDirs(), [], 'a removed dir keeps no footprint');
+});
+
+test('an unreadable footprint file only costs one walk of each settled dir', async (t) => {
+  const f = await fixture(t);
+  const settledDir = path.join(f.root, 'projects/demo/tasks/qa/ended');
+  await mkdir(settledDir, { recursive: true });
+  await writeFile(path.join(settledDir, 'TASK.md'), 'task');
+  const file = path.join(f.store.root, 'usage', 'acquisition-footprints.json');
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, '{"v":1,"dirs":');
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    acquisitionTaskDirs: async () => (directory) =>
+      directory === settledDir ? 'ended@1' : undefined,
+  };
+  assert.equal((await materializeRunBundle(request)).acquisitionScan.settledDirs, 0);
+  assert.equal((await materializeRunBundle(request)).acquisitionScan.settledDirs, 1);
+});
+
+test('a failed footprint read is retried by the next scan, and the kept file is not charged as store', async (t) => {
+  const f = await fixture(t);
+  const settledDir = path.join(f.root, 'projects/demo/tasks/qa/ended');
+  await mkdir(settledDir, { recursive: true });
+  await writeFile(path.join(settledDir, 'TASK.md'), 'task');
+  const file = path.join(f.store.root, 'usage', 'acquisition-footprints.json');
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    acquisitionTaskDirs: async () => (directory) =>
+      directory === settledDir ? 'ended@1' : undefined,
+  };
+  // A directory where the file goes fails the read with EISDIR, like a transient EIO.
+  await mkdir(file, { recursive: true });
+  await assert.rejects(materializeRunBundle(request), /EISDIR/);
+  await rm(file, { recursive: true });
+  assert.equal((await materializeRunBundle(request)).acquisitionScan.settledDirs, 0);
+  const { store } = await runBundleAdmissionUsage(f.store, f.root);
+  assert.ok((await stat(file)).size > 0);
+  await rm(file);
+  assert.equal((await runBundleAdmissionUsage(f.store, f.root)).store, store);
+});
+
+test('settled task dirs under .sandbox are kept, and a forgotten footprint is measured again', async (t) => {
+  const f = await fixture(t);
+  const settledDir = path.join(f.root, '.sandbox/demo/tasks/qa/ended');
+  await mkdir(settledDir, { recursive: true });
+  await writeFile(path.join(settledDir, 'TASK.md'), Buffer.alloc(300));
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    acquisitionTaskDirs: async () => (directory) =>
+      directory === settledDir ? 'ended@1' : undefined,
+  };
+  await materializeRunBundle(request);
+  assert.equal((await materializeRunBundle(request)).acquisitionScan.settledDirs, 1);
+  await writeFile(path.join(settledDir, 'more.bin'), Buffer.alloc(700));
+  await forgetAcquisitionFootprints(f.store, [settledDir]);
+  const kept = JSON.parse(
+    await readFile(path.join(f.store.root, 'usage', 'acquisition-footprints.json'), 'utf8'),
+  ) as { dirs: object };
+  assert.deepEqual(kept.dirs, {}, 'forgetting persists at once');
+  const remeasured = (await materializeRunBundle(request)).acquisitionScan;
+  assert.equal(remeasured.settledDirs, 0);
+  assert.equal((await materializeRunBundle(request)).acquisitionScan.bytes, remeasured.bytes);
+});
+
+test('a measurement whose token changed during its walk is not kept', async (t) => {
+  const f = await fixture(t);
+  const settledDir = path.join(f.root, 'projects/demo/tasks/qa/released');
+  await mkdir(settledDir, { recursive: true });
+  await writeFile(path.join(settledDir, 'TASK.md'), 'task');
+  // As if a slot release began (and maybe ended) while the first walk was under way.
+  let calls = 0;
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    acquisitionTaskDirs: async () => (directory) =>
+      directory === settledDir ? (calls++ === 0 ? 'unowned' : 'unowned #w1') : undefined,
+  };
+  assert.equal((await materializeRunBundle(request)).acquisitionScan.settledDirs, 0);
+  assert.equal(
+    (await materializeRunBundle(request)).acquisitionScan.settledDirs,
+    0,
+    'nothing was kept from the spanning walk',
+  );
+  assert.equal((await materializeRunBundle(request)).acquisitionScan.settledDirs, 1);
 });
