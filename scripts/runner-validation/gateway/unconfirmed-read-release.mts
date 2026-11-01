@@ -1,17 +1,18 @@
 #!/usr/bin/env tsx
 // Live proof (F298) that one slow workspace read no longer hides a slot's workspace until its node
 // reconnects. An isolated gateway and node (own pool, projects, runs and home) observe a slot
-// whose node-side `git` is a fixture: the first workspace probe leaves a process in its own
-// session holding the probe's output open for 25 s, longer than the read's budget, cancel
-// closeout and transport grace. The read fails as an unconfirmed closeout; when the node finally
-// delivers that result on the same connection, the next fleet read must show the workspace.
-// macpro-audiolab-1 stayed at "Execution … has unconfirmed closeout (timeout)" instead.
+// whose node-side `python3` is a fixture: the first workspace probe leaves a process in its own
+// session (out of reach of the node's process-group kill) holding the probe's output open for
+// 25 s, longer than the read's budget, cancel closeout and transport grace. The read fails as an
+// unconfirmed closeout; when the node finally delivers that result on the same connection, the
+// next fleet read must show the workspace. macpro-audiolab-1 stayed at "Execution … has
+// unconfirmed closeout (timeout)" instead. macOS (the node's zsh login supplies the PATH).
 //
 // Run: yarn tsx scripts/runner-validation/gateway/unconfirmed-read-release.mts [evidence-dir]
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, type ChildProcess } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -45,6 +46,7 @@ const slotId = 'unconfirmed-read-slot';
 const repo = path.join(fixture, 'slot');
 const origin = path.join(fixture, 'origin.git');
 const slowed = path.join(fixture, 'slow-read-started');
+const realPython = execFileSync('sh', ['-c', 'command -v python3'], { encoding: 'utf8' }).trim();
 const env: NodeJS.ProcessEnv = { ...process.env };
 delete env.TMUX;
 delete env.TMUX_PANE;
@@ -100,26 +102,29 @@ try {
   git(repo, 'remote', 'add', 'origin', origin);
   git(repo, 'push', '-q', '-u', 'origin', 'main');
   git(repo, 'fetch', '-q', 'origin', 'main');
-  // The node's `git`: the first probe's branch read leaves a holder of its output in its own
-  // session (so no process-group kill reaches it), as a stuck read on a loaded machine does.
+  // The node's `python3`: the first workspace probe leaves a holder of its output in its own
+  // session, as a stuck read on a loaded machine does. The node's commands take their PATH from
+  // its zsh login, so a login profile puts the fixture first.
   const shimDir = path.join(fixture, 'shim');
   await mkdir(shimDir);
-  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   await writeFile(
-    path.join(shimDir, 'git'),
+    path.join(shimDir, 'python3'),
     [
       '#!/bin/sh',
-      'case "$*" in',
-      `  *"${repo} symbolic-ref --quiet --short HEAD"*)`,
-      `    if mkdir ${JSON.stringify(slowed)} 2>/dev/null; then`,
-      `      perl -MPOSIX -e 'POSIX::setsid(); sleep 25' &`,
-      '    fi;;',
-      'esac',
-      `exec ${JSON.stringify(realGit)} "$@"`,
+      `if [ "$1" = - ] && [ "$2" = ${JSON.stringify(repo)} ] && mkdir ${JSON.stringify(slowed)} 2>/dev/null; then`,
+      `  perl -MPOSIX -e 'POSIX::setsid(); sleep 25' </dev/null &`,
+      'fi',
+      `exec ${JSON.stringify(realPython)} "$@"`,
       '',
     ].join('\n'),
   );
-  await chmod(path.join(shimDir, 'git'), 0o755);
+  await chmod(path.join(shimDir, 'python3'), 0o755);
+  const zdotdir = path.join(fixture, 'zdotdir');
+  await mkdir(zdotdir);
+  await writeFile(
+    path.join(zdotdir, '.zprofile'),
+    `export PATH=${JSON.stringify(shimDir)}:"$PATH"\n`,
+  );
   const project = path.join(fixtureRoot, 'projects/unconfirmed-read');
   await json(path.join(project, 'project.json'), {
     name: 'unconfirmed-read',
@@ -210,7 +215,7 @@ try {
       GATEWAY_URL: `ws://127.0.0.1:${port}`,
       MACHINE_NAME: machine,
       SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen.sock'),
-      PATH: `${shimDir}:${process.env.PATH}`,
+      ZDOTDIR: zdotdir,
     }),
     '@farmslot/node',
     'node.log',
@@ -241,6 +246,7 @@ try {
     120_000,
   );
   await json(path.join(evidence, 'timeline.json'), timeline);
+  assert.ok((await stat(slowed)).isDirectory(), 'the fixture slowed the first workspace probe');
   assert.ok(sawUnconfirmed, 'the slow read was reported as an unconfirmed closeout first');
   assert.equal(recovered.workspace, 'main');
   result = { pass: true, evidence, recoveredAfterSeconds: recovered.at, timeline };
