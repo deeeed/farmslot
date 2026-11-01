@@ -97,6 +97,14 @@ function actionParams(id: string, opts: Record<string, unknown>): Record<string,
   return params;
 }
 
+// Dirty or unpushed work refuses recovery until --force confirms the discard (as the
+// Command Center's "Discard local work" does); other refusals are fenced, --force cannot pass.
+function recoverUserAction(result: SlotRefreshResult): string {
+  return result.reason === 'dirty' || result.reason === 'unpushed'
+    ? 'Publish the local work, or re-run `farmslot slot refresh <slot> --recover --force` to discard it.'
+    : 'Resolve the refusal above, then re-run `farmslot slot refresh <slot> --recover`.';
+}
+
 function refreshFailureMessage(slotId: string, result: SlotRefreshResult): string {
   const detail = result.detail ? `: ${result.detail}` : '';
   return `Refresh skipped for ${slotId}: ${result.reason ?? 'not refreshed'}${detail}`;
@@ -274,9 +282,8 @@ export function registerSlotCommand(program: Command): void {
             emit.fail(
               Object.assign(new Error(refreshFailureMessage(slotId, result)), {
                 code: 'SLOT_REFRESH_SKIPPED',
-                // A refused recovery is fenced: --force cannot override a live run or owner.
                 userAction: opts.recover
-                  ? 'Resolve the refusal above, then re-run `farmslot slot refresh <slot> --recover`.'
+                  ? recoverUserAction(result)
                   : 'Re-run with `--force` to refresh anyway, or `farmslot slot release <slot>` first.',
                 details: result,
               }),

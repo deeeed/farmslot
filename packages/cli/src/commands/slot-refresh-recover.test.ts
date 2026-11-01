@@ -59,6 +59,7 @@ function spawnCli(
 async function runRecover(
   slots: unknown[],
   refreshResult: unknown = { refreshed: true },
+  extraArgs: string[] = [],
 ): Promise<{ refreshParams: unknown[]; run: Awaited<ReturnType<typeof spawnCli>> }> {
   const refreshParams: unknown[] = [];
   // Created before the server listens, so every exit path closes the server.
@@ -90,6 +91,7 @@ async function runRecover(
         'refresh',
         'macpro-mm-1',
         '--recover',
+        ...extraArgs,
       ],
       home,
     );
@@ -132,4 +134,24 @@ test('a refused slot refresh --recover shows the refusal detail, not --force', a
   assert.equal(run.status, 1, printed);
   assert.match(printed, /failed-phase: Checkout, free ownership or fixtures did not verify/);
   assert.doesNotMatch(printed, /--force/);
+});
+
+test('slot refresh --recover --force sends force and a dirty refusal offers the discard', async () => {
+  const { refreshParams, run } = await runRecover(
+    [{ slot: 'macpro-mm-1', workspace: IDENTITY }],
+    {
+      refreshed: false,
+      reason: 'dirty',
+      detail: 'Confirm discarding the current local work',
+      branch: 'main',
+      advanced: false,
+    },
+    ['--force'],
+  );
+  const printed = `${run.stdout}${run.stderr}`;
+  assert.equal(run.status, 1, printed);
+  assert.deepEqual(refreshParams, [
+    { slotId: 'macpro-mm-1', mode: 'force', release: true, expectedWorkspace: IDENTITY },
+  ]);
+  assert.match(printed, /--recover --force` to discard it/);
 });
