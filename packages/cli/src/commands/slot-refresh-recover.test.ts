@@ -58,10 +58,12 @@ function spawnCli(
 
 async function runRecover(
   slots: unknown[],
+  refreshResult: unknown = { refreshed: true },
 ): Promise<{ refreshParams: unknown[]; run: Awaited<ReturnType<typeof spawnCli>> }> {
   const refreshParams: unknown[] = [];
+  // Created before the server listens, so every exit path closes the server.
+  const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-slot-recover-'));
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-  await once(server, 'listening');
   server.on('connection', (socket) => {
     socket.on('message', (data) => {
       const request = JSON.parse(String(data)) as { id: string; method: string; params?: unknown };
@@ -69,15 +71,15 @@ async function runRecover(
       if (request.method === 'fleet.status') payload = { fleet: { slots } };
       if (request.method === 'slot.refresh') {
         refreshParams.push(request.params);
-        payload = { refreshed: true };
+        payload = refreshResult;
       }
       socket.send(JSON.stringify({ type: 'res', id: request.id, ok: true, payload }));
     });
   });
-  const address = server.address();
-  assert.ok(address && typeof address === 'object');
-  const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-slot-recover-'));
   try {
+    await once(server, 'listening');
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
     const run = await spawnCli(
       [
         '--url',
@@ -107,7 +109,7 @@ test('slot refresh --recover sends release and the fleet workspace identity', as
   ]);
   assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
   assert.deepEqual(refreshParams, [
-    { slotId: 'macpro-mm-1', release: true, expectedWorkspace: IDENTITY },
+    { slotId: 'macpro-mm-1', mode: 'safe', release: true, expectedWorkspace: IDENTITY },
   ]);
 });
 
@@ -116,4 +118,18 @@ test('slot refresh --recover refuses a slot with no workspace identity', async (
   assert.equal(run.status, 1, `${run.stdout}${run.stderr}`);
   assert.match(run.stdout, /has no workspace identity/);
   assert.deepEqual(refreshParams, []);
+});
+
+test('a refused slot refresh --recover shows the refusal detail, not --force', async () => {
+  const { run } = await runRecover([{ slot: 'macpro-mm-1', workspace: IDENTITY }], {
+    refreshed: false,
+    reason: 'failed-phase',
+    detail: 'Checkout, free ownership or fixtures did not verify',
+    branch: 'main',
+    advanced: false,
+  });
+  const printed = `${run.stdout}${run.stderr}`;
+  assert.equal(run.status, 1, printed);
+  assert.match(printed, /failed-phase: Checkout, free ownership or fixtures did not verify/);
+  assert.doesNotMatch(printed, /--force/);
 });

@@ -98,7 +98,8 @@ function actionParams(id: string, opts: Record<string, unknown>): Record<string,
 }
 
 function refreshFailureMessage(slotId: string, result: SlotRefreshResult): string {
-  return `Refresh skipped for ${slotId}: ${result.reason ?? 'not refreshed'}`;
+  const detail = result.detail ? `: ${result.detail}` : '';
+  return `Refresh skipped for ${slotId}: ${result.reason ?? 'not refreshed'}${detail}`;
 }
 
 export function registerSlotCommand(program: Command): void {
@@ -261,7 +262,11 @@ export function registerSlotCommand(program: Command): void {
               `Slot ${slotId} has no workspace identity to recover; check \`farmslot fleet status\`.`,
             );
           }
-          params = { slotId, release: true, expectedWorkspace: slotWorkspaceIdentity(workspace) };
+          params = {
+            ...params,
+            release: true,
+            expectedWorkspace: slotWorkspaceIdentity(workspace),
+          };
         }
         if (emit.machine) {
           const result = await client.call<SlotRefreshResult>('slot.refresh', params);
@@ -269,8 +274,10 @@ export function registerSlotCommand(program: Command): void {
             emit.fail(
               Object.assign(new Error(refreshFailureMessage(slotId, result)), {
                 code: 'SLOT_REFRESH_SKIPPED',
-                userAction:
-                  'Re-run with `--force` to refresh anyway, or `farmslot slot release <slot>` first.',
+                // A refused recovery is fenced: --force cannot override a live run or owner.
+                userAction: opts.recover
+                  ? 'Resolve the refusal above, then re-run `farmslot slot refresh <slot> --recover`.'
+                  : 'Re-run with `--force` to refresh anyway, or `farmslot slot release <slot>` first.',
                 details: result,
               }),
             );
