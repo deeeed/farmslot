@@ -112,7 +112,11 @@ export function useRunAcceptance(
             runId,
             includeRecordedEvidence: true,
             ...(options.decisionId
-              ? { decisionId: options.decisionId, evidenceSnapshotHash }
+              ? {
+                  decisionId: options.decisionId,
+                  evidenceSnapshotHash,
+                  ...(options.recipeRunId ? { recipeRunId: options.recipeRunId } : {}),
+                }
               : options.recipeRunId
                 ? { recipeRunId: options.recipeRunId }
                 : {}),

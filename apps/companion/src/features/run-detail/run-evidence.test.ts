@@ -8,6 +8,7 @@ import {
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
 
+import { acceptanceViewerRecipeRunId } from '../../lib/acceptance-evidence';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../../lib/artifact-url';
 import { selectArtifactWorkspaceDecision } from '../../lib/workspace-decisions';
 
@@ -127,15 +128,17 @@ test('a retained invocation rereads progress and evidence and refuses replaced c
 });
 
 test("a criterion's Review evidence opens the viewer on the evidence this screen read", () => {
-  // Output review pending: the screen read its snapshot, so the viewer must read it too.
+  // Output review pending, default execution: the viewer reads the review's snapshot.
   const pending = runAcceptanceEvidenceHref(
     run(),
     'AC-1',
     'artifacts/recipe-runs/run-2/v.mp4',
-    'execution-a',
+    'execution-default',
+    null,
   );
   assert.equal(pending.params.recipeRun, DECISION_EVIDENCE_RECIPE_RUN_PARAM);
   assert.equal(pending.params.evidenceDecision, 'review-a');
+  assert.equal('evidenceExecution' in pending.params, false);
   assert.equal(
     selectArtifactWorkspaceDecision(
       run(),
@@ -144,10 +147,42 @@ test("a criterion's Review evidence opens the viewer on the evidence this screen
     )?.id,
     'review-a',
   );
+  assert.equal(
+    acceptanceViewerRecipeRunId(pending.params.recipeRun, pending.params.evidenceExecution ?? ''),
+    undefined,
+  );
+  // An older retained execution chosen while the review is pending: the screen reads that
+  // execution within the snapshot, and so does the viewer.
+  const older = runAcceptanceEvidenceHref(
+    run(),
+    'AC-1',
+    'artifacts/recipe-runs/run-1/v.mp4',
+    'execution-older',
+    'execution-older',
+  );
+  assert.equal(older.params.evidenceDecision, 'review-a');
+  assert.equal(older.params.evidenceExecution, 'execution-older');
+  const viewerExecution = acceptanceViewerRecipeRunId(
+    older.params.recipeRun,
+    older.params.evidenceExecution ?? '',
+  );
+  assert.equal(viewerExecution, 'execution-older');
+  assert.equal(
+    (runEvidenceQuery('run-a', run(), 'execution-older')!.params as { recipeRunId?: string })
+      .recipeRunId,
+    viewerExecution,
+  );
   // No review pending: the selected execution, as before.
   const settled = run();
   settled.decisions = [];
-  const plain = runAcceptanceEvidenceHref(settled, 'AC-1', 'artifacts/v.mp4', 'execution-a');
+  const plain = runAcceptanceEvidenceHref(
+    settled,
+    'AC-1',
+    'artifacts/v.mp4',
+    'execution-a',
+    'execution-a',
+  );
   assert.equal(plain.params.recipeRun, 'execution-a');
   assert.equal('evidenceDecision' in plain.params, false);
+  assert.equal(acceptanceViewerRecipeRunId(plain.params.recipeRun, ''), 'execution-a');
 });

@@ -21,10 +21,7 @@ export function runEvidenceQuery(
 ) {
   if (!runId || run?.id !== runId) return undefined;
   const review = pendingOutputReview(run);
-  const recipeRunId =
-    requestedRecipeRunId && requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
-      ? requestedRecipeRunId
-      : undefined;
+  const recipeRunId = explicitRecipeRunId(requestedRecipeRunId);
   return resourceQuery<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
     runId,
     includeRecordedEvidence: true,
@@ -50,11 +47,24 @@ export function runAcceptanceEvidenceHref(
   criterionId: string,
   path: string,
   selectedRecipeRunId: string | null,
+  requestedRecipeRunId: string | null,
 ) {
   const review = pendingOutputReview(run);
   return review
-    ? acceptanceEvidenceHref(run.id, criterionId, path, undefined, review.id)
+    ? acceptanceEvidenceHref(
+        run.id,
+        criterionId,
+        path,
+        undefined,
+        review.id,
+        explicitRecipeRunId(requestedRecipeRunId),
+      )
     : acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId);
+}
+
+/** The execution the screen asked for by name; none when it reads the default or the decision. */
+function explicitRecipeRunId(requested: string | null): string | undefined {
+  return requested && requested !== DECISION_EVIDENCE_RECIPE_RUN_PARAM ? requested : undefined;
 }
 
 interface EvidenceInvocation {

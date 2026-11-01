@@ -118,6 +118,8 @@ export function acceptanceEvidenceHref(
   path: string,
   recipeRunId?: string | null,
   decisionId?: string,
+  /** The execution read within that decision's snapshot, when one was chosen. */
+  decisionExecutionId?: string,
 ) {
   return {
     pathname: '/evidence/[runId]' as const,
@@ -127,8 +129,18 @@ export function acceptanceEvidenceHref(
       evidence: path,
       recipeRun: recipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
       ...(decisionId ? { evidenceDecision: decisionId } : {}),
+      ...(decisionId && decisionExecutionId ? { evidenceExecution: decisionExecutionId } : {}),
     },
   };
+}
+
+/** The execution the evidence viewer reads: the route's own, or the one within its decision. */
+export function acceptanceViewerRecipeRunId(
+  recipeRun: string | undefined,
+  evidenceExecution: string,
+): string | undefined {
+  if (recipeRun && recipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM) return recipeRun;
+  return evidenceExecution || undefined;
 }
 
 /**

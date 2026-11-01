@@ -208,11 +208,12 @@ export function MediaViewer({
             >
               {current?.title ?? 'Evidence'}
             </Text>
-            {/* A recording with the criteria overlay names its current criterion in the pill. */}
+            {/* A recording showing the criteria overlay names its current criterion in the pill. */}
             {current?.detail &&
             !(
               acceptance &&
-              (current.mediaType ?? classifyArtifact(current.title ?? current.uri)) === 'video'
+              current.evidenceModel &&
+              evidenceRecordingForPath(current.evidenceModel, current.path)
             ) ? (
               <Text
                 style={styles.detailText}
@@ -759,7 +760,7 @@ function FullscreenVideo({
       <View style={styles.controls}>
         {error ? <Text style={styles.detailText}>{error}</Text> : null}
         {/* With the criteria overlay its pill names the criterion; the header has its verdict. */}
-        {model?.selection?.caption && !review ? (
+        {model?.selection?.caption && !(model && timeline && review) ? (
           <Text style={styles.detailText}>{model.selection.caption}</Text>
         ) : null}
         {model?.selection?.message ? (

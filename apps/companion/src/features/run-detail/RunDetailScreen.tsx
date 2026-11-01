@@ -454,7 +454,9 @@ export default function RunDetailScreen() {
     await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
   };
   const openAcceptanceEvidence = (criterionId: string, path: string) =>
-    router.push(runAcceptanceEvidenceHref(run, criterionId, path, selectedRecipeRunId));
+    router.push(
+      runAcceptanceEvidenceHref(run, criterionId, path, selectedRecipeRunId, requestedRecipeRunId),
+    );
   const openRunEvidenceArtifact = (
     artifactPath?: string,
     recipeRunId?: string | null,
