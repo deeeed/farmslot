@@ -53,8 +53,9 @@ export function ResolvedTerminal({
     () => (runId ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId }) : undefined),
     [runId],
   );
-  const slotRun = useResourceQuery(focused ? slotQuery : undefined);
-  const pinnedRun = useResourceQuery(focused ? runQuery : undefined);
+  // Not gated on focus: leaving the tab for Slot or Diff must not drop the open pane.
+  const slotRun = useResourceQuery(slotQuery);
+  const pinnedRun = useResourceQuery(runQuery);
   // Undefined while loading; a read that failed with nothing saved has no run to follow.
   const runRead = runQuery ? pinnedRun : slotQuery ? slotRun : undefined;
   const run = !runRead
@@ -77,7 +78,7 @@ export function ResolvedTerminal({
         : undefined,
     [machine],
   );
-  const inventory = useResourceQuery(focused ? inventoryQuery : undefined);
+  const inventory = useResourceQuery(inventoryQuery);
   const resolved =
     first.status === 'needs-inventory'
       ? resolveTerminalWorkerRef({ selector: stable, run, slotMachine, inventory: inventory.data })
@@ -102,7 +103,14 @@ export function ResolvedTerminal({
       .catch((error: Error) => setReinit(error.message));
   }, [client, inventoryQuery, reinitKey, resolved, run, stable]);
 
-  const worker = resolved.status === 'ready' ? resolved.worker : null;
+  // A run refresh resolves an equal pane and target: memoized by value, the terminal keeps its
+  // stream instead of subscribing again.
+  const resolvedWorker = resolved.status === 'ready' ? resolved.worker : null;
+  const workerKey = resolvedWorker ? JSON.stringify(resolvedWorker) : '';
+  const worker = useMemo(() => resolvedWorker, [workerKey]);
+  const resolvedTarget = worker ? slotTerminalTarget(stable, run ?? null) : null;
+  const targetKey = JSON.stringify(resolvedTarget);
+  const slotTarget = useMemo(() => resolvedTarget, [targetKey]);
   const reason =
     resolved.status === 'waiting' || resolved.status === 'unavailable'
       ? resolved.reason
@@ -162,7 +170,7 @@ export function ResolvedTerminal({
     <TerminalPane
       key={worker ? `${worker.nodeId}:${worker.target}` : 'pending'}
       worker={worker}
-      slotTarget={worker ? slotTerminalTarget(stable, run ?? null) : null}
+      slotTarget={slotTarget}
       embedded={embedded}
       initialDraft={initialDraft}
       unavailableReason={reason}
