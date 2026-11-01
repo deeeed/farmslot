@@ -134,6 +134,7 @@ const OFF_SCREEN_OBSERVATIONS: ReadonlySet<string> = new Set(['command', 'watch_
  * other observation, including an adapter's own app or UI query, keeps the declared mode.
  */
 export function assertVisualClaimsObserveUi(plan: RecipeEvidencePlan): void {
+  const refused: string[] = [];
   for (const claim of plan.declarations) {
     if (claim.proofMode !== 'visual' && claim.proofMode !== 'mixed') continue;
     const claims = new Set([claim.id]);
@@ -160,17 +161,20 @@ export function assertVisualClaimsObserveUi(plan: RecipeEvidencePlan): void {
     // A claim nothing proves is reported as missing by claim derivation, not here.
     if (!closure.size) continue;
     const onScreen = [...closure].some((id) => {
-      const action = plan.nodes.get(id)?.action ?? '';
-      if (action.startsWith('ui.')) return true;
+      const node = plan.nodes.get(id);
+      // An unresolved source is the recipe's own validation to report; it never refuses here.
+      if (!node) return true;
+      if (node.action.startsWith('ui.')) return true;
       return (
-        isProofObservation(action) &&
-        action !== 'state_read' &&
-        !OFF_SCREEN_OBSERVATIONS.has(action)
+        isProofObservation(node.action) &&
+        node.action !== 'state_read' &&
+        !OFF_SCREEN_OBSERVATIONS.has(node.action)
       );
     });
-    if (!onScreen)
-      throw new Error(
-        `Claim ${claim.id} is declared ${claim.proofMode}, but only shell commands and file or log checks prove it, so the recording cannot show it; prove it with a UI observation (ui.wait_for, or assert_output on a UI query), or declare proofMode state.`,
-      );
+    if (!onScreen) refused.push(`${claim.id} (${claim.proofMode})`);
   }
+  if (refused.length)
+    throw new Error(
+      `Only shell commands and file or log checks prove these visual or mixed claims, so the recording cannot show them: ${refused.join(', ')}. Prove each with a UI observation (ui.wait_for, or assert_output on a UI query), or declare proofMode state.`,
+    );
 }

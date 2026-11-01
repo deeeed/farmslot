@@ -326,7 +326,7 @@ test('a visual or mixed claim that only shell output proves is refused before th
     assert.throws(
       () => assertVisualClaimsObserveUi(plan),
       new RegExp(
-        `Claim AC-1 is declared ${mode}, but only shell commands and file or log checks prove it.*or declare proofMode state`,
+        `Only shell commands and file or log checks prove these visual or mixed claims, so the recording cannot show them: AC-1 \\(${mode}\\)\\. .*or declare proofMode state`,
       ),
     );
   }
@@ -351,25 +351,33 @@ test('the visual-claim check follows calls, re-reads, file and log checks and ch
       },
     },
   });
-  const viaCall = (child: ReturnType<typeof shellCheck>) =>
+  const viaCall = (child: ReturnType<typeof shellCheck>, provedByCall = false) =>
     planRecipeEvidence(
       {
         proofTargets: [{ id: 'AC1', claim: 'The checks pass.', proofMode: 'mixed' as const }],
         workflow: {
           nodes: {
-            step: { action: 'call', ref: 'checks', claimBindings: { check: 'AC1' }, next: 'done' },
+            step: provedByCall
+              ? { action: 'call', ref: 'checks', proves: ['AC1'], next: 'done' }
+              : { action: 'call', ref: 'checks', claimBindings: { check: 'AC1' }, next: 'done' },
             done: { action: 'end', status: 'pass' },
           },
         },
       },
       new Map([['checks', child]]),
     );
+  const shell = shellCheck({ action: 'command', cmd: 'yarn tsc' });
+  const ui = shellCheck({ action: 'echobridge.ui.query', target: 'x' });
   // A shared library check called from the task recipe, its `end` included.
+  assert.throws(() => assertVisualClaimsObserveUi(viaCall(shell)), /them: AC-1 \(mixed\)\./);
+  assertVisualClaimsObserveUi(viaCall(ui));
+  // A call that proves the claim itself walks the whole callee; its `end` shows nothing. Every
+  // refused claim is named at once, the callee's own claim included.
   assert.throws(
-    () => assertVisualClaimsObserveUi(viaCall(shellCheck({ action: 'command', cmd: 'yarn tsc' }))),
-    /Claim AC-1 is declared mixed/,
+    () => assertVisualClaimsObserveUi(viaCall(shell, true)),
+    /them: AC-1 \(mixed\), step\/check \(mixed\)\./,
   );
-  assertVisualClaimsObserveUi(viaCall(shellCheck({ action: 'echobridge.ui.query', target: 'x' })));
+  assertVisualClaimsObserveUi(viaCall(ui, true));
   // A log read, and a command re-read through state_read, are off screen too.
   for (const nodes of [
     { read: { action: 'watch_logs', path: 'app.log', contains: 'ready' } },
@@ -380,8 +388,16 @@ test('the visual-claim check follows calls, re-reads, file and log checks and ch
   ]) {
     const child = shellCheck({});
     child.workflow.nodes = { ...child.workflow.nodes, ...nodes } as typeof child.workflow.nodes;
-    assert.throws(() => assertVisualClaimsObserveUi(viaCall(child)), /declared mixed/);
+    assert.throws(() => assertVisualClaimsObserveUi(viaCall(child)), /AC-1 \(mixed\)/);
   }
+  // A re-read of a UI query is followed to the query, so it stays on screen.
+  const reread = shellCheck({});
+  reread.workflow.nodes = {
+    ...reread.workflow.nodes,
+    query: { action: 'echobridge.ui.query', target: 'x', next: 'read' },
+    read: { action: 'state_read', source: 'query', path: '$' },
+  } as typeof reread.workflow.nodes;
+  assertVisualClaimsObserveUi(viaCall(reread));
   // A file assertion proves nothing the recording shows.
   assert.throws(
     () =>
@@ -405,7 +421,7 @@ test('the visual-claim check follows calls, re-reads, file and log checks and ch
           new Map(),
         ),
       ),
-    /declared visual/,
+    /AC-1 \(visual\)/,
   );
   // A mixed parent whose child claim is shown on screen keeps its mode.
   assertVisualClaimsObserveUi(
