@@ -38,6 +38,14 @@
     {
       "id": "native-terminal-runner-send",
       "claim": "Send from a slot-opened terminal goes through the runner's terminal.send once, and the line reaches the pane once."
+    },
+    {
+      "id": "native-terminal-saved-target",
+      "claim": "A CI-fix context saved without window fields opens its saved window, and Send types into that same pane."
+    },
+    {
+      "id": "native-terminal-native-review",
+      "claim": "A native review worktree opened by run id takes the conversation branch, not a worktree pane."
     }
   ],
   "workflow": {
@@ -135,6 +143,24 @@
         "match": "\"nativeTerminalRunnerSend\":true",
         "intent": "Require Send through the runner's terminal.send, once.",
         "proves": ["native-terminal-runner-send"],
+        "next": "saved"
+      },
+      "saved": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalSavedTarget\":true",
+        "intent": "Require the saved target's pane to be shown and typed into.",
+        "proves": ["native-terminal-saved-target"],
+        "next": "native"
+      },
+      "native": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalNativeReview\":true",
+        "intent": "Require a native review worktree to open its conversation.",
+        "proves": ["native-terminal-native-review"],
         "next": "done"
       },
       "done": {

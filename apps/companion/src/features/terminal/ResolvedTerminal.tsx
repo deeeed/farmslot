@@ -52,6 +52,8 @@ export function ResolvedTerminal({
     terminalDraft: proof.current.draft,
     terminalSends: [...proof.current.sends],
     terminalReinit: resolved.reinit,
+    terminalWorker: worker,
+    terminalNative: resolved.native,
   });
   const proofRunId = run?.id ?? selector.runId;
   useEffect(() => {

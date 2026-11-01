@@ -26,8 +26,10 @@ import {
 } from './d05-fixture.mjs';
 import {
   draftRestored,
+  openedNative,
   openOnSlot,
   sentThroughRunner,
+  sentWhereShown,
   sessionRecreated,
   typedOnce,
 } from './one-terminal-claims.mjs';
@@ -1310,6 +1312,174 @@ if (phase === 'terminal-context') {
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(text.split('\n').slice(-8))}`);
   };
+  // Two review-round routing fixes, on runs this proof seeds into the private gateway home and
+  // removes again: a CI-fix context saved as {window: null, target: '<session>:<window>'} opens
+  // and sends to that window's pane, and a native review worktree opened by run id takes the
+  // conversation branch instead of a worktree pane.
+  const proveSeededRouting = async () => {
+    const template = JSON.parse(await readFile(fixture.runFile, 'utf8'));
+    const now = new Date().toISOString();
+    const fixRunId = randomUUID();
+    const reviewRunId = randomUUID();
+    const files = [fixRunId, reviewRunId].map((id) => path.join(home, 'runs', `${id}.json`));
+    const window = 'ot-fix';
+    const seededRun = (id, overrides) => ({
+      ...template,
+      id,
+      flowType: 'fix-bug',
+      status: 'monitoring',
+      tags: [],
+      steps: [],
+      decisions: [],
+      readOnly: false,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: undefined,
+      ...overrides,
+    });
+    const fixRun = seededRun(fixRunId, {
+      slotId: fixture.slotId,
+      agentContexts: [
+        {
+          id: 'ot-ci-fix',
+          role: 'ci-fix',
+          label: 'CI fix',
+          status: 'working',
+          slotId: fixture.slotId,
+          runId: fixRunId,
+          runner: 'claude',
+          // The shape services/gateway/src/ci-monitor/inline-fix.ts saves.
+          target: {
+            session: sessionName,
+            window: null,
+            pane: null,
+            target: `${sessionName}:${window}`,
+          },
+        },
+      ],
+    });
+    const reviewRun = seededRun(reviewRunId, {
+      slotId: null,
+      transport: 'native',
+      reviewWorkspace: {
+        workspaceId: `ot-${reviewRunId.slice(0, 8)}`,
+        machine: pool.machine,
+        executionNodeId: 'local',
+        checkoutPath: workerRepo,
+        taskPath: template.taskFile,
+        artifactPath: path.dirname(template.taskFile),
+      },
+      agentContexts: [
+        {
+          id: 'ot-review',
+          role: 'review',
+          label: 'Review',
+          status: 'working',
+          slotId: null,
+          runId: reviewRunId,
+          runner: 'claude',
+        },
+      ],
+    });
+    let seeded = false;
+    let windowOpen = false;
+    try {
+      await sessionInfo();
+      await execute('tmux', [
+        'new-window',
+        '-d',
+        '-t',
+        `=${sessionName}:`,
+        '-n',
+        window,
+        '-c',
+        workerRepo,
+      ]);
+      windowOpen = true;
+      const paneOf = async (target) =>
+        (
+          await execute('tmux', ['display-message', '-p', '-t', target, '#{pane_id}'])
+        ).stdout.trim();
+      const fixPane = await paneOf(`=${sessionName}:${window}`);
+      const shellPane = await paneOf(`=${sessionName}:^`);
+      assert.notEqual(fixPane, shellPane);
+      await withOwnedGatewayOffline(async () => {
+        await writeFile(files[0], JSON.stringify(fixRun), { flag: 'wx', mode: 0o600 });
+        await writeFile(files[1], JSON.stringify(reviewRun), { flag: 'wx', mode: 0o600 });
+        seeded = true;
+      });
+
+      // Saved target: the pane shown and the pane terminal.send types into are the same.
+      const sent = shortTag('os');
+      proofRef = `runs-cache:terminal:${fixRunId}`;
+      await inbox(
+        `workspace/slot/${fixture.slotId}/terminal?runId=${fixRunId}&contextId=ot-ci-fix&draft=${encodeURIComponent(`echo ${sent}`)}`,
+      );
+      const opened = await until(
+        (value) =>
+          value.focused &&
+          value.terminalReady &&
+          value.terminalStream === 'live' &&
+          value.terminalDraft === `echo ${sent}`,
+        'The saved CI-fix target must open its own window',
+      );
+      assert.deepEqual(opened.terminalTarget, {
+        slotId: fixture.slotId,
+        runId: fixRunId,
+        contextId: 'ot-ci-fix',
+        role: 'ci-fix',
+      });
+      await device.interactions.press({ ...selection, selector: 'id="worker-voice-send"' });
+      await until(
+        (value) => sentThroughRunner(value, opened.terminalSends?.length ?? 0),
+        "The saved target's Send must go through terminal.send",
+      );
+      const capturePane = async (pane) =>
+        (await execute('tmux', ['capture-pane', '-p', '-J', '-S', '-80', '-t', pane])).stdout;
+      const deadline = Date.now() + 30000;
+      let shown;
+      do {
+        shown = await snapshot();
+        if (
+          sentWhereShown(
+            shown,
+            fixPane,
+            await capturePane(fixPane),
+            await capturePane(shellPane),
+            sent,
+          )
+        )
+          break;
+        await delay(200);
+      } while (Date.now() < deadline);
+      assert(
+        sentWhereShown(
+          shown,
+          fixPane,
+          await capturePane(fixPane),
+          await capturePane(shellPane),
+          sent,
+        ),
+        `The pane shown must be the pane terminal.send typed into: ${JSON.stringify(shown?.terminalWorker)} vs ${fixPane}`,
+      );
+      await capture('native-terminal-saved-target.png');
+
+      // Native review worktree: the run link takes the conversation branch.
+      proofRef = `runs-cache:terminal:${reviewRunId}`;
+      await inbox(`terminal/worker?runId=${reviewRunId}`);
+      await until(openedNative, 'A native review worktree must open its conversation, not a pane');
+      await capture('native-terminal-native-review.png');
+    } finally {
+      proofRef = `runs-cache:terminal:${fixture.runId}`;
+      await inbox('runs');
+      if (seeded)
+        await withOwnedGatewayOffline(async () => {
+          for (const file of files) await rm(file, { force: true });
+        });
+      if (windowOpen) await execute('tmux', ['kill-window', '-t', `=${sessionName}:${window}`]);
+    }
+  };
+
   // The shared terminal must create the missing slot session itself (terminal.reinit); a
   // previous run of this proof retires the session it created.
   assert(!existed, `Start without the private proof session ${sessionName}`);
@@ -1474,6 +1644,7 @@ if (phase === 'terminal-context') {
       'Changing the terminal actor must clear the actual previous pane buffer',
     );
     await capture('native-terminal-pin-refused.png');
+    await proveSeededRouting();
     console.log(
       JSON.stringify({
         result: 'PASS',
@@ -1489,6 +1660,8 @@ if (phase === 'terminal-context') {
         nativeTerminalLegacyRoute: true,
         nativeTerminalDraftRestored: true,
         nativeTerminalRunnerSend: true,
+        nativeTerminalSavedTarget: true,
+        nativeTerminalNativeReview: true,
         noTerminalReplay: true,
         nativePhases: phases,
         observedAt: cold.detail.observedAt,

@@ -155,6 +155,8 @@ export interface SlotProofFrame extends Omit<DiffProofFrame, 'recipes'> {
   terminalDraft?: string;
   terminalSends?: readonly string[];
   terminalReinit?: string;
+  terminalWorker?: import('@farmslot/protocol').TmuxWorkerRef | null;
+  terminalNative?: boolean;
 }
 const slotFrames = new Map<string, Set<() => SlotProofFrame>>();
 
@@ -510,6 +512,8 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
               terminalDraft: slotFrame.terminalDraft,
               terminalSends: slotFrame.terminalSends,
               terminalReinit: slotFrame.terminalReinit,
+              terminalWorker: slotFrame.terminalWorker,
+              terminalNative: slotFrame.terminalNative,
               slotHistory: slotFrame.history,
               slotHistoryReadCount: slotFrame.historyRunIds?.length,
               slotHistoryReadsReady: Boolean(

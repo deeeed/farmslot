@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   draftRestored,
+  openedNative,
   openOnSlot,
   sentThroughRunner,
+  sentWhereShown,
   sessionRecreated,
   typedOnce,
 } from './one-terminal-claims.mjs';
@@ -55,4 +57,23 @@ test("a slot terminal's Send must add exactly one terminal.send", () => {
   assert.equal(sentThroughRunner({ terminalSends: ['terminal.worker.input'] }, 0), false);
   assert.equal(sentThroughRunner({ terminalSends: ['terminal.send', 'terminal.send'] }, 0), false);
   assert.equal(sentThroughRunner({ terminalSends: [] }, 0), false);
+});
+
+test("a saved target's pane is the one shown and the one Send typed into", () => {
+  const frame = { terminalWorker: { target: '%9' } };
+  const typed = 'KT> echo ot-2\not-2\nKT> ';
+  assert.equal(sentWhereShown(frame, '%9', typed, 'KT> ', 'ot-2'), true);
+  // Shown on another pane, typed elsewhere, or typed into both.
+  assert.equal(
+    sentWhereShown({ terminalWorker: { target: '%8' } }, '%9', typed, 'KT> ', 'ot-2'),
+    false,
+  );
+  assert.equal(sentWhereShown(frame, '%9', 'KT> ', typed, 'ot-2'), false);
+  assert.equal(sentWhereShown(frame, '%9', typed, typed, 'ot-2'), false);
+});
+
+test('a native actor opens the conversation branch, not a pane', () => {
+  assert.equal(openedNative({ focused: true, terminalNative: true, terminalReady: false }), true);
+  assert.equal(openedNative({ focused: true, terminalNative: false, terminalReady: true }), false);
+  assert.equal(openedNative({ focused: true, terminalNative: false, terminalReady: false }), false);
 });

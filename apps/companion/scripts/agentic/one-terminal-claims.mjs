@@ -39,3 +39,20 @@ export function sentThroughRunner(frame, sendsBefore) {
   const sends = frame?.terminalSends ?? [];
   return sends.length === sendsBefore + 1 && sends.at(-1) === 'terminal.send';
 }
+
+/**
+ * The pane the terminal opened is the saved target's pane, and the runner's Send typed the line
+ * there once (and nowhere else in the session).
+ */
+export function sentWhereShown(frame, paneId, paneText, otherPaneText, tag) {
+  return (
+    frame?.terminalWorker?.target === paneId &&
+    typedOnce(paneText, tag) &&
+    !paneLines(otherPaneText).some((line) => line.includes(tag))
+  );
+}
+
+/** A native actor's link takes the conversation branch, never a terminal pane. */
+export function openedNative(frame) {
+  return frame?.focused === true && frame.terminalNative === true && !frame.terminalReady;
+}
