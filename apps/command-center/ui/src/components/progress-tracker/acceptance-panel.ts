@@ -20,6 +20,7 @@ import {
   type EvidenceReviewClaim,
   type EvidenceReviewClaimOffers,
   type EvidenceReviewModel,
+  proofStepGroups,
 } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
@@ -46,7 +47,6 @@ import {
   acceptanceClaimListStyles,
   renderAcceptanceClaimList,
 } from './acceptance-claim-list.js';
-import { proofStepGroups } from './proof-step-groups.js';
 
 export interface AcceptanceClaimOverrideEditor {
   claimId: string | null;

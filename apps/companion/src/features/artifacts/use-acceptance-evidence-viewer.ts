@@ -2,7 +2,9 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { Run } from '@farmslot/protocol';
+import { acceptanceClaimRows } from '@farmslot/review-dispatch';
 
+import type { EvidenceAcceptanceReview } from '../../components/EvidenceAcOverlay';
 import type { MediaViewerItem } from '../../components/MediaViewer';
 import { useRunAcceptance } from '../../hooks/useRunAcceptance';
 import { acceptanceEvidenceViewer } from '../../lib/acceptance-evidence';
@@ -64,6 +66,21 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
         : null,
     [acceptance.evidenceModel, evidencePath, resolveArtifactUrl, row, runId],
   );
+  // The run's criteria over the recording, the rows its acceptance list shows.
+  const review = useMemo<EvidenceAcceptanceReview | undefined>(() => {
+    const { view, evidenceModel } = acceptance;
+    if (!view || !evidenceModel) return undefined;
+    return {
+      rows: acceptanceClaimRows({
+        criteria: acceptance.acceptanceCriteria ?? undefined,
+        ledger: acceptance.acceptanceStatus ?? undefined,
+        claims: view.rows.map(({ review: reviewed, criterion }) => reviewed ?? criterion),
+        judgmentRows: evidenceModel.judgmentRows(acceptance.reviewer),
+        pendingVisualClaimIds: evidenceModel.pendingVisualClaimIds,
+      }),
+      record: acceptance.commandsReady ? acceptance.recordVisualReview : undefined,
+    };
+  }, [acceptance]);
   const items = useMemo<MediaViewerItem[]>(
     () =>
       (viewer?.items ?? []).map((item) => ({
@@ -74,6 +91,7 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
         authHeaders,
         path: item.path,
         evidenceModel: acceptance.evidenceModel ?? undefined,
+        acceptance: review,
         resolveArtifactUrl,
         sharedArtifact: {
           runId,
@@ -89,6 +107,7 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
       authHeaders,
       criterionId,
       resolveArtifactUrl,
+      review,
       run?.slotId,
       runId,
       viewer,

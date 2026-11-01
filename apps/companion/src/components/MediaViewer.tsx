@@ -35,7 +35,11 @@ import {
   artifactSource,
   classifyArtifact,
 } from '../lib/artifact-url';
-import { evidenceRecordingForPath, mediaShareView } from '../lib/evidence-media-items';
+import {
+  evidenceClaimPlayback,
+  evidenceRecordingForPath,
+  mediaShareView,
+} from '../lib/evidence-media-items';
 import { gatewayFetch } from '../lib/gateway-http-auth';
 import {
   TEXT_PREVIEW_MAX_BYTES,
@@ -47,6 +51,7 @@ import { colors, fonts } from '../lib/theme';
 import { videoSourceLoadDurationMs } from '../lib/video-source-load';
 
 import { ArtifactImage } from './ArtifactImage';
+import { type EvidenceAcceptanceReview, EvidenceAcOverlay } from './EvidenceAcOverlay';
 
 export interface MediaViewerItem {
   uri: string;
@@ -63,6 +68,8 @@ export interface MediaViewerItem {
   evidenceModel?: EvidenceReviewModel;
   initialTraceIndex?: number;
   sharedArtifact?: SharedRunArtifactSelection;
+  /** The run's criteria: a recording shows them over the player to move between and judge. */
+  acceptance?: EvidenceAcceptanceReview;
 }
 
 interface MediaViewerProps {
@@ -586,6 +593,21 @@ function FullscreenVideo({
     };
   }, [applyPlayback, model, player, source.uri, uri, videoPath]);
 
+  /** A criterion from the overlay: select it, cue its clip here and play from its moment. */
+  const chooseClaim = useCallback(
+    (claimId: string, startMs: number | null) => {
+      const chosen = model ? evidenceClaimPlayback(model, claimId, videoPath, startMs) : undefined;
+      if (!chosen) return;
+      onViewSelectionChange(item.uri);
+      updateSelection((value) => value + 1);
+      if (!chosen.effect) return;
+      resumePlayback.current = true;
+      applyPlayback(chosen.effect);
+      player.play();
+    },
+    [applyPlayback, item.uri, model, onViewSelectionChange, player, videoPath],
+  );
+
   const timeline = model?.recordings.find((recording) => recording.videoPath === videoPath);
   const groups = model?.timelineGroups(videoPath, undefined, durationMs) ?? [];
   return (
@@ -607,6 +629,16 @@ function FullscreenVideo({
         ) : null}
         {model?.selection?.message ? (
           <Text style={styles.detailText}>{model.selection.message}</Text>
+        ) : null}
+        {model && timeline && item.acceptance ? (
+          <EvidenceAcOverlay
+            model={model}
+            videoPath={videoPath}
+            durationMs={durationMs}
+            review={item.acceptance}
+            maxListHeight={height * 0.28}
+            onChoose={chooseClaim}
+          />
         ) : null}
         {timeline ? (
           <ScrollView
