@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The refusals from `slot.release`, `slot.prepare` and `slot.refresh` for a slot with recovery in flight now name the exit: `farmslot slot refresh <slot> --recover`.
+
 - Completion push verification inspects the slot worktree in one exec instead of one per git probe (six to nine), and commit mode (autonomous dev) no longer walks untracked files, which cannot block it. An inspection that times out is retried after 5 s, doubling, within the verification's 5-minute wait, then fails with the same error; a git error still fails at once and a cancel still wins. Run e4d0cc24 failed after its worker finished because the untracked-files probe timed out at 30 s on a briefly overloaded slot host; it answered in under a second later.
 - Capture, admission and the hourly capacity warning charge gateway task dirs whose runs have all ended (live or archived records) and have not been updated for 15 minutes, or that no run names, from a footprint measured once; any later update to one of those runs measures the dir again. Dirs of runs still going, dirs being admitted, dirs a slot release or an explicit backfill is writing (which also drop their kept footprint first), and eval experiment roots are walked on every read.
 - Publication receipts fence their reasons with the shared protocol `markdownFence`; line endings inside a reason are normalised.
