@@ -354,7 +354,7 @@ test('real git: write-tree probe reports conflicts only when origin ref exists',
   assert.doesNotMatch(failFetch.hint, /up to date/);
 });
 
-test("approval re-probes the publication base, and the gate's last result decides when it cannot (F302)", async () => {
+test('approval re-probes the publication base and counts only a known result at the package HEAD (F302)', async () => {
   const run = { slotId: 'gate-slot', project: 'fixture', parentRunId: null };
   const summary = (mergeConflicts?: boolean, headSha = 'abc1234'): BranchFreshnessSummary => ({
     ...(mergeConflicts === undefined ? {} : { mergeConflicts }),
@@ -365,11 +365,7 @@ test("approval re-probes the publication base, and the gate's last result decide
     fetchOk: mergeConflicts !== undefined,
     hint: 'behindMain: 3, mergeConflicts: true. Next: `git fetch origin main && git rebase origin/main` (rebase project).',
   });
-  const gate = (mergeConflicts: boolean) => ({
-    prPackage: { headSha: 'abc1234' },
-    mergeConflicts,
-    mergeConflictPaths: mergeConflicts ? ['yarn.lock'] : [],
-  });
+  const gate = { prPackage: { headSha: 'abc1234' } };
   const timeouts: (number | undefined)[] = [];
   const probe =
     (result: BranchFreshnessSummary | null | Error): typeof probeRunBaseFreshness =>
@@ -380,21 +376,22 @@ test("approval re-probes the publication base, and the gate's last result decide
     };
   // A conflict at the package's HEAD refuses, with the project's own next step, and is returned
   // so the card can stop offering approval.
-  const found = await approvalBaseMergeConflict(run, gate(false), probe(summary(true)));
+  const found = await approvalBaseMergeConflict(run, gate, probe(summary(true)));
   assert.match(
     found?.refusal ?? '',
     /in package\.json, yarn\.lock, .* Next: `git fetch origin main && git rebase origin\/main`/,
   );
-  assert.equal(found?.observed?.mergeConflicts, true);
-  // A clean probe at that HEAD clears a stale conflict.
-  assert.equal(await approvalBaseMergeConflict(run, gate(true), probe(summary(false))), undefined);
-  // Unknown, unavailable, failed, or another HEAD: the recorded result decides.
-  for (const unknown of [summary(), null, new Error('node offline'), summary(true, 'other-head')]) {
-    assert.equal(await approvalBaseMergeConflict(run, gate(false), probe(unknown)), undefined);
-    const kept = await approvalBaseMergeConflict(run, gate(true), probe(unknown));
-    assert.match(kept?.refusal ?? '', /Resolve the base conflict first: .* in yarn\.lock/);
-    assert.equal(kept?.observed, undefined);
-  }
+  assert.equal(found?.observed.mergeConflicts, true);
+  // Clean, unknown, unavailable, failed, or at another HEAD: approval has nothing new to refuse
+  // (the gate's recorded result is enforced by assertRunGateReady).
+  for (const result of [
+    summary(false),
+    summary(),
+    null,
+    new Error('node offline'),
+    summary(true, 'other-head'),
+  ])
+    assert.equal(await approvalBaseMergeConflict(run, gate, probe(result)), undefined);
   assert.ok(
     timeouts.every((ms) => ms === 15_000),
     'approval waits a short probe',

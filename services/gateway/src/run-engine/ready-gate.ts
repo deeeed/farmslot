@@ -1141,12 +1141,12 @@ export async function executeReadyGate(
   let branchFreshness: BranchFreshnessSummary | null = null;
   if (current.slotId) {
     try {
-      const vars = await loadSlotVars(current.slotId);
       // Probed against the base the publication push checks (a stacked run's upstream branch).
       const probed = await probeRunBaseFreshness(current);
       branchFreshness = probed?.freshness ?? null;
       if (branchFreshness?.headSha) headSha = branchFreshness.headSha;
       if (!headSha) {
+        const vars = await loadSlotVars(current.slotId);
         const r = await execOnSlot(vars, `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`, {
           timeout: 10_000,
         });

@@ -414,25 +414,20 @@ export async function probeRunBaseFreshness(
   return { base, defaultBranch, freshness };
 }
 
-/** Approval waits on the probe interactively; an unknown result defers to what the gate knew. */
+/** Approval waits on the probe interactively; an unknown result leaves the push's own check. */
 const APPROVAL_PROBE_TIMEOUT_MS = 15_000;
 
 /**
  * Approval refuses a package whose branch conflicts with its publication base. The base can move
- * after the package was built (ba397e2c went behind main by 3), so approval probes again; when
- * that probe can't speak for the package's HEAD, the gate's last known result decides. Returns
- * the refusal and, when the probe found a conflict the card did not show, that probe.
+ * after the package was built (ba397e2c went behind main by 3), so approval probes again. Only a
+ * known result at the package's HEAD counts; `assertRunGateReady` enforces the gate's recorded
+ * one. Returns the refusal and the conflicting probe.
  */
 export async function approvalBaseMergeConflict(
   run: Pick<Run, 'slotId' | 'project' | 'stack' | 'parentRunId'>,
-  payload: Pick<
-    ReadyGatePayload,
-    'mergeConflicts' | 'mergeConflictPaths' | 'branchFreshnessHint'
-  > & {
-    prPackage?: { headSha?: string | null } | null;
-  },
+  payload: { prPackage?: { headSha?: string | null } | null },
   probe: typeof probeRunBaseFreshness = probeRunBaseFreshness,
-): Promise<{ refusal: string; observed?: BranchFreshnessSummary } | undefined> {
+): Promise<{ refusal: string; observed: BranchFreshnessSummary } | undefined> {
   let observed: BranchFreshnessSummary | null = null;
   try {
     observed = (await probe(run, { timeoutMs: APPROVAL_PROBE_TIMEOUT_MS }))?.freshness ?? null;
@@ -441,28 +436,11 @@ export async function approvalBaseMergeConflict(
       `[run-engine] approval base probe unavailable for slot ${run.slotId}: ${(error as Error).message.slice(0, 200)}`,
     );
   }
-  const current =
-    observed &&
-    typeof observed.mergeConflicts === 'boolean' &&
-    (!payload.prPackage?.headSha || observed.headSha === payload.prPackage.headSha)
-      ? observed
-      : null;
-  if (current)
-    return current.mergeConflicts
-      ? {
-          refusal: baseMergeConflictMessage({
-            paths: current.mergeConflictPaths,
-            hint: current.hint,
-          }),
-          observed: current,
-        }
-      : undefined;
-  return payload.mergeConflicts === true
-    ? {
-        refusal: baseMergeConflictMessage({
-          paths: payload.mergeConflictPaths ?? [],
-          hint: payload.branchFreshnessHint,
-        }),
-      }
-    : undefined;
+  const headSha = payload.prPackage?.headSha;
+  if (observed?.mergeConflicts !== true || (headSha && observed.headSha !== headSha))
+    return undefined;
+  return {
+    refusal: baseMergeConflictMessage({ paths: observed.mergeConflictPaths, hint: observed.hint }),
+    observed,
+  };
 }
