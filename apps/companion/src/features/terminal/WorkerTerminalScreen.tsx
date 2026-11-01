@@ -144,6 +144,10 @@ export interface TerminalPaneProof {
   error: string | null;
   readOnlyReason: string | null;
   readText: () => string;
+  /** The unsent draft in the composer. */
+  draft: string;
+  /** How each Send went out: the runner's `terminal.send`, or typed into the pane. */
+  sends: Array<'terminal.send' | 'terminal.worker.input'>;
 }
 
 /**
@@ -563,12 +567,14 @@ export function TerminalPane({
           onSent: () => inputLineRef.current?.reset(),
         });
         if (pendingOperatorMessage.current === message) pendingOperatorMessage.current = null;
+        proof?.current.sends.push('terminal.send');
       } else {
         const sending = writeWorkerInput(data);
         // The instruction ends the pane's line with Enter, so the input line starts over as
         // soon as it is queued; keys typed while it is on its way belong to the next line.
         inputLineRef.current?.reset();
         await sending;
+        proof?.current.sends.push('terminal.worker.input');
       }
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setVoiceStatus('idle');
@@ -589,6 +595,7 @@ export function TerminalPane({
   }, [
     client,
     isSending,
+    proof,
     slotTarget,
     voiceContext,
     voiceEditableInstruction,
@@ -835,7 +842,8 @@ export function TerminalPane({
     proof.current.error = visibleError;
     proof.current.readOnlyReason = readOnlyReason;
     proof.current.readText = () => terminalTailTextRef.current;
-  }, [proof, readOnlyReason, visibleError]);
+    proof.current.draft = voiceEditableInstruction;
+  }, [proof, readOnlyReason, visibleError, voiceEditableInstruction]);
 
   return (
     <KeyboardAvoidingView

@@ -24,6 +24,13 @@ import {
   d05NativeControl,
   resolveD05Inputs,
 } from './d05-fixture.mjs';
+import {
+  draftRestored,
+  openOnSlot,
+  sentThroughRunner,
+  sessionRecreated,
+  typedOnce,
+} from './one-terminal-claims.mjs';
 
 const execute = promisify(execFile);
 // adb shell joins argv into a remote shell command, so a URL's query separators
@@ -1261,11 +1268,11 @@ if (phase === 'terminal-context') {
   const selection = { session: devices[0].name, platform, target: 'mobile' };
   const nativeScreen = () =>
     device.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
-  const button = async (enabled) => {
+  const button = async (enabled, label = '^L') => {
     const deadline = Date.now() + 15000;
     let found;
     do {
-      found = (await nativeScreen()).nodes.find((node) => node.label === '^L');
+      found = (await nativeScreen()).nodes.find((node) => node.label === label);
       if (found?.enabled === enabled && found.rect) return found;
       await delay(100);
     } while (Date.now() < deadline);
@@ -1290,6 +1297,22 @@ if (phase === 'terminal-context') {
   let ownedSession;
   let cold;
   const tag = `native-terminal-${randomUUID().slice(0, 8)}`;
+  const shortTag = (prefix) => `${prefix}${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const paneText = async () =>
+    (await execute('tmux', ['capture-pane', '-p', '-J', '-S', '-80', '-t', sessionName])).stdout;
+  const untilPane = async (ready, label) => {
+    const deadline = Date.now() + 30000;
+    let text = '';
+    do {
+      text = await paneText();
+      if (ready(text)) return text;
+      await delay(200);
+    } while (Date.now() < deadline);
+    assert.fail(`${label}: ${JSON.stringify(text.split('\n').slice(-8))}`);
+  };
+  // The shared terminal must create the missing slot session itself (terminal.reinit); a
+  // previous run of this proof retires the session it created.
+  assert(!existed, `Start without the private proof session ${sessionName}`);
   try {
     await inbox(route);
     const initial = await until(
@@ -1302,6 +1325,10 @@ if (phase === 'terminal-context') {
     );
     assert.deepEqual(initial.terminalTarget, { slotId: fixture.slotId, bareSession: true });
     ownedSession = await sessionInfo();
+    assert(
+      sessionRecreated(initial, Boolean(ownedSession)),
+      `The missing slot session must be created through terminal.reinit: ${initial.terminalReinit}`,
+    );
     if (!existed)
       assert(
         Number(ownedSession.created) >= Math.floor(phaseStart / 1000),
@@ -1320,6 +1347,67 @@ if (phase === 'terminal-context') {
         !value.terminalControlError,
       'The actual terminal key must send through the verified private idle shell',
     );
+
+    // Typing once: the input line types the line, the key bar's Enter runs it, exactly once.
+    const typed = shortTag('ot');
+    await sessionInfo();
+    await device.interactions.fill({
+      ...selection,
+      selector: 'id="terminal-input-line"',
+      text: `echo ${typed}`,
+    });
+    const enter = await button(true, 'Enter');
+    await device.interactions.press({
+      ...selection,
+      x: enter.rect.x + enter.rect.width / 2,
+      y: enter.rect.y + enter.rect.height / 2,
+    });
+    await untilPane((text) => typedOnce(text, typed), 'The input line must type its line once');
+    await capture('native-terminal-typed-once.png');
+
+    // An old /terminal/<slot> link opens the same shared terminal on that slot.
+    await inbox('runs');
+    await until((value) => !value.focused, 'Leave the terminal before the old link');
+    await inbox(`terminal/${fixture.slotId}?runId=${fixture.runId}`);
+    await until(
+      (value) => value.slotProjectionMatches && openOnSlot(value, fixture.slotId),
+      'The old /terminal/<slot> link must open the shared terminal on its slot',
+    );
+
+    // A draft is kept per pane: it comes back after a relaunch, and Send from a slot-opened
+    // terminal goes through the runner's terminal.send (typed by the gateway, once).
+    const drafted = shortTag('od');
+    const draftText = `echo ${drafted}`;
+    await inbox(`${route}&draft=${encodeURIComponent(draftText)}`);
+    await until(
+      (value) => openOnSlot(value, fixture.slotId) && value.terminalDraft === draftText,
+      'A handed-over draft must reach the shared terminal composer',
+    );
+    await restartNative();
+    await inbox(route);
+    const restored = await until(
+      (value) => openOnSlot(value, fixture.slotId) && draftRestored(value, draftText),
+      'The unsent draft must come back on the same pane after a relaunch',
+    );
+    await capture('native-terminal-draft-restored.png');
+    const sendsBefore = restored.terminalSends?.length ?? 0;
+    await sessionInfo();
+    await device.interactions.press({ ...selection, selector: 'id="worker-voice-send"' });
+    await until(
+      (value) => sentThroughRunner(value, sendsBefore) && value.terminalDraft === '',
+      "Send from a slot-opened terminal must go through the runner's terminal.send once",
+    );
+    await untilPane(
+      (text) => typedOnce(text, drafted),
+      'The runner must type the sent line into the pane once',
+    );
+    await capture('native-terminal-runner-send.png');
+
+    // The relaunch above mounted a new terminal: the stream baseline is its current one.
+    const beforeWrite = await until(
+      (value) => current(value) && value.terminalStream === 'live',
+      'The relaunched terminal must be live before the external write',
+    );
     await rpc('run.tags.set', { runId: fixture.runId, tags: [...(original.tags ?? []), tag] });
     const updated = await until(
       (value) => current(value) && value.detail.data.run.tags?.includes(tag),
@@ -1327,7 +1415,7 @@ if (phase === 'terminal-context') {
     );
     assert.equal(
       updated.terminalSubscriptionStarts,
-      initial.terminalSubscriptionStarts,
+      beforeWrite.terminalSubscriptionStarts,
       'Ordinary run invalidation must not restart the terminal stream',
     );
     const committed = await until(
@@ -1396,6 +1484,11 @@ if (phase === 'terminal-context') {
         nativeTerminalSqlTimestamp: committed.storedDetail.observedAt,
         nativeTerminalPinRefused: true,
         nativeTerminalClearsPane: true,
+        nativeTerminalReinit: true,
+        nativeTerminalTypedOnce: true,
+        nativeTerminalLegacyRoute: true,
+        nativeTerminalDraftRestored: true,
+        nativeTerminalRunnerSend: true,
         noTerminalReplay: true,
         nativePhases: phases,
         observedAt: cold.detail.observedAt,

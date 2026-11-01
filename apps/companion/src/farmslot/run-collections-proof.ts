@@ -152,6 +152,9 @@ export interface SlotProofFrame extends Omit<DiffProofFrame, 'recipes'> {
   readTerminalText?: () => Promise<string>;
   terminalInputCommands?: number;
   terminalSubscriptionStarts?: number;
+  terminalDraft?: string;
+  terminalSends?: readonly string[];
+  terminalReinit?: string;
 }
 const slotFrames = new Map<string, Set<() => SlotProofFrame>>();
 
@@ -504,6 +507,9 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
               terminalBufferText: await slotFrame.readTerminalText?.(),
               terminalInputCommands: slotFrame.terminalInputCommands,
               terminalSubscriptionStarts: slotFrame.terminalSubscriptionStarts,
+              terminalDraft: slotFrame.terminalDraft,
+              terminalSends: slotFrame.terminalSends,
+              terminalReinit: slotFrame.terminalReinit,
               slotHistory: slotFrame.history,
               slotHistoryReadCount: slotFrame.historyRunIds?.length,
               slotHistoryReadsReady: Boolean(

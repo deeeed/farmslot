@@ -123,6 +123,8 @@ export function useResolvedTerminal(selector: TerminalSelector) {
     worker,
     target,
     reason,
+    /** idle, running, done, or the reinit error. */
+    reinit,
     openShell: () => setShell(true),
   };
 }

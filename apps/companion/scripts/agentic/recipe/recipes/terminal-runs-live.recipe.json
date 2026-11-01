@@ -18,6 +18,26 @@
     {
       "id": "native-terminal-pinned",
       "claim": "An unavailable explicit actor is refused, never falls back to another target, and clears the actual previous pane buffer."
+    },
+    {
+      "id": "native-terminal-reinit",
+      "claim": "A slot link whose session is missing creates it through terminal.reinit and opens it."
+    },
+    {
+      "id": "native-terminal-typed-once",
+      "claim": "The input line types its line and the key bar's Enter runs it in the pane exactly once."
+    },
+    {
+      "id": "native-terminal-legacy-route",
+      "claim": "An old /terminal/<slot> link opens the same shared terminal on that slot."
+    },
+    {
+      "id": "native-terminal-draft",
+      "claim": "An unsent draft is kept per pane and comes back after a relaunch."
+    },
+    {
+      "id": "native-terminal-runner-send",
+      "claim": "Send from a slot-opened terminal goes through the runner's terminal.send once, and the line reaches the pane once."
     }
   ],
   "workflow": {
@@ -33,7 +53,7 @@
         "action": "command",
         "cmd": "node scripts/agentic/prove-offline-runs.mjs terminal-context",
         "timeout_ms": 240000,
-        "intent": "Prove terminal observations, safe keys, cold restore and exact actor pins.",
+        "intent": "Prove the shared terminal: run observations, reinit, typing once, old links, per-pane drafts, runner Send, cold restore and exact actor pins.",
         "next": "shared"
       },
       "shared": {
@@ -70,6 +90,51 @@
         "match": "\"nativeTerminalPinRefused\":true",
         "intent": "Require real refusal of an unavailable exact actor pin.",
         "proves": ["native-terminal-pinned"],
+        "next": "reinit"
+      },
+      "reinit": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalReinit\":true",
+        "intent": "Require the missing session to be created through terminal.reinit.",
+        "proves": ["native-terminal-reinit"],
+        "next": "typed"
+      },
+      "typed": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalTypedOnce\":true",
+        "intent": "Require the input line to type its line once.",
+        "proves": ["native-terminal-typed-once"],
+        "next": "legacy"
+      },
+      "legacy": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalLegacyRoute\":true",
+        "intent": "Require the old /terminal/<slot> link to open the shared terminal.",
+        "proves": ["native-terminal-legacy-route"],
+        "next": "draft"
+      },
+      "draft": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalDraftRestored\":true",
+        "intent": "Require the per-pane draft back after a relaunch.",
+        "proves": ["native-terminal-draft"],
+        "next": "send"
+      },
+      "send": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalRunnerSend\":true",
+        "intent": "Require Send through the runner's terminal.send, once.",
+        "proves": ["native-terminal-runner-send"],
         "next": "done"
       },
       "done": {

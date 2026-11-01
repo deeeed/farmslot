@@ -32,6 +32,8 @@ export function ResolvedTerminal({
     error: null,
     readOnlyReason: null,
     readText: () => '',
+    draft: '',
+    sends: [],
   });
   const frame = useRef<() => SlotProofFrame>(() => ({ focused: false, run: null }));
   frame.current = () => ({
@@ -47,6 +49,9 @@ export function ResolvedTerminal({
     readTerminalText: async () => (worker ? proof.current.readText() : ''),
     terminalInputCommands: proof.current.inputs,
     terminalSubscriptionStarts: proof.current.subscriptionStarts,
+    terminalDraft: proof.current.draft,
+    terminalSends: [...proof.current.sends],
+    terminalReinit: resolved.reinit,
   });
   const proofRunId = run?.id ?? selector.runId;
   useEffect(() => {
