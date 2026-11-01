@@ -112,8 +112,8 @@ Run `yarn recipe:doctor` after enabling bridge actions. The doctor fails if the 
 ```
 
 - `phase: "start"` opens a window. One window is open at a time.
-- `phase: "end"` closes it and writes `performance/<id>-summary.json`: the frame summary (`activeFps`, p50/p95/p99, `longestFrameMs`, `overBudgetFramePercent`, `refreshRateHz`), `sustainedFps`, and the latency of every `ui.press` and `ui.key_press` inside the window, overall and per press target. An optional `budget` (`min_sustained_fps`, `max_press_p95_ms`, `max_press_ms`, `min_frames`) gives the window a verdict; optional `targets` (`fps`, `press_ms`) are reported, never failed on.
-- `phase: "report"` writes `performance/report.json` and `report.md`, one row per window, and fails the node when any window broke its budget. Each failure names the limit, the measured value and where: `press p95 142 ms > 130 ms (tab-presses; slowest companion-tab-terminals 160 ms)`. Bind the recipe's proof to an `assert_output` on the report's `$.verdict`.
+- `phase: "end"` closes it and writes `performance/<id>-summary.json`: the frame summary (`activeFps`, p50/p95/p99, `longestFrameMs`, `overBudgetFramePercent`, `refreshRateHz`), `sustainedFps`, and the latency of every `ui.press` and `ui.key_press` inside the window, overall and per press target. An optional `budget` (`min_sustained_fps`, `max_press_p95_ms`, `max_press_ms`, `min_frames`) gives the window a verdict; optional `targets` (`fps`, `press_ms`) are reported, never failed on. An optional `baseline` (`label`, `sustained_fps`, `press_p95_ms`, `press_max_ms`, plus any fields to keep) is echoed in the summary and quoted in each failure.
+- `phase: "report"` writes `performance/report.json` and `report.md`, one row per window, and fails the node when any window broke its budget. Each failure names the metric, the limit, the measured value, where, and the baseline: `press p95 (gfxinfo input->mount frame) 231 ms > 210 ms (tab-presses; slowest companion-tab-terminals 262 ms); main 4da00ad80 @90Hz baseline p95 159 ms`. Bind the recipe's proof to an `assert_output` on the report's `$.verdict`.
 
 How the numbers are read:
 

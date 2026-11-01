@@ -42,6 +42,9 @@ const DEFAULT_RESPONSE_WINDOW_MS = 600;
 // (about 1 ms of UI-thread work on a Pixel 6); tab mounts measured 9-80 ms.
 const MOUNT_MIN_MS = 4;
 const MOUNT_OVER_MEDIAN = 3;
+// The metrics failures name, so a reader knows what was measured.
+const PRESS_METRIC = 'gfxinfo input->mount frame';
+const FPS_METRIC = 'gfxinfo, lowest 500 ms';
 
 export interface RecipeNodeSpan {
   nodeId: string;
@@ -61,6 +64,19 @@ export interface PerformanceBudget {
   max_press_ms?: number;
   /** Fail when the window recorded fewer native frames, e.g. a scroll that never rendered. */
   min_frames?: number;
+}
+
+/**
+ * The reference a failure is compared against, e.g. the default branch on a
+ * named build and refresh rate. `label` and the numbers appear in failure
+ * messages; the whole object is echoed in the summary.
+ */
+export interface PerformanceBaseline {
+  label: string;
+  sustained_fps?: number;
+  press_p95_ms?: number;
+  press_max_ms?: number;
+  [key: string]: unknown;
 }
 
 export interface PerformanceTargets {
@@ -102,6 +118,7 @@ export interface PerformanceWindowSummary {
   /** The same statistics per press target, e.g. per tab. */
   pressByTarget: Record<string, PressStats>;
   budget?: { verdict: 'pass' | 'fail'; limits: PerformanceBudget; failures: string[] };
+  baseline?: PerformanceBaseline;
   targets?: {
     fps?: { target: number; sustainedFps?: number; activeFps?: number; met: boolean };
     press?: { target: number; p95Ms?: number; maxMs?: number; met: boolean };
@@ -212,6 +229,7 @@ export function createPerformanceCaptureSession({
       result,
       spans,
       budget: parseBudget(node.budget),
+      baseline: parseBaseline(node.baseline),
       targets: parseTargets(node.targets),
       sustainedWindowMs: positiveNumber(node.sustained_window_ms) ?? DEFAULT_SUSTAINED_WINDOW_MS,
       responseWindowMs: positiveNumber(node.response_window_ms) ?? DEFAULT_RESPONSE_WINDOW_MS,
@@ -343,6 +361,7 @@ export function summarizeWindow({
   result,
   spans,
   budget,
+  baseline,
   targets,
   sustainedWindowMs,
   responseWindowMs,
@@ -354,6 +373,7 @@ export function summarizeWindow({
   result: AndroidGfxinfoCaptureResult;
   spans: readonly RecipeNodeSpan[];
   budget?: PerformanceBudget;
+  baseline?: PerformanceBaseline;
   targets?: PerformanceTargets;
   sustainedWindowMs: number;
   responseWindowMs: number;
@@ -399,7 +419,8 @@ export function summarizeWindow({
     pressByTarget,
     coverageGapReasons,
   };
-  if (budget) summary.budget = checkBudget(summary, budget);
+  if (baseline) summary.baseline = baseline;
+  if (budget) summary.budget = checkBudget(summary, budget, baseline);
   if (targets) summary.targets = checkTargets(summary, targets);
   return summary;
 }
@@ -485,21 +506,27 @@ export function lowestSustainedFps(
   return lowest;
 }
 
-// Every failure names the limit, the measured value and where it was measured.
+// Every failure names the metric, the limit, the measured value, where it was
+// measured and, given a baseline, the baseline's value.
 function checkBudget(
   summary: PerformanceWindowSummary,
   limits: PerformanceBudget,
+  baseline: PerformanceBaseline | undefined,
 ): NonNullable<PerformanceWindowSummary['budget']> {
   const failures: string[] = [];
   const fps = (value: number) => `${Math.round(value * 10) / 10} fps`;
   const ms = (value: number) => `${Math.round(value)} ms`;
+  const against = (name: string, value: number | undefined, format: (value: number) => string) =>
+    baseline && value !== undefined ? `; ${baseline.label} baseline ${name} ${format(value)}` : '';
   if (
     limits.min_sustained_fps !== undefined &&
     summary.sustainedFps !== undefined &&
     summary.sustainedFps < limits.min_sustained_fps
   ) {
     failures.push(
-      `sustained ${fps(summary.sustainedFps)} < ${fps(limits.min_sustained_fps)} (${summary.id})`,
+      `sustained fps (${FPS_METRIC}) ${fps(summary.sustainedFps)} < ${fps(
+        limits.min_sustained_fps,
+      )} (${summary.id})${against('sustained', baseline?.sustained_fps, fps)}`,
     );
   }
   if (
@@ -514,24 +541,34 @@ function checkBudget(
       [undefined, undefined],
     );
     failures.push(
-      `press p95 ${ms(summary.press.p95Ms)} > ${ms(limits.max_press_p95_ms)} (${summary.id}${
-        slowest && stats?.maxMs !== undefined ? `; slowest ${slowest} ${ms(stats.maxMs)}` : ''
-      })`,
+      `press p95 (${PRESS_METRIC}) ${ms(summary.press.p95Ms)} > ${ms(limits.max_press_p95_ms)} (${
+        summary.id
+      }${slowest && stats?.maxMs !== undefined ? `; slowest ${slowest} ${ms(stats.maxMs)}` : ''})${against(
+        'p95',
+        baseline?.press_p95_ms,
+        ms,
+      )}`,
     );
   }
   if (limits.max_press_ms !== undefined) {
     for (const press of summary.presses) {
       const where = `${press.target ?? press.nodeId}, node ${press.nodeId}`;
       if (press.latencyMs === undefined) {
-        failures.push(`press untimed (${where}): ${press.unmeasuredReason}`);
+        failures.push(`press (${PRESS_METRIC}) untimed (${where}): ${press.unmeasuredReason}`);
       } else if (press.latencyMs > limits.max_press_ms) {
-        failures.push(`press ${ms(press.latencyMs)} > ${ms(limits.max_press_ms)} (${where})`);
+        failures.push(
+          `press (${PRESS_METRIC}) ${ms(press.latencyMs)} > ${ms(limits.max_press_ms)} (${where})${against(
+            'max',
+            baseline?.press_max_ms,
+            ms,
+          )}`,
+        );
       }
     }
   }
   if (limits.min_frames !== undefined && summary.frames.frameCount < limits.min_frames) {
     failures.push(
-      `${summary.frames.frameCount} frames < ${limits.min_frames} frames (${summary.id})`,
+      `gfxinfo frames ${summary.frames.frameCount} < ${limits.min_frames} (${summary.id})`,
     );
   }
   return { verdict: failures.length > 0 ? 'fail' : 'pass', limits, failures };
@@ -664,6 +701,16 @@ export function renderPerformanceReport(
     );
   }
   for (const summary of summaries) {
+    const baseline = summary.baseline;
+    if (!baseline) continue;
+    const parts = [
+      baseline.press_p95_ms === undefined ? '' : `press p95 ${value(baseline.press_p95_ms, ' ms')}`,
+      baseline.press_max_ms === undefined ? '' : `max ${value(baseline.press_max_ms, ' ms')}`,
+      baseline.sustained_fps === undefined ? '' : `sustained ${value(baseline.sustained_fps)} fps`,
+    ].filter(Boolean);
+    lines.push(`- ${summary.id} baseline, ${baseline.label}: ${parts.join(', ') || 'recorded'}`);
+  }
+  for (const summary of summaries) {
     for (const failure of summary.budget?.failures ?? []) lines.push(`- FAIL ${failure}`);
   }
   const gaps = summaries.filter((summary) => summary.coverageGapReasons.length > 0);
@@ -681,6 +728,24 @@ function parseBudget(value: unknown): PerformanceBudget | undefined {
     ...optionalLimit(record, 'max_press_p95_ms'),
     ...optionalLimit(record, 'max_press_ms'),
     ...optionalLimit(record, 'min_frames'),
+  };
+}
+
+function parseBaseline(value: unknown): PerformanceBaseline | undefined {
+  if (value === undefined) return undefined;
+  const record = requireRecord(value, 'baseline');
+  if (typeof record.label !== 'string' || !record.label.trim()) {
+    throw new RecipeExecutionError(
+      'harness',
+      `${PERFORMANCE_CAPTURE_ACTION} baseline.label must be a non-empty string.`,
+    );
+  }
+  return {
+    ...record,
+    label: record.label.trim(),
+    ...optionalLimit(record, 'sustained_fps'),
+    ...optionalLimit(record, 'press_p95_ms'),
+    ...optionalLimit(record, 'press_max_ms'),
   };
 }
 

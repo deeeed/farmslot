@@ -217,6 +217,7 @@ describe('window budget', () => {
       result: capture(samples),
       spans: presses,
       budget: { max_press_p95_ms: 130, max_press_ms: 150 },
+      baseline: { label: 'main abc123 @90Hz', press_p95_ms: 159, press_max_ms: 192 },
       targets: { fps: 60, press_ms: 100 },
     });
     assert.deepEqual(summary.press, {
@@ -237,8 +238,8 @@ describe('window budget', () => {
     });
     assert.equal(summary.budget?.verdict, 'fail');
     assert.deepEqual(summary.budget?.failures, [
-      'press p95 206 ms > 130 ms (tabs; slowest tab-terminals 210 ms)',
-      'press 210 ms > 150 ms (tab-terminals, node b)',
+      'press p95 (gfxinfo input->mount frame) 206 ms > 130 ms (tabs; slowest tab-terminals 210 ms); main abc123 @90Hz baseline p95 159 ms',
+      'press (gfxinfo input->mount frame) 210 ms > 150 ms (tab-terminals, node b); main abc123 @90Hz baseline max 192 ms',
     ]);
     assert.equal(summary.targets?.press?.met, false);
   });
@@ -251,7 +252,7 @@ describe('window budget', () => {
       budget: { max_press_ms: 150 },
     });
     assert.deepEqual(summary.budget?.failures, [
-      'press untimed (tab-terminals, node b): no frame handled input during the press',
+      'press (gfxinfo input->mount frame) untimed (tab-terminals, node b): no frame handled input during the press',
     ]);
   });
 
@@ -350,7 +351,9 @@ describe('app.performance_capture session', () => {
         (error: unknown) =>
           error instanceof RecipeExecutionError &&
           error.causeClass === 'subject' &&
-          /press 230 ms > 150 ms \(companion-tab-review, node press\)/u.test(error.message),
+          /press \(gfxinfo input->mount frame\) 230 ms > 150 ms \(companion-tab-review, node press\)/u.test(
+            error.message,
+          ),
       );
       const report = await readFile(path.join(artifactsDir, 'performance/report.md'), 'utf8');
       assert.match(report, /^# Companion jank/u);
