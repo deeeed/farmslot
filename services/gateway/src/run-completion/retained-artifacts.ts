@@ -388,14 +388,11 @@ export async function withTaskDirWrite<T>(directory: string, write: () => Promis
   writingTaskDirs.set(dir, (writingTaskDirs.get(dir) ?? 0) + 1);
   taskDirWrites.set(dir, (taskDirWrites.get(dir) ?? 0) + 1);
   try {
-    // A sandbox gateway never writes the owning gateway's store, so it keeps no footprints.
+    // A sandbox gateway never writes the owning gateway's store, so it keeps no footprints. A
+    // forget that cannot be made durable fails the write: after a restart the old size would
+    // match again.
     if (!process.env.FARMSLOT_SANDBOX_HOME)
-      await forgetAcquisitionFootprints(await runBundleStore(true), [dir]).catch((error) =>
-        // The write count still changes the dir's token in this process. The copy must not fail on it.
-        console.warn(
-          `[run-bundle] could not drop the kept footprint of ${dir}: ${(error as Error).message}`,
-        ),
-      );
+      await forgetAcquisitionFootprints(await runBundleStore(true), [dir]);
     return await write();
   } finally {
     const holds = writingTaskDirs.get(dir)! - 1;

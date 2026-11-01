@@ -624,16 +624,22 @@ function saveKeptFootprints(
 
 /**
  * Drops the kept footprints of task dirs the gateway is about to write outside its runs' own
- * updates, so a crash mid-write cannot leave a stale one behind.
+ * updates, durably, so neither a crash mid-write nor a restart can bring a stale one back. If
+ * the file cannot be rewritten it is removed, and every settled dir is walked once more; only
+ * when that fails too does the forget fail.
  */
 export async function forgetAcquisitionFootprints(
   store: RunBundleStore,
   directories: readonly string[],
 ): Promise<void> {
-  const footprints = await loadKeptFootprints(store);
-  let changed = false;
-  for (const directory of directories) changed = footprints.delete(directory) || changed;
-  if (changed) await saveKeptFootprints(store, footprints);
+  try {
+    const footprints = await loadKeptFootprints(store);
+    let changed = false;
+    for (const directory of directories) changed = footprints.delete(directory) || changed;
+    if (changed) await saveKeptFootprints(store, footprints);
+  } catch {
+    await rm(footprintFile(store), { force: true });
+  }
 }
 
 /**

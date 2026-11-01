@@ -10,9 +10,16 @@ const root = await fs.mkdtemp(path.join(tmpdir(), 'retained-footprints-'));
 after(() => fs.rm(root, { recursive: true, force: true }));
 let stalled: Promise<void> | undefined;
 let entered: (() => void) | undefined;
+let failSave = false;
 mock.module('node:fs/promises', {
   namedExports: {
     ...fs,
+    open: async (...args: Parameters<typeof fs.open>) => {
+      // As if the descriptor table were full when a footprint save opened its temporary.
+      if (failSave && String(args[0]).includes('acquisition-footprints.json.'))
+        throw Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' });
+      return fs.open(...args);
+    },
     rename: async (...args: Parameters<typeof fs.rename>) => {
       // Hold the first footprint save at its rename, after its snapshot was written.
       if (String(args[1]).endsWith('acquisition-footprints.json') && stalled) {
@@ -88,4 +95,26 @@ test('a forget queued behind an earlier save is never overwritten by it', async 
     await fs.readFile(path.join(store.root, 'usage', 'acquisition-footprints.json'), 'utf8'),
   ) as { dirs: object };
   assert.deepEqual(kept.dirs, {});
+});
+
+test('a forget that cannot rewrite the file removes it, so a restart cannot bring the old size back', async () => {
+  const store = await openRunBundleStore({
+    runsDir: path.join(root, 'failed-forget/.runs'),
+    home: path.join(root, 'failed-forget/home'),
+    create: true,
+  });
+  const file = path.join(store.root, 'usage', 'acquisition-footprints.json');
+  const settledDir = path.join(root, 'projects/demo/tasks/qa/released');
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(
+    file,
+    JSON.stringify({ v: 1, dirs: { [settledDir]: { token: 'unowned', bytes: 1 } } }),
+  );
+  failSave = true;
+  try {
+    await forgetAcquisitionFootprints(store, [settledDir]);
+  } finally {
+    failSave = false;
+  }
+  await assert.rejects(fs.stat(file), { code: 'ENOENT' });
 });
