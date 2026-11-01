@@ -9,6 +9,10 @@ import {
   type EvidenceReviewMediaType,
   type EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
+import {
+  recordedEvidenceClosureIdentity,
+  type RunRecordedEvidenceReview,
+} from '@farmslot/protocol';
 
 import type { EvidenceAcceptanceReview } from '../components/EvidenceAcOverlay';
 
@@ -139,4 +143,18 @@ export function recordingAcceptanceReview(
   if (!review || openedEvidenceKey === undefined || review.evidenceKey === openedEvidenceKey)
     return review;
   return { ...review, record: undefined, stale: true };
+}
+
+/**
+ * The identity of a verified recorded-evidence read: its execution and checked files.
+ * Null for a read with errors (a pruned or unverifiable package still lists files it has
+ * no digest for) or without a recorded execution: the reads the evidence model will not
+ * bind verdicts to either.
+ */
+export function recordedEvidenceKey(
+  review: Pick<RunRecordedEvidenceReview, 'input' | 'errors' | 'failureCode'> | undefined,
+): string | null {
+  if (!review?.input?.claims?.recipeRunId || review.errors.length > 0 || review.failureCode)
+    return null;
+  return recordedEvidenceClosureIdentity(review.input);
 }

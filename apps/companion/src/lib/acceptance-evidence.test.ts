@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import type { AcceptanceStatusLedger } from '@farmslot/protocol';
+import {
+  type AcceptanceStatusLedger,
+  recordedEvidenceClosureIdentity,
+  type RecordedEvidencePackageInput,
+} from '@farmslot/protocol';
 
 import {
   acceptanceEvidenceHref,
   acceptanceEvidenceStrip,
   acceptanceEvidenceViewer,
+  recordedEvidenceKey,
   recordingAcceptanceReview,
 } from './acceptance-evidence';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
@@ -149,4 +155,38 @@ test('verdicts over a recording act only on the evidence it opened on', async ()
   // A recording opened without knowing its evidence keeps the live review as it is.
   assert.equal(recordingAcceptanceReview(live('B'), undefined)?.stale, undefined);
   assert.equal(recordingAcceptanceReview(undefined, 'A'), undefined);
+});
+
+test('the evidence key comes only from a verified read, never a throw', () => {
+  const { input }: { input: RecordedEvidencePackageInput } = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../../packages/recipe-runner/test/fixtures/visual-review-package.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  const key = recordedEvidenceKey({ input, errors: [] });
+  assert.equal(typeof key, 'string');
+  // A pruned retained file: the package still lists it, without a digest, and the read says so.
+  const [pruned] = Object.keys(input.artifactDigests);
+  assert.ok(pruned);
+  const { [pruned]: _dropped, ...artifactDigests } = input.artifactDigests;
+  const unverifiable = {
+    ...input,
+    artifactPaths: input.artifactPaths ?? Object.keys(input.artifactDigests),
+    artifactDigests,
+  };
+  assert.throws(() => recordedEvidenceClosureIdentity(unverifiable));
+  assert.equal(
+    recordedEvidenceKey({ input: unverifiable, errors: ['Retained artifact is missing'] }),
+    null,
+  );
+  assert.equal(
+    recordedEvidenceKey({ input, errors: [], failureCode: 'evidence-package-unverifiable' }),
+    null,
+  );
+  assert.equal(recordedEvidenceKey({ input: { ...input, claims: undefined }, errors: [] }), null);
+  assert.equal(recordedEvidenceKey(undefined), null);
 });

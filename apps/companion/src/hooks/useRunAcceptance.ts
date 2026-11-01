@@ -12,7 +12,6 @@ import {
   type AcceptanceStatusLedger,
   Methods,
   type OutputReviewPayload,
-  recordedEvidenceClosureIdentity,
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -21,6 +20,7 @@ import {
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { recordedEvidenceKey } from '../lib/acceptance-evidence';
 import type { GatewayClient } from '../lib/gateway-client';
 import { getResourceCache } from '../lib/resource-cache';
 import { assertNativeRunReady } from '../lib/run-collections';
@@ -217,7 +217,7 @@ export function useRunAcceptance(
         await recordVisualClaimReview(client, runId, evidenceModel, claimId, verdict, reason);
       },
       recipeRunId: evidence?.selectedRecipeRunId ?? null,
-      evidenceKey: recordedEvidenceKey(evidence?.recordedEvidence?.input),
+      evidenceKey: recordedEvidenceKey(evidence?.recordedEvidence),
       acceptanceStatus,
       acceptanceCriteria,
       acceptanceEvidenceLinks,
@@ -252,11 +252,4 @@ export function useRunAcceptance(
     gate,
     options.reportSnapshot,
   ]);
-}
-
-function recordedEvidenceKey(
-  input: Parameters<typeof recordedEvidenceClosureIdentity>[0] | undefined,
-): string | null {
-  if (!input?.claims?.recipeRunId) return null;
-  return recordedEvidenceClosureIdentity(input);
 }
