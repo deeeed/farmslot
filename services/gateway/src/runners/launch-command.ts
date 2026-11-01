@@ -289,21 +289,26 @@ export function codexShellEnvironmentPolicy(names: string[]): string {
   return `shell_environment_policy={inherit="all",exclude=[],include_only=[${allowed.map((name) => JSON.stringify(name)).join(',')}],set={ZDOTDIR="/var/empty"}}`;
 }
 
+/** The machine pool's configured executable for a runner; undefined leaves the runner's own default. */
+export function machineRunnerPath(runner: string, machine?: RawPoolJson): string | undefined {
+  const paths: Record<string, string | undefined> = {
+    codex: machine?.codex_path,
+    claude: machine?.claude_path,
+    cursor: machine?.cursor_path,
+    grok: machine?.grok_path,
+    pi: machine?.pi_path,
+    opencode: machine?.opencode_path,
+  };
+  return paths[runner.trim()]?.trim() || undefined;
+}
+
 export function interactiveRunnerExecutable(options: {
   runner: string;
   binary?: string;
   machine?: RawPoolJson;
 }): string {
   const runnerId = options.runner.trim();
-  const machineBinaries: Record<string, string | undefined> = {
-    codex: options.machine?.codex_path,
-    claude: options.machine?.claude_path,
-    cursor: options.machine?.cursor_path,
-    grok: options.machine?.grok_path,
-    pi: options.machine?.pi_path,
-    opencode: options.machine?.opencode_path,
-  };
-  const binary = options.binary || machineBinaries[runnerId];
+  const binary = options.binary || machineRunnerPath(runnerId, options.machine);
   const resolver: Record<string, (preferred?: string | null) => string> = {
     codex: resolveCodexBinary,
     cursor: resolveCursorAgentBinary,
