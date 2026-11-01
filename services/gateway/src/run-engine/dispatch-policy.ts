@@ -1,6 +1,6 @@
 import type { DispatchPreviewParams, FlowType, Run } from '@farmslot/protocol';
 
-import { normalizeRunner, runnerDefaultModel } from '../runners/registry.js';
+import { assertNativeRunner, normalizeRunner, runnerDefaultModel } from '../runners/registry.js';
 
 export function buildDispatchPreviewParamsForRun(
   run: Pick<
@@ -87,6 +87,17 @@ export function resolveRunDispatchRunnerModel(
     runnerDefaultModel(runner) ||
     'unknown';
   return { runner, model };
+}
+
+/** A native run that names no runner takes the slot's, so FIND_SLOT refuses the slot before claiming it. */
+export function assertNativeRunForSlot(
+  run: Pick<Run, 'transport' | 'metrics'>,
+  slotRunner: string | undefined,
+): void {
+  if (run.transport !== 'native') return;
+  assertNativeRunner(
+    resolveRunDispatchRunnerModel(run, { runner: slotRunner ?? '', model: '' }).runner,
+  );
 }
 export function resolveCIWatchChainFlowType(dispatchAction?: string | null): FlowType | null {
   if (dispatchAction === 'dispatch-update-branch') return 'update-branch';

@@ -71,7 +71,7 @@ import {
 import { constrainDirectWorkflowExecution } from '../review-workspaces/direct-defaults.js';
 import { bindPRExecutionProfilesToPool } from '../review-workspaces/pool-policy.js';
 import { assertReviewNativeRunnerHealthy } from '../runners/native/review-health.js';
-import { normalizeRunner } from '../runners/registry.js';
+import { assertNativeRunner, normalizeRunner } from '../runners/registry.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
 import {
   requireNativeProfileOwner,
@@ -499,6 +499,7 @@ export function addItem(
   if (nativeProfile && params.runner && normalizeRunner(params.runner) !== nativeProfile.runner)
     throw new Error('Selected native profile belongs to another worker runner');
   if (transport === 'native') {
+    if (params.runner) assertNativeRunner(normalizeRunner(params.runner));
     if (params.reviewWorkspaceTarget)
       resolveReviewWorkspaceOwner(
         delegatedOwnerPrincipalId ??

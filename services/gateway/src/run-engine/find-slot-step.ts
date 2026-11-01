@@ -125,6 +125,7 @@ import {
 import { precheckTaskDirCollision } from '../tasks/writer.js';
 
 import { canReplayBranchAffinityDecision, findLatestResolvedDecision } from './decision-replay.js';
+import { assertNativeRunForSlot } from './dispatch-policy.js';
 import { BlockedRunError } from './errors.js';
 import { canReconcileReviewQaRun, reviewQaMigrationPatch } from './review-qa-migration.js';
 import { runSupersededSince } from './run-generation.js';
@@ -232,6 +233,10 @@ async function claimSelectedSlot(
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found while claiming slot: ${runId}`);
+  if (run.transport === 'native') {
+    const slotRunner = (await readSlotRow(slotId))?.runner;
+    assertNativeRunForSlot(run, typeof slotRunner === 'string' ? slotRunner : undefined);
+  }
   const pool = (await loadPoolConfigs()).find((pool) =>
     pool.slots.some((slot) => slot.id === slotId),
   );

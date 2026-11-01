@@ -199,6 +199,30 @@ test('addItem preserves interactive dev policy fields for auto-dispatch', () => 
   }
 });
 
+test('native queue admission refuses a runner with no native mode before it is queued', () => {
+  const oldOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'native-queue-owner';
+  try {
+    assert.throws(
+      () =>
+        addItem(
+          {
+            flowType: 'dev',
+            project: 'farmslot-farm',
+            ticketOrPr: 'NATIVE-QUEUE-SCRIPTED',
+            transport: 'native',
+            runner: 'scripted',
+          },
+          { kind: 'principal', principalId: 'native-queue-owner' },
+        ),
+      /Runner has no native transport: scripted/,
+    );
+  } finally {
+    if (oldOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = oldOwner;
+  }
+});
+
 test('native queue admission binds profile ownership and preserves transport on disk', async () => {
   const oldOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'native-queue-owner';
