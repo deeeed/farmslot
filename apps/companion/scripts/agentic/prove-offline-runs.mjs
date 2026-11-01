@@ -114,6 +114,14 @@ const metro = process.env.METRO_PORT;
 const platform = process.env.PLATFORM;
 assert(/^\d+$/.test(metro ?? ''));
 assert(['ios', 'android'].includes(platform));
+// Android proofs run on an emulator. A physical phone is used only when explicitly named, and
+// every command still targets the development bundle alone.
+const assertProofDevice = (serial) =>
+  assert(
+    serial?.startsWith('emulator-') ||
+      (Boolean(serial) && serial === process.env.FARMSLOT_PROOF_PHYSICAL_SERIAL),
+    'Use an emulator, or name the physical device in FARMSLOT_PROOF_PHYSICAL_SERIAL',
+  );
 assert(
   process.env.FARMSLOT_HOME &&
     process.env.FARMSLOT_GATEWAY_PROFILE &&
@@ -173,7 +181,7 @@ async function inbox(route = 'inbox') {
     await execute('xcrun', ['simctl', 'openurl', process.env.IOS_SIMULATOR, url]);
   } else {
     const serial = process.env.ADB_SERIAL ?? process.env.ANDROID_SERIAL;
-    assert(serial?.startsWith('emulator-'));
+    assertProofDevice(serial);
     await execute('adb', ['-s', serial, 'wait-for-device'], { timeout: 15000 });
     await execute('adb', [
       '-s',
@@ -210,7 +218,7 @@ async function restartNative() {
     await execute('xcrun', ['simctl', 'openurl', process.env.IOS_SIMULATOR, link]);
   } else {
     const serial = process.env.ADB_SERIAL ?? process.env.ANDROID_SERIAL;
-    assert(serial?.startsWith('emulator-'));
+    assertProofDevice(serial);
     // A cold launch needs the owned Metro tunnel as well as the selected gateway route.
     // Keep the gateway mapping intact: the wire proof temporarily routes it through its proxy.
     await execute('adb', ['-s', serial, 'reverse', `tcp:${metro}`, `tcp:${metro}`]);
@@ -244,7 +252,7 @@ if (phase === 'recorded-visual-context') {
   const owner = new D05FixtureOwner([projectDir, path.join(home, 'projects', project), runFile]);
   const deviceId = platform === 'ios' ? process.env.IOS_SIMULATOR : process.env.ADB_SERIAL;
   assert(deviceId, 'Select the single owned native device');
-  if (platform === 'android') assert(deviceId.startsWith('emulator-'));
+  if (platform === 'android') assertProofDevice(deviceId);
   let originalIOSProfile;
   if (platform === 'ios') {
     assert(
@@ -1282,11 +1290,22 @@ if (phase === 'terminal-context') {
         `tcp:${gateway.port}`,
       ]);
   };
+  // Raw keys (BACK, typed text, Return) go only to the development app's own window, never to
+  // another app that a relaunch briefly brings forward.
+  const devAppFocused = async () => {
+    const { stdout } = await execute('adb', ['-s', deviceId, 'shell', 'dumpsys', 'window']);
+    const focus = stdout.split('\n').find((line) => line.includes('mCurrentFocus=')) ?? '';
+    return { focused: focus.includes('net.siteed.farmslot.development/'), window: stdout };
+  };
+  const sendKeys = async (...args) => {
+    assert((await devAppFocused()).focused, 'Keys go only to the development app');
+    await execute('adb', ['-s', deviceId, 'shell', ...args]);
+  };
   // The soft keyboard covers the key bar; BACK hides it only while it is showing.
   const hideKeyboard = async () => {
     if (platform !== 'android') return;
-    const { stdout } = await execute('adb', ['-s', deviceId, 'shell', 'dumpsys', 'window']);
-    if (stdout.includes('mImeShowing=true'))
+    const { focused, window } = await devAppFocused();
+    if (focused && window.includes('mImeShowing=true'))
       await execute('adb', ['-s', deviceId, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
   };
   // Send stays disabled until the pane is in the machine's inventory; press it once enabled.
@@ -1578,8 +1597,8 @@ if (phase === 'terminal-context') {
       const keys = [...`echo ${typed}`]
         .map((key) => `input text '${key === ' ' ? '%s' : key}'; sleep 0.12;`)
         .join(' ');
-      await execute('adb', ['-s', deviceId, 'shell', keys]);
-      await execute('adb', ['-s', deviceId, 'shell', 'input', 'keyevent', 'KEYCODE_ENTER']);
+      await sendKeys(keys);
+      await sendKeys('input', 'keyevent', 'KEYCODE_ENTER');
     } else {
       await device.interactions.fill({
         ...selection,
