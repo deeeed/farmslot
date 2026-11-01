@@ -24,6 +24,7 @@ import {
   prepareCompletionPackageTransitionLocked,
   publicationStatusForRun,
 } from '../run-completion/orchestrator.js';
+import { preparedPackageIsStale } from '../run-completion/prepared-package-stale.js';
 import { publicationBaselineContext } from '../run-completion/publication-artifacts.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
 import {
@@ -114,6 +115,7 @@ export async function ensureCurrentPublishPackage(
       .flatMap((review) => review.artifactPaths ?? [review.id])
       .sort();
     if (
+      !preparedPackageIsStale(run) &&
       prepared?.headSha === head &&
       JSON.stringify([...prepared.reviewArtifactIds].sort()) === JSON.stringify(ids) &&
       (await publicationBundleAvailable(run, prepared))
@@ -240,6 +242,7 @@ export function reconcilePublicationPackageForInspection(
           ? await readers.bundleAvailable(run, pending.payload.prPackage)
           : false;
       if (
+        !preparedPackageIsStale(getRun(run.id) ?? run) &&
         pending.payload?.kind === 'ready' &&
         pending.payload.prPackage?.headSha === head &&
         bundleAvailable

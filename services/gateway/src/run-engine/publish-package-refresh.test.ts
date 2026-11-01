@@ -14,6 +14,10 @@ import {
 
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
+import {
+  markPreparedPackageStale,
+  preparedPackageIsStale,
+} from '../run-completion/prepared-package-stale.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
 import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
@@ -618,4 +622,79 @@ test('an explicit refresh logs its refusal, so a caller that timed out does not 
       `run ${run.id.slice(0, 8)} — publish package refresh refused after \\d+s: No pending ready publish package`,
     ),
   );
+});
+
+test('a package marked stale by refused evidence is refreshed, not shown again, at the same HEAD', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-STALE',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const prepared = makeReadyGatePackage();
+  const decision: RunDecision = {
+    id: 'stale',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    createdAt: prepared.createdAt,
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      branch: prepared.branch,
+      workerReport: '',
+      diffStat: prepared.diffStat,
+      prPackage: prepared,
+    },
+  };
+  updateRun(run.id, { status: 'human-gating', decisions: [decision] });
+  let refreshes = 0;
+  const readers = {
+    head: async () => prepared.headSha ?? null,
+    bundleAvailable: async () => true,
+    progress: async () => ({ kind: 'idle' as const }),
+    refresh: async () => {
+      refreshes++;
+      throw new Error('Before evidence comes from recipe attempt recipe-runs/attempts/base');
+    },
+  };
+  await reconcilePublicationPackageForInspection(getRun(run.id)!, readers);
+  assert.equal(refreshes, 0, 'an unchanged package is shown as is');
+  // A human-gate replay's mirror refresh refused the worker's evidence after this package.
+  updateRun(run.id, { engineState: { publishGate: { packageId: prepared.id } } });
+  await markPreparedPackageStale(run.id);
+  const shown = await reconcilePublicationPackageForInspection(getRun(run.id)!, readers);
+  assert.equal(refreshes, 1);
+  assert.deepEqual(
+    shown.decisions[0].actions.map((action) => action.id),
+    [],
+    'the stale package cannot be approved',
+  );
+  assert.match(shown.decisions[0].description, /Before evidence comes from recipe attempt/);
+});
+
+test('a refused package stays stale, across a restart, until another package replaces it', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-STALE-2',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, { engineState: { publishGate: { packageId: 'pkg-old' } } });
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), false);
+  await markPreparedPackageStale(run.id);
+  // Durable: the run record names the refused package, so a restarted gateway reads it too.
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.refusedEvidencePackageId, 'pkg-old');
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), true);
+  // A package built after the refusal is not stale.
+  updateRun(run.id, {
+    engineState: {
+      publishGate: { ...getRun(run.id)!.engineState!.publishGate, packageId: 'pkg-new' },
+    },
+  });
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), false);
 });
