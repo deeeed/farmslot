@@ -282,6 +282,16 @@ export function NativeConversationScreen({
                     onDisclosure={disclose}
                     hidden={row.fold !== undefined && !foldIsOpen(row.fold)}
                     planOpen={nativePlanOpen(row, watchedTools.current)}
+                    implementing={vm.implementing}
+                    onImplement={
+                      // A proposal's entry text is its plan.
+                      row.key === vm.implementKey
+                        ? () =>
+                            void actions.resume.implement(row.entry.text).then((session) => {
+                              if (session) onSelect(session);
+                            })
+                        : undefined
+                    }
                   />
                 ),
               )}
