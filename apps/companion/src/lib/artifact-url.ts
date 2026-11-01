@@ -16,11 +16,36 @@ export const CURRENT_ARTIFACTS_RECIPE_RUN_PARAM = 'current-artifacts';
 
 export type ArtifactHttpHeaders = GatewayHttpAuthHeaders;
 
+let heldArtifact: ((runId: string, path: string) => string | undefined) | undefined;
+
+/** The resource cache registers where held gate evidence lives on the device. */
+export function setHeldArtifactLookup(
+  lookup: ((runId: string, path: string) => string | undefined) | undefined,
+): void {
+  heldArtifact = lookup;
+}
+
+/** A run artifact the device already holds, by the URL's run and path (not a recipe run's). */
+function heldArtifactUri(uri: string): string | undefined {
+  const query = heldArtifact && uri.includes('/api/run-artifact?') ? uri.split('?')[1] : undefined;
+  if (!query) return undefined;
+  const params = new Map<string, string>();
+  for (const pair of query.split('&')) {
+    const [name, value = ''] = pair.split('=');
+    params.set(decodeURIComponent(name), decodeURIComponent(value.replace(/\+/g, ' ')));
+  }
+  const runId = params.get('runId');
+  const path = params.get('path');
+  return runId && path && !params.get('recipeRunId') ? heldArtifact?.(runId, path) : undefined;
+}
+
+/** Held evidence is read from the device, silently; anything else from the gateway. */
 export function artifactSource(
   uri: string,
   headers: ArtifactHttpHeaders = {},
 ): { uri: string; headers?: ArtifactHttpHeaders } {
-  return gatewayResourceSource(uri, headers);
+  const held = heldArtifactUri(uri);
+  return held ? { uri: held } : gatewayResourceSource(uri, headers);
 }
 
 export type ArtifactManifestType =

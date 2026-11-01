@@ -30,6 +30,26 @@ export function gitBlobHash(data: Uint8Array): string {
   return bytesToHex(sha1.create().update(header).update(data).digest());
 }
 
+/** Bytes from base64 text, as file and RPC reads return them. */
+export function base64Bytes(text: string): Uint8Array {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+/** SHA-256 over bytes read in chunks, for content too large to hold in memory at once. */
+export function createSha256(): {
+  update(chunk: Uint8Array): void;
+  hex(): string;
+} {
+  const hash = sha256.create();
+  return {
+    update: (chunk) => void hash.update(chunk),
+    hex: () => bytesToHex(hash.digest()),
+  };
+}
+
 /** Content rules 1 and 2: bytes are stored only under the identity they hash to. A diff also
  * verifies against a legacy package's raw SHA-256 `diffHash`. */
 export function verifyResourceContent(

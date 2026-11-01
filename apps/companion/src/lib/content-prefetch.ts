@@ -16,6 +16,7 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { decisionRunId } from './decision-run-context';
+import type { EvidenceMediaHolder } from './evidence-media';
 import {
   configurationProjectsQuery,
   nativeActiveRunsQuery,
@@ -70,16 +71,33 @@ export function contentPrefetchTargets(
 }
 
 /**
+ * The gates whose media stays on the device: undefined until both lists are known, so a cold
+ * start that has not read them yet drops nothing.
+ */
+export function heldGateRunIds(
+  active: RunListResult | undefined,
+  decisions: DecisionListResult | undefined,
+): Set<string> | undefined {
+  if (!active || !decisions) return undefined;
+  return new Set(
+    contentPrefetchTargets(active, decisions)
+      .filter((target) => target.gate)
+      .map((target) => target.runId),
+  );
+}
+
+/**
  * Feeds one prefetcher from the shared active-run and decision observations; nothing polls. A
  * farm owner also observes its projects, and runs start once their default branches are known.
  */
 export function startContentPrefetch(
-  options: Omit<ContentPrefetchOptions, 'defaultBranch'> & {
+  options: Omit<ContentPrefetchOptions, 'defaultBranch' | 'media'> & {
     cache: GatewayResourceCache;
     farm: boolean;
+    media?: EvidenceMediaHolder;
   },
 ): () => void {
-  const { cache, farm } = options;
+  const { cache, farm, media } = options;
   const projects = () => (farm ? cache.read(configurationProjectsQuery) : undefined);
   const prefetcher = createContentPrefetcher({
     ...options,
@@ -88,12 +106,12 @@ export function startContentPrefetch(
   });
   const update = () => {
     if (projects()?.status === 'loading') return;
-    prefetcher.setTargets(
-      contentPrefetchTargets(
-        cache.read(nativeActiveRunsQuery).data,
-        cache.read(nativeDecisionsQuery).data,
-      ),
-    );
+    const active = cache.read(nativeActiveRunsQuery).data;
+    const decisions = cache.read(nativeDecisionsQuery).data;
+    prefetcher.setTargets(contentPrefetchTargets(active, decisions));
+    // A decided gate's media goes.
+    const keep = heldGateRunIds(active, decisions);
+    if (media && keep) void media.keep(keep);
   };
   const stops = [
     cache.observe(nativeActiveRunsQuery, update),

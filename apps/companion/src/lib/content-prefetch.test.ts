@@ -25,6 +25,7 @@ import {
 import {
   companionRunDiffBase,
   contentPrefetchTargets,
+  heldGateRunIds,
   startContentPrefetch as startRealContentPrefetch,
 } from './content-prefetch';
 import { configurationProjectsQuery } from './gateway-run-sync';
@@ -261,6 +262,20 @@ mock.module('@react-native-async-storage/async-storage', {
     removeItem: async (key: string) => void saved.delete(key),
   },
 });
+// Gate media files stay out of this test: nothing is held, so every read goes to the gateway.
+mock.module('expo-file-system/legacy', {
+  namedExports: {
+    documentDirectory: 'file:///docs/',
+    EncodingType: { Base64: 'base64' },
+    getInfoAsync: async () => ({ exists: false }),
+    makeDirectoryAsync: async () => {},
+    readAsStringAsync: async () => '',
+    writeAsStringAsync: async () => {},
+    downloadAsync: async () => ({ status: 404 }),
+    moveAsync: async () => {},
+    deleteAsync: async () => {},
+  },
+});
 const stores: ResourceStore[] = [];
 mock.module('@farmslot/local-store/native', {
   namedExports: {
@@ -316,6 +331,19 @@ test('pending gates come before active runs, each ordered by its last update', (
   assert.deepEqual(contentPrefetchTargets(undefined, decisions), [
     { runId: 'run-gate', gate: true, updatedAt: '2026-10-27T00:30:00.000Z' },
   ]);
+});
+
+test('gate media is dropped only against known run and decision lists', () => {
+  const runs = { runs: [activeRun, gateRun], totalCount: 2 };
+  assert.deepEqual(heldGateRunIds(runs, decisions), new Set(['run-gate']));
+  // Decided: the gate is gone from both lists, so its media can go.
+  assert.deepEqual(
+    heldGateRunIds({ runs: [activeRun], totalCount: 1 }, { decisions: [] }),
+    new Set(),
+  );
+  // A cold start before either list is read keeps everything.
+  assert.equal(heldGateRunIds(undefined, decisions), undefined);
+  assert.equal(heldGateRunIds(runs, undefined), undefined);
 });
 
 test('each persistent cache gets one prefetcher that fills it through the gateway client and stops with it; the gate then opens offline from held content', async () => {

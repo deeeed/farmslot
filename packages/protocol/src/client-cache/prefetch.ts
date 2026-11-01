@@ -3,11 +3,16 @@ import type { ReadyGatePrPackage, ReviewDiffSnapshot, Run } from '../contracts/r
 import type { GitDiffResult, GitLogResult, GitShowBatchResult } from '../rpc/git.js';
 import { Methods } from '../rpc/registry.js';
 import type { RunGetResult } from '../rpc/run.js';
-import { isRunArtifactImagePath } from '../runs/artifact-media.js';
+import { isRunArtifactImagePath, isRunArtifactMediaPath } from '../runs/artifact-media.js';
 import { reviewDiffHash } from '../runs/review-diff-identity.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
-import { gitBlobHash, RESOURCE_CONTENT_LIMITS, resourceContentWithinLimits } from './content.js';
+import {
+  base64Bytes,
+  gitBlobHash,
+  RESOURCE_CONTENT_LIMITS,
+  resourceContentWithinLimits,
+} from './content.js';
 import { applyUnifiedDiff, parseUnifiedDiff, type UnifiedDiffFile } from './diff-apply.js';
 import { type ResourceQuery, resourceQuery } from './registry.js';
 import type { ContentKey, ResourceContentCohort } from './store.js';
@@ -35,6 +40,23 @@ export interface ContentPrefetchArtifact {
   bundleDigest?: string;
 }
 
+/** A pending gate's evidence too large for a content row: a video, or an image over the cap. */
+export interface ContentPrefetchMediaEntry extends ContentPrefetchArtifact {
+  sha256: string;
+  sizeBytes?: number;
+  /** The gate's last update, so the holder can drop the oldest gates first. */
+  gateAt: number;
+}
+
+/**
+ * Keeps a pending gate's large evidence as files, by digest. The client owns where the bytes
+ * live, how much it keeps and on which networks it downloads; prefetch only says what the gate
+ * needs. False skips that entry (no room, or not now) without stopping the gate's other reads.
+ */
+export interface ContentPrefetchMedia {
+  hold(entry: ContentPrefetchMediaEntry, signal: AbortSignal): Promise<boolean>;
+}
+
 export interface ContentPrefetchOptions {
   /** The cache's transport: connection, capabilities and resource changes. */
   transport: Pick<
@@ -51,6 +73,8 @@ export interface ContentPrefetchOptions {
   readArtifact(artifact: ContentPrefetchArtifact, signal: AbortSignal): Promise<Uint8Array>;
   /** The run's project default branch, for an active run without a stack base (`activeRunDiffBase`). */
   defaultBranch?(run: Run): string | undefined;
+  /** Large gate evidence (videos, images over the row cap); without it, they load when opened. */
+  media?: ContentPrefetchMedia;
 }
 
 export interface ContentPrefetcher {
@@ -164,13 +188,6 @@ function pendingPackage(run: Run): ReadyGatePrPackage | undefined {
     )
       return decision.payload.prPackage;
   return undefined;
-}
-
-function base64Bytes(text: string): Uint8Array {
-  const binary = atob(text);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-  return bytes;
 }
 
 /**
@@ -463,6 +480,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     run: Run,
     prPackage: ReadyGatePrPackage,
     write: PrefetchWrite,
+    gateAt: number,
   ): Promise<void> {
     const { signal } = write;
     const snapshot = prPackage.reviewSnapshot;
@@ -492,12 +510,25 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       }
     }
     for (const entry of prPackage.evidenceManifest ?? []) {
+      if (!entry.sha256 || !isRunArtifactMediaPath(entry.path)) continue;
       if (
-        !entry.sha256 ||
         !isRunArtifactImagePath(entry.path) ||
         (entry.sizeBytes ?? 0) > RESOURCE_CONTENT_LIMITS.imageBytes
-      )
+      ) {
+        if (signal.aborted) throw aborted();
+        await options.media?.hold(
+          {
+            runId: run.id,
+            path: entry.path,
+            bundleDigest,
+            sha256: entry.sha256,
+            sizeBytes: entry.sizeBytes,
+            gateAt,
+          },
+          signal,
+        );
         continue;
+      }
       const key: ContentKey = { kind: 'artifact', id: entry.sha256 };
       if (await retain(key, write)) continue;
       const data = await options.readArtifact(
@@ -576,7 +607,12 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     if (prPackage) {
       state.plan = 'gate';
       state.packageId = run.engineState?.publishGate?.packageId;
-      return prefetchGate(run, prPackage, { cohort: 'gate', signal, token });
+      return prefetchGate(
+        run,
+        prPackage,
+        { cohort: 'gate', signal, token },
+        updatedAt(state.target),
+      );
     }
     const write: PrefetchWrite = { cohort: 'run', signal, token };
     if (run.reviewWorkspace && run.reviewWorkspaceSubject) {

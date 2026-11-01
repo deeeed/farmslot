@@ -11,7 +11,11 @@ import {
 
 import { useConnectionStore } from '../store/connection';
 
+import { artifactUrl, setHeldArtifactLookup } from './artifact-url';
 import { startContentPrefetch } from './content-prefetch';
+import { createEvidenceMediaHolder } from './evidence-media';
+import { nativeEvidenceMediaFiles } from './evidence-media-files';
+import { gatewayResourceSource } from './gateway-http-auth';
 import { fetchRunArtifactBytes } from './held-content';
 
 let notice: string | undefined;
@@ -47,6 +51,34 @@ const owner = new ResourceCacheOwner({
 owner.subscribe(notify);
 owner.subscribe(bindPrefetch);
 
+/**
+ * Pending gates' videos and large images, kept as files by digest. They download only on a LAN
+ * route: without a network-type API in this binary, that is how the app knows it is on Wi-Fi.
+ */
+const evidenceMedia = createEvidenceMediaHolder({
+  files: nativeEvidenceMediaFiles(),
+  source(entry) {
+    const state = useConnectionStore.getState();
+    return gatewayResourceSource(
+      artifactUrl(
+        state.gatewayUrl,
+        entry.runId,
+        entry.path,
+        undefined,
+        undefined,
+        entry.bundleDigest,
+      ),
+      state.activeProfileHttpAuthHeaders,
+    );
+  },
+  allowed() {
+    const state = useConnectionStore.getState();
+    return state.profiles.find((profile) => profile.id === state.activeProfileId)?.kind === 'lan';
+  },
+  log: (message) => console.info(message),
+});
+setHeldArtifactLookup(evidenceMedia.localUri);
+
 function connectionInputs(): ResourceConnectionInputs {
   const state = useConnectionStore.getState();
   const client = state.client;
@@ -65,6 +97,7 @@ function connectionInputs(): ResourceConnectionInputs {
 
 function sync(): void {
   const state = useConnectionStore.getState();
+  if (state.signedOut) void evidenceMedia.keep(new Set());
   owner.update({
     client: state.client,
     signedOut: state.signedOut,
@@ -92,6 +125,7 @@ function bindPrefetch(): void {
     stop: startContentPrefetch({
       cache,
       farm,
+      media: evidenceMedia,
       transport: createResourceCacheTransport(client, connectionInputs),
       request: (method, params, signal) => client.request(method, params, undefined, { signal }),
       readArtifact(artifact, signal) {

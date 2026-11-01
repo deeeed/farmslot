@@ -10,6 +10,7 @@ import {
   activeRunDiffBase,
   activeRunDiffQuery,
   type ContentPrefetchArtifact,
+  type ContentPrefetchMediaEntry,
   type ContentPrefetchOptions,
   type ContentPrefetchTarget,
   createContentPrefetcher,
@@ -228,6 +229,7 @@ function harness(
   world = createWorld(),
   capabilities: ResourceCacheConnection['capabilities'] = BATCHED,
   defaultBranch?: ContentPrefetchOptions['defaultBranch'],
+  media?: ContentPrefetchOptions['media'],
 ) {
   let connection: ResourceCacheConnection = {
     id: 1,
@@ -297,6 +299,7 @@ function harness(
     request,
     readArtifact,
     defaultBranch,
+    media,
   });
   return {
     world,
@@ -437,6 +440,50 @@ test('a gate reads run.get, its retained diff, batched bases, then evidence imag
   );
   assert.deepEqual(world.stores[0].untrackedFiles, UNTRACKED);
   assert.ok(world.stores.every(({ token }) => token?.connectionId === 1));
+});
+
+test('a gate hands its videos and over-cap images to the media holder, by digest', async () => {
+  const held: ContentPrefetchMediaEntry[] = [];
+  const { world, prefetcher } = harness(createWorld(), BATCHED, undefined, {
+    async hold(entry) {
+      held.push(entry);
+      return entry.path !== 'evidence/huge.png';
+    },
+  });
+  gateRun(world, 'g1', 'p1', gateDiff());
+  prefetcher.setTargets([target('g1', true, '2026-10-27T01:00:00.000Z')]);
+  await flush();
+  assert.deepEqual(
+    held.map(({ runId, path, sha256, bundleDigest, gateAt }) => [
+      runId,
+      path,
+      sha256,
+      bundleDigest,
+      gateAt,
+    ]),
+    [
+      [
+        'g1',
+        'evidence/run.mp4',
+        'f'.repeat(64),
+        'bundle-p1',
+        Date.parse('2026-10-27T01:00:00.000Z'),
+      ],
+      [
+        'g1',
+        'evidence/huge.png',
+        'e'.repeat(64),
+        'bundle-p1',
+        Date.parse('2026-10-27T01:00:00.000Z'),
+      ],
+    ],
+  );
+  // The holder downloads its own files: prefetch reads only the row-sized image, and a skipped
+  // entry stops nothing else.
+  assert.deepEqual(
+    world.calls.filter((call) => call.method === 'artifact').map((call) => call.params.path),
+    ['artifacts/p1.diff', 'evidence/a.png'],
+  );
 });
 
 test('an active slot run keeps its worktree diff as a query and prefetches only diff paths', async () => {
