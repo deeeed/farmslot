@@ -1417,9 +1417,18 @@ if (phase === 'terminal-context') {
         },
       ],
     });
+    // A native run is readable only with a recorded owner; the operator who reads it owns it.
+    const { principals } = await rpc('principal.list');
+    const operator = principals.find(
+      (principal) =>
+        principal.subject.type === 'person' &&
+        principal.roles.some((grant) => grant.role === 'admin'),
+    );
+    assert(operator, 'The sandbox must have an admin person for the native review run');
     const reviewRun = seededRun(reviewRunId, {
       slotId: null,
       transport: 'native',
+      nativeOwnerPrincipalId: operator.id,
       reviewWorkspace: {
         workspaceId: `ot-${reviewRunId.slice(0, 8)}`,
         machine: pool.machine,
