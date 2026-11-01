@@ -20,6 +20,8 @@ import {
   resourceDependenciesForRead,
   resourceQuery,
   type ResourceStore,
+  type ResourceStoreScope,
+  resourceStoreScopeId,
 } from '@farmslot/protocol/client-cache';
 
 import {
@@ -284,9 +286,17 @@ const storeDeletions: Array<(scopeId: string) => Promise<void>> = [];
 mock.module('@farmslot/local-store/native', {
   namedExports: {
     createNativeSqliteResourceStore: async (options: {
+      scope: ResourceStoreScope;
       deleteFiles?: (scopeId: string) => Promise<void>;
     }) => {
-      const store = createMemoryResourceStore();
+      const memory = createMemoryResourceStore();
+      // Like the SQLite store, a deleted scope takes its files with it.
+      const store: ResourceStore = Object.assign(Object.create(memory) as ResourceStore, {
+        async deleteAll() {
+          await options.deleteFiles?.(resourceStoreScopeId(options.scope));
+          await memory.deleteAll();
+        },
+      });
       stores.push(store);
       if (options.deleteFiles) storeDeletions.push(options.deleteFiles);
       return store;
@@ -546,6 +556,36 @@ test("a deleted offline store deletes its scope's held evidence folder", async (
     await flush();
   }
 });
+
+for (const online of [false, true])
+  test(`signing out ${online ? 'online' : 'offline, from a cold start'} deletes the scope's held evidence folder`, async () => {
+    const { initializeNativeResourceCache } = await import('./resource-cache');
+    const profile = `profile-signed-out-${online}`;
+    setState({ client: new FakeClient(auth(true, 'native')), activeProfileId: profile });
+    initializeNativeResourceCache()();
+    await flush();
+    // A cold start reopens the remembered scope, with the gateway unreachable when offline.
+    const client = new FakeClient(auth(true, 'native'));
+    client.connectionState = online ? 'connected' : 'disconnected';
+    setState({ client, signedOut: false });
+    const stop = initializeNativeResourceCache();
+    try {
+      await flush();
+      const before = deletedPaths.length;
+      // Companion's sign-out: the client records the revocation, then the session closes.
+      (client as { resourceConnectionReason?: string }).resourceConnectionReason = 'sign-out';
+      for (const listener of [...client.listeners]) listener();
+      setState({ signedOut: true, client: null });
+      await flush();
+      const deleted = deletedPaths.slice(before);
+      assert.equal(deleted.length, 1);
+      assert.match(deleted[0], /^file:\/\/\/cache\/evidence-media\/[0-9a-f]{16}\/$/);
+    } finally {
+      setState({ signedOut: false });
+      stop();
+      await flush();
+    }
+  });
 
 test('a gateway without capabilities.batchedContent gets no prefetch', async () => {
   const { initializeNativeResourceCache } = await import('./resource-cache');

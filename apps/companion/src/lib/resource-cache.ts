@@ -102,12 +102,22 @@ function bindMedia(): void {
  * A deleted offline store takes its scope's held evidence with it, however it was retired. The
  * store awaits this, so a failure fails the deletion and the owner deletes the scope again.
  */
-function deleteScopeMedia(scopeId: string): Promise<void> {
+async function deleteScopeMedia(scopeId: string): Promise<void> {
   const current = media?.scope === scopeId ? media.holder : undefined;
-  if (!current) return nativeEvidenceMediaFiles(scopeId).clear();
-  media = undefined;
-  setHeldArtifactLookup(undefined);
-  return current.destroy();
+  if (current) {
+    media = undefined;
+    setHeldArtifactLookup(undefined);
+  }
+  try {
+    if (current) await current.destroy();
+    else {
+      await nativeEvidenceMediaFiles(scopeId).clear();
+      console.info('[evidence-media] cleared');
+    }
+  } catch (error) {
+    console.warn('[evidence-media] delete failed', error);
+    throw error;
+  }
 }
 
 function connectionInputs(): ResourceConnectionInputs {
