@@ -1689,8 +1689,24 @@ test('a gate package the worker re-recorded reads as replaced, with no details f
   assert.deepEqual(replaced.currentOccurrences, []);
   assert.deepEqual(replaced.displayWarnings, []);
   assert.equal(replaced.occurrences.length, current.occurrences.length);
-  // Nothing is left to judge on a replaced recording.
-  assert.ok(replaced.judgmentRows(null).every((row) => !row.pending && !row.reviewKind));
+  // A visual check waiting on the current recording; nothing is left to judge once replaced.
+  const visual = structuredClone(pkg);
+  const awaiting = { ...visual.claims!.criteria[0]!, proofMode: 'mixed' as const };
+  visual.claims!.criteria[0] = { ...awaiting, verdict: 'awaiting-review' };
+  const pendingIn = (recipeRunId: string, evidence: string) =>
+    createEvidenceReviewModel({
+      package: visual,
+      packagePath,
+      ledger: { ...ledger(recipeRunId, evidence), criteria: visual.claims!.criteria },
+    })
+      .judgmentRows(null)
+      .filter((row) => row.pending)
+      .map((row) => row.claim.id);
+  assert.deepEqual(pendingIn('qa-attempt', `artifacts/${packagePath}/trace.json`), [awaiting.id]);
+  assert.deepEqual(
+    pendingIn('newer-attempt', 'artifacts/recipe-runs/20261101082718242-33108/trace.json'),
+    [],
+  );
   // Validity is unchanged: the mismatch still refuses measured proof.
   assert.ok(replaced.errors.includes('The task ledger belongs to another recipe execution.'));
 });
