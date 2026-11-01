@@ -159,6 +159,7 @@ beforeEach(() => {
   calls.length = 0;
   launchInputs.length = 0;
 });
+const reservation = () => run.agentContexts![0].nativeSession;
 const dispatch = () =>
   dispatchNativeWorker({
     runId: run.id,
@@ -238,7 +239,7 @@ test('a rewrite during LIST retires the unsent reservation, so the retry ENSUREs
   };
   await assert.rejects(dispatch(), WorkerLaunchInputsChangedError);
   assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST]);
-  assert.equal(run.agentContexts![0].nativeSession, undefined, 'the host never had it');
+  assert.equal(reservation(), undefined, 'the host never had it');
   // The engine's one retry re-reads the inputs and reserves fresh.
   afterList = undefined;
   inputsChanged = false;
@@ -250,7 +251,7 @@ test('a rewrite during LIST retires the unsent reservation, so the retry ENSUREs
     'runtime-ready',
     NATIVE_WORKER_ENSURE,
   ]);
-  assert.notEqual(run.agentContexts![0].nativeSession?.sessionId, 'pending-session');
+  assert.notEqual(reservation()?.sessionId, 'pending-session');
 });
 test('a rewrite while the host may hold the reservation keeps it for reconciliation', async () => {
   listUnavailable = true;
@@ -261,7 +262,7 @@ test('a rewrite while the host may hold the reservation keeps it for reconciliat
     dispatch(),
     (error: Error) => error.name === 'NativeWorkerOperationUncertainError',
   );
-  assert.equal(run.agentContexts![0].nativeSession?.sessionId, 'pending-session');
+  assert.equal(reservation()?.sessionId, 'pending-session');
 });
 test('a bound run launches its native worker on the libraries its task pinned', async (t) => {
   const taskDir = mkdtempSync(path.join(tmpdir(), 'native-pinned-libraries-'));

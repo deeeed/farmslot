@@ -98,6 +98,7 @@ test('the retried dispatch launches and its sub-steps record the retry', async (
   outcomes = [new WorkerLaunchInputsChangedError('Worker launch inputs changed during preflight')];
   try {
     const { outputs } = await dispatchOnce();
+    assert.ok(outputs);
     assert.equal(attempts, 2);
     assert.equal(outputs.launchCommand, 'fixture-launch');
     assert.deepEqual(
