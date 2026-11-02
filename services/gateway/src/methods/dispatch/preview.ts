@@ -1001,17 +1001,6 @@ export async function dispatchPreview(
 ): Promise<DispatchPreviewResult> {
   const automaticLoadPinned = internalOptions.automaticLoadPinned ?? isPinnedSlotSelection(params);
   if ('sourcePlans' in params) throw new Error('Source plans are gateway-owned');
-  // As in run.create, a PR-bound ref (a bare number, a branch) resolves to owner/repo#N first,
-  // so the preview names the same PR, branch and follow-up parent the run will get (F286).
-  if (PR_BOUND_FLOW_TYPES.has(params.flowType as FlowType))
-    params = {
-      ...params,
-      ticketOrPr: await resolvePrBoundTicketRef(
-        normalizeTicketRef(params.ticketOrPr),
-        params.flowType,
-        async () => (await loadProjectConfig(params.project))?.ci?.repo,
-      ),
-    };
   if (
     (sourceAuthority() || params.sourceSelections !== undefined) &&
     !internalOptions.sourcePlans &&
@@ -1058,6 +1047,18 @@ export async function dispatchPreview(
     throw new Error('Workflow execution snapshots cannot be supplied in preview parameters');
   const projectConfig = sourcePlans ? null : await loadProjectConfig(params.project);
   if (!sourcePlans) {
+    // As in run.create, a PR-bound ref (a bare number, a branch) resolves to owner/repo#N first,
+    // so the preview names the same PR, branch and follow-up parent the run will get (F286). A
+    // source plan comes from run.create's own planning in its selected context, so it already has.
+    if (PR_BOUND_FLOW_TYPES.has(params.flowType))
+      params = {
+        ...params,
+        ticketOrPr: await resolvePrBoundTicketRef(
+          normalizeTicketRef(params.ticketOrPr),
+          params.flowType,
+          async () => projectConfig?.ci?.repo,
+        ),
+      };
     const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
       purpose: 'preview',
       ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
@@ -1239,13 +1240,19 @@ export async function dispatchPreview(
     if (scopedPlan && 'params' in scopedPlan) params = scopedPlan.params;
     // The task writer holds a pr-complete run to its parent's original criteria, not those given
     // with it: name them before launch (F286, 9f0b6812 inherited family 8a768552's AC1-AC4). The
-    // parent is the one run.create links, which it infers even beside a family id.
+    // parent is the one run.create links: a source plan's planned run carries it; otherwise it is
+    // inferred as run.create infers it, even beside a family id (without one, `family` has it).
     if (params.flowType === 'pr-complete' && internalOptions.includeProfileFit !== false) {
-      const { parentRunId } = resolveDispatchFamilyContext({
-        ...params,
-        targetBranch: enriched.targetBranch,
-        familyId: undefined,
-      });
+      const plannedRun = scopedPlan && 'params' in scopedPlan ? scopedPlan.run : undefined;
+      let parentRunId: string | undefined;
+      if (plannedRun) parentRunId = plannedRun.parentRunId ?? undefined;
+      else if (params.familyId || sourcePlans)
+        parentRunId = resolveDispatchFamilyContext({
+          ...params,
+          targetBranch: enriched.targetBranch,
+          familyId: undefined,
+        }).parentRunId;
+      else parentRunId = family.parentRunId;
       const inherited =
         parentRunId && (await inheritedPRCompletionAcceptance(parentRunId, params.project));
       if (inherited) result.preview.inheritedAcceptance = inherited;

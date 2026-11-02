@@ -20,6 +20,7 @@ const branch = await import('./branch-checkout.js');
 const pressure = await import('./pressure-admission.js');
 const target = await import('./target-branch.js');
 const runtime = await import('../../sources/runtime.js');
+const intake = await import('../../tasks/completion-intake.js');
 let prospective: SourceSlotPlans | undefined;
 mock.module('../../sources/runtime.js', {
   namedExports: { ...runtime, planSourceRequestSlots: async () => prospective },
@@ -93,16 +94,37 @@ mock.module('./branch-checkout.js', {
 mock.module('./pressure-admission.js', {
   namedExports: { ...pressure, capturePressureAdmissionDecisions: async () => new Map() },
 });
+const inheritedFor: string[] = [];
+mock.module('../../tasks/completion-intake.js', {
+  namedExports: {
+    ...intake,
+    inheritedPRCompletionAcceptance: async (parentRunId: string) => {
+      inheritedFor.push(parentRunId);
+      return { fromRunId: parentRunId, criteria: [] };
+    },
+  },
+});
 mock.module('./target-branch.js', {
   namedExports: { ...target, resolveDispatchTargetBranch: async () => undefined },
 });
 const { dispatchPreview } = await import('./preview.js');
 
-function readyPlans(): RunSlotSourcePlans {
+function readyPlans(
+  planned: { flowType: 'dev' | 'pr-complete'; ticketOrPr: string; parentRunId?: string } = {
+    flowType: 'dev',
+    ticketOrPr: 'TAT-1',
+  },
+): RunSlotSourcePlans {
   const plans: RunSlotSourcePlans = new Map();
   for (const slot of slots) {
     const lock = sourceTestLock(slot.machine);
-    const run = makeRun({ id: 'run-1', project: 'demo', flowType: 'dev', slotId: null });
+    const run = makeRun({
+      id: 'run-1',
+      project: 'demo',
+      flowType: planned.flowType,
+      slotId: null,
+      parentRunId: planned.parentRunId ?? null,
+    });
     run.sourcePlan = sourceTestPlan(lock);
     plans.set(slot.slot, {
       run,
@@ -114,8 +136,8 @@ function readyPlans(): RunSlotSourcePlans {
       },
       params: {
         project: 'demo',
-        flowType: 'dev',
-        ticketOrPr: 'TAT-1',
+        flowType: planned.flowType,
+        ticketOrPr: planned.ticketOrPr,
         mode: 'autonomous',
         prepareProfile: slot.slot === 'a' ? 'sandbox-companion' : 'plain',
         runner: 'codex',
@@ -147,6 +169,24 @@ test('public preview bootstraps prospective plans without a caller-supplied inte
   const result = await dispatchPreview({ project: 'demo', flowType: 'dev', ticketOrPr: 'TAT-1' });
   assert.equal(result.preview.slotId, 'b');
   assert.equal(result.preview.model, 'selected-model');
+});
+
+test("a pr-complete preview takes the selected plan's resolved ref and linked parent (F286)", async () => {
+  // run.create's own planning resolved the bare "42" in the selected context (acme/new#42) and
+  // linked its parent; the preview must not resolve it again through any other pack's ci.repo.
+  const result = await dispatchPreview(
+    { project: 'demo', flowType: 'pr-complete', ticketOrPr: '42' },
+    {
+      sourcePlans: readyPlans({
+        flowType: 'pr-complete',
+        ticketOrPr: 'acme/new#42',
+        parentRunId: 'parent-1',
+      }),
+    },
+  );
+  assert.deepEqual(inheritedFor, ['parent-1']);
+  assert.equal(result.preview.inheritedAcceptance?.fromRunId, 'parent-1');
+  assert(observed.every((entry) => entry.nodeId === 'node-b'));
 });
 
 test('an RPC-shaped sourcePlans field cannot forge gateway planning authority', async () => {
