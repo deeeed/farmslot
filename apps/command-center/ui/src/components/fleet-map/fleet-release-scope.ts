@@ -23,24 +23,28 @@ export function fleetReleaseScope(
   visible: readonly SlotStatus[],
   selected: ReadonlySet<string>,
   selectable = true,
+  /** A saved or stale fleet waits for a current read before any release. */
+  current = true,
 ): FleetReleaseScope {
   const chosen = visible.filter((slot) => selected.has(slot.slot));
   const { count, canInspect } = fleetRecoverySummary(chosen);
   const [reason, title] = !selectable
     ? ['Switch to the table to select', 'Switch to the table to select slots to release']
-    : !selected.size
-      ? ['Select slots to release', 'Select slots to release']
-      : !chosen.length
-        ? ['Selection hidden by filters', 'The selected slots are hidden by the current filters']
-        : !canInspect
-          ? [
-              'Selected slots can’t be released',
-              'No selected slot can be released — each is busy, held, or disabled',
-            ]
-          : [
-              '',
-              `Review the ${chosen.length} selected slot${chosen.length === 1 ? '' : 's'} before releasing`,
-            ];
+    : !current
+      ? ['Waiting for a current fleet read', 'Actions wait for a current fleet read']
+      : !selected.size
+        ? ['Select slots to release', 'Select slots to release']
+        : !chosen.length
+          ? ['Selection hidden by filters', 'The selected slots are hidden by the current filters']
+          : !canInspect
+            ? [
+                'Selected slots can’t be released',
+                'No selected slot can be released — each is busy, held, or disabled',
+              ]
+            : [
+                '',
+                `Review the ${chosen.length} selected slot${chosen.length === 1 ? '' : 's'} before releasing`,
+              ];
   return {
     slotIds: chosen.map((slot) => slot.slot),
     label: chosen.length
