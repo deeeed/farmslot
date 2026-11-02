@@ -122,6 +122,7 @@ async function setup(t: import('node:test').TestContext) {
     updateSlotStatusIf: core.updateSlotStatusIf,
     broadcast: () => {},
     retryOccupiedRunSlot: async () => false,
+    resumeInterruptedRecovery: () => {},
   };
   return { id: created.id, deps };
 }

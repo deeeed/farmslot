@@ -2220,6 +2220,7 @@ function orphanCollaborators(overrides: Partial<OrphanCollaborators>): OrphanCol
     updateSlotStatusIf: async () => unexpected(),
     broadcast: unexpected,
     retryOccupiedRunSlot: async () => unexpected(),
+    resumeInterruptedRecovery: unexpected,
     ...overrides,
   };
 }
@@ -2962,8 +2963,11 @@ for (const action of ['approve-publish', 'approve-publish-unresolved']) {
   }
 }
 
-test('restart keeps failed recovery held and turns its interrupted fence into a failed hold', async () => {
+// F316: the ae4598a4 deploy restart caught macpro-audiolab-4's release at its git step, and the
+// slot stayed held until an operator retried it. The interrupted recovery now runs once more.
+test('restart holds an interrupted recovery, resumes it once, and leaves a failed one held', async () => {
   for (const phase of ['releasing', 'occupied'] as const) {
+    const resumed: string[] = [];
     const row: Record<string, unknown> = {
       lifecycle: phase === 'releasing' ? 'busy' : 'held',
       phase,
@@ -2983,12 +2987,24 @@ test('restart keeps failed recovery held and turns its interrupted fence into a 
         Object.assign(row, fields);
         return true;
       },
+      resumeInterruptedRecovery: (slotId) => resumed.push(slotId),
     });
     await reconcileOrphanedSlots(deps);
     assert.equal(row.lifecycle, 'held');
     assert.equal(row.phase, 'occupied');
     assert.deepEqual(row.workspace_recovery, { id: 'recovery-1', phase: 'fixtures' });
     // reset/occupied-cleanup dependencies deliberately throw if called.
+    assert.deepEqual(resumed, phase === 'releasing' ? ['recovery-slot'] : []);
+    // Once only: the hold is no longer a releasing fence, so a later pass leaves it alone.
+    await reconcileOrphanedSlots(
+      orphanCollaborators({
+        ...deps,
+        loadFleetStatus: async () => ({
+          slots: [{ slot: 'recovery-slot', lifecycle: 'held', phase: 'occupied' }],
+        }),
+      }),
+    );
+    assert.deepEqual(resumed, phase === 'releasing' ? ['recovery-slot'] : []);
   }
 });
 
