@@ -98,7 +98,9 @@ export async function reuseSafeIdleSlot(
     // A finished artifact-only run's own commits are retained output: the release parks them
     // (durable ref, SHAs on the run) and refuses if they turn out not to be the run's own.
     let parkRunId: string | undefined;
-    if (eligibility.confirmationRequired && !expected?.retainedCandidate) {
+    // Automatic reuse never parks an ownerless checkout's commits: that is an operator release.
+    const localWork = eligibility.confirmationRequired || workspace.publication === 'unpushed';
+    if (localWork && !expected?.retainedCandidate) {
       const { getRun } = await import('../runs/store.js');
       const owner = expected?.recordRunId ? getRun(expected.recordRunId) : undefined;
       if (
@@ -130,7 +132,7 @@ export async function reuseSafeIdleSlot(
       {
         slotId,
         release: true,
-        mode: eligibility.confirmationRequired ? 'force' : 'safe',
+        mode: localWork ? 'force' : 'safe',
         expectedWorkspace: workspace,
       },
       emit,

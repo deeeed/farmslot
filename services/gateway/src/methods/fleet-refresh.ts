@@ -23,6 +23,7 @@ import {
   type FleetRefreshSlotsParams,
   type FleetRefreshSlotsResult,
   type FleetRefreshSlotStatus,
+  slotParkedDetail,
   slotRecoveryEligibility,
 } from '@farmslot/protocol';
 
@@ -343,8 +344,13 @@ async function runSlot(
         requestId,
         slotId,
         status: 'refreshed' as FleetRefreshSlotStatus,
-        detail: result.advanced ? 'advanced' : 'already up-to-date',
+        detail: result.parked
+          ? slotParkedDetail(result.parked)
+          : result.advanced
+            ? 'advanced'
+            : 'already up-to-date',
         mode,
+        ...(result.parked ? { parked: result.parked } : {}),
       });
       summary.refreshed++;
     } else {

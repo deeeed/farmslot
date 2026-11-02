@@ -1,4 +1,10 @@
-import { isTerminalRunStatus, type ParkedRunCommits, type Run } from '@farmslot/protocol';
+import {
+  isTerminalRunStatus,
+  type ParkedRunCommits,
+  type Run,
+  type SlotParkedCommits,
+  slotParkedDetail,
+} from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 import type { execOnSlot } from '../core/exec.js';
@@ -99,6 +105,45 @@ export async function parkRunBranchCommits(
     `[slot.release] ${vars.slotId}: parked run ${run.id.slice(0, 8)}'s ${record.commits.length} unpushed commit(s) on ${branch} at ${ref}`,
   );
   return record;
+}
+
+/**
+ * An ownerless slot's unpushed commits have no run to record them, so the park key names the
+ * slot instead: HEAD stays reachable at `refs/farmslot/parked/manual-<slot>-<ts>/<head>`
+ * (created, never moved) before the caller resets. Only the head the operator inspected is
+ * parked; returns null when HEAD moved or holds nothing the remotes lack.
+ */
+export async function parkSlotCommits(
+  vars: SlotVars,
+  exec: typeof execOnSlot,
+  checks: { headSha: string; now?: Date },
+): Promise<SlotParkedCommits | null> {
+  const git = `git -C ${shellQuote(vars.remoteRepo)}`;
+  const stamp = (checks.now ?? new Date()).toISOString().replace(/[-:.]/g, '');
+  const key = `manual-${vars.slotId}-${stamp}`;
+  const script = [
+    `head=$(${git} rev-parse HEAD) || exit 3`,
+    `[ "$head" = ${shellQuote(checks.headSha)} ] || exit 3`,
+    `branch=$(${git} symbolic-ref --quiet --short HEAD || echo HEAD)`,
+    `commits=$(${git} rev-list "$head" --not --remotes) || exit 4`,
+    `[ -n "$commits" ] || exit 3`,
+    `ref="refs/farmslot/parked/${key}/$head"`,
+    `${git} update-ref "$ref" "$head" '' || exit 4`,
+    `echo ${MARK} "$branch" "$ref"`,
+    `printf '%s\\n' "$commits"`,
+  ].join(' && ');
+  const result = await exec(vars, script);
+  if (result.exitCode === 3) return null;
+  const lines = result.stdout.split('\n').filter(Boolean);
+  const marker = lines.findIndex((line) => line.startsWith(`${MARK} `));
+  if (result.exitCode !== 0 || marker < 0)
+    throw new Error(
+      `Cannot park the unpushed commits on ${vars.slotId}: ${(result.stderr || result.stdout).trim()}`,
+    );
+  const [, branch, ref] = lines[marker].split(' ');
+  const parked = { ref, branch, commits: lines.length - marker - 1 };
+  console.log(`[slot.release] ${vars.slotId}: ${slotParkedDetail(parked)}`);
+  return parked;
 }
 
 /**

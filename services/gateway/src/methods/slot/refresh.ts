@@ -83,7 +83,9 @@ export async function slotRefresh(
   emit: EventEmitter,
   signal?: AbortSignal,
 ): Promise<SlotRefreshResult> {
-  if (params.release) return recoverSlotWorkspace(params, emit, signal);
+  // An operator release parks an ownerless slot's unpushed commits rather than refusing them.
+  if (params.release)
+    return recoverSlotWorkspace(params, emit, signal, { parkOwnerlessCommits: true });
   // Honour a client-supplied requestId so the UI can set its event-filter
   // BEFORE issuing the request. This closes the cross-action bleed window
   // where a panel running in parallel would absorb our script.output frames

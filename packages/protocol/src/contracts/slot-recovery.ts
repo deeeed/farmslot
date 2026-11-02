@@ -112,7 +112,9 @@ export function slotRecoveryEligibility(
     return blocked(slot.heldReason ?? 'Slot is held');
   if (work.publication === 'unknown')
     return blocked(work.error ?? 'Publication is unknown', 'unknown');
-  const confirmationRequired = work.dirtyCount > 0 || work.publication === 'unpushed';
+  // An operator release parks an ownerless slot's unpushed commits under a durable ref first.
+  const confirmationRequired =
+    work.dirtyCount > 0 || (work.publication === 'unpushed' && !parksSlotCommits(work));
   return {
     allowed: true,
     bulkInspectable,
@@ -123,6 +125,24 @@ export function slotRecoveryEligibility(
       ? { reason: work.dirtyCount > 0 ? ('dirty' as const) : ('unpushed' as const) }
       : {}),
   };
+}
+
+/** An ownerless checkout's unpushed commits are parked, not discarded, by an operator release. */
+export function parksSlotCommits(
+  work: Pick<SlotWorkspace, 'currentRunId' | 'publication'>,
+): boolean {
+  return work.publication === 'unpushed' && !work.currentRunId;
+}
+
+/** Unpushed commits a release kept reachable at `ref` before resetting the slot. */
+export interface SlotParkedCommits {
+  ref: string;
+  branch: string;
+  commits: number;
+}
+
+export function slotParkedDetail(parked: SlotParkedCommits): string {
+  return `Parked ${parked.commits} unpushed commit${parked.commits === 1 ? '' : 's'} of ${parked.branch} at ${parked.ref}`;
 }
 
 export function slotWorkspaceIdentity(work: SlotWorkspaceIdentity): SlotWorkspaceIdentity {

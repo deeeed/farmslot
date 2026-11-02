@@ -1,0 +1,1 @@
+- Releasing an ownerless slot from the fleet (one slot or in bulk) parks its unpushed commits under `refs/farmslot/parked/manual-<slot>-<ts>/<head>` before the reset, then reports the ref, branch and commit count, with no discard confirmation. Uncommitted files and a run's own unpushed commits still need it. Automatic slot reuse at dispatch never parks ownerless commits.

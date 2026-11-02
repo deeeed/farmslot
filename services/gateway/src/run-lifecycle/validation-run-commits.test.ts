@@ -10,6 +10,7 @@ import type { ParkedRunCommits, Run } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 import type { execOnSlot } from '../core/exec.js';
+import { resetSlotRepoToIdle } from '../methods/slot/slot-tracking.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
@@ -18,6 +19,7 @@ import {
   dropParkedBranch,
   parkRunBranchCommits,
   parksBranchCommits,
+  parkSlotCommits,
   recordReleasedCheckout,
   restoreParkedBranch,
 } from './validation-run-commits.js';
@@ -229,4 +231,40 @@ test('only a finished artifact-only dev or fix-bug run parks its branch commits'
     ),
     true,
   );
+});
+
+test("an ownerless slot's unpushed commits are parked under a manual ref before the idle reset", async (t) => {
+  const { git, vars, base, head } = await fixture(t);
+  // Ownerless work on the idle branch itself: the reset to origin/main would drop it.
+  git('checkout', '-q', 'main');
+  git('merge', '-q', '--ff-only', 'TAT-4146-validation');
+  git('branch', '-q', '-D', 'TAT-4146-validation');
+  const parked = await parkSlotCommits(vars, localExec, {
+    headSha: head,
+    now: new Date('2026-11-02T10:00:00.000Z'),
+  });
+  assert.deepEqual(parked, {
+    ref: `refs/farmslot/parked/manual-proof-slot-20261102T100000000Z/${head}`,
+    branch: 'main',
+    commits: 2,
+  });
+  await resetSlotRepoToIdle(vars, {}, undefined, 'main', { linkedWorktree: false });
+  assert.equal(git('rev-parse', 'HEAD'), base, 'the slot is back on origin/main');
+  assert.equal(git('rev-parse', parked!.ref), head, 'the parked ref keeps the work');
+  assert.equal(git('rev-list', '--count', parked!.ref, '--not', '--remotes'), '2');
+  assert.equal(
+    await parkSlotCommits(vars, localExec, { headSha: base }),
+    null,
+    'nothing the remotes lack',
+  );
+});
+
+test('an ownerless park refuses a head that moved since the inspection', async (t) => {
+  const { git, vars, base, head } = await fixture(t);
+  assert.equal(await parkSlotCommits(vars, localExec, { headSha: base }), null);
+  assert.equal(git('for-each-ref', 'refs/farmslot/'), '');
+  // A feature branch is parked too and keeps its own name in the report.
+  const parked = await parkSlotCommits(vars, localExec, { headSha: head });
+  assert.equal(parked?.branch, 'TAT-4146-validation');
+  assert.equal(parked?.commits, 2);
 });

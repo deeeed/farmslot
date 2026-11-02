@@ -1,5 +1,6 @@
 import type {
   FleetStatus,
+  SlotParkedCommits,
   SlotRecoveryRefusal,
   SlotWorkspaceIdentity,
 } from '../contracts/index.js';
@@ -101,6 +102,8 @@ export interface FleetRefreshSlotUpdateEvent {
    * button on this typed flag rather than substring-matching `detail`.
    */
   recoverableViaForce?: boolean;
+  /** Unpushed commits the release parked before resetting the slot. */
+  parked?: SlotParkedCommits;
 }
 
 export interface FleetRefreshSummaryEvent {

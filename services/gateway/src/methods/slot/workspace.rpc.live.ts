@@ -9,7 +9,11 @@ import { mock, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import type { FleetStatusResult, SlotRefreshResult } from '@farmslot/protocol';
+import type {
+  FleetRefreshSlotUpdateEvent,
+  FleetStatusResult,
+  SlotRefreshResult,
+} from '@farmslot/protocol';
 
 import { createNativeProofFixture } from '../../runtime/native-proof-fixture.live-support.js';
 
@@ -284,7 +288,10 @@ touch "$FARMSLOT_ROOT/recycle-entered"
     const connection = await fixture.client.connect();
     t.after(() => connection.close());
     const bulkSummaries = new Map<string, object>();
+    const bulkUpdates: FleetRefreshSlotUpdateEvent[] = [];
     connection.onEvent((event) => {
+      if (event.event === 'fleet.refresh.slot-update')
+        bulkUpdates.push(event.payload as FleetRefreshSlotUpdateEvent);
       if (
         event.event === 'fleet.refresh.summary' &&
         typeof event.payload === 'object' &&
@@ -508,6 +515,41 @@ touch "$FARMSLOT_ROOT/recycle-entered"
       '',
       'explicit manual recovery retains its project recycle hook',
     );
+    // An ownerless slot's unpushed commit needs no discard confirmation: the release parks it.
+    await writeFile(path.join(repo, 'operator-note.txt'), 'unpushed operator work\n');
+    git(repo, 'add', 'operator-note.txt');
+    git(repo, 'commit', '-qm', 'test: unpushed operator work');
+    const unpushedHead = git(repo, 'rev-parse', 'HEAD');
+    const unpushedWork = await inspectSlotWorkspace('proof-slot');
+    assert.equal(unpushedWork.publication, 'unpushed');
+    // The bulk action takes it: no discard confirmation, and its result names the parked ref.
+    const parkingBulk = await call<{ requestId: string }>('fleet.refreshSlots', {
+      requestId: 'ownerless-park-proof',
+      slots: [
+        { slotId: 'proof-slot', release: true, mode: 'safe', expectedWorkspace: unpushedWork },
+      ],
+    });
+    const parkDeadline = Date.now() + 300_000;
+    while (!bulkSummaries.has(parkingBulk.requestId)) {
+      assert.ok(Date.now() < parkDeadline, 'The parking bulk release did not finish');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const parkedUpdate = bulkUpdates.find(
+      (update) => update.requestId === parkingBulk.requestId && update.status === 'refreshed',
+    );
+    assert.ok(parkedUpdate?.parked, JSON.stringify(bulkUpdates));
+    assert.equal(parkedUpdate.parked.branch, 'main');
+    assert.equal(parkedUpdate.parked.commits, 1);
+    assert.match(
+      parkedUpdate.parked.ref,
+      new RegExp(`^refs/farmslot/parked/manual-proof-slot-\\d{8}T\\d{9}Z/${unpushedHead}$`),
+    );
+    assert.equal(
+      parkedUpdate.detail,
+      `Parked 1 unpushed commit of main at ${parkedUpdate.parked.ref}`,
+    );
+    assert.equal(git(repo, 'rev-parse', parkedUpdate.parked.ref), unpushedHead);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
     let immediate = (await call<FleetStatusResult>('fleet.status')).fleet.slots.find(
       (slot) => slot.slot === 'proof-slot',
     );

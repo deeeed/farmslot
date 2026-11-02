@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_BRANCH,
+  parksSlotCommits,
   sameSlotWorkspace,
+  type SlotParkedCommits,
+  slotParkedDetail,
   type SlotRecovery,
   slotRecoveryEligibility,
   type SlotRecoveryPhase,
@@ -14,6 +17,7 @@ import {
 } from '@farmslot/protocol';
 
 import {
+  execOnSlot,
   getProjectField,
   loadProjectVars,
   loadSlotVars,
@@ -30,6 +34,7 @@ import {
   beginTerminalTeardown,
   endTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
+import { parkSlotCommits } from '../../run-lifecycle/validation-run-commits.js';
 import { checkFixtures } from '../fleet.js';
 
 import { slotFixtureRefresh } from './fixtures.js';
@@ -72,6 +77,8 @@ interface SlotRecoveryOptions {
   parkRunId?: string;
   /** The exact head an ownerless return to idle may park. */
   parkHeadSha?: string;
+  /** An operator release parks an ownerless checkout's unpushed commits instead of refusing. */
+  parkOwnerlessCommits?: boolean;
 }
 
 export async function recoverSlotWorkspace(
@@ -110,6 +117,7 @@ export async function recoverSlotWorkspace(
   activePrepareSlots.add(params.slotId);
   beginTerminalTeardown(params.slotId);
   let recovery: SlotRecovery | undefined;
+  let parked: SlotParkedCommits | null = null;
   let claimed = false;
   let authorized: SlotWorkspaceIdentity = params.expectedWorkspace;
   try {
@@ -259,11 +267,20 @@ export async function recoverSlotWorkspace(
       marker.completed = marker.completed.filter(
         (phase) => phase === 'cleanup' || phase === 'inspect',
       );
+    // A run's own commits are parked by the release below; an ownerless checkout's are parked here.
+    const parkOwnerless =
+      !!options?.parkOwnerlessCommits && !options.parkRunId && parksSlotCommits(workspace);
     if (
-      (workspace.dirtyCount > 0 || workspace.publication === 'unpushed') &&
+      (workspace.dirtyCount > 0 || (workspace.publication === 'unpushed' && !parkOwnerless)) &&
       params.mode !== 'force'
     )
       throw new Error('Local work requires discard confirmation');
+    if (parkOwnerless) {
+      await verifyWork();
+      parked = await parkSlotCommits(vars, execOnSlot, { headSha: authorized.headSha });
+      if (!parked) throw new Error('Unpushed commits changed before parking; inspect again');
+      output('park', slotParkedDetail(parked));
+    }
     await save('cleanup', 'inspect');
     if (!marker.completed.includes('cleanup')) {
       const linked = await detectLinkedWorktree(vars);
@@ -318,7 +335,9 @@ export async function recoverSlotWorkspace(
         'discard',
         params.mode === 'force'
           ? `Confirmed work on ${authorized.branch} at ${authorized.headSha}`
-          : 'Verified published work',
+          : parked
+            ? 'Unpushed commits are parked'
+            : 'Verified published work',
       );
       await resetSlotRepoToIdle(vars, project.projectJson, project, defaultBranch, {
         discardLocalWork: params.mode === 'force',
@@ -377,6 +396,7 @@ export async function recoverSlotWorkspace(
       refreshed: true,
       branch: verified.branch,
       advanced: params.expectedWorkspace.headSha !== verified.headSha,
+      ...(parked ? { parked } : {}),
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
