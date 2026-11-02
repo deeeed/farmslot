@@ -18,6 +18,19 @@ const GROUP_PARAM = 'group';
 const VIEW_PARAM = 'view';
 const REFRESH_PARAM = 'refresh';
 
+export const FLEET_GROUP_STORAGE_KEY = 'farmslot:fleet-groupBy';
+/** Versioned when the table became the default, so a choice saved under the card default lapses once. */
+export const FLEET_VIEW_STORAGE_KEY = 'farmslot:fleet-viewMode:v2';
+
+export function fleetCanvasStoredFallbacks(
+  storage: Pick<Storage, 'getItem'>,
+): FleetCanvasUrlFallbacks {
+  return {
+    groupBy: storage.getItem(FLEET_GROUP_STORAGE_KEY),
+    viewMode: storage.getItem(FLEET_VIEW_STORAGE_KEY),
+  };
+}
+
 function isFleetCanvasGroupBy(value: string | null): value is FleetCanvasGroupBy {
   return value === 'machine' || value === 'project' || value === 'resource';
 }
@@ -56,7 +69,7 @@ export function fleetCanvasUrlStateFromHash(
       ? view
       : isFleetCanvasViewMode(fallbackView)
         ? fallbackView
-        : 'card',
+        : 'list',
     fleetRefreshOpen: isTruthyUrlFlag(params.get(REFRESH_PARAM)),
   };
 }

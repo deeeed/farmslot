@@ -40,7 +40,7 @@ connection.onEvent((event) => {
 });
 const created = [];
 const cdp = fileURLToPath(new URL('../cdp.mjs', import.meta.url));
-const route = process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490';
+const route = process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490&view=list';
 const browser = (...args) =>
   execFileSync(process.execPath, [cdp, ...args], { encoding: 'utf8', env: process.env });
 const poll = async (read, predicate, label) => {
@@ -104,6 +104,28 @@ try {
   );
   fs.writeFileSync(path.join(output, 'scoring-before.json'), JSON.stringify(before, null, 2));
   await cleanupRun(beforeId);
+  // This fixture has no monitor loop. Drive its passive read after seeding local work.
+  await poll(
+    () => connection.call('fleet.status'),
+    (value) =>
+      value.fleet.slots.some(
+        (slot) => slot.slot === 'proof-slot' && slot.workspace?.dirtyCount > 0,
+      ),
+    'the workspace observation for the seeded local work',
+  );
+  browser('reload', route);
+  await poll(
+    async () =>
+      JSON.parse(
+        browser(
+          'eval',
+          route,
+          'const {isFleetCurrent}=await import("/src/state.ts"); return isFleetCurrent();',
+        ),
+      ),
+    Boolean,
+    'the current fleet read after fixture setup',
+  );
   if (context.layoutSlots) {
     browser(
       'eval',
@@ -119,11 +141,30 @@ try {
     `
     const deep=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?deep(selector,e.shadowRoot):[])];
     const dismiss=deep('button').find(e=>e.textContent.trim()==='Got it'); if(dismiss) dismiss.click();
-    const card=deep('slot-card').find(e=>e.slotData?.slot==='proof-slot');
-    if(!card) throw Error('Proof slot is absent from the real fleet');
-    const button=card.shadowRoot.querySelector('.recovery-action');
-    if(button.disabled) throw Error('Proof recovery action is disabled'); button.click(); return true;
+    return true;
   `,
+  );
+  // The fleet table's one bulk action, scoped to the selected proof row.
+  browser('click', route, 'input[aria-label="Select proof-slot"]');
+  browser('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
+  await poll(
+    async () =>
+      JSON.parse(
+        browser(
+          'eval',
+          route,
+          `const root=document.querySelector('fleet-canvas')?.shadowRoot.querySelector('fleet-refresh-modal')?.shadowRoot;
+      const button=root?.querySelector('article[data-slot="proof-slot"] button');
+      return Boolean(button && !button.disabled && root.querySelectorAll('article[data-slot]').length===1 && root.querySelector('article[data-slot="proof-slot"] .warning')?.textContent.includes('changed files') && !root.querySelector('[role=status]')?.textContent?.includes('Checking current'));`,
+        ),
+      ),
+    Boolean,
+    'inspected proof row in the release review',
+  );
+  browser(
+    'click',
+    route,
+    'fleet-canvas >>> fleet-refresh-modal >>> article[data-slot="proof-slot"] button',
   );
   await poll(
     async () =>
@@ -138,6 +179,26 @@ try {
     'content-bound discard confirmation',
   );
   browser('click', route, 'fleet-canvas >>> fleet-refresh-modal >>> .confirm button:last-child');
+  await poll(
+    async () =>
+      JSON.parse(
+        browser(
+          'eval',
+          route,
+          `
+      const canvas=document.querySelector('fleet-canvas');
+      const modal=canvas?.shadowRoot.querySelector('fleet-refresh-modal');
+      const row=modal?.shadowRoot.querySelector('article[data-slot="proof-slot"]');
+      return {text:row?.textContent ?? '',complete:row?.querySelector('.detail')?.textContent.trim().startsWith('refreshed ')};
+    `,
+        ),
+      ),
+    (value) =>
+      value.complete &&
+      value.text.includes('main · baseline · Unowned') &&
+      !value.text.includes('Slot is working'),
+    'fresh completed modal metadata',
+  );
   const ready = await poll(
     () => connection.call('fleet.status'),
     (value) =>
@@ -151,34 +212,20 @@ try {
       ),
     'CC recovery readback',
   );
-  await poll(
-    async () =>
-      JSON.parse(
-        browser(
-          'eval',
-          route,
-          `
-      const canvas=document.querySelector('fleet-canvas');
-      const modal=canvas?.shadowRoot.querySelector('fleet-refresh-modal');
-      return {text:modal?.shadowRoot.querySelector('article[data-slot="proof-slot"]')?.textContent ?? ''};
-    `,
-        ),
-      ),
-    (value) =>
-      value.text.includes('main · baseline · Unowned') && !value.text.includes('Slot is working'),
-    'fresh completed modal metadata',
-  );
   browser('screenshot', route, path.join(output, 'cc-recovery-complete.png'));
   const afterId = await run('AFTER');
   const after = await poll(
     () => readRun(afterId),
-    (value) => value.steps.some((step) => step.name === 'find-slot' && step.status === 'done'),
+    (value) =>
+      value.steps.some((step) => step.name === 'find-slot' && step.status === 'done') ||
+      value.decisions.some((decision) => decision.type === 'engine_no_suitable_slot'),
     'unrestricted scored selection',
   );
+  fs.writeFileSync(path.join(output, 'scoring-after.json'), JSON.stringify(after, null, 2));
+  assert.equal(after.slotId, 'proof-slot', JSON.stringify(after.decisions));
   const selection = after.steps.find((step) => step.name === 'find-slot').outputs;
   assert.equal(selection.selectionMethod, 'scored');
   assert.equal(selection.selectedSlot, 'proof-slot');
-  assert.equal(after.slotId, 'proof-slot');
   assert.equal(after.allowedSlots, null);
   assert.equal(
     after.decisions.some((decision) => decision.type === 'engine_no_suitable_slot'),
@@ -203,13 +250,15 @@ try {
           route,
           `
     const deep=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?deep(selector,e.shadowRoot):[])];
-    const card=deep('slot-card').find(e=>e.slotData?.slot==='proof-slot');
-    return {owner:card?.slotData?.currentRunId,text:card?.shadowRoot.querySelector('.card-content')?.textContent ?? ''};
+    const row=deep('input[aria-label="Select proof-slot"]')[0]?.closest('tr');
+    const data=deep('machine-group').flatMap(e=>e.slots??[]).find(e=>e.slot==='proof-slot');
+    return {owner:data?.currentRunId,text:row?.textContent ?? ''};
   `,
         ),
       ),
-    (value) => value.owner === afterId && value.text.includes('Run ' + afterId.slice(0, 8)),
-    'actual owner on the fleet card',
+    (value) =>
+      value.owner === afterId && value.text.includes('busy') && value.text.includes('PROOF-2'),
+    'actual owner on the fleet table row',
   );
   browser(
     'eval',
@@ -223,7 +272,7 @@ try {
   );
   assert.equal(fs.existsSync(manualWork[0]), false, 'confirmed fixture dirt was removed');
   fs.unlinkSync(manualWork[1]); // Restore the second fixture for the native safe-bulk proof.
-  fs.writeFileSync(path.join(output, 'scoring-after.json'), JSON.stringify(after, null, 2));
+
   fs.writeFileSync(
     path.join(output, 'cc-scored-selection.json'),
     JSON.stringify(

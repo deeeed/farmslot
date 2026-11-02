@@ -1603,7 +1603,8 @@ if (phase === 'fleet-store-web') {
   const base = new URL(process.env.FARMSLOT_UI_URL);
   assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
   base.searchParams.set('fleet-proof', randomUUID());
-  base.hash = 'fleet';
+  // The first read is a card leg; the action reads use the table, where rows can be selected.
+  base.hash = 'fleet?view=card';
   const probe = path.join(root, 'apps/command-center/scripts/probes/offline-fleet.js');
   const until = async (test, label) => {
     const deadline = Date.now() + 45000;
@@ -1652,6 +1653,24 @@ if (phase === 'fleet-store-web') {
       )
     )
       await cdp('click', 'fleet', 'whats-new-modal >>> button.primary');
+    assert.equal(initial.view, 'card');
+    // The bulk release acts on selected table rows: tick the owned slot with a real click.
+    const tickOwnedRow = async () => {
+      const value = await until(
+        (read) => read.view === 'list' && hasSlot(read),
+        'The owned slot must render as a table row',
+      );
+      if (!value.slots.find((slot) => slot.id === fixture.slotId)?.ticked)
+        await cdp('click', 'fleet', `input[aria-label="Select ${fixture.slotId}"]`);
+      await until(
+        (read) => read.slots.find((slot) => slot.id === fixture.slotId)?.ticked,
+        'The owned row must stay selected',
+      );
+    };
+    base.hash = 'fleet?view=list';
+    await cdp('goto', base.href);
+    await cdp('focus', 'fleet');
+    await tickOwnedRow();
     const machine = (await rpc('fleet.status')).fleet.slots[0].machine;
     assert(
       !initial.nodes.some((node) => node.machine === machine),
@@ -1801,6 +1820,8 @@ if (phase === 'fleet-store-web') {
       base.searchParams.set('fleet-cold-proof', randomUUID());
       await cdp('goto', base.href);
       await cdp('focus', 'fleet');
+      // A new document starts with no selection; tick the saved row so only freshness disables.
+      await tickOwnedRow();
       cold = await until(
         (value) =>
           value.freshness === 'stale' &&
@@ -1847,6 +1868,12 @@ if (phase === 'fleet-store-web') {
       await cdp('screenshot', 'fleet', path.join(artifacts, 'fleet-cold-offline.png'));
       return { stale, age, cold };
     });
+    // The reconnect redraws the view without its selection; tick the row again on the current read.
+    await until(
+      (value) => value.freshness === 'ready' && value.current && hasSlot(value, 'ready'),
+      'Gateway restart must restore a current fleet read',
+    );
+    await tickOwnedRow();
     const recovered = await until(
       (value) =>
         value.freshness === 'ready' &&
