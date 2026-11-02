@@ -393,9 +393,8 @@ const fixRoundHold = (
 
 /**
  * The reviewed run's holds: its loop-1 reviewer (node up), its fix round (node up, the fix
- * completing while the gateway is down), its loop-2 re-review (node away). A scripted worker has
- * no prompt receipt, so a restart while its fix signal still reads running makes recovery resend
- * the fix prompt, which it cannot accept: the fix finishes during the outage instead (#1724).
+ * completing while the gateway is down), its loop-2 re-review (node away). The review-fix
+ * worker-survives variants cover a restart with the fix still running.
  */
 function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): HoldPhase[] {
   const review = marker(stack, 'review');
