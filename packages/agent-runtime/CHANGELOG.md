@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.24 - 2026-11-02
+
+- Align `@farmslot/adapter-sdk` 0.26.1.
+
 ## 0.39.23 - 2026-11-02
 
 - Publishes against `@farmslot/protocol` 0.74.10.

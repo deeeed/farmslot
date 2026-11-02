@@ -6,6 +6,11 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.17.4 - 2026-11-02
+
+- Clock-marker midpoint sync comes from `@farmslot/recipe-runner` 0.46.4's shared helper; no behaviour change.
+- Align `@farmslot/recipe-runner` 0.46.4 and `@farmslot/adapter-sdk` 0.26.1.
+
 ## 0.17.3 - 2026-11-02
 
 - Align `@farmslot/recipe-runner` 0.46.3, `@farmslot/adapter-sdk` 0.26.0 and `@farmslot/protocol` 0.74.10.

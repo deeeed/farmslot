@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.26.1 - 2026-11-02
+
+- Align `@farmslot/recipe-runner` 0.46.4.
+
 ## 0.26.0 - 2026-11-02
 
 - `evidenceReviewToc` lists a recording's criteria with the moment it reaches each one (video order, unrecorded criteria last, or the run's own order), and `adjacentEvidenceReviewClaim` steps through it. `proofStepGroups` moves here from Command Center, so both clients' evidence reviews read one table of contents.
