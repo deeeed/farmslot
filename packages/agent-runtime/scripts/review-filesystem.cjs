@@ -32,12 +32,17 @@ async function sandbox(policy, runtimeRoots, configurationRoots = [], runtimeAcc
       throw new Error('Writable review runtime path must belong to a runtime root');
     return resolved;
   };
+  // Named paths exist before the review starts, so a pin on one always holds something: a review
+  // cannot create an absent one as a link or a prepared directory.
   const runtimeWritable = [];
-  for (const file of runtimeAccess.writablePaths ?? []) runtimeWritable.push(await inRuntime(file));
-  // A data file keeps its identity: a review may write its bytes but not replace, rename or
-  // remove it, so a later process that opens it cannot be pointed elsewhere.
-  const runtimeData = [];
-  for (const file of runtimeAccess.dataFiles ?? []) {
+  for (const file of runtimeAccess.writablePaths ?? []) {
+    const resolved = await inRuntime(file);
+    await mkdir(resolved, { recursive: true, mode: 0o700 });
+    if (!(await lstat(resolved)).isDirectory())
+      throw new Error('Review runtime writable path must be a directory');
+    runtimeWritable.push(resolved);
+  }
+  const runtimeFile = async (file) => {
     const resolved = await inRuntime(file);
     try {
       await writeFile(resolved, '', { flag: 'wx', mode: 0o600 });
@@ -45,16 +50,20 @@ async function sandbox(policy, runtimeRoots, configurationRoots = [], runtimeAcc
       if (error.code !== 'EEXIST') throw error;
     }
     if (!(await lstat(resolved)).isFile())
-      throw new Error('Review runtime data file must be a regular file');
-    runtimeData.push(resolved);
-  }
+      throw new Error('Review runtime file must be a regular file');
+    return resolved;
+  };
+  // A data file keeps its identity: a review may write its bytes but not replace, rename or
+  // remove it, so a later process that opens it cannot be pointed elsewhere.
+  const runtimeData = [];
+  for (const file of runtimeAccess.dataFiles ?? []) runtimeData.push(await runtimeFile(file));
   const restrictedRuntime = runtime.filter((root) =>
     [...runtimeWritable, ...runtimeData].some((file) => file.startsWith(root + sep)),
   );
   // A writable path, and any named file in it, cannot be removed, renamed or swapped, so a review
   // cannot move a link or a prepared directory into its place for a later process to write through.
   const runtimeFixed = [...runtimeWritable];
-  for (const file of runtimeAccess.fixedPaths ?? []) runtimeFixed.push(await inRuntime(file));
+  for (const file of runtimeAccess.fixedPaths ?? []) runtimeFixed.push(await runtimeFile(file));
   const blockedConfiguration = [];
   for (const file of configurationRoots) {
     const source = readOnly.find((root) => file.startsWith(root + sep));
