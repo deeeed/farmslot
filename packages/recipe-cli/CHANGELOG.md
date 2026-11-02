@@ -8,7 +8,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## 0.32.5 - 2026-11-02
 
-- Align `@farmslot/recipe-runner` 0.46.4, `@farmslot/adapter-sdk` 0.26.1 and `@farmslot/agent-runtime` 0.39.24.
+- Align `@farmslot/recipe-runner` 0.46.4, `@farmslot/adapter-sdk` 0.26.1 and `@farmslot/agent-runtime` 0.39.25.
 
 ## 0.32.4 - 2026-11-02
 
