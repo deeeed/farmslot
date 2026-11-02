@@ -15,6 +15,8 @@
 #   RI_STATUS      status line (~/lanes/restart-invariant/STATUS.md)
 #   RI_KEEP_RUNS   evidence directories kept (14)
 #   RI_WAIT_MIN    how long to wait for another proof job on this host (90)
+#   RI_REF         ref of origin to run (main)
+#   RI_ARGS        extra arguments for the driver, e.g. "--only monitor" for a short check
 set -uo pipefail
 
 # Run from a copy: the checkout below moves to origin/main, which rewrites this file.
@@ -30,6 +32,7 @@ RI_HOME="${RI_HOME:-$HOME/farmslot-restart-invariant}"
 STATUS="${RI_STATUS:-$HOME/lanes/restart-invariant/STATUS.md}"
 KEEP_RUNS="${RI_KEEP_RUNS:-14}"
 WAIT_MIN="${RI_WAIT_MIN:-90}"
+REF="${RI_REF:-main}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="$RI_HOME/runs/$STAMP"
 START=$(date +%s)
@@ -45,9 +48,9 @@ status() {
   cat "$STATUS"
 }
 
-# One proof job on this host at a time: wait for another lane's proof to finish.
+# One heavy job on this host at a time: wait for another lane's proof or test suite to finish.
 deadline=$(( $(date +%s) + WAIT_MIN * 60 ))
-while pgrep -f 'proof\.mts|runner-validation/gateway/' >/dev/null; do
+while pgrep -f 'proof\.mts|runner-validation/gateway/|run-tsx-tests' >/dev/null; do
   if [ "$(date +%s)" -ge "$deadline" ]; then
     status BLOCKED - "could not run: another proof job held this host for ${WAIT_MIN}m"
     exit 2
@@ -55,8 +58,8 @@ while pgrep -f 'proof\.mts|runner-validation/gateway/' >/dev/null; do
   sleep 30
 done
 
-if ! git -C "$CHECKOUT" fetch -q origin main || ! git -C "$CHECKOUT" checkout -q --detach FETCH_HEAD; then
-  status BLOCKED - "could not run: fetching origin/main into $CHECKOUT failed"
+if ! git -C "$CHECKOUT" fetch -q origin "$REF" || ! git -C "$CHECKOUT" checkout -q --detach FETCH_HEAD; then
+  status BLOCKED - "could not run: fetching origin/$REF into $CHECKOUT failed"
   exit 2
 fi
 SHA="$(git -C "$CHECKOUT" rev-parse HEAD)"
@@ -73,7 +76,7 @@ fi
 
 RESTART_INVARIANT_STAMP="nightly-$STAMP" TSX_TSCONFIG_PATH="$CHECKOUT/services/gateway/tsconfig.json" \
   nice -n 10 node --import tsx scripts/runner-validation/gateway/restart-invariant.mts \
-  --evidence "$OUT" --results "$OUT/results.json" --cli-snapshots "$RI_HOME/cli-snapshots"
+  --evidence "$OUT" --results "$OUT/results.json" --cli-snapshots "$RI_HOME/cli-snapshots" ${RI_ARGS:-}
 code=$?
 
 summary="$(node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(r.summary)' "$OUT/results.json" 2>/dev/null)"
