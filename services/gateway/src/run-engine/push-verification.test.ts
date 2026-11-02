@@ -249,6 +249,65 @@ for (const shell of SHELLS) {
 
     assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 1);
   });
+
+  // F326 (#298): the slot clone fetches main only, so a push never moves origin/<branch>.
+  test(`${name}: a pushed branch verifies against the remote, not a stale origin ref`, async (t) => {
+    const repo = mainOnlyClone(t);
+    const stale = repo.commit('feat: pushed earlier');
+    repo.git('update-ref', 'refs/remotes/origin/feature', stale);
+    repo.commit('feat: one');
+    const head = repo.commit('feat: two');
+    repo.git('push', '-q', 'origin', 'feature');
+    assert.equal(repo.git('rev-parse', 'refs/remotes/origin/feature'), stale);
+
+    const push = await inspect(repo.dir, 'push');
+    assert.equal(push.state.unpushedCommits, 0);
+    repo.commit('feat: three');
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 1);
+    // Commit mode never asks the remote.
+    assert.doesNotMatch((await inspect(repo.dir, 'commit')).command, /ls-remote/);
+    assert.notEqual(head, stale);
+  });
+
+  test(`${name}: a remote branch ahead of the clone is fetched before counting`, async (t) => {
+    const repo = mainOnlyClone(t);
+    repo.commit('feat: one');
+    repo.git('push', '-q', 'origin', 'feature');
+    const other = tempDir(t);
+    execFileSync('git', ['clone', '-q', '-b', 'feature', repo.remote, other], { env: gitEnv });
+    const otherGit = (...args: string[]) => execFileSync('git', args, { cwd: other, env: gitEnv });
+    otherGit(
+      '-c',
+      'user.name=Other',
+      '-c',
+      'user.email=other@example.invalid',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'feat: from elsewhere',
+    );
+    otherGit('push', '-q', 'origin', 'feature');
+
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 0);
+  });
+
+  test(`${name}: a branch the remote no longer has stays unpublished despite a matching stale ref`, async (t) => {
+    const repo = mainOnlyClone(t);
+    repo.git('update-ref', 'refs/remotes/origin/feature', repo.commit('feat: one'));
+
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 1);
+  });
+}
+
+/** A repository whose origin is a real bare remote fetched for main only, like a slot clone. */
+function mainOnlyClone(t: TestContext) {
+  const repo = repository(t);
+  const remote = tempDir(t);
+  execFileSync('git', ['init', '-q', '--bare', remote], { env: gitEnv });
+  repo.git('remote', 'add', 'origin', remote);
+  repo.git('config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+  return { ...repo, remote };
 }
 
 const TIMED_OUT: ExecResult = {

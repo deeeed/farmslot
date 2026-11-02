@@ -97,9 +97,18 @@ function inspectionScript(branch: string, mode: 'push' | 'commit'): string {
     ...(mode === 'push'
       ? [
           `git ls-files --others --exclude-standard -z || fail $? 'untracked-files probe'; printf '\\0'`,
+          // A slot clone that fetches main only never updates origin/<branch> on push, so
+          // that ref can be stale or missing (F326, #298). Ask the remote for the branch:
+          // exit 2 means it has no such branch. Any other failure (no network, no auth)
+          // keeps the local comparison below.
+          `r=$(GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code origin ${shellQuote(`refs/heads/${branch}`)} 2>/dev/null); lr=$?`,
+          `if [ "$lr" -eq 0 ]; then`,
+          `  s=\${r%%[[:space:]]*}`,
+          `  if git cat-file -e "$s^{commit}" 2>/dev/null || GIT_TERMINAL_PROMPT=0 git fetch --quiet --no-tags origin ${shellQuote(`+refs/heads/${branch}:refs/remotes/${remoteRef}`)} 2>/dev/null; then ahead remote "$s"; fi`,
+          `fi`,
         ]
       : []),
-    `exists ${shellQuote(remoteRef)} ${shellQuote(`rev-parse ${remoteRef}`)} && ahead remote ${shellQuote(remoteRef)}`,
+    `[ "\${lr:-}" = 2 ] || { exists ${shellQuote(remoteRef)} ${shellQuote(`rev-parse ${remoteRef}`)} && ahead remote ${shellQuote(remoteRef)}; }`,
     // A new local branch has no origin/<branch> yet. Compare it with its
     // configured upstream when present, otherwise origin/HEAD.
     `u=$(git for-each-ref --format='%(upstream:short)' "$b") || fail $? ${shellQuote(`upstream probe for ${branch}`)}`,
