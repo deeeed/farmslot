@@ -67,6 +67,7 @@ mock.module('expo-file-system/legacy', {
     deleteAsync: async () => {},
   },
 });
+mock.module('expo-file-system', { namedExports: { File: class {} } });
 mock.module('@farmslot/local-store/native', {
   namedExports: { createNativeSqliteResourceStore: async () => createMemoryResourceStore() },
 });

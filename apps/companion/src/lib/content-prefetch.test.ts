@@ -281,6 +281,7 @@ mock.module('expo-file-system/legacy', {
     },
   },
 });
+mock.module('expo-file-system', { namedExports: { File: class {} } });
 const stores: ResourceStore[] = [];
 const storeDeletions: Array<(scopeId: string) => Promise<void>> = [];
 mock.module('@farmslot/local-store/native', {
