@@ -56,13 +56,19 @@ import {
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import { readBlindTrialMarker, restoreBlindTrialGit } from '../../evals/blind-trial.js';
-import { archiveSlotScaffolding, excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
+import {
+  archiveSlotScaffolding,
+  excludeSlotScaffolding,
+  measureSlotRetention,
+  retainTaskCheckouts,
+} from '../../fleet/slot-scaffolding.js';
 import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
 import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import {
+  extendTerminalTeardown,
   TerminalTeardownTimeoutError,
   withTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
@@ -151,6 +157,15 @@ async function logDiscardedWork(
 export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
 /** Progress while waiting, so a CLI idle timeout does not end the release first. */
 const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
+
+/**
+ * Teardown time a release's artifact copy adds for its bytes. Copybacks measured about
+ * 5 MB/s (audiolab-6, F298; 851 MB of unindexed APKs on audiolab-4 after #1726); the
+ * budget assumes 2 MB/s for a loaded node. The floor covers listing and hashing.
+ */
+export function releaseArtifactCopyBudgetMs(bytes: number): number {
+  return Math.max(60_000, Math.ceil(bytes / (2 * 1024 * 1024)) * 1000);
+}
 
 export interface SlotReleaseOptions {
   restartRunId?: string;
@@ -762,6 +777,31 @@ async function slotReleaseImpl(
     }
     return ok;
   };
+  /**
+   * Hold the slot with `reason` after a cleanup step failed, and throw it. Returns a result only
+   * when another claim already owns the slot. Checkouts may have moved before the failure, so the
+   * held status still shows what the slot retains (F310).
+   */
+  const holdAfterCleanupFailure = async (reason: string): Promise<SlotReleaseResult> => {
+    await assertReleaseClaim();
+    const retained = await measureSlotRetention(vars).catch(() => undefined);
+    const held = await guardedTeardownWrite({
+      lifecycle: 'held',
+      phase: 'occupied',
+      held_reason: reason,
+      [SLOT_RELEASING_SINCE]: null,
+      ...(retained !== undefined ? { retained } : {}),
+    });
+    if (!held) return reclaimedResult();
+    complete(1);
+    throw new Error(reason);
+  };
+  /** Refresh the slot's retained totals when this release moved checkouts or it shows some. */
+  const refreshRetention = async (moved: number) => {
+    if (!moved && !(await readSlotField(params.slotId, 'retained'))) return;
+    const retained = await measureSlotRetention(vars).catch(() => undefined);
+    if (retained !== undefined) await guardedTeardownWrite({ retained });
+  };
 
   // 1. Kill running agent. Local-first publication gate-hold skips slotRelease at
   // COMPLETE entirely (see holdSlotForPublicationGate) and keeps the worker warm
@@ -989,6 +1029,10 @@ async function slotReleaseImpl(
             // again (about 900 MB on the Audiolab release slots) outlasted the teardown
             // timeout, so the slot never reset (F298).
             skipUnchanged: true,
+            // Files the mirror never indexed (two 425 MB APKs on audiolab-4) still transfer
+            // here, so the copy adds its own budget instead of spending the teardown's.
+            onTotals: ({ bytes }) =>
+              extendTerminalTeardown(params.slotId, releaseArtifactCopyBudgetMs(bytes)),
             // Stamp run/slot so transfer progress binds to run detail / pipeline UI.
             phase: 'mirror',
             runId: releaseRunId,
@@ -1041,23 +1085,31 @@ async function slotReleaseImpl(
           'scaffolding',
           `Collected ${collected.roots} scaffolding roots to ${collected.directory}`,
         );
+        // Moved-aside checkouts stay on the slot host; fleet status shows what they hold (F310).
+        await refreshRetention(collected.moved);
       } catch (error) {
-        await assertReleaseClaim();
-        const reason = `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`;
-        const held = await guardedTeardownWrite({
-          lifecycle: 'held',
-          phase: 'occupied',
-          held_reason: reason,
-          [SLOT_RELEASING_SINCE]: null,
-        });
-        if (!held) return reclaimedResult();
-        complete(1);
-        throw new Error(reason);
+        const reclaimed = await holdAfterCleanupFailure(
+          `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`,
+        );
+        if (reclaimed) return reclaimed;
       }
     }
 
     // Clean task files
     await assertReleaseClaim();
+    if (taskRel && preserveAgents) {
+      // No scaffolding collection ran, so nested checkouts would go with the task (F310).
+      let moved = 0;
+      try {
+        moved = await retainTaskCheckouts(vars, projectJson, taskRel);
+      } catch (error) {
+        const reclaimed = await holdAfterCleanupFailure(
+          `Nested checkouts could not be kept; cleanup stopped: ${(error as Error).message}`,
+        );
+        if (reclaimed) return reclaimed;
+      }
+      await refreshRetention(moved);
+    }
     if (taskRel) {
       await execOnSlot(
         vars,

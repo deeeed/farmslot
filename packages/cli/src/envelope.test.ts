@@ -64,7 +64,7 @@ function spawnCli(args: string[], home: string) {
   const entry = path.join(packageDir, 'src', 'entry.ts');
   return spawnSync(tsxBin, [entry, ...args], {
     cwd: packageDir,
-    env: { ...process.env, FARMSLOT_HOME: home },
+    env: { ...process.env, FARMSLOT_HOME: home, FARMSLOT_GATEWAY_RECONNECT_MS: '0' },
     encoding: 'utf-8',
     timeout: 60_000,
   });
@@ -83,7 +83,7 @@ test('machine-mode gateway failure emits one envelope on stdout with userAction 
       [entry, '--url', 'ws://127.0.0.1:1', '--timeout', '3000', 'fleet', 'status', '--json'],
       {
         cwd: packageDir,
-        env: { ...process.env, FARMSLOT_HOME: home },
+        env: { ...process.env, FARMSLOT_HOME: home, FARMSLOT_GATEWAY_RECONNECT_MS: '0' },
         encoding: 'utf-8',
         timeout: 60_000,
       },

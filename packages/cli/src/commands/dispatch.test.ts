@@ -8,7 +8,11 @@ import type { PressureAdmissionDecision, PressureAdmissionEvidence } from '@farm
 
 import { stripAnsi } from '../colors.js';
 
-import { renderAdmissionControl, renderPressureAdmission } from './dispatch.js';
+import {
+  renderAdmissionControl,
+  renderInheritedAcceptance,
+  renderPressureAdmission,
+} from './dispatch.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const ARTIFACT_DIR = path.join(REPO_ROOT, 'artifacts');
@@ -191,5 +195,34 @@ after(() => {
       overriddenText,
       '',
     ].join('\n'),
+  );
+});
+
+test('the dispatch preview prints the criteria a pr-complete run inherits (F286)', () => {
+  const lines = renderInheritedAcceptance({
+    fromRunId: '8a768552-0000-4000-8000-000000000000',
+    criteria: [
+      { id: 'AC1', text: 'Every direct dependency is on its latest stable version.' },
+      { id: 'AC2', text: 'Typecheck, lint and unit tests pass.' },
+    ],
+  }).join('\n');
+  assert.match(
+    lines,
+    /2 criteria inherited from run 8a768552; any given with this run are not used/,
+  );
+  assert.match(lines, /AC1: Every direct dependency/);
+  // One criterion reads as one, and its text is printed whole: it is what the run is held to.
+  const long = `The ${'very '.repeat(30)}long criterion.`;
+  const single = renderInheritedAcceptance({
+    fromRunId: '8a768552-0000-4000-8000-000000000000',
+    criteria: [{ id: 'AC1', text: long }],
+  }).join('\n');
+  assert.match(single, /1 criterion inherited from run 8a768552/);
+  assert.ok(single.includes(`AC1: ${long}`));
+  assert.match(
+    renderInheritedAcceptance({ fromRunId: 'gone', criteria: [], unavailable: 'no parent' }).join(
+      '',
+    ),
+    /inherited from run gone, unreadable: no parent/,
   );
 });

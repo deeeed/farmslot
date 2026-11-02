@@ -37,6 +37,7 @@ import {
   NATIVE_WORKER_RESUME_ACTION,
   needsGateParkRestore,
   parseGitHubRef,
+  pipelineReviewPolicyError,
   pipelineStepsForRun,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
@@ -217,6 +218,7 @@ import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
   assertTicketRefMatchesProjectRepo,
   normalizeTicketRef,
+  resolvePrBoundTicketRef,
   resolvePrRef,
   validateTicketRef,
 } from './dispatch/ticket-ref.js';
@@ -512,11 +514,12 @@ export async function planRunCreation(
     }
   }
   // Resolve PR references before selecting static workspace placement.
-  if (PR_BOUND_FLOW_TYPES.has(params.flowType)) {
-    if (projectConfig?.ci?.repo)
-      params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
-    validateTicketRef(params.ticketOrPr, params.flowType);
-  }
+  if (PR_BOUND_FLOW_TYPES.has(params.flowType))
+    params.ticketOrPr = await resolvePrBoundTicketRef(
+      params.ticketOrPr,
+      params.flowType,
+      async () => projectConfig?.ci?.repo,
+    );
   // Rule, submission and repair work (prWork) never delegates authorship.
   const reviewOwner = () =>
     resolveStaticReviewOwner(options.prWork ? undefined : options.reviewDelegation);
@@ -577,6 +580,8 @@ export async function planRunCreation(
       );
     params.completionPolicy = 'artifact-only';
   }
+  const pipelineReviewError = pipelineReviewPolicyError(params);
+  if (pipelineReviewError) throw new Error(pipelineReviewError);
   const devInteractiveProfile = interactiveDevProfileFor(params);
   if (devInteractiveProfile) params.devInteractiveProfile = devInteractiveProfile;
 

@@ -190,3 +190,55 @@ test(
     assert.equal(socket.listenerCount('close'), 0);
   },
 );
+
+test(
+  'a timed-out execution is confirmed closed only by its late result on its own connection',
+  { timeout: 4000 },
+  async (t) => {
+    // F298: a slow read on a loaded node timed out unconfirmed; the node's later reply proves the
+    // process closed, so it must reach the reader that is waiting on that closeout.
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const socket = new ExecSocket();
+    const { controller, result, request } = await startScopedExec(t, socket);
+    controller.abort();
+    // The 10 ms closeout window plus the transport grace elapse with no reply.
+    t.mock.timers.tick(10_010);
+    const error: unknown = await result.catch((failure: unknown) => failure);
+    assert(error instanceof NodeExecUnconfirmedError);
+    assert.equal(error.reason, 'timeout');
+    let confirmed = false;
+    void error.closeout.then(() => {
+      confirmed = true;
+    });
+    const late = { stdout: '', stderr: '', exitCode: 130 };
+    handleNodeResponse(request.id, true, late, undefined, undefined, new ExecSocket().asSocket());
+    await Promise.resolve();
+    assert.equal(confirmed, false, 'another connection cannot confirm it');
+    handleNodeResponse(request.id, true, late, undefined, undefined, socket.asSocket());
+    await error.closeout;
+    assert.equal(confirmed, true);
+  },
+);
+
+test(
+  'a closed connection drops the closeout it owed, so a reply after reconnect proves nothing',
+  { timeout: 4000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const socket = new ExecSocket();
+    const { controller, result, request } = await startScopedExec(t, socket);
+    controller.abort();
+    t.mock.timers.tick(10_010);
+    const error: unknown = await result.catch((failure: unknown) => failure);
+    assert(error instanceof NodeExecUnconfirmedError);
+    let confirmed = false;
+    void error.closeout.then(() => {
+      confirmed = true;
+    });
+    // The gateway's connection close handler.
+    failRequestsBoundTo(socket.asSocket());
+    handleNodeResponse(request.id, true, { exitCode: 0 }, undefined, undefined, socket.asSocket());
+    await Promise.resolve();
+    assert.equal(confirmed, false);
+  },
+);

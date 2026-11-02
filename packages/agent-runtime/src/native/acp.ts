@@ -64,8 +64,18 @@ export interface AcpAdapterConfig {
     request: (method: string, params: AcpObject) => Promise<unknown>,
   ) => Promise<void>;
   defaultModeId?: string;
+  /** Runner settings that have no CLI flag, added to the session's environment. */
+  environment?: (options: NativeAdapterOptions) => Record<string, string>;
   modes: Array<'default' | 'plan'>;
   extensionRequest?: (method: string, params: AcpObject) => AcpPendingRequest | undefined;
+}
+
+/** A runner may run its tools without asking: inside the host review sandbox, or above the sandboxed tier. */
+export function acpRunsToolsUnasked(options: NativeAdapterOptions): boolean {
+  return (
+    Boolean(options.processSandbox) ||
+    Boolean(options.safetyTier && options.safetyTier !== 'sandboxed')
+  );
 }
 
 /** Common ACP v1 flow, confirmed against the installed Cursor and Grok servers. */
@@ -108,7 +118,9 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
         }
       };
       const rpc = new AcpRpc(
-        options,
+        config.environment
+          ? { ...options, env: { ...(options.env ?? process.env), ...config.environment(options) } }
+          : options,
         config.args(options),
         (message) => {
           const method = typeof message.method === 'string' ? message.method : undefined;

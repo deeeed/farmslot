@@ -195,7 +195,13 @@ export interface RunnerDefinition {
   /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
   workspaceTerminalSession?: 'create-chat';
   /** Opt-in native protocol. Missing means structured sessions are unavailable. */
-  nativeTransport?: 'codex-app-server' | 'claude-stream-json' | 'cursor-acp' | 'grok-acp';
+  nativeTransport?:
+    | 'codex-app-server'
+    | 'claude-stream-json'
+    | 'cursor-acp'
+    | 'grok-acp'
+    | 'opencode-acp'
+    | 'pi-rpc';
   /** Native task leases and saved-conversation recovery have been implemented for this runner. */
   supportsNativeTaskReuse?: boolean;
   nativeChoices?: { models: string[]; modes: Array<'default' | 'plan'>; defaultModel?: string };
@@ -565,6 +571,14 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   pi: {
     id: 'pi',
+    nativeTransport: 'pi-rpc',
+    supportsNativeTaskReuse: true,
+    // Native sessions name Pi's own provider-qualified model IDs.
+    nativeChoices: {
+      models: RUNNER_PICKER_MODELS.pi.map((model) => resolvePiModel(model)),
+      defaultModel: resolvePiModel(DEFAULT_PI_MODEL),
+      modes: ['default'],
+    },
     authCheck: (vars, model) =>
       buildPiAuthCheckCommand(vars, resolvePiBinary(vars.piPath), resolvePiModel(model)),
     defaultLaunchMode: 'interactive',
@@ -612,6 +626,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   opencode: {
     id: 'opencode',
+    nativeTransport: 'opencode-acp',
+    supportsNativeTaskReuse: true,
+    // No seed: a new session uses the model OpenCode is configured with.
+    nativeChoices: { models: [], modes: ['default'] },
     defaultLaunchMode: 'exec',
     processMatchers: ['opencode'],
     supportsInteractivePrompt: false,

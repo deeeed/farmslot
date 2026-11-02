@@ -17,18 +17,40 @@ export interface GatewayClientOpts {
    * Absent credentials never trigger discovery.
    */
   credential?: GatewayCredential | null;
+  /** How long a call waits out a gateway reload. Absent or 0 fails at once. */
+  reconnectWindowMs?: number;
 }
+
+/**
+ * How long a `farmslot` command waits out a gateway reload, which takes a minute or two. It stays
+ * under Claude Code's default 120 s Bash tool timeout, so a worker still gets the CLI's own failure.
+ */
+export const GATEWAY_RECONNECT_WINDOW_MS = 90_000;
+
+/** `FARMSLOT_GATEWAY_RECONNECT_MS` sets a command's wait; 0 fails at once. */
+export function cliReconnectWindowMs(environment: NodeJS.ProcessEnv = process.env): number {
+  const configured = environment.FARMSLOT_GATEWAY_RECONNECT_MS?.trim();
+  const value = Number(configured);
+  return configured && Number.isFinite(value) && value >= 0 ? value : GATEWAY_RECONNECT_WINDOW_MS;
+}
+
+// A reloading gateway refuses the port, drops the upgrade or answers it with 503.
+const RELOAD_FAILURE = /ECONNREFUSED|ECONNRESET|socket hang up|Unexpected server response: 503/;
 
 /** Transport-level failure (refused/timeout/closed) — distinct from RPC errors. */
 export class GatewayConnectionError extends Error {
-  constructor(message: string) {
+  /** The socket never opened, so nothing was sent, and the failure is what a reload looks like. */
+  readonly reconnectable: boolean;
+
+  constructor(message: string, reconnectable = false) {
     super(message);
     this.name = 'GatewayConnectionError';
+    this.reconnectable = reconnectable;
   }
 }
 
 /** A socket error with the transport's reason, such as a refusal, a reset, an HTTP status or DNS. */
-export function connectionFailed(error: unknown): GatewayConnectionError {
+export function connectionFailed(error: unknown, beforeOpen = false): GatewayConnectionError {
   // A host with several addresses fails with one error per address tried.
   const causes = error instanceof AggregateError ? error.errors : [error];
   const reasons = causes
@@ -36,6 +58,7 @@ export function connectionFailed(error: unknown): GatewayConnectionError {
     .filter(Boolean);
   return new GatewayConnectionError(
     `Connection failed — is the gateway running?${reasons.length ? ` (${reasons.join('; ')})` : ''}`,
+    beforeOpen && reasons.length > 0 && reasons.every((reason) => RELOAD_FAILURE.test(reason)),
   );
 }
 
@@ -98,11 +121,40 @@ export class GatewayClient {
   private credential: GatewayCredential | null;
   private personClient: PersonSessionClient | null = null;
   private activeConnection: GatewayConnection | null = null;
+  private reconnectWindowMs: number;
 
   constructor(opts: GatewayClientOpts) {
     this.url = opts.url;
     this.timeout = opts.timeout;
     this.credential = effectiveCredential(opts.credential);
+    this.reconnectWindowMs = opts.reconnectWindowMs ?? 0;
+  }
+
+  /**
+   * Waits out a gateway reload by opening a new socket. Only a failure before the socket
+   * opened is retried, so a sent request is never replayed.
+   */
+  private async untilReconnected<T>(attempt: () => Promise<T>): Promise<T> {
+    const deadline = Date.now() + this.reconnectWindowMs;
+    for (let delay = 250, waiting = false; ; delay = Math.min(delay * 2, 5_000)) {
+      try {
+        return await attempt();
+      } catch (error) {
+        if (
+          !(error instanceof GatewayConnectionError) ||
+          !error.reconnectable ||
+          Date.now() + delay > deadline
+        )
+          throw error;
+        // Progress lines go to a terminal only (cli-machine-envelope.md).
+        if (!waiting && process.stderr.isTTY)
+          process.stderr.write(
+            `\nfarmslot: the gateway is not accepting connections (reloading?); retrying for up to ${Math.round(this.reconnectWindowMs / 1000)}s\n`,
+          );
+        waiting = true;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
   }
 
   async currentCredentials(
@@ -124,6 +176,7 @@ export class GatewayClient {
             url: this.url,
             timeout: this.timeout,
             credential: accessToken ? { token: accessToken } : null,
+            reconnectWindowMs: this.reconnectWindowMs,
           }).call(method, params),
         onAccess: async (grant) => {
           if (this.activeConnection)
@@ -149,9 +202,14 @@ export class GatewayClient {
    * one socket and forwards broadcast events. One-shot commands keep using
    * per-invocation sockets via call().
    */
-  async connect(): Promise<GatewayConnection> {
+  connect(): Promise<GatewayConnection> {
+    return this.untilReconnected(() => this.openConnection());
+  }
+
+  private async openConnection(): Promise<GatewayConnection> {
     const credential = await this.currentCredentials(true);
     const ws = new NodeWebSocket(this.url);
+    let socketOpened = false;
     const pending = new Map<
       string,
       { resolve: (v: unknown) => void; reject: (e: Error) => void }
@@ -229,6 +287,7 @@ export class GatewayClient {
           },
         });
         ws.addEventListener('open', () => {
+          socketOpened = true;
           if (!needsAuth) {
             pending.delete(authId);
             clearTimeout(opened);
@@ -251,7 +310,7 @@ export class GatewayClient {
         });
         ws.addEventListener('error', (event) => {
           clearTimeout(opened);
-          reject(connectionFailed(event.error));
+          reject(connectionFailed(event.error, !socketOpened));
         });
       });
     } catch (err) {
@@ -352,11 +411,21 @@ export class GatewayClient {
     onEvent: ((event: EventFrame) => void) | undefined,
     credential: { token?: string; password?: string } | null,
   ): Promise<T> {
+    return this.untilReconnected(() => this.callOnce<T>(method, params, onEvent, credential));
+  }
+
+  private callOnce<T>(
+    method: string,
+    params: unknown,
+    onEvent: ((event: EventFrame) => void) | undefined,
+    credential: { token?: string; password?: string } | null,
+  ): Promise<T> {
     const reqId = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
     return new Promise<T>((resolve, reject) => {
       const ws = new NodeWebSocket(this.url);
       let done = false;
+      let socketOpened = false;
       let timer: ReturnType<typeof setTimeout>;
 
       // Reset timeout on any activity — keeps streaming ops alive.
@@ -389,6 +458,7 @@ export class GatewayClient {
       let authPending = false;
 
       ws.addEventListener('open', () => {
+        socketOpened = true;
         resetTimer();
         if (credential?.token || credential?.password) {
           authPending = true;
@@ -451,7 +521,7 @@ export class GatewayClient {
       });
 
       ws.addEventListener('error', (event) => {
-        finish(() => reject(connectionFailed(event.error)));
+        finish(() => reject(connectionFailed(event.error, !socketOpened)));
       });
 
       ws.addEventListener('close', () => {

@@ -1887,6 +1887,51 @@ export interface ParkedRunCommits {
   parkedAt: string;
 }
 
+/** `none`: the REVIEW step's pipeline code review does not run. Only for artifact-only dev runs. */
+export type RunPipelineReviewPolicy = 'default' | 'none';
+
+/** Flows whose artifact-only run closes on its retained output and never pushes. */
+const PIPELINE_REVIEW_OFF_FLOWS: readonly FlowType[] = ['dev', 'fix-bug'];
+
+/**
+ * Why a run's pipeline review is off, or null when it runs. Only an artifact-only dev or fix-bug
+ * run may turn it off: it closes on its retained output and never pushes or publishes.
+ */
+export function pipelineReviewOffReason(
+  run: Partial<Pick<Run, 'pipelineReview' | 'completionPolicy' | 'flowType'>>,
+): string | null {
+  return run.pipelineReview === 'none' &&
+    run.completionPolicy === 'artifact-only' &&
+    !!run.flowType &&
+    PIPELINE_REVIEW_OFF_FLOWS.includes(run.flowType)
+    ? 'Pipeline review is off for this artifact-only run (pipelineReview none).'
+    : null;
+}
+
+/** The refusal for a create or preview request whose `pipelineReview` would not be honored as asked. */
+export function pipelineReviewPolicyError(params: {
+  pipelineReview?: unknown;
+  completionPolicy?: RunCompletionPolicy;
+  flowType?: FlowType;
+  reviewSequence?: readonly unknown[];
+  reviewPolicy?: unknown;
+  engineState?: { evalExperiment?: unknown };
+}): string | null {
+  const policy = params.pipelineReview;
+  if (policy === undefined || policy === 'default') return null;
+  if (policy !== 'none')
+    return `pipelineReview must be 'default' or 'none', not ${JSON.stringify(policy)}.`;
+  if (params.completionPolicy !== 'artifact-only')
+    return 'pipelineReview none is only for artifact-only runs: set completionPolicy artifact-only.';
+  if (!params.flowType || !PIPELINE_REVIEW_OFF_FLOWS.includes(params.flowType))
+    return `pipelineReview none is only for dev and fix-bug runs; ${params.flowType ?? 'flowless'} runs push or publish, so they keep their review.`;
+  if (params.reviewSequence?.length || params.reviewPolicy !== undefined)
+    return 'pipelineReview none turns the review off; drop reviewSequence and reviewPolicy.';
+  if (params.engineState?.evalExperiment)
+    return 'pipelineReview none would skip the eval judge; an eval run keeps its review.';
+  return null;
+}
+
 export type RunStartRefSource =
   | { kind: 'manual' }
   | { kind: 'package'; packagePath: string }
@@ -2927,6 +2972,8 @@ export interface Run {
   branch: string | null;
   /** Completion pipeline side effects. Separate requested review publication uses prWork.publication. */
   completionPolicy?: RunCompletionPolicy;
+  /** `none` turns this artifact-only run's pipeline review off (`pipelineReviewOffReason`). */
+  pipelineReview?: RunPipelineReviewPolicy;
   /** Local retained output; viewing or acknowledging it never changes the verdict. */
   output?: RunOutput;
   /** Most recent explicit retained capture. Historical decisions keep their own refs. */
