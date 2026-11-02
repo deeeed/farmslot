@@ -48,7 +48,22 @@ export interface FleetWorkspaceRow {
   eligibility: SlotRecoveryEligibility;
 }
 
-/** Used by both fleet cards and both progress renderers. */
+/** The checked-out branch: the workspace observation's when the slot has one. */
+export function fleetSlotBranch(slot: Pick<SlotStatus, 'branch' | 'workspace'>): string {
+  return slot.workspace?.branch ?? slot.branch;
+}
+
+/** "3 behind main" from a current workspace observation; null when the distance is unknown. */
+export function fleetBehindDefault(
+  slot: SlotStatus,
+  eligibility: SlotRecoveryEligibility = slotRecoveryEligibility(slot),
+): string | null {
+  const work = slot.workspace;
+  if (eligibility.reason === 'unknown' || work?.behind == null) return null;
+  return `${work.behind} behind ${work.defaultBranch ?? 'main'}${work.remoteAdvanced ? ' · remote advanced' : ''}`;
+}
+
+/** One row for the Command Center and Companion release reviews. */
 export function fleetWorkspaceRow(slot: SlotStatus): FleetWorkspaceRow {
   const work = slot.workspace;
   const defaultBranch = work?.defaultBranch ?? 'main';
@@ -65,13 +80,10 @@ export function fleetWorkspaceRow(slot: SlotStatus): FleetWorkspaceRow {
   ].filter((value): value is string => !!value);
   return {
     slotId: slot.slot,
-    branch: work?.branch ?? slot.branch ?? 'Unknown branch',
+    branch: fleetSlotBranch(slot) ?? 'Unknown branch',
     owner: owners.length ? owners.join(' / ') : 'Unowned',
     publication: eligibility.reason === 'unknown' ? 'unknown' : (work?.publication ?? 'unknown'),
-    behind:
-      eligibility.reason === 'unknown' || work?.behind == null
-        ? `Behind ${defaultBranch} unknown`
-        : `${work.behind} behind ${defaultBranch}${work.remoteAdvanced ? ' · remote advanced' : ''}`,
+    behind: fleetBehindDefault(slot, eligibility) ?? `Behind ${defaultBranch} unknown`,
     referenceTime:
       work?.defaultFetchedAt && Number.isFinite(Date.parse(work.defaultFetchedAt))
         ? `Fetched ${new Date(work.defaultFetchedAt).toISOString().slice(0, 16).replace('T', ' ')}Z`

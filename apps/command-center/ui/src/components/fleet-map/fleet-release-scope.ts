@@ -13,33 +13,46 @@ export interface FleetReleaseScope {
   disabled: boolean;
 }
 
-/** The fleet's one bulk action: the table's selection, or every visible slot when none is selected. */
+/**
+ * The fleet's one bulk action covers only the selected table rows that are still visible. It
+ * never widens to unselected slots: no selection, or a selection the filters hide, disables it.
+ */
 export function fleetReleaseScope(
   visible: readonly SlotStatus[],
   selected: ReadonlySet<string>,
+  selectable = true,
 ): FleetReleaseScope {
   const chosen = visible.filter((slot) => selected.has(slot.slot));
-  const scope = chosen.length ? chosen : visible;
-  const { count, canInspect } = fleetRecoverySummary(scope);
-  const label = chosen.length
-    ? `${FLEET_RELEASE_LABEL} (${chosen.length} selected)`
-    : count
-      ? `${FLEET_RELEASE_LABEL} (${count})`
-      : FLEET_RELEASE_LABEL;
-  const title = !canInspect
-    ? chosen.length
-      ? 'No selected slot can be released — each is busy, held, or disabled'
-      : 'No eligible slots — every slot is busy, held, or disabled'
-    : chosen.length
-      ? `Review the ${chosen.length} selected slot${chosen.length === 1 ? '' : 's'} before releasing`
-      : 'Review idle slots before releasing; select rows in the table to narrow this';
+  const { count, canInspect } = fleetRecoverySummary(chosen);
+  const title = !selectable
+    ? 'Switch to the table to select slots to release'
+    : !selected.size
+      ? 'Select slots to release'
+      : !chosen.length
+        ? 'The selected slots are hidden by the current filters'
+        : !canInspect
+          ? 'No selected slot can be released — each is busy, held, or disabled'
+          : `Review the ${chosen.length} selected slot${chosen.length === 1 ? '' : 's'} before releasing`;
   return {
-    slotIds: scope.map((slot) => slot.slot),
-    label,
+    slotIds: chosen.map((slot) => slot.slot),
+    label: chosen.length
+      ? `${FLEET_RELEASE_LABEL} (${chosen.length} selected)`
+      : FLEET_RELEASE_LABEL,
     title,
     eligible: count > 0,
-    disabled: !canInspect,
+    disabled: !selectable || !chosen.length || !canInspect,
   };
+}
+
+/** Drop selected ids that left the fleet; the same set when nothing left. */
+export function pruneFleetSelection(
+  selected: ReadonlySet<string>,
+  slots: readonly SlotStatus[],
+): ReadonlySet<string> {
+  const present = new Set(slots.map((slot) => slot.slot));
+  return [...selected].every((slotId) => present.has(slotId))
+    ? selected
+    : new Set([...selected].filter((slotId) => present.has(slotId)));
 }
 
 /** One line naming the slots whose local work keeps them out of the bulk release. */
@@ -50,7 +63,7 @@ export function fleetLocalWorkNote(
     .filter((row) => row.eligibility.confirmationRequired && row.status !== 'refreshed')
     .map((row) => row.slotId);
   if (!held.length) return '';
-  return `Unpushed or uncommitted work on ${held.join(', ')}. Bulk release skips ${held.length === 1 ? 'it' : 'them'}. To discard that work and update, use the slot's own button below.`;
+  return `Unpushed or uncommitted work on ${held.join(', ')}. Bulk release skips ${held.length === 1 ? 'it' : 'them'}.`;
 }
 
 export function setFleetSelection(

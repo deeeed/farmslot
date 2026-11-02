@@ -164,7 +164,11 @@ export class FleetRefreshModal extends LitElement {
     await model.load([...this.slotIds], getState().fleet?.slots);
   }
   private close(): void {
-    this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
+    // Once any row was sent for release, the selection that chose it has done its job.
+    const released = this.model?.rows.some((row) => row.status !== 'idle') ?? false;
+    this.dispatchEvent(
+      new CustomEvent('close', { detail: { released }, bubbles: true, composed: true }),
+    );
   }
   override render() {
     if (!this.open || !this.model) return nothing;

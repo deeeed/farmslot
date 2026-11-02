@@ -1,0 +1,1 @@
+- `fleetSlotBranch` and `fleetBehindDefault` give fleet cards, the fleet table and the release review one branch pick and one behind-main label. The label is null when the distance is unknown, including an expired observation.

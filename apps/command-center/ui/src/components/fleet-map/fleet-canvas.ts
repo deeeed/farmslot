@@ -73,7 +73,11 @@ import {
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
-import { fleetReleaseScope, setFleetSelection } from './fleet-release-scope.js';
+import {
+  fleetReleaseScope,
+  pruneFleetSelection,
+  setFleetSelection,
+} from './fleet-release-scope.js';
 import { fleetSeatsQuery } from './fleet-seats-query.js';
 import { renderFleetSkeleton } from './fleet-skeleton.js';
 import type { MachinePauseBusyAction } from './machine-pause-dialog.js';
@@ -191,8 +195,10 @@ export class FleetCanvas extends LitElement {
       height: 100%;
       overflow: hidden;
     }
+    /* Wraps rather than clips, so the bulk release stays reachable in a narrow pane. */
     .toolbar {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: ${unsafeCSS(spacing.md)};
       padding: ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.xl)};
@@ -245,11 +251,12 @@ export class FleetCanvas extends LitElement {
       color: #fff;
       border-color: ${unsafeCSS(colors.accent)};
     }
-    /* One line, so a selection count changing the label never changes the toolbar's height. */
+    /* One line at a stable width, so a selection count never rewraps the toolbar. */
     .fleet-refresh-trigger {
       border-radius: 4px;
       margin-left: auto;
       white-space: nowrap;
+      min-width: 40ch;
     }
     .fleet-refresh-trigger.has-eligible {
       color: ${unsafeCSS(colors.accent)};
@@ -514,6 +521,7 @@ export class FleetCanvas extends LitElement {
     const prev = this.slots;
     const previousPressureFilter = JSON.stringify([this.filterProjects, this.filterMachines]);
     this.slots = s.fleet?.slots ?? [];
+    if (s.fleet) this.selectedSlotIds = pruneFleetSelection(this.selectedSlotIds, this.slots);
     this.providerAccountsQuery.setQuery(fleetSeatsQuery(this.slots));
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;
@@ -1442,8 +1450,9 @@ export class FleetCanvas extends LitElement {
         <fleet-refresh-modal
           .slotIds=${this.releaseScope.slotIds}
           ?open=${this.fleetRefreshOpen}
-          @close=${() => {
+          @close=${(event: CustomEvent<{ released: boolean }>) => {
             this.fleetRefreshOpen = false;
+            if (event.detail.released) this.selectedSlotIds = new Set();
             this._writeUrlParams();
           }}
         ></fleet-refresh-modal>
@@ -1454,7 +1463,7 @@ export class FleetCanvas extends LitElement {
   /** Selection only counts while the table that shows it is on screen. */
   private get releaseScope() {
     const tableShown = this.viewMode === 'list' && this.groupBy !== 'resource';
-    return fleetReleaseScope(this.filteredSlots, tableShown ? this.selectedSlotIds : new Set());
+    return fleetReleaseScope(this.filteredSlots, this.selectedSlotIds, tableShown);
   }
 
   private renderFleetRefreshTrigger() {
@@ -1475,10 +1484,10 @@ export class FleetCanvas extends LitElement {
   }
   private renderGroupView() {
     if (this.bootstrapFailed && this.slots.length === 0) {
-      return renderFleetSkeleton('Fleet unavailable', () => gateway.reconnect());
+      return renderFleetSkeleton('Fleet unavailable', () => gateway.reconnect(), this.viewMode);
     }
     if (this.hydrating && this.slots.length === 0) {
-      return renderFleetSkeleton();
+      return renderFleetSkeleton('', undefined, this.viewMode);
     }
     if (this.groups.length === 0) {
       return html`<div class="empty">

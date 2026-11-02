@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 
 import type { Run, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
+import { fleetBehindDefault, fleetSlotBranch } from '@farmslot/review-dispatch';
 
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/status-badge.js';
@@ -21,7 +22,7 @@ import { runStatusColor } from '../runs/run-utils.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import type { SlotPendingWork } from '../work-graph/work-graph-execution-overlay.js';
 
-import { slotBehindDefaultLabel, slotBranchDisplay } from './slot-branch-display.js';
+import { slotBranchDisplay } from './slot-branch-display.js';
 
 @customElement('slot-card')
 export class SlotCard extends LitElement {
@@ -124,6 +125,10 @@ export class SlotCard extends LitElement {
       font-size: ${unsafeCSS(fonts.sizeXs)};
       color: ${unsafeCSS(colors.textSecondary)};
       line-height: 1.5;
+    }
+    /* Always one line tall, so the distance arriving never moves the cards below. */
+    .meta .behind {
+      min-height: 1.5em;
     }
     .meta .branch {
       color: ${unsafeCSS(colors.accent)};
@@ -378,11 +383,11 @@ export class SlotCard extends LitElement {
     const hasExpandableRun = hasActiveRun;
     const legacyIdentity = !!s.currentRunId && !s.currentFamilyId;
     const branch = slotBranchDisplay(
-      { ...s, branch: s.workspace?.branch ?? s.branch },
+      { ...s, branch: fleetSlotBranch(s) },
       getProjectSlotTrackingConfigs(),
     );
     const branchLabel = branch.label;
-    const behind = slotBehindDefaultLabel(s);
+    const behind = fleetBehindDefault(s);
     const branchClass =
       branch.tone === 'baseline'
         ? 'branch main'
@@ -502,7 +507,7 @@ export class SlotCard extends LitElement {
                   ></cancelled-run-slot-release>`
                 : ''}
               ${branchLabel ? html`<div class="${branchClass}">${branchLabel}</div>` : ''}
-              ${behind ? html`<div>${behind}</div>` : ''}
+              <div class="behind">${behind ?? ''}</div>
               ${s.taskId ? html`<div class="task">${this._formatTaskId(s.taskId)}</div>` : ''}
               ${s.currentLane
                 ? html`<div class="runner">

@@ -87,7 +87,7 @@ export async function proveFleetScrolling(output, route) {
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   const result = await proveFleetScrolling(
     process.env.FARMSLOT_WORKSPACE_UI_PROOF_OUT,
-    process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490',
+    process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490&view=list',
   );
   const { writeFile } = await import('node:fs/promises');
   await writeFile(result.output, JSON.stringify(result, null, 2) + '\n');

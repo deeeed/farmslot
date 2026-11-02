@@ -11,6 +11,7 @@ import type {
   TaskProgressStructured,
 } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus } from '@farmslot/protocol';
+import { fleetBehindDefault, fleetSlotBranch } from '@farmslot/review-dispatch';
 
 import './slot-card.js';
 import '../shared/cancelled-run-slot-release.js';
@@ -991,6 +992,7 @@ ${deployHint}"
             <th>Progress</th>
             <th>Model</th>
             <th>Branch</th>
+            <th>Behind</th>
             <th></th>
           </tr>
         </thead>
@@ -1013,7 +1015,8 @@ ${deployHint}"
     const hasRun = !!run;
     const isWorking = s.lifecycle === 'busy' && s.phase === 'working';
     const cancelledHold = cancelledRunSlotHold(s);
-    const branch = slotBranchDisplay(s, getProjectSlotTrackingConfigs());
+    const checkedOut = fleetSlotBranch(s);
+    const branch = slotBranchDisplay({ ...s, branch: checkedOut }, getProjectSlotTrackingConfigs());
     const branchLabel = branch.label;
     const branchClass =
       branch.tone === 'baseline'
@@ -1091,7 +1094,8 @@ ${deployHint}"
             : html`<span class="muted">-</span>`}
         </td>
         <td class="muted">${s.model ?? run?.metrics?.model ?? '-'}</td>
-        <td class="${branchClass}" title="${s.branch}">${branchLabel}</td>
+        <td class="${branchClass}" title="${checkedOut}">${branchLabel}</td>
+        <td class="muted">${fleetBehindDefault(s) ?? ''}</td>
         <td style="white-space:nowrap">
           ${hasRun
             ? html`<button

@@ -40,7 +40,7 @@ connection.onEvent((event) => {
 });
 const created = [];
 const cdp = fileURLToPath(new URL('../cdp.mjs', import.meta.url));
-const route = process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490';
+const route = process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490&view=list';
 const browser = (...args) =>
   execFileSync(process.execPath, [cdp, ...args], { encoding: 'utf8', env: process.env });
 const poll = async (read, predicate, label) => {
@@ -223,11 +223,13 @@ try {
           `
     const deep=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?deep(selector,e.shadowRoot):[])];
     const row=deep('input[aria-label="Select proof-slot"]')[0]?.closest('tr');
-    return {text:row?.textContent ?? ''};
+    const data=deep('machine-group').flatMap(e=>e.slots??[]).find(e=>e.slot==='proof-slot');
+    return {owner:data?.currentRunId,text:row?.textContent ?? ''};
   `,
         ),
       ),
-    (value) => value.text.includes('busy') && value.text.includes('PROOF-2'),
+    (value) =>
+      value.owner === afterId && value.text.includes('busy') && value.text.includes('PROOF-2'),
     'actual owner on the fleet table row',
   );
   browser(

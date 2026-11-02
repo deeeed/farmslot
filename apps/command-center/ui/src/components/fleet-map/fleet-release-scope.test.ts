@@ -9,6 +9,7 @@ import {
   FLEET_RELEASE_LABEL,
   fleetLocalWorkNote,
   fleetReleaseScope,
+  pruneFleetSelection,
   setFleetSelection,
 } from './fleet-release-scope.js';
 
@@ -58,19 +59,40 @@ const idle = slot('idle-1');
 const idle2 = slot('idle-2');
 const busy = slot('busy-1', { lifecycle: 'busy', agent: 'working', currentRunId: 'run-1' });
 
-test('with no selection the bulk action reviews every visible slot', () => {
+test('with nothing selected the bulk action is disabled and says so', () => {
   const scope = fleetReleaseScope([idle, idle2, busy], new Set());
-  assert.deepEqual(scope.slotIds, ['idle-1', 'idle-2', 'busy-1']);
-  assert.equal(scope.label, `${FLEET_RELEASE_LABEL} (2)`);
-  assert.equal(scope.eligible, true);
-  assert.equal(scope.disabled, false);
+  assert.deepEqual(scope.slotIds, []);
+  assert.equal(scope.label, FLEET_RELEASE_LABEL);
+  assert.equal(scope.disabled, true);
+  assert.equal(scope.title, 'Select slots to release');
 });
 
 test('a selection narrows the bulk action to the chosen visible rows', () => {
-  const scope = fleetReleaseScope([idle, idle2, busy], new Set(['idle-2', 'gone']));
+  const scope = fleetReleaseScope([idle, idle2, busy], new Set(['idle-2']));
   assert.deepEqual(scope.slotIds, ['idle-2']);
   assert.equal(scope.label, `${FLEET_RELEASE_LABEL} (1 selected)`);
   assert.equal(scope.disabled, false);
+});
+
+test('a filter that hides the selection disables the action instead of widening it', () => {
+  // Search now shows only idle-1 and busy-1; idle-2 stays selected but hidden.
+  const scope = fleetReleaseScope([idle, busy], new Set(['idle-2']));
+  assert.deepEqual(scope.slotIds, []);
+  assert.equal(scope.disabled, true);
+  assert.equal(scope.title, 'The selected slots are hidden by the current filters');
+});
+
+test('cards and the resource view have no rows to select', () => {
+  const scope = fleetReleaseScope([idle, idle2], new Set(['idle-1']), false);
+  assert.equal(scope.disabled, true);
+  assert.equal(scope.title, 'Switch to the table to select slots to release');
+});
+
+test('selected ids that left the fleet are pruned; an unchanged selection keeps its identity', () => {
+  const selected = new Set(['idle-1', 'gone']);
+  assert.deepEqual([...pruneFleetSelection(selected, [idle, idle2])], ['idle-1']);
+  const kept = new Set(['idle-1']);
+  assert.equal(pruneFleetSelection(kept, [idle, idle2]), kept);
 });
 
 test('a selection of busy slots cannot open the release review', () => {
@@ -119,7 +141,7 @@ test('the bulk release sends exactly the selected safe slots to fleet.refreshSlo
   );
   assert.equal(
     fleetLocalWorkNote(model.rows),
-    "Unpushed or uncommitted work on unpushed-1. Bulk release skips it. To discard that work and update, use the slot's own button below.",
+    'Unpushed or uncommitted work on unpushed-1. Bulk release skips it.',
   );
   await model.releaseIdle();
   const bulk = calls.filter((call) => call.method === Methods.FLEET_REFRESH_SLOTS);

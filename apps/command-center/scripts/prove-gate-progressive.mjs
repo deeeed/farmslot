@@ -126,6 +126,17 @@ const cdp = async (...args) => {
     return JSON.stringify({ url: args[1], coldReadinessRecovered: true });
   }
 };
+/** The fleet's bulk release acts on selected table rows: tick every machine's select-all. */
+const selectAllFleetRows = async () => {
+  const labels = JSON.parse(
+    await cdp(
+      'eval',
+      route,
+      `const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);return all.filter(e=>e.localName==='input'&&e.getAttribute('aria-label')?.startsWith('Select all slots on ')&&!e.checked).map(e=>e.getAttribute('aria-label'));`,
+    ),
+  );
+  for (const label of labels) await cdp('click', route, `input[aria-label="${label}"]`);
+};
 try {
   for (const name of [
     'scripts',
@@ -614,6 +625,7 @@ try {
       route,
       `const {getState,isHydrating}=await import('/src/state.ts');const end=Date.now()+30000;while(isHydrating(getState(),'fleet')||getState().fleet?.slots.length!==1){if(Date.now()>end)throw Error('Fleet did not become ready');await new Promise(r=>setTimeout(r,50))}return {mounted:!!document.querySelector('fleet-canvas'),slots:getState().fleet.slots.length};`,
     );
+    await selectAllFleetRows();
     await cdp('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
     const readInspection = async () =>
       JSON.parse(
@@ -804,6 +816,7 @@ try {
     }
     holdFleet = true;
     started = Date.now();
+    await selectAllFleetRows();
     await cdp('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
     const observation = JSON.parse(
       await cdp(
@@ -866,6 +879,7 @@ try {
             firstFleet.slots.find((first) => first.slot === slot.slot).workspace?.observedAt,
           );
       }
+      await selectAllFleetRows();
       await cdp('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
       await cdp('screenshot', route, path.join(output, 'fleet-observation-before.png'));
       // Change real Git facts while the dialog stays mounted. Passive reads
