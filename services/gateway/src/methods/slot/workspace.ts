@@ -142,7 +142,13 @@ async function remoteDefault(
 
 export async function inspectSlotWorkspace(
   slotId: string,
-  options: { fetch?: boolean; network?: boolean; timeoutMs?: number } = {},
+  options: {
+    fetch?: boolean;
+    network?: boolean;
+    timeoutMs?: number;
+    /** Answer only whether HEAD is the remote default; skip the publication analysis. */
+    baselineOnly?: boolean;
+  } = {},
 ): Promise<SlotWorkspace> {
   const vars = await loadSlotVars(slotId);
   const pv = await loadProjectVars(vars.projectName);
@@ -199,6 +205,7 @@ export async function inspectSlotWorkspace(
     (row.lifecycle === 'held' && row.phase === 'occupied' && !work.recovery);
   if (protectedWorkspace) return work;
   if (options.network === false) return work;
+  if (options.baselineOnly && (probe.branch !== branch || probe.dirtyCount)) return work;
   try {
     const remote = await remoteDefault(
       vars,
@@ -212,6 +219,7 @@ export async function inspectSlotWorkspace(
     work.remoteAdvanced = remote.sha !== probe.localDefaultSha;
     if (!remote.sha) return { ...work, error: 'Remote default is unavailable' };
     if (probe.headSha === remote.sha) return { ...work, publication: 'baseline' };
+    if (options.baselineOnly) return work;
     // Only inspect committed ancestry already present locally; never fetch on a status read.
     const base = options.fetch ? remote.sha : probe.localDefaultSha;
     if (base) {

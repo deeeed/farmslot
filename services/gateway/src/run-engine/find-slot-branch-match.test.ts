@@ -336,12 +336,16 @@ const reuseOutcomes = new Map<string, SafeIdleSlotResult>();
 const reuseCalls: string[] = [];
 let defaultReuseOutcome: SafeIdleSlotResult = { kind: 'ready' };
 let afterReuse: ((slotId: string) => void) | undefined;
+const cleanSlots = new Set<string>();
+let recoveryGate: Promise<void> | undefined;
 mock.module('../run-lifecycle/safe-idle-slot.js', {
   namedExports: {
     ...safeIdle,
+    cleanIdleSlot: async (slotId: string) => cleanSlots.has(slotId),
     reuseSafeIdleSlot: async (slotId: string) => {
       reuseCalls.push(slotId);
       afterReuse?.(slotId);
+      await recoveryGate;
       return reuseOutcomes.get(slotId) ?? defaultReuseOutcome;
     },
   },
@@ -387,6 +391,8 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   reuseOutcomes.clear();
   defaultReuseOutcome = { kind: 'ready' };
   reuseCalls.length = 0;
+  cleanSlots.clear();
+  recoveryGate = undefined;
   freshPreview = false;
   afterReuse = undefined;
   liveRows.clear();
@@ -943,6 +949,36 @@ test('a clean main checkout is selected regardless of numeric stale score', asyn
   assert.deepEqual(reuseCalls, [expectedSlot]);
   assert.equal(pickerPayload, undefined);
 });
+
+test(
+  'find-slot takes an idle ready slot in under 10 s while a better-ranked dirty one waits for recovery',
+  {
+    timeout: 10_000,
+  },
+  async () => {
+    reset('dev', 'PROOF-9004');
+    expectedTarget = undefined;
+    const dirty = candidate('dirty', 'first', 'fix/published');
+    const ready = candidate('ready', 'second', 'main');
+    ready.hostLoad = { cpuPercent: 95, memoryPercent: 90, diskPercent: 50, headroom: 'red' };
+    slots.splice(0, slots.length, dirty, ready);
+    assert.equal(
+      scoring.findBestSlot(slots, project)?.slot,
+      dirty.slot,
+      'the dirty slot ranks first',
+    );
+    cleanSlots.add(ready.slot);
+    // F322: a recovery that never ends, as a slow fetch did, must not hold dispatch.
+    recoveryGate = new Promise(() => {});
+    expectedSlot = ready.slot;
+    const started = Date.now();
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+    assert.ok(Date.now() - started < 10_000);
+    assert.equal(result.outputs?.selectedSlot, ready.slot);
+    assert.deepEqual(reuseCalls, [], 'no candidate is recovered inline');
+    assert.deepEqual(claims, [ready.slot]);
+  },
+);
 
 test('unknown evidence with no safe candidate refuses with reasons without a picker', async () => {
   reset('dev', 'PROOF-9002');
