@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
+import { piFailureKind } from '../../../../scripts/runners/pi-farmslot-hook-writer.mjs';
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { readSlotProbe } from '../core/read-probes.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
@@ -204,13 +205,23 @@ export function deriveRunnerSessionDeliveryState(
   const observedAt = observedAtFromRecord(record);
   if (!event || observedAt == null) return null;
   const failure = event === 'StopFailure' && record.turnActive !== true && record.failure;
+  // A failure that isn't a transport failure stays genuine. A Pi worker launched before the
+  // writer set failureKind keeps that writer loaded, so its records are classified here.
+  const failureFields = failure
+    ? {
+        failure,
+        ...(record.failureKind === 'transport' || piFailureKind(failure) === 'transport'
+          ? { failureKind: 'transport' as const }
+          : {}),
+      }
+    : {};
   if (typeof record.turnActive === 'boolean') {
     return {
       value: record.turnActive ? 'active' : 'idle',
       source: 'hook',
       confidence: 'high',
       observedAt,
-      ...(failure ? { failure } : {}),
+      ...failureFields,
       ...(record.lastToolProgressAt === null || typeof record.lastToolProgressAt === 'number'
         ? { lastToolProgressAt: record.lastToolProgressAt }
         : {}),
@@ -239,7 +250,7 @@ export function deriveRunnerSessionDeliveryState(
     source: 'hook',
     confidence: 'high',
     observedAt,
-    ...(failure ? { failure } : {}),
+    ...failureFields,
     ...(value !== 'unknown' && typeof record.turnStartedAt === 'number'
       ? { turnToken: `${sessionId}:${record.turnStartedAt}` }
       : {}),
