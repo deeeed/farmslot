@@ -1,4 +1,4 @@
-import type { ResourceStatusUpdatedPayload, SlotResource } from '@farmslot/protocol';
+import type { ResourceStatusUpdatedPayload, SlotResource, SlotStatus } from '@farmslot/protocol';
 import { Events } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -14,6 +14,9 @@ import {
   connectSlotViewLayoutObserver,
   disconnectSlotViewLayoutObserver,
 } from './slot-view-resize-effects.js';
+
+/** One empty list, so a missing fleet does not re-render the view on every state change. */
+const NO_SLOTS: readonly SlotStatus[] = [];
 
 export function connectSlotView(view: SlotView): void {
   document.addEventListener('keydown', view._boundKeyHandler);
@@ -57,7 +60,8 @@ export function connectSlotView(view: SlotView): void {
         if ((slot?.currentRunId ?? null) !== previousRunId) updateLinkedRun();
       }
     }
-    view._requestSlotSwitcherUpdate(state.fleet?.slots ?? []);
+    view._fleetSlots = state.fleet?.slots ?? NO_SLOTS;
+    view._requestSlotSwitcherUpdate(view._fleetSlots);
   });
 
   // Init workspace when gateway connects (handles page refresh)

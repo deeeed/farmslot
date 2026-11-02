@@ -209,7 +209,7 @@ export function renderRecipeEvidenceSection(
   if (allArtifacts.length === 0) return nothing;
   const kind = view._recipeEvidenceKindFilter;
   const syncUnavailable = view._linkedRun
-    ? runMirrorRefreshUnavailableReason(view._linkedRun, view._slot ? [view._slot] : [])
+    ? runMirrorRefreshUnavailableReason(view._linkedRun, view._fleetSlots)
     : null;
   const filteredArtifacts =
     kind === 'all'

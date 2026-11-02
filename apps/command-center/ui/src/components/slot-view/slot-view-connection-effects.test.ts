@@ -86,8 +86,11 @@ test('an open slot follows its shared fleet projection without repeating initial
   mounted = view;
   connectSlotView(view);
   const updated = { ...original, lifecycle: 'ready' } as SlotStatus;
-  changed!({ fleet: { slots: [updated] } } as AppState);
+  const source = { slot: 'source-slot', lifecycle: 'ready', currentRunId: null } as SlotStatus;
+  changed!({ fleet: { slots: [updated, source] } } as AppState);
   assert.equal(view._slot, updated);
+  // A run loaded from another slot syncs from that slot, so the view keeps every fleet slot.
+  assert.deepEqual(view._fleetSlots, [updated, source]);
   assert.equal(initialLoads, 1);
   assert.equal(runSyncs, 1);
   const rebound = { ...updated, currentRunId: 'next-run' };
