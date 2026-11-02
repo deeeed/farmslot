@@ -300,22 +300,6 @@ export const HOLDS: Record<RestartStep | 'review' | 'review-fix', string> = {
     'the relaunched scripted worker commits its fix with the fix round live, then waits on holds/fix before marking it complete; the gateway restarts with the node up and the fix completes while it is down. Then the codex proxy holds the loop-2 re-review for a restart with the node away',
 };
 
-/** A restart in MONITOR after Replay step adopted the worker: held on its completion's git call. */
-function monitorAfterAdoptionPhase(stack: RemoteNodeStack): HoldPhase {
-  const git = marker(stack, 'git', slotGit);
-  return {
-    step: 'monitor',
-    restarts: ['node-up'],
-    nodeAwayMs: 0,
-    armAt: ({ run }) => stepStatus(run, 'dispatch') === 'done',
-    arm: git.arm,
-    held: ({ run }) => git.hit() && stepStatus(run, 'monitor') === 'running',
-    missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'monitor') ?? ''),
-    release: git.release,
-    releaseWhileDown: true,
-  };
-}
-
 function restartPhase(
   stack: RemoteNodeStack,
   step: RestartStep,
@@ -1521,7 +1505,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
                 ]
               : []),
             // The adopted run, restarted again: it must keep going, not sit without an engine.
-            ...(step === 'dispatch-claude-card-signal' ? [monitorAfterAdoptionPhase(stack)] : []),
+            ...(step === 'dispatch-claude-card-signal'
+              ? [restartPhase(stack, 'human-gate-prep', 'node-up', 0)]
+              : []),
           ],
         );
       },
