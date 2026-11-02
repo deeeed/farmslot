@@ -59,7 +59,10 @@ test('a pending gate retry stands down once another replay owns the gate (F311)'
   });
 
   t.mock.timers.tick(60_000);
-  for (let i = 0; i < 5; i++) await flushed();
+  // The poll awaits the store and a lazy module import: settle until the retry lands (bounded),
+  // then a few more turns so the other gate's poll has also run.
+  for (let turns = 0; turns < 500 && replays.length === 0; turns++) await flushed();
+  for (let turns = 0; turns < 20; turns++) await flushed();
 
   assert.deepEqual(replays, [untouched], 'only the gate nobody else replayed is retried');
   assert.equal(getRun(replayedByOperator)?.engineState?.publishGate?.reviewRecovery, undefined);
