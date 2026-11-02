@@ -103,6 +103,7 @@ import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
 import { renderRunGateSection, runMountsPublicationGate } from './run-detail-decision-renderers.js';
 import {
   acceptanceEvidenceSelection,
+  acceptanceLedgerRead,
   buildRerunAlongsideHref,
   buildRunDiagnosisPrompt,
   type EvidenceLightboxSelection,
@@ -244,7 +245,8 @@ export class RunDetail extends RunDetailState {
       this.syncRun(getState());
     }
     if (changed.has('_recipeObservation')) this._acceptRecipeObservation(this._recipeObservation);
-    if (changed.has('_progressObservation')) this._acceptProgressObservation();
+    if (changed.has('_progressObservation') || (changed.has('_now') && this._taskProgressLoading))
+      this._acceptProgressObservation();
     if (changed.has('_selectedProgressObservation')) this._acceptSelectedProgressObservation();
     this._acceptanceRowRunId = acceptanceRowHeldRunId(
       this.run,
@@ -1143,23 +1145,20 @@ export class RunDetail extends RunDetailState {
 
   private _acceptProgressObservation(): void {
     if (this.mockData) return;
-    const observation = this.progressQuery.belongsToWorkspace
-      ? this.progressQuery.state
-      : undefined;
-    const data = observation?.data;
+    const query = this.progressQuery.belongsToWorkspace ? this.progressQuery : undefined;
+    const data = query?.state.data;
+    const ledger = acceptanceLedgerRead(query, this._now);
     this.taskProgress = data?.structured ?? null;
     this.acceptanceStatus = data?.acceptanceStatus ?? null;
     this.acceptanceCriteria = data?.acceptanceCriteria ?? null;
-    this.acceptanceStatusError = observation?.error?.message ?? data?.acceptanceStatusError ?? null;
+    this.acceptanceStatusError = ledger.error;
     this.acceptanceEvidenceLinks = data?.acceptanceEvidenceLinks ?? null;
     this.acceptanceEvidenceLinksError = data?.acceptanceEvidenceLinksError ?? null;
     this._taskProgressLoading = Boolean(
       this.run &&
       runHasTaskSource(this.run) &&
       (this.run.slotId || this.run.reviewWorkspace) &&
-      !data &&
-      !observation?.error &&
-      (!observation || observation.status === 'loading' || observation.status === 'stale'),
+      ledger.pending,
     );
   }
 

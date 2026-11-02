@@ -13,6 +13,7 @@ import type {
   RunDecision,
   RunStep,
   TaskOperation,
+  TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
@@ -22,9 +23,11 @@ import {
   shouldAcceptTaskProgressUpdate as shouldAcceptTaskProgressForActiveChecklist,
 } from '@farmslot/protocol';
 
+import { readFailureText } from '../../utils/resource-read-status.js';
 import { artifactLightboxItem } from '../shared/artifact-lightbox-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
+import type { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { collectRunEvidenceArtifacts } from './run-utils.js';
 
@@ -202,6 +205,25 @@ export function shouldAcceptTaskProgressUpdate(
   update: Pick<TaskProgressUpdatedPayload, 'contextId' | 'role' | 'parentChecklist'>,
 ): boolean {
   return shouldAcceptTaskProgressForActiveChecklist(run, update);
+}
+
+/**
+ * The acceptance ledger as the run's task-progress read gives it: the error the panel names, and
+ * whether the panel still waits for the ledger. A superseded read already has its reread queued,
+ * so it is not named (readFailureText) and, with nothing held, the panel keeps waiting. A query
+ * that does not belong to this workspace (undefined) is waited for.
+ */
+export function acceptanceLedgerRead(
+  query: ResourceQueryController<TaskProgressResult> | undefined,
+  now = Date.now(),
+): { error: string | null; pending: boolean } {
+  if (!query) return { error: null, pending: true };
+  const { data } = query.state;
+  const failure = readFailureText(query, now);
+  return {
+    error: failure ?? data?.acceptanceStatusError ?? null,
+    pending: !data && !failure,
+  };
 }
 
 export interface RunEvidenceLightboxItem {
