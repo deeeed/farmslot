@@ -1,3 +1,3 @@
-- New `AppBindingMismatchPayload` (`kind: 'app_binding_mismatch'`) in `RunDecisionPayload`: the slot, the run's app, the slot's app and its source, and the project's slots bound to the run's app when they could be listed (F306).
+- New `AppBindingMismatchPayload` (`kind: 'app_binding_mismatch'`) in `RunDecisionPayload`: the slot, the run's app, the slot's app and its source, and the project's slots bound to the run's app when they could be listed, and `operatorPick` when the slot came from a slot picker (F306).
 - New `projectDefaultApp(project)`: `recipe.app`, else the project's only declared app.
 - `PoolConfig` slots may carry `app`.

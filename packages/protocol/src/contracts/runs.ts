@@ -1269,6 +1269,8 @@ export interface AppBindingMismatchPayload {
   source: 'slot' | 'project';
   /** Enabled slots of the run's project bound to the run's app; absent when they could not be listed. */
   boundSlots?: string[];
+  /** The slot is an operator's pick from a slot picker: a Continue keeps that pick, even across a gateway restart. */
+  operatorPick?: true;
 }
 
 export interface ImprovementFileChange {

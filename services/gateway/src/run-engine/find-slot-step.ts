@@ -277,7 +277,10 @@ function appBindingAborted({ slotId, runApp, slotApp }: AppBindingKey): Error {
  * replays the answer.
  */
 class AppBindingContinued extends Error {
-  constructor(readonly slotId: string) {
+  constructor(
+    readonly slotId: string,
+    readonly operatorPick: boolean,
+  ) {
     super(`Continued on ${slotId}'s app binding; selecting again`);
   }
 }
@@ -292,6 +295,7 @@ async function confirmAppBinding(
   run: Run,
   slotId: string,
   decide: FindSlotStepContext['createEngineDecision'],
+  operatorPick = false,
 ): Promise<void> {
   if (!run.app?.trim()) return;
   const [slot, project] = await Promise.all([loadSlotVars(slotId), loadProjectVars(run.project)]);
@@ -312,6 +316,7 @@ async function confirmAppBinding(
     ...key,
     source,
     ...(boundSlots ? { boundSlots } : {}),
+    ...(operatorPick ? { operatorPick: true as const } : {}),
   };
   const bound = !boundSlots
     ? `The slots bound to ${runApp} could not be listed.`
@@ -340,7 +345,22 @@ async function confirmAppBinding(
     { canReplay: (prior) => sameAppBinding(prior.payload, key) },
   );
   if (action !== 'continue') throw appBindingAborted(key);
-  throw new AppBindingContinued(slotId);
+  throw new AppBindingContinued(slotId, operatorPick);
+}
+
+/**
+ * The operator's pick a Continue was given for, when that answer is the latest. It is
+ * read from the stored card, so a Continue resolved with no attempt waiting (after a
+ * gateway restart) still pins the pick.
+ */
+function continuedOperatorPick(run: Run): string | undefined {
+  const decision = findLatestResolvedDecision(run.decisions, 'app_binding_mismatch');
+  const payload = decision?.payload;
+  return decision?.resolvedAction === 'continue' &&
+    payload?.kind === 'app_binding_mismatch' &&
+    payload.operatorPick
+    ? payload.slotId
+    : undefined;
 }
 
 /** The binding the operator continued on for the slot the run claimed, if any. */
@@ -382,7 +402,8 @@ async function claimSelectedSlot(
   }
   // The gate for every claim, before source admission and the claim itself. Paths
   // that may change a slot before claiming it (safe reuse, takeovers, picks) asked
-  // already and replay here; a clean scored pick and affinity are first asked here.
+  // already and replay here; a clean scored pick, affinity, the skip-prepare preview
+  // and workspace review are first asked here.
   await confirmAppBinding(run, slotId, context.createEngineDecision);
   if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
   const pool = (await loadPoolConfigs()).find((pool) =>
@@ -879,6 +900,9 @@ export async function executeFindSlotStep(
   generation: number,
   context: FindSlotStepContext,
 ): Promise<StepIO> {
+  // An operator's pick stays the pick after Continue, whichever attempt resumes the step.
+  const pick = run.slotId ? undefined : continuedOperatorPick(run);
+  if (pick) run = updateRun(runId, { slotId: pick });
   let automaticLoadPinned = isPinnedSlotSelection(run);
   // The queue's own pick within a wider allowlist is not the caller's pin: a lost claim there
   // selects again within the allowlist instead of waiting for the winner's whole run.
@@ -896,7 +920,7 @@ export async function executeFindSlotStep(
         // As after a lost claim: an operator's pick stays the pick, so the restart claims
         // that slot or fails on it and scoring never swaps in another. An unpinned restart
         // may land on another machine, so its preview is admitted afresh.
-        if (operatorPickedSlot(getRun(runId)!) === error.slotId) {
+        if (error.operatorPick) {
           updateRun(runId, { slotId: error.slotId });
           automaticLoadPinned = true;
         } else if (!getRun(runId)!.slotId) {
@@ -1682,7 +1706,7 @@ async function findSlotAttempt(
               );
             }
             assertAllowedSlotSelection(run, pickedSlotId);
-            await confirmAppBinding(run, pickedSlotId, createEngineDecision);
+            await confirmAppBinding(run, pickedSlotId, createEngineDecision, true);
             if (run.sourcePlan)
               await refreshRunSourcePlan(runId, {
                 nodeId: picked.machine,
@@ -1901,7 +1925,7 @@ async function findSlotAttempt(
         );
       }
       assertAllowedSlotSelection(run, pickedSlotId);
-      await confirmAppBinding(run, pickedSlotId, createEngineDecision);
+      await confirmAppBinding(run, pickedSlotId, createEngineDecision, true);
       if (run.sourcePlan)
         await refreshRunSourcePlan(runId, {
           nodeId: picked.machine,

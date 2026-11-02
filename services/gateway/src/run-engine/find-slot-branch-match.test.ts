@@ -1595,6 +1595,7 @@ test('continue after a picker pick claims that pick even when another slot frees
     appCards.map((card) => card.slotId),
     [hot.slot],
   );
+  assert.equal(appCards[0]!.operatorPick, true, 'the card records the pick for a later restart');
   assert.equal(result.outputs?.selectedSlot, hot.slot);
   assert.deepEqual(claims, [hot.slot]);
 });
@@ -1724,3 +1725,62 @@ for (const pinned of [false, true]) {
     assert.equal(run.pressureAdmissionRef?.machine, pinned ? 'macpro' : undefined);
   });
 }
+
+test('a Continue on a picked slot answered after a gateway restart still claims that pick', async () => {
+  reset('dev', 'TAT-9101');
+  expectedTarget = undefined;
+  const cold = candidate('cold', 'mini', 'fix/cold');
+  const hot = candidate('hot', 'macpro', 'fix/hot');
+  slots.splice(0, slots.length, cold, hot);
+  pressureDecisions.set('mini', loadDecision('mini', 0.2));
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.95));
+  slotApps.set(cold.slot, 'apps/sherpa-voice');
+  slotApps.set(hot.slot, 'apps/playground');
+  projectApps = { apps: ['apps/playground', 'apps/sherpa-voice'] };
+  pools = [
+    poolOf('mini', [[cold.slot, 'apps/sherpa-voice', true]]),
+    poolOf('macpro', [[hot.slot, 'apps/playground', true]]),
+  ];
+  run.app = 'apps/sherpa-voice';
+  // Before the restart: the operator picked `hot` and its app card was open. The restart lost
+  // the waiter; Continue was recorded on the stored card and find-slot starts over, unpinned,
+  // after the picker answer, while `cold` (the automatic choice) has become safely reusable.
+  const beforeRestart = '2026-11-02T10:00:00.000Z';
+  run.decisions.push(
+    {
+      id: 'operator-pick',
+      type: 'engine_no_suitable_slot',
+      title: 'Pick a slot',
+      description: '',
+      actions: [{ id: 'pick', label: 'Pick', style: 'primary' }],
+      createdAt: beforeRestart,
+      resolvedAt: beforeRestart,
+      resolvedAction: 'pick',
+      selectionData: { slotId: hot.slot },
+    },
+    appAnswer(
+      {
+        kind: 'app_binding_mismatch',
+        slotId: hot.slot,
+        runApp: 'apps/sherpa-voice',
+        slotApp: 'apps/playground',
+        source: 'slot',
+        boundSlots: [cold.slot],
+        operatorPick: true,
+      },
+      'continue',
+    ),
+  );
+  run.steps[0]!.startedAt = '2026-11-02T10:10:00.000Z';
+  reuseOutcomes.set(cold.slot, { kind: 'ready' });
+  expectedSlot = hot.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, {
+    ...context,
+    createEngineDecision: async (_id, reason) => {
+      throw new Error(`unexpected ${reason} decision`);
+    },
+  });
+  assert.equal(result.outputs?.selectedSlot, hot.slot);
+  assert.deepEqual(claims, [hot.slot]);
+  assert.deepEqual(reuseCalls, [], 'the reusable automatic choice is never considered');
+});
