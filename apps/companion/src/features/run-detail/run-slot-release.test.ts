@@ -8,7 +8,7 @@ import { offeredSlotRelease } from './run-slot-release';
 const run = {
   id: 'run-1',
   status: 'cancelled' as const,
-  steps: [{ name: 'monitor', status: 'cancelled' as const, startedAt: '2026-11-02T00:00:00.000Z' }],
+  steps: [{ name: 'monitor', status: 'failed' as const, startedAt: '2026-11-02T00:00:00.000Z' }],
 };
 const slots = [
   {
