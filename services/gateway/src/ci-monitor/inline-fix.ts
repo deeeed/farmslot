@@ -81,6 +81,7 @@ import {
   type RunnerSendRecoveryContext,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { scriptedRelaunchOptions } from '../runners/scripted-config.js';
 import {
   isRunnerAliveUnderPane,
   resolveRunRetainedSessionBinding,
@@ -457,12 +458,14 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   // Inherit parent run's safety tier (ADR-023) so CI-watch relaunch keeps the posture.
   const runtimeDir = await resolveProjectRuntimeDir(run.project);
   const taskDir = await resolveSlotTaskDir(runId, run.project);
-  await ensureNodeSupportBundle(vars, runtimeDir);
+  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
     effort: run.effort,
     safetyTier: run.safetyTier,
     runtimeDir,
     taskDir: taskDir ?? undefined,
+    ...(await scriptedRelaunchOptions(runner, run)),
+    scriptedSupportDir: nodeSupport?.supportDir,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 

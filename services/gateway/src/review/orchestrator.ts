@@ -61,7 +61,7 @@ import {
   runnerSupportsModel,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
-import { resolveScriptedCommandFromRawProjectJson } from '../runners/scripted-config.js';
+import { scriptedRelaunchOptions } from '../runners/scripted-config.js';
 import { resolvePersistedRunnerSessionBinding } from '../runners/session-process.js';
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
 import {
@@ -3333,30 +3333,13 @@ async function relaunchWorkerForFix(
   const taskDir = parentRun
     ? await resolveWorkerTaskDir(vars, parentRun.project, parentRun.taskFile)
     : null;
-  // A scripted worker relaunches with the run's own scripted config, as dispatch launched it.
-  const scripted = runner === 'scripted' ? parentRun?.scripted : undefined;
-  let scriptedCommand: ReturnType<typeof resolveScriptedCommandFromRawProjectJson> | undefined;
-  if (scripted?.mode === 'command' && parentRun) {
-    const { loadProjectVarsOrNull } = await import('../run-engine/project-vars.js');
-    const projectVars = await loadProjectVarsOrNull(
-      parentRun.project,
-      'review fix relaunch',
-      runId,
-    );
-    scriptedCommand = resolveScriptedCommandFromRawProjectJson(
-      scripted.commandRef,
-      projectVars?.projectJson ?? {},
-      vars.projectName,
-    );
-  }
   let launchCmd = buildLaunchCommand(vars, runner, effectiveModel, prompt, {
     effort: parentRun?.effort,
     safetyTier: parentSafetyTier,
     runtimeDir,
     taskDir: taskDir ?? undefined,
     taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
-    scripted,
-    scriptedCommand,
+    ...(await scriptedRelaunchOptions(runner, parentRun)),
     scriptedSupportDir: nodeSupport?.supportDir,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;

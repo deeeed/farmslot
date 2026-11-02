@@ -1,1 +1,3 @@
 - A review fix round that relaunches a scripted worker now launches it with the run's scripted config (scenario, or the project command and node support bundle), as dispatch did. Before, the relaunch failed with "Runner 'scripted' requires opts.scripted" and REVIEW failed, so no scripted run could reach a fix round.
+- A CI follow-up fix that relaunches a scripted worker now launches it with the run's scripted config too; it failed with the same error.
+- A project that cannot be loaded during such a relaunch now fails with that load error, not "commandRef is not declared".

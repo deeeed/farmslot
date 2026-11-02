@@ -103,7 +103,7 @@ import { assertRunnerAuthBeforeLaunch } from '../../runners/runner-auth.js';
 import { buildRunnerObservabilityInstallCommand } from '../../runners/runner-observability.js';
 import {
   assertScriptedRunnerConfig,
-  resolveScriptedCommandFromRawProjectJson,
+  scriptedCommandForRunner,
 } from '../../runners/scripted-config.js';
 import { dispatchStartedAtMs } from '../../runners/session-path-resolution.js';
 import {
@@ -1204,10 +1204,7 @@ export async function dispatchExecute(
     (defaultFlowKey ? getProjectField(projectJson, `defaults.${defaultFlowKey}.effort`) : '') ||
     currentRun?.effort;
   const scripted = currentRun?.scripted ?? params.scripted;
-  const scriptedCommand =
-    runner === 'scripted' && scripted?.mode === 'command'
-      ? resolveScriptedCommandFromRawProjectJson(scripted.commandRef, projectJson, vars.projectName)
-      : undefined;
+  const scriptedCommand = scriptedCommandForRunner(runner, scripted, projectJson, vars.projectName);
   assertScriptedRunnerConfig({
     runner,
     scripted,

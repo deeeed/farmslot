@@ -18,26 +18,52 @@
       "case": "review",
       "variant": "node-away",
       "signature": "No node connected for machine \\S+ after 120000ms",
+      "differences": ["^REVIEW did not keep its reviewer: failed \\("],
       "ledger": "F-pending (review node-away past 120 s)"
-    },
-    {
-      "case": "f324-replay-open-gate",
-      "variant": "*",
-      "target": "live",
-      "signature": "Run stopped while awaiting its execution node|not superseded",
-      "ledger": "F324"
     },
     {
       "case": "worker-survives",
       "variant": "dispatch",
       "signature": "tmux stop sent: .*(/exit|respawn-window)",
-      "ledger": "F-pending (dispatch recovery relaunches the worker)"
+      "differences": [
+        "^tmux stop sent: .*(/exit|respawn-window)",
+        "^pid \\d+ exited: ",
+        "^worker pane %\\d+ (is gone|is dead|was respawned)"
+      ],
+      "ledger": "F331"
     },
     {
       "case": "worker-survives",
       "variant": "review-fix",
       "signature": "Recovered review fix worker could not accept its prompt",
-      "ledger": "F-pending (fix-round recovery re-prompts a mid-turn worker)"
+      "differences": [
+        "^the run went needs-decision: Recovered review fix worker could not accept its prompt",
+        "^run status: expected done, observed needs-decision$",
+        "^step \\d+: expected review:done, observed review:failed$",
+        "^step \\d+: expected (complete|human-gate|finalize|ci-watch):done, observed \\1:pending$",
+        "^decisions: expected \\[engine_output_review:open\\], observed \\[engine_output_review:open, engine_result_decision:open\\]$",
+        "^decision types: expected \\[engine_output_review\\], observed \\[engine_output_review, engine_result_decision\\]$",
+        "^slot: expected ready/-, observed busy/working$"
+      ],
+      "ledger": "F332"
+    },
+    {
+      "case": "worker-survives",
+      "variant": "monitor-transport-abort",
+      "signature": "monitor: terminated",
+      "differences": [
+        "^the run went failed: terminated",
+        "^a step failed on a dropped transport: terminated",
+        "^tmux stop sent: .*/exit",
+        "^pid \\d+ exited: ",
+        "^worker pane %\\d+ (is gone|is dead|was respawned)",
+        "^run status: expected done, observed failed$",
+        "^step \\d+: expected monitor:done, observed monitor:failed$",
+        "^step \\d+: expected (review|complete|human-gate|finalize|ci-watch):done, observed \\1:skipped$",
+        "^decisions: expected \\[engine_human_gate:close-as-shipped\\], observed \\[\\]$",
+        "^decision types: expected \\[engine_human_gate\\], observed \\[\\]$"
+      ],
+      "ledger": "F328"
     }
   ],
   "live": {

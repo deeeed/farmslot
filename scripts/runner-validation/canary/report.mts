@@ -1,10 +1,6 @@
 // The canary's verdict: results JSON, a one-line status for the lead's watcher, and on failure
 // a HOLD file that stops the next fast-forward deploy.
-import { existsSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-
-import { writeJson } from '../lib/isolated-stack.mjs';
+import { publishIfAbsent, writeAtomic, writeJson } from '../lib/isolated-stack.mjs';
 
 import type { CheckResult } from './outcome.mjs';
 
@@ -16,7 +12,11 @@ export interface Verdict {
   summary: string;
 }
 
-export function verdict(checks: CheckResult[], setupError: string | undefined): Verdict {
+export function verdict(
+  checks: CheckResult[],
+  setupError: string | undefined,
+  cleanupErrors: string[] = [],
+): Verdict {
   if (setupError)
     return { ok: false, exitCode: 2, summary: `could not run: ${setupError.split('\n')[0]}` };
   const blocking = checks.filter((check) => BLOCKING.has(check.status));
@@ -50,22 +50,23 @@ export function verdict(checks: CheckResult[], setupError: string | undefined): 
           .map(([step, seconds]) => `${step} ${seconds}s`)
           .join(' ')}`,
       );
+  // What the stack could not stop is still running or still on disk.
+  if (cleanupErrors.length)
+    parts.push(
+      `${cleanupErrors.length} cleanup failed (${cleanupErrors[0]!.split('\n')[0]!.slice(0, 120)})`,
+    );
   const unverified = blocking.some((check) => check.status === 'unverified');
   return {
-    ok: !blocking.length,
+    ok: !blocking.length && !cleanupErrors.length,
     exitCode: blocking.length
       ? unverified && blocking.every((check) => check.status === 'unverified')
         ? 2
         : 1
-      : 0,
+      : cleanupErrors.length
+        ? 1
+        : 0,
     summary: parts.join('; '),
   };
-}
-
-async function writeAtomic(file: string, content: string) {
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(`${file}.tmp`, content);
-  await rename(`${file}.tmp`, file);
 }
 
 export async function report(options: {
@@ -81,7 +82,7 @@ export async function report(options: {
   evidence: string;
   extra: Record<string, unknown>;
 }): Promise<Verdict> {
-  const result = verdict(options.checks, options.setupError);
+  const result = verdict(options.checks, options.setupError, options.cleanupErrors);
   const minutes = Math.ceil((Date.now() - options.startedAt.getTime()) / 60_000);
   await writeJson(options.resultsFile, {
     schemaVersion: 2,
@@ -104,15 +105,12 @@ export async function report(options: {
   console.log(line);
   // A failed canary holds the next deploy, unless something already holds it.
   if (!result.ok && options.holdFile) {
-    if (existsSync(options.holdFile)) console.log(`deploy hold already set: ${options.holdFile}`);
-    else {
-      const time = new Date().toTimeString().slice(0, 5);
-      await writeAtomic(
-        options.holdFile,
-        `Canary ${time}: ${options.profile} failed at ${options.head.slice(0, 8)}: ${result.summary}; results=${options.resultsFile}\n`,
-      );
-      console.log(`deploy hold set: ${options.holdFile}`);
-    }
+    const time = new Date().toTimeString().slice(0, 5);
+    const set = await publishIfAbsent(
+      options.holdFile,
+      `Canary ${time}: ${options.profile} failed at ${options.head.slice(0, 8)}: ${result.summary}; results=${options.resultsFile}\n`,
+    );
+    console.log(`deploy hold ${set ? 'set' : 'already set'}: ${options.holdFile}`);
   }
   return result;
 }

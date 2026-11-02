@@ -14,6 +14,8 @@
 //   its fix round, HUMAN_GATE package prep or FINALIZE, the gateway restarted with the node up; the
 //   worker must stay alive (no kill, no /exit), the step must resume and the run end like its
 //   baseline. Zero inference: the reviewer's turns are answered by the test (scripted review).
+//   Its monitor-transport-abort hold is a Pi-runner worker in MONITOR whose model stream drops as
+//   the gateway restarts (F328): Pi reports the turn failed, the worker is alive.
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -21,20 +23,23 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
-import type { Run } from '../../../packages/protocol/src/index.js';
-import { poll, type Reaper, writeJson } from '../lib/isolated-stack.mjs';
+import { isTerminalRunStatus, type Run } from '../../../packages/protocol/src/index.js';
+import { alive, poll, type Reaper, writeJson } from '../lib/isolated-stack.mjs';
 import { type RemoteNodeStack, startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
 import {
   CANARY_PROJECT,
   CANARY_REPO,
   canaryPack,
-  canaryRunParams,
+  fakePi,
+  PI_TURN_FAILURE,
+  piRunParams,
   PIPE_PROJECT,
+  pipeRunParams,
   projectPacks,
   REVIEW_PROJECT,
-  REVIEW_TICKET,
   REVIEWER,
+  reviewRunParams,
   SEED,
   slotCli,
 } from './fixtures.mjs';
@@ -44,14 +49,26 @@ import {
   LIFECYCLE_OUTCOME,
   outcomeDifferences,
   outcomeObservations,
-  overBudget,
   REVIEWED_OUTCOME,
+  reviewDriftExcuses,
   reviewVerdicts,
-  type RunOutcome,
-  runOutcome,
-  type SlotView,
-  stepTimings,
 } from './outcome.mjs';
+import {
+  brief,
+  canaryShape,
+  closeGate,
+  type DrivenRun,
+  driveRun,
+  f324Shape,
+  Inconclusive,
+  judgeLifecycle,
+  nativeCheck,
+  retire,
+  type RunShape,
+  STALL_MS,
+  stepStatus,
+  type View,
+} from './run-driver.mjs';
 
 export const RESTART_STEPS = [
   'dispatch',
@@ -62,7 +79,6 @@ export const RESTART_STEPS = [
 ] as const;
 export type RestartStep = (typeof RESTART_STEPS)[number];
 export type Variant = 'node-up' | 'node-away';
-type HoldStep = RestartStep | 'review' | 'review-fix';
 export const SURVIVE_STEPS = [
   'dispatch',
   'monitor',
@@ -70,11 +86,14 @@ export const SURVIVE_STEPS = [
   'review-fix',
   'human-gate-prep',
   'finalize',
+  'monitor-transport-abort',
 ] as const;
 export type SurviveStep = (typeof SURVIVE_STEPS)[number];
+type HoldStep = RestartStep | SurviveStep;
 // How long a worker is watched after the restart before its hold lifts: past a native request's
 // 30 s timeout, so the resumed step's first node calls have answered or failed by then.
 const SURVIVE_OBSERVE_MS = 45_000;
+const LOSS_SETTLE_MS = 5_000;
 const TRANSPORT_ABORT = /\bterminated\b|abort|ECONNRESET|socket hang up|connection reset/i;
 
 export interface IsolatedOptions {
@@ -100,142 +119,39 @@ export interface IsolatedOptions {
   review?: boolean;
   reviewPastWait?: boolean;
   survive?: SurviveStep[];
-  /** Called once the stack exists, so a signal can stop it. */
-  onStack?: (stack: RemoteNodeStack) => void;
+  /** Called with each check as it finishes, so an interrupted canary still reports it. */
+  onCheck: (check: CheckResult) => void;
+  /** Given what stops the stack before it starts, so a signal can stop it at any point. */
+  onCleanup?: (cleanup: () => Promise<string[]>) => void;
 }
 
 const SETTLED_STEP = new Set(['done', 'failed', 'skipped']);
-const TERMINAL = new Set(['done', 'failed', 'cancelled']);
-// Statuses of a run that waits for a person's decision (runners/run-progress.ts).
-const WAITING = new Set(['needs-decision', 'human-gating', 'blocked', 'review-failed']);
-// No visible change for this long with nothing held: the run is not going to move.
-const STALL_MS = 6 * 60_000;
-const stepStatus = (run: Run, name: string) => run.steps.find((step) => step.name === name)?.status;
 const contexts = (run: Run, role: string) =>
   (run.agentContexts ?? []).filter((context) => context.role === role);
-const brief = (run: Run) =>
-  `${run.status} | ${run.steps.map((step) => `${step.name}:${step.status}`).join(' ')} | decisions ${
-    run.decisions
-      .map((decision) => `${decision.type}${decision.resolvedAt ? '' : '(open)'}`)
-      .join(',') || '-'
-  }`;
-
-class Inconclusive extends Error {
-  /** The run it left behind, which the caller retires. */
-  runId?: string;
-}
 
 // ---------------------------------------------------------------- run shapes
-type Decision = Run['decisions'][number];
-type DecisionAction = { resolve: string } | { replay: string };
-
-interface Shape {
-  project: string;
-  create(slotId: string): Record<string, unknown>;
-  /** What the test does with an open decision, or undefined to leave it for a person. */
-  decide(decision: Decision, run: Run, state: { replayedAt?: string }): DecisionAction | undefined;
-  /** Extra reads each poll makes, as a client would (F324: the inbox refreshes gate readiness). */
-  onPoll?(stack: RemoteNodeStack, run: Run): Promise<void>;
+interface Shape extends RunShape {
   /** The proxy swallows every reviewer turn and the test answers it (scriptedReviewer). */
   scriptedReview?: boolean;
-  timeoutMs: number;
 }
 
-const offered = (decision: Decision, ...ids: string[]) =>
-  ids.find((id) => (decision.actions ?? []).some((action) => action.id === id));
-const closeGate = (decision: Decision): DecisionAction | undefined => {
-  const action =
-    decision.type === 'engine_human_gate' ? offered(decision, 'close-as-shipped') : undefined;
-  return action ? { resolve: action } : undefined;
-};
-
-type ShapeName = 'canary' | 'f324' | 'pipe' | 'review' | 'scripted-review';
-
-const reviewRunParams = (slotId: string): Record<string, unknown> => ({
-  project: REVIEW_PROJECT,
-  flowType: 'dev',
-  mode: 'validation',
-  // A Jira-shaped key passes dev ticket validation; ticketData means nothing is fetched. One per
-  // run: a second run on the same ticket raises a collision decision.
-  ticketOrPr: `RI-${slotId.replace(/^.*-/, '')}`,
-  ticketData: {
-    source: 'manual',
-    ...REVIEW_TICKET,
-    acceptanceCriteria: [],
-    affectedArea: 'src',
-    stepsToReproduce: [],
-    screenshots: [],
-    labels: [],
-  },
-  slotId,
-  runner: 'scripted',
-  model: 'scripted',
-  transport: 'tmux',
-  scripted: { mode: 'scenario', scenario: 'success' },
-  completionPolicy: 'artifact-only',
-  reviewMode: 'cold',
-  reviewValidationDepth: 'static-code',
-  reviewSequence: [{ ...REVIEWER, mode: 'cold' }],
-});
+type ShapeName = 'canary' | 'f324' | 'pipe' | 'pi' | 'review' | 'scripted-review';
 
 const SHAPES: Record<ShapeName, Shape> = {
-  canary: {
-    project: CANARY_PROJECT,
-    create: (slotId) => canaryRunParams(slotId, 'isolated lifecycle'),
-    decide: closeGate,
-    timeoutMs: 10 * 60_000,
-  },
-  // F324: replay from dispatch while the first gate card is open, reading the decision inbox as
-  // a client does (that refresh is what failed the replayed dispatch). Close the next card.
-  f324: {
-    project: CANARY_PROJECT,
-    create: (slotId) => canaryRunParams(slotId, 'isolated f324'),
-    decide: (decision, _run, state) =>
-      decision.type !== 'engine_human_gate'
-        ? undefined
-        : !state.replayedAt
-          ? { replay: 'dispatch' }
-          : // Only a card the replay presented; the one it found open must have been superseded.
-            String(decision.createdAt) > state.replayedAt
-            ? closeGate(decision)
-            : undefined,
-    onPoll: async (stack) => {
-      await stack.call('decision.list', {});
-    },
-    timeoutMs: 15 * 60_000,
-  },
-  // The restart matrix's pipeline: the same lifecycle, with a worker that can hold (slotCli).
-  pipe: {
-    project: PIPE_PROJECT,
-    create: (slotId) => ({
-      project: PIPE_PROJECT,
-      flowType: 'dev',
-      mode: 'interactive',
-      devInteractiveProfile: 'reviewed',
-      ticketOrPr: 'restart invariant pipeline',
-      initialContext: 'Scripted restart-invariant run; the worker changes nothing.',
-      slotId,
-      runner: 'scripted',
-      model: 'scripted',
-      transport: 'tmux',
-      // The slot's CLI turns the scenario launch into the project's `work` command (slotCli).
-      scripted: { mode: 'scenario', scenario: 'success' },
-    }),
-    decide: closeGate,
-    timeoutMs: 20 * 60_000,
-  },
-  // A validation dev run (never a publication candidate) whose REVIEW runs codex. Artifact-only,
-  // so an output-review card is open while the fix round runs (#1724's case).
+  canary: canaryShape('isolated lifecycle'),
+  f324: f324Shape('isolated f324'),
+  pipe: { project: PIPE_PROJECT, create: pipeRunParams, decide: closeGate, timeoutMs: 20 * 60_000 },
+  pi: { project: PIPE_PROJECT, create: piRunParams, decide: closeGate, timeoutMs: 20 * 60_000 },
   review: {
     project: REVIEW_PROJECT,
-    create: (slotId) => reviewRunParams(slotId),
+    create: reviewRunParams,
     decide: () => undefined,
     timeoutMs: 40 * 60_000,
   },
   // The same reviewed run with no model call: loop 1 finds the leftover helper, loop 2 passes.
   'scripted-review': {
     project: REVIEW_PROJECT,
-    create: (slotId) => reviewRunParams(slotId),
+    create: reviewRunParams,
     decide: () => undefined,
     scriptedReview: true,
     timeoutMs: 20 * 60_000,
@@ -243,11 +159,6 @@ const SHAPES: Record<ShapeName, Shape> = {
 };
 
 // ---------------------------------------------------------------- holds
-interface View {
-  run: Run;
-  slot?: SlotView;
-}
-
 /** The run a hold belongs to: its slot, and where its evidence goes. */
 interface HoldContext {
   slotId: string;
@@ -255,6 +166,8 @@ interface HoldContext {
   dir: string;
   /** The run as the hold caught it, once it has. */
   held?: Run;
+  /** At the re-review's hold: the fix round's commit removed what the first review flagged. */
+  fixLanded?: boolean;
 }
 
 interface HoldPhase {
@@ -275,6 +188,8 @@ interface HoldPhase {
   needsSlot?: boolean;
   /** Armed before the run is created, whatever `armAt` says (an idle runner). */
   prepare?(context: HoldContext): Promise<void>;
+  /** What to read once held, before the restart. */
+  atHold?(context: HoldContext): void;
   /** Watch the run's worker after the restart, before the release; `release` lifts what kept it. */
   survive?: { release?(context: HoldContext): Promise<void> };
 }
@@ -311,7 +226,7 @@ function marker(
 /** Git calls on the run's own slot checkout; fleet refreshes of other slots go through. */
 const slotGit = ({ slotId }: HoldContext) => `/slots/${slotId}( |/|$)`;
 
-export const HOLDS: Record<HoldStep, string> = {
+export const HOLDS: Record<RestartStep | 'review' | 'review-fix', string> = {
   dispatch:
     "git on the run's slot waits while holds/git exists, armed as soon as DISPATCH runs; released while the gateway is down",
   monitor: 'the scripted worker waits while holds/worker exists, armed before the run starts',
@@ -386,12 +301,15 @@ function restartPhase(
     case 'release':
       return {
         ...base,
-        armAt: ({ run }) => TERMINAL.has(run.status),
+        armAt: ({ run }) => isTerminalRunStatus(run.status),
         arm: git.arm,
         held: ({ run, slot }) =>
-          TERMINAL.has(run.status) && git.hit() && slot !== undefined && slot.lifecycle !== 'ready',
+          isTerminalRunStatus(run.status) &&
+          git.hit() &&
+          slot !== undefined &&
+          slot.lifecycle !== 'ready',
         missed: ({ run, slot }) =>
-          TERMINAL.has(run.status) && !git.hit() && slot?.lifecycle === 'ready',
+          isTerminalRunStatus(run.status) && !git.hit() && slot?.lifecycle === 'ready',
         release: git.release,
         releaseWhileDown: true,
         needsSlot: true,
@@ -475,9 +393,21 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
           (context) => (context.reviewLoopNumber ?? 0) >= 2 && context.nativeSession?.acceptedAt,
         ),
       missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'review') ?? ''),
+      atHold: (context) => {
+        context.fixLanded = !slotHeadHasFile(context.slotRepo, 'src/debug-trace.ts');
+      },
       release: review.release,
     },
   ];
+}
+
+function slotHeadHasFile(slotRepo: string, file: string): boolean {
+  try {
+    execFileSync('git', ['-C', slotRepo, 'cat-file', '-e', `HEAD:${file}`], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export const SURVIVE_HOLDS: Record<SurviveStep, string> = {
@@ -492,6 +422,8 @@ export const SURVIVE_HOLDS: Record<SurviveStep, string> = {
     "the scripted runner stays alive after its work (holds/idle); git on the run's slot waits while HUMAN_GATE prepares its package, released while the gateway is down",
   finalize:
     "the scripted runner stays alive after its work (holds/idle); ssh waits on FINALIZE's session-usage.sh call, released after the watch",
+  'monitor-transport-abort':
+    "a Pi-runner worker (no model) waits on holds/worker; while the gateway is down it records StopFailure 'terminated' on its live session and pane through the real hook writer",
 };
 
 /**
@@ -582,6 +514,22 @@ function survivePhase(
         release: fix.release,
         survive: {},
       } satisfies HoldPhase;
+    }
+    case 'monitor-transport-abort': {
+      const turnFailure = marker(stack, PI_TURN_FAILURE, () => 'terminated\n');
+      return {
+        ...restartPhase(stack, 'monitor', 'node-up', 0),
+        whileDown: async (context) => {
+          await turnFailure.arm(context);
+          await poll(
+            'the worker to record its failed turn',
+            async () => (turnFailure.hit() ? true : undefined),
+            15_000,
+          );
+          await turnFailure.release(context);
+        },
+        survive: {},
+      };
     }
   }
 }
@@ -711,16 +659,7 @@ interface WorkerSnapshot {
   stopsOffset: number;
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** The run's tmux panes, the scripted runner under them, and any reviewer app-server. */
+/** The run's tmux panes, the runner under them, and any reviewer app-server. */
 function snapshotWorker(stack: RemoteNodeStack, slotId: string, run: Run): WorkerSnapshot {
   const panes = stack.panes(slotId).filter((pane) => !pane.dead);
   const table = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
@@ -744,7 +683,9 @@ function snapshotWorker(stack: RemoteNodeStack, slotId: string, run: Run): Worke
     processes: table
       .filter(
         (row) =>
-          (under.has(row.pid) && row.command.includes('scripted-runner')) ||
+          (under.has(row.pid) &&
+            (row.command.includes('scripted-runner') ||
+              row.command.includes(path.join(stack.fixture, 'bin', 'pi')))) ||
           (contexts(run, 'review').length > 0 &&
             row.command.includes(stack.fixture) &&
             /codex-proxy\.cjs.*app-server/.test(row.command)),
@@ -763,7 +704,8 @@ async function watchWorker(
   getRun: () => Promise<Run>,
 ): Promise<string[]> {
   const stops = path.join(stack.holds, 'tmux-stops.log');
-  const until = Date.now() + SURVIVE_OBSERVE_MS;
+  let until = Date.now() + SURVIVE_OBSERVE_MS;
+  let losing = false;
   for (;;) {
     const lost: string[] = [];
     const panes = stack.panes(slotId);
@@ -796,9 +738,14 @@ async function watchWorker(
       lost.push(
         `a new reviewer was launched: ${relaunched.map((context) => context.id).join(', ')}`,
       );
-    if (failed.length || TERMINAL.has(run.status))
+    if (failed.length || isTerminalRunStatus(run.status))
       lost.push(`the run went ${run.status}: ${failureText(run) || brief(run)}`);
-    if (lost.length || Date.now() > until) return lost;
+    // A failure's teardown follows it: keep watching a little, to report what it did to the worker.
+    if (lost.length && !losing) {
+      losing = true;
+      until = Date.now() + LOSS_SETTLE_MS;
+    }
+    if (Date.now() > until) return lost;
     await delay(500);
   }
 }
@@ -813,28 +760,19 @@ interface RestartRecord {
   after: string;
 }
 
-interface ScenarioResult {
+interface ScenarioResult extends DrivenRun {
   label: string;
-  runId: string;
-  run: Run;
-  outcome: RunOutcome;
-  durationS: number;
-  /** Seconds per step, and `release`: from the run going terminal until its slot was ready. */
-  timingsS: Record<string, number>;
   restarts: RestartRecord[];
   /** Holds the run never reached after an earlier restart. */
   unreached: HoldStep[];
   /** For a worker-survives hold: what was watched, and what the restart did to it. */
   watched?: string[];
   survival?: string[];
-  /** Decision actions the gateway refused. */
-  refused: string[];
-  evidence: string;
+  fixLanded?: boolean;
 }
 
-export async function runIsolated(options: IsolatedOptions): Promise<CheckResult[]> {
-  const { log, evidence } = options;
-  const seconds = (since: number) => Math.round((Date.now() - since) / 100) / 10;
+export async function runIsolated(options: IsolatedOptions): Promise<void> {
+  const { log, evidence, onCheck } = options;
   const restarts = options.restarts ?? [];
   const survive = options.survive ?? [];
   const scriptedReviewStep = (step: SurviveStep) => step === 'review' || step === 'review-fix';
@@ -865,24 +803,18 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
       slotId.startsWith(`${CANARY_PROJECT}-`) ? {} : slotCli(options.root)(slotId, fixture),
     cliSnapshots: options.cliSnapshots,
     ...(options.cliSnapshot ? { cliSnapshot: options.cliSnapshot } : {}),
+    binFiles: (holds) => ({ pi: fakePi(holds) }),
     ownerTag: options.ownerTag,
     reaper: options.reaper,
+    ...(options.onCleanup ? { onCleanup: options.onCleanup } : {}),
     log,
   });
-  options.onStack?.(stack);
   const reviewer = scriptedReviewer(stack);
   const slotCounter: Record<string, number> = {};
   const modelCalls = async () =>
     (await readFile(path.join(stack.holds, 'model-calls.log'), 'utf8').catch(() => ''))
       .split('\n')
       .filter(Boolean).length;
-
-  async function readSlot(slotId: string): Promise<SlotView | undefined> {
-    const { fleet } = await stack.call<{
-      fleet: { slots: Array<{ slot: string; lifecycle: string; phase?: string | null }> };
-    }>('fleet.status');
-    return fleet.slots.find((slot) => slot.slot === slotId);
-  }
 
   async function runScenario(
     label: string,
@@ -893,287 +825,175 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
     slotCounter[shape.project] = (slotCounter[shape.project] ?? 0) + 1;
     const slotId = `${shape.project}-${slotCounter[shape.project]}`;
     const dir = path.join(evidence, label);
-    await mkdir(dir, { recursive: true });
-    const started = Date.now();
     const hold: HoldContext = { slotId, slotRepo: stack.slotRepo(slotId), dir };
-    // Matrix workers start once MONITOR watches them (fixtures.mts); one run at a time, so a
-    // marker an earlier, unfinished scenario left armed goes first.
+    // Matrix workers start once MONITOR watches them (fixtures.mts); one run at a time, so what an
+    // earlier, unfinished scenario left armed or hit goes first.
     const monitoring = path.join(stack.holds, 'monitoring');
-    for (const name of ['monitoring', 'worker', 'git', 'ssh', 'fix', 'idle', 'tmux', 'tmux.arm'])
-      await rm(path.join(stack.holds, name), { force: true });
+    for (const name of [
+      'monitoring',
+      'worker',
+      'git',
+      'ssh',
+      'fix',
+      'idle',
+      'tmux',
+      'tmux.arm',
+      PI_TURN_FAILURE,
+    ])
+      for (const suffix of ['', '.hit', '.seen'])
+        await rm(path.join(stack.holds, `${name}${suffix}`), { force: true });
     if (shape.scriptedReview) await reviewer.start();
     for (const phase of phases) await phase.prepare?.(hold);
     for (const phase of phases) if (phase.armAt === 'create') await phase.arm(hold);
     const armed = new Set(phases.filter((phase) => phase.armAt === 'create'));
-    const owned: { runId?: string } = {};
+    const restartLog: RestartRecord[] = [];
+    let watched: string[] | undefined;
+    let survival: string[] | undefined;
+    const unreached: HoldStep[] = [];
+    let current = 0;
+    let runId = '';
+    const getRun = async () => (await stack.call<{ run: Run }>('run.get', { runId })).run;
+    const armPhase = async (phase: HoldPhase) => {
+      await phase.arm(hold);
+      armed.add(phase);
+      await log(`${label}: ${phase.step} hold armed`);
+    };
+    /** The current phase's hold: its restarts once held; true when the phase is over. */
+    const watchPhase = async (view: View, summary: string, changedAt: number) => {
+      const phase = phases[current];
+      const { run } = view;
+      if (!phase) return false;
+      if (!armed.has(phase) && typeof phase.armAt === 'function' && phase.armAt(view))
+        await armPhase(phase);
+      if (armed.has(phase) && phase.held(view)) {
+        await log(`${label}: ${phase.step} held`, { run: brief(run) });
+        hold.held = run;
+        phase.atHold?.(hold);
+        await writeJson(path.join(dir, `run-held-${current + 1}-${phase.step}.json`), run);
+        const snapshot = phase.survive ? snapshotWorker(stack, slotId, run) : undefined;
+        if (snapshot) {
+          watched = [
+            ...snapshot.panes.map((pane) => `pane ${pane.paneId} (pid ${pane.panePid})`),
+            ...snapshot.processes.map((entry) => `pid ${entry.pid} ${entry.command.slice(0, 120)}`),
+          ];
+          await writeJson(path.join(dir, 'watched.json'), snapshot);
+        }
+        for (const [index, variant] of phase.restarts.entries()) {
+          const last = index === phase.restarts.length - 1;
+          const restart = await stack.restartGateway({
+            ...(variant === 'node-away' ? { nodeAwayMs: phase.nodeAwayMs } : {}),
+            ...(last && (phase.releaseWhileDown || phase.whileDown)
+              ? {
+                  whileDown: async () => {
+                    if (phase.releaseWhileDown) await phase.release(hold);
+                    await phase.whileDown?.(hold);
+                  },
+                }
+              : {}),
+          });
+          const after = await getRun();
+          restartLog.push({
+            step: phase.step,
+            variant,
+            downS: Math.round(restart.downMs / 100) / 10,
+            ...(restart.nodeOfflineMs !== undefined
+              ? { nodeOfflineS: Math.round(restart.nodeOfflineMs / 100) / 10 }
+              : {}),
+            before: brief(run),
+            after: brief(after),
+          });
+          await log(`${label}: restarted (${variant})`, { after: brief(after) });
+        }
+        if (snapshot) {
+          survival = watched!.length
+            ? await watchWorker(stack, slotId, snapshot, getRun)
+            : ['nothing to watch: no worker pane or runner process at the hold point'];
+          await log(`${label}: worker ${survival.length ? 'lost' : 'survived'}`, {
+            watched,
+            ...(survival.length ? { survival } : {}),
+          });
+          await phase.survive?.release?.(hold);
+        }
+        if (!phase.releaseWhileDown) await phase.release(hold);
+        await log(`${label}: ${phase.step} released`);
+        current += 1;
+        return true;
+      }
+      const stalled = Date.now() - changedAt >= STALL_MS;
+      if (phase.missed(view) || stalled) {
+        // Before any restart, the hold itself failed. After one, the run went elsewhere than
+        // expected: settle it and let the outcome comparison show where.
+        if (restartLog.length === 0)
+          throw new Inconclusive(
+            `${label}: ${phase.step} ${stalled ? 'never reached' : 'moved past'} its hold point (${summary})`,
+          );
+        unreached.push(...phases.slice(current).map((pending) => pending.step));
+        await log(`${label}: after the restarts the run never reached the ${phase.step} hold`, {
+          run: summary,
+        });
+        current = phases.length;
+        return true;
+      }
+      return false;
+    };
     try {
-      return await drive(
-        shape,
+      const driven = await driveRun({
+        call: stack.call,
+        log,
         label,
         dir,
         slotId,
-        hold,
-        phases,
-        armed,
-        monitoring,
-        started,
-        owned,
-      );
-    } catch (error) {
-      if (error instanceof Inconclusive) error.runId ??= owned.runId;
-      throw error;
+        shape,
+        hooks: {
+          onCreated: (created) => {
+            runId = created;
+          },
+          needsSlot: () => phases[current]?.needsSlot === true,
+          watch: async (view, { summary, changedAt }) => {
+            const { run } = view;
+            if (stepStatus(run, 'monitor') === 'running' && !existsSync(monitoring))
+              await writeFile(monitoring, `${runId}\n`);
+            if (await watchPhase(view, summary, changedAt)) return 'again';
+            // A scripted review answers each reviewer turn, except one a REVIEW hold still keeps.
+            if (shape.scriptedReview && phases[current]?.step !== 'review') {
+              const answered = await reviewer.answer(run, hold.slotRepo);
+              if (answered) {
+                await log(`${label}: scripted reviewer answered ${answered}`);
+                return 'again';
+              }
+            }
+            return undefined;
+          },
+          // A finalize hold arms just before the gate is resolved.
+          beforeAct: async () => {
+            const phase = phases[current];
+            if (phase?.armAt === 'resolve' && !armed.has(phase)) await armPhase(phase);
+          },
+          holding: () => current < phases.length,
+          pollMs: () => {
+            const phase = phases[current];
+            return phase && !armed.has(phase) && typeof phase.armAt === 'function' ? 100 : 500;
+          },
+        },
+      });
+      return {
+        ...driven,
+        label,
+        restarts: restartLog,
+        unreached,
+        ...(watched ? { watched, survival: survival ?? [] } : {}),
+        ...(hold.fixLanded !== undefined ? { fixLanded: hold.fixLanded } : {}),
+      };
     } finally {
       if (shape.scriptedReview) await reviewer.stop(dir);
     }
   }
 
-  async function drive(
-    shape: Shape,
-    label: string,
-    dir: string,
-    slotId: string,
-    hold: HoldContext,
-    phases: HoldPhase[],
-    armed: Set<HoldPhase>,
-    monitoring: string,
-    started: number,
-    owned: { runId?: string },
-  ): Promise<ScenarioResult> {
-    const { run: created } = await stack.call<{ run: Run }>('run.create', shape.create(slotId));
-    const runId = created.id;
-    owned.runId = runId;
-    await log(`${label}: run created`, { runId, slotId });
-    const restartLog: RestartRecord[] = [];
-    let watched: string[] | undefined;
-    let survival: string[] | undefined;
-    const unreached: HoldStep[] = [];
-    const attempted = new Set<string>();
-    const refused: string[] = [];
-    const state: { replayedAt?: string } = {};
-    const getRun = async () => (await stack.call<{ run: Run }>('run.get', { runId })).run;
-    let current = 0;
-    let lastBrief = '';
-    let changedAt = Date.now();
-    let terminalSince: number | undefined;
-    const deadline = started + shape.timeoutMs;
-    for (;;) {
-      if (Date.now() > deadline)
-        throw new Inconclusive(
-          `${label}: the run did not settle within ${shape.timeoutMs / 60_000} min`,
-        );
-      const run = await getRun();
-      await shape.onPoll?.(stack, run);
-      const phase = phases[current];
-      const view: View = {
-        run,
-        ...(phase?.needsSlot || TERMINAL.has(run.status) ? { slot: await readSlot(slotId) } : {}),
-      };
-      if (stepStatus(run, 'monitor') === 'running' && !existsSync(monitoring))
-        await writeFile(monitoring, `${runId}\n`);
-      const summary = `${brief(run)}${view.slot ? ` | slot ${view.slot.lifecycle}/${view.slot.phase ?? '-'}` : ''}`;
-      if (summary !== lastBrief) {
-        await log(`${label}: ${summary}`);
-        await appendFile(
-          path.join(dir, 'samples.jsonl'),
-          `${JSON.stringify({ t: seconds(started), summary })}\n`,
-        );
-        lastBrief = summary;
-        changedAt = Date.now();
-      }
-
-      if (phase) {
-        if (!armed.has(phase) && typeof phase.armAt === 'function' && phase.armAt(view)) {
-          await phase.arm(hold);
-          armed.add(phase);
-          await log(`${label}: ${phase.step} hold armed`);
-        }
-        if (armed.has(phase) && phase.held(view)) {
-          await log(`${label}: ${phase.step} held`, { run: brief(run) });
-          hold.held = run;
-          await writeJson(path.join(dir, `run-held-${current + 1}-${phase.step}.json`), run);
-          const snapshot = phase.survive ? snapshotWorker(stack, slotId, run) : undefined;
-          if (snapshot) {
-            watched = [
-              ...snapshot.panes.map((pane) => `pane ${pane.paneId} (pid ${pane.panePid})`),
-              ...snapshot.processes.map(
-                (entry) => `pid ${entry.pid} ${entry.command.slice(0, 120)}`,
-              ),
-            ];
-            await writeJson(path.join(dir, 'watched.json'), snapshot);
-          }
-          for (const [index, variant] of phase.restarts.entries()) {
-            const last = index === phase.restarts.length - 1;
-            const restart = await stack.restartGateway({
-              ...(variant === 'node-away' ? { nodeAwayMs: phase.nodeAwayMs } : {}),
-              ...(last && (phase.releaseWhileDown || phase.whileDown)
-                ? {
-                    whileDown: async () => {
-                      if (phase.releaseWhileDown) await phase.release(hold);
-                      await phase.whileDown?.(hold);
-                    },
-                  }
-                : {}),
-            });
-            const after = await getRun();
-            restartLog.push({
-              step: phase.step,
-              variant,
-              downS: Math.round(restart.downMs / 100) / 10,
-              ...(restart.nodeOfflineMs !== undefined
-                ? { nodeOfflineS: Math.round(restart.nodeOfflineMs / 100) / 10 }
-                : {}),
-              before: brief(run),
-              after: brief(after),
-            });
-            await log(`${label}: restarted (${variant})`, { after: brief(after) });
-          }
-          if (snapshot) {
-            survival = watched!.length
-              ? await watchWorker(stack, slotId, snapshot, getRun)
-              : ['nothing to watch: no worker pane or runner process at the hold point'];
-            await log(`${label}: worker ${survival.length ? 'lost' : 'survived'}`, {
-              watched,
-              ...(survival.length ? { survival } : {}),
-            });
-            await phase.survive?.release?.(hold);
-          }
-          if (!phase.releaseWhileDown) await phase.release(hold);
-          await log(`${label}: ${phase.step} released`);
-          current += 1;
-          continue;
-        }
-        const stalled = Date.now() - changedAt >= STALL_MS;
-        if (phase.missed(view) || stalled) {
-          // Before any restart, the hold itself failed. After one, the run went elsewhere than
-          // expected: settle it and let the outcome comparison show where.
-          if (restartLog.length === 0)
-            throw new Inconclusive(
-              `${label}: ${phase.step} ${stalled ? 'never reached' : 'moved past'} its hold point (${summary})`,
-            );
-          unreached.push(...phases.slice(current).map((pending) => pending.step));
-          await log(`${label}: after the restarts the run never reached the ${phase.step} hold`, {
-            run: summary,
-          });
-          current = phases.length;
-          continue;
-        }
-      }
-
-      // A scripted review answers each reviewer turn, except one a REVIEW hold still keeps.
-      if (shape.scriptedReview && phase?.step !== 'review') {
-        const answered = await reviewer.answer(run, hold.slotRepo);
-        if (answered) {
-          await log(`${label}: scripted reviewer answered ${answered}`);
-          continue;
-        }
-      }
-
-      // Decisions the shape answers; a finalize hold arms just before the gate is resolved. A
-      // refused action is recorded (the outcome then differs) and not retried.
-      let acted = false;
-      for (const decision of run.decisions.filter(
-        (candidate) => !candidate.resolvedAt && !attempted.has(candidate.id),
-      )) {
-        const action = shape.decide(decision, run, state);
-        if (!action) continue;
-        attempted.add(decision.id);
-        if (phase?.armAt === 'resolve' && !armed.has(phase)) {
-          await phase.arm(hold);
-          armed.add(phase);
-          await log(`${label}: ${phase.step} hold armed`);
-        }
-        try {
-          if ('replay' in action) {
-            state.replayedAt = new Date().toISOString();
-            await stack.call('run.replayStep', { runId, stepName: action.replay });
-            await log(`${label}: replayed from ${action.replay} with ${decision.type} open`);
-          } else {
-            await stack.call('run.resolveDecision', {
-              runId,
-              decisionId: decision.id,
-              actionId: action.resolve,
-            });
-            await log(`${label}: resolved ${decision.type} with ${action.resolve}`);
-          }
-        } catch (error) {
-          refused.push(
-            `${'replay' in action ? `replay from ${action.replay}` : `resolving ${decision.type}`} was refused: ${String(error)}`,
-          );
-          await log(`${label}: ${refused.at(-1)}`);
-        }
-        acted = true;
-        break;
-      }
-      if (acted) continue;
-
-      if (!phase) {
-        // Settled: terminal with its slot released, waiting on a person, or unchanged long
-        // enough that nothing will move it (a run a restart stranded).
-        const unchangedMs = Date.now() - changedAt;
-        const waiting =
-          WAITING.has(run.status) && run.decisions.some((decision) => !decision.resolvedAt);
-        let settled = unchangedMs >= STALL_MS || (waiting && unchangedMs >= 5000);
-        if (TERMINAL.has(run.status)) {
-          // A released slot is ready. Any other slot state stands only once the orphan
-          // reconciler (every 60 s) has had two passes at it.
-          terminalSince ??= Date.now();
-          settled ||=
-            (view.slot?.lifecycle === 'ready' && unchangedMs >= 1500) ||
-            Date.now() - terminalSince > 150_000;
-        }
-        if (settled) {
-          const slot = view.slot ?? (await readSlot(slotId));
-          await writeJson(path.join(dir, 'run-final.json'), run);
-          if (unchangedMs >= STALL_MS)
-            await log(`${label}: unchanged for ${STALL_MS / 60_000} min; recording it as settled`);
-          const timingsS = stepTimings(run);
-          if (terminalSince !== undefined && slot?.lifecycle === 'ready')
-            timingsS.release = Math.round((Date.now() - unchangedMs - terminalSince) / 100) / 10;
-          return {
-            label,
-            runId,
-            run,
-            outcome: runOutcome(run, slot),
-            durationS: seconds(started),
-            timingsS,
-            restarts: restartLog,
-            unreached,
-            refused,
-            ...(watched ? { watched, survival: survival ?? [] } : {}),
-            evidence: dir,
-          };
-        }
-      }
-      const fastPoll = phase && !armed.has(phase) && typeof phase.armAt === 'function';
-      await delay(fastPoll ? 100 : 500);
-    }
-  }
-
   /** Leaves nothing active: a later restart would otherwise recover this run too. */
-  async function retire(runId: string) {
-    const { run } = await stack.call<{ run: Run }>('run.get', { runId });
-    if (TERMINAL.has(run.status)) return;
-    const reason = 'canary: outcome recorded';
-    try {
-      await stack.call('run.cancel', { runId, reason });
-    } catch (error) {
-      // A run held for a result decision refuses cancel: close it through that decision.
-      const close = run.decisions
-        .filter((decision) => !decision.resolvedAt)
-        .flatMap((decision) =>
-          (decision.actions ?? [])
-            .filter((action) => /close/.test(action.id))
-            .map((action) => ({ decisionId: decision.id, actionId: action.id })),
-        )[0];
-      const closed =
-        close &&
-        (await stack.call('run.resolveDecision', { runId, ...close, reason }).then(
-          () => true,
-          () => false,
-        ));
-      // Its outcome is already recorded; later restarts recover it too, which only adds noise.
-      if (!closed) await log('could not retire the run', { runId, error: String(error) });
-    }
+  async function retireRun(runId: string) {
+    const error = await retire(stack.call, runId);
+    // Its outcome is already recorded; later restarts recover it too, which only adds noise.
+    if (error) await log('could not retire the run', { runId, error });
   }
 
   /** One scenario as a check; an unverifiable one (a hold that never caught) is `unverified`. */
@@ -1188,7 +1008,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
     let result: CheckResult;
     try {
       const scenarioResult = await scenario();
-      await retire(scenarioResult.runId);
+      await retireRun(scenarioResult.runId);
       result = {
         ...base,
         target: 'isolated',
@@ -1204,7 +1024,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
       };
     } catch (error) {
       if (!(error instanceof Inconclusive)) throw error;
-      if (error.runId) await retire(error.runId);
+      if (error.runId) await retireRun(error.runId);
       result = {
         ...base,
         target: 'isolated',
@@ -1223,7 +1043,6 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
     return result;
   }
 
-  const results: CheckResult[] = [];
   const unreachedDifferences = (result: ScenarioResult) => [
     ...result.unreached.map(
       (step) => `${step}: after the earlier restarts the run never reached this step's hold`,
@@ -1232,96 +1051,54 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
   ];
 
   if (options.nativeCheck) {
-    // The live canary's native round trip, against this node: the gateway routes a session list
-    // to the node's native host.
-    const started = Date.now();
-    let failure: string | undefined;
-    await stack
-      .call('native.session.list', { executionNodeId: 'ri-node' })
-      .catch((error: unknown) => {
-        failure = `native.session.list on ri-node failed: ${String(error)}`;
-      });
-    const seconds = Math.round((Date.now() - started) / 100) / 10;
-    const late = overBudget({ 'native-check': seconds }, options.budgetsS);
-    const differences = [...(failure ? [failure] : []), ...late];
-    results.push({
-      case: 'native-check',
-      variant: 'ri-node',
-      target: 'isolated',
-      status: differences.length ? 'fail' : 'pass',
-      model: 'none',
-      modelCalls: 0,
-      durationS: seconds,
-      timingsS: { 'native-check': seconds },
-      differences,
-      observations: [],
-    });
-    await log(`native-check ri-node: ${differences.length ? 'FAIL' : 'PASS'}`, {
-      seconds,
-      differences,
+    // The live canary's native round trip, against this node.
+    const result = await nativeCheck(stack.call, 'ri-node', options.budgetsS, 'isolated');
+    onCheck(result);
+    await log(`native-check ri-node: ${result.status.toUpperCase()}`, {
+      seconds: result.durationS,
+      differences: result.differences,
     });
   }
 
   if (options.lifecycle)
-    results.push(
+    onCheck(
       await check(
         { case: 'lifecycle', variant: 'ri-node', model: 'scripted' },
         () => runScenario('lifecycle', 'canary', []),
-        (result) => {
-          const differences = [
-            ...result.refused,
-            ...outcomeDifferences(LIFECYCLE_OUTCOME, result.outcome),
-          ];
-          const late = overBudget(result.timingsS, options.budgetsS);
-          return {
-            status: differences.length || late.length ? 'fail' : 'pass',
-            differences: [...differences, ...late],
-            observations: [],
-            overBudget: late,
-          };
-        },
+        (result) => judgeLifecycle('lifecycle', result, options.budgetsS),
       ),
     );
 
   if (options.f324)
-    results.push(
+    onCheck(
       await check(
         { case: 'f324-replay-open-gate', variant: '-', model: 'scripted' },
         () => runScenario('f324-replay-open-gate', 'f324', []),
-        (result) => {
-          const differences = [
-            ...result.refused,
-            ...outcomeDifferences(LIFECYCLE_OUTCOME, result.outcome),
-          ];
-          // The replay must have superseded the card it found open.
-          const first = [...result.run.decisions]
-            .filter((decision) => decision.type === 'engine_human_gate')
-            .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0];
-          if (first?.resolvedAction !== 'superseded')
-            differences.push(
-              `the gate card open at the replay ended ${first?.resolvedAction ?? (first ? 'open' : 'missing')}, not superseded`,
-            );
-          return { status: differences.length ? 'fail' : 'pass', differences, observations: [] };
-        },
+        (result) => judgeLifecycle('f324-replay-open-gate', result, options.budgetsS),
       ),
     );
 
   // Same-night no-restart baselines, each run once when a case needs it.
-  // A baseline that could not settle makes every case comparing against it unverified.
+  // A baseline that could not settle, or ended other than a healthy run does, makes every case
+  // comparing against it unverified: a pipeline broken for every run must not compare equal.
+  const baselineExpected = { pipe: LIFECYCLE_OUTCOME, 'scripted-review': REVIEWED_OUTCOME };
   const baselines: Partial<Record<'pipe' | 'scripted-review', ScenarioResult | Inconclusive>> = {};
   const baselineOf = async (shapeName: 'pipe' | 'scripted-review') => {
     if (!baselines[shapeName]) {
       try {
         const baseline = await runScenario(`baseline-${shapeName}`, shapeName, []);
-        await retire(baseline.runId);
+        await retireRun(baseline.runId);
         await log(`baseline ${shapeName}`, {
           outcome: baseline.outcome,
           durationS: baseline.durationS,
         });
+        const unhealthy = outcomeDifferences(baselineExpected[shapeName], baseline.outcome);
+        if (unhealthy.length)
+          throw new Inconclusive(`the baseline itself ended wrong: ${unhealthy.join('; ')}`);
         baselines[shapeName] = baseline;
       } catch (error) {
         if (!(error instanceof Inconclusive)) throw error;
-        if (error.runId) await retire(error.runId);
+        if (error.runId) await retireRun(error.runId);
         baselines[shapeName] = new Inconclusive(`no ${shapeName} baseline: ${error.message}`);
       }
     }
@@ -1334,7 +1111,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
     const baseline = await baselineOf('pipe');
     for (const { step, variants } of restarts)
       for (const variant of variants)
-        results.push(
+        onCheck(
           await check(
             { case: step, variant, model: 'scripted', hold: HOLDS[step] },
             () =>
@@ -1359,6 +1136,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
 
   for (const step of survive) {
     const scripted = scriptedReviewStep(step);
+    const pi = step === 'monitor-transport-abort';
     let baseline: ScenarioResult;
     const result = await check(
       {
@@ -1366,12 +1144,14 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
         variant: step,
         model: scripted
           ? `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer whose turns the test answers (no model call)`
-          : 'scripted',
+          : pi
+            ? 'pi worker with no model (fixture)'
+            : 'scripted',
         hold: SURVIVE_HOLDS[step],
       },
       async () => {
         baseline = await baselineOf(scripted ? 'scripted-review' : 'pipe');
-        return runScenario(`survive-${step}`, scripted ? 'scripted-review' : 'pipe', [
+        return runScenario(`survive-${step}`, scripted ? 'scripted-review' : pi ? 'pi' : 'pipe', [
           survivePhase(stack, step, reviewer),
         ]);
       },
@@ -1401,13 +1181,15 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
       result.status = 'fail';
       result.differences.push(`${result.modelCalls} model calls, expected none`);
     }
-    results.push(result);
+    onCheck(result);
   }
 
   if (options.review) {
     // One reviewed run: two model calls, four restarts; its end is derived from its verdicts.
     const model = `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer`;
     let verdicts: ReturnType<typeof reviewVerdicts> | undefined;
+    let procedural: string[] = [];
+    let fixLanded = false;
     const reviewCheck = await check(
       { case: 'review', variant: 'node-up', model, hold: HOLDS.review },
       () => runScenario('review', 'review', reviewPhases(stack, options.reviewFixNodeAwayMs)),
@@ -1415,8 +1197,10 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
         verdicts = reviewVerdicts(result.run);
         // No fix round when loop 1 passes: its holds are not reached, which is no difference.
         const expectedReviewers = verdicts.loop1 === 'pass' ? 1 : 2;
+        procedural = verdicts.loop1 === 'pass' ? result.refused : unreachedDifferences(result);
+        fixLanded = result.fixLanded === true;
         const differences = [
-          ...(verdicts.loop1 === 'pass' ? result.refused : unreachedDifferences(result)),
+          ...procedural,
           ...outcomeDifferences(REVIEWED_OUTCOME, result.outcome),
           ...(verdicts.reviewers > expectedReviewers
             ? [
@@ -1443,16 +1227,21 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
         `${reviewCheck.modelCalls} model calls, expected at most 2: a reviewer was re-launched after a restart`,
       );
     }
-    // Loop 2 returning issues is the model's drift, not a restart's: that path is not modelled.
-    const loop2Drift = verdicts?.loop2 === 'issues';
+    // Loop 2 returning issues can be the model's drift, not a restart's: that path is not modelled.
     const loop1Pass = verdicts?.loop1 === 'pass';
     const relaunched = reviewCheck.differences.some((entry) => entry.includes('re-launched'));
-    if (loop2Drift && reviewCheck.status === 'fail' && !relaunched) {
+    const loop2Drift = reviewDriftExcuses({
+      loop2: verdicts?.loop2,
+      fixLanded,
+      procedural,
+      relaunched,
+    });
+    if (loop2Drift && reviewCheck.status === 'fail') {
       reviewCheck.status = 'not-exercised';
       reviewCheck.error = 'loop 2 returned issues (verdict drift): the restarts cannot be judged';
     }
-    results.push(reviewCheck);
-    results.push({
+    onCheck(reviewCheck);
+    onCheck({
       ...reviewCheck,
       case: 'review-fix',
       variant: 'node-up+node-away',
@@ -1474,7 +1263,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
     });
   }
 
-  if (options.reviewPastWait) results.push(await reviewPastWait());
+  if (options.reviewPastWait) onCheck(await reviewPastWait());
 
   /**
    * A reviewer the proxy accepted without a model call, restarted with its node away past
@@ -1516,7 +1305,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
           const candidate = await getRun();
           if (stepStatus(candidate, 'monitor') === 'running' && !existsSync(monitoring))
             await writeFile(monitoring, `${created.id}\n`);
-          if (TERMINAL.has(candidate.status))
+          if (isTerminalRunStatus(candidate.status))
             throw new Inconclusive(
               `${label}: the run ended before its reviewer was held (${brief(candidate)})`,
             );
@@ -1549,7 +1338,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
         ? []
         : [`REVIEW did not keep its reviewer: ${stepStatus(run, 'review')} (${brief(run)})`];
       await review.release(hold);
-      await retire(created.id);
+      await retireRun(created.id);
       const result: CheckResult = {
         ...base,
         target: 'isolated',
@@ -1578,6 +1367,4 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
       };
     }
   }
-
-  return results;
 }

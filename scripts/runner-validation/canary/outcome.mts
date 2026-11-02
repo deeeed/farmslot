@@ -65,6 +65,8 @@ export interface KnownFailure {
   target?: 'live' | 'isolated';
   /** Regex the check's differences, error or failure text must match. */
   signature: string;
+  /** Regexes for the differences this failure produces; any other difference is a new failure. */
+  differences: string[];
   ledger: string;
 }
 
@@ -173,6 +175,42 @@ export function reviewVerdicts(run: Run): { loop1?: string; loop2?: string; revi
   };
 }
 
+/**
+ * F324: the replay must have superseded the gate card it found open. The driver only closes a
+ * card the replay presented, so the first card is the one that was open.
+ */
+export function replayedGateDifferences(run: Run): string[] {
+  const first = run.decisions
+    .filter((decision) => decision.type === 'engine_human_gate')
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0];
+  return first?.resolvedAction === 'superseded'
+    ? []
+    : [
+        `the gate card open at the replay ended ${first?.resolvedAction ?? (first ? 'open' : 'missing')}, not superseded`,
+      ];
+}
+
+/**
+ * Whether loop 2 returning issues excuses a failed reviewed run: the run then ends outside what
+ * the comparison models. Only when the restarts did their part: the fix round's commit landed (a
+ * re-review of a checkout missing it also returns issues), every hold was reached, nothing was
+ * refused and no reviewer was re-launched.
+ */
+export function reviewDriftExcuses(options: {
+  loop2?: string;
+  fixLanded: boolean;
+  /** Unreached holds and refused decisions. */
+  procedural: string[];
+  relaunched: boolean;
+}): boolean {
+  return (
+    options.loop2 === 'issues' &&
+    options.fixLanded &&
+    !options.procedural.length &&
+    !options.relaunched
+  );
+}
+
 /** Every way `observed` differs from `expected`; empty when they match. */
 export function outcomeDifferences(
   expected: Omit<RunOutcome, 'superseded' | 'reviews'>,
@@ -232,8 +270,9 @@ export function overBudget(
 }
 
 /**
- * Applies the known failures: a failing check whose text matches a known entry for its case and
- * variant becomes `known`; a passing check that has one becomes `xpass` (the entry is stale).
+ * Applies the known failures: a failing check that matches a known entry for its case and variant
+ * becomes `known`, if its text has the entry's signature and it has no difference the entry does
+ * not name. A passing check that has an entry becomes `xpass` (the entry is stale).
  */
 export function applyKnownFailures(check: CheckResult, known: KnownFailure[]): CheckResult {
   const entries = known.filter(
@@ -252,7 +291,13 @@ export function applyKnownFailures(check: CheckResult, known: KnownFailure[]): C
     };
   if (check.status !== 'fail') return check;
   const text = [...check.differences, check.error ?? '', check.failureText ?? ''].join('\n');
-  const entry = entries.find((candidate) => new RegExp(candidate.signature).test(text));
+  const entry = entries.find(
+    (candidate) =>
+      new RegExp(candidate.signature).test(text) &&
+      check.differences.every((difference) =>
+        candidate.differences.some((shape) => new RegExp(shape).test(difference)),
+      ),
+  );
   return entry
     ? { ...check, status: 'known', ledger: entry.ledger }
     : {

@@ -9,7 +9,8 @@
 // (codex): its scripted worker commits a two-file change, one file a leftover debug helper the
 // reviewer should flag. When the engine relaunches the worker for the review-fix round, the same
 // command marks the fix task started, removes that file, commits and marks it complete. Workers
-// hold while their marker exists under the stack's holds/ directory.
+// hold while their marker exists under the stack's holds/ directory. fakePi is a Pi-runner worker
+// with no model, for the case where its model stream drops while it stays alive.
 import type { ProjectPack } from '../lib/remote-node-stack.mjs';
 
 export const CANARY_PROJECT = 'farmslot-canary';
@@ -70,36 +71,114 @@ export const CANARY_REPO: Record<string, string> = {
 export const CANARY_TAGS = ['canary'];
 
 /**
- * A canary lifecycle run: interactive dev with the reviewed profile (HUMAN_GATE prepares a
- * package and presents a card), the scripted runner, no code change, so the gate offers to close
- * it as shipped, which goes through FINALIZE without GitHub.
+ * An interactive dev run with the reviewed profile (HUMAN_GATE prepares a package and presents a
+ * card) on `worker`, no code change, so the gate offers to close it as shipped, which goes through
+ * FINALIZE without GitHub.
  */
-export function canaryRunParams(slotId: string, label: string): Record<string, unknown> {
-  return {
-    project: CANARY_PROJECT,
-    flowType: 'dev',
-    mode: 'interactive',
-    devInteractiveProfile: 'reviewed',
-    ticketOrPr: `canary ${label}`,
-    initialContext:
-      'Post-deploy canary: a scripted run through the whole lifecycle. No code change.',
-    slotId,
-    runner: 'scripted',
-    model: 'scripted',
-    transport: 'tmux',
-    scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 8000 },
-    tags: CANARY_TAGS,
-  };
-}
+const lifecycleRunParams = (
+  project: string,
+  slotId: string,
+  ticketOrPr: string,
+  initialContext: string,
+  worker: Record<string, unknown>,
+): Record<string, unknown> => ({
+  project,
+  flowType: 'dev',
+  mode: 'interactive',
+  devInteractiveProfile: 'reviewed',
+  ticketOrPr,
+  initialContext,
+  slotId,
+  transport: 'tmux',
+  ...worker,
+});
 
-/** The canary demo project, for a repo at `origin`. */
-export function canaryPack(origin: string): ProjectPack {
+/** A canary lifecycle run: the scripted runner on the canary project. */
+export const canaryRunParams = (slotId: string, label: string): Record<string, unknown> =>
+  lifecycleRunParams(
+    CANARY_PROJECT,
+    slotId,
+    `canary ${label}`,
+    'Post-deploy canary: a scripted run through the whole lifecycle. No code change.',
+    {
+      runner: 'scripted',
+      model: 'scripted',
+      scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 8000 },
+      tags: CANARY_TAGS,
+    },
+  );
+
+/** The restart matrix's pipeline: the same lifecycle, with a worker that can hold (slotCli). */
+export const pipeRunParams = (slotId: string): Record<string, unknown> =>
+  lifecycleRunParams(
+    PIPE_PROJECT,
+    slotId,
+    'restart invariant pipeline',
+    'Scripted restart-invariant run; the worker changes nothing.',
+    {
+      runner: 'scripted',
+      model: 'scripted',
+      // The slot's CLI turns the scenario launch into the project's `work` command (slotCli).
+      scripted: { mode: 'scenario', scenario: 'success' },
+    },
+  );
+
+/** The same pipeline with a Pi-runner worker: the fixture's `pi` (fakePi), no model. */
+export const piRunParams = (slotId: string): Record<string, unknown> =>
+  lifecycleRunParams(
+    PIPE_PROJECT,
+    slotId,
+    'restart invariant pi worker',
+    'Restart-invariant run with a Pi-runner worker that calls no model.',
+    { runner: 'pi', model: 'scripted' },
+  );
+
+/**
+ * A validation dev run (never a publication candidate) whose REVIEW runs codex. Artifact-only, so
+ * an output-review card is open while the fix round runs (#1724's case).
+ */
+export const reviewRunParams = (slotId: string): Record<string, unknown> => ({
+  project: REVIEW_PROJECT,
+  flowType: 'dev',
+  mode: 'validation',
+  // A Jira-shaped key passes dev ticket validation; ticketData means nothing is fetched. One per
+  // run: a second run on the same ticket raises a collision decision.
+  ticketOrPr: `RI-${slotId.replace(/^.*-/, '')}`,
+  ticketData: {
+    source: 'manual',
+    ...REVIEW_TICKET,
+    acceptanceCriteria: [],
+    affectedArea: 'src',
+    stepsToReproduce: [],
+    screenshots: [],
+    labels: [],
+  },
+  slotId,
+  runner: 'scripted',
+  model: 'scripted',
+  transport: 'tmux',
+  scripted: { mode: 'scenario', scenario: 'success' },
+  completionPolicy: 'artifact-only',
+  reviewMode: 'cold',
+  reviewValidationDepth: 'static-code',
+  reviewSequence: [{ ...REVIEWER, mode: 'cold' }],
+});
+
+/** A pack: what every project here shares, plus its own `project.json` fields and files. */
+function buildPack(
+  name: string,
+  options: {
+    title: string;
+    devStep: string;
+    dispatchPrompt: string;
+    projectJson: Record<string, unknown>;
+    files?: Record<string, string>;
+  },
+): ProjectPack {
   return {
-    name: CANARY_PROJECT,
+    name,
     projectJson: {
-      repo_url: origin,
-      default_branch: 'main',
-      // Pack portability requires a QA flow even though canary runs never use one.
+      // Pack portability requires a QA flow even though these runs never use one.
       qa: {
         default_profile: 'changes',
         profiles: [{ id: 'changes', title: 'Validate changes', template_id: 'validation/shared' }],
@@ -108,19 +187,31 @@ export function canaryPack(origin: string): ProjectPack {
       execution_templates: {
         sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
       },
-      review: { enabled: false },
-      monitoring: { poll_interval_min: 0.02, total_timeout_min: 15 },
+      ...options.projectJson,
     },
     files: {
-      'shared/dev/shared.md':
-        '---\nplatforms: [cli]\n---\n\n# Canary development\n\n- [ ] Run the scripted canary scenario.\n',
-      'shared/validation/shared.md':
-        '---\nplatforms: [cli]\n---\n\n# Canary validation\n\n- [ ] Validate the change.\n',
-      'templates/prompts/worker-dispatch.md': 'Read {{TASK_FILE}} and follow it.\n',
+      'shared/dev/shared.md': `---\nplatforms: [cli]\n---\n\n# ${options.title} development\n\n- [ ] ${options.devStep}\n`,
+      'shared/validation/shared.md': `---\nplatforms: [cli]\n---\n\n# ${options.title} validation\n\n- [ ] Validate the change.\n`,
+      'templates/prompts/worker-dispatch.md': `${options.dispatchPrompt}\n`,
       'templates/prompts/worker-nudge.md': 'Continue {{TASK_FILE}}.\n',
+      ...options.files,
     },
   };
 }
+
+/** The canary demo project, for a repo at `origin`. */
+export const canaryPack = (origin: string): ProjectPack =>
+  buildPack(CANARY_PROJECT, {
+    title: 'Canary',
+    devStep: 'Run the scripted canary scenario.',
+    dispatchPrompt: 'Read {{TASK_FILE}} and follow it.',
+    projectJson: {
+      repo_url: origin,
+      default_branch: 'main',
+      review: { enabled: false },
+      monitoring: { poll_interval_min: 0.02, total_timeout_min: 15 },
+    },
+  });
 
 export const REVIEW_TICKET = {
   title: 'Add a name formatter',
@@ -258,19 +349,13 @@ const REVIEW_FIX_TEMPLATE = `# Worker: Review fix
 - [ ] **3. Complete** - run the marker with \`complete --mark-last\`.
 `;
 
-function pack(name: string, holds: string, review: boolean): ProjectPack {
-  return {
-    name,
+const pack = (name: string, holds: string, review: boolean): ProjectPack =>
+  buildPack(name, {
+    title: 'Restart invariant',
+    devStep: 'Run the configured scripted command.',
+    dispatchPrompt:
+      'Read {{TASK_FILE}} and follow it. After each checklist step, run {{TASK_DIR}}/mark N.',
     projectJson: {
-      // Pack portability requires a QA flow even though these runs never use one.
-      qa: {
-        default_profile: 'changes',
-        profiles: [{ id: 'changes', title: 'Validate changes', template_id: 'validation/shared' }],
-      },
-      paths: { runtime_dir: '.agent', artifact_dir: '.task' },
-      execution_templates: {
-        sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
-      },
       review: {
         enabled: review,
         ...REVIEWER,
@@ -289,18 +374,10 @@ function pack(name: string, holds: string, review: boolean): ProjectPack {
       monitoring: { poll_interval_min: 0.02, total_timeout_min: 60 },
     },
     files: {
-      'shared/dev/shared.md':
-        '---\nplatforms: [cli]\n---\n\n# Restart invariant development\n\n- [ ] Run the configured scripted command.\n',
-      'shared/validation/shared.md':
-        '---\nplatforms: [cli]\n---\n\n# Restart invariant validation\n\n- [ ] Validate the change.\n',
-      'templates/prompts/worker-dispatch.md':
-        'Read {{TASK_FILE}} and follow it. After each checklist step, run {{TASK_DIR}}/mark N.\n',
-      'templates/prompts/worker-nudge.md': 'Continue {{TASK_FILE}}.\n',
       'templates/worker/review.md': REVIEW_TEMPLATE,
       'templates/worker/review-fix.md': REVIEW_FIX_TEMPLATE,
     },
-  };
-}
+  });
 
 /**
  * The slot's own CLI. A scripted scenario launches `packages/cli/bin/farmslot.mjs` from the slot
@@ -338,6 +415,72 @@ export function slotCli(root: string) {
     ].join('\n'),
   });
 }
+
+/** The marker fakePi turns into a failed turn; its content is the failure Pi reports. */
+export const PI_TURN_FAILURE = 'pi-turn-failure';
+
+/**
+ * A Pi-runner worker with no model, the fixture's `pi`. Like Pi it answers `auth check`, keeps a
+ * session file and reports its turn through the hook writer the real extension uses, which the
+ * real installer copied beside the `-e` extension. It stays mid-turn while holds/worker exists;
+ * while it does, holds/pi-turn-failure makes it record that failed turn as Pi would (StopFailure)
+ * and stay alive. Then it finishes its task and waits at its prompt until the slot stops it.
+ */
+export const fakePi = (holds: string): string => `#!/usr/bin/env node
+'use strict';
+const { execFileSync } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const holds = ${JSON.stringify(holds)};
+const args = process.argv.slice(2);
+if (args[0] === 'auth') {
+  process.stdout.write(JSON.stringify({ status: 'ready' }) + '\\n');
+  process.exit(0);
+}
+const tick = new Int32Array(new SharedArrayBuffer(4));
+const sleep = (ms) => Atomics.wait(tick, 0, 0, ms);
+(async () => {
+  const extension = args[args.indexOf('-e') + 1];
+  const { writePiHook } = await import(pathToFileURL(path.join(path.dirname(extension), 'pi-farmslot-hook-writer.mjs')).href);
+  const taskFile = process.env.FARMSLOT_TASK_FILE;
+  const taskDir = path.dirname(taskFile);
+  const cwd = process.cwd();
+  const sessionId = randomUUID();
+  const transcriptPath = path.join(os.homedir(), '.pi/agent/sessions/canary', sessionId + '.jsonl');
+  fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+  fs.writeFileSync(transcriptPath, JSON.stringify({ type: 'session', cwd, timestamp: new Date().toISOString() }) + '\\n');
+  const hook = (event, extra) => writePiHook({ obsDir: process.env.FARMSLOT_OBS_DIR, event, sessionId, transcriptPath, cwd, ...extra });
+  hook('SessionStart');
+  hook('UserPromptSubmit', { promptText: fs.readFileSync(taskFile, 'utf8') });
+  const worker = path.join(holds, 'worker');
+  const failure = path.join(holds, ${JSON.stringify(PI_TURN_FAILURE)});
+  if (fs.existsSync(worker)) fs.writeFileSync(worker + '.hit', new Date().toISOString() + '\\n');
+  const until = Date.now() + 15 * 60_000;
+  while (fs.existsSync(worker) && Date.now() < until) {
+    if (fs.existsSync(failure) && !fs.existsSync(failure + '.hit')) {
+      hook('StopFailure', { failure: fs.readFileSync(failure, 'utf8').trim() });
+      fs.writeFileSync(failure + '.hit', new Date().toISOString() + '\\n');
+    }
+    sleep(100);
+  }
+  const artifacts = path.join(taskDir, 'artifacts');
+  fs.writeFileSync(path.join(artifacts, 'pr-description.md'), '# Restart invariant\\n\\nFake Pi worker; no code change.\\n');
+  fs.writeFileSync(path.join(artifacts, 'learnings.md'), '# Learnings\\n\\n- Fake Pi worker.\\n');
+  const mark = (...markArgs) => execFileSync(path.join(taskDir, 'mark'), markArgs, { cwd: taskDir, stdio: 'inherit' });
+  const steps = (fs.readFileSync(taskFile, 'utf8').match(/^- \\[ \\]/gm) ?? []).length;
+  mark('start');
+  for (let step = 1; step < steps; step++) mark(String(step));
+  mark('complete', '--mark-last');
+  hook('Stop');
+  setTimeout(() => process.exit(0), 15 * 60_000);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
 
 export function projectPacks(holds: string): ProjectPack[] {
   return [pack(PIPE_PROJECT, holds, false), pack(REVIEW_PROJECT, holds, true)];

@@ -12,8 +12,9 @@
 //            REVIEW with its node away past the reconnect wait (no model call), and worker-survives:
 //            a restart with the worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW, its fix
 //            round, HUMAN_GATE prep and FINALIZE, which must leave it alive (no model call: the test
-//            answers the reviewer). --with-review adds one reviewed run (two codex gpt-6-luna
-//            calls): REVIEW and its fix round.
+//            answers the reviewer), and a Pi-runner worker in MONITOR whose model stream drops as
+//            the gateway restarts. --with-review adds one reviewed run (two codex gpt-6-luna calls):
+//            REVIEW and its fix round.
 //
 // Every model a case would use must be on config.json's allowlist, or the canary stops before
 // dispatching anything. Known failures (config.json) report as KNOWN; one that passes fails the
@@ -34,9 +35,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { GatewayConnection } from '../../../packages/cli/src/gateway-client.js';
 import { cleanupOnExit, startReaper } from '../lib/isolated-stack.mjs';
-import type { RemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
 import { REVIEWER } from './fixtures.mjs';
 import {
@@ -48,7 +47,7 @@ import {
 } from './isolated.mjs';
 import { runLive } from './live.mjs';
 import { applyKnownFailures, type CheckResult, type KnownFailure } from './outcome.mjs';
-import { report } from './report.mjs';
+import { report, type Verdict } from './report.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name: string) => {
@@ -168,34 +167,42 @@ async function log(event: string, detail: Record<string, unknown> = {}) {
 
 const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const reaper = startReaper();
-let stack: RemoteNodeStack | undefined;
-let liveConnection: GatewayConnection | undefined;
+let stopStack: (() => Promise<string[]>) | undefined;
+let stopLive: (() => Promise<string[]>) | undefined;
 const checks: CheckResult[] = [];
 const cleanupErrors: string[] = [];
 let setupError: string | undefined;
 let completed = false;
-// Cleanup reports only when a signal ran it; the normal path reports after applying known failures.
-let signalled = true;
+let cleaning = false;
+let reported: Promise<Verdict> | undefined;
+/** Applies the known failures and reports, once, whichever path gets here first. */
 const finish = () =>
-  report({
-    profile: profile === 'canary' ? 'canary' : 'canary-nightly',
-    head,
-    startedAt,
-    resultsFile,
-    ...(arg('status-file') ? { statusFile: expand(arg('status-file')!) } : {}),
-    ...(arg('hold-file') && profile === 'canary' ? { holdFile: expand(arg('hold-file')!) } : {}),
-    checks,
-    setupError: setupError ?? (completed ? undefined : 'interrupted before the canary finished'),
-    cleanupErrors,
-    evidence,
-    extra: { target, withReview, models, budgetsS, knownFailures: config.knownFailures },
-  });
+  (reported ??= (async () => {
+    for (const [index, check] of checks.entries())
+      checks[index] = applyKnownFailures(check, config.knownFailures);
+    return report({
+      profile: profile === 'canary' ? 'canary' : 'canary-nightly',
+      head,
+      startedAt,
+      resultsFile,
+      ...(arg('status-file') ? { statusFile: expand(arg('status-file')!) } : {}),
+      ...(arg('hold-file') && profile === 'canary' ? { holdFile: expand(arg('hold-file')!) } : {}),
+      checks,
+      setupError: setupError ?? (completed ? undefined : 'interrupted before the canary finished'),
+      cleanupErrors,
+      evidence,
+      extra: { target, withReview, models, budgetsS, knownFailures: config.knownFailures },
+    });
+  })());
 const cleanup = cleanupOnExit(async () => {
-  liveConnection?.close();
-  if (stack) cleanupErrors.push(...(await stack.cleanup()));
-  reaper.done();
-  // A signal exits right after this: report what ran, as interrupted.
-  if (signalled) await finish();
+  cleaning = true;
+  cleanupErrors.push(...((await stopLive?.()) ?? []));
+  const stackErrors = (await stopStack?.()) ?? [];
+  cleanupErrors.push(...stackErrors);
+  // What could not be stopped stays with the reaper, which tries again when this process exits.
+  if (!stackErrors.length) reaper.done();
+  // A signal exits right after this, so the report is written here on both paths.
+  await finish();
 });
 
 try {
@@ -203,23 +210,25 @@ try {
     throw new Error(
       `Model(s) outside the canary allowlist (${config.modelAllowlist.join(', ')}): ${refused.join(', ')}`,
     );
+  const onCheck = (check: CheckResult) => {
+    checks.push(check);
+  };
   if (plan.live)
-    checks.push(
-      ...(await runLive({
-        profileHome: expand(config.live.profileHome),
-        profile: config.live.profile,
-        nodes: config.live.nodes,
-        lifecycle: wants('lifecycle'),
-        nativeCheck: wants('native-check'),
-        ...(wants('f324') ? { f324Node: config.live.f324Node } : {}),
-        budgetsS,
-        evidence,
-        log,
-        onConnection: (connection) => {
-          liveConnection = connection;
-        },
-      })),
-    );
+    await runLive({
+      profileHome: expand(config.live.profileHome),
+      profile: config.live.profile,
+      nodes: config.live.nodes,
+      lifecycle: wants('lifecycle'),
+      nativeCheck: wants('native-check'),
+      ...(wants('f324') ? { f324Node: config.live.f324Node } : {}),
+      budgetsS,
+      evidence,
+      log,
+      onCheck,
+      onStop: (stop) => {
+        stopLive = stop;
+      },
+    });
   if (
     plan.nativeCheck ||
     plan.lifecycle ||
@@ -229,40 +238,39 @@ try {
     plan.reviewPastWait ||
     plan.survive.length
   )
-    checks.push(
-      ...(await runIsolated({
-        root,
-        evidence,
-        log,
-        reaper,
-        ownerTag: process.env.CANARY_STAMP ?? String(process.pid),
-        cliSnapshots: expand(arg('cli-snapshots') ?? '~/farmslot-canary/cli-snapshots'),
-        ...(arg('cli-snapshot') ? { cliSnapshot: expand(arg('cli-snapshot')!) } : {}),
-        budgetsS,
-        nodeAwayMs: Number(arg('node-away-s') ?? 20) * 1000,
-        reviewFixNodeAwayMs: Number(arg('review-fix-node-away-s') ?? 100) * 1000,
-        reviewNodeAwayMs: Number(arg('review-node-away-s') ?? 130) * 1000,
-        lifecycle: plan.lifecycle,
-        nativeCheck: plan.nativeCheck,
-        f324: plan.f324,
-        restarts: plan.restarts,
-        review: plan.review,
-        reviewPastWait: plan.reviewPastWait,
-        survive: plan.survive,
-        onStack: (created) => {
-          stack = created;
-        },
-      })),
-    );
+    await runIsolated({
+      root,
+      evidence,
+      log,
+      reaper,
+      ownerTag: process.env.CANARY_STAMP ?? String(process.pid),
+      cliSnapshots: expand(arg('cli-snapshots') ?? '~/farmslot-canary/cli-snapshots'),
+      ...(arg('cli-snapshot') ? { cliSnapshot: expand(arg('cli-snapshot')!) } : {}),
+      budgetsS,
+      nodeAwayMs: Number(arg('node-away-s') ?? 20) * 1000,
+      reviewFixNodeAwayMs: Number(arg('review-fix-node-away-s') ?? 100) * 1000,
+      reviewNodeAwayMs: Number(arg('review-node-away-s') ?? 130) * 1000,
+      lifecycle: plan.lifecycle,
+      nativeCheck: plan.nativeCheck,
+      f324: plan.f324,
+      restarts: plan.restarts,
+      review: plan.review,
+      reviewPastWait: plan.reviewPastWait,
+      survive: plan.survive,
+      onCheck,
+      onCleanup: (stop) => {
+        stopStack = stop;
+      },
+    });
+  completed = true;
 } catch (error) {
-  setupError = error instanceof Error ? (error.stack ?? error.message) : String(error);
-  await log('aborted', { error: String(error) });
+  // During a signal's cleanup the calls in flight fail; the report says it was interrupted.
+  if (!cleaning) {
+    setupError = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    await log('aborted', { error: String(error) });
+  }
 } finally {
-  signalled = false;
   await cleanup();
 }
-for (const [index, check] of checks.entries())
-  checks[index] = applyKnownFailures(check, config.knownFailures);
-completed = true;
 const { exitCode } = await finish();
 process.exit(exitCode);

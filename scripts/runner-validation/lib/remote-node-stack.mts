@@ -11,7 +11,8 @@
 // the codex reviewer's output waits while `holds/review` exists (see CODEX_PROXY). Each records
 // a `<marker>.hit` file when a call is held. Workers can hold on their own markers under `holds/`.
 import { type ChildProcess, execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync } from 'node:fs';
 import {
   appendFile,
   cp,
@@ -29,11 +30,7 @@ import { userInfo } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import {
-  GatewayClient,
-  GatewayConnectionError,
-  type GatewayConnection,
-} from '../../../packages/cli/src/gateway-client.js';
+import type { GatewayConnection } from '../../../packages/cli/src/gateway-client.js';
 import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../../../services/gateway/src/runners/runner-observability.js';
 import {
   testGatewayIdentity,
@@ -41,7 +38,11 @@ import {
 } from '../../lib/test-gateway-identity-source.mjs';
 
 import {
+  alive,
+  connectGateway,
   freePort,
+  issueNodeCredential,
+  linkCheckout,
   poll,
   type Reaper,
   startWorkspaceProcess,
@@ -73,6 +74,8 @@ export interface RemoteNodeStackOptions {
   seeds: Record<string, Record<string, string>>;
   /** Untracked files written into a slot's checkout (git-excluded), given its id and the fixture. */
   slotFiles?: (slotId: string, fixture: string) => Record<string, string>;
+  /** Fake runner binaries for the fixture's bin, given the stack's holds directory. */
+  binFiles?: (holds: string) => Record<string, string>;
   /** Node CLI snapshots by commit, reused across runs. */
   cliSnapshots: string;
   /** A node CLI snapshot to use as is (a host's deployed one) instead of building one. */
@@ -80,6 +83,8 @@ export interface RemoteNodeStackOptions {
   /** Written to `<fixture>/.owner`, so an outside sweep can match a stack it owns. */
   ownerTag: string;
   reaper: Reaper;
+  /** Given what stops the stack before anything starts, so a signal during startup can use it. */
+  onCleanup?: (cleanup: () => Promise<string[]>) => void;
   log: (event: string, detail?: Record<string, unknown>) => Promise<void>;
 }
 
@@ -343,7 +348,8 @@ export async function startRemoteNodeStack(
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
   const tmuxSocket = path.join(tmuxDir, `tmux-${uid}`, 'default');
   const baseEnv = childEnv(fakeBin, tmuxDir);
-  reaper.command(['tmux', 'kill-server'], baseEnv);
+  // Only ever the stack's own socket: without -S a missing tmux directory falls back to /tmp.
+  reaper.command(['tmux', '-S', tmuxSocket, 'kill-server'], baseEnv);
   // Native supervisors and runners are detached from the stack's groups; they all name the fixture.
   reaper.command(['pkill', '-KILL', '-f', fixture], baseEnv);
   const createdLinks: string[] = [];
@@ -367,7 +373,7 @@ export async function startRemoteNodeStack(
       });
     });
   /** Stops everything the stack started and removes the fixture; returns what went wrong. */
-  const cleanup = async (): Promise<string[]> => {
+  const stopAll = async (): Promise<string[]> => {
     const errors: string[] = [];
     const attempt = async (label: string, operation: () => Promise<unknown>) => {
       try {
@@ -423,22 +429,22 @@ export async function startRemoteNodeStack(
     });
     return errors;
   };
+  let stopping: Promise<string[]> | undefined;
+  const cleanup = () => (stopping ??= stopAll());
+  options.onCleanup?.(cleanup);
 
   try {
     // ---- FARMSLOT_ROOT: the gateway reads its own branch at boot, so it is a checkout.
-    execFileSync('git', ['clone', '-q', '--shared', '--no-checkout', root, fixture], {
-      stdio: 'pipe',
+    await linkCheckout(root, fixture, 'Isolated remote-node stack fixture', {
+      packageManager: false,
     });
     await writeFile(
       path.join(fixture, '.owner'),
       `remote-node-stack ${options.ownerTag} ${process.pid}\n`,
     );
-    for (const name of ['scripts', 'services', 'packages', 'node_modules'])
-      await symlink(path.join(root, name), path.join(fixture, name));
     // Node support bundles must resolve inside FARMSLOT_ROOT: give those paths real copies.
     for (const relative of RUNNER_OBSERVABILITY_SUPPORT_PATHS)
       await materialize(root, fixture, relative);
-    await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated remote-node stack fixture\n');
     // The no-checkout clone has no .gitignore; pack ownership depends on it.
     await cp(path.join(root, '.gitignore'), path.join(fixture, '.gitignore'));
     await mkdir(path.join(home, 'run-archive'), { recursive: true, mode: 0o700 });
@@ -473,11 +479,17 @@ export async function startRemoteNodeStack(
       await link(path.join(root, name), path.join(nodeUserHome, 'farmslot-node', name));
     // The node's installed CLI: an immutable snapshot of the checkout, which task pinning requires.
     await mkdir(path.join(nodeUserHome, '.local', 'bin'), { recursive: true });
+    const cliSnapshot =
+      options.cliSnapshot ??
+      (await ensureCliSnapshot(
+        root,
+        options.cliSnapshots,
+        path.join(fixture, 'cli-build-home'),
+        evidence,
+        log,
+      ));
     await link(
-      path.join(
-        options.cliSnapshot ?? (await ensureCliSnapshot(root, options.cliSnapshots, evidence, log)),
-        'packages/cli/bin/farmslot.mjs',
-      ),
+      path.join(cliSnapshot, 'packages/cli/bin/farmslot.mjs'),
       path.join(nodeUserHome, '.local', 'bin', 'farmslot'),
     );
 
@@ -512,6 +524,8 @@ export async function startRemoteNodeStack(
       `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(fakeBin, 'codex-proxy.cjs'))} "$@"\n`,
       { mode: 0o755 },
     );
+    for (const [file, content] of Object.entries(options.binFiles?.(holds) ?? {}))
+      await writeFile(path.join(fakeBin, file), content, { mode: 0o755 });
 
     // ---- origins (one per project) and slots
     const packs = options.projects(holds);
@@ -654,23 +668,7 @@ export async function startRemoteNodeStack(
         log,
       );
       reaper.group(gateway.pid);
-      const client = new GatewayClient({ url, timeout: 30_000, credential: { token } });
-      const started = gateway;
-      connection = await poll(
-        'the isolated gateway',
-        async () => {
-          if (started.exitCode !== null)
-            throw new Error(`Isolated gateway exited (${started.exitCode}); see ${log}`);
-          try {
-            return await client.connect();
-          } catch (error) {
-            // Connection refusal is expected while the gateway starts on its isolated port.
-            if (!(error instanceof GatewayConnectionError)) throw error;
-            return undefined;
-          }
-        },
-        120_000,
-      );
+      connection = await connectGateway({ url, token, gateway, log, budgetMs: 120_000 });
     };
     const stopGateway = async () => {
       connection?.close();
@@ -702,19 +700,12 @@ export async function startRemoteNodeStack(
     };
 
     await startGateway();
-    const { principal } = await call<{ principal: { id: string } }>('principal.create', {
-      subject: { type: 'node', displayName: 'isolated stack node', machine },
-      roles: [],
-    });
+    const nodeCredential = await issueNodeCredential(connection!, machine, 'isolated stack node');
     await call('principal.bindNativeOwner', {
-      nodePrincipalId: principal.id,
+      nodePrincipalId: nodeCredential.principalId,
       ownerPrincipalId: OWNER,
     });
-    const issued = await call<{ secret: string }>('credential.issue', {
-      principalId: principal.id,
-      displayName: 'isolated stack node',
-    });
-    nodeToken = issued.secret;
+    nodeToken = nodeCredential.secret;
     // The node loader prefers FARMSLOT_ROOT/.env over its env; the credential stays in the fixture.
     await writeFile(path.join(fixture, '.env'), `FARMSLOT_NODE_TOKEN=${nodeToken}\n`, {
       mode: 0o600,
@@ -807,15 +798,6 @@ export async function startRemoteNodeStack(
   }
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Replace the fixture's symlinked path with a real copy, splitting symlinked parents into real dirs. */
 async function materialize(root: string, fixture: string, relative: string) {
   const parts = relative.split('/');
@@ -843,13 +825,16 @@ async function materialize(root: string, fixture: string, relative: string) {
 }
 
 /**
- * A node CLI snapshot of the checkout, built the way scripts/lib/node-cli-refresh.sh builds one
- * on a node. It is the last commit that changed what the snapshot is built from, so a change to
- * runner-validation proofs alone reuses the previous one. Kept per commit under `store`.
+ * A node CLI snapshot of the checkout, built by the deploy's own refresh script
+ * (scripts/lib/node-cli-refresh.sh). It is the last commit that changed what the snapshot is built
+ * from, so a change to runner-validation proofs alone reuses the previous one. Kept per commit
+ * under `store`. The script swaps `$HOME/.local/bin/farmslot`, so it runs under `linkHome`, whose
+ * link already names this snapshot: no real link moves and no other snapshot is pruned.
  */
 async function ensureCliSnapshot(
   root: string,
-  store: string,
+  storeDir: string,
+  linkHome: string,
   evidence: string,
   log: RemoteNodeStackOptions['log'],
 ): Promise<string> {
@@ -868,36 +853,52 @@ async function ensureCliSnapshot(
     'scripts',
     ':(exclude)scripts/runner-validation',
   );
+  // The script compares its link with `$store/$sha/…` as text.
+  const store = path.resolve(storeDir);
   const snapshot = path.join(store, sha);
   if (existsSync(path.join(snapshot, 'DEPLOYED-REVISION.json'))) return snapshot;
   await log('building node CLI snapshot', { sha });
   await mkdir(store, { recursive: true });
-  const partial = await mkdtemp(`${snapshot}.partial.`);
-  const buildLog = path.join(evidence, 'cli-snapshot-build.log');
-  const env = {
-    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('TSX_'))),
-    YARN_ENABLE_IMMUTABLE_INSTALLS: '1',
-    COREPACK_ENABLE_DOWNLOAD_PROMPT: '0',
-  };
-  try {
-    for (const command of [
-      `git -C ${JSON.stringify(root)} archive --format=tar ${sha} | tar -xf -`,
-      'yarn workspaces focus @farmslot/cli',
-      'yarn workspace @farmslot/recipe-cli build',
-    ])
-      execFileSync('bash', ['-c', `${command} >> ${JSON.stringify(buildLog)} 2>&1`], {
-        cwd: partial,
-        env,
-      });
-  } catch (error) {
-    await rm(partial, { recursive: true, force: true });
-    throw new Error(`CLI snapshot build failed (see cli-snapshot-build.log): ${String(error)}`);
-  }
-  await writeFile(
-    path.join(partial, 'DEPLOYED-REVISION.json'),
-    `${JSON.stringify({ sha, sha256: '' }, null, 2)}\n`,
+  const refresh = /CLI_REFRESH=\$\(cat << 'REFRESH'\n([\s\S]*?)\nREFRESH\n/.exec(
+    readFileSync(path.join(root, 'scripts/lib/node-cli-refresh.sh'), 'utf8'),
+  )?.[1];
+  if (!refresh) throw new Error('scripts/lib/node-cli-refresh.sh has no refresh script');
+  const archive = path.join(evidence, 'cli-snapshot.tar');
+  execFileSync('git', ['-C', root, 'archive', '--format=tar', '-o', archive, sha]);
+  const sha256 = createHash('sha256').update(readFileSync(archive)).digest('hex');
+  await mkdir(path.join(linkHome, '.local', 'bin'), { recursive: true });
+  await rm(path.join(linkHome, '.local', 'bin', 'farmslot'), { force: true });
+  await symlink(
+    path.join(snapshot, 'packages/cli/bin/farmslot.mjs'),
+    path.join(linkHome, '.local', 'bin', 'farmslot'),
   );
-  execFileSync('mv', [partial, snapshot]);
+  const buildLog = openSync(path.join(evidence, 'cli-snapshot-build.log'), 'a');
+  const stdin = openSync(archive, 'r');
+  const realHome = userInfo().homedir;
+  try {
+    execFileSync(
+      'bash',
+      ['-c', refresh, '_', store, sha, sha256, path.dirname(process.execPath), '600'],
+      {
+        stdio: [stdin, buildLog, buildLog],
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(([key]) => !key.startsWith('TSX_')),
+          ),
+          HOME: linkHome,
+          // HOME is a scratch directory; the toolchain's caches stay where they are.
+          COREPACK_HOME: process.env.COREPACK_HOME ?? path.join(realHome, '.cache/node/corepack'),
+          YARN_GLOBAL_FOLDER: process.env.YARN_GLOBAL_FOLDER ?? path.join(realHome, '.yarn/berry'),
+        },
+      },
+    );
+  } catch (error) {
+    throw new Error(`CLI snapshot build failed (see cli-snapshot-build.log): ${String(error)}`);
+  } finally {
+    closeSync(stdin);
+    closeSync(buildLog);
+    await rm(archive, { force: true });
+  }
   await log('node CLI snapshot ready', { snapshot });
   return snapshot;
 }
