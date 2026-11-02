@@ -3,6 +3,10 @@ import test from 'node:test';
 
 import '../runtime/mock-pty.test-support.js';
 
+import {
+  resolveMonitorStuckState,
+  shouldDeliverStuckNudge,
+} from '../runners/observability-progress.js';
 import type {
   ObservabilityReading,
   RunnerSessionDeliveryState,
@@ -52,4 +56,19 @@ test('a Pi turn ended on a dropped model connection leaves the live worker monit
     await checkAgentLive('fixture', 'pi', undefined, undefined, undefined, readers),
     'working',
   );
+});
+
+test('an idle Pi whose turn ended on a dropped model connection gets the stuck nudge', () => {
+  const now = Date.now();
+  const idle = { source: 'hook', confidence: 'high', observedAt: now - 60_000 } as const;
+  const state = resolveMonitorStuckState({
+    now,
+    lastProgressAt: now - 20 * 60_000,
+    stuckTimeoutMs: 15 * 60_000,
+    activity: { ...idle, value: 'idle' },
+    turnState: { ...idle, value: 'idle', failure: 'terminated' },
+  });
+  assert.equal(state.kind, 'idle');
+  assert.equal(state.stuck, true);
+  assert.equal(shouldDeliverStuckNudge(state.kind), true);
 });

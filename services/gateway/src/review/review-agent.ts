@@ -48,6 +48,7 @@ import {
   runnerSupportsInteractivePrompt,
   sendRunnerPostLaunchPrompt,
 } from '../runners/registry.js';
+import { isRunnerTransportAbort } from '../runners/runner-execution-error.js';
 import {
   captureRunnerSessionMetadata,
   probeRunnerDescendantPid,
@@ -1300,6 +1301,8 @@ export async function waitForReviewCompletion(
       const acceptance = context.promptAcceptance;
       if (
         reading?.failure &&
+        // A dropped model connection ends the turn, not the reviewer (F328).
+        !isRunnerTransportAbort(reading.failure) &&
         reading.confidence === 'high' &&
         reading.sessionId === context.runnerSessionId &&
         acceptance?.sessionId === context.runnerSessionId &&
