@@ -3876,7 +3876,7 @@ test('an automatic human-gate replay keeps the reviews still planned for the gat
     const created = createRun({
       flowType: 'dev',
       project: 'farmslot-farm',
-      ticketOrPr: `PROJ-${Date.now()}-${triggeredBy}`,
+      ticketOrPr: `PROJ-${Date.now() + (triggeredBy === 'operator' ? 1 : 0)}`,
     });
     const run = updateRun(created.id, {
       status: 'human-gating',
