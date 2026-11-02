@@ -87,6 +87,22 @@ test('findLatestResolvedDecision skips unresolved decisions', () => {
   assert.equal(result?.id, 'dec-1');
 });
 
+test('findLatestResolvedDecision with a predicate returns the latest decision about that subject', () => {
+  const about = (id: string, subject: string, action: string): RunDecision => ({
+    ...makeCollisionDecision([subject]),
+    id,
+    resolvedAction: action,
+  });
+  const forA = about('dec-a', 'proj-1-a', 'create-new');
+  const forB = about('dec-b', 'proj-1-b', 'abort');
+  const isA = (decision: RunDecision) =>
+    decision.payload?.kind === 'collision' && decision.payload.existingDirs.includes('proj-1-a');
+  assert.equal(findLatestResolvedDecision([forA, forB], 'collision', isA)?.id, 'dec-a');
+  // A superseded entry still ends the walk, whatever subject it was about.
+  const superseded = about('dec-superseded', 'proj-1-b', 'superseded');
+  assert.equal(findLatestResolvedDecision([forA, superseded], 'collision', isA), undefined);
+});
+
 test('findLatestResolvedDecision returns undefined when no decision matches reason', () => {
   const unrelated = makeCollisionDecision(['proj-1-a']);
   unrelated.type = 'engine_other' as unknown as RunDecision['type'];

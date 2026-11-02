@@ -40,11 +40,26 @@ test('project app helpers select only for multi-app projects', () => {
     { name: 'single', apps: ['root'] },
   ];
   assert.deepEqual(projectApps(configs, 'mobile'), ['ios/app', 'android/app']);
-  assert.equal(syncSelectedAppForProject(['ios/app', 'android/app'], ''), 'ios/app');
+  assert.equal(syncSelectedAppForProject(['ios/app', 'android/app'], ''), '');
   assert.equal(syncSelectedAppForProject(['ios/app', 'android/app'], 'android/app'), 'android/app');
+  assert.equal(syncSelectedAppForProject(['ios/app', 'android/app'], 'web/app'), '');
   assert.equal(selectedDispatchApp(['root'], 'root'), undefined);
-  assert.equal(selectedDispatchApp(['ios/app', 'android/app'], ''), 'ios/app');
   assert.equal(appLabel('apps/mobile'), 'mobile');
+});
+
+test('a dispatch names an app only when the operator picks one or the pinned slot has its own', () => {
+  const apps = ['apps/playground', 'apps/sherpa-voice'];
+  // Nothing picked, nothing pinned: no app, so the selected slot's binding decides.
+  assert.equal(selectedDispatchApp(apps, ''), undefined);
+  // A pinned Sherpa slot keeps its app instead of the first declared one.
+  assert.equal(selectedDispatchApp(apps, '', 'apps/sherpa-voice'), 'apps/sherpa-voice');
+  // The operator's pick wins over the pinned slot's app.
+  assert.equal(
+    selectedDispatchApp(apps, 'apps/playground', 'apps/sherpa-voice'),
+    'apps/playground',
+  );
+  // A slot app the project does not declare is not sent.
+  assert.equal(selectedDispatchApp(apps, '', 'apps/minimal'), undefined);
 });
 
 test('publication reviews belong to fix-bug and autonomous dev', () => {

@@ -92,6 +92,7 @@ import {
   interactiveTemplateOption,
   modeForFlow,
   parseQaInputOverrides,
+  pinnedSlotApp,
   projectApps,
   projectPrepareProfiles,
   publicationReviewsEnabled,
@@ -635,6 +636,15 @@ export class DispatchWizard extends DispatchWizardState {
     this._app = syncSelectedAppForProject(
       projectApps(this._projectConfigs, projectName),
       this._app,
+    );
+  }
+
+  /** The pick, else the pinned slot's own app: the pill's selection and what run.create sends. */
+  private _dispatchApp(): string | undefined {
+    return selectedDispatchApp(
+      projectApps(this._projectConfigs, this._project),
+      this._app,
+      pinnedSlotApp(this.mockMode ? this.mockPools : this._reviewPools, this._slotOverride),
     );
   }
 
@@ -1581,7 +1591,7 @@ export class DispatchWizard extends DispatchWizardState {
       allowedSlots: this._blockingState().allowedSlots,
       branch: this._resolveTargetBranch(getState().prs),
       ...dispatchWizardExecutionOptions(this._flowType, this._executionPicker),
-      app: selectedDispatchApp(projectApps(this._projectConfigs, this._project), this._app),
+      app: this._dispatchApp(),
       taskTemplate,
       domain: this._domain || undefined,
       executionTemplateId: this._selectedExecutionTemplateId || undefined,
@@ -2101,10 +2111,7 @@ export class DispatchWizard extends DispatchWizardState {
       selectedSlotPlatform: this._selectedSlotPlatform() ?? '',
       refreshSlots: () => this._refreshDispatchSnapshot(),
       projectApps: projectApps(this._projectConfigs, this._project),
-      selectedDispatchApp: selectedDispatchApp(
-        projectApps(this._projectConfigs, this._project),
-        this._app,
-      ),
+      selectedDispatchApp: this._dispatchApp(),
       templateOptions: this._templateOptions,
       templateOptionsLoading: this._templateOptionsLoading,
       templateOptionsError: this._templateOptionsError,

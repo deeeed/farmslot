@@ -4,6 +4,14 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.27 - 2026-11-02
+
+- A Grok review cannot remove, rename or replace `sessions/`, `logs/` or `logs/unified.jsonl` in the Grok home, so it cannot move a link or a prepared directory into their place for a later Grok start to write through. The farm creates any of them that is missing before the review starts, and refuses to start when one is a link or the wrong type.
+
+## 0.39.26 - 2026-11-02
+
+- Align `@farmslot/adapter-sdk` 0.26.1.
+
 ## 0.39.25 - 2026-11-02
 
 - Publishes against `@farmslot/protocol` 0.74.10.

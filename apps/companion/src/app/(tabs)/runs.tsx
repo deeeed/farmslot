@@ -29,6 +29,7 @@ import {
 } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { useSharedViewSelection } from '../../features/quick-actions/QuickActionsProvider';
+import { useShownMarker } from '../../hooks/useShownMarker';
 import {
   type ArtifactHttpHeaders,
   artifactUrlForEntry,
@@ -670,6 +671,7 @@ function RunsReadStatus() {
 }
 
 export default function RunsScreen() {
+  useShownMarker('companion-screen-review');
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();

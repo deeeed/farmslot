@@ -196,6 +196,8 @@ export interface DeviceHolder {
    * re-targeted.
    */
   identities: Array<Record<string, unknown>>;
+  /** Set when the slot is starting or stopping a resource rather than holding a lease. */
+  control?: boolean;
 }
 
 /**
@@ -225,6 +227,13 @@ export function crossSlotTargetConflict(
     for (const identity of holder.identities) {
       for (const [group, values] of identityGroups(identity)) {
         const clash = [...(wanted.get(group) ?? [])].find((value) => values.has(value));
+        if (clash && holder.control) {
+          return (
+            `Device '${clash}' is the ${group} of slot '${holder.slotId}' on ${holder.machine}, ` +
+            `which is starting or stopping that device ('${holder.capabilityId}') for run ` +
+            `'${holder.runId}'. Retry once it has finished`
+          );
+        }
         if (clash) {
           return (
             `Device '${clash}' is the ${group} of slot '${holder.slotId}' on ${holder.machine}, ` +

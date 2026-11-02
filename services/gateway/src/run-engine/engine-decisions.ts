@@ -539,6 +539,9 @@ export function autoResolveEngineDecision(
   }
   if (run.mode !== 'validation' && run.mode !== 'autonomous') return null;
   if (reason === 'review_posting') return null;
+  // A run on a slot bound to another app cannot produce that app's proof; an
+  // operator chooses, even in autonomous mode.
+  if (reason === 'app_binding_mismatch') return null;
   if (reason === 'human_gate') {
     return null;
   }
