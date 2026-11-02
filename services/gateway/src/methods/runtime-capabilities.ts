@@ -365,6 +365,8 @@ export async function assertDeviceTargetAvailable(
      */
     claimsDevice: boolean;
     activeLeases: readonly RuntimeCapabilityLease[];
+    /** Device boots and shutdowns in progress; each holds its slot's configured device. */
+    controls?: readonly { slotId: string; ownerRunId: string; resourceId: string }[];
   },
   deps: DeviceTargetGuardDeps = { loadSlotVars, catalogForSlot },
 ): Promise<string | null> {
@@ -407,28 +409,20 @@ export async function assertDeviceTargetAvailable(
       deviceCapabilities: Set<string> | null;
     }
   >();
-  const holders: DeviceHolder[] = [];
-  for (const lease of input.activeLeases) {
-    if (lease.slotId === input.slotId) continue;
-    let state = slotState.get(lease.slotId);
-    if (!state) {
-      try {
-        const slotVars = await deps.loadSlotVars(lease.slotId);
-        if (slotVars.machine !== machine) {
-          // Another machine's slot can never conflict, so its project config is
-          // never read: doing so added a fail-closed surface for a slot that is
-          // irrelevant by construction, and an unreadable project file over
-          // there would refuse an acquire here. The holder is still built, with
-          // its own machine, so the scoping stays in the pure function rather
-          // than becoming an invisible filter at this call site.
-          state = {
-            machine: slotVars.machine,
-            identity: {},
-            deviceCapabilities: null,
-          };
-        } else {
-          const catalog = await deps.catalogForSlot(lease.slotId);
-          state = {
+  const stateOf = async (slotId: string) => {
+    const cached = slotState.get(slotId);
+    if (cached) return cached;
+    const slotVars = await deps.loadSlotVars(slotId);
+    // Another machine's slot can never conflict, so its project config is
+    // never read: doing so added a fail-closed surface for a slot that is
+    // irrelevant by construction, and an unreadable project file over
+    // there would refuse an acquire here. The holder is still built, with
+    // its own machine, so the scoping stays in the pure function rather
+    // than becoming an invisible filter at this call site.
+    const state =
+      slotVars.machine !== machine
+        ? { machine: slotVars.machine, identity: {}, deviceCapabilities: null }
+        : {
             machine: slotVars.machine,
             identity: slotVars.resourceVars,
             // A slot's configured device is only off-limits when something is
@@ -436,19 +430,27 @@ export async function assertDeviceTargetAvailable(
             // made a slot running only a browser or Metro block its own
             // simulator, and named that capability as the reason.
             deviceCapabilities: new Set(
-              catalog.capabilities.filter(claimsDevice).map((entry) => entry.id),
+              (await deps.catalogForSlot(slotId)).capabilities
+                .filter(claimsDevice)
+                .map((entry) => entry.id),
             ),
           };
-        }
-      } catch (error) {
-        // Handled, not swallowed: without that slot's configuration we cannot
-        // prove the requested device is free, and guessing costs two runs
-        // driving one device. Refuse and name the slot that could not be read.
-        return `cannot verify device target against slot '${lease.slotId}', which holds an active '${lease.capabilityId}' lease: ${
-          error instanceof Error ? error.message : String(error)
-        }`;
-      }
-      slotState.set(lease.slotId, state);
+    slotState.set(slotId, state);
+    return state;
+  };
+  const holders: DeviceHolder[] = [];
+  for (const lease of input.activeLeases) {
+    if (lease.slotId === input.slotId) continue;
+    let state;
+    try {
+      state = await stateOf(lease.slotId);
+    } catch (error) {
+      // Handled, not swallowed: without that slot's configuration we cannot
+      // prove the requested device is free, and guessing costs two runs
+      // driving one device. Refuse and name the slot that could not be read.
+      return `cannot verify device target against slot '${lease.slotId}', which holds an active '${lease.capabilityId}' lease: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
     }
     if (state.deviceCapabilities && !state.deviceCapabilities.has(lease.capabilityId)) continue;
     holders.push({
@@ -463,6 +465,27 @@ export async function assertDeviceTargetAvailable(
       // identity is empty (unread on purpose), so only the lease's own
       // parameters travel — and the machine filter discards it regardless.
       identities: [displaceIdentity(state.identity, lease.parameters)],
+    });
+  }
+  // A slot booting or stopping a resource drives its configured device, so it
+  // holds that device with no capability filter, as a device lease there would.
+  for (const control of input.controls ?? []) {
+    if (control.slotId === input.slotId) continue;
+    let state;
+    try {
+      state = await stateOf(control.slotId);
+    } catch (error) {
+      return `cannot verify device target against slot '${control.slotId}', which is starting or stopping '${control.resourceId}': ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    }
+    holders.push({
+      slotId: control.slotId,
+      machine: state.machine,
+      capabilityId: control.resourceId,
+      runId: control.ownerRunId,
+      identities: [state.identity],
+      control: true,
     });
   }
   return crossSlotTargetConflict(effective, holders, machine);
