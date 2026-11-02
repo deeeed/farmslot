@@ -671,18 +671,6 @@ export function persistedCiStatusFromRun(run: Run): CiCheckUpdatedPayload | null
   };
 }
 
-/**
- * `run.list` leaves large decision payload values out and names them in
- * `payloadTrimmed`, and omits the output manifest. The run page gets both
- * from its direct `run.get` copy.
- */
-export function runHasTrimmedDetail(run: Pick<Run, 'decisions' | 'output'>): boolean {
-  return (
-    Boolean(run.output?.artifactManifestOmitted) ||
-    (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0)
-  );
-}
-
 /** Run evidence plus each worker command's task-local log, the files a run-detail link may open. */
 export function runArtifactsWithOperationLogs(
   run: Run,

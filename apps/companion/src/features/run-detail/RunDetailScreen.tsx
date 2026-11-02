@@ -6,7 +6,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { createEvidenceReviewModel, runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
-  cancelledRunSlotChoices,
   deriveRunLifecycleView,
   extractRunArtifactManifest,
   isSlotFreedByPark,
@@ -15,7 +14,7 @@ import {
   Methods,
   type RecipeRunArtifactGroup,
   reviewChainForRun,
-  type RunGetResult,
+  runHasTrimmedDetail,
   type RunStep,
   type TaskProgressResult,
 } from '@farmslot/protocol';
@@ -49,7 +48,7 @@ import { gateReviewHref, openHumanGateDecision } from '../../lib/gate-review';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
 import { readErrorMessage } from '../../lib/resource-read-status';
-import { assertNativeRunReady } from '../../lib/run-collections';
+import { assertNativeRunReady, retryNativeRuns } from '../../lib/run-collections';
 import {
   runWorkspaceDiffValue,
   selectSlotCompareTarget,
@@ -104,11 +103,14 @@ import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
 import { RunResultsCard } from './components/RunResultsCard';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
+import { retryRunDetailReads, runDetailReadObservations } from './run-detail-reads';
 import {
   assertRunEvidenceReady,
   runAcceptanceEvidenceHref,
   runEvidenceQuery,
 } from './run-evidence';
+import { offeredSlotRelease } from './run-slot-release';
+import { useRunDetailRun } from './use-run-detail-run';
 
 const emptyRecipeRuns: RecipeRunArtifactGroup[] = [];
 
@@ -149,13 +151,8 @@ export default function RunDetailScreen() {
   const requestedRecipeRunId = Array.isArray(recipeRun)
     ? (recipeRun[0] ?? null)
     : (recipeRun ?? null);
-  const runQuery = useMemo(
-    () =>
-      resolvedRunId ? resourceQuery<RunGetResult>('run.get', { runId: resolvedRunId }) : undefined,
-    [resolvedRunId],
-  );
-  const runObservation = useResourceQuery(runQuery);
-  const run = runObservation.data?.run ?? null;
+  const { runQuery, runObservation, runActionable, listObservation, fromList, run } =
+    useRunDetailRun(resolvedRunId);
   const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const recipeQuery = useMemo(
     () => runEvidenceQuery(resolvedRunId, run, requestedRecipeRunId),
@@ -264,11 +261,20 @@ export default function RunDetailScreen() {
     authHeaders: artifactAuthHeaders,
     contextKey: JSON.stringify([profileId, authorityEpoch, recipeQuery?.id]),
   });
-  const retryRun = useCallback(async () => {
-    if (runQuery) await getResourceCache()?.retry(runQuery);
-    if (recipeQuery) await getResourceCache()?.retry(recipeQuery);
-    if (progressQuery) await getResourceCache()?.retry(progressQuery);
-  }, [runQuery, recipeQuery, progressQuery]);
+  const retryRun = useCallback(
+    () =>
+      retryRunDetailReads({
+        fromList,
+        listObservation,
+        retryList: retryNativeRuns,
+        retryReads: async () => {
+          if (runQuery) await getResourceCache()?.retry(runQuery);
+          if (recipeQuery) await getResourceCache()?.retry(recipeQuery);
+          if (progressQuery) await getResourceCache()?.retry(progressQuery);
+        },
+      }),
+    [fromList, listObservation, runQuery, recipeQuery, progressQuery],
+  );
 
   useEffect(() => {
     setError(null);
@@ -380,7 +386,8 @@ export default function RunDetailScreen() {
     : null;
   // ADR-054: the run carries the persisted desired policy, but only
   // `runtime.posture.status` re-merges it with what the providers are observed
-  // to be doing, so the summary is never rendered from `run.resourcePosture`.
+  // to be doing, so the summary is never rendered from `run.resourcePosture`;
+  // the panel only sizes its loading card from it.
   const { posture: runPosture } = useRunResourcePosture(
     client,
     resolvedRunId || null,
@@ -428,7 +435,7 @@ export default function RunDetailScreen() {
     Boolean(client) &&
     connectionStatus === 'connected' &&
     runObservation.status === 'ready';
-  const cancelledSlot = cancelledRunSlotChoices(run, fleetSlots ?? []);
+  const cancelledSlot = offeredSlotRelease(run, fleetSlots ?? [], runActionable);
   const focusedArtifactPath = requestedArtifactPath.trim() || null;
   const focusedArtifactIsDiff = Boolean(
     focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
@@ -547,11 +554,14 @@ export default function RunDetailScreen() {
   return (
     <View style={baseStyles.container}>
       <ResourceReadStatus
-        observations={[
-          { observation: runObservation, label: 'run' },
-          { observation: recipeObservation, label: 'run evidence' },
-          ...(progressQuery ? [{ observation: progressObservation, label: 'task progress' }] : []),
-        ]}
+        observations={runDetailReadObservations({
+          fromList,
+          listObservation,
+          runObservation,
+          evidenceObservation: recipeObservation,
+          progressObservation: progressQuery ? progressObservation : undefined,
+        })}
+        onRetry={() => void retryRun()}
       />
       <Animated.ScrollView
         testID="companion-screen-run-detail"
@@ -662,7 +672,11 @@ export default function RunDetailScreen() {
 
         <NativeWorkerLinks run={run} />
 
-        <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
+        <RunPosturePanel
+          state={runPosture}
+          gatePark={liveGateParkView(run)}
+          reserveFor={run.resourcePosture}
+        />
         <ReviewPublication run={run} context="saved" />
         <ReviewHistoryPanel
           run={run}
@@ -681,6 +695,7 @@ export default function RunDetailScreen() {
             diffAvailable={activeDiffValue !== '-' || Boolean(run.slotId)}
             diffValue={activeDiffValue !== '-' ? activeDiffValue : run.slotId ? 'workspace' : '-'}
             comparePairCount={compareTarget?.pairCount ?? 0}
+            detailLoaded={!runHasTrimmedDetail(run)}
             onOpenArtifact={() =>
               openRunEvidenceArtifact(
                 focusedArtifactPath,

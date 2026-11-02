@@ -108,6 +108,14 @@ const evictionCodes = new Set([
   'RESOURCE_NOT_FOUND',
 ]);
 
+/**
+ * The gateway refused the read: the resource is gone or not this principal's. The
+ * cache evicts saved data on these; a network failure or timeout is not one.
+ */
+export function readRefused(error: ResourceQueryError | undefined): boolean {
+  return Boolean(error && evictionCodes.has(error.code));
+}
+
 function queryError(error: unknown): ResourceQueryError {
   const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
   return {

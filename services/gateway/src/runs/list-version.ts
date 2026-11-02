@@ -1,10 +1,8 @@
 // runs/list-version.ts — run.list version lists and catch-up pages (ADR-071 Amendment 1)
 import { createHash } from 'node:crypto';
 
-import type { Run, RunListVersion } from '@farmslot/protocol';
+import { type Run, type RunListVersion, trimRunForList } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
-
-import { trimRunForList } from './list-trim.js';
 
 /** A catch-up page stops before the row that would take it past this many UTF-8 JSON bytes. */
 export const RUN_LIST_PAGE_MAX_BYTES = 2 * 1024 * 1024;
