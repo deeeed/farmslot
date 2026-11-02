@@ -190,7 +190,7 @@ or release backlog/history links during retention.
 
 Storage is eligible only when the run is done/cancelled/archived, settled at least
 48 hours, holds no slot or native worker, has no open decision, uncleaned review
-workspace, pending closeout/backlog reconciliation or operator tag, and its PR is
+workspace, pending closeout/backlog reconciliation or `keep` tag, and its PR is
 absent or confirmed closed/merged. Unreadable/ambiguous PR state keeps storage.
 Shared paths and admitted task directories MUST remain available to their owners.
 
