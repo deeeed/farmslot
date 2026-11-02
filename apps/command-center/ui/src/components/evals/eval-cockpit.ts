@@ -17,14 +17,14 @@ import { defaultModelForRunner } from '@farmslot/review-dispatch';
 import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
-import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import {
   visibleDefaultModel,
   visibleReviewDispatchCatalog,
 } from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
-import { readStored } from '../shared/read-current.js';
+import { readFresh, readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { RetainedNotice } from '../shared/retained-notice.js';
 
@@ -447,8 +447,20 @@ export class EvalCockpit extends EvalCockpitState {
       this._slotCapDirty = false;
       this._slotCapDirtyGroupId = '';
     }
-    const result = await readStored<EvalSuiteCapGetResult>(
+    const cache = getResourceCache();
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    if (gateway.connectionState !== 'connected')
+      throw new Error('Connect before launching an evaluation');
+    if (!cache) throw new Error('The offline store is not open yet');
+    const result = await readFresh(
+      cache,
       resourceQuery<EvalSuiteCapGetResult>(Methods.EVAL_SUITE_CAP_GET, { capGroupId }),
+      () =>
+        cache === getResourceCache() &&
+        owner === getResourceWorkspaceKey() &&
+        connection === gateway.resourceConnectionId &&
+        gateway.connectionState === 'connected',
     );
     this._evalSlotCap = result.cap;
     this._loadedSlotCapGroupId = result.capGroupId;

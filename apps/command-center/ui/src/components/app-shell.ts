@@ -480,7 +480,7 @@ export class FarmApp extends LitElement {
     this.versionDetailsError = '';
     try {
       // Explicit remote recheck. Its source notification owns the canonical result.
-      await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true });
+      await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true }, 30_000);
     } catch (err) {
       if (owner === getResourceWorkspaceKey() && connection === gateway.resourceConnectionId)
         this.versionDetailsError = err instanceof Error ? err.message : String(err);

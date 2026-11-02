@@ -642,6 +642,7 @@ function isPureNodeIntrinsic(call, checker) {
     'crypto:Hash.update',
     'crypto:Hash.digest',
     'buffer:BufferConstructor.byteLength',
+    'util:TextEncoder.encode',
   ]);
   const expression = call.expression;
   let symbol = checker.getSymbolAtLocation(
@@ -649,10 +650,19 @@ function isPureNodeIntrinsic(call, checker) {
   );
   if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
   return (symbol?.declarations ?? []).some((declaration) => {
-    const module = /@types\/node\/(\w+)\.d\.ts$/u.exec(declaration.getSourceFile().fileName)?.[1];
+    const file = declaration.getSourceFile().fileName;
+    const module = /@types\/node\/(\w+)\.d\.ts$/u.exec(file)?.[1];
     const container = declaration.parent?.name?.text;
     const name = `${container ? `${container}.` : ''}${declaration.name?.getText()}`;
-    return pureNodeIntrinsics.has(`${module}:${name}`);
+    // The portable list fingerprint uses these exact pure library declarations.
+    // A local function with the same name still has its implementation inspected.
+    const noble = /node_modules\/@noble\/hashes\/(sha256|utils)\.d\.ts$/u.exec(file)?.[1];
+    return (
+      pureNodeIntrinsics.has(`${module}:${name}`) ||
+      (noble === 'sha256' && name === 'sha256') ||
+      (noble === 'utils' && name === 'bytesToHex') ||
+      (/typescript\/lib\/lib\.dom\.d\.ts$/u.test(file) && name === 'TextEncoder.encode')
+    );
   });
 }
 

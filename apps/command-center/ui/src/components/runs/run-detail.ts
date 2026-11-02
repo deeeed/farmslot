@@ -788,11 +788,15 @@ export class RunDetail extends RunDetailState {
     this.liveTimeoutPrStatusFailed = false;
     this._lastLiveTimeoutFetchAt = Date.now();
     try {
-      const res = await gateway.request<PRStatusResult>(Methods.PR_STATUS, {
-        pr: run.prNumber,
-        project: run.project,
-        force: true,
-      });
+      const res = await gateway.request<PRStatusResult>(
+        Methods.PR_STATUS,
+        {
+          pr: run.prNumber,
+          project: run.project,
+          force: true,
+        },
+        30_000,
+      );
       if (!current() || requestSeq !== this._liveTimeoutRequestSeq || key !== this._liveTimeoutKey)
         return;
       this.liveTimeoutPrStatus = res.pr;

@@ -10,7 +10,7 @@ export async function readStoredResource<T>(
 ): Promise<T> {
   const cache = current();
   if (!cache) throw new Error('The offline store is not open yet');
-  const held = await cache.readStored?.(query);
+  const held = cache.readStored ? await cache.readStored(query) : undefined;
   const state = held?.data !== undefined ? held : await cache.retry(query);
   if (cache !== current()) throw new Error('The offline store owner changed');
   if (state.data === undefined) throw new Error(state.error?.message ?? 'Nothing stored yet');

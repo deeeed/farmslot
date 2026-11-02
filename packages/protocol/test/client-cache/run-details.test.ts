@@ -20,7 +20,7 @@ async function until(condition: () => boolean) {
   }
 }
 
-function fixture(runs: Run[], budgetBytes?: number) {
+function fixture(runs: Run[], budgetBytes?: number, presented = false) {
   const values = new Map(runs.map((run) => [run.id, run]));
   const rows = new Map<string, StoredResourceQuery<RunGetResult>>();
   const fetched: string[] = [];
@@ -47,7 +47,9 @@ function fixture(runs: Run[], budgetBytes?: number) {
       fetched.push(id);
       const run = values.get(id);
       assert(run);
-      const data = { run };
+      const data = presented
+        ? { run: { ...run, liveRecipeContext: null }, listVersion: runListVersion(run) }
+        : { run };
       const observedAt = Date.now();
       if (bytes(run) <= maxBytes)
         rows.set(key(id), { id: key(id), data, bytes: bytes(run), observedAt });
@@ -142,3 +144,23 @@ for (const metered of [true, undefined]) {
     }
   });
 }
+
+test('presentation-only fields do not refetch unchanged detail after restart', async () => {
+  const first = storedRun('bundled', { status: 'monitoring' });
+  const second = storedRun('other', { status: 'monitoring' });
+  const world = fixture([first, second], undefined, true);
+  try {
+    world.sync.setTargets(world.targets());
+    await until(() => world.rows.size === 2);
+    world.values.set('other', { ...second, summary: 'Changed list row' });
+    world.sync.setTargets(world.targets());
+    await until(() => world.fetched.length >= 3);
+    assert.deepEqual(world.fetched, ['bundled', 'other', 'other']);
+    world.sync.reset();
+    world.sync.setTargets(world.targets());
+    await until(() => world.touched.length >= 3);
+    assert.equal(world.fetched.length, 3);
+  } finally {
+    world.sync.reset();
+  }
+});

@@ -75,6 +75,9 @@ test('reads screens used to send directly are cached with stable identities', ()
 test('imperative variants and unsafe selectors stay outside the cache', () => {
   for (const [method, params] of [
     ['resource.device.inventory', { slotId: 's', refresh: true }],
+    ['gateway.status', { refresh: true }],
+    ['provider.accounts.snapshot', { machines: ['mini'], forceRefresh: true }],
+    ['pr.status', { pr: 1, project: 'farm', force: true }],
     ['native.session.turn.diff', { sessionId: 's', sequence: 1, path: '/etc/passwd' }],
     ['native.session.turn.diff', { sessionId: 's', sequence: 1, path: 'a/../../b' }],
     ['backlog.spec.get', { itemId: 'a/b' }],

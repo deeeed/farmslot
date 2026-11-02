@@ -83,7 +83,9 @@ export function createRunDetailSync(options: RunDetailSyncOptions) {
           if (
             info &&
             (seen.get(target.runId) === target.version ||
-              (saved && runListVersion(trimRunForList(saved.data.run)) === target.version))
+              (saved &&
+                (saved.data.listVersion ?? runListVersion(trimRunForList(saved.data.run))) ===
+                  target.version))
           ) {
             if (owned.signal.aborted) return;
             seen.set(target.runId, target.version);
@@ -101,7 +103,9 @@ export function createRunDetailSync(options: RunDetailSyncOptions) {
           const bytes = encoder.encode(JSON.stringify(state.data)).byteLength;
           if (bytes > remaining) break;
           remaining -= bytes;
-          seen.set(target.runId, runListVersion(trimRunForList(state.data.run)));
+          // Older gateways lack the raw version. Avoid repeated in-session fetches there;
+          // upgraded replies carry the exact version across cold starts as well.
+          seen.set(target.runId, state.data.listVersion ?? target.version);
         }
       } while (again && !owned.signal.aborted);
     } catch (error) {

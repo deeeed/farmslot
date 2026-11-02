@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createRequire } from 'node:module';
 
 import { ResourceCacheConformanceTransport } from '../../src/client-cache/conformance.js';
 import {
@@ -151,6 +152,40 @@ test('saved online artifacts render before a slow refresh and report its result'
       'fresh',
     );
   } finally {
+    await cache.dispose();
+  }
+});
+
+test('artifact text decodes UTF-8 with the native Response polyfill', async () => {
+  const NetworkResponse = Response;
+  const { Response: NativeResponse } = createRequire(import.meta.url)('whatwg-fetch');
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  const body = 'Résumé → 離線 ✓';
+  Object.defineProperty(globalThis, 'Response', {
+    configurable: true,
+    writable: true,
+    value: NativeResponse,
+  });
+  try {
+    const options = {
+      current: () => cache,
+      url,
+      online: true,
+      read: async () => new NetworkResponse(body),
+    };
+    assert.equal(await (await readStoredArtifactResponse(options)).text(), body);
+    assert.equal(
+      await (await readStoredArtifactResponse({ ...options, online: false })).text(),
+      body,
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'Response', {
+      configurable: true,
+      writable: true,
+      value: NetworkResponse,
+    });
     await cache.dispose();
   }
 });

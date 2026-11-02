@@ -31,3 +31,22 @@ export async function readCurrent<T>(
     await Promise.all(stale.map((query) => cache.retry(query)));
   }
 }
+
+/** A one-shot action preflight must finish a successful read from its current owner. */
+export async function readFresh<T>(
+  cache: GatewayResourceCache,
+  query: ResourceQuery<T>,
+  isCurrent: () => boolean,
+): Promise<T> {
+  const startedAt = Date.now();
+  const state = await cache.retry(query);
+  if (
+    !isCurrent() ||
+    state.error ||
+    state.data === undefined ||
+    (query.live && state.status !== 'ready') ||
+    (state.observedAt ?? -Infinity) < startedAt
+  )
+    throw new Error('A current read is required before acting');
+  return state.data;
+}

@@ -1403,6 +1403,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
   },
   // Setting a cap publishes no key yet.
   [Methods.EVAL_SUITE_CAP_GET]: {
+    timeoutMs: 30_000,
     persisted: true,
     maxBytes: 256 * 1024,
     retention: keptUpTo(2 * mb),
@@ -1411,6 +1412,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     dependencies: () => [],
   },
   [Methods.EVAL_TRIAL_RESULT_GET]: {
+    timeoutMs: 30_000,
     persisted: true,
     maxBytes: 20 * mb,
     retention: keptUpTo(40 * mb),
@@ -1468,13 +1470,8 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       ]);
       if (!Number.isSafeInteger(sequence) || Number(sequence) < 0)
         throw new Error('Invalid native turn sequence');
-      if (
-        typeof path !== 'string' ||
-        !path ||
-        path.startsWith('/') ||
-        path.replace(/\\/g, '/').split('/').includes('..')
-      )
-        throw new Error('Native turn diff path must stay relative');
+      if (typeof path !== 'string' || !path) throw new Error('Native turn diff requires a path');
+      validateWorkspacePath(path);
       return { ...nativeHistoryParams(target), sequence, path };
     },
     dependencies: () => [],

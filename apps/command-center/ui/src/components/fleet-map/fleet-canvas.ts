@@ -522,10 +522,14 @@ export class FleetCanvas extends LitElement {
     this.providerAccountsRefreshError = '';
     try {
       // Explicit live probe (~20s). Its source notification refreshes the shared observation.
-      await gateway.request<ProviderAccountsSnapshotResult>(Methods.PROVIDER_ACCOUNTS_SNAPSHOT, {
-        machines: [machine],
-        forceRefresh: true,
-      });
+      await gateway.request<ProviderAccountsSnapshotResult>(
+        Methods.PROVIDER_ACCOUNTS_SNAPSHOT,
+        {
+          machines: [machine],
+          forceRefresh: true,
+        },
+        45_000,
+      );
     } catch (err) {
       if (owner === getResourceWorkspaceKey())
         this.providerAccountsRefreshError = err instanceof Error ? err.message : String(err);

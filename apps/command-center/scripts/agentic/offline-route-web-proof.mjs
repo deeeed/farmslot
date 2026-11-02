@@ -124,6 +124,7 @@ try {
         encodeURIComponent(subjects[name]),
       );
       await page.goto(new URL(href, targetUrl).href, { waitUntil: 'domcontentloaded' });
+      if (phase === 'cold') await page.reload({ waitUntil: 'domcontentloaded' });
       const notes = page.locator('whats-new-modal button.primary');
       if (await notes.isVisible()) await notes.click();
       let tag = entry.tag;
@@ -138,7 +139,7 @@ try {
               return (
                 style.display !== 'none' &&
                 style.visibility !== 'hidden' &&
-                node.getBoundingClientRect().height > 0
+                (style.display === 'contents' || node.getBoundingClientRect().height > 0)
               );
             };
             const read = (node) => {

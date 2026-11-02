@@ -12,6 +12,13 @@ export interface StoredArtifactRead {
   onRefreshError?(error: unknown | undefined): void;
 }
 
+function textResponse(data: Uint8Array, init?: ResponseInit): Response {
+  const response = new Response(data.slice().buffer, init);
+  // React Native's Response polyfill decodes ArrayBuffers one byte per character.
+  Object.defineProperty(response, 'text', { value: async () => new TextDecoder().decode(data) });
+  return response;
+}
+
 function digest(data: Uint8Array): string {
   const hash = createSha256();
   hash.update(data);
@@ -48,7 +55,7 @@ export async function readStoredArtifactResponse({
   assertCurrent();
   const held = await cache.openContentByAlias(alias);
   assertCurrent();
-  if (held && !online) return new Response(held.slice().buffer);
+  if (held && !online) return textResponse(held);
   if (!online) throw new Error('This artifact has not been stored on this device');
   const fetchFresh = async () => {
     const response = await read();
@@ -71,7 +78,7 @@ export async function readStoredArtifactResponse({
         token,
       });
     assertCurrent();
-    return new Response(data.slice().buffer, {
+    return textResponse(data, {
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
@@ -91,7 +98,7 @@ export async function readStoredArtifactResponse({
           onRefreshError(error);
       },
     );
-    return new Response(held.slice().buffer);
+    return textResponse(held);
   }
   return fetchFresh();
 }
