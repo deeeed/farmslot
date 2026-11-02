@@ -1,0 +1,913 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion jank check",
+  "description": "Drives Companion's main read-only flows on an Android device and fails on jank. Native frames come from adb gfxinfo framestats: a flow fails below min_sustained_fps over any 500 ms of rendering, and tab presses fail over the p95 or max press limits (touch to the mount frame). target_fps and target_press_ms are reported, never failed on. Each flow measured on main records main's baseline in its end node (4da00ad80, Pixel 6 at 90 Hz; terminal-open runs only against a sandbox and has none); a window with a coverage gap (failed polls, overwritten frames) is inconclusive and never passes; when the median tab-press p95 of at least 3 fresh release runs on main is more than 20 ms under that baseline, lower the caps and record the new baseline. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "min_sustained_fps": {
+        "type": "number",
+        "default": 30,
+        "description": "Fail a flow whose lowest FPS over any 500 ms of continuous rendering is below this."
+      },
+      "max_tab_press_p95_ms": {
+        "type": "number",
+        "default": 210,
+        "description": "Fail when the 95th percentile tab press (gfxinfo, touch to the mount frame) is above this. Main 4da00ad80 measured 159 ms at 90 Hz. Ratchet: lower it when the median p95 of at least 3 fresh release runs on main is more than 20 ms under the recorded baseline."
+      },
+      "max_tab_press_ms": {
+        "type": "number",
+        "default": 250,
+        "description": "Fail when any tab press is above this, or cannot be timed. Main 4da00ad80 measured 192 ms at 90 Hz."
+      },
+      "target_fps": {
+        "type": "number",
+        "default": 60,
+        "description": "Reported, never failed on."
+      },
+      "target_press_ms": {
+        "type": "number",
+        "default": 100,
+        "description": "Reported, never failed on."
+      },
+      "idle_ms": {
+        "type": "integer",
+        "default": 20000,
+        "minimum": 1000,
+        "description": "How long Review sits idle on live data, up to 60000 ms."
+      },
+      "run_id": {
+        "type": "string",
+        "default": "none",
+        "description": "A run on the Review queue to open and close; none skips the run detail flow."
+      },
+      "terminal_open": {
+        "type": "string",
+        "enum": ["off", "sandbox"],
+        "default": "off",
+        "description": "sandbox opens a terminal and goes back. Opening resizes the tmux pane, so use it only against a sandbox gateway."
+      },
+      "terminal_text": {
+        "type": "string",
+        "default": "none",
+        "description": "Visible text of the Terminals row to open when terminal_open is sandbox."
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "jank-budget",
+      "claim": "Companion's tab presses, list scrolls and idle Review hold the jank budget on this Android device.",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "warm-terminals",
+    "nodes": {
+      "warm-terminals": {
+        "action": "ui.press",
+        "test_id": "companion-tab-terminals",
+        "settle": false,
+        "intent": "Warm up: open Terminals once before measuring.",
+        "next": "warm-terminals-settle"
+      },
+      "warm-terminals-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Terminals finish rendering before the next step.",
+        "next": "warm-terminals-shown"
+      },
+      "warm-terminals-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-terminals",
+        "expected": "visible",
+        "intent": "Confirm Terminals is on screen.",
+        "next": "warm-advanced"
+      },
+      "warm-advanced": {
+        "action": "ui.press",
+        "test_id": "companion-tab-advanced",
+        "settle": false,
+        "intent": "Warm up: open Advanced once before measuring.",
+        "next": "warm-advanced-settle"
+      },
+      "warm-advanced-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Advanced finish rendering before the next step.",
+        "next": "warm-advanced-shown"
+      },
+      "warm-advanced-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-advanced",
+        "expected": "visible",
+        "intent": "Confirm Advanced is on screen.",
+        "next": "warm-settings"
+      },
+      "warm-settings": {
+        "action": "ui.press",
+        "test_id": "companion-tab-settings",
+        "settle": false,
+        "intent": "Warm up: open Settings once before measuring.",
+        "next": "warm-settings-settle"
+      },
+      "warm-settings-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Settings finish rendering before the next step.",
+        "next": "warm-settings-shown"
+      },
+      "warm-settings-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-settings",
+        "expected": "visible",
+        "intent": "Confirm Settings is on screen.",
+        "next": "warm-review"
+      },
+      "warm-review": {
+        "action": "ui.press",
+        "test_id": "companion-tab-review",
+        "settle": false,
+        "intent": "Warm up: open Review once before measuring.",
+        "next": "warm-review-settle"
+      },
+      "warm-review-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Review finish rendering before the next step.",
+        "next": "warm-review-shown"
+      },
+      "warm-review-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Confirm Review is on screen.",
+        "next": "tabs-start"
+      },
+      "tabs-start": {
+        "action": "app.performance_capture",
+        "phase": "start",
+        "id": "tab-presses",
+        "intent": "Start measuring bottom tab presses.",
+        "next": "tabs-1-terminals"
+      },
+      "tabs-1-terminals": {
+        "action": "ui.press",
+        "test_id": "companion-tab-terminals",
+        "settle": false,
+        "intent": "Switch to Terminals (round 1 of 3) while its frames are measured.",
+        "next": "tabs-1-terminals-settle"
+      },
+      "tabs-1-terminals-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Terminals finish rendering before the next step.",
+        "next": "tabs-1-terminals-shown"
+      },
+      "tabs-1-terminals-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-terminals",
+        "expected": "visible",
+        "intent": "Confirm Terminals is on screen.",
+        "next": "tabs-1-advanced"
+      },
+      "tabs-1-advanced": {
+        "action": "ui.press",
+        "test_id": "companion-tab-advanced",
+        "settle": false,
+        "intent": "Switch to Advanced (round 1 of 3) while its frames are measured.",
+        "next": "tabs-1-advanced-settle"
+      },
+      "tabs-1-advanced-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Advanced finish rendering before the next step.",
+        "next": "tabs-1-advanced-shown"
+      },
+      "tabs-1-advanced-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-advanced",
+        "expected": "visible",
+        "intent": "Confirm Advanced is on screen.",
+        "next": "tabs-1-settings"
+      },
+      "tabs-1-settings": {
+        "action": "ui.press",
+        "test_id": "companion-tab-settings",
+        "settle": false,
+        "intent": "Switch to Settings (round 1 of 3) while its frames are measured.",
+        "next": "tabs-1-settings-settle"
+      },
+      "tabs-1-settings-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Settings finish rendering before the next step.",
+        "next": "tabs-1-settings-shown"
+      },
+      "tabs-1-settings-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-settings",
+        "expected": "visible",
+        "intent": "Confirm Settings is on screen.",
+        "next": "tabs-1-review"
+      },
+      "tabs-1-review": {
+        "action": "ui.press",
+        "test_id": "companion-tab-review",
+        "settle": false,
+        "intent": "Switch to Review (round 1 of 3) while its frames are measured.",
+        "next": "tabs-1-review-settle"
+      },
+      "tabs-1-review-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Review finish rendering before the next step.",
+        "next": "tabs-1-review-shown"
+      },
+      "tabs-1-review-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Confirm Review is on screen.",
+        "next": "tabs-2-terminals"
+      },
+      "tabs-2-terminals": {
+        "action": "ui.press",
+        "test_id": "companion-tab-terminals",
+        "settle": false,
+        "intent": "Switch to Terminals (round 2 of 3) while its frames are measured.",
+        "next": "tabs-2-terminals-settle"
+      },
+      "tabs-2-terminals-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Terminals finish rendering before the next step.",
+        "next": "tabs-2-terminals-shown"
+      },
+      "tabs-2-terminals-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-terminals",
+        "expected": "visible",
+        "intent": "Confirm Terminals is on screen.",
+        "next": "tabs-2-advanced"
+      },
+      "tabs-2-advanced": {
+        "action": "ui.press",
+        "test_id": "companion-tab-advanced",
+        "settle": false,
+        "intent": "Switch to Advanced (round 2 of 3) while its frames are measured.",
+        "next": "tabs-2-advanced-settle"
+      },
+      "tabs-2-advanced-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Advanced finish rendering before the next step.",
+        "next": "tabs-2-advanced-shown"
+      },
+      "tabs-2-advanced-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-advanced",
+        "expected": "visible",
+        "intent": "Confirm Advanced is on screen.",
+        "next": "tabs-2-settings"
+      },
+      "tabs-2-settings": {
+        "action": "ui.press",
+        "test_id": "companion-tab-settings",
+        "settle": false,
+        "intent": "Switch to Settings (round 2 of 3) while its frames are measured.",
+        "next": "tabs-2-settings-settle"
+      },
+      "tabs-2-settings-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Settings finish rendering before the next step.",
+        "next": "tabs-2-settings-shown"
+      },
+      "tabs-2-settings-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-settings",
+        "expected": "visible",
+        "intent": "Confirm Settings is on screen.",
+        "next": "tabs-2-review"
+      },
+      "tabs-2-review": {
+        "action": "ui.press",
+        "test_id": "companion-tab-review",
+        "settle": false,
+        "intent": "Switch to Review (round 2 of 3) while its frames are measured.",
+        "next": "tabs-2-review-settle"
+      },
+      "tabs-2-review-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Review finish rendering before the next step.",
+        "next": "tabs-2-review-shown"
+      },
+      "tabs-2-review-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Confirm Review is on screen.",
+        "next": "tabs-3-terminals"
+      },
+      "tabs-3-terminals": {
+        "action": "ui.press",
+        "test_id": "companion-tab-terminals",
+        "settle": false,
+        "intent": "Switch to Terminals (round 3 of 3) while its frames are measured.",
+        "next": "tabs-3-terminals-settle"
+      },
+      "tabs-3-terminals-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Terminals finish rendering before the next step.",
+        "next": "tabs-3-terminals-shown"
+      },
+      "tabs-3-terminals-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-terminals",
+        "expected": "visible",
+        "intent": "Confirm Terminals is on screen.",
+        "next": "tabs-3-advanced"
+      },
+      "tabs-3-advanced": {
+        "action": "ui.press",
+        "test_id": "companion-tab-advanced",
+        "settle": false,
+        "intent": "Switch to Advanced (round 3 of 3) while its frames are measured.",
+        "next": "tabs-3-advanced-settle"
+      },
+      "tabs-3-advanced-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Advanced finish rendering before the next step.",
+        "next": "tabs-3-advanced-shown"
+      },
+      "tabs-3-advanced-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-advanced",
+        "expected": "visible",
+        "intent": "Confirm Advanced is on screen.",
+        "next": "tabs-3-settings"
+      },
+      "tabs-3-settings": {
+        "action": "ui.press",
+        "test_id": "companion-tab-settings",
+        "settle": false,
+        "intent": "Switch to Settings (round 3 of 3) while its frames are measured.",
+        "next": "tabs-3-settings-settle"
+      },
+      "tabs-3-settings-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Settings finish rendering before the next step.",
+        "next": "tabs-3-settings-shown"
+      },
+      "tabs-3-settings-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-settings",
+        "expected": "visible",
+        "intent": "Confirm Settings is on screen.",
+        "next": "tabs-3-review"
+      },
+      "tabs-3-review": {
+        "action": "ui.press",
+        "test_id": "companion-tab-review",
+        "settle": false,
+        "intent": "Switch to Review (round 3 of 3) while its frames are measured.",
+        "next": "tabs-3-review-settle"
+      },
+      "tabs-3-review-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Review finish rendering before the next step.",
+        "next": "tabs-3-review-shown"
+      },
+      "tabs-3-review-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Confirm Review is on screen.",
+        "next": "tabs-end"
+      },
+      "tabs-end": {
+        "action": "app.performance_capture",
+        "phase": "end",
+        "id": "tab-presses",
+        "budget": {
+          "min_sustained_fps": "{{params.min_sustained_fps}}",
+          "max_press_p95_ms": "{{params.max_tab_press_p95_ms}}",
+          "max_press_ms": "{{params.max_tab_press_ms}}"
+        },
+        "targets": {
+          "fps": "{{params.target_fps}}",
+          "press_ms": "{{params.target_press_ms}}"
+        },
+        "baseline": {
+          "label": "main 4da00ad80 @90Hz",
+          "build": "4da00ad80",
+          "device": "Pixel 6",
+          "refresh_hz": 90,
+          "press_p95_ms": 158.9,
+          "press_max_ms": 192.2,
+          "runs": [
+            {
+              "press_p95_ms": 158.9,
+              "press_max_ms": 192.2,
+              "first_frame_presses": 2,
+              "by_target": {
+                "companion-tab-terminals": {
+                  "p95_ms": 181.2,
+                  "max_ms": 192.2
+                },
+                "companion-tab-advanced": {
+                  "p95_ms": 105.3,
+                  "max_ms": 107.5
+                },
+                "companion-tab-settings": {
+                  "p95_ms": 75.9,
+                  "max_ms": 76.0
+                },
+                "companion-tab-review": {
+                  "p95_ms": 129.6,
+                  "max_ms": 131.6
+                }
+              }
+            },
+            {
+              "press_p95_ms": 132.5,
+              "press_max_ms": 162.1,
+              "first_frame_presses": 1,
+              "by_target": {
+                "companion-tab-terminals": {
+                  "p95_ms": 156.7,
+                  "max_ms": 162.1
+                },
+                "companion-tab-advanced": {
+                  "p95_ms": 60.7,
+                  "max_ms": 61.4
+                },
+                "companion-tab-settings": {
+                  "p95_ms": 91.7,
+                  "max_ms": 95.0
+                },
+                "companion-tab-review": {
+                  "p95_ms": 95.9,
+                  "max_ms": 97.4
+                }
+              }
+            }
+          ]
+        },
+        "intent": "Close the tab press window against its budget.",
+        "next": "review-scroll-start"
+      },
+      "review-scroll-start": {
+        "action": "app.performance_capture",
+        "phase": "start",
+        "id": "review-scroll",
+        "intent": "Start measuring the Review queue scroll.",
+        "next": "review-scroll-1"
+      },
+      "review-scroll-1": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move further down the Review queue while its frames are measured.",
+        "next": "review-scroll-1-settle"
+      },
+      "review-scroll-1-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "review-scroll-2"
+      },
+      "review-scroll-2": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move further down the Review queue while its frames are measured.",
+        "next": "review-scroll-2-settle"
+      },
+      "review-scroll-2-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "review-scroll-3"
+      },
+      "review-scroll-3": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move further down the Review queue while its frames are measured.",
+        "next": "review-scroll-3-settle"
+      },
+      "review-scroll-3-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "review-scroll-4"
+      },
+      "review-scroll-4": {
+        "action": "ui.scroll",
+        "direction": "up",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move back up the Review queue while its frames are measured.",
+        "next": "review-scroll-4-settle"
+      },
+      "review-scroll-4-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "review-scroll-5"
+      },
+      "review-scroll-5": {
+        "action": "ui.scroll",
+        "direction": "up",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move back up the Review queue while its frames are measured.",
+        "next": "review-scroll-5-settle"
+      },
+      "review-scroll-5-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "review-scroll-6"
+      },
+      "review-scroll-6": {
+        "action": "ui.scroll",
+        "direction": "up",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move back up the Review queue while its frames are measured.",
+        "next": "review-scroll-6-settle"
+      },
+      "review-scroll-6-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "review-scroll-end"
+      },
+      "review-scroll-end": {
+        "action": "app.performance_capture",
+        "phase": "end",
+        "id": "review-scroll",
+        "budget": {
+          "min_sustained_fps": "{{params.min_sustained_fps}}",
+          "min_frames": 10
+        },
+        "targets": {
+          "fps": "{{params.target_fps}}"
+        },
+        "baseline": {
+          "label": "main 4da00ad80 @90Hz",
+          "build": "4da00ad80",
+          "device": "Pixel 6",
+          "refresh_hz": 90,
+          "sustained_fps": 76.0,
+          "frames": 574
+        },
+        "intent": "Close the the Review queue scroll window against its budget.",
+        "next": "to-terminals"
+      },
+      "to-terminals": {
+        "action": "ui.press",
+        "test_id": "companion-tab-terminals",
+        "settle": false,
+        "intent": "Open Terminals for its list scroll.",
+        "next": "to-terminals-settle"
+      },
+      "to-terminals-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Terminals finish rendering before the next step.",
+        "next": "to-terminals-shown"
+      },
+      "to-terminals-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-terminals",
+        "expected": "visible",
+        "intent": "Confirm Terminals is on screen.",
+        "next": "terminals-scroll-start"
+      },
+      "terminals-scroll-start": {
+        "action": "app.performance_capture",
+        "phase": "start",
+        "id": "terminals-scroll",
+        "intent": "Start measuring the Terminals list scroll.",
+        "next": "terminals-scroll-1"
+      },
+      "terminals-scroll-1": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move further down the Terminals list while its frames are measured.",
+        "next": "terminals-scroll-1-settle"
+      },
+      "terminals-scroll-1-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "terminals-scroll-2"
+      },
+      "terminals-scroll-2": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move further down the Terminals list while its frames are measured.",
+        "next": "terminals-scroll-2-settle"
+      },
+      "terminals-scroll-2-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "terminals-scroll-3"
+      },
+      "terminals-scroll-3": {
+        "action": "ui.scroll",
+        "direction": "up",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move back up the Terminals list while its frames are measured.",
+        "next": "terminals-scroll-3-settle"
+      },
+      "terminals-scroll-3-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "terminals-scroll-4"
+      },
+      "terminals-scroll-4": {
+        "action": "ui.scroll",
+        "direction": "up",
+        "pixels": 900,
+        "settle": false,
+        "intent": "Move back up the Terminals list while its frames are measured.",
+        "next": "terminals-scroll-4-settle"
+      },
+      "terminals-scroll-4-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "terminals-scroll-end"
+      },
+      "terminals-scroll-end": {
+        "action": "app.performance_capture",
+        "phase": "end",
+        "id": "terminals-scroll",
+        "budget": {
+          "min_sustained_fps": "{{params.min_sustained_fps}}",
+          "min_frames": 10
+        },
+        "targets": {
+          "fps": "{{params.target_fps}}"
+        },
+        "baseline": {
+          "label": "main 4da00ad80 @90Hz",
+          "build": "4da00ad80",
+          "device": "Pixel 6",
+          "refresh_hz": 90,
+          "sustained_fps": 77.2,
+          "frames": 338
+        },
+        "intent": "Close the the Terminals list scroll window against its budget.",
+        "next": "terminal-open-gate"
+      },
+      "terminal-open-gate": {
+        "action": "switch",
+        "value": "{{params.terminal_open}}",
+        "equals": "sandbox",
+        "intent": "Open a terminal only against a sandbox gateway.",
+        "cases": {
+          "match": "terminal-open-start"
+        },
+        "default": "back-review"
+      },
+      "terminal-open-start": {
+        "action": "app.performance_capture",
+        "phase": "start",
+        "id": "terminal-open",
+        "intent": "Start measuring a terminal opening and closing.",
+        "next": "terminal-open-row"
+      },
+      "terminal-open-row": {
+        "action": "ui.press",
+        "text": "{{params.terminal_text}}",
+        "settle": false,
+        "intent": "Open the sandbox terminal from the Terminals list.",
+        "next": "terminal-open-row-settle"
+      },
+      "terminal-open-row-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let the terminal finish rendering before the next step.",
+        "next": "terminal-open-shown"
+      },
+      "terminal-open-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-worker-terminal",
+        "expected": "visible",
+        "intent": "Confirm the terminal is on screen.",
+        "next": "terminal-open-back"
+      },
+      "terminal-open-back": {
+        "action": "ui.key_press",
+        "key": "Back",
+        "settle": false,
+        "intent": "Go back to the Terminals list.",
+        "next": "terminal-open-back-settle"
+      },
+      "terminal-open-back-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Terminals finish rendering before the next step.",
+        "next": "terminal-open-returned"
+      },
+      "terminal-open-returned": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-terminals",
+        "expected": "visible",
+        "intent": "Confirm Terminals is back on screen.",
+        "next": "terminal-open-end"
+      },
+      "terminal-open-end": {
+        "action": "app.performance_capture",
+        "phase": "end",
+        "id": "terminal-open",
+        "budget": {
+          "min_sustained_fps": "{{params.min_sustained_fps}}"
+        },
+        "targets": {
+          "fps": "{{params.target_fps}}",
+          "press_ms": "{{params.target_press_ms}}"
+        },
+        "intent": "Close the terminal window against its budget.",
+        "next": "back-review"
+      },
+      "back-review": {
+        "action": "ui.press",
+        "test_id": "companion-tab-review",
+        "settle": false,
+        "intent": "Return to Review for the run detail and idle flows.",
+        "next": "back-review-settle"
+      },
+      "back-review-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Review finish rendering before the next step.",
+        "next": "back-review-shown"
+      },
+      "back-review-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Confirm Review is on screen.",
+        "next": "run-detail-gate"
+      },
+      "run-detail-gate": {
+        "action": "switch",
+        "value": "{{params.run_id}}",
+        "equals": "none",
+        "intent": "Open a run detail only when a run is named.",
+        "cases": {
+          "match": "idle-start"
+        },
+        "default": "run-detail-start"
+      },
+      "run-detail-start": {
+        "action": "app.performance_capture",
+        "phase": "start",
+        "id": "run-detail",
+        "intent": "Start measuring a run detail opening and closing.",
+        "next": "run-detail-open"
+      },
+      "run-detail-open": {
+        "action": "ui.press",
+        "selector": "label=\"Open run {{params.run_id}}\"",
+        "settle": false,
+        "intent": "Open the named run from the Review queue.",
+        "next": "run-detail-open-settle"
+      },
+      "run-detail-open-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let the run detail finish rendering before the next step.",
+        "next": "run-detail-shown"
+      },
+      "run-detail-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-detail",
+        "expected": "visible",
+        "intent": "Confirm the run detail is on screen.",
+        "next": "run-detail-back"
+      },
+      "run-detail-back": {
+        "action": "ui.key_press",
+        "key": "Back",
+        "settle": false,
+        "intent": "Go back to the Review queue.",
+        "next": "run-detail-back-settle"
+      },
+      "run-detail-back-settle": {
+        "action": "wait",
+        "duration_ms": 1500,
+        "intent": "Let Review finish rendering before the next step.",
+        "next": "run-detail-returned"
+      },
+      "run-detail-returned": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Confirm Review is back on screen.",
+        "next": "run-detail-end"
+      },
+      "run-detail-end": {
+        "action": "app.performance_capture",
+        "phase": "end",
+        "id": "run-detail",
+        "budget": {
+          "min_sustained_fps": "{{params.min_sustained_fps}}"
+        },
+        "targets": {
+          "fps": "{{params.target_fps}}",
+          "press_ms": "{{params.target_press_ms}}"
+        },
+        "baseline": {
+          "label": "main 4da00ad80 @90Hz",
+          "build": "4da00ad80",
+          "device": "Pixel 6",
+          "refresh_hz": 90,
+          "press_max_ms": 47.9,
+          "frames": 139
+        },
+        "intent": "Close the run detail window against its budget.",
+        "next": "idle-start"
+      },
+      "idle-start": {
+        "action": "app.performance_capture",
+        "phase": "start",
+        "id": "review-idle",
+        "intent": "Start measuring Review while it sits idle on live data.",
+        "next": "idle-hold"
+      },
+      "idle-hold": {
+        "action": "wait",
+        "duration_ms": "{{params.idle_ms}}",
+        "intent": "Leave Review idle on the live gateway.",
+        "next": "idle-end"
+      },
+      "idle-end": {
+        "action": "app.performance_capture",
+        "phase": "end",
+        "id": "review-idle",
+        "budget": {
+          "min_sustained_fps": "{{params.min_sustained_fps}}"
+        },
+        "targets": {
+          "fps": "{{params.target_fps}}"
+        },
+        "baseline": {
+          "label": "main 4da00ad80 idle @60Hz",
+          "build": "4da00ad80",
+          "device": "Pixel 6",
+          "refresh_hz": 60,
+          "frames": 1
+        },
+        "intent": "Close the idle window against its budget.",
+        "next": "report"
+      },
+      "report": {
+        "action": "app.performance_capture",
+        "phase": "report",
+        "title": "Companion jank",
+        "intent": "Write the per-flow report; a broken budget fails the run.",
+        "next": "check"
+      },
+      "check": {
+        "action": "assert_output",
+        "source": "report",
+        "assert": {
+          "path": "$.verdict",
+          "operator": "eq",
+          "value": "pass"
+        },
+        "intent": "Every measured flow held its budget.",
+        "proves": ["jank-budget"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

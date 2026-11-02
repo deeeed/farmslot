@@ -124,6 +124,27 @@ Legacy warn thresholds for non-workspace paths until PR 2 migration:
 
 If you must exceed temporarily, note it in the PR and link a follow-up issue — do not grow god files silently.
 
+## Jank check (every UI PR)
+
+A PR that touches `apps/companion/src/**` runs the jank recipe on an Android device before review and attaches its report. CI has no device, so the run is part of the PR's recipe evidence.
+
+```bash
+# Device in the slot (ADB_SERIAL), the development variant installed, the gateway reachable.
+GATEWAY_PORT=<slot port> METRO_PORT=<slot port> APP_VARIANT=development \
+  ADB_SERIAL=<serial> FARMSLOT_RECIPE_APP_ID=net.siteed.farmslot.development \
+  yarn recipe:run:jank:android --artifacts-dir <dir>
+```
+
+- It presses the four bottom tabs three times, scrolls the Review and Terminals lists and leaves Review idle on live data. Every flow is read-only on the gateway.
+- `--param run_id=<id>` also opens that run from the Review queue and goes back (pick a run the queue shows; `none`, the default, skips it).
+- `--param terminal_open=sandbox --param terminal_text=<row text>` also opens a terminal and goes back. Opening a terminal resizes its tmux pane, so run it only against a sandbox gateway (for example `projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port <port>`), never the live one.
+- It fails when a flow sustains under 30 fps (lowest FPS over any 500 ms of rendering) or a tab press, from the touch to the mount frame that shows the tab (gfxinfo), is over 210 ms at p95 or 250 ms at most. 60 fps and 100 ms are the targets: reported, never failed on. Each failure names the metric, the limit, the measured value, the tab and main's baseline. A flow whose capture has a gap (adb polls failed, gfxinfo overwrote frames) is inconclusive and fails the check; rerun it.
+- Main's baseline is recorded in the recipe's end nodes: build 4da00ad80, Pixel 6 at 90 Hz, tab-press p95 159 ms and max 192 ms (worst of two release runs; per-tab values and first-frame counts included).
+- Ratchet: when the median tab-press p95 of at least 3 fresh release runs on main is more than 20 ms under the recorded baseline (worst valid run, 158.9 ms), lower the caps by that margin and record the new baseline in the same change. One run cannot trigger it: two runs on the same build differed by 26 ms.
+- The limits are recipe parameters; change them in `jank.recipe.json`'s `paramsSchema` defaults (with the baseline), not per run.
+- Measure on a release build of the development variant (`APP_VARIANT=development`, `assembleRelease`) for budget numbers. Build it on macpro over SSH or with EAS cloud, never with a local Gradle, Xcode or EAS build on macwork (it overloads the machine the phone is plugged into), and install it on the phone from macwork with `adb install -r` onto `net.siteed.farmslot.development` only. A debug client runs the recipe too; label those numbers as debug.
+- Attach `<dir>/performance/report.md` (the per-flow table, with the display refresh rate of each flow) and the run package to the PR, with the head SHA it ran on.
+
 ## Do not
 
 - Rewrite `src/lib/` during UI refactors

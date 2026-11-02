@@ -40,7 +40,10 @@ async function createExtensionPerformanceBackend({
   }
   // Loaded on use: recipe-runner's trace engine is an ES module built to dist,
   // and the other adapter-web modules must load without it.
-  const { createCdpTraceCollector } = require('@farmslot/recipe-runner/runtime/cdp-trace');
+  const {
+    clockMidpoint,
+    createCdpTraceCollector,
+  } = require('@farmslot/recipe-runner/runtime/cdp-trace');
   const browser = await connectBrowserCdp(cdpPort, {
     timeoutMs: connectTimeoutMs,
     commandTimeoutMs,
@@ -79,14 +82,14 @@ async function createExtensionPerformanceBackend({
     platform,
     markerPrefix,
     marker: async (name) => {
-      const before = Date.now();
-      await browser.send(
-        'Runtime.evaluate',
-        { expression: `performance.mark(${JSON.stringify(name)})`, returnByValue: true },
-        sessionId,
+      const { hostEpochMs, uncertaintyMs } = await clockMidpoint(() =>
+        browser.send(
+          'Runtime.evaluate',
+          { expression: `performance.mark(${JSON.stringify(name)})`, returnByValue: true },
+          sessionId,
+        ),
       );
-      const after = Date.now();
-      return { hostEpochMs: (before + after) / 2, uncertaintyMs: (after - before) / 2 };
+      return { hostEpochMs, uncertaintyMs };
     },
   });
 }

@@ -40,6 +40,29 @@
         }
       ]
     },
+    "switch": {
+      "description": "Choose a graph branch when one resolved string equals another.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "string" },
+          "equals": { "type": "string" }
+        },
+        "required": ["value", "equals"],
+        "additionalProperties": false
+      },
+      "result_cases": ["match"],
+      "examples": [
+        {
+          "action": "switch",
+          "intent": "Take the optional flow only when its parameter turns it on.",
+          "value": "on",
+          "equals": "on",
+          "cases": { "match": "optional-flow" },
+          "default": "done"
+        }
+      ]
+    },
     "app.status": {
       "description": "Query the dev-only Farmslot Expo bridge to confirm the app is reachable.",
       "schema": {
@@ -106,6 +129,106 @@
         }
       ]
     },
+    "app.performance_capture": {
+      "description": "Measure native UI smoothness on the assigned Android device from adb gfxinfo frames. phase=start opens a named window; phase=end closes it and records its frames, lowest sustained FPS, press latencies and budget verdict, with failures compared to an optional baseline; phase=report writes the run's report and fails when a window broke its budget or is inconclusive (a coverage gap such as failed polls or overwritten frames). Targets are reported, never failed on.",
+      "adapters": ["android"],
+      "execution_capabilities": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": ["start", "end", "report"]
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "max_duration_ms": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sustained_window_ms": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "response_window_ms": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "min_sustained_fps": {
+                "type": ["number", "string"]
+              },
+              "max_press_p95_ms": {
+                "type": ["number", "string"]
+              },
+              "max_press_ms": {
+                "type": ["number", "string"]
+              },
+              "min_frames": {
+                "type": ["number", "string"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "targets": {
+            "type": "object",
+            "properties": {
+              "fps": {
+                "type": ["number", "string"]
+              },
+              "press_ms": {
+                "type": ["number", "string"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "baseline": {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "sustained_fps": { "type": "number" },
+              "press_p95_ms": { "type": "number" },
+              "press_max_ms": { "type": "number" }
+            },
+            "required": ["label"],
+            "additionalProperties": true
+          }
+        },
+        "required": ["phase"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "app.performance_capture",
+          "intent": "Start measuring the bottom tab presses.",
+          "phase": "start",
+          "id": "tab-presses",
+          "next": "press-review"
+        },
+        {
+          "action": "app.performance_capture",
+          "intent": "Close the tab press window against its budget.",
+          "phase": "end",
+          "id": "tab-presses",
+          "budget": {
+            "min_sustained_fps": 30,
+            "max_press_p95_ms": 210,
+            "max_press_ms": 250
+          },
+          "targets": {
+            "fps": 60,
+            "press_ms": 100
+          },
+          "next": "report"
+        }
+      ]
+    },
     "ui.press": {
       "description": "Press a native app control through the simulator or device assigned to this Farmslot slot; live runs require slot device context.",
       "schema": {
@@ -119,6 +242,9 @@
           },
           "selector": {
             "type": "string"
+          },
+          "settle": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -192,7 +318,8 @@
         "type": "object",
         "properties": {
           "direction": { "type": "string", "enum": ["up", "down", "left", "right"] },
-          "pixels": { "type": "number", "minimum": 1 }
+          "pixels": { "type": "number", "minimum": 1 },
+          "settle": { "type": "boolean" }
         },
         "additionalProperties": false
       },

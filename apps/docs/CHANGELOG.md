@@ -5,6 +5,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - The local demo guide no longer says `farmslot slot release` collects artifacts: a release copies none back (F313).
+- Document `app.performance_capture` in the adapter-rn guide: Android frame and tab-press capture, the jank budget, and how Companion's jank check uses it.
+
 - Document `native.session.turn.diff`, which returns one file's diff for a native turn, in the generated gateway API reference.
 
 - Document `native.session.cancel`, which removes a queued native message, in the generated gateway API reference.
