@@ -1,5 +1,6 @@
 /**
- * Run Detail's first render from a run.list row, trimmed by the gateway's real `trimRunForList`.
+ * Run Detail's first render from a run.list row, trimmed by the `trimRunForList` the gateway's
+ * run.list uses.
  *
  * run.list leaves out every decision payload value over 2 KB and the output manifest. Run
  * Detail draws that row while run.get loads, so each helper it calls on first render (directly
@@ -21,6 +22,7 @@ import {
   type Run,
   runHasTrimmedDetail,
   savedReviewView,
+  trimRunForList,
 } from '@farmslot/protocol';
 import {
   humanGateBlockingReason,
@@ -33,7 +35,6 @@ import {
   runTerminalView,
 } from '@farmslot/review-dispatch';
 
-import { trimRunForList } from '../../../../../services/gateway/src/runs/list-trim';
 import { openHumanGateDecision } from '../../lib/gate-review';
 import { collectRunInteractivePacketArtifacts } from '../../lib/interactive-operator-packets';
 import {
