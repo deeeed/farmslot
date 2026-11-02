@@ -1,11 +1,104 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import test from 'node:test';
 
-import { nativeWorkerEnvironment, nativeWorkerProjectToolsFirst } from './worker-launch.js';
+import { NativeSessionManager } from './manager.js';
+import {
+  nativeWorkerEnvironment,
+  type NativeWorkerLaunch,
+  nativeWorkerProjectToolsFirst,
+} from './worker-launch.js';
+
+test('a native worker starts with project tools ahead of its runner directory', async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'worker-path-')));
+  const runnerDirectory = join(root, 'runner-bin');
+  const asdf = join(root, 'asdf');
+  const pathFile = join(root, 'worker-path');
+  for (const directory of [runnerDirectory, join(asdf, 'shims')])
+    mkdirSync(directory, { recursive: true });
+  // The runner's directory holds a Node, as an asdf-installed claude's or cursor-agent's does.
+  for (const directory of [runnerDirectory, join(asdf, 'shims')])
+    writeFileSync(join(directory, 'node'), `#!/bin/sh\nexec ${process.execPath} "$@"\n`, {
+      mode: 0o755,
+    });
+  const runner = join(runnerDirectory, 'codex');
+  writeFileSync(
+    runner,
+    `#!/usr/bin/env node
+if(process.argv.includes('--version')) { console.log('fixture 1'); process.exit(0); }
+require('node:fs').writeFileSync(process.env.FIXTURE_PATH_FILE, process.env.PATH);
+const send=m=>process.stdout.write(JSON.stringify(m)+'\\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'worker-path'}}});
+});
+`,
+    { mode: 0o700 },
+  );
+  const manager = new NativeSessionManager(join(root, 'state'));
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: runner,
+    safetyTier: 'full-auto',
+    environment: {
+      set: { ASDF_DATA_DIR: asdf, FIXTURE_PATH_FILE: pathFile, CODEX_HOME: join(root, 'account') },
+      unset: [],
+    },
+  };
+  const session = await manager.ensure(
+    'owner',
+    { sessionId: randomUUID(), runner: 'codex', cwd: root },
+    launch,
+  );
+  t.after(async () => {
+    await manager.closeWorker('owner', session.id, session.generation, launch.leaseId);
+    rmSync(root, { recursive: true, force: true });
+  });
+  const path = readFileSync(pathFile, 'utf8').split(delimiter);
+  assert.deepEqual(path.slice(0, 2), [join(asdf, 'shims'), runnerDirectory]);
+});
+
+test("a profile that moves HOME keeps the worker's asdf shims first and working", (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'worker-asdf-home-'));
+  const profile = mkdtempSync(join(tmpdir(), 'worker-profile-home-'));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(profile, { recursive: true, force: true });
+  });
+  mkdirSync(join(home, '.asdf', 'shims'), { recursive: true });
+  const originalEnvironment = process.env;
+  try {
+    process.env = { HOME: home, PATH: '/usr/bin:/bin' };
+    const worker = nativeWorkerEnvironment({
+      leaseId: 'fixture-lease',
+      safetyTier: 'sandboxed',
+      environment: { set: {}, unset: [] },
+    });
+    assert.equal(worker.ASDF_DATA_DIR, join(home, '.asdf'));
+    // A Cursor profile's HOME, then the runner's directory ahead of PATH, as the host applies them.
+    const final = nativeWorkerProjectToolsFirst({
+      ...worker,
+      HOME: profile,
+      PATH: ['/runner-bin', worker.PATH].join(delimiter),
+    });
+    assert.equal(final.PATH?.split(delimiter)[0], join(home, '.asdf', 'shims'));
+  } finally {
+    process.env = originalEnvironment;
+  }
+});
 
 test("a worker resolves the project's Node ahead of the runner's own directory and the host's", (t) => {
   const home = mkdtempSync(join(tmpdir(), 'worker-node-'));

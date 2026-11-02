@@ -32,6 +32,12 @@ function nativeWorkerProcessEnvironment(environment, base = process.env) {
   delete env.FARMSLOT_NODE_TOKEN;
   delete env.FARMSLOT_GATEWAY_TOKEN;
   delete env.FARMSLOT_GATEWAY_PASSWORD;
+  // A profile may move HOME (Cursor's does). Keep the asdf root this worker resolves its tools from,
+  // so its shims stay first and still find their installs under the profile's HOME.
+  if (!env.ASDF_DATA_DIR) {
+    const root = join(env.HOME ?? homedir(), '.asdf');
+    if (existsSync(join(root, 'shims'))) env.ASDF_DATA_DIR = root;
+  }
   return projectToolsFirst(env);
 }
 
