@@ -182,19 +182,24 @@ function nativePiAuth(binary, model, env) {
 }
 
 /** Why the native check gave no verdict. Its output is never passed on: it can carry credentials. */
-function unavailablePiAuth(result) {
+export function unavailablePiAuth(result) {
+  const cause =
+    result.error?.code === 'ETIMEDOUT'
+      ? 'timeout'
+      : result.error?.code === 'ENOENT'
+        ? 'not_found'
+        : result.status === 0
+          ? 'no_verdict'
+          : 'failed';
   return {
     status: 'invalid',
     reason: 'auth_check_unavailable',
-    cause:
-      result.error?.code === 'ETIMEDOUT'
-        ? 'timeout'
-        : result.error?.code === 'ENOENT'
-          ? 'not_found'
-          : result.status === 0
-            ? 'no_verdict'
-            : 'failed',
-    ...(Number.isInteger(result.status) ? { exitCode: result.status } : {}),
+    cause,
+    ...(Number.isInteger(result.status)
+      ? { exitCode: result.status }
+      : cause === 'failed' && typeof result.signal === 'string'
+        ? { signal: result.signal }
+        : {}),
   };
 }
 

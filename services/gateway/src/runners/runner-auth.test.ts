@@ -48,7 +48,7 @@ for (const [name, replies, calls, outcome] of [
     'two timeouts name the timeout',
     [{ exitCode: 124 }, { exitCode: 124 }],
     2,
-    /auth_check_unavailable \(the check timed out after 30 s, twice\)/,
+    /auth_check_unavailable \(the check did not finish within 30 s, twice\)/,
   ],
   [
     "the runner's own timeout is retried and named",
@@ -72,10 +72,35 @@ for (const [name, replies, calls, outcome] of [
     /\(the runner's auth check failed \(exit 3\)\)/,
   ],
   [
+    "a signal kill names the runner's signal",
+    [
+      {
+        stdout:
+          '{"status":"invalid","reason":"auth_check_unavailable","cause":"failed","signal":"SIGKILL"}',
+        exitCode: 1,
+      },
+    ],
+    1,
+    /\(the runner's auth check failed \(SIGKILL\)\)/,
+  ],
+  [
+    'an unknown cause is never looked up on the prototype',
+    [{ stdout: '{"status":"invalid","cause":"constructor"}', exitCode: 1 }],
+    1,
+    /\(the check reported invalid without a known reason\)/,
+  ],
+  [
     'output without a verdict names the exit code',
     [{ stdout: 'secret-token', exitCode: 2 }],
     1,
     /\(the check exited 2 without a verdict\)/,
+  ],
+  ['a ready verdict runs one check', [{ stdout: '{"status":"ready"}' }], 1],
+  [
+    'a known reason runs one check',
+    [{ stdout: '{"status":"not_ready","reason":"credentials_not_configured"}', exitCode: 1 }],
+    1,
+    /credentials_not_configured\. Restore the provider login/,
   ],
 ] as const) {
   test(`auth check cause: ${name}`, async () => {

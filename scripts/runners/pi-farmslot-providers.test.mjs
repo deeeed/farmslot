@@ -12,6 +12,7 @@ import {
   listPiProviderSources,
   openaiBaseUrl,
   resolvePiProviderCatalog,
+  unavailablePiAuth,
 } from './pi-farmslot-providers.mjs';
 
 function hangingFetch(_input, { signal }) {
@@ -149,6 +150,28 @@ test('a native check without a verdict names its cause and never passes its outp
       await checkPiProviderAuth(binary, 'anthropic/claude-haiku-4-5', { FARMSLOT_PI_OLLAMA: '0' }),
       { status: 'invalid', reason: 'auth_check_unavailable', ...expected },
     );
+});
+
+test('each spawnSync failure shape maps to its cause', () => {
+  const unavailable = { status: 'invalid', reason: 'auth_check_unavailable' };
+  for (const [result, expected] of [
+    // What spawnSync returns when its timeout kills the child.
+    [{ error: { code: 'ETIMEDOUT' }, status: null, signal: 'SIGTERM' }, { cause: 'timeout' }],
+    [{ error: { code: 'ENOENT' }, status: null, signal: null }, { cause: 'not_found' }],
+    [
+      { status: null, signal: 'SIGKILL' },
+      { cause: 'failed', signal: 'SIGKILL' },
+    ],
+    [
+      { status: 3, signal: null },
+      { cause: 'failed', exitCode: 3 },
+    ],
+    [
+      { status: 0, signal: null },
+      { cause: 'no_verdict', exitCode: 0 },
+    ],
+  ])
+    assert.deepEqual(unavailablePiAuth(result), { ...unavailable, ...expected });
 });
 
 test('openaiBaseUrl adds http and /v1', () => {

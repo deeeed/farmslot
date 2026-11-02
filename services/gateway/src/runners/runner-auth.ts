@@ -25,7 +25,7 @@ export async function assertRunnerAuthBeforeLaunch(
     projectVars,
     runDomain,
   });
-  const check = async () => {
+  const check = async (): Promise<AuthCheckAttempt> => {
     const result = await (dependencies.execute ?? execOnSlot)(vars, command, {
       timeout: AUTH_CHECK_TIMEOUT_MS,
     });
@@ -39,9 +39,9 @@ export async function assertRunnerAuthBeforeLaunch(
     }
     return { exitCode: result.exitCode, verdict };
   };
-  const timedOut = (attempt: Awaited<ReturnType<typeof check>>) =>
+  const timedOut = (attempt: AuthCheckAttempt) =>
     attempt.exitCode === EXEC_TIMEOUT_EXIT_CODE || attempt.verdict?.cause === 'timeout';
-  // A slow provider or node network can outlast one check; only a second timeout fails dispatch.
+  // A slow provider, node or support-bundle delivery can outlast one check; only a second fails dispatch.
   let attempt = await check();
   if (timedOut(attempt)) attempt = await check();
   const { exitCode, verdict } = attempt;
@@ -54,6 +54,11 @@ export async function assertRunnerAuthBeforeLaunch(
   throw new RunnerExecutionError(
     `Runner ${definition.id} authentication failed before dispatch: auth_check_unavailable (${unavailableCause(exitCode, verdict)}). Check the node and the runner, then replay dispatch.`,
   );
+}
+
+interface AuthCheckAttempt {
+  exitCode: number;
+  verdict?: Record<string, unknown>;
 }
 
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
@@ -72,11 +77,18 @@ const RUNNER_CAUSES: Record<string, string> = {
 };
 
 function unavailableCause(exitCode: number, verdict: Record<string, unknown> | undefined): string {
+  // Also returned while the node's support bundle is still being delivered, before the check runs.
   if (exitCode === EXEC_TIMEOUT_EXIT_CODE)
-    return `the check timed out after ${AUTH_CHECK_TIMEOUT_MS / 1000} s, twice`;
+    return `the check did not finish within ${AUTH_CHECK_TIMEOUT_MS / 1000} s, twice`;
   if (!verdict) return `the check exited ${exitCode} without a verdict`;
-  const cause = RUNNER_CAUSES[String(verdict.cause)];
-  const runnerExit = Number.isInteger(verdict.exitCode) ? ` (exit ${verdict.exitCode})` : '';
+  const cause = Object.hasOwn(RUNNER_CAUSES, String(verdict.cause))
+    ? RUNNER_CAUSES[String(verdict.cause)]
+    : undefined;
+  const runnerExit = Number.isInteger(verdict.exitCode)
+    ? ` (exit ${verdict.exitCode})`
+    : typeof verdict.signal === 'string' && /^SIG[A-Z0-9]+$/.test(verdict.signal)
+      ? ` (${verdict.signal})`
+      : '';
   if (cause) return `${cause}${runnerExit}`;
   if (verdict.status === 'ready') return `the check reported ready but exited ${exitCode}`;
   return ['not_ready', 'invalid'].includes(String(verdict.status))
