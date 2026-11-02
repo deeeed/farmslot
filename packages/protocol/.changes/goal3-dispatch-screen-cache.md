@@ -1,0 +1,1 @@
+- Keep bounded Dispatch candidate and ticket-match snapshots in the shared client store, with candidate invalidation when fleet, run, configuration or model catalogs change.

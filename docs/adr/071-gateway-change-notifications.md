@@ -186,6 +186,11 @@ directories a user opened in a workspace, kept as stale snapshots per slot and
 run. Not persisted: one-off queries such as previews, searches and diagnostics,
 and streams.
 
+Dispatch keeps candidate lists and ticket-matching results by their request parameters.
+Jira ticket matching shares one entry across flow changes. Stored candidates can render
+while a live read refreshes availability; run creation and queue commands still validate
+the current state on the gateway.
+
 **Version-list catch-up.** Until the run list adopts version lists, its
 persisted result is the bounded list each client reads today. When the baseline
 shows that rereading it is slow, the run list adopts them. With `versions: true`

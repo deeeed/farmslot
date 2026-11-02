@@ -157,7 +157,6 @@ export abstract class DispatchWizardState extends LitElement {
    * cache is warm and subsequent calls hit it in <50ms. The flag is set ONLY on the
    * success path — a failure means we still don't know whether the cache warmed, so
    * the next attempt keeps the cold-cache budget. */
-  _candidatesEverLoaded = false;
   /** Comparison-lane fork context, parsed from #dispatch?lane=comparison&familyId=…&variant=…&parentRunId=… */
   @state() _comparisonLane = false;
   /** Operator chose comparison-sibling dispatch (run picker before ticket entry). */

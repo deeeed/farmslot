@@ -9,6 +9,11 @@ import type {
 
 import { Methods } from './registry.js';
 
+/** Ticket matching does not depend on a flow for Jira keys and browse URLs. */
+export function isJiraTicketReference(ticket: string): boolean {
+  return /^[A-Z]+-\d/i.test(ticket) || /atlassian\.net\/browse\//i.test(ticket);
+}
+
 export const DispatchMethods = {
   preview: Methods.DISPATCH_PREVIEW,
   pressureAdmissionGet: Methods.DISPATCH_PRESSURE_ADMISSION_GET,

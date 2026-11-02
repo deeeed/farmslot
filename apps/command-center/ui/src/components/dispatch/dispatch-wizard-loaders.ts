@@ -13,8 +13,8 @@ import type {
   RunListParams,
   RunListResult,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { isJiraTicketReference, Methods } from '@farmslot/protocol';
+import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { readConfiguration } from '../../configuration-resources.js';
 import { gateway } from '../../gateway-client.js';
@@ -62,22 +62,54 @@ export async function requestExecutionTemplatePreview(
 }
 
 export interface DispatchWizardCandidatesRequest extends DispatchCandidatesDraft {
-  candidatesEverLoaded: boolean;
   mockMode: boolean;
   mockCandidates: DispatchCandidatesResult['candidates'] | null;
 }
 
 export async function requestDispatchWizardCandidates(
   input: DispatchWizardCandidatesRequest,
+  onCached?: (result: DispatchCandidatesResult) => void,
 ): Promise<DispatchCandidatesResult> {
   if (input.mockMode) {
     return { candidates: input.mockCandidates ?? [] };
   }
-  return gateway.request<DispatchCandidatesResult>(
-    Methods.DISPATCH_CANDIDATES,
-    buildDispatchCandidatesParams(input),
-    input.candidatesEverLoaded && !input.forceRefresh ? undefined : 60_000,
+  return readDispatchQuery(
+    resourceQuery<DispatchCandidatesResult>(
+      Methods.DISPATCH_CANDIDATES,
+      buildDispatchCandidatesParams(input),
+    ),
+    onCached,
+    input.forceRefresh,
   );
+}
+
+/** Paint a held answer before refreshing it; dispatch commands still validate live state. */
+async function readDispatchQuery<T>(
+  query: ResourceQuery<T>,
+  onCached?: (result: T) => void,
+  refresh = false,
+): Promise<T> {
+  const cache = getResourceCache();
+  const owner = getResourceWorkspaceKey();
+  if (!cache) throw new Error('Dispatch store is unavailable');
+  const current = () => cache === getResourceCache() && owner === getResourceWorkspaceKey();
+  let shown: T | undefined;
+  const stop = cache.observe(query, (state) => {
+    if (current() && state.status !== 'ready' && state.data !== undefined && state.data !== shown) {
+      shown = state.data;
+      onCached?.(state.data);
+    }
+  });
+  try {
+    let state = cache.read(query);
+    if (refresh || state.status !== 'ready') state = await cache.retry(query);
+    if (!current()) throw new Error('Dispatch owner changed during read');
+    if (state.status !== 'ready' || state.data === undefined)
+      throw new Error(state.error?.message ?? 'Dispatch data could not refresh');
+    return state.data;
+  } finally {
+    stop();
+  }
 }
 
 export interface DispatchProjectMatchResult {
@@ -113,11 +145,16 @@ export async function requestDispatchProfileFit(input: {
 export function requestDispatchProjectMatch(
   ticket: string,
   flowType: FlowType | null,
+  onCached?: (result: DispatchProjectMatchResult) => void,
 ): Promise<DispatchProjectMatchResult> {
-  return gateway.request<DispatchProjectMatchResult>(Methods.DISPATCH_MATCH_PROJECT, {
-    ticketOrPr: ticket,
-    flowType,
-  });
+  return readDispatchQuery(
+    resourceQuery<DispatchProjectMatchResult>(Methods.DISPATCH_MATCH_PROJECT, {
+      ticketOrPr: ticket,
+      flowType,
+    }),
+    onCached,
+    !isJiraTicketReference(ticket),
+  );
 }
 
 export interface PriorRunsLookupRequest {
