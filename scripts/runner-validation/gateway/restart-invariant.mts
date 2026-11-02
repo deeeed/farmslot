@@ -18,7 +18,7 @@
 // (setup failure, a hold that never took effect, a run that never settled).
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, cp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -172,17 +172,23 @@ interface View {
   slot?: SlotView;
 }
 
+/** The run a hold belongs to: its slot, and where its evidence goes. */
+interface HoldContext {
+  slotId: string;
+  dir: string;
+}
+
 interface HoldPhase {
   step: StepName;
   restarts: Variant[];
   nodeAwayMs: number;
   /** When to arm: before the run is created, before the test resolves a decision, or on a poll. */
   armAt: 'create' | 'resolve' | ((view: View) => boolean);
-  arm(): Promise<void>;
+  arm(context: HoldContext): Promise<void>;
   held(view: View): boolean;
   /** The step got past the hold point without being held. */
   missed(view: View): boolean;
-  release(): Promise<void>;
+  release(context: HoldContext): Promise<void>;
   /** A git hold must lift before the new gateway starts: it reads its branch at boot. */
   releaseWhileDown?: boolean;
   needsSlot?: boolean;
@@ -204,25 +210,41 @@ const stepStatus = (run: Run, name: string) => run.steps.find((step) => step.nam
 const contexts = (run: Run, role: string) =>
   (run.agentContexts ?? []).filter((context) => context.role === role);
 
-function marker(stack: RemoteNodeStack, name: string, content = 'hold\n') {
+/**
+ * A marker under holds/. Its content says what to hold where the fixture reads it (the git and
+ * ssh holds match commands against it). Release keeps what the hold caught (`.hit`, and the git
+ * calls seen while armed, `.seen`) in the run's evidence.
+ */
+function marker(
+  stack: RemoteNodeStack,
+  name: string,
+  content: (context: HoldContext) => string = () => 'hold\n',
+) {
   const file = path.join(stack.holds, name);
   return {
-    arm: () => writeFile(file, content),
+    arm: (context: HoldContext) => writeFile(file, content(context)),
     hit: () => existsSync(`${file}.hit`),
-    release: async () => {
+    release: async (context: HoldContext) => {
       await rm(file, { force: true });
-      // A later phase arming the same marker must see its own hit.
-      await rm(`${file}.hit`, { force: true });
+      for (const suffix of ['.hit', '.seen'])
+        if (existsSync(`${file}${suffix}`)) {
+          await cp(`${file}${suffix}`, path.join(context.dir, `hold-${name}${suffix}`));
+          // A later phase arming the same marker must see its own hit.
+          await rm(`${file}${suffix}`, { force: true });
+        }
     },
   };
 }
 
+/** Git calls on the run's own slot checkout; fleet refreshes of other slots go through. */
+const slotGit = ({ slotId }: HoldContext) => `/slots/${slotId}( |/|$)`;
+
 const STEPS: Record<StepName, StepSpec> = {
   dispatch: {
     shape: 'pipe',
-    hold: 'git waits while holds/git exists, armed as soon as DISPATCH runs; released while the gateway is down',
+    hold: "git on the run's slot waits while holds/git exists, armed as soon as DISPATCH runs; released while the gateway is down",
     phase: (stack, restarts) => {
-      const git = marker(stack, 'git');
+      const git = marker(stack, 'git', slotGit);
       return {
         step: 'dispatch',
         restarts,
@@ -299,9 +321,9 @@ const STEPS: Record<StepName, StepSpec> = {
   },
   'human-gate-prep': {
     shape: 'pipe',
-    hold: 'git waits while holds/git exists, armed as soon as HUMAN_GATE runs, so the gate cannot finish preparing its package; released while the gateway is down',
+    hold: "git on the run's slot waits while holds/git exists, armed as soon as HUMAN_GATE runs, so the gate cannot finish preparing its package; released while the gateway is down",
     phase: (stack, restarts) => {
-      const git = marker(stack, 'git');
+      const git = marker(stack, 'git', slotGit);
       const gateCard = (run: Run) =>
         run.decisions.some((decision) => decision.type === 'engine_human_gate');
       return {
@@ -322,7 +344,7 @@ const STEPS: Record<StepName, StepSpec> = {
     shape: 'pipe',
     hold: "ssh waits while holds/ssh names session-usage.sh, FINALIZE's first slot call; armed as the test resolves the gate, released while the gateway is down",
     phase: (stack, restarts) => {
-      const ssh = marker(stack, 'ssh', 'session-usage.sh');
+      const ssh = marker(stack, 'ssh', () => 'session-usage.sh');
       return {
         step: 'finalize',
         restarts,
@@ -338,20 +360,19 @@ const STEPS: Record<StepName, StepSpec> = {
   },
   release: {
     shape: 'pipe',
-    hold: 'git waits while holds/git exists, armed once the run is terminal, so the slot teardown cannot reset the checkout; released while the gateway is down',
+    hold: "git on the run's slot waits while holds/git exists, armed once the run is terminal, so the slot teardown cannot finish; released while the gateway is down",
     phase: (stack, restarts) => {
-      const git = marker(stack, 'git');
+      const git = marker(stack, 'git', slotGit);
       return {
         step: 'release',
         restarts,
         nodeAwayMs: NODE_AWAY_MS,
         armAt: ({ run }) => TERMINAL.has(run.status),
         arm: git.arm,
-        held: ({ slot }) => git.hit() && slot?.phase === 'releasing',
+        held: ({ run, slot }) =>
+          TERMINAL.has(run.status) && git.hit() && slot !== undefined && slot.lifecycle !== 'ready',
         missed: ({ run, slot }) =>
-          TERMINAL.has(run.status) &&
-          !git.hit() &&
-          !['busy', 'held'].includes(slot?.lifecycle ?? ''),
+          TERMINAL.has(run.status) && !git.hit() && slot?.lifecycle === 'ready',
         release: git.release,
         releaseWhileDown: true,
         needsSlot: true,
@@ -413,10 +434,11 @@ async function runScenario(
   const dir = path.join(evidence, label);
   await mkdir(dir, { recursive: true });
   const started = Date.now();
+  const hold: HoldContext = { slotId, dir };
   // Workers start once MONITOR watches them (restart-invariant-fixtures.mts); one run at a time.
   const monitoring = path.join(stack.holds, 'monitoring');
   await rm(monitoring, { force: true });
-  for (const phase of phases) if (phase.armAt === 'create') await phase.arm();
+  for (const phase of phases) if (phase.armAt === 'create') await phase.arm(hold);
   const armed = new Set(phases.filter((phase) => phase.armAt === 'create'));
   const { run: created } = await stack.call<{ run: Run }>('run.create', shape.create(slotId));
   const runId = created.id;
@@ -457,22 +479,18 @@ async function runScenario(
 
     if (phase) {
       if (!armed.has(phase) && typeof phase.armAt === 'function' && phase.armAt(view)) {
-        await phase.arm();
+        await phase.arm(hold);
         armed.add(phase);
         await log(`${label}: ${phase.step} hold armed`);
       }
       if (armed.has(phase) && phase.held(view)) {
         await log(`${label}: ${phase.step} held`, { run: brief(run) });
         await writeJson(path.join(dir, `run-held-${phase.step}.json`), run);
-        // What the hold caught (the held git/ssh command, the reviewer turn); release removes it.
-        for (const name of await readdir(stack.holds))
-          if (name.endsWith('.hit'))
-            await cp(path.join(stack.holds, name), path.join(dir, `${phase.step}-${name}`));
         for (const [index, variant] of phase.restarts.entries()) {
           const last = index === phase.restarts.length - 1;
           const restart = await stack.restartGateway({
             ...(variant === 'node-away' ? { nodeAwayMs: phase.nodeAwayMs } : {}),
-            ...(last && phase.releaseWhileDown ? { whileDown: phase.release } : {}),
+            ...(last && phase.releaseWhileDown ? { whileDown: () => phase.release(hold) } : {}),
           });
           const after = await getRun();
           restarts.push({
@@ -487,7 +505,7 @@ async function runScenario(
           });
           await log(`${label}: restarted (${variant})`, { after: brief(after) });
         }
-        if (!phase.releaseWhileDown) await phase.release();
+        if (!phase.releaseWhileDown) await phase.release(hold);
         await log(`${label}: ${phase.step} released`);
         current += 1;
         continue;
@@ -515,7 +533,7 @@ async function runScenario(
       const action = shape.decide(decision);
       if (!action) continue;
       if (phase?.armAt === 'resolve' && !armed.has(phase)) {
-        await phase.arm();
+        await phase.arm(hold);
         armed.add(phase);
         await log(`${label}: ${phase.step} hold armed`);
       }
@@ -586,9 +604,12 @@ const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: '
 const reaper = startReaper();
 let stack: RemoteNodeStack | undefined;
 const cleanupErrors: string[] = [];
+let completed = false;
 const cleanup = cleanupOnExit(async () => {
   if (stack) cleanupErrors.push(...(await stack.cleanup()));
   reaper.done();
+  // A signal exits right after this; the normal path rewrites the file once the matrix is done.
+  await writeResults();
 });
 
 const shapesNeeded = [...new Set(selected.map((name) => STEPS[name].shape))];
@@ -706,32 +727,40 @@ try {
   await cleanup();
 }
 
-const inconclusive = stepResults.some((step) => step.checks.some((check) => check.error));
-const pass =
-  !setupError &&
-  !inconclusive &&
-  stepResults.every((step) => step.pass) &&
-  stepResults.length === (baselinesOnly ? 0 : selected.length);
-const failed = stepResults.filter((step) => !step.pass).map((step) => step.step);
-const summary = setupError
-  ? `could not run: ${setupError.split('\n')[0]}`
-  : `${stepResults.length - failed.length}/${stepResults.length} steps match the no-restart baseline${failed.length ? `; differ or unverified: ${failed.join(', ')}` : ''}`;
-const results = {
-  schemaVersion: 1,
-  head,
-  startedAt: startedAt.toISOString(),
-  finishedAt: new Date().toISOString(),
-  durationS: seconds(t0),
-  pass,
-  summary,
-  reviewer: { ...REVIEWER, reviewedRuns: reviewerRuns },
-  nodeAwayS: { default: NODE_AWAY_MS / 1000, review: REVIEW_NODE_AWAY_MS / 1000 },
-  baselines,
-  steps: stepResults,
-  setupError: setupError ?? null,
-  cleanupErrors,
-  evidence,
-};
-await writeJson(resultsFile, results);
+completed = true;
+const { pass, summary, exitCode } = await writeResults();
 console.log(JSON.stringify({ pass, summary, results: resultsFile }));
-process.exit(pass || (baselinesOnly && !setupError) ? 0 : setupError || inconclusive ? 2 : 1);
+process.exit(exitCode);
+
+/** Writes results.json from what has run so far; cleanup writes it too when a signal cut the run short. */
+async function writeResults() {
+  const inconclusive = stepResults.some((step) => step.checks.some((check) => check.error));
+  const error = completed ? setupError : (setupError ?? 'interrupted before the matrix finished');
+  const pass =
+    !error &&
+    !inconclusive &&
+    stepResults.every((step) => step.pass) &&
+    stepResults.length === (baselinesOnly ? 0 : selected.length);
+  const failed = stepResults.filter((step) => !step.pass).map((step) => step.step);
+  const summary = error
+    ? `could not run: ${error.split('\n')[0]}`
+    : `${stepResults.length - failed.length}/${stepResults.length} steps match the no-restart baseline${failed.length ? `; differ or unverified: ${failed.join(', ')}` : ''}`;
+  await writeJson(resultsFile, {
+    schemaVersion: 1,
+    head,
+    startedAt: startedAt.toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationS: seconds(t0),
+    pass,
+    summary,
+    reviewer: { ...REVIEWER, reviewedRuns: reviewerRuns },
+    nodeAwayS: { default: NODE_AWAY_MS / 1000, review: REVIEW_NODE_AWAY_MS / 1000 },
+    baselines,
+    steps: stepResults,
+    setupError: error ?? null,
+    cleanupErrors,
+    evidence,
+  });
+  const exitCode = pass || (baselinesOnly && !error) ? 0 : error || inconclusive ? 2 : 1;
+  return { pass, summary, exitCode };
+}

@@ -192,11 +192,17 @@ if (tool === 'ssh') {
 const gitHold = (realGit: string, holds: string) =>
   [
     '#!/bin/sh',
-    '# Restart-invariant hold: while holds/git exists every git call waits (15 min ceiling).',
-    `if [ -e ${JSON.stringify(path.join(holds, 'git'))} ]; then`,
-    `  printf '%s\\n' "$PWD git $*" >> ${JSON.stringify(path.join(holds, 'git.hit'))}`,
-    '  i=0',
-    `  while [ -e ${JSON.stringify(path.join(holds, 'git'))} ] && [ $i -lt 9000 ]; do sleep 0.1; i=$((i+1)); done`,
+    '# Restart-invariant hold: while holds/git exists, a git call whose "$PWD git $*" matches the',
+    '# extended regex in it waits (15 min ceiling). Every call made while it exists is logged.',
+    `hold=${JSON.stringify(path.join(holds, 'git'))}`,
+    'if [ -e "$hold" ]; then',
+    '  line="$PWD git $*"',
+    `  printf '%s\\n' "$line" >> "$hold.seen"`,
+    `  if printf '%s\\n' "$line" | grep -qE -- "$(cat "$hold" 2>/dev/null)"; then`,
+    `    printf '%s\\n' "$line" >> "$hold.hit"`,
+    '    i=0',
+    '    while [ -e "$hold" ] && [ $i -lt 9000 ]; do sleep 0.1; i=$((i+1)); done',
+    '  fi',
     'fi',
     `exec ${JSON.stringify(realGit)} "$@"`,
     '',
@@ -356,7 +362,15 @@ export async function startRemoteNodeStack(
     // Drop the links into the real home first, so no removal below can reach their targets.
     for (const at of createdLinks)
       if ((await lstat(at).catch(() => undefined))?.isSymbolicLink()) await unlink(at);
-    await attempt('fixture', () => rm(fixture, { recursive: true, force: true }));
+    // A process that exited during the removal can still write into it: remove until it stays gone.
+    await attempt('fixture', async () => {
+      const until = Date.now() + 5000;
+      do {
+        await rm(fixture, { recursive: true, force: true });
+        await delay(250);
+      } while (existsSync(fixture) && Date.now() < until);
+      if (existsSync(fixture)) throw new Error(`${fixture} keeps reappearing`);
+    });
     return errors;
   };
 
@@ -401,6 +415,8 @@ export async function startRemoteNodeStack(
       path.join(nodeUserHome, '.zprofile'),
       `export PATH=${JSON.stringify(`${fakeBin}:${path.join(nodeUserHome, '.asdf', 'shims')}`)}:"$PATH"\n`,
     );
+    // Pane shells exit during cleanup; a history file written then would recreate the fixture.
+    await writeFile(path.join(nodeUserHome, '.zshrc'), 'unset HISTFILE\n');
     // ~/farmslot-node is the node's deployment: for this node, the checkout under test.
     await mkdir(path.join(nodeUserHome, 'farmslot-node'));
     for (const name of ['scripts', 'packages', 'services', 'node_modules'])
