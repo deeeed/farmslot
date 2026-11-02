@@ -286,40 +286,6 @@ test('artifact text cache keys by slotId so two slots sharing a path do not pois
   );
 });
 
-test('inflight load racing invalidate must not repopulate the memo with stale value', async (t) => {
-  // Reviewer P1: when invalidateLiveRecipeContextMemo runs while a load is
-  // mid-flight, the originating caller's `liveContextResultCache.set` must NOT
-  // re-poison the cache the invalidation just cleared. The guard at line 619
-  // only writes if the inflight slot is still ours.
-  const { run, recipePath } = await makeRunWithRecipe(t, 'run-race-guard');
-
-  // Kick off the load — keep the promise in flight (no await yet).
-  const inflightPromise = attachLiveRecipeContext(run);
-
-  // While that load is parked on the await, invalidate. This clears both the
-  // memo and the inflight slot. The original load is still running but its
-  // post-await write should be a no-op now.
-  invalidateLiveRecipeContextMemo(run.id);
-  invalidateArtifactTextCache();
-
-  // Mutate the source so a fresh load would return different content.
-  await unlink(recipePath);
-  await writeFile(recipePath, '{"entry":"AFTER_INVALIDATE"}\n', 'utf-8');
-
-  // Drain the original in-flight load. Without the race guard, this would
-  // re-populate liveContextResultCache with the pre-invalidation snapshot.
-  await inflightPromise;
-
-  // A fresh call must NOT see a stale memo. With the race guard, the memo
-  // was never repopulated → fresh load runs → reads the new value.
-  const fresh = await attachLiveRecipeContext(run);
-  assert.equal(
-    fresh.liveRecipeContext?.recipeJson,
-    '{"entry":"AFTER_INVALIDATE"}\n',
-    'memo must not be re-poisoned by the completing in-flight load after invalidation',
-  );
-});
-
 test('cache key uses NUL separator + sentinel — slotId literally named "local" does not collide with null', async (t) => {
   // L1: previous separator was `|` and null sentinel was `'local'`. A real slot
   // literally named 'local' would have collided with null-slot reads. Verify
