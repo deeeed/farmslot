@@ -627,11 +627,15 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
     // The review step owns its worker-fix await. Re-enter that same step so it
     // can consume the retained fix signal or re-arm its wait after a restart.
     // Treating `fixing` as a blocked decision state loses that continuation.
+    // An open output review only acknowledges the worker's report and no step
+    // awaits it, so it must not hold the fix wait as a blocking decision.
     if (
       (run.status === 'fixing' || run.status === 'reconciling') &&
       fleet.slots.some((slot) => slot.slot === run.slotId) &&
       run.steps.some((step) => step.name === S.REVIEW && step.status === 'running') &&
-      !run.decisions.some((decision) => !decision.resolvedAt)
+      !run.decisions.some(
+        (decision) => !decision.resolvedAt && decision.payload?.kind !== 'output-review',
+      )
     ) {
       deps.startRun(run.id).catch((err) => {
         console.error(
