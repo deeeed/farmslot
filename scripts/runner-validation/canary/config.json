@@ -1,0 +1,39 @@
+{
+  "modelAllowlist": ["scripted", "haiku", "gpt-6-luna"],
+  "budgetsS": {
+    "find-slot": 10,
+    "write-task": 20,
+    "prepare": 90,
+    "dispatch": 90,
+    "monitor": 60,
+    "complete": 30,
+    "human-gate": 30,
+    "finalize": 30,
+    "ci-watch": 30,
+    "release": 120,
+    "native-check": 10
+  },
+  "knownFailures": [
+    {
+      "case": "review",
+      "variant": "node-away",
+      "signature": "No node connected for machine \\S+ after 120000ms",
+      "ledger": "F-pending (review node-away past 120 s)"
+    },
+    {
+      "case": "f324-replay-open-gate",
+      "variant": "*",
+      "signature": "Run stopped while awaiting its execution node|not superseded",
+      "ledger": "F324"
+    }
+  ],
+  "live": {
+    "profileHome": "~/.farmslot-automation",
+    "profile": "farm-automation",
+    "nodes": [
+      { "machine": "macpro", "slot": "macpro-canary-1" },
+      { "machine": "mini", "slot": "mini-canary-1" }
+    ],
+    "f324Node": "mini"
+  }
+}

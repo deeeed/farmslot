@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Template: install-restart-invariant.sh fills in __CHECKOUT__ and __RI_HOME__. -->
+<!-- Template: install-nightly.sh fills in __CHECKOUT__ and __CANARY_HOME__. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.farmslot.restart-invariant</string>
+  <string>com.farmslot.canary-nightly</string>
   <key>ProgramArguments</key>
   <array>
     <!-- A login shell: the run needs the host's asdf node, yarn and codex on PATH. -->
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>exec __CHECKOUT__/scripts/runner-validation/nightly/restart-invariant-nightly.sh</string>
+    <string>exec __CHECKOUT__/scripts/runner-validation/canary/nightly.sh</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>RI_CHECKOUT</key>
+    <key>CANARY_CHECKOUT</key>
     <string>__CHECKOUT__</string>
-    <key>RI_HOME</key>
-    <string>__RI_HOME__</string>
+    <key>CANARY_HOME</key>
+    <string>__CANARY_HOME__</string>
   </dict>
   <key>StartCalendarInterval</key>
   <dict>
@@ -27,9 +27,9 @@
     <integer>30</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>__RI_HOME__/launchd.log</string>
+  <string>__CANARY_HOME__/launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>__RI_HOME__/launchd.log</string>
+  <string>__CANARY_HOME__/launchd.log</string>
   <key>ProcessType</key>
   <string>Background</string>
 </dict>

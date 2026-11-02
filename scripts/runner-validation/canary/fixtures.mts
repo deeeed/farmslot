@@ -1,12 +1,18 @@
-// Project packs, seed repository and worker commands for restart-invariant.mts.
+// Project packs, seed repositories and workers for the canary.
 //
-// `ri-pipe` runs the whole dev pipeline with the scripted worker and no reviewer. `ri-review` has
-// the pipeline REVIEW on (codex): its scripted worker commits a two-file change, one file a
-// leftover debug helper the reviewer should flag. When the engine relaunches the worker for the
-// review-fix round, the same command marks the fix task started, removes that file, commits and
-// marks it complete. Workers hold while their marker exists under the stack's holds/ directory.
+// `farmslot-canary` is the demo project the live canary uses (setup.mts writes it into a farm):
+// no app, a tiny repo, the scripted runner only. Its repo ships the fake runner a scripted
+// scenario launches from the slot checkout. The isolated stack uses the same pack and repo.
+//
+// `ri-pipe` and `ri-review` drive the isolated restart matrix. `ri-pipe` runs the whole dev
+// pipeline with the scripted worker and no reviewer. `ri-review` has the pipeline REVIEW on
+// (codex): its scripted worker commits a two-file change, one file a leftover debug helper the
+// reviewer should flag. When the engine relaunches the worker for the review-fix round, the same
+// command marks the fix task started, removes that file, commits and marks it complete. Workers
+// hold while their marker exists under the stack's holds/ directory.
 import type { ProjectPack } from '../lib/remote-node-stack.mjs';
 
+export const CANARY_PROJECT = 'farmslot-canary';
 export const PIPE_PROJECT = 'ri-pipe';
 export const REVIEW_PROJECT = 'ri-review';
 export const REVIEWER = { runner: 'codex', model: 'gpt-6-luna', effort: 'low' } as const;
@@ -16,6 +22,105 @@ export const SEED: Record<string, string> = {
   'src/index.ts': "export const fixture = 'restart-invariant';\n",
   '.gitignore': '.task/\n.agent/\n',
 };
+
+// What `node "$PWD/packages/cli/bin/farmslot.mjs" scripted-runner …` runs in a canary slot: wait
+// the scenario's step delay (MONITOR must see a live runner), write the reports a dev run hands
+// over, and signal complete. No model, no code change.
+const FAKE_RUNNER = `#!/usr/bin/env node
+// Farmslot canary fake runner: the slot checkout's "CLI" for a scripted scenario. No model.
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
+const args = process.argv.slice(2);
+const value = (name, fallback) => {
+  const index = args.indexOf(\`--\${name}\`);
+  return index >= 0 ? args[index + 1] : fallback;
+};
+if (args[0] !== 'scripted-runner' || value('scenario', 'success') !== 'success') {
+  console.error('canary fake runner: only "scripted-runner --scenario success" is supported');
+  process.exit(2);
+}
+const taskDir = path.resolve(value('task-dir'));
+const artifacts = path.join(taskDir, 'artifacts');
+mkdirSync(artifacts, { recursive: true });
+setTimeout(() => {
+  writeFileSync(path.join(artifacts, 'pr-description.md'), '# Canary\\n\\nScripted canary run; no code change.\\n');
+  writeFileSync(path.join(artifacts, 'learnings.md'), '# Learnings\\n\\n- Canary run.\\n');
+  writeFileSync(path.join(artifacts, 'report.md'), '# Canary report\\n\\n- Status: complete\\n');
+  const signal = {
+    status: 'complete',
+    outcome: 'success',
+    disposition: 'fixed',
+    reason: 'canary scripted run',
+    evidence: { reportPath: 'artifacts/report.md', artifacts: [] },
+    timestamp: new Date().toISOString(),
+  };
+  writeFileSync(path.join(taskDir, 'SIGNAL.json'), \`\${JSON.stringify(signal, null, 2)}\\n\`);
+}, Number(value('step-delay-ms', '8000')));
+`;
+
+/** The canary slot repo: committed in each canary slot's origin. */
+export const CANARY_REPO: Record<string, string> = {
+  'README.md':
+    '# Farmslot canary\n\nThe post-deploy canary runs scripted runs here. Nothing else.\n',
+  '.gitignore': '.task/\n.agent/\n',
+  'packages/cli/bin/farmslot.mjs': FAKE_RUNNER,
+};
+
+export const CANARY_TAGS = ['canary'];
+
+/**
+ * A canary lifecycle run: interactive dev with the reviewed profile (HUMAN_GATE prepares a
+ * package and presents a card), the scripted runner, no code change, so the gate offers to close
+ * it as shipped, which goes through FINALIZE without GitHub.
+ */
+export function canaryRunParams(slotId: string, label: string): Record<string, unknown> {
+  return {
+    project: CANARY_PROJECT,
+    flowType: 'dev',
+    mode: 'interactive',
+    devInteractiveProfile: 'reviewed',
+    ticketOrPr: `canary ${label}`,
+    initialContext:
+      'Post-deploy canary: a scripted run through the whole lifecycle. No code change.',
+    slotId,
+    runner: 'scripted',
+    model: 'scripted',
+    transport: 'tmux',
+    scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 8000 },
+    tags: CANARY_TAGS,
+  };
+}
+
+/** The canary demo project, for a repo at `origin`. */
+export function canaryPack(origin: string): ProjectPack {
+  return {
+    name: CANARY_PROJECT,
+    projectJson: {
+      repo_url: origin,
+      default_branch: 'main',
+      // Pack portability requires a QA flow even though canary runs never use one.
+      qa: {
+        default_profile: 'changes',
+        profiles: [{ id: 'changes', title: 'Validate changes', template_id: 'validation/shared' }],
+      },
+      paths: { runtime_dir: '.agent', artifact_dir: '.task' },
+      execution_templates: {
+        sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
+      },
+      review: { enabled: false },
+      monitoring: { poll_interval_min: 0.02, total_timeout_min: 15 },
+    },
+    files: {
+      'shared/dev/shared.md':
+        '---\nplatforms: [cli]\n---\n\n# Canary development\n\n- [ ] Run the scripted canary scenario.\n',
+      'shared/validation/shared.md':
+        '---\nplatforms: [cli]\n---\n\n# Canary validation\n\n- [ ] Validate the change.\n',
+      'templates/prompts/worker-dispatch.md': 'Read {{TASK_FILE}} and follow it.\n',
+      'templates/prompts/worker-nudge.md': 'Continue {{TASK_FILE}}.\n',
+    },
+  };
+}
 
 export const REVIEW_TICKET = {
   title: 'Add a name formatter',

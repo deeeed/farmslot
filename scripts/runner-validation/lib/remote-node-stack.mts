@@ -69,12 +69,14 @@ export interface RemoteNodeStackOptions {
   slots: string[];
   /** The packs, given the stack's holds directory. */
   projects: (holds: string) => ProjectPack[];
-  /** Files of the seed repository the slots clone. */
-  seed: Record<string, string>;
+  /** Files of each project's repository, by project name; its slots clone it. */
+  seeds: Record<string, Record<string, string>>;
   /** Untracked files written into a slot's checkout (git-excluded), given its id and the fixture. */
   slotFiles?: (slotId: string, fixture: string) => Record<string, string>;
   /** Node CLI snapshots by commit, reused across runs. */
   cliSnapshots: string;
+  /** A node CLI snapshot to use as is (a host's deployed one) instead of building one. */
+  cliSnapshot?: string;
   /** Written to `<fixture>/.owner`, so an outside sweep can match a stack it owns. */
   ownerTag: string;
   reaper: Reaper;
@@ -146,7 +148,7 @@ const HOLD = ${JSON.stringify(path.join(holds, 'ssh'))};
 const [tool, ...args] = process.argv.slice(2);
 appendFileSync(${JSON.stringify(log)}, JSON.stringify({ at: new Date().toISOString(), tool, args }) + '\\n');
 const isTarget = (value) => value === HOST || value.endsWith('@' + HOST);
-const refuse = (why) => { process.stderr.write('restart-invariant shim refused ' + tool + ': ' + why + '\\n'); process.exit(255); };
+const refuse = (why) => { process.stderr.write('remote-node-stack shim refused ' + tool + ': ' + why + '\\n'); process.exit(255); };
 // The "remote" side is the stack's node: its HOME, never this host's.
 const NODE_HOME = ${JSON.stringify(nodeUserHome)};
 const local = (value) => {
@@ -213,11 +215,14 @@ const gitHold = (realGit: string, holds: string) =>
 // so the gateway sees a live, accepted reviewer that cannot finish until the hold is released.
 // Requests are answered before the hold, so no native request times out (30 s). `turn/started`
 // passes through. Every other invocation (--version, login status) runs codex directly.
+// Each turn sent to codex is a model call and is logged to holds/model-calls.log. A hold whose
+// marker reads `swallow` answers the turn itself instead: an accepted reviewer, no model call.
 const codexProxy = (realCodex: string, holds: string) => `'use strict';
 const { spawn, spawnSync } = require('node:child_process');
-const { appendFileSync, existsSync } = require('node:fs');
+const { appendFileSync, existsSync, readFileSync } = require('node:fs');
 const REAL = ${JSON.stringify(realCodex)};
 const HOLD = ${JSON.stringify(path.join(holds, 'review'))};
+const CALLS = ${JSON.stringify(path.join(holds, 'model-calls.log'))};
 const args = process.argv.slice(2);
 if (!args.includes('app-server'))
   process.exit(spawnSync(REAL, args, { stdio: 'inherit' }).status ?? 1);
@@ -226,13 +231,21 @@ for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => c
 const turnStarts = new Set();
 let input = '';
 process.stdin.on('data', (chunk) => {
-  child.stdin.write(chunk);
   input += chunk;
   for (let end; (end = input.indexOf('\\n')) >= 0; input = input.slice(end + 1)) {
-    try {
-      const message = JSON.parse(input.slice(0, end));
-      if (message.method === 'turn/start' && message.id !== undefined) turnStarts.add(String(message.id));
-    } catch {}
+    const line = input.slice(0, end + 1);
+    let message = {};
+    try { message = JSON.parse(line); } catch {}
+    if (message.method === 'turn/start' && message.id !== undefined) {
+      if (existsSync(HOLD) && readFileSync(HOLD, 'utf8').trim() === 'swallow') {
+        appendFileSync(HOLD + '.hit', new Date().toISOString() + ' turn ' + message.id + ' swallowed\\n');
+        process.stdout.write(JSON.stringify({ id: message.id, result: { turn: { id: 'swallowed-' + message.id } } }) + '\\n');
+        continue;
+      }
+      turnStarts.add(String(message.id));
+      appendFileSync(CALLS, new Date().toISOString() + ' ' + process.pid + ' turn ' + message.id + '\\n');
+    }
+    child.stdin.write(line);
   }
 });
 process.stdin.on('end', () => child.stdin.end());
@@ -287,7 +300,6 @@ export async function startRemoteNodeStack(
   const tmuxDir = path.join(fixture, 'tmux');
   const fakeBin = path.join(fixture, 'bin');
   const holds = path.join(fixture, 'holds');
-  const origin = path.join(fixture, 'origin.git');
   const nodePoolDir = path.join(fixture, 'node-pool');
   const proofHost = `${machine}.invalid`;
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
@@ -381,19 +393,19 @@ export async function startRemoteNodeStack(
     });
     await writeFile(
       path.join(fixture, '.owner'),
-      `restart-invariant ${options.ownerTag} ${process.pid}\n`,
+      `remote-node-stack ${options.ownerTag} ${process.pid}\n`,
     );
     for (const name of ['scripts', 'services', 'packages', 'node_modules'])
       await symlink(path.join(root, name), path.join(fixture, name));
     // Node support bundles must resolve inside FARMSLOT_ROOT: give those paths real copies.
     for (const relative of RUNNER_OBSERVABILITY_SUPPORT_PATHS)
       await materialize(root, fixture, relative);
-    await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated restart-invariant fixture\n');
+    await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated remote-node stack fixture\n');
     // The no-checkout clone has no .gitignore; pack ownership depends on it.
     await cp(path.join(root, '.gitignore'), path.join(fixture, '.gitignore'));
     await mkdir(path.join(home, 'run-archive'), { recursive: true, mode: 0o700 });
     await mkdir(nodeHome, { recursive: true, mode: 0o700 });
-    for (const name of ['pool', 'node-pool', 'runs', 'slots', 'bin', 'holds'])
+    for (const name of ['pool', 'node-pool', 'runs', 'slots', 'bin', 'holds', 'origins', 'seeds'])
       await mkdir(path.join(fixture, name));
     await mkdir(tmuxDir, { mode: 0o700 });
 
@@ -425,7 +437,7 @@ export async function startRemoteNodeStack(
     await mkdir(path.join(nodeUserHome, '.local', 'bin'), { recursive: true });
     await link(
       path.join(
-        await ensureCliSnapshot(root, options.cliSnapshots, evidence, log),
+        options.cliSnapshot ?? (await ensureCliSnapshot(root, options.cliSnapshots, evidence, log)),
         'packages/cli/bin/farmslot.mjs',
       ),
       path.join(nodeUserHome, '.local', 'bin', 'farmslot'),
@@ -434,7 +446,7 @@ export async function startRemoteNodeStack(
     // ---- fixture bin: nothing reaches GitHub, ssh stays local, holds are inert until armed.
     await writeFile(
       path.join(fakeBin, 'gh'),
-      '#!/bin/sh\necho "restart-invariant: gh is disabled in the isolated stack" >&2\nexit 2\n',
+      '#!/bin/sh\necho "isolated stack: gh is disabled" >&2\nexit 2\n',
       { mode: 0o755 },
     );
     await writeFile(
@@ -460,29 +472,38 @@ export async function startRemoteNodeStack(
       { mode: 0o755 },
     );
 
-    // ---- origin and slots
-    const seed = path.join(fixture, 'seed');
-    for (const [file, content] of Object.entries(options.seed)) {
-      await mkdir(path.dirname(path.join(seed, file)), { recursive: true });
-      await writeFile(path.join(seed, file), content);
+    // ---- origins (one per project) and slots
+    const packs = options.projects(holds);
+    const origin = (project: string) => path.join(fixture, 'origins', `${project}.git`);
+    for (const pack of packs) {
+      const seed = path.join(fixture, 'seeds', pack.name);
+      for (const [file, content] of Object.entries(options.seeds[pack.name] ?? {})) {
+        await mkdir(path.dirname(path.join(seed, file)), { recursive: true });
+        await writeFile(path.join(seed, file), content);
+      }
+      git(fixture, 'init', '-q', '-b', 'main', seed);
+      git(seed, 'add', '-A');
+      git(
+        seed,
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        'commit',
+        '-q',
+        '-m',
+        'fixture: seed',
+      );
+      git(fixture, 'clone', '-q', '--bare', seed, origin(pack.name));
     }
-    git(seed, 'init', '-q', '-b', 'main');
-    git(seed, 'add', '-A');
-    git(
-      seed,
-      '-c',
-      'user.name=Fixture',
-      '-c',
-      'user.email=fixture@example.invalid',
-      'commit',
-      '-q',
-      '-m',
-      'fixture: seed',
-    );
-    git(fixture, 'clone', '-q', '--bare', seed, origin);
     const slotRepo = (slotId: string) => path.join(fixture, 'slots', slotId);
+    const projectOf = (slotId: string) => {
+      const pack = packs.find((candidate) => slotId.startsWith(`${candidate.name}-`));
+      if (!pack) throw new Error(`Slot ${slotId} belongs to no project`);
+      return pack.name;
+    };
     for (const slotId of options.slots) {
-      git(fixture, 'clone', '-q', origin, slotRepo(slotId));
+      git(fixture, 'clone', '-q', origin(projectOf(slotId)), slotRepo(slotId));
       git(slotRepo(slotId), 'config', 'user.name', 'Fixture Worker');
       git(slotRepo(slotId), 'config', 'user.email', 'fixture@example.invalid');
       const extra = options.slotFiles?.(slotId, fixture) ?? {};
@@ -497,7 +518,7 @@ export async function startRemoteNodeStack(
     }
 
     // ---- projects and pools
-    for (const pack of options.projects(holds)) {
+    for (const pack of packs) {
       const dir = path.join(fixture, 'projects', pack.name);
       for (const [file, content] of Object.entries(pack.files)) {
         await mkdir(path.dirname(path.join(dir, file)), { recursive: true });
@@ -506,7 +527,7 @@ export async function startRemoteNodeStack(
       await writeJson(path.join(dir, 'project.json'), {
         ...pack.projectJson,
         name: pack.name,
-        repo_url: origin,
+        repo_url: origin(pack.name),
         default_branch: 'main',
       });
       const pool = (host: string) => ({
@@ -638,7 +659,7 @@ export async function startRemoteNodeStack(
 
     await startGateway();
     const { principal } = await call<{ principal: { id: string } }>('principal.create', {
-      subject: { type: 'node', displayName: 'restart-invariant node', machine },
+      subject: { type: 'node', displayName: 'isolated stack node', machine },
       roles: [],
     });
     await call('principal.bindNativeOwner', {
@@ -647,7 +668,7 @@ export async function startRemoteNodeStack(
     });
     const issued = await call<{ secret: string }>('credential.issue', {
       principalId: principal.id,
-      displayName: 'restart-invariant node',
+      displayName: 'isolated stack node',
     });
     nodeToken = issued.secret;
     // The node loader prefers FARMSLOT_ROOT/.env over its env; the credential stays in the fixture.
