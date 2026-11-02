@@ -1,9 +1,12 @@
 // Runner-native trust stores. Callers admit only farm-created worker workspaces.
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const { execFileSync } = require('node:child_process');
-const { assertGrokReviewAccount } = require('./review-account-preflight.cjs');
+const {
+  assertGrokReviewAccount,
+  grokHome,
+  homeDirectory: home,
+} = require('./review-account-preflight.cjs');
 const { tomlSectionHeaderIndexes, tomlBareStringValue } = require('./toml-scan.cjs');
 
 const lockScript = String.raw`
@@ -126,10 +129,8 @@ function seed(file, folders, values, namespace, env) {
     ),
   );
 }
-const home = (env) => env.HOME || os.homedir();
-/** Where Codex and Grok read their login when no profile selects another directory. */
+/** Where Codex reads its login when no profile selects another directory. */
 const codexHome = (env) => env.CODEX_HOME || path.join(home(env), '.codex');
-const grokHome = (env) => env.GROK_HOME || path.join(home(env), '.grok');
 function trustGrokFolders(folders, env = process.env) {
   const file = path.join(grokHome(env), 'trusted_folders.toml');
   const added = seed(
@@ -172,10 +173,11 @@ function farmReviewWorkspace(cwd, owner) {
     throw new Error('Review workspace ownership marker does not match this launch');
   return true;
 }
-function trustGrokWorkspace(cwd, env = process.env, owner, launch) {
+// A Grok review checkout stays untrusted, so Grok loads none of its hooks, agents, MCP or LSP
+// servers, instructions or skills. The preflight refuses an account that already trusts it.
+function checkGrokReviewWorkspace(cwd, env = process.env, owner, launch) {
   if (!farmReviewWorkspace(cwd, owner)) return;
   assertGrokReviewAccount(cwd, env, launch);
-  trustGrokFolders([path.resolve(cwd), fs.realpathSync(cwd)], env);
 }
 function configureCodexReviewWorkspace(cwd, env = process.env, owner) {
   if (!farmReviewWorkspace(cwd, owner)) return;
@@ -217,6 +219,22 @@ const reviewConfigurationRoots = (cwd) =>
     '.lsp.json',
     '.envrc',
   ].map((name) => path.join(fs.realpathSync(cwd), name));
+// What a Grok review may write in its home: its sessions and logs, and the bytes of the sign-in
+// lock that a token refresh takes. Everything else stays read-only: hooks, configuration, policy,
+// bundled and user agents, skills, memory, the model catalog cache, the stored login, the external
+// sign-in command in bin/, and shell startup files (a profile's HOME is its Grok home). So one
+// review cannot change what the next one loads, runs, signs in with or sends requests to.
+const grokReviewHomeAccess = (env) => ({
+  writablePaths: ['sessions', 'logs'].map((name) => path.join(grokHome(env), name)),
+  dataFiles: [path.join(grokHome(env), 'auth.json.lock')],
+  // The log an unsandboxed Grok start appends to.
+  fixedPaths: [path.join(grokHome(env), 'logs', 'unified.jsonl')],
+});
+// A Grok review checkout stays untrusted (ADR-057 Amendment 13), and Grok's terminal then stops
+// at "Do you trust the contents of this directory?" for any checkout with project configuration.
+const terminalReviewRefusalByRunner = {
+  grok: "Grok terminal reviews are unavailable: the review checkout stays untrusted and Grok's terminal stops at its folder-trust prompt. Use the native Grok transport.",
+};
 const reviewConfigurationRootsByRunner = {
   grok: reviewConfigurationRoots,
   claude: reviewConfigurationRoots,
@@ -237,13 +255,15 @@ module.exports = {
   codexHome,
   grokHome,
   reviewConfigurationRootsByRunner,
+  terminalReviewRefusalByRunner,
+  grokReviewHomeAccess,
   codexWorkspaceTrustConfig,
   trustGrokFolders,
-  trustGrokWorkspace,
+  checkGrokReviewWorkspace,
   configureCodexReviewWorkspace,
   workspaceTrustByRunner: {
     codex: configureCodexReviewWorkspace,
-    grok: trustGrokWorkspace,
+    grok: checkGrokReviewWorkspace,
     claude: trustClaudeWorkspace,
   },
   trustClaudeWorkspace,

@@ -67,6 +67,53 @@ test('configuration identities contain only declared selectors; commands and D08
     assert.equal(resourceDependenciesForRead(method, {}), undefined, method);
 });
 
+// F319: every template preview on Dispatch failed with "Invalid configuration selector:
+// executionTemplateId", because template ids are `<flow>/<name>`.
+test('template previews and options accept a `<flow>/<name>` template id, but no path tricks', () => {
+  const selectors = (executionTemplateId: string, executionTemplateSourceId = 'project:one') => ({
+    project: 'va-mmcx-terminal-farm',
+    flowType: 'pr-complete',
+    executionTemplateId,
+    executionTemplateSourceId,
+    executionTemplateSha256: '83cc67572f0a',
+  });
+  const preview = (executionTemplateId: string, sourceId?: string) =>
+    resourceQuery('config.templatePreview', selectors(executionTemplateId, sourceId));
+  assert.deepEqual(preview('pr-complete/default').params, selectors('pr-complete/default'));
+  assert.deepEqual(
+    resourceQuery('config.templateOptions', {
+      project: 'va-mmcx-terminal-farm',
+      flowType: 'pr-complete',
+      executionTemplateId: 'pr-complete/default',
+    }).params,
+    {
+      project: 'va-mmcx-terminal-farm',
+      flowType: 'pr-complete',
+      executionTemplateId: 'pr-complete/default',
+    },
+  );
+  for (const id of [
+    '',
+    '/pr-complete',
+    'pr-complete/',
+    'pr-complete//default',
+    'pr-complete/./default',
+    'pr-complete/../private',
+    '..',
+    'pr-complete\\default',
+  ])
+    assert.throws(() => preview(id), /Invalid configuration selector: executionTemplateId/, id);
+  // Other selectors stay single segments.
+  assert.throws(
+    () => resourceQuery('config.templates', { project: 'team/project' }),
+    /Invalid configuration selector: project/,
+  );
+  assert.throws(
+    () => preview('pr-complete/default', 'project/one'),
+    /Invalid configuration selector: executionTemplateSourceId/,
+  );
+});
+
 test('a cold project observation retains original age offline, then authority loss removes it', async () => {
   const scope = {
     gatewayUrl: 'ws://config.invalid/',

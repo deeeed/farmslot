@@ -537,3 +537,69 @@ Pi's lack of approvals is a property of Pi, not of the native path: a sandboxed 
 ### Public surface
 
 `opencodeNativeAdapter` and `piNativeAdapter`, and the `opencode` and `pi` runner definitions in `@farmslot/agent-runtime`; the `opencode-acp` and `pi-rpc` native transports in the gateway runner registry; `resolveRunnerPath` in `@farmslot/slot-config`.
+
+## Amendment 13: Grok review checkouts stay untrusted, 2026-11-02
+
+**Status:** Accepted (lead, 2026-11-02; Arthur's option 3).
+
+### Decision
+
+A Grok review never trusts its checkout. `checkGrokReviewWorkspace` (formerly `trustGrokWorkspace`) runs the account preflight and writes nothing to `trusted_folders.toml`.
+
+Grok loads a folder's project hooks, project agents, MCP and LSP servers, project instructions and project skills only once the folder is trusted, and a grant covers the folder's subdirectories. The preflight therefore refuses when:
+
+- the account's `trusted_folders.toml` names the checkout, its real path or any parent, as an exact TOML basic or literal string;
+- folder trust is off for the account. The preflight asks Grok directly: `grok inspect` on a fresh folder that holds only an `AGENTS.md` must report it untrusted, with no project instructions. This covers the environment, every configuration layer, device management and remote settings, as Grok resolves them when the review starts;
+- the trust store cannot be read.
+
+The account's own hooks still matter. A headless Grok run treats an untrusted folder as trusted for the account's own hooks, and such a hook can run any file in the checkout. Grok 1.0.70 lists those hooks only when inspected from a folder it trusts for them. The preflight therefore inspects the account from its home directory, where Grok loads no project configuration, and requires that inspection to read as trusted. It refuses any enabled hook there, and any MCP or LSP server the account starts, since the hook pin never covered those. Plugin hooks and agent frontmatter hooks load after inspection, so the account must also meet one of these:
+
+- the `nonManagedHooks` pin (`allow_managed_hooks_only = true`) is set, which skips those hooks at dispatch;
+- it has no plugins, only built-in agents, and no notification commands (`[[ui.notifications.hooks]]`; the preflight refuses any `notifications` setting in the account's `config.toml`).
+
+The pin is no longer required.
+
+**Review sandbox.** In its Grok home a review may write only `sessions/` and `logs/`, plus the bytes of `auth.json.lock`, which a token refresh takes. The lock must already be a regular file; the farm creates it if missing, and a review cannot rename, remove or replace it. No link can be created anywhere in the home. The farm also creates `sessions/`, `logs/` and `logs/unified.jsonl` before the review starts and refuses one that is a link or the wrong type. A review cannot remove, rename or replace them, so nothing can be moved in to stand for them. A review can still move a directory that holds a link into `sessions/` or `logs/`. Only a Grok started outside a review on this home that writes that exact path would follow it. The rest of the home is read-only, so one review cannot change what the next one loads, runs, signs in with or sends requests to. That covers:
+
+- hooks, configuration, policy and trust files;
+- `bundled/` agents, which load as built-in, and user agents;
+- skills and memory;
+- the model catalog cache, which names the endpoint later sessions call;
+- the stored login;
+- the external sign-in command in `bin/`, which also runs outside the sandbox when account status is read;
+- shell startup files, since a profile's HOME is its Grok home.
+
+Grok's own writes to its caches and login fail inside a review and are not needed. A live native session on macwork and mini signs in, starts and finishes this way.
+
+Operations: built-in skills, the model catalog cache and a stored login refresh only when Grok starts outside a review. A new review home needs one ordinary start before its first review. Plugins stay inert, because one loads only when the read-only `config.toml` enables it.
+
+**Terminal reviews.** The Grok runner definition declares `terminalReviewRefusal`. Review admission rejects a Grok terminal (tmux) review with that message before any task preparation, and the terminal launcher refuses it too. The message points to the native transport. In an untrusted checkout that carries project configuration, Grok's terminal stops at "Do you trust the contents of this directory?", and answering Yes would trust the PR.
+
+**Sign-in.** A native Grok session and the account observer authenticate with `cached_token` when Grok offers it. Otherwise they use the home's external auth provider (`auth_provider_command`), the method Grok marks `_meta.external_provider`. The review home uses that provider to share the main login. They still never pick grok.com's interactive login or an API-key fallback. Before this change, a home with an external provider could not start a native session ("Runner did not advertise the required native login method").
+
+### Rationale
+
+Grok's deployment sync deletes an unsigned `$GROK_HOME/requirements.toml` on every signed-in start. On an account with no organization policy, the pin therefore could not stay in a review home, and every Grok review was refused. The pin layers that do survive (`/etc/grok`, MDM, Claude's managed settings) apply to every Grok home on the node, main sessions included.
+
+Evidence from Grok 1.0.70 in a native ACP session, as the farm starts one, with a scratch repository carrying `.grok/hooks`, `.claude/settings.json` hooks, `.cursor/hooks.json` and an `AGENTS.md` instruction:
+
+- Untrusted, `grok inspect` listed 0 hooks and 0 instructions, and the session ran none.
+- Trusted, it listed 4 hooks, and the session ran all 4 and followed the instruction.
+- Through the farm's own launch on a review home without the pin (macwork, a sandboxed review session in a PR checkout that adds hooks for SessionStart, UserPromptSubmit, PreToolUse and Stop, a `.mcp.json` server and an `AGENTS.md` instruction):
+  - the preflight passed;
+  - the session read a file and answered;
+  - no hook wrote its marker into the session's writable root, where a sandboxed child could write one;
+  - the MCP server did not start, and the instruction was not followed;
+  - `trusted_folders.toml` was never written.
+  - A home that trusted the checkout's parent was refused.
+
+The cost is that a Grok reviewer no longer reads the repository's `AGENTS.md`, project skills or repository MCP and LSP servers. The review prompt carries the review instructions, and the review sandbox already denied the repository's runner configuration.
+
+### Public surface
+
+- `checkGrokReviewWorkspace` replaces `trustGrokWorkspace` in `@farmslot/agent-runtime` `scripts/workspace-trust.cjs`, and `workspaceTrustByRunner.grok` points to it.
+- `trustGrokFolders` stays, for worker slots.
+- `reviewRuntimeAccess` on a runner definition (Grok: `grokReviewHomeAccess`) and a fourth `runtimeAccess` argument to the review sandbox (`{ writablePaths, dataFiles }`). A runtime root that names them is read-only apart from them, and no link can be made in it.
+- `terminalReviewRefusal` on a runner definition, and `runnerTerminalReviewRefusal` in the gateway's review admission.
+- `grokAuthMethod` (the Grok adapter and account observer), and `AcpAuthMethod` / `selectAcpAuthMethod`: an ACP adapter's `authMethod` may now pick among the advertised methods.
+- `@farmslot/agent-runtime` needs a release. Until it is rolled out, nodes keep trusting review checkouts.

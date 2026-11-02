@@ -36,7 +36,11 @@ import {
 } from '../run-engine/terminal-teardown-registry.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import { NativeSlotOwnershipError } from '../runners/native/worker-error.js';
-import { quiescentHistoricalWorkerPanes, stopRunOwnedTmuxWorkers } from '../runners/owned-stop.js';
+import {
+  exitClosedRunUnrecordedWorker,
+  quiescentHistoricalWorkerPanes,
+  stopRunOwnedTmuxWorkers,
+} from '../runners/owned-stop.js';
 import { archiveRunnerSessionsForSlotRelease } from '../runners/session-archive.js';
 import { isShellProcessCommand, probeRunnerDescendantPid } from '../runners/session-process.js';
 import { contextPaneId } from '../runners/session-record.js';
@@ -220,8 +224,16 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       if (sessionOrigins.get(origin) !== repo)
         return `Tmux session ${session} was started outside this slot checkout; cleanup deferred`;
       // A slot session survives its runs. Its unrecorded idle shells own no
-      // conversation, but a live or unknown worker still blocks cleanup.
-      if ((await probeRunnerDescendantPid(vars, panePid)).state !== 'absent')
+      // conversation, but a live or unknown worker still blocks cleanup unless
+      // it is provably this closed run's own worker, which closing ends (F315).
+      const live = await probeRunnerDescendantPid(vars, panePid);
+      const left =
+        live.state === 'present'
+          ? await exitClosedRunUnrecordedWorker(vars, run, { session, paneId, panePid })
+          : null;
+      // The deferral keeps its message; the log says why the worker could not be ended.
+      if (left) console.log(`[slot-teardown] ${run.slotId}: left pane ${paneId} running: ${left}`);
+      if (live.state === 'unknown' || left)
         return `Unrecorded pane ${paneId} in slot session ${session} is not quiescent; cleanup deferred`;
       ownedShells.add(panePid);
     }

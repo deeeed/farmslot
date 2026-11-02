@@ -385,3 +385,42 @@ test('Claude worker rollup recomputes a removed session from its verified archiv
   await writeFile(transcript, raw + '{}\n');
   await assert.rejects(extractRunWorkerSessionUsage(current, makeVars()), /SHA256/);
 });
+
+// Arthur 11-02: below the free-space floor nothing is written, not even the archive directory
+// that mkdir would otherwise create before the copy checks the volume.
+test('a session archive below the free-space floor creates nothing', async (t) => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'fs-session-archive-'));
+  t.after(() => rm(tmp, { recursive: true, force: true }));
+  const sessionPath = path.join(tmp, 'session.jsonl');
+  await writeFile(sessionPath, `${CLAUDE_LINES.join('\n')}\n`, 'utf8');
+  const previous = process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+  process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = '100000000';
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+    else process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = previous;
+  });
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `ARCHIVE-${Date.now()}-floor`,
+    runner: 'claude',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    metrics: {
+      ...run.metrics,
+      runner: 'claude',
+      runnerSessionId: 'sess-floor',
+      runnerSessionPath: sessionPath,
+    },
+  });
+
+  const result = await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
+  assert.deepEqual([result.captured, result.missing], [0, 1]);
+  assert.match(
+    getRun(run.id)?.metrics.runnerSessionArchive?.reason ?? '',
+    /under the 100000000\.0 GB floor/,
+  );
+  assert.equal(existsSync(runSessionArchiveDir(run.id)), false);
+});

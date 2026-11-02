@@ -5,6 +5,7 @@ import path from 'node:path';
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
+import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import {
   execOnSlot,
   type RawProjectJson,
@@ -458,6 +459,7 @@ async function collectSlotScaffolding(
       throw new Error(
         `Scaffolding archive is ${Math.ceil(archiveBytes / 1024 ** 2)} MB, over the ${Math.floor(maxArchiveBytes / 1024 ** 2)} MB limit`,
       );
+    await assertHeavyWriteRoom(directory);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const archive = path.join(directory, 'scaffolding.tar');
     await slotCopyFile(vars, remoteArchive, archive, {

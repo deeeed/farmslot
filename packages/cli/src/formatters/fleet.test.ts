@@ -101,3 +101,19 @@ test('ghost slots absent from live pools never receive prepare hints even when f
   assert.match(output, /farmslot slot prepare macwork-ff-1/u);
   assert.doesNotMatch(output, /farmslot slot prepare ghost-slot-9/u);
 });
+
+test('pool and slot config the gateway could not read are shown, not left out (F306)', () => {
+  const output = formatFleetStatus(
+    resultFixture({
+      poolErrors: [{ file: 'macpro.json', error: 'Unterminated string in JSON at position 23768' }],
+      slots: [
+        slotFixture({ slot: 'macpro-audiolab-1', configError: 'Unterminated string in JSON' }),
+      ],
+    }),
+  );
+  assert.match(output, /POOL macpro\.json COULD NOT BE READ: Unterminated string/u);
+  assert.match(
+    output,
+    /macpro-audiolab-1: config could not be loaded \(Unterminated string in JSON\)/u,
+  );
+});

@@ -45,6 +45,7 @@ import {
   copyFileChunked,
   readRemoteFileChunkedToBuffer,
 } from './file-transfer.js';
+import { assertHeavyWriteRoom } from './heavy-write-room.js';
 import { replaceReadOnlyDestination } from './owned-copy.js';
 
 export const MAX_ARTIFACT_TREE_DEPTH = 12;
@@ -404,6 +405,7 @@ export async function slotCopyFile(
     (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0)
   )
     throw new Error('File copy requires a non-negative byte ceiling.');
+  await assertHeavyWriteRoom(path.dirname(localPath));
   if (local(ctx)) {
     if (options.maxBytes !== undefined && (await stat(remotePath)).size > options.maxBytes)
       throw capacityExceeded();
@@ -888,6 +890,7 @@ export async function slotCopyDir(
   localDir: string,
   options: SlotCopyDirOptions = {},
 ): Promise<number> {
+  await assertHeavyWriteRoom(localDir);
   if (local(ctx)) {
     if (!existsSync(remoteDir)) return 0;
     const rootStats = await lstat(remoteDir).catch(() => null);

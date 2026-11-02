@@ -307,13 +307,13 @@ test('review preflight uses the configured executable outside PATH', () => {
     const executable = join(root, 'configured-runner');
     writeFileSync(
       executable,
-      `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({grokVersion:'fixture',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]}}));\n`,
+      `#!${process.execPath}\nconst home=process.argv[process.argv.indexOf('--cwd')+1]===process.env.HOME;process.stdout.write(JSON.stringify({grokVersion:'fixture',hooks:[],mcpServers:[],lspServers:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]},projectTrusted:home,projectInstructions:[]}));\n`,
       { mode: 0o700 },
     );
     const preflight = nativeRunnerDefinitions.grok.reviewAccountPreflight!;
     execFileSync(process.execPath, ['-e', preflight.script, root, '', executable], {
-      env: { ...process.env, PATH: '' },
-      timeout: 1500,
+      env: { ...process.env, PATH: '', GROK_HOME: root },
+      timeout: 10_000,
     });
   } finally {
     rmSync(root, { recursive: true, force: true });

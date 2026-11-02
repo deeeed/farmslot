@@ -1321,3 +1321,30 @@ test('local slot writes expand execution-host home paths for runner sentinels', 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// Arthur 11-02: heavy writes stop at a free-space floor (default 50 GB) before any byte lands.
+test('a slot copy below the free-space floor writes nothing', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const previous = process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+  process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = '100000000';
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+    else process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = previous;
+  });
+  const source = path.join(root, 'source');
+  await mkdir(source);
+  await writeFile(path.join(source, 'report.md'), 'report');
+  const ctx = { host: 'localhost', machine: 'test-machine', sshTarget: 'localhost' };
+
+  await assert.rejects(
+    slotCopyDir(ctx, source, path.join(root, 'mirror')),
+    /under the 100000000\.0 GB floor/,
+  );
+  await assert.rejects(
+    slotCopyFile(ctx, path.join(source, 'report.md'), path.join(root, 'archive/report.md')),
+    /under the 100000000\.0 GB floor/,
+  );
+  assert.equal(existsSync(path.join(root, 'mirror')), false);
+  assert.equal(existsSync(path.join(root, 'archive')), false);
+});
