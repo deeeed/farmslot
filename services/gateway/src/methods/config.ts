@@ -60,6 +60,7 @@ import {
 import { gatewayGitHubAccounts } from '../integrations/github-accounts.js';
 import { publishConfigurationResources } from '../resources/configuration-changes.js';
 import type { GitHubAccountsReadInterest } from '../resources/github-account-observation.js';
+import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import {
   configuredExecutionTemplateOptions,
   projectUsesExecutionTemplateCatalog,
@@ -410,7 +411,8 @@ export async function configSlotUpdate(
   const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
   const backupPath = `${poolFilePath}.bak.${timestamp}`;
   await copyFile(poolFilePath, backupPath);
-  await writeFile(poolFilePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+  // A temp file renamed over the pool: a refresh never reads it half-written (F306).
+  await atomicWriteTextFile(poolFilePath, JSON.stringify(raw, null, 2) + '\n');
 
   // Sync into .farm-status.json + cache now — server.ts also calls fleetRefresh()
   // after this returns, but that runs SSH/device health checks and can take 30s+,
@@ -475,7 +477,7 @@ export async function configPoolUpdate(
   const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
   const backupPath = `${poolFilePath}.bak.${timestamp}`;
   await copyFile(poolFilePath, backupPath);
-  await writeFile(poolFilePath, content.endsWith('\n') ? content : content + '\n', 'utf-8');
+  await atomicWriteTextFile(poolFilePath, content.endsWith('\n') ? content : content + '\n');
 
   // Sync mode/enabled changes into .farm-status.json + cache now — see
   // configSlotUpdate above for why this is needed before fleetRefresh.

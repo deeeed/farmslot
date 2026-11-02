@@ -4,9 +4,24 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.39.25 - 2026-11-02
+## 0.39.26 - 2026-11-02
 
 - Align `@farmslot/adapter-sdk` 0.26.1.
+
+## 0.39.25 - 2026-11-02
+
+- Publishes against `@farmslot/protocol` 0.74.10.
+- A Grok review no longer trusts its checkout, so Grok loads none of the checkout's hooks, agents, MCP or LSP servers, instructions or skills (ADR-057 Amendment 13).
+  - The review preflight inspects the account from its home directory (from elsewhere, Grok lists none of the account's own hooks).
+  - It refuses any enabled hook and any MCP or LSP server the account starts.
+  - Without the `nonManagedHooks` pin, it also needs no plugins, only built-in agents and no notification commands.
+  - It refuses an account whose `trusted_folders.toml` names the checkout or a parent, or whose folder trust is off; that is checked by inspecting a fresh folder that holds only an `AGENTS.md`.
+  - Before, every review needed the pin, and Grok's deployment sync deletes it from an account without an organization policy.
+- A Grok review may write only `sessions/`, `logs/` and the bytes of `auth.json.lock` in the Grok home, and no link can be made there. The rest is read-only, so one review cannot plant something for the next: hooks, config, policy and trust files, bundled and user agents, skills, memory, the model catalog cache, the stored login, the external sign-in command and shell startup files.
+- A Grok terminal (tmux) review is refused, because Grok's terminal would stop at its folder-trust prompt; the runner definition declares this as `terminalReviewRefusal`.
+- Native Grok sessions and account status also sign in through a home's external auth provider (`auth_provider_command`, the method Grok marks `_meta.external_provider`). They still never pick grok.com's interactive login.
+- A native worker's environment is built in one place, `scripts/native-worker-env.cjs` (exported as `@farmslot/agent-runtime/scripts/native-worker-env.cjs`). That includes its single PATH rule: asdf's shims go ahead of the runner's own directory and of the host's PATH. The script also runs a command in that environment, so the gateway's launch preflight probes the Node the worker will run (F318).
+- A native worker now resolves the project's pinned Node ahead of a Node in the runner's own directory, as tmux workers do. Before, a runner installed under another Node (mini's `claude` under asdf's nodejs 22.15.0) or bundling one (`cursor-agent`) put that Node first for the worker's tools.
 
 ## 0.39.24 - 2026-11-02
 

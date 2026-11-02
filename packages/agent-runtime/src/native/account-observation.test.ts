@@ -119,7 +119,7 @@ const acp=process.argv.includes('stdio');
 const send=m=>process.stdout.write(JSON.stringify({...acp?{jsonrpc:'2.0'}:{},...m})+'\\n');
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);record({method:m.method,params:m.params});
- if(m.method==='initialize')return send({id:m.id,result:acp?{protocolVersion:1,authMethods:[{id:mode==='no-cached'?'grok.com':'cached_token'}]}:{}});
+ if(m.method==='initialize')return send({id:m.id,result:acp?{protocolVersion:1,authMethods:[mode==='no-cached'?{id:'grok.com'}:mode==='external-provider'?{id:'grok.com',_meta:{external_provider:true}}:{id:'cached_token'}]}:{}});
  if(m.method==='initialized')return;
  if(m.method==='account/read')return send({id:m.id,result:{account:{type:'chatgpt',email:'account@example.test',refreshToken:process.env.PROBE_SECRET},requiresOpenaiAuth:true}});
  if(m.method==='authenticate'){
@@ -255,6 +255,27 @@ test('Grok absent cached auth and rejected auth remain unavailable without an AP
     assert.equal(calls.filter((c) => c.method === 'authenticate').length, 1);
     assert.ok(
       !calls.some((c) => c.params?.methodId === 'grok.com' || c.params?.methodId === 'xai.api_key'),
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("Grok signs in through a home's external auth provider, headless", async () => {
+  const f = setup();
+  try {
+    const state = await observeGrokAccount({
+      ...f,
+      env: { ...f.env, PROBE_MODE: 'external-provider' },
+    });
+    assert.equal(state.login, 'authenticated');
+    const calls = readFileSync(join(f.cwd, 'calls.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    assert.deepEqual(
+      calls.filter((c) => c.method === 'authenticate').map((c) => c.params),
+      [{ methodId: 'grok.com', _meta: { headless: true } }],
     );
   } finally {
     f.close();

@@ -133,7 +133,10 @@ async function main() {
   const {
     workspaceTrustByRunner,
     reviewConfigurationRootsByRunner,
+    terminalReviewRefusalByRunner,
   } = require('./workspace-trust.cjs');
+  if (terminalReviewRefusalByRunner[input.runner])
+    throw new Error(terminalReviewRefusalByRunner[input.runner]);
   const guard = await sandbox(
     policy,
     runtimeRoots,

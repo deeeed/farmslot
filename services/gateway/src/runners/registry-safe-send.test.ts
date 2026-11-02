@@ -60,7 +60,14 @@ let foregroundProbeUnknown = false;
 const mutationRetryOptions: Array<boolean | undefined> = [];
 const promptInputCommands: string[] = [];
 let acknowledgePromptInput = false;
+// How long each tmux input takes, as on a loaded CI runner.
+let sendDelayMs = 0;
+// readyTimeoutMs also bounds the whole delivery loop in wall-clock time. A loaded CI runner can
+// spend 100 ms on one send, which ends the loop before the retry a test is about. Tests whose
+// outcome is not the deadline get a budget they never reach; the two that wait it out keep theirs.
+const deliveryBudgetMs = 10_000;
 beforeEach(() => {
+  sendDelayMs = 0;
   foregroundCommand = 'claude';
   foregroundRunnerPresent = true;
   exitAfterLiteralSend = false;
@@ -196,6 +203,7 @@ mock.module('../core/exec.js', {
     execFileArgv: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execOnSlot: async (_slotVars: SlotVars, cmd: string, options?: { noRetry?: boolean }) => {
       if (cmd.includes('send-keys') || cmd.includes('send-text') || cmd.includes('paste-buffer')) {
+        if (sendDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, sendDelayMs));
         promptInputCommands.push(cmd);
         mutationRetryOptions.push(options?.noRetry);
         if (cmd.includes('execution-host guard') && !foregroundRunnerPresent)
@@ -354,7 +362,7 @@ test('post-launch paste preserves the full prompt, rechecks both input stages an
     },
     () =>
       sendRunnerPostLaunchPrompt(vars, target, 'codex', message, 'TASK.md', '[test]', {
-        readyTimeoutMs: 100,
+        readyTimeoutMs: deliveryBudgetMs,
         stabilityPolls: 1,
         pollIntervalMs: 0,
         verifyWaitMs: 0,
@@ -393,7 +401,7 @@ test('post-launch paste holds uncertain delivery if the runner exits before subm
   exitAfterLiteralSend = true;
   await assert.rejects(
     sendRunnerPostLaunchPrompt(vars, target, 'codex', message, 'TASK.md', '[test]', {
-      readyTimeoutMs: 100,
+      readyTimeoutMs: deliveryBudgetMs,
       stabilityPolls: 1,
       pollIntervalMs: 0,
       verifyWaitMs: 0,
@@ -434,7 +442,7 @@ for (const code of [85, 1]) {
         },
         () =>
           sendRunnerPostLaunchPrompt(vars, target, 'codex', message, 'TASK.md', '[test]', {
-            readyTimeoutMs: 100,
+            readyTimeoutMs: deliveryBudgetMs,
             stabilityPolls: 1,
             pollIntervalMs: 0,
             verifyWaitMs: 0,
@@ -584,7 +592,7 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
     },
     () =>
       sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
-        readyTimeoutMs: 100,
+        readyTimeoutMs: deliveryBudgetMs,
         stabilityPolls: 1,
         pollIntervalMs: 0,
         verifyWaitMs: 0,
@@ -603,7 +611,7 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
   acceptDigestHandoff = true;
 
   await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'REVIEW.md', '[test]', {
-    readyTimeoutMs: 100,
+    readyTimeoutMs: deliveryBudgetMs,
     stabilityPolls: 1,
     pollIntervalMs: 0,
     verifyWaitMs: 0,
@@ -641,6 +649,8 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
     exactPromptMatch: false,
   };
 
+  // The first send alone outlasts a 100 ms delivery budget, as it did on a loaded CI runner.
+  sendDelayMs = 150;
   await assert.rejects(
     withRunnerPromptMutationBoundary(
       () => {
@@ -649,7 +659,7 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
       },
       () =>
         sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
-          readyTimeoutMs: 100,
+          readyTimeoutMs: deliveryBudgetMs,
           stabilityPolls: 1,
           pollIntervalMs: 0,
           verifyWaitMs: 0,
@@ -695,7 +705,7 @@ test('digest-required prompt delivery rejects text left in the runner queue', as
 
   await assert.rejects(
     sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
-      readyTimeoutMs: 100,
+      readyTimeoutMs: deliveryBudgetMs,
       stabilityPolls: 1,
       pollIntervalMs: 0,
       verifyWaitMs: 0,
@@ -733,7 +743,7 @@ test('non-digest delivery never accepts a prompt left under the Codex queue hint
 
   await assert.rejects(
     sendRunnerPostLaunchPrompt(vars, target, 'codex', taskMessage, 'TASK.md', '[test]', {
-      readyTimeoutMs: 100,
+      readyTimeoutMs: deliveryBudgetMs,
       stabilityPolls: 1,
       pollIntervalMs: 0,
       verifyWaitMs: 0,
@@ -785,7 +795,7 @@ for (const entry of [false, true]) {
 
     await assert.rejects(
       sendRunnerPostLaunchPrompt(vars, target, 'codex', taskMessage, 'REVIEW-FIX.md', '[test]', {
-        readyTimeoutMs: 100,
+        readyTimeoutMs: deliveryBudgetMs,
         stabilityPolls: 1,
         pollIntervalMs: 0,
         verifyWaitMs: 0,
@@ -825,6 +835,7 @@ test('digest-required prompt delivery does not accept pane-only task progress', 
 
   await assert.rejects(
     sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
+      // Waits out its budget on purpose: pane progress never proves delivery.
       readyTimeoutMs: 20,
       stabilityPolls: 1,
       pollIntervalMs: 0,
@@ -868,7 +879,7 @@ test('digest-required delivery waits for a delayed exact acknowledgement without
   });
 
   await sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
-    readyTimeoutMs: 100,
+    readyTimeoutMs: deliveryBudgetMs,
     stabilityPolls: 1,
     pollIntervalMs: 1,
     verifyWaitMs: 0,
@@ -917,7 +928,7 @@ test('digest-required delivery accepts acknowledgement that arrives during retry
   });
 
   await sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
-    readyTimeoutMs: 100,
+    readyTimeoutMs: deliveryBudgetMs,
     stabilityPolls: 1,
     pollIntervalMs: 1,
     verifyWaitMs: 0,
@@ -945,7 +956,7 @@ test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', a
   await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
     launchAckSignalPath: '/tmp/SIGNAL.json',
     launchAckBaseline: null,
-    readyTimeoutMs: 100,
+    readyTimeoutMs: deliveryBudgetMs,
     stabilityPolls: 1,
     pollIntervalMs: 0,
     verifyWaitMs: 0,
@@ -968,7 +979,7 @@ test('sendRunnerPostLaunchPrompt rechecks delayed Grok acceptance before retryin
   grokPromptAcceptedAfterCall = 4;
 
   await sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
-    readyTimeoutMs: 100,
+    readyTimeoutMs: deliveryBudgetMs,
     stabilityPolls: 1,
     pollIntervalMs: 0,
     verifyWaitMs: 0,
@@ -1004,7 +1015,7 @@ test('sendRunnerPostLaunchPrompt keeps post-send tolerance for Grok native accep
   });
 
   await sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
-    readyTimeoutMs: 100,
+    readyTimeoutMs: deliveryBudgetMs,
     stabilityPolls: 1,
     pollIntervalMs: 0,
     verifyWaitMs: 0,
@@ -1041,7 +1052,7 @@ test('sendRunnerPostLaunchPrompt keeps the provider clock when the slot clock is
 
   await assert.rejects(
     sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
-      readyTimeoutMs: 100,
+      readyTimeoutMs: deliveryBudgetMs,
       stabilityPolls: 1,
       pollIntervalMs: 0,
       verifyWaitMs: 0,
@@ -1063,7 +1074,7 @@ test('sendRunnerPostLaunchPrompt does not treat native idle state as exact deliv
   grokPromptAcceptedAfterCall = 3;
 
   await sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
-    readyTimeoutMs: 100,
+    readyTimeoutMs: deliveryBudgetMs,
     stabilityPolls: 1,
     pollIntervalMs: 0,
     verifyWaitMs: 0,
@@ -1512,7 +1523,7 @@ test('a rejected post-launch tmux send leaves the prompt mutation boundary untou
       },
       () =>
         sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
-          readyTimeoutMs: 100,
+          readyTimeoutMs: deliveryBudgetMs,
           stabilityPolls: 1,
           pollIntervalMs: 0,
           verifyWaitMs: 0,
@@ -1553,7 +1564,7 @@ test('a failed submit leaves a typed prompt uncertain', async (t) => {
       },
       () =>
         sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
-          readyTimeoutMs: 100,
+          readyTimeoutMs: deliveryBudgetMs,
           stabilityPolls: 1,
           pollIntervalMs: 0,
           maxAttempts: 1,
@@ -2248,6 +2259,7 @@ for (const acknowledged of [false, true]) {
       'temp/tasks/feat/tat-4092-1009-135016/TASK.md',
       '[test]',
       {
+        // The ack-missing case waits out this budget on purpose: a working runner holds every retry.
         readyTimeoutMs: 300,
         stabilityPolls: 1,
         pollIntervalMs: 1,
@@ -2290,7 +2302,7 @@ test('post-launch delivery refuses stale ready text in a bare shell before typin
       },
       () =>
         sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
-          readyTimeoutMs: 100,
+          readyTimeoutMs: deliveryBudgetMs,
           stabilityPolls: 1,
           pollIntervalMs: 0,
           verifyWaitMs: 0,
@@ -2321,9 +2333,11 @@ test('post-launch retries recheck the foreground when the runner exits after the
     observedAt: Date.now(),
   };
   exitAfterLiteralSend = true;
+  // The first send alone outlasts a 100 ms delivery budget, as it did in CI on #1749.
+  sendDelayMs = 150;
   await assert.rejects(
     sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
-      readyTimeoutMs: 100,
+      readyTimeoutMs: deliveryBudgetMs,
       stabilityPolls: 1,
       pollIntervalMs: 0,
       verifyWaitMs: 0,

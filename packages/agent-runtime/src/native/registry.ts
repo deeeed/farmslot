@@ -18,7 +18,11 @@ import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
 import { opencodeNativeAdapter } from './opencode.js';
 import { piNativeAdapter } from './pi.js';
-import { hostReviewSandboxAvailable, type NativeProcessSandbox } from './review-sandbox.js';
+import {
+  hostReviewSandboxAvailable,
+  type NativeProcessSandbox,
+  type NativeReviewRuntimeAccess,
+} from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
 
 const { grokProfileEnvironment, canResumeGrokProfileContext } = createRequire(import.meta.url)(
@@ -43,6 +47,8 @@ const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-t
   codexHome(environment: NodeJS.ProcessEnv): string;
   grokHome(environment: NodeJS.ProcessEnv): string;
   reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
+  terminalReviewRefusalByRunner: Record<string, string>;
+  grokReviewHomeAccess(environment: NodeJS.ProcessEnv): NativeReviewRuntimeAccess;
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
   workspaceTrustByRunner: Record<
     string,
@@ -78,6 +84,10 @@ export interface NativeRunnerDefinition {
   /** Exclude repository configuration before the sandbox can deny its startup read. */
   reviewStartupArgs?: readonly string[];
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
+  /** Why this runner cannot take a terminal (tmux) review workspace, when it cannot. */
+  terminalReviewRefusal?: string;
+  /** When set, all a review may write inside its runtime roots. */
+  reviewRuntimeAccess?: (environment: NodeJS.ProcessEnv) => NativeReviewRuntimeAccess;
   /** Read-only account inspection before copying support or trusting a review checkout. */
   reviewAccountPreflight?: { script: string; timeoutMs: number };
   /** A runner may admit only its verified migration to a stricter profile environment. */
@@ -187,6 +197,8 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [workspaceTrust.grokHome(env)],
+    reviewRuntimeAccess: workspaceTrust.grokReviewHomeAccess,
+    terminalReviewRefusal: workspaceTrust.terminalReviewRefusalByRunner.grok,
     adapter: grokNativeAdapter,
     binary: 'grok',
     supportsWorkers: true,

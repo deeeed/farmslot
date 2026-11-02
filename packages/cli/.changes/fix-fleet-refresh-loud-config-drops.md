@@ -1,0 +1,1 @@
+- `farmslot fleet status` shows a pool file the gateway could not read, and each slot whose config could not be loaded, instead of a row that is silently missing its resources.

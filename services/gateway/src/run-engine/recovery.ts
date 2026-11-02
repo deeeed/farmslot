@@ -161,6 +161,11 @@ export interface RunRecoveryCollaborators {
   resetSlot: (slotId: string) => Promise<void>;
   retryOccupiedRunSlot: (slotId: string) => Promise<boolean>;
   /**
+   * Run a workspace recovery that a restart interrupted once more, from fresh workspace evidence.
+   * Settles in the background: startup does not wait for the slot's git work.
+   */
+  resumeInterruptedRecovery: (slotId: string) => void;
+  /**
    * Conditional reset: `predicate` runs INSIDE the serialized slot write, so
    * the check and the write cannot be split by a concurrent release. The
    * reconciler needs this because `resetSlot` refuses a releasing slot by
@@ -846,13 +851,18 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         continue;
       }
 
-      if (run.decisions.length === 0) {
+      const runningStepName = run.steps.find((s) => s.status === 'running')?.name;
+      // A gate still preparing its decision when the process stopped has none yet, and only
+      // re-entering it presents one (F311: ba397e2c sat at "Preparing operator decision"). The
+      // gate's own reviews leave the status at fixing or reconciling, so the running step decides.
+      const gateNeverPresented =
+        run.decisions.length === 0 && run.status !== 'blocked' && runningStepName === S.HUMAN_GATE;
+      if (run.decisions.length === 0 && !gateNeverPresented) {
         console.log(
           `[run-engine] run ${run.id.slice(0, 8)} — blocked terminal state with no decisions; keeping blocked`,
         );
         continue;
       }
-      const runningStepName = run.steps.find((s) => s.status === 'running')?.name;
       const latestResolvedGateDecision = [...run.decisions]
         .reverse()
         .find(
@@ -864,13 +874,21 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         runningStepName === S.HUMAN_GATE &&
         (latestResolvedGateDecision?.resolvedAction === 'superseded' ||
           (requiresPublicationApproval(run) && !publicationFinalizationAction(run)));
-      if (resolvedGateRequiresReentry) {
+      if (gateNeverPresented || resolvedGateRequiresReentry) {
         console.log(
-          `[run-engine] run ${run.id.slice(0, 8)} — resolved decision has not fulfilled the gate, re-entering human gate`,
+          `[run-engine] run ${run.id.slice(0, 8)} — ${gateNeverPresented ? 'the human gate never presented a decision' : 'resolved decision has not fulfilled the gate'}, re-entering human gate`,
         );
         try {
           await deps.replayHumanGate(run.id);
         } catch (err) {
+          // A slot's node that hasn't reconnected yet refuses the replay; the publication-review
+          // watcher retries it with backoff before handing the gate to the operator.
+          if (deps.rearmPublicationReviewRecovery(run, { replayPending: true })) {
+            console.warn(
+              `[run-engine] run ${run.id.slice(0, 8)} — human-gate re-entry failed; re-arming: ${(err as Error).message.slice(0, 200)}`,
+            );
+            continue;
+          }
           const message = `Human-gate recovery needs an operator retry: ${(err as Error).message.slice(0, 160)}`;
           const current = deps.getRun(run.id) ?? run;
           await markTerminalReviewArtifactOperatorRequired(deps, current, message);
@@ -1225,6 +1243,7 @@ type OrphanRecoveryCollaborators = Pick<
   | 'updateSlotStatusIf'
   | 'broadcast'
   | 'retryOccupiedRunSlot'
+  | 'resumeInterruptedRecovery'
 >;
 
 export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators): Promise<void> {
@@ -1246,10 +1265,12 @@ export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators):
     if (activeSlotIds.has(slot.slot) && !blockedOwner) continue;
     const workspaceRecovery = await deps.readSlotField(slot.slot, 'workspace_recovery');
     if (workspaceRecovery && typeof workspaceRecovery === 'object') {
-      // Recovery is operator-driven. Restart may turn its live fence into a
-      // failed hold, but must never advertise an unverified checkout as ready.
+      // Restart turns a live recovery fence into a failed hold and never advertises an
+      // unverified checkout as ready. It then runs the recovery once more: that re-inspects
+      // the workspace and refuses unverified or local work, so nobody has to retry a release
+      // a deploy interrupted (F316). A failed recovery stays held for the operator.
       if (!deps.isTerminalTeardownInFlight(slot.slot) && slot.phase === SLOT_PHASE_RELEASING) {
-        await deps.updateSlotStatusIf(
+        const held = await deps.updateSlotStatusIf(
           slot.slot,
           (row) =>
             row.workspace_recovery !== null &&
@@ -1262,6 +1283,7 @@ export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators):
             releasing_since: null,
           },
         );
+        if (held) deps.resumeInterruptedRecovery(slot.slot);
       }
       continue;
     }

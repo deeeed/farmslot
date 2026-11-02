@@ -1,9 +1,16 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join, relative, sep } from 'node:path';
+import { createRequire } from 'node:module';
+import { isAbsolute, relative, sep } from 'node:path';
 
 import type { NativeSessionCreateParams, NativeSessionInfo, SafetyTier } from '@farmslot/protocol';
+
+const workerEnvironment = createRequire(import.meta.url)('../../scripts/native-worker-env.cjs') as {
+  nativeWorkerProcessEnvironment(
+    environment: NativeWorkerLaunch['environment'],
+    base: NodeJS.ProcessEnv,
+  ): NodeJS.ProcessEnv;
+  projectToolsFirst(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
+};
 
 /** Private gateway/node/host contract. Public session RPCs never accept this environment. */
 export interface NativeWorkerLaunch {
@@ -213,20 +220,8 @@ export function nativeWorkerLaunchDigest(launch: NativeWorkerLaunch): string {
 }
 
 export function nativeWorkerEnvironment(launch: NativeWorkerLaunch): NodeJS.ProcessEnv {
-  const unset = new Set(launch.environment.unset);
-  // Object.fromEntries treats names as data, including names matching Object.prototype keys.
-  const env = Object.fromEntries([
-    ...Object.entries(process.env).filter(([key]) => !unset.has(key)),
-    ...Object.entries(launch.environment.set),
-  ]);
-  env.DISABLE_OMC = '1';
-  env.DISABLE_OMX = '1';
-  const shims = join(env.ASDF_DATA_DIR ?? join(env.HOME ?? homedir(), '.asdf'), 'shims');
-  if (existsSync(shims)) env.PATH = `${shims}${delimiter}${env.PATH ?? ''}`;
-  delete env.CLAUDECODE;
-  // Workers do not need control-plane credentials, including configured overrides.
-  delete env.FARMSLOT_NODE_TOKEN;
-  delete env.FARMSLOT_GATEWAY_TOKEN;
-  delete env.FARMSLOT_GATEWAY_PASSWORD;
-  return env;
+  return workerEnvironment.nativeWorkerProcessEnvironment(launch.environment, process.env);
 }
+
+/** A worker's final runner environment keeps project-pinned tools ahead of the runner's own directory. */
+export const nativeWorkerProjectToolsFirst = workerEnvironment.projectToolsFirst;

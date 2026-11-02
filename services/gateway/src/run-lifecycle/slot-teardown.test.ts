@@ -46,6 +46,8 @@ let workspaceHelperAlive = false;
 let rawProcessCensus: string | null = null;
 let cwdProcessCensus: string | null = null;
 let tmuxInventory = '';
+/** The pane process's own command line, as `ps` reports it. */
+let paneLaunch = '';
 let runnerProbe: RunnerDescendantPidProbe = { state: 'absent' };
 let runUpdates: Partial<Run>[] = [];
 let slotAgentKills: string[] = [];
@@ -169,6 +171,17 @@ mock.module('../core/index.js', {
       if (cmd.startsWith(': farmslot-browser-session-reap'))
         return { stdout: reapBrowserSession(cmd), stderr: '', exitCode: 0 };
       if (cmd.includes('list-panes -a')) return { stdout: tmuxInventory, stderr: '', exitCode: 0 };
+      if (cmd.startsWith('ps -ww -o command= -p'))
+        return { stdout: paneLaunch, stderr: '', exitCode: paneLaunch ? 0 : 1 };
+      const display = /display-message -p -t '(%\d+)'/.exec(cmd);
+      const shown =
+        display &&
+        tmuxInventory
+          .split('\n')
+          .map((line) => line.split('\t'))
+          .find((fields) => fields[1] === display[1]);
+      if (shown) return { stdout: `${shown.slice(0, 3).join('\t')}\n`, stderr: '', exitCode: 0 };
+      if (/send-keys -t '%\d+' -l '\/exit'/.test(cmd)) runnerProbe = { state: 'absent' };
       if (cmd.startsWith('lsof -a -d cwd'))
         return {
           stdout:
@@ -229,8 +242,16 @@ mock.module('../runs/store.js', {
     },
   },
 });
+// A fresh instance runs the real closed-run worker exit against the fakes above.
+const closedRunWorkerStop: typeof import('../runners/owned-stop.js') = await import(
+  new URL('../runners/owned-stop.js?closed-run-worker', import.meta.url).href
+);
 mock.module('../runners/owned-stop.js', {
-  namedExports: { ...realOwnedStop, stopRunOwnedTmuxWorkers: async () => workerBlocker },
+  namedExports: {
+    ...realOwnedStop,
+    stopRunOwnedTmuxWorkers: async () => workerBlocker,
+    exitClosedRunUnrecordedWorker: closedRunWorkerStop.exitClosedRunUnrecordedWorker,
+  },
 });
 mock.module('../runners/session-archive.js', {
   namedExports: {
@@ -421,6 +442,9 @@ beforeEach(() => {
   rawProcessCensus = null;
   cwdProcessCensus = null;
   tmuxInventory = '';
+  paneLaunch = '';
+  run.agentContexts = [];
+  run.taskFile = null;
   runnerProbe = { state: 'absent' };
   slotProcesses = [];
   leases = [];
@@ -834,6 +858,68 @@ test('a non-runner child in an unrecorded slot pane still blocks cleanup', async
     '111 1 111 Fri Oct 9 01:00:00 2026 /bin/zsh\n222 111 111 Fri Oct 9 01:00:00 2026 node\n';
   cwdProcessCensus = 'p111\nn/slot\np222\nn/slot\n';
   assert.match((await slotTeardownBlocker(run)) ?? '', /pane process 111 is still occupied/);
+});
+
+/** Run ba397e2c on echobridge-3 (F315): the record names %53, its idle claude holds %3. */
+function closedRunUnrecordedWorker(taskDir: string | null): void {
+  run.taskFile = '/farm/tasks/dev/manual-000163-1102-084955/TASK.md';
+  run.agentContexts = [
+    {
+      id: 'dev',
+      role: 'dev',
+      label: 'Dev',
+      status: 'complete',
+      runner: 'claude',
+      runId: RUN_ID,
+      slotId: SLOT_ID,
+      target: { session: 'mmt-1', window: 'dev', pane: '0', paneId: '%53', target: 'mmt-1:dev' },
+    },
+  ];
+  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  paneLaunch = taskDir
+    ? `bash -c bash -lc 'export DISABLE_OMC=1; if [ -f "\${HOME}/slot/${taskDir}/inputs/inherited/recipe-source.json" ]; then :; fi; claude'`
+    : '-zsh';
+  runnerProbe = { state: 'present', pid: '222' };
+  rawProcessCensus = '111 1 111 Fri Oct 9 01:00:00 2026 /bin/zsh\n';
+  cwdProcessCensus = 'p111\nn/slot\n';
+}
+const exitsSent = () => commands.filter((cmd) => /send-keys -t '%3' -l '\/exit'/.test(cmd)).length;
+
+test('a closed run ends its own unrecorded worker in the slot session instead of deferring', async () => {
+  run.status = 'done';
+  closedRunUnrecordedWorker('.task/dev/manual-000163-1102-084955');
+  assert.equal(await slotTeardownBlocker(run), null);
+  assert.equal(exitsSent(), 1);
+});
+
+test('a live unrecorded runner launched for another task folder, or none, still defers', async (t) => {
+  run.status = 'done';
+  const log = t.mock.method(console, 'log', () => undefined);
+  for (const taskDir of ['.task/dev/manual-000164-1102-090112', null]) {
+    commands = [];
+    log.mock.resetCalls();
+    closedRunUnrecordedWorker(taskDir);
+    assert.equal(
+      await slotTeardownBlocker(run),
+      'Unrecorded pane %3 in slot session mmt-1 is not quiescent; cleanup deferred',
+    );
+    assert.equal(exitsSent(), 0);
+    // The deferral message stays the same; the log names why the worker was left running.
+    assert.ok(
+      log.mock.calls.some((call) =>
+        /^\[slot-teardown\] .*: left pane %3 running: the pane's launch does not name the run's task directory$/.test(
+          String(call.arguments[0]),
+        ),
+      ),
+    );
+  }
+});
+
+test('an open run never stops an unrecorded worker pane', async () => {
+  run.status = 'monitoring';
+  closedRunUnrecordedWorker('.task/dev/manual-000163-1102-084955');
+  assert.match((await slotTeardownBlocker(run)) ?? '', /without verified slot ownership/);
+  assert.ok(!commands.some((cmd) => cmd.includes('send-keys') || cmd.startsWith('ps -ww')));
 });
 
 /** Run 22e62daa's macpro-mmt-2 after cancel: the browser session its worker's recipe calls started. */
