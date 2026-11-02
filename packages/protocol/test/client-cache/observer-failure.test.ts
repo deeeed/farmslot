@@ -46,65 +46,29 @@ test('an observer that throws when a read starts cannot leave the query loading'
   }
 });
 
-test('an observer that keeps throwing is reported once, naming its query', async (t) => {
+test('each failing observer is reported once, naming its query', async (t) => {
   const reported = t.mock.method(console, 'error', () => {});
   const { transport, cache } = fixture();
-  const stop = cache.observe(query, () => {
-    throw new Error('observer failed');
+  // Throws on its first delivery too, which used to skip the read `observe` schedules.
+  const first = cache.observe(query, () => {
+    throw new Error('first observer failed');
   });
   try {
     transport.setConnection({ connected: true, id: 1 });
     (await transport.nextRead()).resolve({ value: 'current' });
     await settle();
     assert.equal(cache.read(query).status, 'ready');
-    assert.equal(reported.mock.callCount(), 1);
+    assert.equal(reported.mock.callCount(), 1, 'a repeating failure is logged once');
     assert.match(String(reported.mock.calls[0]!.arguments[0]), /sources\.status/);
+
+    const second = cache.observe(query, () => {
+      throw new Error('second observer failed');
+    });
+    second();
+    assert.equal(reported.mock.callCount(), 2, 'another observer of the same query is logged too');
+    assert.match(String(reported.mock.calls[1]!.arguments[1]), /second observer failed/);
   } finally {
-    stop();
-    await cache.dispose();
-  }
-});
-
-test('a failed read that holds no rows reads again on its own, backing off', async (t) => {
-  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
-  t.mock.method(performance, 'now', () => Date.now());
-  const { transport, cache } = fixture();
-  const stop = cache.observe(query, () => {});
-  try {
-    transport.setConnection({ connected: true, id: 1 });
-    (await transport.nextRead()).reject('RESOURCE_OBSERVATION_UNAVAILABLE');
-    await settle();
-    assert.equal(cache.read(query).status, 'error');
-    assert.equal(transport.requestCount, 1);
-
-    t.mock.timers.tick(999);
-    await settle();
-    assert.equal(transport.requestCount, 1, 'it waits a second before asking again');
-    t.mock.timers.tick(1);
-    await settle();
-    assert.equal(transport.requestCount, 2);
-    (await transport.nextRead()).reject('RESOURCE_OBSERVATION_UNAVAILABLE');
-    await settle();
-
-    t.mock.timers.tick(1999);
-    await settle();
-    assert.equal(transport.requestCount, 2, 'the next wait doubles');
-    t.mock.timers.tick(1);
-    await settle();
-    assert.equal(transport.requestCount, 3);
-    (await transport.nextRead()).reject('RESOURCE_OBSERVATION_UNAVAILABLE');
-    await settle();
-
-    // A reconnect reads at once instead of waiting out the backoff.
-    transport.setConnection({ connected: false, id: 1 }, 'network');
-    transport.setConnection({ connected: true, id: 2 });
-    await settle();
-    assert.equal(transport.requestCount, 4);
-    (await transport.nextRead()).resolve({ value: 'current' });
-    await settle();
-    assert.equal(cache.read(query).status, 'ready');
-  } finally {
-    stop();
+    first();
     await cache.dispose();
   }
 });

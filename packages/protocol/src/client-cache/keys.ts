@@ -125,6 +125,3 @@ export const RESOURCE_REREAD_INTERVAL_MS: Partial<Record<ResourceKey['family'], 
 
 /** The longest an automatic reread waits after failed reads of the same query. */
 export const RESOURCE_RETRY_MAX_WAIT_MS = 300_000;
-
-/** The shortest wait before a query that holds no rows reads again after a failed read. */
-export const RESOURCE_RETRY_MIN_WAIT_MS = 1_000;

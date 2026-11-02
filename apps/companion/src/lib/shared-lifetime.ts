@@ -8,8 +8,9 @@ export function sharedLifetime(start: () => () => void): () => () => void {
   let holders = 0;
   let stop: (() => void) | undefined;
   return () => {
+    // A start that throws holds nothing, so the next holder starts the service again.
+    if (holders === 0) stop = start();
     holders += 1;
-    if (holders === 1) stop = start();
     let held = true;
     return () => {
       if (!held) return;
