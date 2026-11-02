@@ -25,6 +25,8 @@ interface FakePane {
   runnerLive: boolean;
   /** False for a runner that ignores the exit command. */
   exitsOnRequest: boolean;
+  /** The pane process's own command line. */
+  launch?: string;
 }
 /** Live panes by pane id. */
 let panes: Map<string, FakePane>;
@@ -61,6 +63,11 @@ mock.module('../core/index.js', {
         return pane
           ? { stdout: `${pane.session}\t${display[1]}\t${pane.panePid}\n`, stderr: '', exitCode: 0 }
           : { stdout: '', stderr: "can't find pane", exitCode: 1 };
+      }
+      const root = /^ps -ww -o command= -p '(\d+)'$/.exec(cmd);
+      if (root) {
+        const pane = [...panes.values()].find((p) => p.panePid === root[1]);
+        return { stdout: pane?.launch ?? '', stderr: '', exitCode: pane ? 0 : 1 };
       }
       if (cmd.includes('remain-on-exit on')) onPreserve?.();
       const send = /send-keys -t '?(%\d+)'? -l '?\/exit/.exec(cmd);
@@ -112,7 +119,7 @@ mock.module('./session-lifecycle.js', {
   },
 });
 
-const { stopRunOwnedTmuxWorkers } = await import('./owned-stop.js');
+const { exitClosedRunUnrecordedWorker, stopRunOwnedTmuxWorkers } = await import('./owned-stop.js');
 
 /** TAT-4091's shape: a dev worker whose conversation id was never captured, plus a reviewer. */
 type Publication = 'published_ready' | 'published_draft';
@@ -472,4 +479,77 @@ test('a legacy numeric index is unknown rather than an absent named window', asy
   fix.target = { session: 'mmt-3', window: '1', pane: null, target: 'mmt-3:1.0' };
   assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /no exact pane identity/);
   assert.deepEqual(commands, []);
+});
+
+/** Run ba397e2c (F315): its record names %53, its idle claude still holds echobridge-3's %23. */
+const CLOSED_TASK = '/farm/tasks/dev/manual-000163-1102-084955';
+const launchFor = (taskDir: string) =>
+  `bash -c bash -lc 'export DISABLE_OMC=1; if [ -f "\${HOME}/slot/${taskDir}/inputs/inherited/recipe-source.json" ]; then :; fi; claude'`;
+const closedWorkerPane = { session: 'echobridge-3', paneId: '%23', panePid: '7023' };
+const slotVars = async () => (await import('../core/index.js')).loadSlotVars(SLOT_ID);
+
+function closedRunWorker(launch: string): void {
+  setup(undefined, 'claude');
+  slotRow = { current_run_id: null, cleanup_run_id: RUN_ID, slot_epoch: 1 };
+  run.taskFile = `${CLOSED_TASK}/TASK.md`;
+  run.agentContexts = [run.agentContexts![0]];
+  panes = new Map([
+    [
+      '%23',
+      {
+        session: 'echobridge-3',
+        panePid: '7023',
+        runnerPid: '7024',
+        runnerLive: true,
+        exitsOnRequest: true,
+        launch,
+      },
+    ],
+  ]);
+}
+
+test('a closed run exits its unrecorded worker whose pane was launched for its task folder', async () => {
+  closedRunWorker(launchFor('.task/dev/manual-000163-1102-084955'));
+  assert.equal(await exitClosedRunUnrecordedWorker(await slotVars(), run, closedWorkerPane), null);
+  assert.equal(exitsSentTo('%23'), 1);
+  assert.ok(commands.some((cmd) => cmd.includes("set-option -p -t '%23' remain-on-exit on")));
+  assert.equal(panes.get('%23')!.runnerLive, false);
+});
+
+test('a worker launched for another task folder, or typed into a shell, keeps its pane', async () => {
+  for (const launch of [
+    launchFor('.task/dev/manual-000164-1102-090112'),
+    launchFor('.task/dev/manual-000163-1102-0849551'),
+    '-zsh',
+  ]) {
+    closedRunWorker(launch);
+    assert.match(
+      (await exitClosedRunUnrecordedWorker(await slotVars(), run, closedWorkerPane)) ?? '',
+      /launch does not name the run's task directory/,
+    );
+    assert.equal(exitsSentTo('%23'), 0);
+    assert.equal(panes.get('%23')!.runnerLive, true);
+  }
+});
+
+test('an open run never exits an unrecorded worker', async () => {
+  closedRunWorker(launchFor('.task/dev/manual-000163-1102-084955'));
+  run.status = 'reviewing';
+  assert.match(
+    (await exitClosedRunUnrecordedWorker(await slotVars(), run, closedWorkerPane)) ?? '',
+    /not closed/,
+  );
+  assert.deepEqual(commands, []);
+});
+
+test('a closed-run worker whose pane launch changes before the exit gets none', async () => {
+  closedRunWorker(launchFor('.task/dev/manual-000163-1102-084955'));
+  onPreserve = () => {
+    panes.get('%23')!.launch = '-zsh';
+  };
+  assert.match(
+    (await exitClosedRunUnrecordedWorker(await slotVars(), run, closedWorkerPane)) ?? '',
+    /ownership changed before the exit was sent/,
+  );
+  assert.equal(exitsSentTo('%23'), 0);
 });
