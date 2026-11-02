@@ -57,14 +57,14 @@ test('loop 2 issues excuse a reviewed run only when the restarts did their part'
     fixLanded: true,
     procedural: [],
     relaunched: false,
-    runFailed: false,
+    retriesExhausted: true,
   };
   assert.equal(reviewDriftExcuses(excused), true);
   assert.equal(reviewDriftExcuses({ ...excused, loop2: 'pass' }), false);
   assert.equal(reviewDriftExcuses({ ...excused, fixLanded: false }), false);
   assert.equal(reviewDriftExcuses({ ...excused, procedural: ['a hold was missed'] }), false);
   assert.equal(reviewDriftExcuses({ ...excused, relaunched: true }), false);
-  assert.equal(reviewDriftExcuses({ ...excused, runFailed: true }), false);
+  assert.equal(reviewDriftExcuses({ ...excused, retriesExhausted: false }), false);
 });
 
 test('a canary that ran no check could not run', () => {

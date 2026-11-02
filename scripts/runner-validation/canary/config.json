@@ -19,7 +19,7 @@
       "variant": "node-away",
       "signature": "No node connected for machine \\S+ after 120000ms",
       "differences": ["^REVIEW did not keep its reviewer: failed \\("],
-      "ledger": "F-pending (review node-away past 120 s)"
+      "ledger": "F336"
     },
     {
       "case": "worker-survives",
@@ -45,7 +45,7 @@
         "^decision types: expected \\[engine_output_review\\], observed \\[engine_output_review, engine_result_decision\\]$",
         "^slot: expected ready/-, observed busy/working$",
         "^re-review: expected pass, observed none$",
-        "^\\d+ reviewers ran, expected \\d+$"
+        "^1 reviewers ran, expected 2$"
       ],
       "ledger": "F332"
     }

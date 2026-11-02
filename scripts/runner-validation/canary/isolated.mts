@@ -315,12 +315,6 @@ function restartPhase(
   }
 }
 
-/**
- * The reviewed run's holds: its loop-1 reviewer (node up), its fix round (node up, the fix
- * completing while the gateway is down), its loop-2 re-review (node away). A scripted worker has
- * no prompt receipt, so a restart while its fix signal still reads running makes recovery resend
- * the fix prompt, which it cannot accept: the fix finishes during the outage instead (#1724).
- */
 const fixContext = (run: Run) => contexts(run, 'review-fix').at(-1);
 const reviewHoldMissed = ({ run }: View) =>
   SETTLED_STEP.has(stepStatus(run, 'review') ?? '') || contexts(run, 'review-fix').length > 0;
@@ -336,6 +330,12 @@ const fixRoundHold = (
   release: fix.release,
 });
 
+/**
+ * The reviewed run's holds: its loop-1 reviewer (node up), its fix round (node up, the fix
+ * completing while the gateway is down), its loop-2 re-review (node away). A scripted worker has
+ * no prompt receipt, so a restart while its fix signal still reads running makes recovery resend
+ * the fix prompt, which it cannot accept: the fix finishes during the outage instead (#1724).
+ */
 function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): HoldPhase[] {
   const review = marker(stack, 'review');
   return [
@@ -1212,7 +1212,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     let verdicts: ReturnType<typeof reviewVerdicts> | undefined;
     let procedural: string[] = [];
     let fixLanded = false;
-    let runFailed = false;
+    let retriesExhausted = false;
     const reviewCheck = await check(
       { case: 'review', variant: 'node-up', model, hold: HOLDS.review },
       () => runScenario('review', 'review', reviewPhases(stack, options.reviewFixNodeAwayMs)),
@@ -1222,7 +1222,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         const expectedReviewers = verdicts.loop1 === 'pass' ? 1 : 2;
         procedural = verdicts.loop1 === 'pass' ? result.refused : unreachedDifferences(result);
         fixLanded = result.fixLanded === true;
-        runFailed = result.run.status === 'failed';
+        retriesExhausted =
+          result.run.steps.find((step) => step.name === 'review')?.outputs?.maxRetriesExhausted ===
+          true;
         const differences = [
           ...procedural,
           ...outcomeDifferences(REVIEWED_OUTCOME, result.outcome),
@@ -1259,7 +1261,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       fixLanded,
       procedural,
       relaunched,
-      runFailed,
+      retriesExhausted,
     });
     if (loop2Drift && reviewCheck.status === 'fail') {
       reviewCheck.status = 'not-exercised';
