@@ -31,11 +31,11 @@ if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
 fi
 if [ "$UNINSTALL" = 1 ]; then
   rm -f "$PLIST"
-  echo "removed $LABEL (checkout $CHECKOUT and evidence $RI_HOME kept)"
+  echo "removed $LABEL; its checkout and evidence are kept"
   exit 0
 fi
 
-if [ ! -d "$CHECKOUT/.git" ]; then
+if ! git -C "$CHECKOUT" rev-parse --git-dir >/dev/null 2>&1; then
   source_repo="$(git -C "$HERE" rev-parse --show-toplevel)"
   git clone -q --reference "$source_repo" --dissociate "$(git -C "$source_repo" remote get-url origin)" "$CHECKOUT"
 fi
