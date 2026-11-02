@@ -230,7 +230,12 @@ export function observeAcpAccount(
           }),
         );
         if (init.protocolVersion !== 1) throw new AccountProbeError('malformed-status');
-        const methodId = selectAcpAuthMethod(init.authMethods, probe.authMethod);
+        let methodId: string | undefined;
+        try {
+          methodId = selectAcpAuthMethod(init.authMethods, probe.authMethod);
+        } catch {
+          throw new AccountProbeError('malformed-status');
+        }
         if (!methodId) return { ...unavailableAccount(), reason: 'native-auth-unavailable' };
         // Never select an interactive login or an API-key fallback during observation.
         return probe.state(

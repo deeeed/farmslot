@@ -1,9 +1,12 @@
 // Runner-native trust stores. Callers admit only farm-created worker workspaces.
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const { execFileSync } = require('node:child_process');
-const { assertGrokReviewAccount, grokHome } = require('./review-account-preflight.cjs');
+const {
+  assertGrokReviewAccount,
+  grokHome,
+  homeDirectory: home,
+} = require('./review-account-preflight.cjs');
 const { tomlSectionHeaderIndexes, tomlBareStringValue } = require('./toml-scan.cjs');
 
 const lockScript = String.raw`
@@ -126,7 +129,6 @@ function seed(file, folders, values, namespace, env) {
     ),
   );
 }
-const home = (env) => env.HOME || os.homedir();
 /** Where Codex reads its login when no profile selects another directory. */
 const codexHome = (env) => env.CODEX_HOME || path.join(home(env), '.codex');
 function trustGrokFolders(folders, env = process.env) {
@@ -217,6 +219,26 @@ const reviewConfigurationRoots = (cwd) =>
     '.lsp.json',
     '.envrc',
   ].map((name) => path.join(fs.realpathSync(cwd), name));
+// What a Grok home loads as the account's own hooks, agents, servers and instructions. A review
+// may write its sessions and logs there, never these.
+const grokProtectedHomePaths = (env) =>
+  [
+    'hooks',
+    'hooks-paths',
+    'config.toml',
+    'trusted_folders.toml',
+    'sandbox.toml',
+    'agents',
+    'plugins',
+    'skills',
+    'roles',
+    'rules',
+    'workflows',
+    'lsp.json',
+    'AGENTS.md',
+    '.claude',
+    '.cursor',
+  ].map((name) => path.join(grokHome(env), name));
 const reviewConfigurationRootsByRunner = {
   grok: reviewConfigurationRoots,
   claude: reviewConfigurationRoots,
@@ -237,6 +259,7 @@ module.exports = {
   codexHome,
   grokHome,
   reviewConfigurationRootsByRunner,
+  grokProtectedHomePaths,
   codexWorkspaceTrustConfig,
   trustGrokFolders,
   checkGrokReviewWorkspace,

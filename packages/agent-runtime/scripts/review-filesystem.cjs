@@ -1,6 +1,6 @@
 const { accessSync, constants } = require('node:fs');
 const { mkdir, realpath } = require('node:fs/promises');
-const { join, sep } = require('node:path');
+const { basename, dirname, join, sep } = require('node:path');
 
 function available() {
   if (process.platform !== 'darwin') return false;
@@ -12,7 +12,7 @@ function available() {
     throw error;
   }
 }
-async function sandbox(policy, runtimeRoots, configurationRoots = []) {
+async function sandbox(policy, runtimeRoots, configurationRoots = [], protectedRuntimePaths = []) {
   if (!available())
     throw new Error('This runner needs the macOS review sandbox on its execution node');
   const temporaryDirectory = join(policy.writableRoots[0], '.review-runtime', 'tmp');
@@ -22,6 +22,17 @@ async function sandbox(policy, runtimeRoots, configurationRoots = []) {
   for (const root of runtimeRoots) {
     await mkdir(root, { recursive: true, mode: 0o700 });
     writable.push(await realpath(root));
+  }
+  // Account configuration inside a writable runtime root stays read-only, so one review cannot
+  // change what the next one loads.
+  const protectedPaths = [];
+  for (const file of protectedRuntimePaths) {
+    const resolved = join(await realpath(dirname(file)), basename(file));
+    if (
+      !writable.slice(policy.writableRoots.length).some((root) => resolved.startsWith(root + sep))
+    )
+      throw new Error('Protected review configuration must belong to a runtime root');
+    protectedPaths.push(resolved);
   }
   const blockedConfiguration = [];
   for (const file of configurationRoots) {
@@ -47,6 +58,7 @@ async function sandbox(policy, runtimeRoots, configurationRoots = []) {
     ...writable.map((root) => `(allow file-write* (subpath ${JSON.stringify(root)}))`),
     '(allow file-write* (literal "/dev/null") (literal "/dev/tty"))',
     ...readOnly.map((root) => `(deny file-write* (subpath ${JSON.stringify(root)}))`),
+    ...protectedPaths.map((path) => `(deny file-write* (subpath ${JSON.stringify(path)}))`),
     ...blockedConfiguration.map(
       (root) => `(deny file-read-data (subpath ${JSON.stringify(root)}))`,
     ),

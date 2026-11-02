@@ -99,7 +99,9 @@ async function grokInspector(directory: string) {
   const executable = path.join(directory, 'grok');
   await writeFile(
     executable,
-    `#!${process.execPath}\nif(process.argv.includes('--version'))console.log('grok 1.0.52');else{if(!process.argv.includes('inspect')||!process.argv.includes('--json')||!process.argv.includes('--no-leader'))throw Error('Expected structured account inspection');const ungated=process.env.GROK_FOLDER_TRUST==='0';process.stdout.write(process.env.FIXTURE_INSPECTION||JSON.stringify({grokVersion:'1.0.52',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]},projectTrusted:ungated,projectInstructions:ungated?[{path:'AGENTS.md'}]:[]}));}\n`,
+    // Like Grok 1.0.70: the account's own hooks show only from a folder trusted for them (HOME), and
+    // a fresh folder of project instructions reads as trusted only when folder trust is off.
+    `#!${process.execPath}\nconst a=process.argv;if(a.includes('--version'))console.log('grok 1.0.52');else{if(!a.includes('inspect')||!a.includes('--json')||!a.includes('--no-leader'))throw Error('Expected structured account inspection');const raw=process.env.FIXTURE_INSPECTION;let account;try{account=raw?JSON.parse(raw):{grokVersion:'1.0.52',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]}}}catch{process.stdout.write(raw);process.exit(0)}const home=a[a.indexOf('--cwd')+1]===process.env.HOME;const ungated=process.env.GROK_FOLDER_TRUST==='0'||account.ungated===true;process.stdout.write(JSON.stringify(home?{mcpServers:[],lspServers:[],...account,projectTrusted:true,projectInstructions:[]}:{mcpServers:[],lspServers:[],...account,hooks:[],projectTrusted:ungated,projectInstructions:ungated?[{path:'AGENTS.md'}]:[]}));}\n`,
     { mode: 0o700 },
   );
   return executable;
@@ -124,8 +126,6 @@ test('Grok review account preflight admits only a hook-free account and writes n
     hooks: [],
     plugins: [],
     agents: [{ name: 'explore', source: { type: 'builtin' } }],
-    projectTrusted: false,
-    projectInstructions: [],
   };
   for (const inspection of [
     { grokVersion: '1.0.52', hooks: [{ event: 'session_start', target: 'node pr-script.cjs' }] },
@@ -142,6 +142,8 @@ test('Grok review account preflight admits only a hook-free account and writes n
     { ...hookFree, plugins: undefined },
     { ...hookFree, agents: [{ name: 'reviewer', source: { type: 'user' } }] },
     { ...hookFree, agents: undefined },
+    { ...hookFree, mcpServers: [{ name: 'notes', source: { type: 'user' } }] },
+    { ...hookFree, lspServers: [{ name: 'ts', source: { type: 'user' } }] },
   ]) {
     assert.throws(
       () =>
@@ -176,8 +178,6 @@ test('Grok review account preflight admits only a hook-free account and writes n
         grokVersion: '1.0.52',
         hooks: [{ event: 'session_start', disabled: true }],
         permissions: { enforced: [{ setting: 'nonManagedHooks', enabled: false }] },
-        projectTrusted: false,
-        projectInstructions: [],
       }),
     },
     'owner',
@@ -238,8 +238,7 @@ test('Grok review account preflight refuses a checkout the account trusts or lea
     grokVersion: '1.0.52',
     hooks: [],
     permissions: { enforced: [{ setting: 'nonManagedHooks', enabled: false }] },
-    projectTrusted: true,
-    projectInstructions: [{ path: 'AGENTS.md' }],
+    ungated: true,
   });
   assert.throws(
     () => trust(source, { ...base, FIXTURE_INSPECTION: managed }, 'owner', { executable }),
@@ -311,8 +310,6 @@ test(
       grokVersion: '1.0.52',
       hooks: [],
       permissions: { enforced: [{ setting: 'nonManagedHooks', enabled: false }] },
-      projectTrusted: false,
-      projectInstructions: [],
     });
     await manager.ensure('owner', params, launch);
     assert.equal(starts, 1);
@@ -334,6 +331,8 @@ for (const runner of ['codex', 'grok', 'claude']) {
       GROK_HOME: account,
       CLAUDE_CONFIG_DIR: account,
     };
+    // Grok inspects the account from its home directory.
+    await mkdir(env.HOME, { recursive: true });
     const trust = nativeRunnerDefinitions[runner].trustWorkspace!;
     trust(directory, env, 'owner');
     await assert.rejects(readFile(account), /ENOENT/);

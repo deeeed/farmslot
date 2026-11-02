@@ -548,16 +548,18 @@ A Grok review never trusts its checkout. `checkGrokReviewWorkspace` (formerly `t
 
 Grok loads a folder's project hooks, project agents, MCP and LSP servers, project instructions and project skills only once the folder is trusted, and a grant covers the folder's subdirectories. The preflight therefore refuses when:
 
-- the account's `trusted_folders.toml` names the checkout, its real path or any parent, in any spelling;
+- the account's `trusted_folders.toml` names the checkout, its real path or any parent, as an exact TOML basic or literal string;
 - folder trust is off for the account. The preflight asks Grok directly: `grok inspect` on a fresh folder that holds only an `AGENTS.md` must report it untrusted, with no project instructions. This covers the environment, every configuration layer, device management and remote settings, as Grok resolves them when the review starts;
 - the trust store cannot be read.
 
-The account's own hooks still matter. A headless Grok run treats an untrusted folder as trusted for the account's own hooks, and such a hook can run any file in the checkout. The preflight still refuses any enabled hook that `grok inspect --json` lists. Plugin hooks and agent frontmatter hooks load after inspection, so the account must also meet one of these:
+The account's own hooks still matter. A headless Grok run treats an untrusted folder as trusted for the account's own hooks, and such a hook can run any file in the checkout. Grok 1.0.70 lists those hooks only when inspected from a folder it trusts for them. The preflight therefore inspects the account from its home directory, where Grok loads no project configuration, and requires that inspection to read as trusted. It refuses any enabled hook there, and any MCP or LSP server the account starts, since the hook pin never covered those. Plugin hooks and agent frontmatter hooks load after inspection, so the account must also meet one of these:
 
 - the `nonManagedHooks` pin (`allow_managed_hooks_only = true`) is set, which skips those hooks at dispatch;
 - it has no plugins, only built-in agents, and no notification commands (`[[ui.notifications.hooks]]`; the preflight refuses any `notifications` setting in the account's `config.toml`).
 
 The pin is no longer required.
+
+**Review sandbox.** A review may still write its sessions and logs into the Grok home, but the review sandbox denies writes to the account's own configuration, so one review cannot plant something for the next. The denied paths are `hooks`, `hooks-paths`, `config.toml`, `trusted_folders.toml`, `sandbox.toml`, `agents`, `plugins`, `skills`, `roles`, `rules`, `workflows`, `lsp.json`, `AGENTS.md`, `.claude` and `.cursor`. Grok itself writes `bundled/`, `installed-plugins/`, `managed_config.toml` and `requirements.toml`, so those stay writable.
 
 **Terminal reviews.** A Grok terminal (tmux) review is refused before launch, and the refusal points to the native transport. In an untrusted checkout that carries project configuration, Grok's terminal stops at "Do you trust the contents of this directory?", and answering Yes would trust the PR.
 
@@ -585,5 +587,6 @@ The cost is that a Grok reviewer no longer reads the repository's `AGENTS.md`, p
 
 - `checkGrokReviewWorkspace` replaces `trustGrokWorkspace` in `@farmslot/agent-runtime` `scripts/workspace-trust.cjs`, and `workspaceTrustByRunner.grok` points to it.
 - `trustGrokFolders` stays, for worker slots.
+- `reviewProtectedRuntimePaths` on a runner definition (Grok: `grokProtectedHomePaths`) and a fourth `protectedRuntimePaths` argument to the review sandbox.
 - `grokAuthMethod` (the Grok adapter and account observer), and `AcpAuthMethod` / `selectAcpAuthMethod`: an ACP adapter's `authMethod` may now pick among the advertised methods.
 - `@farmslot/agent-runtime` needs a release. Until it is rolled out, nodes keep trusting review checkouts.

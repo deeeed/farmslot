@@ -11,6 +11,54 @@ import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandb
 
 const exec = promisify(execFile);
 test(
+  "host review sandbox keeps the account's own configuration read-only inside its runtime root",
+  { skip: !hostReviewSandboxAvailable() },
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'review-protected-')));
+    const source = join(root, 'source'),
+      output = join(root, 'reports'),
+      account = join(root, 'account');
+    try {
+      for (const dir of [source, output, join(account, 'hooks'), join(account, 'sessions')])
+        await mkdir(dir, { recursive: true });
+      await writeFile(join(account, 'config.toml'), 'original');
+      const policy = { readOnlyRoots: [source], writableRoots: [output] };
+      const protectedPaths = nativeRunnerDefinitions.grok.reviewProtectedRuntimePaths!({
+        GROK_HOME: account,
+      });
+      assert.ok(protectedPaths.includes(join(account, 'hooks')));
+      const { sandbox } = await reviewProcessSandbox(policy, [account], [], protectedPaths);
+      const program = `const fs=require('node:fs');const files=JSON.parse(process.argv[1]);const results={};for(const [name,file]of Object.entries(files)){try{fs.writeFileSync(file,'changed');results[name]=true;}catch(e){if(!['EPERM','EACCES'].includes(e.code))throw e;results[name]=false;}}console.log(JSON.stringify(results));`;
+      const result = await exec(sandbox.executable, [
+        ...sandbox.args,
+        process.execPath,
+        '-e',
+        program,
+        JSON.stringify({
+          config: join(account, 'config.toml'),
+          hook: join(account, 'hooks', 'planted.json'),
+          agent: join(account, 'agents'),
+          session: join(account, 'sessions', 'review.jsonl'),
+        }),
+      ]);
+      assert.deepEqual(JSON.parse(result.stdout), {
+        config: false,
+        hook: false,
+        agent: false,
+        session: true,
+      });
+      assert.equal(await readFile(join(account, 'config.toml'), 'utf8'), 'original');
+      await assert.rejects(
+        reviewProcessSandbox(policy, [account], [], [join(root, 'elsewhere')]),
+        /must belong to a runtime root/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'host review sandbox protects source, shared git metadata and unrelated files while reports stay writable',
   { skip: !hostReviewSandboxAvailable() },
   async () => {

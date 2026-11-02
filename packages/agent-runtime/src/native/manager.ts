@@ -551,6 +551,7 @@ export class NativeSessionManager {
             filesystemPolicy,
             transport.reviewRuntimeRoots?.(environment) ?? [],
             transport.reviewConfigurationRoots?.(params.cwd) ?? [],
+            transport.reviewProtectedRuntimePaths?.(environment) ?? [],
           )
         : undefined;
     if (relocation) {

@@ -43,6 +43,7 @@ const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-t
   codexHome(environment: NodeJS.ProcessEnv): string;
   grokHome(environment: NodeJS.ProcessEnv): string;
   reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
+  grokProtectedHomePaths(environment: NodeJS.ProcessEnv): string[];
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
   workspaceTrustByRunner: Record<
     string,
@@ -78,6 +79,8 @@ export interface NativeRunnerDefinition {
   /** Exclude repository configuration before the sandbox can deny its startup read. */
   reviewStartupArgs?: readonly string[];
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
+  /** Paths inside the runtime roots that a review must not write: the account's own configuration. */
+  reviewProtectedRuntimePaths?: (environment: NodeJS.ProcessEnv) => string[];
   /** Read-only account inspection before copying support or trusting a review checkout. */
   reviewAccountPreflight?: { script: string; timeoutMs: number };
   /** A runner may admit only its verified migration to a stricter profile environment. */
@@ -187,6 +190,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [workspaceTrust.grokHome(env)],
+    reviewProtectedRuntimePaths: workspaceTrust.grokProtectedHomePaths,
     adapter: grokNativeAdapter,
     binary: 'grok',
     supportsWorkers: true,

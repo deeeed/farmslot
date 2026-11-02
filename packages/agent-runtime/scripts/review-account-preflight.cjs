@@ -11,7 +11,7 @@ const { homedir, tmpdir } = require('node:os');
 const { dirname, join, resolve } = require('node:path');
 
 function grokProfileEnvironment(directory, base = process.env) {
-  const home = base.HOME || homedir();
+  const home = homeDirectory(base);
   const defaultDirectory = join(home, '.grok');
   const canonicalDefault = existsSync(defaultDirectory)
     ? realpathSync(defaultDirectory)
@@ -43,8 +43,9 @@ function canResumeGrokProfileContext(previous, current, ambientHome) {
   );
 }
 
+const homeDirectory = (env) => env.HOME || homedir();
 /** Where Grok reads its login and settings when no profile selects another directory. */
-const grokHome = (env) => env.GROK_HOME || join(env.HOME || homedir(), '.grok');
+const grokHome = (env) => env.GROK_HOME || join(homeDirectory(env), '.grok');
 
 function readGrokHomeFile(env, file) {
   try {
@@ -72,13 +73,11 @@ function grokTrustStoreNamesCheckout(cwd, env) {
 
 function assertGrokReviewAccount(cwd, env, launch = {}) {
   const remedy =
-    'Use a GROK_HOME with no hooks, plugins, agents or notification commands of its own, or set ' +
+    'Use a GROK_HOME with no hooks, MCP or LSP servers, plugins, agents or notification commands of its own, or set ' +
     'allow_managed_hooks_only = true in its requirements.toml; keep folder trust on, and the review ' +
     'checkout and its parents out of its trusted_folders.toml; verify with grok inspect --json; then ' +
     'retry. Use another runner if the account cannot meet this.';
   const executable = launch.executable || 'grok';
-  // Account discovery must not confuse intentionally masked PR configuration with unreadable account hooks.
-  const inspectionCwd = launch.inspectionCwd || cwd;
   const inspect = (directory) => {
     const args = ['--no-leader', '--no-auto-update', '--cwd', directory, 'inspect', '--json'];
     return JSON.parse(
@@ -89,9 +88,11 @@ function assertGrokReviewAccount(cwd, env, launch = {}) {
       ),
     );
   };
+  // Grok lists the account's own hooks only from a folder it trusts for them. The home directory
+  // is one, and Grok loads no project configuration there.
   let inspection;
   try {
-    inspection = inspect(inspectionCwd);
+    inspection = inspect(homeDirectory(env));
   } catch {
     // Inspector output can include account secrets. Refuse without echoing stdout/stderr.
     throw new Error('Grok review refused: account hook safety could not be verified. ' + remedy);
@@ -99,7 +100,10 @@ function assertGrokReviewAccount(cwd, env, launch = {}) {
   if (
     !inspection ||
     typeof inspection.grokVersion !== 'string' ||
+    inspection.projectTrusted !== true ||
     !Array.isArray(inspection.hooks) ||
+    !Array.isArray(inspection.mcpServers) ||
+    !Array.isArray(inspection.lspServers) ||
     (inspection.hookLoadErrors !== undefined &&
       (!Array.isArray(inspection.hookLoadErrors) || inspection.hookLoadErrors.length > 0))
   )
@@ -107,6 +111,11 @@ function assertGrokReviewAccount(cwd, env, launch = {}) {
   // Do not classify commands as safe: a global hook can invoke any PR-supplied file.
   if (inspection.hooks.some((hook) => hook?.disabled !== true))
     throw new Error('Grok review refused: this account has startup hooks enabled. ' + remedy);
+  // An account's MCP or LSP server is a command too, and the hook pin does not cover it.
+  if (inspection.mcpServers.length > 0 || inspection.lspServers.length > 0)
+    throw new Error(
+      'Grok review refused: this account starts its own MCP or LSP servers. ' + remedy,
+    );
   // Grok loads a checkout's hooks, agents, MCP and LSP servers, instructions and skills only once
   // the folder is trusted, so the review checkout must stay untrusted.
   let named;
@@ -173,4 +182,5 @@ module.exports = {
   grokHome,
   grokProfileEnvironment,
   canResumeGrokProfileContext,
+  homeDirectory,
 };
