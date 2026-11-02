@@ -36,3 +36,12 @@ export function workerLeftRunningDecision(
     context: { step: stepName, agents: [...running] },
   };
 }
+
+/** A replay of the run answers its open "worker left running" card. */
+export function answerWorkerLeftRunningCards(decisions: RunDecision[], at: string): RunDecision[] {
+  return decisions.map((decision) =>
+    decision.type === WORKER_LEFT_RUNNING_DECISION && !decision.resolvedAt
+      ? { ...decision, resolvedAt: at, resolvedAction: REPLAY_STEP_ACTION }
+      : decision,
+  );
+}
