@@ -83,7 +83,12 @@ function resolveMergeBase() {
   const event = readGithubEvent();
   const baseSha = event?.pull_request?.base?.sha;
   // base.sha is main's tip, which may hold notes merged after this branch left it.
-  if (baseSha) return gitLines(['merge-base', baseSha, resolveHeadSha()])[0] ?? baseSha;
+  if (baseSha) {
+    const mergeBase = gitLines(['merge-base', baseSha, resolveHeadSha()])[0];
+    if (!mergeBase)
+      throw new Error(`No merge base for ${baseSha} and ${resolveHeadSha()}: fetch full history.`);
+    return mergeBase;
+  }
   const originMain = gitLines(['rev-parse', '--verify', 'origin/main'])[0];
   if (originMain) {
     const mergeBase = gitLines(['merge-base', 'HEAD', originMain])[0];
@@ -160,8 +165,8 @@ function notesAt(ref, workspace) {
 
 const fragmentBullets = (notes) => notes.fragments.flatMap((text) => meaningfulBullets(text));
 
-// Unreleased bullets the PR adds, counting CHANGELOG.md and fragments alike, so editing or
-// renaming another PR's fragment is not a note of its own.
+// Unreleased bullets the PR adds, counting CHANGELOG.md and fragments alike: renaming a
+// fragment adds none, rewording one adds its new text.
 function newUnreleasedBullets(mergeBase, headSha, workspace) {
   const unreleased = (notes) => [
     ...unreleasedMeaningfulBullets(notes.changelog),
@@ -208,24 +213,12 @@ function checkFragmentsKept(mergeBase, headSha, changedFiles, releaseSubjects) {
   }
 }
 
-function releasedVersionCoversPr(mergeBase, headSha, workspace, changelogPath) {
-  const packageJsonPath = `${workspace}/package.json`;
-  const basePackage = JSON.parse(readTextAtRef(mergeBase, packageJsonPath));
-  const headPackage = JSON.parse(
-    headSha === 'HEAD'
-      ? readFileSync(path.join(repoRoot, packageJsonPath), 'utf8')
-      : readTextAtRef(headSha, packageJsonPath),
-  );
-  if (basePackage.version === headPackage.version) return false;
-
-  const headContent =
-    headSha === 'HEAD'
-      ? readFileSync(path.join(repoRoot, changelogPath), 'utf8')
-      : readTextAtRef(headSha, changelogPath);
+function releasedVersionCoversPr(mergeBase, headSha, workspace) {
+  const version = packageVersionAt(headSha, workspace);
+  if (packageVersionAt(mergeBase, workspace) === version) return false;
   const section = extractSection(
-    headContent,
-    (line) =>
-      line === `## ${headPackage.version}` || line.startsWith(`## ${headPackage.version} -`),
+    notesAt(headSha, workspace).changelog,
+    (line) => line === `## ${version}` || line.startsWith(`## ${version} -`),
   );
   return section ? meaningfulBullets(section.body).length > 0 : false;
 }
@@ -279,10 +272,7 @@ function checkPrDiff() {
       continue;
     }
     const bullets = newUnreleasedBullets(mergeBase, headSha, workspace);
-    if (
-      bullets.length === 0 &&
-      !releasedVersionCoversPr(mergeBase, headSha, workspace, changelogPath)
-    ) {
+    if (bullets.length === 0 && !releasedVersionCoversPr(mergeBase, headSha, workspace)) {
       fail(
         `${workspace} must add at least one new non-placeholder bullet, in ${workspace}/${FRAGMENT_DIR}/<branch-name>.md or under ${changelogPath} ## Unreleased, for this PR.`,
       );

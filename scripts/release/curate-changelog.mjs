@@ -21,7 +21,7 @@ function rewriteForOperator(bullet) {
   // One line per summary item: wrapped text joins, nested points drop.
   const lines = [];
   for (const line of bullet.split('\n')) {
-    if (lines.length > 0 && /^\s*-/.test(line)) break;
+    if (lines.length > 0 && /^\s*- /.test(line)) break;
     lines.push(line.trim());
   }
   return lines
