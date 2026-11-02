@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -15,6 +18,17 @@ import test from 'node:test';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import type { SlotVars } from '../core/config.js';
+
+// Slot commands keep the environment from load time, so the cross-volume case needs its stub
+// `df` on PATH first. It reports another device only for a path containing `cross-volume`.
+const dfStub = mkdtempSync(path.join(tmpdir(), 'slot-scaffolding-df-'));
+writeFileSync(
+  path.join(dfStub, 'df'),
+  `#!/bin/sh\ncase "$*" in *cross-volume*) printf 'Filesystem\\n/dev/other\\n' ;; *) exec /bin/df "$@" ;; esac\n`,
+);
+chmodSync(path.join(dfStub, 'df'), 0o755);
+process.env.PATH = `${dfStub}:${process.env.PATH}`;
+test.after(() => rmSync(dfStub, { recursive: true, force: true }));
 
 await import('../runtime/mock-pty.test-support.js');
 const { archiveSlotScaffolding, excludeSlotScaffolding } = await import('./slot-scaffolding.js');
@@ -155,7 +169,7 @@ test('a release that collected the artifacts archives the task without them', as
 
 // F310: macpro-audiolab-4's task held a worker's 14 GB baseline checkout (node_modules and Android
 // builds), and packing it outlasted the 120 s tar budget, so the slot stayed held. Stub sizes.
-function baselineCheckout(f: ReturnType<typeof fixture>) {
+function baselineCheckout(f: ReturnType<typeof fixture>, retention = 'retention') {
   const origin = path.join(f.root, 'origin.git');
   git(f.root, 'init', '-q', '--bare', '-b', 'main', origin);
   const seed = path.join(f.root, 'seed');
@@ -166,43 +180,62 @@ function baselineCheckout(f: ReturnType<typeof fixture>) {
   git(seed, 'add', '.');
   git(seed, 'commit', '-q', '-m', 'seed');
   git(seed, 'push', '-q', origin, 'main');
-  const baseline = path.join(f.repo, '.task/qa/example/checkouts/baseline');
-  mkdirSync(path.dirname(baseline), { recursive: true });
-  git(f.root, 'clone', '-q', origin, baseline);
-  mkdirSync(path.join(baseline, 'apps/playground/node_modules/pkg'), { recursive: true });
-  writeFileSync(path.join(baseline, 'apps/playground/node_modules/pkg/index.js'), 'dependency');
-  mkdirSync(path.join(baseline, 'apps/sherpa-voice/android/app/build/outputs'), {
-    recursive: true,
-  });
-  writeFileSync(path.join(baseline, 'apps/sherpa-voice/android/app/build/outputs/app.apk'), 'apk');
-  return { origin, baseline };
+  const checkouts = path.join(f.repo, '.task/qa/example/checkouts');
+  mkdirSync(checkouts, { recursive: true });
+  // On a slot host this is $HOME/slot-retained.
+  mkdirSync(path.join(f.root, retention));
+  return { origin, checkouts, retainedBase: path.join(f.root, retention, 'slot-retained') };
 }
 
-test('a release lists a pushed baseline checkout and build outputs instead of packing them', async (t) => {
-  const f = fixture(t);
-  git(f.repo, 'init', '-q', '-b', 'main');
-  scaffolding(f.repo);
-  const { origin, baseline } = baselineCheckout(f);
-  // A local-only branch whose commit the slot repository also holds, as on audiolab-4.
-  writeFileSync(path.join(f.repo, 'source.txt'), 'slot work');
-  git(f.repo, 'add', 'source.txt');
-  git(f.repo, 'commit', '-q', '-m', 'slot work');
-  git(baseline, 'fetch', '-q', f.repo, 'main:slot-main');
-  const task = path.join(f.repo, '.task/qa/example');
-  mkdirSync(path.join(task, 'app/android/app/build'), { recursive: true });
-  writeFileSync(path.join(task, 'app/android/app/build/classes.dex'), 'built');
-  mkdirSync(path.join(task, 'tools/node_modules/tool'), { recursive: true });
-  writeFileSync(path.join(task, 'tools/node_modules/tool/index.js'), 'dependency');
-  await excludeSlotScaffolding(f.vars, {}, execute);
-  const result = await archiveSlotScaffolding(
+function withBuildOutputs(checkout: string) {
+  mkdirSync(path.join(checkout, 'apps/playground/node_modules/pkg'), { recursive: true });
+  writeFileSync(path.join(checkout, 'apps/playground/node_modules/pkg/index.js'), 'dependency');
+  mkdirSync(path.join(checkout, 'apps/sherpa-voice/android/app/build/outputs'), {
+    recursive: true,
+  });
+  writeFileSync(path.join(checkout, 'apps/sherpa-voice/android/app/build/outputs/app.apk'), 'apk');
+}
+
+function release(f: ReturnType<typeof fixture>, retainedBase: string) {
+  return archiveSlotScaffolding(
     f.vars,
     {},
     {
       destination: f.destination,
       taskRelativeDir: 'qa/example',
       beforeRemove: async () => undefined,
+      retainedBase,
     },
   );
+}
+
+type Skipped = Array<{
+  path: string;
+  kind: string;
+  sizeBytes: number;
+  retainedAt?: string;
+  linkedWorktree?: boolean;
+  dirtyFiles?: number;
+  stashes?: number;
+  remote?: string;
+  head?: string;
+}>;
+
+test('a release moves a nested checkout aside and lists build outputs instead of packing them', async (t) => {
+  const f = fixture(t);
+  git(f.repo, 'init', '-q', '-b', 'main');
+  scaffolding(f.repo);
+  const { origin, checkouts, retainedBase } = baselineCheckout(f);
+  const baseline = path.join(checkouts, 'baseline');
+  git(f.root, 'clone', '-q', origin, baseline);
+  withBuildOutputs(baseline);
+  const task = path.join(f.repo, '.task/qa/example');
+  mkdirSync(path.join(task, 'app/android/app/build'), { recursive: true });
+  writeFileSync(path.join(task, 'app/android/app/build/classes.dex'), 'built');
+  mkdirSync(path.join(task, 'tools/node_modules/tool'), { recursive: true });
+  writeFileSync(path.join(task, 'tools/node_modules/tool/index.js'), 'dependency');
+  await excludeSlotScaffolding(f.vars, {}, execute);
+  const result = await release(f, retainedBase);
   const archived = unpack(result.directory, f.root);
   assert.equal(
     readFileSync(path.join(archived, '.task/qa/example/TASK.md'), 'utf8'),
@@ -213,13 +246,7 @@ test('a release lists a pushed baseline checkout and build outputs instead of pa
   const { skipped } = JSON.parse(
     readFileSync(path.join(result.directory, 'manifest.json'), 'utf8'),
   ) as {
-    skipped: Array<{
-      path: string;
-      kind: string;
-      sizeBytes: number;
-      remote?: string;
-      head?: string;
-    }>;
+    skipped: Skipped;
   };
   assert.deepEqual(skipped.map((entry) => [entry.kind, entry.path]).sort(), [
     ['checkout', '.task/qa/example/checkouts/baseline'],
@@ -229,17 +256,114 @@ test('a release lists a pushed baseline checkout and build outputs instead of pa
   const checkout = skipped.find((entry) => entry.kind === 'checkout')!;
   assert.equal(checkout.remote, origin);
   assert.equal(checkout.head, git(origin, 'rev-parse', 'main'));
-  assert.ok(checkout.sizeBytes > 0);
+  assert.ok(checkout.retainedAt?.startsWith(path.join(retainedBase, 'fixture-slot')));
+  // Nothing in the checkout is lost, its build outputs included.
+  assert.equal(readFileSync(path.join(checkout.retainedAt!, 'README.md'), 'utf8'), 'baseline');
+  assert.ok(
+    existsSync(path.join(checkout.retainedAt!, 'apps/playground/node_modules/pkg/index.js')),
+  );
+  assert.equal(result.retained?.items, 1);
+  assert.ok((result.retained?.bytes ?? 0) > 0);
   assert.equal(existsSync(task), false, 'the released task is removed');
 });
 
-test('a nested checkout with unpushed or uncommitted work keeps the task and refuses release', async (t) => {
+test('a checkout with a stash, untracked and ignored files moves intact', async (t) => {
   const f = fixture(t);
   git(f.repo, 'init', '-q', '-b', 'main');
   scaffolding(f.repo);
-  const { baseline } = baselineCheckout(f);
+  const { origin, checkouts, retainedBase } = baselineCheckout(f);
+  const work = path.join(checkouts, 'work');
+  git(f.root, 'clone', '-q', origin, work);
+  writeFileSync(path.join(work, 'README.md'), 'stashed edit');
+  git(work, 'stash', '-q');
+  writeFileSync(path.join(work, 'notes.md'), 'untracked notes');
+  writeFileSync(path.join(work, '.git/info/exclude'), 'recordings/\n');
+  mkdirSync(path.join(work, 'recordings'));
+  writeFileSync(path.join(work, 'recordings/take.wav'), 'ignored recording');
   await excludeSlotScaffolding(f.vars, {}, execute);
-  const release = () =>
+  const result = await release(f, retainedBase);
+  const { skipped } = JSON.parse(
+    readFileSync(path.join(result.directory, 'manifest.json'), 'utf8'),
+  ) as {
+    skipped: Skipped;
+  };
+  const moved = skipped.find((entry) => entry.kind === 'checkout')!;
+  assert.equal(moved.stashes, 1);
+  assert.equal(moved.dirtyFiles, 1, 'the untracked notes');
+  assert.equal(readFileSync(path.join(moved.retainedAt!, 'notes.md'), 'utf8'), 'untracked notes');
+  assert.equal(
+    readFileSync(path.join(moved.retainedAt!, 'recordings/take.wav'), 'utf8'),
+    'ignored recording',
+  );
+  assert.match(git(moved.retainedAt!, 'stash', 'list'), /stash@\{0\}/);
+});
+
+test('a moved linked worktree stays registered at its new path', async (t) => {
+  const f = fixture(t);
+  git(f.repo, 'init', '-q', '-b', 'main');
+  scaffolding(f.repo);
+  const { origin, checkouts, retainedBase } = baselineCheckout(f);
+  const main = path.join(f.root, 'canonical');
+  git(f.root, 'clone', '-q', origin, main);
+  const linked = path.join(checkouts, 'baseline');
+  git(main, 'worktree', 'add', '-q', '--detach', linked, 'main');
+  await excludeSlotScaffolding(f.vars, {}, execute);
+  const result = await release(f, retainedBase);
+  const { skipped } = JSON.parse(
+    readFileSync(path.join(result.directory, 'manifest.json'), 'utf8'),
+  ) as {
+    skipped: Skipped;
+  };
+  const moved = skipped.find((entry) => entry.kind === 'checkout')!;
+  assert.equal(moved.linkedWorktree, true);
+  const worktrees = git(main, 'worktree', 'list', '--porcelain');
+  assert.match(worktrees, new RegExp(`worktree ${realpathSync(moved.retainedAt!)}\n`));
+  assert.doesNotMatch(worktrees, /prunable/);
+  assert.equal(git(moved.retainedAt!, 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'main'));
+});
+
+test('a nested checkout that would cross a volume keeps the task and refuses release', async (t) => {
+  const f = fixture(t);
+  git(f.repo, 'init', '-q', '-b', 'main');
+  scaffolding(f.repo);
+  // The stub df puts this retention directory on another device than the slot repository.
+  const { origin, checkouts, retainedBase } = baselineCheckout(f, 'cross-volume');
+  git(f.root, 'clone', '-q', origin, path.join(checkouts, 'baseline'));
+  await excludeSlotScaffolding(f.vars, {}, execute);
+  await assert.rejects(
+    release(f, retainedBase),
+    /cannot be moved aside: .*cross-volume.* is not on the slot repository's volume/,
+  );
+  assert.equal(readFileSync(path.join(checkouts, 'baseline/README.md'), 'utf8'), 'baseline');
+  assert.equal(
+    readFileSync(path.join(f.repo, '.task/qa/example/TASK.md'), 'utf8'),
+    'completed task',
+  );
+});
+
+// F310: a retry loop ran several collections for audiolab-6 at once, each streaming a 6 GB
+// archive into macwork's last free space.
+test('a second collection for the same slot refuses while the first runs', async (t) => {
+  const f = fixture(t);
+  scaffolding(f.repo);
+  let resume!: () => void;
+  const paused = new Promise<void>((resolve) => (resume = resolve));
+  let reachedRemove!: () => void;
+  const removing = new Promise<void>((resolve) => (reachedRemove = resolve));
+  const first = archiveSlotScaffolding(
+    f.vars,
+    {},
+    {
+      destination: f.destination,
+      taskRelativeDir: 'qa/example',
+      beforeRemove: async () => {
+        reachedRemove();
+        await paused;
+      },
+    },
+  );
+  await removing;
+  await assert.rejects(
     archiveSlotScaffolding(
       f.vars,
       {},
@@ -248,12 +372,56 @@ test('a nested checkout with unpushed or uncommitted work keeps the task and ref
         taskRelativeDir: 'qa/example',
         beforeRemove: async () => undefined,
       },
-    );
-  writeFileSync(path.join(baseline, 'README.md'), 'edited');
-  await assert.rejects(release(), /checkouts\/baseline has uncommitted changes/);
-  git(baseline, 'commit', '-q', '-am', 'local only');
-  await assert.rejects(release(), /checkouts\/baseline has commits on no remote/);
-  assert.equal(readFileSync(path.join(baseline, 'README.md'), 'utf8'), 'edited');
+    ),
+    /A scaffolding collection for fixture-slot is already running/,
+  );
+  resume();
+  assert.equal((await first).roots > 0, true);
+});
+
+test('an archive over the size limit refuses before download and leaves nothing behind', async (t) => {
+  const f = fixture(t);
+  scaffolding(f.repo);
+  await assert.rejects(
+    archiveSlotScaffolding(
+      f.vars,
+      {},
+      {
+        destination: f.destination,
+        taskRelativeDir: 'qa/example',
+        beforeRemove: async () => undefined,
+        maxArchiveBytes: 1,
+      },
+    ),
+    /Scaffolding archive is \d+ MB, over the \d+ MB limit/,
+  );
+  assert.equal(existsSync(f.destination), false, 'no archive directory or partial download');
+  assert.equal(
+    readFileSync(path.join(f.repo, '.task/qa/example/TASK.md'), 'utf8'),
+    'completed task',
+  );
+});
+
+test('a collection that fails after its download leaves no partial archive', async (t) => {
+  const f = fixture(t);
+  scaffolding(f.repo);
+  const obs = path.join(runnerRuntimeDir(f.repo), '.observability');
+  mkdirSync(obs, { recursive: true });
+  writeFileSync(path.join(obs, 'unreadable.jsonl'), 'observations');
+  chmodSync(path.join(obs, 'unreadable.jsonl'), 0o000);
+  await assert.rejects(
+    archiveSlotScaffolding(
+      f.vars,
+      {},
+      {
+        destination: f.destination,
+        taskRelativeDir: 'qa/example',
+        beforeRemove: async () => undefined,
+      },
+    ),
+    /Cannot pack runner observations/,
+  );
+  assert.deepEqual(existsSync(f.destination) ? readdirSync(f.destination) : [], []);
   assert.equal(
     readFileSync(path.join(f.repo, '.task/qa/example/TASK.md'), 'utf8'),
     'completed task',

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
@@ -113,7 +113,20 @@ export interface SlotScaffoldingArchiveOptions {
    * timeout (F298). Legacy task roots were not copied, so they stay in the archive.
    */
   artifactsCollected?: boolean;
+  /** Where nested checkouts are moved on the slot host. Default: `$HOME/slot-retained`. */
+  retainedBase?: string;
+  /** Largest archive the release downloads. Default: SCAFFOLDING_ARCHIVE_MAX_BYTES. */
+  maxArchiveBytes?: number;
 }
+
+/**
+ * A scaffolding archive holds task notes and observations once rebuildable content is left out.
+ * Anything larger is refused before download: audiolab-6's retried releases streamed six 6 GB
+ * archives at once into macwork's last free space (F310).
+ */
+export const SCAFFOLDING_ARCHIVE_MAX_BYTES = 2 * 1024 ** 3;
+
+const collectionsInFlight = new Set<string>();
 
 /**
  * Directories an install or build recreates. The archive lists them instead of packing them:
@@ -127,20 +140,27 @@ interface SkippedScaffolding {
   path: string;
   kind: 'checkout' | 'rebuildable';
   sizeBytes: number | null;
+  /** Checkouts only: where the release moved it on the slot host. */
+  retainedAt?: string;
+  linkedWorktree?: boolean;
+  dirtyFiles?: number;
+  stashes?: number;
   remote?: string;
   head?: string;
 }
 
 /**
- * Nested Git checkouts and rebuildable directories under the released task roots. A checkout
- * whose HEAD is on a remote, with no changes and no local-only commit missing from the slot
- * repository, can be cloned again; any other one refuses the release so its work stays.
+ * Nested Git checkouts and rebuildable directories under the released task roots. A checkout is
+ * never deleted: a clean, pushed one still held stashes in its common repository and gigabytes
+ * of ignored prebuilt libraries on audiolab-4, so the release moves it aside on the slot host.
+ * `retainedRoot` is null when no checkout exists or when it would cross a volume.
  */
 async function inventoryRebuildableScaffolding(
   vars: SlotVars,
   taskRoots: string[],
-): Promise<SkippedScaffolding[]> {
-  if (!taskRoots.length) return [];
+  retainedBase: string | undefined,
+): Promise<{ skipped: SkippedScaffolding[]; retainedRoot: string | null }> {
+  if (!taskRoots.length) return { skipped: [], retainedRoot: null };
   const names = REBUILDABLE_DIR_NAMES.map((name) => `-name ${shellQuote(name)}`).join(' -o ');
   const paths = REBUILDABLE_DIR_PATHS.map((glob) => `-path ${shellQuote(glob)}`).join(' -o ');
   const script = [
@@ -151,42 +171,111 @@ async function inventoryRebuildableScaffolding(
     'done | while IFS= read -r dir; do',
     '  size="$(du -sk "$dir" 2>/dev/null | cut -f1)"',
     '  if [ ! -e "$dir/.git" ]; then printf "R\\t%s\\t%s\\n" "$dir" "$size"; continue; fi',
-    '  state=clean',
-    '  [ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ] || state=dirty',
-    '  [ "$state" != clean ] || git -C "$dir" branch -r --contains HEAD 2>/dev/null | grep -q . || state=unpushed',
-    '  if [ "$state" = clean ]; then',
-    '    for commit in $(git -C "$dir" log --format=%H --branches --not --remotes 2>/dev/null); do',
-    '      git cat-file -e "$commit^{commit}" 2>/dev/null || { state=unpushed; break; }',
-    '    done',
-    '  fi',
-    '  printf "C\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$dir" "$size" "$state" "$(git -C "$dir" remote get-url origin 2>/dev/null)" "$(git -C "$dir" rev-parse HEAD 2>/dev/null)"',
+    '  linked=0; [ -f "$dir/.git" ] && linked=1',
+    '  dirty="$(git -C "$dir" status --porcelain --untracked-files=all --ignore-submodules=none 2>/dev/null | wc -l | tr -d " ")"',
+    '  stashes="$(git -C "$dir" stash list 2>/dev/null | wc -l | tr -d " ")"',
+    '  printf "C\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$dir" "$size" "$linked" "$dirty" "$stashes" "$(git -C "$dir" remote get-url origin 2>/dev/null)" "$(git -C "$dir" rev-parse HEAD 2>/dev/null)"',
     'done',
+    `base=${retainedBase ? shellQuote(retainedBase) : '"$HOME/slot-retained"'}`,
+    'printf "V\\t%s\\t%s\\t%s\\n" "$(df -P . | awk \'NR==2{print $1}\')" "$(df -P "$(dirname "$base")" | awk \'NR==2{print $1}\')" "$base"',
   ].join('\n');
   const result = await execOnSlot(vars, script, { timeout: 120_000 });
   if (result.exitCode !== 0) throw new Error(`Cannot inventory scaffolding: ${result.stderr}`);
   const skipped: SkippedScaffolding[] = [];
+  let volumes: string[] = [];
   for (const line of result.stdout.split('\n')) {
-    const [kind, dir, size, state, remote, head] = line.split('\t');
-    if (!dir) continue;
+    const [kind, ...fields] = line.split('\t');
+    if (kind === 'V') volumes = fields;
+    const [dir, size, linked, dirty, stashes, remote, head] = fields;
+    if (!dir || (kind !== 'R' && kind !== 'C')) continue;
     const sizeBytes = /^\d+$/.test(size ?? '') ? Number(size) * 1024 : null;
     if (kind === 'R') skipped.push({ path: dir, kind: 'rebuildable', sizeBytes });
-    else if (kind === 'C') {
-      if (state !== 'clean')
-        throw new Error(
-          `Nested checkout ${dir} has ${state === 'dirty' ? 'uncommitted changes' : 'commits on no remote'}; push or remove it before release`,
-        );
-      skipped.push({ path: dir, kind: 'checkout', sizeBytes, remote: remote || undefined, head });
-    }
+    else
+      skipped.push({
+        path: dir,
+        kind: 'checkout',
+        sizeBytes,
+        linkedWorktree: linked === '1',
+        dirtyFiles: Number(dirty) || 0,
+        stashes: Number(stashes) || 0,
+        ...(remote ? { remote } : {}),
+        ...(head ? { head } : {}),
+      });
   }
-  return skipped;
+  if (!skipped.some((entry) => entry.kind === 'checkout')) return { skipped, retainedRoot: null };
+  const [repoVolume, baseVolume, base] = volumes;
+  if (!repoVolume || repoVolume !== baseVolume || !base)
+    throw new Error(
+      `Nested checkouts cannot be moved aside: ${base || 'the retention directory'} is not on the slot repository's volume`,
+    );
+  return { skipped, retainedRoot: path.posix.join(base, vars.slotId) };
 }
 
-/** Copy all sources before removing any; leave warm runtime resources in place. */
+/**
+ * Move the released task's nested checkouts into the slot's retention directory, repair linked
+ * worktree registrations, and measure what the slot now retains for fleet status.
+ */
+async function retainNestedCheckouts(
+  vars: SlotVars,
+  checkouts: SkippedScaffolding[],
+  retainedDir: string,
+  retainedRoot: string,
+): Promise<{ items: number; bytes: number }> {
+  const moves = checkouts.flatMap((entry) => {
+    const target = path.posix.join(retainedDir, entry.path);
+    return [
+      `mkdir -p ${shellQuote(path.posix.dirname(target))}`,
+      `mv ${shellQuote(entry.path)} ${shellQuote(target)}`,
+      ...(entry.linkedWorktree ? [`git -C ${shellQuote(target)} worktree repair`] : []),
+      `printf '%s\\t%s\\n' ${shellQuote(entry.path)} ${shellQuote(target)} >> ${shellQuote(path.posix.join(retainedDir, 'RETAINED.tsv'))}`,
+    ];
+  });
+  const result = await execOnSlot(
+    vars,
+    [
+      'set -e',
+      `cd ${shellQuote(vars.remoteRepo)}`,
+      ...moves,
+      `printf '%s\\t%s\\n' "$(cat ${shellQuote(retainedRoot)}/*/RETAINED.tsv | wc -l | tr -d ' ')" "$(du -sk ${shellQuote(retainedRoot)} | cut -f1)"`,
+    ].join('\n'),
+    { timeout: 120_000 },
+  );
+  if (result.exitCode !== 0)
+    throw new Error(`Cannot move nested checkouts aside: ${result.stderr}`);
+  const [items, kb] = result.stdout.trim().split('\t');
+  return { items: Number(items) || 0, bytes: (Number(kb) || 0) * 1024 };
+}
+
+type ScaffoldingArchive = {
+  directory: string;
+  roots: number;
+  retained?: { items: number; bytes: number };
+};
+
+/**
+ * Copy all sources before removing any; leave warm runtime resources in place. One collection
+ * per slot at a time: a retry loop ran several on audiolab-6 at once (F310).
+ */
 export async function archiveSlotScaffolding(
   vars: SlotVars,
   projectJson: RawProjectJson,
   options: SlotScaffoldingArchiveOptions,
-): Promise<{ directory: string; roots: number }> {
+): Promise<ScaffoldingArchive> {
+  if (collectionsInFlight.has(vars.slotId))
+    throw new Error(`A scaffolding collection for ${vars.slotId} is already running`);
+  collectionsInFlight.add(vars.slotId);
+  try {
+    return await collectSlotScaffolding(vars, projectJson, options);
+  } finally {
+    collectionsInFlight.delete(vars.slotId);
+  }
+}
+
+async function collectSlotScaffolding(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  options: SlotScaffoldingArchiveOptions,
+): Promise<ScaffoldingArchive> {
   const { task, runtime } = slotScaffoldingPaths(projectJson);
   // Parked/free-slot runs can still own sibling task directories. Only the
   // released task is collected; shared task roots keep their existing retention.
@@ -234,18 +323,26 @@ export async function archiveSlotScaffolding(
   }
   const directory = path.join(options.destination, randomUUID());
   if (!sources.length) return { directory, roots: 0 };
-  const skipped = await inventoryRebuildableScaffolding(
+  const { skipped, retainedRoot } = await inventoryRebuildableScaffolding(
     vars,
     sources
       .filter((source) => taskRoots.includes(source.relative))
       .map((source) => source.relative),
+    options.retainedBase,
   );
+  const retainedDir = retainedRoot && path.posix.join(retainedRoot, path.basename(directory));
+  for (const entry of skipped)
+    if (entry.kind === 'checkout' && retainedDir)
+      entry.retainedAt = path.posix.join(retainedDir, entry.path);
+  let retained: { items: number; bytes: number } | undefined;
   // tar preserves links as links. Copying their targets could leak a mounted
   // reference checkout or lose link metadata when the slot is cleaned.
   const created = await execOnSlot(vars, 'mktemp -d');
   if (created.exitCode !== 0 || !created.stdout.trim())
     throw new Error(`Cannot stage scaffolding archive: ${created.stderr}`);
   const temporary = created.stdout.trim();
+  // A failed transfer leaves its partial download; only a finished archive stays.
+  let archived = false;
   try {
     const remoteArchive = path.posix.join(temporary, 'scaffolding.tar');
     const checkoutSources = sources.filter((source) => source.absolute !== external);
@@ -266,6 +363,12 @@ export async function archiveSlotScaffolding(
       { timeout: 120_000 },
     );
     if (packed.exitCode !== 0) throw new Error(`Cannot pack scaffolding: ${packed.stderr}`);
+    const archiveBytes = (await slotStat(vars, remoteArchive)).size;
+    const maxArchiveBytes = options.maxArchiveBytes ?? SCAFFOLDING_ARCHIVE_MAX_BYTES;
+    if (archiveBytes > maxArchiveBytes)
+      throw new Error(
+        `Scaffolding archive is ${Math.ceil(archiveBytes / 1024 ** 2)} MB, over the ${Math.floor(maxArchiveBytes / 1024 ** 2)} MB limit`,
+      );
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const archive = path.join(directory, 'scaffolding.tar');
     await slotCopyFile(vars, remoteArchive, archive, {
@@ -299,6 +402,7 @@ export async function archiveSlotScaffolding(
       path.join(directory, 'manifest.json'),
       `${JSON.stringify({ slotId: vars.slotId, sources: sources.map((source) => source.relative), skipped }, null, 2)}\n`,
     );
+    archived = true;
     for (const source of [
       ...sources.filter((source) => source.absolute !== external).reverse(),
       ...sources.filter((source) => source.absolute === external),
@@ -306,10 +410,16 @@ export async function archiveSlotScaffolding(
       await options.beforeRemove();
       if ((await slotRealpath(vars, source.absolute)) !== source.resolved)
         throw new Error(`Scaffolding changed during collection: ${source.relative}`);
+      const checkouts = skipped.filter(
+        (entry) => entry.kind === 'checkout' && entry.path.startsWith(`${source.relative}/`),
+      );
+      if (checkouts.length && retainedDir && retainedRoot)
+        retained = await retainNestedCheckouts(vars, checkouts, retainedDir, retainedRoot);
       await slotDeletePath(vars, source.absolute);
     }
-    return { directory, roots: sources.length };
+    return { directory, roots: sources.length, ...(retained ? { retained } : {}) };
   } finally {
+    if (!archived) await rm(directory, { recursive: true, force: true });
     await slotDeletePath(vars, temporary);
   }
 }

@@ -1055,6 +1055,8 @@ async function slotReleaseImpl(
           'scaffolding',
           `Collected ${collected.roots} scaffolding roots to ${collected.directory}`,
         );
+        // Moved-aside checkouts stay on the slot host; fleet status shows what they hold (F310).
+        if (collected.retained) await guardedTeardownWrite({ retained: collected.retained });
       } catch (error) {
         await assertReleaseClaim();
         const reason = `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`;
