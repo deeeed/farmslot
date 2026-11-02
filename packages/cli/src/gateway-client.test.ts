@@ -6,7 +6,13 @@ import test, { type TestContext } from 'node:test';
 
 import { WebSocketServer } from 'ws';
 
-import { connectionFailed, GatewayClient, GatewayConnectionError } from './gateway-client.js';
+import {
+  cliReconnectWindowMs,
+  connectionFailed,
+  GATEWAY_RECONNECT_WINDOW_MS,
+  GatewayClient,
+  GatewayConnectionError,
+} from './gateway-client.js';
 
 type Upgrade = 'answer' | 'refuse-503' | 'drop' | 'hang';
 
@@ -180,4 +186,136 @@ test('the failure reason lists every address tried and skips empty causes', () =
   ] as const) {
     assert.equal(connectionFailed(cause).message, message);
   }
+});
+
+/** Starts answering on a refused port after `afterMs`, as a reloaded gateway does. */
+async function reloadingGateway(t: TestContext, afterMs: number) {
+  const url = await closedPort();
+  const requests: string[] = [];
+  let wss: WebSocketServer | undefined;
+  const timer = setTimeout(() => {
+    wss = new WebSocketServer({ host: '127.0.0.1', port: Number(new URL(url).port) });
+    wss.on('connection', (ws) =>
+      ws.on('message', (raw) => {
+        const { id, method } = JSON.parse(String(raw)) as { id: string; method: string };
+        requests.push(method);
+        ws.send(JSON.stringify({ type: 'res', id, ok: true, payload: { served: true } }));
+      }),
+    );
+  }, afterMs);
+  t.after(() => {
+    clearTimeout(timer);
+    for (const client of wss?.clients ?? []) client.terminate();
+    wss?.close();
+  });
+  return { url, requests };
+}
+
+const waiting = (url: string) =>
+  new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 10_000 });
+
+test('a one-shot call waits out a gateway reload and reaches it once it listens', async (t) => {
+  const { url, requests } = await reloadingGateway(t, 600);
+  assert.deepEqual(await waiting(url).call('fleet.status'), { served: true });
+  // The request reached the gateway once.
+  assert.deepEqual(requests, ['fleet.status']);
+});
+
+test('a long-lived connection waits out a gateway reload too', async (t) => {
+  const { url, requests } = await reloadingGateway(t, 600);
+  const connection = await waiting(url).connect();
+  t.after(() => connection.close());
+  assert.deepEqual(await connection.call('gateway.status'), { served: true });
+  assert.deepEqual(requests, ['gateway.status']);
+});
+
+test('a reload that outlasts the wait fails with the transport reason', async (t) => {
+  const notices: string[] = [];
+  t.mock.method(process.stderr, 'write', (text: string) => {
+    notices.push(text);
+    return true;
+  });
+  const tty = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY');
+  Object.defineProperty(process.stderr, 'isTTY', { configurable: true, value: true });
+  t.after(() => {
+    if (tty) Object.defineProperty(process.stderr, 'isTTY', tty);
+    else Reflect.deleteProperty(process.stderr, 'isTTY');
+  });
+  const url = await closedPort();
+  const started = Date.now();
+  await assert.rejects(
+    new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 700 }).call('gateway.status'),
+    (error: unknown) =>
+      error instanceof GatewayConnectionError &&
+      /^Connection failed — is the gateway running\? \(connect ECONNREFUSED 127\.0\.0\.1:\d+\)$/.test(
+        error.message,
+      ),
+  );
+  assert.ok(Date.now() - started >= 250, 'it retried before giving up');
+  assert.ok(Date.now() - started < 2000, 'the wait is bounded');
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /not accepting connections \(reloading\?\); retrying for up to 1s/);
+});
+
+test('only farmslot commands wait, for FARMSLOT_GATEWAY_RECONNECT_MS or 90 s', async () => {
+  assert.equal(cliReconnectWindowMs({}), GATEWAY_RECONNECT_WINDOW_MS);
+  assert.equal(GATEWAY_RECONNECT_WINDOW_MS, 90_000);
+  assert.equal(cliReconnectWindowMs({ FARMSLOT_GATEWAY_RECONNECT_MS: '0' }), 0);
+  assert.equal(cliReconnectWindowMs({ FARMSLOT_GATEWAY_RECONNECT_MS: '5000' }), 5000);
+  assert.equal(cliReconnectWindowMs({ FARMSLOT_GATEWAY_RECONNECT_MS: 'soon' }), 90_000);
+  // A client built without a window, as probes and scripts build it, fails at once.
+  const url = await closedPort();
+  const started = Date.now();
+  await assert.rejects(new GatewayClient({ url, timeout: 2000 }).call('gateway.status'));
+  assert.ok(Date.now() - started < 200);
+});
+
+test('a failure after the socket opened is not retried, so no request is sent twice', async (t) => {
+  const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(wss, 'listening');
+  t.after(() => wss.close());
+  let requests = 0;
+  wss.on('connection', (ws) =>
+    ws.on('message', () => {
+      requests += 1;
+      ws.terminate();
+    }),
+  );
+  const url = `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`;
+  await assert.rejects(
+    new GatewayClient({ url, timeout: 2000, reconnectWindowMs: 10_000 }).call('run.create'),
+    (error: unknown) => error instanceof GatewayConnectionError && !error.reconnectable,
+  );
+  assert.equal(requests, 1);
+});
+
+test('only a reload-shaped failure before the socket opens is worth waiting for', () => {
+  for (const [cause, beforeOpen, reconnectable] of [
+    [new Error('connect ECONNREFUSED 127.0.0.1:7801'), true, true],
+    [new Error('Unexpected server response: 503'), true, true],
+    [new Error('socket hang up'), true, true],
+    [
+      new AggregateError([
+        new Error('connect ECONNREFUSED ::1:7801'),
+        new Error('connect ECONNREFUSED 127.0.0.1:7801'),
+      ]),
+      true,
+      true,
+    ],
+    // A wrong host, a timeout or a refused credential will not fix itself.
+    [new Error('getaddrinfo ENOTFOUND gateway.invalid'), true, false],
+    [new Error('connect ETIMEDOUT 10.0.0.9:7801'), true, false],
+    [new Error('Unexpected server response: 401'), true, false],
+    [
+      new AggregateError([
+        new Error('connect ETIMEDOUT fe80::1:7801'),
+        new Error('connect ECONNREFUSED 127.0.0.1:7801'),
+      ]),
+      true,
+      false,
+    ],
+    [new Error('connect ECONNREFUSED 127.0.0.1:7801'), false, false],
+    [undefined, true, false],
+  ] as const)
+    assert.equal(connectionFailed(cause, beforeOpen).reconnectable, reconnectable, String(cause));
 });
