@@ -320,14 +320,21 @@ try {
   );
   await gw.call('run.cancel', { runId: continuing.id, reason: 'app binding proof done' });
   await waitForStop(continuing.id);
+  // A cancelled run keeps its slot until a later claim reclaims it. Node 4 compares against the
+  // row once teardown is done: two equal reads in a row, neither mid-release.
+  let previous: string | undefined;
   const settled = await poll(
-    'the slot to be released',
+    'the slot row to settle after the cancel',
     async () => {
       const row = await ownership();
-      return row.lifecycle === 'ready' && !row.currentRunId && !row.phase ? row : undefined;
+      const current = JSON.stringify(row);
+      const stable = row.phase !== 'releasing' && current === previous;
+      previous = current;
+      return stable ? row : undefined;
     },
     120_000,
   );
+  await json(path.join(evidence, 'slot-before-restart-node.json'), settled);
 
   // 4. Abort across a gateway restart: the resolver resumes find-slot with no live waiter.
   const restarting = await createRun('apps/sherpa-voice');
@@ -356,7 +363,7 @@ try {
   assert.equal(appCards(abortedAfterRestart).length, 1, 'no second card after the restart');
   assert.match(abortedAfterRestart.error ?? '', abortedMessage);
   const afterRestartAbort = await ownership();
-  assert.deepEqual(afterRestartAbort, settled, 'the slot is as it was before the run');
+  assert.deepEqual(afterRestartAbort, settled, 'the slot row is as it was before the run');
 
   result = {
     pass: true,
