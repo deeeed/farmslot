@@ -4,8 +4,8 @@
 // with recipe-runner's frame metrics. The frames that handled input keep that
 // mark, so a host can time a press from the touch to the frame that answers it.
 // Given `shownMarkers`, it also streams the app's `[farmslot-perf] shown
-// <screen>` logcat lines on the same clock, so a press can run to the line its
-// screen logs once drawn.
+// <screen>` logcat lines on the same clock, so a press can be timed by the line
+// its screen logs after React commits it.
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 

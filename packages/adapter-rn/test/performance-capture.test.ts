@@ -280,6 +280,16 @@ describe('press latency from the shown line', () => {
     // The app logs its line from the second animation frame after focus: two
     // vsyncs after the frame that drew the screen, plus the log write.
     const afterDraw = (drawn: AndroidFrameSample) => drawn.startedAtEpochMs + 2 * budgetMs + 1;
+    // Pixel 6 captures at 90 Hz, in ms after the touch, stretched to this rate.
+    const ms = (at90: number) => (at90 * budgetMs) / BUDGET_MS;
+    const captured = (rows: Array<[start: number, done: number, uiThreadMs: number]>) => [
+      input,
+      ...rows.map(([start, done, uiThreadMs]) =>
+        at(1_000 + ms(start), ms(done - start), { uiThreadMs }),
+      ),
+    ];
+    const read = (samples: AndroidFrameSample[], marker: number) =>
+      measureShownPress(samples, press, 'screen-terminals', [shown(marker)], 5_000, budgetMs);
     const tabs = (samples: AndroidFrameSample[], markers: number[]) =>
       summarizeWindow({
         id: 'tabs',
@@ -294,21 +304,58 @@ describe('press latency from the shown line', () => {
         responseWindowMs: 600,
       });
 
-    it(`reads the line, never under the draw, and picks no frame at ${hz} Hz`, () => {
-      // Focus came 2 ms after the touch; nothing drew until the mount 8 frames later.
-      const mount = at(1_000 + 8 * budgetMs, 8, { uiThreadMs: 6 });
-      const marker = afterDraw(mount);
-      const samples = [input, mount, at(marker + 2, 9, { uiThreadMs: 5 })];
-      const result = measureShownPress(samples, press, 'screen-terminals', [shown(marker)], 5_000);
-      assert.deepEqual(result, {
+    it(`ends at a mount frame still drawing at the line (Terminals) at ${hz} Hz`, () => {
+      // The line at +61.3 came while a 48 ms mount frame (+56 to +108) drew.
+      const samples = captured([
+        [16.7, 21.5, 1],
+        [33.7, 40.8, 1.8],
+        [45, 74.1, 24.9],
+        [56.1, 107.6, 48.1],
+        [111.6, 115, 0.6],
+      ]);
+      assert.deepEqual(read(samples, 1_000 + ms(61.3)), {
         nodeId: 'tab',
         action: 'ui.press',
         target: 'tab-terminals',
         marker: 'screen-terminals',
-        latencyMs: round(marker - 1_000),
+        latencyMs: round(ms(107.6)),
         answer: 'shown',
       });
-      assert.ok((result.latencyMs ?? 0) >= mount.completedAtEpochMs - 1_000);
+    });
+
+    it(`ends at the last mount frame started by the line's reach (Review) at ${hz} Hz`, () => {
+      // Mount frames at +56 and +67 end at +95; the line came at +73.4.
+      const samples = captured([
+        [16.6, 21, 0.9],
+        [33.5, 37.8, 0.5],
+        [44.9, 50.3, 2.1],
+        [56, 87, 25.8],
+        [67.1, 95.2, 23.7],
+        [100.5, 105.3, 0.7],
+        [111.6, 116, 1],
+      ]);
+      assert.equal(read(samples, 1_000 + ms(73.4)).latencyMs, round(ms(95.2)));
+    });
+
+    it(`counts a frame that starts just after the line (Settings) at ${hz} Hz`, () => {
+      // Nothing drew between the feedback frame and the line; the next frame
+      // started 6.6 ms after it and was done 11 ms after it.
+      const samples = captured([
+        [16.7, 22.2, 3.4],
+        [90.1, 94.5, 1],
+      ]);
+      assert.equal(read(samples, 1_000 + ms(83.5)).latencyMs, round(ms(94.5)));
+    });
+
+    it(`counts no frame that starts past two frame budgets after the line at ${hz} Hz`, () => {
+      const marker = 1_000 + 5 * budgetMs;
+      const atReach = at(marker + 2 * budgetMs, 30, { uiThreadMs: 24 });
+      assert.equal(
+        read([input, atReach], marker).latencyMs,
+        round(atReach.completedAtEpochMs - 1_000),
+      );
+      const past = at(marker + 3 * budgetMs, 30, { uiThreadMs: 24 });
+      assert.equal(read([input, past], marker).latencyMs, round(marker - 1_000));
     });
 
     it(`fails a mount a 650 ms stall delays at ${hz} Hz`, () => {
@@ -319,26 +366,26 @@ describe('press latency from the shown line', () => {
           [input, at(1_000 + budgetMs, 6, { uiThreadMs: 5 }), mount],
           [afterDraw(mount)],
         );
-        assert.equal(summary.presses[0]?.latencyMs, round(afterDraw(mount) - 1_000));
+        const latencyMs = Math.max(afterDraw(mount), mount.completedAtEpochMs) - 1_000;
+        assert.equal(summary.presses[0]?.latencyMs, round(latencyMs));
         assert.equal(summary.budget?.verdict, 'fail');
         assert.ok(
           summary.budget?.failures.includes(
-            `press (gfxinfo input->shown marker) ${Math.round(afterDraw(mount) - 1_000)} ms > 250 ms (tab-terminals, node tab)`,
+            `press (gfxinfo input->shown marker) ${Math.round(latencyMs)} ms > 250 ms (tab-terminals, node tab)`,
           ),
         );
       }
     });
 
-    it(`fails a UI-thread stall that holds the line back at ${hz} Hz`, () => {
-      // A 300 ms mount frame delays the animation frames the line waits for.
+    it(`fails a UI-thread stall in flight at the line at ${hz} Hz`, () => {
+      // JavaScript was free to log the line while a 300 ms mount frame drew.
       const mount = at(1_000 + budgetMs, 300, { uiThreadMs: 295 });
-      const marker = mount.completedAtEpochMs + 2 * budgetMs;
-      const summary = tabs([input, mount], [marker]);
-      assert.ok((summary.presses[0]?.latencyMs ?? 0) > 300);
+      const summary = tabs([input, mount], [1_000 + 2 * budgetMs + 1]);
+      assert.equal(summary.presses[0]?.latencyMs, round(budgetMs + 300));
       assert.equal(summary.budget?.verdict, 'fail');
     });
 
-    it(`bounds a cheap press past a 6.9 ms update at +800 ms at ${hz} Hz`, () => {
+    it(`passes a cheap press before a 6.9 ms update at +800 ms at ${hz} Hz`, () => {
       // The screen drew one frame after the touch; a live update follows later.
       const drawn = at(1_000 + budgetMs, 5, { uiThreadMs: 4 });
       const summary = tabs(
@@ -358,6 +405,7 @@ describe('press latency from the shown line', () => {
       'screen-terminals',
       [shown(1_050, 'screen-review'), shown(2_600)],
       2_500,
+      BUDGET_MS,
     );
     assert.equal(result.latencyMs, undefined);
     assert.match(
@@ -416,7 +464,7 @@ describe('press latency from the shown line', () => {
     assert.deepEqual(byLine.notes, []);
     assert.match(
       renderPerformanceReport('Jank', [byLine]),
-      /^- tabs shown presses: touch frame to the screen's `\[farmslot-perf\] shown` line, logged from the second animation frame after focus\. An upper bound within about 2 frames of the draw \(22\.2 ms at 90 Hz\); it never reads under the draw\.$/mu,
+      /^- tabs shown presses: touch frame to the end of the last frame that started by two vsyncs \(22\.2 ms at 90 Hz\) after the screen's `\[farmslot-perf\] shown` line, logged from the second animation frame after focus\. A press can over-read by up to about two light frames, and could miss a mount frame that starts more than two vsyncs after the line\.$/mu,
     );
 
     const noLines = window({

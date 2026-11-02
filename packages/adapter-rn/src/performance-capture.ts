@@ -63,8 +63,10 @@ const MOUNT_LOOKAHEAD = 1.5;
 // slow cadence (4 vsyncs at 90 Hz is 22.5 fps) counts against the floor.
 const MAX_ACTIVE_GAP_MS = 100;
 const DEFAULT_FRAME_BUDGET_MS = 1000 / 60;
-// The app logs its shown line from the second animation frame after focus, so
-// the line comes at most this many frames after the frame that drew the screen.
+// The app logs its shown line from the second animation frame after focus,
+// once JavaScript is free, which can be before the UI thread finishes the
+// frame that mounts the screen. A shown press ends at the end of the last
+// frame that started by this many frame budgets after the line.
 const SHOWN_MARKER_FRAMES = 2;
 // The metrics failures name, so a reader knows what was measured.
 const PRESS_METRIC = 'gfxinfo input->mount frame';
@@ -120,7 +122,8 @@ export interface PressLatency {
   /** Input frame start to the end of the frame that answered it; absent when not timed. */
   latencyMs?: number;
   /**
-   * `shown`: the screen's `[farmslot-perf] shown` line, logged after it drew.
+   * `shown`: the screen's `[farmslot-perf] shown` line, logged after React
+   * committed it, and the frames that started by two frame budgets after it.
    * `mount`: the first frame after the touch that stood out is the answer.
    * `first-frame`: none stood out, so the press is timed to the first frame
    * after the touch; the new screen did no measurable UI-thread work.
@@ -491,6 +494,7 @@ export function summarizeWindow({
   );
   // An app that logs no shown line (an older build) keeps the frame rule, flagged.
   const markerTimed = Object.keys(shownMarkers).length > 0 && markers.length > 0;
+  const frames = summarizeFrames(samples);
   const presses = pressSpans.map((span, index) => {
     const screen = markerTimed && span.target ? shownMarkers[span.target] : undefined;
     return result.inputEvents === 'missing'
@@ -508,6 +512,8 @@ export function summarizeWindow({
             screen,
             markers,
             pressSpans[index + 1]?.startedAtEpochMs ?? endedAtEpochMs,
+            // A window with no refresh budget is inconclusive whatever this reads.
+            frames.frameBudgetMs ?? DEFAULT_FRAME_BUDGET_MS,
           )
         : measurePress(samples, span, responseWindowMs, endedAtEpochMs);
   });
@@ -518,7 +524,6 @@ export function summarizeWindow({
       presses.filter((entry) => (entry.target ?? entry.nodeId) === target),
     );
   }
-  const frames = summarizeFrames(samples);
   const sustainedFps = lowestWindowedFps(samples, {
     windowMs: sustainedWindowMs,
     maxGapMs: MAX_ACTIVE_GAP_MS,
@@ -635,13 +640,15 @@ export function measurePress(
 
 /**
  * A press timed by the app's own word: from the first frame that handled input
- * during the press node to the screen's next `[farmslot-perf] shown` line. The
- * app logs it from the second animation frame after focus, so the line comes
- * after the frame that drew the screen, and within `SHOWN_MARKER_FRAMES`
- * frames of it unless the app stalls: an upper bound that never reads under
- * the draw. No frame is picked, so a later live update doesn't count, and a
- * stall that delays the mount delays the line too. No line before the next
- * press leaves the press untimed.
+ * during the press node to the screen's next `[farmslot-perf] shown` line, or
+ * to the end of the last frame from the touch on that started by
+ * `SHOWN_MARKER_FRAMES` frame budgets after the line, if that is later. The
+ * app logs the line from the second animation frame after focus, once
+ * JavaScript is free, so the UI thread can still be finishing the mount frame
+ * then. A press can over-read by up to about two light frames, and could miss
+ * a mount frame that starts more than two budgets after the line; a live
+ * update that starts later doesn't count, and a stall that delays the mount
+ * delays the line too. No line before the next press leaves the press untimed.
  */
 export function measureShownPress(
   samples: readonly AndroidFrameSample[],
@@ -649,6 +656,7 @@ export function measureShownPress(
   screen: string,
   markers: readonly AndroidShownMarker[],
   searchEndEpochMs: number,
+  frameBudgetMs: number,
 ): PressLatency {
   const base = {
     nodeId: span.nodeId,
@@ -670,9 +678,17 @@ export function measureShownPress(
       unmeasuredReason: `no [farmslot-perf] shown ${screen} line after the touch, before the next press`,
     };
   }
+  const reach = shown.atEpochMs + SHOWN_MARKER_FRAMES * frameBudgetMs;
+  const endedAtEpochMs = samples.reduce(
+    (end, sample) =>
+      sample.startedAtEpochMs >= input.startedAtEpochMs && sample.startedAtEpochMs <= reach
+        ? Math.max(end, sample.completedAtEpochMs)
+        : end,
+    shown.atEpochMs,
+  );
   return {
     ...base,
-    latencyMs: round(shown.atEpochMs - input.startedAtEpochMs),
+    latencyMs: round(endedAtEpochMs - input.startedAtEpochMs),
     answer: 'shown',
   };
 }
@@ -1003,11 +1019,11 @@ export function renderPerformanceReport(
     if (summary.press.shown === 0) continue;
     const hz = summary.frames.refreshRateHz;
     lines.push(
-      `- ${summary.id} shown presses: touch frame to the screen's \`[farmslot-perf] shown\` line, logged from the second animation frame after focus. An upper bound within about ${SHOWN_MARKER_FRAMES} frames of the draw${
+      `- ${summary.id} shown presses: touch frame to the end of the last frame that started by two vsyncs${
         hz === undefined
           ? ''
           : ` (${formatValue((SHOWN_MARKER_FRAMES * 1000) / hz)} ms at ${Math.round(hz)} Hz)`
-      }; it never reads under the draw.`,
+      } after the screen's \`[farmslot-perf] shown\` line, logged from the second animation frame after focus. A press can over-read by up to about two light frames, and could miss a mount frame that starts more than two vsyncs after the line.`,
     );
   }
   for (const summary of summaries) {
