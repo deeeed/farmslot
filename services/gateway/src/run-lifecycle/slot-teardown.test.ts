@@ -892,16 +892,26 @@ test('a closed run ends its own unrecorded worker in the slot session instead of
   assert.equal(exitsSent(), 1);
 });
 
-test('a live unrecorded runner launched for another task folder, or none, still defers', async () => {
+test('a live unrecorded runner launched for another task folder, or none, still defers', async (t) => {
   run.status = 'done';
+  const log = t.mock.method(console, 'log', () => undefined);
   for (const taskDir of ['.task/dev/manual-000164-1102-090112', null]) {
     commands = [];
+    log.mock.resetCalls();
     closedRunUnrecordedWorker(taskDir);
     assert.equal(
       await slotTeardownBlocker(run),
       'Unrecorded pane %3 in slot session mmt-1 is not quiescent; cleanup deferred',
     );
     assert.equal(exitsSent(), 0);
+    // The deferral message stays the same; the log names why the worker was left running.
+    assert.ok(
+      log.mock.calls.some((call) =>
+        /^\[slot-teardown\] .*: left pane %3 running: the pane's launch does not name the run's task directory$/.test(
+          String(call.arguments[0]),
+        ),
+      ),
+    );
   }
 });
 

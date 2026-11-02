@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/agent-runtime",
-  "version": "0.39.24",
+  "version": "0.39.26",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,6 +31,7 @@
     },
     "./scripts/execution-template-cli.mjs": "./scripts/execution-template-cli.mjs",
     "./scripts/task-init-cli.mjs": "./scripts/task-init-cli.mjs",
+    "./scripts/native-worker-env.cjs": "./scripts/native-worker-env.cjs",
     "./native": {
       "types": "./dist/native/index.d.ts",
       "import": "./dist/native/index.js"

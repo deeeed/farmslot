@@ -1728,7 +1728,17 @@ async function findSlotAttempt(
   const localWorkSlots = new Set<string>();
   const reuseReasons: Record<string, string> = {};
   if (!run.slotId && !skipPrepare) {
-    let remaining = [...eligibleFreeSlots];
+    // A clean candidate needs no recovery, so read them all at once and take the best clean one.
+    // Recovering dirty candidates one by one held dispatch for minutes (F322); that stays the
+    // fallback when no candidate is clean.
+    const { cleanIdleSlot } = await import('../run-lifecycle/safe-idle-slot.js');
+    const clean = await Promise.all(eligibleFreeSlots.map((slot) => cleanIdleSlot(slot.slot)));
+    reusableSlotId = findBestSlot(
+      eligibleFreeSlots.filter((_slot, index) => clean[index]),
+      run.project,
+      selectionOptions,
+    )?.slot;
+    let remaining = reusableSlotId ? [] : [...eligibleFreeSlots];
     while (remaining.length) {
       const candidate = findBestSlot(remaining, run.project, selectionOptions);
       if (!candidate) break;

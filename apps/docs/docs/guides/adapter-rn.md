@@ -97,6 +97,31 @@ The HUD contract is deliberately strict: one concise intent line for the human f
 
 Run `yarn recipe:doctor` after enabling bridge actions. The doctor fails if the manifest declares app/HUD actions but the bridge provider is missing or not dev-gated.
 
+## Performance capture (Android)
+
+`app.performance_capture` measures native UI frames on the slot's Android device. It polls `adb shell dumpsys gfxinfo <FARMSLOT_RECIPE_APP_ID> framestats`, so the app needs no patch and the build can be a release one. Declare it in the project manifest with `"execution_capabilities": []` and the runner registers it:
+
+```json
+{
+  "action": "app.performance_capture",
+  "phase": "start",
+  "id": "tab-presses",
+  "intent": "Start measuring the tab presses.",
+  "next": "press-review"
+}
+```
+
+- `phase: "start"` opens a window. One window is open at a time.
+- `phase: "end"` closes it and writes `performance/<id>-summary.json`: the frame summary (`activeFps`, p50/p95/p99, `longestFrameMs`, `overBudgetFramePercent`, `refreshRateHz`), `sustainedFps`, and the latency of every `ui.press` and `ui.key_press` inside the window, overall and per press target. An optional `shown_markers` maps a press target to the screen that answers it (see press latency below). An optional `budget` (`min_sustained_fps`, `max_press_p95_ms`, `max_press_ms`, `min_frames`) gives the window a verdict; optional `targets` (`fps`, `press_ms`) are reported, never failed on. An optional `baseline` (`label`, `sustained_fps`, `press_p95_ms`, `press_max_ms`, `frames`, `refresh_hz`, plus any fields to keep) is echoed in the summary and quoted in each failure; a measured refresh rate more than 5% off `refresh_hz` is noted. A window with a coverage gap (a failed poll, frames gfxinfo overwrote between polls, an overrun `max_duration_ms`) is `inconclusive` whatever else it failed, never a pass: a lost device would otherwise read as missing frames or untimed presses. A window that rendered nothing and has no gap (an idle screen) passes.
+- `phase: "report"` writes `performance/report.json` and `report.md`: the device (model, Android release, serial), the app (package, version, debug or release build, install time), the checkout's HEAD, and one row per window with its refresh rate. It fails the node when a window broke its budget, or with an environment cause when one is inconclusive. Each failure names the metric, the limit, the measured value, where, and the baseline: `press p95 (gfxinfo input->shown marker) 231 ms > 210 ms (tab-presses; slowest companion-tab-terminals 262 ms); main @90Hz baseline p95 159 ms`. Bind the recipe's proof to an `assert_output` on the report's `$.verdict`.
+
+How the numbers are read:
+
+- **Sustained FPS** is recipe-runner's `lowestWindowedFps`: the lowest frame rate over any `sustained_window_ms` (500 ms by default) of continuous rendering. Frames less than 100 ms apart (or a gap that a slow frame explains) are one stretch, so a slow cadence such as every fourth vsync at 90 Hz (22.5 fps) counts, and so do steady slow frames however few fit in a window. A window counts only when its stretch lasts the whole window: a short burst or an idle screen has no sustained FPS and does not fail. A capture with no refresh budget (legacy framestats without `FrameInterval`, with frames too sparse to estimate one) is `inconclusive`, never a pass.
+- **Press latency** runs from the first frame that handled the touch. For a press whose target is in `shown_markers`, the app marks the screen after React commits it: `[farmslot-perf] shown <screen>`, which a React Native screen logs with `console.info` from the second `requestAnimationFrame` after its focus effect (cancelling both if focus is lost first). The capture streams `adb logcat -v monotonic`, the clock of the frames. The line comes once JavaScript is free, which can be before the UI thread finishes the frame that mounts the screen, so a press ends at the end of the last frame that started by two vsyncs (two of the capture's frame budgets, 22 ms at 90 Hz) after the screen's post-commit marker, or at the marker when that is later. It can over-read by up to ~2 light frames, and could still miss a mount frame that starts more than two vsyncs after the marker (not seen in 24 Pixel 6 presses). A stall that delays the mount delays the line, and a live update that starts later doesn't count. No line before the next press leaves the press untimed. A window whose app logged no line at all (an older build) times those presses by the frame rule and notes it. The frame rule, for every other press, runs to the end of the frame that answered it: the first later frame within `response_window_ms` (600 ms by default) that stands out, with at least 4 ms of UI-thread work and either a whole frame budget of it or three times the median of the other frames in reach; or, up to 1.5 windows (900 ms), even after a pause, a frame with a whole frame budget of UI-thread work. That is the frame that mounts and draws the new screen, while a lighter live update on an already-mounted screen doesn't count; a light mount delayed past the window reads as `first-frame`, which is why tab presses use shown lines. Touch ripples run on the render thread and are not counted. Only when nothing answers that way is the press timed to the first frame within the window and marked `first-frame`. A press with no input frame or no frame after it is untimed, and `max_press_ms` fails it. On devices before Android 12, framestats has no `InputEventId` column and every press is untimed with that reason. Each window also writes `performance/<id>-frames.json`, the frames and node spans the latencies were read from.
+
+Run performance recipes with video off (`--record-video=off --recording-reason=...`): `screenrecord`'s encoder competes with the app for the frames being measured. Hosts that open their own capture windows (mm-harness) import the sources from `@farmslot/adapter-rn/performance-observer`: `createAndroidGfxinfoPerformanceBackend({ serial, packageId, adbPath })` and, for a CDP host such as Hermes on iOS, `createReactNativeTracePerformanceBackend(client, { kind, platform, markerPrefix })`.
+
 ## Farmslot hook
 
 Expose the runner through a thin project hook:

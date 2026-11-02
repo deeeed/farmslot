@@ -2,6 +2,11 @@ import { createRequire } from 'node:module';
 
 import type { NativeWorkerFilesystemPolicy } from './worker-launch.js';
 
+/** Inside the runtime roots, what a review may write: whole paths, or only the bytes of files. */
+export interface NativeReviewRuntimeAccess {
+  writablePaths?: string[];
+  dataFiles?: string[];
+}
 export interface NativeProcessSandbox {
   executable: string;
   args: string[];
@@ -12,6 +17,7 @@ const implementation = createRequire(import.meta.url)('../../scripts/review-file
     policy: NativeWorkerFilesystemPolicy,
     runtimeRoots: string[],
     configurationRoots?: string[],
+    runtimeAccess?: NativeReviewRuntimeAccess,
   ): Promise<{ sandbox: NativeProcessSandbox; temporaryDirectory: string }>;
 };
 export const hostReviewSandboxAvailable = implementation.available;

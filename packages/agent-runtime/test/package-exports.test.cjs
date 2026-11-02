@@ -30,6 +30,7 @@ for (const subpath of [
   './scripts/subtask-unit.cjs',
   './scripts/acceptance-ledger.cjs',
   './scripts/acceptance-cli.cjs',
+  './scripts/native-worker-env.cjs',
 ]) {
   assert.ok(packageJson.exports[subpath], `missing package export ${subpath}`);
   const target = path.join(packageRoot, packageJson.exports[subpath]);
