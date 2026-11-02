@@ -73,6 +73,8 @@ import {
 import {
   assertRunnerLaunchPrerequisites,
   buildLaunchCommand,
+  effectiveModelQuestionsForRun,
+  modelQuestionsForRun,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
   wrapWorkerShellCommand,
 } from '../../runners/launch-command.js';
@@ -103,7 +105,7 @@ import { assertRunnerAuthBeforeLaunch } from '../../runners/runner-auth.js';
 import { buildRunnerObservabilityInstallCommand } from '../../runners/runner-observability.js';
 import {
   assertScriptedRunnerConfig,
-  resolveScriptedCommandFromRawProjectJson,
+  scriptedCommandForRunner,
 } from '../../runners/scripted-config.js';
 import { dispatchStartedAtMs } from '../../runners/session-path-resolution.js';
 import {
@@ -1204,10 +1206,7 @@ export async function dispatchExecute(
     (defaultFlowKey ? getProjectField(projectJson, `defaults.${defaultFlowKey}.effort`) : '') ||
     currentRun?.effort;
   const scripted = currentRun?.scripted ?? params.scripted;
-  const scriptedCommand =
-    runner === 'scripted' && scripted?.mode === 'command'
-      ? resolveScriptedCommandFromRawProjectJson(scripted.commandRef, projectJson, vars.projectName)
-      : undefined;
+  const scriptedCommand = scriptedCommandForRunner(runner, scripted, projectJson, vars.projectName);
   assertScriptedRunnerConfig({
     runner,
     scripted,
@@ -1777,6 +1776,7 @@ export async function dispatchExecute(
       signalFile: `${workerTaskDir}/SIGNAL.json`,
       runner,
       model,
+      modelQuestions: effectiveModelQuestionsForRun(currentRun),
       target: primaryTarget,
     });
   }
@@ -1830,6 +1830,7 @@ export async function dispatchExecute(
     // Label only — installer expands credential path on the slot host.
     codexAccountLabel: accountBind?.bind.launchAccountLabel ?? null,
     blindTrialCapsule: currentRun?.engineState?.evalExperiment?.blind?.isolation?.capsulePath,
+    modelQuestions: modelQuestionsForRun(currentRun),
   });
 
   agentLaunch = wrapWorkerShellCommand(agentLaunch, {
@@ -1868,6 +1869,7 @@ export async function dispatchExecute(
         prompt: taskPrompt,
         effort,
         safetyTier,
+        modelQuestions: modelQuestionsForRun(currentRun),
         runtimeDir: projectVars?.runtimeDir,
         taskDir: workerTaskDir,
         launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,

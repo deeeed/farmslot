@@ -1119,3 +1119,18 @@ test('actual native source stop invalidates both private families and refuses la
   f.producer.stop();
   await f.publication([]);
 });
+
+test('a native catalog observer counts as interest in the node model catalogs', async (t) => {
+  const f = await partialFixture(t);
+  const source = new GatewayNativeObservations(() => {});
+  source.attachClient(f.connection, () => f.owner);
+  t.after(() => source.dispose());
+  assert.equal(source.hasCatalogInterest(), false);
+  await source.read(
+    f.connection,
+    [{ ...f.interest, method: 'native.session.catalog' }],
+    async () => ({ contexts: [], runners: [] }),
+    () => ({}),
+  );
+  assert.equal(source.hasCatalogInterest(), true);
+});

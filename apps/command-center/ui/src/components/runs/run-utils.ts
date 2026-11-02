@@ -24,11 +24,11 @@ import {
   isTerminalRunStatus as protocolIsTerminalRunStatus,
   modeForFlow,
   parseGitHubRef,
-  RUNNER_PICKER_MODELS,
   runStepExecutionMs,
   runStepQueuedMs,
   unavailableContributionLabel,
 } from '@farmslot/protocol';
+import { DEFAULT_REVIEW_DISPATCH_CATALOG } from '@farmslot/review-dispatch';
 export { isCIWatchWorkerFixActive } from '@farmslot/review-dispatch';
 
 import { flowColor as _flowColor, flowLabel as _flowLabel } from '@farmslot/theme';
@@ -308,12 +308,14 @@ const MODEL_QUALIFIERS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'fast
 
 /** Words that name a runner or a model family, from the shared picker catalog. */
 const ENGINE_NAME_WORDS: ReadonlySet<string> = new Set(
-  Object.entries(RUNNER_PICKER_MODELS)
-    .flatMap(([runner, models]) => [runner, ...models.flatMap(engineWords)])
+  DEFAULT_REVIEW_DISPATCH_CATALOG.runners
+    .flatMap(({ id, models }) => [id, ...models.flatMap((model) => engineWords(model.id))])
     .filter((word) => /^[a-z]/u.test(word) && !MODEL_QUALIFIERS.has(word)),
 );
 
-const RUNNER_NAME_WORDS: ReadonlySet<string> = new Set(Object.keys(RUNNER_PICKER_MODELS));
+const RUNNER_NAME_WORDS: ReadonlySet<string> = new Set(
+  DEFAULT_REVIEW_DISPATCH_CATALOG.runners.map(({ id }) => id),
+);
 
 /**
  * Whether a lane tag names a runner or model other than the dispatched engine. A tag may

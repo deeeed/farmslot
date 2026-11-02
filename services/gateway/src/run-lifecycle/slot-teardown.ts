@@ -454,6 +454,9 @@ export async function stopRunOwnedTmuxAndWatches(
   return [blocker, prepareBlocker, browserBlocker].filter(Boolean).join('; ') || null;
 }
 
+// A hook still running past this holds its slot, not every slot's runtime controls (F330).
+const SHUTDOWN_HOOK_SETTLE_GRACE_MS = 30_000;
+
 /**
  * Stop configured slot infrastructure after its terminal run has released its leases.
  * `unconfirmed` collects the stops a shutdown hook ran without confirming.
@@ -461,6 +464,7 @@ export async function stopRunOwnedTmuxAndWatches(
 export async function shutdownRunSlotResources(
   run: Run,
   unconfirmed: string[] = [],
+  { settleGraceMs = SHUTDOWN_HOOK_SETTLE_GRACE_MS }: { settleGraceMs?: number } = {},
 ): Promise<string | null> {
   if (!run.slotId) return null;
   const slotId = run.slotId;
@@ -494,7 +498,7 @@ export async function shutdownRunSlotResources(
       run.id,
       resource.id,
       resource.definition.type === 'device',
-      async () => {
+      async (retainDevice) => {
         if (!(await stillOwned()))
           throw new Error('Slot ownership changed before runtime shutdown');
         const pending: Promise<void>[] = [];
@@ -505,9 +509,20 @@ export async function shutdownRunSlotResources(
           !!resource.definition.hooks?.health,
           pending,
         );
-        // Retain the acquisition fence until a timed-out hook has actually settled.
-        await Promise.allSettled(pending);
-        return result;
+        // Wait a bounded time for a timed-out hook; past that the slot queue moves on,
+        // but the device stays fenced until the hook actually settles.
+        const hooks = Promise.allSettled(pending);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const settled = await Promise.race([
+          hooks.then(() => true),
+          new Promise<false>((resolve) => {
+            timer = setTimeout(() => resolve(false), settleGraceMs);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (settled) return result;
+        retainDevice(hooks);
+        return { ...result, torn: false, reason: 'shutdown hook still running after its timeout' };
       },
     );
     if (!guarded.ok) failures.push(`${resource.id}: ${guarded.reason}`);

@@ -36,6 +36,7 @@ import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import {
   machineRunnerPath,
+  modelQuestionsForRun,
   resolveRunnerEffort,
   taskRecipeTrustEnvironment,
 } from '../launch-command.js';
@@ -342,11 +343,13 @@ export async function launchReviewWorkspaceWorker(input: {
   // As for a dispatched worker, only the machine's configured path overrides the adapter's executable.
   const executable =
     input.executable ?? machineRunnerPath(runner, await loadMachinePool(workspace.machine));
+  const modelQuestions = modelQuestionsForRun(run);
   const launch: NativeWorkerLaunch = {
     leaseId: binding.leaseId,
     ...(executable ? { executable } : {}),
     environment,
     safetyTier: 'sandboxed',
+    ...(modelQuestions ? { modelQuestions } : {}),
     effort,
     filesystemPolicy: {
       readOnlyRoots: reviewReadOnlyRoots(workspace),

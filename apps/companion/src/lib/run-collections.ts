@@ -94,6 +94,7 @@ export const openNativeRunHistory = () => collections.openHistory();
 export const nativeRunHistoryLimit = () => collections.historyLimit();
 export const nativeRunHistoryObservation = () => collections.historyObservation();
 export const retryNativeDecisions = () => collections.retryDecisions();
+export const retryNativeRuns = () => collections.retryRuns();
 
 export function assertNativeFleetReady(): FleetStatus {
   const state = useConnectionStore.getState();

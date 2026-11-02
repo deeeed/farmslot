@@ -35,6 +35,10 @@ import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { executeHumanGateStep } from '../../run-engine/post-dispatch-steps.js';
 import { isPublicationReviewRecoveryHeld } from '../../run-engine/recovery.js';
 import { makeRun } from '../../run-engine/test-fixtures.js';
+import {
+  REPLAY_STEP_ACTION,
+  workerLeftRunningDecision,
+} from '../../run-engine/worker-left-running.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, runsDirectory, updateRun } from '../../runs/store.js';
 import {
@@ -4396,6 +4400,24 @@ test('a dispatch replay that fails before reviving a failed run leaves its gate 
   await dispatchReplay(run.id);
   assert.equal(getRun(run.id)?.status, 'dispatching');
   assert.equal(gate()?.resolvedAction, 'superseded');
+});
+
+// F328: a step error with an agent still running blocks the run on a card; a replay answers it.
+test("a replay answers the run's worker-left-running card", async (t) => {
+  const run = openGateRun(t, 'f328-left-running', 'failed');
+  const card = workerLeftRunningDecision(getRun(run.id)!, 'dispatch', 'terminated', ['dev']);
+  updateRun(run.id, { status: 'blocked', completedAt: undefined, decisions: [card] });
+
+  await dispatchReplay(run.id);
+
+  const after = getRun(run.id)!;
+  assert.equal(after.status, 'dispatching');
+  const answered = after.decisions.find((d) => d.id === card.id);
+  assert.equal(answered?.resolvedAction, REPLAY_STEP_ACTION);
+  assert.equal(
+    after.decisions.some((d) => !d.resolvedAt),
+    false,
+  );
 });
 
 // A fix-bug worker reported not_reproducible and the gate opened a no-change card; the

@@ -1,0 +1,1 @@
+- `runHasTrimmedDetail` moves to `@farmslot/protocol` so Command Center and Companion share one definition. Command Center had no caller, so nothing changes on screen.

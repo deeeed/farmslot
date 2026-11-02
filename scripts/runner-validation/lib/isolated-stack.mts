@@ -7,7 +7,7 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, existsSync, openSync } from 'node:fs';
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -49,6 +49,24 @@ export function startWorkspaceProcess(
   });
   closeSync(fd);
   return child;
+}
+
+/** Every process on this host. */
+export function listProcesses(): Array<{ pid: number; ppid: number; command: string }> {
+  return execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3]! }));
+}
+
+export function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function stopProcess(child: ChildProcess | undefined): Promise<void> {
@@ -168,20 +186,99 @@ export function startReaper(): Reaper {
 }
 
 /** Makes `dir` a shared clone of `root` with its code linked in, for a fixture root or a slot. */
-export async function linkCheckout(root: string, dir: string, note: string): Promise<void> {
+export async function linkCheckout(
+  root: string,
+  dir: string,
+  note: string,
+  options: { packageManager?: boolean } = {},
+): Promise<void> {
   execFileSync('git', ['clone', '--shared', '--no-checkout', root, dir], { stdio: 'pipe' });
-  for (const entry of ['scripts', 'services', 'packages', 'node_modules', 'package.json'])
+  for (const entry of ['scripts', 'services', 'packages', 'node_modules'])
     await symlink(path.join(root, entry), path.join(dir, entry));
-  // The launch preflight checks a slot's package manager the way a worker would run it.
-  for (const entry of ['.yarnrc.yml', '.yarn', 'yarn.lock', '.nvmrc'])
-    if (existsSync(path.join(root, entry)))
-      await symlink(path.join(root, entry), path.join(dir, entry));
+  // The launch preflight checks a slot's package manager the way a worker would run it. A fixture
+  // whose slots PREPARE for real has none: PREPARE would install this repo's dependencies.
+  if (options.packageManager !== false)
+    for (const entry of ['package.json', '.yarnrc.yml', '.yarn', 'yarn.lock', '.nvmrc'])
+      if (existsSync(path.join(root, entry)))
+        await symlink(path.join(root, entry), path.join(dir, entry));
   await writeFile(path.join(dir, 'CLAUDE.md'), `# ${note}\n`);
 }
 
 export async function writeJson(file: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(value, null, 2), { mode: 0o600 });
+}
+
+/** Writes `file` whole: a temporary file renamed into place. */
+export async function writeAtomic(file: string, content: string): Promise<void> {
+  await mkdir(path.dirname(file), { recursive: true });
+  const pending = `${file}.${process.pid}.tmp`;
+  await writeFile(pending, content);
+  await rename(pending, file);
+}
+
+/** Writes `file` whole unless it exists, even if it appears meanwhile; false when it does. */
+export async function publishIfAbsent(file: string, content: string): Promise<boolean> {
+  await mkdir(path.dirname(file), { recursive: true });
+  const pending = `${file}.${process.pid}.tmp`;
+  await writeFile(pending, content);
+  try {
+    await link(pending, file);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    return false;
+  } finally {
+    await rm(pending, { force: true });
+  }
+}
+
+/** Connects to a gateway that is starting on `url`, failing at once if its process exits. */
+export async function connectGateway(options: {
+  url: string;
+  token: string;
+  gateway: ChildProcess;
+  log: string;
+  budgetMs: number;
+}): Promise<GatewayConnection> {
+  const { gateway, log } = options;
+  const client = new GatewayClient({
+    url: options.url,
+    timeout: 30_000,
+    credential: { token: options.token },
+  });
+  return poll(
+    'the isolated gateway',
+    async () => {
+      if (gateway.exitCode !== null)
+        throw new Error(`Isolated gateway exited (${gateway.exitCode}); see ${log}`);
+      try {
+        return await client.connect();
+      } catch (error) {
+        // Connection refusal is expected while the gateway starts on its isolated port.
+        if (!(error instanceof GatewayConnectionError)) throw error;
+        return undefined;
+      }
+    },
+    options.budgetMs,
+  );
+}
+
+/** A node principal for `machine` and the credential its node connects with. */
+export async function issueNodeCredential(
+  connection: GatewayConnection,
+  machine: string,
+  displayName: string,
+): Promise<{ principalId: string; secret: string }> {
+  const { principal } = await connection.call<{ principal: { id: string } }>('principal.create', {
+    subject: { type: 'node', machine, displayName },
+    roles: [],
+  });
+  const { secret } = await connection.call<{ secret: string }>('credential.issue', {
+    principalId: principal.id,
+    displayName,
+  });
+  return { principalId: principal.id, secret };
 }
 
 /** What the proof's cleanup stops; `startIsolatedStack` records each part as it starts. */
@@ -235,32 +332,16 @@ export async function startIsolatedStack(
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
     ...options.gatewayEnv,
   }));
-  const client = new GatewayClient({ url, timeout: 30_000, credential: { token } });
-  const connection = (parts.connection = await poll(
-    'the isolated gateway',
-    async () => {
-      if (gateway.exitCode !== null) throw new Error('Isolated gateway exited before readiness');
-      try {
-        return await client.connect();
-      } catch (error) {
-        // Connection refusal is expected while the gateway starts on its isolated port.
-        if (!(error instanceof GatewayConnectionError)) throw error;
-        return undefined;
-      }
-    },
-    60_000,
-  ));
+  const connection = (parts.connection = await connectGateway({
+    url,
+    token,
+    gateway,
+    log: 'gateway.log',
+    budgetMs: 60_000,
+  }));
   if (options.node) {
     const { machine } = options.node;
-    const displayName = `${machine} fixture node`;
-    const { principal } = await connection.call<{ principal: { id: string } }>('principal.create', {
-      subject: { type: 'node', machine, displayName },
-      roles: [],
-    });
-    const credential = await connection.call<{ secret: string }>('credential.issue', {
-      principalId: principal.id,
-      displayName,
-    });
+    const credential = await issueNodeCredential(connection, machine, `${machine} fixture node`);
     const nodeRoot = path.join(fixture, 'node');
     await mkdir(nodeRoot, { recursive: true });
     parts.node = start('@farmslot/node', 'node.log', {

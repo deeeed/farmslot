@@ -8,12 +8,16 @@ import {
   type RunnerVisibleModelsSetResult,
 } from '@farmslot/protocol';
 
-import { loadMachinePool } from '../core/config.js';
-import { isLocal } from '../core/exec.js';
+import { loadMachinePool, loadSlotVars } from '../core/config.js';
+import { execOnSlot, isDisconnectedRemote, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { withMachineEnv } from '../core/project-env.js';
+import { shellExpressionForRemotePath } from '../core/remote-paths.js';
+import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { nativeCatalogChanges } from '../resources/native-catalog-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
-import type { RunnerModelCatalogSource } from '../runners/model-catalog.js';
+import type { ModelCatalogNode, RunnerModelCatalogSource } from '../runners/model-catalog.js';
 import {
   RUNNER_MODEL_CATALOG_TICK_MS,
   RunnerModelCatalogObservation,
@@ -56,6 +60,34 @@ async function selectRunnerModelCatalogSource(
   return source;
 }
 
+const NODE_MODEL_LIST_TIMEOUT_MS = 20_000;
+/** Remote nodes reconnect after a gateway restart; list once they have had time to. */
+const NODE_MODEL_CATALOG_STARTUP_DELAY_MS = 15_000;
+
+/** Every pool machine, local or remote, lists through one of its slots' exec path. */
+async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
+  const slots = new Map<string, string>();
+  for (const pool of await loadPoolConfigs())
+    if (pool.machine && pool.slots[0] && !slots.has(pool.machine))
+      slots.set(pool.machine, pool.slots[0].id);
+  return [...slots].map(([machine, slot]) => ({
+    machine,
+    list: async (source) => {
+      const vars = await loadSlotVars(slot);
+      if (isDisconnectedRemote(vars)) throw new Error('node is not connected');
+      const binary = vars[source.slotPathKey]?.trim() || source.nodeCommand;
+      const command = `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')} </dev/null`;
+      const result = await execOnSlot(vars, withMachineEnv(command, vars), {
+        cwd: '/',
+        timeout: NODE_MODEL_LIST_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
+      if (result.exitCode !== 0) throw new Error(`exit code ${result.exitCode}`);
+      return result.stdout;
+    },
+  }));
+}
+
 let hasCatalogInterest: (runner: string) => boolean = () => false;
 let activeCatalogObservation: object | undefined;
 const catalogObservation = new RunnerModelCatalogObservation({
@@ -65,7 +97,13 @@ const catalogObservation = new RunnerModelCatalogObservation({
       .map((definition) => definition.id),
   select: selectRunnerModelCatalogSource,
   hasInterest: (runner) => hasCatalogInterest(runner),
-  changed: (runner) => resourceRevisions.advance(runnerModelCatalogResourceKey({ runner })),
+  changed: (runner) => {
+    resourceRevisions.advance(runnerModelCatalogResourceKey({ runner }));
+    // Native pickers list the same per-node models (native.session.catalog nodeModels).
+    const source = getRunnerDefinition(runner).modelCatalog;
+    if (source && 'nodeCommand' in source) nativeCatalogChanges.catalogChanged();
+  },
+  nodes: modelCatalogNodes,
 });
 
 export async function runnerModelCatalog(
@@ -91,9 +129,21 @@ export function startRunnerModelCatalogObservation(options: {
   catalogObservation.start();
   const timer = setInterval(() => void catalogObservation.tick(), RUNNER_MODEL_CATALOG_TICK_MS);
   timer.unref();
+  // Slot selection checks per-node catalogs even when no picker watches them.
+  const startup = setTimeout(() => {
+    for (const definition of Object.values(KNOWN_RUNNERS))
+      if (definition.modelCatalog && 'nodeCommand' in definition.modelCatalog)
+        catalogObservation
+          .read(definition.id)
+          .catch((error) =>
+            console.error(`[runner-models] Startup catalog for ${definition.id} failed:`, error),
+          );
+  }, NODE_MODEL_CATALOG_STARTUP_DELAY_MS);
+  startup.unref();
   return async () => {
     if (activeCatalogObservation !== owner) return;
     clearInterval(timer);
+    clearTimeout(startup);
     hasCatalogInterest = () => false;
     await catalogObservation.stop();
     if (activeCatalogObservation === owner) activeCatalogObservation = undefined;

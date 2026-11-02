@@ -1,4 +1,5 @@
-// runs/list-trim.ts — keep run.list small enough to bootstrap the UI.
+// runs/list-trim.ts — keep run.list small enough to bootstrap the UI. The gateway trims
+// with this; clients read a trimmed row with `runHasTrimmedDetail`.
 //
 // A run list of a few hundred runs carried ~85 MB, 59 MB of it decision
 // payloads (input snapshots, PR packages, review markdown, artifact manifests)
@@ -8,12 +9,9 @@
 // value above RUN_LIST_PAYLOAD_VALUE_LIMIT bytes and removes context.checkSnapshot, naming omitted values in
 // `payloadTrimmed`; run.get, run.forSlot and run events stay complete.
 
-import {
-  CI_SNAPSHOT_TRIM_KEY,
-  type Run,
-  type RunDecision,
-  type RunDecisionPayload,
-} from '@farmslot/protocol';
+import type { Run, RunDecision, RunDecisionPayload } from '../contracts/runs.js';
+
+import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
 
 /** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
 export const RUN_LIST_PAYLOAD_VALUE_LIMIT = 2048;
@@ -67,4 +65,16 @@ export function trimRunForList(run: Run): Run {
     return next;
   });
   return changed ? { ...run, output, decisions } : run;
+}
+
+/**
+ * Whether a run.list row left out its output manifest or any decision payload value. A view
+ * drawn from such a row reads them from the run's direct `run.get` copy, and shows them as not
+ * loaded until then rather than as empty.
+ */
+export function runHasTrimmedDetail(run: Pick<Run, 'decisions' | 'output'>): boolean {
+  return (
+    Boolean(run.output?.artifactManifestOmitted) ||
+    (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0)
+  );
 }

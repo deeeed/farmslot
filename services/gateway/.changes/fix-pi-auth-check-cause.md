@@ -1,0 +1,1 @@
+- A Pi dispatch that fails its auth check with `auth_check_unavailable` now says why: the check timed out (it is retried once first), the runner was not found, or the check failed or gave no verdict, with its exit code. The runner's output is still never shown.

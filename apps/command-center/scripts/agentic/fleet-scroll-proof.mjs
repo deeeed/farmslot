@@ -29,7 +29,7 @@ export async function proveFleetScrolling(output, route) {
       const canvas=fleet?.shadowRoot.querySelector('.canvas');
       if(!canvas) throw Error('Fleet canvas absent');
       const deep=(selector,root)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?deep(selector,e.shadowRoot):[])];
-      const last=deep('slot-card',fleet.shadowRoot).find(e=>e.slotData?.slot==='proof-layout-23');
+      const last=deep('input[aria-label="Select proof-layout-23"]',fleet.shadowRoot)[0]?.closest('tr');
       if(!last) throw Error('Overflow fixture row absent');
       const rect=canvas.getBoundingClientRect(), end=last.getBoundingClientRect();
       return {height:canvas.clientHeight,total:canvas.scrollHeight,scroll:canvas.scrollTop,
@@ -87,7 +87,7 @@ export async function proveFleetScrolling(output, route) {
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   const result = await proveFleetScrolling(
     process.env.FARMSLOT_WORKSPACE_UI_PROOF_OUT,
-    process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490',
+    process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490&view=list',
   );
   const { writeFile } = await import('node:fs/promises');
   await writeFile(result.output, JSON.stringify(result, null, 2) + '\n');

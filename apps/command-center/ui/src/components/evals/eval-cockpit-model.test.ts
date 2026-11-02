@@ -486,11 +486,13 @@ test('missing restored model uses the saved default rather than the first visibl
   }
 });
 
-test('switching runners uses the new default even when the prior model exists in both catalogs', () => {
-  const [row] = sanitizeCandidateRows([{ id: 'shared-model', runner: 'pi', model: 'grok-4.7' }]);
+test('switching runners uses the new default even when the prior model names the same engine', () => {
+  const [row] = sanitizeCandidateRows([
+    { id: 'shared-model', runner: 'pi', model: 'xai/grok-4.7' },
+  ]);
   const changed = applyCandidateRunner(row, 'grok');
-  assert.equal(changed.model, 'grok-4.6');
-  assert.equal(applyCandidateRunner(row, 'pi').model, 'grok-4.7');
+  assert.equal(changed.model, 'grok-4.7');
+  assert.equal(applyCandidateRunner(row, 'pi').model, 'xai/grok-4.7');
 });
 
 test('sanitizeSelectedCases keeps restorable URL cases and omits malformed entries', () => {

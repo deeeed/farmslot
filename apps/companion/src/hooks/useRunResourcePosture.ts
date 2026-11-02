@@ -24,7 +24,11 @@ export function useRunResourcePosture(
   /** Changes whenever the run record changed, so the status is re-read with it. */
   refreshKey: string,
 ): { posture: RunPostureStatusState } {
-  const [posture, setPosture] = useState<RunPostureStatusState>({ status: 'idle' });
+  // A read the effect is about to start is already loading on the first render,
+  // so the panel mounts at its reserved size instead of appearing a frame later.
+  const [posture, setPosture] = useState<RunPostureStatusState>(() =>
+    client && runId ? { status: 'loading' } : { status: 'idle' },
+  );
   const requestRef = useRef(0);
   // Which run, read over which connection, the state on screen describes.
   const heldFor = useRef<{ client: GatewayClient | null; runId: string | null }>({

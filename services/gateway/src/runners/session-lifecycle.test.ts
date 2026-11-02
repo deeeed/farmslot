@@ -794,7 +794,13 @@ test('reloadRunnerForPark respawns only the exact pane when its window may have 
   let runnerProbes = 0;
   const inspectionCommands: string[] = [];
   const result = await reloadRunnerForPark(
-    { vars, recoveryHandle: handle, initialPrompt: 'Continue the parked run', timeoutMs: 100 },
+    {
+      vars,
+      recoveryHandle: handle,
+      initialPrompt: 'Continue the parked run',
+      timeoutMs: 100,
+      modelQuestions: 'off',
+    },
     {
       exec: async (_vars, command) => {
         inspectionCommands.push(command);
@@ -837,6 +843,7 @@ test('reloadRunnerForPark respawns only the exact pane when its window may have 
     },
   });
   assert.match(respawned, /--resume 'session-123' 'Continue the parked run'/);
+  assert.match(respawned, /--disallowedTools' 'AskUserQuestion' --settings/);
   assert.equal(
     inspectionCommands
       .filter((command) => command.includes('display-message'))

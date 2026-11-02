@@ -229,6 +229,11 @@ export class GatewayNativeObservations {
 
   private readonly stopCatalogNotices: () => void;
   private readonly stopVisibleNotices: () => void;
+  /** Whether any connection observes the native catalog, whose node model lists then need refreshing. */
+  hasCatalogInterest(): boolean {
+    return [...this.clients.values()].some((client) => client.catalogInterest !== undefined);
+  }
+
   constructor(private readonly invalidate: (key: NativeObservationKey) => void) {
     this.stopCatalogNotices = nativeCatalogChanges.subscribe((change) =>
       this.catalogChanged(change),

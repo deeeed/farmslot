@@ -23,6 +23,8 @@ import { NativeWorkerOperationUncertainError } from './worker-error.js';
 
 await import('../../runtime/mock-pty.test-support.js');
 const config = await import('../../core/config.js');
+// Loaded before the core mocks below; workspace review uses the real derivation.
+const { modelQuestionsForRun } = await import('../launch-command.js');
 const configuredPool = {
   machine: 'host',
   os: 'macos',
@@ -128,6 +130,7 @@ mock.module('../../security/native-worker-owner.js', {
 });
 mock.module('../launch-command.js', {
   namedExports: {
+    modelQuestionsForRun,
     machineRunnerPath: (runner: string, machine?: RawPoolJson) => {
       executableSelections.push({ runner, machine });
       return selectedExecutable;
@@ -503,6 +506,20 @@ test('native review pins the configured machine executable instead of PATH-selec
   assert.equal(executableSelections[0]?.runner, 'codex');
   assert.equal(executableSelections[0]?.machine, configuredPool);
 });
+
+for (const mode of ['autonomous', 'interactive'] as const) {
+  test(`a native ${mode} workspace review launches with the model's question tool ${mode === 'autonomous' ? 'off' : 'on'}`, async () => {
+    reset();
+    run.mode = mode;
+    await launch();
+    const ensure = calls.find((call) => call.method === NATIVE_WORKER_ENSURE);
+    assert.ok(ensure?.params.launch && typeof ensure.params.launch === 'object');
+    assert.equal(
+      Reflect.get(ensure.params.launch, 'modelQuestions'),
+      mode === 'autonomous' ? 'off' : undefined,
+    );
+  });
+}
 
 test('native review without a configured machine path starts the adapter executable, as a chat session does', async () => {
   reset();

@@ -34,6 +34,7 @@ export function ReviewPublicationPanel({
   observation,
   savedError,
   readSaved,
+  readDisabled,
   context,
   viewIdentity,
 }: ReturnType<typeof useReviewPublication>) {
@@ -100,7 +101,7 @@ export function ReviewPublicationPanel({
           label="Retry saved review"
           testID="companion-saved-review-refresh"
           onPress={readSaved}
-          disabled={disabled || savedLoading}
+          disabled={readDisabled || savedLoading}
         />
       )}
       {curation && (

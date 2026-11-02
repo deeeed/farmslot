@@ -107,62 +107,111 @@ test('terminal shutdown refuses foreign slot owners, device conflicts and an una
   assert.equal(called, false);
 });
 
-test('device acquisition waits until an in-flight terminal shutdown has settled', async (t) => {
-  const order: string[] = [];
-  const device = entry('device');
-  const { registry } = await fixture(t, [device], {
-    catalogForSlot: async (slotId) => {
-      order.push('acquire-catalog');
-      return { slotId, project: 'test-project', capabilities: [device] };
-    },
-    assertTargetAvailable: async () => null,
-    runAction: async (_slot, action) => {
-      order.push(action.kind === 'slot-action' ? action.actionId : action.action);
-      return { ok: true };
-    },
-  });
-  let enter!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
+test(
+  'an in-flight device shutdown reaches other slots as a device holder, not a wait',
+  { timeout: 5_000 },
+  async (t) => {
+    const device: RuntimeCapabilityCatalogEntry = {
+      ...entry('device'),
+      cost: { class: 'low', resources: [{ id: 'sim', kind: 'device', access: 'exclusive' }] },
+    };
+    const seen: unknown[] = [];
+    const { registry } = await fixture(t, [device], {
+      assertTargetAvailable: async (input) => {
+        seen.push(input.controls);
+        return input.controls?.some((control) => control.slotId !== input.slotId)
+          ? 'another slot is stopping this device'
+          : null;
+      },
+    });
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const cleanup = registry.withSlotResourceShutdown(
+      SLOT,
+      'finished-run',
+      'ios-sim',
+      true,
+      async () => {
+        enter();
+        await released;
+      },
+    );
+    await entered;
+    const acquire = () =>
+      registry.acquire({
+        slotId: 'other-slot',
+        capabilityId: 'device',
+        ownerRunId: 'next-run',
+        proofRequirement: { capabilityId: 'device', reason: 'validation', mode: 'state' },
+      });
+    try {
+      const refused = await acquire();
+      assert.equal(refused.ok, false);
+      if (!refused.ok) assert.match(refused.conflict.reason, /stopping this device/);
+    } finally {
+      release();
+    }
+    await cleanup;
+    assert.equal((await acquire()).ok, true);
+    const control = { slotId: SLOT, ownerRunId: 'finished-run', resourceId: 'ios-sim' };
+    assert.deepEqual(seen, [[], [control], []]);
+  },
+);
+
+// F330: mini-mme-3's stuck teardown held every slot's boots, teardowns and acquires.
+test("a stuck runtime control holds only its own slot's queue", { timeout: 5_000 }, async (t) => {
+  const { registry } = await fixture(t, [entry('app')]);
   let release!: () => void;
-  const released = new Promise<void>((resolve) => {
+  const stuck = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const cleanup = registry.withSlotResourceShutdown(
+  const first = registry.withSlotResourceShutdown(SLOT, 'stuck-run', 'server', false, () => stuck);
+  let waited = false;
+  let secondRan = false;
+  const second = registry.withSlotResourceShutdown(
     SLOT,
-    'finished-run',
-    'ios-sim',
-    true,
+    'stuck-run',
+    'browser',
+    false,
     async () => {
-      order.push('shutdown');
-      enter();
-      await released;
-      order.push('shutdown-settled');
+      secondRan = true;
+    },
+    () => {
+      waited = true;
     },
   );
-  await entered;
-  const acquiring = registry.acquire({
-    slotId: 'other-slot',
-    capabilityId: 'device',
-    ownerRunId: 'next-run',
-    proofRequirement: { capabilityId: 'device', reason: 'validation', mode: 'state' },
-  });
   try {
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(order, ['shutdown']);
+    assert.deepEqual(
+      await registry.withSlotResourceShutdown(
+        'slot-b',
+        'other-run',
+        'server',
+        false,
+        async () => 'ok',
+      ),
+      { ok: true, value: 'ok' },
+    );
+    const acquired = await registry.acquire({
+      slotId: 'slot-b',
+      capabilityId: 'app',
+      ownerRunId: 'other-run',
+      proofRequirement: { capabilityId: 'app', reason: 'validation', mode: 'state' },
+    });
+    assert.equal(acquired.ok, true);
+    assert.equal(waited, true, "the stuck slot's next control waits its turn");
+    assert.equal(secondRan, false);
   } finally {
     release();
   }
-  await cleanup;
-  assert.equal((await acquiring).ok, true);
-  assert.deepEqual(order, [
-    'shutdown',
-    'shutdown-settled',
-    'acquire-catalog',
-    'device.acquire',
-    'device.health',
-  ]);
+  assert.deepEqual(await first, { ok: true, value: undefined });
+  assert.deepEqual(await second, { ok: true, value: undefined });
+  assert.equal(secondRan, true);
 });
 
 test('retiring run ownership preserves foreign leases and defers provider shutdown explicitly', async (t) => {

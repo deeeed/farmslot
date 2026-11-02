@@ -8,6 +8,7 @@ import { after, mock, test } from 'node:test';
 import * as realCore from '../../core/index.js';
 import { fakeSshTools } from '../../core/ssh-test-fixtures.js';
 import * as realFleetState from '../../fleet/state.js';
+import { makeRun } from '../../run-engine/test-fixtures.js';
 import * as realRegistry from '../../runners/registry.js';
 import * as realRunStore from '../../runs/store.js';
 import * as realHostedTask from '../../tasks/hosted-task-init.js';
@@ -25,6 +26,29 @@ const taskFile = path.join(taskDir, 'TASK.md');
 const slotCommands: string[] = [];
 const STOP = 'retained task verification refused';
 const verifiedTasks: string[] = [];
+const requestingRun = makeRun({
+  id: 'run-1',
+  project: 'demo',
+  branch: 'fix/x',
+  flowType: 'pr-complete',
+});
+const priorOwner = makeRun({
+  id: 'prior-owner',
+  project: 'demo',
+  slotId: SLOT_ID,
+  flowType: 'pr-complete',
+});
+priorOwner.agentContexts = [
+  {
+    id: 'primary',
+    runId: priorOwner.id,
+    slotId: SLOT_ID,
+    role: 'primary',
+    label: 'Worker',
+    status: 'working',
+    modelQuestions: 'on',
+  },
+];
 
 mock.module('../../core/index.js', {
   namedExports: {
@@ -51,14 +75,16 @@ mock.module('../../core/index.js', {
 mock.module('../../fleet/state.js', {
   namedExports: {
     ...realFleetState,
-    loadFleetStatus: async () => ({ slots: [{ slot: SLOT_ID, branch: 'fix/x' }] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: SLOT_ID, branch: 'fix/x', currentRunId: priorOwner.id }],
+    }),
   },
 });
 mock.module('../../runs/store.js', {
   namedExports: {
     ...realRunStore,
     getRun: (id: string) =>
-      id === 'run-1' ? { id, project: 'demo', transport: 'tmux', branch: 'fix/x' } : undefined,
+      id === requestingRun.id ? requestingRun : id === priorOwner.id ? priorOwner : undefined,
     getAllRuns: () => [],
   },
 });

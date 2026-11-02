@@ -150,6 +150,44 @@ test('OpenCode asks before each tool only at the sandboxed tier', () => {
     );
 });
 
+test('an autonomous OpenCode run also denies the question tool, merged with the tier rule', () => {
+  for (const [safetyTier, permission] of [
+    ['sandboxed', { '*': 'ask', question: 'deny' }],
+    ['full-auto', { question: 'deny' }],
+  ] as const) {
+    const environment = opencodeEnvironment({
+      cwd: '/w',
+      executable: 'opencode',
+      safetyTier,
+      modelQuestions: 'off',
+    });
+    assert.equal(environment.OPENCODE_PERMISSION, JSON.stringify(permission), safetyTier);
+  }
+});
+
+test('an autonomous Grok run starts without its question tool', async () => {
+  for (const modelQuestions of ['off', undefined] as const) {
+    const f = setup();
+    writeFileSync(
+      f.executable,
+      fixture.replace(
+        "const fs=require('node:fs');",
+        "const fs=require('node:fs');fs.writeFileSync('grok-question',String(process.env.GROK_ASK_USER_QUESTION));",
+      ),
+    );
+    const session = await grokNativeAdapter.start({ ...f, modelQuestions }, () => undefined);
+    try {
+      assert.equal(
+        readFileSync(join(f.cwd, 'grok-question'), 'utf8'),
+        modelQuestions ? '0' : 'undefined',
+      );
+    } finally {
+      await session.close();
+      f.cleanup();
+    }
+  }
+});
+
 test('the OpenCode permission override reaches the runner process', async () => {
   const f = setup();
   const session = await opencodeNativeAdapter.start(

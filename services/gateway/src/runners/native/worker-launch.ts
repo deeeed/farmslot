@@ -42,6 +42,8 @@ export async function prepareNativeWorkerLaunch(input: {
   safetyTier: SafetyTier;
   role: AgentRole;
   reviewValidationDepth?: ReviewValidationDepth;
+  /** From modelQuestionsForRun. */
+  modelQuestions?: 'off';
   domain?: string;
   taskDir: string;
   leaseId: string;
@@ -176,6 +178,7 @@ export async function prepareNativeWorkerLaunch(input: {
       environment,
       safetyTier: input.safetyTier,
       ...(input.role === 'review' ? { approvalPolicy: 'never' } : {}),
+      ...(input.modelQuestions ? { modelQuestions: input.modelQuestions } : {}),
       ...(accountLabel ? { accountLabel } : {}),
       ...(effort ? { effort } : {}),
     },

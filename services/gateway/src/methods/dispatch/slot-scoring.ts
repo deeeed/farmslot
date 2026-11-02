@@ -392,6 +392,20 @@ export interface SlotSelectionOptions {
   parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
   skipPrepare?: boolean;
   plans?: SlotSelectionPlans;
+  /** The run's runner override and model, checked against the slot's node by `modelNodeBlocker`. */
+  runner?: string | null;
+  model?: string | null;
+  /** Per-node runner catalog check (`runnerModelNodeBlocker`); absent skips it. */
+  modelNodeBlocker?: (runner: string, model: string, machine: string) => string | null;
+}
+
+/** A requested model runs only on nodes whose own runner catalog lists it. */
+export function slotModelNodeBlocker(
+  slot: Pick<SlotStatus, 'machine' | 'runner'>,
+  options?: Pick<SlotSelectionOptions, 'runner' | 'model' | 'modelNodeBlocker'>,
+): string | null {
+  if (!options?.model || !options.modelNodeBlocker) return null;
+  return options.modelNodeBlocker(options.runner || slot.runner || '', options.model, slot.machine);
 }
 
 /** One candidate context supplies eligibility and score; a missing scoped plan refuses. */
@@ -495,6 +509,7 @@ export function findBestSlot(
       if (slotRepoBlocker(s, selected) || automaticSlotLoadBlocker(s, selected)) return false;
       if (slotCapabilityBlocker(s.slot, selected.requiredCapabilities, selected.capabilityCatalogs))
         return false;
+      if (slotModelNodeBlocker(s, selected)) return false;
       if (selected.pressureRejectedMachines?.has(s.machine)) return false;
       if (
         slotBranchCheckoutBlocker(
@@ -607,7 +622,7 @@ export function validateSlotForDispatch(
     explicitSlot?: boolean;
     projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
     pinnedSlotSelection?: boolean;
-  },
+  } & Pick<SlotSelectionOptions, 'runner' | 'model' | 'modelNodeBlocker'>,
 ): string | null {
   return (
     automaticSlotLoadBlocker(slot, options) ??
@@ -620,6 +635,7 @@ export function validateSlotForDispatch(
       ? null
       : (unattachedDeviceBlocker(slot) ?? physicalDevicePolicyBlocker(slot, options))) ??
     slotCapabilityBlocker(slot.slot, options?.requiredCapabilities, options?.capabilityCatalogs) ??
+    slotModelNodeBlocker(slot, options) ??
     slotRepoBlocker(slot, options)
   );
 }
