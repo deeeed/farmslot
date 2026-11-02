@@ -1,5 +1,5 @@
 // Requires the authenticated workspace.rpc.live.ts UI fixture and its real CC tab.
-// Real clicks in the Fleet table: the bulk release sends exactly the ticked safe rows, a filter
+// Real clicks in the Fleet table: the bulk release releases exactly the ticked safe rows, a filter
 // that hides the selection disables it, and a finished release clears the selection.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -7,32 +7,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { GatewayClient } from '../../../../packages/cli/src/gateway-client.ts';
-
 const output = process.env.FARMSLOT_WORKSPACE_UI_PROOF_OUT;
 assert.ok(output, 'Set the disposable UI fixture output');
 const context = JSON.parse(fs.readFileSync(path.join(output, 'ui-context.json'), 'utf8'));
-const profile = JSON.parse(fs.readFileSync(path.join(context.home, 'gateways.json'), 'utf8'));
-const grant = await new GatewayClient({ url: context.gatewayUrl, timeout: 30_000 }).call(
-  'auth.session.exchange',
-  {
-    credential: profile.gateways[profile.active].secret,
-    deviceName: 'Disposable fleet selection proof',
-    deviceKind: 'cli',
-  },
-);
-const connection = await new GatewayClient({
-  url: context.gatewayUrl,
-  timeout: 300_000,
-  credential: { token: grant.accessToken },
-}).connect();
-const updates = [];
-const summaries = new Map();
-connection.onEvent((event) => {
-  if (event.event === 'fleet.refresh.slot-update') updates.push(event.payload);
-  if (event.event === 'fleet.refresh.summary')
-    summaries.set(event.payload.requestId, event.payload);
-});
+// Real Git is the release's ground truth: proof-slot, proof-slot-two and proof-unpublished.
+const checkouts = {
+  'proof-slot': context.repo,
+  'proof-slot-two': context.secondRepo,
+  'proof-unpublished': context.localRepo,
+};
+const branches = () =>
+  Object.fromEntries(
+    Object.entries(checkouts).map(([slot, repo]) => [
+      slot,
+      execFileSync('git', ['-C', repo, 'branch', '--show-current'], { encoding: 'utf8' }).trim(),
+    ]),
+  );
 const cdp = fileURLToPath(new URL('../cdp.mjs', import.meta.url));
 const route = process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=selection&view=list';
 const browser = (...args) =>
@@ -98,19 +88,29 @@ const review = await poll(
 );
 assert.deepEqual(review.rows, ['proof-slot-two', 'proof-unpublished']);
 assert.equal(review.bulk, 'Release idle slots (1)');
+const before = branches();
 browser('click', route, 'fleet-canvas >>> fleet-refresh-modal >>> footer button');
-const summary = await poll(
-  async () => [...summaries.values()].find((value) => value.requestId.startsWith('fleet-refresh-')),
-  Boolean,
+const finished = await poll(
+  () =>
+    read(
+      `const root=document.querySelector('fleet-canvas')?.shadowRoot.querySelector('fleet-refresh-modal')?.shadowRoot;return {summary:[...root.querySelectorAll('footer [role=status]')].map(e=>e.textContent.replace(/\\s+/g,' ').trim()).find(t=>t.includes('ready'))??'',rows:Object.fromEntries([...root.querySelectorAll('article[data-slot]')].map(e=>[e.dataset.slot,e.querySelector('.detail')?.textContent.trim().split(' ')[0]??'idle']))};`,
+    ),
+  (value) => value.summary !== '',
   'the bulk release summary',
 );
-const sent = [
-  ...new Set(
-    updates.filter((value) => value.requestId === summary.requestId).map((value) => value.slotId),
-  ),
-];
-assert.deepEqual(sent, ['proof-slot-two'], 'Only the ticked safe row is released');
-assert.equal(summary.refreshed, 1);
+assert.equal(finished.summary, '1 ready · 0 failed · 0 skipped');
+assert.deepEqual(finished.rows, { 'proof-slot-two': 'refreshed', 'proof-unpublished': 'idle' });
+const after = branches();
+assert.deepEqual(before, {
+  'proof-slot': 'previous',
+  'proof-slot-two': 'previous-two',
+  'proof-unpublished': 'local-only',
+});
+assert.deepEqual(
+  after,
+  { 'proof-slot': 'previous', 'proof-slot-two': 'main', 'proof-unpublished': 'local-only' },
+  'Only the ticked safe row returned to main; the unticked and the unsafe rows are untouched',
+);
 browser('screenshot', route, path.join(output, 'fleet-selection-released.png'));
 
 browser('click', route, 'fleet-canvas >>> fleet-refresh-modal >>> button[aria-label="Close"]');
@@ -118,7 +118,10 @@ const cleared = await poll(trigger, (value) => value.ticked.length === 0, 'the c
 assert.equal(cleared.disabled, true);
 fs.writeFileSync(
   path.join(output, 'fleet-selection-release.json'),
-  JSON.stringify({ pass: true, idle, chosen, hidden, review, summary, sent, cleared }, null, 2),
+  JSON.stringify(
+    { pass: true, idle, chosen, hidden, review, before, finished, after, cleared },
+    null,
+    2,
+  ),
 );
-connection.close();
 console.log('Fleet selection release proof PASS');
