@@ -37,10 +37,16 @@ async function pausedRecipeRead(t: TestContext) {
   await fs.writeFile(path.join(root, 'TASK.md'), '# task\n');
   await fs.writeFile(recipePath, '{"entry":"BEFORE_INVALIDATE"}\n');
   const run = makeRun(path.join(root, 'TASK.md'), { id: root, slotId: null });
-  const started = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<void>();
+  let markStarted!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   t.after(async () => {
-    release.resolve();
+    release();
     heldPath = undefined;
     holdNextRead = undefined;
     invalidateArtifactTextCache();
@@ -49,12 +55,12 @@ async function pausedRecipeRead(t: TestContext) {
   });
   heldPath = recipePath;
   holdNextRead = () => {
-    started.resolve();
-    return release.promise;
+    markStarted();
+    return released;
   };
   const stale = attachLiveRecipeContext(run);
-  await started.promise;
-  return { run, artifacts, recipePath, stale, release: release.resolve };
+  await started;
+  return { run, artifacts, recipePath, stale, release };
 }
 
 for (const scope of ['all', 'prefix', 'slot'] as const) {
