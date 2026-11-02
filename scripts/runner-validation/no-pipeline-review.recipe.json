@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "An artifact-only run turns its pipeline review off",
-  "description": "Start an isolated gateway with engine start disabled. Through the checkout-local CLI, preview and create an artifact-only dev run with --no-pipeline-review, read it back with run.get, and check that dispatch.preview and run.create refuse pipelineReview none on update-branch, without artifact-only and for an unknown value. No worker, reviewer, operator tmux server, run or slot is used.",
+  "description": "Start an isolated gateway with engine start disabled. Through the checkout-local CLI, preview and create an artifact-only dev run with --no-pipeline-review, read it back with run.get, and check that dispatch.preview and run.create refuse pipelineReview none on update-branch, without artifact-only and for an unknown value. Then, on a second isolated gateway and node with the engine running, a scripted worker commits one change in a reviewed interactive dev run with pipelineReview none: REVIEW records the pipeline-review-off skip, no reviewer context exists, and COMPLETE runs. The project has review on, and the node's codex and claude are fixtures that refuse, so no model is reached.",
   "workflow": {
     "entry": "no-pipeline-review",
     "nodes": {
@@ -10,6 +10,13 @@
         "cmd": "node --import tsx scripts/runner-validation/gateway/no-pipeline-review.mts",
         "timeout_ms": 300000,
         "intent": "An artifact-only dev run keeps its pipeline review off and reads it back; every request it could not honor is refused and creates nothing.",
+        "next": "review-skip"
+      },
+      "review-skip": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/no-pipeline-review-skip.mts",
+        "timeout_ms": 420000,
+        "intent": "A run with its pipeline review off reaches REVIEW, skips it with its reason recorded, launches no reviewer and goes on to COMPLETE.",
         "next": "done"
       },
       "done": {
