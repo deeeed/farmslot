@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { type AgentContext, isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 import { execOnSlot, loadSlotVars, ownsRunSlotCleanup, readSlotRow } from '../core/index.js';
@@ -82,6 +84,81 @@ async function exitPublishedRunWorker(
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   return `runner did not exit within ${timeoutMs}ms`;
+}
+
+/**
+ * Exit a closed run's worker that its record does not name (F315: run ba397e2c's
+ * claude stayed in echobridge-3's %23 while the run named %53). A worker launch
+ * that respawns its pane wraps every runner in the task-recipe guard, which
+ * names the run's task directory, so the pane's own process carrying that
+ * directory proves the worker is this run's. A command typed into a shell has
+ * a shell as the pane process and never qualifies. Returns why it was left.
+ */
+export async function exitClosedRunUnrecordedWorker(
+  vars: SlotVars,
+  run: Run,
+  pane: { session: string; paneId: string; panePid: string },
+  { exitTimeoutMs = RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS }: { exitTimeoutMs?: number } = {},
+): Promise<string | null> {
+  if (!isTerminalRunStatus(run.status) || !run.slotId) return 'the run is not closed';
+  const taskDir = path.posix.dirname(run.taskFile ?? '');
+  const segments = [path.posix.basename(path.posix.dirname(taskDir)), path.posix.basename(taskDir)];
+  if (!segments.every((segment) => /^\w[\w.-]*$/.test(segment)))
+    return 'the run names no task directory';
+  if (!/^%\d+$/.test(pane.paneId) || !/^\d+$/.test(pane.panePid))
+    return 'the pane identity is malformed';
+  const token = `/${segments.join('/')}/`;
+  const launchNamesRun = async () => {
+    const root = await execOnSlot(vars, `ps -ww -o command= -p ${shellQuote(pane.panePid)}`, {
+      cwd: '/',
+    });
+    return root.exitCode === 0 && root.stdout.includes(token);
+  };
+  const slotId = run.slotId;
+  const slot = await readSlotRow(slotId);
+  if (!ownsRunSlotCleanup(slot, run.id)) return 'the run no longer owns the slot cleanup';
+  if (!(await launchNamesRun())) return "the pane's launch does not name the run's task directory";
+  const runners = new Set(
+    (run.agentContexts ?? []).flatMap((context) =>
+      !context.nativeSession && !context.nativeSessionOwner && context.runner
+        ? [context.runner]
+        : [],
+    ),
+  );
+  const live: Array<{ runner: string; pid: string }> = [];
+  for (const runner of runners) {
+    const probe = await probeRunnerDescendantPid(vars, pane.panePid, runner);
+    if (probe.state === 'unknown') return `runner liveness is unknown (${probe.code})`;
+    if (probe.state === 'present') live.push({ runner, pid: probe.pid });
+  }
+  if (live.length !== 1) return `${live.length} of the run's runners are live in the pane`;
+  const generation = run.engineState?.generation;
+  const assertOwned = async () => {
+    const currentRun = await getRunWithArchived(run.id);
+    const currentSlot = await readSlotRow(slotId);
+    if (
+      !currentRun ||
+      !isTerminalRunStatus(currentRun.status) ||
+      currentRun.slotId !== slotId ||
+      currentRun.taskFile !== run.taskFile ||
+      currentRun.engineState?.generation !== generation ||
+      !ownsRunSlotCleanup(currentSlot, run.id) ||
+      currentSlot?.slot_epoch !== slot?.slot_epoch ||
+      (currentSlot?.handoff_run_id && currentSlot.handoff_run_id !== run.id) ||
+      !(await launchNamesRun())
+    )
+      throw new Error('worker ownership changed before the exit was sent');
+  };
+  try {
+    return await exitPublishedRunWorker(
+      vars,
+      { ...pane, runnerPid: live[0].pid, runner: live[0].runner },
+      assertOwned,
+      exitTimeoutMs,
+    );
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 /** Missing historical metadata can prove quiescence, never authority to stop a live worker. */
