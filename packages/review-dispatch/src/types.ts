@@ -20,6 +20,10 @@ export interface ReviewDispatchModelOption {
   label?: string;
   /** Omitted inherits runner levels. Empty means only the supported default. */
   efforts?: readonly string[];
+  /** Provider group label for node catalog ids, such as "Consensys LiteLLM". */
+  group?: string;
+  /** Execution nodes that list the model, present only when some node lacks it. */
+  nodes?: readonly string[];
 }
 export interface ReviewDispatchModelPickerState {
   choices: readonly ReviewDispatchModelOption[];

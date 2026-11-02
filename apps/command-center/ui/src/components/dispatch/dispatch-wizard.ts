@@ -50,7 +50,10 @@ import {
 import { activeRunsQuery, runHistoryQuery } from '../../state.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { COMPARISON_LANE_RUNNERS, RUNNER_OPTIONS } from '../../utils/runner-options.js';
-import { visibleReviewDispatchCatalog } from '../../utils/runner-visible-models.js';
+import {
+  NODE_CATALOG_RUNNERS,
+  visibleReviewDispatchCatalog,
+} from '../../utils/runner-visible-models.js';
 import {
   deriveExecutionTemplatePickerView,
   pickCompatibleExecutionTemplateId,
@@ -893,6 +896,7 @@ export class DispatchWizard extends DispatchWizardState {
     // no extra gh round trip.
     const targetBranch = this._resolveTargetBranch(st.prs);
     this._lastFetchTargetBranch = targetBranch;
+    this._lastFetchNodeModel = this._nodeCatalogModelKey();
     const gen = ++this._fetchGen;
     const hasCache = this._allCandidates.length > 0;
     const silent = options.silent === true && hasCache && options.force !== true;
@@ -910,6 +914,8 @@ export class DispatchWizard extends DispatchWizardState {
         app: this._app || undefined,
         prepareProfile: this._prepareProfile.trim() || undefined,
         skipPrepare: this._skipPrepare,
+        runner: this._runner || undefined,
+        model: this._model || undefined,
         comparison:
           this._comparisonLane && this._comparisonFamilyId
             ? {
@@ -2006,7 +2012,14 @@ export class DispatchWizard extends DispatchWizardState {
     )
       this._setTransport('tmux');
     this._recomputeVariantCollision();
+    // Candidate rows check a Pi/OpenCode model against each slot's node.
+    if (this._nodeCatalogModelKey() !== this._lastFetchNodeModel)
+      void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
     this.requestUpdate();
+  }
+
+  private _nodeCatalogModelKey(): string {
+    return NODE_CATALOG_RUNNERS.includes(this._runner) ? `${this._runner}/${this._model}` : '';
   }
 
   /** Resolved QA preset shown beside static review rounds; runtime QA is a separate flow. */

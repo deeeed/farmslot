@@ -11,12 +11,14 @@ import {
   DEFAULT_PI_THINKING,
   DEFAULT_REVIEW_MODE,
   DEFAULT_RUNNER,
+  nativeRunnerModels,
   type NativeRunnerOption,
   PI_THINKING_LEVELS,
   type ReviewMode,
   type ReviewSelection,
   RUNNER_PICKER_MODELS,
   type RunnerModelCatalogResult,
+  runnerModelProviderLabel,
   type RunnerVisibleModelState,
 } from '@farmslot/protocol';
 
@@ -87,7 +89,7 @@ export const DEFAULT_REVIEW_DISPATCH_CATALOG: ReviewDispatchCatalog = {
       defaultModel: DEFAULT_PI_MODEL,
       defaultEffort: DEFAULT_PI_THINKING,
       efforts: PI_THINKING_LEVELS,
-      models: RUNNER_PICKER_MODELS.pi.map((id) => ({ id })),
+      models: [],
     },
     {
       id: 'opencode',
@@ -173,12 +175,20 @@ export function catalogWithVisibleModels(
     runners: catalog.runners.map((option) => {
       const state = visible.find((entry) => entry.runner === option.id);
       if (!state) return option;
+      // No saved set and no seed (Pi, OpenCode): the node catalog is the list.
+      const ids =
+        state.configured || state.models.length
+          ? state.pickerModels
+          : [
+              ...new Set([
+                ...option.models.map((model) => model.id),
+                ...(state.retainedModel ? [state.retainedModel] : []),
+              ]),
+            ];
       return {
         ...option,
         defaultModel: state.defaultModel || null,
-        models: state.pickerModels.map(
-          (id) => option.models.find((model) => model.id === id) ?? { id },
-        ),
+        models: ids.map((id) => option.models.find((model) => model.id === id) ?? { id }),
       };
     }),
   };
@@ -195,21 +205,28 @@ export function catalogWithRunnerModels(
         ? option
         : {
             ...option,
-            models: result.models.map((model) => ({
-              id: model.id,
-              label: model.label,
-              efforts: model.reasoningModes.length
-                ? option.efforts.filter((level) => model.reasoningModes.includes(level))
-                : option.models.find((entry) => entry.id === model.id)?.efforts,
-            })),
+            models: result.models.map((model) => {
+              const group = runnerModelProviderLabel(model.id);
+              return {
+                id: model.id,
+                label: model.label,
+                efforts: model.reasoningModes.length
+                  ? option.efforts.filter((level) => model.reasoningModes.includes(level))
+                  : option.models.find((entry) => entry.id === model.id)?.efforts,
+                ...(group ? { group } : {}),
+                ...(model.nodes ? { nodes: model.nodes } : {}),
+              };
+            }),
           },
     ),
   };
 }
 
+/** `executionNodeId` picks a per-node runner's list for the node the session runs on. */
 export function catalogForNativeRunners(
   runners: readonly NativeRunnerOption[],
   catalog: ReviewDispatchCatalog = DEFAULT_REVIEW_DISPATCH_CATALOG,
+  executionNodeId?: string,
 ): ReviewDispatchCatalog {
   return {
     runners: runners.map((native) => {
@@ -220,9 +237,12 @@ export function catalogForNativeRunners(
         defaultModel: native.defaultModel || null,
         defaultEffort: option?.defaultEffort ?? null,
         efforts: option?.efforts ?? [],
-        models: native.models.map(
-          (id) => option?.models.find((entry) => entry.id === id) ?? { id },
-        ),
+        models: nativeRunnerModels(native, executionNodeId).map((id) => {
+          const group = runnerModelProviderLabel(id);
+          return (
+            option?.models.find((entry) => entry.id === id) ?? (group ? { id, group } : { id })
+          );
+        }),
       };
     }),
   };

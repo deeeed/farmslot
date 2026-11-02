@@ -1,12 +1,14 @@
-import type { NativeSessionCatalogResult } from '@farmslot/protocol';
+import { isPickerCatalogModel, type NativeSessionCatalogResult } from '@farmslot/protocol';
 
 import { loadSlotVars, poolDir } from '../core/config.js';
 import { farmslotRoot, isLocal } from '../core/index.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { nodeModelCatalogs } from '../runners/model-catalog.js';
 import { runnerSupportsReadonlyReviewWorkspace } from '../runners/native/review-workspace.js';
 import {
   DEFAULT_COPILOT_RUNNER,
+  getRunnerDefinition,
   KNOWN_RUNNERS,
   runnerSupportsNativeTaskReuse,
 } from '../runners/registry.js';
@@ -31,6 +33,8 @@ export async function nativeCatalog(
       ? [{ cwd: farmslotRoot, label: 'Farmslot checkout', supportsProfiles: true }]
       : []),
   ];
+  /** Context node id ('local' or a machine) to the pool machine its node catalog is keyed by. */
+  const contextMachines = new Map<string, string>();
   for (const pool of await loadPoolConfigs(poolDir)) {
     for (const slot of pool.slots) {
       if (!slot.repo) continue;
@@ -46,6 +50,7 @@ export async function nativeCatalog(
       )
         continue;
       const vars = await loadSlotVars(slot.id);
+      contextMachines.set(executionNodeId, pool.machine);
       contexts.push({
         executionNodeId,
         cwd: vars.remoteRepo,
@@ -62,29 +67,54 @@ export async function nativeCatalog(
       .sort(
         (a, b) => Number(b.id === DEFAULT_COPILOT_RUNNER) - Number(a.id === DEFAULT_COPILOT_RUNNER),
       )
-      .flatMap((definition) =>
-        definition.nativeTransport && definition.nativeChoices
-          ? [
-              {
-                runner: definition.id,
-                supportsWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
-                supportsQueuedWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
-                supportsWorkspaceReviews:
-                  allowWorkers &&
-                  runnerSupportsNativeTaskReuse(definition.id) &&
-                  runnerSupportsReadonlyReviewWorkspace(definition.id),
-                ...definition.nativeChoices,
-                ...nativeModelPreferences(
-                  definition.id,
-                  definition.nativeChoices.models,
-                  definition.nativeChoices.defaultModel ?? definition.defaultModel,
-                ),
-              },
-            ]
-          : [],
-      ),
+      .flatMap((definition) => {
+        if (!definition.nativeTransport || !definition.nativeChoices) return [];
+        const defaultModel = definition.nativeChoices.defaultModel ?? definition.defaultModel;
+        const nodeModels = nativeNodeModels(definition.id, defaultModel, contextMachines);
+        return [
+          {
+            runner: definition.id,
+            supportsWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
+            supportsQueuedWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
+            supportsWorkspaceReviews:
+              allowWorkers &&
+              runnerSupportsNativeTaskReuse(definition.id) &&
+              runnerSupportsReadonlyReviewWorkspace(definition.id),
+            ...definition.nativeChoices,
+            ...nativeModelPreferences(definition.id, definition.nativeChoices.models, defaultModel),
+            ...(nodeModels ? { nodeModels } : {}),
+          },
+        ];
+      }),
     contexts,
   };
+}
+
+/**
+ * Per-node catalogs (Pi, OpenCode): each listed node's picker models, under the same saved
+ * preferences and default as `models`. A node that has not listed yet is absent, so its
+ * sessions keep `models` (the default, or the saved set).
+ */
+export function nativeNodeModels(
+  runner: string,
+  defaultModel: string | null | undefined,
+  contextMachines: ReadonlyMap<string, string>,
+): Record<string, string[]> | undefined {
+  const source = getRunnerDefinition(runner).modelCatalog;
+  if (!source || !('nodeCommand' in source)) return undefined;
+  const entries = [...contextMachines].flatMap(([executionNodeId, machine]) => {
+    const listing = nodeModelCatalogs.listing(runner, machine);
+    return listing
+      ? [
+          [
+            executionNodeId,
+            nativeModelPreferences(runner, listing.filter(isPickerCatalogModel), defaultModel)
+              .models,
+          ] as const,
+        ]
+      : [];
+  });
+  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 /**

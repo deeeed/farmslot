@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Methods,
   nativeProfileSessionParams,
+  nativeRunnerModels,
   type NativeSessionCatalogResult,
   type NativeSessionInfo,
 } from '@farmslot/protocol';
@@ -65,7 +66,15 @@ export function useNativeSessionSetup(enabled: boolean) {
   const runner = runnerId
     ? catalog?.runners.find((item) => item.runner === runnerId)
     : catalog?.runners[0];
-  const model = runner?.models.includes(modelId) ? modelId : (runner?.defaultModel ?? '');
+  const contextIndex =
+    catalog?.contexts.findIndex((item) => workspaceKey(item) === contextKey) ?? -1;
+  const context = catalog?.contexts[contextIndex];
+  // Pi and OpenCode list the models of the node the session will run on.
+  const executionNode = context?.executionNodeId ?? 'local';
+  const model =
+    runner && nativeRunnerModels(runner, executionNode).includes(modelId)
+      ? modelId
+      : (runner?.defaultModel ?? '');
   const executionPicker = useMemo(
     () =>
       catalog?.runners.length
@@ -74,7 +83,7 @@ export function useNativeSessionSetup(enabled: boolean) {
             catalog: {
               runners: catalog.runners.map((entry) => ({
                 id: entry.runner,
-                models: entry.models.map((id) => ({ id })),
+                models: nativeRunnerModels(entry, executionNode).map((id) => ({ id })),
                 defaultModel: entry.defaultModel,
                 allowCustomModels: false,
                 efforts: [],
@@ -84,18 +93,18 @@ export function useNativeSessionSetup(enabled: boolean) {
             sequence: [
               {
                 runner: runner?.runner ?? catalog.runners[0].runner,
-                model: runner?.models.includes(modelId) ? modelId : null,
+                model:
+                  runner && nativeRunnerModels(runner, executionNode).includes(modelId)
+                    ? modelId
+                    : null,
                 effort: null,
                 mode: 'cold',
               },
             ],
           })
         : undefined,
-    [catalog, runner?.runner, modelId],
+    [catalog, runner, modelId, executionNode],
   );
-  const contextIndex =
-    catalog?.contexts.findIndex((item) => workspaceKey(item) === contextKey) ?? -1;
-  const context = catalog?.contexts[contextIndex];
   const selectedNode = useRef('local');
   if (context) selectedNode.current = context.executionNodeId ?? 'local';
   const selectedMode = runner?.modes.includes(mode) ? mode : (runner?.modes[0] ?? 'default');

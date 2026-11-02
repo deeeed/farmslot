@@ -59,11 +59,12 @@ import { codexSessionObservability } from './codex-observability.js';
 import { createCursorLogObservability } from './cursor-observability.js';
 import { grokLogObservability } from './grok-observability.js';
 import {
-  decodePiModelCatalog,
+  nodeModelCatalogs,
   parseCodexModelCatalog,
   parseCursorModelCatalog,
   parseGrokModelCatalog,
-  parsePiModelCatalog,
+  parseOpenCodeModelList,
+  parsePiModelList,
   type RunnerModelCatalogSource,
 } from './model-catalog.js';
 import {
@@ -573,9 +574,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'pi',
     nativeTransport: 'pi-rpc',
     supportsNativeTaskReuse: true,
-    // Native sessions name Pi's own provider-qualified model IDs.
+    // Native sessions name Pi's own provider-qualified model IDs. No seed: each
+    // execution node lists its own models (modelCatalog below).
     nativeChoices: {
-      models: RUNNER_PICKER_MODELS.pi.map((model) => resolvePiModel(model)),
+      models: [],
       defaultModel: resolvePiModel(DEFAULT_PI_MODEL),
       modes: ['default'],
     },
@@ -614,9 +616,11 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_PI_MODEL,
     modelCatalog: {
-      relativePath: ['.pi/agent/models-store.json', '.pi/agent/models.json'],
-      decode: decodePiModelCatalog,
-      parse: parsePiModelCatalog,
+      nodeCommand: 'pi',
+      slotPathKey: 'piPath',
+      args: ['--list-models'],
+      parse: parsePiModelList,
+      resolveModel: resolvePiModel,
     },
     acceptsEffort: (_model, effort) => isPiThinkingLevel(effort.trim().toLowerCase()),
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
@@ -630,6 +634,12 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsNativeTaskReuse: true,
     // No seed: a new session uses the model OpenCode is configured with.
     nativeChoices: { models: [], modes: ['default'] },
+    modelCatalog: {
+      nodeCommand: 'opencode',
+      slotPathKey: 'opencodePath',
+      args: ['models'],
+      parse: parseOpenCodeModelList,
+    },
     defaultLaunchMode: 'exec',
     processMatchers: ['opencode'],
     supportsInteractivePrompt: false,
@@ -875,6 +885,22 @@ export function runnerSupportsModel(
   // matter how permissive the runner's own `acceptsModel` is.
   if (!runnerArgumentValueIsSafe(model)) return false;
   return getRunnerDefinition(runnerId).acceptsModel(model);
+}
+
+/**
+ * Why a slot on `machine` cannot run `model`: a per-node catalog lists the model
+ * on other nodes but not this one. Null when it does, or when the catalog has no
+ * listing for this node or none for the model.
+ */
+export function runnerModelNodeBlocker(
+  runnerId: string,
+  model: string,
+  machine: string,
+): string | null {
+  const definition = getRunnerDefinition(runnerId);
+  const source = definition.modelCatalog;
+  if (!source || !('nodeCommand' in source) || !model.trim() || model === 'unknown') return null;
+  return nodeModelCatalogs.blocker(definition.id, source.resolveModel?.(model) ?? model, machine);
 }
 
 export function runnerSupportsEffort(runnerId: string, model: string, effort?: string): boolean {

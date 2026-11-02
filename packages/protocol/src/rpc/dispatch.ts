@@ -83,6 +83,9 @@ export interface DispatchCandidatesParams {
   forceRefresh?: boolean;
   /** The dispatch keeps each slot's checkout (no prepare): slot repo blockers do not apply. */
   skipPrepare?: boolean;
+  /** The chosen runner and model: a free row on a node whose own catalog lacks the model is ineligible. */
+  runner?: string;
+  model?: string;
 }
 
 /** Optional metadata attached to busy candidates whose branch matches the dispatch's `targetBranch`.

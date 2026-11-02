@@ -8,10 +8,12 @@ import test from 'node:test';
 import { DEFAULT_PI_MODEL } from '@farmslot/protocol';
 
 import { readWorkspaceText, WORKSPACE_TEXT_LIMIT, workspacePath } from '../core/workspace-files.js';
+import { nodeModelCatalogs } from '../runners/model-catalog.js';
 import { getRunnerDefinition } from '../runners/registry.js';
 
 import {
   nativeModelPreferences,
+  nativeNodeModels,
   nativeWorkspaceChanges,
   nativeWorkspaceDiff,
   nativeWorkspaceList,
@@ -161,4 +163,51 @@ test("Pi's native picker offers its provider-qualified default unless an operato
       .defaultModel,
     claude.defaultModel,
   );
+});
+
+test('Pi and OpenCode native pickers list the models of the node each context runs on', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'native-node-models-'));
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = home;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  });
+  // Context node ids map to the pool machines that list models; 'local' is the gateway host's pool.
+  const contexts = new Map([
+    ['local', 'nw-host'],
+    ['nw-mini', 'nw-mini'],
+  ]);
+  const piDefault = getRunnerDefinition('pi').nativeChoices!.defaultModel;
+  // Before any node lists, there are no node entries: sessions keep the default-only `models`.
+  assert.equal(nativeNodeModels('pi', piDefault, contexts), undefined);
+  nodeModelCatalogs.record('pi', 'nw-mini', [
+    'litellm/glm-5p3',
+    'anthropic/claude-haiku-4-5',
+    'amazon-bedrock/anthropic.claude-opus-5-5',
+    'xai/grok-4.7',
+  ]);
+  assert.deepEqual(nativeNodeModels('pi', piDefault, contexts), {
+    'nw-mini': ['litellm/glm-5p3', 'xai/grok-4.7'],
+  });
+  // A default the node does not list stays selectable, first.
+  assert.deepEqual(nativeNodeModels('pi', 'xai/grok-5', contexts)?.['nw-mini'], [
+    'xai/grok-5',
+    'litellm/glm-5p3',
+    'xai/grok-4.7',
+  ]);
+  nodeModelCatalogs.record('opencode', 'nw-host', ['opencode/big-pickle', 'litellm/kimi-k3']);
+  assert.deepEqual(nativeNodeModels('opencode', null, contexts), { local: ['litellm/kimi-k3'] });
+  // A saved visible set and default apply to every node, as they do to `models`.
+  await writeFile(
+    path.join(home, 'runner-visible-models.json'),
+    JSON.stringify({
+      version: 1,
+      byRunner: { pi: ['litellm/kimi-k3'] },
+      defaults: { pi: 'litellm/kimi-k3' },
+    }),
+  );
+  assert.deepEqual(nativeNodeModels('pi', piDefault, contexts), { 'nw-mini': ['litellm/kimi-k3'] });
+  assert.equal(nativeNodeModels('claude', 'opus', contexts), undefined);
 });

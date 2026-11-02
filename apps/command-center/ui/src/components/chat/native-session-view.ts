@@ -325,12 +325,17 @@ export class NativeSessionView extends LitElement {
         this.selectedNodeId !== this.initialExecutionNodeId)
     )
       this.select(this.initialSessionId, this.initialExecutionNodeId);
-    if ((changed.has('profile') || changed.has('catalog')) && this.catalog) {
+    if (
+      (changed.has('profile') || changed.has('catalog') || changed.has('executionNodeId')) &&
+      this.catalog
+    ) {
       this.executionPicker.setCatalog(
         catalogForNativeRunners(
           this.catalog.runners.filter(
             (runner) => !this.profile || runner.runner === this.profile.runner,
           ),
+          undefined,
+          this.executionNodeId,
         ),
       );
     }
@@ -943,7 +948,9 @@ ${JSON.stringify(
             this.catalog = state.data;
             this.catalogCurrent = state.status === 'ready';
             if (this.catalog)
-              this.executionPicker.setCatalog(catalogForNativeRunners(this.catalog.runners));
+              this.executionPicker.setCatalog(
+                catalogForNativeRunners(this.catalog.runners, undefined, this.executionNodeId),
+              );
             if (!this.cwd && !this.customCwd && this.catalog) {
               this.cwd = this.catalog.contexts[0]?.cwd ?? '';
               this.executionNodeId = this.catalog.contexts[0]?.executionNodeId ?? 'local';
@@ -985,13 +992,17 @@ ${JSON.stringify(
         this.select('');
         if (this.initialSessionId) {
           this.unavailableNodes = result.unavailableExecutionNodes ?? [];
-          this.executionPicker.setCatalog(catalogForNativeRunners(catalog.runners));
+          this.executionPicker.setCatalog(
+            catalogForNativeRunners(catalog.runners, undefined, this.executionNodeId),
+          );
           this.error = 'Open this task conversation from its run.';
           return;
         }
       }
       this.unavailableNodes = result.unavailableExecutionNodes ?? [];
-      this.executionPicker.setCatalog(catalogForNativeRunners(catalog.runners));
+      this.executionPicker.setCatalog(
+        catalogForNativeRunners(catalog.runners, undefined, this.executionNodeId),
+      );
       if (!catalog.runners.some((option) => option.runner === this.runner)) {
         this.runner = catalog.runners[0]?.runner ?? '';
         this.model = catalog.runners[0]?.defaultModel ?? '';

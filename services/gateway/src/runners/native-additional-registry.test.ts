@@ -30,8 +30,9 @@ test('Pi and OpenCode run natively while their terminal launches stay as they we
   assert.equal(pi.defaultModel, DEFAULT_PI_MODEL);
   assert.equal(pi.supportsInteractivePrompt, true);
   assert.equal(pi.nativeChoices?.defaultModel, `xai/${DEFAULT_PI_MODEL}`);
-  assert.ok(pi.nativeChoices?.models.every((model) => model.includes('/')));
-  assert.ok(pi.nativeChoices?.models.includes(pi.nativeChoices.defaultModel!));
+  // No seed: each execution node lists its own models.
+  assert.deepEqual(pi.nativeChoices?.models, []);
+  assert.ok(pi.modelCatalog && 'nodeCommand' in pi.modelCatalog);
 
   const opencode = getRunnerDefinition('opencode');
   assert.equal(opencode.nativeTransport, 'opencode-acp');

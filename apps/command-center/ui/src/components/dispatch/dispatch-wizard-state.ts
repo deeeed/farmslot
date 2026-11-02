@@ -180,6 +180,8 @@ export abstract class DispatchWizardState extends LitElement {
   _lastFetchMachines = '';
   /** Last targetBranch passed to dispatch.candidates; re-fetches when pr.list hydrates and flips this from undefined to a branch. */
   _lastFetchTargetBranch: string | undefined;
+  /** Last Pi/OpenCode runner and model passed to dispatch.candidates; their node check depends on it. */
+  _lastFetchNodeModel = '';
   /** Tracks which `(flow, ticket)` pair the previous candidate fetch was for. The scoring
    * context isn't just the ticket — `_resolveTargetBranch` ALSO depends on `_flowType` (only
    * `review-pr` / `pr-complete` look up the PR's head branch). Switching from

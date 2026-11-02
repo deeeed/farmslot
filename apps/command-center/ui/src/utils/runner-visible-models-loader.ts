@@ -1,4 +1,8 @@
-import { Methods, type RunnerVisibleModelsGetResult } from '@farmslot/protocol';
+import {
+  Methods,
+  type RunnerModelCatalogResult,
+  type RunnerVisibleModelsGetResult,
+} from '@farmslot/protocol';
 import { type GatewayResourceCache, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../gateway-client.js';
@@ -10,7 +14,11 @@ import {
   subscribeResourceCache,
 } from '../resource-cache.js';
 
-import { setObservedVisibleModels } from './runner-visible-models.js';
+import {
+  NODE_CATALOG_RUNNERS,
+  setObservedRunnerCatalogs,
+  setObservedVisibleModels,
+} from './runner-visible-models.js';
 
 const listeners = new Set<(error: string) => void>();
 let stopOwner: (() => void) | undefined;
@@ -33,27 +41,52 @@ function bind(): void {
   const owner = getResourceNativeOwnerId();
   const workspace = getResourceWorkspaceKey();
   const same = cache === bound.cache && owner === bound.owner && workspace === bound.workspace;
-  if (same && (stopQuery || !cache || !owner)) return;
+  if (same && (stopQuery || !cache)) return;
   stopQuery?.();
   stopQuery = undefined;
   const current = ++version;
   if (!same) {
     // Another principal or gateway never shows the previous owner's preferences.
     setObservedVisibleModels([]);
+    setObservedRunnerCatalogs([]);
     error = '';
   }
   bound = { cache, owner, workspace };
-  if (cache && owner) {
-    const stop = cache.observe(
-      resourceQuery<RunnerVisibleModelsGetResult>(Methods.RUNNER_VISIBLE_MODELS_GET, {}, owner),
-      (state) => {
-        if (current !== version) return;
-        if (state.data) setObservedVisibleModels(state.data.runners);
-        // Retry must not blank the last failure before a current reply settles it.
-        error = state.error?.message ?? (state.status === 'ready' ? '' : error);
-        notify();
-      },
+  if (cache) {
+    // Node catalogs load with the picker, from the persisted cache first.
+    const catalogs = new Map<string, RunnerModelCatalogResult>();
+    const stops = NODE_CATALOG_RUNNERS.map((runner) =>
+      cache.observe(
+        resourceQuery<RunnerModelCatalogResult>(Methods.RUNNER_MODEL_CATALOG, { runner }),
+        (state) => {
+          if (current !== version) return;
+          if (state.data?.runner === runner) catalogs.set(runner, state.data);
+          else if (state.error && !catalogs.has(runner))
+            catalogs.set(runner, {
+              runner,
+              status: 'unavailable',
+              source: 'unavailable',
+              detail: state.error.message,
+              models: [],
+            });
+          setObservedRunnerCatalogs([...catalogs.values()]);
+        },
+      ),
     );
+    if (owner)
+      stops.push(
+        cache.observe(
+          resourceQuery<RunnerVisibleModelsGetResult>(Methods.RUNNER_VISIBLE_MODELS_GET, {}, owner),
+          (state) => {
+            if (current !== version) return;
+            if (state.data) setObservedVisibleModels(state.data.runners);
+            // Retry must not blank the last failure before a current reply settles it.
+            error = state.error?.message ?? (state.status === 'ready' ? '' : error);
+            notify();
+          },
+        ),
+      );
+    const stop = () => stops.forEach((stopObserving) => stopObserving());
     if (current === version) stopQuery = stop;
     else stop();
   }

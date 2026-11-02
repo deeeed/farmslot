@@ -50,8 +50,8 @@ test('runners without an auth-check capability do not inherit Pi checks', async 
 });
 
 for (const [model, expected] of [
-  [null, 'xai/grok-4.6'],
-  ['unknown', 'xai/grok-4.6'],
+  [null, 'xai/grok-4.7'],
+  ['unknown', 'xai/grok-4.7'],
   ['grok-4.6', 'xai/grok-4.6'],
   ['anthropic/claude-opus-5-5', 'anthropic/claude-opus-5-5'],
 ] as const) {
