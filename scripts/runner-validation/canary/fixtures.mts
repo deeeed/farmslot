@@ -622,7 +622,9 @@ setTimeout(() => process.exit(0), 15 * 60_000);
     }
 ${FAKE_WORKER_FINISH}
   }
-  hook('Stop', noSession ? {} : session);
+  // Done with what it was held for: a runner with no session at all reads as never idle.
+  if (noSession && fixFile) hook('SessionStart', session);
+  hook('Stop', noSession && !fixFile ? {} : session);
   process.stdout.write('\\u276f\\n');
   prompt = await nextPrompt();
   }
