@@ -393,8 +393,9 @@ function workerWithPromptSent(run: Run): AgentContext | undefined {
 
 /**
  * How far an interrupted DISPATCH got with its task, read after runtime reconciliation (which
- * promotes a live `launching` worker to `working`). The step records `promptDeliveryVerified` on
- * its outputs once delivery is verified: a fleet refresh rewrites the slot's agent but not that.
+ * promotes a live `launching` worker to `working`). The step records `promptDeliveryVerifiedAt`
+ * on its outputs once delivery is verified: a fleet refresh rewrites the slot's agent but not that,
+ * and a record older than this attempt's marker belongs to an earlier attempt.
  */
 async function interruptedDispatchDelivery(
   deps: Pick<RunRecoveryCollaborators, 'dispatchPromptAccepted'>,
@@ -413,7 +414,13 @@ async function interruptedDispatchDelivery(
     return 'delivered';
   if (!worker) return 'unsent';
   const dispatch = run.steps.find((step) => step.name === S.DISPATCH);
-  if (dispatch?.outputs?.promptDeliveryVerified) return 'delivered';
+  const verifiedAt = dispatch?.outputs?.promptDeliveryVerifiedAt;
+  if (
+    typeof verifiedAt === 'string' &&
+    worker.promptDeliveryStartedAt &&
+    verifiedAt >= worker.promptDeliveryStartedAt
+  )
+    return 'delivered';
   if (reconcileFailed) return 'uncertain';
   if (
     worker.status === 'working' &&

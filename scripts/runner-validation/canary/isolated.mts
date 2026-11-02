@@ -524,8 +524,8 @@ function survivePhase(
         },
         held: ({ run }) =>
           stepStatus(run, 'dispatch') === 'running' &&
-          run.steps.find((entry) => entry.name === 'dispatch')?.outputs?.promptDeliveryVerified ===
-            true,
+          typeof run.steps.find((entry) => entry.name === 'dispatch')?.outputs
+            ?.promptDeliveryVerifiedAt === 'string',
         missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'dispatch') ?? ''),
         release: lateSession.release,
         survive: { release: worker.release },

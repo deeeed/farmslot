@@ -118,7 +118,7 @@ function restartAt(
 function dispatchingRun(
   runner: string,
   promptDeliveryStartedAt?: string,
-  { verified = false, flags }: { verified?: boolean; flags?: RunEngineFlags } = {},
+  { verifiedAt, flags }: { verifiedAt?: string; flags?: RunEngineFlags } = {},
 ): Run {
   const steps = FLOW_STEPS['fix-bug'];
   const worker: AgentContext = {
@@ -145,7 +145,7 @@ function dispatchingRun(
           name,
           status: 'running',
           startedAt: DISPATCH_STARTED_AT,
-          ...(verified ? { outputs: { promptDeliveryVerified: true } } : {}),
+          ...(verifiedAt ? { outputs: { promptDeliveryVerifiedAt: verifiedAt } } : {}),
         };
       return { name, status: index < steps.indexOf('dispatch') ? 'done' : 'pending' };
     }),
@@ -196,12 +196,23 @@ test('restart adopts a live worker whose launch carried its prompt and resumes a
 
 test('delivery, then a fleet refresh, then a restart: the verified record still adopts', async () => {
   // The refresh rewrote the slot's agent to idle while the run stayed dispatching.
-  const run = dispatchingRun('claude', PROMPT_SENT_AT, { verified: true });
+  const run = dispatchingRun('claude', PROMPT_SENT_AT, { verifiedAt: PROMPT_SENT_AT });
   const { restart, deps } = restartAt(run, { slotAgent: 'idle' });
 
   await recoverActiveRuns(deps);
 
   assertAdopted(restart);
+});
+
+test('a verified record from an earlier attempt does not adopt this attempt', async () => {
+  // Attempt 1 verified, a later error sent it to the card, and its Replay step keeps the outputs.
+  const earlier = new Date(Date.parse(PROMPT_SENT_AT) - 1_000).toISOString();
+  const run = dispatchingRun('claude', PROMPT_SENT_AT, { verifiedAt: earlier });
+  const { restart, deps } = restartAt(run, { slotAgent: 'idle' });
+
+  await recoverActiveRuns(deps);
+
+  assert.equal(openCard(restart.run)?.type, WORKER_LEFT_RUNNING_DECISION);
 });
 
 test('a warm claim on the slot proves nothing once its handoff fell back to a cold dispatch', async () => {
@@ -326,7 +337,7 @@ test('a reconciliation error is not an uncertain delivery', async () => {
   assert.equal(dispatchStep(held.restart.run)?.outputs?.promptDeliveryUncertain, undefined);
   assert.match(held.restart.run.error ?? '', /could not be checked: No node connected/);
 
-  const verified = dispatchingRun('claude', PROMPT_SENT_AT, { verified: true });
+  const verified = dispatchingRun('claude', PROMPT_SENT_AT, { verifiedAt: PROMPT_SENT_AT });
   const adopted = restartAt(verified, { reconcile });
   await recoverActiveRuns(adopted.deps);
   assertAdopted(adopted.restart);
@@ -362,7 +373,7 @@ test('only an interrupted delivery waits for its node, and a cancel during the w
 });
 
 test('adoption restores the session binding a completed DISPATCH would have verified', async () => {
-  const run = dispatchingRun('claude', PROMPT_SENT_AT, { verified: true });
+  const run = dispatchingRun('claude', PROMPT_SENT_AT, { verifiedAt: PROMPT_SENT_AT });
   const { restart, deps } = restartAt(run, {
     reconcile: async (current) => {
       Object.assign(current.agentContexts![0]!, {
@@ -382,7 +393,7 @@ test('adoption restores the session binding a completed DISPATCH would have veri
 });
 
 test('a slot that no longer records the run is not adopted into', async () => {
-  const run = dispatchingRun('claude', PROMPT_SENT_AT, { verified: true });
+  const run = dispatchingRun('claude', PROMPT_SENT_AT, { verifiedAt: PROMPT_SENT_AT });
   const { restart, deps } = restartAt(run, { slotOwned: false });
 
   await recoverActiveRuns(deps);

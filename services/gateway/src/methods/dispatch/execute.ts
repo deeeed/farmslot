@@ -1874,7 +1874,7 @@ export async function dispatchExecute(
       if (!dispatchStep) return;
       await persistRunNow(
         updateRunStep(params.runId, dispatchStep.name, {
-          outputs: { ...dispatchStep.outputs, promptDeliveryVerified: true },
+          outputs: { ...dispatchStep.outputs, promptDeliveryVerifiedAt: new Date().toISOString() },
         }),
         'dispatch prompt verified',
       );
