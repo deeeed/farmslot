@@ -149,13 +149,13 @@ test(
   async () => {
     const harness = await startServer();
     const previousHome = process.env.FARMSLOT_HOME;
-    process.env.FARMSLOT_HOME = harness.home;
-    const operator = harness.runtime.writer.createPrincipal(
-      { type: 'service', displayName: 'Template preview fixture' },
-      [{ role: 'admin', scope: { kind: 'global' } }],
-    );
-    const credential = harness.runtime.writer.issueCredential(operator.id, 'preview fixture');
     try {
+      process.env.FARMSLOT_HOME = harness.home;
+      const operator = harness.runtime.writer.createPrincipal(
+        { type: 'service', displayName: 'Template preview fixture' },
+        [{ role: 'admin', scope: { kind: 'global' } }],
+      );
+      const credential = harness.runtime.writer.issueCredential(operator.id, 'preview fixture');
       const ui = await connect(harness.url);
       const auth = await request(ui, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
