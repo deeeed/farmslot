@@ -510,8 +510,12 @@ async function collectSlotScaffolding(
       moved: retainedDir ? skipped.filter((entry) => entry.kind === 'checkout').length : 0,
     };
   } finally {
-    await slotDeletePath(vars, temporary);
-    // A destination that could not be created has nothing to remove.
-    if (!archived) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    try {
+      await slotDeletePath(vars, temporary);
+    } finally {
+      // Runs even when the slot side is unreachable: an unfinished archive can be gigabytes.
+      // A destination that could not be created has nothing to remove.
+      if (!archived) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 }
