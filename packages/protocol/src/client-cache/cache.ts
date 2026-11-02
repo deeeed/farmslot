@@ -15,6 +15,7 @@ import {
   RESOURCE_PUBLISH_INTERVAL_MS,
   RESOURCE_REREAD_INTERVAL_MS,
   RESOURCE_RETRY_MAX_WAIT_MS,
+  RESOURCE_RETRY_MIN_WAIT_MS,
   resourceKeyId,
   type ResourceReadStamp,
 } from './keys.js';
@@ -227,9 +228,23 @@ export function createGatewayResourceCache(
     unsubscribeStore = store.onDeleted(storeDeleted);
   }
 
+  /** Queries whose observer failure was already reported, so a repeating one is logged once. */
+  const failedObservers = new Set<string>();
+
+  /** One observer's failure is its own: the other observers and the cache's reads go on. */
+  function deliver(entry: QueryEntry, listener: (state: ResourceQueryState) => void): void {
+    try {
+      listener(entry.state);
+    } catch (error) {
+      if (failedObservers.has(entry.query.id)) return;
+      failedObservers.add(entry.query.id);
+      console.error(`Resource cache observer of ${entry.query.id} failed:`, error);
+    }
+  }
+
   function notify(entry: QueryEntry): void {
     entry.state = { ...entry.state, storageNotice };
-    for (const listener of entry.listeners) listener(entry.state);
+    for (const listener of entry.listeners) deliver(entry, listener);
   }
 
   function cancelScheduledRead(entry: QueryEntry): void {
@@ -814,7 +829,7 @@ export function createGatewayResourceCache(
       // failure visible until a successful read replaces that observation.
       error: entry.state.data === undefined ? undefined : entry.state.error,
     };
-    notify(entry);
+    // The read starts before observers hear of it, so nothing they do can leave it unstarted.
     pending.promise = (async () => {
       try {
         if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
@@ -1029,12 +1044,13 @@ export function createGatewayResourceCache(
         // A gateway too slow to answer may still be working on the read, so asking again at once
         // piles the same work up there. The wait starts at the failed read's length and doubles.
         const failedAt = performance.now();
-        entry.retryAt =
+        const retryAt =
           failedAt +
           Math.min(
             (failedAt - (entry.lastRequestedAt ?? failedAt)) * 2 ** entry.failures++,
             RESOURCE_RETRY_MAX_WAIT_MS,
           );
+        entry.retryAt = retryAt;
         // An intervening write still needs one read after failed I/O. Terminal
         // refusals retire that work; an unchanged failed source never retries.
         entry.dirty &&=
@@ -1069,7 +1085,7 @@ export function createGatewayResourceCache(
             pending.controller.signal.aborted
           )
             return;
-        } else
+        } else {
           entry.state = {
             ...entry.state,
             status:
@@ -1080,6 +1096,23 @@ export function createGatewayResourceCache(
                   : 'stale',
             error: failure,
           };
+          // A view without rows has nothing to show, and an unchanged source sends no notice that
+          // would read it again, so it asks again on its own: a second later at first, doubling.
+          if (
+            entry.state.data === undefined &&
+            failure.code !== 'RESOURCE_OBSERVATION_UNSUPPORTED'
+          ) {
+            entry.dirty = true;
+            entry.retryAt = Math.max(
+              retryAt,
+              failedAt +
+                Math.min(
+                  RESOURCE_RETRY_MIN_WAIT_MS * 2 ** (entry.failures - 1),
+                  RESOURCE_RETRY_MAX_WAIT_MS,
+                ),
+            );
+          }
+        }
         notify(entry);
       } finally {
         if (entry.pending === pending) {
@@ -1089,6 +1122,7 @@ export function createGatewayResourceCache(
         }
       }
     })();
+    notify(entry);
     if (signal) {
       // A read only this caller wants stops with it: no response is written after the abort.
       const cancel = () => {
@@ -1285,7 +1319,7 @@ export function createGatewayResourceCache(
           notify(entry);
         });
       }
-      receive(entry.state);
+      deliver(entry, receive);
       if (entry.state.status !== 'ready' || entry.dirty) schedule(entry);
       return () => {
         entry.listeners.delete(receive);
