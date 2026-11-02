@@ -1807,6 +1807,7 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     },
     dispatchPromptAccepted: dispatchPromptHandoffProven,
     absentExecutionNode: async (slotId) => {
+      // An unloadable slot has no node to wait for: reconciliation hits the same error, then the card.
       const vars = await loadSlotVars(slotId).catch(() => null);
       return vars && !isLocal(vars.host, vars.machine) && !isNodeConnected(vars.machine)
         ? vars.machine

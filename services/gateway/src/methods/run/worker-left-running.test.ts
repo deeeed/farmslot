@@ -95,6 +95,7 @@ function dispatchHeldByRecovery(
   t: test.TestContext,
   actionId: string,
   replay: 'accepted' | 'refused' = 'accepted',
+  adopted = false,
 ) {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: `HOLD-${actionId}` });
   t.after(() => deleteTestRunIfPresent(run.id));
@@ -117,6 +118,7 @@ function dispatchHeldByRecovery(
     card.actions.map((action) => action.id),
     [REPLAY_STEP_ACTION, CANCEL_RUN_ACTION],
   );
+  if (adopted) updateRunStep(run.id, 'dispatch', { status: 'done', detail: undefined });
   updateRun(run.id, {
     decisions: [{ ...card, resolvedAt: new Date().toISOString(), resolvedAction: actionId }],
   });
@@ -197,6 +199,20 @@ test('Replay step on a fix round card replays REVIEW, past its output review sti
   await until(() => replayed.length > 0);
   assert.deepEqual(replayed, ['review:operator']);
   assert.deepEqual(resumed, []);
+});
+
+// R3: a refused replay can have recorded the adoption. Replaying again would clear the signal.
+test('Replay step after an adoption was recorded continues the run instead of relaunching', async (t) => {
+  const { run, resumed, replayed } = dispatchHeldByRecovery(
+    t,
+    REPLAY_STEP_ACTION,
+    'accepted',
+    true,
+  );
+  await until(() => resumed.length > 0);
+  assert.deepEqual(resumed, [run.id]);
+  assert.deepEqual(replayed, [], 'no second replay, which would relaunch a finished worker');
+  assert.equal(getRun(run.id)!.steps.find((step) => step.name === 'dispatch')?.status, 'done');
 });
 
 test('a refused Replay step reopens the card instead of leaving a blocked run without one', async (t) => {
