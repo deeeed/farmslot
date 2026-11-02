@@ -65,6 +65,7 @@ import {
   runnerSupportsModel,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { scriptedRelaunchOptions } from '../runners/scripted-config.js';
 import { resolvePersistedRunnerSessionBinding } from '../runners/session-process.js';
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
 import {
@@ -3333,7 +3334,7 @@ async function relaunchWorkerForFix(
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
   const parentSafetyTier = parentRun?.safetyTier;
   const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-  await ensureNodeSupportBundle(vars, runtimeDir);
+  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   const taskDir = parentRun
     ? await resolveWorkerTaskDir(vars, parentRun.project, parentRun.taskFile)
     : null;
@@ -3343,6 +3344,8 @@ async function relaunchWorkerForFix(
     runtimeDir,
     taskDir: taskDir ?? undefined,
     taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
+    ...(await scriptedRelaunchOptions(runner, parentRun)),
+    scriptedSupportDir: nodeSupport?.supportDir,
     modelQuestions: modelQuestionsForRun(parentRun),
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
