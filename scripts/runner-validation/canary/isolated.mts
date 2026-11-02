@@ -942,6 +942,12 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
       case: 'review-fix',
       variant: 'node-up+node-away',
       hold: HOLDS['review-fix'],
+      // The same run as the review check, whose entry counts its model calls.
+      modelCalls: 0,
+      observations: [
+        ...reviewCheck.observations,
+        "shares the review check's run and its model calls",
+      ],
       ...(loop1Pass || loop2Drift
         ? {
             status: 'not-exercised',
