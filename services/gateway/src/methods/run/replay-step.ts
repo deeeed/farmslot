@@ -71,6 +71,7 @@ import {
 } from '../../run-engine/run-monitor.js';
 import { replaySlotCapabilityRequirements } from '../../run-engine/slot-capability-requirements.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
+import { answerWorkerLeftRunningCards } from '../../run-engine/worker-left-running.js';
 import { assertRunNotArchiving, isRunArchivingRefusal } from '../../run-lifecycle/archive-fence.js';
 import { cancelledSlotReplayRefusal } from '../../run-lifecycle/cancelled-slot-reclaim.js';
 import { checkoutBeforeIdleReturn } from '../../run-lifecycle/safe-idle-slot.js';
@@ -2417,7 +2418,11 @@ async function replayRunStep(
         : {}),
       // A replay ends a held run's result decision (ADR-065 Amendment 7): it
       // either settles the run or holds it again with a fresh one.
-      decisions: supersedePendingResultDecisions(clearedDecisions, new Date().toISOString()),
+      // The replay also answers a "worker left running" card (F328).
+      decisions: answerWorkerLeftRunningCards(
+        supersedePendingResultDecisions(clearedDecisions, new Date().toISOString()),
+        new Date().toISOString(),
+      ),
       ...(existing.reviewWorkspace && replayStepName === PS.HUMAN_GATE
         ? {
             reviewAutoFinish: false,
