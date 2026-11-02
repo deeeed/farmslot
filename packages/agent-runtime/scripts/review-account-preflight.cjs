@@ -1,6 +1,13 @@
 const { execFileSync } = require('node:child_process');
-const { existsSync, readFileSync, realpathSync } = require('node:fs');
-const { homedir } = require('node:os');
+const {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} = require('node:fs');
+const { homedir, tmpdir } = require('node:os');
 const { dirname, join, resolve } = require('node:path');
 
 function grokProfileEnvironment(directory, base = process.env) {
@@ -36,22 +43,22 @@ function canResumeGrokProfileContext(previous, current, ambientHome) {
   );
 }
 
-// Grok loads a checkout's hooks, agents, MCP and LSP servers, instructions and skills only once the
-// folder is trusted, and a grant covers the folder's subdirectories. So a review checkout is refused
-// when the trust store names it or any parent, in any form, or when folder trust is switched off.
-function grokTrustAdmitsCheckout(cwd, env) {
-  const grokHome = env.GROK_HOME || join(env.HOME || homedir(), '.grok');
-  if (env.GROK_FOLDER_TRUST !== undefined) return true;
-  const read = (file) => {
-    try {
-      return readFileSync(join(grokHome, file), 'utf8');
-    } catch (error) {
-      if (error?.code === 'ENOENT') return '';
-      throw error;
-    }
-  };
-  if (read('config.toml').includes('folder_trust')) return true;
-  const store = read('trusted_folders.toml');
+/** Where Grok reads its login and settings when no profile selects another directory. */
+const grokHome = (env) => env.GROK_HOME || join(env.HOME || homedir(), '.grok');
+
+function readGrokHomeFile(env, file) {
+  try {
+    return readFileSync(join(grokHome(env), file), 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return '';
+    throw error;
+  }
+}
+
+// A grant covers the folder's subdirectories, so the store must name neither the checkout nor any
+// parent, in either TOML string form.
+function grokTrustStoreNamesCheckout(cwd, env) {
+  const store = readGrokHomeFile(env, 'trusted_folders.toml');
   const folders = new Set();
   for (const start of [resolve(cwd), ...(existsSync(cwd) ? [realpathSync(cwd)] : [])])
     for (let folder = start; ; folder = dirname(folder)) {
@@ -65,22 +72,26 @@ function grokTrustAdmitsCheckout(cwd, env) {
 
 function assertGrokReviewAccount(cwd, env, launch = {}) {
   const remedy =
-    'Use a GROK_HOME with no hooks, plugins or agents of its own, or set allow_managed_hooks_only = true ' +
-    'in its requirements.toml; keep the review checkout and its parents out of its trusted_folders.toml; ' +
-    'verify with grok inspect --json; then retry. Use another runner if the account cannot meet this.';
+    'Use a GROK_HOME with no hooks, plugins, agents or notification commands of its own, or set ' +
+    'allow_managed_hooks_only = true in its requirements.toml; keep folder trust on, and the review ' +
+    'checkout and its parents out of its trusted_folders.toml; verify with grok inspect --json; then ' +
+    'retry. Use another runner if the account cannot meet this.';
   const executable = launch.executable || 'grok';
   // Account discovery must not confuse intentionally masked PR configuration with unreadable account hooks.
   const inspectionCwd = launch.inspectionCwd || cwd;
-  const args = ['--no-leader', '--no-auto-update', '--cwd', inspectionCwd, 'inspect', '--json'];
-  let inspection;
-  try {
-    inspection = JSON.parse(
+  const inspect = (directory) => {
+    const args = ['--no-leader', '--no-auto-update', '--cwd', directory, 'inspect', '--json'];
+    return JSON.parse(
       execFileSync(
         launch.processSandbox?.executable || executable,
         launch.processSandbox ? [...launch.processSandbox.args, executable, ...args] : args,
-        { cwd: inspectionCwd, env, encoding: 'utf8', stdio: 'pipe', timeout: 10000 },
+        { cwd: directory, env, encoding: 'utf8', stdio: 'pipe', timeout: 10000 },
       ),
     );
+  };
+  let inspection;
+  try {
+    inspection = inspect(inspectionCwd);
   } catch {
     // Inspector output can include account secrets. Refuse without echoing stdout/stderr.
     throw new Error('Grok review refused: account hook safety could not be verified. ' + remedy);
@@ -96,35 +107,70 @@ function assertGrokReviewAccount(cwd, env, launch = {}) {
   // Do not classify commands as safe: a global hook can invoke any PR-supplied file.
   if (inspection.hooks.some((hook) => hook?.disabled !== true))
     throw new Error('Grok review refused: this account has startup hooks enabled. ' + remedy);
-  let admitted;
+  // Grok loads a checkout's hooks, agents, MCP and LSP servers, instructions and skills only once
+  // the folder is trusted, so the review checkout must stay untrusted.
+  let named;
   try {
-    admitted = grokTrustAdmitsCheckout(cwd, env);
+    named = grokTrustStoreNamesCheckout(cwd, env);
   } catch {
     throw new Error('Grok review refused: folder trust could not be verified. ' + remedy);
   }
-  if (admitted)
+  if (named)
     throw new Error(
-      'Grok review refused: this account trusts the review checkout or turns folder trust off. ' +
+      'Grok review refused: this account trusts the review checkout or one of its parents. ' +
         remedy,
     );
-  // Plugin and agent frontmatter hooks load after inspection. The native pin disables them;
-  // without it, the account must have no plugins and only built-in agents.
+  // The environment, any config layer, device management or remote settings can switch folder
+  // trust off. Ask Grok: a fresh folder holding only project instructions must read as untrusted.
+  let gated;
+  let probe;
+  try {
+    probe = mkdtempSync(join(launch.inspectionCwd || tmpdir(), 'grok-trust-probe-'));
+    writeFileSync(join(probe, 'AGENTS.md'), 'Folder-trust probe.\n');
+    const result = inspect(probe);
+    gated =
+      result?.projectTrusted === false &&
+      Array.isArray(result.projectInstructions) &&
+      result.projectInstructions.length === 0;
+  } catch {
+    throw new Error('Grok review refused: folder trust could not be verified. ' + remedy);
+  } finally {
+    if (probe) rmSync(probe, { recursive: true, force: true });
+  }
+  if (!gated)
+    throw new Error('Grok review refused: folder trust is off for this account. ' + remedy);
+  // Plugin hooks, agent frontmatter hooks and notification commands load after inspection. The
+  // native pin disables them; without it, the account must have none.
   const pinned =
     Array.isArray(inspection.permissions?.enforced) &&
     inspection.permissions.enforced.some(
       (pin) => pin?.setting === 'nonManagedHooks' && pin.enabled === false,
     );
+  if (pinned) return;
+  let notifications;
+  try {
+    notifications = readGrokHomeFile(env, 'config.toml')
+      .split('\n')
+      .some((line) => !line.trim().startsWith('#') && line.includes('notifications'));
+  } catch {
+    throw new Error('Grok review refused: account hook safety could not be verified. ' + remedy);
+  }
   if (
-    !pinned &&
-    (!Array.isArray(inspection.plugins) ||
-      inspection.plugins.length > 0 ||
-      !Array.isArray(inspection.agents) ||
-      inspection.agents.some((agent) => agent?.source?.type !== 'builtin'))
+    !Array.isArray(inspection.plugins) ||
+    inspection.plugins.length > 0 ||
+    !Array.isArray(inspection.agents) ||
+    inspection.agents.some((agent) => agent?.source?.type !== 'builtin') ||
+    notifications
   )
     throw new Error(
-      'Grok review refused: account plugins or agents can load hooks and are not disabled by policy. ' +
+      'Grok review refused: account plugins, agents or notification commands can run and are not disabled by policy. ' +
         remedy,
     );
 }
 
-module.exports = { assertGrokReviewAccount, grokProfileEnvironment, canResumeGrokProfileContext };
+module.exports = {
+  assertGrokReviewAccount,
+  grokHome,
+  grokProfileEnvironment,
+  canResumeGrokProfileContext,
+};

@@ -2,7 +2,16 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -90,7 +99,7 @@ async function grokInspector(directory: string) {
   const executable = path.join(directory, 'grok');
   await writeFile(
     executable,
-    `#!${process.execPath}\nif(process.argv.includes('--version'))console.log('grok 1.0.52');else{if(!process.argv.includes('inspect')||!process.argv.includes('--json')||!process.argv.includes('--no-leader'))throw Error('Expected structured account inspection');process.stdout.write(process.env.FIXTURE_INSPECTION||JSON.stringify({grokVersion:'1.0.52',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]}}));}\n`,
+    `#!${process.execPath}\nif(process.argv.includes('--version'))console.log('grok 1.0.52');else{if(!process.argv.includes('inspect')||!process.argv.includes('--json')||!process.argv.includes('--no-leader'))throw Error('Expected structured account inspection');const ungated=process.env.GROK_FOLDER_TRUST==='0';process.stdout.write(process.env.FIXTURE_INSPECTION||JSON.stringify({grokVersion:'1.0.52',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]},projectTrusted:ungated,projectInstructions:ungated?[{path:'AGENTS.md'}]:[]}));}\n`,
     { mode: 0o700 },
   );
   return executable;
@@ -115,6 +124,8 @@ test('Grok review account preflight admits only a hook-free account and writes n
     hooks: [],
     plugins: [],
     agents: [{ name: 'explore', source: { type: 'builtin' } }],
+    projectTrusted: false,
+    projectInstructions: [],
   };
   for (const inspection of [
     { grokVersion: '1.0.52', hooks: [{ event: 'session_start', target: 'node pr-script.cjs' }] },
@@ -130,6 +141,7 @@ test('Grok review account preflight admits only a hook-free account and writes n
     { ...hookFree, plugins: [{ name: 'team-hooks' }] },
     { ...hookFree, plugins: undefined },
     { ...hookFree, agents: [{ name: 'reviewer', source: { type: 'user' } }] },
+    { ...hookFree, agents: undefined },
   ]) {
     assert.throws(
       () =>
@@ -164,6 +176,8 @@ test('Grok review account preflight admits only a hook-free account and writes n
         grokVersion: '1.0.52',
         hooks: [{ event: 'session_start', disabled: true }],
         permissions: { enforced: [{ setting: 'nonManagedHooks', enabled: false }] },
+        projectTrusted: false,
+        projectInstructions: [],
       }),
     },
     'owner',
@@ -171,6 +185,19 @@ test('Grok review account preflight admits only a hook-free account and writes n
   );
   await assert.rejects(readFile(store), /ENOENT/);
   assert.equal(await readFile(file, 'utf8'), settings);
+  // A notification command can run any file; only the pin disables it.
+  await writeFile(
+    file,
+    `${settings}[[ui.notifications.hooks]]\ncommand = "node scripts/notify.cjs"\n`,
+  );
+  assert.throws(
+    () =>
+      trust(source, { ...base, FIXTURE_INSPECTION: JSON.stringify(hookFree) }, 'owner', {
+        executable,
+      }),
+    /Grok review refused: account plugins, agents or notification commands can run/,
+  );
+  trust(source, base, 'owner', { executable });
 });
 
 test('Grok review account preflight refuses a checkout the account trusts or leaves ungated', async (t) => {
@@ -183,7 +210,9 @@ test('Grok review account preflight refuses a checkout the account trusts or lea
   const store = path.join(account, 'trusted_folders.toml');
   const trust = nativeRunnerDefinitions.grok.trustWorkspace!;
   const base = { ...process.env, GROK_HOME: account };
-  const refused = /Grok review refused: this account trusts the review checkout.*another runner/;
+  const refused =
+    /Grok review refused: this account trusts the review checkout or one of its parents.*another runner/;
+  const ungated = /Grok review refused: folder trust is off for this account/;
   // A grant covers subdirectories, so the checkout, a parent, its real path or any spelling refuses.
   for (const entry of [
     `[folders.${JSON.stringify(source)}]\ntrusted = true\n`,
@@ -199,13 +228,28 @@ test('Grok review account preflight refuses a checkout the account trusts or lea
     `[folders.${JSON.stringify(path.join(directory, 'other'))}]\ntrusted = true\n`,
   );
   trust(source, base, 'owner', { executable });
+  // Grok itself reports whether a fresh folder of project instructions is gated, whichever layer
+  // (the environment, managed configuration, device management) switched trust off.
   assert.throws(
     () => trust(source, { ...base, GROK_FOLDER_TRUST: '0' }, 'owner', { executable }),
-    refused,
+    ungated,
   );
-  await writeFile(path.join(account, 'config.toml'), '[folder_trust]\nenabled = false\n');
-  assert.throws(() => trust(source, base, 'owner', { executable }), refused);
-  await rm(path.join(account, 'config.toml'));
+  const managed = JSON.stringify({
+    grokVersion: '1.0.52',
+    hooks: [],
+    permissions: { enforced: [{ setting: 'nonManagedHooks', enabled: false }] },
+    projectTrusted: true,
+    projectInstructions: [{ path: 'AGENTS.md' }],
+  });
+  assert.throws(
+    () => trust(source, { ...base, FIXTURE_INSPECTION: managed }, 'owner', { executable }),
+    ungated,
+  );
+  // The probe folder is removed after each inspection.
+  const probes = path.join(directory, 'probes');
+  await mkdir(probes);
+  trust(source, base, 'owner', { executable, inspectionCwd: probes });
+  assert.deepEqual(await readdir(probes), []);
   await rm(store);
   await mkdir(store);
   assert.throws(
@@ -267,6 +311,8 @@ test(
       grokVersion: '1.0.52',
       hooks: [],
       permissions: { enforced: [{ setting: 'nonManagedHooks', enabled: false }] },
+      projectTrusted: false,
+      projectInstructions: [],
     });
     await manager.ensure('owner', params, launch);
     assert.equal(starts, 1);

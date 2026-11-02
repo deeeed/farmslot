@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
-const { assertGrokReviewAccount } = require('./review-account-preflight.cjs');
+const { assertGrokReviewAccount, grokHome } = require('./review-account-preflight.cjs');
 const { tomlSectionHeaderIndexes, tomlBareStringValue } = require('./toml-scan.cjs');
 
 const lockScript = String.raw`
@@ -127,9 +127,8 @@ function seed(file, folders, values, namespace, env) {
   );
 }
 const home = (env) => env.HOME || os.homedir();
-/** Where Codex and Grok read their login when no profile selects another directory. */
+/** Where Codex reads its login when no profile selects another directory. */
 const codexHome = (env) => env.CODEX_HOME || path.join(home(env), '.codex');
-const grokHome = (env) => env.GROK_HOME || path.join(home(env), '.grok');
 function trustGrokFolders(folders, env = process.env) {
   const file = path.join(grokHome(env), 'trusted_folders.toml');
   const added = seed(

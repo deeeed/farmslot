@@ -549,15 +549,17 @@ A Grok review never trusts its checkout. `checkGrokReviewWorkspace` (formerly `t
 Grok loads a folder's project hooks, project agents, MCP and LSP servers, project instructions and project skills only once the folder is trusted, and a grant covers the folder's subdirectories. The preflight therefore refuses when:
 
 - the account's `trusted_folders.toml` names the checkout, its real path or any parent, in any spelling;
-- folder trust is switched off: `GROK_FOLDER_TRUST` is set, or the account's `config.toml` mentions `folder_trust`;
+- folder trust is off for the account. The preflight asks Grok directly: `grok inspect` on a fresh folder that holds only an `AGENTS.md` must report it untrusted, with no project instructions. This covers the environment, every configuration layer, device management and remote settings, as Grok resolves them when the review starts;
 - the trust store cannot be read.
 
 The account's own hooks still matter. A headless Grok run treats an untrusted folder as trusted for the account's own hooks, and such a hook can run any file in the checkout. The preflight still refuses any enabled hook that `grok inspect --json` lists. Plugin hooks and agent frontmatter hooks load after inspection, so the account must also meet one of these:
 
 - the `nonManagedHooks` pin (`allow_managed_hooks_only = true`) is set, which skips those hooks at dispatch;
-- it has no plugins and only built-in agents.
+- it has no plugins, only built-in agents, and no notification commands (`[[ui.notifications.hooks]]`; the preflight refuses any `notifications` setting in the account's `config.toml`).
 
 The pin is no longer required.
+
+**Terminal reviews.** A Grok terminal (tmux) review is refused before launch, and the refusal points to the native transport. In an untrusted checkout that carries project configuration, Grok's terminal stops at "Do you trust the contents of this directory?", and answering Yes would trust the PR.
 
 **Sign-in.** A native Grok session and the account observer authenticate with `cached_token` when Grok offers it. Otherwise they use the home's external auth provider (`auth_provider_command`), the method Grok marks `_meta.external_provider`. The review home uses that provider to share the main login. They still never pick grok.com's interactive login or an API-key fallback. Before this change, a home with an external provider could not start a native session ("Runner did not advertise the required native login method").
 

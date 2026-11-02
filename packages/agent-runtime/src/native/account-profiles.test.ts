@@ -307,7 +307,7 @@ test('review preflight uses the configured executable outside PATH', () => {
     const executable = join(root, 'configured-runner');
     writeFileSync(
       executable,
-      `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({grokVersion:'fixture',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]}}));\n`,
+      `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({grokVersion:'fixture',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]},projectTrusted:false,projectInstructions:[]}));\n`,
       { mode: 0o700 },
     );
     const preflight = nativeRunnerDefinitions.grok.reviewAccountPreflight!;
