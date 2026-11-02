@@ -594,6 +594,7 @@ setTimeout(() => process.exit(0), 15 * 60_000);
     const fixTask = path.resolve(cwd, fixFile);
     const mark = (...markArgs) => execFileSync(path.join(path.dirname(fixTask), 'mark'), ['--checklist', 'REVIEW-FIX.md', '--signal', 'REVIEW-FIX-SIGNAL.json', ...markArgs], { cwd, encoding: 'utf8', stdio: 'pipe' });
     const steps = (fs.readFileSync(fixTask, 'utf8').match(/^- \\[ \\]/gm) ?? []).length;
+    fs.writeFileSync(path.join(path.dirname(fixTask), 'artifacts', 'report.md'), '# Review fix\\n\\nRemoved the leftover debug helper.\\n');
     mark('start');
     git('rm', '-q', 'src/debug-trace.ts');
     git('commit', '-qm', 'fix: remove the leftover debug helper');
