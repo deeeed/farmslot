@@ -73,6 +73,7 @@ function reviewWorker(holds: string): string {
     '  mark start',
     '  git rm -q src/debug-trace.ts',
     '  git commit -qm "fix: remove the leftover debug helper"',
+    `  printf '# Restart invariant\\n\\nAdds formatName in src/format-name.ts. A debug helper the first commit added is removed by the second, so the net change is that one file.\\n' > "$task/artifacts/pr-description.md"`,
     '  steps=$(grep -c "^- \\[ \\]" "$task/REVIEW-FIX.md" || true)',
     '  k=1; while [ "$k" -lt "${steps:-1}" ]; do mark "$k"; k=$((k+1)); done',
     // Held with the fix round live (its signal reads running) until the test lets it finish.
@@ -128,9 +129,12 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
   <one or two sentences>
 
   ## Issues
-  - <empty for PASS, or file:line findings for ISSUES>
+  - <blocker or major findings only, file:line; empty for PASS>
+
+  ## Follow-ups
+  - <minor findings and nits>
   \`\`\`
-  Use \`## Verdict: ISSUES\` when any blocking issue remains.
+  Use \`## Verdict: ISSUES\` when a blocker or major finding remains. Minor findings are follow-ups and never block: with no blocker or major finding, the verdict is PASS.
 - [ ] **5. Complete** - run the marker with \`complete --mark-last\`.
 `;
 
