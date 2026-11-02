@@ -247,6 +247,7 @@ test("the dispatch preview names the parent's original criteria a pr-complete ru
     'family-parent',
     'echobridge',
     async () =>
+      // @ts-expect-error A stored legacy ticket can lack acceptanceCriteria; the writer refuses it.
       makeRun({ ...parent, ticketData: { ...ticketData, acceptanceCriteria: undefined } }),
   );
   assert.match(
