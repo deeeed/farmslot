@@ -443,6 +443,9 @@ Operators restore storage
 using the recorded paths while its run is inactive. Automated restore is outside
 this change.
 
+A tag no longer pins a run's storage, because archival is a reversible move with a restore
+manifest, not a delete. Only the explicit `keep` tag holds a run's storage in place.
+
 ### Public surface
 
 One environment setting, `FARMSLOT_RUN_ARCHIVE_ROOT`. The hourly gateway pass and
