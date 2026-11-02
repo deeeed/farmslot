@@ -9,6 +9,7 @@ import {
   buildArtifactUrlResolver,
   decodeArtifactLink,
   isExternalWebLink,
+  reportVideoLinks,
 } from '@farmslot/review-dispatch';
 
 /** The page's own origin: unreachable, so a relative link arrives as a URL that maps back. */
@@ -22,12 +23,16 @@ const META_TAG = /<meta\b[^>]*>/gi;
  * sanitizer drops them: a refresh could leave the page unasked, however its value is
  * encoded. Removal repeats so that it cannot join the pieces of a new tag.
  */
-export function isolatedReportHtml(html: string): string {
+export function isolatedReportHtml(
+  html: string,
+  resolveArtifact?: (relativeHref: string) => string | null,
+): string {
   let stripped = html;
   for (let previous = ''; previous !== stripped; ) {
     previous = stripped;
     stripped = stripped.replace(META_TAG, '');
   }
+  stripped = reportVideoLinks(stripped, (path) => Boolean(resolveArtifact?.(path)));
   const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_HTML_CSP}">`;
   return /<head\b[^>]*>/i.test(stripped)
     ? stripped.replace(/<head\b[^>]*>/i, (tag) => `${tag}${head}`)

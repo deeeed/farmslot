@@ -1,0 +1,1 @@
+- `farmslot slot refresh --recover` parks an ownerless slot's unpushed commits instead of refusing them. Uncommitted files and a run's own commits still need `--force`.

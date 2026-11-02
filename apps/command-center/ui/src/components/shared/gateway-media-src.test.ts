@@ -8,6 +8,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { ReadyGatePayload } from '@farmslot/protocol';
 
 import { clearGatewayMemoryAuth, setGatewayMemoryAuth } from '../../gateway-url.js';
+import { installFakeGateway } from '../../testing/fake-gateway.js';
 import { gatewayApiUrl } from '../../utils/gateway-origin.js';
 import { renderReadyPrPreviewTab } from '../workspace/ready-workspace-tab-renderers.js';
 
@@ -102,6 +103,64 @@ class MediaHarness extends GatewayMedia {
 }
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test('cached gateway media waits for restored authentication before making its first request', async (t) => {
+  const fake = installFakeGateway(t);
+  Object.defineProperty(window, 'location', {
+    value: {
+      ...location,
+      origin: 'http://localhost:1234',
+      href: 'http://localhost:1234/',
+      pathname: '/',
+    },
+    configurable: true,
+  });
+  fake.holdAuth = true;
+  const { gateway } = await import('../../gateway-client.js');
+  const view = new MediaHarness({
+    type: PartType.ATTRIBUTE,
+    name: 'src',
+    strings: ['', ''],
+    tagName: 'VIDEO',
+  });
+  const cancelled = new MediaHarness({ type: PartType.CHILD });
+  fake.beforeRestore = async () => {
+    view.disconnect();
+    cancelled.disconnect();
+    gateway.disconnect();
+    clearGatewayMemoryAuth();
+  };
+  const calls: Array<string | null> = [];
+  t.mock.method(globalThis, 'fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(new Headers(init?.headers).get('Authorization'));
+    return new Response('video-bytes', { headers: { 'content-type': 'video/mp4' } });
+  });
+  t.mock.method(URL, 'createObjectURL', () => 'blob:restored-media');
+  t.mock.method(URL, 'revokeObjectURL', () => {});
+  await gateway.setAuthCredentials({ token: 'media-fixture' });
+  gateway.connect();
+  assert.equal(view.render('/api/run-artifact?path=clip.mp4'), nothing);
+  cancelled.render('/api/run-artifact?path=closed-clip.mp4');
+  for (let i = 0; i < 20; i++) await flush();
+  assert.deepEqual(calls, []);
+  assert.deepEqual(view.values, []);
+  cancelled.disconnect();
+  fake.respond('auth.connect', {
+    ok: true,
+    authMode: 'token',
+    principal: {
+      id: 'media-owner',
+      subjectKind: 'service',
+      displayName: 'Media owner',
+      roles: [{ role: 'viewer', scope: { kind: 'global' } }],
+    },
+    capabilities: { workspaceAccess: 'farm' },
+  });
+  for (let i = 0; i < 20; i++) await flush();
+  assert.deepEqual(calls, ['Bearer media-fixture']);
+  assert.deepEqual(view.values, ['blob:restored-media']);
+  assert.deepEqual(cancelled.values, []);
+});
 
 test('Markdown HTML uses the shared document loader and releases it with the view', async (t) => {
   setGatewayMemoryAuth(

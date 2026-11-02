@@ -23,6 +23,7 @@ import {
   type FleetRefreshSlotsParams,
   type FleetRefreshSlotsResult,
   type FleetRefreshSlotStatus,
+  slotParkedDetail,
   slotRecoveryEligibility,
 } from '@farmslot/protocol';
 
@@ -343,8 +344,13 @@ async function runSlot(
         requestId,
         slotId,
         status: 'refreshed' as FleetRefreshSlotStatus,
-        detail: result.advanced ? 'advanced' : 'already up-to-date',
+        detail: result.parked
+          ? slotParkedDetail(result.parked)
+          : result.advanced
+            ? 'advanced'
+            : 'already up-to-date',
         mode,
+        ...(result.parked ? { parked: result.parked } : {}),
       });
       summary.refreshed++;
     } else {
@@ -354,6 +360,7 @@ async function runSlot(
       emit(Events.FLEET_REFRESH_SLOT_UPDATE, {
         requestId,
         slotId,
+        ...(result.parked ? { parked: result.parked } : {}),
         status: 'failed' as FleetRefreshSlotStatus,
         detail: result.detail ?? reason ?? 'safe mode aborted',
         reason,

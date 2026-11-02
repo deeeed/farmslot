@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "HTML report videos open and seek in the authenticated player",
+  "description": "Opt-in live proof on an owned authenticated CC tab with the report open. Set FARMSLOT_PROOF_RUN_ID, FARMSLOT_CDP_ENDPOINT, FARMSLOT_HTML_REPORT_PROOF_OUT and FARMSLOT_PROOF_BROWSER_MODULE, pointing to an external playwright-core@1.56.1 installation. No product commands are sent; all media opens use real clicks.",
+  "proofTargets": [
+    {
+      "id": "report-videos",
+      "claim": "Every report video becomes a link, opens the authenticated player, reaches metadata readiness, plays and seeks without weakening the report sandbox."
+    }
+  ],
+  "workflow": {
+    "entry": "videos",
+    "nodes": {
+      "videos": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/agentic/html-report-media-proof.mjs",
+        "timeout_ms": 1200000,
+        "intent": "Click every video link in the real retained report, play and seek each video, and verify no dead embedded player or related media error remains.",
+        "proves": ["report-videos"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -32,6 +32,25 @@ export function decodeArtifactLink(href: string): string | null {
   }
 }
 
+/** Report videos use the clients' authenticated players, outside the isolated document. */
+export function reportVideoLinks(html: string, canOpen: (artifactHref: string) => boolean): string {
+  return html.replace(/<video\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/video\s*>/gi, (video) => {
+    for (const tag of video.matchAll(/<(?:video|source)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi)) {
+      for (const attribute of tag[0].matchAll(
+        /\s([^\s=<>/'"]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'<>`]+))?/g,
+      )) {
+        if (attribute[1].toLowerCase() !== 'src' || !attribute[2]) continue;
+        const quoted = attribute[2];
+        const raw = /^["']/.test(quoted) ? quoted.slice(1, -1) : quoted;
+        const path = decodeArtifactLink(raw);
+        if (path !== null && canOpen(path))
+          return `<a data-report-video href=${quoted}>Play video</a>`;
+      }
+    }
+    return '<span data-report-video-unavailable>Video unavailable</span>';
+  });
+}
+
 function normalizeArtifactCandidate(rawUrl: string): string | null {
   const trimmed = rawUrl.trim();
   if (!trimmed) return null;

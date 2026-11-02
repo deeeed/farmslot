@@ -1,5 +1,6 @@
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type { ArtifactRef } from '@farmslot/protocol';
+import { isHtmlArtifactPath } from '@farmslot/review-dispatch';
 
 import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 
@@ -20,12 +21,16 @@ export function artifactLightboxItem<T extends LightboxArtifact>(
     url: artifactUrl(artifact),
     path: artifact.path,
     purpose: artifact.purpose,
+    ...(artifact.timelinePath || isHtmlArtifactPath(artifact.path)
+      ? {
+          resolveArtifactUrl: (path: string) =>
+            artifactUrl({ ...artifact, path, sha256: undefined }),
+        }
+      : {}),
     ...(artifact.timelinePath
       ? {
           sha256: artifact.sha256,
           timelinePath: artifact.timelinePath,
-          resolveArtifactUrl: (path: string) =>
-            artifactUrl({ ...artifact, path, sha256: undefined }),
         }
       : {}),
     ...(artifact.timelineUnavailableReason
