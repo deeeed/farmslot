@@ -14,7 +14,10 @@ import {
   reviewBudgetExtensionRefusal,
 } from '../../review/review-round-budget.js';
 import { publicationStatusForRun } from '../../run-completion/orchestrator.js';
-import { capturePublicationSource } from '../../run-completion/publication-source.js';
+import {
+  capturePublicationSource,
+  rebindUnownedPublicationSlot,
+} from '../../run-completion/publication-source.js';
 import {
   hasEngineDecisionWaiter,
   recordDecisionResolution,
@@ -27,6 +30,7 @@ import { getRun } from '../../runs/store.js';
 export interface ReviewBudgetExtensionDependencies {
   authorize?: () => Principal;
   source?: typeof capturePublicationSource;
+  rebindSlot?: typeof rebindUnownedPublicationSlot;
 }
 
 function identity(run: Run): string {
@@ -98,6 +102,12 @@ export async function runExtendReviewBudget(
         isGateParkInFlightOrFreed(current)
       )
         throw new Error('Review budget extension requires the same owned unpublished run');
+      // Budget failure releases the lease while keeping the checkout. Recover it with the
+      // gate's existing branch/owner guards before verifying the approved head.
+      if (current.status === 'failed')
+        await (dependencies.rebindSlot ?? rebindUnownedPublicationSlot)(current, {
+          expectedHeadSha: request.headSha,
+        });
       const source = await (dependencies.source ?? capturePublicationSource)(current);
       if (slotEpoch !== undefined && source.slotEpoch !== slotEpoch)
         throw new Error('Publication source slot epoch changed');
