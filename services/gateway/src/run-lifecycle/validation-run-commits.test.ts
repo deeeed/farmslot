@@ -268,3 +268,22 @@ test('an ownerless park refuses a head that moved since the inspection', async (
   assert.equal(parked?.branch, 'TAT-4146-validation');
   assert.equal(parked?.commits, 2);
 });
+
+test('an ownerless park names a valid ref for any slot id and never moves an existing one', async (t) => {
+  const { git, vars, base, head } = await fixture(t);
+  const now = new Date('2026-11-02T10:00:00.000Z');
+  const odd = { ...vars, slotId: 'team/a.b..lock' };
+  const parked = await parkSlotCommits(odd, localExec, { headSha: head, now });
+  assert.equal(
+    parked?.ref,
+    `refs/farmslot/parked/manual-team-a-b-lock-20261102T100000000Z/${head}`,
+  );
+  git('check-ref-format', parked!.ref);
+  // Parking the same head again keeps the same ref, as the run park does.
+  assert.deepEqual(await parkSlotCommits(odd, localExec, { headSha: head, now }), parked);
+  // A ref already naming another head is never moved: the park refuses before any reset.
+  const taken = `refs/farmslot/parked/manual-proof-slot-20261102T100000000Z/${head}`;
+  git('update-ref', taken, base);
+  await assert.rejects(parkSlotCommits(vars, localExec, { headSha: head, now }), /Cannot park/);
+  assert.equal(git('rev-parse', taken), base);
+});

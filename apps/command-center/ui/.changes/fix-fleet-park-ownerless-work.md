@@ -1,0 +1,1 @@
+- The fleet release review says before a release that an ownerless slot's unpushed commits will be parked under `refs/farmslot/parked`, and afterwards shows where they went.
