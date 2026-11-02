@@ -59,7 +59,10 @@ export function DocumentViewer({
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
   const formatted = html ? [] : formatDocument(title, body);
   const isHtml = Boolean(html);
-  const page = useMemo(() => (isHtml ? isolatedReportHtml(body) : ''), [isHtml, body]);
+  const page = useMemo(
+    () => (isHtml ? isolatedReportHtml(body, html?.resolveArtifact) : ''),
+    [isHtml, body, html?.resolveArtifact],
+  );
   if (!visible) return null;
   return (
     <Modal
