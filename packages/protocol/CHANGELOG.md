@@ -4,7 +4,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- `ContentPrefetchOptions.media` (`ContentPrefetchMedia`, `ContentPrefetchMediaEntry`): a pending gate's videos and images over the content row cap go to a client media holder by digest, with the gate's age, instead of loading only when opened. `base64Bytes` and `createSha256` (chunked SHA-256) are exported from the client cache.
 - `SlotReleaseParams.skipArtifacts` is removed: a slot release no longer copies artifacts, so there is nothing to skip (F313).
 - `SlotStatus.retained` (`{ items, bytes }`): the nested checkouts that slot releases moved aside on the slot host instead of deleting them, and their total size there (F310).
 - `ReadyGatePayload.mergeConflicts`/`behindMain` are probed against the publication base (a stacked run's upstream branch), and a conflict on a publication gate now blocks its advancing actions (doc only; no shape change).

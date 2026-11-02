@@ -1,0 +1,1 @@
+- `ContentPrefetchOptions.media` (`ContentPrefetchMedia`, `ContentPrefetchMediaEntry`): a pending gate's videos and images over the content row cap go to a client media holder by digest, with the gate's age, instead of loading only when opened. `base64Bytes` and `createSha256` (chunked SHA-256) are exported from the client cache.

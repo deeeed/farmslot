@@ -1,0 +1,1 @@
+- SQLite stores take `deleteFiles(scopeId)` (also through `createNativeSqliteResourceStore`): files a client keeps beside a scope's store are deleted with it, before its row, both by `deleteAll` and when the scope is evicted past the store limit. A failure rejects, so the owner deletes the scope again before it is read again.
