@@ -100,6 +100,15 @@ function roadmapListObservationParams(params: unknown): Record<string, unknown> 
   return observation;
 }
 
+/** Execution template ids are `<flow>/<name>`; every other selector is one segment. */
+function configurationSelector(key: string, item: unknown): boolean {
+  if (typeof item !== 'string' || !item || item.includes('\\')) return false;
+  const segments = key === 'executionTemplateId' ? item.split('/') : [item];
+  return segments.every(
+    (segment) => segment && !segment.includes('/') && segment !== '.' && segment !== '..',
+  );
+}
+
 function configurationParams(
   params: unknown,
   allowed: readonly string[],
@@ -115,13 +124,7 @@ function configurationParams(
   for (const [key, item] of Object.entries(value)) {
     if (key === 'unfiltered') {
       if (typeof item !== 'boolean') throw new Error('unfiltered must be a boolean');
-    } else if (
-      typeof item !== 'string' ||
-      !item ||
-      /[/\\]/.test(item) ||
-      item === '.' ||
-      item === '..'
-    ) {
+    } else if (!configurationSelector(key, item)) {
       throw new Error(`Invalid configuration selector: ${key}`);
     }
   }
