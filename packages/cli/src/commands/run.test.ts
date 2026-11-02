@@ -387,6 +387,16 @@ test('run create omits the domain key entirely unless --domain is given', () => 
   assert.equal(withDomain.domain, 'blue');
 });
 
+test('--no-pipeline-review creates an artifact-only validation run with no pipeline review', () => {
+  const ticket = { project: 'audiolab-farm', flowType: 'dev', ticket: 'DEMO-414' };
+  const validation = buildRunCreateParams({ ...ticket, pipelineReview: false });
+  assert.equal(validation.completionPolicy, 'artifact-only');
+  assert.equal(validation.pipelineReview, 'none');
+  const ordinary = buildRunCreateParams(ticket);
+  assert.equal('pipelineReview' in ordinary, false);
+  assert.equal('completionPolicy' in ordinary, false);
+});
+
 test('run create carries an exact execution-template id only when requested', () => {
   const params = buildRunCreateParams({
     project: 'example',

@@ -569,3 +569,40 @@ try {
 console.log(
   `Selected-manifest completion regression: ${(performance.now() - selectedStarted).toFixed(0)}ms`,
 );
+
+// A run's reviewer completes beside a blocked worker's recipe.json (F312): the worker's
+// recipe artifacts are the worker's obligation, so they never bind the reviewer's own mark.
+const reviewerStarted = performance.now();
+const reviewerDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-reviewer-recipe-'));
+try {
+  writeManifest(reviewerDir, 'CHECKLIST.md');
+  mkdirSync(path.join(reviewerDir, 'inputs'), { recursive: true });
+  mkdirSync(path.join(reviewerDir, 'artifacts'), { recursive: true });
+  writeFileSync(path.join(reviewerDir, 'CHECKLIST.md'), '- [x] Worker step');
+  writeFileSync(path.join(reviewerDir, 'REVIEW.md'), '- [x] Review step');
+  // The worker wrote its recipe but stopped before its coverage report and evidence manifest.
+  writeFileSync(path.join(reviewerDir, 'artifacts', 'recipe.json'), '{"title":"blocked worker"}');
+  writeFileSync(path.join(reviewerDir, 'artifacts', 'review-feedback.md'), '# Review\n\nISSUES\n');
+  const reviewContract = resolveWorkerTerminalContract(null, 'review');
+  assert.deepEqual(reviewContract.whenPresent, []);
+  assert.ok(resolveWorkerTerminalContract(null, 'dev').whenPresent.length > 0);
+  writeFileSync(
+    path.join(reviewerDir, terminalContractInputForChecklist('REVIEW.md')),
+    JSON.stringify(reviewContract),
+  );
+  const reviewed = spawnSync(
+    process.execPath,
+    [helper, reviewerDir, '--checklist', 'REVIEW.md', 'complete', '--mark-last'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(reviewed.status, 0, reviewed.stderr);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(reviewerDir, 'REVIEW-SIGNAL.json'), 'utf8')).status,
+    'complete',
+  );
+} finally {
+  rmSync(reviewerDir, { recursive: true, force: true });
+}
+console.log(
+  `Reviewer beside a worker recipe: ${(performance.now() - reviewerStarted).toFixed(0)}ms`,
+);

@@ -4,12 +4,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `SlotStatus.retained` (`{ items, bytes }`): the nested checkouts that slot releases moved aside on the slot host instead of deleting them, and their total size there (F310).
 - `ReadyGatePayload.mergeConflicts`/`behindMain` are probed against the publication base (a stacked run's upstream branch), and a conflict on a publication gate now blocks its advancing actions (doc only; no shape change).
 - A client-cache observer that throws no longer stops the other observers or the cache's reads; each failing observer is logged once with `console.error`. Before, an observer that threw as a read started, or on its first delivery from `observe`, left that query loading with no request sent until the next reconnect.
 - `DispatchPreview.inheritedAcceptance`: the parent run and its original criteria a pr-complete run is held to, or `unavailable` with the reason.
 - `Run.parkedCommits` (`ParkedRunCommits[]`): an artifact-only run's own branch commits, parked under `refs/farmslot/parked/<run>/<head>` when its slot returned to idle (append-only).
 - `Run.releasedCheckout`: the branch and head an artifact-only run left on its slot when COMPLETE released the slot's ownership; a later ownerless return to idle parks only that head.
 - `RunEngineState.publishGate.refusedEvidencePackageId`: the prepared package a human-gate replay found the worker's evidence refused against; while it is still `packageId`, the gate rebuilds rather than reuses it.
+- `RunPipelineReviewPolicy` (`'default' | 'none'`) on `Run`, `RunCreateParams` and `DispatchPreviewParams` (with `completionPolicy`), `DispatchPreview.pipelineReview`, and the shared `pipelineReviewOffReason` / `pipelineReviewPolicyError` rule. Only an artifact-only dev or fix-bug run may turn its pipeline review off, and not alongside `reviewSequence`, `reviewPolicy` or an eval experiment; an unknown value is refused.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - `compareText` orders strings as `localeCompare` does, through one shared `Intl.Collator`. Run lists and family groups sort with it.
 - Content prefetch hashes files and artifacts in 16 KB slices, one per macrotask, so a large file no longer blocks a frame; content a person opens still verifies at once.

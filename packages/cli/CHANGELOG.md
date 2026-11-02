@@ -6,6 +6,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 - Farm commands wait out a gateway reload instead of failing at once. When the gateway refuses the connection, drops the upgrade or answers it with 503 before the socket opens, a `farmslot` command reconnects for up to 90 s (`FARMSLOT_GATEWAY_RECONNECT_MS`; `0` fails at once). A failure after the socket opened is never retried. A `GatewayClient` built without `reconnectWindowMs`, as probes and scripts build it, still fails at once.
 - `farmslot dispatch preview` prints the criteria a pr-complete run inherits from its parent run, and that criteria given with the run are not used.
+- `farmslot run create` and `farmslot dispatch preview` take `--no-pipeline-review`: an artifact-only dev or fix-bug run with no pipeline review. The preview prints `Review: off (artifact-only run)`. The flag is refused on a backlog dispatch, which would drop it.
 - `farmslot slot refresh [slot] --recover` resumes a held slot's failed workspace recovery through the fenced `slot.refresh` path, sending the slot's current workspace identity from `fleet.status`. It refuses when the slot has no workspace identity.
 
 - `farmslot run gate <runId> --action attest-before-attempt --recipe-run <id> --reason <text>` attests a recipe attempt from the same run as before-only evidence at a publish gate (ADR-062 Amendment 21).

@@ -7,6 +7,7 @@
 ## 0.39.24 - 2026-11-02
 
 - Publishes against `@farmslot/protocol` 0.74.10.
+- A run's reviewer contract carries no recipe rules. A reviewer shares its worker's task directory, so a blocked worker's `artifacts/recipe.json` made every reviewer's terminal mark require the worker's `recipe-coverage.md` and evidence manifest. The reviewer could not finish, and the gate review failed (F312).
 - Pi and OpenCode run as native sessions and farm workers (ADR-057 Amendment 12). OpenCode runs through ACP (`opencode acp`) and asks before each tool at the sandboxed tier. Pi runs through its JSONL RPC mode (`pi --mode rpc`), which asks before no tool, as in its terminal. Profiles set Pi's agent directory or OpenCode's data home.
 
 ## 0.39.23 - 2026-11-02
