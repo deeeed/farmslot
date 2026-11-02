@@ -6,7 +6,11 @@ import {
 
 /** Pending gates' large evidence kept on the device. Past this, older gates make room. */
 export const EVIDENCE_MEDIA_LIMIT_BYTES = 400 * 1024 * 1024;
-const HASH_CHUNK_BYTES = 1024 * 1024;
+/**
+ * Bytes per read while verifying. Each read is decoded and hashed on the JS thread, about 1 s per
+ * MB on a Pixel 6, so a small read keeps a tab press from waiting behind a whole video.
+ */
+const HASH_CHUNK_BYTES = 16 * 1024;
 
 /** The file operations the holder needs; `directory` ends with '/'. */
 export interface EvidenceMediaFiles {
@@ -192,6 +196,7 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
   async function fetchFile(entry: ContentPrefetchMediaEntry, signal: AbortSignal) {
     const part = `${files.directory}${entry.sha256}.part`;
     let bytes: number;
+    log(`[evidence-media] downloading ${entry.path}`);
     try {
       bytes = await files.download(options.source(entry), part, stopped.signal);
     } catch (error) {

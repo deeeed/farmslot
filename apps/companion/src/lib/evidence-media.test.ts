@@ -23,6 +23,7 @@ const signal = new AbortController().signal;
 function memoryFiles(served: Map<string, Uint8Array>) {
   const disk = new Map<string, Uint8Array | string>();
   const downloads: string[] = [];
+  const reads: number[] = [];
   const control: { gate?: Promise<void>; removal?: Promise<void>; stall?: boolean } = {};
   const files: EvidenceMediaFiles = {
     directory: DIRECTORY,
@@ -44,6 +45,7 @@ function memoryFiles(served: Map<string, Uint8Array>) {
       return body.length;
     },
     async read(uri, position, length) {
+      reads.push(length);
       await control.gate;
       return (disk.get(uri) as Uint8Array).slice(position, position + length);
     },
@@ -67,7 +69,7 @@ function memoryFiles(served: Map<string, Uint8Array>) {
     },
   };
   const media = () => [...disk.keys()].filter((key) => !key.endsWith('index.json'));
-  return { files, disk, downloads, control, media };
+  return { files, disk, downloads, reads, control, media };
 }
 
 function setup({ limitBytes = 1000, allowed = true } = {}) {
@@ -193,6 +195,14 @@ test('bytes that do not hash to the manifest digest are never kept', async () =>
   assert.deepEqual(media(), []);
 });
 
+test('a large file verifies in 16 KB reads, so hashing never holds the JS thread for long', async () => {
+  const { holder, entry, reads } = setup({ limitBytes: 1024 * 1024 });
+  const body = bytes(15, 100 * 1024);
+  assert.equal(await holder.hold(entry('a', 'run.mp4', body), signal), true);
+  assert.equal(reads.length, Math.ceil(body.length / (16 * 1024)));
+  assert.ok(reads.every((length) => length <= 16 * 1024));
+});
+
 test('sign-out while a file is verifying keeps nothing, and destroy deletes every held file', async () => {
   const { holder, entry, control, media } = setup();
   assert.equal(await holder.hold(entry('a', 'kept.mp4', bytes(14, 20)), signal), true);
@@ -219,7 +229,7 @@ test('sign-out cancels a download in flight and deletes its partial file', async
   assert.equal(await pending, false);
   assert.deepEqual([...disk.keys()], []);
   // A cancelled transfer is no download failure.
-  assert.deepEqual(logs, ['[evidence-media] cleared']);
+  assert.deepEqual(logs, ['[evidence-media] downloading run.mp4', '[evidence-media] cleared']);
 });
 
 test('the index survives a restart; an unreadable one is cleared rather than trusted', async () => {
