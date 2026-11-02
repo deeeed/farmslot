@@ -52,7 +52,6 @@ import { pendingDecisionForRun } from '../../run-engine/decision-projection.js';
 import { resolveEngineDecision } from '../../run-engine/engine-decisions.js';
 import {
   hasValidPrNumber,
-  isGateDecision,
   reopenSupersededGateDecisions,
   supersedeStaleHumanGateDecisions,
 } from '../../run-engine/gate-policy.js';
@@ -927,7 +926,8 @@ function decisionOwningStepIndex(type: string, flowSteps: readonly string[] | un
   if (!flowSteps) return -1;
   if (type.startsWith('monitor_')) return flowSteps.indexOf(PS.MONITOR);
   if (type.startsWith('ci_')) return flowSteps.indexOf(PS.CI_WATCH);
-  if (isGateDecision({ type })) return flowSteps.indexOf(PS.HUMAN_GATE);
+  if (type === 'engine_human_gate' || type === 'engine_review_posting')
+    return flowSteps.indexOf(PS.HUMAN_GATE);
   return -1;
 }
 
