@@ -96,8 +96,9 @@ function actionParams(id: string, opts: Record<string, unknown>): Record<string,
   return params;
 }
 
-// Dirty or unpushed work refuses recovery until --force confirms the discard (as the
-// Command Center's "Discard local work" does); other refusals are fenced, --force cannot pass.
+// Dirty files, or a run's own unpushed commits, refuse recovery until --force confirms the
+// discard (as the Command Center's "Discard local work" does). An ownerless checkout's unpushed
+// commits are parked instead. Other refusals are fenced; --force cannot pass.
 function recoverUserAction(result: SlotRefreshResult): string {
   return result.reason === 'dirty' || result.reason === 'unpushed'
     ? 'Publish the local work, or re-run `farmslot slot refresh <slot> --recover --force` to discard it.'

@@ -1,0 +1,1 @@
+- `slotRecoveryEligibility` treats a clean ownerless checkout with unpushed commits as safe for bulk release with no confirmation, because the release parks those commits. New `parksSlotCommits`, `SlotParkedCommits` and `slotParkedDetail`. `SlotRefreshResult` and `FleetRefreshSlotUpdateEvent` gain an optional `parked` report.
