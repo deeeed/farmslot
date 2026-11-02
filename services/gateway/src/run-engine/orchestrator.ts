@@ -19,7 +19,10 @@ import {
   type SlotReleaseParams,
 } from '@farmslot/protocol';
 
-import { reconcileRunAgentRuntime } from '../agents/runtime-recovery.js';
+import {
+  dispatchPromptHandoffProven,
+  reconcileRunAgentRuntime,
+} from '../agents/runtime-recovery.js';
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { withoutCleanupSignal } from '../core/cleanup-scope.js';
 import {
@@ -28,7 +31,7 @@ import {
   loadProjectVars,
   loadSlotVars,
 } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import {
@@ -40,7 +43,12 @@ import {
   updateSlotStatusIf,
 } from '../core/state.js';
 import { completedRunOutcome } from '../evals/blocked-first-output.js';
-import { withNodeReconnectWait, withoutNodeReconnectWait } from '../fleet/node-rpc.js';
+import {
+  isNodeConnected,
+  waitForNode,
+  withNodeReconnectWait,
+  withoutNodeReconnectWait,
+} from '../fleet/node-rpc.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import {
@@ -92,7 +100,6 @@ import { schedulerTick } from '../work-graph/store.js';
 import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
-import { pendingDecisionForRun } from './decision-projection.js';
 import { latestResolvedHumanGateDecision, requiresCollisionPrecheck } from './decision-replay.js';
 import { DeferredSlotReleases } from './deferred-slot-release.js';
 import { executeDispatchStep, executePrepareStep } from './dispatch-lifecycle-steps.js';
@@ -164,7 +171,7 @@ import {
   isTerminalTeardownInFlight,
 } from './terminal-teardown-registry.js';
 import { agentsWithoutExitEvidence } from './worker-exit-evidence.js';
-import { workerLeftRunningDecision } from './worker-left-running.js';
+import { holdRunOnWorkerLeftRunningCard } from './worker-left-running.js';
 type BroadcastFn = (event: string, payload: unknown) => void;
 let broadcastFn: BroadcastFn = () => {};
 let settledBroadcastFn: BroadcastFn = () => {};
@@ -701,19 +708,13 @@ async function holdRunForRunningAgents(
   console.warn(
     `[run-engine] run ${runId.slice(0, 8)} — ${running.join(', ')} may still be running after ${stepName} error; blocked for an operator instead of failing`,
   );
-  const decision = workerLeftRunningDecision(current, stepName, reason, running);
-  updateRunStep(runId, stepName, { status: 'failed', detail: reason });
-  updateRun(runId, {
-    status: 'blocked',
-    error: reason,
-    decisions: [...current.decisions, decision],
-  });
-  broadcastFn(Events.RUN_DECISION_NEW, {
-    runId,
-    decision: pendingDecisionForRun(getRun(runId)!, decision),
-    slotId: current.slotId,
-  });
-  broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+  holdRunOnWorkerLeftRunningCard(
+    { updateRunStep, updateRun, getRun, broadcast: broadcastFn },
+    current,
+    stepName,
+    reason,
+    running,
+  );
   return true;
 }
 
@@ -1803,6 +1804,16 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     },
     reconcileRunAgentRuntime: async (run) => {
       await reconcileRunAgentRuntime(run);
+    },
+    dispatchPromptAccepted: dispatchPromptHandoffProven,
+    absentExecutionNode: async (slotId) => {
+      const vars = await loadSlotVars(slotId).catch(() => null);
+      return vars && !isLocal(vars.host, vars.machine) && !isNodeConnected(vars.machine)
+        ? vars.machine
+        : null;
+    },
+    waitForExecutionNode: async (machine) => {
+      await waitForNode(machine, 120_000);
     },
     clearSettledWorkerError,
     rearmHandoffAutoRecovery: (run) =>

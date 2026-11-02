@@ -410,6 +410,10 @@ export function resolveAfterNodeReconnect<T>(machine: string, resolve: () => T):
   }
 }
 
+export function isNodeConnected(machine: string): boolean {
+  return getNode(machine)?.ws.readyState === WebSocket.OPEN;
+}
+
 export async function waitForNode(
   machine: string,
   timeoutMs = 15_000,
