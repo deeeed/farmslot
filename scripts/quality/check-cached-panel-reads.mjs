@@ -72,6 +72,12 @@ const imperativeContracts = [
     'refresh',
   ],
   [
+    'RESOURCE_DEVICE_INVENTORY',
+    'packages/protocol/src/rpc/resources.ts',
+    'DeviceInventoryParams',
+    'refresh',
+  ],
+  [
     'PROVIDER_ACCOUNTS_SNAPSHOT',
     'packages/protocol/src/rpc/provider-accounts.ts',
     'ProviderAccountsSnapshotParams',

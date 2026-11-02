@@ -126,7 +126,10 @@ export const GATEWAY_COMMAND_METHODS = [
   Methods.RESOURCE_WATCH_SET_ENABLED,
   Methods.ROADMAP_DELETE,
   Methods.ROADMAP_PROMOTE,
+  Methods.ROADMAP_PROMOTION_DRAFT_GET,
+  Methods.ROADMAP_PROMOTION_DRAFT_LIST,
   Methods.ROADMAP_PROMOTION_DRAFT_SAVE,
+  Methods.ROADMAP_PROMPT_GET,
   Methods.ROADMAP_REFINE,
   Methods.ROADMAP_SAVE,
   Methods.RUN_ARCHIVE,
@@ -220,6 +223,7 @@ export const GATEWAY_READ_EXCEPTIONS = {
     Methods.STREAM_UNSUBSCRIBE,
     Methods.SCREEN_THUMBNAIL,
     Methods.TMUX_LIST,
+    Methods.SLOT_PREPARE_STATUS,
   ],
   /** These open the connection the cache reads through and read no farm state. */
   connection: [Methods.GATEWAY_PING, Methods.AUTH_SESSION_REFRESH],

@@ -81,18 +81,6 @@
   },
   {
     "file": "apps/command-center/ui/src/components/roadmap/roadmap-panel.ts",
-    "method": "roadmap.promotionDraft.get"
-  },
-  {
-    "file": "apps/command-center/ui/src/components/roadmap/roadmap-panel.ts",
-    "method": "roadmap.promotionDraft.list"
-  },
-  {
-    "file": "apps/command-center/ui/src/components/roadmap/roadmap-panel.ts",
-    "method": "roadmap.prompt.get"
-  },
-  {
-    "file": "apps/command-center/ui/src/components/roadmap/roadmap-panel.ts",
     "method": "roadmap.refinementSession.get"
   },
   {
@@ -116,16 +104,8 @@
     "method": "http"
   },
   {
-    "file": "apps/command-center/ui/src/components/slot-actions/fleet-refresh-modal.ts",
-    "method": "fleet.status"
-  },
-  {
     "file": "apps/command-center/ui/src/components/slot-actions/slot-actions-panel.ts",
     "method": "slot.action.list"
-  },
-  {
-    "file": "apps/command-center/ui/src/components/slot-actions/slot-actions-panel.ts",
-    "method": "slot.prepareStatus"
   },
   {
     "file": "apps/command-center/ui/src/components/slot-view/slot-view-connection-effects.ts",

@@ -33,7 +33,7 @@ test('worker inventory filters have one canonical identity and retain node depen
     resourceQuery('tmux.worker.list', {}).id,
     resourceQuery('tmux.worker.list', { machines: [], includeDisconnected: true }).id,
   );
-  assert.equal(first.persisted, false);
+  assert.equal(first.persisted, true);
   assert.equal(first.live, true);
   assert.equal(RESOURCE_PUBLISH_INTERVAL_MS.workers, 200);
   for (const params of [

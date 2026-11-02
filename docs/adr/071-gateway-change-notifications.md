@@ -380,12 +380,12 @@ for commands are unchanged.
 **Exceptions.** Only these read gateway state outside the cache. The same
 module keeps their methods next to the command list.
 
-| Exception      | Covers                                                                          | Reason                                                                                      |
-| -------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Live streams   | Terminal output and windows, worker session history, device streams and screens | Output arrives continuously and has no value to keep; the pane and device lists are cached. |
-| Large media    | Evidence video, and images and files over the content cap, fetched on open      | Too large for the shared byte budget; content under the cap is stored and shown offline.    |
-| Connection     | `gateway.ping`, authentication, token refresh, pairing exchange                 | These open the connection the cache reads through and read no farm state.                   |
-| Identity admin | Principal, credential and pairing-candidate lists                               | The store holds no credentials, and stale authority data would mislead an administrator.    |
+| Exception      | Covers                                                                                                     | Reason                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Live streams   | Terminal output and windows, worker session history, slot preparation progress, device streams and screens | Output arrives continuously and has no value to keep; the pane and device lists are cached. |
+| Large media    | Evidence video, and images and files over the content cap, fetched on open                                 | Too large for the shared byte budget; content under the cap is stored and shown offline.    |
+| Connection     | `gateway.ping`, authentication, token refresh, pairing exchange                                            | These open the connection the cache reads through and read no farm state.                   |
+| Identity admin | Principal, credential and pairing-candidate lists                                                          | The store holds no credentials, and stale authority data would mislead an administrator.    |
 
 **What is kept.** Every registered read is persisted with its size bound,
 replacing Amendment 1's list. A read registered before its writers publish its

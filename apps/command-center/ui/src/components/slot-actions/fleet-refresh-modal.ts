@@ -1,7 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { Methods } from '@farmslot/protocol';
+import { type FleetStatusResult, Methods } from '@farmslot/protocol';
 import { FleetRefreshViewModel } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
@@ -155,6 +155,7 @@ export class FleetRefreshModal extends LitElement {
             gateway.credentialGeneration,
             gateway.authenticatedPrincipalId,
           ]),
+        readFleet: () => fleetRefreshRequest<FleetStatusResult>(Methods.FLEET_STATUS),
         request: fleetRefreshRequest,
         subscribe: (event, callback) => gateway.subscribe(event, callback),
       },

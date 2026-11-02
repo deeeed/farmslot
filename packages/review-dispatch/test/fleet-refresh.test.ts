@@ -80,6 +80,7 @@ function setup(slots: SlotStatus[]) {
   const events = new Map<string, (payload: unknown) => void>();
   const client: FleetRefreshClient = {
     contextKey: () => context,
+    readFleet: () => client.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
     request: async <T>(method: string, params: unknown): Promise<T> => {
       calls.push({ method, params });
       if (method === Methods.FLEET_STATUS && nextReadBarrier) {
