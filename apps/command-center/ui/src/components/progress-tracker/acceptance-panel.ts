@@ -630,6 +630,7 @@ export function renderAcceptancePanel(
     options.registration,
   );
   const linked = rows.filter((row) => row.link).length;
+  const hasAcceptance = rows.length > 0 || Boolean(options.registration) || Boolean(options.error);
   // Like the links, a manifest read error only matters while there is no ledger.
   const linksError = ledger.criteria.length === 0 ? options.evidenceLinksError : null;
   return html`
@@ -645,10 +646,12 @@ export function renderAcceptancePanel(
     >
       <summary class="ac-summary">
         <span class="ac-caret"></span>
-        <span class="ac-label">Acceptance criteria</span>
-        <span class="ac-count" data-testid="acceptance-counts" title=${view.countsTooltip}
-          >${view.counts}${linked > 0 ? ` · ${linked} evidence linked` : ''}</span
-        >
+        <span class="ac-label">${hasAcceptance ? 'Acceptance criteria' : 'Evidence'}</span>
+        ${hasAcceptance
+          ? html`<span class="ac-count" data-testid="acceptance-counts" title=${view.countsTooltip}
+              >${view.counts}${linked > 0 ? ` · ${linked} evidence linked` : ''}</span
+            >`
+          : nothing}
         ${linked > 0
           ? html`<span
               class="ac-source"

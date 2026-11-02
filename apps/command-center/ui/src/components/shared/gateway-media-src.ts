@@ -53,7 +53,10 @@ function hasGatewayMediaAuth(): boolean {
 }
 
 export function requiresGatewayMediaHeaders(url: string): boolean {
-  if (!hasGatewayMediaAuth()) return false;
+  return hasGatewayMediaAuth() && isGatewayMediaUrl(url);
+}
+
+function isGatewayMediaUrl(url: string): boolean {
   const origin = gatewayHttpOrigin();
   // Authored Markdown can contain placeholder ports or otherwise invalid links.
   if (!URL.canParse(url, origin)) return false;
@@ -61,7 +64,29 @@ export function requiresGatewayMediaHeaders(url: string): boolean {
   return parsed.origin === origin && parsed.pathname.startsWith('/api/');
 }
 
+/** Cached galleries can mount before a saved device session has restored its access token. */
+async function waitForGatewayMediaAuth(url: string, signal: AbortSignal): Promise<void> {
+  if (typeof window === 'undefined' || !isGatewayMediaUrl(url)) return;
+  const { gateway } = await import('../../gateway-client.js');
+  signal.throwIfAborted();
+  if (gateway.connectionState === 'connected') return;
+  await new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      unsubscribe();
+      reject(signal.reason);
+    };
+    const unsubscribe = gateway.onConnectionChange((state) => {
+      if (state !== 'connected') return;
+      unsubscribe();
+      signal.removeEventListener('abort', abort);
+      resolve();
+    });
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
 async function fetchGatewayMedia(url: string, signal: AbortSignal): Promise<Blob> {
+  await waitForGatewayMediaAuth(url, signal);
   const resource = new URL(url, gatewayHttpOrigin());
   resource.searchParams.delete('token');
   resource.searchParams.delete('password');
@@ -117,6 +142,7 @@ export async function loadGatewayMedia(
 ): Promise<{ url: string; dispose(): void }> {
   const sha256 = heldMediaIds.get(url);
   if (sha256) return loadContentMedia(url, sha256, signal);
+  await waitForGatewayMediaAuth(url, signal);
   if (!requiresGatewayMediaHeaders(url)) return { url, dispose() {} };
   return objectMedia(await fetchGatewayMedia(url, signal));
 }
@@ -137,7 +163,9 @@ export class GatewayMedia extends AsyncDirective {
     if (
       !(format === 'html'
         ? hasGatewayMediaAuth()
-        : requiresGatewayMediaHeaders(url) || heldMediaIds.has(url))
+        : requiresGatewayMediaHeaders(url) ||
+          heldMediaIds.has(url) ||
+          (typeof window !== 'undefined' && isGatewayMediaUrl(url)))
     ) {
       this.release();
       this.source = undefined;

@@ -33,6 +33,7 @@ import { GatewayMediaDocument, gatewayMediaSrc } from './gateway-media-src.js';
 import { loadLightboxEvidence } from './media-lightbox-evidence-source.js';
 import {
   isVideoLightboxItem,
+  lightboxReportArtifactResolver,
   mediaLightboxFileType,
   mediaLightboxFileTypeBadge,
 } from './media-lightbox-model.js';
@@ -1531,15 +1532,10 @@ export class MediaLightbox extends MediaLightboxState {
             : text;
         let rendered =
           kind === 'html'
-            ? isolatedArtifactHtml(content, (rawPath) => {
-                const resolve = buildArtifactUrlResolver(
-                  byPath.keys(),
-                  (file) => file,
-                  document?.path,
-                );
-                const item = this.items.find((item) => item.path === resolve(rawPath));
-                return item ? { mediaUrl: item.url, viewUrl: item.viewUrl } : null;
-              })
+            ? isolatedArtifactHtml(
+                content,
+                lightboxReportArtifactResolver(document, this.items, location.href),
+              )
             : formatLightboxTextPreview(kind, content);
         if (kind === 'html' || kind === 'markdown') {
           if (this._mediaDocuments.size >= MD_CACHE_LIMIT) {

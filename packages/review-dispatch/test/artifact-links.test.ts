@@ -6,7 +6,50 @@ import {
   decodeArtifactLink,
   isExternalWebLink,
   isHtmlArtifactPath,
+  reportVideoLinks,
 } from '../src/artifact-links.js';
+
+test('report videos become artifact links, including source elements and repeated filenames', () => {
+  const resolve = buildArtifactUrlResolver(
+    [
+      'artifacts/report.html',
+      'artifacts/case-4-run/videos/recipe-run.mp4',
+      'artifacts/case 1/videos/recipe-run.mp4',
+    ],
+    (path) => path,
+    'artifacts/report.html',
+  );
+  const source = `<p>Recorded result</p>
+    <video controls src="case-4-run/videos/recipe-run.mp4"></video>
+    <video aria-label="An attribute mentioning src='wrong.mp4'"><source src='case%201/videos/recipe-run.mp4'></video>
+    <video src=case-4-run/videos/recipe-run.mp4></video>`;
+  const result = reportVideoLinks(source, (path) => resolve(path) !== null);
+  assert.equal(result.match(/data-report-video /g)?.length, 3);
+  assert.match(result, /href="case-4-run\/videos\/recipe-run.mp4"/);
+  assert.match(result, /href='case%201\/videos\/recipe-run.mp4'/);
+  assert.doesNotMatch(result, /<video\b|<source\b|wrong\.mp4/);
+  assert.match(result, /<p>Recorded result<\/p>/);
+});
+
+test('unavailable or unsafe report video sources leave no dead player', () => {
+  const resolve = buildArtifactUrlResolver(
+    ['artifacts/report.html'],
+    (path) => path,
+    'artifacts/report.html',
+  );
+  for (const src of [
+    'missing/clip.mp4',
+    '../private.mp4',
+    'https://outside.test/clip.mp4',
+    'javascript:alert(1)',
+  ]) {
+    const result = reportVideoLinks(
+      `<video controls src="${src}"></video>`,
+      (path) => resolve(path) !== null,
+    );
+    assert.equal(result, '<span data-report-video-unavailable>Video unavailable</span>');
+  }
+});
 
 test('report links resolve against the document directory, never an ambiguous basename', () => {
   const resolveUrl = buildArtifactUrlResolver(
