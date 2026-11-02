@@ -3,6 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import {
+  fragmentFiles,
+  fragmentProblems,
+  isFragmentPath,
+} from '../release/changelog-fragments.mjs';
 import { isReleaseOnlyFile } from '../release/lib/release-only.mjs';
 import { workspaceForFile } from '../release/lib/workspace-utils.mjs';
 import {
@@ -110,6 +115,10 @@ function checkStructure() {
     if (!content.includes('## Unreleased')) {
       fail(`${changelogPath} must include an '## Unreleased' section.`);
     }
+    for (const fragment of fragmentFiles(path.join(repoRoot, relativeDir))) {
+      for (const problem of fragmentProblems(readFileSync(fragment, 'utf8')))
+        fail(`${path.relative(repoRoot, fragment)} ${problem}.`);
+    }
   }
 }
 
@@ -166,8 +175,9 @@ function checkPrDiff() {
   if (releaseOnly || commitSubjects.every((subject) => /^chore\(release\):/i.test(subject))) return;
 
   const touchedWorkspaces = new Map();
+  const isNotes = (file) => file.endsWith('/CHANGELOG.md') || isFragmentPath(file);
   for (const file of changedFiles) {
-    if (file.endsWith('/CHANGELOG.md')) continue;
+    if (isNotes(file)) continue;
     if (isTestOnlyChange(file)) continue;
     const workspace = workspaceForFile(file, repoRoot);
     if (!workspace) continue;
@@ -176,21 +186,31 @@ function checkPrDiff() {
     touchedWorkspaces.set(workspace, bucket);
   }
 
+  // A PR's own `.changes/<name>.md` fragment is its entry; it never conflicts with another PR's.
+  const addedFragments = new Set(
+    gitLines(['diff', '--name-only', '--diff-filter=AM', `${mergeBase}...${headSha}`]).filter(
+      isFragmentPath,
+    ),
+  );
   for (const file of changedFiles) {
-    if (!file.endsWith('/CHANGELOG.md')) continue;
+    if (!isNotes(file)) continue;
     const workspace = workspaceForFile(file, repoRoot);
     if (!workspace || !touchedWorkspaces.has(workspace)) continue;
-    touchedWorkspaces.get(workspace).changelogTouched = true;
+    const bucket = touchedWorkspaces.get(workspace);
+    bucket.changelogTouched = true;
+    if (addedFragments.has(file)) bucket.fragment = true;
   }
 
   for (const [workspace, bucket] of touchedWorkspaces.entries()) {
     const changelogPath = `${workspace}/CHANGELOG.md`;
     if (!bucket.changelogTouched) {
       fail(
-        `${workspace} code changed (${bucket.codeChanges.slice(0, 3).join(', ')}${bucket.codeChanges.length > 3 ? ', …' : ''}) but ${changelogPath} was not updated.`,
+        `${workspace} code changed (${bucket.codeChanges.slice(0, 3).join(', ')}${bucket.codeChanges.length > 3 ? ', …' : ''}) but it has no release note: add ${workspace}/.changes/<branch-name>.md with one '- ' bullet.`,
       );
       continue;
     }
+    // The structure check has already refused an empty or malformed fragment.
+    if (bucket.fragment) continue;
     const bullets = newUnreleasedBullets(mergeBase, headSha, changelogPath);
     if (
       bullets.length === 0 &&

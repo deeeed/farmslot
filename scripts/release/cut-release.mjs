@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { GATEWAY_API_DOC } from './lib/release-only.mjs';
 import { loadWorkspacePackages, readJson } from './lib/workspace-utils.mjs';
+import { readChangelogWithFragments } from './changelog-fragments.mjs';
 import { buildProposal, optionValue } from './curate-changelog.mjs';
 import {
   applyChangelogCut,
@@ -71,8 +72,8 @@ function validateProposal(proposal, groupId) {
       (dir) => dir !== 'packages/protocol',
     );
     const pendingHosted = hostedOnly.filter((dir) => {
-      const changelog = readFileSync(path.join(repoRoot, dir, 'CHANGELOG.md'), 'utf8');
-      return unreleasedMeaningfulBullets(changelog).length > 0;
+      const { content } = readChangelogWithFragments(path.join(repoRoot, dir));
+      return unreleasedMeaningfulBullets(content).length > 0;
     });
     if (pendingHosted.length > 0) {
       throw new Error(
@@ -161,7 +162,8 @@ function planCut(proposal) {
       continue;
     }
     const changelogPath = path.join(repoRoot, dir, 'CHANGELOG.md');
-    const content = readFileSync(changelogPath, 'utf8');
+    // Each PR's fragment joins the Unreleased section; the cut writes them in and deletes them.
+    const { content, fragments } = readChangelogWithFragments(path.join(repoRoot, dir));
     if (proposalCutDisposition(content, entry.include) === 'already-cut') {
       console.log(`[skip] ${dir} — proposal already cut`);
       continue;
@@ -184,6 +186,7 @@ function planCut(proposal) {
       defer: entry.defer,
     });
     writes.push({ path: changelogPath, content: nextChangelog });
+    for (const fragment of fragments) writes.push({ path: fragment, remove: true });
     console.log(`[plan] ${dir}/CHANGELOG.md → ${nextVersion}`);
 
     const pkgPath = path.join(repoRoot, dir, 'package.json');
@@ -228,7 +231,8 @@ function applyCut(proposal, dryRun) {
   const { writes, commitParts } = planCut(proposal);
   if (!dryRun) {
     for (const write of writes) {
-      writeFileSync(write.path, write.content, 'utf8');
+      if (write.remove) rmSync(write.path);
+      else writeFileSync(write.path, write.content, 'utf8');
     }
   }
   if (commitParts.length > 0) {

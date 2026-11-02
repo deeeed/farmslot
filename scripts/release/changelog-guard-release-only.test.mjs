@@ -26,7 +26,7 @@ function changelog(name, bullets = []) {
 
 // Throwaway repo with the two workspaces a protocol release touches: the
 // protocol package and apps/docs, which holds the generated gateway reference.
-function makeRepo(t) {
+function makeRepo(t, baseFiles = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'changelog-guard-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const write = (file, content) => {
@@ -44,6 +44,7 @@ function makeRepo(t) {
   }
   write('packages/protocol/src/index.ts', 'export const value = 1;\n');
   write(GATEWAY_API_DOC, 'Protocol version: `0.1.0`\n');
+  for (const [file, content] of Object.entries(baseFiles)) write(file, content);
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 'test@example.com');
   git('config', 'user.name', 'Test');
@@ -52,6 +53,7 @@ function makeRepo(t) {
   const base = git('rev-parse', 'HEAD');
 
   return {
+    dir,
     write,
     // Commit the change and run the guard on base...head, as a pull request event would.
     guard(subject) {
@@ -95,7 +97,7 @@ test('changelog guard: a feature plus a gateway reference change needs an apps/d
   assert.equal(result.status, 1, result.stdout);
   assert.match(
     result.stderr,
-    /apps\/docs code changed .* but apps\/docs\/CHANGELOG\.md was not updated/,
+    /apps\/docs code changed .* but it has no release note: add apps\/docs\/\.changes\/<branch-name>\.md/,
   );
   assert.doesNotMatch(result.stderr, /packages\/protocol/);
 });
@@ -109,5 +111,40 @@ test('changelog guard: a feature plus a gateway reference change passes with an 
     changelog('@farmslot/docs', ['Gateway API reference: document `value` 2.']),
   );
   const result = repo.guard('feat(protocol): add value 2');
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('changelog guard: a .changes fragment is the release note, with no CHANGELOG.md edit', (t) => {
+  const repo = makeRepo(t);
+  repo.write('packages/protocol/src/index.ts', 'export const value = 2;\n');
+  repo.write('packages/protocol/.changes/add-value-2.md', '- Add `value` 2.\n');
+  const result = repo.guard('feat(protocol): add value 2');
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('changelog guard: a malformed fragment fails, even beside a CHANGELOG.md bullet', (t) => {
+  const repo = makeRepo(t);
+  addFeature(repo);
+  repo.write('packages/protocol/.changes/add-value-2.md', 'Add value 2 without a bullet\n');
+  const result = repo.guard('feat(protocol): add value 2');
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(
+    result.stderr,
+    /packages\/protocol\/\.changes\/add-value-2\.md has a line that is not a '- ' bullet/,
+  );
+});
+
+test('changelog guard: a release cut that folds and deletes fragments needs no new note', (t) => {
+  const repo = makeRepo(t, { 'packages/protocol/.changes/add-value-2.md': '- Add `value` 2.\n' });
+  repo.write(
+    'packages/protocol/CHANGELOG.md',
+    '# Changelog\n\n## Unreleased\n\n## 0.1.1 - 2026-11-02\n\n- Add `value` 2.\n',
+  );
+  repo.write(
+    'packages/protocol/package.json',
+    JSON.stringify({ name: '@farmslot/protocol', version: '0.1.1' }),
+  );
+  rmSync(path.join(repo.dir, 'packages/protocol/.changes/add-value-2.md'));
+  const result = repo.guard('chore(release): cut protocol 0.1.1');
   assert.equal(result.status, 0, result.stderr);
 });

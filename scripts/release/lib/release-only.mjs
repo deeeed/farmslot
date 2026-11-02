@@ -2,6 +2,8 @@
 // workspace code: a PR that changes only these needs no new Unreleased bullet.
 // The gateway API reference is here because its only cut-time change is the
 // protocol version line, regenerated with PROTOCOL_VERSION.
+import { isFragmentPath } from '../changelog-fragments.mjs';
+
 export const GATEWAY_API_DOC = 'apps/docs/docs/reference/gateway-api.generated.md';
 
 export function isReleaseOnlyFile(file) {
@@ -9,6 +11,8 @@ export function isReleaseOnlyFile(file) {
     file.startsWith('.release-cut/') ||
     file.endsWith('/release-notes.json') ||
     file.endsWith('/CHANGELOG.md') ||
+    // A cut deletes the `.changes/` fragments it writes into CHANGELOG.md.
+    isFragmentPath(file) ||
     file.endsWith('/package.json') ||
     file === 'packages/protocol/src/version.ts' ||
     file === GATEWAY_API_DOC ||

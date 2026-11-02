@@ -91,7 +91,7 @@ Every self-review, review and review-pr consumes the shared policy from `node pa
 
 Before saying a farmslot PR is ready (or suggesting merge):
 
-1. **Changelog** — if the diff touches a publishable workspace package (`apps/command-center/ui`, `services/gateway`, `packages/*`, etc.), add an **Unreleased** bullet to that package's `CHANGELOG.md` in the same PR. Hygiene CI runs `check-workspace-changelogs.mjs --pr-diff` and **fails** when the changelog is missing.
+1. **Changelog** — if the diff touches a publishable workspace package (`apps/command-center/ui`, `services/gateway`, `packages/*`, etc.), add its release note as a file of its own, `<package>/.changes/<branch-name>.md`, holding `- ` bullets, in the same PR. Don't edit `CHANGELOG.md` directly: fragments never conflict between PRs, and the release cut writes them into the changelog. Hygiene CI runs `check-workspace-changelogs.mjs --pr-diff` and **fails** when the release note is missing.
    Keep Unreleased concise. Consolidate related work into one user-facing bullet per behavior area, and update that bullet as follow-up fixes land. Do not list each internal race, test, code path, or review finding as a separate release note.
 2. **CI green** — wait for `gh pr checks` on the PR (hygiene + quality gates for the touched area). Do not claim ready while checks are pending, failed, or skipped-only for the relevant packages.
 3. **Independent review** — run at least one independent code-reviewer agent against the **same HEAD SHA** that is on the PR.
@@ -183,7 +183,7 @@ Do **not** use `tsc -b` for routine validation there. Some workspace packages do
 
 ### Docs Folder Hygiene
 
-Keep `docs/` clean. Before adding or moving docs, read `docs/DOCS-GOVERNANCE.md`. Root `docs/` holds canonical PRDs and governance; the three roadmap/history files remain there as read-only snapshots. Record shipped changes in the affected workspace's `CHANGELOG.md` and use linked PRs/commits for evidence. Track new plans in approved Farmslot roadmap/backlog items or public-safe GitHub issues, not by extending the frozen files. Put stable technical detail in `docs/reference/`, approved supporting plans in `docs/plans/`, operations guidance in `docs/operations/`, and reader-facing website pages in `apps/docs/docs/`. Do not add one-off audits, generated dumps, private release checklists, scratch notes, or project/private evidence to `docs/`.
+Keep `docs/` clean. Before adding or moving docs, read `docs/DOCS-GOVERNANCE.md`. Root `docs/` holds canonical PRDs and governance; the three roadmap/history files remain there as read-only snapshots. Record shipped changes as the affected workspace's `.changes/` fragment (the release cut writes it into `CHANGELOG.md`) and use linked PRs/commits for evidence. Track new plans in approved Farmslot roadmap/backlog items or public-safe GitHub issues, not by extending the frozen files. Put stable technical detail in `docs/reference/`, approved supporting plans in `docs/plans/`, operations guidance in `docs/operations/`, and reader-facing website pages in `apps/docs/docs/`. Do not add one-off audits, generated dumps, private release checklists, scratch notes, or project/private evidence to `docs/`.
 
 ### No Project-Specific Logic in Scripts
 

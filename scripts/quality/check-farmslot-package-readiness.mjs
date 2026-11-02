@@ -4,6 +4,8 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readChangelogWithFragments } from '../release/changelog-fragments.mjs';
+
 import { checkCjsEsmExports } from './check-cjs-esm-exports.mjs';
 
 const argv = process.argv.slice(2);
@@ -400,7 +402,8 @@ function checkPublishChangelog(pkg, changelogPath) {
     fail(`${pkg.name} release requires ${changelogPath}.`);
     return;
   }
-  const changelog = readFileSync(changelogPath, 'utf8');
+  // A PR's `.changes/` fragment counts as its Unreleased entry until a release folds it in.
+  const changelog = readChangelogWithFragments(path.dirname(changelogPath)).content;
   const releasedHeading = new RegExp(`^##\\s+\\[?${escapeRegExp(pkg.version)}\\]?\\b`);
   const section =
     extractChangelogSection(changelog, (line) => releasedHeading.test(line)) ??

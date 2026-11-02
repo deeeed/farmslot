@@ -5,8 +5,8 @@ Manual release cuts for operator-facing surfaces. Continuous merges still deploy
 ## Daily development
 
 1. Change code in a workspace (`apps/command-center/ui`, `services/gateway`, `packages/protocol`, …).
-2. Add a bullet under that workspace's `CHANGELOG.md` → `## Unreleased`.
-3. Open a PR. CI runs `yarn quality:changelogs:pr` and requires a non-placeholder bullet when workspace code changed.
+2. Add the release note as a file of its own: `<workspace>/.changes/<branch-name>.md`, holding one or more `- ` bullets. Parallel PRs never edit the same lines, so release notes no longer conflict. A bullet added straight to `CHANGELOG.md` → `## Unreleased` still counts.
+3. Open a PR. CI runs `yarn quality:changelogs:pr` and requires a fragment or a non-placeholder bullet when workspace code changed. A fragment that is empty or holds anything but bullets fails the guard.
 
 Placeholder lines (ignored by guards) mention "active-development baseline" or "add user-facing changes here".
 
@@ -47,6 +47,8 @@ yarn release:cut --group hosted-cc --from-proposal .release-cut/proposal.json --
 Effects:
 
 - Bumps `package.json` versions (patch by default; pass `--bump minor|major` to `--assist`)
+- Reads each workspace's `.changes/` fragments as part of `## Unreleased`, writes them into the changelog and deletes the fragment files
+- A release cut by hand (editing `package.json` and `CHANGELOG.md` directly) runs `yarn release:fold <workspace>...` first, so the fragments move into `## Unreleased` and are not shipped again in the next release
 - Moves included bullets verbatim into `## X.Y.Z - YYYY-MM-DD`
 - Writes `release-notes.json` for UI surfaces
 - Syncs `PROTOCOL_VERSION` when `packages/protocol` is in the group, and the protocol version line of `apps/docs/docs/reference/gateway-api.generated.md` with it (the changelog guard counts that file as release-only)
