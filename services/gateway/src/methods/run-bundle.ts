@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 import type {
   RunBundleExportParams,
   RunBundleExportResult,
@@ -8,15 +11,20 @@ import type {
 } from '@farmslot/protocol';
 import { exportRunsToBundle, importBundle, listBundle } from '@farmslot/run-bundle';
 
+import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import { farmslotRoot } from '../projects/repo-root.js';
+import { runBundleHome } from '../run-completion/retained-artifacts.js';
 import { captureRunEpisode } from '../run-completion/run-episode.js';
-import { getRun, loadAllRuns } from '../runs/store.js';
+import { getRun, loadAllRuns, runsDirectory } from '../runs/store.js';
 
 export async function runBundleExport(
   params: RunBundleExportParams,
 ): Promise<RunBundleExportResult> {
   if (!params.outputPath?.trim())
     throw new Error('Invalid run.bundle.export params: missing outputPath');
+  // Export stages the retained media in the temp directory before writing the bundle.
+  for (const dir of [tmpdir(), path.dirname(path.resolve(params.outputPath))])
+    await assertHeavyWriteRoom(dir);
   return exportRunsToBundle({
     farmslotRoot,
     outputPath: params.outputPath,
@@ -33,6 +41,15 @@ export async function runBundleImport(
 ): Promise<RunBundleImportResult> {
   if (!params.bundlePath?.trim())
     throw new Error('Invalid run.bundle.import params: missing bundlePath');
+  // An import extracts in the temp directory, restores task payloads under the checkout, and
+  // writes run records and their media into the gateway's stores. Each may be its own volume.
+  for (const dir of [
+    tmpdir(),
+    farmslotRoot,
+    runsDirectory(),
+    path.join(runBundleHome(), 'run-bundles'),
+  ])
+    await assertHeavyWriteRoom(dir);
   const result = await importBundle({
     farmslotRoot,
     bundlePath: params.bundlePath,
