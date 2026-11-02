@@ -61,9 +61,16 @@ for (const Panel of [IntelligenceAuditPanel, IntelligenceIncidentsPanel]) {
     const mounted = mock.method(LitElement.prototype, 'connectedCallback', () => undefined);
     const unmounted = mock.method(LitElement.prototype, 'disconnectedCallback', () => undefined);
     const panel = new Panel();
+    const load = panel.load.bind(panel);
+    let initialLoad: Promise<void> | undefined;
+    const loading = mock.method(panel, 'load', () => {
+      initialLoad = load();
+      return initialLoad;
+    });
     try {
       panel.connectedCallback();
-      for (let i = 0; i < 10; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.ok(initialLoad, 'mounting offline must start the real saved read');
+      await initialLoad;
       assert.deepEqual(Reflect.get(panel, 'summary'), summary);
       assert.equal(Reflect.get(panel, 'loading'), false);
       assert.equal(transport.requestCount, 0);
@@ -71,6 +78,7 @@ for (const Panel of [IntelligenceAuditPanel, IntelligenceIncidentsPanel]) {
       panel.disconnectedCallback();
       mounted.mock.restore();
       unmounted.mock.restore();
+      loading.mock.restore();
       await current.dispose();
       current = undefined;
     }
@@ -103,7 +111,11 @@ test('a mounted Intelligence panel replaces saved summary after the online refre
   try {
     const refreshed = panel.load();
     const pending = await transport.nextRead();
-    for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    const deadline = Date.now() + 1000;
+    while (Reflect.get(panel, 'summary')?.total !== 7) {
+      assert(Date.now() < deadline, 'saved summary did not paint before the pending reply');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     assert.equal(Reflect.get(panel, 'summary').total, 7);
     assert.equal(Reflect.get(panel, 'loading'), false);
     pending.resolve({ summary: { ...summary, total: 8 } });

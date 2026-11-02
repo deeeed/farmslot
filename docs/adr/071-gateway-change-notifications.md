@@ -397,9 +397,9 @@ replacing Amendment 1's list. A read registered before its writers publish its
 keys is not `live`: it shows its stored result, rereads whenever it is opened
 and reports that it has no live updates.
 
-**Startup.** When the store opens, the cache loads every stored result into
-memory in one batch. A query whose result is stored then starts `stale` with its
-data instead of `loading`.
+**Startup.** When the store opens, the cache loads up to 8 MiB of the most recently used
+stored queries in one batch. Those queries start `stale` with their data instead
+of `loading`; other saved queries hydrate when opened.
 
 **Run details.** Background sync stores `run.get` for every run in a stored run
 list, not only runs that were opened or prefetched. Until a run's details arrive,
