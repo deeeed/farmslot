@@ -30,10 +30,21 @@ export function formatFleetStatus(result: FleetStatusResult): string {
     );
     lines.push(red('Run `farmslot fleet status --force-refresh` for live data.'));
   }
+  // Config the gateway could not read: say so, its slots are shown as they were last read.
+  for (const { file, error } of fleet.poolErrors ?? [])
+    lines.push(
+      red(bold(`POOL ${file} COULD NOT BE READ: ${error}. Its slots show their last good rows.`)),
+    );
   lines.push(bold('='.repeat(Math.min(termWidth, 140))));
 
   // Table
   lines.push(buildFleetTable(fleet.slots));
+  for (const slot of fleet.slots.filter((s) => s.configError))
+    lines.push(
+      red(
+        `${slot.slot}: config could not be loaded (${slot.configError}); no resources until it loads`,
+      ),
+    );
 
   lines.push(bold('='.repeat(Math.min(termWidth, 140))));
 

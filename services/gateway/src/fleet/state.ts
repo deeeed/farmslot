@@ -399,6 +399,7 @@ interface RawSlot {
   mode?: string;
   dispatchable?: boolean;
   repo_blocker?: string;
+  config_error?: string;
   lifecycle?: string;
   phase?: string | null;
   warm?: boolean;
@@ -426,6 +427,7 @@ interface RawSlot {
 interface RawStatus {
   checked_at: string;
   slots: RawSlot[];
+  pool_errors?: Array<{ file: string; error: string }>;
 }
 
 // ─── Transform ───
@@ -513,6 +515,7 @@ function transformSlot(raw: RawSlot): SlotStatus {
     enabled: raw.enabled ?? true,
     dispatchable: raw.dispatchable ?? false,
     ...(raw.repo_blocker ? { repoBlocker: raw.repo_blocker } : {}),
+    ...(raw.config_error ? { configError: raw.config_error } : {}),
     lifecycle,
     phase,
     warm,
@@ -657,6 +660,7 @@ function transformFleet(raw: RawStatus): FleetStatus {
     checkedAt: statusCheckedAt(raw) ?? '',
     slots,
     summary: computeSummary(slots),
+    ...(raw.pool_errors?.length ? { poolErrors: raw.pool_errors } : {}),
   };
 }
 

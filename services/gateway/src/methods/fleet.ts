@@ -1,6 +1,7 @@
 // methods/fleet.ts — fleet.status, fleet.refresh (native TS)
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   type AgentContextSummary,
@@ -61,7 +62,6 @@ import {
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
-let fleetRefreshInFlight: Promise<FleetStatusResult> | null = null;
 let workspaceRefreshInFlight: Promise<void> | null = null;
 type FleetWorkspacePublisher = (fleet: FleetStatus) => void;
 let workspacePublisher: FleetWorkspacePublisher | undefined;
@@ -193,6 +193,8 @@ interface SlotCheckResult {
   mode: string;
   dispatchable: boolean;
   repoBlocker?: string;
+  /** Why the slot's config could not be loaded; the row then has no resources. */
+  configError?: string;
   resources?: Record<string, Record<string, string | number | boolean>>;
 }
 
@@ -429,20 +431,47 @@ export async function rebindRunSlot(
   return claimed ? null : (holder ?? 'an unknown holder');
 }
 
-export async function fleetRefresh(): Promise<FleetStatusResult> {
-  if (fleetRefreshInFlight) return fleetRefreshInFlight;
-  fleetRefreshInFlight = runFleetRefresh();
-  try {
-    return await fleetRefreshInFlight;
-  } finally {
-    fleetRefreshInFlight = null;
-  }
+/**
+ * One run at a time. A call made while a run is in flight gets one more run after it, shared by
+ * every call made meanwhile: what changed after the running one read its inputs (a pool edit) is
+ * never absorbed by it. Before, a pool edit during a slow refresh stayed unseen until the next
+ * trigger (F306, macpro-audiolab-1).
+ */
+export function withFollowUpRefresh<T>(run: () => Promise<T>): () => Promise<T> {
+  let inFlight: Promise<T> | null = null;
+  let followUp: Promise<T> | null = null;
+  const start = (): Promise<T> => {
+    const current = run().finally(() => {
+      if (inFlight === current) inFlight = null;
+    });
+    inFlight = current;
+    return current;
+  };
+  return () => {
+    if (!inFlight) return start();
+    followUp ??= inFlight
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .then(() => {
+        followUp = null;
+        return inFlight ?? start();
+      });
+    return followUp;
+  };
+}
+
+const refreshFleet = withFollowUpRefresh(runFleetRefresh);
+
+export function fleetRefresh(): Promise<FleetStatusResult> {
+  return refreshFleet();
 }
 
 async function runFleetRefresh(): Promise<FleetStatusResult> {
   // 1. Load all pool JSONs
-  const pools = await loadAllPools();
-  if (pools.length === 0) {
+  const { pools, unread } = await loadAllPools();
+  if (pools.length === 0 && unread.errors.length === 0) {
     return { fleet: await loadFleetStatus(true) };
   }
 
@@ -473,6 +502,7 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
       results,
       listRuns({ active: true }).runs,
       checkedAt,
+      unread,
     ),
   );
 
@@ -485,6 +515,7 @@ export function buildFleetRefreshSnapshot(
   results: SlotCheckResult[],
   activeRuns: Run[],
   checkedAt: string,
+  unread: UnreadPools = { errors: [], slots: new Set() },
 ) {
   const lostLeases = missingRunningStepLeases(currentRows, activeRuns);
   const prevSlots: Record<string, PreviousSlotStatus> = {};
@@ -512,11 +543,21 @@ export function buildFleetRefreshSnapshot(
     );
   });
 
+  const probed = new Set(results.map((r) => r.slot));
+  // A pool this refresh could not read keeps its slots' rows as they were, instead of dropping
+  // them with their resources; the error says why.
+  const kept = currentRows.filter(
+    (row) => unread.slots.has(String(row.slot)) && !probed.has(String(row.slot)),
+  );
   const preserved = preserveClaimedRowsUnknownToProbe(
     currentRows,
-    new Set(results.map((r) => r.slot)),
+    new Set([...probed, ...kept.map((row) => String(row.slot))]),
   );
-  return { checked_at: checkedAt, slots: [...slots, ...preserved] };
+  return {
+    checked_at: checkedAt,
+    slots: [...slots, ...kept, ...preserved],
+    ...(unread.errors.length > 0 ? { pool_errors: unread.errors } : {}),
+  };
 }
 
 /**
@@ -650,6 +691,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     mode: r.mode,
     dispatchable: r.dispatchable,
     ...(r.repoBlocker ? { repo_blocker: r.repoBlocker } : {}),
+    ...(r.configError ? { config_error: r.configError } : {}),
     lifecycle,
     phase,
     warm,
@@ -711,23 +753,60 @@ async function mapWithConcurrency<T, R>(
 
 // ─── Load all pool JSONs ───
 
-async function loadAllPools(): Promise<RawPoolJson[]> {
+/** Pool files a refresh could not parse, and the slots of their last good read. */
+export interface UnreadPools {
+  errors: Array<{ file: string; error: string }>;
+  slots: ReadonlySet<string>;
+}
+
+// Each file's last good parse: a later unreadable read keeps those slots' rows.
+const lastGoodPools = new Map<string, RawPoolJson>();
+const POOL_REREAD_DELAY_MS = 250;
+
+/**
+ * Every pool JSON. A file that doesn't parse is read once more (an edit can land mid-write); one
+ * that still fails is reported and logged, with the slots of its last good read so their rows are
+ * kept, never dropped silently.
+ */
+export async function loadAllPools(
+  directory = poolDir,
+  read: (file: string) => Promise<string> = (file) => readFile(file, 'utf-8'),
+  pause: (ms: number) => Promise<unknown> = delay,
+): Promise<{ pools: RawPoolJson[]; unread: UnreadPools }> {
   const pools: RawPoolJson[] = [];
+  const errors: UnreadPools['errors'] = [];
+  const slots = new Set<string>();
+  let files: string[];
   try {
-    const files = await readdir(poolDir);
-    for (const file of files.sort()) {
-      if (isIgnoredPoolFile(file)) continue;
+    files = await readdir(directory);
+  } catch {
+    return { pools, unread: { errors, slots } }; // pool dir missing
+  }
+  for (const file of files.sort()) {
+    if (isIgnoredPoolFile(file)) continue;
+    const filePath = path.join(directory, file);
+    const parse = async () => JSON.parse(await read(filePath)) as RawPoolJson;
+    let pool: RawPoolJson;
+    try {
+      pool = await parse();
+    } catch {
+      await pause(POOL_REREAD_DELAY_MS);
       try {
-        const content = await readFile(path.join(poolDir, file), 'utf-8');
-        pools.push(JSON.parse(content));
-      } catch {
-        /* skip */
+        pool = await parse();
+      } catch (error) {
+        const message = (error as Error).message;
+        console.error(
+          `[fleet.refresh] pool ${file} could not be read: ${message}. Its slots keep their last rows until it parses.`,
+        );
+        errors.push({ file, error: message });
+        for (const slot of lastGoodPools.get(filePath)?.slots ?? []) slots.add(slot.id);
+        continue;
       }
     }
-  } catch {
-    /* pool dir missing */
+    lastGoodPools.set(filePath, pool);
+    pools.push(pool);
   }
-  return pools;
+  return { pools, unread: { errors, slots } };
 }
 
 // ─── Check SSH per unique machine ───
@@ -904,8 +983,12 @@ async function checkSingleSlot(
   let vars: SlotVars;
   try {
     vars = await loadSlotVars(sid);
-  } catch {
+  } catch (error) {
+    // Its resources can't be read either: say why on the row, not by leaving them out.
+    const configError = (error as Error).message;
+    console.error(`[fleet.refresh] ${sid}: slot config could not be loaded: ${configError}`);
     return {
+      configError,
       slot: sid,
       machine: pool.machine,
       platform,

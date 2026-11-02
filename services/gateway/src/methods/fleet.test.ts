@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { FleetStatus, Run, SlotStatus } from '@farmslot/protocol';
@@ -16,12 +19,14 @@ import {
   type FleetStatusDeps,
   gitHeadProbeCommand,
   isFleetCheckedAtStale,
+  loadAllPools,
   newestActiveRunForSlot,
   parseGitHeadProbe,
   preserveClaimedRowsUnknownToProbe,
   reconcileRefreshSlotRowWithActiveRun,
   setFleetWorkspacePublisher,
   slotHeadRefreshUpdate,
+  withFollowUpRefresh,
 } from './fleet.js';
 
 test('refresh preserves the owner and epoch of a running review through idle probes', () => {
@@ -1046,4 +1051,88 @@ test('a branch refresh writes the commit too, not just the branch name', () => {
     branch: 'main',
     head_sha: 'abc',
   });
+});
+
+// F306, macpro-audiolab-1: a pool edit landing while a refresh ran was absorbed by it, and the slot
+// kept a stale row until something else refreshed.
+test('a refresh asked for while one runs gets one more run after it, shared by every caller (F306)', async () => {
+  const finish: Array<() => void> = [];
+  const refresh = withFollowUpRefresh(
+    () => new Promise<number>((resolve) => finish.push(() => resolve(finish.length))),
+  );
+  const first = refresh();
+  const during = [refresh(), refresh()];
+  assert.equal(finish.length, 1, 'the second and third calls wait for the running one');
+  finish[0]!();
+  assert.equal(await first, 1);
+  for (let turn = 0; turn < 10 && finish.length < 2; turn++) await new Promise(setImmediate);
+  assert.equal(finish.length, 2, 'one follow-up run starts after it');
+  finish[1]!();
+  assert.deepEqual(await Promise.all(during), [2, 2]);
+  assert.equal(finish.length, 2, 'both callers shared it');
+  const idle = refresh();
+  assert.equal(finish.length, 3, 'with nothing running, a call starts at once');
+  finish[2]!();
+  assert.equal(await idle, 3);
+});
+
+test('a pool read mid-write is read again; one still unreadable is reported with its last good slots (F306)', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'fleet-pools-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const pool = JSON.stringify({
+    machine: 'macpro',
+    host: 'macpro.local',
+    project: 'audiolab',
+    slots: [{ id: 'macpro-audiolab-1', resources: { 'ios-sim': { simulator: 'audiolab-1' } } }],
+  });
+  await writeFile(path.join(directory, 'macpro.json'), pool);
+  const pauses: number[] = [];
+  const pause = async (ms: number) => void pauses.push(ms);
+  let reads = 0;
+  const midWrite = await loadAllPools(
+    directory,
+    async () => (++reads === 1 ? pool.slice(0, 40) : pool),
+    pause,
+  );
+  assert.equal(midWrite.pools.length, 1, 'the second read parses');
+  assert.deepEqual(midWrite.unread.errors, []);
+  assert.equal(pauses.length, 1);
+
+  const truncated = await loadAllPools(directory, async () => pool.slice(0, 40), pause);
+  assert.equal(truncated.pools.length, 0);
+  assert.equal(truncated.unread.errors[0]?.file, 'macpro.json');
+  assert.match(truncated.unread.errors[0]?.error ?? '', /JSON/);
+  assert.deepEqual([...truncated.unread.slots], ['macpro-audiolab-1']);
+});
+
+test('a refresh keeps the rows of slots whose pool could not be read, and names the pool (F306)', () => {
+  const lastGood = {
+    slot: 'macpro-audiolab-1',
+    machine: 'macpro',
+    lifecycle: 'ready',
+    resources: { 'ios-sim': { simulator: 'audiolab-1' }, 'dev-server': { port: 7361 } },
+  };
+  const error = { file: 'macpro.json', error: 'Unterminated string in JSON at position 23768' };
+  const snapshot = buildFleetRefreshSnapshot(
+    [lastGood, { slot: 'retired', machine: 'x' }],
+    [],
+    [],
+    'now',
+    {
+      errors: [error],
+      slots: new Set(['macpro-audiolab-1']),
+    },
+  );
+  assert.deepEqual(snapshot.slots, [lastGood], 'unchanged, resources included');
+  assert.deepEqual(snapshot.pool_errors, [error]);
+  assert.equal(buildFleetRefreshSnapshot([], [], [], 'now').pool_errors, undefined);
+});
+
+test('a slot whose config could not be loaded carries the error on its row (F306)', () => {
+  const row = buildRefreshSlotRow(
+    { ...makeRefreshRow(), configError: "Duplicate resource field 'port' in slot macwork-mm-4" },
+    {},
+  );
+  assert.equal(row.config_error, "Duplicate resource field 'port' in slot macwork-mm-4");
+  assert.equal(buildRefreshSlotRow(makeRefreshRow(), {}).config_error, undefined);
 });
