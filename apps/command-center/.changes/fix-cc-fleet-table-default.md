@@ -1,0 +1,1 @@
+- The fleet recovery, scroll, offline-fleet and progress-reader proofs follow Fleet opening as a table. The recovery proof selects its slot row and uses the one bulk "Release and update to main" action. The scroll proof reaches the last table row. Proofs that read cards open `#fleet?view=card`.
