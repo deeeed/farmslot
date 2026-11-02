@@ -1,0 +1,1 @@
+- Run detail puts the pipeline canvas first, then current progress, mirrored artifacts, acceptance criteria and the terminal. Panels remember each viewer's open/closed choices locally. The artifact explorer works during active runs and refreshes the mirror in the background at most once every 20 seconds while open.

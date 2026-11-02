@@ -34,7 +34,12 @@ import {
   runOutputCloseUnavailableReason,
   runRecoveryHints,
 } from '@farmslot/protocol';
-import { runActivityView, runResultsSummary, runTerminalView } from '@farmslot/review-dispatch';
+import {
+  reviewHistoryView,
+  runActivityView,
+  runResultsSummary,
+  runTerminalView,
+} from '@farmslot/review-dispatch';
 
 import '../slot-view/worker-session-history.js';
 import './review-history-panel.js';
@@ -46,7 +51,7 @@ import { gateway } from '../../gateway-client.js';
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
-import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
+import { renderCollapsiblePanel } from '../shared/collapsible-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import type { EvidenceReviewerView } from '../shared/evidence-reviewer-url-state.js';
@@ -68,6 +73,7 @@ import {
   reviewTerminalUnavailableReason,
   RUN_OUTPUT_SCOPE,
 } from './run-detail-model.js';
+import type { RunDetailPanelId } from './run-detail-panels.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
 import { stepInspectorTaskProgress } from './run-pipeline-model.js';
 import { renderReviewProcess, renderRunReviewResult } from './run-review-result-renderer.js';
@@ -152,11 +158,19 @@ export interface RunDetailViewContext {
   _shouldShowCiStatus: (run: Run) => boolean;
   _renderCiStatus: (run: Run) => unknown;
   _renderRunEvidence: (run: Run) => unknown;
+  _renderEvidenceOverlay: (run: Run) => unknown;
   /**
    * ADR-054 resource posture, rendered beside the pipeline phase. It takes no
    * run: the panel renders the posture status already fetched for the bound run.
    */
   _renderPosture: (run: Run) => unknown;
+  /** The collapsed Resource posture header's one line. */
+  postureSummary: string;
+  /** The run's mirrored files in the shared artifact browser. */
+  _renderArtifactExplorer: (run: Run) => unknown;
+  /** The viewer's open/closed choice for a panel below the canvas. */
+  panelOpen: (id: RunDetailPanelId) => boolean;
+  togglePanel: (id: RunDetailPanelId) => void;
   _renderInteractivePackets: (run: Run) => unknown;
   _renderAgentSessions: (run: Run) => unknown;
   _onReplayStep: (
@@ -262,15 +276,19 @@ export interface RunEvidenceRenderContext {
   closeOutput?: (decision: RunDecision) => void;
 }
 
-export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unknown {
+export function renderRunEvidence(
+  run: Run,
+  ctx: RunEvidenceRenderContext,
+  includeOverlay = true,
+): unknown {
   return html`<section data-shared-run-panel="evidence" tabindex="-1">
-    ${renderRunEvidenceContent(run, ctx)}
-  </section>`;
+      ${renderRunEvidenceContent(run, ctx)}
+    </section>
+    ${includeOverlay ? renderEvidenceLightbox(ctx) : nothing}`;
 }
 
 function renderRunEvidenceContent(run: Run, ctx: RunEvidenceRenderContext): unknown {
-  if (run.reviewWorkspaceTarget)
-    return html`${renderReviewProcess(run, ctx)}${renderEvidenceLightbox(ctx)}`;
+  if (run.reviewWorkspaceTarget) return renderReviewProcess(run, ctx);
   const artifacts = collectRunEvidenceArtifacts(run);
   const evidence = runResultsSummary(run, artifacts.length);
   // A worker command log link opens here while the run is still active and has
@@ -278,7 +296,7 @@ function renderRunEvidenceContent(run: Run, ctx: RunEvidenceRenderContext): unkn
   if (!evidence.shouldRender)
     return html`${ctx.selectedSharedEvidence
       ? html`<p>No saved evidence for this run.</p>`
-      : nothing}${renderEvidenceLightbox(ctx)}`;
+      : nothing}`;
   const review = [...run.decisions]
     .reverse()
     .find(
@@ -404,12 +422,11 @@ function renderRunEvidenceContent(run: Run, ctx: RunEvidenceRenderContext): unkn
             </details>
           `
         : html`<div class="evidence-empty">${evidence.emptyMessage}</div>`}
-      ${renderEvidenceLightbox(ctx)}
     </div>
   `;
 }
 
-function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
+export function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
   const unavailable = ctx.evidenceArtifactUnavailable;
   return html`${unavailable
       ? html`<div
@@ -443,6 +460,52 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
       @lightbox-items-change=${(event: CustomEvent<LightboxSelection>) =>
         ctx.replaceEvidenceLightbox(event.detail)}
     ></media-lightbox>`;
+}
+
+export interface RunArtifactExplorerRenderContext {
+  artifactUrl: (artifact: FamilyObservabilityArtifact) => string;
+  onEvidenceArtifactClick: (
+    event: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
+  ) => void;
+  /** Why the last background sync failed; the mirrored copy stays on screen. */
+  syncError: string | null;
+}
+
+/**
+ * The run's mirrored files in the results card's browser, rendered from what the
+ * gateway already holds. A background sync updates the run; nothing here waits on it.
+ */
+export function renderRunArtifactExplorer(
+  run: Run,
+  ctx: RunArtifactExplorerRenderContext,
+): unknown {
+  const artifacts = collectRunEvidenceArtifacts(run);
+  return html`<div
+    data-testid="run-artifact-explorer"
+    style="height:min(60vh, 520px); overflow:auto; min-width:0;"
+  >
+    ${ctx.syncError
+      ? html`<p class="evidence-copy" role="status" data-testid="run-artifact-sync-error">
+          Sync failed: ${ctx.syncError}. Showing the last mirrored copy.
+        </p>`
+      : nothing}
+    ${artifacts.length
+      ? html`<step-artifacts
+          stepName="Mirrored files"
+          status=${!isTerminalRunStatus(run.status)
+            ? 'running'
+            : run.status === 'failed'
+              ? 'failed'
+              : 'done'}
+          .artifacts=${artifacts}
+          .artifactUrl=${ctx.artifactUrl}
+          default-open
+          @step-artifact-click=${(
+            event: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
+          ) => ctx.onEvidenceArtifactClick(event)}
+        ></step-artifacts>`
+      : html`<div class="evidence-empty">No files mirrored yet.</div>`}
+  </div>`;
 }
 
 export function renderRunGrade(grade: RunGrade): unknown {
@@ -572,9 +635,13 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const slotFreedByPark = isSlotFreedByPark(r);
   const executionTemplate = r.executionTemplate ?? r.templateProvenance?.executionTemplate;
   const variantDrift = Boolean(r.variant && variantNamesOtherEngine(r.variant, engine));
+  // Rendered up front so an empty one gets no panel header at all.
+  const sessions = ctx._renderAgentSessions(r);
+  const posture = ctx._renderPosture(r);
+  const history = reviewHistoryView(r);
 
   return html`
-    ${backToRuns} ${openReviewGate ? ctx.renderGateSection(r) : nothing}
+    ${backToRuns}
     <source-status-panel
       .context=${{ target: { scope: 'run', targetId: r.id }, actions: ['pin', 'unpin'] }}
     ></source-status-panel>
@@ -773,7 +840,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         : nothing}
     </div>
     ${r.summary ? html`${renderRunTitle(r, 'header-summary')}` : nothing}
-    ${openPublicationGate ? ctx.renderGateSection(r) : nothing}
     ${r.slotTeardownSkipped
       ? html`<p role="status" data-testid="run-slot-cleanup-hint">
           Workspace cleanup deferred: ${r.slotTeardownSkipped}
@@ -847,7 +913,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           ${r.qaAfterReview.error ? html`<p>${r.qaAfterReview.error}</p>` : nothing}
         </div>`
       : nothing}
-    ${ctx._renderInteractiveDevGate(r)}
     <div class="meta">
       <div class="meta-item">
         <div class="meta-label">ID</div>
@@ -1172,92 +1237,10 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           `
         : nothing}
     </div>
-    ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
-      ? ctx._renderRunEvidence(r)
-      : nothing}
-    ${r.output && !openReviewGate && !openPublicationGate ? ctx.renderGateSection(r) : nothing}
-    ${!openReviewGate
-      ? renderRunReviewResult(
-          r,
-          () => void ctx._onReplayStep('human-gate'),
-          actionsBlocked || ctx._rereviewInFlight,
-          () => void ctx._rereviewLatestHead(r),
-        )
-      : nothing}
-    ${r.reviewWorkspace && !r.output && !openReviewGate && !openPublicationGate
-      ? ctx.renderGateSection(r)
-      : nothing}
-    ${ctx._renderAgentSessions(r)} ${renderReviewChain(r)}
-    ${ctx.siblings.length
-      ? html`
-          <div class="grade-card">
-            <div class="grade-rationale">
-              Family siblings:
-              ${r.status === 'done'
-                ? html`<a
-                    href="#family/${r.familyId}?run=${encodeURIComponent(r.id)}"
-                    style="color:${colors.accent}; text-decoration:none"
-                    >retrospective</a
-                  >`
-                : nothing}${comparisonLaneCount >= 2
-                ? html` ·
-                    <a
-                      href="#family/${r.familyId}?run=${encodeURIComponent(r.id)}"
-                      style="color:${colors.accent}; text-decoration:none"
-                      >compare ${comparisonLaneCount} lanes</a
-                    >`
-                : nothing}
-              ${ctx.siblings.map(
-                (s, i) =>
-                  html`${i ? html` · ` : nothing}<a
-                      href=${`#${routeForRun(s)}`}
-                      style="color:${colors.accent}; text-decoration:none"
-                      >${s.ticketOrPr}${s.variant ? `/${s.variant}` : ''}</a
-                    >
-                    <span style="color:${colors.textMuted}">[${s.lane}/${s.status}]</span
-                    >${s.lane === 'comparison' || r.lane === 'comparison'
-                      ? html` <a
-                          href="#runs/compare?a=${r.id}&b=${s.id}"
-                          style="color:${colors.textMuted}; text-decoration:none"
-                          >(compare)</a
-                        >`
-                      : nothing}`,
-              )}
-            </div>
-          </div>
-        `
-      : nothing}
-    ${r.grade ? ctx.renderGrade(r.grade) : nothing} ${ctx._renderPosture(r)}
-    ${r.flowType === 'dev' && r.steps.some((s) => s.status === 'failed')
-      ? html`<failure-triage-panel
-          .runId=${r.id}
-          .canLinkDecision=${(() => {
-            const pending = r.decisions.find((d) => !d.resolvedAt);
-            const kind = decisionPayloadKind(pending?.payload);
-            return Boolean(
-              pending &&
-              kind !== 'slot_picker' &&
-              kind !== 'branch_affinity_nudge' &&
-              kind !== 'retrospective' &&
-              pending.type !== 'monitor_interactive_handoff' &&
-              pending.type !== 'retrospective',
-            );
-          })()}
-          .linkedAssessmentId=${ctx.linkedTriageAssessmentId}
-          @triage-decision-link=${(
-            e: CustomEvent<{ runId: string; assessmentId: string | null }>,
-          ) => ctx.onTriageDecisionLink(e.detail.runId, e.detail.assessmentId)}
-          .runVersion=${JSON.stringify([
-            r.status,
-            r.steps
-              .filter((s) => s.status === 'failed')
-              .map((s) => [s.name, s.startedAt, s.completedAt, s.detail]),
-          ])}
-        ></failure-triage-panel>`
-      : nothing}
     <div class="pipeline-section" data-shared-run-panel="timeline" tabindex="-1">
       <run-pipeline
         reason-in-header
+        collapsible-panels
         .run=${r}
         .taskProgress=${ctx.taskProgress}
         .evidenceModel=${ctx.evidenceModel}
@@ -1274,130 +1257,273 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           ctx.openRecipeProof?.(event.detail.traceIndex)}
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}
       >
+        <div slot="canvas-detail">
+          ${history.roundCount || history.segments.length || history.chain.length
+            ? renderCollapsiblePanel({
+                id: 'run-review-history',
+                label: 'Review history',
+                summary: `${history.roundCount} rounds`,
+                open: ctx.panelOpen('run-review-history'),
+                onToggle: () => ctx.togglePanel('run-review-history'),
+                body: () => html`<review-history-panel .run=${r}></review-history-panel>`,
+              })
+            : nothing}
+          ${ctx.selectedStep
+            ? html`
+                <step-inspector
+                  .step=${ctx.selectedStep}
+                  .run=${ctx.run}
+                  .showReviewHistory=${false}
+                  .taskProgress=${stepInspectorTaskProgress({
+                    selectedStepName: ctx.selectedStep?.name,
+                    run: ctx.run ?? undefined,
+                    liveProgress: ctx.taskProgress,
+                    selectedStepProgress: ctx.selectedStepProgress,
+                  })}
+                  .allowReplay=${canReplayRunSteps(r, actionsBlocked)}
+                  @inspector-close=${() => ctx.onStepInspectorClose()}
+                  @step-replay=${(e: CustomEvent) =>
+                    ctx._onReplayStep(
+                      e.detail.stepName,
+                      e.detail.skipPrepare,
+                      e.detail.prepareProfile,
+                      e.detail.freshDispatch,
+                    )}
+                >
+                </step-inspector>
+                ${ctx.selectedStep.name === 'ci-watch' && ctx._currentCiStatus(r)
+                  ? ctx._renderCiStatus(r)
+                  : ''}
+              `
+            : nothing}
+          ${ctx._currentCiStatus(r) && ctx._shouldShowCiStatus(r) && !ctx.selectedStep
+            ? ctx._renderCiStatus(r)
+            : ''}
+        </div>
+        <div slot="artifacts">
+          ${renderCollapsiblePanel({
+            id: 'run-artifacts',
+            label: 'Artifacts',
+            summary: String(collectRunEvidenceArtifacts(r).length),
+            open: ctx.panelOpen('run-artifacts'),
+            onToggle: () => ctx.togglePanel('run-artifacts'),
+            body: () => ctx._renderArtifactExplorer(r),
+          })}
+        </div>
       </run-pipeline>
-      <review-history-panel .run=${r}></review-history-panel>
-      ${ctx.selectedStep
-        ? html`
-            <step-inspector
-              .step=${ctx.selectedStep}
-              .run=${ctx.run}
-              .showReviewHistory=${false}
-              .taskProgress=${stepInspectorTaskProgress({
-                selectedStepName: ctx.selectedStep?.name,
-                run: ctx.run ?? undefined,
-                liveProgress: ctx.taskProgress,
-                selectedStepProgress: ctx.selectedStepProgress,
-              })}
-              .allowReplay=${canReplayRunSteps(r, actionsBlocked)}
-              @inspector-close=${() => ctx.onStepInspectorClose()}
-              @step-replay=${(e: CustomEvent) =>
-                ctx._onReplayStep(
-                  e.detail.stepName,
-                  e.detail.skipPrepare,
-                  e.detail.prepareProfile,
-                  e.detail.freshDispatch,
-                )}
-            >
-            </step-inspector>
-            ${ctx.selectedStep.name === 'ci-watch' && ctx._currentCiStatus(r)
-              ? ctx._renderCiStatus(r)
-              : ''}
-          `
-        : nothing}
-      ${ctx._currentCiStatus(r) && ctx._shouldShowCiStatus(r) && !ctx.selectedStep
-        ? ctx._renderCiStatus(r)
-        : ''}
     </div>
-    ${ctx._renderInteractivePackets(r)}
-    ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
-      ? nothing
-      : ctx._renderRunEvidence(r)}
     ${!terminal.context?.nativeSession &&
     (boundSlotId || (r.reviewWorkspace && !terminalUnavailable))
       ? html`
-          ${renderCollapsibleSectionHeader(
-            boundSlotId
+          ${renderCollapsiblePanel({
+            id: 'run-terminal',
+            label: boundSlotId
               ? `Terminal (${terminal.target?.slotId ?? boundSlotId})`
               : `${r.transport === 'native' ? 'Worktree shell' : 'Reviewer terminal'} (${r.reviewWorkspace!.machine})`,
-            !terminalOpen,
-            ctx.toggleTerminal,
-            {
-              testId: 'run-terminal-toggle',
-              className: `terminal-toggle worker-panel-toggle ${terminalOpen ? 'active' : ''}`,
-              disabled: Boolean(terminal.disabledReason),
-              title: terminal.disabledReason ?? '',
-            },
-          )}
-          ${terminal.disabledReason
-            ? html`<span role="status">${terminal.disabledReason}</span>`
-            : nothing}
-          ${terminalOpen
-            ? html`<div class="terminal-section">
+            open: terminalOpen,
+            onToggle: ctx.toggleTerminal,
+            className: `terminal-toggle worker-panel-toggle ${terminalOpen ? 'active' : ''}`,
+            disabled: Boolean(terminal.disabledReason),
+            title: terminal.disabledReason ?? '',
+            body: () =>
+              html`<div class="terminal-section">
                 <terminal-view
                   .slotId=${terminal.target?.slotId ?? boundSlotId ?? ''}
                   .runId=${r.id}
                   .contextId=${terminal.target?.contextId ?? ctx._terminalContextId}
                   .role=${terminal.target?.role ?? ctx._terminalRole}
                 ></terminal-view>
-              </div>`
+              </div>`,
+          })}
+          ${terminal.disabledReason
+            ? html`<span role="status">${terminal.disabledReason}</span>`
             : nothing}
         `
       : !terminal.context?.nativeSession && r.reviewWorkspace
         ? html`<p data-testid="review-terminal-unavailable">${terminalUnavailable}</p>`
         : nothing}
-    ${r.reviewWorkspace || r.output || openPublicationGate ? nothing : ctx.renderGateSection(r)}
-    ${isRecoverableBlockedWorkerRun(r)
-      ? html`<details>
-          <summary class="output-file-summary">Worker recovery (advanced)</summary>
-          <p class="evidence-copy">
-            Use this only to resume unfinished execution. It does not review the report or validate
-            missing checks.
-          </p>
-          <blocked-run-recovery
-            .run=${r}
-            .disabled=${actionsBlocked}
-            .resumeWorker=${async () => {
-              await gateway.request(Methods.RUN_RESUME, { runId: r.id });
-            }}
-            .restartWorker=${() => ctx._onReplayStep('find-slot')}
-          ></blocked-run-recovery>
-        </details>`
+    ${renderCollapsiblePanel({
+      id: 'run-results',
+      label: 'Results and actions',
+      summary: activityLabel,
+      open: ctx.panelOpen('run-results'),
+      onToggle: () => ctx.togglePanel('run-results'),
+      body: () => html`
+        ${openReviewGate ? ctx.renderGateSection(r) : nothing}
+        ${openPublicationGate ? ctx.renderGateSection(r) : nothing}
+        ${ctx._renderInteractiveDevGate(r)}
+        ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
+          ? ctx._renderRunEvidence(r)
+          : nothing}
+        ${r.output && !openReviewGate && !openPublicationGate ? ctx.renderGateSection(r) : nothing}
+        ${!openReviewGate
+          ? renderRunReviewResult(
+              r,
+              () => void ctx._onReplayStep('human-gate'),
+              actionsBlocked || ctx._rereviewInFlight,
+              () => void ctx._rereviewLatestHead(r),
+            )
+          : nothing}
+        ${r.reviewWorkspace && !r.output && !openReviewGate && !openPublicationGate
+          ? ctx.renderGateSection(r)
+          : nothing}
+        ${ctx._renderInteractivePackets(r)}
+        ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
+          ? nothing
+          : ctx._renderRunEvidence(r)}
+        ${r.reviewWorkspace || r.output || openPublicationGate ? nothing : ctx.renderGateSection(r)}
+        ${r.flowType === 'dev' && r.steps.some((s) => s.status === 'failed')
+          ? html`<failure-triage-panel
+              .runId=${r.id}
+              .canLinkDecision=${(() => {
+                const pending = r.decisions.find((d) => !d.resolvedAt);
+                const kind = decisionPayloadKind(pending?.payload);
+                return Boolean(
+                  pending &&
+                  kind !== 'slot_picker' &&
+                  kind !== 'branch_affinity_nudge' &&
+                  kind !== 'retrospective' &&
+                  pending.type !== 'monitor_interactive_handoff' &&
+                  pending.type !== 'retrospective',
+                );
+              })()}
+              .linkedAssessmentId=${ctx.linkedTriageAssessmentId}
+              @triage-decision-link=${(
+                e: CustomEvent<{ runId: string; assessmentId: string | null }>,
+              ) => ctx.onTriageDecisionLink(e.detail.runId, e.detail.assessmentId)}
+              .runVersion=${JSON.stringify([
+                r.status,
+                r.steps
+                  .filter((s) => s.status === 'failed')
+                  .map((s) => [s.name, s.startedAt, s.completedAt, s.detail]),
+              ])}
+            ></failure-triage-panel>`
+          : nothing}
+        ${isRecoverableBlockedWorkerRun(r)
+          ? html`<details>
+              <summary class="output-file-summary">Worker recovery (advanced)</summary>
+              <p class="evidence-copy">
+                Use this only to resume unfinished execution. It does not review the report or
+                validate missing checks.
+              </p>
+              <blocked-run-recovery
+                .run=${r}
+                .disabled=${actionsBlocked}
+                .resumeWorker=${async () => {
+                  await gateway.request(Methods.RUN_RESUME, { runId: r.id });
+                }}
+                .restartWorker=${() => ctx._onReplayStep('find-slot')}
+              ></blocked-run-recovery>
+            </details>`
+          : nothing}
+        ${r.error && !r.output
+          ? html`
+              <div class="error-box">
+                <div>${r.error}</div>
+                ${r.flowType === 'review-pr' &&
+                !r.reviewWorkspace &&
+                (r.status === 'blocked' || r.status === 'done' || r.status === 'failed') &&
+                r.steps.some((step) => step.detail === 'stale-review')
+                  ? html`
+                      <button
+                        class="gate-action-btn"
+                        data-testid="run-rereview-latest-head"
+                        ?disabled=${ctx._rereviewInFlight}
+                        style="margin-top:${spacing.sm}; padding:4px 12px; font-size:11px"
+                        title="Start a new review round on the PR's current head, resuming this reviewer session when it is still available"
+                        @click=${() => ctx._rereviewLatestHead(r)}
+                      >
+                        Re-review on latest head
+                      </button>
+                    `
+                  : nothing}
+                ${r.status === 'failed'
+                  ? html`
+                      <button
+                        class="gate-action-btn"
+                        style="margin-top:${spacing.sm}; border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
+                        @click=${() => ctx._requestCopilotRunDiagnosis(r)}
+                      >
+                        Ask Co-Pilot why
+                      </button>
+                    `
+                  : nothing}
+              </div>
+            `
+          : nothing}
+        ${renderReviewChain(r)}
+        ${ctx.siblings.length
+          ? html`
+              <div class="grade-card">
+                <div class="grade-rationale">
+                  Family siblings:
+                  ${r.status === 'done'
+                    ? html`<a
+                        href="#family/${r.familyId}?run=${encodeURIComponent(r.id)}"
+                        style="color:${colors.accent}; text-decoration:none"
+                        >retrospective</a
+                      >`
+                    : nothing}${comparisonLaneCount >= 2
+                    ? html` ·
+                        <a
+                          href="#family/${r.familyId}?run=${encodeURIComponent(r.id)}"
+                          style="color:${colors.accent}; text-decoration:none"
+                          >compare ${comparisonLaneCount} lanes</a
+                        >`
+                    : nothing}
+                  ${ctx.siblings.map(
+                    (s, i) =>
+                      html`${i ? html` · ` : nothing}<a
+                          href=${`#${routeForRun(s)}`}
+                          style="color:${colors.accent}; text-decoration:none"
+                          >${s.ticketOrPr}${s.variant ? `/${s.variant}` : ''}</a
+                        >
+                        <span style="color:${colors.textMuted}">[${s.lane}/${s.status}]</span
+                        >${s.lane === 'comparison' || r.lane === 'comparison'
+                          ? html` <a
+                              href="#runs/compare?a=${r.id}&b=${s.id}"
+                              style="color:${colors.textMuted}; text-decoration:none"
+                              >(compare)</a
+                            >`
+                          : nothing}`,
+                  )}
+                </div>
+              </div>
+            `
+          : nothing}
+      `,
+    })}
+    ${sessions === nothing
+      ? nothing
+      : renderCollapsiblePanel({
+          id: 'run-sessions',
+          label: 'Runner sessions',
+          summary: String(r.agentContexts?.length ?? 0),
+          open: ctx.panelOpen('run-sessions'),
+          onToggle: () => ctx.togglePanel('run-sessions'),
+          body: () => sessions,
+        })}
+    ${posture === nothing
+      ? nothing
+      : renderCollapsiblePanel({
+          id: 'run-posture',
+          label: 'Resource posture',
+          summary: ctx.postureSummary,
+          open: ctx.panelOpen('run-posture'),
+          onToggle: () => ctx.togglePanel('run-posture'),
+          body: () => posture,
+        })}
+    ${r.grade
+      ? renderCollapsiblePanel({
+          id: 'run-grade',
+          label: 'Grade',
+          summary: [r.grade.difficulty, r.grade.modelRecommendation].filter(Boolean).join(' · '),
+          open: ctx.panelOpen('run-grade'),
+          onToggle: () => ctx.togglePanel('run-grade'),
+          body: () => ctx.renderGrade(r.grade!),
+        })
       : nothing}
-    ${r.error && !r.output
-      ? html`
-          <div class="error-box">
-            <div>${r.error}</div>
-            ${r.flowType === 'review-pr' &&
-            !r.reviewWorkspace &&
-            (r.status === 'blocked' || r.status === 'done' || r.status === 'failed') &&
-            r.steps.some((step) => step.detail === 'stale-review')
-              ? html`
-                  <button
-                    class="gate-action-btn"
-                    data-testid="run-rereview-latest-head"
-                    ?disabled=${ctx._rereviewInFlight}
-                    style="margin-top:${spacing.sm}; padding:4px 12px; font-size:11px"
-                    title="Start a new review round on the PR's current head, resuming this reviewer session when it is still available"
-                    @click=${() => ctx._rereviewLatestHead(r)}
-                  >
-                    Re-review on latest head
-                  </button>
-                `
-              : nothing}
-            ${r.status === 'failed'
-              ? html`
-                  <button
-                    class="gate-action-btn"
-                    style="margin-top:${spacing.sm}; border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
-                    @click=${() => ctx._requestCopilotRunDiagnosis(r)}
-                  >
-                    Ask Co-Pilot why
-                  </button>
-                `
-              : nothing}
-          </div>
-        `
-      : nothing}
+    ${ctx._renderEvidenceOverlay(r)}
   `;
 }
 

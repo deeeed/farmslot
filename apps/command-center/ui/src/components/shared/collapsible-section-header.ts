@@ -8,6 +8,10 @@ interface CollapsibleSectionHeaderOptions {
   className?: string;
   disabled?: boolean;
   title?: string;
+  /** One line after the label, cut with an ellipsis rather than wrapping. */
+  summary?: string;
+  /** A fixed height, so the header is the same size open and closed. */
+  height?: string;
 }
 
 export function renderCollapsibleSectionHeader(
@@ -29,7 +33,9 @@ export function renderCollapsibleSectionHeader(
         ? colors.bgSurface
         : `${colors.accent}12`}; color:${colors.textPrimary}; padding:${spacing.sm}; border-radius:${radii.md}; cursor:pointer; font:inherit; margin-bottom:${spacing.xs}; box-shadow:${collapsed
         ? 'none'
-        : `inset 0 0 0 1px ${colors.accent}22`};"
+        : `inset 0 0 0 1px ${colors.accent}22`};${options.height
+        ? ` height:${options.height}; box-sizing:border-box;`
+        : ''}"
       @click=${onToggle ?? (() => {})}
     >
       <span style="display:flex; align-items:center; gap:${spacing.sm}; min-width:0;">
@@ -44,9 +50,18 @@ export function renderCollapsibleSectionHeader(
         <span
           style="font-size:${fonts.sizeXs}; color:${collapsed
             ? colors.textSecondary
-            : colors.textPrimary}; text-transform:uppercase; letter-spacing:0.08em; font-weight:700;"
+            : colors.textPrimary}; text-transform:uppercase; letter-spacing:0.08em; font-weight:700;${options.height
+            ? ' white-space:nowrap;'
+            : ''}"
           >${label}</span
         >
+        ${options.summary
+          ? html`<span
+              data-testid=${ifDefined(options.testId ? `${options.testId}-summary` : undefined)}
+              style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;"
+              >(${options.summary})</span
+            >`
+          : ''}
       </span>
       <span
         style="font-size:${fonts.sizeXs}; color:${collapsed
