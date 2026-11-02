@@ -104,6 +104,29 @@ try {
   );
   fs.writeFileSync(path.join(output, 'scoring-before.json'), JSON.stringify(before, null, 2));
   await cleanupRun(beforeId);
+  // This fixture has no monitor loop. Re-probe its owned slots after seeding local work.
+  await connection.call('fleet.status', { forceRefresh: true });
+  await poll(
+    () => connection.call('fleet.status'),
+    (value) =>
+      value.fleet.slots.some(
+        (slot) => slot.slot === 'proof-slot' && slot.workspace?.dirtyCount > 0,
+      ),
+    'the workspace observation for the seeded local work',
+  );
+  browser('reload', route);
+  await poll(
+    async () =>
+      JSON.parse(
+        browser(
+          'eval',
+          route,
+          'const {isFleetCurrent}=await import("/src/state.ts"); return isFleetCurrent();',
+        ),
+      ),
+    Boolean,
+    'the current fleet read after fixture setup',
+  );
   if (context.layoutSlots) {
     browser(
       'eval',
@@ -133,7 +156,7 @@ try {
           route,
           `const root=document.querySelector('fleet-canvas')?.shadowRoot.querySelector('fleet-refresh-modal')?.shadowRoot;
       const button=root?.querySelector('article[data-slot="proof-slot"] button');
-      return Boolean(button && !button.disabled && root.querySelectorAll('article[data-slot]').length===1 && !root.querySelector('[role=status]')?.textContent?.includes('Checking current'));`,
+      return Boolean(button && !button.disabled && root.querySelectorAll('article[data-slot]').length===1 && root.querySelector('article[data-slot="proof-slot"] .warning')?.textContent.includes('changed files') && !root.querySelector('[role=status]')?.textContent?.includes('Checking current'));`,
         ),
       ),
     Boolean,

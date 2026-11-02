@@ -1868,6 +1868,12 @@ if (phase === 'fleet-store-web') {
       await cdp('screenshot', 'fleet', path.join(artifacts, 'fleet-cold-offline.png'));
       return { stale, age, cold };
     });
+    // The reconnect redraws the view without its selection; tick the row again on the current read.
+    await until(
+      (value) => value.freshness === 'ready' && value.current && hasSlot(value, 'ready'),
+      'Gateway restart must restore a current fleet read',
+    );
+    await tickOwnedRow();
     const recovered = await until(
       (value) =>
         value.freshness === 'ready' &&

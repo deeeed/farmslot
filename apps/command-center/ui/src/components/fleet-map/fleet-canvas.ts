@@ -268,6 +268,8 @@ export class FleetCanvas extends LitElement {
     .fleet-release-hint {
       margin-left: auto;
       width: 34ch;
+      min-height: 1.4em;
+      line-height: 1.4;
       text-align: right;
       white-space: nowrap;
       overflow: hidden;
@@ -538,7 +540,9 @@ export class FleetCanvas extends LitElement {
     const prev = this.slots;
     const previousPressureFilter = JSON.stringify([this.filterProjects, this.filterMachines]);
     this.slots = s.fleet?.slots ?? [];
-    if (s.fleet) this.selectedSlotIds = pruneFleetSelection(this.selectedSlotIds, this.slots);
+    // Only a current read says a slot left: a reconnect's interim reads keep the selection.
+    if (s.fleet && s.fleetObservation.status === 'ready')
+      this.selectedSlotIds = pruneFleetSelection(this.selectedSlotIds, this.slots);
     this.providerAccountsQuery.setQuery(fleetSeatsQuery(this.slots));
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;

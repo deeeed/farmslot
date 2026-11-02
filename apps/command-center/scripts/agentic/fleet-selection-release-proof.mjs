@@ -24,7 +24,7 @@ const branches = () =>
     ]),
   );
 const cdp = fileURLToPath(new URL('../cdp.mjs', import.meta.url));
-const route = process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=selection&view=list';
+const route = process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490&view=list';
 const browser = (...args) =>
   execFileSync(process.execPath, [cdp, ...args], { encoding: 'utf8', env: process.env });
 const read = (body) =>
@@ -62,20 +62,96 @@ await poll(
   (count) => count === 1,
   'the fixture rows in the Fleet table',
 );
-const idle = await trigger();
+const idle = await poll(
+  trigger,
+  (value) => value.title === 'Select slots to release',
+  'the current fleet read before selection',
+);
 assert.equal(idle.disabled, true, 'Nothing selected disables the bulk release');
 assert.equal(idle.title, 'Select slots to release');
 
-// Tick one safe row and one with local work; proof-slot stays unselected.
-browser('click', route, 'input[aria-label="Select proof-slot-two"]');
-browser('click', route, 'input[aria-label="Select proof-unpublished"]');
-const chosen = await poll(trigger, (value) => value.ticked.length === 2, 'two ticked rows');
+if (read(`return deep('whats-new-modal').some(e=>e.open);`))
+  browser('click', route, 'whats-new-modal >>> button.primary');
+
+// A narrow toolbar must retain its height when the disabled reason disappears.
+browser('viewport', route, '390', '900');
+const geometry = () =>
+  read(`
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const box = selector => { const r = deep(selector)[0].getBoundingClientRect(); return {y:r.y,height:r.height}; };
+  return {width:innerWidth,button:box('.fleet-refresh-trigger'),hint:box('.fleet-release-hint'),row:box('.slot-row')};
+`);
+const idleGeometry = geometry();
+browser(
+  'screenshot',
+  route,
+  path.join(output, 'fleet-narrow-unselected.png'),
+  '--width',
+  '390',
+  '--height',
+  '900',
+);
+
+// Run before the recovery node. Leave proof-slot-two for the later native bulk proof.
+const before = branches();
+assert.deepEqual(before, {
+  'proof-slot': 'previous',
+  'proof-slot-two': 'previous-two',
+  'proof-unpublished': 'local-only',
+});
+
+// Tick one safe row and one with local work; proof-slot-two stays unselected.
+for (const slot of ['proof-slot', 'proof-unpublished']) {
+  await poll(
+    () => {
+      // Release notes may arrive after the first fleet rows. Dismiss the real overlay first.
+      if (read(`return deep('whats-new-modal').some(e=>e.open);`))
+        browser('click', route, 'whats-new-modal >>> button.primary');
+      const selector = `input[aria-label="Select ${slot}"]`;
+      if (!read(`return deep('${selector}')[0]?.checked;`)) browser('click', route, selector);
+      return read(`return deep('${selector}')[0]?.checked;`);
+    },
+    Boolean,
+    `the selected ${slot} row`,
+  );
+}
+const chosen = await poll(
+  trigger,
+  (value) => value.ticked.length === 2 && !value.disabled,
+  'two ticked rows with a current fleet read',
+);
 assert.equal(chosen.label, 'Release and update to main (2 selected)');
 assert.equal(chosen.disabled, false);
 
+const chosenGeometry = geometry();
+for (const part of ['button', 'hint', 'row']) {
+  assert.ok(
+    Math.abs(idleGeometry[part].y - chosenGeometry[part].y) < 1,
+    `${part} moved after selection`,
+  );
+  assert.ok(
+    Math.abs(idleGeometry[part].height - chosenGeometry[part].height) < 1,
+    `${part} resized after selection`,
+  );
+}
+browser(
+  'screenshot',
+  route,
+  path.join(output, 'fleet-narrow-selected.png'),
+  '--width',
+  '390',
+  '--height',
+  '900',
+);
+browser('viewport', route, '1440', '900');
+
 // A search that hides the selection disables the action; it never widens to proof-slot.
 browser('fill', route, 'fleet-canvas >>> .toolbar input', 'no-such-slot');
-const hidden = await poll(trigger, (value) => value.disabled, 'the hidden selection');
+const hidden = await poll(
+  trigger,
+  (value) => value.title === 'The selected slots are hidden by the current filters',
+  'the hidden selection on a current fleet read',
+);
 assert.equal(hidden.title, 'The selected slots are hidden by the current filters');
 browser('fill', route, 'fleet-canvas >>> .toolbar input', 'proof');
 await poll(trigger, (value) => !value.disabled, 'the selection back in view');
@@ -86,9 +162,8 @@ const review = await poll(
   (value) => value.rows.length > 0 && !value.checking && value.bulkDisabled === false,
   'the inspected release review',
 );
-assert.deepEqual(review.rows, ['proof-slot-two', 'proof-unpublished']);
+assert.deepEqual(review.rows, ['proof-slot', 'proof-unpublished']);
 assert.equal(review.bulk, 'Release idle slots (1)');
-const before = branches();
 browser('click', route, 'fleet-canvas >>> fleet-refresh-modal >>> footer button');
 const finished = await poll(
   () =>
@@ -99,16 +174,11 @@ const finished = await poll(
   'the bulk release summary',
 );
 assert.equal(finished.summary, '1 ready · 0 failed · 0 skipped');
-assert.deepEqual(finished.rows, { 'proof-slot-two': 'refreshed', 'proof-unpublished': 'idle' });
+assert.deepEqual(finished.rows, { 'proof-slot': 'refreshed', 'proof-unpublished': 'idle' });
 const after = branches();
-assert.deepEqual(before, {
-  'proof-slot': 'previous',
-  'proof-slot-two': 'previous-two',
-  'proof-unpublished': 'local-only',
-});
 assert.deepEqual(
   after,
-  { 'proof-slot': 'previous', 'proof-slot-two': 'main', 'proof-unpublished': 'local-only' },
+  { 'proof-slot': 'main', 'proof-slot-two': 'previous-two', 'proof-unpublished': 'local-only' },
   'Only the ticked safe row returned to main; the unticked and the unsafe rows are untouched',
 );
 browser('screenshot', route, path.join(output, 'fleet-selection-released.png'));
@@ -119,7 +189,19 @@ assert.equal(cleared.disabled, true);
 fs.writeFileSync(
   path.join(output, 'fleet-selection-release.json'),
   JSON.stringify(
-    { pass: true, idle, chosen, hidden, review, before, finished, after, cleared },
+    {
+      pass: true,
+      idle,
+      chosen,
+      idleGeometry,
+      chosenGeometry,
+      hidden,
+      review,
+      before,
+      finished,
+      after,
+      cleared,
+    },
     null,
     2,
   ),

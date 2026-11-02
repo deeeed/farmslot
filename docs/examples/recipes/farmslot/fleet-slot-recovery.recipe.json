@@ -25,7 +25,7 @@
     }
   ],
   "workflow": {
-    "entry": "cc-selection",
+    "entry": "cc-selection-release",
     "nodes": {
       "cc-selection": {
         "action": "command",
@@ -33,7 +33,7 @@
         "timeout_ms": 660000,
         "intent": "Recover one stale slot through the authenticated CC fleet and inspect the next unrestricted run selection through the public gateway.",
         "proves": ["recovery-selection"],
-        "next": "cc-selection-release"
+        "next": "native-actions"
       },
       "cc-selection-release": {
         "action": "command",
@@ -41,7 +41,7 @@
         "timeout_ms": 600000,
         "intent": "Tick one safe and one unsafe fixture row with real clicks, hide them with a search, then release through the review and check each checkout's real Git branch.",
         "proves": ["selection-release"],
-        "next": "native-actions"
+        "next": "cc-selection"
       },
       "rpc-safety": {
         "action": "command",
