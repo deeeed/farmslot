@@ -1872,11 +1872,14 @@ export function continueResolvedRunDecision(
     void (dependencies.cancelRun ?? runCancel)({
       runId: params.runId,
       reason: 'Aborted by the operator after its runner became unavailable',
-    }).catch((err: unknown) => {
-      console.error(
-        `[run-engine] abort of run ${params.runId.slice(0, 8)} failed: ${(err as Error).message}`,
-      );
-    });
+    })
+      // The cancel fenced the run, so the monitor's waiter ends without settling its step.
+      .then(() => resolveMonitorDecision(params.decisionId, params.actionId))
+      .catch((err: unknown) => {
+        console.error(
+          `[run-engine] abort of run ${params.runId.slice(0, 8)} failed: ${(err as Error).message}`,
+        );
+      });
     return false;
   }
   // Unblock whichever resolver owns this decision

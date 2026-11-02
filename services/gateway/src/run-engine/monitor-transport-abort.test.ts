@@ -14,6 +14,7 @@ import type { MonitorViolation, WorkerSignal } from '@farmslot/protocol';
 import '../runtime/mock-pty.test-support.js';
 
 import { farmslotRoot } from '../fleet/state.js';
+import { continueResolvedRunDecision } from '../methods/run.js';
 import type {
   ObservabilityReading,
   RunnerSessionDeliveryState,
@@ -215,6 +216,37 @@ test(
 
     assert.equal((await execution).exitReason, 'worker-done');
     assert.equal(getRun(f.run.id)?.decisions.length, 1);
+  },
+);
+
+// R3: the cancel fences the run, then the monitor's waiter ends without settling its step.
+test(
+  'Abort Run on a runner_unavailable card ends the waiting monitor once the run is cancelled',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await fixture(t);
+    const pane = f.paneEndedOn('OAuth refresh failed for anthropic: invalid_grant');
+    const execution = f.start({
+      workerStatus: (slot, runner, runId, role, contextId) =>
+        checkAgentLive(slot, runner, runId, role, contextId, pane),
+      violations: async () => [],
+    });
+    const card = () => getRun(f.run.id)?.decisions.find((decision) => !decision.resolvedAt);
+    await until(() => card() !== undefined);
+    const decisionId = card()!.id;
+    continueResolvedRunDecision(
+      { runId: f.run.id, decisionId, actionId: 'abort' },
+      () => {},
+      {
+        cancelRun: async () => {
+          updateRun(f.run.id, { status: 'cancelled' });
+        },
+      },
+      getRun(f.run.id)!.engineState?.generation ?? 0,
+    );
+
+    assert.equal((await execution).exitReason, 'aborted');
+    assert.equal(getRun(f.run.id)?.status, 'cancelled');
   },
 );
 
