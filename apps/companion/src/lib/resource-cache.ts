@@ -25,6 +25,11 @@ import { fetchRunArtifactBytes } from './held-content';
 import { sharedLifetime } from './shared-lifetime';
 
 let notice: string | undefined;
+let artifactNotice: string | undefined;
+export function reportArtifactRefreshError(error: unknown | undefined): void {
+  artifactNotice = error ? 'Could not refresh this artifact. Showing the saved copy.' : undefined;
+  notify();
+}
 
 export function readStored<T>(query: ResourceQuery<T>): Promise<T> {
   return readStoredResource(getResourceCache, query);
@@ -225,7 +230,7 @@ export function getResourceWorkspaceKey(): string | undefined {
   return owner.renderKey;
 }
 export function getResourceStoreNotice(): string | undefined {
-  return owner.cache ? notice : undefined;
+  return owner.cache ? (notice ?? artifactNotice) : undefined;
 }
 export function subscribeResourceCache(listener: () => void): () => void {
   listeners.add(listener);

@@ -7,6 +7,9 @@ export interface StoredArtifactRead {
   online: boolean;
   read(): Promise<Response>;
   signal?: AbortSignal;
+  /** Explicit reloads wait for fresh bytes; ordinary display opens saved bytes immediately. */
+  refresh?: boolean;
+  onRefreshError?(error: unknown | undefined): void;
 }
 
 function digest(data: Uint8Array): string {
@@ -22,6 +25,8 @@ export async function readStoredArtifactResponse({
   online,
   read,
   signal,
+  refresh = false,
+  onRefreshError,
 }: StoredArtifactRead): Promise<Response> {
   const cache = current();
   if (!cache) throw new Error('The offline store is not open yet');
@@ -45,29 +50,48 @@ export async function readStoredArtifactResponse({
   assertCurrent();
   if (held && !online) return new Response(held.slice().buffer);
   if (!online) throw new Error('This artifact has not been stored on this device');
-  const response = await read();
-  assertCurrent();
-  if (!response.ok) {
-    if (held && (response.status === 401 || response.status === 403))
-      await cache.forgetContent({ kind: 'artifact', id: digest(held) });
-    return response;
-  }
-  const data = new Uint8Array(await response.arrayBuffer());
-  assertCurrent();
-  // Over-cap files remain the named large-media exception and are fetched only on open.
-  if (data.byteLength <= RESOURCE_CONTENT_LIMITS.fileBytes)
-    await cache.storeContent({
-      key: { kind: 'artifact', id: digest(data) },
-      data,
-      alias,
-      origin: 'opened',
-      cohort: 'run',
-      token,
+  const fetchFresh = async () => {
+    const response = await read();
+    assertCurrent();
+    if (!response.ok) {
+      if (held && (response.status === 401 || response.status === 403))
+        await cache.forgetContent({ kind: 'artifact', id: digest(held) });
+      return response;
+    }
+    const data = new Uint8Array(await response.arrayBuffer());
+    assertCurrent();
+    // Over-cap files remain the named large-media exception and are fetched only on open.
+    if (data.byteLength <= RESOURCE_CONTENT_LIMITS.fileBytes)
+      await cache.storeContent({
+        key: { kind: 'artifact', id: digest(data) },
+        data,
+        alias,
+        origin: 'opened',
+        cohort: 'run',
+        token,
+      });
+    assertCurrent();
+    return new Response(data.slice().buffer, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
     });
-  assertCurrent();
-  return new Response(data.slice().buffer, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
+  };
+  if (held && !refresh && onRefreshError) {
+    // The saved response is the display fallback. Report refresh failures separately so
+    // temporary network loss cannot hide it or leave a rejected background promise.
+    void fetchFresh().then(
+      (response) => onRefreshError(response.ok ? undefined : new Error(`HTTP ${response.status}`)),
+      (error: unknown) => {
+        if (
+          cache === current() &&
+          !signal?.aborted &&
+          cache.contentWriteToken().ownerVersion === token.ownerVersion
+        )
+          onRefreshError(error);
+      },
+    );
+    return new Response(held.slice().buffer);
+  }
+  return fetchFresh();
 }

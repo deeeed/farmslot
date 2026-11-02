@@ -142,7 +142,7 @@ try {
               );
             };
             const read = (node) => {
-              if (node instanceof Element && !visible(node)) return '';
+              if (node instanceof Element && node !== element && !visible(node)) return '';
               if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
               return [...(node.shadowRoot?.childNodes ?? node.childNodes)].map(read).join(' ');
             };
@@ -152,7 +152,10 @@ try {
               if (!value || typeof value !== 'object' || seen.has(value) || depth > 2) return;
               seen.add(value);
               if (typeof value.setQuery === 'function' && value.state) {
-                queries.push({ status: value.state.status, hasData: value.state.data !== undefined });
+                queries.push({
+                  status: value.state.status,
+                  hasData: value.state.data !== undefined,
+                });
                 return;
               }
               if (Array.isArray(value) || value instanceof Node) return;
@@ -169,10 +172,11 @@ try {
               fleet: state.fleetObservation?.data !== undefined,
               runs: state.runsObservation?.data !== undefined,
               prs: state.prsObservation?.data !== undefined,
+              decisions: state.decisionsObservation?.data !== undefined,
               run: Boolean(element.run?.id),
               slot: Boolean(element._slot?.slot),
-        native: Boolean(element.catalog),
-        devices: (element._availableResources?.length ?? 0) > 0,
+              native: Boolean(element.catalog),
+              devices: (element._availableResources?.length ?? 0) > 0,
             };
             return {
               text: read(element).replace(/\s+/g, ' ').trim().slice(0, 1400),
@@ -203,13 +207,18 @@ try {
       });
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error))
-        .replace(/((?:token|password)=)[^&\s]+/gi, '$1[redacted]').slice(0, 1800);
+        .replace(/((?:token|password)=)[^&\s]+/gi, '$1[redacted]')
+        .slice(0, 1800);
       results.push({ route: entry.route, kind: entry.kind, result: 'FAIL', message });
       await page.screenshot({ path: path.join(output, `${entry.route}-failed.png`) });
     }
   }
 
-  assert.deepEqual(results.filter((result) => result.result === 'FAIL').map(({ route }) => route), [], 'Every cached route needs its stored body');
+  assert.deepEqual(
+    results.filter((result) => result.result === 'FAIL').map(({ route }) => route),
+    [],
+    'Every cached route needs its stored body',
+  );
   assert.deepEqual(errors, [], 'No uncaught browser error while rendering stored routes');
   console.log(JSON.stringify({ phase, result: 'PASS', routes: results.length, bootstrap }));
 } finally {

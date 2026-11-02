@@ -52,3 +52,24 @@ test('a display read cannot publish the retired owner reply', async () => {
     await cache.dispose();
   }
 });
+
+test('a cold local display does not wait for a connected slow gateway', async () => {
+  const query = resourceQuery<{ value: string }>('sources.status');
+  const store = createMemoryResourceStore();
+  const authority = { roles: [], workspaceAccess: 'farm' as const };
+  await store.setMetadata({ scope, authority });
+  await store.putQuery({ id: query.id, data: { value: 'saved' }, bytes: 17, observedAt: 123 });
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.connection.authority = authority;
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport, store });
+  try {
+    assert.deepEqual(await readStoredResource(() => cache, query), { value: 'saved' });
+    const pending = await transport.nextRead();
+    assert.equal(cache.read(query).data?.value, 'saved');
+    pending.resolve({ value: 'fresh' });
+    assert.equal((await cache.retry(query)).data?.value, 'fresh');
+  } finally {
+    await cache.dispose();
+  }
+});

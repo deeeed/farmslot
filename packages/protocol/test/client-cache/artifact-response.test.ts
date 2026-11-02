@@ -103,3 +103,54 @@ test('online artifact reads replace changed text and an authorization refusal re
     await cache.dispose();
   }
 });
+
+test('saved online artifacts render before a slow refresh and report its result', async () => {
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  try {
+    await readStoredArtifactResponse({
+      current: () => cache,
+      url,
+      online: true,
+      read: async () => new Response('saved'),
+    });
+    let finish: ((value: Response) => void) | undefined;
+    let completed: (() => void) | undefined;
+    const refreshed = new Promise<void>((resolve) => {
+      completed = resolve;
+    });
+    const held = await readStoredArtifactResponse({
+      current: () => cache,
+      url,
+      online: true,
+      read: () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+      onRefreshError: (error) => {
+        assert.equal(error, undefined);
+        completed?.();
+      },
+    });
+    assert.equal(await held.text(), 'saved');
+    assert.ok(finish);
+    finish(new Response('fresh'));
+    await refreshed;
+    assert.equal(
+      await (
+        await readStoredArtifactResponse({
+          current: () => cache,
+          url,
+          online: false,
+          read: async () => {
+            throw new Error('offline');
+          },
+        })
+      ).text(),
+      'fresh',
+    );
+  } finally {
+    await cache.dispose();
+  }
+});

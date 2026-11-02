@@ -130,6 +130,8 @@ export interface ResourceQueryPlacement extends ResourceContentPlacement {
 export interface GatewayResourceCache {
   observe<T>(query: ResourceQuery<T>, listener: (state: ResourceQueryState<T>) => void): () => void;
   read<T>(query: ResourceQuery<T>): ResourceQueryState<T>;
+  /** Waits only for local hydration, then refreshes in the background. Optional for test doubles. */
+  readStored?<T>(query: ResourceQuery<T>): Promise<ResourceQueryState<T>>;
   /**
    * A `prefetch` placement persists a workspace snapshot as prefetched content: it counts toward
    * the prefetch half of the budget and evicts only what prefetch may evict. A later read the user

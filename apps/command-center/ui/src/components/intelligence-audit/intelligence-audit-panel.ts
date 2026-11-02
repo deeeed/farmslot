@@ -288,7 +288,7 @@ export class IntelligenceAuditPanel extends LitElement {
     });
     this.syncState(getState());
     this.unsubscribeState = subscribe((s) => this.syncState(s));
-    if (gateway.connectionState === 'connected') void this.load();
+    void this.load();
   }
 
   disconnectedCallback() {

@@ -969,6 +969,7 @@ ${JSON.stringify(
             this.catalogError = state.error?.message ?? '';
             this.catalog = state.data;
             this.catalogCurrent = state.status === 'ready';
+            if (this.catalog && !this.selectedId) this.creating = true;
             if (this.catalog)
               this.executionPicker.setCatalog(
                 catalogForNativeRunners(this.catalog.runners, undefined, this.executionNodeId),
