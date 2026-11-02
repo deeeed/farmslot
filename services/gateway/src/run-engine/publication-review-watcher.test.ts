@@ -59,10 +59,11 @@ test('a pending gate retry stands down once another replay owns the gate (F311)'
   });
 
   t.mock.timers.tick(60_000);
-  // The poll awaits the store and a lazy module import: settle until the retry lands (bounded),
-  // then a few more turns so the other gate's poll has also run.
-  for (let turns = 0; turns < 500 && replays.length === 0; turns++) await flushed();
-  for (let turns = 0; turns < 20; turns++) await flushed();
+  // The retry lands after a lazy module import, which takes real time: wait for it with a
+  // wall-clock ceiling (the mocked timers leave performance.now real). The moved gate stands down
+  // synchronously inside tick(), which the recovery-record assertion below checks.
+  const deadline = performance.now() + 5_000;
+  while (replays.length === 0 && performance.now() < deadline) await flushed();
 
   assert.deepEqual(replays, [untouched], 'only the gate nobody else replayed is retried');
   assert.equal(getRun(replayedByOperator)?.engineState?.publishGate?.reviewRecovery, undefined);
