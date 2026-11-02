@@ -38,3 +38,12 @@ test('ticket matching is retained across flow changes only for Jira', () => {
       .id,
   );
 });
+
+test('a branch beginning like a Jira key retains its PR flow', () => {
+  const ref = 'feat-123-description';
+  const query = resourceQuery('dispatch.matchProject', {
+    ticketOrPr: ref,
+    flowType: 'pr-complete',
+  });
+  assert.deepEqual(query.params, { ticketOrPr: ref, flowType: 'pr-complete' });
+});

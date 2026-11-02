@@ -972,7 +972,6 @@ export class DispatchWizard extends DispatchWizardState {
   private _refreshDispatchSnapshot(): void {
     if (!this.mockMode) void this._loadNativeWorkers(true);
     this._templateOptionsCache.clear();
-    this._allCandidates = [];
     void this._fetchTemplateOptions();
     void this._fetchCandidates({ force: true });
   }

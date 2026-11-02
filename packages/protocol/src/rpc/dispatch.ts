@@ -11,7 +11,11 @@ import { Methods } from './registry.js';
 
 /** Ticket matching does not depend on a flow for Jira keys and browse URLs. */
 export function isJiraTicketReference(ticket: string): boolean {
-  return /^[A-Z]+-\d/i.test(ticket) || /atlassian\.net\/browse\//i.test(ticket);
+  const reference = ticket.trim();
+  return (
+    /^[A-Z]+-\d+$/i.test(reference) ||
+    /^https?:\/\/[^/]+\/browse\/[A-Z]+-\d+(?:[?#].*)?$/i.test(reference)
+  );
 }
 
 export const DispatchMethods = {
