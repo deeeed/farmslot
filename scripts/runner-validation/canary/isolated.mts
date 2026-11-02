@@ -1299,6 +1299,11 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       };
     } finally {
       if (shape.scriptedReview) await reviewer.stop(dir);
+      const crash = path.join(stack.holds, 'claude-worker.err');
+      if (existsSync(crash)) {
+        await log(`${label}: the fixture worker crashed`, { error: await readFile(crash, 'utf8') });
+        await rm(crash, { force: true });
+      }
     }
   }
 

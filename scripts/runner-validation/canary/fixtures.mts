@@ -592,7 +592,7 @@ setTimeout(() => process.exit(0), 15 * 60_000);
   const fixFile = prompt.match(/\\S*REVIEW-FIX\\.md/)?.[0];
   if (fixFile) {
     const fixTask = path.resolve(cwd, fixFile);
-    const mark = (...markArgs) => execFileSync(path.join(path.dirname(fixTask), 'mark'), ['--checklist', 'REVIEW-FIX.md', '--signal', 'REVIEW-FIX-SIGNAL.json', ...markArgs], { cwd, stdio: 'inherit' });
+    const mark = (...markArgs) => execFileSync(path.join(path.dirname(fixTask), 'mark'), ['--checklist', 'REVIEW-FIX.md', '--signal', 'REVIEW-FIX-SIGNAL.json', ...markArgs], { cwd, encoding: 'utf8', stdio: 'pipe' });
     const steps = (fs.readFileSync(fixTask, 'utf8').match(/^- \\[ \\]/gm) ?? []).length;
     mark('start');
     git('rm', '-q', 'src/debug-trace.ts');
@@ -615,6 +615,8 @@ ${FAKE_WORKER_FINISH}
   process.stdout.write('\\u276f\\n');
 })().catch((error) => {
   console.error(error);
+  // A crashed fixture reads as a worker gone: say why, or recovery looks at fault.
+  fs.appendFileSync(path.join(holds, 'claude-worker.err'), [error.stack, error.stdout, error.stderr].filter(Boolean).join('\\n') + '\\n');
   process.exit(1);
 });
 `;
