@@ -189,6 +189,11 @@ test('a fix delivery restart recovery could not confirm keeps its worker, blocke
       '',
     /Still running: fix-bug, review-fix\./,
   );
+  assert.equal(
+    run.steps.find((step) => step.name === S.REVIEW)?.outputs?.promptDeliveryUncertain,
+    undefined,
+    'restart recovery skips a run still marked, which would strand this one',
+  );
 });
 
 // R1: a deterministic refusal after the worker finished is the run's real outcome.

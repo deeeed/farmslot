@@ -110,6 +110,7 @@ const READINESS_WAIT_MS = 30_000;
 const WORKER_LEFT_RUNNING_CARD = 'engine_worker_left_running';
 // Recovery looks for proof of an unconfirmed fix delivery for 120 s before it gives up.
 const FIX_CARD_WITHIN_MS = 150_000;
+const RESTART_TWICE: Variant[] = ['node-up', 'node-up'];
 const TRANSPORT_ABORT = /\bterminated\b|abort|ECONNRESET|socket hang up|connection reset/i;
 
 export interface IsolatedOptions {
@@ -465,6 +466,43 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
   ];
 }
 
+/**
+ * The restarts after the fix card: one must find it open with its worker kept, then one at the
+ * re-review Replay step led to must keep going. An uncertainty mark would strand either, because
+ * restart recovery skips a run still marked.
+ */
+function fixCardRestarts(stack: RemoteNodeStack): HoldPhase[] {
+  const noHook = marker(stack, 'claude-no-hook');
+  const worker = marker(stack, 'worker');
+  const base = {
+    restarts: ['node-up'] as Variant[],
+    nodeAwayMs: 0,
+    armAt: 'create' as const,
+    arm: async () => {},
+    // REVIEW still reads failed, from the card, when these phases start.
+    missed: ({ run }: View) => stepStatus(run, 'review') === 'done',
+  };
+  return [
+    {
+      ...base,
+      step: 'review-fix-claude-card',
+      held: ({ run }) => run.status === 'blocked' && Boolean(openCard(run)),
+      release: worker.release,
+      survive: { card: true, release: noHook.release },
+    },
+    {
+      ...base,
+      step: 'review',
+      held: ({ run }) =>
+        reviewRunning({ run }) &&
+        contexts(run, 'review').some(
+          (context) => (context.reviewLoopNumber ?? 0) >= 2 && context.nativeSession?.acceptedAt,
+        ),
+      release: async () => {},
+    },
+  ];
+}
+
 /** The fix round's commit is at HEAD: the debug file it removes is gone, the source it fixes is kept. */
 function fixInCheckout(slotRepo: string): boolean {
   try {
@@ -500,7 +538,7 @@ export const SURVIVE_HOLDS: Record<SurviveStep, string> = {
   'review-fix-claude':
     'a Claude-runner worker (no model) resumed with its fix prompt on argv records the prompt hook, then waits on holds/worker before it starts the fix; the scripted reviewer returned issues in loop 1 and passes loop 2',
   'review-fix-claude-card':
-    'the same worker, except that its prompt hook is withheld, so nothing proves delivery: the test watches the worker through to the card, lets it fix, and presses Replay step',
+    'the same worker, except that its prompt hook is withheld, so nothing proves delivery: the test watches the worker through to the card, restarts again with the card open, lets it fix, presses Replay step, and restarts a third time at the re-review',
   'human-gate-prep':
     "the scripted runner stays alive after its work (holds/idle); git on the run's slot waits while HUMAN_GATE prepares its package, released while the gateway is down",
   finalize:
@@ -684,6 +722,7 @@ function survivePhase(
     case 'review-fix': {
       return {
         ...base,
+        restarts: RESTART_TWICE,
         armAt: 'create',
         ...fixRoundHold(marker(stack, 'fix')),
         survive: {},
@@ -693,6 +732,7 @@ function survivePhase(
     case 'review-fix-claude':
       return {
         ...base,
+        restarts: RESTART_TWICE,
         armAt: reviewRunning,
         ...fixRoundHold(worker),
         survive: {},
@@ -707,7 +747,9 @@ function survivePhase(
           await noHook.arm(context);
           await worker.arm(context);
         },
-        survive: { card: true, cardWithinMs: FIX_CARD_WITHIN_MS, release: noHook.release },
+        // The worker stays held for the card's own restart (fixCardRestarts).
+        release: async () => {},
+        survive: { card: true, cardWithinMs: FIX_CARD_WITHIN_MS },
       };
     }
     case 'monitor-transport-abort': {
@@ -1491,6 +1533,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
                     : 'pipe',
           [
             survivePhase(stack, step, reviewer),
+            ...(fixCard ? fixCardRestarts(stack) : []),
             // The relaunched attempt, interrupted too: the session it reopens must be its own.
             ...(step === 'dispatch-claude-card'
               ? [
