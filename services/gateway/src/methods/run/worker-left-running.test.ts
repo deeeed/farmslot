@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RunCancelParams } from '@farmslot/protocol';
+import type { RunCancelParams, RunDecision } from '@farmslot/protocol';
 
 import '../../runtime/mock-pty.test-support.js';
 
@@ -20,7 +20,7 @@ import { continueResolvedRunDecision } from '../run.js';
 function parkedRun(
   t: test.TestContext,
   actionId: string,
-  decisionType = WORKER_LEFT_RUNNING_DECISION,
+  decisionType: RunDecision['type'] = WORKER_LEFT_RUNNING_DECISION,
 ) {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: `PARK-${actionId}` });
   t.after(() => deleteTestRunIfPresent(run.id));
