@@ -777,6 +777,25 @@ async function slotReleaseImpl(
     }
     return ok;
   };
+  /**
+   * Hold the slot with `reason` after a cleanup step failed, and throw it. Returns a result only
+   * when another claim already owns the slot. Checkouts may have moved before the failure, so the
+   * held status still shows what the slot retains (F310).
+   */
+  const holdAfterCleanupFailure = async (reason: string): Promise<SlotReleaseResult> => {
+    await assertReleaseClaim();
+    const retained = await measureSlotRetention(vars).catch(() => undefined);
+    const held = await guardedTeardownWrite({
+      lifecycle: 'held',
+      phase: 'occupied',
+      held_reason: reason,
+      [SLOT_RELEASING_SINCE]: null,
+      ...(retained !== undefined ? { retained } : {}),
+    });
+    if (!held) return reclaimedResult();
+    complete(1);
+    throw new Error(reason);
+  };
 
   // 1. Kill running agent. Local-first publication gate-hold skips slotRelease at
   // COMPLETE entirely (see holdSlotForPublicationGate) and keeps the worker warm
@@ -1063,20 +1082,10 @@ async function slotReleaseImpl(
         // Moved-aside checkouts stay on the slot host; fleet status shows what they hold (F310).
         await guardedTeardownWrite({ retained: await measureSlotRetention(vars) });
       } catch (error) {
-        await assertReleaseClaim();
-        const reason = `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`;
-        // Checkouts may have moved before the failure; status still shows what the slot holds.
-        const retained = await measureSlotRetention(vars).catch(() => undefined);
-        const held = await guardedTeardownWrite({
-          lifecycle: 'held',
-          phase: 'occupied',
-          held_reason: reason,
-          [SLOT_RELEASING_SINCE]: null,
-          ...(retained !== undefined ? { retained } : {}),
-        });
-        if (!held) return reclaimedResult();
-        complete(1);
-        throw new Error(reason);
+        const reclaimed = await holdAfterCleanupFailure(
+          `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`,
+        );
+        if (reclaimed) return reclaimed;
       }
     }
 
@@ -1084,7 +1093,14 @@ async function slotReleaseImpl(
     await assertReleaseClaim();
     if (taskRel && preserveAgents) {
       // No scaffolding collection ran, so nested checkouts would go with the task (F310).
-      await retainTaskCheckouts(vars, projectJson, taskRel);
+      try {
+        await retainTaskCheckouts(vars, projectJson, taskRel);
+      } catch (error) {
+        const reclaimed = await holdAfterCleanupFailure(
+          `Nested checkouts could not be kept; cleanup stopped: ${(error as Error).message}`,
+        );
+        if (reclaimed) return reclaimed;
+      }
       await guardedTeardownWrite({ retained: await measureSlotRetention(vars) });
     }
     if (taskRel) {

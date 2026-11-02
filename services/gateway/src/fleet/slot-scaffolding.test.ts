@@ -370,6 +370,36 @@ test('a clone and its own linked worktree move together and stay connected', asy
   assert.ok((retained?.bytes ?? 0) > 0);
 });
 
+test('a clone under the configured task root and its worktree under the legacy one stay connected', async (t) => {
+  const f = fixture(t);
+  git(f.repo, 'init', '-q', '-b', 'main');
+  scaffolding(f.repo);
+  const project = { task_dir: 'support/tasks', paths: { runtime_dir: '.agent' } };
+  const { origin, checkouts, retainedBase } = baselineCheckout(f);
+  const source = path.join(f.repo, 'support/tasks/qa/example/checkouts/source');
+  mkdirSync(path.dirname(source), { recursive: true });
+  git(f.root, 'clone', '-q', origin, source);
+  git(source, 'worktree', 'add', '-q', '--detach', path.join(checkouts, 'baseline'), 'main');
+  await excludeSlotScaffolding(f.vars, project, execute);
+  const result = await archiveSlotScaffolding(f.vars, project, {
+    destination: f.destination,
+    taskRelativeDir: 'qa/example',
+    beforeRemove: async () => undefined,
+    retainedBase,
+  });
+  const { skipped } = JSON.parse(
+    readFileSync(path.join(result.directory, 'manifest.json'), 'utf8'),
+  ) as {
+    skipped: Skipped;
+  };
+  const at = (name: string) =>
+    skipped.find((entry) => entry.path.endsWith(`checkouts/${name}`))!.retainedAt!;
+  const worktrees = git(at('source'), 'worktree', 'list', '--porcelain');
+  assert.match(worktrees, new RegExp(`worktree ${realpathSync(at('baseline'))}\n`));
+  assert.doesNotMatch(worktrees, /prunable/);
+  assert.equal(git(at('baseline'), 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'main'));
+});
+
 test('a retention directory linked onto another volume refuses the move', async (t) => {
   const f = fixture(t);
   git(f.repo, 'init', '-q', '-b', 'main');

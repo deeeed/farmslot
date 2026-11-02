@@ -37,6 +37,15 @@ function relativeNamespace(value: string): string {
   return normalized.replace(/\/$/, '');
 }
 
+/** The released task's directories: the configured task root and the legacy default one. */
+function releasedTaskRoots(projectJson: RawProjectJson, taskRelativeDir: string | null): string[] {
+  if (!taskRelativeDir) return [];
+  const { task } = slotScaffoldingPaths(projectJson);
+  return [...new Set([task, DEFAULT_TASK_DIR])].map(
+    (root) => `${root}/${relativeNamespace(taskRelativeDir)}`,
+  );
+}
+
 export function slotScaffoldingPaths(projectJson: RawProjectJson) {
   const task = relativeNamespace(resolveProjectTaskDirName(projectJson));
   const configuredRuntime = resolveProjectRuntimeDirName(projectJson);
@@ -311,13 +320,9 @@ export async function retainTaskCheckouts(
   taskRelativeDir: string,
   retainedBase?: string,
 ): Promise<void> {
-  const { task } = slotScaffoldingPaths(projectJson);
-  const taskRoots = [...new Set([task, DEFAULT_TASK_DIR])].map(
-    (root) => `${root}/${relativeNamespace(taskRelativeDir)}`,
-  );
   const { skipped, retainedRoot, repoRealpath } = await inventoryRebuildableScaffolding(
     vars,
-    taskRoots,
+    releasedTaskRoots(projectJson, taskRelativeDir),
     retainedBase,
   );
   const checkouts = skipped.filter((entry) => entry.kind === 'checkout');
@@ -360,11 +365,7 @@ async function collectSlotScaffolding(
   // Parked/free-slot runs can still own sibling task directories. Only the
   // released task is collected; shared task roots keep their existing retention.
   const taskRelativeDir = options.taskRelativeDir;
-  const taskRoots = taskRelativeDir
-    ? [...new Set([task, DEFAULT_TASK_DIR])].map(
-        (root) => `${root}/${relativeNamespace(taskRelativeDir)}`,
-      )
-    : [];
+  const taskRoots = releasedTaskRoots(projectJson, taskRelativeDir);
   const roots = [
     ...new Set([
       ...taskRoots,
@@ -482,18 +483,24 @@ async function collectSlotScaffolding(
       `${JSON.stringify({ slotId: vars.slotId, sources: sources.map((source) => source.relative), skipped }, null, 2)}\n`,
     );
     archived = true;
-    for (const source of [
+    const removal = [
       ...sources.filter((source) => source.absolute !== external).reverse(),
       ...sources.filter((source) => source.absolute === external),
-    ]) {
+    ];
+    const checkouts = skipped.filter((entry) => entry.kind === 'checkout');
+    if (checkouts.length && retainedDir) {
+      // One batch across every task root: a clone under one root can own a worktree under the
+      // other, and a repair before both moved would point at the clone's old path.
+      await options.beforeRemove();
+      for (const source of removal)
+        if ((await slotRealpath(vars, source.absolute)) !== source.resolved)
+          throw new Error(`Scaffolding changed during collection: ${source.relative}`);
+      await retainNestedCheckouts(vars, checkouts, retainedDir, repoRealpath);
+    }
+    for (const source of removal) {
       await options.beforeRemove();
       if ((await slotRealpath(vars, source.absolute)) !== source.resolved)
         throw new Error(`Scaffolding changed during collection: ${source.relative}`);
-      const checkouts = skipped.filter(
-        (entry) => entry.kind === 'checkout' && entry.path.startsWith(`${source.relative}/`),
-      );
-      if (checkouts.length && retainedDir)
-        await retainNestedCheckouts(vars, checkouts, retainedDir, repoRealpath);
       await slotDeletePath(vars, source.absolute);
     }
     return { directory, roots: sources.length };
