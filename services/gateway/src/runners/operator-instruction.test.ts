@@ -30,6 +30,7 @@ let tmuxOutcome: import('./registry.js').RunnerInstructionOutcome = 'sent';
 let inspectionError = false;
 let tmuxStopped = false;
 let reloadAttempts = 0;
+const reloads: Parameters<typeof lifecycle.reloadRunnerForPark>[0][] = [];
 const tmuxCalls: Parameters<typeof registry.sendRunnerInstructionWithOutcome>[] = [];
 mock.module('../core/config.js', {
   namedExports: {
@@ -51,8 +52,9 @@ mock.module('./session-lifecycle.js', {
         'supported' | 'liveTarget'
       >;
     },
-    reloadRunnerForPark: async () => {
+    reloadRunnerForPark: async (options: Parameters<typeof lifecycle.reloadRunnerForPark>[0]) => {
       reloadAttempts++;
+      reloads.push(options);
       return {
         ok: false,
         status: 'acceptance-failed',
@@ -125,6 +127,7 @@ async function fixture(t: TestContext, native = true) {
   inspectionError = false;
   tmuxStopped = false;
   reloadAttempts = 0;
+  reloads.length = 0;
   stopped = false;
   resumeError = undefined;
   reads = undefined;
@@ -323,4 +326,13 @@ test('an uncertain stopped tmux reload never clears the delivery attempt', async
   assert.equal(await deliverOperatorInstruction(run, 'unit', 'Instruction', 100), 'unconfirmed');
   assert.equal(reloadAttempts, 1);
   assert.equal(tmuxCalls.at(-1)?.[6]?.observeOnly, true);
+});
+
+test("a stopped tmux worker reloads with its run mode's question tool", async (t) => {
+  for (const mode of ['autonomous', 'interactive'] as const) {
+    const run = store.updateRun((await fixture(t, false)).id, { mode });
+    tmuxStopped = true;
+    await assert.rejects(deliverOperatorInstruction(run, 'unit', 'Instruction'), /Reload/);
+    assert.equal(reloads.at(-1)?.modelQuestions, mode === 'autonomous' ? 'off' : undefined);
+  }
 });

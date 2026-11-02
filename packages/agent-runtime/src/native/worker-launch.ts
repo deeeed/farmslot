@@ -22,6 +22,8 @@ export interface NativeWorkerLaunch {
   safetyTier: SafetyTier;
   /** Gateway-owned reviewer interaction policy. Does not change filesystem grants. */
   approvalPolicy?: 'never';
+  /** Gateway-owned: an autonomous run removes the model's own question tool. */
+  modelQuestions?: 'off';
   filesystemPolicy?: NativeWorkerFilesystemPolicy;
 }
 
@@ -139,6 +141,7 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
           'effort',
           'safetyTier',
           'approvalPolicy',
+          'modelQuestions',
           'filesystemPolicy',
         ].includes(key),
     )
@@ -158,6 +161,8 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
     throw new Error('Invalid native worker effort');
   if (launch.approvalPolicy !== undefined && launch.approvalPolicy !== 'never')
     throw new Error('Invalid native worker approval policy');
+  if (launch.modelQuestions !== undefined && launch.modelQuestions !== 'off')
+    throw new Error('Invalid native worker model questions setting');
   const environment = object(launch.environment);
   if (Object.keys(environment).some((key) => !['set', 'unset'].includes(key)))
     throw new Error('Unsupported native worker environment field');
@@ -179,6 +184,7 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
     ...(typeof launch.effort === 'string' ? { effort: launch.effort } : {}),
     safetyTier: launch.safetyTier as SafetyTier,
     ...(launch.approvalPolicy === 'never' ? { approvalPolicy: 'never' } : {}),
+    ...(launch.modelQuestions === 'off' ? { modelQuestions: 'off' } : {}),
     ...(launch.filesystemPolicy === undefined
       ? {}
       : {
@@ -196,8 +202,9 @@ const ROUTING_ENVIRONMENT = new Set(['GW_URL']);
 
 /**
  * Journals bind sandbox grants and worker settings without retaining environment values.
- * The gateway rederives reviewer approval routing on resume, like gateway routing;
- * it may suppress prompts without changing the bound tier or filesystem grants.
+ * The gateway rederives reviewer approval routing and the run's model-questions setting on
+ * resume, like gateway routing; they may suppress prompts without changing the bound tier or
+ * filesystem grants.
  */
 export function nativeWorkerLaunchDigest(launch: NativeWorkerLaunch): string {
   return createHash('sha256')

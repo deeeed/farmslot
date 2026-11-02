@@ -33,7 +33,11 @@ import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js'
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { assertRunNotArchiving } from '../run-lifecycle/archive-fence.js';
-import { buildRunnerSessionReloadCommand } from '../runners/launch-command.js';
+import {
+  buildRunnerSessionReloadCommand,
+  effectiveModelQuestionsForRun,
+  modelQuestionsForRun,
+} from '../runners/launch-command.js';
 import { reconcileNativeRunAgentRuntime } from '../runners/native/worker-runtime.js';
 import {
   getRunnerObservability,
@@ -614,6 +618,7 @@ export async function restoreTmuxWorker(
         effort: run.effort,
         runtimeDir,
         safetyTier,
+        modelQuestions: modelQuestionsForRun(run),
         taskDir: run.taskFile ? path.posix.dirname(run.taskFile) : undefined,
         blindTrialCapsule: blindTrialWorkerCapsule(run, selected.role),
       },
@@ -638,6 +643,7 @@ export async function restoreTmuxWorker(
     persistRestoredContext(run.id, selected.id, {
       status: 'working',
       target: agentTargetFromWorkerRef(liveRef),
+      modelQuestions: effectiveModelQuestionsForRun(run),
       runnerSessionId: sessionBinding.runnerSessionId,
       runnerSessionPath: sessionBinding.runnerSessionPath,
     });

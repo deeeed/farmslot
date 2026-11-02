@@ -178,6 +178,8 @@ export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
   workerManaged?: boolean;
   /** Current worker task's input lease; independent of process generation and command IDs. */
   workerLeaseId?: string;
+  /** Effective question-tool setting of this worker process; absent on older hosts. */
+  workerModelQuestions?: 'on' | 'off';
   capabilities: NativeSessionCapabilities;
   state: 'starting' | 'idle' | 'waiting' | 'running' | 'closing' | 'closed' | 'failed';
 }

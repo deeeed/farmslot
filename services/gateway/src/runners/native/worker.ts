@@ -3,12 +3,14 @@ import path from 'node:path';
 
 import {
   NATIVE_WORKER_CANCEL,
+  NATIVE_WORKER_CLOSE,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_SEND,
   NATIVE_WORKER_STATE,
   NATIVE_WORKER_TRANSFER,
   type NativeWorkerCancelResult,
 } from '@farmslot/agent-runtime/native';
+import { effectiveModelQuestions } from '@farmslot/agent-runtime/native/model-questions';
 import { nativeWorkerLaunchDigest } from '@farmslot/agent-runtime/native/worker-launch';
 import {
   type AgentContext,
@@ -46,7 +48,7 @@ import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../../security/work-originator.js';
 import { runTaskLibraries } from '../../tasks/pinned-libraries.js';
 import { unwatchContext, watchContext } from '../../tasks/watcher.js';
-import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
+import { modelQuestionsForRun, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
 
 import { routeNativeExecution } from './node.js';
 import { nativeReviewerOwner } from './review-owner.js';
@@ -630,6 +632,7 @@ export async function dispatchNativeWorker(input: {
   const prepared = await prepareNativeWorkerLaunch({
     ...input,
     reviewValidationDepth: context.reviewValidationDepth,
+    modelQuestions: modelQuestionsForRun(run),
     vars,
     taskLibraries: runTaskLibraries(run),
     taskDir: path.posix.dirname(input.taskFile),
@@ -775,6 +778,28 @@ export async function dispatchNativeWorker(input: {
         await persistRunNow(ownedRun(sourceRun.id), 'native handoff source pause');
       }
       await admission();
+      // The launch digest deliberately excludes this setting for journal compatibility. A live
+      // process cannot change its tools during a lease transfer; close it so the handoff below
+      // resumes the saved conversation with the successor's launch. Legacy hosts are unknown.
+      if (
+        !snapshot.session.processStopped &&
+        snapshot.session.workerModelQuestions !==
+          effectiveModelQuestions(prepared.launch.modelQuestions)
+      ) {
+        const closed = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_CLOSE, {
+          ...target(binding),
+          generation: binding.generation,
+          leaseId: snapshot.session.workerLeaseId,
+        })) as { session: NativeSessionInfo };
+        if (
+          closed.session.id !== binding.sessionId ||
+          closed.session.generation !== binding.generation ||
+          closed.session.workerLeaseId !== snapshot.session.workerLeaseId ||
+          !closed.session.processStopped
+        )
+          throw new Error('Retained worker stop is unconfirmed');
+        await admission();
+      }
       const transferred = (await routeNativeExecution(
         binding.ownerPrincipalId,
         NATIVE_WORKER_TRANSFER,

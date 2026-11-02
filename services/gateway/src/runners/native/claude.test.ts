@@ -216,6 +216,28 @@ test('Claude stream-json adapter preserves structured session, turn, tool, and a
   await session.close();
 });
 
+test('an autonomous Claude run starts without its question tool', async (t) => {
+  const { executable, invocation } = await fixture(t);
+  const session = await startSession(
+    t,
+    {
+      cwd: process.cwd(),
+      executable,
+      modelQuestions: 'off',
+      env: { ...process.env, FARMSLOT_NATIVE_INVOCATION: invocation },
+    },
+    () => {},
+  );
+  const args = JSON.parse(await readFile(invocation, 'utf8')) as string[];
+  assert.deepEqual(args.slice(-4), [
+    '--disallowedTools',
+    'AskUserQuestion',
+    '--session-id',
+    session.nativeSessionId,
+  ]);
+  await session.close();
+});
+
 test('Claude stream-json adapter resumes the exact native session id', async (t) => {
   const { executable, invocation } = await fixture(t);
   const session = await startSession(

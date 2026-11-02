@@ -1,6 +1,11 @@
 import path from 'node:path';
 
 import {
+  effectiveModelQuestions,
+  modelQuestionsOffByRunner,
+  type ModelQuestionsSwitch,
+} from '@farmslot/agent-runtime/native/model-questions';
+import {
   codexWorkspaceTrustConfig,
   nativeRunnerDefinitions,
 } from '@farmslot/agent-runtime/native/registry';
@@ -13,6 +18,7 @@ import {
   DEFAULT_PI_MODEL,
   DEFAULT_PI_THINKING,
   isPiThinkingLevel,
+  type Run,
   type SafetyTier,
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
@@ -74,6 +80,58 @@ function runnerModelFlag(model?: string | null): string {
 function assertedModel(model: string): string {
   assertSafeRunnerArgumentValue('model', model);
   return model;
+}
+
+/**
+ * The model's question tool for a run's runner processes: an autonomous run has no operator to
+ * answer it. A live process keeps the setting it was launched with, so another run may reuse it
+ * in place only when this value is the same for both runs.
+ */
+export function modelQuestionsForRun(run: Pick<Run, 'mode'> | null | undefined): 'off' | undefined {
+  return run?.mode === 'autonomous' ? 'off' : undefined;
+}
+
+/** Recorded process setting, distinct from the optional CLI switch. */
+export function effectiveModelQuestionsForRun(
+  run: Pick<Run, 'mode'> | null | undefined,
+): 'on' | 'off' {
+  return effectiveModelQuestions(modelQuestionsForRun(run));
+}
+
+const modelQuestionSwitches: Readonly<Partial<Record<string, ModelQuestionsSwitch>>> =
+  modelQuestionsOffByRunner;
+
+/** Shell words that remove the model's own question tool, with a leading space, or ''. */
+function modelQuestionsArgs(runner: string, modelQuestions?: 'off'): string {
+  const args = modelQuestions === 'off' ? modelQuestionSwitches[runner]?.args : undefined;
+  return args?.length ? ` ${args.map(shellQuote).join(' ')}` : '';
+}
+
+/** The runner's environment that removes the model's own question tool. */
+export function modelQuestionsEnvironment(
+  runner: string,
+  modelQuestions?: 'off',
+): Readonly<Record<string, string>> {
+  return (modelQuestions === 'off' && modelQuestionSwitches[runner]?.environment) || {};
+}
+
+/** Exports each variable ahead of the command. */
+function withExportedEnvironment(
+  environment: Readonly<Record<string, string>>,
+  command: string,
+): string {
+  return `${Object.entries(environment)
+    .map(([key, value]) => `export ${key}=${shellQuote(value)};`)
+    .join(' ')} ${command}`;
+}
+
+function withModelQuestionsEnvironment(
+  command: string,
+  runner: string,
+  modelQuestions?: 'off',
+): string {
+  const environment = modelQuestionsEnvironment(runner, modelQuestions);
+  return Object.keys(environment).length ? withExportedEnvironment(environment, command) : command;
 }
 
 export function resolveRunnerEffort(runnerId: string, effort?: string | null): string | undefined {
@@ -340,10 +398,13 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   shellEnvironmentNames?: string[];
   machine?: RawPoolJson;
   resumeSessionId?: string;
+  /** Argument switches only; the caller sets modelQuestionsEnvironment in the launch environment. */
+  modelQuestions?: 'off';
 }): string | null {
   const runnerId = options.runner.trim();
   if (!runnerId) return null;
   const binary = interactiveRunnerExecutable(options);
+  const questionsArgs = modelQuestionsArgs(runnerId, options.modelQuestions);
   const modelFlag = options.model?.trim() ? ` --model ${shellQuote(options.model.trim())}` : '';
   const promptArg = `"$(cat ${shellQuote(options.promptPath)})"`;
   const safetyFlags = runnerFlagsForTier(runnerId, options.safetyTier).map(shellQuote).join(' ');
@@ -365,6 +426,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       options.shellEnvironmentNames
         ? `--config ${shellQuote(codexShellEnvironmentPolicy(options.shellEnvironmentNames))}`
         : '',
+      questionsArgs.trim(),
       modelFlag.trim(),
       options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
       promptArg,
@@ -394,7 +456,8 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     })} ${promptArg}`;
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
-  return `${shellQuote(binary || runnerId)}${reviewFlags ? ` ${reviewFlags}` : ''}${flags}${modelFlag} ${promptArg}`;
+  // Claude's list-valued switch goes ahead of the review and safety options, never before the prompt.
+  return `${shellQuote(binary || runnerId)}${questionsArgs}${reviewFlags ? ` ${reviewFlags}` : ''}${flags}${modelFlag} ${promptArg}`;
 }
 
 /** Runners whose persisted sessions can be resumed via buildRunnerSessionReloadCommand. */
@@ -430,6 +493,8 @@ interface RunnerSessionReloadOptions {
   taskDir?: string;
   effort?: string | null;
   safetyTier?: SafetyTier;
+  /** 'off' for an autonomous run: the resumed model has no question tool. */
+  modelQuestions?: 'off';
   runtimeDir?: string;
   codexAccountLabel?: string | null;
   codexAuthSource?: string | null;
@@ -476,7 +541,7 @@ export function buildRunnerSessionReloadCommand(
       withTaskRecipeTrustEnvironment(
         blind(
           withRunnerObservabilityInstall(
-            `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
+            `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${modelQuestionsArgs(runner, opts.modelQuestions)}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
             installCommand,
             settingsFallback,
           ),
@@ -498,7 +563,7 @@ export function buildRunnerSessionReloadCommand(
     );
     const modelFlag = runnerModelFlag(model);
     const effortFlag = codexReasoningEffortFlag(opts.effort, model);
-    const workerConfigFlags = codexWorkerConfigFlags();
+    const workerConfigFlags = `${codexWorkerConfigFlags()}${modelQuestionsArgs(runner, opts.modelQuestions)}`;
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const codexHomeSetup = buildCodexHomeSetup(repo, opts.runtimeDir ?? '.agent', {
@@ -535,11 +600,15 @@ export function buildRunnerSessionReloadCommand(
     return withMachineEnv(
       withTaskRecipeTrustEnvironment(
         blind(
-          withRequiredRunnerInstall(
-            `cd ${shellQuote(repo)} && ${resolveGrokBinary(
-              vars.grokPath,
-            )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
-            installCommand,
+          withModelQuestionsEnvironment(
+            withRequiredRunnerInstall(
+              `cd ${shellQuote(repo)} && ${resolveGrokBinary(
+                vars.grokPath,
+              )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
+              installCommand,
+            ),
+            runner,
+            opts.modelQuestions,
           ),
         ),
         repo,
@@ -603,10 +672,11 @@ export function buildCodexExecLaunch(options: {
   runtimeDir?: string;
   /** Safety tier (ADR-023). Omit to let `runnerFlagsForTier` apply the codex default (`sandboxed`). */
   safetyTier?: SafetyTier;
+  modelQuestions?: 'off';
 }): string {
   const modelFlag = runnerModelFlag(options.model);
   const effortFlag = codexReasoningEffortFlag(options.effort, options.model);
-  const workerConfigFlags = codexWorkerConfigFlags();
+  const workerConfigFlags = `${codexWorkerConfigFlags()}${modelQuestionsArgs('codex', options.modelQuestions)}`;
   const flagList = runnerFlagsForTier('codex', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const prompt = options.prompt?.trim() ? ` ${shellQuote(options.prompt)}` : '';
@@ -821,6 +891,8 @@ export interface BuildLaunchOptions {
   codexAuthSource?: string | null;
   /** Capsule of a blind eval trial; its worker starts without GitHub credentials. */
   blindTrialCapsule?: string;
+  /** 'off' for an autonomous run: the model has no question tool (modelQuestionsOffByRunner). */
+  modelQuestions?: 'off';
 }
 
 /**
@@ -852,14 +924,12 @@ export function buildLaunchCommand(
 
   const withSourceInputs = (command: string): string => {
     const sources = currentProjectSources();
-    if (!sources) return command;
-    const env = sourceWorkerEnvironment(sources);
-    return `${Object.entries(env)
-      .map(([key, value]) => `export ${key}=${shellQuote(value)};`)
-      .join(' ')} ${command}`;
+    return sources ? withExportedEnvironment(sourceWorkerEnvironment(sources), command) : command;
   };
-  const withRecipeTrust = (command: string): string =>
-    withMachineEnv(
+  const withRecipeTrust = (launch: string): string => {
+    // Grok's and OpenCode's switches are environment, on whichever path launches them.
+    const command = withModelQuestionsEnvironment(launch, runner, opts.modelQuestions);
+    return withMachineEnv(
       withTaskRecipeTrustEnvironment(
         // Innermost, so neither pool nor project environment restores a credential.
         withSourceInputs(
@@ -872,6 +942,8 @@ export function buildLaunchCommand(
       ),
       vars,
     );
+  };
+  const questionsArgs = modelQuestionsArgs(runner, opts.modelQuestions);
 
   // none runner: no launch command (silent sentinel; callers decide what to do).
   if (runner === 'none') return '';
@@ -972,7 +1044,11 @@ export function buildLaunchCommand(
           `Claude dispatch_cmd on ${vars.machine} must include {runner_path} or {claude_path} so runtime arguments target the runner executable`,
         );
       }
-      const runnerArgs = [cmdHasModelPlaceholder ? '' : modelFlag.trim(), settingsFlag.trim()]
+      const runnerArgs = [
+        cmdHasModelPlaceholder ? '' : modelFlag.trim(),
+        questionsArgs.trim(),
+        settingsFlag.trim(),
+      ]
         .filter(Boolean)
         .join(' ');
       const claudeDispatchCommand = expandDispatchCmd(vars, {
@@ -997,7 +1073,7 @@ export function buildLaunchCommand(
     const flags = flagList.join(' ');
     return withRecipeTrust(
       withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${settingsFlag}${launchPrompt ? ` ${shellQuote(launchPrompt)}` : ''}`,
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${questionsArgs}${settingsFlag}${launchPrompt ? ` ${shellQuote(launchPrompt)}` : ''}`,
         installCommand,
         settingsFallback,
       ),
@@ -1018,7 +1094,7 @@ export function buildLaunchCommand(
     if (cmdIsRunnerAware) {
       return withRecipeTrust(
         withRunnerObservabilityInstall(
-          `unset CLAUDECODE && ${buildCodexHomeSetup(repo, opts.runtimeDir)} && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort, model)}`,
+          `unset CLAUDECODE && ${buildCodexHomeSetup(repo, opts.runtimeDir)} && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort, model, questionsArgs)}`,
           installCommand,
         ),
       );
@@ -1036,6 +1112,7 @@ export function buildLaunchCommand(
           repo,
           runtimeDir: opts.runtimeDir,
           safetyTier: tier,
+          modelQuestions: opts.modelQuestions,
         }),
         installCommand,
       ),
@@ -1137,20 +1214,21 @@ function injectCodexReasoningEffortFlag(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   effort?: string | null,
   model?: string | null,
+  questionsArgs = '',
 ): string {
   const effortFlag = codexReasoningEffortFlag(effort, model);
   const workerConfigFlags = codexWorkerConfigFlags();
   if (command.includes('mcp_servers.n8n-mcp.enabled=false')) {
-    return injectCodexWorkerConfigFlags(command, vars, CODEX_PLUGIN_HOOK_ARGS);
+    return injectCodexWorkerConfigFlags(command, vars, `${CODEX_PLUGIN_HOOK_ARGS}${questionsArgs}`);
   }
   if (command.includes('model_reasoning_effort')) {
     return injectCodexWorkerConfigFlags(
       command,
       vars,
-      `${CODEX_PLUGIN_HOOK_ARGS}${workerConfigFlags}`,
+      `${CODEX_PLUGIN_HOOK_ARGS}${workerConfigFlags}${questionsArgs}`,
     );
   }
-  const flags = `${CODEX_PLUGIN_HOOK_ARGS}${effortFlag}${workerConfigFlags}`;
+  const flags = `${CODEX_PLUGIN_HOOK_ARGS}${effortFlag}${workerConfigFlags}${questionsArgs}`;
   return injectCodexWorkerConfigFlags(command, vars, flags);
 }
 

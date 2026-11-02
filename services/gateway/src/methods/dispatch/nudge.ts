@@ -25,6 +25,7 @@ import {
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+import { effectiveModelQuestionsForRun } from '../../runners/launch-command.js';
 import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
@@ -295,6 +296,16 @@ export async function nudgeDispatch(
     },
   );
   if (eligibilityFail) throw new Error(`Branch-affinity nudge no longer valid: ${eligibilityFail}`);
+  // A live worker keeps its launch's question tool, which a nudge cannot change.
+  const priorWorker =
+    priorOwner &&
+    selectAgentContext(priorOwner, {
+      role: primaryRoleForFlow(priorOwner.flowType),
+    });
+  if (priorWorker?.modelQuestions !== effectiveModelQuestionsForRun(requestingRun))
+    throw new Error(
+      'Branch-affinity nudge no longer valid: the run mode changes the question tool',
+    );
 
   let projectJson: RawProjectJson = {};
   try {
@@ -511,6 +522,7 @@ export async function nudgeDispatch(
   // here would have it look at an empty window.
   const workingContext = await upsertAgentContext(params.runId, workerRole, {
     status: 'working',
+    modelQuestions: effectiveModelQuestionsForRun(requestingRun),
     taskFile: `${workerTaskDir}/TASK.md`,
     signalFile: `${workerTaskDir}/SIGNAL.json`,
     runner,
