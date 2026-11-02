@@ -2,6 +2,7 @@ import type {
   ExecResult,
   RuntimeCapabilityTarget,
   SlotActionPlacement,
+  SlotParkedCommits,
   SlotRecoveryRefusal,
   SlotStatus,
   SlotWorkspaceIdentity,
@@ -216,6 +217,8 @@ export interface SlotRefreshResult {
   branch: string;
   /** True when origin/<branch> moved past the slot's prior HEAD. */
   advanced: boolean;
+  /** Unpushed commits the release parked before resetting, including a failed attempt's. */
+  parked?: SlotParkedCommits[];
 }
 export interface SlotCleanupParams {
   slotId: string;

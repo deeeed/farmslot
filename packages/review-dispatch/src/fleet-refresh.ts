@@ -7,7 +7,9 @@ import {
   type FleetRefreshSummaryEvent,
   type FleetStatusResult,
   Methods,
+  parksSlotCommits,
   type ScriptOutput,
+  slotParkedDetail,
   type SlotRecoveryEligibility,
   slotRecoveryEligibility,
   type SlotRefreshResult,
@@ -107,7 +109,9 @@ export function fleetWorkspaceRow(slot: SlotStatus): FleetWorkspaceRow {
           : 'Release and update to main',
     warning: eligibility.confirmationRequired
       ? `${work?.dirtyCount ?? 0} changed files, ${work?.unpublishedCount ?? 0} unpublished commits on ${work?.branch ?? slot.branch}`
-      : (eligibility.detail ?? slot.workspaceError ?? ''),
+      : eligibility.allowed && work && parksSlotCommits(work)
+        ? `${work.unpublishedCount} unpushed commit${work.unpublishedCount === 1 ? '' : 's'} on ${work.branch} will be parked under refs/farmslot/parked before the update`
+        : (eligibility.detail ?? slot.workspaceError ?? ''),
     eligibility,
   };
 }
@@ -455,7 +459,10 @@ export class FleetRefreshViewModel {
       }
       this.update(slotId, {
         status: result.refreshed ? 'refreshed' : 'failed',
-        detail: result.detail ?? result.reason ?? 'Ready on main',
+        detail:
+          result.refreshed && result.parked?.length
+            ? slotParkedDetail(result.parked)
+            : (result.detail ?? result.reason ?? 'Ready on main'),
       });
       this.phase = 'done';
       await this.refreshRows();

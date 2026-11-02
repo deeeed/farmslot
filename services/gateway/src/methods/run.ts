@@ -38,6 +38,7 @@ import {
   needsGateParkRestore,
   parseGitHubRef,
   pipelineReviewPolicyError,
+  PipelineSteps,
   pipelineStepsForRun,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
@@ -124,6 +125,7 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import { buildCIWatchChainedRunParams } from '../run-engine/ci-watch-chain.js';
+import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import {
   isHumanGateReviewRequestAction,
   isResumeCarriedHumanGateAction,
@@ -181,6 +183,7 @@ import {
 } from '../run-engine/visual-repair.js';
 import {
   CANCEL_RUN_ACTION,
+  REPLAY_STEP_ACTION,
   WORKER_LEFT_RUNNING_DECISION,
 } from '../run-engine/worker-left-running.js';
 import { WORKER_QUESTION_CLOSED_ACTION } from '../run-engine/worker-question.js';
@@ -1657,6 +1660,7 @@ function assertCurrentGateDecision(run: Run, decision: RunDecision): void {
 type TriageAssessmentPrice = NonNullable<NonNullable<AssessmentRecord['reservation']>['price']>;
 
 export interface RunResolveDecisionDependencies {
+  replayStep?: typeof runReplayStep;
   assertGatePrerequisites?: import('../run-engine/gate-prerequisites.js').GatePrerequisiteAssertion;
   probePublicationBase?: typeof import('../run-engine/branch-freshness.js').probeRunBaseFreshness;
   /** Supplied only by the authenticated ingress, never RPC parameters or background callers. */
@@ -1904,6 +1908,40 @@ export function continueResolvedRunDecision(
         await (dependencies.cancelRun ?? runCancel)({
           runId: params.runId,
           reason: 'Cancelled by the operator after a step error left its agents running',
+        });
+        return;
+      }
+      // Replay on a DISPATCH card is a real replay: it adopts a signal the worker has written since
+      // and clears a stale one, where resuming the engine would restart a worker that finished.
+      // A refused replay can leave DISPATCH done with the signal adopted: replaying it again would
+      // clear that signal and relaunch, so the resume below continues at MONITOR instead.
+      const card = afterResolve.decisions.find((d) => d.id === params.decisionId);
+      if (
+        params.actionId === REPLAY_STEP_ACTION &&
+        card?.type === WORKER_LEFT_RUNNING_DECISION &&
+        card.context?.step === PipelineSteps.DISPATCH &&
+        afterResolve.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.status !== 'done'
+      ) {
+        await (dependencies.replayStep ?? runReplayStep)(
+          { runId: params.runId, stepName: PipelineSteps.DISPATCH, triggeredBy: 'operator' },
+          emit,
+        ).catch((err: Error) => {
+          // A refused replay (slot unreachable, say) must leave the operator a way out.
+          console.warn(
+            `[run] replay from the card on ${params.runId.slice(0, 8)} was refused: ${err.message}`,
+          );
+          const reopened = { ...card, resolvedAt: undefined, resolvedAction: undefined };
+          const current = getRun(params.runId) ?? afterResolve;
+          const run = updateRun(params.runId, {
+            error: `Replay step was refused: ${err.message}`,
+            decisions: current.decisions.map((d) => (d.id === card.id ? reopened : d)),
+          });
+          emit(Events.RUN_DECISION_NEW, {
+            runId: run.id,
+            decision: pendingDecisionForRun(run, reopened),
+            slotId: run.slotId,
+          });
+          emit(Events.RUN_UPDATED, { run });
         });
         return;
       }

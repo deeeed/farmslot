@@ -129,8 +129,11 @@ test('the bulk release sends exactly the selected safe slots to fleet.refreshSlo
   const unpushed = slot('unpushed-1', {
     workspace: { ...workspace('feat/x'), publication: 'unpushed', unpublishedCount: 1 },
   });
-  const fleet = [idle, idle2, busy, unpushed];
-  const scope = fleetReleaseScope(fleet, new Set(['idle-2', 'busy-1', 'unpushed-1']));
+  const dirty = slot('dirty-1', {
+    workspace: { ...workspace('feat/x'), dirtyCount: 1 },
+  });
+  const fleet = [idle, idle2, busy, unpushed, dirty];
+  const scope = fleetReleaseScope(fleet, new Set(['idle-2', 'busy-1', 'unpushed-1', 'dirty-1']));
   const calls: Array<{ method: string; params: unknown }> = [];
   const model = new FleetRefreshViewModel(
     {
@@ -150,11 +153,11 @@ test('the bulk release sends exactly the selected safe slots to fleet.refreshSlo
   await model.load(scope.slotIds, fleet);
   assert.deepEqual(
     model.rows.map((row) => row.slotId),
-    ['idle-2', 'busy-1', 'unpushed-1'],
+    ['idle-2', 'busy-1', 'unpushed-1', 'dirty-1'],
   );
   assert.equal(
     fleetLocalWorkNote(model.rows),
-    'Unpushed or uncommitted work on unpushed-1. Bulk release skips it.',
+    'Unpushed or uncommitted work on dirty-1. Bulk release skips it.',
   );
   await model.releaseIdle();
   const bulk = calls.filter((call) => call.method === Methods.FLEET_REFRESH_SLOTS);
@@ -162,8 +165,11 @@ test('the bulk release sends exactly the selected safe slots to fleet.refreshSlo
   const { slots } = bulk[0].params as { slots: Array<{ slotId: string; mode: string }> };
   assert.deepEqual(
     slots.map((target) => [target.slotId, target.mode]),
-    [['idle-2', 'safe']],
-    'busy and unpushed rows stay out of bulk; idle-1 was not selected',
+    [
+      ['idle-2', 'safe'],
+      ['unpushed-1', 'safe'],
+    ],
+    'ownerless commits are parked; busy and dirty rows stay out; idle-1 was not selected',
   );
   model.dispose();
 });

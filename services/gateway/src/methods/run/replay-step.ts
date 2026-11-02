@@ -1951,6 +1951,8 @@ async function replayRunStep(
         detail: 'Recovered uncertain prompt delivery from the fresh task-local worker signal',
         outputs: {
           ...(dispatchStep?.outputs ?? {}),
+          // Answered: a restart skips a run still marked, so the mark must not outlive this.
+          promptDeliveryUncertain: false,
           acknowledgement: 'task-signal',
           signalAttemptId: adoptedTaskSignal.attemptId,
           recoveredAt: new Date().toISOString(),

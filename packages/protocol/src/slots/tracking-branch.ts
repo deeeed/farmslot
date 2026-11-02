@@ -12,6 +12,14 @@ export interface ResetSlotRepoToIdleOptions {
   linkedWorktree?: boolean;
   /** Internal caller has verified and explicitly authorized discarding staged work. */
   discardLocalWork?: boolean;
+  /** The Git state the caller inspected and parked; the reset refuses if it changed since. */
+  expect?: SlotResetExpectation;
+}
+
+export interface SlotResetExpectation {
+  headSha: string;
+  /** Local branches the reset overwrites, each with the commit it pointed at (null: absent). */
+  branches?: Readonly<Record<string, string | null>>;
 }
 
 export function remoteBranchRefspec(name: string): string {

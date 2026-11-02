@@ -10,6 +10,7 @@ import type { ParkedRunCommits, Run } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 import type { execOnSlot } from '../core/exec.js';
+import { resetSlotRepoToIdle } from '../methods/slot/slot-tracking.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
@@ -18,6 +19,8 @@ import {
   dropParkedBranch,
   parkRunBranchCommits,
   parksBranchCommits,
+  parkSlotBranch,
+  parkSlotCommits,
   recordReleasedCheckout,
   restoreParkedBranch,
 } from './validation-run-commits.js';
@@ -59,7 +62,7 @@ async function fixture(t: test.TestContext) {
   const created = createRun({
     flowType: 'dev',
     project: 'farmslot-farm',
-    ticketOrPr: `PROJ-${Date.now()}`,
+    ticketOrPr: 'deeeed/farmslot#1769',
   });
   t.after(async () => {
     if (!getRun(created.id)) return;
@@ -229,4 +232,92 @@ test('only a finished artifact-only dev or fix-bug run parks its branch commits'
     ),
     true,
   );
+});
+
+test("an ownerless slot's unpushed commits are parked under a manual ref before the idle reset", async (t) => {
+  const { git, vars, base, head } = await fixture(t);
+  // Ownerless work on the idle branch itself: the reset to origin/main would drop it.
+  git('checkout', '-q', 'main');
+  git('merge', '-q', '--ff-only', 'TAT-4146-validation');
+  git('branch', '-q', '-D', 'TAT-4146-validation');
+  const parked = await parkSlotCommits(vars, localExec, {
+    ...checks,
+    headSha: head,
+    now: new Date('2026-11-02T10:00:00.000Z'),
+  });
+  assert.deepEqual(parked, {
+    ref: `refs/farmslot/parked/manual-proof-slot-20261102T100000000Z/${head}`,
+    branch: 'main',
+    commits: 2,
+  });
+  await resetSlotRepoToIdle(vars, {}, undefined, 'main', { linkedWorktree: false });
+  assert.equal(git('rev-parse', 'HEAD'), base, 'the slot is back on origin/main');
+  assert.equal(git('rev-parse', parked!.ref), head, 'the parked ref keeps the work');
+  assert.equal(git('rev-list', '--count', parked!.ref, '--not', '--remotes'), '2');
+  assert.equal((await parkSlotCommits(vars, localExec, { ...checks, headSha: base }))?.commits, 0);
+});
+
+test('an ownerless park refuses a head that moved since the inspection', async (t) => {
+  const { git, vars, base, head } = await fixture(t);
+  assert.equal(await parkSlotCommits(vars, localExec, { ...checks, headSha: base }), null);
+  assert.equal(git('for-each-ref', 'refs/farmslot/'), '');
+  // A feature branch is parked too and keeps its own name in the report.
+  const parked = await parkSlotCommits(vars, localExec, { ...checks, headSha: head });
+  assert.equal(parked?.branch, 'TAT-4146-validation');
+  assert.equal(parked?.commits, 2);
+});
+
+test('an ownerless park names a valid ref for any slot id and never moves an existing one', async (t) => {
+  const { git, vars, base, head } = await fixture(t);
+  const now = new Date('2026-11-02T10:00:00.000Z');
+  const odd = { ...vars, slotId: 'team/a.b..lock' };
+  const parked = await parkSlotCommits(odd, localExec, { ...checks, headSha: head, now });
+  assert.equal(
+    parked?.ref,
+    `refs/farmslot/parked/manual-team-a-b-lock-20261102T100000000Z/${head}`,
+  );
+  git('check-ref-format', parked!.ref);
+  // Parking the same head again keeps the same ref, as the run park does.
+  assert.deepEqual(
+    await parkSlotCommits(odd, localExec, { ...checks, headSha: head, now }),
+    parked,
+  );
+  // A ref already naming another head is never moved: the park refuses before any reset.
+  const taken = `refs/farmslot/parked/manual-proof-slot-20261102T100000000Z/${head}`;
+  git('update-ref', taken, base);
+  await assert.rejects(
+    parkSlotCommits(vars, localExec, { ...checks, headSha: head, now }),
+    /Cannot park/,
+  );
+  assert.equal(git('rev-parse', taken), base);
+});
+
+test('a detached head already reachable through another remote is still parked', async (t) => {
+  const { git, vars, head } = await fixture(t);
+  git('push', '-q', 'origin', 'HEAD:topic');
+  git('checkout', '-q', '--detach', head);
+  const parked = await parkSlotCommits(vars, localExec, { ...checks, headSha: head });
+  assert.equal(parked?.commits, 2);
+  assert.equal(git('rev-parse', parked!.ref), head);
+});
+
+test('a local idle branch with work absent from the current branch is parked too', async (t) => {
+  const { git, vars, base, head } = await fixture(t);
+  git('checkout', '-q', 'main');
+  git('commit', '-qm', 'operator main work', '--allow-empty');
+  const main = git('rev-parse', 'HEAD');
+  git('checkout', '-q', 'TAT-4146-validation');
+  const parked = await parkSlotBranch(vars, localExec, {
+    branch: 'main',
+    defaultBranch: 'main',
+    headSha: head,
+  });
+  assert.equal(parked?.commits, 1);
+  assert.equal(git('rev-parse', parked!.ref), main);
+  await resetSlotRepoToIdle(vars, {}, undefined, 'main', {
+    linkedWorktree: false,
+    expect: { headSha: head, branches: { main } },
+  });
+  assert.equal(git('rev-parse', 'HEAD'), base);
+  assert.equal(git('rev-parse', parked!.ref), main);
 });
