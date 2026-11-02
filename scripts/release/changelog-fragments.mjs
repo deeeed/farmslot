@@ -11,27 +11,43 @@ import { extractSection, isPlaceholderBullet } from './parse-changelog.mjs';
 
 export const FRAGMENT_DIR = '.changes';
 
-export function isFragmentPath(file) {
-  return /(^|\/)\.changes\/[^/]+\.md$/.test(file);
+/** The one fragment rule: an `.md` file directly in its own workspace's `.changes/` directory. */
+export function isFragmentPath(file, workspace) {
+  return path.dirname(file) === path.join(workspace, FRAGMENT_DIR) && file.endsWith('.md');
+}
+
+function changesEntries(workspaceDir) {
+  const dir = path.join(workspaceDir, FRAGMENT_DIR);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).map((entry) => ({
+    file: path.join(dir, entry.name),
+    fragment: entry.isFile() && isFragmentPath(path.join(dir, entry.name), workspaceDir),
+  }));
 }
 
 /** Fragment files of one workspace, in name order. */
 export function fragmentFiles(workspaceDir) {
-  const dir = path.join(workspaceDir, FRAGMENT_DIR);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((name) => name.endsWith('.md'))
-    .sort()
-    .map((name) => path.join(dir, name));
+  return changesEntries(workspaceDir)
+    .filter((entry) => entry.fragment)
+    .map((entry) => entry.file)
+    .sort();
 }
 
-/** A fragment holds only bullet lines (and blank lines); anything else is an error. */
+/** Entries of `.changes/` that no reader sees, such as a branch path `.changes/fix/foo.md`. */
+export function strayChangesEntries(workspaceDir) {
+  return changesEntries(workspaceDir)
+    .filter((entry) => !entry.fragment)
+    .map((entry) => entry.file);
+}
+
+/** A fragment opens with a bullet and holds only bullets and their indented lines. */
 export function fragmentProblems(text) {
   const lines = text.split(/\r?\n/).filter((line) => line.trim());
   if (lines.length === 0) return ['is empty'];
   const problems = [];
+  if (!lines[0].startsWith('- ')) problems.push(`must open with a '- ' bullet`);
   for (const line of lines)
-    if (!line.startsWith('- ') && !line.startsWith('  '))
+    if (!/^- \S/.test(line) && !line.startsWith('  '))
       problems.push(`has a line that is not a '- ' bullet: ${line.slice(0, 60)}`);
   if (lines.some((line) => line.startsWith('- ') && isPlaceholderBullet(line)))
     problems.push('repeats the Unreleased placeholder bullet');
@@ -48,12 +64,11 @@ export function changelogWithFragments(changelog, fragmentTexts) {
   const unreleased = extractSection(changelog, (line) => /^##\s+Unreleased\b/i.test(line));
   if (!unreleased) throw new Error('Missing ## Unreleased section');
   const lines = changelog.split(/\r?\n/);
-  let end = unreleased.headingIndex + 1;
-  while (end < lines.length && !lines[end].startsWith('## ')) end += 1;
   // Insert after the section's last non-blank line so the next heading keeps its spacing.
-  let insert = end;
+  let insert = unreleased.endIndex;
   while (insert > unreleased.headingIndex + 1 && !lines[insert - 1].trim()) insert -= 1;
-  return [...lines.slice(0, insert), bullets, ...lines.slice(insert)].join('\n');
+  const opening = insert === unreleased.headingIndex + 1 ? [''] : [];
+  return [...lines.slice(0, insert), ...opening, bullets, ...lines.slice(insert)].join('\n');
 }
 
 /** A workspace's changelog as readers should see it, and the fragment files it includes. */

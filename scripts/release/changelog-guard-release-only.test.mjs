@@ -146,7 +146,50 @@ test('changelog guard: a fragment under a branch-path subdirectory fails', (t) =
   );
 });
 
-test('changelog guard: a release cut that folds and deletes fragments needs no new note', (t) => {
+test('changelog guard: a src/.changes note is code, not a release note', (t) => {
+  const repo = makeRepo(t);
+  repo.write('packages/protocol/src/index.ts', 'export const value = 2;\n');
+  repo.write('packages/protocol/src/.changes/add-value-2.md', '- Add `value` 2.\n');
+  const result = repo.guard('feat(protocol): add value 2');
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /packages\/protocol code changed .* but it has no release note/);
+});
+
+test("changelog guard: trimming or deleting another PR's fragment fails", (t) => {
+  for (const change of ['trim', 'delete']) {
+    const repo = makeRepo(t, {
+      'packages/protocol/.changes/earlier.md': '- Earlier note one.\n- Earlier note two.\n',
+    });
+    repo.write('packages/protocol/src/index.ts', 'export const value = 3;\n');
+    repo.write('packages/protocol/.changes/add-value-3.md', '- Add `value` 3.\n');
+    if (change === 'trim')
+      repo.write('packages/protocol/.changes/earlier.md', '- Earlier note one.\n');
+    else rmSync(path.join(repo.dir, 'packages/protocol/.changes/earlier.md'));
+    const result = repo.guard('feat(protocol): add value 3');
+    assert.equal(result.status, 1, `${change}: ${result.stdout}`);
+    assert.match(result.stderr, /drops a fragment's release note \("Earlier note (one|two)/);
+  }
+});
+
+test('changelog guard: a release cut that truncates a wrapped fragment fails', (t) => {
+  const repo = makeRepo(t, {
+    'packages/protocol/.changes/wrapped.md': '- Alpha feature that wraps\n  onto a second line.\n',
+  });
+  repo.write(
+    'packages/protocol/CHANGELOG.md',
+    '# Changelog\n\n## Unreleased\n\n## 0.1.1 - 2026-11-02\n\n- Alpha feature that wraps\n',
+  );
+  repo.write(
+    'packages/protocol/package.json',
+    JSON.stringify({ name: '@farmslot/protocol', version: '0.1.1' }),
+  );
+  rmSync(path.join(repo.dir, 'packages/protocol/.changes/wrapped.md'));
+  const result = repo.guard('chore(release): cut protocol 0.1.1');
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /drops a fragment's release note \("Alpha feature that wraps/);
+});
+
+test('changelog guard: a release cut that moves fragments into the changelog passes', (t) => {
   const repo = makeRepo(t, { 'packages/protocol/.changes/add-value-2.md': '- Add `value` 2.\n' });
   repo.write(
     'packages/protocol/CHANGELOG.md',

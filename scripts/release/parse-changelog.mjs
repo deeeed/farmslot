@@ -12,13 +12,16 @@ export function isPlaceholderBullet(line) {
   return PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
+// A bullet runs from its `-` line through the indented lines under it (wrapped text or nested
+// bullets), so a cut moves it whole.
 export function parseBullets(sectionText) {
-  return sectionText
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('-'))
-    .map((line) => line.replace(/^-\s*/, '').trim())
-    .filter((line) => line.length > 0);
+  const bullets = [];
+  for (const line of sectionText.split('\n')) {
+    if (line.startsWith('-')) bullets.push(line.replace(/^-\s*/, '').trimEnd());
+    else if (bullets.length > 0 && /^\s+\S/.test(line))
+      bullets[bullets.length - 1] += `\n${line.trimEnd()}`;
+  }
+  return bullets.filter((bullet) => bullet.trim().length > 0);
 }
 
 export function meaningfulBullets(sectionText) {
@@ -34,15 +37,14 @@ export function extractSection(changelog, headingMatches) {
   const lines = changelog.split(/\r?\n/);
   const headingIndex = lines.findIndex((line) => headingMatches(line.trim()));
   if (headingIndex < 0) return undefined;
-  const sectionLines = [];
-  for (let i = headingIndex + 1; i < lines.length; i += 1) {
-    if (lines[i].startsWith('## ')) break;
-    sectionLines.push(lines[i]);
-  }
+  let endIndex = headingIndex + 1;
+  while (endIndex < lines.length && !lines[endIndex].startsWith('## ')) endIndex += 1;
   return {
     heading: lines[headingIndex].trim(),
-    body: sectionLines.join('\n'),
+    body: lines.slice(headingIndex + 1, endIndex).join('\n'),
     headingIndex,
+    // The next section's heading line, or the line count when this section is last.
+    endIndex,
   };
 }
 
@@ -116,15 +118,8 @@ export function applyChangelogCut(content, { version, date, include, defer }) {
   const placeholder =
     '- Active-development baseline; add user-facing changes here before release or package publication.';
 
-  const afterUnreleasedIndex = (() => {
-    for (let i = unreleased.headingIndex + 1; i < lines.length; i += 1) {
-      if (lines[i].startsWith('## ')) return i;
-    }
-    return lines.length;
-  })();
-
   const head = lines.slice(0, unreleased.headingIndex);
-  const tail = lines.slice(afterUnreleasedIndex);
+  const tail = lines.slice(unreleased.endIndex);
   const next = [
     ...head,
     '## Unreleased',

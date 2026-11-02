@@ -10,6 +10,7 @@ import {
   fragmentProblems,
   isFragmentPath,
   readChangelogWithFragments,
+  strayChangesEntries,
 } from './changelog-fragments.mjs';
 import { applyChangelogCut, unreleasedMeaningfulBullets } from './parse-changelog.mjs';
 
@@ -41,18 +42,45 @@ test('a release cut writes fragment bullets into the new version', () => {
   assert.match(cut, /## 1\.1\.0 - 2026-11-02\n\n- An older bullet\.\n- Fix the probe\./);
 });
 
+test('a wrapped fragment bullet reaches the cut whole, as folding writes it', () => {
+  const fragment = '- Alpha feature that wraps\n  onto a second line.\n  - With a nested point.\n';
+  const merged = changelogWithFragments(changelog, [fragment]);
+  const include = unreleasedMeaningfulBullets(merged);
+  assert.deepEqual(include, [
+    'An older bullet.',
+    'Alpha feature that wraps\n  onto a second line.\n  - With a nested point.',
+  ]);
+  const cut = applyChangelogCut(merged, {
+    version: '1.1.0',
+    date: '2026-11-02',
+    include,
+    defer: [],
+  });
+  assert.ok(cut.includes(`## 1.1.0 - 2026-11-02\n\n- An older bullet.\n${fragment}`), cut);
+});
+
+test('folding into an empty Unreleased section keeps a blank line under the heading', () => {
+  assert.equal(
+    changelogWithFragments('# Changelog\n\n## Unreleased\n\n## 1.0.0\n', ['- A.\n']),
+    '# Changelog\n\n## Unreleased\n\n- A.\n\n## 1.0.0\n',
+  );
+});
+
 test('a fragment holds bullets only', () => {
   assert.deepEqual(fragmentProblems('- Fix the probe.\n  Continued line.\n'), []);
   assert.deepEqual(fragmentProblems('\n\n'), ['is empty']);
-  assert.match(fragmentProblems('Fix the probe.\n')[0], /not a '- ' bullet/);
+  assert.match(fragmentProblems('- \n').join(), /not a '- ' bullet/);
+  assert.match(fragmentProblems('  Only a continuation.\n').join(), /must open with a '- ' bullet/);
+  assert.match(fragmentProblems('Fix the probe.\n').join(), /not a '- ' bullet/);
   assert.match(fragmentProblems(`${placeholder}\n`).join(), /placeholder/);
 });
 
-test('fragment paths are .md files directly under a .changes directory', () => {
-  assert.equal(isFragmentPath('packages/cli/.changes/fix-probe.md'), true);
-  assert.equal(isFragmentPath('.changes/root.md'), true);
-  assert.equal(isFragmentPath('packages/cli/.changes/nested/x.md'), false);
-  assert.equal(isFragmentPath('packages/cli/CHANGELOG.md'), false);
+test('a fragment is an .md file directly in its workspace .changes directory', () => {
+  assert.equal(isFragmentPath('packages/cli/.changes/fix-probe.md', 'packages/cli'), true);
+  assert.equal(isFragmentPath('packages/cli/.changes/nested/x.md', 'packages/cli'), false);
+  assert.equal(isFragmentPath('packages/cli/src/.changes/x.md', 'packages/cli'), false);
+  assert.equal(isFragmentPath('packages/cli/.changes/notes.txt', 'packages/cli'), false);
+  assert.equal(isFragmentPath('packages/cli/CHANGELOG.md', 'packages/cli'), false);
 });
 
 test('a workspace reads its changelog with every fragment in name order', (t) => {
@@ -63,6 +91,14 @@ test('a workspace reads its changelog with every fragment in name order', (t) =>
   writeFileSync(path.join(dir, '.changes', 'b-second.md'), '- Second.\n');
   writeFileSync(path.join(dir, '.changes', 'a-first.md'), '- First.\n');
   writeFileSync(path.join(dir, '.changes', 'notes.txt'), 'not a fragment');
+  mkdirSync(path.join(dir, '.changes', 'fix'));
+  writeFileSync(path.join(dir, '.changes', 'fix', 'branch-path.md'), '- Lost.\n');
+  assert.deepEqual(
+    strayChangesEntries(dir)
+      .map((file) => path.relative(dir, file))
+      .sort(),
+    ['.changes/fix', '.changes/notes.txt'],
+  );
   const { content, fragments } = readChangelogWithFragments(dir);
   assert.deepEqual(
     fragments.map((file) => path.basename(file)),

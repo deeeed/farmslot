@@ -135,10 +135,18 @@ export function planProtocolVersion({ versionSource, gatewayDoc, protocolVersion
   return writes;
 }
 
-export function proposalCutDisposition(changelogContent, include) {
+export function proposalCutDisposition(changelogContent, include, defer = []) {
   const pending = new Set(unreleasedMeaningfulBullets(changelogContent));
   const pendingCount = include.filter((bullet) => pending.has(bullet)).length;
-  if (pendingCount === include.length) return 'cut';
+  if (pendingCount === include.length) {
+    // The cut deletes every fragment, so a note merged after curation must not be left out.
+    const covered = new Set([...include, ...defer]);
+    if ([...pending].some((bullet) => !covered.has(bullet)))
+      throw new Error(
+        'Release proposal does not cover every Unreleased bullet (one merged after curation?); curate again',
+      );
+    return 'cut';
+  }
   if (pendingCount > 0) {
     throw new Error('Release proposal only partially matches the current Unreleased section');
   }
@@ -164,7 +172,7 @@ function planCut(proposal) {
     const changelogPath = path.join(repoRoot, dir, 'CHANGELOG.md');
     // Each PR's fragment joins the Unreleased section; the cut writes them in and deletes them.
     const { content, fragments } = readChangelogWithFragments(path.join(repoRoot, dir));
-    if (proposalCutDisposition(content, entry.include) === 'already-cut') {
+    if (proposalCutDisposition(content, entry.include, entry.defer) === 'already-cut') {
       console.log(`[skip] ${dir} — proposal already cut`);
       continue;
     }
