@@ -59,7 +59,11 @@ import {
   prepareBranchMaintenance,
 } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
-import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  modelQuestionsForRun,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+} from '../runners/launch-command.js';
 import { runnerActivityIsBusy } from '../runners/observability-files.js';
 import { isObservabilityReadingAuthoritative } from '../runners/observability-send-decision.js';
 import type {
@@ -329,7 +333,7 @@ export async function sendCiFixNudge(input: {
     model: input.run?.metrics.model,
     effort: input.run?.effort,
     safetyTier: input.run?.safetyTier,
-    modelQuestions: input.run?.mode === 'autonomous' ? 'off' : undefined,
+    modelQuestions: modelQuestionsForRun(input.run),
     prompt: input.prompt,
     promptMarker: CI_FIX_CHECKLIST_TARGET.checklist,
     runtimeDir,
@@ -464,7 +468,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     safetyTier: run.safetyTier,
     runtimeDir,
     taskDir: taskDir ?? undefined,
-    modelQuestions: run.mode === 'autonomous' ? 'off' : undefined,
+    modelQuestions: modelQuestionsForRun(run),
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 

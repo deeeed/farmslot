@@ -3,6 +3,11 @@ export interface ModelQuestionsSwitch {
   environment?: Readonly<Record<string, string>>;
 }
 
+/** An omitted launch switch leaves the model's question tool enabled. */
+export function effectiveModelQuestions(setting?: 'off'): 'on' | 'off' {
+  return setting ?? 'on';
+}
+
 /** OpenCode's permission rule that removes its `question` tool. */
 export const opencodeQuestionPermission = { question: 'deny' } as const;
 
@@ -12,7 +17,7 @@ export const opencodeQuestionPermission = { question: 'deny' } as const;
  * goes through that tool and keeps working. Pi has no such tool; Cursor has no switch.
  * Both the native and the terminal (tmux) launches read this table.
  */
-export const modelQuestionsOffByRunner: Readonly<Record<string, ModelQuestionsSwitch>> = {
+export const modelQuestionsOffByRunner = {
   // Variadic: another option must follow, or a prompt after it is read as a tool name.
   claude: { args: ['--disallowedTools', 'AskUserQuestion'] },
   // A TOML struct; Codex rejects a bare boolean. A root option, so it may precede a subcommand.
@@ -20,4 +25,4 @@ export const modelQuestionsOffByRunner: Readonly<Record<string, ModelQuestionsSw
   grok: { environment: { GROK_ASK_USER_QUESTION: '0' } },
   // Merges with the project's own permission rules.
   opencode: { environment: { OPENCODE_PERMISSION: JSON.stringify(opencodeQuestionPermission) } },
-};
+} as const satisfies Record<string, ModelQuestionsSwitch>;

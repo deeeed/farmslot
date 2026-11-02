@@ -440,7 +440,7 @@ export const claudeNativeAdapter: NativeAdapter = {
           : []),
         ...(options.effort ? ['--effort', options.effort] : []),
         ...(options.model ? ['--model', options.model] : []),
-        ...(options.modelQuestions === 'off' ? (modelQuestionsOffByRunner.claude.args ?? []) : []),
+        ...(options.modelQuestions === 'off' ? modelQuestionsOffByRunner.claude.args : []),
         ...(options.resumeSessionId
           ? ['--resume', options.resumeSessionId]
           : ['--session-id', nativeSessionId]),

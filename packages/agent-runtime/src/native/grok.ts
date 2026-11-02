@@ -33,6 +33,6 @@ export const grokNativeAdapter = createAcpAdapter({
     'stdio',
   ],
   environment: (options) =>
-    options.modelQuestions === 'off' ? { ...modelQuestionsOffByRunner.grok.environment } : {},
+    options.modelQuestions === 'off' ? modelQuestionsOffByRunner.grok.environment : {},
   modes: ['default'],
 });

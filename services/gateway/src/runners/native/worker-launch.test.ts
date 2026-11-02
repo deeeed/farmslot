@@ -31,6 +31,7 @@ mock.module('../../core/exec.js', {
 });
 const { makeVars } = await import('../test-fixtures.js');
 const { prepareNativeWorkerLaunch } = await import('./worker-launch.js');
+const { modelQuestionsForRun } = await import('../launch-command.js');
 
 interface ProviderPool extends SlotPoolFile {
   env: { PROVIDER_ROOT: string };
@@ -150,7 +151,7 @@ test('only an autonomous run launches its native worker with model questions off
       runner: 'codex',
       model: 'gpt-6.1-sol',
       role: 'primary',
-      runMode,
+      modelQuestions: modelQuestionsForRun({ mode: runMode }),
       safetyTier: 'sandboxed',
       taskDir: 'tasks/proof',
       leaseId: 'proof-lease',

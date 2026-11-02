@@ -24,6 +24,7 @@ import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { runTaskLibraries } from '../../tasks/pinned-libraries.js';
 import { unwatchContext, watchContext } from '../../tasks/watcher.js';
+import { modelQuestionsForRun } from '../launch-command.js';
 import { runnerSupportsNativeTaskReuse } from '../registry.js';
 
 import { routeNativeExecution } from './node.js';
@@ -178,7 +179,7 @@ export async function rehomeNativeParkHandle(
   const projectVars = await loadProjectVars(run.project);
   const prepared = await prepareNativeWorkerLaunch({
     role: owner.context.role,
-    runMode: run.mode,
+    modelQuestions: modelQuestionsForRun(run),
     vars,
     taskLibraries: runTaskLibraries(run),
     project: projectVars.projectJson,

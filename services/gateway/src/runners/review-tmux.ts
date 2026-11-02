@@ -25,6 +25,8 @@ import { execNativeNodeArgv } from './native/node.js';
 import {
   buildInteractiveRefinementRunnerCommand,
   interactiveRunnerExecutable,
+  modelQuestionsEnvironment,
+  modelQuestionsForRun,
   workspaceTerminalSessionCreateArgv,
 } from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
@@ -219,6 +221,11 @@ export async function reviewTmuxOperation(
   if (action === 'launch') {
     const pool = await loadMachinePool(w.machine);
     const environment = await reviewEnvironment(run);
+    const modelQuestions = modelQuestionsForRun(run);
+    environment.set = {
+      ...environment.set,
+      ...modelQuestionsEnvironment(runner, modelQuestions),
+    };
     const executable = interactiveRunnerExecutable({ runner, machine: pool });
     const command = buildInteractiveRefinementRunnerCommand({
       runner,
@@ -250,6 +257,7 @@ export async function reviewTmuxOperation(
       resumeSessionId:
         run.agentContexts?.find((context) => context.id === 'review')?.runnerSessionId ?? undefined,
       safetyTier: 'dangerous',
+      modelQuestions,
     });
     if (!command) throw new Error('Runner does not support terminal review');
     Object.assign(input, {

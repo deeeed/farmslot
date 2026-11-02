@@ -33,6 +33,7 @@ import {
   requireNativeProfile,
 } from './account-profiles.js';
 import { NATIVE_CHECKPOINT_WAIT_MS, NativeCheckpoints, withinMs } from './checkpoint.js';
+import { effectiveModelQuestions } from './model-questions.js';
 import { NativeRequestRefused } from './process.js';
 import { journalProcesses, type ProcessIdentity } from './process-tree.js';
 import { nativeRunnerDefinitions as adapters } from './registry.js';
@@ -618,7 +619,13 @@ export class NativeSessionManager {
       accountMode: 'native',
       resultSchema: params.resultSchema ?? previous?.info.resultSchema,
       ...(effort ? { effort } : {}),
-      ...(workerLaunch ? { workerManaged: true, workerLeaseId: workerLaunch.leaseId } : {}),
+      ...(workerLaunch
+        ? {
+            workerManaged: true,
+            workerLeaseId: workerLaunch.leaseId,
+            workerModelQuestions: effectiveModelQuestions(workerLaunch.modelQuestions),
+          }
+        : {}),
       state: 'starting',
       capabilities: {
         ...transport.adapter.capabilities,
@@ -1016,12 +1023,17 @@ export class NativeSessionManager {
       record.context.workerLaunchDigest !== nativeWorkerLaunchDigest(launch)
     )
       throw new Error('Native worker handoff must preserve generation and launch configuration');
-    if (record.info.workerLeaseId === launch.leaseId) return this.snapshot(record);
-    this.assertWorkerLease(owner, id, generation, leaseId);
     const stopped =
       ['closed', 'failed'].includes(record.info.state) &&
       record.info.processStopped &&
       Boolean(record.info.nativeSessionId);
+    if (
+      !stopped &&
+      record.info.workerModelQuestions !== effectiveModelQuestions(launch.modelQuestions)
+    )
+      throw new Error('Native worker question tool changed; stop and resume with a fresh launch');
+    if (record.info.workerLeaseId === launch.leaseId) return this.snapshot(record);
+    this.assertWorkerLease(owner, id, generation, leaseId);
     if (
       (record.info.state !== 'idle' && !stopped) ||
       record.sending ||

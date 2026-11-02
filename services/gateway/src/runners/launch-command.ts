@@ -1,6 +1,10 @@
 import path from 'node:path';
 
-import { modelQuestionsOffByRunner } from '@farmslot/agent-runtime/native/model-questions';
+import {
+  effectiveModelQuestions,
+  modelQuestionsOffByRunner,
+  type ModelQuestionsSwitch,
+} from '@farmslot/agent-runtime/native/model-questions';
 import {
   codexWorkspaceTrustConfig,
   nativeRunnerDefinitions,
@@ -14,6 +18,7 @@ import {
   DEFAULT_PI_MODEL,
   DEFAULT_PI_THINKING,
   isPiThinkingLevel,
+  type Run,
   type SafetyTier,
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
@@ -77,24 +82,56 @@ function assertedModel(model: string): string {
   return model;
 }
 
+/**
+ * The model's question tool for a run's runner processes: an autonomous run has no operator to
+ * answer it. A live process keeps the setting it was launched with, so another run may reuse it
+ * in place only when this value is the same for both runs.
+ */
+export function modelQuestionsForRun(run: Pick<Run, 'mode'> | null | undefined): 'off' | undefined {
+  return run?.mode === 'autonomous' ? 'off' : undefined;
+}
+
+/** Recorded process setting, distinct from the optional CLI switch. */
+export function effectiveModelQuestionsForRun(
+  run: Pick<Run, 'mode'> | null | undefined,
+): 'on' | 'off' {
+  return effectiveModelQuestions(modelQuestionsForRun(run));
+}
+
+const modelQuestionSwitches: Readonly<Partial<Record<string, ModelQuestionsSwitch>>> =
+  modelQuestionsOffByRunner;
+
 /** Shell words that remove the model's own question tool, with a leading space, or ''. */
 function modelQuestionsArgs(runner: string, modelQuestions?: 'off'): string {
-  const args = modelQuestions === 'off' ? modelQuestionsOffByRunner[runner]?.args : undefined;
+  const args = modelQuestions === 'off' ? modelQuestionSwitches[runner]?.args : undefined;
   return args?.length ? ` ${args.map(shellQuote).join(' ')}` : '';
 }
 
-/** Exports the runner's model-questions environment ahead of its launch command. */
+/** The runner's environment that removes the model's own question tool. */
+export function modelQuestionsEnvironment(
+  runner: string,
+  modelQuestions?: 'off',
+): Readonly<Record<string, string>> {
+  return (modelQuestions === 'off' && modelQuestionSwitches[runner]?.environment) || {};
+}
+
+/** Exports each variable ahead of the command. */
+function withExportedEnvironment(
+  environment: Readonly<Record<string, string>>,
+  command: string,
+): string {
+  return `${Object.entries(environment)
+    .map(([key, value]) => `export ${key}=${shellQuote(value)};`)
+    .join(' ')} ${command}`;
+}
+
 function withModelQuestionsEnvironment(
   command: string,
   runner: string,
   modelQuestions?: 'off',
 ): string {
-  const environment =
-    modelQuestions === 'off' ? modelQuestionsOffByRunner[runner]?.environment : undefined;
-  if (!environment) return command;
-  return `${Object.entries(environment)
-    .map(([key, value]) => `export ${key}=${shellQuote(value)};`)
-    .join(' ')} ${command}`;
+  const environment = modelQuestionsEnvironment(runner, modelQuestions);
+  return Object.keys(environment).length ? withExportedEnvironment(environment, command) : command;
 }
 
 export function resolveRunnerEffort(runnerId: string, effort?: string | null): string | undefined {
@@ -361,10 +398,13 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   shellEnvironmentNames?: string[];
   machine?: RawPoolJson;
   resumeSessionId?: string;
+  /** Argument switches only; the caller sets modelQuestionsEnvironment in the launch environment. */
+  modelQuestions?: 'off';
 }): string | null {
   const runnerId = options.runner.trim();
   if (!runnerId) return null;
   const binary = interactiveRunnerExecutable(options);
+  const questionsArgs = modelQuestionsArgs(runnerId, options.modelQuestions);
   const modelFlag = options.model?.trim() ? ` --model ${shellQuote(options.model.trim())}` : '';
   const promptArg = `"$(cat ${shellQuote(options.promptPath)})"`;
   const safetyFlags = runnerFlagsForTier(runnerId, options.safetyTier).map(shellQuote).join(' ');
@@ -386,6 +426,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       options.shellEnvironmentNames
         ? `--config ${shellQuote(codexShellEnvironmentPolicy(options.shellEnvironmentNames))}`
         : '',
+      questionsArgs.trim(),
       modelFlag.trim(),
       options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
       promptArg,
@@ -415,7 +456,8 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     })} ${promptArg}`;
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
-  return `${shellQuote(binary || runnerId)}${reviewFlags ? ` ${reviewFlags}` : ''}${flags}${modelFlag} ${promptArg}`;
+  // Claude's list-valued switch goes ahead of the review and safety options, never before the prompt.
+  return `${shellQuote(binary || runnerId)}${questionsArgs}${reviewFlags ? ` ${reviewFlags}` : ''}${flags}${modelFlag} ${promptArg}`;
 }
 
 /** Runners whose persisted sessions can be resumed via buildRunnerSessionReloadCommand. */
@@ -882,11 +924,7 @@ export function buildLaunchCommand(
 
   const withSourceInputs = (command: string): string => {
     const sources = currentProjectSources();
-    if (!sources) return command;
-    const env = sourceWorkerEnvironment(sources);
-    return `${Object.entries(env)
-      .map(([key, value]) => `export ${key}=${shellQuote(value)};`)
-      .join(' ')} ${command}`;
+    return sources ? withExportedEnvironment(sourceWorkerEnvironment(sources), command) : command;
   };
   const withRecipeTrust = (launch: string): string => {
     // Grok's and OpenCode's switches are environment, on whichever path launches them.

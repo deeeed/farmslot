@@ -182,7 +182,7 @@ export const codexNativeAdapter: NativeAdapter = {
               'features.hooks=false',
             ]
           : []),
-        ...(options.modelQuestions === 'off' ? (modelQuestionsOffByRunner.codex.args ?? []) : []),
+        ...(options.modelQuestions === 'off' ? modelQuestionsOffByRunner.codex.args : []),
         'app-server',
       ],
       options,

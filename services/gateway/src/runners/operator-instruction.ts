@@ -20,6 +20,7 @@ import {
   sendNativeWorkerInstruction,
 } from './native/worker-control.js';
 import { resumeNativeWorker } from './native/worker-recovery.js';
+import { modelQuestionsForRun } from './launch-command.js';
 import { sendRunnerInstructionWithOutcome } from './registry.js';
 import { inspectRunnerRecovery, reloadRunnerForPark } from './session-lifecycle.js';
 import { resolveRunRetainedSessionBinding, retainedSessionSendOption } from './session-process.js';
@@ -132,6 +133,7 @@ export async function deliverOperatorInstruction(
         recoveryHandle: handle,
         initialPrompt: text,
         blindTrialCapsule: blindTrialWorkerCapsule(run, context.role),
+        modelQuestions: modelQuestionsForRun(run),
       });
       if (!resumed.ok) throw new Error(resumed.error);
       return 'confirmed';
