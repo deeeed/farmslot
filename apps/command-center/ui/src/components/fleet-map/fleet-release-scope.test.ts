@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { SlotStatus, SlotWorkspace } from '@farmslot/protocol';
+import { Methods } from '@farmslot/protocol';
+import { FleetRefreshViewModel } from '@farmslot/review-dispatch';
 
 import {
   FLEET_RELEASE_LABEL,
@@ -85,4 +87,43 @@ test('selection toggles whole groups and single rows without mutating the old se
   assert.deepEqual([...before], ['a']);
   assert.deepEqual([...setFleetSelection(all, ['b'], false)], ['a', 'c']);
   assert.deepEqual([...setFleetSelection(all, ['a', 'b', 'c'], false)], []);
+});
+
+test('the bulk release sends exactly the selected safe slots to fleet.refreshSlots', async () => {
+  const unpushed = slot('unpushed-1', {
+    workspace: { ...workspace('feat/x'), publication: 'unpushed', unpublishedCount: 1 },
+  });
+  const fleet = [idle, idle2, busy, unpushed];
+  const scope = fleetReleaseScope(fleet, new Set(['idle-2', 'busy-1', 'unpushed-1']));
+  const calls: Array<{ method: string; params: unknown }> = [];
+  const model = new FleetRefreshViewModel(
+    {
+      contextKey: () => 'farm',
+      request: async <T>(method: string, params?: unknown): Promise<T> => {
+        calls.push({ method, params });
+        const reply =
+          method === Methods.FLEET_STATUS
+            ? { fleet: { slots: fleet } }
+            : { requestId: 'bulk-1', perSlotRequestIds: {} };
+        return reply as T;
+      },
+      subscribe: () => () => {},
+    },
+    () => 'bulk-1',
+  );
+  await model.load(scope.slotIds, fleet);
+  assert.deepEqual(
+    model.rows.map((row) => row.slotId),
+    ['idle-2', 'busy-1', 'unpushed-1'],
+  );
+  await model.releaseIdle();
+  const bulk = calls.filter((call) => call.method === Methods.FLEET_REFRESH_SLOTS);
+  assert.equal(bulk.length, 1);
+  const { slots } = bulk[0].params as { slots: Array<{ slotId: string; mode: string }> };
+  assert.deepEqual(
+    slots.map((target) => [target.slotId, target.mode]),
+    [['idle-2', 'safe']],
+    'busy and unpushed rows stay out of bulk; idle-1 was not selected',
+  );
+  model.dispose();
 });
