@@ -47,3 +47,16 @@ test('a branch beginning like a Jira key retains its PR flow', () => {
   });
   assert.deepEqual(query.params, { ticketOrPr: ref, flowType: 'pr-complete' });
 });
+
+test('lowercase Jira-lookalike branches retain flow, while real browse URLs do not', () => {
+  for (const ref of ['fix-123', 'release-7.70.0'])
+    assert.deepEqual(
+      resourceQuery('dispatch.matchProject', { ticketOrPr: ref, flowType: 'pr-complete' }).params,
+      { ticketOrPr: ref, flowType: 'pr-complete' },
+    );
+  const url = 'https://consensys.atlassian.net/browse/TAT-4355?focusedCommentId=1';
+  assert.deepEqual(
+    resourceQuery('dispatch.matchProject', { ticketOrPr: url, flowType: 'dev' }).params,
+    { ticketOrPr: url },
+  );
+});

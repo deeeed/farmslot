@@ -78,16 +78,17 @@ async function fixture(t: TestContext, held = false) {
     params: unknown,
   ): Promise<ResourceReadResult<T>> => {
     calls.push(method);
-    await gate;
     const read = resourceQuery(method, params);
+    const dependencies = read.dependencies.map((key) => ({
+      key,
+      revision: key.family === 'slots' ? slotRevision : 0,
+    }));
+    await gate;
     return {
       data: response as T,
       resourceState: {
         epoch: 'conformance-epoch',
-        dependencies: read.dependencies.map((key) => ({
-          key,
-          revision: key.family === 'slots' ? slotRevision : 0,
-        })),
+        dependencies,
       },
     };
   };
@@ -173,7 +174,39 @@ test('each explicit candidate refresh asks the gateway even when that query is c
   const refresh = { ...input, forceRefresh: true };
   await requestDispatchWizardCandidates(refresh);
   await requestDispatchWizardCandidates(refresh);
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 4, 'each forced read also updates the ordinary cached snapshot');
+});
+
+test('a completed read remains usable when fleet revisions advance while it is in flight', async (t) => {
+  const f = await fixture(t);
+  f.hold();
+  f.response({ candidates: [] });
+  const states: string[] = [];
+  const pending = requestDispatchWizardCandidates(input, () =>
+    states.push(f.cache.read(f.query).status),
+  );
+  for (let turn = 0; turn < 30 && !f.calls.length; turn++)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  f.changeFleet();
+  f.release();
+  assert.deepEqual(await pending, { candidates: [] });
+  assert.ok(states.includes('stale'), 'the successful reply was stale from the mid-read write');
+});
+
+test('an offline early return cannot treat a held snapshot as a new reply', async (t) => {
+  const f = await fixture(t);
+  await requestDispatchWizardCandidates(input);
+  f.transport.setConnection({ connected: false }, 'network');
+  await assert.rejects(requestDispatchWizardCandidates(input), /could not refresh/);
+});
+
+test('Refresh updates the snapshot used by the next ordinary candidate read', async (t) => {
+  const f = await fixture(t);
+  await requestDispatchWizardCandidates(input);
+  f.response({ candidates: [] });
+  await requestDispatchWizardCandidates({ ...input, forceRefresh: true });
+  assert.deepEqual(await requestDispatchWizardCandidates(input), { candidates: [] });
+  assert.equal(f.calls.length, 3, 'the last ordinary read is a cache hit after refresh');
 });
 
 test('a changed fleet invalidates cached candidates and updates them from the gateway', async (t) => {

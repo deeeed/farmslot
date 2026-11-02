@@ -9,13 +9,14 @@ import type {
 
 import { Methods } from './registry.js';
 
-/** Ticket matching does not depend on a flow for Jira keys and browse URLs. */
-export function isJiraTicketReference(ticket: string): boolean {
+/** A complete Jira reference recognized by project matching, normalized to its key. */
+export function jiraTicketKey(ticket: string): string | undefined {
   const reference = ticket.trim();
-  return (
-    /^[A-Z]+-\d+$/i.test(reference) ||
-    /^https?:\/\/[^/]+\/browse\/[A-Z]+-\d+(?:[?#].*)?$/i.test(reference)
+  const url = reference.match(
+    /^https?:\/\/[^\s/]+\.atlassian\.net\/browse\/([A-Z]+-\d+)(?:[/?#].*)?$/i,
   );
+  if (url) return url[1].toUpperCase();
+  return /^[A-Z]+-\d+$/.test(reference) ? reference : undefined;
 }
 
 export const DispatchMethods = {

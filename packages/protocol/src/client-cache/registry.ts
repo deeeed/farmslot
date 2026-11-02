@@ -4,7 +4,7 @@ import {
   providerAccountsStoredData,
 } from '../contracts/provider-accounts.js';
 import type { ConfigGitHubAccountsResult } from '../rpc/config.js';
-import { isJiraTicketReference } from '../rpc/dispatch.js';
+import { jiraTicketKey } from '../rpc/dispatch.js';
 import type { CheckoutUpdateOperation, GatewayStatusResult } from '../rpc/gateway.js';
 import {
   prForSlotObservationParams,
@@ -840,7 +840,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       requiredId(value, 'ticketOrPr');
       const ticket = String(value.ticketOrPr).trim();
       value.ticketOrPr = ticket;
-      if (isJiraTicketReference(ticket)) delete value.flowType;
+      if (jiraTicketKey(ticket)) delete value.flowType;
       return value;
     },
     dependencies: configurationDependencies,

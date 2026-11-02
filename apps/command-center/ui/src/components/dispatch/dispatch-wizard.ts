@@ -20,7 +20,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   failedRunCancelEffects,
-  isJiraTicketReference,
+  jiraTicketKey,
   Methods,
   parseGitHubPullUrl,
   parseGitHubRef,
@@ -149,6 +149,7 @@ import { renderDispatchWizardView } from './dispatch-wizard-view-renderer.js';
 
 @customElement('dispatch-wizard')
 export class DispatchWizard extends DispatchWizardState {
+  private _matchGeneration = 0;
   private readonly comparisonQuery = new ResourceQueryController<RunListResult>(this, () =>
     this._runReadsChanged(),
   );
@@ -918,13 +919,15 @@ export class DispatchWizard extends DispatchWizardState {
     }
     const prevOverride = this._slotOverride;
     let held = hasCache;
-    const applyResult = (res: DispatchCandidatesResult) => {
+    const applyResult = (res: DispatchCandidatesResult, cached = false) => {
       if (gen !== this._fetchGen) return;
+      // Automatic cached picks are provisional; only the operator's pin outranks live scoring.
+      const keep = cached || this._slotOverrideExplicit ? this._slotOverride || prevOverride : '';
       held = true;
       this._allCandidates = res.candidates;
       this._candidateRefreshFailed = false;
       // Keep a selection the operator made while the background read was in flight.
-      this._applyVisibleCandidates(this._slotOverride || prevOverride);
+      this._applyVisibleCandidates(keep);
     };
     try {
       const res = await requestDispatchWizardCandidates(
@@ -949,7 +952,7 @@ export class DispatchWizard extends DispatchWizardState {
           mockMode: this.mockMode,
           mockCandidates: this.mockCandidates,
         },
-        applyResult,
+        (snapshot) => applyResult(snapshot, true),
       );
       if (gen !== this._fetchGen) return; // superseded by newer filter/project change
       applyResult(res);
@@ -1045,6 +1048,7 @@ export class DispatchWizard extends DispatchWizardState {
 
   // Debounced server-side project resolution
   private _scheduleMatchProject(ticket: string): void {
+    const generation = ++this._matchGeneration;
     if (this._matchTimer) clearTimeout(this._matchTimer);
     if (!ticket.trim()) {
       this._autoProject = '';
@@ -1054,16 +1058,16 @@ export class DispatchWizard extends DispatchWizardState {
     }
     // Jira key or URL: match immediately
     // PR number: debounce 400ms (needs GitHub API call)
-    const isJira = isJiraTicketReference(ticket);
+    const isJira = jiraTicketKey(ticket);
     const delay = isJira ? 0 : 400;
     this._matchingProject = true;
-    this._matchTimer = setTimeout(() => this._doMatchProject(ticket), delay);
+    this._matchTimer = setTimeout(() => this._doMatchProject(ticket, generation), delay);
   }
 
-  private async _doMatchProject(ticket: string): Promise<void> {
+  private async _doMatchProject(ticket: string, generation: number): Promise<void> {
     let held = false;
     const applyResult = (res: DispatchProjectMatchResult) => {
-      if (ticket !== this._ticketId) return;
+      if (generation !== this._matchGeneration || ticket !== this._ticketId) return;
       held = true;
       this._matchingProject = false;
       // Don't overwrite the user's input — server normalizes at dispatch time.
@@ -1093,13 +1097,13 @@ export class DispatchWizard extends DispatchWizardState {
     try {
       applyResult(await requestDispatchProjectMatch(ticket, this._flowType, applyResult));
     } catch (err) {
-      if (ticket !== this._ticketId) return;
+      if (generation !== this._matchGeneration || ticket !== this._ticketId) return;
       // Ticket matching is an advisory wizard convenience. Dispatch itself still validates
       // normalized refs server-side, so the safe recovery is to keep manual project selection.
       console.warn('[dispatch-wizard] project match failed', err);
       if (!held) this._autoProject = '';
     } finally {
-      if (ticket === this._ticketId) {
+      if (generation === this._matchGeneration) {
         this._matchingProject = false;
         this._checkActiveRunConflict();
       }
