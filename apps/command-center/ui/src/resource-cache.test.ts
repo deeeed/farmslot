@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import type { PendingDecision, Run } from '@farmslot/protocol';
+import type { PendingDecision } from '@farmslot/protocol';
 import { createMemoryResourceStore, type ResourceStore } from '@farmslot/protocol/client-cache';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
@@ -71,14 +71,23 @@ test('the owner tab prefetches pending gates and active runs from the shared obs
   const gateRun = storedRun('gate-run', { status: 'human-gating', decisions: [gate] });
   fakeGateway.responseForRequest = ({ method, params }) => {
     if (method === 'run.list')
-      return { payload: { runs: [activeRun, gateRun], totalCount: 2 }, resourceState: stamp('runs') };
+      return {
+        payload: { runs: [activeRun, gateRun], totalCount: 2 },
+        resourceState: stamp('runs'),
+      };
     if (method === 'decision.list')
       return { payload: { decisions: [gate] }, resourceState: stamp('decisions') };
-    if (method === 'run.get') return {
-      payload: { run: Reflect.get(params ?? {}, 'runId') === gateRun.id ? gateRun : activeRun },
-      resourceState: { epoch: fakeGateway.resourceEpoch,
-        dependencies: resourceQuery(method, params).dependencies.map((key) => ({ key, revision: 0 })) },
-    };
+    if (method === 'run.get')
+      return {
+        payload: { run: Reflect.get(params ?? {}, 'runId') === gateRun.id ? gateRun : activeRun },
+        resourceState: {
+          epoch: fakeGateway.resourceEpoch,
+          dependencies: resourceQuery(method, params).dependencies.map((key) => ({
+            key,
+            revision: 0,
+          })),
+        },
+      };
     if (method === 'config.projects') return { payload: { projects: [] } };
     if (method === 'pr.list') return { payload: { prs: [] } };
     if (method === 'workGraph.list') return { payload: { graphs: [] } };

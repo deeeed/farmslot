@@ -29,7 +29,8 @@ export async function createRunReplyProxy({
   assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
   assert(Number.isSafeInteger(upstreamPort) && upstreamPort > 0);
   if (offlineSnapshots) assert.equal(typeof allowRequest, 'function');
-  else if (method === 'run.list') assert(runId === undefined && params && typeof params === 'object');
+  else if (method === 'run.list')
+    assert(runId === undefined && params && typeof params === 'object');
   else assert.match(runId, /^[a-f0-9-]{36}$/);
   const methods = new Set([
     'terminal.send',
@@ -85,7 +86,10 @@ export async function createRunReplyProxy({
     failure = error;
   });
   sockets.on('connection', (downstream, incoming) => {
-    if (offline) { downstream.close(); return; }
+    if (offline) {
+      downstream.close();
+      return;
+    }
     const upstream = new WebSocket(`ws://127.0.0.1:${upstreamPort}${incoming.url}`);
     const pair = { downstream, upstream };
     pairs.add(pair);
@@ -94,21 +98,33 @@ export async function createRunReplyProxy({
     downstream.on('message', (bytes, binary) => {
       if (offlineSnapshots) {
         const frame = binary ? undefined : JSON.parse(String(bytes));
-        if (!frame || frame.type !== 'req' || !allowRequest(frame)) {
+        const policy = frame?.type === 'req' ? allowRequest(frame) : false;
+        if (!policy) {
           blocked++;
-          if (frame?.id) downstream.send(JSON.stringify({ type: 'res', id: frame.id, ok: false,
-            error: { code: 'PROOF_READ_ONLY', message: 'This snapshot fixture permits reads only' } }));
+          if (frame?.id)
+            downstream.send(
+              JSON.stringify({
+                type: 'res',
+                id: frame.id,
+                ok: false,
+                error: {
+                  code: 'PROOF_READ_ONLY',
+                  message: 'This snapshot fixture permits reads only',
+                },
+              }),
+            );
           return;
         }
         // Preparation uses real legacy replies, never manufactured data or revision stamps.
-        delete frame.resourceRead;
+        if (policy === true || policy.snapshot) delete frame.resourceRead;
         bytes = JSON.stringify(frame);
         counts.set(frame.method, (counts.get(frame.method) ?? 0) + 1);
       }
       if (!binary) {
         const frame = JSON.parse(String(bytes));
         if (
-          !offlineSnapshots && frame.type === 'req' &&
+          !offlineSnapshots &&
+          frame.type === 'req' &&
           (selected.method === 'run.list'
             ? frame.method === 'run.list' && matchesParams(frame.params)
             : (frame.params?.runId ?? frame.params?.worker?.runId) === runId)
@@ -199,15 +215,22 @@ export async function createRunReplyProxy({
     port: server.address().port,
     state() {
       if (failure) throw failure;
-      return { ...evidence, method: selected.method, counts: Object.fromEntries(counts), offline, blocked };
+      return {
+        ...evidence,
+        method: selected.method,
+        counts: Object.fromEntries(counts),
+        offline,
+        blocked,
+      };
     },
     setOffline(value) {
       assert(offlineSnapshots, 'Only the snapshot fixture owns an outage switch');
       offline = value;
-      if (offline) for (const { downstream, upstream } of pairs) {
-        downstream.terminate();
-        upstream.terminate();
-      }
+      if (offline)
+        for (const { downstream, upstream } of pairs) {
+          downstream.terminate();
+          upstream.terminate();
+        }
     },
     arm(options = {}) {
       assert(!held, 'Release the current response before selecting another proof boundary');

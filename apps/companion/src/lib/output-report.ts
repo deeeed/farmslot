@@ -25,7 +25,11 @@ export function readRunOutputReport(
     runId: string;
     authHeaders: GatewayHttpAuthHeaders;
     signal?: AbortSignal;
-    readArtifact: (url: string, headers: GatewayHttpAuthHeaders, init?: RequestInit) => Promise<Response>;
+    readArtifact: (
+      url: string,
+      headers: GatewayHttpAuthHeaders,
+      init?: RequestInit,
+    ) => Promise<Response>;
   },
 ): Promise<EvidenceReviewReport> {
   return readEvidenceReviewReport(model, async (path) => {

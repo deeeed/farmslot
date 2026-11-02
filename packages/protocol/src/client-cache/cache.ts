@@ -25,7 +25,7 @@ import {
   storedNativeHistoryMatches,
 } from './native-history.js';
 import { type ResourceQuery, resourceQuery } from './registry.js';
-import { createRunDetailSync, type RunDetailTarget,runDetailTarget } from './run-details.js';
+import { createRunDetailSync, type RunDetailTarget, runDetailTarget } from './run-details.js';
 import {
   isRunListCollectionRead,
   RUN_LIST_COLLECTION_ID,
@@ -1498,8 +1498,11 @@ export function createGatewayResourceCache(
     async forgetContent(key) {
       const target = store;
       const ownerVersion = hydrationOwnerVersion;
-      await updateStore(target, () => target === store && !target.deleted && ownerVersion === hydrationOwnerVersion,
-        () => target.deleteContent(contentKey(key)));
+      await updateStore(
+        target,
+        () => target === store && !target.deleted && ownerVersion === hydrationOwnerVersion,
+        () => target.deleteContent(contentKey(key)),
+      );
     },
     readContentByAlias: (alias) =>
       readContentBytes((target) => target.getContentByAlias(alias), false),

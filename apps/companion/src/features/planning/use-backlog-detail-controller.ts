@@ -29,12 +29,15 @@ export function useBacklogDetailController(itemId: string | undefined) {
   const [specOpen, setSpecOpen] = useState(false);
   const specPath = item?.specPath;
   const specQuery = useMemo(
-    () => itemId && specPath ? resourceQuery<BacklogSpecGetResult>(Methods.BACKLOG_SPEC_GET, { itemId }) : undefined,
+    () =>
+      itemId && specPath
+        ? resourceQuery<BacklogSpecGetResult>(Methods.BACKLOG_SPEC_GET, { itemId })
+        : undefined,
     [itemId, specPath],
   );
   const specObservation = useResourceQuery(specQuery);
-  const spec = specObservation.data && specObservation.data.itemId === itemId
-    ? specObservation.data : null;
+  const spec =
+    specObservation.data && specObservation.data.itemId === itemId ? specObservation.data : null;
   const specError = readErrorMessage(specObservation, heldConnectionCurrent());
   const retryBacklog = Boolean(
     observation.error || (itemId && observation.status === 'ready' && !item),

@@ -10,7 +10,7 @@ import {
 
 import type { ResourceReadStamp } from './keys.js';
 import { resourceQuery } from './registry.js';
-import { type RunDetailTarget,runDetailTarget } from './run-details.js';
+import { type RunDetailTarget, runDetailTarget } from './run-details.js';
 import type { ResourceRowsMerge, StoredResourceRows } from './store.js';
 import type { ResourceReadResult } from './types.js';
 

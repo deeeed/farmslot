@@ -3,7 +3,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Methods } from '@farmslot/protocol';
-import { GATEWAY_READ_EXCEPTIONS, RESOURCE_QUERY_DEFINITIONS, resourceQuery } from '@farmslot/protocol/client-cache';
+import {
+  GATEWAY_READ_EXCEPTIONS,
+  RESOURCE_QUERY_DEFINITIONS,
+  resourceQuery,
+} from '@farmslot/protocol/client-cache';
 
 import { createOfflineSnapshotProxy } from '../../../../services/gateway/scripts/visual-reply-proxy.mjs';
 
@@ -19,13 +23,20 @@ const proxy = await createOfflineSnapshotProxy({
   upstreamPort,
   port,
   allowRequest(frame) {
-    if (exceptions.has(frame.method) || [Methods.AUTH_CONNECT, Methods.AUTH_SESSION_EXCHANGE, Methods.RESOURCE_OBSERVERS_REPLACE].includes(frame.method))
-      return true;
+    if (
+      exceptions.has(frame.method) ||
+      [
+        Methods.AUTH_CONNECT,
+        Methods.AUTH_SESSION_EXCHANGE,
+        Methods.RESOURCE_OBSERVERS_REPLACE,
+      ].includes(frame.method)
+    )
+      return { snapshot: false };
     if (!Object.hasOwn(RESOURCE_QUERY_DEFINITIONS, frame.method)) return false;
     try {
       // Shape validation only. Actual authority remains the upstream gateway's authenticated principal.
-      resourceQuery(frame.method, frame.params, 'snapshot-shape-check');
-      return true;
+      const query = resourceQuery(frame.method, frame.params, 'snapshot-shape-check');
+      return { snapshot: !query.requiresObservedRead && !query.requiresWorkspaceRead };
     } catch {
       // Imperative variants of read methods are outside a read-only snapshot fixture.
       return false;
@@ -33,12 +44,19 @@ const proxy = await createOfflineSnapshotProxy({
   },
 });
 await mkdir(path.dirname(receipt), { recursive: true });
-const checkpoint = () => writeFile(receipt, JSON.stringify({ pid: process.pid, port, upstreamPort, ...proxy.state() }, null, 2));
+const checkpoint = () =>
+  writeFile(
+    receipt,
+    JSON.stringify({ pid: process.pid, port, upstreamPort, ...proxy.state() }, null, 2),
+  );
 await checkpoint();
 console.log(JSON.stringify({ ready: true, pid: process.pid, port, upstreamPort }));
 process.on('SIGUSR2', () => {
   proxy.setOffline(!proxy.state().offline);
-  void checkpoint().catch((error) => { console.error(error); process.exitCode = 1; });
+  void checkpoint().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 });
 let closing = false;
 const close = async () => {
@@ -47,6 +65,10 @@ const close = async () => {
   await checkpoint();
   await proxy.close();
 };
-for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
-  void close().catch((error) => { console.error(error); process.exitCode = 1; });
-});
+for (const signal of ['SIGINT', 'SIGTERM'])
+  process.once(signal, () => {
+    void close().catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+    });
+  });

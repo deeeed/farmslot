@@ -4,8 +4,8 @@ import test from 'node:test';
 
 import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 
-import { readRunOutputReport } from './output-report';
 import { gatewayFetch } from './gateway-http-auth';
+import { readRunOutputReport } from './output-report';
 
 const body = '<h1>Release validation</h1><p>Coverage gaps: none recorded.</p>';
 const sha256 = createHash('sha256').update(body).digest('hex');

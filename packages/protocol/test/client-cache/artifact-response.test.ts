@@ -86,9 +86,20 @@ test('online artifact reads replace changed text and an authorization refusal re
     assert.equal(await (await readStoredArtifactResponse(options)).text(), 'first');
     body = 'updated';
     assert.equal(await (await readStoredArtifactResponse(options)).text(), 'updated');
-    assert.equal(await (await readStoredArtifactResponse({ ...options, online: false })).text(), 'updated');
-    const denied = await readStoredArtifactResponse({ ...options, read: async () => new Response('', { status: 403 }) });
+    assert.equal(
+      await (await readStoredArtifactResponse({ ...options, online: false })).text(),
+      'updated',
+    );
+    const denied = await readStoredArtifactResponse({
+      ...options,
+      read: async () => new Response('', { status: 403 }),
+    });
     assert.equal(denied.status, 403);
-    await assert.rejects(readStoredArtifactResponse({ ...options, online: false }), /not been stored/);
-  } finally { await cache.dispose(); }
+    await assert.rejects(
+      readStoredArtifactResponse({ ...options, online: false }),
+      /not been stored/,
+    );
+  } finally {
+    await cache.dispose();
+  }
 });

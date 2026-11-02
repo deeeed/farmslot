@@ -138,11 +138,22 @@ test('the bulk release sends exactly the selected safe slots to fleet.refreshSlo
   const model = new FleetRefreshViewModel(
     {
       contextKey: () => 'farm',
-      readFleet: async () => ({ fleet: {
-        checkedAt: now,
-        slots: fleet,
-        summary: { total: 4, ready: 3, busy: 1, held: 0, manual: 0, disabled: 0, blocked: 0, warmCount: 0 },
-      } }),
+      readFleet: async () => ({
+        fleet: {
+          checkedAt: now,
+          slots: fleet,
+          summary: {
+            total: 4,
+            ready: 3,
+            busy: 1,
+            held: 0,
+            manual: 0,
+            disabled: 0,
+            blocked: 0,
+            warmCount: 0,
+          },
+        },
+      }),
       request: async <T>(method: string, params?: unknown): Promise<T> => {
         calls.push({ method, params });
         const reply = { requestId: 'bulk-1', perSlotRequestIds: {} };

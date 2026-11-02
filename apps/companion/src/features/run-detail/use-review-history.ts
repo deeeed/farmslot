@@ -121,7 +121,10 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
     selection.current = request;
     const key = `${round.key}:${finding.id}`;
     const owner = getResourceWorkspaceKey();
-    const current = () => selection.current === request && cache === getResourceCache() && owner === getResourceWorkspaceKey();
+    const current = () =>
+      selection.current === request &&
+      cache === getResourceCache() &&
+      owner === getResourceWorkspaceKey();
     setSource({ identity, key, loading: true });
     try {
       const context = await loadReviewFindingSource(params, finding.line!, current);

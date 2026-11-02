@@ -7,8 +7,8 @@ import { Methods, type RunGetResult, type RunRecipeRunsForRunResult } from '@far
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { observeNativeVisualReview } from '../../farmslot/run-collections-proof';
-import { readStoredArtifact } from '../../lib/artifact-response';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { readStoredArtifact } from '../../lib/artifact-response';
 import {
   getResourceCache,
   getResourceWorkspaceKey,
