@@ -413,6 +413,9 @@ async function runScenario(
   const dir = path.join(evidence, label);
   await mkdir(dir, { recursive: true });
   const started = Date.now();
+  // Workers start once MONITOR watches them (restart-invariant-fixtures.mts); one run at a time.
+  const monitoring = path.join(stack.holds, 'monitoring');
+  await rm(monitoring, { force: true });
   for (const phase of phases) if (phase.armAt === 'create') await phase.arm();
   const armed = new Set(phases.filter((phase) => phase.armAt === 'create'));
   const { run: created } = await stack.call<{ run: Run }>('run.create', shape.create(slotId));
@@ -439,6 +442,8 @@ async function runScenario(
         ? { slot: await readSlot(stack, slotId) }
         : {}),
     };
+    if (stepStatus(run, 'monitor') === 'running' && !existsSync(monitoring))
+      await writeFile(monitoring, `${runId}\n`);
     const summary = `${brief(run)}${view.slot ? ` | slot ${view.slot.lifecycle}/${view.slot.phase ?? '-'}` : ''}`;
     if (summary !== lastBrief) {
       await log(`${label}: ${summary}`);

@@ -39,7 +39,12 @@ const LEFTOVER = [
 
 /** Waits while `holds/<name>` exists (15 min ceiling) after recording `<name>.hit`. */
 const holdFunction = (holds: string) =>
-  `hold() { [ -e '${holds}'/"$1" ] || return 0; date -u +%FT%TZ > '${holds}'/"$1".hit; i=0; while [ -e '${holds}'/"$1" ] && [ $i -lt 9000 ]; do sleep 0.1; i=$((i+1)); done; }`;
+  [
+    `hold() { [ -e '${holds}'/"$1" ] || return 0; date -u +%FT%TZ > '${holds}'/"$1".hit; i=0; while [ -e '${holds}'/"$1" ] && [ $i -lt 9000 ]; do sleep 0.1; i=$((i+1)); done; }`,
+    // DISPATCH confirms the launch by seeing the runner alive, so the worker stays up until the
+    // test sees MONITOR watching it (holds/monitoring), for at most 5 min.
+    `i=0; until [ -e '${holds}/monitoring' ] || [ $i -ge 3000 ]; do sleep 0.1; i=$((i+1)); done`,
+  ].join('\n');
 
 const reports = (summary: string) =>
   [
