@@ -46,24 +46,6 @@
         "^slot: expected ready/-, observed busy/working$"
       ],
       "ledger": "F332"
-    },
-    {
-      "case": "worker-survives",
-      "variant": "monitor-transport-abort",
-      "signature": "monitor: terminated",
-      "differences": [
-        "^the run went failed: terminated",
-        "^a step failed on a dropped transport: terminated",
-        "^tmux stop sent: .*(/exit| C-c|kill-(pane|window|session))",
-        "^pid \\d+ exited: ",
-        "^worker pane %\\d+ (is gone|is dead|was respawned)",
-        "^run status: expected done, observed failed$",
-        "^step \\d+: expected monitor:done, observed monitor:failed$",
-        "^step \\d+: expected (review|complete|human-gate|finalize|ci-watch):done, observed \\1:skipped$",
-        "^decisions: expected \\[engine_human_gate:close-as-shipped\\], observed \\[\\]$",
-        "^decision types: expected \\[engine_human_gate\\], observed \\[\\]$"
-      ],
-      "ledger": "F328"
     }
   ],
   "live": {
