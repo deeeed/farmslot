@@ -2991,3 +2991,32 @@ test('restart keeps failed recovery held and turns its interrupted fence into a 
     // reset/occupied-cleanup dependencies deliberately throw if called.
   }
 });
+
+test('startup re-enters a human gate that stopped before presenting a decision (F311)', async () => {
+  // ba397e2c: a restart stopped its gate at "Preparing operator decision". With no decision to
+  // re-present, recovery kept it as a blocked run and the card never appeared.
+  const atGate = (status: Run['status']) =>
+    minimalActiveRun({
+      status,
+      steps: FLOW_STEPS['fix-bug'].map((name) => ({
+        name,
+        status:
+          name === 'human-gate'
+            ? 'running'
+            : name === 'finalize' || name === 'complete'
+              ? 'pending'
+              : 'done',
+        ...(name === 'human-gate'
+          ? { detail: 'Preparing operator decision: reconciling workspace' }
+          : {}),
+      })),
+      decisions: [],
+    });
+  const preparing = publicationReviewRecoveryDeps(atGate('human-gating'));
+  await recoverActiveRuns(preparing.deps);
+  assert.deepEqual(preparing.calls.replayed, ['5dd53883-bb8f-4f24-a20e-a20ab2856974']);
+  // A blocked run with no decisions stays blocked, gate step or not.
+  const blocked = publicationReviewRecoveryDeps(atGate('blocked'));
+  await recoverActiveRuns(blocked.deps);
+  assert.deepEqual(blocked.calls.replayed, []);
+});

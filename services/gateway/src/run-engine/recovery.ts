@@ -846,13 +846,19 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         continue;
       }
 
-      if (run.decisions.length === 0) {
+      const runningStepName = run.steps.find((s) => s.status === 'running')?.name;
+      // A gate still preparing its decision when the process stopped has none yet, and only
+      // re-entering it presents one (F311: ba397e2c sat at "Preparing operator decision").
+      const gateNeverPresented =
+        run.decisions.length === 0 &&
+        run.status === 'human-gating' &&
+        runningStepName === S.HUMAN_GATE;
+      if (run.decisions.length === 0 && !gateNeverPresented) {
         console.log(
           `[run-engine] run ${run.id.slice(0, 8)} — blocked terminal state with no decisions; keeping blocked`,
         );
         continue;
       }
-      const runningStepName = run.steps.find((s) => s.status === 'running')?.name;
       const latestResolvedGateDecision = [...run.decisions]
         .reverse()
         .find(
@@ -864,9 +870,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         runningStepName === S.HUMAN_GATE &&
         (latestResolvedGateDecision?.resolvedAction === 'superseded' ||
           (requiresPublicationApproval(run) && !publicationFinalizationAction(run)));
-      if (resolvedGateRequiresReentry) {
+      if (gateNeverPresented || resolvedGateRequiresReentry) {
         console.log(
-          `[run-engine] run ${run.id.slice(0, 8)} — resolved decision has not fulfilled the gate, re-entering human gate`,
+          `[run-engine] run ${run.id.slice(0, 8)} — ${gateNeverPresented ? 'the human gate never presented a decision' : 'resolved decision has not fulfilled the gate'}, re-entering human gate`,
         );
         try {
           await deps.replayHumanGate(run.id);
