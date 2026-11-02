@@ -212,6 +212,23 @@ describe('press latency', () => {
     });
   });
 
+  it('leaves a live update on an already-mounted screen to another cause', () => {
+    // A cheap Review return, then a routine 6.9 ms live-run update at +800 ms.
+    const samples = [
+      frame(1_000, 6, { input: true, uiThreadMs: 3 }),
+      frame(1_011, 5, { uiThreadMs: 1.3 }),
+      frame(1_466, 5, { uiThreadMs: 1.2 }),
+      frame(1_800, 9, { uiThreadMs: 6.9 }),
+    ];
+    assert.deepEqual(measurePress(samples, press, 600, 5_000), {
+      nodeId: 'tab',
+      action: 'ui.press',
+      target: 'tab-terminals',
+      latencyMs: 16,
+      answer: 'first-frame',
+    });
+  });
+
   it('leaves an update beyond reach to another cause', () => {
     // Main's release capture: a cheap Review return, then a 6.9 ms update at +1076 ms.
     const samples = [
@@ -242,6 +259,25 @@ describe('press latency', () => {
 });
 
 describe('sustained FPS', () => {
+  it('enforces the floor on a capture without refresh budgets', () => {
+    // Legacy framestats: no FrameInterval, and a 50 ms cadence the estimator rejects.
+    const legacy = cadence(0, 41, 50).map(({ frameBudgetMs: _budget, ...sample }) => sample);
+    const summary = summarizeWindow({
+      id: 'scroll',
+      startedAtEpochMs: 0,
+      endedAtEpochMs: 2_100,
+      maxDurationMs: 60_000,
+      result: capture(legacy),
+      spans: [],
+      sustainedWindowMs: 500,
+      responseWindowMs: 600,
+      budget: { min_sustained_fps: 30 },
+    });
+    assert.equal(summary.sustainedFps, 20);
+    assert.equal(summary.budget?.verdict, 'fail');
+    assert.match(summary.notes.join(';'), /no refresh budget/u);
+  });
+
   it('counts a slow cadence up to 100 ms apart against the floor', () => {
     const summary = summarizeWindow({
       id: 'scroll',
@@ -580,6 +616,53 @@ describe('app.performance_capture session', () => {
     } finally {
       await rm(artifactsDir, { recursive: true, force: true });
     }
+  });
+
+  it('names the checkout in the report and warns only when git itself fails', async () => {
+    const backend: AndroidGfxinfoPerformanceBackend = {
+      async start() {},
+      async end() {
+        return capture([]);
+      },
+      async close() {},
+    };
+    const report = async (projectRoot: string, env?: Record<string, string>) => {
+      const warnings: string[] = [];
+      const session = createPerformanceCaptureSession({
+        env: {},
+        createBackend: () => backend,
+        logger: { warn: (message: string) => warnings.push(message) },
+      });
+      const artifactsDir = await mkdtemp(path.join(os.tmpdir(), 'adapter-rn-perf-'));
+      const ctx = { ...context('n', artifactsDir).value, projectRoot };
+      const savedPath = process.env.PATH;
+      try {
+        await session.handler.execute({ phase: 'start', id: 'idle' }, ctx);
+        await session.handler.execute({ phase: 'end', id: 'idle' }, ctx);
+        if (env?.PATH !== undefined) process.env.PATH = env.PATH;
+        const result = await session.handler.execute({ phase: 'report' }, ctx);
+        return { result, warnings };
+      } finally {
+        process.env.PATH = savedPath;
+        await rm(artifactsDir, { recursive: true, force: true });
+      }
+    };
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'adapter-rn-not-a-repo-'));
+    try {
+      const notARepo = await report(outside);
+      assert.deepEqual(notARepo.warnings, []);
+      assert.ok(matchesObject(notARepo.result.output, { verdict: 'pass' }));
+      const noGit = await report(outside, { PATH: outside });
+      assert.equal(noGit.warnings.length, 1);
+      assert.match(noGit.warnings[0] ?? '', /could not read the checkout/u);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+    const inRepo = await report(process.cwd());
+    assert.match(
+      JSON.stringify(inRepo.result.output),
+      /"checkout":\{"head":"[0-9a-f]{40}","dirty":(true|false)\}/u,
+    );
   });
 
   it('logs a window it could not end when the run closes', async () => {

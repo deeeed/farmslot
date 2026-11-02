@@ -53,8 +53,10 @@ const DEFAULT_RESPONSE_WINDOW_MS = 600;
 const MOUNT_MIN_MS = 4;
 const MOUNT_OVER_MEDIAN = 3;
 // A mount up to this many response windows after the touch answers the press,
-// even after a pause (a JavaScript stall delays it): 900 ms by default. Main's
-// release captures had a background update 1076 ms after a tab press.
+// even after a pause (a JavaScript stall delays it): 900 ms by default. Past
+// the window only a whole frame budget of UI-thread work counts as the mount;
+// a live update on an already-mounted screen is lighter (main's release
+// captures had a 6.9 ms update 1076 ms after a tab press).
 const MOUNT_LOOKAHEAD = 1.5;
 // Frames closer than this are one stretch of rendering for sustained FPS, so a
 // slow cadence (4 vsyncs at 90 Hz is 22.5 fps) counts against the floor.
@@ -505,6 +507,11 @@ export function summarizeWindow({
     unavailableReasons: [...result.nativeUi.unavailableReasons],
     notes: [],
   };
+  if (frames.frameCount > 0 && frames.refreshRateHz === undefined) {
+    summary.notes.push(
+      'the capture has no refresh budget; sustained fps is not clamped to a refresh rate',
+    );
+  }
   if (
     baseline?.refresh_hz !== undefined &&
     frames.refreshRateHz !== undefined &&
@@ -524,10 +531,11 @@ export function summarizeWindow({
  * The press's latency: from the first frame that handled input during the
  * press node to the end of the frame that answered it. The answer is the
  * first later frame that stands out (see MOUNT_MIN_MS) within
- * `MOUNT_LOOKAHEAD` response windows of the touch, after a pause too: the
- * frame that mounts and draws the new screen. Touch ripples run on the render
- * thread. Only when no frame in reach stands out is the press timed to the
- * first frame within `responseWindowMs` (`first-frame`). A press with no input
+ * `responseWindowMs`, or past it within `MOUNT_LOOKAHEAD` windows, after a
+ * pause too, a frame with a whole frame budget of UI-thread work: the frame
+ * that mounts and draws the new screen. Touch ripples run on the render
+ * thread. Only when nothing answers that way is the press timed to the first
+ * frame within `responseWindowMs` (`first-frame`). A press with no input
  * frame, or no frame after it, is untimed.
  */
 export function measurePress(
@@ -565,8 +573,10 @@ export function measurePress(
   const work = (sample: AndroidFrameSample) => sample.uiThreadMs ?? sample.durationMs;
   const standsOut = (sample: AndroidFrameSample) => {
     const ms = work(sample);
+    const wholeFrame = ms >= (sample.frameBudgetMs ?? DEFAULT_FRAME_BUDGET_MS);
+    if (sample.startedAtEpochMs > windowEnd) return wholeFrame;
     if (ms < MOUNT_MIN_MS) return false;
-    if (ms >= (sample.frameBudgetMs ?? DEFAULT_FRAME_BUDGET_MS)) return true;
+    if (wholeFrame) return true;
     const others = candidates
       .filter((other) => other !== sample)
       .map(work)
