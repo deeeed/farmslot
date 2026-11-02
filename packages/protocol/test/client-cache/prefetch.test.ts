@@ -10,6 +10,7 @@ import {
   activeRunDiffBase,
   activeRunDiffQuery,
   type ContentPrefetchArtifact,
+  type ContentPrefetchMediaEntry,
   type ContentPrefetchOptions,
   type ContentPrefetchTarget,
   createContentPrefetcher,
@@ -228,6 +229,7 @@ function harness(
   world = createWorld(),
   capabilities: ResourceCacheConnection['capabilities'] = BATCHED,
   defaultBranch?: ContentPrefetchOptions['defaultBranch'],
+  media?: ContentPrefetchOptions['media'],
 ) {
   let connection: ResourceCacheConnection = {
     id: 1,
@@ -297,6 +299,7 @@ function harness(
     request,
     readArtifact,
     defaultBranch,
+    media,
   });
   return {
     world,
@@ -437,6 +440,78 @@ test('a gate reads run.get, its retained diff, batched bases, then evidence imag
   );
   assert.deepEqual(world.stores[0].untrackedFiles, UNTRACKED);
   assert.ok(world.stores.every(({ token }) => token?.connectionId === 1));
+});
+
+test('a gate hands its videos and over-cap images to the media holder, by digest', async () => {
+  const held: ContentPrefetchMediaEntry[] = [];
+  const { world, prefetcher } = harness(createWorld(), BATCHED, undefined, {
+    async hold(entry) {
+      held.push(entry);
+      return entry.path !== 'evidence/huge.png';
+    },
+  });
+  gateRun(world, 'g1', 'p1', gateDiff());
+  prefetcher.setTargets([target('g1', true, '2026-10-27T01:00:00.000Z')]);
+  await flush();
+  assert.deepEqual(
+    held.map(({ runId, path, sha256, bundleDigest, gateAt }) => [
+      runId,
+      path,
+      sha256,
+      bundleDigest,
+      gateAt,
+    ]),
+    [
+      [
+        'g1',
+        'evidence/run.mp4',
+        'f'.repeat(64),
+        'bundle-p1',
+        Date.parse('2026-10-27T01:00:00.000Z'),
+      ],
+      [
+        'g1',
+        'evidence/huge.png',
+        'e'.repeat(64),
+        'bundle-p1',
+        Date.parse('2026-10-27T01:00:00.000Z'),
+      ],
+    ],
+  );
+  // The holder downloads its own files: prefetch reads only the row-sized image, and a skipped
+  // entry stops nothing else.
+  assert.deepEqual(
+    world.calls.filter((call) => call.method === 'artifact').map((call) => call.params.path),
+    ['artifacts/p1.diff', 'evidence/a.png'],
+  );
+});
+
+test('a run at its human gate while a requested review runs still prefetches its current package', async () => {
+  // The shape of a live EchoBridge gate: status human-gating, the current package's ready decision
+  // resolved with request-review, and no decision open until the review comes back.
+  const held: string[] = [];
+  const { world, prefetcher } = harness(createWorld(), BATCHED, undefined, {
+    async hold(entry) {
+      held.push(`${entry.runId}:${entry.path}`);
+      return true;
+    },
+  });
+  gateRun(world, 'g1', 'p1', gateDiff());
+  gateRun(world, 'm1', 'p2', gateDiff());
+  const resolve = (runId: string, status: Run['status']) => {
+    const run = world.runs.get(runId)!;
+    run.status = status;
+    for (const decision of run.decisions ?? []) {
+      decision.resolvedAt = '2026-11-01T08:41:08.392Z';
+      decision.resolvedAction = 'request-review';
+    }
+  };
+  resolve('g1', 'human-gating');
+  // Same shape, but the run moved on: nothing waits on a person, so nothing is prefetched as a gate.
+  resolve('m1', 'monitoring');
+  prefetcher.setTargets([target('g1', true), target('m1', false)]);
+  await flush();
+  assert.deepEqual(held, ['g1:evidence/run.mp4', 'g1:evidence/huge.png']);
 });
 
 test('an active slot run keeps its worktree diff as a query and prefetches only diff paths', async () => {

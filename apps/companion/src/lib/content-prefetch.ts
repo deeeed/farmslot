@@ -1,4 +1,5 @@
 import {
+  awaitsHumanDecision,
   type ConfigProjectsResult,
   type DecisionListResult,
   HUMAN_GATE_DECISION_TYPE,
@@ -16,6 +17,7 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { decisionRunId } from './decision-run-context';
+import type { EvidenceMediaHolder } from './evidence-media';
 import {
   configurationProjectsQuery,
   nativeActiveRunsQuery,
@@ -63,10 +65,28 @@ export function contentPrefetchTargets(
     if (!targets.has(run.id))
       targets.set(run.id, {
         runId: run.id,
-        gate: openHumanGateDecision(run)?.payload?.kind === 'ready',
+        // An open ready gate, or a run the review queue shows waiting on a decision (also while
+        // a review it requested is still running).
+        gate: openHumanGateDecision(run)?.payload?.kind === 'ready' || awaitsHumanDecision(run),
         updatedAt: run.updatedAt,
       });
   return [...targets.values()];
+}
+
+/**
+ * The gates whose media stays on the device: undefined until both lists are known, so a cold
+ * start that has not read them yet drops nothing.
+ */
+export function heldGateRunIds(
+  active: RunListResult | undefined,
+  decisions: DecisionListResult | undefined,
+): Set<string> | undefined {
+  if (!active || !decisions) return undefined;
+  return new Set(
+    contentPrefetchTargets(active, decisions)
+      .filter((target) => target.gate)
+      .map((target) => target.runId),
+  );
 }
 
 /**
@@ -74,12 +94,13 @@ export function contentPrefetchTargets(
  * farm owner also observes its projects, and runs start once their default branches are known.
  */
 export function startContentPrefetch(
-  options: Omit<ContentPrefetchOptions, 'defaultBranch'> & {
+  options: Omit<ContentPrefetchOptions, 'defaultBranch' | 'media'> & {
     cache: GatewayResourceCache;
     farm: boolean;
+    media?: EvidenceMediaHolder;
   },
 ): () => void {
-  const { cache, farm } = options;
+  const { cache, farm, media } = options;
   const projects = () => (farm ? cache.read(configurationProjectsQuery) : undefined);
   const prefetcher = createContentPrefetcher({
     ...options,
@@ -88,12 +109,18 @@ export function startContentPrefetch(
   });
   const update = () => {
     if (projects()?.status === 'loading') return;
-    prefetcher.setTargets(
-      contentPrefetchTargets(
-        cache.read(nativeActiveRunsQuery).data,
-        cache.read(nativeDecisionsQuery).data,
-      ),
-    );
+    const active = cache.read(nativeActiveRunsQuery).data;
+    const decisions = cache.read(nativeDecisionsQuery).data;
+    prefetcher.setTargets(contentPrefetchTargets(active, decisions));
+    // A decided gate's media goes.
+    const keep = heldGateRunIds(active, decisions);
+    if (media && keep)
+      media.keep(keep).catch((error: unknown) => {
+        // The next decision update keeps again; a failed drop leaves files inside the bound.
+        console.warn(
+          `Held evidence was not trimmed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
   };
   const stops = [
     cache.observe(nativeActiveRunsQuery, update),

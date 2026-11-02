@@ -21,10 +21,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 
 import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
+import { useArtifactSource } from '../hooks/useArtifactSource';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
-  artifactSource,
   classifyArtifact,
   formatVisualArtifactPairLabel,
   type VisualArtifactPair,
@@ -506,10 +506,7 @@ function ComparisonVideo<T extends ArtifactManifestEntry>({
   authHeaders?: ArtifactHttpHeaders;
   height: number;
 }) {
-  const source = React.useMemo(
-    () => artifactSource(artifact.url, authHeaders),
-    [artifact.url, authHeaders],
-  );
+  const source = useArtifactSource(artifact.url, authHeaders, artifact.sha256);
   const player = useVideoPlayer(source);
   return (
     <VideoView

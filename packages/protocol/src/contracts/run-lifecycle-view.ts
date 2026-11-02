@@ -64,6 +64,18 @@ export function openHumanGateDecision<D extends GateDecisionFields>(
   return null;
 }
 
+/**
+ * A run that waits on a person: at its human gate ("Awaiting decision", also while a review it
+ * requested is still running and its ready decision is already resolved), or blocked at an
+ * open one. These are the runs the review queues show as waiting on a decision.
+ */
+export function awaitsHumanDecision(run: {
+  status: RunStatus;
+  decisions?: readonly GateDecisionFields[];
+}): boolean {
+  return run.status === 'human-gating' || gateDecisionWait(run) !== undefined;
+}
+
 /** A blocked run whose latest human gate is open: it waits at the gate, not on a fault. */
 export function isBlockedAtOpenHumanGate(run: {
   status: RunStatus;

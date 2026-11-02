@@ -4,7 +4,13 @@ import type { ImageSourcePropType } from 'react-native';
 import type { GitDiffResult, Run } from '@farmslot/protocol';
 import { activeRunDiffQuery, type ResourceQuery } from '@farmslot/protocol/client-cache';
 
-import { type ArtifactHttpHeaders, artifactSource } from '../lib/artifact-url';
+import {
+  type ArtifactHttpHeaders,
+  artifactSource,
+  heldArtifactFile,
+  heldArtifactsRevision,
+  subscribeHeldArtifacts,
+} from '../lib/artifact-url';
 import { companionRunDiffBase } from '../lib/content-prefetch';
 import {
   artifactImageKey,
@@ -152,6 +158,10 @@ export function useArtifactImageSource(
   const cache = useSyncExternalStore(subscribeResourceCache, getResourceCache, getResourceCache);
   const connected = useConnectedTransport() !== null;
   const keyId = artifactImageKey(artifact)?.id;
+  // An image too large for a content row may be held as a verified file: show it, read nothing.
+  // The revision renders again once the held index is read (a cold offline start) or changes.
+  useSyncExternalStore(subscribeHeldArtifacts, heldArtifactsRevision, heldArtifactsRevision);
+  const heldFile = keyId ? heldArtifactFile(keyId) : undefined;
   const identity = keyId ? `${keyId}\n${uri}` : '';
   const [resolved, setResolved] = useState<{
     cache: typeof cache;
@@ -165,7 +175,7 @@ export function useArtifactImageSource(
   // Verified or rejected bytes are final; only an unavailable read tries again.
   const settled = result !== undefined && result.status !== 'unavailable';
   useEffect(() => {
-    if (!keyId || settled) return;
+    if (!keyId || settled || heldFile) return;
     let active = true;
     let done = false;
     const run = ++runs.current;
@@ -205,10 +215,14 @@ export function useArtifactImageSource(
       if (!done) traceRef.current?.(run, 'aborted');
       controller.abort();
     };
-  }, [cache, connected, keyId, settled, stableHeaders, uri]);
+  }, [cache, connected, heldFile, keyId, settled, stableHeaders, uri]);
   const source = useMemo(
-    () => artifactImageSource(keyId, result, artifactSource(uri, stableHeaders)),
-    [keyId, result, stableHeaders, uri],
+    () =>
+      heldFile
+        ? { uri: heldFile }
+        : artifactImageSource(keyId, result, artifactSource(uri, stableHeaders)),
+    [heldFile, keyId, result, stableHeaders, uri],
   );
+  if (heldFile) return { source, read: 'ready' };
   return { source, read: keyId ? (result?.status ?? 'reading') : 'url' };
 }

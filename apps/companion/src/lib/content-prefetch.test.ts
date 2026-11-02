@@ -20,11 +20,14 @@ import {
   resourceDependenciesForRead,
   resourceQuery,
   type ResourceStore,
+  type ResourceStoreScope,
+  resourceStoreScopeId,
 } from '@farmslot/protocol/client-cache';
 
 import {
   companionRunDiffBase,
   contentPrefetchTargets,
+  heldGateRunIds,
   startContentPrefetch as startRealContentPrefetch,
 } from './content-prefetch';
 import { configurationProjectsQuery } from './gateway-run-sync';
@@ -261,12 +264,41 @@ mock.module('@react-native-async-storage/async-storage', {
     removeItem: async (key: string) => void saved.delete(key),
   },
 });
+// Gate media files stay out of this test: nothing is held, so every read goes to the gateway.
+const deletedPaths: string[] = [];
+mock.module('expo-file-system/legacy', {
+  namedExports: {
+    cacheDirectory: 'file:///cache/',
+    EncodingType: { Base64: 'base64' },
+    getInfoAsync: async () => ({ exists: false }),
+    makeDirectoryAsync: async () => {},
+    readAsStringAsync: async () => '',
+    writeAsStringAsync: async () => {},
+    downloadAsync: async () => ({ status: 404 }),
+    moveAsync: async () => {},
+    deleteAsync: async (uri: string) => {
+      deletedPaths.push(uri);
+    },
+  },
+});
 const stores: ResourceStore[] = [];
+const storeDeletions: Array<(scopeId: string) => Promise<void>> = [];
 mock.module('@farmslot/local-store/native', {
   namedExports: {
-    createNativeSqliteResourceStore: async () => {
-      const store = createMemoryResourceStore();
+    createNativeSqliteResourceStore: async (options: {
+      scope: ResourceStoreScope;
+      deleteFiles?: (scopeId: string) => Promise<void>;
+    }) => {
+      const memory = createMemoryResourceStore();
+      // Like the SQLite store, a deleted scope takes its files with it.
+      const store: ResourceStore = Object.assign(Object.create(memory) as ResourceStore, {
+        async deleteAll() {
+          await options.deleteFiles?.(resourceStoreScopeId(options.scope));
+          await memory.deleteAll();
+        },
+      });
       stores.push(store);
+      if (options.deleteFiles) storeDeletions.push(options.deleteFiles);
       return store;
     },
   },
@@ -316,6 +348,36 @@ test('pending gates come before active runs, each ordered by its last update', (
   assert.deepEqual(contentPrefetchTargets(undefined, decisions), [
     { runId: 'run-gate', gate: true, updatedAt: '2026-10-27T00:30:00.000Z' },
   ]);
+});
+
+test('a run awaiting a decision while a review it requested runs is still a waiting gate', () => {
+  // A live gate's shape: human-gating, its ready decision resolved with request-review.
+  const waiting = {
+    ...gateRun,
+    id: 'run-review-requested',
+    status: 'human-gating',
+    decisions: (gateRun.decisions ?? []).map((decision) => ({
+      ...decision,
+      resolvedAt: '2026-11-01T08:41:08.392Z',
+    })),
+  } as Run;
+  assert.deepEqual(
+    heldGateRunIds({ runs: [activeRun, waiting], totalCount: 2 }, { decisions: [] }),
+    new Set(['run-review-requested']),
+  );
+});
+
+test('gate media is dropped only against known run and decision lists', () => {
+  const runs = { runs: [activeRun, gateRun], totalCount: 2 };
+  assert.deepEqual(heldGateRunIds(runs, decisions), new Set(['run-gate']));
+  // Decided: the gate is gone from both lists, so its media can go.
+  assert.deepEqual(
+    heldGateRunIds({ runs: [activeRun], totalCount: 1 }, { decisions: [] }),
+    new Set(),
+  );
+  // A cold start before either list is read keeps everything.
+  assert.equal(heldGateRunIds(undefined, decisions), undefined);
+  assert.equal(heldGateRunIds(runs, undefined), undefined);
 });
 
 test('each persistent cache gets one prefetcher that fills it through the gateway client and stops with it; the gate then opens offline from held content', async () => {
@@ -473,6 +535,57 @@ test("the diff base is the stack base, then the project's default branch, then m
   // While a farm owner's projects load, no base is chosen yet.
   assert.equal(companionRunDiffBase(activeRun, { status: 'loading' }), undefined);
 });
+
+test("a deleted offline store deletes its scope's held evidence folder", async () => {
+  const { initializeNativeResourceCache } = await import('./resource-cache');
+  const client = new FakeClient(auth(true, 'native'));
+  setState({ client, activeProfileId: 'profile-deleted' });
+  const stop = initializeNativeResourceCache();
+  try {
+    await flush();
+    const deleteFiles = storeDeletions.at(-1);
+    assert.ok(deleteFiles, 'the store was opened with a deletion hook');
+    const before = deletedPaths.length;
+    // The store awaits this before its row goes, so a failure would fail the deletion.
+    await deleteFiles('{"gatewayUrl":"https://gone.invalid/"}');
+    const deleted = deletedPaths.slice(before);
+    assert.equal(deleted.length, 1);
+    assert.match(deleted[0], /^file:\/\/\/cache\/evidence-media\/[0-9a-f]{16}\/$/);
+  } finally {
+    stop();
+    await flush();
+  }
+});
+
+for (const online of [false, true])
+  test(`signing out ${online ? 'online' : 'offline, from a cold start'} deletes the scope's held evidence folder`, async () => {
+    const { initializeNativeResourceCache } = await import('./resource-cache');
+    const profile = `profile-signed-out-${online}`;
+    setState({ client: new FakeClient(auth(true, 'native')), activeProfileId: profile });
+    initializeNativeResourceCache()();
+    await flush();
+    // A cold start reopens the remembered scope, with the gateway unreachable when offline.
+    const client = new FakeClient(auth(true, 'native'));
+    client.connectionState = online ? 'connected' : 'disconnected';
+    setState({ client, signedOut: false });
+    const stop = initializeNativeResourceCache();
+    try {
+      await flush();
+      const before = deletedPaths.length;
+      // Companion's sign-out: the client records the revocation, then the session closes.
+      (client as { resourceConnectionReason?: string }).resourceConnectionReason = 'sign-out';
+      for (const listener of [...client.listeners]) listener();
+      setState({ signedOut: true, client: null });
+      await flush();
+      const deleted = deletedPaths.slice(before);
+      assert.equal(deleted.length, 1);
+      assert.match(deleted[0], /^file:\/\/\/cache\/evidence-media\/[0-9a-f]{16}\/$/);
+    } finally {
+      setState({ signedOut: false });
+      stop();
+      await flush();
+    }
+  });
 
 test('a gateway without capabilities.batchedContent gets no prefetch', async () => {
   const { initializeNativeResourceCache } = await import('./resource-cache');

@@ -37,6 +37,8 @@ export interface NativeResourceStoreOptions {
   scope: ResourceStoreScope;
   databaseName?: string;
   schemaVersion?: number;
+  /** Files kept beside a scope's store, deleted with it (see `SqliteResourceStoreOptions`). */
+  deleteFiles?: (scopeId: string) => Promise<void>;
 }
 
 export interface NativeResourceStoreDiagnostics {
@@ -86,6 +88,7 @@ export async function createNativeSqliteResourceStore(
     database: opened.driver,
     scope: options.scope,
     schemaVersion: options.schemaVersion,
+    deleteFiles: options.deleteFiles,
   });
 }
 
