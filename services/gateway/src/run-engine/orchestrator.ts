@@ -1435,6 +1435,8 @@ const publicationReviewRecoveryWatchers = new Map<
   {
     cleanup: () => void;
     replayPending: boolean;
+    /** The generation a pending gate replay was owed for; a newer one owns the gate. */
+    replayGeneration: number;
   }
 >();
 
@@ -1485,7 +1487,10 @@ function rearmPublicationReviewRecovery(
 
   const existing = publicationReviewRecoveryWatchers.get(run.id);
   if (existing) {
-    if (options?.replayPending) existing.replayPending = true;
+    if (options?.replayPending) {
+      existing.replayPending = true;
+      existing.replayGeneration = run.engineState?.generation ?? 0;
+    }
     return existing.cleanup;
   }
 
@@ -1504,6 +1509,7 @@ function rearmPublicationReviewRecovery(
   const startedAt = new Date(startedAtMs).toISOString();
   const state = {
     replayPending: options?.replayPending ?? false,
+    replayGeneration: run.engineState?.generation ?? 0,
     cleanup: (): void => {
       if (settled) return;
       settled = true;
@@ -1580,6 +1586,13 @@ function rearmPublicationReviewRecovery(
       state.cleanup();
       return;
     }
+    // Another replay (an operator's, or a later recovery) took the gate since this one was owed:
+    // replaying again would supersede the gate it presents.
+    if (state.replayPending && (latest.engineState?.generation ?? 0) !== state.replayGeneration) {
+      clearRecovery(latest);
+      state.cleanup();
+      return;
+    }
 
     inFlight = true;
     attempts += 1;
@@ -1600,6 +1613,7 @@ function rearmPublicationReviewRecovery(
           recoveryResult,
           getRun(latest.id)?.engineState?.publishGate?.reviews,
         );
+        state.replayGeneration = getRun(latest.id)?.engineState?.generation ?? 0;
         if (!state.replayPending && recoveryResult.terminalErrors.length === 0) {
           failures = 0;
           schedule(latest);
@@ -1648,6 +1662,8 @@ function rearmPublicationReviewRecovery(
         state.cleanup();
         return;
       }
+      // A refused replay of its own may have moved the generation; only another replay ends it.
+      state.replayGeneration = getRun(latest.id)?.engineState?.generation ?? 0;
       schedule(getRun(latest.id) ?? latest);
     } finally {
       inFlight = false;
@@ -1659,10 +1675,13 @@ function rearmPublicationReviewRecovery(
   return state.cleanup;
 }
 
-export function rearmPublicationReviewRecoveryForRun(runId: string): boolean {
+export function rearmPublicationReviewRecoveryForRun(
+  runId: string,
+  options?: { replayPending?: boolean },
+): boolean {
   const run = getRun(runId);
   publicationReviewRecoveryWatchers.get(runId)?.cleanup();
-  return !!run && rearmPublicationReviewRecovery(run) !== undefined;
+  return !!run && rearmPublicationReviewRecovery(run, options) !== undefined;
 }
 
 export function suspendPublicationReviewRecoveryForRun(runId: string): boolean {
