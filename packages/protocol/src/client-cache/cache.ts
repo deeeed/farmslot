@@ -227,9 +227,23 @@ export function createGatewayResourceCache(
     unsubscribeStore = store.onDeleted(storeDeleted);
   }
 
+  /** Observers whose failure was already logged, so a repeating one is reported once. */
+  const failedObservers = new WeakSet<(state: ResourceQueryState) => void>();
+
+  /** One observer's failure is its own: the other observers and the cache's reads go on. */
+  function deliver(entry: QueryEntry, listener: (state: ResourceQueryState) => void): void {
+    try {
+      listener(entry.state);
+    } catch (error) {
+      if (failedObservers.has(listener)) return;
+      failedObservers.add(listener);
+      console.error(`Resource cache observer of ${entry.query.id} failed:`, error);
+    }
+  }
+
   function notify(entry: QueryEntry): void {
     entry.state = { ...entry.state, storageNotice };
-    for (const listener of entry.listeners) listener(entry.state);
+    for (const listener of entry.listeners) deliver(entry, listener);
   }
 
   function cancelScheduledRead(entry: QueryEntry): void {
@@ -1285,7 +1299,7 @@ export function createGatewayResourceCache(
           notify(entry);
         });
       }
-      receive(entry.state);
+      deliver(entry, receive);
       if (entry.state.status !== 'ready' || entry.dirty) schedule(entry);
       return () => {
         entry.listeners.delete(receive);

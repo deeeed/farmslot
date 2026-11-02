@@ -2793,6 +2793,32 @@ test('a requested gate review whose package meets a stale CI receipt returns to 
   assert.equal(gates, 2, 'the requested review returns to the gate');
 });
 
+test('an artifact-only run with its pipeline review off records the skip and launches no reviewer', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'VALIDATION-1',
+    mode: 'autonomous',
+    slotId: 'validation-slot',
+    completionPolicy: 'artifact-only',
+    pipelineReview: 'none',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  assert.equal(run.pipelineReview, 'none', 'the stored run keeps the policy');
+  const result = await executeReviewStep(run.id, {
+    ...restartReplayContext(),
+    executeReviewForRun: async () => assert.fail('an artifact-only run with no pipeline review'),
+    createEngineDecision: async () => assert.fail('no review decision'),
+  });
+  assert.deepEqual(result.outputs, {
+    skipped: true,
+    reason: 'pipeline-review-off',
+    source: 'run-policy',
+    detail: 'Pipeline review is off for this artifact-only run (pipelineReview none).',
+  });
+  assert.equal(result.inputs?.enabled, false);
+});
+
 for (const mode of ['autonomous', 'interactive'] as const) {
   test(`PR completion in ${mode} mode never launches a reviewer or review decision`, async (t) => {
     const run = createRun({
