@@ -89,6 +89,7 @@ import {
   confirmRunDecision,
   confirmRunLifecycleAction,
   jumpToSuccessorWhenAvailable,
+  refreshRunEvidence,
   rescueRunLinkage,
   resolveBranchNudgePick,
   resolveInteractiveDevAction,
@@ -1703,6 +1704,7 @@ export class RunDetail extends RunDetailState {
       _directRunRefreshFailed: this._directRunRefreshFailed,
       _directRunUnavailable: this._directRunUnavailable,
       _rescueInProgress: this._rescueInProgress,
+      _evidenceRefreshInProgress: this._evidenceRefreshInProgress,
       _pendingConfirm: this._pendingConfirm,
       linkedTriageAssessmentId:
         this._triageDecisionLink?.runId === this.runId &&
@@ -1722,6 +1724,7 @@ export class RunDetail extends RunDetailState {
       _terminalRole: this._terminalRole,
       _actionsBlocked: () => this._actionsBlocked(),
       _rescueLinkage: (runId) => this._rescueLinkage(runId),
+      _refreshEvidence: (runId) => this._refreshEvidence(runId),
       _confirmForceComplete: (run) => this._confirmForceComplete(run),
       _confirmLifecycleAction: (run, action) =>
         confirmRunLifecycleAction(run, action, {
@@ -2061,6 +2064,16 @@ export class RunDetail extends RunDetailState {
       rescueInProgress: () => this._rescueInProgress,
       setRescueInProgress: (inProgress) => {
         this._rescueInProgress = inProgress;
+      },
+    });
+  }
+
+  private async _refreshEvidence(runId: string) {
+    await refreshRunEvidence(runId, {
+      actionsBlocked: () => this._actionsBlocked(),
+      refreshInProgress: () => this._evidenceRefreshInProgress,
+      setRefreshInProgress: (inProgress) => {
+        this._evidenceRefreshInProgress = inProgress;
       },
     });
   }

@@ -18,16 +18,11 @@ import {
   type SlotReleaseResult,
 } from '@farmslot/protocol';
 
-import {
-  WORKER_ARTIFACT_COPY_EXCLUDES,
-  WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
-} from '../../core/artifact-copy-policy.js';
 import { assertCleanupCurrent, withoutCleanupSignal } from '../../core/cleanup-scope.js';
 import {
   execOnSlot,
   expandHook,
   expandRecycleCmd,
-  getOrchestratorTaskRoot,
   getProjectField,
   loadProjectVars,
   loadSlotVars,
@@ -47,7 +42,6 @@ import {
   type SlotVars,
   updateSlotStatusIf,
 } from '../../core/index.js';
-import { slotCopyDir, SlotCopyDirEntryError } from '../../core/slot-io.js';
 import {
   firstWindowTarget,
   resolveTmuxSession,
@@ -68,7 +62,6 @@ import {
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import {
-  extendTerminalTeardown,
   TerminalTeardownTimeoutError,
   withTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
@@ -158,15 +151,6 @@ export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
 /** Progress while waiting, so a CLI idle timeout does not end the release first. */
 const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
 
-/**
- * Teardown time a release's artifact copy adds for its bytes. Copybacks measured about
- * 5 MB/s (audiolab-6, F298; 851 MB of unindexed APKs on audiolab-4 after #1726); the
- * budget assumes 2 MB/s for a loaded node. The floor covers listing and hashing.
- */
-export function releaseArtifactCopyBudgetMs(bytes: number): number {
-  return Math.max(60_000, Math.ceil(bytes / (2 * 1024 * 1024)) * 1000);
-}
-
 export interface SlotReleaseOptions {
   restartRunId?: string;
   machineTransitionHeld?: boolean;
@@ -197,7 +181,6 @@ function releaseCoalesceKey(params: SlotReleaseParams, options?: SlotReleaseOpti
     expectedRunId: params.expectedRunId ?? null,
     keepWarm: params.keepWarm ?? false,
     keepWork: params.keepWork ?? false,
-    skipArtifacts: params.skipArtifacts ?? false,
     forceReset: params.forceReset ?? false,
     preserveAgents: params.preserveAgents ?? false,
     detachRuns: params.detachRuns ?? true,
@@ -537,7 +520,6 @@ async function slotReleaseImpl(
   const preserveAgents = params.preserveAgents ?? false;
   const keepWarm = params.keepWarm ?? false;
   const keepWork = params.keepWork ?? false;
-  const skipArtifacts = params.skipArtifacts ?? false;
   const detachRuns = params.detachRuns ?? true;
   const requestId = params.requestId ?? `release-${randomUUID()}`;
   const startTime = Date.now();
@@ -558,6 +540,9 @@ async function slotReleaseImpl(
   const step = (name: string, detail: string) => {
     emit('slot.release.step', { requestId, slotId: params.slotId, name, detail });
     out(`[${name}] ${detail}`);
+    // The gateway log names the step too: releases the engine or an archive starts have no
+    // caller reading the stream, and 8385c3c3's timed out with nothing logged (F313).
+    console.log(`[slot.release] ${params.slotId} ${name} +${Date.now() - startTime}ms: ${detail}`);
   };
 
   // ONE serialized CAS does owner validation, the releasing marker, and the
@@ -987,10 +972,10 @@ async function slotReleaseImpl(
     await logDiscardedWork(vars, params.slotId, boundOwner);
   }
 
-  // 3. Collect artifacts + clean task files + git reset
+  // 3. Clean task files + git reset. Evidence was pulled into the artifact mirror when the run
+  // completed (run.refreshMirror pulls it again), so the release copies none of it (F313).
   const taskDirName = resolveProjectTaskDirName(projectJson);
   let idleBranchAfterRelease: string | undefined;
-  let artifactsCollected = false;
   if (!keepWork) {
     // Legacy slots may predate prepare exclusions; keep warm runtime files out of Git clean.
     await assertReleaseClaim();
@@ -1000,69 +985,6 @@ async function slotReleaseImpl(
       (await readSlotField(params.slotId, 'task_file')) as string | null,
       taskDirName,
     );
-
-    if (!skipArtifacts && taskRel) {
-      step('artifacts', 'Collecting artifacts...');
-      const workerArtifacts = `${vars.remoteRepo}/${taskDirName}/${taskRel}/artifacts`;
-      const hasArtifacts =
-        (
-          await execOnSlot(vars, `test -d ${shellQuote(workerArtifacts)} && echo yes`)
-        ).stdout.trim() === 'yes';
-      if (hasArtifacts) {
-        const orchTaskDir = path.join(
-          getOrchestratorTaskRoot(vars.projectName, projectJson),
-          taskRel,
-        );
-        const localArtifactsDir = path.join(orchTaskDir, 'artifacts');
-        const entryFailures: SlotCopyDirEntryError[] = [];
-        const releaseRunId =
-          params.expectedRunId ??
-          ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ??
-          undefined;
-        // An ended run's dir gets these files with no update of that run.
-        const { withTaskDirWrite } = await import('../../run-completion/retained-artifacts.js');
-        await withTaskDirWrite(orchTaskDir, () =>
-          slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
-            excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES],
-            excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
-            // The completion mirror already holds most of these files. Copying them all
-            // again (about 900 MB on the Audiolab release slots) outlasted the teardown
-            // timeout, so the slot never reset (F298).
-            skipUnchanged: true,
-            // Files the mirror never indexed (two 425 MB APKs on audiolab-4) still transfer
-            // here, so the copy adds its own budget instead of spending the teardown's.
-            onTotals: ({ bytes }) =>
-              extendTerminalTeardown(params.slotId, releaseArtifactCopyBudgetMs(bytes)),
-            // Stamp run/slot so transfer progress binds to run detail / pipeline UI.
-            phase: 'mirror',
-            runId: releaseRunId,
-            slotId: params.slotId,
-            labelPrefix: 'release-artifacts',
-            // Release-time copyback is best-effort: one transient EACCES on a
-            // screenshot must not block reset of the whole slot. Per-file errors
-            // are surfaced in the step breadcrumb so operators see partial copies.
-            onEntryFailure: (err) => {
-              entryFailures.push(err);
-              console.warn(
-                `[slot.release] artifact copy entry failure ${err.sourcePath}: ${err.message.slice(0, 200)}`,
-              );
-            },
-          }),
-        );
-        // A file that failed to copy is only kept by the scaffolding archive.
-        artifactsCollected = entryFailures.length === 0;
-        if (entryFailures.length > 0) {
-          step(
-            'artifacts',
-            `Artifacts collected to ${localArtifactsDir}/ (with ${entryFailures.length} per-file failure${entryFailures.length === 1 ? '' : 's'})`,
-          );
-        } else {
-          step('artifacts', `Artifacts collected to ${localArtifactsDir}/`);
-        }
-      } else {
-        step('artifacts', 'No artifacts directory');
-      }
-    }
 
     if (!preserveAgents) {
       await assertReleaseClaim();
@@ -1079,7 +1001,6 @@ async function slotReleaseImpl(
           destination,
           taskRelativeDir: taskRel,
           beforeRemove: assertReleaseClaim,
-          artifactsCollected,
         });
         step(
           'scaffolding',
@@ -1137,7 +1058,7 @@ async function slotReleaseImpl(
       }
     } catch (err) {
       // Storage pruning is intentionally best-effort at release time: by this
-      // point the active task artifacts have already been copied back, and a
+      // point the task's evidence was mirrored at completion, and a
       // stale-cache cleanup failure must not strand the slot in releasing.
       const detail = (err as Error).message.slice(0, 200);
       console.warn(`[slot.release] ${params.slotId}: storage cleanup skipped: ${detail}`);
