@@ -38,7 +38,9 @@ function taskFolder(taskFile: string | null | undefined): string | undefined {
  * An unknown slot is left to the gateway to answer.
  */
 export function runMirrorRefreshUnavailableReason(
-  run: Pick<Run, 'id' | 'slotId' | 'taskFile'> & { output?: Pick<RunOutput, 'capturedAt'> },
+  run: Pick<Run, 'id' | 'slotId' | 'taskFile'> & {
+    output?: Pick<RunOutput, 'capturedAt' | 'captureError'>;
+  },
   slots: readonly Pick<SlotStatus, 'slot' | 'lifecycle' | 'phase' | 'currentRunId' | 'taskFile'>[],
   formatTime: (iso: string) => string = (iso) => new Date(iso).toLocaleString(),
 ): string | null {
@@ -51,7 +53,10 @@ export function runMirrorRefreshUnavailableReason(
     slot.currentRunId === run.id ||
     (!slot.currentRunId && task !== undefined && taskFolder(slot.taskFile) === task);
   if (occupied && holdsTask) return null;
-  return run.output?.capturedAt
-    ? `Slot released; files were synced at ${formatTime(run.output.capturedAt)}`
-    : 'Slot released; no files were synced';
+  if (!run.output?.capturedAt) return 'Slot released; no files were synced';
+  // A failed sync also stamps capturedAt, over the files of the last good one.
+  const at = formatTime(run.output.capturedAt);
+  return run.output.captureError
+    ? `Slot released; the last sync, at ${at}, failed`
+    : `Slot released; files were synced at ${at}`;
 }
