@@ -291,6 +291,7 @@ const LAYOUTS: Record<FlowType, Record<string, StepPos>> = {
 export const DECISION_STEP_MAP: Record<string, string> = {
   collision_check: 'find-slot',
   engine_collision: 'find-slot',
+  engine_app_binding_mismatch: 'find-slot',
   plan_confirmation: 'prepare',
   blocked_alert: 'monitor',
   engine_review_posting: 'human-gate',

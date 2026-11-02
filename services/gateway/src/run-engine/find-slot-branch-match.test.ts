@@ -3,10 +3,12 @@ import { mock, test } from 'node:test';
 import * as promiseTimers from 'node:timers/promises';
 
 import type {
+  AppBindingMismatchPayload,
   PoolConfig,
   PressureAdmissionDecision,
   ProjectSlotSelectionConfig,
   Run,
+  RunDecision,
   SlotStatus,
 } from '@farmslot/protocol';
 import { sourceLockDigest } from '@farmslot/slot-config/sources';
@@ -22,6 +24,25 @@ const fleet = await import('../fleet/state.js');
 const core = await import('../core/index.js');
 const branches = await import('../methods/dispatch/branch-checkout.js');
 const raw = await import('../methods/pr/raw-cache.js');
+
+// Pool `app` per slot and the project's default app, for the app binding check (F306).
+// The project default is served by the core/index mock below.
+interface ProjectAppFixture {
+  recipe?: { app?: string };
+  apps?: string[];
+}
+const slotApps = new Map<string, string>();
+let projectApps: ProjectAppFixture | undefined;
+const config = await import('../core/config.js');
+mock.module('../core/config.js', {
+  namedExports: {
+    ...config,
+    loadSlotVars: async (id: string) => {
+      const app = slotApps.get(id);
+      return app ? { slotId: id, resourceVars: { app } } : config.loadSlotVars(id);
+    },
+  },
+});
 
 const project = 'example-terminal';
 const branch = 'TAT-4137-feat-chart-native-order-management';
@@ -204,6 +225,10 @@ mock.module('../core/index.js', {
     },
     claimSlotStatusIf: claim,
     updateSlotStatus: async () => {},
+    loadProjectVars: async (...args: Parameters<typeof core.loadProjectVars>) =>
+      projectApps
+        ? { projectName: args[0], projectJson: projectApps }
+        : core.loadProjectVars(...args),
   },
 });
 mock.module('../methods/dispatch/branch-checkout.js', {
@@ -392,6 +417,8 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   liveRows.clear();
   rivalClaim = undefined;
   previewPins.length = 0;
+  slotApps.clear();
+  projectApps = undefined;
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -1145,4 +1172,136 @@ test('a lost operator pick waits for that slot like a pin', async () => {
   assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-1');
   assert.deepEqual(claims, ['macpro-mmt-1']);
   assert.deepEqual(previewPins.slice(-1), [true], 'the pick is claimed under its pin policy');
+});
+
+// F306: a slot's task binding and runtime follow its pool app, never run.app.
+type DecideOptions = Parameters<(typeof context)['createEngineDecision']>[5];
+function bindAudiolabApps(): void {
+  slotApps.set('macpro-mmt-1', 'apps/playground');
+  slotApps.set('macpro-mmt-2', 'apps/sherpa-voice');
+  projectApps = {
+    recipe: { app: 'apps/playground' },
+    apps: ['apps/playground', 'apps/sherpa-voice'],
+  };
+  pools = [
+    {
+      machine: 'macpro',
+      project,
+      platform: 'ios',
+      os: 'test',
+      host: 'macpro',
+      sshUser: 'fixture',
+      slots: ['macpro-mmt-1', 'macpro-mmt-2'].map((id) => ({
+        id,
+        enabled: true,
+        mode: 'dispatch' as const,
+        project,
+        repo: `/repos/${id}`,
+        session: id,
+      })),
+    },
+  ];
+}
+function appBindingContext(
+  answer: 'abort' | 'continue',
+  asked: Array<{ payload: AppBindingMismatchPayload; options: DecideOptions }>,
+): typeof context {
+  return {
+    ...context,
+    createEngineDecision: async (_id, reason, description, actions, payload, options) => {
+      assert.equal(reason, 'app_binding_mismatch');
+      assert.deepEqual(claims, [], 'the operator answers before the slot claim');
+      assert.deepEqual(finishedReclaims, [], 'nothing on the slot changes before the answer');
+      assert.equal(liveRows.has('macpro-mmt-1'), false, 'the slot row is untouched');
+      assert.ok(payload?.kind === 'app_binding_mismatch');
+      assert.match(description, /Slots bound to apps\/sherpa-voice: macpro-mmt-2\./);
+      asked.push({ payload, options });
+      run.decisions.push({
+        id: `app-binding-${run.decisions.length}`,
+        type: `engine_${reason}`,
+        title: 'App binding mismatch',
+        description,
+        actions,
+        createdAt: new Date().toISOString(),
+        resolvedAt: new Date().toISOString(),
+        resolvedAction: answer,
+        payload,
+      });
+      return answer;
+    },
+  };
+}
+const playgroundSlotMismatch: AppBindingMismatchPayload = {
+  kind: 'app_binding_mismatch',
+  slotId: 'macpro-mmt-1',
+  runApp: 'apps/sherpa-voice',
+  slotApp: 'apps/playground',
+  source: 'slot',
+  boundSlots: ['macpro-mmt-2'],
+};
+
+test('a pinned slot bound to another app asks before the claim, and abort leaves it untouched', async () => {
+  reset('fix-bug', 'TAT-4137');
+  bindAudiolabApps();
+  run.slotId = 'macpro-mmt-1';
+  run.app = 'apps/sherpa-voice';
+  const asked: Array<{ payload: AppBindingMismatchPayload; options: DecideOptions }> = [];
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, appBindingContext('abort', asked)),
+    /App binding mismatch: macpro-mmt-1 is bound to apps\/playground, not apps\/sherpa-voice; aborted before the claim/,
+  );
+  assert.deepEqual(
+    asked.map((entry) => entry.payload),
+    [playgroundSlotMismatch],
+  );
+  assert.deepEqual(claims, []);
+  assert.deepEqual(finishedReclaims, []);
+  assert.equal(liveRows.has('macpro-mmt-1'), false);
+  assert.equal(slots[0]!.lifecycle, 'ready');
+});
+
+test('continue on the slot binding claims it and records the accepted binding', async () => {
+  reset('fix-bug', 'TAT-4137');
+  bindAudiolabApps();
+  run.slotId = 'macpro-mmt-1';
+  run.app = 'apps/sherpa-voice';
+  const asked: Array<{ payload: AppBindingMismatchPayload; options: DecideOptions }> = [];
+  const result = await executeFindSlotStep(run.id, run, 0, appBindingContext('continue', asked));
+  assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-1');
+  assert.deepEqual(claims, ['macpro-mmt-1']);
+  assert.deepEqual(result.outputs?.appBinding, playgroundSlotMismatch);
+  // Only a continue for this same slot and these apps replays; a reselect asks again.
+  const [{ options }] = asked;
+  const recorded = run.decisions.at(-1)!;
+  const variant = (patch: Partial<RunDecision>): RunDecision => ({ ...recorded, ...patch });
+  assert.equal(options?.canReplay?.(recorded), true);
+  assert.equal(options?.canReplay?.(variant({ resolvedAction: 'abort' })), false);
+  assert.equal(
+    options?.canReplay?.(
+      variant({ payload: { ...playgroundSlotMismatch, slotId: 'macpro-mmt-2' } }),
+    ),
+    false,
+  );
+  assert.equal(
+    options?.canReplay?.(
+      variant({ payload: { ...playgroundSlotMismatch, runApp: 'apps/minimal' } }),
+    ),
+    false,
+  );
+});
+
+test('a run whose app matches the slot binding is never asked', async () => {
+  reset('fix-bug', 'TAT-4137');
+  bindAudiolabApps();
+  run.slotId = 'macpro-mmt-1';
+  run.app = './apps/playground/';
+  const result = await executeFindSlotStep(run.id, run, 0, {
+    ...context,
+    createEngineDecision: async (_id, reason) => {
+      throw new Error(`unexpected ${reason} decision`);
+    },
+  });
+  assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-1');
+  assert.deepEqual(claims, ['macpro-mmt-1']);
+  assert.equal(result.outputs?.appBinding, undefined);
 });

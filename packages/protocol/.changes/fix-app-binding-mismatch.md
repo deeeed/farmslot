@@ -1,0 +1,1 @@
+- New `AppBindingMismatchPayload` (`kind: 'app_binding_mismatch'`) in `RunDecisionPayload`: the slot, the run's app, the slot's app and its source, and the project's slots bound to the run's app (F306).

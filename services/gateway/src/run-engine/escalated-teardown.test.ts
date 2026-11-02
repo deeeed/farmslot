@@ -104,3 +104,37 @@ test('a retained-session handoff hold clears its reservation and never kills the
   assert.equal(row.current_run_id, 'terminal-owner');
   assert.equal(row.lifecycle, 'busy', 'the slot is not published ready over a live worker');
 });
+
+// A find-slot abort before the claim (F306 app binding) fails a run pinned to a
+// slot it never claimed: the slot is idle or another run's, so failure cleanup
+// owes it nothing.
+for (const [label, row] of [
+  ['an idle slot', { lifecycle: 'ready', phase: null, current_run_id: null }],
+  [
+    'a slot another run holds',
+    { lifecycle: 'busy', phase: 'working', current_run_id: 'live-owner' },
+  ],
+] as const) {
+  test(`failure cleanup leaves ${label} that the failed run never claimed untouched`, async (t) => {
+    const before = { slot: 'pinned-slot', slot_epoch: 7, ...row };
+    const statusPath = statusFileWith(t, before);
+
+    const { stdout } = await runAgainstStatusFile(
+      statusPath,
+      `const { cleanupSlotAfterRunFailure } = await import('./src/run-engine/orchestrator.js');
+       const touched = [];
+       await cleanupSlotAfterRunFailure(
+         'pinned-slot',
+         'aborted-run',
+         'find-slot failure',
+         async () => { touched.push('destructive cleanup'); },
+         async () => { touched.push('worker teardown'); },
+       );
+       console.log(JSON.stringify({ touched }));`,
+    );
+
+    const { touched } = JSON.parse(stdout.trim().split('\n').at(-1)!);
+    assert.deepEqual(touched, [], 'no teardown runs for a slot the run never claimed');
+    assert.deepEqual(JSON.parse(readFileSync(statusPath, 'utf8')).slots[0], before);
+  });
+}

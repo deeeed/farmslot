@@ -1255,6 +1255,22 @@ export interface BranchAffinityNudgePayload {
   riskFlags: string[];
 }
 
+/**
+ * The run names an app the selected slot is not bound to. The slot's task
+ * binding, Metro and launch actions follow the slot's app, so FIND_SLOT asks
+ * before claiming it.
+ */
+export interface AppBindingMismatchPayload {
+  kind: 'app_binding_mismatch';
+  slotId: string;
+  runApp: string;
+  slotApp: string;
+  /** `slot`: the pool slot's `app`; `project`: the project's default app. */
+  source: 'slot' | 'project';
+  /** Pool slots of the run's project bound to the run's app. */
+  boundSlots: string[];
+}
+
 export interface ImprovementFileChange {
   filePath: string;
   before: string;
@@ -1509,6 +1525,7 @@ export type RunDecisionPayload =
   | NoChangeGatePayload
   | SlotPickerPayload
   | BranchAffinityNudgePayload
+  | AppBindingMismatchPayload
   | ImprovementDiffPayload
   | LearningsDraftPayload
   | RetrospectivePayload

@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
 import {
+  type AppBindingMismatchPayload,
   type DecisionAction,
   DEFAULT_BRANCH,
   type DispatchPreviewParams,
@@ -124,6 +125,7 @@ import {
 } from '../tasks/execution-template-catalog.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
 
+import { appBindingMismatch, boundApp, type SlotAppBinding } from './app-binding.js';
 import { canReplayBranchAffinityDecision, findLatestResolvedDecision } from './decision-replay.js';
 import { assertNativeRunForSlot } from './dispatch-policy.js';
 import { BlockedRunError } from './errors.js';
@@ -215,6 +217,103 @@ export function activeWorkerFreshReuseAllowed(flowType: Run['flowType']): boolea
   return flowType === 'review-pr' || flowType === 'pr-complete' || flowType === 'update-branch';
 }
 
+/** Enabled pool slots of the project whose app binding is `app`. */
+async function slotsBoundToApp(
+  project: string,
+  app: string,
+  defaults: Omit<SlotAppBinding, 'slotApp'>,
+): Promise<string[]> {
+  const ids = (await loadPoolConfigs()).flatMap((pool) =>
+    pool.slots.filter((slot) => slot.project === project && slot.enabled).map((slot) => slot.id),
+  );
+  const slots = await Promise.allSettled(ids.map((id) => loadSlotVars(id)));
+  return ids.filter((_, index) => {
+    const slot = slots[index]!;
+    return (
+      slot.status === 'fulfilled' &&
+      boundApp({ ...defaults, slotApp: slot.value.resourceVars.app })?.app === app
+    );
+  });
+}
+
+function sameAppBinding(
+  prior: RunDecisionPayload | undefined,
+  current: AppBindingMismatchPayload,
+): boolean {
+  return (
+    prior?.kind === 'app_binding_mismatch' &&
+    prior.slotId === current.slotId &&
+    prior.runApp === current.runApp &&
+    prior.slotApp === current.slotApp
+  );
+}
+
+/**
+ * The slot's task binding, Metro and launch actions follow the slot's app, never
+ * `run.app` (F306). A run naming another app waits for the operator: abort, or
+ * continue on the slot's app. Only a continue for this same binding replays.
+ */
+async function confirmAppBinding(
+  run: Run,
+  slotId: string,
+  decide: FindSlotStepContext['createEngineDecision'],
+): Promise<void> {
+  if (!run.app?.trim()) return;
+  const [slot, project] = await Promise.all([loadSlotVars(slotId), loadProjectVars(run.project)]);
+  const defaults = { recipeApp: project.projectJson.recipe?.app, apps: project.projectJson.apps };
+  const mismatch = appBindingMismatch(run.app, { ...defaults, slotApp: slot.resourceVars.app });
+  if (!mismatch) return;
+  const { runApp, slotApp, source } = mismatch;
+  const payload: AppBindingMismatchPayload = {
+    kind: 'app_binding_mismatch',
+    slotId,
+    ...mismatch,
+    boundSlots: await slotsBoundToApp(run.project, runApp, defaults),
+  };
+  const bound = payload.boundSlots.length
+    ? `Slots bound to ${runApp}: ${payload.boundSlots.join(', ')}.`
+    : `No ${run.project} slot is bound to ${runApp}.`;
+  const action = await decide(
+    run.id,
+    'app_binding_mismatch',
+    `Run app ${runApp} differs from ${slotId}'s binding ${slotApp} (${source === 'slot' ? 'pool slot app' : 'project default'}). The task binding, Metro and launch actions on that slot follow ${slotApp}, not the run. ${bound}`,
+    [
+      {
+        id: 'abort',
+        label: 'Abort run',
+        style: 'danger',
+        description: `Stop before claiming ${slotId}. Nothing on the slot changes.`,
+      },
+      {
+        id: 'continue',
+        label: `Continue on ${slotApp}`,
+        style: 'secondary',
+        description: `Claim ${slotId}. Its task and runtime stay bound to ${slotApp}.`,
+      },
+    ],
+    payload,
+    {
+      canReplay: (prior) =>
+        prior.resolvedAction === 'continue' && sameAppBinding(prior.payload, payload),
+    },
+  );
+  if (action !== 'continue')
+    throw new Error(
+      `App binding mismatch: ${slotId} is bound to ${slotApp}, not ${runApp}; aborted before the claim`,
+    );
+}
+
+/** The binding the operator continued on for the slot the run claimed, if any. */
+function acceptedAppBinding(run: Run | undefined): AppBindingMismatchPayload | undefined {
+  const decision = run && findLatestResolvedDecision(run.decisions, 'app_binding_mismatch');
+  const payload = decision?.payload;
+  return decision?.resolvedAction === 'continue' &&
+    payload?.kind === 'app_binding_mismatch' &&
+    payload.slotId === run?.slotId
+    ? payload
+    : undefined;
+}
+
 /**
  * Selection-time slot claim. All claim-type writes must refuse a slot whose
  * phase is 'releasing' (an in-flight teardown owns it and will kill/reset
@@ -226,7 +325,7 @@ async function claimSelectedSlot(
   slotId: string,
   runId: string,
   generation: number,
-  emit: BroadcastFn,
+  context: Pick<FindSlotStepContext, 'broadcastFn' | 'createEngineDecision'>,
   phase: 'preparing' | 'working',
   agent?: 'working',
   opts?: { takeoverLiveOwner?: boolean; reserveOnly?: boolean },
@@ -237,6 +336,9 @@ async function claimSelectedSlot(
     const slotRunner = (await readSlotRow(slotId))?.runner;
     assertNativeRunForSlot(run, typeof slotRunner === 'string' ? slotRunner : undefined);
   }
+  // Before source admission and the claim: an abort leaves the slot as it was.
+  await confirmAppBinding(run, slotId, context.createEngineDecision);
+  if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
   const pool = (await loadPoolConfigs()).find((pool) =>
     pool.slots.some((slot) => slot.id === slotId),
   );
@@ -268,7 +370,7 @@ async function claimSelectedSlot(
       // Record the binding only after source revalidation. Automatic replans keep their
       // original open request, while the claim and any teardown see this exact target.
       if (current?.slotId !== slotId) updateRun(runId, { slotId });
-      return claimAdmittedSlot(slotId, runId, generation, emit, phase, agent, opts);
+      return claimAdmittedSlot(slotId, runId, generation, context.broadcastFn, phase, agent, opts);
     },
     { nodeId: pool?.machine },
   );
@@ -777,6 +879,8 @@ export async function executeFindSlotStep(
     }
     if (slotClaimWaitReason)
       result = { ...result, inputs: { ...result.inputs, slotClaimWaitReason } };
+    const appBinding = result.hostLoadWait ? undefined : acceptedAppBinding(getRun(runId));
+    if (appBinding) result = { ...result, outputs: { ...result.outputs, appBinding } };
     if (!result.hostLoadWait)
       return hostLoadWaitReason
         ? { ...result, inputs: { ...result.inputs, hostLoadWaitReason } }
@@ -1006,7 +1110,7 @@ async function findSlotAttempt(
     // gate as every other binding; the kill switch is the deliberate bypass.
     await assertEngineBoundSlotPressureAdmitted(runId, run, warmSlot.machine);
     // Take over the parent's ownership fence; DISPATCH decides warm vs fresh after liveness.
-    await claimSelectedSlot(run.slotId, runId, generation, broadcastFn, 'working', 'working', {
+    await claimSelectedSlot(run.slotId, runId, generation, context, 'working', 'working', {
       takeoverLiveOwner: true,
     });
     return {
@@ -1062,7 +1166,7 @@ async function findSlotAttempt(
     if (wizardSlot) await assertEngineBoundSlotPressureAdmitted(runId, run, wizardSlot.machine);
     // Reserve the handoff exactly like the decision-card path: without this,
     // two wizard nudges racing the same worker would both deliver.
-    await claimSelectedSlot(run.slotId, runId, generation, broadcastFn, 'working', 'working', {
+    await claimSelectedSlot(run.slotId, runId, generation, context, 'working', 'working', {
       takeoverLiveOwner: true,
     });
     return {
@@ -1146,11 +1250,11 @@ async function findSlotAttempt(
     // the same CAS that refuses foreign reservations. A read-then-teardown
     // check would let a nudge reserve in the gap and have its in-flight
     // delivery killed here. The ordinary claim below consumes the fence.
-    await claimSelectedSlot(run.slotId, runId, generation, broadcastFn, 'preparing', undefined, {
+    await claimSelectedSlot(run.slotId, runId, generation, context, 'preparing', undefined, {
       ...(replaceableWarm || becameFree ? { reserveOnly: true } : { takeoverLiveOwner: true }),
     });
     await withRunSources(getRun(runId)!, () => prepareSlotForFreshReuse(run.slotId!, runId));
-    await claimSelectedSlot(run.slotId, runId, generation, broadcastFn, 'preparing');
+    await claimSelectedSlot(run.slotId, runId, generation, context, 'preparing');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
     return {
       inputs,
@@ -1273,7 +1377,7 @@ async function findSlotAttempt(
       );
       // Held-slot affinity reuse still launches a fresh worker on the machine.
       await assertEngineBoundSlotPressureAdmitted(runId, run, affinitySlot.machine);
-      await claimSelectedSlot(affinitySlot.slot, runId, generation, broadcastFn, 'preparing');
+      await claimSelectedSlot(affinitySlot.slot, runId, generation, context, 'preparing');
       broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
       return {
         inputs,
@@ -1417,17 +1521,9 @@ async function findSlotAttempt(
           // decision-card nudge fail its own eligibility recheck. The wizard-shortcut path
           // doesn't markSlotBusy at all (slot already has agent=working from the prior run);
           // this branch needs the same preservation.
-          await claimSelectedSlot(
-            top.slot.slot,
-            runId,
-            generation,
-            broadcastFn,
-            'working',
-            'working',
-            {
-              takeoverLiveOwner: true,
-            },
-          );
+          await claimSelectedSlot(top.slot.slot, runId, generation, context, 'working', 'working', {
+            takeoverLiveOwner: true,
+          });
           broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
           return {
             inputs,
@@ -1467,7 +1563,7 @@ async function findSlotAttempt(
             top.slot.slot,
             runId,
             generation,
-            broadcastFn,
+            context,
             'preparing',
             undefined,
             {
@@ -1481,7 +1577,7 @@ async function findSlotAttempt(
           await withRunSources(getRun(runId)!, () =>
             prepareSlotForFreshReuse(top.slot.slot, runId),
           );
-          await claimSelectedSlot(top.slot.slot, runId, generation, broadcastFn, 'preparing');
+          await claimSelectedSlot(top.slot.slot, runId, generation, context, 'preparing');
           broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
           return {
             inputs,
@@ -1541,7 +1637,7 @@ async function findSlotAttempt(
             // as every other fresh binding, before updateRun/claim.
             await assertEngineBoundSlotPressureAdmitted(runId, run, picked.machine);
             updateRun(runId, { slotId: pickedSlotId });
-            await claimSelectedSlot(pickedSlotId, runId, generation, broadcastFn, 'preparing');
+            await claimSelectedSlot(pickedSlotId, runId, generation, context, 'preparing');
             broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
             return {
               inputs,
@@ -1753,7 +1849,7 @@ async function findSlotAttempt(
     // owner's worker is still writing in — and the claim's 'preparing' fence
     // keeps rivals out for the duration of the reset below.
     updateRun(runId, { slotId: pickedSlotId });
-    await claimSelectedSlot(pickedSlotId, runId, generation, broadcastFn, 'preparing');
+    await claimSelectedSlot(pickedSlotId, runId, generation, context, 'preparing');
 
     // If user requested reset, do it behind the claim fence
     if (resolvedDecision?.selectionData?.resetBranch) {
@@ -1868,7 +1964,7 @@ async function findSlotAttempt(
   const slotId = result.preview.slotId;
   if (!slotId) throw new Error('Workspace review must use its workspace allocation path');
   // Mark slot as claimed by this run
-  await claimSelectedSlot(slotId, runId, generation, broadcastFn, 'preparing');
+  await claimSelectedSlot(slotId, runId, generation, context, 'preparing');
   run = getRun(runId)!;
   // Stamp the slot's persistent runner/model fields now so the UI's slot
   // card surfaces the upcoming worker as soon as the bind happens.

@@ -1,0 +1,1 @@
+- An app binding mismatch decision shows on the run pipeline's find-slot step instead of at complete (F306).
