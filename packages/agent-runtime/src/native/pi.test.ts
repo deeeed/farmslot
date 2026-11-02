@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { observePiAccount, piAccountState } from './account-pi.js';
 import { piNativeAdapter } from './pi.js';
+import { PiRpc } from './pi-rpc.js';
 import type { NativeEventInput } from './types.js';
 
 // Records shaped like Pi 1.4.0's `--mode rpc` output, as observed live.
@@ -24,13 +25,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  if(!line.trim())return;
  const m=JSON.parse(line);fs.appendFileSync('wire',line+'\\n');
  if(m.type==='get_state')return reply(m,{sessionId:session,model:{provider,id},isStreaming:false});
- if(m.type==='get_available_models')return reply(m,{models:process.env.PI_FIXTURE_NO_MODELS?[]:[{provider,id}]});
+ if(m.type==='get_available_models'){if(process.env.PI_FIXTURE_REFUSE)return send({id:m.id,type:'response',command:m.type,success:false,error:'no registry'});return reply(m,{models:process.env.PI_FIXTURE_NO_MODELS?[]:[{provider,id}]})}
  if(m.type==='clear_queue')return reply(m,{steering:[],followUp:[]});
  if(m.type==='abort'){settle(true);return reply(m)}
  if(m.type==='steer')return reply(m,{disposition:'queued'});
  if(m.type==='extension_ui_response'){fs.writeFileSync('dialog',line);return settle()}
  if(m.type!=='prompt')return;
  const text=m.message;
+ if(text==='hold')return;
  if(text==='reject'){send({type:'queue_update',steering:[],followUp:[]});return send({id:m.id,type:'response',command:'prompt',success:false,error:'busy'})}
  if(text==='handled')return reply(m,{disposition:'handled'});
  if(text==='events-first'){send({type:'agent_start'});reply(m,{disposition:'started'});return settle()}
@@ -270,16 +272,46 @@ test('Pi account state reads its RPC model list', async (t) => {
   assert.throws(() => piAccountState({}));
   const f = setup();
   t.after(f.cleanup);
-  for (const [env, login] of [
-    [{}, 'authenticated'],
-    [{ PI_FIXTURE_NO_MODELS: '1' }, 'signed-out'],
+  for (const [env, login, reason] of [
+    [{}, 'authenticated', undefined],
+    [{ PI_FIXTURE_NO_MODELS: '1' }, 'signed-out', undefined],
+    // Pi refusing the model list leaves the login unknown, not signed out.
+    [{ PI_FIXTURE_REFUSE: '1' }, 'unavailable', 'status-unavailable'],
   ] as const) {
     const observed = await observePiAccount({
       cwd: f.cwd,
       executable: f.executable,
       env: { ...process.env, ...env },
     });
-    assert.equal(observed.login, login);
+    assert.deepEqual([observed.login, observed.reason], [login, reason]);
     assert.equal(observed.version, '1.4.0');
   }
+});
+
+test('a Pi prompt waits past 30 s for its reply while other requests stay bounded', async (t) => {
+  const f = setup();
+  t.after(f.cleanup);
+  const session = await piNativeAdapter.start(f, () => undefined);
+  t.after(() => session.close());
+  const rpc = new PiRpc(
+    f,
+    ['--mode', 'rpc'],
+    () => undefined,
+    () => undefined,
+  );
+  t.after(() => rpc.close());
+  // Pi replies to a prompt only after its pre-run work, such as a compaction, which can run long.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let settled = false;
+  const sending = session.send('hold', 'c1').then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  const bounded = rpc.request({ type: 'never-answered' });
+  t.mock.timers.tick(31_000);
+  await assert.rejects(bounded, /never-answered timed out/);
+  assert.equal(settled, false, 'the prompt is still waiting for its reply');
+  t.mock.timers.reset();
+  await session.close();
+  await sending;
 });

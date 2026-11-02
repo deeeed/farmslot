@@ -519,7 +519,7 @@ Pi and OpenCode get native adapters on the same path as the other runners, so ev
   - Stop sends `clear_queue` before `abort`, because Pi keeps queued steering through an abort;
   - `prompt` waits for Pi's reply, which follows its pre-run work such as compaction;
   - resume passes `--session <id>` and must report the same session;
-  - the model must be the one requested: a `provider/id` must match exactly, and a bare ID leaves the provider to Pi. Native pickers name Pi's provider-qualified IDs.
+  - the model must be the one requested: a `provider/id` must match exactly, and a bare ID leaves the provider to Pi. Native pickers name Pi's provider-qualified IDs. A `:<thinking>` suffix on the model sets the level and wins over the session's effort; the tmux launch always passes `--thinking`, so there the effort wins.
 - **Pi tools.** Pi asks before no tool and has no sandbox of its own, in RPC mode as in its terminal. The session reports `approvals: false`, and every tier runs Pi's tools unasked, matching the tmux Pi launch, whose tier flags are empty. Extension dialogs are answered `cancelled` until a native surface exists.
 - **Pi project trust.** The native launch passes no `--approve`. In RPC mode Pi then loads trust-gated project resources (`.pi/settings.json`, `.pi/extensions`, `.agents/skills`) only for a project trusted in Pi's own settings. The tmux worker passes `--approve` and loads Farmslot's Pi extension. Whether native workers in farm-created workspaces should approve project trust is left to a later decision.
 - **Accounts.** Both sign in per provider and have no account status command:

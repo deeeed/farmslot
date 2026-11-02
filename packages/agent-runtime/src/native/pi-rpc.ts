@@ -67,12 +67,12 @@ export class PiRpc {
     );
   }
 
-  /** `timeoutMs` undefined waits for the reply. */
-  request(record: PiRecord, timeoutMs: number | undefined = 30_000): Promise<unknown> {
+  /** `timeoutMs` null waits for the reply, as AcpRpc's does. */
+  request(record: PiRecord, timeoutMs: number | null = 30_000): Promise<unknown> {
     const id = `farmslot-pi-${++this.nextId}`;
     return new Promise((resolve, reject) => {
       const timer =
-        timeoutMs === undefined
+        timeoutMs === null
           ? undefined
           : setTimeout(() => {
               this.pending.delete(id);

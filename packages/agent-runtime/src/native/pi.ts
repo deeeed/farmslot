@@ -171,7 +171,7 @@ export const piNativeAdapter: NativeAdapter = {
     const request = (record: PiRecord) =>
       rpc.request(
         record,
-        record.type === 'prompt' ? undefined : record.type === 'abort' ? 60_000 : 30_000,
+        record.type === 'prompt' ? null : record.type === 'abort' ? 60_000 : 30_000,
       );
     try {
       const state = piObject(await request({ type: 'get_state' }));
