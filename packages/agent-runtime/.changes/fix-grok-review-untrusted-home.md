@@ -1,9 +1,0 @@
-- A Grok review no longer trusts its checkout, so Grok loads none of the checkout's hooks, agents, MCP or LSP servers, instructions or skills (ADR-057 Amendment 13).
-  - The review preflight inspects the account from its home directory (from elsewhere, Grok lists none of the account's own hooks).
-  - It refuses any enabled hook and any MCP or LSP server the account starts.
-  - Without the `nonManagedHooks` pin, it also needs no plugins, only built-in agents and no notification commands.
-  - It refuses an account whose `trusted_folders.toml` names the checkout or a parent, or whose folder trust is off; that is checked by inspecting a fresh folder that holds only an `AGENTS.md`.
-  - Before, every review needed the pin, and Grok's deployment sync deletes it from an account without an organization policy.
-- A Grok review may write only `sessions/`, `logs/` and the bytes of `auth.json.lock` in the Grok home, and no link can be made there. The rest is read-only, so one review cannot plant something for the next: hooks, config, policy and trust files, bundled and user agents, skills, memory, the model catalog cache, the stored login, the external sign-in command and shell startup files.
-- A Grok terminal (tmux) review is refused, because Grok's terminal would stop at its folder-trust prompt; the runner definition declares this as `terminalReviewRefusal`.
-- Native Grok sessions and account status also sign in through a home's external auth provider (`auth_provider_command`, the method Grok marks `_meta.external_provider`). They still never pick grok.com's interactive login.
