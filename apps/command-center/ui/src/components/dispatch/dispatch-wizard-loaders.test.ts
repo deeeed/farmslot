@@ -72,12 +72,14 @@ async function fixture(t: TestContext, held = false) {
   let release = () => {};
   let gate = Promise.resolve();
   const calls: string[] = [];
+  let failAt: number | undefined;
   let slotRevision = 0;
   transport.request = async <T>(
     method: typeof query.method,
     params: unknown,
   ): Promise<ResourceReadResult<T>> => {
     calls.push(method);
+    if (calls.length === failAt) throw new Error('Cache refresh failed');
     const read = resourceQuery(method, params);
     const dependencies = read.dependencies.map((key) => ({
       key,
@@ -105,6 +107,9 @@ async function fixture(t: TestContext, held = false) {
     transport,
     calls,
     query,
+    failRequest(number: number) {
+      failAt = number;
+    },
     changeFleet() {
       slotRevision++;
       transport.publish({
@@ -207,6 +212,20 @@ test('Refresh updates the snapshot used by the next ordinary candidate read', as
   await requestDispatchWizardCandidates({ ...input, forceRefresh: true });
   assert.deepEqual(await requestDispatchWizardCandidates(input), { candidates: [] });
   assert.equal(f.calls.length, 3, 'the last ordinary read is a cache hit after refresh');
+});
+
+test('a successful forced read paints fresh rows even if updating the ordinary cache fails', async (t) => {
+  const f = await fixture(t);
+  await requestDispatchWizardCandidates(input);
+  const fresh = { candidates: [] };
+  f.response(fresh);
+  f.failRequest(3);
+  const shown: DispatchCandidatesResult[] = [];
+  await assert.rejects(
+    requestDispatchWizardCandidates({ ...input, forceRefresh: true }, (value) => shown.push(value)),
+    /Cache refresh failed/,
+  );
+  assert.deepEqual(shown, [fresh]);
 });
 
 test('a changed fleet invalidates cached candidates and updates them from the gateway', async (t) => {

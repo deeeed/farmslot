@@ -77,12 +77,13 @@ export async function requestDispatchWizardCandidates(
   const { forceRefresh, ...normalParams } = params;
   if (forceRefresh) {
     const scope = dispatchReadScope();
-    await readDispatchQuery(
+    const refreshed = await readDispatchQuery(
       resourceQuery<DispatchCandidatesResult>(Methods.DISPATCH_CANDIDATES, params),
       undefined,
       true,
     );
     if (!scope.current()) throw new Error('Dispatch owner changed during read');
+    onCached?.(refreshed);
   }
   return readDispatchQuery(
     resourceQuery<DispatchCandidatesResult>(Methods.DISPATCH_CANDIDATES, normalParams),
