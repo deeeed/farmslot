@@ -211,6 +211,14 @@ test('the dispatch preview prints the criteria a pr-complete run inherits (F286)
     /2 criteria inherited from run 8a768552; any given with this run are not used/,
   );
   assert.match(lines, /AC1: Every direct dependency/);
+  // One criterion reads as one, and its text is printed whole: it is what the run is held to.
+  const long = `The ${'very '.repeat(30)}long criterion.`;
+  const single = renderInheritedAcceptance({
+    fromRunId: '8a768552-0000-4000-8000-000000000000',
+    criteria: [{ id: 'AC1', text: long }],
+  }).join('\n');
+  assert.match(single, /1 criterion inherited from run 8a768552/);
+  assert.ok(single.includes(`AC1: ${long}`));
   assert.match(
     renderInheritedAcceptance({ fromRunId: 'gone', criteria: [], unavailable: 'no parent' }).join(
       '',

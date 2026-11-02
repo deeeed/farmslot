@@ -1,8 +1,8 @@
 import type { Command } from 'commander';
 
 import type {
+  DispatchInheritedAcceptance,
   DispatchPressureAdmissionMode,
-  DispatchPreview,
   DispatchPreviewResult,
   DispatchQueueListResult,
   PressureAdmissionDecision,
@@ -63,19 +63,15 @@ export function renderAdmissionControl(state: {
 }
 
 /** A pr-complete run is held to its parent's original criteria; say so before launch. */
-export function renderInheritedAcceptance(
-  inherited: NonNullable<DispatchPreview['inheritedAcceptance']>,
-): string[] {
+export function renderInheritedAcceptance(inherited: DispatchInheritedAcceptance): string[] {
   const from = `run ${inherited.fromRunId.slice(0, 8)}`;
   if (inherited.unavailable)
     return [
       `  ${yellow('Acceptance:')} inherited from ${from}, unreadable: ${inherited.unavailable}`,
     ];
   return [
-    `  ${yellow('Acceptance:')} ${inherited.criteria.length} criteria inherited from ${from}; any given with this run are not used`,
-    ...inherited.criteria.map(
-      ({ id, text }) => `    ${id}: ${text.length > 110 ? `${text.slice(0, 109)}…` : text}`,
-    ),
+    `  ${yellow('Acceptance:')} ${inherited.criteria.length} ${inherited.criteria.length === 1 ? 'criterion' : 'criteria'} inherited from ${from}; any given with this run are not used`,
+    ...inherited.criteria.map(({ id, text }) => `    ${id}: ${text}`),
   ];
 }
 
