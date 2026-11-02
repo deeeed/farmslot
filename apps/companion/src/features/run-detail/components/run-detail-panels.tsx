@@ -34,7 +34,6 @@ import {
   hasRunWorkspaceDiff,
   isActionableWorkspaceDiffValue,
   runCockpitCounts,
-  runGateRailCounts,
   runWorkspaceDiffValue,
   selectSlotGatePreviewArtifacts,
   selectSlotRecipeArtifactsForPreviewScope,
@@ -587,7 +586,6 @@ export function RunWorkspaceGateRail({
   onOpenCompareTarget,
   onOpenCompareFallbackArtifact,
   onOpenDiff,
-  detailLoaded,
 }: {
   gates: SlotWorkspaceGateSummary[];
   runId: string;
@@ -602,8 +600,6 @@ export function RunWorkspaceGateRail({
   onOpenCompareTarget: () => void;
   onOpenCompareFallbackArtifact: (artifactPath: string) => void;
   onOpenDiff: () => void;
-  /** False while the run is a run.list row that left detail out. */
-  detailLoaded: boolean;
 }) {
   return (
     <View style={styles.workspaceGateRailPanel}>
@@ -634,7 +630,6 @@ export function RunWorkspaceGateRail({
             visualPairSummary.pairs.length > 0
               ? visualPairSummary.pairs.length
               : (compareTarget?.pairCount ?? 0);
-          const railCounts = runGateRailCounts(gate, comparePairCount, detailLoaded);
           const diffValue = workspaceGateDiffMetricValue(gate);
           const diffAvailable = isActionableWorkspaceDiffValue(diffValue);
           const openPrimaryEvidence = () => onOpenArtifacts(gate.primaryArtifactPath ?? undefined);
@@ -662,18 +657,18 @@ export function RunWorkspaceGateRail({
                 />
                 <RunGateAction
                   label="Evidence"
-                  value={railCounts.evidence}
+                  value={String(gate.artifactPaths.length)}
                   onPress={openPrimaryEvidence}
-                  disabled={railCounts.evidenceDisabled}
+                  disabled={gate.artifactPaths.length === 0}
                 />
                 <RunGateAction
                   label="Before→After"
-                  value={railCounts.beforeAfter}
+                  value={String(comparePairCount)}
                   onPress={() => {
                     if (primaryVisualPair) onOpenArtifacts(primaryVisualPair.after.path);
                     else onOpenCompareTarget();
                   }}
-                  disabled={railCounts.beforeAfterDisabled}
+                  disabled={comparePairCount === 0}
                 />
                 <RunGateAction
                   label="Diff"

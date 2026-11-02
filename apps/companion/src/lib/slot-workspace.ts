@@ -297,7 +297,7 @@ function runStepDiffStat(
     )?.diffStat;
 }
 
-export const NOT_LOADED = 'not loaded';
+const NOT_LOADED = 'not loaded';
 
 /**
  * A count read from run detail. A run.list row that left detail out (`runHasTrimmedDetail`)
@@ -311,9 +311,10 @@ function loadedCount(run: Run, count: number): string {
   return detailCountLabel(count, !runHasTrimmedDetail(run));
 }
 
+/** A file count in words, from the value `detailCountLabel` chose. */
 function fileCountLabel(count: number, loaded: boolean): string {
-  if (!loaded) return `files ${NOT_LOADED}`;
-  return `${count} file${count === 1 ? '' : 's'}`;
+  const value = detailCountLabel(count, loaded);
+  return value === NOT_LOADED ? `files ${value}` : `${value} file${count === 1 ? '' : 's'}`;
 }
 
 /** A gate's cockpit hint: its file count and diff. */
@@ -359,20 +360,6 @@ export function runCockpitCounts(
   };
 }
 
-/** One gate rail card's Evidence and Before→After counts, not loaded on a trimmed list row. */
-export function runGateRailCounts(
-  gate: Pick<SlotWorkspaceGateSummary, 'artifactPaths'>,
-  comparePairCount: number,
-  loaded: boolean,
-) {
-  return {
-    evidence: detailCountLabel(gate.artifactPaths.length, loaded),
-    evidenceDisabled: loaded && gate.artifactPaths.length === 0,
-    beforeAfter: detailCountLabel(comparePairCount, loaded),
-    beforeAfterDisabled: comparePairCount === 0,
-  };
-}
-
 function summarizeSlotWorkspaceDecision(
   run: Run,
   decision: RunDecision,
@@ -411,6 +398,8 @@ function summarizeSlotWorkspaceDecision(
   }
 
   if (payload?.kind === 'review') {
+    // A run.list row can leave lineComments out; reading its length would throw.
+    const commentsLoaded = !decision.payloadTrimmed?.includes('lineComments');
     const evidenceCount = loadedCount(
       run,
       (payload.artifactManifest?.length ?? 0) + (payload.reviewInputArtifactPaths?.length ?? 0),
@@ -428,9 +417,7 @@ function summarizeSlotWorkspaceDecision(
         { label: 'Verdict', value: formatMetricValue(payload.recommendation) },
         {
           label: 'Comments',
-          value: decision.payloadTrimmed?.includes('lineComments')
-            ? NOT_LOADED
-            : String(payload.lineComments.length),
+          value: detailCountLabel(commentsLoaded ? payload.lineComments.length : 0, commentsLoaded),
         },
         { label: 'Evidence', value: evidenceCount },
         ...visualPairMetric,

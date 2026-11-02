@@ -6,7 +6,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { createEvidenceReviewModel, runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
-  cancelledRunSlotChoices,
   deriveRunLifecycleView,
   extractRunArtifactManifest,
   isSlotFreedByPark,
@@ -110,6 +109,7 @@ import {
   runAcceptanceEvidenceHref,
   runEvidenceQuery,
 } from './run-evidence';
+import { offeredSlotRelease } from './run-slot-release';
 import { useRunDetailRun } from './use-run-detail-run';
 
 const emptyRecipeRuns: RecipeRunArtifactGroup[] = [];
@@ -435,8 +435,7 @@ export default function RunDetailScreen() {
     Boolean(client) &&
     connectionStatus === 'connected' &&
     runObservation.status === 'ready';
-  // The release is a write: only run.get's own run decides whether it is offered, never a row.
-  const cancelledSlot = runActionable ? cancelledRunSlotChoices(run, fleetSlots ?? []) : null;
+  const cancelledSlot = offeredSlotRelease(run, fleetSlots ?? [], runActionable);
   const focusedArtifactPath = requestedArtifactPath.trim() || null;
   const focusedArtifactIsDiff = Boolean(
     focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
