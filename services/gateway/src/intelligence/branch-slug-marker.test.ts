@@ -83,6 +83,10 @@ test('every spelling of the marker becomes one canonical segment, never twice', 
     'DO.NOT.MERGE chart order lines',
     'DO_NOT_MERGE_POC chart order lines',
     'Chart order lines - do not merge',
+    'Do Not Merge: chart order lines',
+    'do not merge. Chart order lines',
+    'Temp PR, do not merge, chart order lines',
+    '[POC - do not merge] Chart order lines',
   ])
     assert.equal(await slugFor(title), 'do-not-merge-chart-order-lines', title);
   llmSlug = 'poc-do-not-merge-banner';
@@ -103,6 +107,18 @@ test('a sentence that says do not merge is not a marker', async () => {
     'Token rows do not merge',
   ])
     assert.equal(await slugFor(title), 'orders-position-row', title);
+});
+
+test('a slug built from such a sentence loses the words', async () => {
+  llmSlug = undefined;
+  assert.equal(await slugFor('Do not merge duplicate token balances'), 'duplicate-token-b');
+  assert.equal(
+    await slugFor('Perps: do not merge TP/SL orders with the position row'),
+    'perps-tpsl-orders',
+  );
+  assert.equal(await slugFor('Token rows do not merge'), 'token-rows');
+  llmSlug = 'do-not-merge-duplicate-rows';
+  assert.equal(await slugFor('Do not merge duplicate rows'), 'duplicate-rows');
 });
 
 test('the marker survives the default branch shape and its truncation', async () => {

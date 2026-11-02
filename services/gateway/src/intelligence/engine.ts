@@ -159,11 +159,11 @@ const DO_NOT_MERGE_MARKERS = [
   /(?<![A-Za-z0-9])DO[\s._-]*NOT[\s._-]*MERGE(?![A-Za-z0-9])/,
   // Joined, in any case: do-not-merge, do_not_merge, DoNotMerge.
   /(?<![a-z0-9])do[._-]*not[._-]*merge(?![a-z0-9])/i,
-  // Bracketed: [Do Not Merge], (dnm).
-  /[[(]\s*(?:do\s+not\s+merge|dnm)\s*[\])]/i,
-  // Closing the title after a separator, or the whole title: "PoC banner - do not merge".
-  /(?:^|[:;,|–—-]\s*)do\s+not\s+merge[\s.!]*$/i,
-  // The short form in capitals: DNM: chart order lines.
+  // Spaced, as its own clause: punctuation or a title edge on both sides. "Do Not Merge: banner",
+  // "temp PR, do not merge, flag", "[POC - do not merge]", "PoC banner - do not merge".
+  /(?:^|[[(\])]\s*|[:;,|–—-]\s*)do\s+not\s+merge\s*(?:$|[\]):;,.!|–—-])/i,
+  // The short form, bracketed or in capitals: [dnm], DNM: chart order lines.
+  /[[(]\s*dnm\s*[\])]/i,
   /(?<![A-Za-z0-9])DNM(?![A-Za-z0-9])/,
 ];
 const DO_NOT_MERGE_SEGMENT = 'do-not-merge';
@@ -171,10 +171,12 @@ const DO_NOT_MERGE_SEGMENT = 'do-not-merge';
 /**
  * A title marked DO NOT MERGE keeps the marker in its branch slug, as a leading
  * `do-not-merge` segment that no truncation can drop. Run 9819c7bf's title said
- * DO NOT MERGE and its generated slug did not (F327).
+ * DO NOT MERGE and its generated slug did not (F327). A slug built from a title that only
+ * says the words loses them: a mergeable branch must not read as marked.
  */
 function keepDoNotMergeMarker(slug: string, title: string): string {
-  if (!DO_NOT_MERGE_MARKERS.some((marker) => marker.test(title))) return slug;
+  if (!DO_NOT_MERGE_MARKERS.some((marker) => marker.test(title)))
+    return slug.replace(/(^|-)do-not-merge(?=-|$)/g, '').replace(/^-+|-+$/g, '') || slug;
   const rest = slug.replace(/(^|-)(?:do-?not-?merge|dnm)(?=-|$)/g, '').replace(/^-+|-+$/g, '');
   return `${DO_NOT_MERGE_SEGMENT}${rest ? `-${rest}` : ''}`
     .slice(0, BRANCH_SLUG_MAX)
