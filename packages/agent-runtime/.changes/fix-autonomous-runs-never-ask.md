@@ -1,0 +1,1 @@
+- A native worker launch can start its runner without the model's own question tool (`modelQuestions: 'off'`). Claude, Codex, Grok and OpenCode each get their own switch. Cursor has no switch, and Pi has no such tool. Steering and queued follow-ups don't use that tool, so they keep working. The setting is outside the launch digest, so saved native workers still resume (F321).

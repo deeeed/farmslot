@@ -24,6 +24,7 @@ export * from './runs/family-iteration-ledger.js';
 export * from './runs/family-readiness.js';
 export * from './runs/interactive-handoff.js';
 export * from './runs/linked-tickets.js';
+export * from './runs/list-trim.js';
 export * from './runs/publish-approval.js';
 export * from './runs/recovery-hints.js';
 export * from './runs/review-chain.js';

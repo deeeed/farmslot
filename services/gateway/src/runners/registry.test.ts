@@ -13,6 +13,7 @@ import {
 import {
   buildCodexExecLaunch,
   buildLaunchCommand,
+  type BuildLaunchOptions,
   buildRunnerSessionReloadCommand,
   withTaskRecipeTrustEnvironment,
 } from './launch-command.js';
@@ -1723,6 +1724,101 @@ describe('buildLaunchCommand', () => {
     assert.match(cmd, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/u);
   });
 
+  describe('an autonomous run launches the model without its question tool', () => {
+    const QUESTION_SWITCHES =
+      /AskUserQuestion|request_user_input|GROK_ASK_USER_QUESTION|OPENCODE_PERMISSION/u;
+    const CODEX_SWITCH = `'--config' 'tools\\.experimental_request_user_input=\\{enabled=false\\}'`;
+    const cases: Array<[string, string, string, BuildLaunchOptions, RegExp]> = [
+      // The variadic flag is followed by an option, so a task file or prompt stays positional.
+      [
+        'Claude through dispatch_cmd',
+        'cd {repo} && {claude_path} {task_file}',
+        'claude',
+        { claudeUsesDispatchCmd: true, taskFile: TASK_FILE },
+        /\/usr\/local\/bin\/claude '--disallowedTools' 'AskUserQuestion' --settings '[^']+' \.task\/fix\/abc\/TASK\.md/u,
+      ],
+      [
+        'Claude inline',
+        '',
+        'claude',
+        { initialPromptOnLaunch: true },
+        /\/usr\/local\/bin\/claude '--disallowedTools' 'AskUserQuestion' --settings '[^']+' 'Read TASK\.md and execute\.'/u,
+      ],
+      [
+        'Codex through a runner-aware dispatch_cmd',
+        'cd {repo} && {runner_path}',
+        'codex',
+        {},
+        new RegExp(`/usr/local/bin/codex [^&]*${CODEX_SWITCH}`, 'u'),
+      ],
+      [
+        'Codex inline',
+        '',
+        'codex',
+        {},
+        new RegExp(`/usr/local/bin/codex [^&]*${CODEX_SWITCH}`, 'u'),
+      ],
+      [
+        'Grok through a runner-aware dispatch_cmd',
+        'cd {repo} && {grok_path}',
+        'grok',
+        {},
+        /export GROK_ASK_USER_QUESTION='0'; .*\/usr\/local\/bin\/grok/u,
+      ],
+      [
+        'Grok inline',
+        '',
+        'grok',
+        {},
+        /export GROK_ASK_USER_QUESTION='0'; .*\/usr\/local\/bin\/grok/u,
+      ],
+      [
+        'OpenCode',
+        'cd {repo} && {opencode_path}',
+        'opencode',
+        {},
+        /export OPENCODE_PERMISSION='\{"question":"deny"\}'; .*\/usr\/local\/bin\/opencode/u,
+      ],
+    ];
+    for (const [name, dispatchCmd, runner, opts, expected] of cases) {
+      it(name, () => {
+        const vars = makeVars({ dispatchCmd });
+        assert.match(
+          buildLaunchCommand(vars, runner, null, PROMPT, { ...opts, modelQuestions: 'off' }),
+          expected,
+        );
+        assert.doesNotMatch(
+          buildLaunchCommand(vars, runner, null, PROMPT, opts),
+          QUESTION_SWITCHES,
+        );
+      });
+    }
+
+    it('leaves Pi, which has no question tool, and Cursor, which has no switch, unchanged', () => {
+      const vars = makeVars({ dispatchCmd: '' });
+      for (const runner of ['pi', 'cursor'])
+        assert.equal(
+          buildLaunchCommand(vars, runner, null, PROMPT, { modelQuestions: 'off' }),
+          buildLaunchCommand(vars, runner, null, PROMPT),
+          runner,
+        );
+    });
+
+    it('resumes a retained session without the question tool', () => {
+      const vars = makeVars({ dispatchCmd: '' });
+      for (const [runner, expected] of [
+        ['claude', /'--disallowedTools' 'AskUserQuestion' --settings '[^']+' --resume 'sess-1'/u],
+        ['codex', new RegExp(` resume [^&]*${CODEX_SWITCH}[^&]* 'sess-1'`, 'u')],
+        ['grok', /export GROK_ASK_USER_QUESTION='0'; .*--resume 'sess-1'/u],
+      ] as const) {
+        const reload = (opts: { modelQuestions?: 'off' }) =>
+          buildRunnerSessionReloadCommand(vars, runner, null, 'sess-1', opts);
+        assert.match(reload({ modelQuestions: 'off' }), expected, runner);
+        assert.doesNotMatch(reload({}), QUESTION_SWITCHES, runner);
+      }
+    });
+  });
+
   describe('claude runner', () => {
     it('inline-launches with --dangerously-skip-permissions when the full-auto tier is explicit', () => {
       // Intrinsic runner default is sandboxed; pre-refactor dangerous posture
@@ -2042,7 +2138,7 @@ describe('buildLaunchCommand', () => {
         /-e '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/bin\/pi-farmslot-observability\.ts'/,
       );
       assert.match(cmd, /--thinking medium/);
-      assert.match(cmd, /--model xai\/grok-4\.6/);
+      assert.match(cmd, /--model xai\/grok-4\.7/);
       assert.doesNotMatch(cmd, /(^|[\s])-p([\s]|$)/);
       assert.doesNotMatch(cmd, /--mode json/);
       assert.doesNotMatch(cmd, /Read TASK/);
@@ -2280,15 +2376,15 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /continuing without hooks/, 'trust seeding is required for Grok');
       assert.match(
         cmd,
-        /--slot-id '[^']*'\) && \{ cd '\/tmp\/repo' && grok --effort xhigh --model grok-4\.6; \}$/,
+        /--slot-id '[^']*'\) && \{ cd '\/tmp\/repo' && grok --effort xhigh --model grok-4\.7; \}$/,
       );
     });
 
-    it('falls back to inline Grok launcher with grok-4.6 and xhigh effort', () => {
+    it('falls back to inline Grok launcher with grok-4.7 and xhigh effort', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.ok(
-        cmd.endsWith(`cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.6; }`),
+        cmd.endsWith(`cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.7; }`),
       );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
@@ -2319,7 +2415,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.6; \}$/,
+        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.7; \}$/,
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);

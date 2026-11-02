@@ -20,20 +20,27 @@ Shared project-workflow and PR-rule editors can browse catalogs, but do not appl
 or edit personal defaults and shortcut preferences. Their saved configuration is
 shared rather than owned by the current operator.
 
-Discovery is a runner capability, queried on the gateway host:
+Discovery is a runner capability, queried on the gateway host unless noted:
 
-| Runner | Source                                                                                   |
-| ------ | ---------------------------------------------------------------------------------------- |
-| Cursor | `cursor-agent --list-models`, with a bounded timeout and output size                     |
-| Codex  | `.codex/models_cache.json` under the gateway user's home                                 |
-| Grok   | `.grok/models_cache.json` under the gateway user's home                                  |
-| Pi     | `.pi/agent/models-store.json` then `.pi/agent/models.json` under the gateway user's home |
-| Claude | No catalog source declared; the picker reports unsupported                               |
+| Runner   | Source                                                               |
+| -------- | -------------------------------------------------------------------- |
+| Cursor   | `cursor-agent --list-models`, with a bounded timeout and output size |
+| Codex    | `.codex/models_cache.json` under the gateway user's home             |
+| Grok     | `.grok/models_cache.json` under the gateway user's home              |
+| Pi       | `pi --list-models` on every execution node (see below)               |
+| OpenCode | `opencode models` on every execution node (see below)                |
+| Claude   | No catalog source declared; the picker reports unsupported           |
 
-Pi merges both files in order; configured models override matching built-ins.
-Either file may be absent or list no models. Without a store, discovery lists only
-configured models. An unreadable file or invalid JSON makes the catalog
-unavailable. Pi's line comments, trailing commas and BOM are supported.
+Pi and OpenCode have no built-in model list. The gateway runs their listing on
+every pool machine, local or remote, through that machine's slot exec path with a
+20-second timeout. It does so shortly after startup and while a picker watches the
+catalog, and keeps each node's last good listing when a node fails. The picker shows
+LiteLLM ("Consensys LiteLLM"), xAI, Anthropic and local (omlx, lmstudio) models,
+without Claude 4.x or older or Grok before 4.7, and names the nodes that have a
+model when some do not. Dispatch places a Pi or OpenCode model only on a slot whose
+node lists it, and Dispatch candidate rows on other nodes show why; a node with no
+listing yet is not excluded. Native session pickers list the models of the node the
+session runs on, and only the default until that node has listed.
 
 The Cursor catalog uses the gateway host's configured `cursor_path` when present,
 otherwise `cursor-agent` from its PATH. Remote slots can use a different binary;

@@ -15,16 +15,19 @@ import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import {
   ModelCatalogFormatError,
+  NodeModelCatalogs,
   parseCodexModelCatalog,
   parseCursorModelCatalog,
   parseGrokModelCatalog,
-  parsePiModelCatalog,
+  parseOpenCodeModelList,
+  parsePiModelList,
+  queryNodeModelCatalog,
   queryRunnerModelCatalog,
 } from './model-catalog.js';
 import { getRunnerDefinition } from './registry.js';
 import { visibleModelsHome } from './visible-models.js';
 
-test('codex, grok, and pi parse structured catalogs and keep reasoning modes', () => {
+test('codex and grok parse structured catalogs and keep reasoning modes', () => {
   assert.deepEqual(
     parseCodexModelCatalog({
       models: [
@@ -65,27 +68,13 @@ test('codex, grok, and pi parse structured catalogs and keep reasoning modes', (
       { id: 'secret', reasoningModes: [], listed: false },
     ],
   );
-  assert.deepEqual(
-    parsePiModelCatalog({
-      anthropic: {
-        models: [
-          {
-            model: null,
-            effort: null,
-            mode: 'cold' as const,
-            id: 'claude-fable-5',
-            thinkingLevelMap: { off: null, high: { id: 'high' } },
-          },
-        ],
-      },
-    }),
-    [{ id: 'anthropic/claude-fable-5', reasoningModes: ['off', 'high'], listed: true }],
-  );
 });
 
 test('a missing or unreadable structured catalog is unavailable and a runner without one is unsupported', async () => {
   const home = mkdtempSync(join(tmpdir(), 'runner-catalog-'));
-  const missing = await queryRunnerModelCatalog('pi', getRunnerDefinition('pi').modelCatalog, home);
+  const grok = getRunnerDefinition('grok').modelCatalog;
+  assert.ok(grok && 'relativePath' in grok);
+  const missing = await queryRunnerModelCatalog('grok', grok, home);
   assert.equal(missing.status, 'unavailable');
   assert.equal(missing.source, 'structured-file');
   assert.deepEqual(missing.models, []);
@@ -93,11 +82,9 @@ test('a missing or unreadable structured catalog is unavailable and a runner wit
   const fileHome = mkdtempSync(join(tmpdir(), 'runner-catalog-bad-'));
   mkdirSync(join(fileHome, '.codex'));
   writeFileSync(join(fileHome, '.codex', 'models_cache.json'), '{');
-  const invalid = await queryRunnerModelCatalog(
-    'codex',
-    getRunnerDefinition('codex').modelCatalog,
-    fileHome,
-  );
+  const codex = getRunnerDefinition('codex').modelCatalog;
+  assert.ok(codex && 'relativePath' in codex);
+  const invalid = await queryRunnerModelCatalog('codex', codex, fileHome);
   assert.equal(invalid.status, 'unavailable');
   assert.equal(invalid.models.length, 0);
 
@@ -314,120 +301,75 @@ test('visible preferences expand the configured home directory', () => {
   }
 });
 
-for (const builtins of [false, true]) {
-  test(`pi discovers configured LiteLLM models ${builtins ? 'with its built-in catalog' : 'without a cached catalog'}`, async (t) => {
-    const home = mkdtempSync(join(tmpdir(), 'pi-custom-catalog-'));
-    t.after(() => rmSync(home, { recursive: true, force: true }));
-    const agent = join(home, '.pi', 'agent');
-    mkdirSync(agent, { recursive: true });
-    if (builtins)
-      writeFileSync(
-        join(agent, 'models-store.json'),
-        JSON.stringify({
-          anthropic: { models: [{ id: 'claude-sonnet-5' }] },
-          xai: { models: [{ id: 'grok-4.6', thinkingLevelMap: { off: null } }] },
-          openai: { models: [{ id: 'openai/gpt-4o' }] },
-        }),
-      );
-    writeFileSync(
-      join(agent, 'models.json'),
-      JSON.stringify({
-        providers: {
-          litellm: {
-            apiKey: '$LITELLM_API_KEY',
-            models: [
-              { id: 'DeepSeek-V4-Flash' },
-              { id: 'glm-5p3', thinkingLevelMap: { high: 'high' } },
-              { id: 'openai/gpt-4o' },
-            ],
-          },
-          xai: { models: [{ id: 'grok-4.6', thinkingLevelMap: { high: 'high' } }] },
-        },
-      }),
-    );
-    const result = await queryRunnerModelCatalog(
-      'pi',
-      getRunnerDefinition('pi').modelCatalog,
-      home,
-    );
-    assert.equal(result.status, 'ready');
-    assert.equal(
-      result.models.some((m) => m.id === 'anthropic/claude-sonnet-5'),
-      builtins,
-    );
-    assert.ok(result.models.some((m) => m.id === 'litellm/DeepSeek-V4-Flash'));
-    assert.ok(result.models.some((m) => m.id === 'litellm/openai/gpt-4o'));
-    assert.equal(
-      result.models.some((m) => m.id === 'openai/gpt-4o'),
-      builtins,
-    );
-    assert.deepEqual(result.models.find((m) => m.id === 'litellm/glm-5p3')?.reasoningModes, [
-      'high',
-    ]);
-    assert.deepEqual(
-      result.models.filter((m) => m.id === 'xai/grok-4.6'),
-      [{ id: 'xai/grok-4.6', reasoningModes: ['high'], listed: true }],
-    );
-  });
-}
+const PI_LIST = [
+  '\u001b[1mprovider        model                     context  max-out  thinking  images\u001b[0m',
+  'amazon-bedrock  amazon.nova-2-lite-v1:0   1M       65.5K    yes       yes',
+  'anthropic       claude-haiku-4-5          200K     64K      yes       yes',
+  'anthropic       claude-haiku-5-5          200K     64K      yes       yes',
+  'litellm         glm-5p3                   200K     32K      yes       no',
+  'litellm         grok-4.6                  2M       64K      yes       yes',
+  'xai             grok-4.7                  2M       64K      yes       yes',
+  '',
+].join('\n');
 
-test('pi keeps built-in models when custom configuration is absent or only overrides a provider', async (t) => {
-  const home = mkdtempSync(join(tmpdir(), 'pi-optional-config-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  const agent = join(home, '.pi', 'agent');
-  mkdirSync(agent, { recursive: true });
-  writeFileSync(
-    join(agent, 'models-store.json'),
-    JSON.stringify({ xai: { models: [{ id: 'grok-4.6' }] } }),
-  );
-  const source = getRunnerDefinition('pi').modelCatalog;
-  const original = await queryRunnerModelCatalog('pi', source, home);
-  assert.equal(original.status, 'ready');
-  writeFileSync(
-    join(agent, 'models.json'),
-    JSON.stringify({ providers: { xai: { apiKey: 'XAI_API_KEY' } } }),
-  );
-  assert.deepEqual(await queryRunnerModelCatalog('pi', source, home), original);
-  writeFileSync(join(agent, 'models.json'), '{');
-  assert.equal((await queryRunnerModelCatalog('pi', source, home)).status, 'unavailable');
-});
-
-test('pi merges an empty native cache and reports unavailable only when the merged catalog is empty', async (t) => {
-  const home = mkdtempSync(join(tmpdir(), 'pi-empty-catalog-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  const agent = join(home, '.pi', 'agent');
-  mkdirSync(agent, { recursive: true });
-  const source = getRunnerDefinition('pi').modelCatalog;
-  for (const cache of [{}, { anthropic: { models: [], checkedAt: 1 } }]) {
-    writeFileSync(join(agent, 'models-store.json'), JSON.stringify(cache));
-    writeFileSync(
-      join(agent, 'models.json'),
-      JSON.stringify({ providers: { litellm: { models: [{ id: 'DeepSeek-V4-Flash' }] } } }),
-    );
-    const result = await queryRunnerModelCatalog('pi', source, home);
-    assert.equal(result.status, 'ready');
-    assert.deepEqual(
-      result.models.map((model) => model.id),
-      ['litellm/DeepSeek-V4-Flash'],
-    );
-    writeFileSync(join(agent, 'models.json'), '{"providers":{}}');
-    assert.equal((await queryRunnerModelCatalog('pi', source, home)).status, 'unavailable');
-  }
-});
-
-test('pi accepts its native BOM, line comments and trailing commas without stripping string contents', async (t) => {
-  const home = mkdtempSync(join(tmpdir(), 'pi-commented-catalog-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  const agent = join(home, '.pi', 'agent');
-  mkdirSync(agent, { recursive: true });
-  writeFileSync(
-    join(agent, 'models.json'),
-    '\uFEFF{ // configured providers\n"providers": { "litellm": { "baseUrl": "https://proxy.test/path,}", "models": [{"id": "DeepSeek-V4-Flash",},],},},}',
-  );
-  const result = await queryRunnerModelCatalog('pi', getRunnerDefinition('pi').modelCatalog, home);
-  assert.equal(result.status, 'ready');
+test('Pi and OpenCode model lists parse into provider/model ids', () => {
+  assert.deepEqual(parsePiModelList(PI_LIST), [
+    'amazon-bedrock/amazon.nova-2-lite-v1:0',
+    'anthropic/claude-haiku-4-5',
+    'anthropic/claude-haiku-5-5',
+    'litellm/glm-5p3',
+    'litellm/grok-4.6',
+    'xai/grok-4.7',
+  ]);
+  assert.throws(() => parsePiModelList('No models available.\n'), /header/);
+  assert.throws(() => parsePiModelList('provider model context\n\n'), /no models/);
   assert.deepEqual(
-    result.models.map((model) => model.id),
-    ['litellm/DeepSeek-V4-Flash'],
+    parseOpenCodeModelList(
+      'opencode/big-pickle\nlitellm/glm-5p3\r\nlmstudio/openai/gpt-oss-20b\nINFO  2026-11-02 service=models refreshing\n\n',
+    ),
+    ['opencode/big-pickle', 'litellm/glm-5p3', 'lmstudio/openai/gpt-oss-20b'],
   );
+  assert.throws(() => parseOpenCodeModelList('Error: not configured\n'), /no models/);
+});
+
+test('per-node listings merge into picker models that name the nodes having them', async () => {
+  const store = new NodeModelCatalogs();
+  const source = getRunnerDefinition('pi').modelCatalog;
+  assert.ok(source && 'nodeCommand' in source);
+  const outputs: Record<string, string | Error> = {
+    macpro: PI_LIST,
+    mini: 'provider model\nxai grok-4.7\nlitellm kimi-k3\n',
+  };
+  const nodes = ['macpro', 'mini'].map((machine) => ({
+    machine,
+    list: async () => {
+      const output = outputs[machine];
+      if (output instanceof Error) throw output;
+      return output;
+    },
+  }));
+  const first = await queryNodeModelCatalog('pi', source, nodes, store);
+  assert.equal(first.status, 'ready');
+  assert.deepEqual(first.models, [
+    { id: 'anthropic/claude-haiku-5-5', reasoningModes: [], listed: true, nodes: ['macpro'] },
+    { id: 'litellm/glm-5p3', reasoningModes: [], listed: true, nodes: ['macpro'] },
+    { id: 'xai/grok-4.7', reasoningModes: [], listed: true },
+    { id: 'litellm/kimi-k3', reasoningModes: [], listed: true, nodes: ['mini'] },
+  ]);
+
+  // A failing node keeps its last good listing; an empty store is unavailable.
+  outputs.mini = new Error('exit code 1');
+  assert.deepEqual(await queryNodeModelCatalog('pi', source, nodes, store), first);
+  assert.equal(new NodeModelCatalogs().result('pi').status, 'unavailable');
+
+  // Restriction data is the full listing, including models the picker hides.
+  assert.equal(store.blocker('pi', 'xai/grok-4.7', 'mini'), null);
+  assert.equal(store.blocker('pi', 'litellm/kimi-k3', 'mini'), null);
+  assert.equal(
+    store.blocker('pi', 'litellm/glm-5p3', 'mini'),
+    'pi model litellm/glm-5p3 is not listed on mini; only on macpro',
+  );
+  assert.match(store.blocker('pi', 'anthropic/claude-haiku-4-5', 'mini') ?? '', /only on macpro/);
+  assert.equal(store.blocker('pi', 'litellm/glm-5p3', 'never-listed'), null, 'unknown node');
+  assert.equal(store.blocker('pi', 'custom/model', 'mini'), null, 'model no node lists');
 });

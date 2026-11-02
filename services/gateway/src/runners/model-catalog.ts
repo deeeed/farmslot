@@ -4,7 +4,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify, stripVTControlCharacters } from 'node:util';
 
-import type { RunnerCatalogModel, RunnerModelCatalogResult } from '@farmslot/protocol';
+import {
+  isPickerCatalogModel,
+  type RunnerCatalogModel,
+  type RunnerModelCatalogResult,
+} from '@farmslot/protocol';
 
 export class ModelCatalogFormatError extends Error {}
 
@@ -12,8 +16,6 @@ export class ModelCatalogFormatError extends Error {}
 export interface RunnerModelCatalogFileSource {
   /** Catalog files relative to the operator's home directory, merged in order. */
   relativePath: string | readonly string[];
-  /** Decode the runner's file syntax; strict JSON is the default. */
-  decode?: (raw: string) => unknown;
   parse: (data: unknown) => RunnerCatalogModel[];
 }
 
@@ -24,15 +26,28 @@ export interface RunnerModelCatalogCommandSource {
   parse: (output: string) => RunnerCatalogModel[];
 }
 
+/** A listing command every execution node runs itself, through its slots' exec path. */
+export interface RunnerModelCatalogNodeSource {
+  nodeCommand: string;
+  /** Slot var naming the pool's configured executable; `nodeCommand` when unset. */
+  slotPathKey: 'piPath' | 'opencodePath';
+  args: string[];
+  /** Model ids, `provider/model`. */
+  parse: (output: string) => string[];
+  /** The listed id a requested model launches as, such as Pi's bare `grok-*` as `xai/grok-*`. */
+  resolveModel?: (model: string) => string;
+}
+
 export type RunnerModelCatalogSource =
   | RunnerModelCatalogFileSource
-  | RunnerModelCatalogCommandSource;
+  | RunnerModelCatalogCommandSource
+  | RunnerModelCatalogNodeSource;
 
 const pendingCommands = new Map<string, Promise<RunnerModelCatalogResult>>();
 
 export async function queryRunnerModelCatalog(
   runner: string,
-  source: RunnerModelCatalogSource | undefined,
+  source: RunnerModelCatalogFileSource | RunnerModelCatalogCommandSource | undefined,
   home = homedir(),
 ): Promise<RunnerModelCatalogResult> {
   if (!source || !('command' in source)) return readRunnerModelCatalog(runner, source, home);
@@ -150,8 +165,7 @@ export function readRunnerModelCatalog(
       throw err;
     }
     try {
-      for (const model of source.parse((source.decode ?? JSON.parse)(raw)))
-        models.set(model.id, model);
+      for (const model of source.parse(JSON.parse(raw))) models.set(model.id, model);
     } catch (err) {
       if (err instanceof SyntaxError)
         return unavailable(runner, 'Structured model catalog is not valid JSON.');
@@ -216,44 +230,119 @@ export function parseGrokModelCatalog(data: unknown): RunnerCatalogModel[] {
   return parsed;
 }
 
-/** Pi permits a BOM, line comments and trailing commas, preserving string literals. */
-export function decodePiModelCatalog(raw: string): unknown {
-  return JSON.parse(
-    raw
-      .replace(/^\uFEFF/, '')
-      .replace(/"(?:\\.|[^"\\])*"|\/\/[^\n]*/g, (match) => (match[0] === '"' ? match : ''))
-      .replace(
-        /"(?:\\.|[^"\\])*"|,(\s*[}\]])/g,
-        (match, tail: string | undefined) => tail ?? match,
-      ),
+const LISTED_PROVIDER = /^[a-z0-9][\w.-]*$/i;
+
+/** `pi --list-models`: a whitespace table under a `provider model …` header. */
+export function parsePiModelList(output: string): string[] {
+  const rows = stripVTControlCharacters(output)
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/));
+  const header = rows.findIndex(
+    ([provider, model]) => provider === 'provider' && model === 'model',
   );
+  if (header < 0) throw new ModelCatalogFormatError('Missing Pi model list header.');
+  const ids = rows
+    .slice(header + 1)
+    .flatMap(([provider, model]) =>
+      model && LISTED_PROVIDER.test(provider) ? [`${provider}/${model}`] : [],
+    );
+  if (!ids.length) throw new ModelCatalogFormatError('Pi listed no models.');
+  return [...new Set(ids)];
 }
 
-export function parsePiModelCatalog(data: unknown): RunnerCatalogModel[] {
-  if (!isRecord(data))
-    throw new ModelCatalogFormatError('Structured model catalog is not an object.');
-  const parsed: RunnerCatalogModel[] = [];
-  const configuredProviders = isRecord(data.providers) ? data.providers : null;
-  const providers = configuredProviders ?? data;
-  for (const [provider, value] of Object.entries(providers)) {
-    if (!isRecord(value) || !Array.isArray(value.models)) continue;
-    for (const model of value.models) {
-      if (!isRecord(model) || typeof model.id !== 'string' || !model.id.trim()) continue;
-      const id =
-        !configuredProviders && model.id.includes('/') ? model.id : `${provider}/${model.id}`;
-      const map = isRecord(model.thinkingLevelMap) ? model.thinkingLevelMap : null;
-      // Only modes the store actually names. A boolean reasoning flag is not a mode list.
-      const reasoningModes = map ? Object.keys(map) : [];
-      parsed.push({ id, reasoningModes, listed: true });
-    }
+/** `opencode models`: one `provider/model` per line. */
+export function parseOpenCodeModelList(output: string): string[] {
+  const ids = stripVTControlCharacters(output)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^[a-z0-9][\w.-]*\/\S+$/i.test(line));
+  if (!ids.length) throw new ModelCatalogFormatError('OpenCode listed no models.');
+  return [...new Set(ids)];
+}
+
+/** Last good listing per runner and execution node. A node that fails keeps its previous one. */
+export class NodeModelCatalogs {
+  private readonly listings = new Map<string, Map<string, readonly string[]>>();
+
+  record(runner: string, machine: string, ids: readonly string[]): void {
+    let byNode = this.listings.get(runner);
+    if (!byNode) this.listings.set(runner, (byNode = new Map()));
+    byNode.set(machine, [...ids]);
   }
-  if (
-    parsed.length === 0 &&
-    !configuredProviders &&
-    !Object.values(data).every((value) => isRecord(value) && Array.isArray(value.models))
-  )
-    throw new ModelCatalogFormatError('Structured model catalog listed no models.');
-  return parsed;
+
+  /** One node's full last good listing; undefined until it has listed. */
+  listing(runner: string, machine: string): readonly string[] | undefined {
+    return this.listings.get(runner)?.get(machine);
+  }
+
+  /** Picker models only, each naming its nodes when some node lacks it. */
+  result(runner: string): RunnerModelCatalogResult {
+    const nodes = [...(this.listings.get(runner) ?? [])].sort(([a], [b]) => a.localeCompare(b));
+    if (!nodes.length)
+      return {
+        runner,
+        status: 'unavailable',
+        source: 'catalog-command',
+        detail: 'No execution node has listed its models yet.',
+        models: [],
+      };
+    const listedOn = new Map<string, string[]>();
+    for (const [machine, ids] of nodes)
+      for (const id of ids)
+        if (isPickerCatalogModel(id)) listedOn.set(id, [...(listedOn.get(id) ?? []), machine]);
+    return {
+      runner,
+      status: 'ready',
+      source: 'catalog-command',
+      models: [...listedOn].map(([id, machines]) => ({
+        id,
+        reasoningModes: [],
+        listed: true,
+        ...(machines.length < nodes.length ? { nodes: machines } : {}),
+      })),
+    };
+  }
+
+  /** Why `machine` cannot run `model`, or null when it lists the model, never answered, or no node lists it. */
+  blocker(runner: string, model: string, machine: string): string | null {
+    const byNode = this.listings.get(runner);
+    if (!byNode?.get(machine) || byNode.get(machine)!.includes(model)) return null;
+    const listedOn = [...byNode]
+      .filter(([, ids]) => ids.includes(model))
+      .map(([node]) => node)
+      .sort();
+    return listedOn.length
+      ? `${runner} model ${model} is not listed on ${machine}; only on ${listedOn.join(', ')}`
+      : null;
+  }
+}
+
+export const nodeModelCatalogs = new NodeModelCatalogs();
+
+/** One execution node: `list` resolves the source command's stdout or rejects. */
+export interface ModelCatalogNode {
+  machine: string;
+  list(source: RunnerModelCatalogNodeSource): Promise<string>;
+}
+
+export async function queryNodeModelCatalog(
+  runner: string,
+  source: RunnerModelCatalogNodeSource,
+  nodes: readonly ModelCatalogNode[],
+  store = nodeModelCatalogs,
+): Promise<RunnerModelCatalogResult> {
+  await Promise.all(
+    nodes.map(async (node) => {
+      try {
+        store.record(runner, node.machine, source.parse(await node.list(source)));
+      } catch (error) {
+        console.warn(
+          `[runner-models] ${runner} model list on ${node.machine} failed; keeping its last listing: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }),
+  );
+  return store.result(runner);
 }
 
 function arrayField(data: unknown, key: string): unknown[] {

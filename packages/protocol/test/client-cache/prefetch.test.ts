@@ -10,6 +10,7 @@ import {
   activeRunDiffBase,
   activeRunDiffQuery,
   type ContentPrefetchArtifact,
+  type ContentPrefetchMediaEntry,
   type ContentPrefetchOptions,
   type ContentPrefetchTarget,
   createContentPrefetcher,
@@ -228,6 +229,7 @@ function harness(
   world = createWorld(),
   capabilities: ResourceCacheConnection['capabilities'] = BATCHED,
   defaultBranch?: ContentPrefetchOptions['defaultBranch'],
+  media?: ContentPrefetchOptions['media'],
 ) {
   let connection: ResourceCacheConnection = {
     id: 1,
@@ -297,6 +299,7 @@ function harness(
     request,
     readArtifact,
     defaultBranch,
+    media,
   });
   return {
     world,
@@ -396,6 +399,54 @@ test('an authorization refusal stops prefetch for the rest of the connection', a
   );
 });
 
+test('a run whose run.get failed is read again after 5 s, 30 s, then every 2 min until it succeeds', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const { world, prefetcher, change, connect, calls } = harness();
+  let failures = 4;
+  world.fail = (call) =>
+    call.method === Methods.RUN_GET && failures-- > 0 ? 'TIMEOUT' : undefined;
+  world.runs.set('g1', { id: 'g1', slotId: null, decisions: [] } as unknown as Run);
+  prefetcher.setTargets([target('g1', true, 1)]);
+  await flush();
+  // Nothing else reads a run whose plan is unknown: not a newer update, a change or a resume.
+  prefetcher.setTargets([target('g1', true, 2)]);
+  change({ family: 'package', runId: 'g1' }, { family: 'run', runId: 'g1' });
+  connect({ foreground: false });
+  connect({ foreground: true });
+  await flush();
+  assert.equal(calls(Methods.RUN_GET).length, 1);
+  for (const [wait, reads] of [
+    [5_000, 2],
+    [30_000, 3],
+    [120_000, 4],
+    [120_000, 5],
+  ] as const) {
+    t.mock.timers.tick(wait - 1);
+    await flush();
+    assert.equal(calls(Methods.RUN_GET).length, reads - 1);
+    t.mock.timers.tick(1);
+    await flush();
+    assert.equal(calls(Methods.RUN_GET).length, reads);
+  }
+  // The fifth read succeeded: nothing is tried again.
+  t.mock.timers.tick(10 * 60_000);
+  await flush();
+  assert.equal(calls(Methods.RUN_GET).length, 5);
+});
+
+test('a failed run.get is not read again once its run is no longer listed', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const { world, prefetcher, calls } = harness();
+  world.fail = (call) => (call.method === Methods.RUN_GET ? 'TIMEOUT' : undefined);
+  world.runs.set('g1', { id: 'g1', slotId: null, decisions: [] } as unknown as Run);
+  prefetcher.setTargets([target('g1', true, 1)]);
+  await flush();
+  prefetcher.setTargets([]);
+  t.mock.timers.tick(5_000);
+  await flush();
+  assert.equal(calls(Methods.RUN_GET).length, 1);
+});
+
 test('a gate reads run.get, its retained diff, batched bases, then evidence images', async () => {
   const { world, prefetcher } = harness();
   world.pageSize = 1;
@@ -437,6 +488,111 @@ test('a gate reads run.get, its retained diff, batched bases, then evidence imag
   );
   assert.deepEqual(world.stores[0].untrackedFiles, UNTRACKED);
   assert.ok(world.stores.every(({ token }) => token?.connectionId === 1));
+});
+
+test('a gate hands its videos and over-cap images to the media holder, by digest', async () => {
+  const held: ContentPrefetchMediaEntry[] = [];
+  const { world, prefetcher } = harness(createWorld(), BATCHED, undefined, {
+    async hold(entry) {
+      held.push(entry);
+      return entry.path !== 'evidence/huge.png';
+    },
+  });
+  gateRun(world, 'g1', 'p1', gateDiff());
+  prefetcher.setTargets([target('g1', true, '2026-10-27T01:00:00.000Z')]);
+  await flush();
+  assert.deepEqual(
+    held.map(({ runId, path, sha256, bundleDigest, gateAt }) => [
+      runId,
+      path,
+      sha256,
+      bundleDigest,
+      gateAt,
+    ]),
+    [
+      [
+        'g1',
+        'evidence/run.mp4',
+        'f'.repeat(64),
+        'bundle-p1',
+        Date.parse('2026-10-27T01:00:00.000Z'),
+      ],
+      [
+        'g1',
+        'evidence/huge.png',
+        'e'.repeat(64),
+        'bundle-p1',
+        Date.parse('2026-10-27T01:00:00.000Z'),
+      ],
+    ],
+  );
+  // The holder downloads its own files: prefetch reads only the row-sized image, and a skipped
+  // entry stops nothing else.
+  assert.deepEqual(
+    world.calls.filter((call) => call.method === 'artifact').map((call) => call.params.path),
+    ['artifacts/p1.diff', 'evidence/a.png'],
+  );
+});
+
+test('a gate whose review diff cannot be read still holds its media, and is read again after 5 s', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const held: string[] = [];
+  const { world, prefetcher, calls } = harness(createWorld(), BATCHED, undefined, {
+    async hold(entry) {
+      held.push(entry.path);
+      return true;
+    },
+  });
+  gateRun(world, 'g1', 'p1', gateDiff());
+  let failures = 1;
+  world.fail = (call) =>
+    call.method === 'artifact' && call.params.path === 'artifacts/p1.diff' && failures-- > 0
+      ? 'TIMEOUT'
+      : undefined;
+  const diffReads = () =>
+    calls('artifact').filter((call) => call.params.path === 'artifacts/p1.diff').length;
+  prefetcher.setTargets([target('g1', true, 1)]);
+  await flush();
+  assert.deepEqual(held, ['evidence/run.mp4', 'evidence/huge.png']);
+  assert.equal(diffReads(), 1);
+  t.mock.timers.tick(4_999);
+  await flush();
+  assert.equal(diffReads(), 1);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(diffReads(), 2);
+  // The second read succeeded: nothing is tried again.
+  t.mock.timers.tick(10 * 60_000);
+  await flush();
+  assert.equal(diffReads(), 2);
+});
+
+test('a run at its human gate while a requested review runs still prefetches its current package', async () => {
+  // The shape of a live EchoBridge gate: status human-gating, the current package's ready decision
+  // resolved with request-review, and no decision open until the review comes back.
+  const held: string[] = [];
+  const { world, prefetcher } = harness(createWorld(), BATCHED, undefined, {
+    async hold(entry) {
+      held.push(`${entry.runId}:${entry.path}`);
+      return true;
+    },
+  });
+  gateRun(world, 'g1', 'p1', gateDiff());
+  gateRun(world, 'm1', 'p2', gateDiff());
+  const resolve = (runId: string, status: Run['status']) => {
+    const run = world.runs.get(runId)!;
+    run.status = status;
+    for (const decision of run.decisions ?? []) {
+      decision.resolvedAt = '2026-11-01T08:41:08.392Z';
+      decision.resolvedAction = 'request-review';
+    }
+  };
+  resolve('g1', 'human-gating');
+  // Same shape, but the run moved on: nothing waits on a person, so nothing is prefetched as a gate.
+  resolve('m1', 'monitoring');
+  prefetcher.setTargets([target('g1', true), target('m1', false)]);
+  await flush();
+  assert.deepEqual(held, ['g1:evidence/run.mp4', 'g1:evidence/huge.png']);
 });
 
 test('an active slot run keeps its worktree diff as a query and prefetches only diff paths', async () => {

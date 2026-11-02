@@ -368,6 +368,28 @@ test('candidate requests carry Skip Prepare so repo-blocked slots stay selectabl
   );
 });
 
+test('candidate requests carry the chosen runner and model for the node check', () => {
+  const draft = {
+    flowType: 'dev' as const,
+    machines: [],
+    targetBranch: undefined,
+    ticketOrPr: 'DEV-1',
+    app: undefined,
+    prepareProfile: undefined,
+    comparison: undefined,
+    skipPrepare: false,
+  };
+  const params = buildDispatchCandidatesParams({
+    ...draft,
+    runner: 'pi',
+    model: 'litellm/glm-5p3',
+  });
+  assert.equal(params.runner, 'pi');
+  assert.equal(params.model, 'litellm/glm-5p3');
+  const unset = buildDispatchCandidatesParams(draft);
+  assert.equal('runner' in unset || 'model' in unset, false);
+});
+
 test('candidates, run.create and queue agree on the prepare profile under Skip Prepare', () => {
   for (const skipPrepare of [true, false]) {
     const draft: DispatchPayloadDraft = {

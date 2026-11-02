@@ -73,6 +73,8 @@ import {
 import {
   assertRunnerLaunchPrerequisites,
   buildLaunchCommand,
+  effectiveModelQuestionsForRun,
+  modelQuestionsForRun,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
   wrapWorkerShellCommand,
 } from '../../runners/launch-command.js';
@@ -1774,6 +1776,7 @@ export async function dispatchExecute(
       signalFile: `${workerTaskDir}/SIGNAL.json`,
       runner,
       model,
+      modelQuestions: effectiveModelQuestionsForRun(currentRun),
       target: primaryTarget,
     });
   }
@@ -1827,6 +1830,7 @@ export async function dispatchExecute(
     // Label only — installer expands credential path on the slot host.
     codexAccountLabel: accountBind?.bind.launchAccountLabel ?? null,
     blindTrialCapsule: currentRun?.engineState?.evalExperiment?.blind?.isolation?.capsulePath,
+    modelQuestions: modelQuestionsForRun(currentRun),
   });
 
   agentLaunch = wrapWorkerShellCommand(agentLaunch, {
@@ -1865,6 +1869,7 @@ export async function dispatchExecute(
         prompt: taskPrompt,
         effort,
         safetyTier,
+        modelQuestions: modelQuestionsForRun(currentRun),
         runtimeDir: projectVars?.runtimeDir,
         taskDir: workerTaskDir,
         launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,

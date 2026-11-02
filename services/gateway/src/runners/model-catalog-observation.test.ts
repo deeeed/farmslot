@@ -451,3 +451,45 @@ test('the catalog method keeps alias handling and unsupported runners need no so
   assert.equal(claude.observation, undefined);
   await assert.rejects(runnerModelCatalog({ runner: 'unknown-runner' }), /Unknown runner/);
 });
+
+test('a per-node source lists on every node through the observation and keeps a failed node', async () => {
+  let now = 1000;
+  let miniFails = false;
+  const notices: string[] = [];
+  const source = {
+    nodeCommand: 'pi',
+    slotPathKey: 'piPath' as const,
+    args: ['--list-models'],
+    parse: (output: string) => output.split('\n').filter(Boolean),
+  };
+  const owner = new RunnerModelCatalogObservation({
+    runners: () => ['node-observed'],
+    select: async () => source,
+    nodes: async () => [
+      { machine: 'macpro', list: async () => 'litellm/glm-5p3\nxai/grok-4.7\n' },
+      {
+        machine: 'mini',
+        list: async () => {
+          if (miniFails) throw new Error('exit code 1');
+          return 'xai/grok-4.7\nopenai/gpt-6\n';
+        },
+      },
+    ],
+    hasInterest: () => true,
+    changed: (runner) => notices.push(runner),
+    now: () => now,
+  });
+  const first = await owner.read('node-observed', managed);
+  assert.equal(first.status, 'ready');
+  assert.equal(first.source, 'catalog-command');
+  assert.deepEqual(first.models, [
+    { id: 'litellm/glm-5p3', reasoningModes: [], listed: true, nodes: ['macpro'] },
+    { id: 'xai/grok-4.7', reasoningModes: [], listed: true },
+  ]);
+  assert.deepEqual(notices, ['node-observed']);
+  miniFails = true;
+  now += RUNNER_MODEL_CATALOG_TTL_MS;
+  await owner.tick();
+  assert.deepEqual((await owner.read('node-observed', managed)).models, first.models);
+  await owner.stop();
+});

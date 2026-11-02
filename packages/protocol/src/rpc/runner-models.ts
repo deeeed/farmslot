@@ -4,24 +4,15 @@ import {
   DEFAULT_CODEX_MODEL,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_MODEL,
-  DEFAULT_PI_MODEL,
 } from '../contracts/runs.js';
 
 import { Methods } from './registry.js';
 import type { UpstreamObservation } from './resource-observers.js';
 
-// Pi's Anthropic OAuth provider uses Anthropic model IDs. Keep the provider
-// prefix so launch-command.ts cannot mistake them for xAI's bare model IDs.
-export const PI_ANTHROPIC_MODELS = [
-  'anthropic/claude-opus-5',
-  'anthropic/claude-sonnet-5',
-  'anthropic/claude-haiku-4-5',
-  'anthropic/claude-fable-5-1',
-] as const;
-
 /**
  * Built-in picker models per runner. Clients show these, and the gateway reports
  * them as visible models, until an operator saves a visible set for the runner.
+ * Pi and OpenCode have none: their pickers list each execution node's own catalog.
  */
 export const RUNNER_PICKER_MODELS: Readonly<Record<string, readonly string[]>> = {
   claude: ['sonnet', 'opus', 'haiku', 'fable'],
@@ -49,9 +40,40 @@ export const RUNNER_PICKER_MODELS: Readonly<Record<string, readonly string[]>> =
     'gpt-5.6-sol-high',
     'gpt-5.6-sol-max',
   ],
-  grok: [DEFAULT_GROK_MODEL, 'grok-4.7'],
-  pi: [DEFAULT_PI_MODEL, ...PI_ANTHROPIC_MODELS],
+  grok: [DEFAULT_GROK_MODEL],
 };
+
+/** Node catalog providers the picker shows, in group order. Every other provider is hidden. */
+export const RUNNER_MODEL_PROVIDER_LABELS: ReadonlyMap<string, string> = new Map([
+  ['litellm', 'Consensys LiteLLM'],
+  ['xai', 'xAI'],
+  ['anthropic', 'Anthropic'],
+  ['omlx', 'Local'],
+  ['lmstudio', 'Local'],
+]);
+
+/** Picker group of a `provider/model` id; undefined for an unprefixed id or a hidden provider. */
+export function runnerModelProviderLabel(id: string): string | undefined {
+  const slash = id.indexOf('/');
+  return slash > 0 ? RUNNER_MODEL_PROVIDER_LABELS.get(id.slice(0, slash)) : undefined;
+}
+
+/**
+ * Whether a node catalog id belongs in the picker: a labelled provider, and not an old
+ * generation by model name whatever the provider (Claude 4.x and older, Grok before 4.7).
+ */
+export function isPickerCatalogModel(id: string): boolean {
+  if (!runnerModelProviderLabel(id)) return false;
+  const name = id.slice(id.lastIndexOf('/') + 1).toLowerCase();
+  const claude = /^claude-(?:[a-z]+-)?(\d+)/.exec(name);
+  if (claude) return Number(claude[1]) >= 5;
+  const grok = /^grok-(\d+)(?:[.-](\d+))?/.exec(name);
+  if (grok) {
+    const [major, minor] = [Number(grok[1]), Number(grok[2] ?? 0)];
+    return major > 4 || (major === 4 && minor >= 7);
+  }
+  return true;
+}
 
 /** How a runner model catalog was obtained. */
 export type RunnerModelCatalogSource =
@@ -69,6 +91,8 @@ export interface RunnerCatalogModel {
   reasoningModes: string[];
   /** Whether the runner lists this model in its default visible set. Hidden models stay in the full catalog. */
   listed: boolean;
+  /** Per-node catalogs only: the execution nodes that list this model, when some node does not. */
+  nodes?: string[];
 }
 
 export interface RunnerModelCatalogParams {
@@ -98,7 +122,7 @@ export interface RunnerVisibleModelState {
   defaultConfigured: boolean;
   /** True when the operator has saved a visible set for this runner. */
   configured: boolean;
-  /** Models shown by default. The built-in seed when nothing has been saved. */
+  /** Models shown by default. The built-in seed when nothing has been saved; empty for Pi and OpenCode. */
   models: string[];
   /** Visible models plus the retained explicit selection, in picker order. */
   pickerModels: string[];
@@ -173,7 +197,7 @@ export function runnerModelCatalogResourceKey(params: unknown): ResourceKey {
   };
 }
 
-/** Durable catalog: IDs, labels, reasoning/visibility fields and the source observation only. */
+/** Durable catalog: IDs, labels, reasoning/visibility/node fields and the source observation only. */
 export function runnerModelCatalogStoredData(data: unknown): RunnerModelCatalogResult {
   const result = data as RunnerModelCatalogResult;
   const observation = result.observation;
@@ -182,11 +206,12 @@ export function runnerModelCatalogStoredData(data: unknown): RunnerModelCatalogR
     status: result.status,
     source: result.source,
     ...(result.detail === undefined ? {} : { detail: result.detail }),
-    models: result.models.map(({ id, label, reasoningModes, listed }) => ({
+    models: result.models.map(({ id, label, reasoningModes, listed, nodes }) => ({
       id,
       ...(label === undefined ? {} : { label }),
       reasoningModes: [...reasoningModes],
       listed,
+      ...(nodes === undefined ? {} : { nodes: [...nodes] }),
     })),
     ...(observation
       ? {

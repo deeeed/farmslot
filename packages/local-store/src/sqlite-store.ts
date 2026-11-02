@@ -23,6 +23,11 @@ export interface SqliteResourceStoreOptions {
   schemaVersion?: number;
   /** Platform owner broadcasts deletion to other tabs before accepting another read. */
   onDeleted?: (scopeId: string) => void;
+  /**
+   * Files a client keeps beside a scope's store go with it, before its row does. A failure
+   * rejects the deletion, so the owner deletes the scope again before it is read again.
+   */
+  deleteFiles?: (scopeId: string) => Promise<void>;
 }
 
 export const RESOURCE_STORE_SCHEMA_VERSION = 5;
@@ -283,6 +288,7 @@ export async function createSqliteResourceStore(
     );
     for (const old of evicted) {
       owner.seal(old.id);
+      await options.deleteFiles?.(old.scope_id);
       await db.run('DELETE FROM resource_stores WHERE id = ?', [old.id]);
       options.onDeleted?.(old.scope_id);
     }
@@ -617,7 +623,10 @@ export async function createSqliteResourceStore(
       handle.seal();
       owner.seal(row.id);
       options.onDeleted?.(scopeId);
-      return owner.serial(() => db.run('DELETE FROM resource_stores WHERE id = ?', [row.id]));
+      return owner.serial(async () => {
+        await options.deleteFiles?.(scopeId);
+        await db.run('DELETE FROM resource_stores WHERE id = ?', [row.id]);
+      });
     },
     async close() {
       closed = true;

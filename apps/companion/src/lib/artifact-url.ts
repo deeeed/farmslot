@@ -9,6 +9,7 @@ import {
   withArtifactBundleDigest,
 } from '@farmslot/protocol';
 
+import type { EvidenceMediaLookup } from './evidence-media';
 import { type GatewayHttpAuthHeaders, gatewayResourceSource } from './gateway-http-auth';
 
 export const DECISION_EVIDENCE_RECIPE_RUN_PARAM = 'decision-evidence';
@@ -16,11 +17,62 @@ export const CURRENT_ARTIFACTS_RECIPE_RUN_PARAM = 'current-artifacts';
 
 export type ArtifactHttpHeaders = GatewayHttpAuthHeaders;
 
+let heldMedia: EvidenceMediaLookup | undefined;
+let unsubscribeHeld: (() => void) | undefined;
+let heldRevision = 0;
+const heldListeners = new Set<() => void>();
+const heldChanged = () => {
+  heldRevision++;
+  for (const listener of heldListeners) listener();
+};
+
+/** The resource cache registers where its scope's held gate evidence lives on the device. */
+export function setHeldArtifactLookup(lookup: EvidenceMediaLookup | undefined): void {
+  unsubscribeHeld?.();
+  heldMedia = lookup;
+  unsubscribeHeld = lookup?.subscribe(heldChanged);
+  heldChanged();
+}
+
+/** For readers that render held files: a new revision means a held file appeared or went. */
+export function subscribeHeldArtifacts(listener: () => void): () => void {
+  heldListeners.add(listener);
+  return () => {
+    heldListeners.delete(listener);
+  };
+}
+
+export function heldArtifactsRevision(): number {
+  return heldRevision;
+}
+
+/** A held file by artifact digest, for readers that know the manifest's sha256. */
+export function heldArtifactFile(sha256: string): string | undefined {
+  return heldMedia?.byDigest(sha256);
+}
+
+/** A run artifact the device holds for exactly this package: run, path and bundle digest. */
+function heldArtifactUri(uri: string): string | undefined {
+  const query = heldMedia && uri.includes('/api/run-artifact?') ? uri.split('?')[1] : undefined;
+  if (!query) return undefined;
+  const params = new Map<string, string>();
+  for (const pair of query.split('&')) {
+    const [name, value = ''] = pair.split('=');
+    params.set(decodeURIComponent(name), decodeURIComponent(value.replace(/\+/g, ' ')));
+  }
+  const runId = params.get('runId');
+  const path = params.get('path');
+  if (!runId || !path || params.get('recipeRunId')) return undefined;
+  return heldMedia?.byPath(runId, path, params.get('bundleDigest'));
+}
+
+/** Held evidence is read from the device, silently; anything else from the gateway. */
 export function artifactSource(
   uri: string,
   headers: ArtifactHttpHeaders = {},
 ): { uri: string; headers?: ArtifactHttpHeaders } {
-  return gatewayResourceSource(uri, headers);
+  const held = heldArtifactUri(uri);
+  return held ? { uri: held } : gatewayResourceSource(uri, headers);
 }
 
 export type ArtifactManifestType =

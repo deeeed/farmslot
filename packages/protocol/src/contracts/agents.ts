@@ -136,6 +136,8 @@ export interface AgentContext {
   pipelineVisualReviewInput?: import('../recipe/pipeline-visual-judgments.js').PipelineReviewInput;
   pipelineVisualReviewResult?: import('../recipe/pipeline-visual-judgments.js').PipelineVisualReviewResult;
   runner?: string | null;
+  /** Effective question-tool setting captured at terminal worker launch; absent on older runs. */
+  modelQuestions?: 'on' | 'off';
   model?: string | null;
   /** Reasoning / thinking level for this reviewer or worker attempt. */
   effort?: string | null;
