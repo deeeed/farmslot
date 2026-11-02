@@ -145,6 +145,7 @@ for (const shell of SHELLS) {
       trackedDirtyFiles: 3,
       untrackedFiles: 2,
       unpushedCommits: 0,
+      remoteChecked: false,
     });
     for (const probe of [
       `${GIT_DIFF_COMMAND} --name-only -z HEAD --`,
@@ -166,6 +167,7 @@ for (const shell of SHELLS) {
       trackedDirtyFiles: 0,
       untrackedFiles: 1,
       unpushedCommits: 0,
+      remoteChecked: false,
     });
     assert.equal(stateSatisfiesMode(state, 'push'), false);
   });
@@ -199,6 +201,7 @@ for (const shell of SHELLS) {
       trackedDirtyFiles: 1,
       untrackedFiles: 1,
       unpushedCommits: 1,
+      remoteChecked: false,
     });
   });
 
@@ -215,6 +218,7 @@ for (const shell of SHELLS) {
       trackedDirtyFiles: 0,
       untrackedFiles: 0,
       unpushedCommits: 2,
+      remoteChecked: false,
     });
   });
 
@@ -222,7 +226,8 @@ for (const shell of SHELLS) {
     const repo = repository(t);
     repo.commit('chore: history');
     repo.git('update-ref', 'refs/remotes/origin/main', repo.commit('chore: main'));
-    repo.git('remote', 'add', 'origin', 'https://example.invalid/repo.git');
+    // An origin that cannot be read, without a DNS lookup.
+    repo.git('remote', 'add', 'origin', path.join(tempDir(t), 'missing.git'));
     repo.git('config', 'branch.feature.remote', 'origin');
     repo.git('config', 'branch.feature.merge', 'refs/heads/main');
 
@@ -278,6 +283,124 @@ for (const shell of SHELLS) {
 
     assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 1);
   });
+
+  // F326 (#298): the slot clone fetches main only, so a push never moves origin/<branch>.
+  test(`${name}: a pushed branch verifies against the remote, not a stale origin ref`, async (t) => {
+    const repo = mainOnlyClone(t);
+    const stale = repo.commit('feat: pushed earlier');
+    repo.git('update-ref', 'refs/remotes/origin/feature', stale);
+    repo.commit('feat: one');
+    repo.commit('feat: two');
+    repo.git('push', '-q', 'origin', 'feature');
+    assert.equal(repo.git('rev-parse', 'refs/remotes/origin/feature'), stale);
+
+    const { state } = await inspect(repo.dir, 'push');
+    assert.equal(state.unpushedCommits, 0);
+    assert.equal(state.remoteChecked, true);
+    repo.commit('feat: three');
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 1);
+    // Commit mode never contacts the remote.
+    assert.doesNotMatch((await inspect(repo.dir, 'commit')).command, /ls-remote|fetch/);
+  });
+
+  test(`${name}: a remote branch ahead of the clone is fetched before counting`, async (t) => {
+    const repo = mainOnlyClone(t);
+    repo.commit('feat: one');
+    repo.git('push', '-q', 'origin', 'feature');
+    pushElsewhere(t, repo.remote);
+
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 0);
+    // Counted from the fetched remote tip: a local commit beside it is unpushed.
+    repo.commit('feat: two');
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 1);
+  });
+
+  test(`${name}: a remote commit the fetch cannot bring falls back to the local comparison`, async (t) => {
+    const repo = mainOnlyClone(t);
+    const pushed = repo.commit('feat: one');
+    repo.git('push', '-q', 'origin', 'feature');
+    pushElsewhere(t, repo.remote);
+    repo.git('update-ref', 'refs/remotes/origin/feature', pushed);
+    repo.commit('feat: two');
+    serveOrigin(t, repo, '[ "$n" = 2 ] && exit 1');
+
+    const { state } = await inspect(repo.dir, 'push');
+
+    assert.equal(state.unpushedCommits, 1);
+    assert.equal(state.remoteChecked, false);
+  });
+
+  test(`${name}: a branch force-pushed between the probe and the fetch falls back to the local comparison`, async (t) => {
+    const repo = mainOnlyClone(t);
+    const pushed = repo.commit('feat: one');
+    repo.git('push', '-q', 'origin', 'feature');
+    pushElsewhere(t, repo.remote);
+    repo.commit('feat: two');
+    // ls-remote advertises the commit from elsewhere; the fetch then finds `pushed`.
+    serveOrigin(
+      t,
+      repo,
+      `[ "$n" = 2 ] && git --git-dir='${repo.remote}' update-ref refs/heads/feature ${pushed}`,
+    );
+
+    const { state } = await inspect(repo.dir, 'push');
+
+    assert.equal(state.unpushedCommits, 1);
+    assert.equal(state.remoteChecked, false);
+  });
+
+  test(`${name}: a branch the remote no longer has stays unpublished despite a matching stale ref`, async (t) => {
+    const repo = mainOnlyClone(t);
+    repo.git('update-ref', 'refs/remotes/origin/feature', repo.commit('feat: one'));
+
+    const { state } = await inspect(repo.dir, 'push');
+
+    assert.equal(state.unpushedCommits, 1);
+    assert.equal(state.remoteChecked, true);
+  });
+}
+
+/** A repository whose origin is a real bare remote fetched for main only, like a slot clone. */
+function mainOnlyClone(t: TestContext) {
+  const repo = repository(t);
+  const remote = tempDir(t);
+  execFileSync('git', ['init', '-q', '--bare', remote], { env: gitEnv });
+  repo.git('remote', 'add', 'origin', remote);
+  repo.git('config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+  return { ...repo, remote };
+}
+
+/** Push one commit on top of the remote's feature branch from another clone. */
+function pushElsewhere(t: TestContext, remote: string) {
+  const other = tempDir(t);
+  execFileSync('git', ['clone', '-q', '-b', 'feature', remote, other], { env: gitEnv });
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: other, env: gitEnv });
+  git(
+    '-c',
+    'user.name=Other',
+    '-c',
+    'user.email=other@example.invalid',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'feat: from elsewhere',
+  );
+  git('push', '-q', 'origin', 'feature');
+}
+
+/**
+ * Run `hook` before each upload-pack the clone starts against origin, with the
+ * call number in `$n`: 1 is the ls-remote probe, 2 the fetch.
+ */
+function serveOrigin(t: TestContext, repo: ReturnType<typeof repository>, hook: string) {
+  const script = path.join(tempDir(t), 'upload-pack');
+  writeFileSync(
+    script,
+    `#!/bin/sh\nn=$(($(cat "$0.n" 2>/dev/null || echo 0) + 1)); echo "$n" >"$0.n"\n${hook}\nexec git upload-pack "$@"\n`,
+    { mode: 0o755 },
+  );
+  repo.git('config', 'remote.origin.uploadpack', script);
 }
 
 const TIMED_OUT: ExecResult = {
@@ -308,6 +431,59 @@ test('an inspection that timed out once is retried and verifies', async (t) => {
 
   assert.ok(state !== 'aborted' && stateSatisfiesMode(state, 'commit'));
   assert.equal(execs, 2);
+});
+
+test('a push inspection that timed out retries without asking the remote, even past its deadline', async (t) => {
+  // A stalled connection to the remote outlives the exec timeout. The retry
+  // compares with local refs and says so, also during the nudge wait's last
+  // recheck, so the run blocks instead of failing.
+  const repo = repository(t);
+  repo.git('update-ref', 'refs/remotes/origin/feature', repo.commit('feat: task'));
+  const slot = shellExecutor(repo.dir);
+  const commands: string[] = [];
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  const pending = inspectWorktreeWithRetry(
+    'feature',
+    'push',
+    async (command) => {
+      commands.push(command);
+      return commands.length === 1 ? TIMED_OUT : slot.execute(command);
+    },
+    Date.now(),
+  );
+  await settle();
+  t.mock.timers.tick(5_000);
+  const state = await pending;
+
+  assert.match(commands[0], /ls-remote/);
+  assert.doesNotMatch(commands[1], /ls-remote/);
+  assert.ok(state !== 'aborted' && stateSatisfiesMode(state, 'push'));
+  assert.equal(state.remoteChecked, false);
+});
+
+test('a push inspection past its deadline fails once its local retry also times out', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const commands: string[] = [];
+
+  const rejected = assert.rejects(
+    inspectWorktreeWithRetry(
+      'feature',
+      'push',
+      async (command) => {
+        commands.push(command);
+        return TIMED_OUT;
+      },
+      Date.now(),
+    ),
+    /push-verification worktree inspection failed \(exit 124\)/,
+  );
+  await settle();
+  t.mock.timers.tick(5_000);
+  await rejected;
+
+  assert.equal(commands.length, 2);
+  assert.doesNotMatch(commands[1], /ls-remote/);
 });
 
 test('an inspection that keeps timing out fails with the probe message at its deadline', async (t) => {

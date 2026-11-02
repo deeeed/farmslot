@@ -444,3 +444,62 @@ test('a processed run replayed before the next candidate keeps its shared task',
     'reactivated processed owners are still owners',
   );
 });
+
+test('the pass holds the bundle lock one run at a time, so a waiting admission goes between runs', async (t) => {
+  const roots = await retentionRoots(t, runsDirectory());
+  const ids: string[] = [];
+  for (const ticketOrPr of ['RETENTION-TURN-A', 'RETENTION-TURN-B']) {
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr,
+    });
+    const task = path.join(roots.taskRoots[0], run.id);
+    updateRun(run.id, {
+      status: 'done',
+      completedAt: settled,
+      taskFile: path.join(task, 'TASK.md'),
+    });
+    await persistRunNow(run);
+    await file(path.join(task, 'TASK.md'));
+    ids.push(run.id);
+  }
+  // A FIFO lock like the store's: each caller runs after every earlier holder releases.
+  let tail: Promise<unknown> = Promise.resolve();
+  let held = false;
+  const withBundleLock = <T>(operation: () => Promise<T>): Promise<T> => {
+    const turn = tail.then(async () => {
+      held = true;
+      try {
+        return await operation();
+      } finally {
+        held = false;
+      }
+    });
+    tail = turn.catch(() => {});
+    return turn;
+  };
+  const order: string[] = [];
+  let admission: Promise<void> | undefined;
+  await runRetentionPass(
+    { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60000 },
+    {
+      ...privateDeps,
+      withBundleLock,
+      holdsSlot: async (run) => {
+        // Other tests' settled runs may be candidates too; only this test's two are traced.
+        if (held && ids.includes(run.id)) {
+          order.push(run.id);
+          admission ??= withBundleLock(async () => {
+            order.push('admission');
+          });
+        }
+        return false;
+      },
+    },
+  );
+  await admission;
+  assert.equal(order[1], 'admission');
+  assert.deepEqual([order[0], order[2]].sort(), [...ids].sort());
+});

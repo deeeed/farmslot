@@ -13,7 +13,12 @@ import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 // the push is meant to happen. They ARE commit-verified: uncommitted work exists
 // only in the slot worktree and is destroyed when the slot is reclaimed, which is
 // a different failure from an unpushed commit and needs its own check.
-import { type ExecResult, isInteractiveDevRun, type Run } from '@farmslot/protocol';
+import {
+  type ExecResult,
+  isInteractiveDevRun,
+  remoteBranchRefspec,
+  type Run,
+} from '@farmslot/protocol';
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
@@ -47,6 +52,8 @@ export interface PushVerificationResult {
   nudged?: boolean;
   /** True when the run was cancelled mid-verification — callers must not block the run. */
   aborted?: boolean;
+  /** Push mode: false when the result came from local refs only. */
+  remoteChecked?: boolean;
 }
 
 export interface WorktreePublishState {
@@ -67,25 +74,42 @@ export interface WorktreePublishState {
   untrackedFiles?: number;
   unpushedCommits: number;
   /**
+   * Push mode: false when the remote did not answer for the branch (unreachable,
+   * timed out, or skipped), so `unpushedCommits` comes from local refs only.
+   */
+  remoteChecked?: boolean;
+  /**
    * HEAD is not on the run branch: the worker renamed or deleted it (`runBranchExists`
    * false), or switched to another branch. `head` is HEAD's branch, null when detached.
-   * The commit comparison is skipped; this state never satisfies a mode.
+   * The remote probe and the commit comparison are skipped; this state never satisfies
+   * a mode.
    */
   offBranch?: { runBranchExists: boolean; head: string | null };
 }
 
 type GitExecutor = (command: string) => Promise<ExecResult>;
 
+interface InspectionOptions {
+  /** False skips the push-mode remote probe and compares with local refs only. */
+  remote?: boolean;
+}
+
 /**
  * The whole inspection as one shell script (bash, or zsh on macOS nodes).
  * It prints NUL-terminated records: the tracked-content and staged path lists,
  * then the untracked list in push mode, each closed by an empty record (no path
- * is empty); then the comparison: `remote` or `base` with a commit count, or
- * `none`; or, when HEAD is not on the run branch, `moved`, `0` or `1` for whether
- * the run branch still exists, and HEAD's branch (empty when detached). A failing
- * probe prints its name as the last record and exits with its status.
+ * is empty). When HEAD is not on the run branch, that is followed by `moved`, `0`
+ * or `1` for whether the run branch still exists, and HEAD's branch (empty when
+ * detached). Otherwise: in push mode, `unchecked` when the remote did not settle
+ * the branch; then the comparison: `remote` or `base` with a commit count, or
+ * `none`. A failing probe prints its name as the last record and exits with its
+ * status.
  */
-function inspectionScript(branch: string, mode: 'push' | 'commit'): string {
+function inspectionScript(
+  branch: string,
+  mode: 'push' | 'commit',
+  { remote = true }: InspectionOptions = {},
+): string {
   const remoteRef = `origin/${branch}`;
   return [
     `b=${shellQuote(`refs/heads/${branch}`)}`,
@@ -107,11 +131,31 @@ function inspectionScript(branch: string, mode: 'push' | 'commit'): string {
         ]
       : []),
     // A renamed or switched branch is the worker's to fix: comparing a missing run
-    // branch failed rev-list with exit 128 (F327).
+    // branch failed rev-list with exit 128 (F327). Checked before the remote probe,
+    // whose comparison would fail the same way.
     `h=$(git symbolic-ref --quiet --short HEAD); rc=$?`,
     `[ "$rc" -le 1 ] || fail "$rc" 'HEAD branch probe'`,
     `if [ "$h" != ${shellQuote(branch)} ]; then exists "$b" ${shellQuote(`rev-parse refs/heads/${branch}`)}; printf 'moved\\0%s\\0%s\\0' "$?" "$h"; exit 0; fi`,
-    `exists ${shellQuote(remoteRef)} ${shellQuote(`rev-parse ${remoteRef}`)} && ahead remote ${shellQuote(remoteRef)}`,
+    ...(mode === 'push'
+      ? [
+          // A slot clone that fetches main only never updates origin/<branch> on push, so
+          // that ref can be stale or missing (F326, #298). Ask the remote for the branch:
+          // exit 2 means it has no such branch. Any other failure (no network, no auth)
+          // keeps the local comparison below, marked unchecked.
+          ...(remote
+            ? [
+                `r=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads --exit-code origin ${shellQuote(`refs/heads/${branch}`)} 2>/dev/null); lr=$?`,
+                `if [ "$lr" -eq 0 ]; then`,
+                `  s=\${r%%[[:space:]]*}`,
+                // A force-push between ls-remote and the fetch can leave $s unfetched.
+                `  git cat-file -e "$s^{commit}" 2>/dev/null || { GIT_TERMINAL_PROMPT=0 git fetch --quiet --no-tags origin ${shellQuote(remoteBranchRefspec(branch))} 2>/dev/null && git cat-file -e "$s^{commit}" 2>/dev/null; } && ahead remote "$s"`,
+                `fi`,
+              ]
+            : []),
+          `[ "\${lr:-}" = 2 ] || printf 'unchecked\\0'`,
+        ]
+      : []),
+    `[ "\${lr:-}" = 2 ] || { exists ${shellQuote(remoteRef)} ${shellQuote(`rev-parse ${remoteRef}`)} && ahead remote ${shellQuote(remoteRef)}; }`,
     // A new local branch has no origin/<branch> yet. Compare it with its
     // configured upstream when present, otherwise origin/HEAD.
     `u=$(git for-each-ref --format='%(upstream:short)' "$b") || fail $? ${shellQuote(`upstream probe for ${branch}`)}`,
@@ -132,8 +176,9 @@ export async function inspectWorktreePublishState(
   branch: string,
   mode: 'push' | 'commit',
   execute: GitExecutor,
+  options?: InspectionOptions,
 ): Promise<WorktreePublishState> {
-  const result = await execute(inspectionScript(branch, mode));
+  const result = await execute(inspectionScript(branch, mode, options));
   const records = result.stdout.split('\0');
   if (result.exitCode !== 0) {
     // An exec that timed out was killed before any probe could name itself.
@@ -151,22 +196,30 @@ export async function inspectWorktreePublishState(
   };
   const tracked = new Set([...paths(), ...paths()]);
   const untracked = mode === 'push' ? paths() : undefined;
-  const [comparison, ahead, head] = records.slice(at);
+  if (records[at] === 'moved') {
+    const [, exists, head] = records.slice(at);
+    return {
+      dirtyFiles: new Set([...tracked, ...(untracked ?? [])]).size,
+      trackedDirtyFiles: tracked.size,
+      ...(untracked ? { untrackedFiles: untracked.length } : {}),
+      // Off the run branch there is no comparison to count; `offBranch` blocks instead.
+      unpushedCommits: 0,
+      offBranch: { runBranchExists: exists === '0', head: head || null },
+    };
+  }
+  const unchecked = records[at] === 'unchecked';
+  const [comparison, ahead] = records.slice(unchecked ? at + 1 : at);
   const commits = parseInt(ahead ?? '', 10) || 0;
-  const offBranch =
-    comparison === 'moved' ? { runBranchExists: ahead === '0', head: head || null } : undefined;
   return {
     dirtyFiles: new Set([...tracked, ...(untracked ?? [])]).size,
     trackedDirtyFiles: tracked.size,
-    ...(untracked ? { untrackedFiles: untracked.length } : {}),
-    ...(offBranch ? { offBranch } : {}),
+    ...(untracked ? { untrackedFiles: untracked.length, remoteChecked: !unchecked } : {}),
     // Against an upstream or origin/HEAD, counting the entire local branch
     // history produced absurd values (for example 31,508 "unpushed commits")
     // and obscured the actual one-commit state. With neither a feature remote
     // nor a trustworthy base ref, publication cannot be proven: report the safe
     // minimum and keep the gate closed.
-    // Off the run branch there is no comparison to count; `offBranch` blocks instead.
-    unpushedCommits: offBranch ? 0 : comparison === 'remote' ? commits : Math.max(1, commits),
+    unpushedCommits: comparison === 'remote' ? commits : Math.max(1, commits),
   };
 }
 
@@ -177,6 +230,10 @@ export async function inspectWorktreePublishState(
  * the same probe answered in under a second later. A git error still throws at
  * once. A timeout backs off and retries until `deadline`, then throws. Returns
  * 'aborted' once `signal` fires, so the cancel path keeps the run status.
+ * Retries skip the remote probe: a stalled connection to the remote outlives the
+ * exec timeout, so only the local comparison can answer in time. A push attempt
+ * that timed out always gets that one local retry, even past `deadline`, so a
+ * stall during the last recheck blocks the run instead of failing it.
  */
 export async function inspectWorktreeWithRetry(
   branch: string,
@@ -191,17 +248,20 @@ export async function inspectWorktreeWithRetry(
     exitCode = result.exitCode;
     return result;
   };
+  let remote = mode === 'push';
   for (let backoff = INSPECTION_RETRY_BACKOFF_MS; ; backoff *= 2) {
     // Only this attempt's own timeout retries; a thrown exec is not a timeout.
     exitCode = 0;
     try {
-      return await inspectWorktreePublishState(branch, mode, probe);
+      return await inspectWorktreePublishState(branch, mode, probe, { remote });
     } catch (err) {
       // Never let a probe error racing a cancellation escape as a step failure
       // that overwrites the cancel status.
       if (signal?.aborted) return 'aborted';
-      if (exitCode !== EXEC_TIMEOUT_EXIT_CODE || Date.now() + backoff >= deadline) throw err;
+      if (exitCode !== EXEC_TIMEOUT_EXIT_CODE || (!remote && Date.now() + backoff >= deadline))
+        throw err;
     }
+    remote = false;
     await timers.setTimeout(backoff, undefined, { signal }).catch((err: unknown) => {
       if (!signal?.aborted) throw err;
     });
@@ -237,7 +297,8 @@ function describe(state: WorktreePublishState, mode: 'push' | 'commit' | 'none' 
     parts.push(`${state.dirtyFiles} uncommitted file(s)`);
   }
   if (mode === 'push' && state.unpushedCommits > 0) {
-    parts.push(`${state.unpushedCommits} unpushed commit(s)`);
+    const unchecked = state.remoteChecked === false ? ' (remote not checked)' : '';
+    parts.push(`${state.unpushedCommits} unpushed commit(s)${unchecked}`);
   } else if (mode === 'commit' && state.unpushedCommits > 0) {
     // Push is owned by the publication step for dev flows — do not present as a failure.
   }
@@ -317,7 +378,12 @@ export async function verifyWorkerPushedBranch(
     return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
   }
   if (stateSatisfiesMode(state, mode)) {
-    return { verified: true, dirtyFiles: state.dirtyFiles, unpushedCommits: state.unpushedCommits };
+    return {
+      verified: true,
+      dirtyFiles: state.dirtyFiles,
+      unpushedCommits: state.unpushedCommits,
+      remoteChecked: state.remoteChecked,
+    };
   }
 
   console.warn(
@@ -399,6 +465,7 @@ export async function verifyWorkerPushedBranch(
         verified: true,
         dirtyFiles: state.dirtyFiles,
         unpushedCommits: state.unpushedCommits,
+        remoteChecked: state.remoteChecked,
         nudged,
       };
     }
@@ -411,6 +478,7 @@ export async function verifyWorkerPushedBranch(
       : `worker signaled complete but ${branch} still has ${describe(state, mode)} after publish nudge`,
     dirtyFiles: state.dirtyFiles,
     unpushedCommits: state.unpushedCommits,
+    remoteChecked: state.remoteChecked,
     nudged,
   };
 }
