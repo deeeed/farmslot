@@ -150,7 +150,9 @@ test('retention archives settled run storage only after 48h with nothing open', 
     runRetentionHold({ ...done, decisions: [openDecision] }, context()),
     'still needs its execution storage',
   );
-  assert.equal(runRetentionHold({ ...done, tags: ['demo'] }, context()), 'operator-tagged');
+  // Archiving is a reversible move, so only the keep tag holds a run's storage in place.
+  assert.equal(runRetentionHold({ ...done, tags: ['demo', 'unsteered'] }, context()), undefined);
+  assert.equal(runRetentionHold({ ...done, tags: ['perps', 'keep'] }, context()), 'tagged keep');
   assert.equal(runRetentionHold(done, context('open')), 'PR open');
   assert.equal(runRetentionHold(done, context('unknown')), 'PR state unknown');
   assert.equal(runRetentionHold(done, context('settled')), undefined);
