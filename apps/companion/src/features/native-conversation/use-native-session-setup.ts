@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Methods,
   nativeProfileSessionParams,
+  nativeRunnerDefaultModel,
   nativeRunnerModels,
   type NativeSessionCatalogResult,
   type NativeSessionInfo,
@@ -74,7 +75,9 @@ export function useNativeSessionSetup(enabled: boolean) {
   const model =
     runner && nativeRunnerModels(runner, executionNode).includes(modelId)
       ? modelId
-      : (runner?.defaultModel ?? '');
+      : runner
+        ? nativeRunnerDefaultModel(runner, executionNode)
+        : '';
   const executionPicker = useMemo(
     () =>
       catalog?.runners.length
@@ -84,7 +87,7 @@ export function useNativeSessionSetup(enabled: boolean) {
               runners: catalog.runners.map((entry) => ({
                 id: entry.runner,
                 models: nativeRunnerModels(entry, executionNode).map((id) => ({ id })),
-                defaultModel: entry.defaultModel,
+                defaultModel: nativeRunnerDefaultModel(entry, executionNode),
                 allowCustomModels: false,
                 efforts: [],
                 defaultEffort: null,

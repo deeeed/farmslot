@@ -338,6 +338,18 @@ export class NativeSessionView extends LitElement {
           this.executionNodeId,
         ),
       );
+      // Another node may not list the previous model or saved global default.
+      const row = this.executionPicker.rows[0];
+      if (
+        changed.has('executionNodeId') &&
+        row?.selection.model &&
+        this.executionPicker.modelPickerState(row.id).customModel
+      ) {
+        const runner = this.executionPicker.catalog.runners.find(
+          (option) => option.id === row.selection.runner,
+        );
+        this.executionPicker.setModel(row.id, runner?.defaultModel ?? null);
+      }
     }
     if (!changed.has('worker') || !this.isConnected) return;
     const previous = changed.get('worker') as NativeWorkerViewTarget | undefined;

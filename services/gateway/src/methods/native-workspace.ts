@@ -10,6 +10,7 @@ import {
   DEFAULT_COPILOT_RUNNER,
   getRunnerDefinition,
   KNOWN_RUNNERS,
+  runnerModelNodeBlocker,
   runnerSupportsNativeTaskReuse,
 } from '../runners/registry.js';
 import { describeVisibleModels } from '../runners/visible-models.js';
@@ -90,6 +91,19 @@ export async function nativeCatalog(
   };
 }
 
+/** Why a native session on `executionNodeId` cannot run `model`, from that node's own listing. */
+export async function nativeModelNodeBlocker(
+  runner: string,
+  model: string | undefined,
+  executionNodeId: string,
+): Promise<string | null> {
+  if (!model) return null;
+  for (const pool of await loadPoolConfigs(poolDir))
+    if ((isLocal(pool.host, pool.machine) ? 'local' : pool.machine) === executionNodeId)
+      return runnerModelNodeBlocker(runner, model, pool.machine);
+  return null;
+}
+
 /**
  * Per-node catalogs (Pi, OpenCode): each listed node's picker models, under the same saved
  * preferences and default as `models`. A node that has not listed yet is absent, so its
@@ -104,15 +118,14 @@ export function nativeNodeModels(
   if (!source || !('nodeCommand' in source)) return undefined;
   const entries = [...contextMachines].flatMap(([executionNodeId, machine]) => {
     const listing = nodeModelCatalogs.listing(runner, machine);
-    return listing
-      ? [
-          [
-            executionNodeId,
-            nativeModelPreferences(runner, listing.filter(isPickerCatalogModel), defaultModel)
-              .models,
-          ] as const,
-        ]
-      : [];
+    if (!listing) return [];
+    const listed = listing.filter(isPickerCatalogModel);
+    return [
+      [
+        executionNodeId,
+        nativeModelPreferences(runner, listed, defaultModel, listing).models,
+      ] as const,
+    ];
   });
   return entries.length ? Object.fromEntries(entries) : undefined;
 }
@@ -125,14 +138,22 @@ export function nativeModelPreferences(
   runner: string,
   seed: string[],
   defaultModel: string | null | undefined,
+  availableModels?: readonly string[],
 ) {
   const visible = describeVisibleModels(runner);
+  const source = getRunnerDefinition(runner).modelCatalog;
+  const available = (model: string) =>
+    !availableModels ||
+    availableModels.includes(
+      source && 'nodeCommand' in source ? (source.resolveModel?.(model) ?? model) : model,
+    );
   const effectiveDefault = (visible.defaultConfigured && visible.defaultModel) || defaultModel;
-  const models = visible.configured ? visible.models : seed;
+  const preferred = (visible.configured ? visible.models : seed).filter(available);
+  const models = preferred.length || !availableModels ? preferred : seed;
   return {
     defaultModel: effectiveDefault ?? '',
     models:
-      effectiveDefault && !models.includes(effectiveDefault)
+      effectiveDefault && available(effectiveDefault) && !models.includes(effectiveDefault)
         ? [effectiveDefault, ...models]
         : models,
   };

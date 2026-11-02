@@ -101,7 +101,7 @@ import {
   inspectNativeWorkerProfile,
   nativeProfileAllowedSlots,
 } from '../runners/native/worker-profile.js';
-import { runnerDefaultSafetyTier } from '../runners/registry.js';
+import { runnerDefaultSafetyTier, runnerModelNodeBlocker } from '../runners/registry.js';
 import {
   getAllRuns,
   getAllRunsWithArchived,
@@ -125,7 +125,7 @@ import {
 import { precheckTaskDirCollision } from '../tasks/writer.js';
 
 import { canReplayBranchAffinityDecision, findLatestResolvedDecision } from './decision-replay.js';
-import { assertNativeRunForSlot } from './dispatch-policy.js';
+import { assertNativeRunForSlot, runExplicitRunnerModel } from './dispatch-policy.js';
 import { BlockedRunError } from './errors.js';
 import { canReconcileReviewQaRun, reviewQaMigrationPatch } from './review-qa-migration.js';
 import { runSupersededSince } from './run-generation.js';
@@ -972,6 +972,11 @@ async function findSlotAttempt(
       })
     : undefined;
   const capabilitySelection = { requiredCapabilities, capabilityCatalogs };
+  // A Pi or OpenCode model the run names runs only on a node whose own catalog lists it.
+  const modelNodeSelection = {
+    ...runExplicitRunnerModel(run),
+    modelNodeBlocker: runnerModelNodeBlocker,
+  };
   const releasableBranchHolderIds = await inspectReleasableBranchHolders(
     branchFleet.slots,
     run.project,
@@ -1112,6 +1117,7 @@ async function findSlotAttempt(
         skipPrepare,
         allowWorking: replaceableWarm,
         ...capabilitySelection,
+        ...modelNodeSelection,
       });
     } else if (activeWorkerFreshReuseAllowed(run.flowType)) {
       eligibilityFail = await verifyBranchAffinityNudgeStillEligible(
@@ -1180,6 +1186,7 @@ async function findSlotAttempt(
   );
   const selectionOptions: SlotSelectionOptions = {
     ...capabilitySelection,
+    ...modelNodeSelection,
     automaticLoads,
     pinnedSlotSelection: automaticLoadPinned,
     targetBranch,
@@ -1808,6 +1815,8 @@ async function findSlotAttempt(
       dispatchPreview(
         {
           ...buildDispatchPreviewParamsForRun(run),
+          // The preview's node check needs the model the run names.
+          ...runExplicitRunnerModel(run),
           // A lower-load unsafe candidate must not win again after another was recovered.
           ...(reusableSlotId ? { allowedSlots: [reusableSlotId] } : {}),
           targetBranch,

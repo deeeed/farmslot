@@ -23,6 +23,7 @@ import './choice-picker.js';
 
 import { gateway } from '../../gateway-client.js';
 import {
+  NODE_CATALOG_RUNNERS,
   onVisibleModelsChange,
   runnerCatalogPending,
   visibleModelIds,
@@ -152,6 +153,16 @@ export class ReviewDispatchPicker extends LitElement {
     .models-loading {
       border: 1px solid transparent;
       font-style: italic;
+    }
+    .model-list {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+    }
+    /* A node catalog arrives after first paint: one fixed box, loading or loaded, so nothing below moves. */
+    .node-catalog .model-list {
+      height: 168px;
+      overflow-y: auto;
     }
   `;
 
@@ -307,69 +318,75 @@ export class ReviewDispatchPicker extends LitElement {
             })}
           </div>
           <div class="model-effort">
-            <div class="field model-field">
+            <div
+              class="field model-field ${NODE_CATALOG_RUNNERS.includes(selected.runner)
+                ? 'node-catalog'
+                : ''}"
+            >
               <span class="field-title">MODEL</span>
-              ${models.searchable
-                ? html`<input
-                    class="model-filter"
-                    aria-label="Filter models"
-                    placeholder="Filter models…"
-                    .value=${this.modelFilters[row.id] ?? ''}
-                    ?disabled=${executionDisabled}
-                    @input=${(event: Event) => {
-                      this.modelFilters = {
-                        ...this.modelFilters,
-                        [row.id]: (event.target as HTMLInputElement).value,
-                      };
-                    }}
-                  />`
-                : nothing}
-              ${!choices.length && runnerCatalogPending(selected.runner)
-                ? html`<div
-                    class="choice-grid"
-                    role="group"
-                    aria-busy="true"
-                    data-value=${selected.model ?? ''}
-                    data-testid="review-dispatch-model"
-                  >
-                    <span class="choice-button models-loading">Loading models…</span>
-                  </div>`
-                : renderChoiceButtons({
-                    options: ['', ...choices.map((option) => option.id)],
-                    labels: {
-                      '': `Default${runner?.defaultModel ? ` · ${runner.defaultModel}` : ''}`,
-                      ...Object.fromEntries(
-                        choices.map((option) => [option.id, option.label ?? option.id]),
+              <div class="model-list">
+                ${models.searchable
+                  ? html`<input
+                      class="model-filter"
+                      aria-label="Filter models"
+                      placeholder="Filter models…"
+                      .value=${this.modelFilters[row.id] ?? ''}
+                      ?disabled=${executionDisabled}
+                      @input=${(event: Event) => {
+                        this.modelFilters = {
+                          ...this.modelFilters,
+                          [row.id]: (event.target as HTMLInputElement).value,
+                        };
+                      }}
+                    />`
+                  : nothing}
+                ${!choices.length && runnerCatalogPending(selected.runner)
+                  ? html`<div
+                      class="choice-grid"
+                      role="group"
+                      aria-busy="true"
+                      data-value=${selected.model ?? ''}
+                      data-testid="review-dispatch-model"
+                    >
+                      <span class="choice-button models-loading">Loading models…</span>
+                    </div>`
+                  : renderChoiceButtons({
+                      options: ['', ...choices.map((option) => option.id)],
+                      labels: {
+                        '': `Default${runner?.defaultModel ? ` · ${runner.defaultModel}` : ''}`,
+                        ...Object.fromEntries(
+                          choices.map((option) => [option.id, option.label ?? option.id]),
+                        ),
+                      },
+                      groups: Object.fromEntries(
+                        choices.flatMap((option) =>
+                          option.group ? [[option.id, option.group]] : [],
+                        ),
                       ),
-                    },
-                    groups: Object.fromEntries(
-                      choices.flatMap((option) =>
-                        option.group ? [[option.id, option.group]] : [],
+                      hints: Object.fromEntries(
+                        choices.flatMap((option) =>
+                          option.nodes
+                            ? [
+                                [
+                                  option.id,
+                                  option.nodes.length === 1
+                                    ? `${option.nodes[0]} only`
+                                    : option.nodes.join(', '),
+                                ],
+                              ]
+                            : [],
+                        ),
                       ),
-                    ),
-                    hints: Object.fromEntries(
-                      choices.flatMap((option) =>
-                        option.nodes
-                          ? [
-                              [
-                                option.id,
-                                option.nodes.length === 1
-                                  ? `${option.nodes[0]} only`
-                                  : option.nodes.join(', '),
-                              ],
-                            ]
-                          : [],
-                      ),
-                    ),
-                    value: selected.model ?? '',
-                    testId: 'review-dispatch-model',
-                    disabled: executionDisabled,
-                    onSelect: (value) =>
-                      this.change(() => {
-                        this.otherModels = { ...this.otherModels, [row.id]: false };
-                        vm.setModel(row.id, value || null);
-                      }),
-                  })}
+                      value: selected.model ?? '',
+                      testId: 'review-dispatch-model',
+                      disabled: executionDisabled,
+                      onSelect: (value) =>
+                        this.change(() => {
+                          this.otherModels = { ...this.otherModels, [row.id]: false };
+                          vm.setModel(row.id, value || null);
+                        }),
+                    })}
+              </div>
               ${runner?.allowCustomModels !== false
                 ? html`<div>
                     <button

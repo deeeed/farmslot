@@ -335,6 +335,15 @@ export function nativeRunnerModels(
 ): string[] {
   return (executionNodeId && option.nodeModels?.[executionNodeId]) || option.models;
 }
+
+/** Keep the default within a known node's listing, including saved global defaults. */
+export function nativeRunnerDefaultModel(
+  option: Pick<NativeRunnerOption, 'models' | 'nodeModels' | 'defaultModel'>,
+  executionNodeId?: string,
+): string {
+  const listed = executionNodeId && option.nodeModels?.[executionNodeId];
+  return listed && !listed.includes(option.defaultModel) ? (listed[0] ?? '') : option.defaultModel;
+}
 export interface NativeSessionCatalogResult {
   runners: NativeRunnerOption[];
   contexts: Array<{

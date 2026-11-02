@@ -37,11 +37,11 @@ export function visibleModelsObserved(): boolean {
   return observed.length > 0 || catalogs.length > 0;
 }
 
-/** True while a node-catalog runner's catalog has not been read from the cache or gateway. */
+/** True until a node-catalog runner has a listing: unread, or no execution node has listed yet. */
 export function runnerCatalogPending(runner: string): boolean {
-  return (
-    NODE_CATALOG_RUNNERS.includes(runner) && !catalogs.some((entry) => entry.runner === runner)
-  );
+  if (!NODE_CATALOG_RUNNERS.includes(runner)) return false;
+  const entry = catalogs.find((candidate) => candidate.runner === runner);
+  return !entry || (entry.status !== 'ready' && entry.models.length === 0);
 }
 
 /** Null until observed, and while an unsaved runner has no seed: its shown node catalog is the set. */

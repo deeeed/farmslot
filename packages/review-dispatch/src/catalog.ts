@@ -11,6 +11,7 @@ import {
   DEFAULT_PI_THINKING,
   DEFAULT_REVIEW_MODE,
   DEFAULT_RUNNER,
+  nativeRunnerDefaultModel,
   nativeRunnerModels,
   type NativeRunnerOption,
   PI_THINKING_LEVELS,
@@ -234,7 +235,7 @@ export function catalogForNativeRunners(
       return {
         id: native.runner,
         allowCustomModels: option?.allowCustomModels ?? true,
-        defaultModel: native.defaultModel || null,
+        defaultModel: nativeRunnerDefaultModel(native, executionNodeId) || null,
         defaultEffort: option?.defaultEffort ?? null,
         efforts: option?.efforts ?? [],
         models: nativeRunnerModels(native, executionNodeId).map((id) => {

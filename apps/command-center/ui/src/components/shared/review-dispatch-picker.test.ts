@@ -91,6 +91,8 @@ test('pi models load in place, then group by provider with hints for nodes that 
     /data-testid="review-dispatch-model"[^>]*>\s*<span class="choice-button models-loading">Loading models…</,
   );
   assert.doesNotMatch(loading, /data-testid=review-dispatch-model-/);
+  // Loading and loaded share one fixed-height model box, so nothing below it moves.
+  assert.match(loading, /class="field model-field node-catalog"/);
 
   vm.setCatalog(
     catalogWithRunnerModels(vm.catalog, {
@@ -108,6 +110,7 @@ test('pi models load in place, then group by provider with hints for nodes that 
   );
   const rendered = markup(picker.render());
   assert.doesNotMatch(rendered, /Loading models/);
+  assert.match(rendered, /class="field model-field node-catalog"/);
   const order = ['Consensys LiteLLM', 'xAI', 'Anthropic', 'Local'].map((group) =>
     rendered.indexOf(`<span class="choice-group">${group}</span>`),
   );

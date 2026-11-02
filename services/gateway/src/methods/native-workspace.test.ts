@@ -191,23 +191,30 @@ test('Pi and OpenCode native pickers list the models of the node each context ru
   assert.deepEqual(nativeNodeModels('pi', piDefault, contexts), {
     'nw-mini': ['litellm/glm-5p3', 'xai/grok-4.7'],
   });
-  // A default the node does not list stays selectable, first.
+  // A default the node does not list cannot run there, so it is not offered.
   assert.deepEqual(nativeNodeModels('pi', 'xai/grok-5', contexts)?.['nw-mini'], [
-    'xai/grok-5',
     'litellm/glm-5p3',
     'xai/grok-4.7',
   ]);
   nodeModelCatalogs.record('opencode', 'nw-host', ['opencode/big-pickle', 'litellm/kimi-k3']);
   assert.deepEqual(nativeNodeModels('opencode', null, contexts), { local: ['litellm/kimi-k3'] });
-  // A saved visible set and default apply to every node, as they do to `models`.
+  // A saved visible set and default narrow each node to what it lists.
   await writeFile(
     path.join(home, 'runner-visible-models.json'),
     JSON.stringify({
       version: 1,
-      byRunner: { pi: ['litellm/kimi-k3'] },
+      byRunner: { pi: ['litellm/kimi-k3', 'litellm/glm-5p3'] },
       defaults: { pi: 'litellm/kimi-k3' },
     }),
   );
-  assert.deepEqual(nativeNodeModels('pi', piDefault, contexts), { 'nw-mini': ['litellm/kimi-k3'] });
+  assert.deepEqual(nativeNodeModels('pi', piDefault, contexts), { 'nw-mini': ['litellm/glm-5p3'] });
+  // A saved set the node lists none of leaves the node's own models, never models it lacks.
+  await writeFile(
+    path.join(home, 'runner-visible-models.json'),
+    JSON.stringify({ version: 1, byRunner: { pi: ['litellm/kimi-k3'] } }),
+  );
+  assert.deepEqual(nativeNodeModels('pi', piDefault, contexts), {
+    'nw-mini': ['litellm/glm-5p3', 'xai/grok-4.7'],
+  });
   assert.equal(nativeNodeModels('claude', 'opus', contexts), undefined);
 });

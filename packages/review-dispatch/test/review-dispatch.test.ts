@@ -278,7 +278,7 @@ test('a native picker lists the models of the node its session runs on', () => {
   const pi = {
     runner: 'pi',
     models: ['xai/grok-4.7'],
-    nodeModels: { mini: ['xai/grok-4.7', 'litellm/glm-5p3'] },
+    nodeModels: { mini: ['xai/grok-4.7', 'litellm/glm-5p3'], macpro: ['litellm/glm-5p3'] },
     defaultModel: 'xai/grok-4.7',
     modes: ['default' as const],
   };
@@ -288,8 +288,11 @@ test('a native picker lists the models of the node its session runs on', () => {
     { id: 'xai/grok-4.7', group: 'xAI' },
     { id: 'litellm/glm-5p3', group: 'Consensys LiteLLM' },
   ]);
+  const macpro = catalogForNativeRunners([pi], undefined, 'macpro');
+  assert.deepEqual(models('macpro'), [{ id: 'litellm/glm-5p3', group: 'Consensys LiteLLM' }]);
+  assert.equal(macpro.runners[0].defaultModel, 'litellm/glm-5p3');
   // A node that has not listed, or no node, keeps the default-only list.
-  assert.deepEqual(models('macpro'), [{ id: 'xai/grok-4.7', group: 'xAI' }]);
+  assert.deepEqual(models('unlisted'), [{ id: 'xai/grok-4.7', group: 'xAI' }]);
   assert.deepEqual(models(), [{ id: 'xai/grok-4.7', group: 'xAI' }]);
 });
 

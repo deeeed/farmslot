@@ -111,6 +111,7 @@ const sourceAdmissions: string[] = [];
 const finishedReclaims: string[] = [];
 let finishedRefusal: string | undefined;
 let slotSelection: ProjectSlotSelectionConfig | undefined;
+let affinitySlot: SlotStatus | undefined;
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
@@ -254,7 +255,7 @@ mock.module('../methods/dispatch.js', {
       refreshedSlots.push(...rows.map((row) => row.slot));
     },
     collectBranchAffinityNudgeCandidates: async () => nudgeCandidates,
-    findAffinitySlot: () => null,
+    findAffinitySlot: () => affinitySlot ?? null,
     selectBranchAffinityRefreshSlots: () => [],
     capturePressureAdmissionDecisionsLightweight: () => pressureDecisions,
     consumedPressureAdmissionRef: () => {
@@ -351,6 +352,7 @@ mock.module('../run-lifecycle/safe-idle-slot.js', {
   },
 });
 const { resolveDispatchPreviewFromFleet } = await import('../methods/dispatch/preview.js');
+const { nodeModelCatalogs } = await import('../runners/model-catalog.js');
 const { executeFindSlotStep } = await import('./find-slot-step.js');
 
 function reset(flowType: Run['flowType'], ticketOrPr: string): void {
@@ -360,6 +362,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   finishedReclaims.length = 0;
   finishedRefusal = undefined;
   slotSelection = undefined;
+  affinitySlot = undefined;
   run = makeRun({
     id: 'branch-match-fixture',
     project,
@@ -1181,4 +1184,60 @@ test('a lost operator pick waits for that slot like a pin', async () => {
   assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-1');
   assert.deepEqual(claims, ['macpro-mmt-1']);
   assert.deepEqual(previewPins.slice(-1), [true], 'the pick is claimed under its pin policy');
+});
+
+/** glm-5p3 is listed on node-a only; node-b lists other models, so it is known to lack it. */
+function piOnNodeA(): void {
+  nodeModelCatalogs.record('pi', 'node-a', ['litellm/glm-5p3', 'xai/grok-4.7']);
+  nodeModelCatalogs.record('pi', 'node-b', ['xai/grok-4.7']);
+  run.metrics = { ...run.metrics, runner: 'pi', model: 'litellm/glm-5p3' };
+}
+
+test('branch affinity never claims a held slot whose node lacks the run model', async () => {
+  reset('pr-complete', 'example-org/terminal#210');
+  piOnNodeA();
+  affinitySlot = { ...candidate('held-b', 'node-b', branch), lifecycle: 'held' };
+  const free = candidate('free-a', 'node-a', 'main');
+  slots.splice(0, slots.length, affinitySlot, free);
+  cleanSlots.add(free.slot);
+  expectedSlot = free.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, free.slot);
+  assert.notEqual(result.outputs?.selectionMethod, 'affinity');
+  assert.deepEqual(claims, [free.slot]);
+});
+
+test('a pinned fresh reuse on a node that lacks the run model is refused before teardown', async () => {
+  reset('dev', 'deeeed/farmslot#1776');
+  expectedTarget = undefined;
+  piOnNodeA();
+  const pinned = candidate('pinned-b', 'node-b', 'main');
+  slots.splice(0, slots.length, pinned, candidate('free-a', 'node-a', 'main'));
+  run.slotId = pinned.slot;
+  run.allowedSlots = [pinned.slot];
+  run.engineState!.flags = { freshReuse: true };
+  await assert.rejects(executeFindSlotStep(run.id, run, 0, context), {
+    message:
+      'Fresh-reuse no longer valid: pi model litellm/glm-5p3 is not listed on node-b; only on node-a. Pick a slot again.',
+  });
+  assert.deepEqual(freshTeardowns, []);
+  assert.deepEqual(claims, []);
+});
+
+test('the clean-slot pick skips a better-ranked slot whose node lacks the run model', async () => {
+  reset('dev', 'deeeed/farmslot#1776');
+  expectedTarget = undefined;
+  piOnNodeA();
+  const lacking = candidate('clean-b', 'node-b', 'main');
+  const listing = candidate('clean-a', 'node-a', 'main');
+  listing.hostLoad = { cpuPercent: 95, memoryPercent: 90, diskPercent: 50, headroom: 'red' };
+  slots.splice(0, slots.length, lacking, listing);
+  assert.equal(scoring.findBestSlot(slots, project)?.slot, lacking.slot, 'node-b ranks first');
+  cleanSlots.add(lacking.slot);
+  cleanSlots.add(listing.slot);
+  expectedSlot = listing.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, listing.slot);
+  assert.deepEqual(reuseCalls, []);
+  assert.deepEqual(claims, [listing.slot]);
 });
