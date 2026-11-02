@@ -253,13 +253,17 @@ export async function resetSlotRepoToIdle(
     `cd ${repo}`,
     guard(guards),
     `base=$(git rev-parse ${shellQuote(baseRef)})`,
+    `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; }`,
     ...(options?.discardLocalWork
       ? [
           `{ ${CLEAR_INDEX_FLAGS_COMMAND}; }`,
           `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
         ]
       : []),
-    'if git ls-files --error-unmatch . >/dev/null 2>&1; then git checkout -- .; fi',
+    // On the target branch the final hard reset clears the index, including merge conflicts.
+    ...(currentBranch !== target
+      ? ['if git ls-files --error-unmatch . >/dev/null 2>&1; then git checkout -- .; fi']
+      : []),
     'git clean -fd',
     guard(guards.filter((check) => !check.includes('status --porcelain'))),
     ...(currentBranch !== target

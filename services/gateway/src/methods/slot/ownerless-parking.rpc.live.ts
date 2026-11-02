@@ -1,7 +1,7 @@
 // Opt-in authenticated RPC proof, real disposable Git repositories and fixtures; no farm run.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, symlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -222,6 +222,14 @@ test(
       parkingCases.push({ name, result });
       return result;
     };
+    const indexLock = path.join(repo, git(repo, 'rev-parse', '--git-path', 'index.lock'));
+    await writeFile(indexLock, '');
+    const oldLock = new Date(Date.now() - 60_000);
+    await utimes(indexLock, oldLock, oldLock);
+    const staleLockRelease = await releaseOwnedProof('stale-index-lock-safe-release');
+    assert.equal(staleLockRelease.refreshed, true, staleLockRelease.detail);
+    git(repo, 'update-index', '--refresh');
+
     const baselineHead = git(repo, 'rev-parse', 'HEAD');
     git(repo, 'commit', '--allow-empty', '-qm', 'test: local default branch work');
     const localMainHead = git(repo, 'rev-parse', 'HEAD');

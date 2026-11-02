@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -170,4 +170,38 @@ test('an operator commit made during fetch refuses the idle reset and remains on
   );
   assert.notEqual(git(repo, 'rev-parse', 'HEAD'), expected);
   assert.equal(git(repo, 'log', '-1', '--format=%s'), 'test: operator commit during fetch');
+});
+
+test('idle reset clears an old unowned index lock without discard confirmation', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'idle-reset-lock-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'slot');
+  initPrimaryRepo(repo, path.join(root, 'origin.git'));
+  const head = git(repo, 'rev-parse', 'HEAD');
+  const lock = path.join(repo, git(repo, 'rev-parse', '--git-path', 'index.lock'));
+  writeFileSync(lock, '');
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  await resetSlotRepoToIdle(slotVars(repo, 'stale-lock'), {}, undefined, 'main', {
+    expect: { headSha: head, branches: { main: head } },
+  });
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  git(repo, 'update-index', '--refresh');
+});
+
+test('idle reset on its target branch clears an unmerged index', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'idle-reset-conflict-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'slot');
+  initPrimaryRepo(repo, path.join(root, 'origin.git'));
+  git(repo, 'checkout', '-qb', 'topic');
+  writeFileSync(path.join(repo, 'README.md'), 'topic\n');
+  git(repo, 'commit', '-qam', 'test: topic');
+  git(repo, 'checkout', '-q', 'main');
+  writeFileSync(path.join(repo, 'README.md'), 'main\n');
+  git(repo, 'commit', '-qam', 'test: main');
+  assert.equal(spawnSync('git', ['merge', 'topic'], { cwd: repo }).status, 1);
+  await resetSlotRepoToIdle(slotVars(repo, 'conflict'), {}, undefined, 'main');
+  assert.equal(git(repo, 'status', '--porcelain'), '');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
 });
