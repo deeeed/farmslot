@@ -618,6 +618,9 @@ export async function startRemoteNodeStack(
       FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: OWNER,
       FARMSLOT_GATEWAY_PROFILE: 'proof',
       FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
+      // The stack's writes are a few MB; the 50 GB production floor would refuse them on a
+      // test host with less free, while 2 GB still keeps it from filling the disk.
+      FARMSLOT_HEAVY_WRITE_FLOOR_GB: '2',
       FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '1',
       FARMSLOT_DEMO_POOL: '0',
       GATEWAY_HOST: '127.0.0.1',
