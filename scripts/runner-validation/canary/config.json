@@ -26,7 +26,7 @@
       "variant": "dispatch",
       "signature": "tmux stop sent: .*(/exit|respawn-window)",
       "differences": [
-        "^tmux stop sent: .*(/exit|respawn-window)",
+        "^tmux stop sent: .*(/exit| C-c|respawn-(pane|window)|kill-(pane|window|session))",
         "^pid \\d+ exited: ",
         "^worker pane %\\d+ (is gone|is dead|was respawned)"
       ],
@@ -54,7 +54,7 @@
       "differences": [
         "^the run went failed: terminated",
         "^a step failed on a dropped transport: terminated",
-        "^tmux stop sent: .*/exit",
+        "^tmux stop sent: .*(/exit| C-c|kill-(pane|window|session))",
         "^pid \\d+ exited: ",
         "^worker pane %\\d+ (is gone|is dead|was respawned)",
         "^run status: expected done, observed failed$",

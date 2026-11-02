@@ -226,7 +226,7 @@ const tmuxWatch = (realTmux: string, holds: string) =>
     `holds=${JSON.stringify(holds)}`,
     'case " $* " in',
     '  *" kill-pane "*|*" kill-window "*|*" kill-session "*|*" respawn-pane "*|*" respawn-window "*|*" C-c "*|*"/exit"*)',
-    `    printf '%s %s\\n' "$(date -u +%FT%TZ)" "$*" >> "$holds/tmux-stops.log" ;;`,
+    `    printf '%s %s\\n' "$(date -u +%FT%TZ)" "$(printf '%s' "$*" | tr '\\n' ' ')" >> "$holds/tmux-stops.log" ;;`,
     'esac',
     'hold="$holds/tmux"',
     'if [ -e "$hold" ] && printf \'%s\\n\' "$*" | grep -qE -- "$(cat "$hold" 2>/dev/null)"; then',

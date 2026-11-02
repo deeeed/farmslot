@@ -724,7 +724,7 @@ async function watchWorker(
     if (existsSync(stops)) {
       const text = await readFile(stops, 'utf8');
       for (const line of text.slice(snapshot.stopsOffset).split('\n').filter(Boolean))
-        lost.push(`tmux stop sent: ${line}`);
+        lost.push(`tmux stop sent: ${line.slice(0, 200)}`);
     }
     // Read after the worker: a run already done when its worker went is the slot release
     // stopping it, as it should, not the restart.
