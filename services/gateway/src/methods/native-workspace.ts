@@ -87,14 +87,17 @@ export async function nativeCatalog(
   };
 }
 
-/** A saved visible set replaces the native seed, but a new session's default model stays selectable. */
-function nativeModelPreferences(
+/**
+ * A saved visible set replaces the native seed, but a new session's default model stays selectable.
+ * The native default wins unless an operator saved one: Pi's terminal default is a bare ID.
+ */
+export function nativeModelPreferences(
   runner: string,
   seed: string[],
   defaultModel: string | null | undefined,
 ) {
   const visible = describeVisibleModels(runner);
-  const effectiveDefault = visible.defaultModel || defaultModel;
+  const effectiveDefault = (visible.defaultConfigured && visible.defaultModel) || defaultModel;
   const models = visible.configured ? visible.models : seed;
   return {
     defaultModel: effectiveDefault ?? '',

@@ -58,7 +58,8 @@ import {
   withSourcePlanning,
   withSourceRequestPlanning,
 } from '../../sources/runtime.js';
-import type { SourceSlotPlans } from '../../sources/slot-planning.js';
+import { isProspectiveSlotSourcePlan, type SourceSlotPlans } from '../../sources/slot-planning.js';
+import { inheritedPRCompletionAcceptance } from '../../tasks/completion-intake.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -101,7 +102,7 @@ import {
   validateSlotForDispatch,
 } from './slot-scoring.js';
 import { resolveDispatchTargetBranch } from './target-branch.js';
-import { normalizeTicketRef, resolvePrRef, validateTicketRef } from './ticket-ref.js';
+import { normalizeTicketRef, resolvePrBoundTicketRef } from './ticket-ref.js';
 
 const BRANCH_REFRESH_CONCURRENCY = 4;
 const BRANCH_REFRESH_TIMEOUT_MS = 5_000;
@@ -1004,7 +1005,7 @@ async function previewDispatch(
      * must leave this unset so the session originator is the only authority.
      */
     overridePrincipalId?: string;
-    /** FIND_SLOT does not present profile-fit advice; skip its config lookup. */
+    /** FIND_SLOT presents no operator advice (profile fit, inherited acceptance); skip their lookups. */
     includeProfileFit?: boolean;
     /** Original caller intent, before gateway candidate narrowing. */
     automaticLoadPinned?: boolean;
@@ -1064,12 +1065,18 @@ async function previewDispatch(
     throw new Error('Workflow execution snapshots cannot be supplied in preview parameters');
   const projectConfig = sourcePlans ? null : await loadProjectConfig(params.project);
   if (!sourcePlans) {
-    if (params.flowType === 'review-pr') {
-      params = { ...params, ticketOrPr: normalizeTicketRef(params.ticketOrPr) };
-      if (projectConfig?.ci.repo)
-        params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
-      validateTicketRef(params.ticketOrPr, 'review-pr');
-    }
+    // As in run.create, a PR-bound ref (a bare number, a branch) resolves to owner/repo#N first,
+    // so the preview names the same PR, branch and follow-up parent the run will get (F286). A
+    // source plan comes from run.create's own planning in its selected context, so it already has.
+    if (PR_BOUND_FLOW_TYPES.has(params.flowType))
+      params = {
+        ...params,
+        ticketOrPr: await resolvePrBoundTicketRef(
+          normalizeTicketRef(params.ticketOrPr),
+          params.flowType,
+          async () => projectConfig?.ci?.repo,
+        ),
+      };
     const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
       purpose: 'preview',
       ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
@@ -1211,8 +1218,9 @@ async function previewDispatch(
       )
       .map((slot) => slot.slot),
   );
+  const family = resolveDispatchFamilyContext(enriched);
   const result = resolveDispatchPreviewFromFleet(
-    { ...enriched, ...resolveDispatchFamilyContext(enriched) },
+    { ...enriched, ...family },
     fleet.slots,
     projectConfigs,
     {
@@ -1248,6 +1256,30 @@ async function previewDispatch(
       // still drive resource filtering and profile-fit suggestions are simply omitted.
     }
     if (scopedPlan && 'params' in scopedPlan) params = scopedPlan.params;
+    // The task writer holds a pr-complete run to its parent's original criteria, not those given
+    // with it: name them before launch (F286, 9f0b6812 inherited family 8a768552's AC1-AC4). The
+    // parent is the one run.create links. A source plan is run.create's own planning in its
+    // selected context and records it; otherwise infer it as run.create does, even beside a family
+    // id (without one, `family` already holds that lookup).
+    if (params.flowType === 'pr-complete' && internalOptions.includeProfileFit !== false) {
+      const planned = scopedPlan && 'params' in scopedPlan ? scopedPlan : undefined;
+      let parentRunId: string | undefined;
+      if (planned)
+        parentRunId =
+          (isProspectiveSlotSourcePlan(planned)
+            ? planned.creationPlan.params.parentRunId
+            : planned.run?.parentRunId) ?? undefined;
+      else if (params.familyId)
+        parentRunId = resolveDispatchFamilyContext({
+          ...params,
+          targetBranch: enriched.targetBranch,
+          familyId: undefined,
+        }).parentRunId;
+      else parentRunId = family.parentRunId;
+      const inherited =
+        parentRunId && (await inheritedPRCompletionAcceptance(parentRunId, params.project));
+      if (inherited) result.preview.inheritedAcceptance = inherited;
+    }
     const configuredProject = sourcePlans
       ? (await loadProjectConfig(params.project))?.executionTemplates
       : projectConfigList.find((project) => project.name === params.project)?.executionTemplates;

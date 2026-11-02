@@ -5,6 +5,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - `ReadyGatePayload.mergeConflicts`/`behindMain` are probed against the publication base (a stacked run's upstream branch), and a conflict on a publication gate now blocks its advancing actions (doc only; no shape change).
+- A client-cache observer that throws no longer stops the other observers or the cache's reads; each failing observer is logged once with `console.error`. Before, an observer that threw as a read started, or on its first delivery from `observe`, left that query loading with no request sent until the next reconnect.
+- `DispatchPreview.inheritedAcceptance`: the parent run and its original criteria a pr-complete run is held to, or `unavailable` with the reason.
 - `Run.parkedCommits` (`ParkedRunCommits[]`): an artifact-only run's own branch commits, parked under `refs/farmslot/parked/<run>/<head>` when its slot returned to idle (append-only).
 - `Run.releasedCheckout`: the branch and head an artifact-only run left on its slot when COMPLETE released the slot's ownership; a later ownerless return to idle parks only that head.
 - `RunEngineState.publishGate.refusedEvidencePackageId`: the prepared package a human-gate replay found the worker's evidence refused against; while it is still `packageId`, the gate rebuilds rather than reuses it.

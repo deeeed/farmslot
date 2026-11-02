@@ -260,6 +260,14 @@ A native session or worker without `profileId` runs on the node's own login for 
 - `native.profile.add` refuses the standard directory with "This is the node's own login; no profile is needed". It compares canonical paths (`~/` expanded, symlinks resolved), before the existing-profile check.
 - Profiles register additional configuration directories only.
 
+## Pi and OpenCode native sessions
+
+Pi and OpenCode run natively for chat and workers (ADR-057 Amendment 12).
+
+- OpenCode runs `opencode acp` through the shared ACP adapter. With no model, a session uses the model OpenCode is configured with. At the sandboxed tier, or with none, each tool asks through native approvals. Other tiers keep OpenCode's own permission rules.
+- Pi runs `pi --mode rpc`. Pi never asks before a tool, so its sessions report no approvals, as its terminal does. A turn fails only when Pi's last answer is an error, so a retry Pi makes itself can still complete it. Stop clears Pi's queued steering first. A `provider/id` model must match exactly; a bare ID leaves the provider to Pi.
+- A Pi profile is an agent directory (`PI_CODING_AGENT_DIR`); an OpenCode profile is a data home (`XDG_DATA_HOME`). Pi reads as signed in while its RPC model list is not empty. OpenCode reads as signed in once its ACP server starts; its login is unconditional and its own free models need no sign-in.
+
 ## Managed native reviewer approval policy
 
 The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. Reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.

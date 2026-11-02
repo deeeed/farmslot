@@ -4,14 +4,43 @@ import { JsonLineProcess } from './process.js';
 import type { NativeAdapterOptions } from './types.js';
 
 export type AcpObject = Record<string, unknown>;
+/** A JSON object from a native protocol record (ACP, and Pi's RPC). */
 export function acpObject(value: unknown): AcpObject {
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('Expected an ACP object');
+    throw new Error('Expected a native protocol object');
   return value as AcpObject;
 }
 export function acpString(value: unknown): string {
   if (typeof value !== 'string') throw new Error('Expected an ACP string');
   return value;
+}
+
+export type AcpRequest = (method: string, params: AcpObject) => Promise<unknown>;
+
+/** The values a session config option offers, or undefined when the runner has no such option. */
+export function acpConfigChoices(session: AcpObject, id: string): string[] | undefined {
+  const options = ((session.configOptions as AcpObject[] | undefined) ?? []).find(
+    (option) => option.id === id,
+  )?.options;
+  return Array.isArray(options)
+    ? options.map((option) => acpString(acpObject(option).value))
+    : undefined;
+}
+
+/** Sets one session config option and returns the options the runner reports afterwards. */
+export async function setAcpConfigOption(
+  request: AcpRequest,
+  sessionId: string,
+  id: string,
+  value: string,
+  runner: string,
+): Promise<AcpObject[]> {
+  const result = acpObject(
+    await request('session/set_config_option', { sessionId, configId: id, value }),
+  );
+  if (!Array.isArray(result.configOptions))
+    throw new Error(`${runner} did not confirm model settings`);
+  return result.configOptions.map(acpObject);
 }
 
 /** ACP uses JSON-RPC 2.0; a prompt response may take the entire agent turn. */

@@ -81,6 +81,8 @@ test("a runner's standard directory is the node's own login and cannot be regist
       ['codex', '~/.codex'],
       ['cursor', home],
       ['grok', '~/.grok'],
+      ['opencode', '~/.local/share'],
+      ['pi', '~/.pi/agent'],
     ])
       await assert.rejects(
         addNativeProfile({ profileId: 'own', runner, directory }, home, env),
@@ -97,6 +99,17 @@ test("a runner's standard directory is the node's own login and cannot be regist
         { profileId: 'own', runner: 'codex', directory: join(home, 'codex-home') },
         home,
         codexEnv,
+      ),
+      refused,
+    );
+    await assert.rejects(
+      addNativeProfile(
+        { profileId: 'own', runner: 'pi', directory: join(home, 'pi-agent') },
+        home,
+        {
+          HOME: home,
+          PI_CODING_AGENT_DIR: join(home, 'pi-agent'),
+        },
       ),
       refused,
     );

@@ -420,7 +420,7 @@ export function resolveRunnerPath(slotVars: SlotVars, runner?: string): string {
       runnerPath = slotVars.codexPath || '';
       break;
     case 'opencode':
-      runnerPath = slotVars.opencodePath || slotVars.codexPath || '';
+      runnerPath = slotVars.opencodePath || '';
       break;
     case 'cursor':
       runnerPath = slotVars.cursorPath || '';
