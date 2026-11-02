@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { GATEWAY_API_DOC } from './lib/release-only.mjs';
 import { loadWorkspacePackages, readJson } from './lib/workspace-utils.mjs';
+import { readChangelogWithFragments } from './changelog-fragments.mjs';
 import { buildProposal, optionValue } from './curate-changelog.mjs';
 import {
   applyChangelogCut,
@@ -71,8 +72,8 @@ function validateProposal(proposal, groupId) {
       (dir) => dir !== 'packages/protocol',
     );
     const pendingHosted = hostedOnly.filter((dir) => {
-      const changelog = readFileSync(path.join(repoRoot, dir, 'CHANGELOG.md'), 'utf8');
-      return unreleasedMeaningfulBullets(changelog).length > 0;
+      const { content } = readChangelogWithFragments(path.join(repoRoot, dir));
+      return unreleasedMeaningfulBullets(content).length > 0;
     });
     if (pendingHosted.length > 0) {
       throw new Error(
@@ -134,10 +135,18 @@ export function planProtocolVersion({ versionSource, gatewayDoc, protocolVersion
   return writes;
 }
 
-export function proposalCutDisposition(changelogContent, include) {
+export function proposalCutDisposition(changelogContent, include, defer = []) {
   const pending = new Set(unreleasedMeaningfulBullets(changelogContent));
   const pendingCount = include.filter((bullet) => pending.has(bullet)).length;
-  if (pendingCount === include.length) return 'cut';
+  if (pendingCount === include.length) {
+    // The cut deletes every fragment, so a note merged after curation must not be left out.
+    const covered = new Set([...include, ...defer]);
+    if ([...pending].some((bullet) => !covered.has(bullet)))
+      throw new Error(
+        'Release proposal does not cover every Unreleased bullet (one merged after curation?); curate again',
+      );
+    return 'cut';
+  }
   if (pendingCount > 0) {
     throw new Error('Release proposal only partially matches the current Unreleased section');
   }
@@ -161,8 +170,9 @@ function planCut(proposal) {
       continue;
     }
     const changelogPath = path.join(repoRoot, dir, 'CHANGELOG.md');
-    const content = readFileSync(changelogPath, 'utf8');
-    if (proposalCutDisposition(content, entry.include) === 'already-cut') {
+    // Each PR's fragment joins the Unreleased section; the cut writes them in and deletes them.
+    const { content, fragments } = readChangelogWithFragments(path.join(repoRoot, dir));
+    if (proposalCutDisposition(content, entry.include, entry.defer) === 'already-cut') {
       console.log(`[skip] ${dir} — proposal already cut`);
       continue;
     }
@@ -184,6 +194,7 @@ function planCut(proposal) {
       defer: entry.defer,
     });
     writes.push({ path: changelogPath, content: nextChangelog });
+    for (const fragment of fragments) writes.push({ path: fragment, remove: true });
     console.log(`[plan] ${dir}/CHANGELOG.md → ${nextVersion}`);
 
     const pkgPath = path.join(repoRoot, dir, 'package.json');
@@ -228,7 +239,8 @@ function applyCut(proposal, dryRun) {
   const { writes, commitParts } = planCut(proposal);
   if (!dryRun) {
     for (const write of writes) {
-      writeFileSync(write.path, write.content, 'utf8');
+      if (write.remove) rmSync(write.path);
+      else writeFileSync(write.path, write.content, 'utf8');
     }
   }
   if (commitParts.length > 0) {

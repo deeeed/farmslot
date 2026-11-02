@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadWorkspacePackages } from './lib/workspace-utils.mjs';
+import { readChangelogWithFragments } from './changelog-fragments.mjs';
 import { parseChangelog } from './parse-changelog.mjs';
 import { resolveReleaseGroup } from './release-groups.mjs';
 
@@ -17,7 +18,14 @@ function isOperatorFacing(bullet) {
 }
 
 function rewriteForOperator(bullet) {
-  return bullet
+  // One line per summary item: wrapped text joins, nested points drop.
+  const lines = [];
+  for (const line of bullet.split('\n')) {
+    if (lines.length > 0 && /^\s*- /.test(line)) break;
+    lines.push(line.trim());
+  }
+  return lines
+    .join(' ')
     .replace(/^Add\s+/i, '')
     .replace(/^Show\s+/i, 'View ')
     .replace(/\.$/, '')
@@ -55,7 +63,7 @@ export function buildProposal({ groupId, bump = 'patch' }) {
     const pkg = packages.get(dir);
     if (!pkg) throw new Error(`Workspace not found: ${dir}`);
     const changelogPath = path.join(repoRoot, dir, 'CHANGELOG.md');
-    const content = readFileSync(changelogPath, 'utf8');
+    const { content } = readChangelogWithFragments(path.join(repoRoot, dir));
     const parsed = parseChangelog(changelogPath, content);
     workspaces[dir] = buildWorkspaceProposal(dir, parsed.unreleased);
   }
