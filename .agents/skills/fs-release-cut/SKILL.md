@@ -45,7 +45,7 @@ yarn release:cut --group hosted-cc --assist
 - `defer` — internal/chore bullets that stay in `## Unreleased`
 - `operatorSummary` — 3–5 lines for What's New UI
 
-Edit the JSON when the heuristic mis-classified items. Use your judgment to consolidate duplicates and rewrite for operators.
+Edit the JSON when the heuristic mis-classified items. Every Unreleased bullet stays in `include` or `defer` (the cut refuses a proposal that leaves one out, since it deletes every fragment), so consolidate duplicates and rewrite for operators in `operatorSummary`.
 
 ## Step 3 — Execute cut
 
@@ -73,7 +73,7 @@ chore(release): cut command-center-ui@X.Y.Z, gateway@X.Y.Z, …
 
 ## PR rule
 
-Any PR that changes workspace code adds its release note as `<workspace>/.changes/<branch-name>.md`, each `/` as `-` (one or more `- ` bullets), so parallel PRs never conflict on `CHANGELOG.md`. A bullet under `## Unreleased` still counts. CI enforces via `yarn quality:changelogs:pr`. `release-status`, curation and the cut read fragments as part of `## Unreleased`; the cut writes them into the changelog and deletes them, and refuses a proposal that leaves an Unreleased bullet out of `include` and `defer`. The guard fails a PR that drops a fragment's note.
+Any PR that changes workspace code adds its release note as `<workspace>/.changes/<branch-name>.md`, each `/` as `-` (one or more `- ` bullets), so parallel PRs never conflict on `CHANGELOG.md`. A bullet under `## Unreleased` still counts. CI enforces via `yarn quality:changelogs:pr`. `release-status`, curation and the cut read fragments as part of `## Unreleased`; the cut writes them into the changelog and deletes them, and refuses a proposal that leaves an Unreleased bullet out of `include` and `defer`. The guard fails a release PR that loses a fragment's bullet.
 
 ## Stop conditions
 

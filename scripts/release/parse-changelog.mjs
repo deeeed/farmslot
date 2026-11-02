@@ -13,13 +13,20 @@ export function isPlaceholderBullet(line) {
 }
 
 // A bullet runs from its `-` line through the indented lines under it (wrapped text or nested
-// bullets), so a cut moves it whole.
+// bullets) and any unindented text straight after it, so a cut moves it whole.
 export function parseBullets(sectionText) {
   const bullets = [];
+  let open = false;
   for (const line of sectionText.split('\n')) {
-    if (line.startsWith('-')) bullets.push(line.replace(/^-\s*/, '').trimEnd());
-    else if (bullets.length > 0 && /^\s+\S/.test(line))
+    if (line.startsWith('-')) {
+      bullets.push(line.replace(/^-\s*/, '').trimEnd());
+      open = true;
+    } else if (
+      bullets.length > 0 &&
+      (/^\s+\S/.test(line) || (open && line.trim() && !line.startsWith('#')))
+    ) {
       bullets[bullets.length - 1] += `\n${line.trimEnd()}`;
+    } else open = false;
   }
   return bullets.filter((bullet) => bullet.trim().length > 0);
 }

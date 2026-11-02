@@ -52,26 +52,32 @@ function makeRepo(t, baseFiles = {}) {
   git('commit', '-q', '-m', 'chore: base');
   const base = git('rev-parse', 'HEAD');
 
+  const commit = (subject) => {
+    git('add', '-A');
+    git('commit', '-q', '-m', subject);
+    return git('rev-parse', 'HEAD');
+  };
+  // Run the guard as a pull request event would, with the event's base and head.
+  const check = (baseSha, headSha) => {
+    const eventPath = path.join(dir, '.git', 'event.json');
+    writeFileSync(
+      eventPath,
+      JSON.stringify({ pull_request: { base: { sha: baseSha }, head: { sha: headSha } } }),
+    );
+    return spawnSync('node', [guardScript, '--pr-diff'], {
+      cwd: dir,
+      env: { ...env, GITHUB_EVENT_PATH: eventPath },
+      encoding: 'utf8',
+    });
+  };
   return {
     dir,
     write,
-    // Commit the change and run the guard on base...head, as a pull request event would.
-    guard(subject) {
-      git('add', '-A');
-      git('commit', '-q', '-m', subject);
-      const eventPath = path.join(dir, '.git', 'event.json');
-      writeFileSync(
-        eventPath,
-        JSON.stringify({
-          pull_request: { base: { sha: base }, head: { sha: git('rev-parse', 'HEAD') } },
-        }),
-      );
-      return spawnSync('node', [guardScript, '--pr-diff'], {
-        cwd: dir,
-        env: { ...env, GITHUB_EVENT_PATH: eventPath },
-        encoding: 'utf8',
-      });
-    },
+    git,
+    commit,
+    check,
+    // Commit the change and run the guard on base...head.
+    guard: (subject) => check(base, commit(subject)),
   };
 }
 
@@ -155,20 +161,23 @@ test('changelog guard: a src/.changes note is code, not a release note', (t) => 
   assert.match(result.stderr, /packages\/protocol code changed .* but it has no release note/);
 });
 
-test("changelog guard: trimming or deleting another PR's fragment fails", (t) => {
-  for (const change of ['trim', 'delete']) {
-    const repo = makeRepo(t, {
-      'packages/protocol/.changes/earlier.md': '- Earlier note one.\n- Earlier note two.\n',
-    });
-    repo.write('packages/protocol/src/index.ts', 'export const value = 3;\n');
-    repo.write('packages/protocol/.changes/add-value-3.md', '- Add `value` 3.\n');
-    if (change === 'trim')
-      repo.write('packages/protocol/.changes/earlier.md', '- Earlier note one.\n');
-    else rmSync(path.join(repo.dir, 'packages/protocol/.changes/earlier.md'));
-    const result = repo.guard('feat(protocol): add value 3');
-    assert.equal(result.status, 1, `${change}: ${result.stdout}`);
-    assert.match(result.stderr, /drops a fragment's release note \("Earlier note (one|two)/);
-  }
+const earlier = { 'packages/protocol/.changes/earlier.md': '- Earlier note.\n' };
+
+test("changelog guard: a follow-up PR may reword an earlier PR's fragment", (t) => {
+  const repo = makeRepo(t, earlier);
+  repo.write('packages/protocol/src/index.ts', 'export const value = 3;\n');
+  repo.write('packages/protocol/.changes/earlier.md', '- Earlier note, kept after a restart.\n');
+  const result = repo.guard('fix(protocol): keep value after a restart');
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("changelog guard: a revert may delete the reverted PR's fragment, with a note of its own", (t) => {
+  const repo = makeRepo(t, earlier);
+  repo.write('packages/protocol/src/index.ts', 'export const value = 0;\n');
+  rmSync(path.join(repo.dir, 'packages/protocol/.changes/earlier.md'));
+  repo.write('packages/protocol/.changes/revert-earlier.md', '- Revert the earlier change.\n');
+  const result = repo.guard('revert(protocol): the earlier change');
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('changelog guard: a release cut that truncates a wrapped fragment fails', (t) => {
@@ -186,7 +195,7 @@ test('changelog guard: a release cut that truncates a wrapped fragment fails', (
   rmSync(path.join(repo.dir, 'packages/protocol/.changes/wrapped.md'));
   const result = repo.guard('chore(release): cut protocol 0.1.1');
   assert.equal(result.status, 1, result.stdout);
-  assert.match(result.stderr, /drops a fragment's release note \("Alpha feature that wraps/);
+  assert.match(result.stderr, /this release loses a fragment's note \("Alpha feature that wraps/);
 });
 
 test('changelog guard: a release cut that moves fragments into the changelog passes', (t) => {
@@ -201,5 +210,27 @@ test('changelog guard: a release cut that moves fragments into the changelog pas
   );
   rmSync(path.join(repo.dir, 'packages/protocol/.changes/add-value-2.md'));
   const result = repo.guard('chore(release): cut protocol 0.1.1');
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('changelog guard: a release behind main is judged from its merge base, not main', (t) => {
+  // The event's base is main's tip, which gained a fragment after the release branch left it.
+  const repo = makeRepo(t, { 'packages/protocol/.changes/add-value-2.md': '- Add `value` 2.\n' });
+  repo.git('checkout', '-q', '-b', 'release');
+  repo.write(
+    'packages/protocol/CHANGELOG.md',
+    '# Changelog\n\n## Unreleased\n\n## 0.1.1 - 2026-11-02\n\n- Add `value` 2.\n',
+  );
+  repo.write(
+    'packages/protocol/package.json',
+    JSON.stringify({ name: '@farmslot/protocol', version: '0.1.1' }),
+  );
+  rmSync(path.join(repo.dir, 'packages/protocol/.changes/add-value-2.md'));
+  const head = repo.commit('chore(release): cut protocol 0.1.1');
+  repo.git('checkout', '-q', 'main');
+  repo.write('packages/protocol/src/index.ts', 'export const value = 3;\n');
+  repo.write('packages/protocol/.changes/add-value-3.md', '- Add `value` 3.\n');
+  const mainTip = repo.commit('feat(protocol): add value 3');
+  const result = repo.check(mainTip, head);
   assert.equal(result.status, 0, result.stderr);
 });

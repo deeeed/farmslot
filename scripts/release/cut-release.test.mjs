@@ -119,6 +119,16 @@ test('cut-release recognizes an already-applied proposal and refuses partial dri
   assert.equal(proposalCutDisposition(pending, [bulletA], [bulletB]), 'cut');
 });
 
+test('an operator summary is one line: wrapped text joins and nested points drop', () => {
+  const proposal = buildWorkspaceProposal('packages/cli', [
+    'Show run history\n  across restarts.\n  - Internal detail.',
+  ]);
+  assert.deepEqual(proposal.operatorSummary, ['View run history across restarts']);
+  assert.deepEqual(proposal.include, [
+    'Show run history\n  across restarts.\n  - Internal detail.',
+  ]);
+});
+
 test('curate-changelog parses optional values without consuming adjacent flags', () => {
   assert.deepEqual(parseCurateArgs(['--group', 'companion']), {
     group: 'companion',

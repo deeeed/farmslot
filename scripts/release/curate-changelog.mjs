@@ -18,7 +18,14 @@ function isOperatorFacing(bullet) {
 }
 
 function rewriteForOperator(bullet) {
-  return bullet
+  // One line per summary item: wrapped text joins, nested points drop.
+  const lines = [];
+  for (const line of bullet.split('\n')) {
+    if (lines.length > 0 && /^\s*-/.test(line)) break;
+    lines.push(line.trim());
+  }
+  return lines
+    .join(' ')
     .replace(/^Add\s+/i, '')
     .replace(/^Show\s+/i, 'View ')
     .replace(/\.$/, '')

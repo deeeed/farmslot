@@ -82,7 +82,8 @@ function readGithubEvent() {
 function resolveMergeBase() {
   const event = readGithubEvent();
   const baseSha = event?.pull_request?.base?.sha;
-  if (baseSha) return baseSha;
+  // base.sha is main's tip, which may hold notes merged after this branch left it.
+  if (baseSha) return gitLines(['merge-base', baseSha, resolveHeadSha()])[0] ?? baseSha;
   const originMain = gitLines(['rev-parse', '--verify', 'origin/main'])[0];
   if (originMain) {
     const mergeBase = gitLines(['merge-base', 'HEAD', originMain])[0];
@@ -170,15 +171,31 @@ function newUnreleasedBullets(mergeBase, headSha, workspace) {
   return unreleased(notesAt(headSha, workspace)).filter((bullet) => !base.has(bullet));
 }
 
-// Every bullet a fragment held at the base must survive at the head, in CHANGELOG.md (a cut or a
-// fold moved it) or in a fragment. A PR that drops, trims or loses another PR's note fails.
-function checkFragmentsKept(mergeBase, headSha, changedFiles) {
-  const workspaces = new Set();
-  for (const file of changedFiles) {
-    const workspace = workspaceForFile(file, repoRoot);
-    if (workspace && isFragmentPath(file, workspace)) workspaces.add(workspace);
-  }
+const isWorkspaceFragment = (file) => {
+  const workspace = workspaceForFile(file, repoRoot);
+  return Boolean(workspace) && isFragmentPath(file, workspace);
+};
+
+const packageVersionAt = (ref, workspace) =>
+  JSON.parse(
+    ref === 'HEAD'
+      ? readFileSync(path.join(repoRoot, workspace, 'package.json'), 'utf8')
+      : readTextAtRef(ref, `${workspace}/package.json`) || '{}',
+  ).version;
+
+// A release (a chore(release) PR, or one that bumps the workspace's version) must carry every
+// fragment bullet into CHANGELOG.md, or keep it as a fragment. Ordinary PRs may reword or revert
+// an earlier note; they still need a new note of their own for a code change.
+function checkFragmentsKept(mergeBase, headSha, changedFiles, releaseSubjects) {
+  const workspaces = new Set(
+    changedFiles.filter(isWorkspaceFragment).map((file) => workspaceForFile(file, repoRoot)),
+  );
   for (const workspace of workspaces) {
+    if (
+      !releaseSubjects &&
+      packageVersionAt(mergeBase, workspace) === packageVersionAt(headSha, workspace)
+    )
+      continue;
     const head = notesAt(headSha, workspace);
     const kept = new Set([...parseBullets(head.changelog), ...fragmentBullets(head)]);
     const lost = fragmentBullets(notesAt(mergeBase, workspace)).filter(
@@ -186,7 +203,7 @@ function checkFragmentsKept(mergeBase, headSha, changedFiles) {
     );
     if (lost.length > 0)
       fail(
-        `${workspace}: this PR drops a fragment's release note ("${lost[0].slice(0, 60)}"). Only a release cut or \`yarn release:fold\` moves a fragment, into CHANGELOG.md.`,
+        `${workspace}: this release loses a fragment's note ("${lost[0].slice(0, 60)}") instead of writing it into CHANGELOG.md.`,
       );
   }
 }
@@ -218,16 +235,21 @@ function checkPrDiff() {
   const headSha = resolveHeadSha();
   const changedFiles = gitLines(['diff', '--name-only', `${mergeBase}...${headSha}`]);
   if (changedFiles.length === 0) return;
-  // Before the release exemption, so a cut that loses a note fails too.
+  const commitSubjects = gitLines(['log', '--pretty=%s', `${mergeBase}..${headSha}`]);
+  const releaseSubjects = commitSubjects.every((subject) => /^chore\(release\):/i.test(subject));
+  // Before the release exemption, so a cut that loses a note fails.
   checkFragmentsKept(
     mergeBase,
     headSha,
     gitLines(['diff', '--name-only', '--no-renames', `${mergeBase}...${headSha}`]),
+    releaseSubjects,
   );
 
-  const releaseOnly = changedFiles.every(isReleaseOnlyFile);
-  const commitSubjects = gitLines(['log', '--pretty=%s', `${mergeBase}..${headSha}`]);
-  if (releaseOnly || commitSubjects.every((subject) => /^chore\(release\):/i.test(subject))) return;
+  // A cut deletes the fragments it writes into CHANGELOG.md.
+  const releaseOnly = changedFiles.every(
+    (file) => isReleaseOnlyFile(file) || isWorkspaceFragment(file),
+  );
+  if (releaseOnly || releaseSubjects) return;
 
   const touchedWorkspaces = new Map();
   const isNotes = (file, workspace) =>
