@@ -84,7 +84,16 @@ export async function executeTool(
       case 'fleet_refresh': {
         const { fleetRefresh } = await import('../methods/fleet.js');
         const { fleet } = await fleetRefresh();
-        result = { slots: fleet.slots.length, summary: fleet.summary };
+        const configErrors = fleet.slots
+          .filter((slot) => slot.configError)
+          .map((slot) => ({ slot: slot.slot, error: slot.configError }));
+        result = {
+          slots: fleet.slots.length,
+          summary: fleet.summary,
+          // What the refresh could not read, so an answer can name it.
+          ...(fleet.poolErrors ? { poolErrors: fleet.poolErrors } : {}),
+          ...(configErrors.length > 0 ? { configErrors } : {}),
+        };
         break;
       }
       case 'list_pending_decisions': {

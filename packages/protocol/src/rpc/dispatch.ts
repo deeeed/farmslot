@@ -320,6 +320,9 @@ export interface DispatchPreviewParams {
    * pressure generation of the named machine; a stale generation is rejected
    * with a fresh decision. */
   pressureOverride?: import('../contracts/index.js').PressureDispatchOverride;
+  /** As on run.create: checked here and echoed on the preview, so a skip is visible before dispatch. */
+  completionPolicy?: import('../contracts/index.js').RunCompletionPolicy;
+  pipelineReview?: import('../contracts/index.js').RunPipelineReviewPolicy;
 }
 
 export interface DispatchExecuteParams {

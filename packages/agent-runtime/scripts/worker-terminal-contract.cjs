@@ -249,14 +249,20 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
     requireSignal = false;
   }
 
-  const whenPresent = Array.isArray(projectConfig?.whenPresent)
-    ? projectConfig.whenPresent.map((rule) => ({
-        path: rule.path,
-        alsoRequire: [...(rule.alsoRequire ?? [])],
-        ...(rule.requireRecipeQuality ? { requireRecipeQuality: true } : {}),
-        ...(rule.requireRecipeCoverage ? { requireRecipeCoverage: true } : {}),
-      }))
-    : DEFAULT_WHEN_PRESENT.map((rule) => ({ ...rule, alsoRequire: [...rule.alsoRequire] }));
+  // A run's reviewer shares its worker's task directory and judges the worker's recipe
+  // artifacts; it does not produce them, so no recipe rule binds its own terminal mark.
+  // Otherwise a blocked worker's recipe.json leaves every reviewer unable to complete.
+  const whenPresent =
+    flowKey === 'review'
+      ? []
+      : Array.isArray(projectConfig?.whenPresent)
+        ? projectConfig.whenPresent.map((rule) => ({
+            path: rule.path,
+            alsoRequire: [...(rule.alsoRequire ?? [])],
+            ...(rule.requireRecipeQuality ? { requireRecipeQuality: true } : {}),
+            ...(rule.requireRecipeCoverage ? { requireRecipeCoverage: true } : {}),
+          }))
+        : DEFAULT_WHEN_PRESENT.map((rule) => ({ ...rule, alsoRequire: [...rule.alsoRequire] }));
 
   const acceptanceRules =
     projectConfig?.acceptance || flowLayer?.acceptance

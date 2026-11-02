@@ -2346,7 +2346,8 @@ async function replayRunStep(
       replaysCompletionOrGate
         ? resetPublishGateApprovalForReplay(
             currentBeforeReplayUpdate.engineState,
-            Boolean(activeFixTaskFile),
+            // Recovery re-enters a gate it did not finish; the reviews still planned for it stand.
+            Boolean(activeFixTaskFile) || triggeredBy === 'auto-recovery',
           )
         : currentBeforeReplayUpdate.engineState,
       params.freshDispatch || nativeFreshRestart,

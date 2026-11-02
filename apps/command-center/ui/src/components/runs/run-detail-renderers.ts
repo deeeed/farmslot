@@ -51,6 +51,7 @@ import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import type { EvidenceReviewerView } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
+import { RUN_MIRROR_REFRESH_TITLE } from '../shared/run-mirror-refresh.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
@@ -253,6 +254,8 @@ export interface RunEvidenceRenderContext {
   replaceEvidenceLightbox: (selection: LightboxSelection) => void;
   refreshOutput?: () => void;
   refreshingOutput?: boolean;
+  /** Why the run's slot has nothing left to pull, shown on the disabled button. */
+  refreshOutputUnavailable?: string | null;
   outputError?: string;
   closingOutput?: boolean;
   actionsBlocked?: boolean;
@@ -325,10 +328,14 @@ function renderRunEvidenceContent(run: Run, ctx: RunEvidenceRenderContext): unkn
         ${ctx.refreshOutput
           ? html`<button
               class="evidence-link"
-              ?disabled=${ctx.actionsBlocked || ctx.refreshingOutput || ctx.closingOutput}
+              title=${ctx.refreshOutputUnavailable ?? RUN_MIRROR_REFRESH_TITLE}
+              ?disabled=${ctx.actionsBlocked ||
+              ctx.refreshingOutput ||
+              ctx.closingOutput ||
+              Boolean(ctx.refreshOutputUnavailable)}
               @click=${ctx.refreshOutput}
             >
-              ${ctx.refreshingOutput ? 'Retrieving files…' : 'Refresh output'}
+              ${ctx.refreshingOutput ? 'Syncing…' : 'Sync artifacts'}
             </button>`
           : nothing}
         ${evidence.showEvalPackageHint

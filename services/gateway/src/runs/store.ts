@@ -261,7 +261,20 @@ function syncPrimaryAgentContextStatus(
 }
 
 async function ensureDir(): Promise<void> {
-  await mkdir(RUNS_DIR, { recursive: true });
+  if (!process.env.FARMSLOT_RUNS_DIR) {
+    await mkdir(RUNS_DIR, { recursive: true });
+    return;
+  }
+  // A configured root is created only inside an existing parent: recreating the missing
+  // parents of an unmounted volume would put the farm's runs on the internal disk.
+  await mkdir(RUNS_DIR).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'EEXIST') return;
+    if (error.code === 'ENOENT' || error.code === 'EACCES')
+      throw new Error(
+        `FARMSLOT_RUNS_DIR ${RUNS_DIR} cannot be created: its parent is missing or not writable (is its volume mounted?)`,
+      );
+    throw error;
+  });
 }
 
 /** Per-run write chain so background and awaitable persists cannot reorder renames. */
@@ -1085,6 +1098,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
       : {}),
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
+    ...(params.pipelineReview === 'none' ? { pipelineReview: 'none' as const } : {}),
     ...(pressureOverride ? { pressureOverride } : {}),
     ...(pressureAdmissionRef ? { pressureAdmissionRef } : {}),
     startRef,

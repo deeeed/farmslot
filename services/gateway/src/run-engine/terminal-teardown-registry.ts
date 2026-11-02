@@ -1,5 +1,3 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
-
 import {
   type CleanupCommands,
   cleanupSignal,
@@ -64,23 +62,6 @@ export class TerminalTeardownTimeoutError extends Error {
   }
 }
 
-/** Deadline extenders of the bounded teardowns this call runs inside, outermost first. */
-const teardownDeadlines = new AsyncLocalStorage<
-  Array<{ slotId: string; extend: (ms: number) => void }>
->();
-
-/**
- * Give every bounded teardown of `slotId` this call runs inside `ms` more time. A release's
- * artifact copy takes as long as its bytes do, so it adds its own budget and the teardown
- * keeps the rest (F298). A nested release extends the run teardown around it as well. Only
- * that slot's deadlines move: work dispatched from inside a teardown inherits its context,
- * and its own release must not postpone another slot's.
- */
-export function extendTerminalTeardown(slotId: string, ms: number): void {
-  for (const deadline of teardownDeadlines.getStore() ?? [])
-    if (deadline.slotId === slotId) deadline.extend(ms);
-}
-
 /** Bound the awaited teardown, not just its marker. A late result owns no new work. */
 export async function withTerminalTeardown<T>(
   slotId: string,
@@ -104,37 +85,19 @@ export async function withTerminalTeardown<T>(
     rejectAborted = () => reject(signal.reason);
   });
   signal.addEventListener('abort', rejectAborted, { once: true });
-  let budgetMs = timeoutMs ?? 0;
-  let settled = false;
-  const startedAt = Date.now();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const arm = () => {
-    timer = setTimeout(
-      () => {
-        const error = new TerminalTeardownTimeoutError(slotId, budgetMs);
-        console.warn(`[teardown] ${error.message}`);
-        controller.abort(error);
-      },
-      Math.max(0, startedAt + budgetMs - Date.now()),
-    );
-  };
-  const extend = (ms: number) => {
-    if (settled || signal.aborted || timer === undefined) return;
-    clearTimeout(timer);
-    budgetMs += ms;
-    arm();
-  };
-  if (timeoutMs !== null) arm();
-  const deadlines = [...(teardownDeadlines.getStore() ?? []), { slotId, extend }];
+  const timer =
+    timeoutMs === null
+      ? undefined
+      : setTimeout(() => {
+          const error = new TerminalTeardownTimeoutError(slotId, timeoutMs);
+          console.warn(`[teardown] ${error.message}`);
+          controller.abort(error);
+        }, timeoutMs);
   beginTerminalTeardown(slotId);
   try {
     signal.throwIfAborted();
-    return await Promise.race([
-      teardownDeadlines.run(deadlines, () => withCleanupSignal(signal, operation, commands)),
-      aborted,
-    ]);
+    return await Promise.race([withCleanupSignal(signal, operation, commands), aborted]);
   } finally {
-    settled = true;
     clearTimeout(timer);
     signal.removeEventListener('abort', rejectAborted);
     if (

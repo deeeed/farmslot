@@ -157,6 +157,8 @@ export interface DispatchRequest {
 
 export interface DispatchPreview {
   recipeCompatibility?: import('./recipe-conformance.js').RecipeProjectCompatibility;
+  /** Set when the dispatch turns its pipeline review off. */
+  pipelineReview?: { policy: 'none'; reason: string };
   slotId: string | null;
   reviewWorkspace?: {
     machine: string;

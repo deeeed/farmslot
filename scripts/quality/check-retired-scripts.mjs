@@ -49,6 +49,7 @@ const HISTORICAL = [
   /^docs\/reference\/adr-implementation-status\.md$/,
   /^docs\/reference\/bash-decision-core-inventory\.md$/,
   /CHANGELOG\.md$/,
+  /(^|\/)\.changes\/[^/]+\.md$/,
   // Generated What's New surfaces mirror changelog bullets verbatim.
   /release-notes\.json$/,
   /^scripts\/quality\/check-retired-scripts\.mjs$/,

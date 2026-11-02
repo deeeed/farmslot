@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- The offline run-detail probe finds the results card's Sync artifacts button by its new label (F313).
 - Give an owned gateway outage 90 seconds to restart, so a slow watcher restart no longer reads as a lost gateway.
 - Prove acceptance criteria stay absent before task creation and real read errors remain visible afterward.
 - Add a recorded browser recipe for remembered worker panel disclosure and stable conversation read status.

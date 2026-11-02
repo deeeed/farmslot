@@ -340,7 +340,6 @@ export async function proveSelectionRestart(options: SelectionRestartOptions) {
         slotId,
         expectedRunId: fresh.run.id,
         keepWork: true,
-        skipArtifacts: true,
       });
       assert.equal(released.released, true);
     } else {
@@ -360,7 +359,6 @@ export async function proveSelectionRestart(options: SelectionRestartOptions) {
         released = await client.call<{ released: boolean }>('slot.release', {
           slotId,
           keepWork: true,
-          skipArtifacts: true,
           preserveAgents: true,
         });
         assert.equal(released.released, true);

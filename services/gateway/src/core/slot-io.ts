@@ -45,6 +45,7 @@ import {
   copyFileChunked,
   readRemoteFileChunkedToBuffer,
 } from './file-transfer.js';
+import { assertHeavyWriteRoom } from './heavy-write-room.js';
 import { replaceReadOnlyDestination } from './owned-copy.js';
 
 export const MAX_ARTIFACT_TREE_DEPTH = 12;
@@ -85,11 +86,6 @@ export interface SlotCopyDirOptions {
    * dangling link: the node's fs.list omits it, so it is dropped unreported.
    */
   onSkippedLink?: (link: SlotCopyDirSkippedLink) => void;
-  /**
-   * Called once with what a remote copy will walk, before it copies anything. Unchanged
-   * files count too: they are only known after hashing.
-   */
-  onTotals?: (totals: { files: number; bytes: number }) => void;
   /** Progress phase for large remote files (default download). */
   phase?: FileTransferPhase;
   runId?: string;
@@ -409,6 +405,7 @@ export async function slotCopyFile(
     (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0)
   )
     throw new Error('File copy requires a non-negative byte ceiling.');
+  await assertHeavyWriteRoom(path.dirname(localPath));
   if (local(ctx)) {
     if (options.maxBytes !== undefined && (await stat(remotePath)).size > options.maxBytes)
       throw capacityExceeded();
@@ -893,6 +890,7 @@ export async function slotCopyDir(
   localDir: string,
   options: SlotCopyDirOptions = {},
 ): Promise<number> {
+  await assertHeavyWriteRoom(localDir);
   if (local(ctx)) {
     if (!existsSync(remoteDir)) return 0;
     const rootStats = await lstat(remoteDir).catch(() => null);
@@ -996,7 +994,6 @@ export async function slotCopyDir(
   }
 
   const totals = await countRemoteFiles(remoteDir, 0, [rootRealPath]);
-  options.onTotals?.(totals);
   const filesTotal = totals.files;
   const aggregate = new AggregateTransferSession({
     path: remoteDir,

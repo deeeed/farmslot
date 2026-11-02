@@ -6,8 +6,18 @@ import {
   bumpSemver,
   isPlaceholderBullet,
   meaningfulBullets,
+  parseBullets,
   unreleasedMeaningfulBullets,
 } from './parse-changelog.mjs';
+
+test('parseBullets keeps wrapped, nested and unindented continuation text with its bullet', () => {
+  assert.deepEqual(
+    parseBullets(
+      '- First part\ncontinued at column 0)\n- Second\n  - nested point\n\n### Fixed\n\nProse is not a bullet.\n- Third\n',
+    ),
+    ['First part\ncontinued at column 0)', 'Second\n  - nested point', 'Third'],
+  );
+});
 
 const SAMPLE = `# Changelog
 

@@ -11,6 +11,13 @@ import { runTaskDirectories } from './store.js';
 /** A settled run keeps its storage this long (ADR-039 Amendment 2). */
 export const RUN_RETENTION_AGE_MS = 48 * 60 * 60 * 1000;
 
+/**
+ * The one tag that keeps a run's storage in place. Archiving moves storage with a restore
+ * manifest, so other tags (unsteered, perps, release, ...) no longer pin it: 222 runs were
+ * held on the gateway's disk by an arbitrary tag (ADR-039 Amendment 3).
+ */
+export const RUN_RETENTION_KEEP_TAG = 'keep';
+
 export type RunRetentionStore =
   | 'session-archives'
   | 'task-dirs'
@@ -59,7 +66,7 @@ export function runRetentionHold(
 ): string | undefined {
   if (!run.archivedAt && run.status !== 'done' && run.status !== 'cancelled')
     return 'not done, cancelled or archived';
-  if (run.tags?.length) return 'operator-tagged';
+  if (run.tags?.includes(RUN_RETENTION_KEEP_TAG)) return 'tagged keep';
   if (runNeedsExecutionStorage(run)) return 'still needs its execution storage';
   if (run.backlogReconcilePending) return 'backlog reconciliation pending';
   const pr = prState(run);

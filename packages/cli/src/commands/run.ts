@@ -320,6 +320,9 @@ export async function runWizardDispatch(
   const plan = await collectRunCreatePlan(ctx.client);
   if (!plan) return true; // operator cancelled — exit 0, nothing dispatched
   if (plan.kind === 'backlog') {
+    // A backlog dispatch carries the item's own policies; the flag would be dropped silently.
+    if (opts.pipelineReview === false)
+      throw new Error('--no-pipeline-review applies to a ticket run, not a backlog dispatch.');
     const item = await resolveItem(ctx, plan.backlogRef ?? plan.backlogItemId ?? '');
     await dispatchBacklogItem(ctx, item, (promoted) => {
       ctx.output.write(`Promoted ${promoted.sourceRef ?? promoted.id} to ready\n`);
@@ -467,6 +470,20 @@ export interface RunCreateCliOptions {
   pressureMachine?: string;
   pressureGeneration?: string;
   pressureOverrideReason?: string;
+  /** `--no-pipeline-review` sets this false. */
+  pipelineReview?: boolean;
+}
+
+export const NO_PIPELINE_REVIEW_OPTION =
+  'Artifact-only dev or fix-bug run: close on the retained output with no pipeline review';
+
+/** `--no-pipeline-review`: an artifact-only run that closes on its retained output, unreviewed. */
+export function buildValidationRunParams(opts: {
+  pipelineReview?: boolean;
+}): Record<string, unknown> {
+  return opts.pipelineReview === false
+    ? { completionPolicy: 'artifact-only', pipelineReview: 'none' }
+    : {};
 }
 
 function optionalPositiveInteger(value: string | undefined, field: string): number | undefined {
@@ -661,6 +678,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     lane: opts.lane || undefined,
     variant: opts.variant || undefined,
     ...buildPressureAdmissionParams(opts),
+    ...buildValidationRunParams(opts),
   };
 
   if (opts.task) {
@@ -1423,6 +1441,7 @@ export function registerRunCommand(program: Command): void {
       '--review-sequence-context <json>',
       'Lineage provenance aligned with review sequence rows',
     )
+    .option('--no-pipeline-review', NO_PIPELINE_REVIEW_OPTION)
     .option('--skip-prepare', 'Skip slot preparation entirely (operator owns slot state)')
     .option(
       '--prepare-profile <name>',

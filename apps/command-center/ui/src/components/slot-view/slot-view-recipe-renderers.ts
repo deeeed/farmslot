@@ -14,6 +14,10 @@ import {
 } from '../recipe/recipe-rerun-model.js';
 import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
+import {
+  RUN_MIRROR_REFRESH_TITLE,
+  runMirrorRefreshUnavailableReason,
+} from '../shared/run-mirror-refresh.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
 import { renderSlotRecipeDrawer } from './slot-recipe-drawer.js';
@@ -204,6 +208,9 @@ export function renderRecipeEvidenceSection(
   } = view._recipeEvidenceArtifacts(recipeHost);
   if (allArtifacts.length === 0) return nothing;
   const kind = view._recipeEvidenceKindFilter;
+  const syncUnavailable = view._linkedRun
+    ? runMirrorRefreshUnavailableReason(view._linkedRun, view._fleetSlots)
+    : null;
   const filteredArtifacts =
     kind === 'all'
       ? effectiveArtifacts
@@ -296,8 +303,9 @@ export function renderRecipeEvidenceSection(
                         style="padding:2px 8px; font-size:${fonts.sizeXs};"
                         ?disabled=${view._mirrorRefreshing ||
                         view._runActionsBlocked ||
-                        !view._recipeRunsCurrent}
-                        title="Re-sync artifacts from slot disk → orchestrator mirror"
+                        !view._recipeRunsCurrent ||
+                        Boolean(syncUnavailable)}
+                        title=${syncUnavailable ?? RUN_MIRROR_REFRESH_TITLE}
                         @click=${() => void view._refreshArtifactMirror()}
                       >
                         ${view._mirrorRefreshing

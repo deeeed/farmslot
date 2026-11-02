@@ -11,12 +11,15 @@ import {
   createReviewCuration,
   DEFAULT_CURSOR_MODEL,
   Events,
+  pipelineReviewOffReason,
+  pipelineReviewPolicyError,
   PUBLISH_APPROVAL_ACTIONS,
   type ReadyGatePrPackage,
   recipeRepairId,
   type RecipeRepairScope,
   type ReviewGatePayload,
   type Run,
+  type RunCreateParams,
   type RunDecision,
   SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
@@ -43,6 +46,7 @@ import {
   updateRun,
 } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
+import { captureRunCreationRequest } from '../sources/creation-request.js';
 
 import { makeRun } from './run/test-fixtures.js';
 import {
@@ -235,6 +239,96 @@ test('run creation holds its task directory against retention until it registers
   );
   assert.equal(heldAtRegistration, true);
   assert.equal(isTaskDirectoryAdmitting(taskDir), false, 'a refused admission releases it');
+});
+
+test('run.create refuses a pipeline review it could not turn off as asked', async () => {
+  const before = getAllRuns().length;
+  const base: RunCreateParams = {
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `TAT-${Date.now()}`,
+    completionPolicy: 'artifact-only',
+    pipelineReview: 'none',
+  };
+  const refusals: Array<[RunCreateParams, RegExp]> = [
+    [
+      { ...base, completionPolicy: undefined },
+      /pipelineReview none is only for artifact-only runs: set completionPolicy artifact-only/,
+    ],
+    [
+      { ...base, reviewSequence: [{ runner: 'codex', model: null, effort: null, mode: 'cold' }] },
+      /turns the review off; drop reviewSequence and reviewPolicy/,
+    ],
+    [
+      {
+        ...base,
+        engineState: {
+          evalExperiment: {
+            experimentId: 'experiment',
+            experimentKey: 'key',
+            experimentManifestPath: 'manifest.json',
+            packagePath: 'package',
+            candidateStrategyFingerprint: 'fingerprint',
+            trialId: 'trial',
+          },
+        },
+      },
+      /would skip the eval judge/,
+    ],
+  ];
+  for (const [params, refusal] of refusals)
+    await assert.rejects(
+      runCreate(params, () => {}),
+      refusal,
+    );
+  await assert.rejects(
+    // @ts-expect-error pipelineReview accepts only 'default' or 'none'; a raw RPC can send more.
+    runCreate({ ...base, pipelineReview: 'off' }, () => {}),
+    /pipelineReview must be 'default' or 'none', not "off"/,
+  );
+  assert.equal(getAllRuns().length, before, 'nothing is created');
+  // update-branch pushes to an existing PR whatever its completion policy. run.create checks a PR
+  // reference first, so the shared rule is asserted directly (dispatch.preview covers it end to end).
+  assert.match(
+    pipelineReviewPolicyError({ ...base, flowType: 'update-branch' }) ?? '',
+    /only for dev and fix-bug runs; update-branch runs push or publish/,
+  );
+});
+
+test('run.create keeps an artifact-only pipeline review off and retains the request', async (t) => {
+  const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
+  const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  let runId = '';
+  t.after(async () => {
+    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
+    if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+    if (runId && getRun(runId)) {
+      updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+      await deleteRun(runId);
+    }
+  });
+  const tatKey = `TAT-${Date.now()}`;
+  const params: RunCreateParams = {
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: tatKey,
+    ticketData: jiraTicketData(tatKey),
+    completionPolicy: 'artifact-only',
+    pipelineReview: 'none',
+  };
+  const { run } = await runCreate(params, () => {});
+  runId = run.id;
+  assert.equal(getRun(run.id)?.pipelineReview, 'none');
+  assert.equal(
+    pipelineReviewOffReason(getRun(run.id)!),
+    'Pipeline review is off for this artifact-only run (pipelineReview none).',
+  );
+  // Queued revalidation and replays re-read the retained request.
+  assert.equal(captureRunCreationRequest(params).pipelineReview, 'none');
 });
 
 test('planning resolves the same dispatch defaults without creating a run or consuming a queue claim', async () => {

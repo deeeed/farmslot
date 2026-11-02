@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import {
+import fs, {
   closeSync,
   constants,
   existsSync,
@@ -1265,6 +1265,42 @@ test('admitted byte limits refuse local overflow and remote growth before excess
   if (existsSync(destination)) assert.ok((await readFile(destination)).length <= 4);
 });
 
+// The partial's write stream opens asynchronously. On a loaded runner a copy refused on its first
+// chunk rejected and removed the partial before that open ran; the late open then recreated it, or
+// failed with ENOENT once the test's directory was gone ("asynchronous activity after the test").
+test('a copy refused on its first chunk settles its partial file before rejecting', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'slot-copy-partial-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const destination = path.join(dir, 'destination');
+  // Hold the stream's open until after the copy's own cleanup, as a busy thread pool can.
+  const realOpen = fs.open;
+  t.mock.method(fs, 'open', (...args: Parameters<typeof fs.open>) => {
+    setTimeout(() => realOpen(...args), 50);
+  });
+  const remote = {
+    host: 'remote.invalid',
+    machine: 'remote-partial',
+    sshTarget: '',
+    nodeRequest: async (method: string) => {
+      if (method === 'fs.stat') return { size: 3, isFile: true };
+      if (method === 'fs.readChunk')
+        return {
+          content: Buffer.from('grown').toString('base64'),
+          bytesRead: 5,
+          eof: true,
+          totalSize: 5,
+        };
+      throw new Error(`Unexpected RPC ${method}`);
+    },
+  };
+  await assert.rejects(
+    slotCopyFile(remote, '/video', destination, { maxBytes: 4, verifyRemoteHash: false }),
+    { code: 'EFBIG' },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(existsSync(`${destination}.farmslot-partial`), false);
+});
+
 test('local slot writes expand execution-host home paths for runner sentinels', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'slot-home-write-'));
   const originalHome = process.env.HOME;
@@ -1284,4 +1320,31 @@ test('local slot writes expand execution-host home paths for runner sentinels', 
     else process.env.HOME = originalHome;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// Arthur 11-02: heavy writes stop at a free-space floor (default 50 GB) before any byte lands.
+test('a slot copy below the free-space floor writes nothing', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const previous = process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+  process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = '100000000';
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
+    else process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = previous;
+  });
+  const source = path.join(root, 'source');
+  await mkdir(source);
+  await writeFile(path.join(source, 'report.md'), 'report');
+  const ctx = { host: 'localhost', machine: 'test-machine', sshTarget: 'localhost' };
+
+  await assert.rejects(
+    slotCopyDir(ctx, source, path.join(root, 'mirror')),
+    /under the 100000000\.0 GB floor/,
+  );
+  await assert.rejects(
+    slotCopyFile(ctx, path.join(source, 'report.md'), path.join(root, 'archive/report.md')),
+    /under the 100000000\.0 GB floor/,
+  );
+  assert.equal(existsSync(path.join(root, 'mirror')), false);
+  assert.equal(existsSync(path.join(root, 'archive')), false);
 });

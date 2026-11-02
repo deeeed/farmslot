@@ -22,6 +22,7 @@ const REQUEST_FIELDS = {
   ticketData: true,
   engineState: true,
   completionPolicy: true,
+  pipelineReview: true,
   startRef: true,
   startRefSource: true,
   prNumber: true,

@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 
 export function runArchiveRoot(): string {
   return process.env.FARMSLOT_RUN_ARCHIVE_ROOT ?? path.join(farmslotHome(), 'run-archive');
@@ -132,6 +133,7 @@ async function syncTree(file: string): Promise<void> {
 async function finishEntry(entry: StorageArchiveEntry, save: () => Promise<void>): Promise<void> {
   if (entry.completedAt) return;
   if (existsSync(entry.staged)) {
+    await assertHeavyWriteRoom(path.dirname(entry.destination));
     await mkdir(path.dirname(entry.destination), { recursive: true });
     try {
       // A retry must never overwrite an earlier archive copy.

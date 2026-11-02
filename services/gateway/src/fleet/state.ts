@@ -10,6 +10,7 @@ import { watch } from 'chokidar';
 
 import {
   type ActiveResourcePointer,
+  type FleetPoolReadError,
   type FleetStatus,
   type FleetSummary,
   normalizeProjectWorkflowDefaults,
@@ -399,6 +400,7 @@ interface RawSlot {
   mode?: string;
   dispatchable?: boolean;
   repo_blocker?: string;
+  config_error?: string;
   lifecycle?: string;
   phase?: string | null;
   warm?: boolean;
@@ -408,6 +410,7 @@ interface RawSlot {
   task_file?: string | null;
   current_run_id?: string | null;
   held_reason?: string;
+  retained?: { items: number; bytes: number } | null;
   current_flow_type?: string | null;
   current_ticket_or_pr?: string | null;
   current_mode?: string | null;
@@ -425,6 +428,7 @@ interface RawSlot {
 interface RawStatus {
   checked_at: string;
   slots: RawSlot[];
+  pool_errors?: FleetPoolReadError[];
 }
 
 // ─── Transform ───
@@ -512,6 +516,7 @@ function transformSlot(raw: RawSlot): SlotStatus {
     enabled: raw.enabled ?? true,
     dispatchable: raw.dispatchable ?? false,
     ...(raw.repo_blocker ? { repoBlocker: raw.repo_blocker } : {}),
+    ...(raw.config_error ? { configError: raw.config_error } : {}),
     lifecycle,
     phase,
     warm,
@@ -522,6 +527,7 @@ function transformSlot(raw: RawSlot): SlotStatus {
     cleanupRunId: raw.cleanup_run_id ?? null,
     handoffRunId: raw.handoff_run_id ?? null,
     ...(raw.held_reason ? { heldReason: raw.held_reason } : {}),
+    ...(raw.retained ? { retained: raw.retained } : {}),
     currentFlowType: raw.current_flow_type ?? null,
     currentTicketOrPr: raw.current_ticket_or_pr ?? null,
     currentMode: raw.current_mode ?? null,
@@ -655,6 +661,7 @@ function transformFleet(raw: RawStatus): FleetStatus {
     checkedAt: statusCheckedAt(raw) ?? '',
     slots,
     summary: computeSummary(slots),
+    ...(raw.pool_errors?.length ? { poolErrors: raw.pool_errors } : {}),
   };
 }
 

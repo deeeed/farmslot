@@ -10,6 +10,7 @@ import {
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
   isReviewValidationDepth,
+  pipelineReviewOffReason,
   PipelineSteps,
   type ReadyGatePrPackage,
   reviewPolicySatisfied,
@@ -766,6 +767,19 @@ export async function executeReviewStep(
       inputs: { ...inputs, enabled: false },
       outputs: { skipped: true, reason: 'pr-complete-has-no-reviewer' },
     };
+  const pipelineReviewOff = pipelineReviewOffReason(current);
+  if (pipelineReviewOff) {
+    console.log(`[run-engine] run ${runId.slice(0, 8)} — review skipped: ${pipelineReviewOff}`);
+    return {
+      inputs: { ...inputs, enabled: false, policy: 'pipeline-review-none' },
+      outputs: {
+        skipped: true,
+        reason: 'pipeline-review-off',
+        source: 'run-policy',
+        detail: pipelineReviewOff,
+      },
+    };
+  }
 
   if (evalJudge) {
     await freezeEvalWorkerFacts(current, context);

@@ -45,6 +45,7 @@ import {
 import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { EVAL_TASK_FLOW } from '../core/config.js';
 import { sha256File } from '../core/file-hash.js';
+import { assertConfiguredRootPresent, assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import { inferArtifactPurpose } from '../core/index.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { GatewayMethodError } from '../core/method-error.js';
@@ -136,21 +137,34 @@ export function createRunArtifactAcquisition(run: Run): RunArtifactAcquisition {
   };
 }
 
-export function runBundleStore(create = false) {
-  if (create && process.env.FARMSLOT_SANDBOX_HOME)
-    throw new Error('Sandbox gateways may only read the owning gateway retained bundle store.');
-  const home = process.env.FARMSLOT_HOME
+/** The home whose `run-bundles` directory is the gateway's retained bundle store. */
+export function runBundleHome(): string {
+  return process.env.FARMSLOT_HOME
     ? farmslotHome()
     : process.env.FARMSLOT_RUNS_DIR
       ? path.join(runsDirectory(), 'bundle-home')
       : shouldUseIsolatedRunsDir(process.env, process.argv)
         ? isolatedTestPath('farmslot-test-bundle-home')
         : farmslotHome();
-  return openRunBundleStore({
-    runsDir: runsDirectory(),
-    home,
-    create: create && !process.env.FARMSLOT_SANDBOX_HOME,
-  });
+}
+
+export function runBundleStore(create = false) {
+  if (create && process.env.FARMSLOT_SANDBOX_HOME)
+    throw new Error('Sandbox gateways may only read the owning gateway retained bundle store.');
+  const home = runBundleHome();
+  const open = () =>
+    openRunBundleStore({
+      runsDir: runsDirectory(),
+      home,
+      create: create && !process.env.FARMSLOT_SANDBOX_HOME,
+    });
+  // Opening for writes creates the home and the runs directory, so both roots are checked first.
+  return create
+    ? Promise.all([
+        assertConfiguredRootPresent(home),
+        assertConfiguredRootPresent(runsDirectory()),
+      ]).then(open)
+    : open();
 }
 
 export function retainedRunBundleRef(
@@ -520,6 +534,7 @@ export async function retainCapturedRunArtifacts(input: {
 }): Promise<MaterializedRunBundle> {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
+  await assertHeavyWriteRoom(store.root);
   await tryArchiveRunArtifactHousekeeping();
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.

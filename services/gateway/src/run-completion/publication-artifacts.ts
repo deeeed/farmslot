@@ -18,6 +18,7 @@ import {
 
 import { INTERNAL_ARTIFACT_COPY_EXCLUDES } from '../core/artifact-copy-policy.js';
 import { getProjectField, loadProjectVars } from '../core/config.js';
+import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import {
   execLocal,
   farmslotRoot,
@@ -385,6 +386,7 @@ export async function uploadArtifacts(
         '/tmp',
         `farmslot-selected-artifacts-${run.id.slice(0, 8)}-${randomUUID()}`,
       );
+      await assertHeavyWriteRoom(tempUploadDir);
       await mkdir(tempUploadDir, { recursive: true });
       for (const file of files) {
         const source = path.join(artifactsDir, file);

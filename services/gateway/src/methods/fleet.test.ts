@@ -1,27 +1,35 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { FleetStatus, Run, SlotStatus } from '@farmslot/protocol';
 
 import { resolveSlot, SlotConfigError } from '../core/config.js';
+import type { RawPoolJson } from '../core/index.js';
 import { markGhostSlots } from '../fleet/state.js';
+import { makeVars } from '../runners/test-fixtures.js';
 
 import { isFreeSlot } from './dispatch/slot-scoring.js';
 import { makeRun } from './run/test-fixtures.js';
 import {
   buildFleetRefreshSnapshot,
   buildRefreshSlotRow,
+  checkSSHPerMachine,
   fleetStaleThresholdMs,
   fleetStatus,
   type FleetStatusDeps,
   gitHeadProbeCommand,
   isFleetCheckedAtStale,
+  loadAllPools,
   newestActiveRunForSlot,
   parseGitHeadProbe,
   preserveClaimedRowsUnknownToProbe,
   reconcileRefreshSlotRowWithActiveRun,
   setFleetWorkspacePublisher,
   slotHeadRefreshUpdate,
+  withFollowUpRefresh,
 } from './fleet.js';
 
 test('refresh preserves the owner and epoch of a running review through idle probes', () => {
@@ -482,7 +490,7 @@ function fleetFixture(checkedAt: string, slots: SlotStatus[]): FleetStatus {
 }
 
 function fleetStatusDepsFixture(fleet: FleetStatus, refreshedFleet?: FleetStatus) {
-  const calls = { load: 0, refresh: 0 };
+  const calls = { load: 0, refresh: 0, join: 0 };
   const refreshed = refreshedFleet ?? fleetFixture(new Date().toISOString(), fleet.slots);
   const deps: FleetStatusDeps = {
     async load() {
@@ -491,6 +499,10 @@ function fleetStatusDepsFixture(fleet: FleetStatus, refreshedFleet?: FleetStatus
     },
     async refresh() {
       calls.refresh += 1;
+      return { fleet: refreshed };
+    },
+    async join() {
+      calls.join += 1;
       return { fleet: refreshed };
     },
   };
@@ -610,7 +622,9 @@ test('stale fleet.status marks stale, disables dispatch, and kicks a background 
 
   assert.equal(result.fleet.stale, true);
   assert.ok(result.fleet.slots.every((slot) => slot.dispatchable === false));
-  assert.equal(calls.refresh, 1);
+  // F306: the kick joins a running refresh; it never queues a follow-up probe.
+  assert.equal(calls.join, 1);
+  assert.equal(calls.refresh, 0);
 });
 
 test('slots absent from live pools are marked missingFromPool and never dispatchable', () => {
@@ -658,7 +672,7 @@ test('stale all-ghost fleets do not spin background no-op refreshes', async () =
   const result = await fleetStatus(undefined, deps);
 
   assert.equal(result.fleet.stale, true);
-  assert.equal(calls.refresh, 0);
+  assert.equal(calls.refresh + calls.join, 0);
 });
 
 test('dispatch slot selection never treats ghost slots as free', () => {
@@ -1046,4 +1060,139 @@ test('a branch refresh writes the commit too, not just the branch name', () => {
     branch: 'main',
     head_sha: 'abc',
   });
+});
+
+// F306, macpro-audiolab-1: a pool edit landing while a refresh ran was absorbed by it, and the slot
+// kept a stale row until something else refreshed.
+test('a refresh asked for while one runs gets one more run after it, shared by every caller (F306)', async () => {
+  const finish: Array<(fail?: boolean) => void> = [];
+  const { refresh } = withFollowUpRefresh(
+    () =>
+      new Promise<number>((resolve, reject) =>
+        finish.push((fail) => (fail ? reject(new Error('probe failed')) : resolve(finish.length))),
+      ),
+  );
+  const settle = async (runs: number) => {
+    for (let turn = 0; turn < 10 && finish.length < runs; turn++) await new Promise(setImmediate);
+  };
+  const first = refresh();
+  const during = [refresh(), refresh()];
+  assert.equal(finish.length, 1, 'the second and third calls wait for the running one');
+  finish[0]!(true);
+  await assert.rejects(first, /probe failed/, "the first caller gets its run's failure");
+  await settle(2);
+  assert.equal(finish.length, 2, 'one follow-up run starts after it, even after a failure');
+  const duringFollowUp = refresh();
+  finish[1]!();
+  assert.deepEqual(await Promise.all(during), [2, 2], 'both callers shared it');
+  await settle(3);
+  assert.equal(finish.length, 3, 'a call during the follow-up gets one more run');
+  finish[2]!();
+  assert.equal(await duringFollowUp, 3);
+});
+
+test('a refresh joined while one runs shares that run and starts nothing more (F306)', async () => {
+  const finish: Array<() => void> = [];
+  const { join } = withFollowUpRefresh(
+    () => new Promise<number>((resolve) => finish.push(() => resolve(finish.length))),
+  );
+  const running = join();
+  const joined = join();
+  finish[0]!();
+  assert.deepEqual(await Promise.all([running, joined]), [1, 1]);
+  for (let turn = 0; turn < 10; turn++) await new Promise(setImmediate);
+  assert.equal(finish.length, 1, 'no follow-up run');
+  const idle = join();
+  assert.equal(finish.length, 2, 'with nothing running, a join starts one');
+  finish[1]!();
+  assert.equal(await idle, 2);
+});
+
+test("one slot's broken config doesn't fail its host's SSH check for every slot (F306)", async () => {
+  const pool = (machine: string, ids: string[]): RawPoolJson => ({
+    machine,
+    project: 'audiolab',
+    platform: 'ios',
+    os: 'darwin',
+    host: `${machine}.invalid`,
+    ssh_user: 'operator',
+    slots: ids.map((id) => ({ id, enabled: true, repo: `/repos/${id}`, session: id })),
+  });
+  const broken = new Set(['remote-1', 'dead-1', 'dead-2']);
+  const reached: string[] = [];
+  const status = await checkSSHPerMachine(
+    [pool('remote', ['remote-1', 'remote-2']), pool('dead', ['dead-1', 'dead-2'])],
+    async (slotId) => {
+      if (broken.has(slotId)) throw new Error(`Duplicate resource field 'port' in slot ${slotId}`);
+      return makeVars({ slotId });
+    },
+    async (vars) => {
+      reached.push(vars.slotId);
+      return { exitCode: 0, stdout: 'ok', stderr: '' };
+    },
+  );
+  assert.equal(status.get('remote.invalid'), 'ok', 'reached through the slot that loads');
+  assert.deepEqual(reached, ['remote-2']);
+  assert.equal(status.get('dead.invalid'), 'unloadable', 'no slot loads: no SSH verdict at all');
+});
+
+test('a pool read mid-write is read again; one still unreadable is reported with its last good slots (F306)', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'fleet-pools-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const pool = JSON.stringify({
+    machine: 'macpro',
+    host: 'macpro.local',
+    project: 'audiolab',
+    slots: [{ id: 'macpro-audiolab-1', resources: { 'ios-sim': { simulator: 'audiolab-1' } } }],
+  });
+  await writeFile(path.join(directory, 'macpro.json'), pool);
+  const pauses: number[] = [];
+  const pause = async (ms: number) => void pauses.push(ms);
+  let reads = 0;
+  const midWrite = await loadAllPools(
+    directory,
+    async () => (++reads === 1 ? pool.slice(0, 40) : pool),
+    pause,
+  );
+  assert.equal(midWrite.pools.length, 1, 'the second read parses');
+  assert.deepEqual(midWrite.unread.errors, []);
+  assert.equal(pauses.length, 1);
+
+  const truncated = await loadAllPools(directory, async () => pool.slice(0, 40), pause);
+  assert.equal(truncated.pools.length, 0);
+  assert.equal(truncated.unread.errors[0]?.file, 'macpro.json');
+  assert.match(truncated.unread.errors[0]?.error ?? '', /JSON/);
+  assert.deepEqual([...truncated.unread.slots], ['macpro-audiolab-1']);
+});
+
+test('a refresh keeps the rows of slots whose pool could not be read, and names the pool (F306)', () => {
+  const lastGood = {
+    slot: 'macpro-audiolab-1',
+    machine: 'macpro',
+    lifecycle: 'ready',
+    resources: { 'ios-sim': { simulator: 'audiolab-1' }, 'dev-server': { port: 7361 } },
+  };
+  const error = { file: 'macpro.json', error: 'Unterminated string in JSON at position 23768' };
+  const snapshot = buildFleetRefreshSnapshot(
+    [lastGood, { slot: 'retired', machine: 'x' }],
+    [],
+    [],
+    'now',
+    {
+      errors: [error],
+      slots: new Set(['macpro-audiolab-1']),
+    },
+  );
+  assert.deepEqual(snapshot.slots, [lastGood], 'unchanged, resources included');
+  assert.deepEqual(snapshot.pool_errors, [error]);
+  assert.equal(buildFleetRefreshSnapshot([], [], [], 'now').pool_errors, undefined);
+});
+
+test('a slot whose config could not be loaded carries the error on its row (F306)', () => {
+  const row = buildRefreshSlotRow(
+    { ...makeRefreshRow(), configError: "Duplicate resource field 'port' in slot macwork-mm-4" },
+    {},
+  );
+  assert.equal(row.config_error, "Duplicate resource field 'port' in slot macwork-mm-4");
+  assert.equal(buildRefreshSlotRow(makeRefreshRow(), {}).config_error, undefined);
 });

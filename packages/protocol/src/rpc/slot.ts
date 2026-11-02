@@ -158,7 +158,6 @@ export interface SlotReleaseParams {
   expectedRunId?: string;
   keepWarm?: boolean;
   keepWork?: boolean;
-  skipArtifacts?: boolean;
   forceReset?: boolean;
   killTmux?: boolean;
   /**

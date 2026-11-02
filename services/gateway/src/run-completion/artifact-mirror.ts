@@ -25,6 +25,7 @@ import {
   resolveTaskRelDir,
 } from '../core/config.js';
 import { execArgvOnSlot, isLocal } from '../core/exec.js';
+import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import {
   type LatestValidRecipeRunPointer,
   sanitizeLatestValidRecipeRunPointer,
@@ -576,6 +577,8 @@ export async function refreshArtifactMirror(
   };
   const before = await artifactMirrorSignature(localArtifactsDir);
   const copy = async (): Promise<number> => {
+    // Checked before the per-file mkdirs, which would otherwise recreate a missing storage root.
+    await assertHeavyWriteRoom(localArtifactsDir);
     await pruneWorkerOwnedArtifactMirror(localArtifactsDir, pruneOptions);
     const transferMeta = { runId: run.id, slotId: run.slotId ?? vars.slotId };
     const manifestNamed = new Set(manifestPaths);
