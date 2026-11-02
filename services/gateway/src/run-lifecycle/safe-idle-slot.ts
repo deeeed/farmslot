@@ -73,20 +73,42 @@ function atVerifiedDefault(workspace: SlotWorkspace): boolean {
   );
 }
 
+/** Dispatch reads every free candidate at once; past this budget a candidate counts as not clean. */
+export const CLEAN_IDLE_PROBE_BUDGET_MS = 8_000;
+
 /**
  * Whether a free slot is reusable as it stands, read with status-probe budgets and no fetch:
  * HEAD matching the remote default is the positive evidence. Dispatch takes such a slot
  * without recovering anything; any doubt answers false and leaves the slot to recovery.
  */
-export async function cleanIdleSlot(slotId: string): Promise<boolean> {
+export async function cleanIdleSlot(
+  slotId: string,
+  budgetMs = CLEAN_IDLE_PROBE_BUDGET_MS,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<false>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(`[find-slot] clean probe of ${slotId} passed ${budgetMs} ms; not clean`);
+      resolve(false);
+    }, budgetMs);
+  });
+  try {
+    return await Promise.race([readCleanIdleSlot(slotId), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readCleanIdleSlot(slotId: string): Promise<boolean> {
   try {
     const { inspectSlotWorkspace } = await import('../methods/slot/workspace.js');
     const { loadFleetStatus } = await import('../fleet/state.js');
-    const workspace = await inspectSlotWorkspace(slotId);
+    const workspace = await inspectSlotWorkspace(slotId, { baselineOnly: true });
     const slot = (await loadFleetStatus(true)).slots.find((candidate) => candidate.slot === slotId);
     const eligibility = slotRecoveryEligibility(slot ? { ...slot, workspace } : undefined);
     return eligibility.allowed && !eligibility.confirmationRequired && atVerifiedDefault(workspace);
-  } catch {
+  } catch (error) {
+    console.warn(`[find-slot] clean probe of ${slotId} failed: ${(error as Error).message}`);
     return false;
   }
 }

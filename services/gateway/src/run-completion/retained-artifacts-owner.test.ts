@@ -137,7 +137,8 @@ test('an offline archive leaves pending reservations intact while normal admissi
 
 test('admission runs housekeeping only once capacity refuses the reservation', async () => {
   const { createRun, updateRun, persistRunNow } = await import('../runs/store.js');
-  const owner = await runBundleStore();
+  delete process.env.FARMSLOT_SANDBOX_HOME;
+  const owner = await runBundleStore(true);
   const archive = path.join(root, 'capacity-archive');
   await mkdir(archive);
   process.env.FARMSLOT_RUN_ARCHIVE_ROOT = archive;
