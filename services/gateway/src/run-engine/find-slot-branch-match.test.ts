@@ -1843,3 +1843,65 @@ test('a Continue on a picked slot answered after a gateway restart still claims 
   assert.deepEqual(claims, [hot.slot]);
   assert.deepEqual(reuseCalls, [], 'the reusable automatic choice is never considered');
 });
+
+test('fresh reuse refuses an active owner whose node lacks the requested model before touching it', async () => {
+  reset('pr-complete', 'example-org/terminal#210');
+  piOnNodeA();
+  const busy: SlotStatus = {
+    ...candidate('busy-b', 'node-b', branch),
+    lifecycle: 'busy',
+    agent: 'working',
+    currentRunId: 'active-owner',
+  };
+  slots.splice(0, slots.length, busy);
+  cancelledHolder = makeRun({
+    id: 'active-owner',
+    project,
+    slotId: busy.slot,
+    status: 'reviewing',
+  });
+  run.slotId = busy.slot;
+  run.allowedSlots = [busy.slot];
+  run.engineState!.flags = { freshReuse: true };
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, context),
+    /Fresh-reuse no longer valid: pi model litellm\/glm-5p3 is not listed on node-b/,
+  );
+  assert.deepEqual(freshTeardowns, []);
+  assert.deepEqual(claims, []);
+});
+
+test('the active-owner decision card refuses fresh dispatch on a node lacking the requested model', async () => {
+  reset('pr-complete', 'example-org/terminal#210');
+  piOnNodeA();
+  const busy: SlotStatus = {
+    ...candidate('busy-b', 'node-b', branch),
+    lifecycle: 'busy',
+    agent: 'working',
+  };
+  slots.splice(0, slots.length, busy);
+  nudgeCandidates = [
+    {
+      slot: busy,
+      uncommittedCount: 0,
+      uncommittedFiles: [],
+      nudgeCount: 0,
+      ctxPct: null,
+      prMatchKind: 'branch-slug',
+      riskFlags: [],
+      canNudge: false,
+    },
+  ];
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, {
+      ...context,
+      createEngineDecision: async (_id, reason) => {
+        assert.equal(reason, 'branch_affinity_nudge');
+        return 'fresh';
+      },
+    }),
+    /Kill & dispatch fresh refused on busy-b: pi model litellm\/glm-5p3 is not listed on node-b/,
+  );
+  assert.deepEqual(freshTeardowns, []);
+  assert.deepEqual(claims, []);
+});

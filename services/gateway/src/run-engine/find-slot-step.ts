@@ -79,6 +79,7 @@ import {
   slotClaimBlockedByRelease,
   slotClaimBlocker,
   type SlotLoadWait,
+  slotModelNodeBlocker,
   slotRepoBlocker,
   slotScore,
   type SlotSelectionOptions,
@@ -1281,6 +1282,9 @@ async function findSlotAttempt(
   if (run.engineState?.flags?.freshReuse && run.slotId) {
     const liveFleet = await loadFleetStatus();
     const wizardSlot = liveFleet.slots.find((s) => s.slot === run.slotId);
+    const modelBlocker = wizardSlot ? slotModelNodeBlocker(wizardSlot, modelNodeSelection) : null;
+    if (modelBlocker)
+      throw new Error(`Fresh-reuse no longer valid: ${modelBlocker}. Pick a slot again.`);
     const allRuns = getAllRuns();
     const otherActiveSlotIds = activeRunSlotIds(allRuns, runId);
     const replaceableWarm = Boolean(
@@ -1641,9 +1645,11 @@ async function findSlotAttempt(
             });
           // Fresh dispatch prepares the slot: refuse a repo that cannot, before
           // the teardown below kills the worker.
-          const repoBlocker = slotRepoBlocker(top.slot, { skipPrepare });
-          if (repoBlocker) {
-            throw new Error(`Kill & dispatch fresh refused on ${top.slot.slot}: ${repoBlocker}`);
+          const freshBlocker =
+            slotModelNodeBlocker(top.slot, modelNodeSelection) ??
+            slotRepoBlocker(top.slot, { skipPrepare });
+          if (freshBlocker) {
+            throw new Error(`Kill & dispatch fresh refused on ${top.slot.slot}: ${freshBlocker}`);
           }
           // The decision-card 'fresh' branch binds the busy slot AND must hard-kill the
           // prior worker BEFORE PREPARE runs — otherwise PREPARE's git reset / checkout /

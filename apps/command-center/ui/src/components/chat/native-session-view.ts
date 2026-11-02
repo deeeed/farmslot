@@ -62,7 +62,11 @@ import {
   type ResourceQueryState,
   SUPERSEDED_READ_GRACE_MS,
 } from '@farmslot/protocol/client-cache';
-import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+import {
+  catalogForNativeRunners,
+  defaultModelForRunner,
+  ReviewDispatchViewModel,
+} from '@farmslot/review-dispatch';
 
 import '../shared/review-dispatch-picker.js';
 import './chat-message.js';
@@ -149,7 +153,11 @@ export class NativeSessionView extends LitElement {
     this.requestUpdate();
   }
   private get model() {
-    return this.executionPicker.selection!.model ?? '';
+    return (
+      this.executionPicker.selection!.model ??
+      defaultModelForRunner(this.runner, this.executionPicker.catalog) ??
+      ''
+    );
   }
   private set model(value: string) {
     this.executionPicker.setModel(this.executionPicker.rows[0].id, value || null);
