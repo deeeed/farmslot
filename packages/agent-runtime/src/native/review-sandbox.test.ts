@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -19,14 +28,7 @@ test(
       output = join(root, 'reports'),
       account = join(root, 'account');
     try {
-      for (const dir of [
-        source,
-        output,
-        join(account, 'bin'),
-        join(account, 'bundled', 'agents'),
-        join(account, 'sessions'),
-        join(account, 'logs'),
-      ])
+      for (const dir of [source, output, join(account, 'bin'), join(account, 'bundled', 'agents')])
         await mkdir(dir, { recursive: true });
       for (const file of [
         'config.toml',
@@ -38,8 +40,11 @@ test(
       const policy = { readOnlyRoots: [source], writableRoots: [output] };
       const access = nativeRunnerDefinitions.grok.reviewRuntimeAccess!({ GROK_HOME: account });
       const { sandbox } = await reviewProcessSandbox(policy, [account], [], access);
+      // A fresh home gets its named paths before the review starts, so each pin holds something.
+      assert.ok((await lstat(join(account, 'sessions'))).isDirectory());
+      assert.equal(await readFile(join(account, 'logs', 'unified.jsonl'), 'utf8'), '');
       const lock = join(account, 'auth.json.lock');
-      const program = `const fs=require('node:fs'),path=require('node:path');const ops=JSON.parse(process.argv[1]);const results={};for(const [name,[op,file,other]]of Object.entries(ops)){try{if(op==='write'){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'changed')}else if(op==='symlink')fs.symlinkSync(other,file);else if(op==='link')fs.linkSync(other,file);else if(op==='rename')fs.renameSync(file,other);else fs.unlinkSync(file);results[name]=true;}catch(e){if(!['EPERM','EACCES'].includes(e.code))throw e;results[name]=false;}}console.log(JSON.stringify(results));`;
+      const program = `const fs=require('node:fs'),path=require('node:path');const ops=JSON.parse(process.argv[1]);const results={};for(const [name,[op,file,other]]of Object.entries(ops)){try{if(op==='write'){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'changed')}else if(op==='symlink')fs.symlinkSync(other,file);else if(op==='link')fs.linkSync(other,file);else if(op==='rename')fs.renameSync(file,other);else if(op==='rmdir')fs.rmdirSync(file);else fs.unlinkSync(file);results[name]=true;}catch(e){if(!['EPERM','EACCES'].includes(e.code))throw e;results[name]=false;}}console.log(JSON.stringify(results));`;
       const result = await exec(sandbox.executable, [
         ...sandbox.args,
         process.execPath,
@@ -66,6 +71,23 @@ test(
           lockRemove: ['unlink', lock],
           session: ['write', join(account, 'sessions', 'review.jsonl')],
           log: ['write', join(account, 'logs', 'unified.jsonl')],
+          newLog: ['write', join(account, 'logs', 'other.jsonl')],
+          // A writable directory and the log an unsandboxed Grok start appends to keep their
+          // identity: nothing can be moved in to stand for them.
+          logReplace: [
+            'rename',
+            join(account, 'sessions', 'review.jsonl'),
+            join(account, 'logs', 'unified.jsonl'),
+          ],
+          logRemove: ['unlink', join(account, 'logs', 'unified.jsonl')],
+          logRename: [
+            'rename',
+            join(account, 'logs', 'unified.jsonl'),
+            join(account, 'logs', 'renamed.jsonl'),
+          ],
+          logsRemove: ['rmdir', join(account, 'logs')],
+          logsMove: ['rename', join(account, 'logs'), join(output, 'logs-moved')],
+          sessionsMove: ['rename', join(account, 'sessions'), join(output, 'sessions-moved')],
         }),
       ]);
       assert.deepEqual(JSON.parse(result.stdout), {
@@ -85,6 +107,13 @@ test(
         lockRemove: false,
         session: true,
         log: true,
+        newLog: true,
+        logReplace: false,
+        logRemove: false,
+        logRename: false,
+        logsRemove: false,
+        logsMove: false,
+        sessionsMove: false,
       });
       for (const file of [
         'config.toml',
@@ -99,6 +128,14 @@ test(
       await assert.rejects(
         reviewProcessSandbox(policy, [account], [], access),
         /must be a regular file/,
+      );
+      // So is a writable path that is not a real directory.
+      await rm(lock);
+      await rm(join(account, 'sessions'), { recursive: true });
+      await symlink(output, join(account, 'sessions'));
+      await assert.rejects(
+        reviewProcessSandbox(policy, [account], [], access),
+        /must be a directory/,
       );
       await assert.rejects(
         reviewProcessSandbox(policy, [account], [], { writablePaths: [join(root, 'elsewhere')] }),
