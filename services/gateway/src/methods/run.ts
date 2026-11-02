@@ -1913,11 +1913,14 @@ export function continueResolvedRunDecision(
       }
       // Replay on a DISPATCH card is a real replay: it adopts a signal the worker has written since
       // and clears a stale one, where resuming the engine would restart a worker that finished.
+      // A refused replay can leave DISPATCH done with the signal adopted: replaying it again would
+      // clear that signal and relaunch, so the resume below continues at MONITOR instead.
       const card = afterResolve.decisions.find((d) => d.id === params.decisionId);
       if (
         params.actionId === REPLAY_STEP_ACTION &&
         card?.type === WORKER_LEFT_RUNNING_DECISION &&
-        card.context?.step === PipelineSteps.DISPATCH
+        card.context?.step === PipelineSteps.DISPATCH &&
+        afterResolve.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.status !== 'done'
       ) {
         await (dependencies.replayStep ?? runReplayStep)(
           { runId: params.runId, stepName: PipelineSteps.DISPATCH, triggeredBy: 'operator' },

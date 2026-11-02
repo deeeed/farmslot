@@ -107,7 +107,7 @@ test('fresh dispatch rechecks pressure before every runner effect path', () => {
     ['await attemptRepeatReviewResume(', 'review-session resume'],
     ['await respawnRoleWindowWithCommand(', 'role-window launch'],
     ['await runLaunchPreludeAndSend(', 'send-keys launch'],
-    ['await sendRunnerPostLaunchPrompt(', 'post-launch prompt'],
+    ['await withRunnerPromptMutationBoundary(', 'post-launch prompt'],
   ] as const;
   for (const [needle, label] of effects) {
     const effect = executeSource.indexOf(needle);
