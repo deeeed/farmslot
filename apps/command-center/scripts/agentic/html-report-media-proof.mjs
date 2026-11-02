@@ -91,12 +91,14 @@ try {
       );
     });
   });
+  const frameHandle = await iframe.elementHandle();
+  assert(frameHandle);
   const reportFrame = await poll(
-    () => page.frames().find((frame) => frame.url().startsWith('about:srcdoc')),
+    () => frameHandle.contentFrame(),
     Boolean,
     'the isolated report document',
   );
-  assert(reportFrame, 'The isolated report frame must exist');
+  assert(reportFrame);
   const frameSession = await page.context().newCDPSession(reportFrame);
   const { frameTree } = await frameSession.send('Page.getFrameTree');
   const findReport = (node) =>

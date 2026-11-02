@@ -37,7 +37,7 @@ test('a report-only gallery resolves videos from its retained inventory into the
   assert.ok(target);
   assert.equal(
     target.viewUrl,
-    'https://cc.example/#run/run-1?artifactRun=run-1&artifact=artifacts%2Fcase-4-run%2Fvideos%2Frecipe-run.mp4&recipeRun=recording-1',
+    'https://cc.example/#run/run-1?recipeRun=recording-1&artifactRun=run-1&artifact=artifacts%2Fcase-4-run%2Fvideos%2Frecipe-run.mp4',
   );
   assert.doesNotMatch(target.viewUrl, /test-secret|token=/);
   assert.equal(resolve('../private.mp4'), null);

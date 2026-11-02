@@ -14,6 +14,8 @@ import {
   viewRouteFromLink,
 } from '@farmslot/protocol/surfaces/view-links';
 
+import { lightboxReportArtifactResolver } from '../components/shared/media-lightbox-model.js';
+
 import { familyRunHash } from '../components/runs/family-observability-url-state.js';
 import {
   runDetailEvidenceArtifactHash,
@@ -22,7 +24,25 @@ import {
 import { runsHashWithState } from '../state-url-state.js';
 
 test('actual navigation builders round trip through the desktop contract', () => {
+  const report = {
+    path: 'artifacts/report.html',
+    purpose: 'report',
+    url: '/api/run-artifact?runId=run-1',
+    resolveArtifactUrl: () => '/api/run-artifact?runId=run-1&recipeRunId=recording-1',
+  };
+  const video = {
+    path: 'artifacts/clip.mp4',
+    purpose: 'video',
+    url: '/api/run-artifact?runId=run-1',
+  };
+  const target = lightboxReportArtifactResolver(
+    report,
+    [report, video],
+    'https://cc.example/',
+  )('clip.mp4');
+  assert.ok(target);
   const routes = [
+    new URL(target.viewUrl).hash,
     runDetailStepHash('run-1', 'monitor', '#runs?run=run-1'),
     runDetailEvidenceArtifactHash('run-1', { path: 'artifacts/report.md' }, '#run/run-1'),
     runsHashWithState(

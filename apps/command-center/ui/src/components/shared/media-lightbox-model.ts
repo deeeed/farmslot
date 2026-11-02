@@ -3,7 +3,7 @@ import { buildArtifactUrlResolver, isHtmlArtifactPath } from '@farmslot/review-d
 
 import { JSON_EXTS, MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
 import type { HtmlArtifactTarget } from '../../utils/artifact-html.js';
-import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash } from '../../utils/url-state.js';
 import { runDetailEvidenceArtifactHash } from '../runs/run-detail-url-state.js';
 
 import type { LightboxItem } from './media-lightbox-types.js';
@@ -29,10 +29,15 @@ export function lightboxReportArtifactResolver(
     const source = new URL(mediaUrl, baseUrl);
     const runId = source.searchParams.get('runId');
     if (!runId) return item?.viewUrl ? { viewUrl: item.viewUrl } : null;
-    const { route, params } = parseHashRoute(runDetailEvidenceArtifactHash(runId, { path }, ''));
+    const params = new URLSearchParams();
     const recipeRun = source.searchParams.get('recipeRunId');
     if (recipeRun) params.set('recipeRun', recipeRun);
-    return { viewUrl: new URL(buildHash(route, params), baseUrl).href };
+    return {
+      viewUrl: new URL(
+        runDetailEvidenceArtifactHash(runId, { path }, buildHash('', params)),
+        baseUrl,
+      ).href,
+    };
   };
 }
 
