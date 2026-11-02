@@ -201,6 +201,30 @@ test('delivery, then a fleet refresh, then a restart: the verified record still 
   assertAdopted(restart);
 });
 
+test('a run adopted from the card restarts with its engine', async () => {
+  const held = dispatchingRun('claude', PROMPT_SENT_AT);
+  const adopted: Run = {
+    ...held,
+    status: 'monitoring',
+    steps: held.steps.map((step) =>
+      step.name === 'dispatch'
+        ? {
+            ...step,
+            status: 'done',
+            outputs: { promptDeliveryUncertain: false, acknowledgement: 'task-signal' },
+          }
+        : step.name === 'monitor'
+          ? { ...step, status: 'running' }
+          : step,
+    ),
+  };
+  const { restart, deps } = restartAt(adopted);
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(restart.started, [adopted.id]);
+});
+
 test('a verified record from an earlier attempt does not adopt this attempt', async () => {
   // Attempt 1 verified, a later error sent it to the card, and its Replay step keeps the outputs.
   const earlier = new Date(Date.parse(PROMPT_SENT_AT) - 1_000).toISOString();
