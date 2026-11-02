@@ -2,11 +2,20 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { mock } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 import { promisify } from 'node:util';
 
 import { NativeSessionManager } from './manager.js';
@@ -90,14 +99,24 @@ async function grokInspector(directory: string) {
   const executable = path.join(directory, 'grok');
   await writeFile(
     executable,
-    `#!${process.execPath}\nif(process.argv.includes('--version'))console.log('grok 1.0.52');else{if(!process.argv.includes('inspect')||!process.argv.includes('--json')||!process.argv.includes('--no-leader'))throw Error('Expected structured account inspection');process.stdout.write(process.env.FIXTURE_INSPECTION||JSON.stringify({grokVersion:'1.0.52',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]}}));}\n`,
+    // Like Grok 1.0.70: the account's own hooks show only from a folder trusted for them (HOME), and
+    // a fresh folder of project instructions reads as trusted only when folder trust is off.
+    `#!${process.execPath}\nconst a=process.argv;if(a.includes('--version'))console.log('grok 1.0.52');else{if(!a.includes('inspect')||!a.includes('--json')||!a.includes('--no-leader'))throw Error('Expected structured account inspection');const raw=process.env.FIXTURE_INSPECTION;let account;try{account=raw?JSON.parse(raw):{grokVersion:'1.0.52',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]}}}catch{process.stdout.write(raw);process.exit(0)}const cwd=a[a.indexOf('--cwd')+1];if(process.env.FIXTURE_CWD_LOG)require('node:fs').appendFileSync(process.env.FIXTURE_CWD_LOG,cwd+'\\n');const home=cwd===process.env.HOME;const ungated=process.env.GROK_FOLDER_TRUST==='0'||account.ungated===true;process.stdout.write(JSON.stringify(home?{mcpServers:[],lspServers:[],...account,projectTrusted:true,projectInstructions:[]}:{mcpServers:[],lspServers:[],...account,hooks:[],projectTrusted:ungated,projectInstructions:ungated?[{path:'AGENTS.md'}]:[]}));}\n`,
     { mode: 0o700 },
   );
   return executable;
 }
 
-test('Grok review account preflight refuses hooks and unknown state before persisting trust', async (t) => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'grok-account-trust-'));
+// A review home as Grok 1.0.70 reports it after its deployment sync dropped the hook pin.
+const hookFree = {
+  grokVersion: '1.0.70',
+  hooks: [],
+  plugins: [],
+  agents: [{ name: 'explore', source: { type: 'builtin' } }],
+};
+
+async function grokAccountFixture(t: TestContext, name: string) {
+  const directory = await mkdtemp(path.join(tmpdir(), name));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const source = await farmSource(directory, 'review');
   const executable = await grokInspector(directory);
@@ -106,8 +125,21 @@ test('Grok review account preflight refuses hooks and unknown state before persi
   const file = path.join(account, 'config.toml');
   const settings = '[compat.claude]\nhooks = false\n';
   await writeFile(file, settings);
-  const trust = nativeRunnerDefinitions.grok.trustWorkspace!;
-  const base = { ...process.env, GROK_HOME: account };
+  return {
+    directory,
+    source,
+    executable,
+    file,
+    settings,
+    trust: nativeRunnerDefinitions.grok.trustWorkspace!,
+    base: { ...process.env, GROK_HOME: account },
+    store: path.join(account, 'trusted_folders.toml'),
+  };
+}
+
+test('Grok review account preflight refuses account hooks, servers, plugins, agents and unknown state', async (t) => {
+  const { directory, source, executable, file, settings, trust, base, store } =
+    await grokAccountFixture(t, 'grok-account-refusal-');
   for (const inspection of [
     { grokVersion: '1.0.52', hooks: [{ event: 'session_start', target: 'node pr-script.cjs' }] },
     { grokVersion: '1.0.52', hooks: [{ hookType: 'unknown' }] },
@@ -119,6 +151,12 @@ test('Grok review account preflight refuses hooks and unknown state before persi
       permissions: { enforced: [{ setting: 'nonManagedHooks', enabled: true }] },
     },
     { grokVersion: '1.0.52', hooks: [], hookLoadErrors: ['unreadable account hooks'] },
+    { ...hookFree, plugins: [{ name: 'team-hooks' }] },
+    { ...hookFree, plugins: undefined },
+    { ...hookFree, agents: [{ name: 'reviewer', source: { type: 'user' } }] },
+    { ...hookFree, agents: undefined },
+    { ...hookFree, mcpServers: [{ name: 'notes', source: { type: 'user' } }] },
+    { ...hookFree, lspServers: [{ name: 'ts', source: { type: 'user' } }] },
   ]) {
     assert.throws(
       () =>
@@ -127,7 +165,7 @@ test('Grok review account preflight refuses hooks and unknown state before persi
         }),
       /Grok review refused:.*allow_managed_hooks_only.*another runner/,
     );
-    await assert.rejects(readFile(path.join(account, 'trusted_folders.toml')), /ENOENT/);
+    await assert.rejects(readFile(store), /ENOENT/);
     assert.equal(await readFile(file, 'utf8'), settings);
   }
   assert.throws(
@@ -143,7 +181,15 @@ test('Grok review account preflight refuses hooks and unknown state before persi
     () => trust(source, base, 'owner', { executable: path.join(directory, 'missing') }),
     /could not be verified/,
   );
+});
+
+test('Grok review account preflight admits a hook-free or pinned account and writes no trust', async (t) => {
+  const { source, executable, file, settings, trust, base, store } = await grokAccountFixture(
+    t,
+    'grok-account-admission-',
+  );
   trust(source, base, 'owner', { executable });
+  trust(source, { ...base, FIXTURE_INSPECTION: JSON.stringify(hookFree) }, 'owner', { executable });
   trust(
     source,
     {
@@ -157,10 +203,85 @@ test('Grok review account preflight refuses hooks and unknown state before persi
     'owner',
     { executable },
   );
-  assert.ok(
-    (await readFile(path.join(account, 'trusted_folders.toml'), 'utf8')).includes('trusted = true'),
-  );
+  await assert.rejects(readFile(store), /ENOENT/);
   assert.equal(await readFile(file, 'utf8'), settings);
+  // A notification command can run any file; only the pin disables it.
+  await writeFile(
+    file,
+    `${settings}[[ui.notifications.hooks]]\ncommand = "node scripts/notify.cjs"\n`,
+  );
+  assert.throws(
+    () =>
+      trust(source, { ...base, FIXTURE_INSPECTION: JSON.stringify(hookFree) }, 'owner', {
+        executable,
+      }),
+    /Grok review refused: account plugins, agents or notification commands can run/,
+  );
+  trust(source, base, 'owner', { executable });
+});
+
+test('Grok review account preflight refuses a checkout the account trusts or leaves ungated', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'grok-checkout-trust-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = await farmSource(directory, 'review');
+  const executable = await grokInspector(directory);
+  const account = path.join(directory, 'account');
+  await mkdir(account);
+  const store = path.join(account, 'trusted_folders.toml');
+  const trust = nativeRunnerDefinitions.grok.trustWorkspace!;
+  const base = { ...process.env, GROK_HOME: account };
+  const refused =
+    /Grok review refused: this account trusts the review checkout or one of its parents.*another runner/;
+  const ungated = /Grok review refused: folder trust is off for this account/;
+  // A grant covers subdirectories, so the checkout, a parent, its real path or any spelling refuses.
+  for (const entry of [
+    `[folders.${JSON.stringify(source)}]\ntrusted = true\n`,
+    `[folders.${JSON.stringify(path.dirname(source))}]\ntrusted = true\n`,
+    `[folders.${JSON.stringify(await realpath(source))}]\ntrusted = true\n`,
+    `folders.'${path.dirname(path.dirname(source))}'.trusted = true\n`,
+  ]) {
+    await writeFile(store, entry);
+    assert.throws(() => trust(source, base, 'owner', { executable }), refused);
+  }
+  await writeFile(
+    store,
+    `[folders.${JSON.stringify(path.join(directory, 'other'))}]\ntrusted = true\n`,
+  );
+  trust(source, base, 'owner', { executable });
+  // Grok itself reports whether a fresh folder of project instructions is gated, whichever layer
+  // (the environment, managed configuration, device management) switched trust off.
+  assert.throws(
+    () => trust(source, { ...base, GROK_FOLDER_TRUST: '0' }, 'owner', { executable }),
+    ungated,
+  );
+  const managed = JSON.stringify({
+    grokVersion: '1.0.52',
+    hooks: [],
+    permissions: { enforced: [{ setting: 'nonManagedHooks', enabled: false }] },
+    ungated: true,
+  });
+  assert.throws(
+    () => trust(source, { ...base, FIXTURE_INSPECTION: managed }, 'owner', { executable }),
+    ungated,
+  );
+  // Grok inspects a probe folder created under the launch's temporary directory, then it is removed.
+  const probes = path.join(directory, 'probes');
+  const cwdLog = path.join(directory, 'inspected-folders');
+  await mkdir(probes);
+  trust(source, { ...base, FIXTURE_CWD_LOG: cwdLog }, 'owner', {
+    executable,
+    inspectionCwd: probes,
+  });
+  const inspected = (await readFile(cwdLog, 'utf8')).trim().split('\n');
+  assert.equal(inspected[0], process.env.HOME);
+  assert.ok(inspected[1]?.startsWith(path.join(probes, 'grok-trust-probe-')), inspected[1]);
+  assert.deepEqual(await readdir(probes), []);
+  await rm(store);
+  await mkdir(store);
+  assert.throws(
+    () => trust(source, base, 'owner', { executable }),
+    /Grok review refused: folder trust could not be verified/,
+  );
 });
 
 test(
@@ -183,11 +304,7 @@ test(
     let starts = 0;
     mock.method(nativeRunnerDefinitions.grok.adapter, 'start', async () => {
       starts += 1;
-      assert.ok(
-        (await readFile(path.join(account, 'trusted_folders.toml'), 'utf8')).includes(
-          'trusted = true',
-        ),
-      );
+      await assert.rejects(readFile(path.join(account, 'trusted_folders.toml')), /ENOENT/);
       return {
         nativeSessionId: 'grok-worker',
         send: async () => {},
@@ -241,19 +358,18 @@ for (const runner of ['codex', 'grok', 'claude']) {
       GROK_HOME: account,
       CLAUDE_CONFIG_DIR: account,
     };
+    // Grok inspects the account from its home directory.
+    await mkdir(env.HOME, { recursive: true });
     const trust = nativeRunnerDefinitions[runner].trustWorkspace!;
     trust(directory, env, 'owner');
     await assert.rejects(readFile(account), /ENOENT/);
     assert.throws(() => trust(source, env, 'another-owner'), /does not match/);
     trust(source, env, 'owner');
-    const file = path.join(
-      account,
-      runner === 'claude'
-        ? '.claude.json'
-        : runner === 'codex'
-          ? 'config.toml'
-          : 'trusted_folders.toml',
-    );
+    if (runner === 'grok') {
+      await assert.rejects(readFile(path.join(account, 'trusted_folders.toml')), /ENOENT/);
+      return;
+    }
+    const file = path.join(account, runner === 'claude' ? '.claude.json' : 'config.toml');
     const first = await readFile(file, 'utf8');
     if (runner === 'claude')
       assert.deepEqual(
@@ -262,10 +378,7 @@ for (const runner of ['codex', 'grok', 'claude']) {
       );
     else {
       assert.ok(first.includes(JSON.stringify(source)), first);
-      assert.ok(
-        first.includes(runner === 'codex' ? 'trust_level = "untrusted"' : 'trusted = true'),
-        first,
-      );
+      assert.ok(first.includes('trust_level = "untrusted"'), first);
     }
     trust(source, env, 'owner');
     assert.equal(await readFile(file, 'utf8'), first);
@@ -274,53 +387,36 @@ for (const runner of ['codex', 'grok', 'claude']) {
   });
 }
 
-for (const runner of ['codex', 'grok']) {
-  test(`${runner} preserves multiline config and simultaneous source trust entries`, async (t) => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'native-toml-trust-'));
-    t.after(() => rm(directory, { recursive: true, force: true }));
-    const sources = await Promise.all(['one', 'two'].map((name) => farmSource(directory, name)));
-    await grokInspector(directory);
-    const file = path.join(directory, runner === 'codex' ? 'config.toml' : 'trusted_folders.toml');
-    const prefix =
-      'note = """\n[projects."not-a-table"]\ntrust_level = "untrusted"\n"""\n[other]\nsetting = true\n';
-    await writeFile(file, prefix);
-    const functionName =
-      runner === 'codex' ? 'configureCodexReviewWorkspace' : 'trustGrokWorkspace';
-    await Promise.all(
-      sources.map((source) =>
-        exec(
-          process.execPath,
-          [
-            '-e',
-            `require(${JSON.stringify(trustScript)}).${functionName}(${JSON.stringify(source)});`,
-          ],
-          {
-            env: {
-              ...process.env,
-              PATH: directory + path.delimiter + process.env.PATH,
-              CODEX_HOME: directory,
-              GROK_HOME: directory,
-            },
-          },
-        ),
+test('codex preserves multiline config and simultaneous source trust entries', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'native-toml-trust-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sources = await Promise.all(['one', 'two'].map((name) => farmSource(directory, name)));
+  const file = path.join(directory, 'config.toml');
+  const prefix =
+    'note = """\n[projects."not-a-table"]\ntrust_level = "untrusted"\n"""\n[other]\nsetting = true\n';
+  await writeFile(file, prefix);
+  await Promise.all(
+    sources.map((source) =>
+      exec(
+        process.execPath,
+        [
+          '-e',
+          `require(${JSON.stringify(trustScript)}).configureCodexReviewWorkspace(${JSON.stringify(source)});`,
+        ],
+        { env: { ...process.env, CODEX_HOME: directory } },
       ),
-    );
-    const content = await readFile(file, 'utf8');
-    assert.ok(content.startsWith(prefix.trimEnd()), content);
-    for (const source of sources) assert.ok(content.includes(JSON.stringify(source)), content);
-    nativeRunnerDefinitions[runner].trustWorkspace!(
-      sources[0],
-      {
-        ...process.env,
-        PATH: directory + path.delimiter + process.env.PATH,
-        CODEX_HOME: directory,
-        GROK_HOME: directory,
-      },
-      'owner',
-    );
-    assert.equal(await readFile(file, 'utf8'), content);
-  });
-}
+    ),
+  );
+  const content = await readFile(file, 'utf8');
+  assert.ok(content.startsWith(prefix.trimEnd()), content);
+  for (const source of sources) assert.ok(content.includes(JSON.stringify(source)), content);
+  nativeRunnerDefinitions.codex.trustWorkspace!(
+    sources[0],
+    { ...process.env, CODEX_HOME: directory },
+    'owner',
+  );
+  assert.equal(await readFile(file, 'utf8'), content);
+});
 
 test('native worker records farm workspace trust before startup while conversations do not', async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'native-trust-launch-'));

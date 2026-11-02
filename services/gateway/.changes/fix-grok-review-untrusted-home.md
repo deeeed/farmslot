@@ -1,0 +1,1 @@
+- Review admission refuses a Grok terminal (tmux) review before task preparation, with the runner's reason; use the native Grok transport (ADR-057 Amendment 13).

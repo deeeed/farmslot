@@ -1,6 +1,6 @@
 const { accessSync, constants } = require('node:fs');
-const { mkdir, realpath } = require('node:fs/promises');
-const { join, sep } = require('node:path');
+const { lstat, mkdir, realpath, writeFile } = require('node:fs/promises');
+const { basename, dirname, join, sep } = require('node:path');
 
 function available() {
   if (process.platform !== 'darwin') return false;
@@ -12,7 +12,7 @@ function available() {
     throw error;
   }
 }
-async function sandbox(policy, runtimeRoots, configurationRoots = []) {
+async function sandbox(policy, runtimeRoots, configurationRoots = [], runtimeAccess = {}) {
   if (!available())
     throw new Error('This runner needs the macOS review sandbox on its execution node');
   const temporaryDirectory = join(policy.writableRoots[0], '.review-runtime', 'tmp');
@@ -23,6 +23,34 @@ async function sandbox(policy, runtimeRoots, configurationRoots = []) {
     await mkdir(root, { recursive: true, mode: 0o700 });
     writable.push(await realpath(root));
   }
+  // A runtime root that names writable paths or data files is read-only apart from them, and no
+  // link can be made in it, so one review cannot change what the next one loads, runs or writes.
+  const runtime = writable.slice(policy.writableRoots.length);
+  const inRuntime = async (file) => {
+    const resolved = join(await realpath(dirname(file)), basename(file));
+    if (!runtime.some((root) => resolved.startsWith(root + sep)))
+      throw new Error('Writable review runtime path must belong to a runtime root');
+    return resolved;
+  };
+  const runtimeWritable = [];
+  for (const file of runtimeAccess.writablePaths ?? []) runtimeWritable.push(await inRuntime(file));
+  // A data file keeps its identity: a review may write its bytes but not replace, rename or
+  // remove it, so a later process that opens it cannot be pointed elsewhere.
+  const runtimeData = [];
+  for (const file of runtimeAccess.dataFiles ?? []) {
+    const resolved = await inRuntime(file);
+    try {
+      await writeFile(resolved, '', { flag: 'wx', mode: 0o600 });
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    if (!(await lstat(resolved)).isFile())
+      throw new Error('Review runtime data file must be a regular file');
+    runtimeData.push(resolved);
+  }
+  const restrictedRuntime = runtime.filter((root) =>
+    [...runtimeWritable, ...runtimeData].some((file) => file.startsWith(root + sep)),
+  );
   const blockedConfiguration = [];
   for (const file of configurationRoots) {
     const source = readOnly.find((root) => file.startsWith(root + sep));
@@ -47,6 +75,14 @@ async function sandbox(policy, runtimeRoots, configurationRoots = []) {
     ...writable.map((root) => `(allow file-write* (subpath ${JSON.stringify(root)}))`),
     '(allow file-write* (literal "/dev/null") (literal "/dev/tty"))',
     ...readOnly.map((root) => `(deny file-write* (subpath ${JSON.stringify(root)}))`),
+    ...restrictedRuntime.map((root) => `(deny file-write* (subpath ${JSON.stringify(root)}))`),
+    ...runtimeWritable.map((file) => `(allow file-write* (subpath ${JSON.stringify(file)}))`),
+    ...runtimeData.map((file) => `(allow file-write-data (literal ${JSON.stringify(file)}))`),
+    ...restrictedRuntime.map(
+      (root) =>
+        `(deny file-write-create (require-all (subpath ${JSON.stringify(root)}) (vnode-type SYMLINK)))`,
+    ),
+    ...restrictedRuntime.map((root) => `(deny file-link (subpath ${JSON.stringify(root)}))`),
     ...blockedConfiguration.map(
       (root) => `(deny file-read-data (subpath ${JSON.stringify(root)}))`,
     ),

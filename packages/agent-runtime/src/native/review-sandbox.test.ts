@@ -11,6 +11,106 @@ import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandb
 
 const exec = promisify(execFile);
 test(
+  "host review sandbox lets a review write only the runner's named paths in its account home",
+  { skip: !hostReviewSandboxAvailable() },
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'review-protected-')));
+    const source = join(root, 'source'),
+      output = join(root, 'reports'),
+      account = join(root, 'account');
+    try {
+      for (const dir of [
+        source,
+        output,
+        join(account, 'bin'),
+        join(account, 'bundled', 'agents'),
+        join(account, 'sessions'),
+        join(account, 'logs'),
+      ])
+        await mkdir(dir, { recursive: true });
+      for (const file of [
+        'config.toml',
+        'bin/main-session-token',
+        'models_cache.json',
+        'auth.json',
+      ])
+        await writeFile(join(account, file), 'original');
+      const policy = { readOnlyRoots: [source], writableRoots: [output] };
+      const access = nativeRunnerDefinitions.grok.reviewRuntimeAccess!({ GROK_HOME: account });
+      const { sandbox } = await reviewProcessSandbox(policy, [account], [], access);
+      const lock = join(account, 'auth.json.lock');
+      const program = `const fs=require('node:fs'),path=require('node:path');const ops=JSON.parse(process.argv[1]);const results={};for(const [name,[op,file,other]]of Object.entries(ops)){try{if(op==='write'){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'changed')}else if(op==='symlink')fs.symlinkSync(other,file);else if(op==='link')fs.linkSync(other,file);else if(op==='rename')fs.renameSync(file,other);else fs.unlinkSync(file);results[name]=true;}catch(e){if(!['EPERM','EACCES'].includes(e.code))throw e;results[name]=false;}}console.log(JSON.stringify(results));`;
+      const result = await exec(sandbox.executable, [
+        ...sandbox.args,
+        process.execPath,
+        '-e',
+        program,
+        JSON.stringify({
+          config: ['write', join(account, 'config.toml')],
+          managed: ['write', join(account, 'managed_config.toml')],
+          hook: ['write', join(account, 'hooks', 'planted.json')],
+          // A bundled agent loads as built-in; managed or required settings can select it.
+          bundledAgent: ['write', join(account, 'bundled', 'agents', 'planted.md')],
+          // The external sign-in command runs at every authenticate, also outside the sandbox.
+          signIn: ['write', join(account, 'bin', 'main-session-token')],
+          // A profile's HOME is its Grok home, and Grok's login-shell capture runs these.
+          shell: ['write', join(account, '.zshenv')],
+          // The model catalog cache names the endpoint later sessions send requests to.
+          modelCatalog: ['write', join(account, 'models_cache.json')],
+          storedLogin: ['write', join(account, 'auth.json')],
+          memory: ['write', join(account, 'memory-v2', 'global', 'planted.md')],
+          sessionLink: ['symlink', join(account, 'sessions', 'link'), join(account, 'config.toml')],
+          logHardLink: ['link', join(account, 'logs', 'hard'), join(account, 'config.toml')],
+          lockData: ['write', lock],
+          lockRename: ['rename', lock, join(account, 'sessions', 'moved')],
+          lockRemove: ['unlink', lock],
+          session: ['write', join(account, 'sessions', 'review.jsonl')],
+          log: ['write', join(account, 'logs', 'unified.jsonl')],
+        }),
+      ]);
+      assert.deepEqual(JSON.parse(result.stdout), {
+        config: false,
+        managed: false,
+        hook: false,
+        bundledAgent: false,
+        signIn: false,
+        shell: false,
+        modelCatalog: false,
+        storedLogin: false,
+        memory: false,
+        sessionLink: false,
+        logHardLink: false,
+        lockData: true,
+        lockRename: false,
+        lockRemove: false,
+        session: true,
+        log: true,
+      });
+      for (const file of [
+        'config.toml',
+        'bin/main-session-token',
+        'models_cache.json',
+        'auth.json',
+      ])
+        assert.equal(await readFile(join(account, file), 'utf8'), 'original');
+      // A lock that is not a regular file is refused before anything starts.
+      await rm(lock);
+      await symlink(join(account, 'bin', 'main-session-token'), lock);
+      await assert.rejects(
+        reviewProcessSandbox(policy, [account], [], access),
+        /must be a regular file/,
+      );
+      await assert.rejects(
+        reviewProcessSandbox(policy, [account], [], { writablePaths: [join(root, 'elsewhere')] }),
+        /must belong to a runtime root/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'host review sandbox protects source, shared git metadata and unrelated files while reports stay writable',
   { skip: !hostReviewSandboxAvailable() },
   async () => {
