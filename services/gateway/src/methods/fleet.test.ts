@@ -7,13 +7,16 @@ import test from 'node:test';
 import type { FleetStatus, Run, SlotStatus } from '@farmslot/protocol';
 
 import { resolveSlot, SlotConfigError } from '../core/config.js';
+import type { RawPoolJson } from '../core/index.js';
 import { markGhostSlots } from '../fleet/state.js';
+import { makeVars } from '../runners/test-fixtures.js';
 
 import { isFreeSlot } from './dispatch/slot-scoring.js';
 import { makeRun } from './run/test-fixtures.js';
 import {
   buildFleetRefreshSnapshot,
   buildRefreshSlotRow,
+  checkSSHPerMachine,
   fleetStaleThresholdMs,
   fleetStatus,
   type FleetStatusDeps,
@@ -1056,24 +1059,75 @@ test('a branch refresh writes the commit too, not just the branch name', () => {
 // F306, macpro-audiolab-1: a pool edit landing while a refresh ran was absorbed by it, and the slot
 // kept a stale row until something else refreshed.
 test('a refresh asked for while one runs gets one more run after it, shared by every caller (F306)', async () => {
-  const finish: Array<() => void> = [];
-  const refresh = withFollowUpRefresh(
-    () => new Promise<number>((resolve) => finish.push(() => resolve(finish.length))),
+  const finish: Array<(fail?: boolean) => void> = [];
+  const { refresh } = withFollowUpRefresh(
+    () =>
+      new Promise<number>((resolve, reject) =>
+        finish.push((fail) => (fail ? reject(new Error('probe failed')) : resolve(finish.length))),
+      ),
   );
+  const settle = async (runs: number) => {
+    for (let turn = 0; turn < 10 && finish.length < runs; turn++) await new Promise(setImmediate);
+  };
   const first = refresh();
   const during = [refresh(), refresh()];
   assert.equal(finish.length, 1, 'the second and third calls wait for the running one');
-  finish[0]!();
-  assert.equal(await first, 1);
-  for (let turn = 0; turn < 10 && finish.length < 2; turn++) await new Promise(setImmediate);
-  assert.equal(finish.length, 2, 'one follow-up run starts after it');
+  finish[0]!(true);
+  await assert.rejects(first, /probe failed/, "the first caller gets its run's failure");
+  await settle(2);
+  assert.equal(finish.length, 2, 'one follow-up run starts after it, even after a failure');
+  const duringFollowUp = refresh();
   finish[1]!();
-  assert.deepEqual(await Promise.all(during), [2, 2]);
-  assert.equal(finish.length, 2, 'both callers shared it');
-  const idle = refresh();
-  assert.equal(finish.length, 3, 'with nothing running, a call starts at once');
+  assert.deepEqual(await Promise.all(during), [2, 2], 'both callers shared it');
+  await settle(3);
+  assert.equal(finish.length, 3, 'a call during the follow-up gets one more run');
   finish[2]!();
-  assert.equal(await idle, 3);
+  assert.equal(await duringFollowUp, 3);
+});
+
+test('a refresh joined while one runs shares that run and starts nothing more (F306)', async () => {
+  const finish: Array<() => void> = [];
+  const { join } = withFollowUpRefresh(
+    () => new Promise<number>((resolve) => finish.push(() => resolve(finish.length))),
+  );
+  const running = join();
+  const joined = join();
+  finish[0]!();
+  assert.deepEqual(await Promise.all([running, joined]), [1, 1]);
+  for (let turn = 0; turn < 10; turn++) await new Promise(setImmediate);
+  assert.equal(finish.length, 1, 'no follow-up run');
+  const idle = join();
+  assert.equal(finish.length, 2, 'with nothing running, a join starts one');
+  finish[1]!();
+  assert.equal(await idle, 2);
+});
+
+test("one slot's broken config doesn't fail its host's SSH check for every slot (F306)", async () => {
+  const pool = (machine: string, ids: string[]): RawPoolJson => ({
+    machine,
+    project: 'audiolab',
+    platform: 'ios',
+    os: 'darwin',
+    host: `${machine}.invalid`,
+    ssh_user: 'operator',
+    slots: ids.map((id) => ({ id, enabled: true, repo: `/repos/${id}`, session: id })),
+  });
+  const broken = new Set(['remote-1', 'dead-1', 'dead-2']);
+  const reached: string[] = [];
+  const status = await checkSSHPerMachine(
+    [pool('remote', ['remote-1', 'remote-2']), pool('dead', ['dead-1', 'dead-2'])],
+    async (slotId) => {
+      if (broken.has(slotId)) throw new Error(`Duplicate resource field 'port' in slot ${slotId}`);
+      return makeVars({ slotId });
+    },
+    async (vars) => {
+      reached.push(vars.slotId);
+      return { exitCode: 0, stdout: 'ok', stderr: '' };
+    },
+  );
+  assert.equal(status.get('remote.invalid'), 'ok', 'reached through the slot that loads');
+  assert.deepEqual(reached, ['remote-2']);
+  assert.equal(status.get('dead.invalid'), 'unloadable', 'no slot loads: no SSH verdict at all');
 });
 
 test('a pool read mid-write is read again; one still unreadable is reported with its last good slots (F306)', async (t) => {

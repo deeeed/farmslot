@@ -130,6 +130,8 @@ try {
   // 1. An edit made while a refresh is running reaches fleet.status by itself.
   await writeFile(hold, 'hold\n');
   const running = gw.call<FleetStatusResult>('fleet.status', { forceRefresh: true });
+  // Awaited below; a failure before then must still fail the proof, not go unhandled.
+  running.catch(() => undefined);
   await poll(
     'a refresh to be held in its slot probe',
     async () => existsSync(held) || undefined,
@@ -192,7 +194,7 @@ try {
   failure = error;
   await json(path.join(evidence, 'failure.json'), { error: String(error), fixture });
 } finally {
-  await rm(hold, { force: true }).catch(() => {});
+  await rm(hold, { force: true });
   await cleanup();
   if (cleanupErrors.length > 0)
     failure = new AggregateError(

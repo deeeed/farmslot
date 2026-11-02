@@ -172,7 +172,13 @@ export interface FleetStatus {
    */
   stale?: boolean;
   /** Pool files the last refresh could not parse; their slots keep the rows of the last good read. */
-  poolErrors?: Array<{ file: string; error: string }>;
+  poolErrors?: FleetPoolReadError[];
+}
+
+/** A pool file a fleet refresh could not parse, and the parse error. */
+export interface FleetPoolReadError {
+  file: string;
+  error: string;
 }
 
 // Slot contracts include resource/action shapes used by slot UI and gateway actions.

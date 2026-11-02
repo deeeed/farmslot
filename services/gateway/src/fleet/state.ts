@@ -10,6 +10,7 @@ import { watch } from 'chokidar';
 
 import {
   type ActiveResourcePointer,
+  type FleetPoolReadError,
   type FleetStatus,
   type FleetSummary,
   normalizeProjectWorkflowDefaults,
@@ -427,7 +428,7 @@ interface RawSlot {
 interface RawStatus {
   checked_at: string;
   slots: RawSlot[];
-  pool_errors?: Array<{ file: string; error: string }>;
+  pool_errors?: FleetPoolReadError[];
 }
 
 // ─── Transform ───

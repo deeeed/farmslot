@@ -6,6 +6,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   type AgentContextSummary,
   DEFAULT_BRANCH,
+  type ExecResult,
+  type FleetPoolReadError,
   type FleetStatus,
   type FleetStatusParams,
   type FleetStatusResult,
@@ -80,12 +82,15 @@ interface FleetWorkspaceObservations {
 export interface FleetStatusDeps {
   load(): Promise<FleetStatus>;
   refresh(): Promise<FleetStatusResult>;
+  /** A refresh that a running one already satisfies (the stale kick); defaults to `refresh`. */
+  join?(): Promise<FleetStatusResult>;
   workspaces?: FleetWorkspaceObservations;
 }
 
 const defaultFleetStatusDeps: FleetStatusDeps = {
   load: () => loadFleetStatus(false, true),
   refresh: () => fleetRefresh(),
+  join: () => joinFleetRefresh(),
   workspaces: { read: observedFleetWorkspaces, refresh: enrichFleetWorkspaces },
 };
 
@@ -163,7 +168,7 @@ export async function fleetStatus(
   // snapshot, so re-kicking on every status call would spin no-op refreshes.
   const probeable = fleet.slots.some((slot) => !slot.missingFromPool);
   if (!params?.forceRefresh && probeable) {
-    deps.refresh().catch((err) => {
+    (deps.join ?? deps.refresh)().catch((err) => {
       console.error(`[fleet.status] background stale refresh failed: ${(err as Error).message}`);
     });
   }
@@ -432,12 +437,16 @@ export async function rebindRunSlot(
 }
 
 /**
- * One run at a time. A call made while a run is in flight gets one more run after it, shared by
- * every call made meanwhile: what changed after the running one read its inputs (a pool edit) is
- * never absorbed by it. Before, a pool edit during a slow refresh stayed unseen until the next
- * trigger (F306, macpro-audiolab-1).
+ * One run at a time. `refresh` is for a caller whose inputs may have changed after the running
+ * one read them (a pool edit, an explicit refresh): it gets one more run after it, shared by every
+ * such call made meanwhile. Before, a pool edit during a slow refresh stayed unseen until the next
+ * trigger (F306, macpro-audiolab-1). `join` is for a caller the running one already satisfies (a
+ * stale-snapshot kick): it shares that run and starts nothing more.
  */
-export function withFollowUpRefresh<T>(run: () => Promise<T>): () => Promise<T> {
+export function withFollowUpRefresh<T>(run: () => Promise<T>): {
+  refresh(): Promise<T>;
+  join(): Promise<T>;
+} {
   let inFlight: Promise<T> | null = null;
   let followUp: Promise<T> | null = null;
   const start = (): Promise<T> => {
@@ -447,25 +456,34 @@ export function withFollowUpRefresh<T>(run: () => Promise<T>): () => Promise<T> 
     inFlight = current;
     return current;
   };
-  return () => {
-    if (!inFlight) return start();
-    followUp ??= inFlight
-      .then(
-        () => undefined,
-        () => undefined,
-      )
-      .then(() => {
-        followUp = null;
-        return inFlight ?? start();
-      });
-    return followUp;
+  return {
+    refresh: () => {
+      if (!inFlight) return start();
+      followUp ??= inFlight
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .then(() => {
+          followUp = null;
+          return inFlight ?? start();
+        });
+      return followUp;
+    },
+    join: () => inFlight ?? start(),
   };
 }
 
-const refreshFleet = withFollowUpRefresh(runFleetRefresh);
+const fleetRefreshes = withFollowUpRefresh(runFleetRefresh);
 
+/** Re-probe the fleet; a call made while a refresh runs gets one more run after it. */
 export function fleetRefresh(): Promise<FleetStatusResult> {
-  return refreshFleet();
+  return fleetRefreshes.refresh();
+}
+
+/** Re-probe the fleet, or share the refresh already running. */
+export function joinFleetRefresh(): Promise<FleetStatusResult> {
+  return fleetRefreshes.join();
 }
 
 async function runFleetRefresh(): Promise<FleetStatusResult> {
@@ -755,7 +773,7 @@ async function mapWithConcurrency<T, R>(
 
 /** Pool files a refresh could not parse, and the slots of their last good read. */
 export interface UnreadPools {
-  errors: Array<{ file: string; error: string }>;
+  errors: FleetPoolReadError[];
   slots: ReadonlySet<string>;
 }
 
@@ -779,8 +797,9 @@ export async function loadAllPools(
   let files: string[];
   try {
     files = await readdir(directory);
-  } catch {
-    return { pools, unread: { errors, slots } }; // pool dir missing
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return { pools, unread: { errors, slots } }; // no pool dir yet
   }
   for (const file of files.sort()) {
     if (isIgnoredPoolFile(file)) continue;
@@ -811,10 +830,19 @@ export async function loadAllPools(
 
 // ─── Check SSH per unique machine ───
 
-async function checkSSHPerMachine(
+/** A host's reachability; `unloadable` when no slot on it has a config that loads. */
+export type HostCheck = 'local' | 'ok' | 'fail' | 'skip' | 'unloadable';
+
+export async function checkSSHPerMachine(
   pools: RawPoolJson[],
-): Promise<Map<string, 'local' | 'ok' | 'fail' | 'skip'>> {
-  const status = new Map<string, 'local' | 'ok' | 'fail' | 'skip'>();
+  load: (slotId: string) => Promise<SlotVars> = loadSlotVars,
+  exec: (
+    vars: SlotVars,
+    cmd: string,
+    opts: { timeout: number },
+  ) => Promise<ExecResult> = execOnSlot,
+): Promise<Map<string, HostCheck>> {
+  const status = new Map<string, HostCheck>();
   const seen = new Set<string>();
 
   const checks: Array<Promise<void>> = [];
@@ -837,9 +865,23 @@ async function checkSSHPerMachine(
     } else {
       checks.push(
         (async () => {
+          // Reach the host through any slot whose config loads: one slot's bad config is its
+          // own row's error, not every slot's SSH failure.
+          let vars: SlotVars | undefined;
+          for (const slot of pool.slots) {
+            try {
+              vars = await load(slot.id);
+              break;
+            } catch {
+              // That slot's own row reports why (configError).
+            }
+          }
+          if (!vars) {
+            status.set(key, 'unloadable');
+            return;
+          }
           try {
-            const vars = await loadSlotVars(pool.slots[0].id);
-            const result = await execOnSlot(vars, 'echo ok', { timeout: SLOT_CHECK_TIMEOUT_MS });
+            const result = await exec(vars, 'echo ok', { timeout: SLOT_CHECK_TIMEOUT_MS });
             status.set(key, result.exitCode === 0 ? 'ok' : 'fail');
           } catch {
             status.set(key, 'fail');
@@ -857,7 +899,7 @@ async function checkSSHPerMachine(
 
 async function checkAllSlots(
   entries: Array<{ pool: RawPoolJson; slotIdx: number }>,
-  sshStatus: Map<string, 'local' | 'ok' | 'fail' | 'skip'>,
+  sshStatus: Map<string, HostCheck>,
 ): Promise<SlotCheckResult[]> {
   // Group by machine for parallel execution
   const byMachine = new Map<string, Array<{ pool: RawPoolJson; slotIdx: number }>>();
@@ -917,7 +959,7 @@ async function checkAllSlots(
 async function checkSingleSlot(
   pool: RawPoolJson,
   slotIdx: number,
-  sshStatus: Map<string, 'local' | 'ok' | 'fail' | 'skip'>,
+  sshStatus: Map<string, HostCheck>,
   agents: Promise<ReadonlyMap<string, FleetAgentState>>,
 ): Promise<SlotCheckResult> {
   const rawSlot = pool.slots[slotIdx];
@@ -977,18 +1019,19 @@ async function checkSingleSlot(
     };
   }
 
-  const sshStr = ssh === 'local' ? 'LOCAL' : 'OK';
+  const sshStr = ssh === 'local' ? 'LOCAL' : ssh === 'unloadable' ? '-' : 'OK';
 
   // Load slot vars and project config
   let vars: SlotVars;
   try {
     vars = await loadSlotVars(sid);
   } catch (error) {
-    // Its resources can't be read either: say why on the row, not by leaving them out.
+    // The pool itself parsed, so the row keeps its resources and says why nothing was probed.
     const configError = (error as Error).message;
     console.error(`[fleet.refresh] ${sid}: slot config could not be loaded: ${configError}`);
     return {
       configError,
+      ...(rawSlot.resources ? { resources: rawSlot.resources } : {}),
       slot: sid,
       machine: pool.machine,
       platform,
@@ -1179,7 +1222,7 @@ type FleetAgentState = 'working' | 'idle' | 'no-tmux' | '-';
  */
 async function checkMachineAgents(
   entries: Array<{ pool: RawPoolJson; slotIdx: number }>,
-  sshStatus: Map<string, 'local' | 'ok' | 'fail' | 'skip'>,
+  sshStatus: Map<string, HostCheck>,
 ): Promise<Map<string, FleetAgentState>> {
   const agents = new Map<string, FleetAgentState>();
   const pools = await loadPoolConfigs();
