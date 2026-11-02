@@ -86,6 +86,25 @@ export async function resolvePrRef(
 }
 
 /**
+ * A PR-bound flow's normalized ref as run.create stores it: resolved through the project's
+ * `ci.repo` (read only for a ref that isn't `owner/repo#N` yet), then validated. The dispatch
+ * preview takes the same step, so both name the same PR, branch and follow-up parent.
+ */
+export async function resolvePrBoundTicketRef(
+  normalized: string,
+  flowType: string,
+  ciRepo: () => Promise<string | undefined>,
+): Promise<string> {
+  let ref = normalized;
+  if (!parseGitHubRef(ref)) {
+    const repo = await ciRepo();
+    if (repo) ref = await resolvePrRef(ref, repo);
+  }
+  validateTicketRef(ref, flowType);
+  return ref;
+}
+
+/**
  * Validates a *normalized* ticketOrPr against the flow type it's paired with.
  * Called at dispatch/runCreate entry so invalid input fails fast, before slot
  * allocation or task-file generation, with a message that lists accepted shapes.
