@@ -31,7 +31,10 @@ function claudeProcessBindingRegistration(
     processStartedAt <= 0 ||
     typeof value.sessionId !== 'string' ||
     !/^[a-zA-Z0-9-]+$/.test(value.sessionId) ||
-    (value.status !== 'busy' && value.status !== 'idle' && value.status !== 'waiting') ||
+    (value.status !== 'busy' &&
+      value.status !== 'idle' &&
+      value.status !== 'shell' &&
+      value.status !== 'waiting') ||
     (value.statusUpdatedAt !== undefined &&
       (typeof value.statusUpdatedAt !== 'number' ||
         !Number.isFinite(value.statusUpdatedAt) ||
@@ -40,7 +43,9 @@ function claudeProcessBindingRegistration(
     return null;
   return {
     sessionId: value.sessionId,
-    status: value.status,
+    // Claude Code 2.1.312 writes "shell" once a turn has ended while background shells still run:
+    // the turn is idle; the background-work reader tracks the shells from the transcript.
+    status: value.status === 'shell' ? 'idle' : value.status,
     observedAt: typeof value.statusUpdatedAt === 'number' ? value.statusUpdatedAt : null,
   };
 }

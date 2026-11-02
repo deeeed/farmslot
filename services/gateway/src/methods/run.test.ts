@@ -10,6 +10,7 @@ import {
   buildRunResolveDecisionParams,
   createReviewCuration,
   DEFAULT_CURSOR_MODEL,
+  Events,
   pipelineReviewOffReason,
   pipelineReviewPolicyError,
   PUBLISH_APPROVAL_ACTIONS,
@@ -3924,7 +3925,98 @@ test('refused publication approval stays pending without restoring, replaying or
   assert.deepEqual(getRun(run.id), before);
 });
 
-test('real packaged approval restores a parked run before reading a reused slot checkout', async (t) => {
+/** The approval probe's answer: a conflict with the base at `headSha`, or a clean merge. */
+function baseProbe(mergeConflicts: boolean, headSha = 'abc1234', seen: Run['slotId'][] = []) {
+  return async (run: Pick<Run, 'slotId'>) => {
+    seen.push(run.slotId);
+    return {
+      base: 'main',
+      defaultBranch: 'main',
+      freshness: {
+        mergeConflicts,
+        mergeConflictPaths: mergeConflicts ? ['package.json', 'yarn.lock'] : [],
+        defaultBranch: 'main',
+        headSha,
+        remoteRefOk: true,
+        fetchOk: true,
+        hint: mergeConflicts
+          ? 'mergeConflicts: true. Next: `git fetch origin main && git merge origin/main`.'
+          : 'Up to date with origin/main.',
+      },
+    };
+  };
+}
+
+test('approval of a package conflicting with its publication base is refused, and the gate stops offering it (F302)', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'approval-base-conflict',
+    ticketOrPr: 'APPROVAL-BASE-CONFLICT',
+    runner: 'scripted',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'cancelled' });
+    await deleteRun(run.id);
+  });
+  const decision: RunDecision = {
+    id: 'approval-base-conflict',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    createdAt: '2026-11-02T00:00:00Z',
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      branch: 'fix/subject',
+      workerReport: 'Proof retained',
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+    },
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [decision],
+    steps: [
+      { name: 'human-gate', status: 'running' },
+      { name: 'finalize', status: 'pending' },
+    ],
+    engineState: { generation: 4 },
+  });
+  const events: string[] = [];
+  const probed: Run['slotId'][] = [];
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+      (event) => events.push(event),
+      {
+        assertGatePrerequisites: async () => {},
+        probePublicationBase: baseProbe(true, 'abc1234', probed),
+        restoreGatePark: async () => assert.fail('refusal cannot restore a worker'),
+        resumeRun: async () => assert.fail('refusal cannot resume the run'),
+      },
+    ),
+    /Resolve the base conflict first: .* in package\.json, yarn\.lock, .* Next: `git fetch origin main && git merge origin\/main`/,
+  );
+  assert.equal(probed.length, 1, 'approval probes the base once');
+  const gate = getRun(run.id)!.decisions[0];
+  assert.equal(gate.resolvedAt, undefined);
+  assert.deepEqual(
+    gate.payload?.kind === 'ready' && [
+      gate.payload.mergeConflicts,
+      gate.payload.mergeConflictPaths,
+    ],
+    [true, ['package.json', 'yarn.lock']],
+    'the conflict is written to the gate',
+  );
+  assert.ok(events.includes(Events.RUN_UPDATED), 'an open card hears the change');
+});
+
+/** A parked packaged gate whose slot was reused; its restore rehomes the run to its own checkout. */
+async function parkedPackagedGate(
+  t: import('node:test').TestContext,
+  actions: RunDecision['actions'],
+) {
   const projectDir = mkdtempSync(path.join(projectsDir, 'parked-package-'));
   const project = path.basename(projectDir);
   writeFileSync(
@@ -4000,9 +4092,7 @@ test('real packaged approval restores a parked run before reading a reused slot 
     rmSync(root, { recursive: true, force: true });
     rmSync(poolFile, { force: true });
   });
-  decision.actions = [
-    { id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' },
-  ];
+  decision.actions = actions;
   decision.payload = {
     kind: 'ready',
     prNumber: null,
@@ -4022,6 +4112,47 @@ test('real packaged approval restores a parked run before reading a reused slot 
   });
   await retainRunFixture(getRun(run.id)!, pkg);
   let restores = 0;
+  const restoreGatePark = async () => {
+    restores++;
+    const park = getRun(run.id)!.park!;
+    updateRun(run.id, {
+      slotId: ownedSlot,
+      park: { ...park, slotId: ownedSlot, phase: 'restored', slotFreedAt: undefined },
+    });
+    return {
+      ok: true as const,
+      runId: run.id,
+      slotId: ownedSlot,
+      restoredGeneration: 1,
+      reloadedSessionId: 'retained',
+      gateReplayed: false,
+      record: getRun(run.id)!.park!,
+    };
+  };
+  const selectionData = {
+    packageId: pkg.id,
+    packageHash: pkg.packageHash,
+    packageHeadSha: head,
+    selectedEvidenceKeys: [],
+  };
+  return {
+    run,
+    decision,
+    pkg,
+    head,
+    ownedSlot,
+    selectionData,
+    restoreGatePark,
+    restores: () => restores,
+  };
+}
+
+test('real packaged approval restores a parked run before reading a reused slot checkout', async (t) => {
+  const { run, decision, pkg, head, ownedSlot, selectionData, restoreGatePark, restores } =
+    await parkedPackagedGate(t, [
+      { id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' },
+    ]);
+  const probed: Run['slotId'][] = [];
   const findings = [{ reviewId: 'review', file: 'src/a.ts', description: 'Accepted finding' }];
   await runWithSessionOriginator(acceptor, () =>
     runResolveDecision(
@@ -4030,12 +4161,7 @@ test('real packaged approval restores a parked run before reading a reused slot 
         decisionId: decision.id,
         actionId: 'approve-publish-unresolved',
         ...ACCEPTANCE,
-        selectionData: {
-          packageId: pkg.id,
-          packageHash: pkg.packageHash,
-          packageHeadSha: head,
-          selectedEvidenceKeys: [],
-        },
+        selectionData,
       },
       () => {},
       {
@@ -4058,28 +4184,14 @@ test('real packaged approval restores a parked run before reading a reused slot 
           findings,
           findingsDigest: ACCEPTANCE.findingsDigest,
         }),
+        probePublicationBase: baseProbe(false, head, probed),
         resumeRun: async () => {},
-        restoreGatePark: async () => {
-          restores++;
-          const park = getRun(run.id)!.park!;
-          updateRun(run.id, {
-            slotId: ownedSlot,
-            park: { ...park, slotId: ownedSlot, phase: 'restored', slotFreedAt: undefined },
-          });
-          return {
-            ok: true,
-            runId: run.id,
-            slotId: ownedSlot,
-            restoredGeneration: 1,
-            reloadedSessionId: 'retained',
-            gateReplayed: false,
-            record: getRun(run.id)!.park!,
-          };
-        },
+        restoreGatePark,
       },
     ),
   );
-  assert.equal(restores, 1);
+  assert.equal(restores(), 1);
+  assert.deepEqual(probed, [ownedSlot], 'the base probe reads the restored checkout');
   assert.equal(getRun(run.id)!.decisions[0].resolvedAction, 'approve-publish-unresolved');
   assert.deepEqual(getRun(run.id)!.decisions[0].publicationApproval?.acceptedFindings, {
     findings,
@@ -4094,4 +4206,40 @@ test('real packaged approval restores a parked run before reading a reused slot 
   assert.equal(reloaded.decisions[0].resolvedAction, 'approve-publish-unresolved');
   assert.equal(reloaded.engineState?.publishGate?.publicationStatus, 'pending_publish');
   assert.equal((await ensureCurrentPublishPackage(run.id))?.packageHash, pkg.packageHash);
+});
+
+test('a parked approval probes its restored checkout and refuses a base conflict found there (F302)', async (t) => {
+  const { run, decision, head, ownedSlot, selectionData, restoreGatePark, restores } =
+    await parkedPackagedGate(t, [
+      { id: 'approve-publish', label: 'Publish', style: 'primary' },
+      { id: 'hold', label: 'Hold', style: 'secondary' },
+    ]);
+  const events: string[] = [];
+  const probed: Run['slotId'][] = [];
+  await assert.rejects(
+    runWithSessionOriginator(acceptor, () =>
+      runResolveDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'approve-publish', selectionData },
+        (event) => events.push(event),
+        {
+          ...acceptorAuthority,
+          assertGatePrerequisites: async () => {},
+          probePublicationBase: baseProbe(true, head, probed),
+          resumeRun: async () => assert.fail('refusal cannot resume the run'),
+          restoreGatePark,
+        },
+      ),
+    ),
+    /Resolve the base conflict first/,
+  );
+  assert.equal(restores(), 1);
+  assert.deepEqual(probed, [ownedSlot], 'the base probe reads the restored checkout');
+  const gate = getRun(run.id)!.decisions[0];
+  assert.equal(gate.resolvedAt, undefined);
+  assert.equal(gate.payload?.kind === 'ready' && gate.payload.mergeConflicts, true);
+  assert.ok(
+    !gate.actions.some(({ id }) => id === 'approve-publish'),
+    'the refreshed gate stops offering approval',
+  );
+  assert.ok(events.includes(Events.RUN_UPDATED));
 });

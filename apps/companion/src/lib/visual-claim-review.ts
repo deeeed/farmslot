@@ -1,4 +1,7 @@
-import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import type {
+  EvidenceReviewJudgmentRow,
+  EvidenceReviewModel,
+} from '@farmslot/adapter-sdk/evidence';
 import { Methods, type RunReviewVisualClaimResult } from '@farmslot/protocol';
 
 import type { GatewayClient } from './gateway-client';
@@ -16,4 +19,17 @@ export async function recordVisualClaimReview(
   const params = model.visualReviewRequest(claimId, client.authenticatedPrincipal, verdict, reason);
   if (params.runId !== runId) throw new Error('The run changed. Refresh the evidence.');
   return client.request<RunReviewVisualClaimResult>(Methods.RUN_REVIEW_VISUAL_CLAIM, params, null);
+}
+
+/**
+ * Whether Looks right / Issue can act: the evidence binds a verdict for this person
+ * (`reviewKind`) and the screen has a current way to send it. Every surface that shows the
+ * controls renders them unavailable otherwise, so a blocked control never looks live.
+ */
+export function visualJudgmentAvailable(
+  row: Pick<EvidenceReviewJudgmentRow, 'reviewKind'>,
+  onRecord: unknown,
+  disabled = false,
+): boolean {
+  return !disabled && Boolean(row.reviewKind) && Boolean(onRecord);
 }

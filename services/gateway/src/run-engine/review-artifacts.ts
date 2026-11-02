@@ -19,7 +19,11 @@ import {
 } from '../core/artifact-copy-policy.js';
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotCopyDir, slotCopyFile, slotFileExists, slotListDir } from '../core/slot-io.js';
-import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
+import {
+  loadReviewApprovalPolicy,
+  normalizeReviewRecommendation,
+  stricterReviewRecommendation,
+} from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { appendReviewFindingBodies } from '../review-publication/validate-comments.js';
 import {
@@ -68,21 +72,6 @@ function reviewRecommendationFromArtifact(data: unknown): string | null {
   return typeof recommendation === 'string' && recommendation.trim()
     ? recommendation.toUpperCase()
     : null;
-}
-
-const REVIEW_RECOMMENDATION_RANK: Record<string, number> = {
-  APPROVE: 0,
-  COMMENT: 1,
-  REQUEST_CHANGES: 2,
-};
-
-function normalizeReviewRecommendation(value: string | null | undefined): string | null {
-  const normalized = value?.trim().toUpperCase();
-  return normalized && normalized in REVIEW_RECOMMENDATION_RANK ? normalized : null;
-}
-
-function stricterReviewRecommendation(left: string, right: string): string {
-  return REVIEW_RECOMMENDATION_RANK[right] > REVIEW_RECOMMENDATION_RANK[left] ? right : left;
 }
 
 function reviewMetadataLines(markdown: string): string[] {
@@ -323,8 +312,9 @@ export async function readReviewArtifacts(
             `[run-engine] review recommendation mismatch for ${runId.slice(0, 8)}: review.md=${markdownRecommendation}, line-comments.json=${sidecarRecommendation}; using stricter verdict`,
           );
         }
-        result.recommendation = markdownRecommendation
-          ? stricterReviewRecommendation(markdownRecommendation, sidecarRecommendation)
+        const markdown = normalizeReviewRecommendation(markdownRecommendation);
+        result.recommendation = markdown
+          ? stricterReviewRecommendation(markdown, sidecarRecommendation)
           : sidecarRecommendation;
       }
     } catch (err) {

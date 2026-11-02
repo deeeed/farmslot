@@ -15,7 +15,11 @@ import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { readEvalReviewContribution, recordEvalJudgeResult } from '../evals/judge.js';
-import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
+import {
+  isNodeTransportUnavailableError,
+  resolveAfterNodeReconnect,
+  withNodeReconnectWait,
+} from '../fleet/node-rpc.js';
 import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
@@ -48,7 +52,7 @@ import {
 import { unwatchContext } from '../tasks/watcher.js';
 
 import { finishReviewCleanup } from './cleanup.js';
-import { readReviewFeedback } from './feedback.js';
+import { logRecommendationCorrection, readReviewFeedback } from './feedback.js';
 import { continueNativeReviewCompletion } from './native-review-completion.js';
 import {
   assertNativeReviewOperationCurrent,
@@ -221,7 +225,6 @@ async function runNativeReviewAttempt(
   if (!original) throw new Error('Native review run not found');
   assertNativeRunOwner(original);
   validateNativeRunner(runner, model);
-  const ownerPrincipalId = nativeReviewerOwner(original, vars);
   const generation = original.engineState?.generation ?? 0;
   const admit = () => {
     assertNativeReviewOperationCurrent();
@@ -236,6 +239,11 @@ async function runNativeReviewAttempt(
     assertNativeRunOwner(run);
     return run;
   };
+  // A reload re-enters REVIEW before the review node reconnects; wait for it, not fail the run.
+  const ownerPrincipalId = await withNodeReconnectWait(
+    async () => resolveAfterNodeReconnect(vars.machine, () => nativeReviewerOwner(original, vars)),
+    admit,
+  );
   admit();
   const allocated = allocateReviewerContext({ runId, runner, model });
   const contextPrefix = nativeReviewerContextPrefix({
@@ -875,6 +883,7 @@ async function runNativeReviewAttempt(
       await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath),
       terminal,
     );
+    logRecommendationCorrection(contextId, feedback);
     const error = terminalReviewArtifactErrorForCompletion(
       contextId,
       feedback.terminalInvalidReason,

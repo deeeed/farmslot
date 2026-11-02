@@ -328,6 +328,23 @@ test('filter store restores persisted filters with current source options', asyn
   assert.deepEqual(store.getState().availableMachines, ['runner-local']);
 });
 
+test('filter store keeps its values when a refresh brings the same sources', () => {
+  const store = createFilterStore(new MemoryFilterStorage({}));
+  store.getState().setAvailable(sources);
+  const before = store.getState();
+  // Fleet, run and decision refreshes recompute the sources; equal ones re-render nothing.
+  store.getState().setAvailable(sources.map((source) => ({ ...source })));
+  const after = store.getState();
+  assert.equal(after.filters, before.filters);
+  assert.equal(after.availableSources, before.availableSources);
+  assert.equal(after.availableProjects, before.availableProjects);
+  assert.equal(after.availableMachines, before.availableMachines);
+
+  store.getState().setAvailable([...sources, { project: 'example-web-farm', machine: 'runner-b' }]);
+  assert.notEqual(store.getState().availableProjects, before.availableProjects);
+  assert.ok(store.getState().availableProjects.includes('example-web-farm'));
+});
+
 test('filter store hydration does not overwrite user changes made while storage is loading', async () => {
   const storageReadGate: { release?: () => void } = {};
   const storage = new MemoryFilterStorage({

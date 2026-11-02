@@ -333,7 +333,8 @@ version=$(farmslot --version < /dev/null) || {
 }
 echo "  farmslot $version"
 echo "  farmslot profile home: ${FARMSLOT_HOME:-$HOME/.farmslot}"
-if ! farmslot rpc gateway.status < /dev/null > /dev/null; then
+# A stopped gateway is classified below, so this check does not wait out a reload.
+if ! FARMSLOT_GATEWAY_RECONNECT_MS=0 farmslot rpc gateway.status < /dev/null > /dev/null; then
   # Nothing listening on the gateway's port (the instance's gateway is down) is
   # not a CLI fault: the checks above passed, so warn and let the deploy finish.
   # Node runs the CLI, so it is on this PATH; GW_URL always carries the port

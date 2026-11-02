@@ -63,11 +63,18 @@ import {
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import {
+  extendTerminalTeardown,
   TerminalTeardownTimeoutError,
   withTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
 import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
+import {
+  dropParkedBranch,
+  ownsArtifactOnlyBranch,
+  parkRunBranchCommits,
+  parksBranchCommits,
+} from '../../run-lifecycle/validation-run-commits.js';
 import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
@@ -146,6 +153,15 @@ export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
 /** Progress while waiting, so a CLI idle timeout does not end the release first. */
 const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
 
+/**
+ * Teardown time a release's artifact copy adds for its bytes. Copybacks measured about
+ * 5 MB/s (audiolab-6, F298; 851 MB of unindexed APKs on audiolab-4 after #1726); the
+ * budget assumes 2 MB/s for a loaded node. The floor covers listing and hashing.
+ */
+export function releaseArtifactCopyBudgetMs(bytes: number): number {
+  return Math.max(60_000, Math.ceil(bytes / (2 * 1024 * 1024)) * 1000);
+}
+
 export interface SlotReleaseOptions {
   restartRunId?: string;
   machineTransitionHeld?: boolean;
@@ -159,6 +175,10 @@ export interface SlotReleaseOptions {
     verifyWork: () => Promise<void>;
     discardLocalWork: boolean;
     skipRecycle?: boolean;
+    /** The finished artifact-only run whose own branch commits this recovery parks. */
+    parkRunId?: string;
+    /** The exact head an ownerless return to idle may park (`Run.releasedCheckout`). */
+    parkHeadSha?: string;
   };
 }
 
@@ -899,7 +919,30 @@ async function slotReleaseImpl(
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
   await assertReleaseClaim();
   if (options?.workspaceRecovery) await options.workspaceRecovery.verifyWork();
-  if (!keepWork && !forceReset && !options?.workspaceRecovery) {
+  // An artifact-only run's own commits are parked under a durable ref (SHAs on the run) before
+  // any reset, so they neither block the next dispatch nor vanish with the reset.
+  const parkOwnerId = options?.workspaceRecovery?.parkRunId ?? params.expectedRunId ?? boundOwner;
+  const parkOwner = !keepWork && parkOwnerId ? await getRunWithArchived(parkOwnerId) : undefined;
+  // A named discard parks the run's commits whatever its phase (a run held at a refused COMPLETE).
+  const namedDiscard = forceReset && !!parkOwnerId && parkOwnerId === params.expectedRunId;
+  const parkable = namedDiscard ? ownsArtifactOnlyBranch(parkOwner) : parksBranchCommits(parkOwner);
+  // The park reads the checkout as clean the way the workspace probe does: scaffolding ignored.
+  if (parkable) await excludeSlotScaffolding(vars, projectJson);
+  const parked = parkable
+    ? await parkRunBranchCommits(parkOwner!, vars, execOnSlot, {
+        defaultBranch,
+        headSha: options?.workspaceRecovery?.parkHeadSha,
+        discard: namedDiscard,
+      })
+    : null;
+  // A recovery started to park a run's commits never resets a checkout that turned out not to be them.
+  if (options?.workspaceRecovery?.parkRunId && !parked) {
+    await markSlotBusy(params.slotId, 'working');
+    throw new Error(
+      `Slot ${params.slotId} holds work that is not run ${options.workspaceRecovery.parkRunId}'s own branch commits; nothing was parked or reset.`,
+    );
+  }
+  if (!keepWork && !forceReset && !options?.workspaceRecovery && !parked) {
     const unmergedWork = await findReleaseUnmergedWork(
       vars,
       projectJson,
@@ -910,17 +953,18 @@ async function slotReleaseImpl(
       await markSlotBusy(params.slotId, 'working');
       throw unmergedWorkError(unmergedWork);
     }
-  } else if (!keepWork) {
+  } else if (!keepWork && !parked) {
     await logDiscardedWork(vars, params.slotId, boundOwner);
   }
 
   // 3. Collect artifacts + clean task files + git reset
   const taskDirName = resolveProjectTaskDirName(projectJson);
   let idleBranchAfterRelease: string | undefined;
+  let artifactsCollected = false;
   if (!keepWork) {
     // Legacy slots may predate prepare exclusions; keep warm runtime files out of Git clean.
     await assertReleaseClaim();
-    await excludeSlotScaffolding(vars, projectJson);
+    if (!parkable) await excludeSlotScaffolding(vars, projectJson);
     // Read task_file from status
     const taskRel = normalizeTaskRelativeDir(
       (await readSlotField(params.slotId, 'task_file')) as string | null,
@@ -951,6 +995,14 @@ async function slotReleaseImpl(
           slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
             excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES],
             excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
+            // The completion mirror already holds most of these files. Copying them all
+            // again (about 900 MB on the Audiolab release slots) outlasted the teardown
+            // timeout, so the slot never reset (F298).
+            skipUnchanged: true,
+            // Files the mirror never indexed (two 425 MB APKs on audiolab-4) still transfer
+            // here, so the copy adds its own budget instead of spending the teardown's.
+            onTotals: ({ bytes }) =>
+              extendTerminalTeardown(params.slotId, releaseArtifactCopyBudgetMs(bytes)),
             // Stamp run/slot so transfer progress binds to run detail / pipeline UI.
             phase: 'mirror',
             runId: releaseRunId,
@@ -967,6 +1019,8 @@ async function slotReleaseImpl(
             },
           }),
         );
+        // A file that failed to copy is only kept by the scaffolding archive.
+        artifactsCollected = entryFailures.length === 0;
         if (entryFailures.length > 0) {
           step(
             'artifacts',
@@ -995,6 +1049,7 @@ async function slotReleaseImpl(
           destination,
           taskRelativeDir: taskRel,
           beforeRemove: assertReleaseClaim,
+          artifactsCollected,
         });
         step(
           'scaffolding',
@@ -1059,6 +1114,13 @@ async function slotReleaseImpl(
     });
     idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
+    if (parked) {
+      const kept = await dropParkedBranch(parked, vars, execOnSlot);
+      step(
+        'git',
+        `Parked ${parked.commits.length} unpushed commit(s) of ${parked.branch} at ${parked.ref}${kept ? `; ${kept}` : '; branch dropped'}`,
+      );
+    }
 
     // Automatic recovery stays cold. Explicit manual recovery keeps its recycle policy.
     if (options?.workspaceRecovery?.skipRecycle) {

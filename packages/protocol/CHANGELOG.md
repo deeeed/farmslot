@@ -4,8 +4,15 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `ReadyGatePayload.mergeConflicts`/`behindMain` are probed against the publication base (a stacked run's upstream branch), and a conflict on a publication gate now blocks its advancing actions (doc only; no shape change).
+- `Run.parkedCommits` (`ParkedRunCommits[]`): an artifact-only run's own branch commits, parked under `refs/farmslot/parked/<run>/<head>` when its slot returned to idle (append-only).
+- `Run.releasedCheckout`: the branch and head an artifact-only run left on its slot when COMPLETE released the slot's ownership; a later ownerless return to idle parks only that head.
+- `RunEngineState.publishGate.refusedEvidencePackageId`: the prepared package a human-gate replay found the worker's evidence refused against; while it is still `packageId`, the gate rebuilds rather than reuses it.
 - `RunPipelineReviewPolicy` (`'default' | 'none'`) on `Run`, `RunCreateParams` and `DispatchPreviewParams` (with `completionPolicy`), `DispatchPreview.pipelineReview`, and the shared `pipelineReviewOffReason` / `pipelineReviewPolicyError` rule. Only an artifact-only dev or fix-bug run may turn its pipeline review off, and not alongside `reviewSequence`, `reviewPolicy` or an eval experiment; an unknown value is refused.
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `compareText` orders strings as `localeCompare` does, through one shared `Intl.Collator`. Run lists and family groups sort with it.
+- Content prefetch hashes files and artifacts in 16 KB slices, one per macrotask, so a large file no longer blocks a frame; content a person opens still verifies at once.
+- Change notifications match queries by dependency ids computed when the query is first observed.
 
 ## 0.74.10 - 2026-11-01
 

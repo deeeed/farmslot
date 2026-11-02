@@ -83,6 +83,8 @@ export class NativeHostObservation {
   private receipt: NativeSourceReceipt;
   private snapshot?: SourceSnapshot;
   private accountDigest = '';
+  /** False while the last profile sample failed: sessions stay observable, profile reads don't. */
+  private accountsAvailable = false;
   private readonly profileStatuses = new Map<string, NativeProfileStatusResult>();
   private timer?: ReturnType<typeof setTimeout>;
   private generation = 0;
@@ -139,7 +141,10 @@ export class NativeHostObservation {
       this.arm();
       const change = this.changes;
       const before = this.scan();
-      const accounts = await this.observeAccounts();
+      // A failed profile sample affects only profile reads (ADR-057 Amendment 11).
+      const accounts = await this.observeAccounts().catch((error: unknown) =>
+        this.sampleFailed(error),
+      );
       if (generation !== this.generation || this.stopped) return;
       const after = this.scan();
       if (this.failed || change !== this.changes || before.digest !== after.digest)
@@ -231,6 +236,13 @@ export class NativeHostObservation {
    * Imperative profile/status retains its existing on-demand probe outside this source. */
   profileStatus(profileId: string): NativeProfileStatusResult {
     this.fence();
+    if (!this.accountsAvailable)
+      throw Object.assign(
+        new Error(
+          'Native account profiles are unavailable on this node. Retry after its next sample.',
+        ),
+        { code: 'NATIVE_PROFILES_UNAVAILABLE' },
+      );
     const status = this.profileStatuses.get(profileId);
     if (!status)
       throw Object.assign(new Error('Native account profile is unavailable'), {
@@ -238,13 +250,27 @@ export class NativeHostObservation {
       });
     return structuredClone(status);
   }
-  private setAccounts(accounts: NativeProfileStatusResult[]): void {
+  private setAccounts(accounts: NativeProfileStatusResult[] | undefined): void {
     this.profileStatuses.clear();
-    for (const status of accounts)
+    for (const status of accounts ?? [])
       this.profileStatuses.set(status.profile.id, structuredClone(status));
-    this.accountDigest = hash(JSON.stringify(accounts));
+    this.accountsAvailable = accounts !== undefined;
+    this.accountDigest = accountsDigest(accounts);
   }
 
+  /** Logs a failed profile sample once per outage; sessions stay observable. */
+  private sampleFailed(error: unknown): undefined {
+    if (this.accountsAvailable || !this.receipt.ready)
+      console.warn(
+        '[native-observation]',
+        JSON.stringify({
+          code: 'NATIVE_PROFILES_UNAVAILABLE',
+          reason: error instanceof Error ? error.message : String(error),
+          nodeId: this.client.executionNodeId,
+        }),
+      );
+    return undefined;
+  }
   private fail(reason: string): void {
     if (!this.failed)
       console.warn(
@@ -332,7 +358,7 @@ export class NativeHostObservation {
     void Promise.resolve()
       .then(async () => {
         before = this.scan();
-        return this.observeAccounts();
+        return this.observeAccounts().catch((error: unknown) => this.sampleFailed(error));
       })
       .then((accounts) => {
         if (generation !== this.generation || this.stopped) return;
@@ -340,7 +366,7 @@ export class NativeHostObservation {
           this.queued = true;
           return;
         }
-        const digest = hash(JSON.stringify(accounts));
+        const digest = accountsDigest(accounts);
         const after = this.scan();
         if (after.accounts !== before.accounts) {
           this.queued = true;
@@ -359,7 +385,7 @@ export class NativeHostObservation {
       })
       .catch(() => {
         if (generation === this.generation) {
-          this.fail('account-sample-failed');
+          this.fail('sample-scan-failed');
         }
       })
       .finally(() => {
@@ -439,7 +465,13 @@ export class NativeHostObservation {
         }
     }
     host = hash([host, parts[0] ?? 'absent'].join('\n'));
-    const profiles = listNativeProfiles(this.home);
+    let profiles: unknown;
+    try {
+      profiles = listNativeProfiles(this.home);
+    } catch {
+      // An unreadable profile file fails the profile sample, not session observation.
+      profiles = 'unreadable';
+    }
     const accountFiles: string[] = [JSON.stringify(profiles)];
     const accounts = hash(accountFiles.join('\n'));
     parts.push(host, accounts);
@@ -454,6 +486,10 @@ function nearestDirectory(path: string): string {
     current = parent;
   }
   return current;
+}
+/** An unavailable sample has its own digest, so a later successful one reads as a change. */
+function accountsDigest(accounts: NativeProfileStatusResult[] | undefined): string {
+  return hash(JSON.stringify(accounts ?? 'unavailable'));
 }
 function hash(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
