@@ -15,6 +15,10 @@ export async function createArtifactOnlyTrial(
   const { captureRunOutput } = await import('../run-completion/output.js');
   const { resolveWorkerTerminalContract } = await import('../tasks/worker-terminal-contract.js');
   const directory = path.join(taskDir, 'artifacts/recipe-runs/proof');
+  // A visual claim has to rest on something a recording can show, or plan refuses it (#1706).
+  // Here it reads through an app query (not a ui.* action, so no recording is required);
+  // the other proof modes keep the shell read.
+  const visual = proofMode === 'visual';
   const runner = createRecipeRunner({
     actionManifest: {
       $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
@@ -27,6 +31,12 @@ export async function createArtifactOnlyTrial(
             additionalProperties: false,
           },
           examples: [{ action: 'command', cmd: 'printf observed', intent: 'Read.', next: 'check' }],
+        },
+        'app.read_visible_state': {
+          description: 'Read the value the app shows.',
+          execution_capabilities: [],
+          schema: { type: 'object', properties: {}, additionalProperties: false },
+          examples: [{ action: 'app.read_visible_state', intent: 'Read.', next: 'check' }],
         },
         assert_output: {
           description: 'Check the value.',
@@ -48,7 +58,16 @@ export async function createArtifactOnlyTrial(
         end: { description: 'Finish.', examples: [{ action: 'end', status: 'pass' }] },
       },
     },
-    adapters: createStandardCoreAdapters({ actions: ['command', 'assert_output'] }),
+    adapters: [
+      ...createStandardCoreAdapters({ actions: ['command', 'assert_output'] }),
+      // A stand-in for the app's query, supplied by the operator like the rest of this fixture.
+      {
+        action: 'app.read_visible_state',
+        capabilities: [],
+        source: { kind: 'operator', trust: 'trusted', name: 'artifact-only fixture' },
+        execute: async () => ({ output: { stdout: 'observed' } }),
+      },
+    ],
     hud: false,
     defaultSource: { kind: 'operator', trust: 'trusted' },
   });
@@ -64,7 +83,9 @@ export async function createArtifactOnlyTrial(
       workflow: {
         entry: 'read',
         nodes: {
-          read: { action: 'command', cmd: 'printf observed', intent: 'Read.', next: 'check' },
+          read: visual
+            ? { action: 'app.read_visible_state', intent: 'Read.', next: 'check' }
+            : { action: 'command', cmd: 'printf observed', intent: 'Read.', next: 'check' },
           check: {
             action: 'assert_output',
             source: 'read',

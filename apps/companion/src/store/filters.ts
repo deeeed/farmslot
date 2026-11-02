@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
-import type { PendingDecision, Run, SlotStatus } from '@farmslot/protocol';
+import { compareText, type PendingDecision, type Run, type SlotStatus } from '@farmslot/protocol';
 import { evidenceOnlyDecisionIds } from '@farmslot/review-dispatch';
 
 export const GLOBAL_FILTERS_STORAGE_KEY = '@farmslot:globalFilters';
@@ -142,14 +142,27 @@ export function createFilterStore(storage: FilterPersistenceStorage = AsyncStora
     },
 
     setAvailable: (sources) => {
+      const current = get();
       const normalizedSources = normalizeFilterSources(sources);
-      const next = reconcileFiltersWithSources(get().filters, normalizedSources);
-      const filtersChanged = !sameFilters(get().filters, next.filters);
+      const next = reconcileFiltersWithSources(current.filters, normalizedSources);
+      const filtersChanged = !sameFilters(current.filters, next.filters);
+      // Every fleet, run and decision update recomputes the sources; values that come out equal
+      // keep their identity so filtered screens do not re-render for them.
       set({
-        availableSources: normalizedSources,
-        availableProjects: next.available.projects,
-        availableMachines: next.available.machines,
-        filters: next.filters,
+        availableSources: sameFilterSources(current.availableSources, normalizedSources)
+          ? current.availableSources
+          : normalizedSources,
+        availableProjects: sameStringArray(current.availableProjects, next.available.projects)
+          ? current.availableProjects
+          : next.available.projects,
+        availableMachines: sameStringArray(current.availableMachines, next.available.machines)
+          ? current.availableMachines
+          : next.available.machines,
+        filters:
+          sameStringArray(current.filters.projects, next.filters.projects) &&
+          sameStringArray(current.filters.machines, next.filters.machines)
+            ? current.filters
+            : next.filters,
       });
       if (get().initialized && filtersChanged) void persistFilters(next.filters, set, storage);
     },
@@ -320,8 +333,18 @@ function normalizeFilterSources(sources: FilterSource[]): FilterSource[] {
   }
   return [...byKey.values()].sort(
     (a, b) =>
-      (a.project ?? '').localeCompare(b.project ?? '') ||
-      (a.machine ?? '').localeCompare(b.machine ?? ''),
+      compareText(a.project ?? '', b.project ?? '') ||
+      compareText(a.machine ?? '', b.machine ?? ''),
+  );
+}
+
+function sameFilterSources(left: FilterSource[], right: FilterSource[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (source, index) =>
+        source.project === right[index].project && source.machine === right[index].machine,
+    )
   );
 }
 

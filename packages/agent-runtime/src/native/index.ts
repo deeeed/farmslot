@@ -2,6 +2,8 @@ export { NativeSessionClient } from './client.js';
 export { cursorNativeAdapter } from './cursor.js';
 export { grokNativeAdapter } from './grok.js';
 export { NativeSessionManager, resolveNativeExecutable } from './manager.js';
+export { opencodeNativeAdapter } from './opencode.js';
+export { piNativeAdapter } from './pi.js';
 export type {
   NativeAdapter,
   NativeAdapterOptions,

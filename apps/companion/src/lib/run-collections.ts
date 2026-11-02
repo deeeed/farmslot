@@ -19,6 +19,11 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from './resource-cache';
+import { sharedLifetime } from './shared-lifetime';
+
+function sameRows<T>(previous: readonly T[], next: readonly T[]): boolean {
+  return previous.length === next.length && previous.every((row, index) => row === next[index]);
+}
 
 const collections = new NativeRunCollections((snapshot) => {
   useFleetStore.setState({
@@ -26,9 +31,12 @@ const collections = new NativeRunCollections((snapshot) => {
     fleet: snapshot.fleet.data?.fleet ?? null,
     loading: snapshot.fleet.status === 'loading',
   });
+  const runs = snapshot.runs.data?.runs ?? [];
+  const previousRuns = useRunStore.getState().runs;
   useRunStore.setState({
     observation: snapshot.runs,
-    runs: snapshot.runs.data?.runs ?? [],
+    // Fleet and decision updates republish the same rows; an unchanged list keeps its identity.
+    runs: sameRows(previousRuns, runs) ? previousRuns : runs,
     activeLoading: snapshot.active.status === 'loading',
     historyLoading: snapshot.history?.status === 'loading',
     historyLoaded: Boolean(snapshot.history && snapshot.history.status !== 'loading'),
@@ -70,7 +78,8 @@ function bind(): void {
   );
 }
 
-export function initializeNativeRunCollections(): () => void {
+/** Each mounted app root holds the collections; they stop only after the last root releases them. */
+export const initializeNativeRunCollections = sharedLifetime(() => {
   const stopCache = subscribeResourceCache(bind);
   const stopConnection = useConnectionStore.subscribe(bind);
   bind();
@@ -79,7 +88,7 @@ export function initializeNativeRunCollections(): () => void {
     stopConnection();
     collections.dispose();
   };
-}
+});
 
 export const openNativeRunHistory = () => collections.openHistory();
 export const nativeRunHistoryLimit = () => collections.historyLimit();

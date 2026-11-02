@@ -3,15 +3,21 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { DEFAULT_PI_THINKING } from '@farmslot/protocol';
+
 import { claudeProfileEnvironment, observeClaudeAccount } from './account-claude.js';
 import { observeCodexAccount } from './account-codex.js';
 import { cursorProfileEnvironment, observeCursorAccount } from './account-cursor.js';
 import { observeGrokAccount } from './account-grok.js';
+import { observeOpenCodeAccount, opencodeProfileEnvironment } from './account-opencode.js';
+import { observePiAccount, piProfileEnvironment } from './account-pi.js';
 import type { NativeAccountObservation, NativeAccountProbeOptions } from './account-types.js';
 import { claudeNativeAdapter } from './claude.js';
 import { codexNativeAdapter } from './codex.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
+import { opencodeNativeAdapter } from './opencode.js';
+import { piNativeAdapter } from './pi.js';
 import { hostReviewSandboxAvailable, type NativeProcessSandbox } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
 
@@ -34,6 +40,8 @@ export interface NativeWorkspaceTrustOptions {
 
 const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-trust.cjs') as {
   claudeReadOnlyReviewArgs: readonly string[];
+  codexHome(environment: NodeJS.ProcessEnv): string;
+  grokHome(environment: NodeJS.ProcessEnv): string;
   reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
   workspaceTrustByRunner: Record<
@@ -81,12 +89,17 @@ export interface NativeRunnerDefinition {
   /** Default for new standalone conversations; worker launch settings stay authoritative. */
   defaultEffort?: string;
   account: {
+    /** Where a session without a profile reads this runner's login under the node's environment. */
+    standardDirectory(environment: NodeJS.ProcessEnv): string;
     environment(directory: string, base?: NodeJS.ProcessEnv): Record<string, string>;
     unset: readonly string[];
     loginArgs: readonly string[];
     observe(options: NativeAccountProbeOptions): Promise<NativeAccountObservation>;
   };
 }
+
+const claudeDirectory = (env: NodeJS.ProcessEnv) =>
+  env.CLAUDE_CONFIG_DIR || join(env.HOME || homedir(), '.claude');
 
 /** Native profile mechanics stay with the runner definition, not client workflows. */
 export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
@@ -98,6 +111,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     supportsReadOnlyWorkspace: true,
     defaultEffort: 'low',
     account: {
+      standardDirectory: workspaceTrust.codexHome,
       environment: (directory) => ({ CODEX_HOME: directory }),
       unset: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
       loginArgs: ['login'],
@@ -110,7 +124,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     trustWorkspace: workspaceTrustByRunner.claude,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [
-      env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude'),
+      claudeDirectory(env),
       // Claude Code creates its tool-runner scratch directory outside
       // CLAUDE_CONFIG_DIR. Keep that state writable inside the review sandbox.
       ...(typeof process.getuid === 'function' ? [join('/tmp', `claude-${process.getuid()}`)] : []),
@@ -119,6 +133,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'claude',
     supportsWorkers: true,
     account: {
+      standardDirectory: claudeDirectory,
       environment: claudeProfileEnvironment,
       unset: [
         'ANTHROPIC_API_KEY',
@@ -148,6 +163,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'cursor-agent',
     supportsWorkers: true,
     account: {
+      standardDirectory: (env) => env.HOME || homedir(),
       environment: cursorProfileEnvironment,
       unset: [
         'CURSOR_API_KEY',
@@ -170,15 +186,46 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.grok,
     trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
-    reviewRuntimeRoots: (env) => [env.GROK_HOME ?? join(env.HOME ?? homedir(), '.grok')],
+    reviewRuntimeRoots: (env) => [workspaceTrust.grokHome(env)],
     adapter: grokNativeAdapter,
     binary: 'grok',
     supportsWorkers: true,
     account: {
+      standardDirectory: workspaceTrust.grokHome,
       environment: grokProfileEnvironment,
       unset: ['GROK_API_KEY', 'XAI_API_KEY'],
       loginArgs: ['login'],
       observe: observeGrokAccount,
+    },
+  },
+  // Pi and OpenCode sign in per provider: a profile separates their own login stores,
+  // while provider keys in the environment still apply.
+  opencode: {
+    adapter: opencodeNativeAdapter,
+    binary: 'opencode',
+    supportsWorkers: true,
+    account: {
+      standardDirectory: (env) => env.XDG_DATA_HOME || join(env.HOME || homedir(), '.local/share'),
+      environment: opencodeProfileEnvironment,
+      unset: ['OPENCODE_AUTH_CONTENT'],
+      loginArgs: ['auth', 'login'],
+      observe: observeOpenCodeAccount,
+    },
+  },
+  pi: {
+    adapter: piNativeAdapter,
+    binary: 'pi',
+    supportsWorkers: true,
+    // The tmux launch's default thinking level.
+    defaultEffort: DEFAULT_PI_THINKING,
+    account: {
+      standardDirectory: (env) =>
+        env.PI_CODING_AGENT_DIR || join(env.HOME || homedir(), '.pi/agent'),
+      environment: piProfileEnvironment,
+      unset: [],
+      // Pi signs in from its own `/login` command.
+      loginArgs: [],
+      observe: observePiAccount,
     },
   },
 };

@@ -21,17 +21,18 @@ function loadReader(relative: string, overrides: Record<string, unknown> = {}) {
   });
   return exports;
 }
-const parserFile = path.join(routerRoot, 'build/fork/getStateFromPath.js');
-const parserRequire = createRequire(parserFile);
-const parser = loadReader('build/fork/getStateFromPath.js', {
-  '../react-navigation/native': parserRequire('../react-navigation/core/validatePathConfig'),
-});
+const parser = loadReader('build/fork/getStateFromPath.js');
 const globalReader = loadReader('build/global-state/getRouteInfoFromState.js', {
   '../fork/getPathFromState-forks': { appendBaseUrl: (pathname: string) => pathname },
 });
-const { extractExpoPathFromURL } = require(
-  path.join(routerRoot, 'build/fork/extractPathFromURL.js'),
+// expo-linking's entry loads React Native; its dev-launch unwrapping has no dependencies.
+const linkingRoot = path.dirname(
+  createRequire(path.join(routerRoot, 'package.json')).resolve('expo-linking/package.json'),
 );
+const { unwrapDevLaunchURL } = require(path.join(linkingRoot, 'build/devLaunchURL.js'));
+const extractExpoPathFromURL = loadReader('build/fork/extractPathFromURL.js', {
+  'expo-linking': { unwrapDevLaunchURL },
+}).extractExpoPathFromURL as (prefixes: string[], url: string) => string;
 const config = {
   screens: {
     __root: {

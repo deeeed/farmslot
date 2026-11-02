@@ -9,6 +9,7 @@ import {
   Events,
   isCompletionPrerequisiteFailure,
   type Principal,
+  RecordedEvidenceReadError,
   type Run,
   type RunDecision,
   type RuntimeCapabilityStatusResult,
@@ -24,6 +25,7 @@ import {
 } from '../../backlog/dispatch-queue.js';
 import { isolatedTestPath } from '../../core/isolated-test-path.js';
 import { statusFile, updateSlotStatus } from '../../core/state.js';
+import { preparedPackageIsStale } from '../../run-completion/prepared-package-stale.js';
 import {
   createEngineDecision,
   hasEngineDecisionWaiter,
@@ -56,6 +58,7 @@ import {
   resetPublishGateApprovalForReplay,
   rollbackReclaimedSlotReleaseOptions,
   runReplayStep,
+  type RunReplayStepHooks,
   shouldRerouteEvalReplayToPrepare,
 } from './replay-step.js';
 
@@ -2526,6 +2529,129 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
   );
 });
 
+/** A human-gating run whose engine is packaging after a passing review: no decision is open (ba397e2c). */
+async function preparingGateRun(t: test.TestContext): Promise<Run> {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const taskFile = '/tmp/farmslot-human-gate-preparing/TASK.md';
+  const slotOwner = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}1`,
+  });
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}2`,
+  });
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+    'complete',
+  ]);
+  updateRun(run.id, {
+    status: 'human-gating',
+    taskFile,
+    slotId: 'macwork-ff-9',
+    decisions: [],
+    steps: run.steps.map((step) =>
+      doneThroughComplete.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'human-gate'
+          ? { ...step, status: 'running', detail: 'Running human-gate claude review (1/1)' }
+          : step,
+    ),
+  });
+  // The slot is owned by another live run, so the replay fails after cancelling the engine.
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      { slots: [{ slot: 'macwork-ff-9', lifecycle: 'busy', current_run_id: slotOwner.id }] },
+      null,
+      2,
+    ) + '\n',
+  );
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+    for (const r of [run, slotOwner]) {
+      if (getRun(r.id)) {
+        updateRun(r.id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(r.id);
+      }
+    }
+  });
+  return run;
+}
+
+const replayGate = (run: Run, hooks: RunReplayStepHooks) =>
+  runReplayStep(
+    { runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' },
+    () => {},
+    hooks,
+  );
+
+test('a gate replay that fails after cancelling the engine preparing its decision resumes that gate', async (t) => {
+  const run = await preparingGateRun(t);
+  const resumed: string[] = [];
+  await assert.rejects(
+    () =>
+      replayGate(run, {
+        engineDriven: () => true,
+        startEngine: async (runId) => {
+          resumed.push(runId);
+        },
+      }),
+    /no longer safely reclaimable/,
+  );
+  assert.deepEqual(resumed, [run.id], 'the gate gets its engine back');
+  assert.equal(getRun(run.id)?.status, 'human-gating');
+});
+
+test('a failed gate replay with no live engine to cancel leaves the run to its owner', async (t) => {
+  const run = await preparingGateRun(t);
+  const resumed: string[] = [];
+  await assert.rejects(
+    () =>
+      replayGate(run, {
+        engineDriven: () => false,
+        startEngine: async (runId) => {
+          resumed.push(runId);
+        },
+      }),
+    /no longer safely reclaimable/,
+  );
+  assert.deepEqual(resumed, [], 'a recovery holding the gate keeps it');
+});
+
+test('overlapping failed gate replays resume the gate once, at the newest generation', async (t) => {
+  const run = await preparingGateRun(t);
+  const resumed: string[] = [];
+  const startEngine = async (runId: string) => {
+    resumed.push(runId);
+  };
+  // The first replay cancels the live engine. A second replay starts and fails while the first is
+  // still in flight; the first then fails on the generation the second took and leaves last.
+  await assert.rejects(() =>
+    replayGate(run, {
+      engineDriven: () => true,
+      startEngine,
+      afterGenerationBump: async () => {
+        await assert.rejects(
+          () => replayGate(run, { engineDriven: () => false, startEngine }),
+          /no longer safely reclaimable/,
+        );
+        assert.deepEqual(resumed, [], 'the first replay is still in flight');
+      },
+    }),
+  );
+  assert.deepEqual(resumed, [run.id]);
+});
+
 test('slot activation persists its dispatch baseline and ordinary prepare replay clears the intent', async (t) => {
   const baseline = 'a'.repeat(40);
   const taskFile = '/tmp/activation-baseline-fixture/TASK.md';
@@ -3834,6 +3960,105 @@ test('a failed replay of a live gate retires the stale engine waiter of the deci
   assert.equal(await waiting, 'abort');
   assert.equal(hasEngineDecisionWaiter(gateId), false);
   assert.equal(getRun(run.id)?.decisions.find((d) => d.id === gateId)?.resolvedAt, undefined);
+});
+
+test('a failed replay of a live gate gives the gate its engine back, which presents its own card', async (t) => {
+  const run = await blockedGateRun(t, 'gate-live-resume', [holdGate('pending-gate-live')]);
+  const resumed: string[] = [];
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}, {
+      engineDriven: () => true,
+      startEngine: async (runId) => {
+        // A blocked run would be finalized as terminal on engine entry.
+        assert.equal(getRun(runId)?.status, 'human-gating');
+        resumed.push(runId);
+      },
+      afterGenerationBump: async () => {
+        throw new Error('refresh failed');
+      },
+    }),
+    /refresh failed/,
+  );
+  // ba397e2c: a reopened card had no engine, and a gate action resumes only a blocked run.
+  assert.deepEqual(resumed, [run.id], 'the gate gets its engine back');
+  assert.equal(
+    getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-live')?.resolvedAction,
+    'superseded',
+    'the resumed engine presents its own card',
+  );
+});
+
+test('a failed replay of a live gate with another open decision reopens its card for the owner', async (t) => {
+  const other: RunDecision = {
+    ...holdGate('blocked-alert'),
+    type: 'blocked_alert',
+    title: 'Worker blocked',
+  };
+  const run = await blockedGateRun(t, 'gate-live-other', [holdGate('pending-gate-other'), other]);
+  const resumed: string[] = [];
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}, {
+      engineDriven: () => true,
+      startEngine: async (runId) => {
+        resumed.push(runId);
+      },
+      afterGenerationBump: async () => {
+        throw new Error('refresh failed');
+      },
+    }),
+    /refresh failed/,
+  );
+  assert.deepEqual(resumed, []);
+  assert.equal(
+    getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-other')?.resolvedAt,
+    undefined,
+  );
+});
+
+test('a gate replay whose publication evidence is refused rebuilds the gate instead of failing', async (t) => {
+  const run = await blockedGateRun(t, 'gate-evidence', [holdGate('pending-gate-evidence')]);
+  // No frozen dispatch contract in this fixture's task; a package was prepared before.
+  updateRun(run.id, {
+    recordedEvidenceContractVersion: 0,
+    engineState: { ...run.engineState, publishGate: { packageId: 'pkg-before' } },
+  });
+  const started: string[] = [];
+  const hooks = (refusal: Error): RunReplayStepHooks => ({
+    startEngine: async (runId) => {
+      started.push(runId);
+    },
+    captureOutput: async () => {
+      throw refusal;
+    },
+  });
+  // A node failure still fails the replay; with no live engine to give back, it reopens the card.
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}, {
+      ...hooks(new Error('Node macpro timeout after 60000ms')),
+      engineDriven: () => false,
+    }),
+    /Node macpro timeout/,
+  );
+  assert.deepEqual(started, []);
+  assert.equal(
+    getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-evidence')?.resolvedAt,
+    undefined,
+  );
+  // ba397e2c: the before attempt awaits an attestation. The gate's own package refresh refuses
+  // it the same way and shows why, so the replay goes on and an engine waits at the gate.
+  await runReplayStep(
+    { runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' },
+    () => {},
+    hooks(
+      new RecordedEvidenceReadError(
+        'evidence-selection-invalid',
+        'Before evidence comes from recipe attempt recipe-runs/attempts/base',
+      ),
+    ),
+  );
+  assert.deepEqual(started, [run.id]);
+  // The package prepared before the refusal is not offered again.
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), true);
 });
 
 test('the enclosing human gate cannot mark a replay-restored held slot busy', async (t) => {

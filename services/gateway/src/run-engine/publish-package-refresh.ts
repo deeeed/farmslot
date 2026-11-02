@@ -1,7 +1,6 @@
 // publish-package-refresh.ts — Ready-gate package refresh and evidence-selection preservation
 
 import {
-  DEFAULT_BRANCH,
   effectiveRequiredReviewCount,
   Events,
   GATE_SUMMARY_KINDS,
@@ -9,6 +8,7 @@ import {
   latestExhaustedReview,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  RecordedEvidenceReadError,
   reviewPolicySatisfied,
   reviewRetryCapReason,
   type ReviewStatus,
@@ -16,13 +16,15 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
+import { loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
   prepareCompletionPackageTransitionLocked,
   publicationStatusForRun,
 } from '../run-completion/orchestrator.js';
+import { preparedPackageIsStale } from '../run-completion/prepared-package-stale.js';
+import { publicationBaselineContext } from '../run-completion/publication-artifacts.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
 import {
   computeReadyGateReviewSubjectHash,
@@ -35,8 +37,8 @@ import { commitRunVisualJudgment, getRun, persistRunNow, updateRun } from '../ru
 
 import {
   applyBranchFreshnessToReadyGatePayload,
-  probeSlotBranchFreshness,
-  resolveBranchUpdateStrategy,
+  type BranchFreshnessSummary,
+  probeRunBaseFreshness,
 } from './branch-freshness.js';
 import { BlockedRunError, OWNED_WORKER_NOT_IDLE, OwnedWorkerBusyError } from './errors.js';
 import {
@@ -112,6 +114,7 @@ export async function ensureCurrentPublishPackage(
       .flatMap((review) => review.artifactPaths ?? [review.id])
       .sort();
     if (
+      !preparedPackageIsStale(run) &&
       prepared?.headSha === head &&
       JSON.stringify([...prepared.reviewArtifactIds].sort()) === JSON.stringify(ids) &&
       (await publicationBundleAvailable(run, prepared))
@@ -131,6 +134,45 @@ interface PublicationInspectionReaders {
 
 const inspectionRefreshes = new Map<string, Promise<Run>>();
 
+/**
+ * An evidence refusal is kept until its inputs change. Every run.get and decision list inspects the
+ * gate, and each refresh holds the machine's transition key while it reads the worker's checkout,
+ * so re-running a refusal on every poll would starve the machine's other runs. Artifact edits
+ * leave HEAD alone, so a refusal is also retried once it is a few minutes old, and as soon as the
+ * worker has worked again.
+ */
+const refreshRefusals = new Map<string, { inputs: string; message: string; at: number }>();
+const REFRESH_REFUSAL_RETRY_MS = 5 * 60_000;
+
+function refreshInputs(run: Run, decisionId: string, head: string): string {
+  return JSON.stringify([
+    decisionId,
+    head,
+    run.engineState?.generation ?? 0,
+    run.slotId,
+    run.branch,
+    publicationBaselineContext(run).baseSha,
+    (run.beforeAttemptAttestations ?? []).map((attestation) => attestation.id),
+  ]);
+}
+
+/** Only an evidence refusal repeats on the next poll; a node timeout or a busy worker does not. */
+function isEvidenceRefusal(error: unknown): boolean {
+  for (let cause = error; cause instanceof Error; cause = cause.cause)
+    if (cause instanceof RecordedEvidenceReadError) return true;
+  return false;
+}
+
+function refreshFailureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** One bounded log line: a node failure can carry a command's whole output. */
+function refreshFailureLogLine(message: string): string {
+  const line = message.replace(/\s+/gu, ' ');
+  return line.length > 2000 ? `${line.slice(0, 2000)}…` : line;
+}
+
 /** Coalesce polling readers, and never snapshot a worker that is still progressing. */
 export function reconcilePublicationPackageForInspection(
   run: Run,
@@ -144,8 +186,11 @@ export function reconcilePublicationPackageForInspection(
     !['dev', 'fix-bug'].includes(run.flowType) ||
     run.readOnly ||
     publicationStatusForRun(run) !== 'not_published'
-  )
+  ) {
+    // A gate that closed, or moved past refreshing, has no refusal left to show.
+    refreshRefusals.delete(run.id);
     return Promise.resolve(run);
+  }
   const existing = inspectionRefreshes.get(run.id);
   if (existing) return existing;
   const readers: PublicationInspectionReaders = {
@@ -196,23 +241,42 @@ export function reconcilePublicationPackageForInspection(
           ? await readers.bundleAvailable(run, pending.payload.prPackage)
           : false;
       if (
+        !preparedPackageIsStale(getRun(run.id) ?? run) &&
         pending.payload?.kind === 'ready' &&
         pending.payload.prPackage?.headSha === head &&
         bundleAvailable
       )
         return getRun(run.id) ?? run;
       const progress = await readers.progress(getRun(run.id) ?? run);
-      if (progress.kind !== 'idle')
+      if (progress.kind !== 'idle') {
+        // A worker acting on the gate (re-recording, say) gets its result refreshed. An unproven
+        // read under node load is not the worker working, so the refusal is kept through it.
+        if (progress.kind === 'making-progress') refreshRefusals.delete(run.id);
         return collecting(
           bundleAvailable
             ? 'Publication HEAD changed; waiting for the owned worker to be idle before refreshing its package.'
             : 'Retained publication evidence is missing; waiting for the owned worker to be idle before refreshing its package.',
           head,
         );
-      return await readers.refresh(run.id, pending.id);
+      }
+      const inputs = refreshInputs(getRun(run.id) ?? run, pending.id, head);
+      const refused = refreshRefusals.get(run.id);
+      if (refused?.inputs === inputs && Date.now() - refused.at < REFRESH_REFUSAL_RETRY_MS)
+        return collecting(`Publication package refresh could not finish: ${refused.message}`);
+      try {
+        return await readers.refresh(run.id, pending.id);
+      } catch (error) {
+        if (isEvidenceRefusal(error))
+          refreshRefusals.set(run.id, {
+            inputs,
+            message: refreshFailureMessage(error),
+            at: Date.now(),
+          });
+        throw error;
+      }
     } catch (error) {
       return collecting(
-        `Publication package refresh could not finish: ${error instanceof Error ? error.message : String(error)}`,
+        `Publication package refresh could not finish: ${refreshFailureMessage(error)}`,
       );
     } finally {
       inspectionRefreshes.delete(run.id);
@@ -320,13 +384,28 @@ export function restampReviewsForRefreshedPackage(
   });
 }
 
-export function refreshPublishPackage(
+export async function refreshPublishPackage(
   params: Parameters<typeof refreshPublishPackageTransitionLocked>[0],
   readers: { progress?: typeof readRunProgress; source?: typeof capturePublicationSource } = {},
 ): ReturnType<typeof refreshPublishPackageTransitionLocked> {
-  return withRunTransition(params.runId, () =>
-    refreshPublishPackageTransitionLocked(params, false, readers.progress, readers.source),
-  );
+  const startedAt = Date.now();
+  try {
+    return await withRunTransition(params.runId, () =>
+      refreshPublishPackageTransitionLocked(params, false, readers.progress, readers.source),
+    );
+  } catch (error) {
+    // A caller that timed out never sees this refusal, so the log keeps it. Inspection runs a
+    // refusal again only once its inputs change, so this is one line per attempt, not per poll.
+    const message = refreshFailureMessage(error);
+    console.warn(
+      `[run-engine] run ${params.runId.slice(0, 8)} — publish package refresh refused after ${Math.round((Date.now() - startedAt) / 1000)}s: ${refreshFailureLogLine(message)}`,
+    );
+    // The gate shows the latest evidence refusal, not an older remembered one.
+    const remembered = refreshRefusals.get(params.runId);
+    if (remembered && isEvidenceRefusal(error))
+      refreshRefusals.set(params.runId, { ...remembered, message, at: Date.now() });
+    throw error;
+  }
 }
 
 async function refreshPublishPackageTransitionLocked(
@@ -560,20 +639,16 @@ async function refreshPublishPackageTransitionLocked(
       reviews,
     },
   };
-  // Soft gate chip: re-probe behind-main + merge-tree on package refresh so the
-  // operator sees staleness before more review loops. Never auto-rebases.
+  // Re-probe behind-base + merge-tree against the publication base on package refresh so the
+  // operator sees staleness before more review loops, and a conflict blocks approval (F302).
+  // Never auto-rebases.
   // Always replace (not partial-spread) freshness keys so stale mergeConflictPaths
   // / hints cannot survive a clean or failed probe via ...oldPayload.
-  let freshness: Awaited<ReturnType<typeof probeSlotBranchFreshness>> = null;
+  let freshness: BranchFreshnessSummary | null = null;
   let freshnessLine = '';
   if (refreshedRun.slotId) {
     try {
-      const vars = await loadSlotVars(refreshedRun.slotId);
-      const projectVars = await loadProjectVars(refreshedRun.project);
-      const defaultBranch =
-        getProjectField(projectVars.projectJson, 'default_branch') || DEFAULT_BRANCH;
-      const strategy = resolveBranchUpdateStrategy(projectVars.projectJson);
-      freshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
+      freshness = (await probeRunBaseFreshness(refreshedRun))?.freshness ?? null;
       if (freshness) {
         const behindLabel =
           typeof freshness.behindMain === 'number' ? String(freshness.behindMain) : 'unknown';
@@ -628,6 +703,7 @@ async function refreshPublishPackageTransitionLocked(
   // The preparation owner commits the package only after all projection I/O.
   // A late source refusal therefore preserves the previous canonical pointer.
   await prepared.commit!();
+  refreshRefusals.delete(params.runId);
   const nextDecision: RunDecision | undefined = decision
     ? {
         ...decision,

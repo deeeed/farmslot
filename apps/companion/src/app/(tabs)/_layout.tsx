@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, Tabs } from 'expo-router';
 import React from 'react';
-import { View } from 'react-native';
+import { type ColorValue, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ConnectionBanner } from '../../components/ConnectionBanner';
@@ -11,6 +11,9 @@ import { isStoreScreenshotMode } from '../../lib/store-screenshot-mode';
 import { colors } from '../../lib/theme';
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { workspaceHome } from '../../lib/workspace-access';
+
+// React Navigation passes tab icons a string; RN 0.88 widened ColorValue to null and numbers.
+const tabIconColor = (color: ColorValue) => (typeof color === 'string' ? color : undefined);
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
@@ -57,7 +60,7 @@ export default function TabLayout() {
               href: farmTabs ? undefined : null,
               tabBarButtonTestID: 'companion-tab-review',
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="play-circle-outline" size={size} color={color} />
+                <Ionicons name="play-circle-outline" size={size} color={tabIconColor(color)} />
               ),
               header: () => filteredHeader,
             }}
@@ -68,7 +71,7 @@ export default function TabLayout() {
               title: 'Fleet',
               href: null,
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="grid-outline" size={size} color={color} />
+                <Ionicons name="grid-outline" size={size} color={tabIconColor(color)} />
               ),
               header: () => filteredHeader,
             }}
@@ -80,7 +83,7 @@ export default function TabLayout() {
               href: farmTabs ? undefined : null,
               tabBarButtonTestID: 'companion-tab-terminals',
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="terminal-outline" size={size} color={color} />
+                <Ionicons name="terminal-outline" size={size} color={tabIconColor(color)} />
               ),
               header: () => connectedHeader,
             }}
@@ -91,7 +94,7 @@ export default function TabLayout() {
               title: 'PRs',
               href: null,
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="git-pull-request-outline" size={size} color={color} />
+                <Ionicons name="git-pull-request-outline" size={size} color={tabIconColor(color)} />
               ),
               header: () => filteredHeader,
             }}
@@ -102,7 +105,11 @@ export default function TabLayout() {
               title: 'Co-Pilot',
               href: null,
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="chatbubble-ellipses-outline" size={size} color={color} />
+                <Ionicons
+                  name="chatbubble-ellipses-outline"
+                  size={size}
+                  color={tabIconColor(color)}
+                />
               ),
               header: () => connectedHeader,
             }}
@@ -129,7 +136,7 @@ export default function TabLayout() {
               title: 'Inbox',
               href: null,
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="mail-outline" size={size} color={color} />
+                <Ionicons name="mail-outline" size={size} color={tabIconColor(color)} />
               ),
               header: () => filteredHeader,
             }}
@@ -141,7 +148,11 @@ export default function TabLayout() {
               href: farmTabs ? undefined : null,
               tabBarButtonTestID: 'companion-tab-advanced',
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="ellipsis-horizontal-circle-outline" size={size} color={color} />
+                <Ionicons
+                  name="ellipsis-horizontal-circle-outline"
+                  size={size}
+                  color={tabIconColor(color)}
+                />
               ),
               header: () => connectedHeader,
             }}
@@ -152,7 +163,7 @@ export default function TabLayout() {
               title: 'Settings',
               tabBarButtonTestID: 'companion-tab-settings',
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="settings-outline" size={size} color={color} />
+                <Ionicons name="settings-outline" size={size} color={tabIconColor(color)} />
               ),
             }}
           />

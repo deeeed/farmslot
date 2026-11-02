@@ -3,6 +3,10 @@
 ## Unreleased
 
 - SQLite stores take `deleteFiles(scopeId)` (also through `createNativeSqliteResourceStore`): files a client keeps beside a scope's store are deleted with it, before its row, both by `deleteAll` and when the scope is evicted past the store limit. A failure rejects, so the owner deletes the scope again before it is read again.
+- `ResourceCacheOwner.renderKey` is rebuilt only when the owner, its input, authentication or render identity changes, not on every read.
+
+- The native storage peers follow Expo SDK 58: `expo-sqlite` ~58.0.15 and `expo-file-system` ~58.0.13.
+
 - Schema 5 stores run-list rows beside their query entry (`resource_rows`): `getRows` reads the entry and its rows in one serial job, `mergeRows` writes the entry, deletes and upserts in one transaction, `putQuery` keeps the rows, and deleting the entry, store or scope removes them. Older schemas are rebuilt; drafts are unaffected.
 
 - Add the drafts store (`@farmslot/local-store/drafts`): one draft per scope, slot, run and path, IndexedDB and memory adapters, and a 30-day sweep once a slot or run can no longer be read.

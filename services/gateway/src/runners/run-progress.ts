@@ -188,13 +188,21 @@ async function observeContext(
     run.steps.some(
       (step) => (step.name === 'complete' || step.name === 'finalize') && step.status === 'running',
     );
-  if (progress.kind !== 'unproven' || !context?.target?.paneId || !handedOff) return progress;
+  // A context still launching has no runner yet, which absence cannot tell from one that exited.
+  if (
+    progress.kind !== 'unproven' ||
+    !context?.target?.paneId ||
+    !handedOff ||
+    context.status === 'launching'
+  )
+    return progress;
   const retained = await source.retainedTarget(vars, context);
   if (retained.state === 'absent')
     return {
       kind: 'idle',
       activeRole,
-      reason: 'Recorded worker pane is gone and its slot has no live runner',
+      reason:
+        'Recorded worker runner has exited or its pane is gone, and its slot has no live runner',
     };
   if (retained.state === 'unknown') return { ...progress, reason: retained.reason };
   return observeTarget(retained.target);

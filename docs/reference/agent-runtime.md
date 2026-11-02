@@ -251,6 +251,23 @@ A native worker, dispatched or static-review, starts through its runner's native
 - The gateway's launch names an executable only when the machine's pool configures one for that runner. Otherwise the host uses the adapter's own.
 - A native run for a runner without a native adapter is refused before its slot is claimed or prepared.
 
+## Native account default
+
+A native session or worker without `profileId` runs on the node's own login for its runner (ADR-057 Amendment 11). That login lives in the runner's standard directory, the one such a session uses: `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` when the node sets it, otherwise `~/.claude`, `~/.codex` or `~/.grok`; for Cursor, the home directory. Each runner definition exposes it once as `account.standardDirectory`.
+
+- No registration is needed for it, and clients enable it without reading the profile list.
+- A failed profile sample on the node (an unreadable profile file, or a profile removed during the sample) leaves session observation ready; observed profile reads fail with `NATIVE_PROFILES_UNAVAILABLE` until a later sample succeeds.
+- `native.profile.add` refuses the standard directory with "This is the node's own login; no profile is needed". It compares canonical paths (`~/` expanded, symlinks resolved), before the existing-profile check.
+- Profiles register additional configuration directories only.
+
+## Pi and OpenCode native sessions
+
+Pi and OpenCode run natively for chat and workers (ADR-057 Amendment 12).
+
+- OpenCode runs `opencode acp` through the shared ACP adapter. With no model, a session uses the model OpenCode is configured with. At the sandboxed tier, or with none, each tool asks through native approvals. Other tiers keep OpenCode's own permission rules.
+- Pi runs `pi --mode rpc`. Pi never asks before a tool, so its sessions report no approvals, as its terminal does. A turn fails only when Pi's last answer is an error, so a retry Pi makes itself can still complete it. Stop clears Pi's queued steering first. A `provider/id` model must match exactly; a bare ID leaves the provider to Pi.
+- A Pi profile is an agent directory (`PI_CODING_AGENT_DIR`); an OpenCode profile is a data home (`XDG_DATA_HOME`). Pi reads as signed in while its RPC model list is not empty. OpenCode reads as signed in once its ACP server starts; its login is unconditional and its own free models need no sign-in.
+
 ## Managed native reviewer approval policy
 
 The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. Reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.

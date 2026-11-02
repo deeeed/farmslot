@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -59,6 +60,73 @@ test('the default Claude directory retains its native credential store while cus
       profile.directory,
       'A different HOME must not redirect the chosen directory',
     );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a runner's standard directory is the node's own login and cannot be registered", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'native-standard-'));
+  try {
+    const refused = { message: "This is the node's own login; no profile is needed" };
+    const env = { HOME: home };
+    mkdirSync(join(home, 'claude-config'));
+    symlinkSync(join(home, 'claude-config'), join(home, '.claude'));
+    for (const directory of ['~/.claude', join(home, '.claude'), join(home, 'claude-config')])
+      await assert.rejects(
+        addNativeProfile({ profileId: 'own', runner: 'claude', directory }, home, env),
+        refused,
+      );
+    for (const [runner, directory] of [
+      ['codex', '~/.codex'],
+      ['cursor', home],
+      ['grok', '~/.grok'],
+      ['opencode', '~/.local/share'],
+      ['pi', '~/.pi/agent'],
+    ])
+      await assert.rejects(
+        addNativeProfile({ profileId: 'own', runner, directory }, home, env),
+        refused,
+      );
+    // A registration made before this rule is refused rather than returned again.
+    const legacy = { profileId: 'legacy', runner: 'claude', directory: join(home, '.claude') };
+    await addNativeProfile(legacy, home, { HOME: join(home, 'elsewhere') });
+    await assert.rejects(addNativeProfile(legacy, home, env), refused);
+    // The standard directory is the one a session without a profile uses.
+    const codexEnv = { HOME: home, CODEX_HOME: join(home, 'codex-home') };
+    await assert.rejects(
+      addNativeProfile(
+        { profileId: 'own', runner: 'codex', directory: join(home, 'codex-home') },
+        home,
+        codexEnv,
+      ),
+      refused,
+    );
+    await assert.rejects(
+      addNativeProfile(
+        { profileId: 'own', runner: 'pi', directory: join(home, 'pi-agent') },
+        home,
+        {
+          HOME: home,
+          PI_CODING_AGENT_DIR: join(home, 'pi-agent'),
+        },
+      ),
+      refused,
+    );
+    const extra = await addNativeProfile(
+      { profileId: 'extra', runner: 'codex', directory: '~/.codex' },
+      home,
+      codexEnv,
+    );
+    // Codex ignores an empty CODEX_HOME, so ~/.codex is its own login then.
+    await assert.rejects(
+      addNativeProfile({ profileId: 'own', runner: 'codex', directory: '~/.codex' }, home, {
+        HOME: home,
+        CODEX_HOME: '',
+      }),
+      refused,
+    );
+    assert.equal(extra.directory, join(realpathSync(home), '.codex'));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

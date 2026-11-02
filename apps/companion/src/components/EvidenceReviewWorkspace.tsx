@@ -3,6 +3,7 @@ import {
   Linking,
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -117,7 +118,7 @@ export function EvidenceReviewWorkspace({
             : artifactUrlForEntry(gatewayUrl, runId, { path, purpose: 'evidence' }),
         );
   const [, refreshComparisons] = useState(0);
-  const workspaceScroll = useRef<ScrollView>(null);
+  const workspaceScroll = useRef<ScrollViewInstance>(null);
   const layouts = useRef<ComparisonLayouts>({ workspace: 0, rail: 0, rows: {} });
   const focusRow = (offset: number) => {
     workspaceScroll.current?.scrollTo({ y: offset, animated: true });
@@ -322,7 +323,12 @@ export function EvidenceReviewWorkspace({
                   </Pressable>
                 ))}
                 <Text style={styles.railSubtitle}>
-                  {acceptanceClaimLabel(acceptanceClaimRows({ claims: [row.claim] })[0])}
+                  {acceptanceClaimLabel(
+                    acceptanceClaimRows({
+                      claims: [row.claim],
+                      recording: evidenceModel?.recording,
+                    })[0],
+                  )}
                 </Text>
                 {row.claim.reviewLabels?.length ? (
                   <Text style={styles.railSubtitle}>{row.claim.reviewLabels.join(' · ')}</Text>

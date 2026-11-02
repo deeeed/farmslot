@@ -5,6 +5,7 @@
 **Scope:** [Runner execution PRD](../PRD-runner-execution-canonical.md), [near-term roadmap](../ROADMAP-next.md)
 **Related:** [ADR-023](023-runner-agnostic-tui-execution.md), [ADR-032](032-runner-observability-via-hooks.md), [ADR-047](047-worker-session-history-panel.md), [ADR-051](051-principal-and-credential-model.md)
 **Lifecycle:** Keep as the accepted decision for the native transport option. This adds an explicit alternative to ADR-023's default without rewriting historical tmux decisions.
+**Terminology:** "runner" here means the agent harness. [ADR-023 Amendment 1](023-runner-agnostic-tui-execution.md#amendment-1-agent-harness-vocabulary-2026-11-02) also records the transport default (tmux, later configurable) and the direction for the Terminals page (tmux and native sessions listed together).
 
 ## Context
 
@@ -436,3 +437,103 @@ A native farm worker is a native session started through the runner's native ada
 Workers and standalone sessions already shared one host launch path: the adapter registry and `NativeSessionManager`, with Cursor and Grok declaring worker support. The split was in the gateway. Its worker launch picked the executable for Claude and Codex itself and refused every other runner, so a Grok worker failed after its slot was prepared (run e57cded9).
 
 Removing that choice leaves one path. A runner gains worker support by having a native adapter, and the pool path stays the only override.
+
+## Amendment 11: a node's own runner login is the default, 2026-11-01
+
+**Status:** Accepted (lead, 2026-11-01).
+
+### Decision
+
+**No registration for the default.** A native session or worker without `profileId` runs on the node's existing login for its runner, in the runner's standard directory.
+
+- The standard directory is the one a session without a profile uses: `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` when the node's environment sets it, otherwise `~/.claude`, `~/.codex` or `~/.grok`; for Cursor, the home directory.
+- Each runner definition in the runner registry exposes it once (`account.standardDirectory`). The Grok review preflight script keeps its own copy, because it runs standalone.
+- This is today's no-profile behaviour. Launch, `accountContextId` and resume don't change.
+- A worker provisions from the node's login or the slot's account label. Codex workers keep the farm-managed `codex-home` that dispatch provisions, as tmux workers do (ADR-032). That is setup, not registration.
+
+**Clients don't wait for profiles.** Command Center (chat and dispatch) and Companion enable Start on "Node default account" without waiting for `native.profile.list`.
+
+- A pending or failed read affects only the profile choices. Its error shows beside the picker.
+- On the node, a failed profile sample (an unreadable profile file, or a profile removed during the sample) leaves session observation ready. Profile reads report unavailable until a later sample succeeds.
+- An explicitly selected profile never silently falls back to the default.
+- In Command Center, with no profiles registered, the picker shows "Node default account" and "Add another account".
+
+**Profiles are for an additional account only.** `native.profile.add` refuses the runner's standard directory with "This is the node's own login; no profile is needed".
+
+- The check compares canonical paths: `~/` expanded, symlinks resolved.
+- It runs before the existing-profile check, so a standard-directory registration made earlier is refused too, not returned again.
+
+**Migration.** Registrations whose canonical directory is their runner's standard directory (today the `macpro-dev-*` ones on macpro) are removed with `native.profile.remove` once no unfinished run, queued item, PR-rule choice or saved review default names them.
+
+- Their saved sessions stay readable and closeable.
+- Resume refuses them, as for any removed profile ("Native account profile is unavailable"). Their conversation files stay in the standard directory.
+- Then one Claude session starts on macpro with no profile.
+- The change ships on the mini proof. The macpro cleanup and its no-profile session follow when macpro is back from maintenance.
+
+**Unchanged:**
+
+- the owner check (`FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID`, ADR-051's generation-zero owner);
+- approval routing;
+- the launch fences (Amendment 6);
+- reviewer health, which already keys "no profile" per owner, node and runner.
+
+This amendment changes one sentence under "Trusted operator profile scope". "Profiles are optional for side-by-side configurations; saved-session resume never changes runners" becomes "Profiles are optional, for an additional configuration directory; the runner's standard directory needs none and cannot be registered; saved-session resume never changes runners". The rest of ADR-057, ADR-051 and the agent-runtime specification's inherited-environment rule stay as written.
+
+### Rationale
+
+The runtime and the gateway already run without a profile. Two things around them made it look otherwise:
+
+- Clients enabled the default only after a successful profile list read, so a slow or failed read blocked Start.
+- Nothing stopped a standard directory being registered, so one login could exist as two accounts.
+
+The cost of the change is small:
+
+- Start on the default no longer waits for a network read.
+- The registration check is one path comparison in `native.profile.add`.
+- Nothing new is scanned or spawned.
+
+### Public surface
+
+- No new methods or fields. `account.standardDirectory` is added to the runner definition in `@farmslot/agent-runtime`.
+- Older hosts still accept a standard-directory registration, and older clients still wait for the profile list.
+- `@farmslot/agent-runtime` (the registration check) needs a release; native hosts started after it refuse.
+- Command Center and Companion change their pickers.
+- The agent-runtime specification states the default and the refusal ("Native account default").
+
+## Amendment 12: Pi and OpenCode native sessions, 2026-11-02
+
+**Status:** Proposed.
+
+### Decision
+
+Pi and OpenCode get native adapters on the same path as the other runners, so every CLI the farm runs has a native mode for chat and farm workers. tmux stays first-class for both.
+
+- **OpenCode** speaks ACP v1 (`opencode acp`) and uses the shared ACP adapter, like Cursor and Grok:
+  - it signs in with `opencode-login`;
+  - the model is the `model` session config option, confirmed after it is set;
+  - a new session with no model uses the model OpenCode is configured with, so the gateway seeds no picker models.
+- **OpenCode tools.** OpenCode runs its tools without asking unless its permission rules say otherwise. At the sandboxed tier, and with no tier, the adapter sets `OPENCODE_PERMISSION` so every tool asks through ACP approvals. That override is merged last, so it also turns the user's denies into asks; a human still decides each one. Other tiers set nothing and keep OpenCode's own rules, as the tmux launch does. An `allow` override there would also lift OpenCode's asks for `.env` reads and writes outside the workspace, and the user's denies.
+- **Pi** has no ACP. Its adapter speaks Pi's JSONL RPC mode (`pi --mode rpc`):
+  - `prompt`, `steer` and `abort` map to send, steer and interrupt;
+  - a turn completes on `agent_settled`: `interrupted` when Pi reports the run aborted, and `failed` when the last assistant message stopped on an error. Pi retries a failed model request itself, so a retry that succeeds completes the turn;
+  - Stop sends `clear_queue` before `abort`, because Pi keeps queued steering through an abort;
+  - `prompt` waits for Pi's reply, which follows its pre-run work such as compaction;
+  - resume passes `--session <id>` and must report the same session;
+  - the model must be the one requested: a `provider/id` must match exactly, and a bare ID leaves the provider to Pi. Native pickers name Pi's provider-qualified IDs. A `:<thinking>` suffix on the model sets the level and wins over the session's effort; the tmux launch always passes `--thinking`, so there the effort wins.
+- **Pi tools.** Pi asks before no tool and has no sandbox of its own, in RPC mode as in its terminal. The session reports `approvals: false`, and every tier runs Pi's tools unasked, matching the tmux Pi launch, whose tier flags are empty. Extension dialogs are answered `cancelled` until a native surface exists.
+- **Pi project trust.** The native launch passes no `--approve`. In RPC mode Pi then loads trust-gated project resources (`.pi/settings.json`, `.pi/extensions`, `.agents/skills`) only for a project trusted in Pi's own settings. The tmux worker passes `--approve` and loads Farmslot's Pi extension. Whether native workers in farm-created workspaces should approve project trust is left to a later decision.
+- **Accounts.** Both sign in per provider and have no account status command:
+  - a profile sets Pi's agent directory (`PI_CODING_AGENT_DIR`) or OpenCode's data home (`XDG_DATA_HOME`). Their standard directories (the variable when set, else `~/.pi/agent` or `~/.local/share`) are the node's own login and are refused as profiles (Amendment 11);
+  - provider keys in the environment still apply;
+  - account observation uses each runner's protocol. Pi's RPC `get_available_models` lists only models it holds credentials for, so any model reads as signed in. OpenCode's ACP `authenticate` is unconditional, so it proves only that OpenCode's ACP server starts; its own free models need no login, so OpenCode reads as signed in.
+- **Executables.** An OpenCode slot with no `opencode_path` never gets the Codex path. A native worker then starts the adapter's own `opencode`. In a tmux template, `{runner_path}` stays empty, as for Cursor, Grok and Pi, so the template falls back to `{runner}`. Amendment 10 already made the pool path the only override; the old fallback ran OpenCode's arguments through Codex.
+
+### Rationale and consequences
+
+Both runners already ran in tmux, and both have a documented machine interface, so a native mode needs no terminal parsing. T3's `provider-pi` and `provider-opencode` packages were a reference; no code is copied. T3 drives OpenCode through its HTTP server. ACP reuses the adapter Cursor and Grok already prove.
+
+Pi's lack of approvals is a property of Pi, not of the native path: a sandboxed native Pi session is no less contained than a sandboxed tmux one, and no more. Containing Pi needs an operating-system boundary, such as the host review sandbox, and is left to a later decision.
+
+### Public surface
+
+`opencodeNativeAdapter` and `piNativeAdapter`, and the `opencode` and `pi` runner definitions in `@farmslot/agent-runtime`; the `opencode-acp` and `pi-rpc` native transports in the gateway runner registry; `resolveRunnerPath` in `@farmslot/slot-config`.

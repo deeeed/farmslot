@@ -4,7 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Native chat and dispatch enable "Node default account" without waiting for the node's profile list; a pending or failed read only affects the profile choices, and its error shows beside the picker. A selected profile still waits for its login status. The add control reads "Add another account" (ADR-057 Amendment 11).
 - The Runs list's Runner / model cell names the worker's effort when a record has it (`grok/grok-4.7 · medium`); runs without one show runner and model as before.
+- The evidence review's criteria list and each criterion's moment come from the shared `evidenceReviewToc` (`@farmslot/adapter-sdk/evidence`), the same table of contents Companion shows. No visible change.
+- AC rows name the recording their verdict comes from. After a re-recording, the gate's older evidence reads "Evidence replaced" instead of red "Not proven" or an invalid package next to passing steps.
 - A plan-mode native conversation's proposed plan has an Implement button: it starts a new session on the same runner and directory in default mode, sends it the plan to carry out, and opens it. Codex stays in plan mode within a conversation, so the plan runs in a new one.
 - A slot terminal can hand selected output to its native conversation: in Select mode, "Add to <conversation>" puts the selection in that conversation's message as a code block and opens it. Nothing is sent until the reader sends it.
 - A native conversation shows what each finished turn changed in a Git working tree ("Changed 3 files · +12 −4"), and each file opens its diff for that turn. Sessions on an older native host show nothing new.

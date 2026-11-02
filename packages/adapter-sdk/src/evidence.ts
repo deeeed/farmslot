@@ -19,6 +19,7 @@ export type {
   EvidenceReviewOccurrence,
   EvidenceReviewPlaybackEffect,
   EvidenceReviewProofKind,
+  EvidenceReviewRecording,
   EvidenceReviewRecordingInput,
   EvidenceReviewRecordingSelection,
   EvidenceReviewSelection,
@@ -33,6 +34,13 @@ export { loadRecordingEvidenceReview, readEvidenceReviewReport } from './evidenc
 export type { EvidenceReviewIssue, EvidenceReviewPackageStatus } from './evidence-review-status.js';
 export type { EvidenceReviewTimelineGroup } from './evidence-review-timeline.js';
 export { formatEvidenceReviewVideoTime } from './evidence-review-timeline.js';
+export type { EvidenceReviewTocEntry, ProofStepGroup } from './evidence-review-toc.js';
+export {
+  adjacentEvidenceReviewClaim,
+  evidenceReviewToc,
+  OTHER_PROOF_STEPS,
+  proofStepGroups,
+} from './evidence-review-toc.js';
 export type { RecipeValidationResult, RecordedEvidencePackageInput } from '@farmslot/protocol';
 export type { RecordedClaimSource } from '@farmslot/recipe-runner/evidence';
 export {

@@ -21,6 +21,7 @@ import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/vie
 
 import { observeNativeArtifactFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { acceptanceViewerRecipeRunId } from '../../lib/acceptance-evidence';
 import {
   type ArtifactStickyChromeLayout,
   artifactStickyChromeThreshold,
@@ -88,6 +89,7 @@ export function useArtifactViewerController() {
     ac,
     evidence,
     evidenceDecision,
+    evidenceExecution,
   } = useLocalSearchParams<{
     runId: string;
     recipeRun?: string;
@@ -99,6 +101,8 @@ export function useArtifactViewerController() {
     ac?: string | string[];
     evidence?: string | string[];
     evidenceDecision?: string | string[];
+    /** The execution read within `evidenceDecision`'s snapshot. */
+    evidenceExecution?: string | string[];
   }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -150,10 +154,10 @@ export function useArtifactViewerController() {
   const acceptanceViewer = useAcceptanceEvidenceViewer({
     client,
     run,
-    recipeRunId:
-      typeof recipeRun === 'string' && recipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
-        ? recipeRun
-        : undefined,
+    recipeRunId: acceptanceViewerRecipeRunId(
+      typeof recipeRun === 'string' ? recipeRun : undefined,
+      routeParamString(evidenceExecution).trim(),
+    ),
     criterionId: routeParamString(ac).trim(),
     decisionId: frozenDecision?.id,
     evidencePath: routeParamString(evidence).trim(),

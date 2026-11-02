@@ -8,23 +8,21 @@
 // the runner. Nothing reads pane text.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/linked-runner-pane.mts [evidence-dir]
-import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { once } from 'node:events';
-import { closeSync, openSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
-  GatewayClient,
-  GatewayConnectionError,
-  type GatewayConnection,
-} from '../../../packages/cli/src/gateway-client.js';
+  type IsolatedStackParts,
+  linkCheckout,
+  poll,
+  startIsolatedStack,
+  stopProcess,
+  writeJson as json,
+} from '../lib/isolated-stack.mjs';
 import type {
   Run,
   TmuxWorkerListResult,
@@ -34,72 +32,20 @@ import type {
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const evidence = path.resolve(root, process.argv[2] ?? `temp/linked-runner-pane/${Date.now()}`);
 await mkdir(evidence, { recursive: true });
-const fixture = await mkdtemp(path.join(tmpdir(), 'linked-runner-pane-'));
+const fixture = await realpath(await mkdtemp(path.join(tmpdir(), 'linked-runner-pane-')));
 const machine = 'linked-runner-node';
 const slotId = 'linked-runner-slot';
 const session = path.basename(fixture);
 const repo = path.join(fixture, 'repo');
 
-async function json(file: string, value: unknown) {
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(value, null, 2), { mode: 0o600 });
-}
-
 function tmux(...args: string[]) {
   return execFileSync('tmux', args, { encoding: 'utf8' }).trim();
 }
 
-async function freePort() {
-  const probe = createServer().listen(0, '127.0.0.1');
-  await once(probe, 'listening');
-  const { port } = probe.address() as { port: number };
-  await new Promise<void>((resolve, reject) =>
-    probe.close((error) => (error ? reject(error) : resolve())),
-  );
-  return port;
-}
-
-function startWorkspaceProcess(workspace: string, log: string, env: NodeJS.ProcessEnv) {
-  const fd = openSync(path.join(evidence, log), 'w', 0o600);
-  const child = spawn('yarn', ['workspace', workspace, 'start'], {
-    cwd: root,
-    detached: true,
-    stdio: ['ignore', fd, fd],
-    env: { ...process.env, ...env },
-  });
-  closeSync(fd);
-  return child;
-}
-
-async function stopProcess(child: ChildProcess | undefined) {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
-  const stopped = once(child, 'exit');
-  process.kill(-child.pid, 'SIGTERM');
-  if (!(await Promise.race([stopped.then(() => true), delay(5000).then(() => false)]))) {
-    process.kill(-child.pid, 'SIGKILL');
-    await stopped;
-  }
-}
-
-async function poll<T>(description: string, read: () => Promise<T | undefined>, timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await read();
-    if (value !== undefined) return value;
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${description}`);
-    await delay(500);
-  }
-}
-
 // The fixture root and slot checkout borrow this checkout's code, like the other isolated e2e runs.
-execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
-execFileSync('git', ['clone', '--shared', '--no-checkout', root, repo], { stdio: 'pipe' });
-for (const dir of [fixture, repo])
-  for (const entry of ['scripts', 'services', 'packages', 'node_modules', 'package.json'])
-    await symlink(path.join(root, entry), path.join(dir, entry));
+await linkCheckout(root, fixture, 'Isolated linked-runner fixture');
+await linkCheckout(root, repo, 'Isolated linked-runner checkout');
 await symlink(path.join(fixture, 'projects'), path.join(repo, 'projects'));
-await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated linked-runner fixture\n');
-await writeFile(path.join(repo, 'CLAUDE.md'), '# Isolated linked-runner checkout\n');
 const project = path.join(fixture, 'projects/linked-runner');
 await mkdir(path.join(project, 'templates/prompts'), { recursive: true });
 await writeFile(
@@ -115,6 +61,7 @@ await json(path.join(project, 'project.json'), {
   name: 'linked-runner',
   repo_url: root,
   paths: { runtime_dir: '.agent', artifact_dir: '.task' },
+  execution_templates: { sources: [] },
   // Keeps the worker process alive while the panes are read; the run is cancelled afterwards.
   scripted: { commands: { hold: { command: 'sleep 300', timeout_ms: 330_000 } } },
   monitoring: { poll_interval_min: 0.02, total_timeout_min: 10 },
@@ -147,67 +94,16 @@ await json(path.join(fixture, '.farm-status.json'), {
   ],
 });
 
-const port = await freePort();
-const token = testGatewayIdentity(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`);
-const gateway = startWorkspaceProcess('@farmslot/gateway', 'gateway.log', {
-  FARMSLOT_ROOT: fixture,
-  FARMSLOT_HOME: path.join(fixture, 'home'),
-  FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
-  FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
-  FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
-  FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
-  GATEWAY_HOST: '127.0.0.1',
-  GATEWAY_PORT: String(port),
-  FARMSLOT_GATEWAY_PROFILE: 'proof',
-  FARMSLOT_DISABLE_ORCHESTRATION: '1',
-  FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
-});
-let node: ChildProcess | undefined;
-let connection: GatewayConnection | undefined;
+const parts: IsolatedStackParts = {};
 let run: Run | undefined;
 let failure: unknown;
 let result: Record<string, unknown> | undefined;
 try {
   tmux('new-session', '-d', '-s', session, '-c', repo);
-  const client = new GatewayClient({
-    url: `ws://127.0.0.1:${port}`,
-    timeout: 30_000,
-    credential: { token },
-  });
-  connection = await poll(
-    'the isolated gateway',
-    async () => {
-      if (gateway.exitCode !== null) throw new Error('Isolated gateway exited before readiness');
-      try {
-        return await client.connect();
-      } catch (error) {
-        // Connection refusal is expected while the gateway starts on its isolated port.
-        if (!(error instanceof GatewayConnectionError)) throw error;
-        return undefined;
-      }
-    },
-    60_000,
+  const { connection: gw } = await startIsolatedStack(
+    { root, evidence, env: process.env, fixture, node: { machine } },
+    parts,
   );
-  const gw = connection;
-
-  const { principal } = await gw.call<{ principal: { id: string } }>('principal.create', {
-    subject: { type: 'node', machine, displayName: 'Linked runner fixture node' },
-    roles: [],
-  });
-  const credential = await gw.call<{ secret: string }>('credential.issue', {
-    principalId: principal.id,
-    displayName: 'Linked runner fixture node',
-  });
-  const nodeRoot = path.join(fixture, 'node');
-  await mkdir(nodeRoot, { recursive: true });
-  node = startWorkspaceProcess('@farmslot/node', 'node.log', {
-    FARMSLOT_ROOT: nodeRoot,
-    FARMSLOT_HOME: path.join(nodeRoot, 'home'),
-    FARMSLOT_NODE_TOKEN: credential.secret,
-    GATEWAY_URL: `ws://127.0.0.1:${port}`,
-    MACHINE_NAME: machine,
-    SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen.sock'),
-  });
 
   run = (
     await gw.call<{ run: Run }>('run.create', {
@@ -312,14 +208,15 @@ try {
   await json(path.join(evidence, 'failure.json'), { error: String(error), fixture });
 } finally {
   const cleanupErrors: unknown[] = [];
+  const { connection } = parts;
   if (connection && run && !['done', 'failed', 'cancelled'].includes(run.status)) {
     await connection
       .call('run.cancel', { runId: run.id, reason: 'linked runner fixture cleanup' })
       .catch((error: unknown) => cleanupErrors.push(error));
   }
   connection?.close();
-  await stopProcess(node);
-  await stopProcess(gateway);
+  await stopProcess(parts.node);
+  await stopProcess(parts.gateway);
   // Cancelling the run may already have closed the session; only a surviving one is an error.
   const killed = spawnSync('tmux', ['kill-session', '-t', `=${session}`], { stdio: 'ignore' });
   if (

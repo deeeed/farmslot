@@ -1,3 +1,4 @@
+import type { AcceptanceCriterionRef } from './acceptance.js';
 import type { TaskTemplateSelection } from './evals.js';
 import type {
   DevInteractiveProfile,
@@ -174,4 +175,17 @@ export interface DispatchPreview {
   /** Exact template snapshot the gateway will use if this preview is dispatched. */
   executionTemplate?: import('./execution-templates.js').ExecutionTemplateReference;
   profileFit?: ProfileFitSuggestion;
+  /**
+   * A pr-complete run is held to its parent run's original acceptance criteria, not any given
+   * with it; the preview names them before launch. Absent when nothing is inherited.
+   */
+  inheritedAcceptance?: DispatchInheritedAcceptance;
+}
+
+/** The parent's criteria a pr-complete run will be held to, as its dispatch preview names them. */
+export interface DispatchInheritedAcceptance {
+  fromRunId: string;
+  criteria: Pick<AcceptanceCriterionRef, 'id' | 'text'>[];
+  /** Why the criteria can't be read; the dispatch then refuses at task writing. */
+  unavailable?: string;
 }

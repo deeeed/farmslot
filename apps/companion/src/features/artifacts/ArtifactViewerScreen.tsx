@@ -235,6 +235,7 @@ export default function ArtifactViewerScreen() {
         authHeaders={artifactAuthHeaders}
         initialIndex={acceptanceViewer.initialIndex}
         onClose={acceptanceViewer.close}
+        acceptance={acceptanceViewer.review}
       />
       <DocumentViewer
         visible={isFocused && !!documentViewer}

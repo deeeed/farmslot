@@ -1,6 +1,6 @@
 import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { LayoutChangeEvent, ScrollView } from 'react-native';
+import type { LayoutChangeEvent, ScrollViewInstance } from 'react-native';
 import {
   Extrapolation,
   interpolate,
@@ -336,7 +336,7 @@ export function useSlotWorkspaceController() {
   }, [workspaceRunId]);
   const [navLayout, setNavLayout] = useState<WorkspaceStickyNavLayout | null>(null);
   const [stickyNavVisible, setStickyNavVisibleState] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const stickyNavVisibleRef = useRef(false);
   const scrollY = useSharedValue(0);
   const workspaceRecipeRunId =

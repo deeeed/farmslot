@@ -8,6 +8,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   StatusBar,
   type StyleProp,
   StyleSheet,
@@ -75,7 +76,7 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
     Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight ?? 0),
   );
   const fullscreenBottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const [, refreshTransform] = useState(0);
   const [side, setSide] = useState<CompareSide>(initialSide);
   const [viewportWidth, setViewportWidth] = useState(0);

@@ -8,6 +8,7 @@ import {
   resourceBudgetEvictions,
   resourceContentWithinLimits,
   verifyResourceContent,
+  verifyResourceContentInSlices,
 } from './content.js';
 import {
   isKnownResourceFamily,
@@ -71,6 +72,8 @@ interface PendingRead {
 }
 interface QueryEntry {
   query: ResourceQuery;
+  /** Canonical ids of `query.dependencies`, which every change notification is matched against. */
+  dependencyIds: ReadonlySet<string>;
   state: ResourceQueryState;
   listeners: Set<(state: ResourceQueryState) => void>;
   hydration: Promise<void>;
@@ -224,9 +227,23 @@ export function createGatewayResourceCache(
     unsubscribeStore = store.onDeleted(storeDeleted);
   }
 
+  /** Observers whose failure was already logged, so a repeating one is reported once. */
+  const failedObservers = new WeakSet<(state: ResourceQueryState) => void>();
+
+  /** One observer's failure is its own: the other observers and the cache's reads go on. */
+  function deliver(entry: QueryEntry, listener: (state: ResourceQueryState) => void): void {
+    try {
+      listener(entry.state);
+    } catch (error) {
+      if (failedObservers.has(listener)) return;
+      failedObservers.add(listener);
+      console.error(`Resource cache observer of ${entry.query.id} failed:`, error);
+    }
+  }
+
   function notify(entry: QueryEntry): void {
     entry.state = { ...entry.state, storageNotice };
-    for (const listener of entry.listeners) listener(entry.state);
+    for (const listener of entry.listeners) deliver(entry, listener);
   }
 
   function cancelScheduledRead(entry: QueryEntry): void {
@@ -520,9 +537,7 @@ export function createGatewayResourceCache(
       const id = resourceKeyId(change.key);
       if (change.revision <= (revisions.get(id) ?? -1)) continue;
       revisions.set(id, change.revision);
-      const affected = [...entries.values()].filter((entry) =>
-        entry.query.dependencies.some((key) => resourceKeyId(key) === id),
-      );
+      const affected = [...entries.values()].filter((entry) => entry.dependencyIds.has(id));
       // Coverage counts declared dependencies only, so a known key that no entry declares (another
       // slot, an unopened workspace) changes nothing held. Only a family this client cannot name might.
       if (!affected.length && isKnownResourceFamily(change.key?.family)) continue;
@@ -557,6 +572,7 @@ export function createGatewayResourceCache(
     }
     const entry: QueryEntry = {
       query,
+      dependencyIds: new Set(query.dependencies.map(resourceKeyId)),
       state: { status: 'loading' },
       listeners: new Set(),
       hydration: Promise.resolve(),
@@ -1163,16 +1179,25 @@ export function createGatewayResourceCache(
     return written;
   }
 
+  function contentWriteToken(): ResourceContentWriteToken {
+    return { connectionId: connection.id, ownerVersion: hydrationOwnerVersion, storeVersion };
+  }
+
   /** Stores verified bytes within the caps and the shared budget. */
-  function storeContent(input: ResourceContentInput): Promise<boolean> {
+  async function storeContent(input: ResourceContentInput): Promise<boolean> {
     const key = contentKey(input.key);
     const { data, origin, cohort } = input;
-    if (
-      !resourceContentWithinLimits(key, data) ||
-      !verifyResourceContent(key, data, input.untrackedFiles)
-    )
-      return Promise.resolve(false);
-    return writeContent(input.token, async (target, current) => {
+    // Prefetch verifies between frames, so the write still answers to the owner it was asked under.
+    const token = input.token ?? contentWriteToken();
+    if (!resourceContentWithinLimits(key, data)) return false;
+    // Prefetch is background work; content a person opened is on their critical path and
+    // verifies at once, as before.
+    const verified =
+      origin === 'prefetch'
+        ? await verifyResourceContentInSlices(key, data, input.untrackedFiles)
+        : verifyResourceContent(key, data, input.untrackedFiles);
+    if (!verified) return false;
+    return writeContent(token, async (target, current) => {
       const accessedAt = Date.now();
       const content = await target.listContent();
       if (content.some((row) => row.kind === key.kind && row.id === key.id)) {
@@ -1274,7 +1299,7 @@ export function createGatewayResourceCache(
           notify(entry);
         });
       }
-      receive(entry.state);
+      deliver(entry, receive);
       if (entry.state.status !== 'ready' || entry.dirty) schedule(entry);
       return () => {
         entry.listeners.delete(receive);
@@ -1320,11 +1345,7 @@ export function createGatewayResourceCache(
       readContentBytes((target) => target.getContentByAlias(alias), true),
     storeContent,
     retainContent,
-    contentWriteToken: (): ResourceContentWriteToken => ({
-      connectionId: connection.id,
-      ownerVersion: hydrationOwnerVersion,
-      storeVersion,
-    }),
+    contentWriteToken,
     async dispose(reason?: ResourceConnectionReason) {
       if (disposed) return;
       const withdrawing = collectors.close();

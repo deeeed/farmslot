@@ -8,6 +8,7 @@ import {
   type RunStatus,
 } from '../contracts/runs.js';
 import type { SlotStatus } from '../contracts/slots.js';
+import { compareText } from '../text-order.js';
 
 import { runLinkedTicketRefs } from './linked-tickets.js';
 import type { RunListProjection } from './run-list-filter.js';
@@ -63,7 +64,7 @@ export function slotMachineMap(
 export function mergeRunsById(existing: readonly Run[], incoming: readonly Run[]): Run[] {
   const byId = new Map(existing.map((run) => [run.id, run]));
   for (const run of incoming) byId.set(run.id, run);
-  return [...byId.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  return [...byId.values()].sort((left, right) => compareText(right.createdAt, left.createdAt));
 }
 
 function slotOf(run: Run | RunListProjection): string | null {

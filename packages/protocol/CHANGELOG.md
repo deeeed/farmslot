@@ -5,6 +5,16 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - `ContentPrefetchOptions.media` (`ContentPrefetchMedia`, `ContentPrefetchMediaEntry`): a pending gate's videos and images over the content row cap go to a client media holder by digest, with the gate's age, instead of loading only when opened. `base64Bytes` and `createSha256` (chunked SHA-256) are exported from the client cache.
+- `ReadyGatePayload.mergeConflicts`/`behindMain` are probed against the publication base (a stacked run's upstream branch), and a conflict on a publication gate now blocks its advancing actions (doc only; no shape change).
+- A client-cache observer that throws no longer stops the other observers or the cache's reads; each failing observer is logged once with `console.error`. Before, an observer that threw as a read started, or on its first delivery from `observe`, left that query loading with no request sent until the next reconnect.
+- `DispatchPreview.inheritedAcceptance`: the parent run and its original criteria a pr-complete run is held to, or `unavailable` with the reason.
+- `Run.parkedCommits` (`ParkedRunCommits[]`): an artifact-only run's own branch commits, parked under `refs/farmslot/parked/<run>/<head>` when its slot returned to idle (append-only).
+- `Run.releasedCheckout`: the branch and head an artifact-only run left on its slot when COMPLETE released the slot's ownership; a later ownerless return to idle parks only that head.
+- `RunEngineState.publishGate.refusedEvidencePackageId`: the prepared package a human-gate replay found the worker's evidence refused against; while it is still `packageId`, the gate rebuilds rather than reuses it.
+- Active-development baseline; add user-facing changes here before release or package publication.
+- `compareText` orders strings as `localeCompare` does, through one shared `Intl.Collator`. Run lists and family groups sort with it.
+- Content prefetch hashes files and artifacts in 16 KB slices, one per macrotask, so a large file no longer blocks a frame; content a person opens still verifies at once.
+- Change notifications match queries by dependency ids computed when the query is first observed.
 
 ## 0.74.10 - 2026-11-01
 

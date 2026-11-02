@@ -1153,14 +1153,15 @@ export interface ReadyGatePayload {
    */
   evidenceRefreshOverride?: EvidenceRefreshOverrideRecord;
   /**
-   * Soft gate: commits the slot branch is behind origin/<defaultBranch>
-   * (`git rev-list --count HEAD..origin/<branch>`). Chip only — not a hard fail.
+   * Soft gate: commits the slot branch is behind its publication base (a stacked run's upstream
+   * branch, else origin/<defaultBranch>; `git rev-list --count HEAD..origin/<base>`). Chip only.
    * Absent when the probe could not run.
    */
   behindMain?: number;
   /**
-   * Soft gate: non-destructive merge-tree conflict probe against origin/<defaultBranch>.
-   * Chip only — not a hard fail. Absent when the probe could not run.
+   * Non-destructive merge-tree conflict probe against the publication base. `true` on a
+   * publication gate blocks every advancing action (`base-merge-conflict`), since the push would
+   * refuse it. Absent when the probe could not run.
    */
   mergeConflicts?: boolean;
   /** Sample conflict paths from the merge-tree probe (capped). */
@@ -1874,6 +1875,17 @@ export interface RunMetrics {
 }
 
 export type RunCompletionPolicy = 'default' | 'artifact-only';
+/** One parking of an artifact-only run's own branch commits (see `Run.parkedCommits`). */
+export interface ParkedRunCommits {
+  slotId: string;
+  ref: string;
+  branch: string;
+  baseSha: string;
+  headSha: string;
+  /** The parked commits not on any remote, newest first. */
+  commits: string[];
+  parkedAt: string;
+}
 
 export type RunStartRefSource =
   | { kind: 'manual' }
@@ -2884,6 +2896,16 @@ export interface Run {
   slotId: string | null;
   /** A cancelled replay hold was released on demand for another run, preserving its record. */
   slotReclaimed?: { slotId: string; byRunId: string; at: string };
+  /**
+   * Branch commits of this artifact-only run, parked when its slot returned to idle (append-only).
+   * Each `ref` (`refs/farmslot/parked/<run>/<head>`) keeps `headSha` reachable on the slot.
+   */
+  parkedCommits?: ParkedRunCommits[];
+  /**
+   * The checkout an artifact-only run left on its slot when COMPLETE released the slot's
+   * ownership. A later ownerless return to idle parks only this exact head.
+   */
+  releasedCheckout?: { slotId: string; branch: string; headSha: string; at: string };
   /** Explicit workspace placement, mutually exclusive with a slot binding. */
   reviewWorkspaceTarget?: import('./review-workspace.js').ReviewWorkspaceTarget;
   /** Trusted runtime-owned checkout and output locations. Requires slotId=null. */
@@ -3139,6 +3161,11 @@ export interface RunEngineState {
   intelligenceAuditDegraded?: boolean;
   /** Local-first publication gate metadata. Stored on the run JSON snapshot; no DB migration. */
   publishGate?: {
+    /**
+     * The prepared package a human-gate replay found the worker's evidence refused against. While
+     * it is still `packageId`, the gate and inspection rebuild instead of reusing that package.
+     */
+    refusedEvidencePackageId?: string;
     maintainedSnapshot?: BranchMaintenanceCheckpoint;
     humanPublicationAdoption?: import('./human-publication.js').HumanPublicationAdoptionReceipt;
     packageId?: string;

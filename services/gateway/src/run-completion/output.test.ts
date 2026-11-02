@@ -7,6 +7,8 @@ import test from 'node:test';
 
 import { buildRunResolveDecisionParams, type RunOutput } from '@farmslot/protocol';
 
+import type { RunArtifactAcquisition } from './retained-artifacts.js';
+
 await import('../runtime/mock-pty.test-support.js');
 const { runResolveDecision } = await import('../methods/run.js');
 const { makeRun } = await import('../methods/run/test-fixtures.js');
@@ -19,8 +21,33 @@ const {
   verifyRunOutputReview,
 } = await import('./output.js');
 const { closeRunOutput } = await import('./output-close.js');
-const { retainedRunTaskDirectory } = await import('./retained-artifacts.js');
+const { createRunArtifactAcquisition, retainedRunTaskDirectory } =
+  await import('./retained-artifacts.js');
 const { createRetrospectiveForRun } = await import('./retrospective.js');
+
+/**
+ * An acquisition that waits in acquireMedia until released. A capture acquires its media after
+ * the bundle's metadata commit and before its final commit.
+ */
+function gatedAcquisition(runId: string) {
+  let release = () => {};
+  let reach = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const inner = createRunArtifactAcquisition(getRun(runId)!);
+  const acquisition: RunArtifactAcquisition = {
+    get media() {
+      return inner.media;
+    },
+    beforeCopy: (locality) => inner.beforeCopy(locality),
+    acquireMedia: async (artifact, destination, maxBytes) => {
+      reach();
+      await gate;
+      return inner.acquireMedia(artifact, destination, maxBytes);
+    },
+  };
+  return { acquisition, reached, release: () => release() };
+}
 
 const output: RunOutput = {
   workerFinished: true,
@@ -520,6 +547,159 @@ test('QA with every step done or skipped keeps close available after acknowledge
   assert.equal(closed.metrics.outcome, 'partial');
   assert.deepEqual(closed.steps, originalSteps);
   assert.equal(closed.decisions.filter((decision) => !decision.resolvedAt).length, 0);
+});
+
+// F304: run 67feec52's parity evidence included `queryUiTarget__textContains-Tokens-…json`. The
+// retained bundle skips any name containing `token`, so every close and acknowledgement refused
+// with "Run output changed" although nothing had changed.
+test('a capture holding a file the bundle never retains still reviews and closes', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'output-review-excluded-'));
+  await mkdir(path.join(dir, 'artifacts/parity'), { recursive: true });
+  await writeFile(path.join(dir, 'artifacts/report.md'), '# Spike report\nAll criteria pass.\n');
+  await writeFile(
+    path.join(dir, 'artifacts/parity/queryUiTarget__textContains-Tokens-tree.json'),
+    '{"present":true}\n',
+  );
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'F304' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+    await rm(dir, { recursive: true, force: true });
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile: path.join(dir, 'TASK.md'),
+    completionPolicy: 'artifact-only',
+    completedAt: new Date().toISOString(),
+    metrics: { ...run.metrics, outcome: 'success' },
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'complete', status: 'skipped' },
+    ],
+  });
+  await captureRunOutput(run.id, false);
+  const captured = getRun(run.id)!;
+  assert.equal(captured.output?.artifactManifest.length, 2, 'the capture lists both files');
+  const review = captured.decisions.find((decision) => !decision.resolvedAt)!;
+  const acknowledged = await runResolveDecision(
+    { runId: run.id, decisionId: review.id, actionId: 'mark-reviewed' },
+    () => {},
+  );
+  const close = acknowledged.run.decisions.find((decision) => !decision.resolvedAt)!;
+  const closed = await closeRunOutput(run.id, close.id, {
+    publish: async (run) => run,
+    releaseSlot: async () => ({ released: false }),
+    slotOwner: async () => null,
+  });
+  assert.equal(closed.status, 'done');
+
+  // Any other difference from the reviewed capture still refuses.
+  const reopened = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'F304b' });
+  t.after(async () => {
+    updateRun(reopened.id, { status: 'done' });
+    await deleteRun(reopened.id);
+  });
+  updateRun(reopened.id, {
+    status: 'blocked',
+    taskFile: path.join(dir, 'TASK.md'),
+    completionPolicy: 'artifact-only',
+    completedAt: new Date().toISOString(),
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'complete', status: 'skipped' },
+    ],
+  });
+  await captureRunOutput(reopened.id, false);
+  const pending = getRun(reopened.id)!.decisions.find((decision) => !decision.resolvedAt)!;
+  const tampered = getRun(reopened.id)!.output!;
+  updateRun(reopened.id, {
+    output: {
+      ...tampered,
+      artifactManifest: tampered.artifactManifest.map((artifact) =>
+        artifact.path === 'artifacts/report.md' ? { ...artifact, sizeBytes: 1 } : artifact,
+      ),
+    },
+  });
+  await assert.rejects(
+    verifyRunOutputReview(reopened.id, pending.id),
+    /Run output changed; refresh the report before reviewing/,
+  );
+});
+
+// F305: run e8f6b0bc's replayed review and its recovered review gate captured the output at the
+// same time. Both started from the same committed bundle, and the one that committed second
+// failed the review step with "A newer retained capture committed".
+test('two overlapping captures of one run both succeed, the later one committed last', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'output-capture-overlap-'));
+  await mkdir(path.join(dir, 'artifacts'));
+  await writeFile(path.join(dir, 'artifacts/report.md'), '# Report\nDone.\n');
+  await writeFile(path.join(dir, 'artifacts/first.png'), 'first image bytes');
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'F305' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+    await rm(dir, { recursive: true, force: true });
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile: path.join(dir, 'TASK.md'),
+    completionPolicy: 'artifact-only',
+    completedAt: new Date().toISOString(),
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'complete', status: 'skipped' },
+    ],
+  });
+  const gated = gatedAcquisition(run.id);
+  const first = captureRunOutput(run.id, false, false, { acquisition: gated.acquisition });
+  await gated.reached;
+  await writeFile(path.join(dir, 'artifacts/second.png'), 'second image bytes');
+  const second = captureRunOutput(run.id, false);
+  // Unserialized, the second capture commits while the first waits, and the first then fails its
+  // final commit; serialized, the second queues behind the first.
+  let secondSettled = false;
+  void second.then(
+    () => (secondSettled = true),
+    () => (secondSettled = true),
+  );
+  const deadline = Date.now() + 500;
+  while (!secondSettled && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  gated.release();
+  await first;
+  await second;
+  assert.ok(
+    getRun(run.id)!.output?.artifactManifest.some(
+      (artifact) => artifact.path === 'artifacts/second.png',
+    ),
+    'the later capture is the committed one',
+  );
+});
+
+test('a capture queued behind another still refuses once its attempt changed', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'output-capture-queued-attempt-'));
+  await mkdir(path.join(dir, 'artifacts'));
+  await writeFile(path.join(dir, 'artifacts/report.md'), '# Report\nDone.\n');
+  await writeFile(path.join(dir, 'artifacts/first.png'), 'first image bytes');
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'F305' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+    await rm(dir, { recursive: true, force: true });
+  });
+  updateRun(run.id, {
+    status: 'monitoring',
+    taskFile: path.join(dir, 'TASK.md'),
+    engineState: { generation: 1 },
+  });
+  const gated = gatedAcquisition(run.id);
+  const first = captureRunOutput(run.id, false, false, { acquisition: gated.acquisition });
+  const second = captureRunOutput(run.id, false, true);
+  updateRun(run.id, { engineState: { generation: 2 } });
+  gated.release();
+  await assert.rejects(first, /attempt changed/);
+  await assert.rejects(second, /attempt changed/);
+  assert.equal(getRun(run.id)!.output, undefined);
 });
 
 // F243: run f74906ee's reviewer re-captured its output while `reviewing`, which read as a

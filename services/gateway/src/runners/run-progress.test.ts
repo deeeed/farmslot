@@ -226,6 +226,30 @@ test('a reviewer whose native session was closed and released does not keep the 
   assert.equal(nativeReads, 0, 'a released session is not read');
 });
 
+test('a worker still launching at a handoff keeps its unconfirmed progress', async () => {
+  const run = fixRun('tmux', 'launching');
+  run.flowType = 'fix-bug';
+  const context = run.agentContexts![0]!;
+  context.role = 'fix-bug';
+  context.target = { target: 'owned:bugfix', session: 'owned', paneId: '%288' };
+  run.steps = [...run.steps, { name: 'finalize', status: 'running' }];
+  let retainedReads = 0;
+  const progress = await readRunProgress(run, {
+    slot: async () => slot,
+    target: async () => ({ target: '%288', session: 'owned' }),
+    taskProgress: async () => null,
+    activity: async () => null,
+    turn: async () => null,
+    background: async () => null,
+    retainedTarget: async () => {
+      retainedReads++;
+      return { state: 'absent' };
+    },
+  });
+  assert.equal(progress.kind, 'unproven');
+  assert.equal(retainedReads, 0, 'a runner not started yet is not read as exited');
+});
+
 test('a publication gate recovers only a confirmed vanished worker', async () => {
   const run = fixRun('tmux', 'waiting');
   run.flowType = 'fix-bug';

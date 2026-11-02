@@ -18,13 +18,12 @@ import { createEvidenceMediaHolder, type EvidenceMediaHolder } from './evidence-
 import { nativeEvidenceMediaFiles } from './evidence-media-files';
 import { gatewayResourceSource } from './gateway-http-auth';
 import { fetchRunArtifactBytes } from './held-content';
+import { sharedLifetime } from './shared-lifetime';
 
 let notice: string | undefined;
 let prefetch:
   | { cache: GatewayResourceCache; farm: boolean; media?: EvidenceMediaHolder; stop: () => void }
   | undefined;
-let stopStore: (() => void) | undefined;
-let stopAppState: (() => void) | undefined;
 const listeners = new Set<() => void>();
 const notify = () => {
   for (const listener of listeners) listener();
@@ -189,23 +188,20 @@ function bindPrefetch(): void {
   };
 }
 
-export function initializeNativeResourceCache(): () => void {
-  if (stopStore) return () => {};
-  stopStore = useConnectionStore.subscribe(sync);
+/** Each mounted app root holds the cache; it closes only after the last root releases it. */
+export const initializeNativeResourceCache = sharedLifetime(() => {
+  const stopStore = useConnectionStore.subscribe(sync);
   const appState = AppState.addEventListener('change', sync);
-  stopAppState = () => appState.remove();
   sync();
   return () => {
-    stopStore?.();
-    stopStore = undefined;
-    stopAppState?.();
-    stopAppState = undefined;
+    stopStore();
+    appState.remove();
     void owner.dispose().catch((error: unknown) => {
       notice = `Offline storage could not close: ${error instanceof Error ? error.message : String(error)}`;
       notify();
     });
   };
-}
+});
 
 export function getResourceCache(): GatewayResourceCache | undefined {
   return owner.cache;
