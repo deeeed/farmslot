@@ -367,8 +367,11 @@ export async function startRemoteNodeStack(
       path.join(fixture, '.owner'),
       `restart-invariant ${options.ownerTag} ${process.pid}\n`,
     );
-    for (const name of ['scripts', 'services', 'packages', 'node_modules'])
+    for (const name of ['services', 'packages', 'node_modules'])
       await symlink(path.join(root, name), path.join(fixture, name));
+    // A pack that declares node_support ships the root scripts in its bundle, which refuses links
+    // out of FARMSLOT_ROOT: check them out for real (same commit as the checkout).
+    git(fixture, 'checkout', '-q', 'HEAD', '--', 'scripts');
     // Node support bundles must resolve inside FARMSLOT_ROOT: give those paths real copies.
     for (const relative of RUNNER_OBSERVABILITY_SUPPORT_PATHS)
       await materialize(root, fixture, relative);
