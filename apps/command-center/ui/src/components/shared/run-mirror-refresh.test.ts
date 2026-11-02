@@ -91,4 +91,13 @@ test('a released slot disables Sync artifacts and says when the files were last 
     ),
     'Slot released; no files were synced',
   );
+  // A failed sync stamps capturedAt too, so the time is the failed attempt's.
+  assert.equal(
+    runMirrorRefreshUnavailableReason(
+      { ...run, output: { ...run.output, captureError: 'Unreadable worker files' } },
+      [slot({ lifecycle: 'ready', phase: null, currentRunId: null })],
+      at,
+    ),
+    'Slot released; the last sync, at [2026-11-02T03:00:00Z], failed',
+  );
 });
