@@ -105,6 +105,7 @@ const plan =
     ? {
         live: target === 'live' && (wants('lifecycle') || wants('f324') || wants('native-check')),
         lifecycle: target === 'isolated' && wants('lifecycle'),
+        nativeCheck: target === 'isolated' && wants('native-check'),
         f324: target === 'isolated' && wants('f324'),
         restarts: wants('monitor')
           ? [{ step: 'monitor' as const, variants: ['node-up'] as Variant[] }]
@@ -115,6 +116,7 @@ const plan =
     : {
         live: false,
         lifecycle: false,
+        nativeCheck: false,
         f324: false,
         restarts: RESTART_STEPS.filter((step) => wants(step)).map((step) => ({
           step,
@@ -197,7 +199,14 @@ try {
         },
       })),
     );
-  if (plan.lifecycle || plan.f324 || plan.restarts.length || plan.review || plan.reviewPastWait)
+  if (
+    plan.nativeCheck ||
+    plan.lifecycle ||
+    plan.f324 ||
+    plan.restarts.length ||
+    plan.review ||
+    plan.reviewPastWait
+  )
     checks.push(
       ...(await runIsolated({
         root,
@@ -212,6 +221,7 @@ try {
         reviewFixNodeAwayMs: Number(arg('review-fix-node-away-s') ?? 100) * 1000,
         reviewNodeAwayMs: Number(arg('review-node-away-s') ?? 130) * 1000,
         lifecycle: plan.lifecycle,
+        nativeCheck: plan.nativeCheck,
         f324: plan.f324,
         restarts: plan.restarts,
         review: plan.review,

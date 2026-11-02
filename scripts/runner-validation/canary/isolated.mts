@@ -75,6 +75,7 @@ export interface IsolatedOptions {
   /** For review-past-wait: past REVIEW's 120 s reconnect wait. */
   reviewNodeAwayMs: number;
   lifecycle?: boolean;
+  nativeCheck?: boolean;
   f324?: boolean;
   restarts?: Array<{ step: RestartStep; variants: Variant[] }>;
   review?: boolean;
@@ -783,6 +784,37 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
     ),
     ...result.refused,
   ];
+
+  if (options.nativeCheck) {
+    // The live canary's native round trip, against this node: the gateway routes a session list
+    // to the node's native host.
+    const started = Date.now();
+    let failure: string | undefined;
+    await stack
+      .call('native.session.list', { executionNodeId: 'ri-node' })
+      .catch((error: unknown) => {
+        failure = `native.session.list on ri-node failed: ${String(error)}`;
+      });
+    const seconds = Math.round((Date.now() - started) / 100) / 10;
+    const late = overBudget({ 'native-check': seconds }, options.budgetsS);
+    const differences = [...(failure ? [failure] : []), ...late];
+    results.push({
+      case: 'native-check',
+      variant: 'ri-node',
+      target: 'isolated',
+      status: differences.length ? 'fail' : 'pass',
+      model: 'none',
+      modelCalls: 0,
+      durationS: seconds,
+      timingsS: { 'native-check': seconds },
+      differences,
+      observations: [],
+    });
+    await log(`native-check ri-node: ${differences.length ? 'FAIL' : 'PASS'}`, {
+      seconds,
+      differences,
+    });
+  }
 
   if (options.lifecycle)
     results.push(
