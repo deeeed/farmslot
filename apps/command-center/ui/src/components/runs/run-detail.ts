@@ -78,7 +78,10 @@ import {
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
-import { refreshRunMirror } from '../shared/run-mirror-refresh.js';
+import {
+  refreshRunMirror,
+  runMirrorRefreshUnavailableReason,
+} from '../shared/run-mirror-refresh.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
@@ -1653,6 +1656,7 @@ export class RunDetail extends RunDetailState {
       },
       refreshOutput: () => void this._refreshOutput(run),
       refreshingOutput: this._refreshingOutput,
+      refreshOutputUnavailable: runMirrorRefreshUnavailableReason(run, this._fleetSlots),
       outputError: this._outputError,
       closingOutput: this._closingOutput,
       actionsBlocked: this._actionsBlocked(),
