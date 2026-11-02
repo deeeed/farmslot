@@ -14,13 +14,12 @@ import {
   viewRouteFromLink,
 } from '@farmslot/protocol/surfaces/view-links';
 
-import { lightboxReportArtifactResolver } from '../components/shared/media-lightbox-model.js';
-
 import { familyRunHash } from '../components/runs/family-observability-url-state.js';
 import {
   runDetailEvidenceArtifactHash,
   runDetailStepHash,
 } from '../components/runs/run-detail-url-state.js';
+import { lightboxReportArtifactResolver } from '../components/shared/media-lightbox-model.js';
 import { runsHashWithState } from '../state-url-state.js';
 
 test('actual navigation builders round trip through the desktop contract', () => {
