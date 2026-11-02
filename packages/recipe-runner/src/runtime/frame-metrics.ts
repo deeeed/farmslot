@@ -168,7 +168,29 @@ function activeRenderingIntervals(
   return intervals;
 }
 
-function percentile(sorted: readonly number[], quantile: number): number {
+/**
+ * The display's frame budget from frame start times (ms): the 10th-percentile
+ * interval between 3.5 and 40 ms, snapped to a whole refresh rate from 24 to
+ * 240 Hz. Undefined with fewer than five such intervals.
+ */
+export function estimateRefreshBudgetMs(frameStartsMs: readonly number[]): number | undefined {
+  const cadenceMs: number[] = [];
+  for (let index = 1; index < frameStartsMs.length; index += 1) {
+    const previous = frameStartsMs[index - 1];
+    const current = frameStartsMs[index];
+    if (previous === undefined || current === undefined) continue;
+    const intervalMs = current - previous;
+    if (intervalMs >= 3.5 && intervalMs <= 40) cadenceMs.push(intervalMs);
+  }
+  if (cadenceMs.length < 5) return undefined;
+  cadenceMs.sort((first, second) => first - second);
+  const observedBudgetMs = percentile(cadenceMs, 0.1);
+  const refreshRateHz = Math.round(1000 / observedBudgetMs);
+  return refreshRateHz >= 24 && refreshRateHz <= 240 ? 1000 / refreshRateHz : undefined;
+}
+
+/** Linear-interpolated quantile of an ascending list (0 when it is empty). */
+export function percentile(sorted: readonly number[], quantile: number): number {
   if (sorted.length === 1) return sorted[0] ?? 0;
   const position = (sorted.length - 1) * quantile;
   const lower = Math.floor(position);
@@ -178,6 +200,7 @@ function percentile(sorted: readonly number[], quantile: number): number {
   return lowerValue + (upperValue - lowerValue) * (position - lower);
 }
 
-function round(value: number): number {
+/** Rounded to three decimals, as every frame metric is reported. */
+export function round(value: number): number {
   return Math.round(value * 1000) / 1000;
 }

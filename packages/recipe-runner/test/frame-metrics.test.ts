@@ -1,7 +1,36 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { summarizeFrames } from '../src/runtime/frame-metrics.js';
+import { clockMidpoint } from '../src/runtime/cdp-trace.js';
+import {
+  estimateRefreshBudgetMs,
+  percentile,
+  round,
+  summarizeFrames,
+} from '../src/runtime/frame-metrics.js';
+
+describe('shared frame helpers', () => {
+  it('interpolates percentiles and rounds to three decimals', () => {
+    assert.equal(percentile([10, 20, 30, 40], 0.5), 25);
+    assert.equal(percentile([7], 0.95), 7);
+    assert.equal(percentile([], 0.5), 0);
+    assert.equal(round(1.23456), 1.235);
+  });
+
+  it('snaps the observed cadence to a refresh-rate budget', () => {
+    const at90 = Array.from({ length: 10 }, (_, index) => index * (1000 / 90));
+    assert.equal(estimateRefreshBudgetMs(at90), 1000 / 90);
+    assert.equal(estimateRefreshBudgetMs(at90.slice(0, 5)), undefined);
+    assert.equal(estimateRefreshBudgetMs([0, 100, 200, 300, 400, 500, 600]), undefined);
+  });
+
+  it('places a clock marker at the midpoint of its write', async () => {
+    const sync = await clockMidpoint(async () => 'written');
+    assert.equal(sync.value, 'written');
+    assert.ok(sync.uncertaintyMs >= 0);
+    assert.ok(Math.abs(sync.hostEpochMs - Date.now()) < 1_000);
+  });
+});
 
 describe('frame metric summaries', () => {
   it('excludes idle gaps from cadence-based active FPS', () => {

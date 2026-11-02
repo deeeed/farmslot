@@ -7,6 +7,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import {
+  clockMidpoint,
+  estimateRefreshBudgetMs,
   type FrameSample,
   type JavaScriptPerformanceSourceResult,
   type NativeUiPerformanceSourceResult,
@@ -14,6 +16,7 @@ import {
   type PerformanceCaptureResult,
   type PerformanceSourceStatus,
   summarizeFrames,
+  type TraceClockSync,
   type TraceEvent,
 } from '@farmslot/recipe-runner/runtime/cdp-trace';
 
@@ -434,30 +437,24 @@ async function synchronizeAndroidClock(
   serial: string,
   packageId: string,
 ): Promise<AndroidClockSync> {
-  const before = Date.now();
-  const output = await adbCommand(adb, serial, [
-    'shell',
-    'dumpsys',
-    'gfxinfo',
-    packageId,
-    'framestats',
-  ]);
-  const after = Date.now();
+  const { value: output, ...midpoint } = await clockMidpoint(() =>
+    adbCommand(adb, serial, ['shell', 'dumpsys', 'gfxinfo', packageId, 'framestats']),
+  );
   const deviceUptimeMs = Number(/Uptime:\s+(\d+)/u.exec(output)?.[1]);
-  return androidClockSync(before, after, deviceUptimeMs);
+  return androidClockSync(midpoint, deviceUptimeMs);
 }
 
+/** The host epoch of device uptime 0, from the host-clock midpoint of the read that printed `Uptime:`. */
 export function androidClockSync(
-  beforeEpochMs: number,
-  afterEpochMs: number,
+  midpoint: TraceClockSync,
   deviceUptimeMs: number,
 ): AndroidClockSync {
   if (!positiveFinite(deviceUptimeMs)) {
     throw new Error('Android performance capture could not read device uptime.');
   }
   return {
-    hostEpochAtDeviceUptimeMs: (beforeEpochMs + afterEpochMs) / 2 - deviceUptimeMs,
-    uncertaintyMs: (afterEpochMs - beforeEpochMs) / 2,
+    hostEpochAtDeviceUptimeMs: midpoint.hostEpochMs - deviceUptimeMs,
+    uncertaintyMs: midpoint.uncertaintyMs,
   };
 }
 
@@ -471,28 +468,7 @@ async function adbCommand(adb: string, serial: string, args: string[]): Promise<
 }
 
 function estimateFrameBudgetMs(rows: readonly AndroidFrameRow[]): number | undefined {
-  const intervals: number[] = [];
-  for (let index = 1; index < rows.length; index += 1) {
-    const previous = rows[index - 1];
-    const current = rows[index];
-    if (!previous || !current) continue;
-    const intervalMs = (current.intendedVsyncNs - previous.intendedVsyncNs) / 1_000_000;
-    if (intervalMs >= 3.5 && intervalMs <= 40) intervals.push(intervalMs);
-  }
-  if (intervals.length < 5) return undefined;
-  intervals.sort((first, second) => first - second);
-  const observed = percentile(intervals, 0.1);
-  const refreshRateHz = Math.round(1000 / observed);
-  return refreshRateHz >= 24 && refreshRateHz <= 240 ? 1000 / refreshRateHz : undefined;
-}
-
-function percentile(sorted: readonly number[], quantile: number): number {
-  const position = (sorted.length - 1) * quantile;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-  const lowerValue = sorted[lower] ?? 0;
-  const upperValue = sorted[upper] ?? lowerValue;
-  return lowerValue + (upperValue - lowerValue) * (position - lower);
+  return estimateRefreshBudgetMs(rows.map((row) => row.intendedVsyncNs / 1_000_000));
 }
 
 function notApplicableJavaScript(): JavaScriptPerformanceSourceResult {

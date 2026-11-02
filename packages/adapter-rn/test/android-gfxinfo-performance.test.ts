@@ -85,7 +85,7 @@ describe('Android gfxinfo performance', () => {
   });
 
   it('maps device uptime to the midpoint of the host request', () => {
-    assert.deepEqual(androidClockSync(10_000, 10_020, 2_000), {
+    assert.deepEqual(androidClockSync({ hostEpochMs: 10_010, uncertaintyMs: 10 }, 2_000), {
       hostEpochAtDeviceUptimeMs: 8_010,
       uncertaintyMs: 10,
     });

@@ -17,7 +17,9 @@ import {
 } from '@farmslot/recipe-runner';
 import {
   type FrameMetricSummary,
+  percentile,
   type PerformanceSourceStatus,
+  round,
   summarizeFrames,
 } from '@farmslot/recipe-runner/runtime/cdp-trace';
 
@@ -1036,18 +1038,4 @@ function positiveNumber(value: unknown): number | undefined {
 
 function safeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]/gu, '-');
-}
-
-function percentile(sorted: readonly number[], quantile: number): number {
-  if (sorted.length === 1) return sorted[0] ?? 0;
-  const position = (sorted.length - 1) * quantile;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-  const lowerValue = sorted[lower] ?? 0;
-  const upperValue = sorted[upper] ?? lowerValue;
-  return lowerValue + (upperValue - lowerValue) * (position - lower);
-}
-
-function round(value: number): number {
-  return Math.round(value * 1000) / 1000;
 }

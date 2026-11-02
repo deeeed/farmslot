@@ -5,6 +5,7 @@
 // connects the CDP client and names the trace kind, platform and marker prefix.
 import {
   type CdpClient,
+  clockMidpoint,
   createCdpTraceCollector,
   type PerformanceBackend,
   type TraceKind,
@@ -35,18 +36,18 @@ export function createReactNativeTracePerformanceBackend<P extends string = stri
     platform,
     markerPrefix,
     async marker(name) {
-      const before = Date.now();
-      await client.send(
-        'Runtime.evaluate',
-        {
-          expression: `performance.mark(${JSON.stringify(name)})`,
-          returnByValue: true,
-          awaitPromise: false,
-        },
-        MARKER_TIMEOUT_MS,
+      const { hostEpochMs, uncertaintyMs } = await clockMidpoint(() =>
+        client.send(
+          'Runtime.evaluate',
+          {
+            expression: `performance.mark(${JSON.stringify(name)})`,
+            returnByValue: true,
+            awaitPromise: false,
+          },
+          MARKER_TIMEOUT_MS,
+        ),
       );
-      const after = Date.now();
-      return { hostEpochMs: (before + after) / 2, uncertaintyMs: (after - before) / 2 };
+      return { hostEpochMs, uncertaintyMs };
     },
   });
 }
