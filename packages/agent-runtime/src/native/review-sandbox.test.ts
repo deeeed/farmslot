@@ -66,6 +66,17 @@ test(
           lockRemove: ['unlink', lock],
           session: ['write', join(account, 'sessions', 'review.jsonl')],
           log: ['write', join(account, 'logs', 'unified.jsonl')],
+          newLog: ['write', join(account, 'logs', 'other.jsonl')],
+          // A writable directory and the log an unsandboxed Grok start appends to keep their
+          // identity: nothing can be moved in to stand for them.
+          logReplace: [
+            'rename',
+            join(account, 'sessions', 'review.jsonl'),
+            join(account, 'logs', 'unified.jsonl'),
+          ],
+          logRemove: ['unlink', join(account, 'logs', 'unified.jsonl')],
+          logsMove: ['rename', join(account, 'logs'), join(output, 'logs-moved')],
+          sessionsMove: ['rename', join(account, 'sessions'), join(output, 'sessions-moved')],
         }),
       ]);
       assert.deepEqual(JSON.parse(result.stdout), {
@@ -85,6 +96,11 @@ test(
         lockRemove: false,
         session: true,
         log: true,
+        newLog: true,
+        logReplace: false,
+        logRemove: false,
+        logsMove: false,
+        sessionsMove: false,
       });
       for (const file of [
         'config.toml',

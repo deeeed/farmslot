@@ -559,7 +559,7 @@ The account's own hooks still matter. A headless Grok run treats an untrusted fo
 
 The pin is no longer required.
 
-**Review sandbox.** In its Grok home a review may write only `sessions/` and `logs/`, plus the bytes of `auth.json.lock`, which a token refresh takes. The lock must already be a regular file; the farm creates it if missing, and a review cannot rename, remove or replace it. No link can be made anywhere in the home. The rest of the home is read-only, so one review cannot change what the next one loads, runs, signs in with or sends requests to. That covers:
+**Review sandbox.** In its Grok home a review may write only `sessions/` and `logs/`, plus the bytes of `auth.json.lock`, which a token refresh takes. The lock must already be a regular file; the farm creates it if missing, and a review cannot rename, remove or replace it. No link can be created anywhere in the home. `sessions/`, `logs/` and `logs/unified.jsonl` cannot be removed, renamed or replaced, so nothing can be moved in to stand for them. A review can still move a directory that holds a link into `sessions/` or `logs/`. Only a Grok started outside a review on this home that writes that exact path would follow it. The rest of the home is read-only, so one review cannot change what the next one loads, runs, signs in with or sends requests to. That covers:
 
 - hooks, configuration, policy and trust files;
 - `bundled/` agents, which load as built-in, and user agents;

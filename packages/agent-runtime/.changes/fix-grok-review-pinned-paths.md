@@ -1,0 +1,1 @@
+- A Grok review cannot remove, rename or replace `sessions/`, `logs/` or `logs/unified.jsonl` in the Grok home, so it cannot move a link or a prepared directory into their place for a later Grok start to write through. The review sandbox's runtime access takes `fixedPaths` for files that keep their identity, and every writable path keeps its own.

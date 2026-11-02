@@ -51,6 +51,10 @@ async function sandbox(policy, runtimeRoots, configurationRoots = [], runtimeAcc
   const restrictedRuntime = runtime.filter((root) =>
     [...runtimeWritable, ...runtimeData].some((file) => file.startsWith(root + sep)),
   );
+  // A writable path, and any named file in it, cannot be removed, renamed or swapped, so a review
+  // cannot move a link or a prepared directory into its place for a later process to write through.
+  const runtimeFixed = [...runtimeWritable];
+  for (const file of runtimeAccess.fixedPaths ?? []) runtimeFixed.push(await inRuntime(file));
   const blockedConfiguration = [];
   for (const file of configurationRoots) {
     const source = readOnly.find((root) => file.startsWith(root + sep));
@@ -83,6 +87,7 @@ async function sandbox(policy, runtimeRoots, configurationRoots = [], runtimeAcc
         `(deny file-write-create (require-all (subpath ${JSON.stringify(root)}) (vnode-type SYMLINK)))`,
     ),
     ...restrictedRuntime.map((root) => `(deny file-link (subpath ${JSON.stringify(root)}))`),
+    ...runtimeFixed.map((file) => `(deny file-write-unlink (literal ${JSON.stringify(file)}))`),
     ...blockedConfiguration.map(
       (root) => `(deny file-read-data (subpath ${JSON.stringify(root)}))`,
     ),
