@@ -204,13 +204,20 @@ export function deriveRunnerSessionDeliveryState(
   const observedAt = observedAtFromRecord(record);
   if (!event || observedAt == null) return null;
   const failure = event === 'StopFailure' && record.turnActive !== true && record.failure;
+  // A failure without the runner's transport classification stays a genuine failure.
+  const failureFields = failure
+    ? {
+        failure,
+        ...(record.failureKind === 'transport' ? { failureKind: 'transport' as const } : {}),
+      }
+    : {};
   if (typeof record.turnActive === 'boolean') {
     return {
       value: record.turnActive ? 'active' : 'idle',
       source: 'hook',
       confidence: 'high',
       observedAt,
-      ...(failure ? { failure } : {}),
+      ...failureFields,
       ...(record.lastToolProgressAt === null || typeof record.lastToolProgressAt === 'number'
         ? { lastToolProgressAt: record.lastToolProgressAt }
         : {}),
@@ -239,7 +246,7 @@ export function deriveRunnerSessionDeliveryState(
     source: 'hook',
     confidence: 'high',
     observedAt,
-    ...(failure ? { failure } : {}),
+    ...failureFields,
     ...(value !== 'unknown' && typeof record.turnStartedAt === 'number'
       ? { turnToken: `${sessionId}:${record.turnStartedAt}` }
       : {}),

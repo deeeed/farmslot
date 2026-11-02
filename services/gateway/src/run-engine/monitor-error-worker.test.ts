@@ -16,13 +16,19 @@ import {
 import '../runtime/mock-pty.test-support.js';
 
 import { makeRun } from './test-fixtures.js';
+import {
+  CANCEL_RUN_ACTION,
+  REPLAY_STEP_ACTION,
+  WORKER_LEFT_RUNNING_DECISION,
+} from './worker-left-running.js';
 
 let run: Run;
 let released: string[] = [];
 let killed: string[] = [];
 
+let stepFailure = 'terminated';
 const stepError = async () => {
-  throw new Error('terminated');
+  throw new Error(stepFailure);
 };
 mock.module('./post-dispatch-steps.js', {
   namedExports: {
@@ -106,6 +112,7 @@ function failingRun(at: typeof S.MONITOR | typeof S.REVIEW): Run {
   const steps = FLOW_STEPS['fix-bug'];
   released = [];
   killed = [];
+  stepFailure = 'terminated';
   return makeRun({
     id: 'ce1c5583-dd9f-4664-87f2-b64f02941ee7',
     flowType: 'fix-bug',
@@ -119,7 +126,7 @@ function failingRun(at: typeof S.MONITOR | typeof S.REVIEW): Run {
   });
 }
 
-test('a monitor error leaves the live worker and its slot to an operator', async () => {
+test('a monitor error leaves the live worker and its slot, blocked on a card', async () => {
   run = failingRun(S.MONITOR);
   const worker = agent('fix-bug', 'fix-bug', 'working');
   run.agentContexts = [worker];
@@ -128,16 +135,24 @@ test('a monitor error leaves the live worker and its slot to an operator', async
 
   assert.deepEqual(released, [], 'the slot is not released, so the worker gets no /exit');
   assert.deepEqual(killed, [], 'the worker is not killed');
-  assert.equal(run.status, 'reconciling');
-  assert.match(run.error ?? '', /^terminated\n\nLeft running with the slot: fix-bug\./);
+  assert.equal(run.status, 'blocked', 'blocked runs are replayable and need attention');
+  assert.equal(run.error, 'terminated');
   assert.equal(run.completedAt, undefined);
   assert.equal(run.slotId, 'macpro-mm-5');
   assert.deepEqual(run.agentContexts, [worker]);
+  const card = run.decisions.find((decision) => !decision.resolvedAt);
+  assert.equal(card?.type, WORKER_LEFT_RUNNING_DECISION);
+  assert.match(card?.title ?? '', /worker left running after monitor error/);
+  assert.match(card?.description ?? '', /^terminated\n\nStill running: fix-bug\./);
+  assert.deepEqual(
+    card?.actions.map((action) => action.id),
+    [REPLAY_STEP_ACTION, CANCEL_RUN_ACTION],
+  );
   assert.equal(run.steps.find((step) => step.name === S.MONITOR)?.status, 'failed');
   assert.equal(run.steps.find((step) => step.name === S.REVIEW)?.status, 'pending');
 });
 
-test('a review error leaves the live reviewer and the slot to an operator', async () => {
+test('a review error leaves the live reviewer and the slot, blocked on a card', async () => {
   run = failingRun(S.REVIEW);
   run.agentContexts = [
     agent('fix-bug', 'fix-bug', 'complete'),
@@ -147,16 +162,24 @@ test('a review error leaves the live reviewer and the slot to an operator', asyn
   await startRun(run.id);
 
   assert.deepEqual(released, [], 'the reviewer gets no /exit');
-  assert.equal(run.status, 'reconciling');
-  assert.match(run.error ?? '', /Left running with the slot: review-1\./);
+  assert.equal(run.status, 'blocked');
+  assert.match(
+    run.decisions.find((decision) => decision.type === WORKER_LEFT_RUNNING_DECISION)?.description ??
+      '',
+    /Still running: review-1\./,
+  );
 });
 
-test('a step error with no agent left running still fails the run and releases its slot', async () => {
+// R1: a deterministic refusal after the worker finished is the run's real outcome.
+test('a worker-done refusal with exit evidence fails with its real reason', async () => {
   run = failingRun(S.MONITOR);
+  stepFailure = 'Unsigned outgoing commit(s): 1a2b3c4';
   run.agentContexts = [agent('fix-bug', 'fix-bug', 'complete')];
 
   await startRun(run.id);
 
   assert.equal(run.status, 'failed');
+  assert.equal(run.error, 'Unsigned outgoing commit(s): 1a2b3c4');
+  assert.equal(run.decisions.length, 0, 'no "left running" card for a finished worker');
   assert.deepEqual(released, [run.id]);
 });

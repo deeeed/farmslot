@@ -56,6 +56,7 @@ test('a failed escalated worker kill leaves the fence up AND reports the failure
          'test failure',
          undefined,
          async () => { throw new Error('kill refused'); },
+         { workerExited: async () => true },
        );
      } catch (error) { threw = error.message; }
      console.log(JSON.stringify({ threw }));`,
@@ -103,4 +104,39 @@ test('a retained-session handoff hold clears its reservation and never kills the
   assert.equal(row.handoff_run_id, null, 'only the reservation is cleared');
   assert.equal(row.current_run_id, 'terminal-owner');
   assert.equal(row.lifecycle, 'busy', 'the slot is not published ready over a live worker');
+});
+
+// F328: a failure alone never kills a worker; the escalated kill needs its exit evidence too.
+test('an escalated teardown leaves a worker with no exit evidence and keeps the fence up', async (t) => {
+  const statusPath = statusFileWith(t, {
+    slot: 'live-slot',
+    lifecycle: 'busy',
+    phase: 'working',
+    current_run_id: 'ghost-owner',
+    handoff_run_id: 'reservation-holder',
+  });
+
+  const { stdout } = await runAgainstStatusFile(
+    statusPath,
+    `const { cleanupSlotAfterRunFailure } = await import('./src/run-engine/orchestrator.js');
+     let killed = false;
+     let threw = '';
+     try {
+       await cleanupSlotAfterRunFailure(
+         'live-slot',
+         'reservation-holder',
+         'test failure',
+         undefined,
+         async () => { killed = true; },
+         { workerExited: async () => false },
+       );
+     } catch (error) { threw = error.message; }
+     console.log(JSON.stringify({ killed, threw }));`,
+  );
+
+  const { killed, threw } = JSON.parse(stdout.trim().split('\n').at(-1)!);
+  assert.equal(killed, false, 'the worker is not killed without exit evidence');
+  assert.match(threw, /may still be running after test failure/);
+  const row = JSON.parse(readFileSync(statusPath, 'utf8')).slots[0];
+  assert.equal(row.phase, 'releasing', 'the slot stays fenced, not dispatchable over the worker');
 });

@@ -51,6 +51,7 @@ import {
   type ReviewQaDispatchSelection,
   type ReviewStatus,
   type Run,
+  type RunCancelParams,
   runClaimOverrideSnapshotIdentity,
   type RunCreateParams,
   type RunCreateResult,
@@ -178,6 +179,10 @@ import {
   reserveVisualRepair,
   type VisualRepairAdmission,
 } from '../run-engine/visual-repair.js';
+import {
+  CANCEL_RUN_ACTION,
+  WORKER_LEFT_RUNNING_DECISION,
+} from '../run-engine/worker-left-running.js';
 import { WORKER_QUESTION_CLOSED_ACTION } from '../run-engine/worker-question.js';
 import {
   assertSupportedRunnerSpelling,
@@ -1664,6 +1669,7 @@ export interface RunResolveDecisionDependencies {
     Pick<Awaited<ReturnType<typeof admittedFailureSnapshot>>, 'snapshotHash' | 'sources'>
   >;
   resumeRun?: (runId: string) => Promise<void>;
+  cancelRun?: (params: RunCancelParams) => Promise<unknown>;
   assertReviewLaunchAllowed?: typeof assertReviewLaunchStateForSlot;
   /**
    * ADR-054 `free-slot`: brings a run whose park freed its slot back before its
@@ -1869,6 +1875,18 @@ export function continueResolvedRunDecision(
       const afterResolve = getRun(params.runId);
       if (!afterResolve || engineResumed || runSupersededSince(afterResolve, gateGeneration))
         return;
+      // Cancelling a run whose agents a step error left running stops them by intent (F328).
+      if (
+        params.actionId === CANCEL_RUN_ACTION &&
+        afterResolve.decisions.find((d) => d.id === params.decisionId)?.type ===
+          WORKER_LEFT_RUNNING_DECISION
+      ) {
+        await (dependencies.cancelRun ?? runCancel)({
+          runId: params.runId,
+          reason: 'Cancelled by the operator after a step error left its agents running',
+        });
+        return;
+      }
       const carriedGate = afterResolve.decisions.find(
         (d) => d.id === params.decisionId && isGateDecision(d),
       );

@@ -383,6 +383,7 @@ test('a reviewer turn ended on a dropped model connection keeps the review waiti
     sessionId: 'exact-session',
     turnToken: 'exact-session:current-turn',
     failure: 'terminated',
+    failureKind: 'transport',
   }));
   assert.equal(
     await waitForReviewCompletion(

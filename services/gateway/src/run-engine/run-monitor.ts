@@ -64,7 +64,7 @@ import {
   stripRunnerNoise,
 } from '../runners/registry.js';
 import { readRunProgress, runDecisionWaitingStatus } from '../runners/run-progress.js';
-import { isRunnerTransportAbort, RunnerExecutionError } from '../runners/runner-execution-error.js';
+import { RunnerExecutionError } from '../runners/runner-execution-error.js';
 import {
   probeRunnerDescendantPid,
   resolveRunnerSessionForRun,
@@ -1074,6 +1074,28 @@ export async function monitorRun(
     actions?: RunDecision['actions'],
     question?: HandoffQuestionProbe,
   ) => createBlockedDecision(id, reason, description, actions, { signal, generation }, question);
+  // A failure the runner itself reported (an expired login) waits for the operator in a
+  // runner_unavailable decision with the worker kept, instead of failing the step (#1427, F328).
+  const observeUntilRunnerAvailable = async (
+    observe: () => Promise<AgentLiveStatus>,
+  ): Promise<AgentLiveStatus | 'aborted'> => {
+    for (;;) {
+      try {
+        return await observe();
+      } catch (error) {
+        if (!(error instanceof RunnerExecutionError)) throw error;
+        console.log(
+          `[run-monitor] run ${runId.slice(0, 8)} — runner failed its turn; blocking instead of failing: ${error.message}`,
+        );
+        const actionId = await createMonitorDecision(
+          runId,
+          'runner_unavailable',
+          `${error.message} Restore the provider account or authentication in the retained runner pane, then choose Continue. The worktree and current task state are preserved.`,
+        );
+        if (actionId === 'abort') return 'aborted';
+      }
+    }
+  };
   // The monitor follows the flow-owned primary worker for this run. Secondary
   // roles such as review and ci-fix have their own watchers/signals and
   // must not retarget the main completion monitor mid-run.
@@ -1374,19 +1396,18 @@ export async function monitorRun(
       };
     }
     let ctx = currentMonitorContext();
-    let startupAgent = await observeWorker(slotId, run.metrics.runner, runId, ctx?.role, ctx?.id);
-    if (startupAgent !== 'working') {
+    let startupAgent = await observeUntilRunnerAvailable(() =>
+      observeWorker(slotId, run.metrics.runner, runId, ctx?.role, ctx?.id),
+    );
+    if (startupAgent !== 'working' && startupAgent !== 'aborted') {
       recordOperatorWait(false);
       ctx = currentMonitorContext();
-      startupAgent = await waitForWorker(
-        slotId,
-        run.metrics.runner,
-        10_000,
-        runId,
-        ctx?.role,
-        ctx?.id,
+      startupAgent = await observeUntilRunnerAvailable(() =>
+        waitForWorker(slotId, run.metrics.runner, 10_000, runId, ctx?.role, ctx?.id),
       );
     }
+    if (startupAgent === 'aborted')
+      return { pollCount: 0, exitReason: 'aborted', violations: allViolations, snapshots };
     if (startupAgent === 'idle' || startupAgent === 'no-tmux') {
       // The worker can write its signal while the startup/liveness probes await.
       const terminalSignal = await checkSignalFile();
@@ -1492,24 +1513,30 @@ export async function monitorRun(
 
       // 1. Confirm the owned worker is idle, including any native background work.
       const liveContext = currentMonitorContext();
-      let agentStatus = await observeWorker(
-        slotId,
-        run.metrics.runner,
-        runId,
-        liveContext?.role,
-        liveContext?.id,
+      let agentStatus = await observeUntilRunnerAvailable(() =>
+        observeWorker(slotId, run.metrics.runner, runId, liveContext?.role, liveContext?.id),
       );
+      if (agentStatus === 'aborted') {
+        exitReason = 'aborted';
+        return { pollCount, exitReason, violations: allViolations, snapshots };
+      }
       if (agentStatus === 'idle' || agentStatus === 'no-tmux') {
         recordOperatorWait(false);
         const recoveredContext = currentMonitorContext();
-        const recoveredStatus = await waitForWorker(
-          slotId,
-          run.metrics.runner,
-          5_000,
-          runId,
-          recoveredContext?.role,
-          recoveredContext?.id,
+        const recoveredStatus = await observeUntilRunnerAvailable(() =>
+          waitForWorker(
+            slotId,
+            run.metrics.runner,
+            5_000,
+            runId,
+            recoveredContext?.role,
+            recoveredContext?.id,
+          ),
         );
+        if (recoveredStatus === 'aborted') {
+          exitReason = 'aborted';
+          return { pollCount, exitReason, violations: allViolations, snapshots };
+        }
         if (recoveredStatus === 'idle' || recoveredStatus === 'no-tmux') {
           // Re-read completion after confirming exit; the earlier read predates that probe.
           const terminalSignal = await checkSignalFile();
@@ -2081,11 +2108,9 @@ export async function checkAgentLive(
       turn.source !== 'unknown' &&
       turn.failure
     ) {
-      if (!isRunnerTransportAbort(turn.failure)) throw new RunnerExecutionError(turn.failure);
-      // The live worker sits at its prompt; the waiting and stuck nudges continue it.
-      console.warn(
-        `[run-monitor] slot=${slotId} run=${runId?.slice(0, 8) ?? '-'} turn ended on a dropped model connection (${turn.failure}); monitoring continues`,
-      );
+      // A dropped model connection ends the turn, not the worker: the waiting and stuck nudges
+      // continue it (F328). Without the runner's transport classification it is genuine.
+      if (turn.failureKind !== 'transport') throw new RunnerExecutionError(turn.failure);
     }
     const r = await source.exec(
       vars,

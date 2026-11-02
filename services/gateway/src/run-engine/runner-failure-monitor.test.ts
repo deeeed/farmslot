@@ -39,7 +39,7 @@ test('a live Pi process with a terminal native auth error fails the monitor with
 
 // F328 ce1c5583: Pi's model stream dropped mid-turn ("terminated"); the worker stayed alive.
 test('a Pi turn ended on a dropped model connection leaves the live worker monitored', async () => {
-  const readers = {
+  const pane = (failureKind?: 'transport') => ({
     slot: async () => makeVars(),
     target: async () => ({ target: 'fixture:dev', session: 'fixture' }),
     exec: async () => ({ exitCode: 0, stdout: '42\n', stderr: '' }),
@@ -50,12 +50,18 @@ test('a Pi turn ended on a dropped model connection leaves the live worker monit
       confidence: 'high',
       observedAt: Date.now(),
       failure: 'terminated',
+      ...(failureKind ? { failureKind } : {}),
     }),
-  };
+  });
   assert.equal(
-    await checkAgentLive('fixture', 'pi', undefined, undefined, undefined, readers),
+    await checkAgentLive('fixture', 'pi', undefined, undefined, undefined, pane('transport')),
     'working',
   );
+  // Only the runner classifies its failure; unclassified text is a genuine failure.
+  await assert.rejects(checkAgentLive('fixture', 'pi', undefined, undefined, undefined, pane()), {
+    name: 'RunnerExecutionError',
+    message: 'terminated',
+  });
 });
 
 test('an idle Pi whose turn ended on a dropped model connection gets the stuck nudge', () => {
@@ -66,7 +72,7 @@ test('an idle Pi whose turn ended on a dropped model connection gets the stuck n
     lastProgressAt: now - 20 * 60_000,
     stuckTimeoutMs: 15 * 60_000,
     activity: { ...idle, value: 'idle' },
-    turnState: { ...idle, value: 'idle', failure: 'terminated' },
+    turnState: { ...idle, value: 'idle', failure: 'terminated', failureKind: 'transport' },
   });
   assert.equal(state.kind, 'idle');
   assert.equal(state.stuck, true);

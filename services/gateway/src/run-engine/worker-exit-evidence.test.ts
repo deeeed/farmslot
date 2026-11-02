@@ -84,6 +84,7 @@ test('a turn ended on a dropped model connection is no exit evidence', async () 
       confidence: 'high',
       observedAt: Date.now(),
       failure: 'terminated',
+      failureKind: 'transport',
     }),
   };
   assert.deepEqual(
