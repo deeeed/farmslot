@@ -1357,6 +1357,117 @@ for (const status of ['fixing', 'reconciling'] as const) {
   }
 }
 
+// TAT-4033 6148c5e5: the worker's report opened an output review at 16:57Z, before the
+// review step started. The 17:26Z reload landed mid-fix, recovery re-presented that card
+// instead of resuming the review step, and the 17:31Z REVIEW-FIX-SIGNAL was never consumed.
+function reviewFixRunWithOutputReview(
+  status: 'fixing' | 'reconciling',
+  pending: Run['decisions'][number],
+): Run {
+  return minimalActiveRun({
+    id: '6148c5e5-a3f4-4dce-8eba-1187b8b06aa1',
+    slotId: 'mini-mmt-1',
+    flowType: 'dev',
+    mode: 'validation',
+    ticketOrPr: 'TAT-4033',
+    familyRootTicketOrPr: 'TAT-4033',
+    taskFile: '/tmp/recovery-output-review-fix/TASK.md',
+    status,
+    decisions: [
+      {
+        id: 'slot-picker',
+        type: 'engine_no_suitable_slot',
+        title: 'TAT-4033 — no suitable slot',
+        description: 'Preserve or release dirty slot work.',
+        actions: [{ id: 'pick', label: 'Use Selected Slot', style: 'primary' }],
+        createdAt: '2026-11-01T16:15:41.751Z',
+        resolvedAt: '2026-11-01T16:20:51.887Z',
+        resolvedAction: 'pick',
+      },
+      pending,
+    ],
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'review', status: 'running', detail: 'Fix: 2/6 steps' },
+      { name: 'complete', status: 'pending' },
+    ],
+    agentContexts: [
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Review fix',
+        status: 'working',
+        runId: '6148c5e5-a3f4-4dce-8eba-1187b8b06aa1',
+        slotId: 'mini-mmt-1',
+        taskFile: 'temp/tasks/feat/tat-4033-1102-002116/REVIEW-FIX.md',
+        signalFile: 'temp/tasks/feat/tat-4033-1102-002116/REVIEW-FIX-SIGNAL.json',
+        signalAttemptId: 'b9fd7464-cd6e-4058-abfd-12a558c6a7ae',
+        attemptStartedAt: '2026-11-01T17:01:20.703Z',
+      },
+    ],
+  });
+}
+
+const openOutputReview: Run['decisions'][number] = {
+  id: 'output-review',
+  type: 'engine_output_review',
+  title: 'Review run output',
+  description: 'The worker has produced a report.',
+  actions: [
+    { id: 'close-run', label: 'Close run', style: 'primary' },
+    { id: 'mark-reviewed', label: 'Mark reviewed', style: 'secondary' },
+  ],
+  createdAt: '2026-11-01T16:57:41.383Z',
+  payload: {
+    kind: 'output-review',
+    manifestDigest: 'c48b8d31b9e0400d7557081d8579add00baee95bd40b49edd88dfb4d2aaa8f41',
+    reportPath: 'artifacts/pr-description.md',
+  },
+};
+
+for (const status of ['fixing', 'reconciling'] as const) {
+  test(`restart resumes the review-fix wait in ${status} past an open output review`, async () => {
+    const run = reviewFixRunWithOutputReview(status, openOutputReview);
+    const { deps, calls } = publicationReviewRecoveryDeps(run);
+    const started: string[] = [];
+    deps.startRun = async (runId) => {
+      started.push(runId);
+    };
+    deps.updateRunStep = () => assert.fail('recovery must not touch the running review step');
+    deps.reconstructStepOutputs = () => assert.fail('the review loop owns fix-signal validation');
+
+    await recoverActiveRuns(deps);
+
+    assert.deepEqual(started, [run.id], 'the review step re-enters and owns its fix wait');
+    assert.equal(calls.broadcasted, 0, 'the output review is not re-presented in its place');
+    assert.equal(calls.reconciled, 0, 'context reconciliation must not retire the live fix');
+    assert.deepEqual(calls.replayed, []);
+    assert.deepEqual(calls.rearmed, []);
+    assert.equal(run.steps.find((step) => step.name === 'review')?.status, 'running');
+    assert.equal(run.decisions.find((d) => d.id === 'output-review')?.resolvedAt, undefined);
+    assert.equal(run.agentContexts?.[0].signalAttemptId, 'b9fd7464-cd6e-4058-abfd-12a558c6a7ae');
+  });
+}
+
+test('restart still re-presents a decision the running review step waits on', async () => {
+  const run = reviewFixRunWithOutputReview('fixing', {
+    id: 'review-complete',
+    type: 'engine_review_complete',
+    title: 'Review complete',
+    description: 'Review found 2 issues.',
+    actions: [{ id: 'send_feedback', label: 'Send feedback to worker', style: 'primary' }],
+    createdAt: '2026-11-01T17:01:10.722Z',
+  });
+  run.decisions.push(openOutputReview);
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+  deps.startRun = async () => assert.fail('an operator choice still holds the review step');
+
+  await recoverActiveRuns(deps);
+
+  assert.equal(calls.broadcasted, 2, 'both open decisions are re-presented');
+  assert.equal(run.steps.find((step) => step.name === 'review')?.status, 'running');
+});
+
 test('recovery replays the human gate before reconciliation when a reviewer completed', async () => {
   const run = withRecoverableReviewer(
     minimalActiveRun({
