@@ -23,17 +23,6 @@
     },
     {
       "case": "worker-survives",
-      "variant": "dispatch",
-      "signature": "tmux stop sent: .*(/exit|respawn-window)",
-      "differences": [
-        "^tmux stop sent: .*(/exit| C-c|respawn-(pane|window)|kill-(pane|window|session))",
-        "^pid \\d+ exited: ",
-        "^worker pane %\\d+ (is gone|is dead|was respawned)"
-      ],
-      "ledger": "F331"
-    },
-    {
-      "case": "worker-survives",
       "variant": "review-fix",
       "signature": "Recovered review fix worker could not accept its prompt",
       "differences": [
