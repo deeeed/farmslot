@@ -18,7 +18,7 @@
 // (setup failure, a hold that never took effect, a run that never settled).
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -464,6 +464,10 @@ async function runScenario(
       if (armed.has(phase) && phase.held(view)) {
         await log(`${label}: ${phase.step} held`, { run: brief(run) });
         await writeJson(path.join(dir, `run-held-${phase.step}.json`), run);
+        // What the hold caught (the held git/ssh command, the reviewer turn); release removes it.
+        for (const name of await readdir(stack.holds))
+          if (name.endsWith('.hit'))
+            await cp(path.join(stack.holds, name), path.join(dir, `${phase.step}-${name}`));
         for (const [index, variant] of phase.restarts.entries()) {
           const last = index === phase.restarts.length - 1;
           const restart = await stack.restartGateway({
@@ -529,9 +533,12 @@ async function runScenario(
         WAITING.has(run.status) && run.decisions.some((decision) => !decision.resolvedAt);
       let settled = unchangedMs >= STALL_MS || (waiting && unchangedMs >= 5000);
       if (TERMINAL.has(run.status)) {
+        // A released slot is ready. Any other slot state stands only once the orphan
+        // reconciler (every 60 s) has had two passes at it.
         terminalSince ??= Date.now();
-        const releasing = view.slot?.phase === 'releasing' || view.slot?.lifecycle === 'busy';
-        settled ||= (!releasing && unchangedMs >= 1500) || Date.now() - terminalSince > 120_000;
+        settled ||=
+          (view.slot?.lifecycle === 'ready' && unchangedMs >= 1500) ||
+          Date.now() - terminalSince > 150_000;
       }
       if (settled) {
         const slot = view.slot ?? (await readSlot(stack, slotId));
