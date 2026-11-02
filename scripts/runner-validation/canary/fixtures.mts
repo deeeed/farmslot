@@ -502,8 +502,11 @@ ${FAKE_WORKER_FINISH}
  * --settings, which the real installer wrote. Holds: holds/claude-startup keeps it starting up (no
  * prompt marker, so DISPATCH stays in its readiness wait); holds/tmux.arm becomes holds/tmux once
  * its prompt is accepted; holds/claude-late-session withholds its session until it may finish, so
- * DISPATCH stays recapturing it after delivery; holds/worker keeps it mid-turn. Then it finishes
- * its task and waits at its prompt until /exit.
+ * DISPATCH stays recapturing it after delivery; holds/claude-no-hook keeps its accepted prompt
+ * from its hooks, so nothing proves delivery; holds/claude-no-finish makes that attempt stay
+ * mid-turn until /exit; holds/worker keeps it mid-turn. Then it finishes its task and waits at its
+ * prompt until /exit. The two prompt holds are read when the prompt arrives, so lifting them only
+ * affects the next launch.
  */
 export const fakeClaude = (holds: string): string => `#!/usr/bin/env node
 'use strict';
@@ -560,7 +563,8 @@ setTimeout(() => process.exit(0), 15 * 60_000);
     onPrompt = resolve;
   });
   onPrompt = () => {};
-  hook('UserPromptSubmit', { prompt, ...(lateSession ? {} : session) });
+  const noFinish = held('claude-no-finish');
+  if (!held('claude-no-hook')) hook('UserPromptSubmit', { prompt, ...(lateSession ? {} : session) });
   process.stdout.write('working\\n');
   try {
     fs.renameSync(path.join(holds, 'tmux.arm'), path.join(holds, 'tmux'));
@@ -568,6 +572,7 @@ setTimeout(() => process.exit(0), 15 * 60_000);
     // No dispatch hold to arm.
   }
   await whileHeld('worker');
+  if (noFinish) await new Promise(() => {});
   while (held('claude-late-session') && Date.now() < ceiling) await sleep(100);
   if (lateSession) hook('SessionStart', session);
   const taskFile = path.resolve(cwd, prompt.match(/\\S*TASK\\.md/)[0]);

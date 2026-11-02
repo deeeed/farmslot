@@ -51,9 +51,10 @@ import {
   LIFECYCLE_OUTCOME,
   outcomeDifferences,
   outcomeObservations,
-  REVIEWED_OUTCOME,
   reviewDriftExcuses,
+  REVIEWED_OUTCOME,
   reviewVerdicts,
+  type RunOutcome,
 } from './outcome.mjs';
 import {
   brief,
@@ -86,6 +87,8 @@ export const SURVIVE_STEPS = [
   'dispatch-claude-readiness',
   'dispatch-claude-keys',
   'dispatch-claude-verified',
+  'dispatch-claude-card',
+  'dispatch-claude-card-signal',
   'monitor',
   'review',
   'review-fix',
@@ -101,6 +104,7 @@ const SURVIVE_OBSERVE_MS = 45_000;
 const LOSS_SETTLE_MS = 5_000;
 // The launch's session capture gives up after 20 s on a runner that has reported no session yet.
 const READINESS_WAIT_MS = 30_000;
+const WORKER_LEFT_RUNNING_CARD = 'engine_worker_left_running';
 const TRANSPORT_ABORT = /\bterminated\b|abort|ECONNRESET|socket hang up|connection reset/i;
 
 export interface IsolatedOptions {
@@ -133,6 +137,10 @@ export interface IsolatedOptions {
 }
 
 const SETTLED_STEP = new Set(['done', 'failed', 'skipped']);
+const openCard = (run: Run) =>
+  run.decisions.find(
+    (decision) => !decision.resolvedAt && decision.type === WORKER_LEFT_RUNNING_CARD,
+  );
 const contexts = (run: Run, role: string) =>
   (run.agentContexts ?? []).filter((context) => context.role === role);
 
@@ -142,7 +150,15 @@ interface Shape extends RunShape {
   scriptedReview?: boolean;
 }
 
-type ShapeName = 'canary' | 'f324' | 'pipe' | 'pi' | 'claude' | 'review' | 'scripted-review';
+type ShapeName =
+  | 'canary'
+  | 'f324'
+  | 'pipe'
+  | 'pi'
+  | 'claude'
+  | 'claude-card'
+  | 'review'
+  | 'scripted-review';
 
 const SHAPES: Record<ShapeName, Shape> = {
   canary: canaryShape('isolated lifecycle'),
@@ -153,6 +169,14 @@ const SHAPES: Record<ShapeName, Shape> = {
     project: PIPE_PROJECT,
     create: claudeRunParams,
     decide: closeGate,
+    timeoutMs: 20 * 60_000,
+  },
+  // The test presses the card's Replay step once its hold is over, through run.resolveDecision.
+  'claude-card': {
+    project: PIPE_PROJECT,
+    create: claudeRunParams,
+    decide: (decision) =>
+      decision.type === WORKER_LEFT_RUNNING_CARD ? { resolve: 'replay-step' } : closeGate(decision),
     timeoutMs: 20 * 60_000,
   },
   review: {
@@ -206,6 +230,8 @@ interface HoldPhase {
     release?(context: HoldContext): Promise<void>;
     /** Nothing it holds can be lost: the restart may stop and relaunch this worker. */
     relaunches?: boolean;
+    /** Recovery cannot prove delivery: the run waits on the card, its worker untouched. */
+    card?: boolean;
   };
 }
 
@@ -445,6 +471,10 @@ export const SURVIVE_HOLDS: Record<SurviveStep, string> = {
     "a Claude-runner worker (no model) accepts its typed prompt and arms a tmux hold, so DISPATCH's verification waits; the worker waits on holds/worker; the tmux hold lifts while the gateway is down",
   'dispatch-claude-verified':
     'a Claude-runner worker (no model) withholds its session, so DISPATCH is still recapturing it after recording verified delivery; the worker waits on holds/worker',
+  'dispatch-claude-card':
+    "a Claude-runner worker (no model) gets its prompt but records no hook, so nothing proves delivery while DISPATCH's verification waits on a tmux hold that lifts while the gateway is down. The test watches the card, presses Replay step, and restarts again when the relaunched worker has its keys",
+  'dispatch-claude-card-signal':
+    'the same worker, except that it finishes its task while the run waits on the card, so Replay step adopts its signal instead of relaunching it',
   monitor: 'the scripted worker waits on holds/worker',
   review:
     "the codex proxy swallows the reviewer's turn (no model call); the test answers it after the watch",
@@ -457,6 +487,32 @@ export const SURVIVE_HOLDS: Record<SurviveStep, string> = {
   'monitor-transport-abort':
     "a Pi-runner worker (no model) waits on holds/worker; while the gateway is down it records StopFailure 'terminated' on its live session and pane through the real hook writer",
 };
+
+/**
+ * DISPATCH's next tmux call waits once the worker has armed the hold (one run at a time, so they
+ * are DISPATCH's), and lifts while the gateway is down.
+ */
+function dispatchTmuxHold(
+  stack: RemoteNodeStack,
+  armWorker: (context: HoldContext) => Promise<void>,
+) {
+  const tmux = marker(stack, 'tmux');
+  const armFile = path.join(stack.holds, 'tmux.arm');
+  return {
+    armAt: 'create',
+    arm: async (context: HoldContext) => {
+      await armWorker(context);
+      await writeFile(armFile, '.\n');
+    },
+    held: ({ run }: View) => tmux.hit() && stepStatus(run, 'dispatch') === 'running',
+    missed: ({ run }: View) => SETTLED_STEP.has(stepStatus(run, 'dispatch') ?? ''),
+    release: async (context: HoldContext) => {
+      await rm(armFile, { force: true });
+      await tmux.release(context);
+    },
+    releaseWhileDown: true,
+  } satisfies Partial<HoldPhase>;
+}
 
 /**
  * A worker-survives hold: the run held with its worker (or reviewer) mid-turn, a restart with the
@@ -473,25 +529,64 @@ function survivePhase(
   const idle = marker(stack, 'idle');
   switch (step) {
     case 'dispatch':
-    case 'dispatch-claude-keys': {
-      const tmux = marker(stack, 'tmux');
-      const armFile = path.join(stack.holds, 'tmux.arm');
+    case 'dispatch-claude-keys':
       return {
         ...base,
-        armAt: 'create',
-        arm: async (context) => {
-          await worker.arm(context);
-          // Any tmux call once the worker has it armed: one run at a time, so they are DISPATCH's.
-          await writeFile(armFile, '.\n');
-        },
-        held: ({ run }) => tmux.hit() && stepStatus(run, 'dispatch') === 'running',
-        missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'dispatch') ?? ''),
-        release: async (context) => {
-          await rm(armFile, { force: true });
-          await tmux.release(context);
-        },
-        releaseWhileDown: true,
+        ...dispatchTmuxHold(stack, worker.arm),
         survive: { release: worker.release },
+      };
+    case 'dispatch-claude-card': {
+      const noHook = marker(stack, 'claude-no-hook');
+      const noFinish = marker(stack, 'claude-no-finish');
+      return {
+        ...base,
+        ...dispatchTmuxHold(stack, async (context) => {
+          await noHook.arm(context);
+          await noFinish.arm(context);
+        }),
+        survive: {
+          card: true,
+          release: async (context) => {
+            await noHook.release(context);
+            await noFinish.release(context);
+          },
+        },
+      };
+    }
+    case 'dispatch-claude-card-signal': {
+      const noHook = marker(stack, 'claude-no-hook');
+      return {
+        ...base,
+        ...dispatchTmuxHold(stack, async (context) => {
+          await noHook.arm(context);
+          await worker.arm(context);
+        }),
+        survive: {
+          card: true,
+          release: async (context) => {
+            await noHook.release(context);
+            await worker.release(context);
+            const signalFile = context.held?.agentContexts?.find(
+              (entry) => entry.signalFile,
+            )?.signalFile;
+            if (!signalFile) throw new Error('The held run has no worker signal file');
+            await poll(
+              'the worker to finish on the card',
+              async () => {
+                try {
+                  const raw = await readFile(path.join(context.slotRepo, signalFile), 'utf8');
+                  return (JSON.parse(raw) as { status?: string }).status === 'complete'
+                    ? true
+                    : undefined;
+                } catch {
+                  // Missing or mid-write: the next poll reads the finished file.
+                  return undefined;
+                }
+              },
+              60_000,
+            );
+          },
+        },
       };
     }
     case 'dispatch-claude-readiness': {
@@ -761,6 +856,7 @@ async function watchWorker(
   snapshot: WorkerSnapshot,
   getRun: () => Promise<Run>,
   step: HoldStep,
+  expectCard = false,
 ): Promise<string[]> {
   const stops = path.join(stack.holds, 'tmux-stops.log');
   const deadline = Date.now() + SURVIVE_OBSERVE_MS;
@@ -798,7 +894,10 @@ async function watchWorker(
       lost.push(
         `a new reviewer was launched: ${relaunched.map((context) => context.id).join(', ')}`,
       );
-    if (failed.length || isTerminalRunStatus(run.status))
+    if (expectCard) {
+      if (!(run.status === 'blocked' && openCard(run)))
+        lost.push(`the run is not waiting on the card: ${brief(run)}`);
+    } else if (failed.length || isTerminalRunStatus(run.status))
       lost.push(`the run went ${run.status}: ${failureText(run) || brief(run)}`);
     // A failure's teardown follows it: keep watching a little, to report what it did to the worker.
     if (lost.length && !losing) {
@@ -812,6 +911,49 @@ async function watchWorker(
     if (Date.now() > until) return lost;
     await delay(500);
   }
+}
+
+/** A card variant's outcome, for comparing the rest with its baseline: the card is the difference. */
+function withoutCard(outcome: RunOutcome): RunOutcome {
+  return {
+    ...outcome,
+    decisions: outcome.decisions.filter(
+      (decision) => !decision.startsWith(`${WORKER_LEFT_RUNNING_CARD}:`),
+    ),
+    decisionTypes: outcome.decisionTypes.filter((type) => type !== WORKER_LEFT_RUNNING_CARD),
+  };
+}
+
+/** The worker's context: a dev run's has the flow's own id. */
+const workerContext = (run: Run) =>
+  run.agentContexts?.find((context) => context.id === run.flowType);
+
+/**
+ * Where Replay step took the run. The fixture worker starts a new session each launch, so the session
+ * tells a kept worker from a relaunched one, and which of them the run would reopen.
+ */
+function cardDifferences(scenario: ScenarioResult, step: SurviveStep): string[] {
+  if (!scenario.cardRun) return ['the run never waited on the card'];
+  const atCard = workerContext(scenario.cardRun)?.runnerSessionId;
+  const final = workerContext(scenario.run)?.runnerSessionId;
+  if (!atCard || !final) return [`no session to compare: ${atCard ?? '-'} -> ${final ?? '-'}`];
+  return [
+    ...scenario.refused,
+    ...(step === 'dispatch-claude-card-signal'
+      ? atCard === final
+        ? []
+        : ['Replay step relaunched a worker that had signalled']
+      : atCard === final
+        ? [`the run reopens the card attempt's session ${final}, not the relaunched attempt's`]
+        : []),
+  ];
+}
+
+function cardObservations(scenario: ScenarioResult): string[] {
+  return [
+    `card: ${scenario.cardRun ? brief(scenario.cardRun) : 'never'}`,
+    `session ${scenario.cardRun ? (workerContext(scenario.cardRun)?.runnerSessionId ?? '-') : '-'} -> ${workerContext(scenario.run)?.runnerSessionId ?? '-'}`,
+  ];
 }
 
 /** The reviews a survive hold must still have run: the outcome comparison doesn't see them. */
@@ -851,6 +993,8 @@ interface ScenarioResult extends DrivenRun {
   /** For a worker-survives hold: what was watched, and what the restart did to it. */
   watched?: string[];
   survival?: string[];
+  /** The run as it waited on the card, once its watch was over. */
+  cardRun?: Run;
   fixLanded?: boolean;
 }
 
@@ -932,6 +1076,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     const restartLog: RestartRecord[] = [];
     let watched: string[] | undefined;
     let survival: string[] | undefined;
+    let cardRun: Run | undefined;
     const unreached: HoldStep[] = [];
     let current = 0;
     let runId = '';
@@ -955,6 +1100,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         const snapshot = phase.survive ? snapshotWorker(stack, slotId, run) : undefined;
         if (snapshot) {
           watched = [
+            ...(watched ?? []),
             ...snapshot.panes.map((pane) => `pane ${pane.paneId} (pid ${pane.panePid})`),
             ...snapshot.processes.map((entry) => `pid ${entry.pid} ${entry.command.slice(0, 120)}`),
           ];
@@ -987,11 +1133,22 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           await log(`${label}: restarted (${variant})`, { after: brief(after) });
         }
         if (snapshot) {
-          survival = phase.survive?.relaunches
-            ? []
-            : snapshot.processes.length
-              ? await watchWorker(stack, slotId, snapshot, getRun, phase.step)
-              : ['nothing to watch: no runner process at the hold point'];
+          survival = [
+            ...(survival ?? []),
+            ...(phase.survive?.relaunches
+              ? []
+              : snapshot.processes.length
+                ? await watchWorker(
+                    stack,
+                    slotId,
+                    snapshot,
+                    getRun,
+                    phase.step,
+                    phase.survive?.card,
+                  )
+                : ['nothing to watch: no runner process at the hold point']),
+          ];
+          if (phase.survive?.card) cardRun = await getRun();
           await log(`${label}: worker ${survival.length ? 'lost' : 'survived'}`, {
             watched,
             ...(survival.length ? { survival } : {}),
@@ -1067,6 +1224,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         unreached,
         ...(watched ? { watched, survival: survival ?? [] } : {}),
         ...(hold.fixLanded !== undefined ? { fixLanded: hold.fixLanded } : {}),
+        ...(cardRun ? { cardRun } : {}),
         ...(shape.scriptedReview ? { reviewerTurns: reviewer.turns() } : {}),
       };
     } finally {
@@ -1223,6 +1381,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     const scripted = scriptedReviewStep(step);
     const pi = step === 'monitor-transport-abort';
     const claude = step.startsWith('dispatch-claude-');
+    const card = step.startsWith('dispatch-claude-card');
     let baseline: ScenarioResult;
     const result = await check(
       {
@@ -1241,8 +1400,30 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         baseline = await baselineOf(scripted ? 'scripted-review' : 'pipe');
         return runScenario(
           `survive-${step}`,
-          scripted ? 'scripted-review' : pi ? 'pi' : claude ? 'claude' : 'pipe',
-          [survivePhase(stack, step, reviewer)],
+          scripted
+            ? 'scripted-review'
+            : pi
+              ? 'pi'
+              : card
+                ? 'claude-card'
+                : claude
+                  ? 'claude'
+                  : 'pipe',
+          [
+            survivePhase(stack, step, reviewer),
+            // The relaunched attempt, interrupted too: the session it reopens must be its own.
+            ...(step === 'dispatch-claude-card'
+              ? [
+                  {
+                    ...survivePhase(stack, 'dispatch-claude-keys', reviewer),
+                    armAt: ({ run }: View) =>
+                      run.status === 'dispatching' && stepStatus(run, 'dispatch') === 'running',
+                    // DISPATCH still reads failed, from the card, when this phase starts.
+                    missed: ({ run }: View) => stepStatus(run, 'dispatch') === 'done',
+                  },
+                ]
+              : []),
+          ],
         );
       },
       (scenario) => {
@@ -1253,14 +1434,19 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           ...(TRANSPORT_ABORT.test(failure)
             ? [`a step failed on a dropped transport: ${failure.split('\n')[0]}`]
             : []),
-          ...outcomeDifferences(baseline.outcome, scenario.outcome),
+          ...outcomeDifferences(
+            baseline.outcome,
+            card ? withoutCard(scenario.outcome) : scenario.outcome,
+          ),
           ...(scripted ? reviewRoundDifferences(scenario, baseline) : []),
+          ...(card ? cardDifferences(scenario, step) : []),
         ];
         return {
           status: differences.length ? 'fail' : 'pass',
           differences,
           observations: [
             `watched: ${(scenario.watched ?? []).join('; ') || 'nothing'}`,
+            ...(card ? cardObservations(scenario) : []),
             ...outcomeObservations(baseline.outcome, scenario.outcome),
             ...(scripted ? [`reviews: ${scenario.outcome.reviews.join(', ') || '-'}`] : []),
           ],

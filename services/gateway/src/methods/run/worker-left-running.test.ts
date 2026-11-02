@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RunCancelParams, RunDecision } from '@farmslot/protocol';
+import { Events, type RunCancelParams, type RunDecision } from '@farmslot/protocol';
 
 import '../../runtime/mock-pty.test-support.js';
 
@@ -91,7 +91,11 @@ test('Abort Run on a runner_unavailable card cancels the run instead of waking t
 });
 
 // F331: restart recovery holds an uncertain dispatch on this card with the same transition.
-function dispatchHeldByRecovery(t: test.TestContext, actionId: string) {
+function dispatchHeldByRecovery(
+  t: test.TestContext,
+  actionId: string,
+  replay: 'accepted' | 'refused' = 'accepted',
+) {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: `HOLD-${actionId}` });
   t.after(() => deleteTestRunIfPresent(run.id));
   for (const name of ['find-slot', 'write-task', 'prepare'])
@@ -118,9 +122,11 @@ function dispatchHeldByRecovery(t: test.TestContext, actionId: string) {
   });
   const resumed: string[] = [];
   const cancelled: string[] = [];
+  const replayed: string[] = [];
+  const events: string[] = [];
   continueResolvedRunDecision(
     { runId: run.id, decisionId: card.id, actionId },
-    () => {},
+    (event) => events.push(event),
     {
       resumeRun: async (runId) => {
         resumed.push(runId);
@@ -128,21 +134,38 @@ function dispatchHeldByRecovery(t: test.TestContext, actionId: string) {
       cancelRun: async (params: RunCancelParams) => {
         cancelled.push(params.runId);
       },
+      replayStep: async (params, _emit) => {
+        replayed.push(`${params.runId}:${params.stepName}:${params.triggeredBy}`);
+        if (replay === 'refused') throw new Error('the worker signal could not be read');
+        return { run: getRun(run.id)! };
+      },
     },
     getRun(run.id)!.engineState?.generation ?? 0,
   );
-  return { run, resumed, cancelled };
+  return { run, card, resumed, cancelled, replayed, events };
 }
 
-test('Replay step on a dispatch restart recovery held re-enters DISPATCH', async (t) => {
-  const { run, resumed, cancelled } = dispatchHeldByRecovery(t, REPLAY_STEP_ACTION);
-  await until(() => resumed.length > 0);
-  assert.deepEqual(resumed, [run.id]);
+test('Replay step on a DISPATCH card goes through the replay that adopts a fresh signal', async (t) => {
+  const { run, resumed, cancelled, replayed } = dispatchHeldByRecovery(t, REPLAY_STEP_ACTION);
+  await until(() => replayed.length > 0);
+  assert.deepEqual(replayed, [`${run.id}:dispatch:operator`]);
+  assert.deepEqual(resumed, [], 'not the engine resume, which would restart a finished worker');
   assert.deepEqual(cancelled, []);
-  const after = getRun(run.id)!;
-  assert.equal(after.status, 'created');
-  assert.equal(after.steps.find((step) => step.name === 'dispatch')?.status, 'failed');
-  assert.equal(after.steps.find((step) => step.name === 'prepare')?.status, 'done');
+});
+
+test('a refused Replay step reopens the card instead of leaving a blocked run without one', async (t) => {
+  const { run, card, replayed, resumed, events } = dispatchHeldByRecovery(
+    t,
+    REPLAY_STEP_ACTION,
+    'refused',
+  );
+  await until(() => replayed.length > 0 && events.includes(Events.RUN_UPDATED));
+  assert.deepEqual(resumed, []);
+  const reopened = getRun(run.id)!.decisions.find((decision) => decision.id === card.id);
+  assert.equal(reopened?.resolvedAt, undefined);
+  assert.equal(getRun(run.id)!.status, 'blocked');
+  assert.match(getRun(run.id)!.error ?? '', /Replay step was refused: the worker signal/);
+  assert.ok(events.includes(Events.RUN_DECISION_NEW), 'clients are told the card is open again');
 });
 
 test('Cancel run on a dispatch restart recovery held cancels it', async (t) => {

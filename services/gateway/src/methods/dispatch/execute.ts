@@ -90,7 +90,6 @@ import {
   detectRunnerLaunchBlocker,
   execRunnerKeys,
   normalizeRunner,
-  prepareRunnerDispatchPrompt,
   PromptDeliveryUncertainError,
   runnerAppliesOwnSandbox,
   runnerDefaultModel,
@@ -101,6 +100,7 @@ import {
   runnerResolvesPreTaskLaunchBlockers,
   sendRunnerPostLaunchPrompt,
   withRunnerPromptMutationBoundary,
+  workerDispatchPrompt,
 } from '../../runners/registry.js';
 import { assertRunnerAuthBeforeLaunch } from '../../runners/runner-auth.js';
 import { buildRunnerObservabilityInstallCommand } from '../../runners/runner-observability.js';
@@ -121,7 +121,6 @@ import {
 } from '../../runners/session-record.js';
 import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.js';
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
-import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { initializeAuthoredTaskOnSlot } from '../../tasks/existing-runtime.js';
 import { verifyHostedTaskOnSlot } from '../../tasks/hosted-task-init.js';
@@ -1766,6 +1765,12 @@ export async function dispatchExecute(
     target: workerTarget,
   };
   if (params.runId && currentRun) {
+    // Reconciliation keeps a saved session over the one it observes, and reopen falls back to the
+    // metrics: an interrupted attempt must not leave either pointing at the previous session.
+    const { metrics } = getRun(params.runId) ?? currentRun;
+    updateRunStore(params.runId, {
+      metrics: { ...metrics, runnerSessionId: undefined, runnerSessionPath: undefined },
+    });
     await upsertAgentContext(params.runId, workerRole, {
       reviewId: primaryReviewId,
       status: 'launching',
@@ -1774,6 +1779,7 @@ export async function dispatchExecute(
       signalAttemptId: undefined,
       attemptStartedAt: new Date().toISOString(),
       promptDeliveryStartedAt: undefined,
+      ...clearedRunnerSessionContextPatch(),
       taskFile: `${workerTaskDir}/TASK.md`,
       signalFile: `${workerTaskDir}/SIGNAL.json`,
       runner,
@@ -1787,14 +1793,11 @@ export async function dispatchExecute(
   // 5. Launch agent
   step('launch', 'Launching agent...');
   const workerTaskFile = `${workerTaskDir}/TASK.md`;
-  const taskPrompt = await prepareRunnerDispatchPrompt(
+  const taskPrompt = await workerDispatchPrompt(
     vars,
     runner,
-    await resolveWorkerDispatchPrompt(vars.projectName, {
-      taskFile: workerTaskFile,
-      taskDir: workerTaskDir,
-    }),
-    workerTaskDir,
+    { taskFile: workerTaskFile, taskDir: workerTaskDir },
+    { materialize: true },
   );
   const sessionFilesBefore = await listRunnerSessionFiles(vars, runner);
   const safetyTier = resolveDispatchSafetyTier({

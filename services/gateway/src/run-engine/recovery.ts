@@ -199,8 +199,10 @@ export interface RunRecoveryCollaborators {
   reconcileRunAgentRuntime?: (run: Run) => Promise<void>;
   /** The runner's own evidence that an interrupted DISPATCH's task prompt was accepted. */
   dispatchPromptAccepted?: (run: Run, worker: AgentContext) => Promise<boolean>;
-  /** Reconcile an interrupted DISPATCH with the reconnect wait its re-run would have had. */
-  withExecutionNodeWait?: <T>(run: Run, operation: () => Promise<T>) => Promise<T>;
+  /** The node this slot's commands need when it isn't connected, else null. */
+  absentExecutionNode?: (slotId: string) => Promise<string | null>;
+  /** Settles when the node connects, or rejects when its reconnect wait runs out. */
+  waitForExecutionNode?: (machine: string) => Promise<void>;
   /** Clear a run error that only settled native workers carry, from recorded state. */
   clearSettledWorkerError?: (runId: string) => void;
   rearmHandoffAutoRecovery: (run: Run) => (() => void) | undefined;
@@ -462,6 +464,50 @@ function adoptedWorkerContexts(run: Run): AgentContext[] | undefined {
   );
 }
 
+/**
+ * The order recovery takes runs in. An interrupted delivery on an absent node waits for it, as its
+ * re-run would have, but only after every other run has recovered. Each node's runs share one wait
+ * and no node waits on another. `waitErrors` keeps why a node never came back, by run.
+ */
+async function* runsInRecoveryOrder(
+  deps: RunRecoveryCollaborators,
+  runs: Run[],
+  waitErrors: Map<string, string>,
+): AsyncGenerator<Run> {
+  const byNode = new Map<string, Run[]>();
+  for (const run of runs) {
+    const machine =
+      run.slotId &&
+      run.status === 'dispatching' &&
+      run.transport !== 'native' &&
+      workerWithPromptSent(run) &&
+      deps.waitForExecutionNode
+        ? await deps.absentExecutionNode?.(run.slotId)
+        : null;
+    if (machine) byNode.set(machine, [...(byNode.get(machine) ?? []), run]);
+    else yield run;
+  }
+  const waits = new Map(
+    [...byNode.keys()].map((machine) => [
+      machine,
+      deps.waitForExecutionNode!(machine).then(
+        () => ({ machine, error: undefined }),
+        (err: Error) => ({ machine, error: err.message.slice(0, 200) }),
+      ),
+    ]),
+  );
+  while (waits.size > 0) {
+    const { machine, error } = await Promise.race(waits.values());
+    waits.delete(machine);
+    for (const run of byNode.get(machine) ?? []) {
+      // The wait can outlast an operator's cancel or pause.
+      if (deps.getRun(run.id)?.status !== 'dispatching') continue;
+      if (error) waitErrors.set(run.id, error);
+      yield run;
+    }
+  }
+}
+
 export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise<void> {
   const { runs: active } = deps.listRuns({ active: true });
   if (active.length === 0) return;
@@ -491,8 +537,13 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
   }
   console.log(`[run-engine] recovering ${recoverable.length} active run(s)`);
 
-  for (const run of recoverable) {
-    if (deferSlotBoundRecovery && run.slotId) continue;
+  const nodeWaitErrors = new Map<string, string>();
+  const ordered = runsInRecoveryOrder(
+    deps,
+    recoverable.filter((run) => !deferSlotBoundRecovery || !run.slotId),
+    nodeWaitErrors,
+  );
+  for await (const run of ordered) {
     if (
       run.engineState?.publishGate?.reviewRecovery?.status === 'watching' &&
       !isPublicationReviewRecoveryHeld(run)
@@ -759,23 +810,16 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       continue;
     }
 
-    let reconcileError: string | undefined;
-    if (deps.reconcileRunAgentRuntime && run.slotId) {
-      const reconcile = deps.reconcileRunAgentRuntime;
-      const nodeWait =
-        run.status === 'dispatching' && run.transport !== 'native' && workerWithPromptSent(run)
-          ? deps.withExecutionNodeWait
-          : undefined;
+    let reconcileError = nodeWaitErrors.get(run.id);
+    if (!reconcileError && deps.reconcileRunAgentRuntime && run.slotId) {
       try {
-        await (nodeWait ? nodeWait(run, () => reconcile(run)) : reconcile(run));
+        await deps.reconcileRunAgentRuntime(run);
       } catch (err) {
         reconcileError = (err as Error).message.slice(0, 200);
         console.warn(
           `[run-engine] agent runtime reconciliation failed for ${run.id.slice(0, 8)}: ${reconcileError}`,
         );
       }
-      // The wait can outlast an operator's cancel or pause.
-      if (nodeWait && deps.getRun(run.id)?.status !== 'dispatching') continue;
     }
 
     if (
@@ -1196,7 +1240,8 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
           slot.agent,
           reconcileError !== undefined,
         );
-        const holdOnCard = (reason: string, stepOutputs?: Record<string, unknown>) => {
+        // The marker lets the card's Replay adopt a signal the worker writes meanwhile.
+        const holdOnCard = (reason: string) => {
           console.warn(
             `[run-engine] run ${run.id.slice(0, 8)} — ${reason} Preserving the claimed slot and runner`,
           );
@@ -1206,19 +1251,15 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             S.DISPATCH,
             reason,
             [worker?.id ?? workerRoleForFlow(run.flowType) ?? 'worker'],
-            stepOutputs,
+            { promptDeliveryUncertain: true },
           );
         };
         if (delivery === 'uncertain') {
-          if (reconcileError)
-            holdOnCard(
-              `A gateway restart interrupted dispatch and its worker could not be checked: ${reconcileError}.`,
-            );
-          else
-            holdOnCard(
-              'A gateway restart interrupted dispatch while the task prompt was being delivered.',
-              { promptDeliveryUncertain: true },
-            );
+          holdOnCard(
+            reconcileError
+              ? `A gateway restart interrupted dispatch and its worker could not be checked: ${reconcileError}.`
+              : 'A gateway restart interrupted dispatch while the task prompt was being delivered.',
+          );
           continue;
         }
         if (delivery === 'delivered') {

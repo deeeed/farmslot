@@ -18,6 +18,9 @@ let sessionExists: boolean;
 let paneSession: string;
 let observed: typeof original | null = original;
 let runnerAlive: boolean;
+let hasSessionExit: number;
+let listPanesExit: number;
+let processProbe: 'unknown' | undefined;
 let normalizeBinding:
   | ((...args: unknown[]) => Promise<{ sessionId: string; sessionPath: string } | null>)
   | undefined;
@@ -33,7 +36,9 @@ mock.module('../core/exec.js', {
       commands.push(command);
       assert.ok(!/new-session|new-window|respawn|send-keys|kill-session/.test(command));
       if (command.includes('has-session'))
-        return { exitCode: sessionExists ? 0 : 1, stdout: '', stderr: '' };
+        return { exitCode: sessionExists ? hasSessionExit : 1, stdout: '', stderr: '' };
+      if (command.includes('list-panes') && listPanesExit !== 0)
+        return { exitCode: listPanesExit, stdout: '', stderr: '' };
       // The exact pane moved to the archive session; it is filtered out of the slot session.
       return {
         exitCode: 0,
@@ -71,6 +76,12 @@ mock.module('../runners/session-process.js', {
     ...sessions,
     readPaneProcessStartedAtMs: async () => processStarted,
     isRunnerAliveUnderPane: async () => runnerAlive,
+    probeRunnerDescendantPid: async () =>
+      processProbe
+        ? { state: processProbe, code: 'probe-failed', reason: 'probe timed out' }
+        : runnerAlive
+          ? { state: 'present', pid: '202' }
+          : { state: 'absent' },
     resolveRunnerSessionBinding: async (
       _vars: unknown,
       _runner: unknown,
@@ -122,6 +133,9 @@ function fixture(corrupt = false): void {
   commands.length = 0;
   launches.length = 0;
   runnerAlive = true;
+  hasSessionExit = 0;
+  listPanesExit = 0;
+  processProbe = undefined;
   normalizeBinding = undefined;
   processStarted = Date.parse('2026-10-12T20:22:03.000Z');
   sessionExists = true;
@@ -164,6 +178,82 @@ function fixture(corrupt = false): void {
     },
   ];
 }
+
+function launchingWorker(): AgentContext {
+  fixture();
+  paneSession = 'slot-1';
+  run.status = 'dispatching';
+  run.agentContexts = [{ ...run.agentContexts![0]!, status: 'launching' }];
+  return run.agentContexts[0]!;
+}
+
+test('a read that timed out says nothing: the worker stays launching', async () => {
+  const unknownReads: Array<[string, () => void]> = [
+    ['has-session timed out', () => (hasSessionExit = 124)],
+    ['list-panes timed out', () => (listPanesExit = 124)],
+    ['tmux not found', () => (hasSessionExit = 127)],
+    ['process probe unknown', () => (processProbe = 'unknown')],
+  ];
+  for (const [label, arrange] of unknownReads) {
+    const before = launchingWorker();
+    arrange();
+    runnerAlive = false;
+
+    await reconcileRunAgentRuntime(run);
+
+    assert.equal(run.agentContexts![0]!.status, 'launching', label);
+    assert.equal(run.agentContexts![0]!.completedAt, before.completedAt, label);
+    assert.equal(run.agentContexts![0]!.lastSignalAt, before.lastSignalAt, label);
+  }
+});
+
+test('a read that timed out leaves a worker already marked gone as it was', async () => {
+  const worker = launchingWorker();
+  const completedAt = '2026-10-12T20:30:00.000Z';
+  run.agentContexts = [{ ...worker, status: 'blocked', completedAt }];
+  hasSessionExit = 124;
+
+  await reconcileRunAgentRuntime(run);
+
+  assert.equal(run.agentContexts[0]!.status, 'blocked');
+  assert.equal(run.agentContexts[0]!.completedAt, completedAt);
+});
+
+test('a clean read that finds the worker gone marks it so', async () => {
+  const goneReads: Array<[string, () => void]> = [
+    ['no such session', () => (hasSessionExit = 1)],
+    ['no such target', () => (listPanesExit = 1)],
+    ['no runner process under the pane', () => (runnerAlive = false)],
+  ];
+  for (const [label, arrange] of goneReads) {
+    launchingWorker();
+    arrange();
+
+    await reconcileRunAgentRuntime(run);
+
+    assert.equal(run.agentContexts![0]!.status, 'blocked', label);
+  }
+});
+
+test('a worker with no saved session takes the one its pane observed', async () => {
+  const worker = launchingWorker();
+  run.agentContexts = [{ ...worker, runnerSessionId: null, runnerSessionPath: null }];
+  observed = { runnerSessionId: 'attempt-2', runnerSessionPath: '/sessions/attempt-2.jsonl' };
+
+  await reconcileRunAgentRuntime(run);
+
+  assert.equal(run.agentContexts[0]!.runnerSessionId, 'attempt-2');
+});
+
+test('a saved session from an earlier attempt would outrank the one its pane observed', async () => {
+  // Why a cold attempt must clear it (dispatch-claude-card in the matrix drives the real clear).
+  launchingWorker();
+  observed = { runnerSessionId: 'attempt-2', runnerSessionPath: '/sessions/attempt-2.jsonl' };
+
+  await reconcileRunAgentRuntime(run);
+
+  assert.equal(run.agentContexts![0]!.runnerSessionId, original.runnerSessionId);
+});
 
 test('reconciling a dispatch interrupted before it captured the pane restores the pane id', async () => {
   fixture();

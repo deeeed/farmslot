@@ -26,7 +26,6 @@ interface Restart {
   started: string[];
   slotWrites: Array<Record<string, unknown>>;
   broadcasts: string[];
-  nodeWaits: number;
 }
 
 interface RestartOptions {
@@ -49,7 +48,7 @@ function restartAt(
     promptAccepted = false,
   }: RestartOptions = {},
 ): { restart: Restart; deps: RunRecoveryCollaborators } {
-  const restart: Restart = { run, started: [], slotWrites: [], broadcasts: [], nodeWaits: 0 };
+  const restart: Restart = { run, started: [], slotWrites: [], broadcasts: [] };
   const deps: RunRecoveryCollaborators = {
     listRuns: () => ({ runs: [run] }),
     loadFleetStatus: async () => ({
@@ -102,10 +101,8 @@ function restartAt(
           context.status = workerAlive ? 'working' : 'blocked';
       }),
     dispatchPromptAccepted: async () => promptAccepted,
-    withExecutionNodeWait: (_run, operation) => {
-      restart.nodeWaits += 1;
-      return operation();
-    },
+    absentExecutionNode: async () => null,
+    waitForExecutionNode: unexpected,
     rearmHandoffAutoRecovery: unexpected,
     rearmPublicationReviewRecovery: unexpected,
     recoverInflightPublicationReviews: unexpected,
@@ -283,9 +280,12 @@ test('the card outlives another restart and is presented again', async () => {
   assertHeldOnCard(restart);
 });
 
-test('a re-entered DISPATCH drops the hold marker, so a restart during it is not skipped', () => {
+test('a re-entered or replayed DISPATCH keeps neither the hold marker nor the verified record', () => {
   assert.equal(
-    retainedMaintenanceStepOutputs('dispatch', { promptDeliveryUncertain: true }),
+    retainedMaintenanceStepOutputs('dispatch', {
+      promptDeliveryUncertain: true,
+      promptDeliveryVerifiedAt: PROMPT_SENT_AT,
+    }),
     undefined,
   );
 });
@@ -320,9 +320,9 @@ test('a handoff probe that throws reads as uncertain, not as a dead worker', asy
   assertHeldOnCard(restart);
 });
 
-test('a reconciliation error is not an uncertain delivery', async () => {
+test('a reconciliation error holds on the card with the error as its reason', async () => {
   const reconcile = async () => {
-    throw new Error('No node connected for machine ri-node after 120000ms');
+    throw new Error('No node connected for machine ri-node after 15000ms');
   };
 
   const held = restartAt(dispatchingRun('scripted', PROMPT_SENT_AT), { reconcile });
@@ -334,8 +334,9 @@ test('a reconciliation error is not an uncertain delivery', async () => {
   await recoverActiveRuns(held.deps);
   assertHeldOnCard(held.restart);
   assert.equal(probes, 0, 'the node reconciliation could not reach is not probed again');
-  assert.equal(dispatchStep(held.restart.run)?.outputs?.promptDeliveryUncertain, undefined);
   assert.match(held.restart.run.error ?? '', /could not be checked: No node connected/);
+  // Replay from this card can still adopt a signal the worker writes meanwhile.
+  assert.equal(dispatchStep(held.restart.run)?.outputs?.promptDeliveryUncertain, true);
 
   const verified = dispatchingRun('claude', PROMPT_SENT_AT, { verifiedAt: PROMPT_SENT_AT });
   const adopted = restartAt(verified, { reconcile });
@@ -349,27 +350,151 @@ test('a reconciliation error is not an uncertain delivery', async () => {
   assert.deepEqual(unsent.restart.started, [unsent.restart.run.id]);
 });
 
-test('only an interrupted delivery waits for its node, and a cancel during the wait stands', async () => {
-  const sent = restartAt(dispatchingRun('scripted', PROMPT_SENT_AT));
-  await recoverActiveRuns(sent.deps);
-  assert.equal(sent.restart.nodeWaits, 1);
-
-  const unsent = restartAt(dispatchingRun('scripted'));
-  await recoverActiveRuns(unsent.deps);
-  assert.equal(unsent.restart.nodeWaits, 0);
-
-  const cancelled = restartAt(dispatchingRun('claude', PROMPT_SENT_AT), {
-    reconcile: async (run) => {
-      run.status = 'cancelled';
-      throw new Error('Run stopped while awaiting its execution node');
-    },
+test('only a read that found the runner gone re-runs: an unknown one reaches the card', async () => {
+  // Real reconciliation leaves a worker it could not read `launching`, and marks one it read as
+  // gone `blocked` (runtime-recovery-binding.test.ts pins which reads are which).
+  const unknown = restartAt(dispatchingRun('scripted', PROMPT_SENT_AT), {
+    reconcile: async () => {},
   });
+  await recoverActiveRuns(unknown.deps);
+  assertHeldOnCard(unknown.restart);
+
+  const gone = restartAt(dispatchingRun('scripted', PROMPT_SENT_AT), { workerAlive: false });
+  await recoverActiveRuns(gone.deps);
+  assert.equal(stepStatus(gone.restart.run, 'dispatch'), 'running');
+  assert.deepEqual(gone.restart.started, [gone.restart.run.id]);
+
+  const signalled = restartAt(dispatchingRun('scripted', PROMPT_SENT_AT), {
+    workerAlive: false,
+    promptAccepted: true,
+  });
+  await recoverActiveRuns(signalled.deps);
+  assertAdopted(signalled.restart, 'a terminal signal wins over the re-run');
+});
+
+/** Several runs on their own slots, some on nodes the test keeps away until it says otherwise. */
+function restartAcrossNodes(runs: Run[], nodeOfSlot: Record<string, string>) {
+  const byId = (runId: string) => runs.find((run) => run.id === runId)!;
+  const waits = new Map<
+    string,
+    { calls: number; arrive: () => void; expire: (error: Error) => void; settled: Promise<void> }
+  >();
+  const started: string[] = [];
+  const reconciled: string[] = [];
+  const { deps } = restartAt(runs[0]!);
+  deps.listRuns = () => ({ runs });
+  deps.getRun = byId;
+  deps.loadFleetStatus = async () => ({
+    slots: runs.map((run) => ({ slot: run.slotId!, lifecycle: 'busy', agent: 'idle' })),
+  });
+  deps.updateRun = (runId: string, fields: Partial<Run>) => {
+    Object.assign(byId(runId), fields);
+  };
+  deps.updateRunStep = (runId: string, name: string, fields: Partial<RunStep>) => {
+    Object.assign(byId(runId).steps.find((step) => step.name === name)!, fields);
+  };
+  deps.updateSlotStatusIf = async () => true;
+  deps.startRun = async (runId: string) => {
+    started.push(runId);
+  };
+  deps.reconcileRunAgentRuntime = async (run) => {
+    reconciled.push(run.id);
+    for (const context of run.agentContexts ?? []) context.status = 'working';
+  };
+  deps.absentExecutionNode = async (slotId) => nodeOfSlot[slotId] ?? null;
+  deps.waitForExecutionNode = (machine) => {
+    let arrive = () => {};
+    let expire = (_error: Error) => {};
+    const settled = new Promise<void>((resolve, reject) => {
+      arrive = resolve;
+      expire = reject;
+    });
+    const seen = waits.get(machine);
+    waits.set(machine, { calls: (seen?.calls ?? 0) + 1, arrive, expire, settled });
+    return settled;
+  };
+  return { deps, waits, started, reconciled };
+}
+
+async function until(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !done(); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+}
+
+function runOnSlot(id: string, slotId: string, promptSentAt?: string): Run {
+  return { ...dispatchingRun('scripted', promptSentAt), id, slotId };
+}
+
+test('an absent node delays no healthy run, and its runs share one wait', async () => {
+  const away1 = runOnSlot('away-1', 'away-slot-1', PROMPT_SENT_AT);
+  const away2 = runOnSlot('away-2', 'away-slot-2', PROMPT_SENT_AT);
+  const healthyDispatch = runOnSlot('healthy-dispatch', 'healthy-slot-1', PROMPT_SENT_AT);
+  const healthyMonitor: Run = {
+    ...runOnSlot('healthy-monitor', 'healthy-slot-2'),
+    status: 'monitoring',
+  };
+  const { deps, waits, started } = restartAcrossNodes(
+    [away1, away2, healthyDispatch, healthyMonitor],
+    { 'away-slot-1': 'away-node', 'away-slot-2': 'away-node' },
+  );
+
+  const recovered = recoverActiveRuns(deps);
+  await until(() => started.length >= 2 && waits.size > 0);
+
+  assert.deepEqual(started, ['healthy-dispatch', 'healthy-monitor']);
+  assert.equal(waits.get('away-node')?.calls, 1);
+  assert.equal(away1.status, 'dispatching', 'nothing is decided before the node has its chance');
+  waits.get('away-node')!.arrive();
+  await recovered;
+
+  assert.deepEqual(started, ['healthy-dispatch', 'healthy-monitor', 'away-1', 'away-2']);
+  assert.equal(away1.status, 'monitoring');
+  assert.equal(away2.status, 'monitoring');
+});
+
+test('one absent node waits on no other, and running out of wait reaches the card', async () => {
+  const lost = runOnSlot('lost', 'lost-slot', PROMPT_SENT_AT);
+  const back = runOnSlot('back', 'back-slot', PROMPT_SENT_AT);
+  const { deps, waits, started, reconciled } = restartAcrossNodes([lost, back], {
+    'lost-slot': 'lost-node',
+    'back-slot': 'back-node',
+  });
+
+  const recovered = recoverActiveRuns(deps);
+  await until(() => waits.size === 2);
+  waits.get('back-node')!.arrive();
+  await until(() => started.length > 0);
+  assert.deepEqual(started, ['back']);
+  assert.equal(lost.status, 'dispatching');
+
+  waits.get('lost-node')!.expire(new Error('No node connected for machine lost-node'));
+  await recovered;
+  assert.equal(lost.status, 'blocked');
+  assert.match(lost.error ?? '', /could not be checked: No node connected for machine lost-node/);
+  assert.deepEqual(reconciled, ['back'], 'no second wait on a node that just ran out');
+});
+
+test('a cancel during the node wait stands', async () => {
+  const cancelled = runOnSlot('cancelled', 'away-slot', PROMPT_SENT_AT);
+  const { deps, waits, started } = restartAcrossNodes([cancelled], { 'away-slot': 'away-node' });
   // A cancelled run's slot goes back through the orphan sweep.
-  cancelled.deps.resetSlotIf = async () => false;
-  await recoverActiveRuns(cancelled.deps);
-  assert.equal(cancelled.restart.run.status, 'cancelled');
-  assert.equal(cancelled.restart.run.decisions.length, 0);
-  assert.deepEqual(cancelled.restart.started, []);
+  deps.resetSlotIf = async () => false;
+
+  const recovered = recoverActiveRuns(deps);
+  await until(() => waits.size === 1);
+  cancelled.status = 'cancelled';
+  waits.get('away-node')!.arrive();
+  await recovered;
+
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.decisions.length, 0);
+  assert.deepEqual(started, []);
+});
+
+test('a run with no interrupted delivery never asks after its node', async () => {
+  const unsent = restartAt(dispatchingRun('scripted'));
+  unsent.deps.absentExecutionNode = unexpected;
+  await recoverActiveRuns(unsent.deps);
+  assert.deepEqual(unsent.restart.started, [unsent.restart.run.id]);
 });
 
 test('adoption restores the session binding a completed DISPATCH would have verified', async () => {

@@ -19,7 +19,7 @@ import {
 } from '@farmslot/protocol';
 
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, type ExecResult } from '../core/exec.js';
 import { readSlotRow, SLOT_PHASE_RELEASING } from '../core/index.js';
 import {
   resolveTmuxSession,
@@ -39,23 +39,27 @@ import {
   modelQuestionsForRun,
 } from '../runners/launch-command.js';
 import { reconcileNativeRunAgentRuntime } from '../runners/native/worker-runtime.js';
-import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
+import {
+  type LaunchAckSignalSnapshot,
+  readLaunchAckSignalSnapshot,
+} from '../runners/prompt-delivery-evidence.js';
 import {
   getRunnerObservability,
   normalizeRunner,
-  prepareRunnerDispatchPrompt,
   runnerHasDurablePromptHandoff,
   runnerPersistsSessionFiles,
   WORKER_ENV_PREFIX,
+  workerDispatchPrompt,
 } from '../runners/registry.js';
 import {
   isRunnerAliveUnderPane,
+  probeRunnerDescendantPid,
   readPaneProcessStartedAtMs,
   resolveRunnerSessionBinding,
   resolveRunRetainedSessionBinding,
 } from '../runners/session-process.js';
-import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, listRuns, updateRun, updateRunAgentContexts } from '../runs/store.js';
+import { normalizeWorkerSignal, parseStrictIsoMs } from '../tasks/worker-signals.js';
 
 const ACTIVE_CONTEXT_STATUSES: ReadonlySet<AgentContextStatus> = new Set([
   'launching',
@@ -76,7 +80,8 @@ interface TmuxPaneRuntime {
 }
 
 interface RuntimeInspection {
-  state: 'live' | 'missing' | 'dead' | 'skipped';
+  /** `unknown`: a read timed out or failed, which says nothing about the worker. */
+  state: 'live' | 'missing' | 'dead' | 'skipped' | 'unknown';
   panes: TmuxPaneRuntime[];
   runnerAlive: boolean;
   detail?: string;
@@ -162,16 +167,27 @@ function persistRestoredContext(
   );
 }
 
-async function tmuxSessionExists(
+/** tmux exits 1 for a target that is gone. Any other failure, a timeout's 124 included, proves nothing. */
+function tmuxReadUnknown(exitCode: number): boolean {
+  return exitCode !== 0 && exitCode !== 1;
+}
+
+function tmuxSessionRead(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
-): Promise<boolean> {
-  const result = await execOnSlot(
+): Promise<ExecResult> {
+  return execOnSlot(
     vars,
     tmuxShellSnippet(`has-session -t ${shellQuote(`=${session}`)} 2>/dev/null`),
     { timeout: 3000 },
   );
-  return result.exitCode === 0;
+}
+
+async function tmuxSessionExists(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+): Promise<boolean> {
+  return (await tmuxSessionRead(vars, session)).exitCode === 0;
 }
 
 async function tmuxWindowExists(
@@ -189,11 +205,11 @@ async function tmuxWindowExists(
   return result.exitCode === 0;
 }
 
-async function listTargetPanes(
+async function readTargetPanes(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
   target: string,
-): Promise<TmuxPaneRuntime[]> {
+): Promise<{ exitCode: number; panes: TmuxPaneRuntime[] }> {
   const result = await execOnSlot(
     vars,
     tmuxShellSnippet(
@@ -205,12 +221,23 @@ async function listTargetPanes(
     ),
     { timeout: 3000 },
   );
-  if (result.exitCode !== 0) return [];
-  return result.stdout
-    .split('\n')
-    .map((line) => parseTmuxPaneRuntime(line))
-    .filter((pane): pane is TmuxPaneRuntime => Boolean(pane))
-    .filter((pane) => pane.session === session);
+  if (result.exitCode !== 0) return { exitCode: result.exitCode, panes: [] };
+  return {
+    exitCode: 0,
+    panes: result.stdout
+      .split('\n')
+      .map((line) => parseTmuxPaneRuntime(line))
+      .filter((pane): pane is TmuxPaneRuntime => Boolean(pane))
+      .filter((pane) => pane.session === session),
+  };
+}
+
+async function listTargetPanes(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+  target: string,
+): Promise<TmuxPaneRuntime[]> {
+  return (await readTargetPanes(vars, session, target)).panes;
 }
 
 async function sessionBindingForContext(
@@ -287,7 +314,15 @@ async function inspectContextRuntime(run: Run, ctx: AgentContext): Promise<Runti
   const vars = await loadSlotVars(run.slotId);
   const expectedSession = await resolveTmuxSession(run.slotId, vars, { strict: true });
   const session = ctx.target?.session || expectedSession;
-  if (!(await tmuxSessionExists(vars, session))) {
+  const sessionRead = await tmuxSessionRead(vars, session);
+  if (tmuxReadUnknown(sessionRead.exitCode))
+    return {
+      state: 'unknown',
+      panes: [],
+      runnerAlive: false,
+      detail: `tmux session ${session} could not be read (exit ${sessionRead.exitCode})`,
+    };
+  if (sessionRead.exitCode !== 0) {
     const binding = await sessionBindingForContext(vars, run, ctx);
     return {
       state: 'missing',
@@ -306,7 +341,14 @@ async function inspectContextRuntime(run: Run, ctx: AgentContext): Promise<Runti
       : ctx.target
         ? canonicalAgentContextTarget(ctx.target)
         : session;
-  const panes = await listTargetPanes(vars, session, target);
+  const { exitCode: panesExit, panes } = await readTargetPanes(vars, session, target);
+  if (tmuxReadUnknown(panesExit))
+    return {
+      state: 'unknown',
+      panes: [],
+      runnerAlive: false,
+      detail: `tmux target ${target} could not be read (exit ${panesExit})`,
+    };
   if (panes.length === 0) {
     const binding = await sessionBindingForContext(vars, run, ctx);
     return {
@@ -321,13 +363,23 @@ async function inspectContextRuntime(run: Run, ctx: AgentContext): Promise<Runti
 
   const runner = ctx.runner ?? run.metrics.runner;
   let runnerAlive = false;
+  let unknownProbe: string | undefined;
   for (const pane of panes) {
     if (!pane.panePid) continue;
-    if (await isRunnerAliveUnderPane(vars, pane.panePid, runner)) {
+    const probe = await probeRunnerDescendantPid(vars, pane.panePid, runner);
+    if (probe.state === 'present') {
       runnerAlive = true;
       break;
     }
+    if (probe.state === 'unknown') unknownProbe = probe.reason;
   }
+  if (!runnerAlive && unknownProbe)
+    return {
+      state: 'unknown',
+      panes,
+      runnerAlive: false,
+      detail: `runner under ${target} could not be probed: ${unknownProbe}`,
+    };
   const binding = await sessionBindingForContext(vars, run, ctx, panes[0]?.paneId);
   const base = {
     panes,
@@ -414,7 +466,7 @@ function statusAfterInspection(
   inspection: RuntimeInspection,
 ): AgentContextStatus {
   if (inspection.state === 'live') return ctx.status === 'launching' ? 'working' : ctx.status;
-  if (inspection.state === 'skipped') return ctx.status;
+  if (inspection.state === 'skipped' || inspection.state === 'unknown') return ctx.status;
   if (ctx.id === primaryContextId(run)) return 'blocked';
   return 'failed';
 }
@@ -422,6 +474,19 @@ function statusAfterInspection(
 export async function reconcileRunAgentRuntime(run: Run): Promise<void> {
   await reconcileNativeRunAgentRuntime(run);
   if (run.transport !== 'native') await reconcileTmuxRunAgentRuntime(run);
+}
+
+/** A worker signal written at or after this attempt's marker; an older one is an earlier attempt's. */
+function signalFromAttempt(snapshot: LaunchAckSignalSnapshot | null, sinceMs: number): boolean {
+  if (!snapshot?.raw) return false;
+  try {
+    const normalized = normalizeWorkerSignal(JSON.parse(snapshot.raw));
+    const signalAt = normalized.ok ? parseStrictIsoMs(normalized.signal.timestamp) : null;
+    return signalAt !== null && signalAt >= sinceMs;
+  } catch {
+    // Mid-write: only a later read can say.
+    return false;
+  }
 }
 
 /**
@@ -437,13 +502,15 @@ export async function dispatchPromptHandoffProven(
   if (!run.slotId || !runner || !worker.target || !worker.taskFile || !Number.isFinite(sinceMs))
     return false;
   const vars = await loadSlotVars(run.slotId);
-  const taskDir = path.posix.dirname(worker.taskFile);
-  const prompt = await prepareRunnerDispatchPrompt(
+  const prompt = await workerDispatchPrompt(
     vars,
     runner,
-    await resolveWorkerDispatchPrompt(vars.projectName, { taskFile: worker.taskFile, taskDir }),
-    taskDir,
+    { taskFile: worker.taskFile, taskDir: path.posix.dirname(worker.taskFile) },
+    { materialize: false },
   );
+  const signal = worker.signalFile
+    ? await readLaunchAckSignalSnapshot(vars, worker.signalFile)
+    : null;
   const handoff = await runnerHasDurablePromptHandoff(
     vars,
     canonicalAgentContextTarget(worker.target),
@@ -452,10 +519,8 @@ export async function dispatchPromptHandoffProven(
     sinceMs,
     {
       launchAckSignalPath: worker.signalFile,
-      launchAckBaseline: worker.signalFile
-        ? await readLaunchAckSignalSnapshot(vars, worker.signalFile)
-        : null,
-      acceptExistingLaunchAck: true,
+      launchAckBaseline: signal,
+      acceptExistingLaunchAck: signalFromAttempt(signal, sinceMs),
       requirePromptDigest: true,
     },
   );
@@ -474,6 +539,7 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
     if (ctx.nativeSession || ctx.nativeSessionOwner) continue;
     const inspection = await inspectContextRuntime(run, ctx);
     const nextStatus = statusAfterInspection(run, ctx, inspection);
+    const observed = inspection.state !== 'skipped' && inspection.state !== 'unknown';
     const now = new Date().toISOString();
     const patch: Partial<AgentContext> = {
       status: nextStatus,
@@ -488,12 +554,12 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
       ...(!ctx.target?.paneId && inspection.target
         ? { target: agentTargetFromWorkerRef(inspection.target) }
         : {}),
-      ...(inspection.state !== 'skipped' ? { lastSignalAt: now, updatedAt: now } : {}),
-      ...(nextStatus === 'failed' || nextStatus === 'blocked'
-        ? { completedAt: now }
-        : inspection.state !== 'skipped'
-          ? { completedAt: undefined }
-          : {}),
+      ...(observed ? { lastSignalAt: now, updatedAt: now } : {}),
+      ...(!observed
+        ? {}
+        : nextStatus === 'failed' || nextStatus === 'blocked'
+          ? { completedAt: now }
+          : { completedAt: undefined }),
     };
     const changed =
       patch.status !== ctx.status ||
@@ -505,7 +571,7 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
     results.push({
       contextId: ctx.id,
       role: ctx.role,
-      status: inspection.state,
+      status: inspection.state === 'unknown' ? 'skipped' : inspection.state,
       ...(inspection.target ? { target: inspection.target } : {}),
       ...(inspection.runnerSessionId !== undefined
         ? { runnerSessionId: inspection.runnerSessionId }

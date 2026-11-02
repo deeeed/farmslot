@@ -31,7 +31,7 @@ import {
   loadProjectVars,
   loadSlotVars,
 } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import {
@@ -43,7 +43,12 @@ import {
   updateSlotStatusIf,
 } from '../core/state.js';
 import { completedRunOutcome } from '../evals/blocked-first-output.js';
-import { withNodeReconnectWait, withoutNodeReconnectWait } from '../fleet/node-rpc.js';
+import {
+  isNodeConnected,
+  waitForNode,
+  withNodeReconnectWait,
+  withoutNodeReconnectWait,
+} from '../fleet/node-rpc.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import {
@@ -1801,11 +1806,15 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
       await reconcileRunAgentRuntime(run);
     },
     dispatchPromptAccepted: dispatchPromptHandoffProven,
-    withExecutionNodeWait: (run, operation) =>
-      withNodeReconnectWait(operation, () => {
-        if (getRun(run.id)?.status !== 'dispatching')
-          throw new Error('Run stopped while awaiting its execution node');
-      }),
+    absentExecutionNode: async (slotId) => {
+      const vars = await loadSlotVars(slotId).catch(() => null);
+      return vars && !isLocal(vars.host, vars.machine) && !isNodeConnected(vars.machine)
+        ? vars.machine
+        : null;
+    },
+    waitForExecutionNode: async (machine) => {
+      await waitForNode(machine, 120_000);
+    },
     clearSettledWorkerError,
     rearmHandoffAutoRecovery: (run) =>
       rearmInteractiveHandoffAutoRecovery(run, async (runId, decisionId, actionId) => {
