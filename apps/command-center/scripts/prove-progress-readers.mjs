@@ -103,7 +103,8 @@ async function navigate(surface) {
   base.searchParams.set('progress-reader-case', runId);
   // The slot route mounts its real terminal alongside the task panel.
   const route = surface === 'fleet' ? 'fleet' : `slot/${fixture.slotId}`;
-  base.hash = surface === 'fleet' ? route : `${route}?runId=${runId}&contextId=dev`;
+  // The fleet probe reads a card's mini progress; the fleet opens on its table by default.
+  base.hash = surface === 'fleet' ? `${route}?view=card` : `${route}?runId=${runId}&contextId=dev`;
   await cdp('goto', base.href);
   await cdp('focus', route);
   return route;

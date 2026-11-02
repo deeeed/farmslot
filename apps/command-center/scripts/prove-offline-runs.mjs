@@ -1603,7 +1603,8 @@ if (phase === 'fleet-store-web') {
   const base = new URL(process.env.FARMSLOT_UI_URL);
   assert(['localhost', '127.0.0.1', '[::1]'].includes(base.hostname));
   base.searchParams.set('fleet-proof', randomUUID());
-  base.hash = 'fleet';
+  // The probe reads slot cards; the fleet opens on its table by default.
+  base.hash = 'fleet?view=card';
   const probe = path.join(root, 'apps/command-center/scripts/probes/offline-fleet.js');
   const until = async (test, label) => {
     const deadline = Date.now() + 45000;
