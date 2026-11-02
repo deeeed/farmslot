@@ -19,7 +19,10 @@ import {
   type SlotReleaseParams,
 } from '@farmslot/protocol';
 
-import { reconcileRunAgentRuntime } from '../agents/runtime-recovery.js';
+import {
+  dispatchPromptHandoffProven,
+  reconcileRunAgentRuntime,
+} from '../agents/runtime-recovery.js';
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { withoutCleanupSignal } from '../core/cleanup-scope.js';
 import {
@@ -92,7 +95,6 @@ import { schedulerTick } from '../work-graph/store.js';
 import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
-import { pendingDecisionForRun } from './decision-projection.js';
 import { latestResolvedHumanGateDecision, requiresCollisionPrecheck } from './decision-replay.js';
 import { DeferredSlotReleases } from './deferred-slot-release.js';
 import { executeDispatchStep, executePrepareStep } from './dispatch-lifecycle-steps.js';
@@ -164,7 +166,7 @@ import {
   isTerminalTeardownInFlight,
 } from './terminal-teardown-registry.js';
 import { agentsWithoutExitEvidence } from './worker-exit-evidence.js';
-import { workerLeftRunningDecision } from './worker-left-running.js';
+import { holdRunOnWorkerLeftRunningCard } from './worker-left-running.js';
 type BroadcastFn = (event: string, payload: unknown) => void;
 let broadcastFn: BroadcastFn = () => {};
 let settledBroadcastFn: BroadcastFn = () => {};
@@ -701,19 +703,13 @@ async function holdRunForRunningAgents(
   console.warn(
     `[run-engine] run ${runId.slice(0, 8)} — ${running.join(', ')} may still be running after ${stepName} error; blocked for an operator instead of failing`,
   );
-  const decision = workerLeftRunningDecision(current, stepName, reason, running);
-  updateRunStep(runId, stepName, { status: 'failed', detail: reason });
-  updateRun(runId, {
-    status: 'blocked',
-    error: reason,
-    decisions: [...current.decisions, decision],
-  });
-  broadcastFn(Events.RUN_DECISION_NEW, {
-    runId,
-    decision: pendingDecisionForRun(getRun(runId)!, decision),
-    slotId: current.slotId,
-  });
-  broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+  holdRunOnWorkerLeftRunningCard(
+    { updateRunStep, updateRun, getRun, broadcast: broadcastFn },
+    current,
+    stepName,
+    reason,
+    running,
+  );
   return true;
 }
 
@@ -1804,6 +1800,12 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     reconcileRunAgentRuntime: async (run) => {
       await reconcileRunAgentRuntime(run);
     },
+    dispatchPromptAccepted: dispatchPromptHandoffProven,
+    withExecutionNodeWait: (run, operation) =>
+      withNodeReconnectWait(operation, () => {
+        if (getRun(run.id)?.status !== 'dispatching')
+          throw new Error('Run stopped while awaiting its execution node');
+      }),
     clearSettledWorkerError,
     rearmHandoffAutoRecovery: (run) =>
       rearmInteractiveHandoffAutoRecovery(run, async (runId, decisionId, actionId) => {

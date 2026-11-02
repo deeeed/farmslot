@@ -10,7 +10,8 @@
 // reviewer should flag. When the engine relaunches the worker for the review-fix round, the same
 // command marks the fix task started, removes that file, commits and marks it complete. Workers
 // hold while their marker exists under the stack's holds/ directory. fakePi is a Pi-runner worker
-// with no model, for the case where its model stream drops while it stays alive.
+// with no model, for the case where its model stream drops while it stays alive. fakeClaude is a
+// Claude-runner worker with no model, for a runner that takes its task after launch.
 import type { ProjectPack } from '../lib/remote-node-stack.mjs';
 
 export const CANARY_PROJECT = 'farmslot-canary';
@@ -131,6 +132,16 @@ export const piRunParams = (slotId: string): Record<string, unknown> =>
     'restart invariant pi worker',
     'Restart-invariant run with a Pi-runner worker that calls no model.',
     { runner: 'pi', model: 'scripted' },
+  );
+
+/** The same pipeline with a Claude-runner worker: the fixture's `claude` (fakeClaude), no model. */
+export const claudeRunParams = (slotId: string): Record<string, unknown> =>
+  lifecycleRunParams(
+    PIPE_PROJECT,
+    slotId,
+    'restart invariant claude worker',
+    'Restart-invariant run with a Claude-runner worker that calls no model.',
+    { runner: 'claude', model: 'haiku' },
   );
 
 /**
@@ -419,6 +430,16 @@ export function slotCli(root: string) {
 /** The marker fakePi turns into a failed turn; its content is the failure Pi reports. */
 export const PI_TURN_FAILURE = 'pi-turn-failure';
 
+/** A fake worker finishing its task: its evidence, then every checklist mark. */
+const FAKE_WORKER_FINISH = `  const artifacts = path.join(taskDir, 'artifacts');
+  fs.writeFileSync(path.join(artifacts, 'pr-description.md'), '# Restart invariant\\n\\nFake worker; no code change.\\n');
+  fs.writeFileSync(path.join(artifacts, 'learnings.md'), '# Learnings\\n\\n- Fake worker.\\n');
+  const mark = (...markArgs) => execFileSync(path.join(taskDir, 'mark'), markArgs, { cwd: taskDir, stdio: 'inherit' });
+  const steps = (fs.readFileSync(taskFile, 'utf8').match(/^- \\[ \\]/gm) ?? []).length;
+  mark('start');
+  for (let step = 1; step < steps; step++) mark(String(step));
+  mark('complete', '--mark-last');`;
+
 /**
  * A Pi-runner worker with no model, the fixture's `pi`. Like Pi it answers `auth check`, keeps a
  * session file and reports its turn through the hook writer the real extension uses, which the
@@ -466,16 +487,94 @@ const sleep = (ms) => Atomics.wait(tick, 0, 0, ms);
     }
     sleep(100);
   }
-  const artifacts = path.join(taskDir, 'artifacts');
-  fs.writeFileSync(path.join(artifacts, 'pr-description.md'), '# Restart invariant\\n\\nFake Pi worker; no code change.\\n');
-  fs.writeFileSync(path.join(artifacts, 'learnings.md'), '# Learnings\\n\\n- Fake Pi worker.\\n');
-  const mark = (...markArgs) => execFileSync(path.join(taskDir, 'mark'), markArgs, { cwd: taskDir, stdio: 'inherit' });
-  const steps = (fs.readFileSync(taskFile, 'utf8').match(/^- \\[ \\]/gm) ?? []).length;
-  mark('start');
-  for (let step = 1; step < steps; step++) mark(String(step));
-  mark('complete', '--mark-last');
+${FAKE_WORKER_FINISH}
   hook('Stop');
   setTimeout(() => process.exit(0), 15 * 60_000);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+
+/**
+ * A Claude-runner worker with no model, the fixture's `claude`. Like Claude it takes its task after
+ * launch: it reads the typed prompt at a raw terminal and reports through the hooks in its
+ * --settings, which the real installer wrote. Holds: holds/claude-startup keeps it starting up (no
+ * prompt marker, so DISPATCH stays in its readiness wait); holds/tmux.arm becomes holds/tmux once
+ * its prompt is accepted; holds/claude-late-session withholds its session until it may finish, so
+ * DISPATCH stays recapturing it after delivery; holds/worker keeps it mid-turn. Then it finishes
+ * its task and waits at its prompt until /exit.
+ */
+export const fakeClaude = (holds: string): string => `#!/usr/bin/env node
+'use strict';
+const { execFileSync, spawnSync } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const holds = ${JSON.stringify(holds)};
+const held = (name) => fs.existsSync(path.join(holds, name));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const ceiling = Date.now() + 15 * 60_000;
+const whileHeld = async (name) => {
+  if (held(name)) fs.writeFileSync(path.join(holds, name + '.hit'), new Date().toISOString() + '\\n');
+  while (held(name) && Date.now() < ceiling) await sleep(100);
+};
+const args = process.argv.slice(2);
+const settingsAt = args.indexOf('--settings');
+const settings = settingsAt < 0 ? {} : JSON.parse(fs.readFileSync(args[settingsAt + 1], 'utf8'));
+const cwd = process.cwd();
+const sessionId = randomUUID();
+const transcriptPath = path.join(os.homedir(), '.claude/projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), sessionId + '.jsonl');
+const session = { session_id: sessionId, transcript_path: transcriptPath };
+const hook = (event, extra) => {
+  for (const entry of settings.hooks?.[event] ?? [])
+    for (const handler of entry.hooks ?? [])
+      spawnSync('sh', ['-c', handler.command], { input: JSON.stringify({ hook_event_name: event, cwd, ...extra }) });
+};
+let typed = '';
+let onPrompt = () => {};
+if (process.stdin.isTTY) process.stdin.setRawMode(true);
+process.stdin.on('data', (chunk) => {
+  const text = chunk.toString();
+  if (text.includes('\\u0003')) process.exit(130);
+  process.stdout.write(text);
+  typed += text;
+  const end = typed.search(/[\\r\\n]/);
+  if (end < 0) return;
+  const line = typed.slice(0, end).trim();
+  typed = typed.slice(end + 1);
+  if (line === '/exit') process.exit(0);
+  if (line) onPrompt(line);
+});
+setTimeout(() => process.exit(0), 15 * 60_000);
+(async () => {
+  fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+  fs.writeFileSync(transcriptPath, JSON.stringify({ type: 'system', sessionId, cwd }) + '\\n');
+  process.stdout.write('starting\\n');
+  await whileHeld('claude-startup');
+  const lateSession = held('claude-late-session');
+  if (!lateSession) hook('SessionStart', session);
+  process.stdout.write('\\u276f\\n');
+  const prompt = await new Promise((resolve) => {
+    onPrompt = resolve;
+  });
+  onPrompt = () => {};
+  hook('UserPromptSubmit', { prompt, ...(lateSession ? {} : session) });
+  process.stdout.write('working\\n');
+  try {
+    fs.renameSync(path.join(holds, 'tmux.arm'), path.join(holds, 'tmux'));
+  } catch {
+    // No dispatch hold to arm.
+  }
+  await whileHeld('worker');
+  while (held('claude-late-session') && Date.now() < ceiling) await sleep(100);
+  if (lateSession) hook('SessionStart', session);
+  const taskFile = path.resolve(cwd, prompt.match(/\\S*TASK\\.md/)[0]);
+  const taskDir = path.dirname(taskFile);
+${FAKE_WORKER_FINISH}
+  hook('Stop', session);
+  process.stdout.write('\\u276f\\n');
 })().catch((error) => {
   console.error(error);
   process.exit(1);

@@ -100,6 +100,7 @@ import {
   runnerPaneHasDeferredLaunchBlocker,
   runnerResolvesPreTaskLaunchBlockers,
   sendRunnerPostLaunchPrompt,
+  withRunnerPromptMutationBoundary,
 } from '../../runners/registry.js';
 import { assertRunnerAuthBeforeLaunch } from '../../runners/runner-auth.js';
 import { buildRunnerObservabilityInstallCommand } from '../../runners/runner-observability.js';
@@ -1849,14 +1850,39 @@ export async function dispatchExecute(
   let runnerProcessStarted = false;
   let resumedReviewSession = false;
   // Restart recovery reads this to tell a worker that may hold its task from one that cannot, so
-  // it reaches disk before the launch or send that hands the task over.
-  const markPromptDeliveryStarted = async () => {
-    if (!params.runId || !currentRun) return;
-    await upsertAgentContext(params.runId, workerRole, {
-      promptDeliveryStartedAt: new Date().toISOString(),
-    });
+  // it reaches disk before the launch or keys that hand the task over.
+  let promptDeliveryMarked = false;
+  const persistPromptDeliveryMarker = async (promptDeliveryStartedAt: string | undefined) => {
+    await upsertAgentContext(params.runId!, workerRole, { promptDeliveryStartedAt });
     const { persistRunNow } = await import('../../runs/store.js');
-    await persistRunNow(getRun(params.runId)!, 'dispatch prompt delivery');
+    await persistRunNow(getRun(params.runId!)!, 'dispatch prompt delivery');
+    promptDeliveryMarked = promptDeliveryStartedAt !== undefined;
+  };
+  const markPromptDeliveryStarted = async () => {
+    if (params.runId && currentRun && !promptDeliveryMarked)
+      await persistPromptDeliveryMarker(new Date().toISOString());
+  };
+  const clearPromptDeliveryStarted = async () => {
+    if (promptDeliveryMarked) await persistPromptDeliveryMarker(undefined);
+  };
+  // Recovery adopts a worker on this record. Failing to write it must not stop that worker.
+  const markPromptDeliveryVerified = async () => {
+    if (!params.runId || !currentRun) return;
+    try {
+      const { persistRunNow, updateRunStep } = await import('../../runs/store.js');
+      const dispatchStep = getRun(params.runId)?.steps.find((entry) => entry.name === 'dispatch');
+      if (!dispatchStep) return;
+      await persistRunNow(
+        updateRunStep(params.runId, dispatchStep.name, {
+          outputs: { ...dispatchStep.outputs, promptDeliveryVerified: true },
+        }),
+        'dispatch prompt verified',
+      );
+    } catch (err) {
+      console.warn(
+        `[dispatch] could not record verified delivery for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+      );
+    }
   };
   const launchCarriesPrompt = !runnerNeedsPostLaunchPrompt(runner);
 
@@ -1869,7 +1895,6 @@ export async function dispatchExecute(
     };
     if (repeatReviewResumePlan.kind === 'resume') {
       await runPressureGate();
-      await markPromptDeliveryStarted();
       const binding = repeatReviewResumePlan.binding;
       step(
         'launch',
@@ -1887,6 +1912,8 @@ export async function dispatchExecute(
         taskDir: workerTaskDir,
         launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,
         acceptExistingLaunchAck: false,
+        onPromptMutationStart: markPromptDeliveryStarted,
+        onPromptMutationConfirmedUntouched: clearPromptDeliveryStarted,
         sendLogPrefix: '[repeat-review-resume]',
       });
       if (attempt.kind === 'resumed') {
@@ -2058,26 +2085,30 @@ export async function dispatchExecute(
         handoffAckSinceMs,
       );
       await runPressureGate();
-      await markPromptDeliveryStarted();
-      await sendRunnerPostLaunchPrompt(
-        vars,
-        workerTarget,
-        runner,
-        taskPrompt,
-        'TASK.md',
-        'dispatch',
-        {
-          readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
-          blockerSnapshotPath: `${workerTaskDir}/artifacts/runner-blockers/dispatch-launch.txt`,
-          signalPath: `${workerTaskDir}/SIGNAL.json`,
-          launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,
-          requirePromptDigest: true,
-          handoffAckSinceMs,
-          promptAcceptanceBaselineMs,
-          softAcceptOnHandoffAck: true,
-          providerAccountLabel: accountBind?.bind.accountLabel ?? null,
-          runtimeDir: projectVars?.runtimeDir,
-        },
+      await withRunnerPromptMutationBoundary(
+        markPromptDeliveryStarted,
+        () =>
+          sendRunnerPostLaunchPrompt(
+            vars,
+            workerTarget,
+            runner,
+            taskPrompt,
+            'TASK.md',
+            'dispatch',
+            {
+              readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
+              blockerSnapshotPath: `${workerTaskDir}/artifacts/runner-blockers/dispatch-launch.txt`,
+              signalPath: `${workerTaskDir}/SIGNAL.json`,
+              launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,
+              requirePromptDigest: true,
+              handoffAckSinceMs,
+              promptAcceptanceBaselineMs,
+              softAcceptOnHandoffAck: true,
+              providerAccountLabel: accountBind?.bind.accountLabel ?? null,
+              runtimeDir: projectVars?.runtimeDir,
+            },
+          ),
+        clearPromptDeliveryStarted,
       );
       promptSessionCaptureOptions = {
         promptText: taskPrompt,
@@ -2085,8 +2116,7 @@ export async function dispatchExecute(
       };
       step('task', 'Task prompt delivered and verified');
     }
-    // The worker holds its task: from here restart recovery adopts it instead of re-dispatching.
-    await markSlotBusy(params.slotId, 'working', 'working');
+    await markPromptDeliveryVerified();
     if (!resumedReviewSession) {
       sessionMeta = await recaptureRunnerSessionMetadataIfMissing(
         vars,
@@ -2142,6 +2172,7 @@ export async function dispatchExecute(
   }
 
   // 6. Update status + start TASK.md watching
+  await markSlotBusy(params.slotId, 'working', 'working');
   if (params.runId) {
     const latestRun = getRun(params.runId);
     if (latestRun) {

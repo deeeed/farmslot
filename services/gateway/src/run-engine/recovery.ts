@@ -1,6 +1,7 @@
 // run-engine/recovery.ts — restart recovery and orphan slot reconciliation.
 
 import {
+  type AgentContext,
   type ArtifactRef,
   contextIdFor,
   Events,
@@ -33,6 +34,7 @@ import {
   runnerResolvesPreTaskLaunchBlockers,
 } from '../runners/registry.js';
 import { runDecisionWaitingStatus, type RunProgressObservation } from '../runners/run-progress.js';
+import { runnerSessionContextPatch } from '../runners/session-record.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 import { withSourcePlanning } from '../sources/runtime.js';
 
@@ -51,7 +53,11 @@ import {
 import { reviewPostingActions } from './review-gate.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
 import { runSupersededSince } from './run-generation.js';
-import { REPLAY_STEP_ACTION, WORKER_LEFT_RUNNING_DECISION } from './worker-left-running.js';
+import {
+  holdRunOnWorkerLeftRunningCard,
+  REPLAY_STEP_ACTION,
+  WORKER_LEFT_RUNNING_DECISION,
+} from './worker-left-running.js';
 
 const S = PipelineSteps;
 const RECONCILE_INTERVAL_MS = 60_000; // 60s
@@ -191,6 +197,10 @@ export interface RunRecoveryCollaborators {
   ) => Promise<boolean>;
   quarantineLeakedRun: (run: Run) => Promise<void>;
   reconcileRunAgentRuntime?: (run: Run) => Promise<void>;
+  /** The runner's own evidence that an interrupted DISPATCH's task prompt was accepted. */
+  dispatchPromptAccepted?: (run: Run, worker: AgentContext) => Promise<boolean>;
+  /** Reconcile an interrupted DISPATCH with the reconnect wait its re-run would have had. */
+  withExecutionNodeWait?: <T>(run: Run, operation: () => Promise<T>) => Promise<T>;
   /** Clear a run error that only settled native workers carry, from recorded state. */
   clearSettledWorkerError?: (runId: string) => void;
   rearmHandoffAutoRecovery: (run: Run) => (() => void) | undefined;
@@ -363,58 +373,86 @@ export async function representResultDecisions(runs: Run[]): Promise<void> {
 }
 
 /**
- * How far a DISPATCH that a restart interrupted got with its task. The step writes
- * `promptDeliveryStartedAt` durably before the launch or send that hands the worker its task, and
- * a stamp older than the step belongs to an earlier attempt. The verified outcome is the slot's
- * `agent: working`, which the caller checks. Without it only a live runner that took its prompt on
- * argv, with no launch blocker left to resolve, is known to hold the task. Read this after runtime
- * reconciliation, which promotes a live `launching` worker to `working`.
+ * The worker of a DISPATCH a restart interrupted after its task may have left the gateway. The
+ * step writes `promptDeliveryStartedAt` durably just before the launch or keys that hand it over,
+ * and a stamp older than the step belongs to an earlier attempt. No worker: the task was not sent.
  */
-function interruptedDispatchDelivery(run: Run): 'unsent' | 'delivered' | 'uncertain' {
+function workerWithPromptSent(run: Run): AgentContext | undefined {
   const dispatch = run.steps.find((step) => step.name === S.DISPATCH);
   const workerRole = workerRoleForFlow(run.flowType);
   const worker = workerRole
     ? run.agentContexts?.find((context) => context.id === contextIdFor(workerRole))
     : undefined;
-  if (
-    dispatch?.status !== 'running' ||
-    !dispatch.startedAt ||
-    !worker?.promptDeliveryStartedAt ||
-    worker.promptDeliveryStartedAt < dispatch.startedAt
-  )
-    return 'unsent';
-  return worker.status === 'working' &&
-    !runnerNeedsPostLaunchPrompt(worker.runner) &&
-    !runnerResolvesPreTaskLaunchBlockers(worker.runner)
-    ? 'delivered'
-    : 'uncertain';
+  return dispatch?.status === 'running' &&
+    dispatch.startedAt &&
+    worker?.promptDeliveryStartedAt &&
+    worker.promptDeliveryStartedAt >= dispatch.startedAt
+    ? worker
+    : undefined;
 }
 
-/** The state the engine leaves on a PromptDeliveryUncertainError, without re-entering the engine. */
-function holdUncertainDispatch(
-  deps: Pick<RunRecoveryCollaborators, 'updateRunStep' | 'updateRun' | 'getRun' | 'broadcast'>,
+/**
+ * How far an interrupted DISPATCH got with its task, read after runtime reconciliation (which
+ * promotes a live `launching` worker to `working`). The step records `promptDeliveryVerified` on
+ * its outputs once delivery is verified: a fleet refresh rewrites the slot's agent but not that.
+ */
+async function interruptedDispatchDelivery(
+  deps: Pick<RunRecoveryCollaborators, 'dispatchPromptAccepted'>,
   run: Run,
-): void {
-  const message =
-    'A gateway restart interrupted dispatch while the task prompt was being delivered.';
-  deps.updateRunStep(run.id, S.DISPATCH, {
-    status: 'failed',
-    detail: message,
-    outputs: { promptDeliveryUncertain: true },
-  });
-  for (const step of run.steps) {
-    if (step.status === 'pending') deps.updateRunStep(run.id, step.name, { status: 'skipped' });
+  worker: AgentContext | undefined,
+  slotAgent: string | undefined,
+  reconcileFailed: boolean,
+): Promise<'unsent' | 'delivered' | 'uncertain'> {
+  // A warm handoff or branch nudge has no dispatchExecute record: its claim's `working` decides.
+  // One that fell back to a cold dispatch has the record, and that claim proves nothing.
+  const flags = run.engineState?.flags;
+  if (
+    slotAgent === 'working' &&
+    (flags?.nudgeReuse || (flags?.warmSessionReuse && flags.warmHandoffSucceeded !== false))
+  )
+    return 'delivered';
+  if (!worker) return 'unsent';
+  const dispatch = run.steps.find((step) => step.name === S.DISPATCH);
+  if (dispatch?.outputs?.promptDeliveryVerified) return 'delivered';
+  if (reconcileFailed) return 'uncertain';
+  if (
+    worker.status === 'working' &&
+    !runnerNeedsPostLaunchPrompt(worker.runner) &&
+    !runnerResolvesPreTaskLaunchBlockers(worker.runner)
+  )
+    return 'delivered';
+  try {
+    if (await deps.dispatchPromptAccepted?.(run, worker)) return 'delivered';
+  } catch (err) {
+    console.warn(
+      `[run-engine] prompt handoff probe failed for ${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+    );
+    return 'uncertain';
   }
-  deps.updateRun(run.id, {
-    status: 'reconciling',
-    error: `${message}\n\nThe runner and claimed slot were preserved because the prompt may already be executing.`,
-    metrics: {
-      ...run.metrics,
-      outcome: 'partial',
-      durationMs: Date.now() - new Date(run.createdAt).getTime(),
-    },
-  });
-  deps.broadcast(Events.RUN_UPDATED, { run: deps.getRun(run.id) });
+  // Reconciliation found no runner and it left no signal: nothing to double-deliver to.
+  return worker.status === 'blocked' || worker.status === 'failed' ? 'unsent' : 'uncertain';
+}
+
+/** A DISPATCH that recovery completes leaves its worker as the step's own end would. */
+function adoptedWorkerContexts(run: Run): AgentContext[] | undefined {
+  const workerRole = workerRoleForFlow(run.flowType);
+  return run.agentContexts?.map((context) =>
+    workerRole && context.id === contextIdFor(workerRole)
+      ? {
+          ...context,
+          status: context.status === 'launching' ? 'working' : context.status,
+          ...(context.runnerSessionCapturedAt
+            ? {}
+            : runnerSessionContextPatch(
+                {
+                  runnerSessionId: context.runnerSessionId ?? null,
+                  runnerSessionPath: context.runnerSessionPath ?? null,
+                },
+                'dispatch adoption',
+              )),
+        }
+      : context,
+  );
 }
 
 export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise<void> {
@@ -487,7 +525,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       run.steps.some(
         (step) =>
           step.outputs?.promptDeliveryUncertain || step.outputs?.nativeWorkerOperationUncertain,
-      )
+      ) &&
+      // Its card is the explicit reconciliation: re-present that below.
+      !run.decisions.some((d) => !d.resolvedAt && d.type === WORKER_LEFT_RUNNING_DECISION)
     )
       continue;
     if (
@@ -712,14 +752,23 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       continue;
     }
 
+    let reconcileError: string | undefined;
     if (deps.reconcileRunAgentRuntime && run.slotId) {
+      const reconcile = deps.reconcileRunAgentRuntime;
+      const nodeWait =
+        run.status === 'dispatching' && run.transport !== 'native' && workerWithPromptSent(run)
+          ? deps.withExecutionNodeWait
+          : undefined;
       try {
-        await deps.reconcileRunAgentRuntime(run);
+        await (nodeWait ? nodeWait(run, () => reconcile(run)) : reconcile(run));
       } catch (err) {
+        reconcileError = (err as Error).message.slice(0, 200);
         console.warn(
-          `[run-engine] agent runtime reconciliation failed for ${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+          `[run-engine] agent runtime reconciliation failed for ${run.id.slice(0, 8)}: ${reconcileError}`,
         );
       }
+      // The wait can outlast an operator's cancel or pause.
+      if (nodeWait && deps.getRun(run.id)?.status !== 'dispatching') continue;
     }
 
     if (
@@ -1131,33 +1180,63 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       }
 
       if (run.transport !== 'native' && run.status === 'dispatching') {
-        const delivery =
-          slot.agent === 'working'
-            ? 'delivered'
-            : interruptedDispatchDelivery(deps.getRun(run.id) ?? run);
-        if (delivery === 'uncertain') {
+        const current = deps.getRun(run.id) ?? run;
+        const worker = workerWithPromptSent(current);
+        const delivery = await interruptedDispatchDelivery(
+          deps,
+          current,
+          worker,
+          slot.agent,
+          reconcileError !== undefined,
+        );
+        const holdOnCard = (reason: string, stepOutputs?: Record<string, unknown>) => {
           console.warn(
-            `[run-engine] run ${run.id.slice(0, 8)} — restart interrupted dispatch with prompt delivery uncertain; preserving the claimed slot and runner`,
+            `[run-engine] run ${run.id.slice(0, 8)} — ${reason} Preserving the claimed slot and runner`,
           );
-          holdUncertainDispatch(deps, deps.getRun(run.id) ?? run);
+          holdRunOnWorkerLeftRunningCard(
+            deps,
+            current,
+            S.DISPATCH,
+            reason,
+            [worker?.id ?? workerRoleForFlow(run.flowType) ?? 'worker'],
+            stepOutputs,
+          );
+        };
+        if (delivery === 'uncertain') {
+          if (reconcileError)
+            holdOnCard(
+              `A gateway restart interrupted dispatch and its worker could not be checked: ${reconcileError}.`,
+            );
+          else
+            holdOnCard(
+              'A gateway restart interrupted dispatch while the task prompt was being delivered.',
+              { promptDeliveryUncertain: true },
+            );
           continue;
         }
         if (delivery === 'delivered') {
           console.log(
             `[run-engine] run ${run.id.slice(0, 8)} — worker already has its task, advancing to monitoring`,
           );
-          await deps.updateSlotStatusIf(run.slotId, (row) => row.current_run_id === run.id, {
-            lifecycle: 'busy',
-            phase: 'working',
-            agent: 'working',
-          });
+          const owned = await deps.updateSlotStatusIf(
+            run.slotId,
+            (row) => row.current_run_id === run.id,
+            { lifecycle: 'busy', phase: 'working', agent: 'working' },
+          );
+          if (!owned) {
+            holdOnCard(
+              `A gateway restart interrupted dispatch and slot ${run.slotId} no longer records this run as its owner.`,
+            );
+            continue;
+          }
           deps.updateRunStep(run.id, S.DISPATCH, {
             status: 'done',
             completedAt: new Date().toISOString(),
           });
           deps.updateRun(run.id, {
             status: 'monitoring',
-            activeTaskFile: run.taskFile ?? undefined,
+            activeTaskFile: current.taskFile ?? undefined,
+            agentContexts: adoptedWorkerContexts(deps.getRun(run.id) ?? current),
           });
           deps.updateRunStep(run.id, S.MONITOR, {
             status: 'running',

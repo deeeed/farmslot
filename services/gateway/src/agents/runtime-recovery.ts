@@ -39,9 +39,12 @@ import {
   modelQuestionsForRun,
 } from '../runners/launch-command.js';
 import { reconcileNativeRunAgentRuntime } from '../runners/native/worker-runtime.js';
+import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   getRunnerObservability,
   normalizeRunner,
+  prepareRunnerDispatchPrompt,
+  runnerHasDurablePromptHandoff,
   runnerPersistsSessionFiles,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
@@ -51,6 +54,7 @@ import {
   resolveRunnerSessionBinding,
   resolveRunRetainedSessionBinding,
 } from '../runners/session-process.js';
+import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, listRuns, updateRun, updateRunAgentContexts } from '../runs/store.js';
 
 const ACTIVE_CONTEXT_STATUSES: ReadonlySet<AgentContextStatus> = new Set([
@@ -420,6 +424,44 @@ export async function reconcileRunAgentRuntime(run: Run): Promise<void> {
   if (run.transport !== 'native') await reconcileTmuxRunAgentRuntime(run);
 }
 
+/**
+ * The runner's own record that an interrupted DISPATCH's prompt arrived. The attempt's stamp is the
+ * lower bound; a signal in the task's own file counts, as the lost in-memory send would have seen.
+ */
+export async function dispatchPromptHandoffProven(
+  run: Run,
+  worker: AgentContext,
+): Promise<boolean> {
+  const runner = worker.runner ?? run.metrics.runner;
+  const sinceMs = Date.parse(worker.promptDeliveryStartedAt ?? '');
+  if (!run.slotId || !runner || !worker.target || !worker.taskFile || !Number.isFinite(sinceMs))
+    return false;
+  const vars = await loadSlotVars(run.slotId);
+  const taskDir = path.posix.dirname(worker.taskFile);
+  const prompt = await prepareRunnerDispatchPrompt(
+    vars,
+    runner,
+    await resolveWorkerDispatchPrompt(vars.projectName, { taskFile: worker.taskFile, taskDir }),
+    taskDir,
+  );
+  const handoff = await runnerHasDurablePromptHandoff(
+    vars,
+    canonicalAgentContextTarget(worker.target),
+    runner,
+    prompt,
+    sinceMs,
+    {
+      launchAckSignalPath: worker.signalFile,
+      launchAckBaseline: worker.signalFile
+        ? await readLaunchAckSignalSnapshot(vars, worker.signalFile)
+        : null,
+      acceptExistingLaunchAck: true,
+      requirePromptDigest: true,
+    },
+  );
+  return handoff.accepted;
+}
+
 async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestoreResult> {
   const contexts = run.agentContexts ?? [];
   if (!run.slotId || contexts.length === 0) {
@@ -441,6 +483,11 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
       ...(inspection.runnerSessionPath !== undefined
         ? { runnerSessionPath: inspection.runnerSessionPath }
         : {}),
+      // A dispatch interrupted before it captured the pane: without the id, an exited runner
+      // reads as unproven at the gate.
+      ...(!ctx.target?.paneId && inspection.target
+        ? { target: agentTargetFromWorkerRef(inspection.target) }
+        : {}),
       ...(inspection.state !== 'skipped' ? { lastSignalAt: now, updatedAt: now } : {}),
       ...(nextStatus === 'failed' || nextStatus === 'blocked'
         ? { completedAt: now }
@@ -452,6 +499,7 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
       patch.status !== ctx.status ||
       patch.runnerSessionId !== undefined ||
       patch.runnerSessionPath !== undefined ||
+      patch.target !== undefined ||
       ('completedAt' in patch && patch.completedAt !== ctx.completedAt);
     if (changed) patches.set(ctx.id, patch);
     results.push({

@@ -165,6 +165,24 @@ function fixture(corrupt = false): void {
   ];
 }
 
+test('reconciling a dispatch interrupted before it captured the pane restores the pane id', async () => {
+  fixture();
+  paneSession = 'slot-1';
+  run.status = 'dispatching';
+  run.agentContexts = [
+    {
+      ...run.agentContexts![0]!,
+      status: 'launching',
+      target: { session: 'slot-1', window: 'dev', pane: null, target: 'slot-1:dev' },
+    },
+  ];
+
+  await reconcileRunAgentRuntime(run);
+
+  assert.equal(run.agentContexts![0]!.status, 'working');
+  assert.equal(run.agentContexts![0]!.target?.paneId, '%1');
+});
+
 test('a moved exact pane never replaces the primary session with the newest reviewer transcript', async () => {
   fixture();
   await reconcileRunAgentRuntime(run);

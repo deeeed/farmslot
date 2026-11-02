@@ -31,6 +31,8 @@ import {
   CANARY_PROJECT,
   CANARY_REPO,
   canaryPack,
+  claudeRunParams,
+  fakeClaude,
   fakePi,
   PI_TURN_FAILURE,
   piRunParams,
@@ -81,6 +83,9 @@ export type RestartStep = (typeof RESTART_STEPS)[number];
 export type Variant = 'node-up' | 'node-away';
 export const SURVIVE_STEPS = [
   'dispatch',
+  'dispatch-claude-readiness',
+  'dispatch-claude-keys',
+  'dispatch-claude-verified',
   'monitor',
   'review',
   'review-fix',
@@ -94,6 +99,7 @@ type HoldStep = RestartStep | SurviveStep;
 // 30 s timeout, so the resumed step's first node calls have answered or failed by then.
 const SURVIVE_OBSERVE_MS = 45_000;
 const LOSS_SETTLE_MS = 5_000;
+const READINESS_WAIT_MS = 8_000;
 const TRANSPORT_ABORT = /\bterminated\b|abort|ECONNRESET|socket hang up|connection reset/i;
 
 export interface IsolatedOptions {
@@ -135,13 +141,19 @@ interface Shape extends RunShape {
   scriptedReview?: boolean;
 }
 
-type ShapeName = 'canary' | 'f324' | 'pipe' | 'pi' | 'review' | 'scripted-review';
+type ShapeName = 'canary' | 'f324' | 'pipe' | 'pi' | 'claude' | 'review' | 'scripted-review';
 
 const SHAPES: Record<ShapeName, Shape> = {
   canary: canaryShape('isolated lifecycle'),
   f324: f324Shape('isolated f324'),
   pipe: { project: PIPE_PROJECT, create: pipeRunParams, decide: closeGate, timeoutMs: 20 * 60_000 },
   pi: { project: PIPE_PROJECT, create: piRunParams, decide: closeGate, timeoutMs: 20 * 60_000 },
+  claude: {
+    project: PIPE_PROJECT,
+    create: claudeRunParams,
+    decide: closeGate,
+    timeoutMs: 20 * 60_000,
+  },
   review: {
     project: REVIEW_PROJECT,
     create: reviewRunParams,
@@ -189,7 +201,11 @@ interface HoldPhase {
   /** Armed before the run is created, whatever `armAt` says (an idle runner). */
   prepare?(context: HoldContext): Promise<void>;
   /** Watch the run's worker after the restart, before the release; `release` lifts what kept it. */
-  survive?: { release?(context: HoldContext): Promise<void> };
+  survive?: {
+    release?(context: HoldContext): Promise<void>;
+    /** Nothing it holds can be lost: the restart may stop and relaunch this worker. */
+    relaunches?: boolean;
+  };
 }
 
 /**
@@ -422,6 +438,12 @@ function fixInCheckout(slotRepo: string): boolean {
 export const SURVIVE_HOLDS: Record<SurviveStep, string> = {
   dispatch:
     "the scripted runner arms a tmux hold when it starts, so DISPATCH's next tmux call waits with the worker launched; the worker waits on holds/worker; the tmux hold lifts while the gateway is down",
+  'dispatch-claude-readiness':
+    'a Claude-runner worker (no model) stays starting up, so DISPATCH is in its readiness wait with nothing typed; lifts while the gateway is down. A relaunch is correct here',
+  'dispatch-claude-keys':
+    "a Claude-runner worker (no model) accepts its typed prompt and arms a tmux hold, so DISPATCH's verification waits; the worker waits on holds/worker; the tmux hold lifts while the gateway is down",
+  'dispatch-claude-verified':
+    'a Claude-runner worker (no model) withholds its session, so DISPATCH is still recapturing it after recording verified delivery; the worker waits on holds/worker',
   monitor: 'the scripted worker waits on holds/worker',
   review:
     "the codex proxy swallows the reviewer's turn (no model call); the test answers it after the watch",
@@ -449,7 +471,8 @@ function survivePhase(
   const worker = marker(stack, 'worker');
   const idle = marker(stack, 'idle');
   switch (step) {
-    case 'dispatch': {
+    case 'dispatch':
+    case 'dispatch-claude-keys': {
       const tmux = marker(stack, 'tmux');
       const armFile = path.join(stack.holds, 'tmux.arm');
       return {
@@ -457,7 +480,7 @@ function survivePhase(
         armAt: 'create',
         arm: async (context) => {
           await worker.arm(context);
-          // Any tmux call once the worker runs: one run at a time, so they are DISPATCH's.
+          // Any tmux call once the worker has it armed: one run at a time, so they are DISPATCH's.
           await writeFile(armFile, '.\n');
         },
         held: ({ run }) => tmux.hit() && stepStatus(run, 'dispatch') === 'running',
@@ -468,7 +491,44 @@ function survivePhase(
         },
         releaseWhileDown: true,
         survive: { release: worker.release },
-      } satisfies HoldPhase;
+      };
+    }
+    case 'dispatch-claude-readiness': {
+      const startup = marker(stack, 'claude-startup');
+      let startupSeenAt = 0;
+      return {
+        ...base,
+        armAt: 'create',
+        arm: startup.arm,
+        // Past the launch's session capture: DISPATCH is polling the pane for a ready prompt.
+        held: ({ run }) => {
+          if (!startup.hit() || stepStatus(run, 'dispatch') !== 'running') return false;
+          startupSeenAt ||= Date.now();
+          return Date.now() - startupSeenAt >= READINESS_WAIT_MS;
+        },
+        missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'dispatch') ?? ''),
+        release: startup.release,
+        releaseWhileDown: true,
+        survive: { relaunches: true },
+      };
+    }
+    case 'dispatch-claude-verified': {
+      const lateSession = marker(stack, 'claude-late-session');
+      return {
+        ...base,
+        armAt: 'create',
+        arm: async (context) => {
+          await worker.arm(context);
+          await lateSession.arm(context);
+        },
+        held: ({ run }) =>
+          stepStatus(run, 'dispatch') === 'running' &&
+          run.steps.find((entry) => entry.name === 'dispatch')?.outputs?.promptDeliveryVerified ===
+            true,
+        missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'dispatch') ?? ''),
+        release: lateSession.release,
+        survive: { release: worker.release },
+      };
     }
     case 'monitor':
       return { ...restartPhase(stack, 'monitor', 'node-up', 0), survive: {} };
@@ -681,7 +741,8 @@ function snapshotWorker(stack: RemoteNodeStack, slotId: string, run: Run): Worke
         (row) =>
           (under.has(row.pid) &&
             (row.command.includes('scripted-runner') ||
-              row.command.includes(path.join(stack.fixture, 'bin', 'pi')))) ||
+              row.command.includes(path.join(stack.fixture, 'bin', 'pi')) ||
+              row.command.includes(path.join(stack.fixture, 'bin', 'claude')))) ||
           (contexts(run, 'review').length > 0 &&
             row.command.includes(stack.fixture) &&
             /codex-proxy\.cjs.*app-server/.test(row.command)),
@@ -824,7 +885,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       slotId.startsWith(`${CANARY_PROJECT}-`) ? {} : slotCli(options.root)(slotId, fixture),
     cliSnapshots: options.cliSnapshots,
     ...(options.cliSnapshot ? { cliSnapshot: options.cliSnapshot } : {}),
-    binFiles: (holds) => ({ pi: fakePi(holds) }),
+    binFiles: (holds) => ({ pi: fakePi(holds), claude: fakeClaude(holds) }),
     ownerTag: options.ownerTag,
     reaper: options.reaper,
     ...(options.onCleanup ? { onCleanup: options.onCleanup } : {}),
@@ -925,9 +986,11 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           await log(`${label}: restarted (${variant})`, { after: brief(after) });
         }
         if (snapshot) {
-          survival = snapshot.processes.length
-            ? await watchWorker(stack, slotId, snapshot, getRun, phase.step)
-            : ['nothing to watch: no runner process at the hold point'];
+          survival = phase.survive?.relaunches
+            ? []
+            : snapshot.processes.length
+              ? await watchWorker(stack, slotId, snapshot, getRun, phase.step)
+              : ['nothing to watch: no runner process at the hold point'];
           await log(`${label}: worker ${survival.length ? 'lost' : 'survived'}`, {
             watched,
             ...(survival.length ? { survival } : {}),
@@ -1158,6 +1221,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
   for (const step of survive) {
     const scripted = scriptedReviewStep(step);
     const pi = step === 'monitor-transport-abort';
+    const claude = step.startsWith('dispatch-claude-');
     let baseline: ScenarioResult;
     const result = await check(
       {
@@ -1167,14 +1231,18 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           ? `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer whose turns the test answers (no model call)`
           : pi
             ? 'pi worker with no model (fixture)'
-            : 'scripted',
+            : claude
+              ? 'claude worker with no model (fixture)'
+              : 'scripted',
         hold: SURVIVE_HOLDS[step],
       },
       async () => {
         baseline = await baselineOf(scripted ? 'scripted-review' : 'pipe');
-        return runScenario(`survive-${step}`, scripted ? 'scripted-review' : pi ? 'pi' : 'pipe', [
-          survivePhase(stack, step, reviewer),
-        ]);
+        return runScenario(
+          `survive-${step}`,
+          scripted ? 'scripted-review' : pi ? 'pi' : claude ? 'claude' : 'pipe',
+          [survivePhase(stack, step, reviewer)],
+        );
       },
       (scenario) => {
         const failure = failureText(scenario.run);

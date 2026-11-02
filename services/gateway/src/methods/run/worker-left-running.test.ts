@@ -10,6 +10,7 @@ import '../../runtime/mock-pty.test-support.js';
 import { deleteTestRunIfPresent } from '../../run-engine/test-fixtures.js';
 import {
   CANCEL_RUN_ACTION,
+  holdRunOnWorkerLeftRunningCard,
   REPLAY_STEP_ACTION,
   WORKER_LEFT_RUNNING_DECISION,
   workerLeftRunningDecision,
@@ -84,6 +85,68 @@ test('Cancel run on a worker-left-running card cancels the run instead of resumi
 
 test('Abort Run on a runner_unavailable card cancels the run instead of waking the monitor', async (t) => {
   const { run, resumed, cancelled } = parkedRun(t, 'abort', 'monitor_runner_unavailable');
+  await until(() => cancelled.length > 0);
+  assert.deepEqual(cancelled, [run.id]);
+  assert.deepEqual(resumed, []);
+});
+
+// F331: restart recovery holds an uncertain dispatch on this card with the same transition.
+function dispatchHeldByRecovery(t: test.TestContext, actionId: string) {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: `HOLD-${actionId}` });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  for (const name of ['find-slot', 'write-task', 'prepare'])
+    updateRunStep(run.id, name, { status: 'done' });
+  updateRunStep(run.id, 'dispatch', { status: 'running' });
+  updateRun(run.id, { status: 'dispatching', slotId: 'held-slot' });
+  holdRunOnWorkerLeftRunningCard(
+    { updateRunStep, updateRun, getRun, broadcast: () => {} },
+    getRun(run.id)!,
+    'dispatch',
+    'A gateway restart interrupted dispatch while the task prompt was being delivered.',
+    ['dev'],
+    { promptDeliveryUncertain: true },
+  );
+  const card = getRun(run.id)!.decisions[0]!;
+  assert.equal(getRun(run.id)!.status, 'blocked');
+  assert.equal(card.type, WORKER_LEFT_RUNNING_DECISION);
+  assert.deepEqual(
+    card.actions.map((action) => action.id),
+    [REPLAY_STEP_ACTION, CANCEL_RUN_ACTION],
+  );
+  updateRun(run.id, {
+    decisions: [{ ...card, resolvedAt: new Date().toISOString(), resolvedAction: actionId }],
+  });
+  const resumed: string[] = [];
+  const cancelled: string[] = [];
+  continueResolvedRunDecision(
+    { runId: run.id, decisionId: card.id, actionId },
+    () => {},
+    {
+      resumeRun: async (runId) => {
+        resumed.push(runId);
+      },
+      cancelRun: async (params: RunCancelParams) => {
+        cancelled.push(params.runId);
+      },
+    },
+    getRun(run.id)!.engineState?.generation ?? 0,
+  );
+  return { run, resumed, cancelled };
+}
+
+test('Replay step on a dispatch restart recovery held re-enters DISPATCH', async (t) => {
+  const { run, resumed, cancelled } = dispatchHeldByRecovery(t, REPLAY_STEP_ACTION);
+  await until(() => resumed.length > 0);
+  assert.deepEqual(resumed, [run.id]);
+  assert.deepEqual(cancelled, []);
+  const after = getRun(run.id)!;
+  assert.equal(after.status, 'created');
+  assert.equal(after.steps.find((step) => step.name === 'dispatch')?.status, 'failed');
+  assert.equal(after.steps.find((step) => step.name === 'prepare')?.status, 'done');
+});
+
+test('Cancel run on a dispatch restart recovery held cancels it', async (t) => {
+  const { run, resumed, cancelled } = dispatchHeldByRecovery(t, CANCEL_RUN_ACTION);
   await until(() => cancelled.length > 0);
   assert.deepEqual(cancelled, [run.id]);
   assert.deepEqual(resumed, []);
