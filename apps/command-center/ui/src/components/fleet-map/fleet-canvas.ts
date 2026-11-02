@@ -242,9 +242,11 @@ export class FleetCanvas extends LitElement {
       color: #fff;
       border-color: ${unsafeCSS(colors.accent)};
     }
+    /* One line, so a selection count changing the label never changes the toolbar's height. */
     .fleet-refresh-trigger {
       border-radius: 4px;
       margin-left: auto;
+      white-space: nowrap;
     }
     .fleet-refresh-trigger.has-eligible {
       color: ${unsafeCSS(colors.accent)};
