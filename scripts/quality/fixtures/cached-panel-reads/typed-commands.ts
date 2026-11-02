@@ -2,7 +2,7 @@ import { Methods } from '@farmslot/protocol';
 
 import { gateway } from './transport.js';
 
-type SessionMethod = typeof Methods.AUTH_SESSION_REFRESH | typeof Methods.AUTH_SESSION_LIST;
+type SessionMethod = typeof Methods.AUTH_SESSION_REFRESH | typeof Methods.RUN_CANCEL;
 
 // A session client's refresh loop whose transport type admits only uncached commands.
 class TypedSession {
@@ -29,7 +29,7 @@ class TypedSession {
 }
 
 const session = new TypedSession({ request: (method, params) => gateway.request(method, params) });
-const h1 = () => session.list(Methods.AUTH_SESSION_LIST);
+const h1 = () => session.list(Methods.RUN_CANCEL);
 const h2 = () => h1();
 const h3 = () => h2();
 const h4 = () => h3();
