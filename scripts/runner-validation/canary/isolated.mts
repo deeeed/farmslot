@@ -1102,14 +1102,21 @@ function cardObservations(scenario: ScenarioResult): string[] {
  * The reviews a survive hold must still have run: the outcome comparison doesn't see them. A
  * recovered fix costs what an uninterrupted one does: `extraReviewers` is only for the variants
  * whose reviewer is real work (a fix too large to accept, a worker lost before its fix).
+ * `refusedResumes` is the proxy's doing, not recovery's: a swallowed turn never reaches codex, so
+ * that thread cannot resume and its re-review falls back cold. With real turns the review row
+ * resumes the same session, no fallback and no no-verdict receipt.
  */
 function reviewRoundDifferences(
   scenario: ScenarioResult,
   baseline: ScenarioResult,
   extraReviewers: number,
+  refusedResumes: number,
 ): string[] {
   const seen = reviewVerdicts(scenario.run);
-  const expected = reviewVerdicts(baseline.run).reviewers + extraReviewers;
+  const expected = reviewVerdicts(baseline.run).reviewers + extraReviewers + refusedResumes;
+  const fallbacks = contexts(scenario.run, 'review').filter(
+    (context) => context.reviewFallback,
+  ).length;
   return [
     ...(seen.loop2 === 'pass'
       ? []
@@ -1117,9 +1124,10 @@ function reviewRoundDifferences(
     ...(seen.reviewers === expected
       ? []
       : [`${seen.reviewers} reviewers ran, expected ${expected}`]),
-    ...(scenario.reviewerTurns === seen.reviewers
+    ...(scenario.reviewerTurns === seen.reviewers - refusedResumes
       ? []
       : [`${scenario.reviewerTurns ?? 0} reviewer turns for ${seen.reviewers} reviewers`]),
+    ...(fallbacks === refusedResumes ? [] : [`${fallbacks} reviewers fell back cold`]),
   ];
 }
 
@@ -1579,8 +1587,8 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     const claudeFix = step.startsWith('review-fix-claude');
     const fixCard = step.startsWith('review-fix-claude-card');
     const reviewFix = step.startsWith('review-fix');
-    const extraReviewers =
-      step === 'review-fix-large' || step === 'review-fix-claude-card-dead' ? 1 : 0;
+    const large = step === 'review-fix-large';
+    const extraReviewers = large || step === 'review-fix-claude-card-dead' ? 1 : 0;
     let baseline: ScenarioResult;
     const result = await check(
       {
@@ -1646,7 +1654,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             baseline.outcome,
             card || fixCard ? withoutCard(scenario.outcome) : scenario.outcome,
           ),
-          ...(scripted ? reviewRoundDifferences(scenario, baseline, extraReviewers) : []),
+          ...(scripted
+            ? reviewRoundDifferences(scenario, baseline, extraReviewers, large ? 1 : 0)
+            : []),
           ...(card ? cardDifferences(scenario, step) : []),
           ...(fixCard ? fixCardDifferences(scenario, baseline, step) : []),
           ...(reviewFix && scenario.typedMidTurn
