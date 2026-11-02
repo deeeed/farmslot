@@ -134,3 +134,44 @@ test('an offline archive leaves pending reservations intact while normal admissi
     next.id,
   );
 });
+
+test('admission runs housekeeping only once capacity refuses the reservation', async () => {
+  const { createRun, updateRun, persistRunNow } = await import('../runs/store.js');
+  const owner = await runBundleStore();
+  const archive = path.join(root, 'capacity-archive');
+  await mkdir(archive);
+  process.env.FARMSLOT_RUN_ARCHIVE_ROOT = archive;
+  const admit = async (ticketOrPr: string) => {
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'fixture',
+      mode: 'autonomous',
+      ticketOrPr,
+    });
+    await persistRunNow(run);
+    await reserveRunArtifactMetadata(run);
+    return run;
+  };
+  const cancelled = await admit('META-CANCELLED');
+  updateRun(cancelled.id, { status: 'cancelled' });
+  await persistRunNow(cancelled);
+  const reservations = path.join(owner.root, 'reservations');
+  const cancelledReservation = path.join(reservations, `${cancelled.id}.json`);
+  // Room for exactly one more 1 MiB reservation.
+  const policy = path.join(path.dirname(owner.root), 'run-bundle-retention.json');
+  const held = (await readdir(reservations)).length;
+  await writeFile(
+    policy,
+    JSON.stringify({ runBundleRetention: { metadataReserveBytes: (held + 1) * 1024 ** 2 } }),
+  );
+  try {
+    await admit('META-FITS');
+    await readFile(cancelledReservation, 'utf8');
+    await assert.rejects(readdir(path.join(archive, cancelled.id)), /ENOENT/);
+    const full = await admit('META-FULL');
+    await assert.rejects(readFile(cancelledReservation, 'utf8'), /ENOENT/);
+    await readFile(path.join(reservations, `${full.id}.json`), 'utf8');
+  } finally {
+    await rm(policy, { force: true });
+  }
+});

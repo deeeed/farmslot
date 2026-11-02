@@ -63,6 +63,34 @@ async function retainCheckout(
   }
 }
 
+/** No cleanup is necessary for an unowned primary checkout already at the verified default. */
+function atVerifiedDefault(workspace: SlotWorkspace): boolean {
+  return (
+    !workspace.currentRunId &&
+    !workspace.recoveryId &&
+    workspace.branch === workspace.defaultBranch &&
+    workspace.publication === 'baseline'
+  );
+}
+
+/**
+ * Whether a free slot is reusable as it stands, read with status-probe budgets and no fetch:
+ * HEAD matching the remote default is the positive evidence. Dispatch takes such a slot
+ * without recovering anything; any doubt answers false and leaves the slot to recovery.
+ */
+export async function cleanIdleSlot(slotId: string): Promise<boolean> {
+  try {
+    const { inspectSlotWorkspace } = await import('../methods/slot/workspace.js');
+    const { loadFleetStatus } = await import('../fleet/state.js');
+    const workspace = await inspectSlotWorkspace(slotId);
+    const slot = (await loadFleetStatus(true)).slots.find((candidate) => candidate.slot === slotId);
+    const eligibility = slotRecoveryEligibility(slot ? { ...slot, workspace } : undefined);
+    return eligibility.allowed && !eligibility.confirmationRequired && atVerifiedDefault(workspace);
+  } catch {
+    return false;
+  }
+}
+
 /** Automatic callers use the same positive evidence and fenced recovery as fleet release. */
 export async function reuseSafeIdleSlot(
   slotId: string,
@@ -116,14 +144,7 @@ export async function reuseSafeIdleSlot(
           reason: workspace.dirtyCount ? 'dirty files' : 'unpushed commits',
         };
     }
-    // No cleanup is necessary for an unowned primary checkout already at the verified default.
-    if (
-      !workspace.currentRunId &&
-      !workspace.recoveryId &&
-      workspace.branch === workspace.defaultBranch &&
-      workspace.publication === 'baseline'
-    )
-      return { kind: 'ready' };
+    if (atVerifiedDefault(workspace)) return { kind: 'ready' };
     await retainCheckout(slotId, workspace, expected?.recordRunId);
     const { recoverSlotWorkspace } = await import('../methods/slot/recover-workspace.js');
     const result = await recoverSlotWorkspace(

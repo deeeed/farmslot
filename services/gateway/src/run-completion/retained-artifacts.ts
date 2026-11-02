@@ -37,6 +37,7 @@ import {
   reserveRunBundleMetadata,
   resolveRetainedRunBundleRef as localBundleRef,
   runBundleAdmissionUsage,
+  RunBundleCapacityError,
   runBundleHousekeepingPaths,
   runBundleRefs,
   withRunBundleStoreLock,
@@ -515,8 +516,17 @@ export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const store = await runBundleStore(true);
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
-  await tryArchiveRunArtifactHousekeeping();
-  await reserveRunBundleMetadata(store, run.id, policy, farmslotRoot, acquisitionTaskDirToken);
+  const reserve = () =>
+    reserveRunBundleMetadata(store, run.id, policy, farmslotRoot, acquisitionTaskDirToken);
+  // Housekeeping walks the store under its lock, so dispatch waits for it only when capacity
+  // refuses; the retention pass and captures run it otherwise (F322).
+  try {
+    await reserve();
+  } catch (error) {
+    if (!(error instanceof RunBundleCapacityError)) throw error;
+    await tryArchiveRunArtifactHousekeeping();
+    await reserve();
+  }
 }
 
 export async function retainCapturedRunArtifacts(input: {
