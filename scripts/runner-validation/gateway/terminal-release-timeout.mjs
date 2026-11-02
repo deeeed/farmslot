@@ -232,7 +232,6 @@ writeFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid}));
       expectedRunId: owner.id,
       forceReset: true,
       preserveAgents: true,
-      skipArtifacts: true,
     });
     requestOutcome = request.then(
       (value) => ({ value }),

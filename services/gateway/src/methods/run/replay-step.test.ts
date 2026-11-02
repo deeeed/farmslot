@@ -3856,6 +3856,61 @@ async function blockedGateRun(t: test.TestContext, label: string, decisions: Run
   return run;
 }
 
+// F311: a restart stopped a gate after the pipeline review and before its planned codex review.
+// Recovery's replay re-enters that gate with the plan; an operator's replay starts it fresh.
+test('an automatic human-gate replay keeps the reviews still planned for the gate (F311)', async (t) => {
+  const reviewSequence = [
+    { runner: 'codex', model: 'gpt-6-luna', effort: 'low', mode: 'cold' as const },
+  ];
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+    'complete',
+  ]);
+  const planned = async (triggeredBy: 'auto-recovery' | 'operator') => {
+    const taskFile = `/tmp/farmslot-gate-plan-${triggeredBy}/TASK.md`;
+    const created = createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: `PROJ-${Date.now() + (triggeredBy === 'operator' ? 1 : 0)}`,
+    });
+    const run = updateRun(created.id, {
+      status: 'human-gating',
+      taskFile,
+      engineState: {
+        publishGate: {
+          reviewSequence,
+          reviewSequenceRequestedAt: '2026-11-02T01:30:00.000Z',
+          publicationStatus: 'not_published',
+        },
+      },
+      steps: created.steps.map((step) =>
+        doneThroughComplete.has(step.name)
+          ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+          : step.name === 'human-gate'
+            ? { ...step, status: 'running', detail: 'Preparing operator decision' }
+            : step,
+      ),
+    });
+    t.after(async () => {
+      cancelRunEngine(run.id);
+      if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+    });
+    await runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy }, () => {}, {
+      startEngine: async () => {},
+    });
+    return getRun(run.id)?.engineState?.publishGate;
+  };
+  const recovered = await planned('auto-recovery');
+  assert.deepEqual(recovered?.reviewSequence, reviewSequence);
+  assert.equal(recovered?.reviewSequenceRequestedAt, '2026-11-02T01:30:00.000Z');
+  assert.equal((await planned('operator'))?.reviewSequence, undefined);
+});
+
 const holdGate = (id: string): RunDecision => ({
   id,
   type: 'engine_human_gate',

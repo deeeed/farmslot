@@ -78,6 +78,10 @@ import {
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import {
+  refreshRunMirror,
+  runMirrorRefreshUnavailableReason,
+} from '../shared/run-mirror-refresh.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
@@ -1610,12 +1614,8 @@ export class RunDetail extends RunDetailState {
     this._outputError = '';
     try {
       this._assertRunReady(run.id);
-      const result = await gateway.request<{ ok: boolean; reason?: string }>(
-        Methods.RUN_REFRESH_MIRROR,
-        { runId: run.id },
-        120_000,
-      );
-      if (!result.ok) throw new Error(result.reason ?? 'Could not retrieve worker output');
+      const result = await refreshRunMirror(run.id);
+      if (!result.ok) throw new Error(result.reason || 'Could not retrieve worker output');
     } catch (error) {
       if (!current()) return;
       this._outputError = error instanceof Error ? error.message : String(error);
@@ -1656,6 +1656,7 @@ export class RunDetail extends RunDetailState {
       },
       refreshOutput: () => void this._refreshOutput(run),
       refreshingOutput: this._refreshingOutput,
+      refreshOutputUnavailable: runMirrorRefreshUnavailableReason(run, this._fleetSlots),
       outputError: this._outputError,
       closingOutput: this._closingOutput,
       actionsBlocked: this._actionsBlocked(),

@@ -9,7 +9,9 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,8 +33,12 @@ process.env.PATH = `${dfStub}:${process.env.PATH}`;
 test.after(() => rmSync(dfStub, { recursive: true, force: true }));
 
 await import('../runtime/mock-pty.test-support.js');
-const { archiveSlotScaffolding, excludeSlotScaffolding, measureSlotRetention } =
-  await import('./slot-scaffolding.js');
+const {
+  archiveSlotScaffolding,
+  excludeSlotScaffolding,
+  measureSlotRetention,
+  SCAFFOLDING_TEXT_MAX_FILE_BYTES,
+} = await import('./slot-scaffolding.js');
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(path.join(tmpdir(), 'slot-scaffolding-'));
@@ -140,15 +146,23 @@ test('teardown archives tasks and real observations before removing their compat
   assert.equal(existsSync(path.join(f.repo, '.observability')), false);
 });
 
-// F298: the release had already collected these artifacts, and the scaffolding tar downloaded
-// all 0.5-1 GB of them again within the same 300 s teardown budget.
-test('a release that collected the artifacts archives the task without them', async (t) => {
+// F313: a release copies nothing back; evidence was pulled into the artifact mirror when the run
+// completed. A task holding a 14 GB build (sparse here) keeps only its small text.
+test('a release keeps only the small text of a 14 GB task', async (t) => {
   const f = fixture(t);
   git(f.repo, 'init', '-q', '-b', 'main');
   scaffolding(f.repo);
-  mkdirSync(path.join(f.repo, '.task/qa/example/artifacts/runs'), { recursive: true });
-  writeFileSync(path.join(f.repo, '.task/qa/example/artifacts/runs/model.bin'), 'large payload');
-  await excludeSlotScaffolding(f.vars, {}, execute);
+  const task = path.join(f.repo, '.task/qa/example');
+  mkdirSync(path.join(task, 'artifacts/recipe-runs/run-1'), { recursive: true });
+  writeFileSync(path.join(task, 'artifacts/report.md'), 'report');
+  writeFileSync(path.join(task, 'artifacts/recipe-runs/run-1/result.json'), '{}');
+  writeFileSync(path.join(task, 'artifacts/recipe-runs/run-1/recipe-run.mp4'), 'video');
+  const sized = (relative: string, bytes: number) => {
+    writeFileSync(path.join(task, relative), '');
+    truncateSync(path.join(task, relative), bytes);
+  };
+  sized('artifacts/app-release.aab', 14 * 1024 ** 3);
+  sized('metro.log', SCAFFOLDING_TEXT_MAX_FILE_BYTES + 1);
   const result = await archiveSlotScaffolding(
     f.vars,
     {},
@@ -156,16 +170,23 @@ test('a release that collected the artifacts archives the task without them', as
       destination: f.destination,
       taskRelativeDir: 'qa/example',
       beforeRemove: async () => undefined,
-      artifactsCollected: true,
     },
   );
+  assert.ok(statSync(path.join(result.directory, 'scaffolding.tar')).size < 1024 ** 2);
   const archived = unpack(result.directory, f.root);
+  for (const kept of ['TASK.md', 'artifacts/report.md', 'artifacts/recipe-runs/run-1/result.json'])
+    assert.ok(existsSync(path.join(archived, '.task/qa/example', kept)), kept);
+  for (const dropped of [
+    'artifacts/app-release.aab',
+    'artifacts/recipe-runs/run-1/recipe-run.mp4',
+    'metro.log',
+  ])
+    assert.equal(existsSync(path.join(archived, '.task/qa/example', dropped)), false, dropped);
   assert.equal(
-    readFileSync(path.join(archived, '.task/qa/example/TASK.md'), 'utf8'),
-    'completed task',
+    readFileSync(path.join(archived, '.agent/.observability/hooks.jsonl'), 'utf8'),
+    'observations',
   );
-  assert.equal(existsSync(path.join(archived, '.task/qa/example/artifacts')), false);
-  assert.equal(existsSync(path.join(f.repo, '.task/qa/example')), false);
+  assert.equal(existsSync(task), false);
 });
 
 // F310: macpro-audiolab-4's task held a worker's 14 GB baseline checkout (node_modules and Android
@@ -505,7 +526,7 @@ test('a collection that fails after its download leaves no partial archive', asy
   );
 });
 
-test('only the configured task root counts as collected; legacy artifacts stay archived', async (t) => {
+test('the configured and the legacy task root both keep their text and drop binaries', async (t) => {
   const f = fixture(t);
   scaffolding(f.repo);
   mkdirSync(path.join(f.repo, '.task/qa/example/artifacts'), { recursive: true });
@@ -518,7 +539,6 @@ test('only the configured task root counts as collected; legacy artifacts stay a
     destination: f.destination,
     taskRelativeDir: 'qa/example',
     beforeRemove: async () => undefined,
-    artifactsCollected: true,
   });
   const archived = unpack(result.directory, f.root);
   assert.equal(

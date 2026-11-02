@@ -3,11 +3,19 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import {
+  FRAGMENT_DIR,
+  fragmentFiles,
+  fragmentProblems,
+  isFragmentPath,
+  strayChangesEntries,
+} from '../release/changelog-fragments.mjs';
 import { isReleaseOnlyFile } from '../release/lib/release-only.mjs';
 import { workspaceForFile } from '../release/lib/workspace-utils.mjs';
 import {
   extractSection,
   meaningfulBullets,
+  parseBullets,
   unreleasedMeaningfulBullets,
 } from '../release/parse-changelog.mjs';
 
@@ -74,7 +82,13 @@ function readGithubEvent() {
 function resolveMergeBase() {
   const event = readGithubEvent();
   const baseSha = event?.pull_request?.base?.sha;
-  if (baseSha) return baseSha;
+  // base.sha is main's tip, which may hold notes merged after this branch left it.
+  if (baseSha) {
+    const mergeBase = gitLines(['merge-base', baseSha, resolveHeadSha()])[0];
+    if (!mergeBase)
+      throw new Error(`No merge base for ${baseSha} and ${resolveHeadSha()}: fetch full history.`);
+    return mergeBase;
+  }
   const originMain = gitLines(['rev-parse', '--verify', 'origin/main'])[0];
   if (originMain) {
     const mergeBase = gitLines(['merge-base', 'HEAD', originMain])[0];
@@ -110,6 +124,14 @@ function checkStructure() {
     if (!content.includes('## Unreleased')) {
       fail(`${changelogPath} must include an '## Unreleased' section.`);
     }
+    for (const entry of strayChangesEntries(path.join(repoRoot, relativeDir)))
+      fail(
+        `${path.relative(repoRoot, entry)} is not a fragment: name it ${relativeDir}/${FRAGMENT_DIR}/<branch-name>.md, with each '/' as '-'.`,
+      );
+    for (const fragment of fragmentFiles(path.join(repoRoot, relativeDir))) {
+      for (const problem of fragmentProblems(readFileSync(fragment, 'utf8')))
+        fail(`${path.relative(repoRoot, fragment)} ${problem}.`);
+    }
   }
 }
 
@@ -122,35 +144,81 @@ function readTextAtRef(ref, relativePath) {
   return result.stdout;
 }
 
-function newUnreleasedBullets(mergeBase, headSha, changelogPath) {
-  const headContent =
-    headSha === 'HEAD'
-      ? readFileSync(path.join(repoRoot, changelogPath), 'utf8')
-      : readTextAtRef(headSha, changelogPath);
-  const baseContent = readTextAtRef(mergeBase, changelogPath);
-  const headBullets = unreleasedMeaningfulBullets(headContent);
-  const baseBullets = new Set(unreleasedMeaningfulBullets(baseContent));
-  return headBullets.filter((bullet) => !baseBullets.has(bullet));
+/** A workspace's CHANGELOG.md and fragment texts at a commit (`HEAD` reads the working tree). */
+function notesAt(ref, workspace) {
+  if (ref === 'HEAD') {
+    const changelogFile = path.join(repoRoot, workspace, 'CHANGELOG.md');
+    return {
+      changelog: existsSync(changelogFile) ? readFileSync(changelogFile, 'utf8') : '',
+      fragments: fragmentFiles(path.join(repoRoot, workspace)).map((file) =>
+        readFileSync(file, 'utf8'),
+      ),
+    };
+  }
+  return {
+    changelog: readTextAtRef(ref, `${workspace}/CHANGELOG.md`),
+    fragments: gitLines(['ls-tree', '--name-only', ref, `${workspace}/${FRAGMENT_DIR}/`])
+      .filter((file) => isFragmentPath(file, workspace))
+      .map((file) => readTextAtRef(ref, file)),
+  };
 }
 
-function releasedVersionCoversPr(mergeBase, headSha, workspace, changelogPath) {
-  const packageJsonPath = `${workspace}/package.json`;
-  const basePackage = JSON.parse(readTextAtRef(mergeBase, packageJsonPath));
-  const headPackage = JSON.parse(
-    headSha === 'HEAD'
-      ? readFileSync(path.join(repoRoot, packageJsonPath), 'utf8')
-      : readTextAtRef(headSha, packageJsonPath),
-  );
-  if (basePackage.version === headPackage.version) return false;
+const fragmentBullets = (notes) => notes.fragments.flatMap((text) => meaningfulBullets(text));
 
-  const headContent =
-    headSha === 'HEAD'
-      ? readFileSync(path.join(repoRoot, changelogPath), 'utf8')
-      : readTextAtRef(headSha, changelogPath);
+// Unreleased bullets the PR adds, counting CHANGELOG.md and fragments alike: renaming a
+// fragment adds none, rewording one adds its new text.
+function newUnreleasedBullets(mergeBase, headSha, workspace) {
+  const unreleased = (notes) => [
+    ...unreleasedMeaningfulBullets(notes.changelog),
+    ...fragmentBullets(notes),
+  ];
+  const base = new Set(unreleased(notesAt(mergeBase, workspace)));
+  return unreleased(notesAt(headSha, workspace)).filter((bullet) => !base.has(bullet));
+}
+
+const isWorkspaceFragment = (file) => {
+  const workspace = workspaceForFile(file, repoRoot);
+  return Boolean(workspace) && isFragmentPath(file, workspace);
+};
+
+const packageVersionAt = (ref, workspace) =>
+  JSON.parse(
+    ref === 'HEAD'
+      ? readFileSync(path.join(repoRoot, workspace, 'package.json'), 'utf8')
+      : readTextAtRef(ref, `${workspace}/package.json`) || '{}',
+  ).version;
+
+// A release (a chore(release) PR, or one that bumps the workspace's version) must carry every
+// fragment bullet into CHANGELOG.md, or keep it as a fragment. Ordinary PRs may reword or revert
+// an earlier note; they still need a new note of their own for a code change.
+function checkFragmentsKept(mergeBase, headSha, changedFiles, releaseSubjects) {
+  const workspaces = new Set(
+    changedFiles.filter(isWorkspaceFragment).map((file) => workspaceForFile(file, repoRoot)),
+  );
+  for (const workspace of workspaces) {
+    if (
+      !releaseSubjects &&
+      packageVersionAt(mergeBase, workspace) === packageVersionAt(headSha, workspace)
+    )
+      continue;
+    const head = notesAt(headSha, workspace);
+    const kept = new Set([...parseBullets(head.changelog), ...fragmentBullets(head)]);
+    const lost = fragmentBullets(notesAt(mergeBase, workspace)).filter(
+      (bullet) => !kept.has(bullet),
+    );
+    if (lost.length > 0)
+      fail(
+        `${workspace}: this release loses a fragment's note ("${lost[0].slice(0, 60)}") instead of writing it into CHANGELOG.md.`,
+      );
+  }
+}
+
+function releasedVersionCoversPr(mergeBase, headSha, workspace) {
+  const version = packageVersionAt(headSha, workspace);
+  if (packageVersionAt(mergeBase, workspace) === version) return false;
   const section = extractSection(
-    headContent,
-    (line) =>
-      line === `## ${headPackage.version}` || line.startsWith(`## ${headPackage.version} -`),
+    notesAt(headSha, workspace).changelog,
+    (line) => line === `## ${version}` || line.startsWith(`## ${version} -`),
   );
   return section ? meaningfulBullets(section.body).length > 0 : false;
 }
@@ -160,26 +228,38 @@ function checkPrDiff() {
   const headSha = resolveHeadSha();
   const changedFiles = gitLines(['diff', '--name-only', `${mergeBase}...${headSha}`]);
   if (changedFiles.length === 0) return;
-
-  const releaseOnly = changedFiles.every(isReleaseOnlyFile);
   const commitSubjects = gitLines(['log', '--pretty=%s', `${mergeBase}..${headSha}`]);
-  if (releaseOnly || commitSubjects.every((subject) => /^chore\(release\):/i.test(subject))) return;
+  const releaseSubjects = commitSubjects.every((subject) => /^chore\(release\):/i.test(subject));
+  // Before the release exemption, so a cut that loses a note fails.
+  checkFragmentsKept(
+    mergeBase,
+    headSha,
+    gitLines(['diff', '--name-only', '--no-renames', `${mergeBase}...${headSha}`]),
+    releaseSubjects,
+  );
+
+  // A cut deletes the fragments it writes into CHANGELOG.md.
+  const releaseOnly = changedFiles.every(
+    (file) => isReleaseOnlyFile(file) || isWorkspaceFragment(file),
+  );
+  if (releaseOnly || releaseSubjects) return;
 
   const touchedWorkspaces = new Map();
+  const isNotes = (file, workspace) =>
+    file.endsWith('/CHANGELOG.md') || isFragmentPath(file, workspace);
   for (const file of changedFiles) {
-    if (file.endsWith('/CHANGELOG.md')) continue;
     if (isTestOnlyChange(file)) continue;
     const workspace = workspaceForFile(file, repoRoot);
-    if (!workspace) continue;
+    if (!workspace || isNotes(file, workspace)) continue;
     const bucket = touchedWorkspaces.get(workspace) ?? { codeChanges: [], changelogTouched: false };
     bucket.codeChanges.push(file);
     touchedWorkspaces.set(workspace, bucket);
   }
 
+  // A PR's own `.changes/<name>.md` fragment is its entry; it never conflicts with another PR's.
   for (const file of changedFiles) {
-    if (!file.endsWith('/CHANGELOG.md')) continue;
     const workspace = workspaceForFile(file, repoRoot);
-    if (!workspace || !touchedWorkspaces.has(workspace)) continue;
+    if (!workspace || !touchedWorkspaces.has(workspace) || !isNotes(file, workspace)) continue;
     touchedWorkspaces.get(workspace).changelogTouched = true;
   }
 
@@ -187,17 +267,14 @@ function checkPrDiff() {
     const changelogPath = `${workspace}/CHANGELOG.md`;
     if (!bucket.changelogTouched) {
       fail(
-        `${workspace} code changed (${bucket.codeChanges.slice(0, 3).join(', ')}${bucket.codeChanges.length > 3 ? ', …' : ''}) but ${changelogPath} was not updated.`,
+        `${workspace} code changed (${bucket.codeChanges.slice(0, 3).join(', ')}${bucket.codeChanges.length > 3 ? ', …' : ''}) but it has no release note: add ${workspace}/.changes/<branch-name>.md (each '/' as '-') with one '- ' bullet.`,
       );
       continue;
     }
-    const bullets = newUnreleasedBullets(mergeBase, headSha, changelogPath);
-    if (
-      bullets.length === 0 &&
-      !releasedVersionCoversPr(mergeBase, headSha, workspace, changelogPath)
-    ) {
+    const bullets = newUnreleasedBullets(mergeBase, headSha, workspace);
+    if (bullets.length === 0 && !releasedVersionCoversPr(mergeBase, headSha, workspace)) {
       fail(
-        `${changelogPath} must add at least one non-placeholder bullet under ## Unreleased for this PR.`,
+        `${workspace} must add at least one new non-placeholder bullet, in ${workspace}/${FRAGMENT_DIR}/<branch-name>.md or under ${changelogPath} ## Unreleased, for this PR.`,
       );
     }
   }

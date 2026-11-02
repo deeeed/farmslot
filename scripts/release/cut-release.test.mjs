@@ -114,6 +114,19 @@ test('cut-release recognizes an already-applied proposal and refuses partial dri
   assert.equal(proposalCutDisposition(pending, [bulletA, bulletB]), 'cut');
   assert.equal(proposalCutDisposition(released, [bulletA, bulletB]), 'already-cut');
   assert.throws(() => proposalCutDisposition(pending, [bulletA, 'missing']), /partially/);
+  // A bullet merged after curation (as a fragment, say) must be included or deferred, not lost.
+  assert.throws(() => proposalCutDisposition(pending, [bulletA]), /does not cover/);
+  assert.equal(proposalCutDisposition(pending, [bulletA], [bulletB]), 'cut');
+});
+
+test('an operator summary is one line: wrapped text joins and nested points drop', () => {
+  const proposal = buildWorkspaceProposal('packages/cli', [
+    'Show run history\n  across restarts.\n  - Internal detail.',
+  ]);
+  assert.deepEqual(proposal.operatorSummary, ['View run history across restarts']);
+  assert.deepEqual(proposal.include, [
+    'Show run history\n  across restarts.\n  - Internal detail.',
+  ]);
 });
 
 test('curate-changelog parses optional values without consuming adjacent flags', () => {

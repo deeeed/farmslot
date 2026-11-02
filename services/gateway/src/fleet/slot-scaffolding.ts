@@ -116,12 +116,6 @@ export interface SlotScaffoldingArchiveOptions {
   destination: string;
   beforeRemove: () => Promise<void>;
   taskRelativeDir: string | null;
-  /**
-   * The release copied every file of the configured task root's `artifacts/`. Archiving
-   * them again downloaded the same 0.5-1 GB a second time and outlasted the teardown
-   * timeout (F298). Legacy task roots were not copied, so they stay in the archive.
-   */
-  artifactsCollected?: boolean;
   /** Where nested checkouts are moved on the slot host. Default: `$HOME/slot-retained`. */
   retainedBase?: string;
   /** Largest archive the release downloads. Default: SCAFFOLDING_ARCHIVE_MAX_BYTES. */
@@ -129,11 +123,28 @@ export interface SlotScaffoldingArchiveOptions {
 }
 
 /**
- * A scaffolding archive holds task notes and observations once rebuildable content is left out.
- * Anything larger is refused before download: audiolab-6's retried releases streamed six 6 GB
- * archives at once into macwork's last free space (F310).
+ * A scaffolding archive holds only small text. Anything larger is refused before download:
+ * audiolab-6's retried releases streamed six 6 GB archives at once into macwork's last free
+ * space (F310).
  */
 export const SCAFFOLDING_ARCHIVE_MAX_BYTES = 2 * 1024 ** 3;
+
+/**
+ * What a release keeps of a task and its runner observations: notes, inputs, signals, reports
+ * and logs. Evidence was pulled into the artifact mirror when the run completed; binaries and
+ * larger files are deleted with the task (F313).
+ */
+const KEPT_TEXT_NAMES = ['*.md', '*.txt', '*.json', '*.jsonl', '*.log', '*.yaml', '*.yml'];
+export const SCAFFOLDING_TEXT_MAX_FILE_BYTES = 16 * 1024 ** 2;
+
+/** Writes the NUL-separated list of kept text files under `roots`, skipping `prune` paths. */
+function listKeptText(roots: string[], prune: string[], list: string): string {
+  const names = KEPT_TEXT_NAMES.map((name) => `-name ${shellQuote(name)}`).join(' -o ');
+  const pruned = prune.length
+    ? `\\( ${prune.map((dir) => `-path ${shellQuote(dir.replace(/[\\*?\[\]]/g, '\\$&'))}`).join(' -o ')} \\) -prune -o `
+    : '';
+  return `find ${roots.map(shellQuote).join(' ')} ${pruned}-type f \\( ${names} \\) -size -${SCAFFOLDING_TEXT_MAX_FILE_BYTES + 1}c -print0 > ${shellQuote(list)}`;
+}
 
 const collectionsInFlight = new Set<string>();
 
@@ -362,7 +373,7 @@ async function collectSlotScaffolding(
   projectJson: RawProjectJson,
   options: SlotScaffoldingArchiveOptions,
 ): Promise<ScaffoldingArchive> {
-  const { task, runtime } = slotScaffoldingPaths(projectJson);
+  const { runtime } = slotScaffoldingPaths(projectJson);
   // Parked/free-slot runs can still own sibling task directories. Only the
   // released task is collected; shared task roots keep their existing retention.
   const taskRelativeDir = options.taskRelativeDir;
@@ -427,20 +438,17 @@ async function collectSlotScaffolding(
   try {
     const remoteArchive = path.posix.join(temporary, 'scaffolding.tar');
     const checkoutSources = sources.filter((source) => source.absolute !== external);
-    const collected = taskRelativeDir && `${task}/${relativeNamespace(taskRelativeDir)}`;
-    const excluded = [
-      ...(options.artifactsCollected &&
-      collected &&
-      checkoutSources.some((source) => source.relative === collected)
-        ? [`${collected}/artifacts`]
-        : []),
-      ...skipped.map((entry) => entry.path),
-    ]
-      .map((pattern) => `--exclude ${shellQuote(pattern)} `)
-      .join('');
+    const list = path.posix.join(temporary, 'kept-text');
+    const listed = checkoutSources.length
+      ? listKeptText(
+          checkoutSources.map((source) => source.relative),
+          skipped.map((entry) => entry.path),
+          list,
+        )
+      : `: > ${shellQuote(list)}`;
     const packed = await execOnSlot(
       vars,
-      `tar -C ${shellQuote(vars.remoteRepo)} ${excluded}-cf ${shellQuote(remoteArchive)} ${checkoutSources.length ? `-- ${checkoutSources.map((source) => shellQuote(source.relative)).join(' ')}` : '-T /dev/null'}`,
+      `cd ${shellQuote(vars.remoteRepo)} && ${listed} && tar -cf ${shellQuote(remoteArchive)} --null -T ${shellQuote(list)}`,
       { timeout: 120_000 },
     );
     if (packed.exitCode !== 0) throw new Error(`Cannot pack scaffolding: ${packed.stderr}`);
@@ -461,9 +469,10 @@ async function collectSlotScaffolding(
       throw new Error('Scaffolding archive transfer incomplete');
     if (external) {
       const externalArchive = path.posix.join(temporary, 'runner-observability.tar');
+      const externalList = path.posix.join(temporary, 'kept-observations');
       const packedExternal = await execOnSlot(
         vars,
-        `tar -C ${shellQuote(external)} -cf ${shellQuote(externalArchive)} .`,
+        `cd ${shellQuote(external)} && ${listKeptText(['.'], [], externalList)} && tar -cf ${shellQuote(externalArchive)} --null -T ${shellQuote(externalList)}`,
         { timeout: 120_000 },
       );
       if (packedExternal.exitCode !== 0)

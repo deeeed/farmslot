@@ -50,6 +50,8 @@ export abstract class SlotViewState extends LitElement {
 
   // --- Slot detail state ---
   @state() _slot: SlotStatus | null = null;
+  /** Every fleet slot: a run loaded from another slot is synced from that slot. */
+  @state() _fleetSlots: readonly SlotStatus[] = [];
   @state() _checks: CheckResult[] = [];
   @state() _loading = false;
   // _pendingConfirm gates the 3s double-click confirmation flow used by the

@@ -63,6 +63,7 @@
     "quality:changelogs:pr": "node scripts/quality/check-workspace-changelogs.mjs --pr-diff",
     "release:status": "node scripts/release/release-status.mjs",
     "release:cut": "node scripts/release/cut-release.mjs",
+    "release:fold": "node scripts/release/changelog-fragments.mjs",
     "test:release": "node --test scripts/release/*.test.mjs",
     "prepush:quality": "node scripts/quality/prepush-quality.mjs",
     "smoke:framework-p1": "node scripts/quality/smoke-framework-p1.mjs",

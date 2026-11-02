@@ -1,8 +1,8 @@
-import type { ResourceStatusUpdatedPayload, SlotResource } from '@farmslot/protocol';
+import type { ResourceStatusUpdatedPayload, SlotResource, SlotStatus } from '@farmslot/protocol';
 import { Events } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import { subscribe } from '../../state.js';
+import { getState, subscribe } from '../../state.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 import type { SlotView } from './slot-view.js';
@@ -14,6 +14,9 @@ import {
   connectSlotViewLayoutObserver,
   disconnectSlotViewLayoutObserver,
 } from './slot-view-resize-effects.js';
+
+/** One empty list, so a missing fleet does not re-render the view on every state change. */
+const NO_SLOTS: readonly SlotStatus[] = [];
 
 export function connectSlotView(view: SlotView): void {
   document.addEventListener('keydown', view._boundKeyHandler);
@@ -41,7 +44,9 @@ export function connectSlotView(view: SlotView): void {
   // Drafts follow the fleet record: runs that are no longer current, and unreadable slots.
   let draftFleet: unknown;
 
-  // Follow the same fleet projection as the rest of the application.
+  // Follow the same fleet projection as the rest of the application. subscribe() does not replay
+  // the current state, so a view opened after fleet hydration starts from it.
+  view._fleetSlots = getState().fleet?.slots ?? NO_SLOTS;
   view._unsubState = subscribe((state) => {
     if (state.fleetObservation !== draftFleet) {
       draftFleet = state.fleetObservation;
@@ -57,7 +62,8 @@ export function connectSlotView(view: SlotView): void {
         if ((slot?.currentRunId ?? null) !== previousRunId) updateLinkedRun();
       }
     }
-    view._requestSlotSwitcherUpdate(state.fleet?.slots ?? []);
+    view._fleetSlots = state.fleet?.slots ?? NO_SLOTS;
+    view._requestSlotSwitcherUpdate(view._fleetSlots);
   });
 
   // Init workspace when gateway connects (handles page refresh)

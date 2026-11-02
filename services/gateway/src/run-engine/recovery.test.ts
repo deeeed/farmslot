@@ -2991,3 +2991,70 @@ test('restart keeps failed recovery held and turns its interrupted fence into a 
     // reset/occupied-cleanup dependencies deliberately throw if called.
   }
 });
+
+test('startup re-enters a human gate that stopped before presenting a decision (F311)', async () => {
+  // ba397e2c: a restart stopped its gate at "Preparing operator decision". With no decision to
+  // re-present, recovery kept it as a blocked run and the card never appeared.
+  const atGate = (status: Run['status'], overrides: Partial<Run> = {}) =>
+    minimalActiveRun({
+      status,
+      ticketOrPr: 'GATE-PREPARING-RECOVERY',
+      familyRootTicketOrPr: 'GATE-PREPARING-RECOVERY',
+      taskFile: '/tmp/gate-preparing-recovery/TASK.md',
+      steps: FLOW_STEPS['fix-bug'].map((name) => ({
+        name,
+        status:
+          name === 'human-gate'
+            ? 'running'
+            : name === 'finalize' || name === 'complete'
+              ? 'pending'
+              : 'done',
+        ...(name === 'human-gate'
+          ? { detail: 'Preparing operator decision: reconciling workspace' }
+          : {}),
+      })),
+      decisions: [],
+      ...overrides,
+    });
+  // The gate's own reviews leave the status at fixing or reconciling while it prepares.
+  for (const status of ['human-gating', 'fixing', 'reconciling', 'review-failed'] as const) {
+    const recovered = publicationReviewRecoveryDeps(atGate(status));
+    await recoverActiveRuns(recovered.deps);
+    assert.deepEqual(recovered.calls.replayed, [atGate(status).id], status);
+  }
+  // Not only publication gates: a validation dev run's gate re-enters too.
+  const validation = publicationReviewRecoveryDeps(
+    atGate('human-gating', {
+      flowType: 'dev',
+      mode: 'validation',
+      steps: FLOW_STEPS.dev.map((name) => ({
+        name,
+        status:
+          name === 'human-gate'
+            ? 'running'
+            : ['complete', 'finalize', 'ci-watch'].includes(name)
+              ? 'pending'
+              : 'done',
+      })),
+    }),
+  );
+  await recoverActiveRuns(validation.deps);
+  assert.equal(validation.calls.replayed.length, 1);
+  // A blocked run with no decisions stays blocked, gate step or not.
+  const blocked = publicationReviewRecoveryDeps(atGate('blocked'));
+  await recoverActiveRuns(blocked.deps);
+  assert.deepEqual(blocked.calls.replayed, []);
+  // The slot's node hasn't reconnected yet, so the replay is refused: the publication-review
+  // watcher retries it instead of handing the gate to the operator.
+  const offline = publicationReviewRecoveryDeps(atGate('human-gating'), {
+    replayError: new Error('Cannot replay human-gate yet: machine macpro is not connected'),
+  });
+  await recoverActiveRuns(offline.deps);
+  assert.deepEqual(offline.calls.rearmed, [
+    { runId: atGate('human-gating').id, replayPending: true },
+  ]);
+  assert.equal(
+    offline.calls.updates.some((fields) => JSON.stringify(fields).includes('operator-required')),
+    false,
+  );
+});

@@ -1,17 +1,16 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadWorkspacePackages } from './lib/workspace-utils.mjs';
+import { readChangelogWithFragments } from './changelog-fragments.mjs';
 import { extractSection, meaningfulBullets } from './parse-changelog.mjs';
 import { RELEASE_GROUPS } from './release-groups.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 function scanWorkspace(dir, pkg) {
-  const changelogPath = path.join(repoRoot, dir, 'CHANGELOG.md');
-  const content = readFileSync(changelogPath, 'utf8');
+  const { content } = readChangelogWithFragments(path.join(repoRoot, dir));
   const unreleased = extractSection(content, (line) => /^##\s+Unreleased\b/i.test(line));
   const bullets = unreleased ? meaningfulBullets(unreleased.body) : [];
   return {

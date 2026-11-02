@@ -85,11 +85,6 @@ export interface SlotCopyDirOptions {
    * dangling link: the node's fs.list omits it, so it is dropped unreported.
    */
   onSkippedLink?: (link: SlotCopyDirSkippedLink) => void;
-  /**
-   * Called once with what a remote copy will walk, before it copies anything. Unchanged
-   * files count too: they are only known after hashing.
-   */
-  onTotals?: (totals: { files: number; bytes: number }) => void;
   /** Progress phase for large remote files (default download). */
   phase?: FileTransferPhase;
   runId?: string;
@@ -996,7 +991,6 @@ export async function slotCopyDir(
   }
 
   const totals = await countRemoteFiles(remoteDir, 0, [rootRealPath]);
-  options.onTotals?.(totals);
   const filesTotal = totals.files;
   const aggregate = new AggregateTransferSession({
     path: remoteDir,
