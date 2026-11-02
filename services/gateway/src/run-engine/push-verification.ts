@@ -52,6 +52,8 @@ export interface PushVerificationResult {
   nudged?: boolean;
   /** True when the run was cancelled mid-verification — callers must not block the run. */
   aborted?: boolean;
+  /** Push mode: false when the result came from local refs only. */
+  remoteChecked?: boolean;
 }
 
 export interface WorktreePublishState {
@@ -80,6 +82,11 @@ export interface WorktreePublishState {
 
 type GitExecutor = (command: string) => Promise<ExecResult>;
 
+interface InspectionOptions {
+  /** False skips the push-mode remote probe and compares with local refs only. */
+  remote?: boolean;
+}
+
 /**
  * The whole inspection as one shell script (bash, or zsh on macOS nodes).
  * It prints NUL-terminated records: the tracked-content and staged path lists,
@@ -87,12 +94,12 @@ type GitExecutor = (command: string) => Promise<ExecResult>;
  * is empty); then, in push mode, `unchecked` when the remote did not settle the
  * branch; then the comparison: `remote` or `base` with a commit count, or
  * `none`. A failing probe prints its name as the last record and exits with its
- * status. `remote: false` skips the remote probe.
+ * status.
  */
 function inspectionScript(
   branch: string,
   mode: 'push' | 'commit',
-  { remote = true }: { remote?: boolean } = {},
+  { remote = true }: InspectionOptions = {},
 ): string {
   const remoteRef = `origin/${branch}`;
   return [
@@ -150,7 +157,7 @@ export async function inspectWorktreePublishState(
   branch: string,
   mode: 'push' | 'commit',
   execute: GitExecutor,
-  options?: { remote?: boolean },
+  options?: InspectionOptions,
 ): Promise<WorktreePublishState> {
   const result = await execute(inspectionScript(branch, mode, options));
   const records = result.stdout.split('\0');
@@ -194,7 +201,9 @@ export async function inspectWorktreePublishState(
  * once. A timeout backs off and retries until `deadline`, then throws. Returns
  * 'aborted' once `signal` fires, so the cancel path keeps the run status.
  * Retries skip the remote probe: a stalled connection to the remote outlives the
- * exec timeout, so only the local comparison can answer in time.
+ * exec timeout, so only the local comparison can answer in time. A push attempt
+ * that timed out always gets that one local retry, even past `deadline`, so a
+ * stall during the last recheck blocks the run instead of failing it.
  */
 export async function inspectWorktreeWithRetry(
   branch: string,
@@ -209,7 +218,7 @@ export async function inspectWorktreeWithRetry(
     exitCode = result.exitCode;
     return result;
   };
-  let remote = true;
+  let remote = mode === 'push';
   for (let backoff = INSPECTION_RETRY_BACKOFF_MS; ; backoff *= 2) {
     // Only this attempt's own timeout retries; a thrown exec is not a timeout.
     exitCode = 0;
@@ -219,7 +228,8 @@ export async function inspectWorktreeWithRetry(
       // Never let a probe error racing a cancellation escape as a step failure
       // that overwrites the cancel status.
       if (signal?.aborted) return 'aborted';
-      if (exitCode !== EXEC_TIMEOUT_EXIT_CODE || Date.now() + backoff >= deadline) throw err;
+      if (exitCode !== EXEC_TIMEOUT_EXIT_CODE || (!remote && Date.now() + backoff >= deadline))
+        throw err;
     }
     remote = false;
     await timers.setTimeout(backoff, undefined, { signal }).catch((err: unknown) => {
@@ -314,7 +324,12 @@ export async function verifyWorkerPushedBranch(
     return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
   }
   if (stateSatisfiesMode(state, mode)) {
-    return { verified: true, dirtyFiles: state.dirtyFiles, unpushedCommits: state.unpushedCommits };
+    return {
+      verified: true,
+      dirtyFiles: state.dirtyFiles,
+      unpushedCommits: state.unpushedCommits,
+      remoteChecked: state.remoteChecked,
+    };
   }
 
   console.warn(
@@ -390,6 +405,7 @@ export async function verifyWorkerPushedBranch(
         verified: true,
         dirtyFiles: state.dirtyFiles,
         unpushedCommits: state.unpushedCommits,
+        remoteChecked: state.remoteChecked,
         nudged,
       };
     }
@@ -400,6 +416,7 @@ export async function verifyWorkerPushedBranch(
     reason: `worker signaled complete but ${branch} still has ${describe(state, mode)} after publish nudge`,
     dirtyFiles: state.dirtyFiles,
     unpushedCommits: state.unpushedCommits,
+    remoteChecked: state.remoteChecked,
     nudged,
   };
 }

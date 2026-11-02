@@ -404,9 +404,10 @@ test('an inspection that timed out once is retried and verifies', async (t) => {
   assert.equal(execs, 2);
 });
 
-test('a push inspection that timed out retries without asking the remote', async (t) => {
+test('a push inspection that timed out retries without asking the remote, even past its deadline', async (t) => {
   // A stalled connection to the remote outlives the exec timeout. The retry
-  // compares with local refs and says so.
+  // compares with local refs and says so, also during the nudge wait's last
+  // recheck, so the run blocks instead of failing.
   const repo = repository(t);
   repo.git('update-ref', 'refs/remotes/origin/feature', repo.commit('feat: task'));
   const slot = shellExecutor(repo.dir);
@@ -420,7 +421,7 @@ test('a push inspection that timed out retries without asking the remote', async
       commands.push(command);
       return commands.length === 1 ? TIMED_OUT : slot.execute(command);
     },
-    Date.now() + 60_000,
+    Date.now(),
   );
   await settle();
   t.mock.timers.tick(5_000);
@@ -430,6 +431,30 @@ test('a push inspection that timed out retries without asking the remote', async
   assert.doesNotMatch(commands[1], /ls-remote/);
   assert.ok(state !== 'aborted' && stateSatisfiesMode(state, 'push'));
   assert.equal(state.remoteChecked, false);
+});
+
+test('a push inspection past its deadline fails once its local retry also times out', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const commands: string[] = [];
+
+  const rejected = assert.rejects(
+    inspectWorktreeWithRetry(
+      'feature',
+      'push',
+      async (command) => {
+        commands.push(command);
+        return TIMED_OUT;
+      },
+      Date.now(),
+    ),
+    /push-verification worktree inspection failed \(exit 124\)/,
+  );
+  await settle();
+  t.mock.timers.tick(5_000);
+  await rejected;
+
+  assert.equal(commands.length, 2);
+  assert.doesNotMatch(commands[1], /ls-remote/);
 });
 
 test('an inspection that keeps timing out fails with the probe message at its deadline', async (t) => {
