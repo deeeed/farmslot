@@ -11,7 +11,7 @@ import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandb
 
 const exec = promisify(execFile);
 test(
-  "host review sandbox keeps the account's own configuration read-only inside its runtime root",
+  "host review sandbox lets a review write only the runner's named paths in its account home",
   { skip: !hostReviewSandboxAvailable() },
   async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'review-protected-')));
@@ -19,22 +19,16 @@ test(
       output = join(root, 'reports'),
       account = join(root, 'account');
     try {
-      for (const dir of [
-        source,
-        output,
-        join(account, 'hooks'),
-        join(account, 'bundled', 'agents'),
-        join(account, 'sessions'),
-      ])
+      for (const dir of [source, output, join(account, 'bin'), join(account, 'bundled', 'agents')])
         await mkdir(dir, { recursive: true });
       await writeFile(join(account, 'config.toml'), 'original');
+      await writeFile(join(account, 'bin', 'main-session-token'), 'original');
       const policy = { readOnlyRoots: [source], writableRoots: [output] };
-      const protectedPaths = nativeRunnerDefinitions.grok.reviewProtectedRuntimePaths!({
+      const writablePaths = nativeRunnerDefinitions.grok.reviewWritableRuntimePaths!({
         GROK_HOME: account,
       });
-      assert.ok(protectedPaths.includes(join(account, 'hooks')));
-      const { sandbox } = await reviewProcessSandbox(policy, [account], [], protectedPaths);
-      const program = `const fs=require('node:fs');const files=JSON.parse(process.argv[1]);const results={};for(const [name,file]of Object.entries(files)){try{fs.writeFileSync(file,'changed');results[name]=true;}catch(e){if(!['EPERM','EACCES'].includes(e.code))throw e;results[name]=false;}}console.log(JSON.stringify(results));`;
+      const { sandbox } = await reviewProcessSandbox(policy, [account], [], writablePaths);
+      const program = `const fs=require('node:fs'),path=require('node:path');const files=JSON.parse(process.argv[1]);const results={};for(const [name,file]of Object.entries(files)){try{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'changed');results[name]=true;}catch(e){if(!['EPERM','EACCES'].includes(e.code))throw e;results[name]=false;}}console.log(JSON.stringify(results));`;
       const result = await exec(sandbox.executable, [
         ...sandbox.args,
         process.execPath,
@@ -42,25 +36,36 @@ test(
         program,
         JSON.stringify({
           config: join(account, 'config.toml'),
+          managed: join(account, 'managed_config.toml'),
           hook: join(account, 'hooks', 'planted.json'),
-          agent: join(account, 'agents'),
           // A bundled agent loads as built-in; managed or required settings can select it.
           bundledAgent: join(account, 'bundled', 'agents', 'planted.md'),
-          managed: join(account, 'managed_config.toml'),
-          requirements: join(account, 'requirements.toml'),
+          agent: join(account, 'agents', 'planted.md'),
+          // The external sign-in command runs at every authenticate, also outside the sandbox.
+          signIn: join(account, 'bin', 'main-session-token'),
+          // A profile's HOME is its Grok home, and Grok's login-shell capture runs these.
+          shell: join(account, '.zshenv'),
+          memory: join(account, 'memory-v2', 'global', 'planted.md'),
+          unknown: join(account, 'anything-new'),
           session: join(account, 'sessions', 'review.jsonl'),
+          cache: join(account, 'settings_cache.json'),
         }),
       ]);
       assert.deepEqual(JSON.parse(result.stdout), {
         config: false,
-        hook: false,
-        agent: false,
-        bundledAgent: false,
         managed: false,
-        requirements: false,
+        hook: false,
+        bundledAgent: false,
+        agent: false,
+        signIn: false,
+        shell: false,
+        memory: false,
+        unknown: false,
         session: true,
+        cache: true,
       });
       assert.equal(await readFile(join(account, 'config.toml'), 'utf8'), 'original');
+      assert.equal(await readFile(join(account, 'bin', 'main-session-token'), 'utf8'), 'original');
       await assert.rejects(
         reviewProcessSandbox(policy, [account], [], [join(root, 'elsewhere')]),
         /must belong to a runtime root/,

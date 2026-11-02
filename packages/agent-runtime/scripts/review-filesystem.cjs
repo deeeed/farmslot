@@ -12,7 +12,7 @@ function available() {
     throw error;
   }
 }
-async function sandbox(policy, runtimeRoots, configurationRoots = [], protectedRuntimePaths = []) {
+async function sandbox(policy, runtimeRoots, configurationRoots = [], runtimeWritablePaths = []) {
   if (!available())
     throw new Error('This runner needs the macOS review sandbox on its execution node');
   const temporaryDirectory = join(policy.writableRoots[0], '.review-runtime', 'tmp');
@@ -23,17 +23,19 @@ async function sandbox(policy, runtimeRoots, configurationRoots = [], protectedR
     await mkdir(root, { recursive: true, mode: 0o700 });
     writable.push(await realpath(root));
   }
-  // Account configuration inside a writable runtime root stays read-only, so one review cannot
-  // change what the next one loads.
-  const protectedPaths = [];
-  for (const file of protectedRuntimePaths) {
+  // A runtime root that names writable paths is read-only apart from them, so one review cannot
+  // change what the next one loads or runs.
+  const runtime = writable.slice(policy.writableRoots.length);
+  const runtimeWritable = [];
+  for (const file of runtimeWritablePaths) {
     const resolved = join(await realpath(dirname(file)), basename(file));
-    if (
-      !writable.slice(policy.writableRoots.length).some((root) => resolved.startsWith(root + sep))
-    )
-      throw new Error('Protected review configuration must belong to a runtime root');
-    protectedPaths.push(resolved);
+    if (!runtime.some((root) => resolved.startsWith(root + sep)))
+      throw new Error('Writable review runtime path must belong to a runtime root');
+    runtimeWritable.push(resolved);
   }
+  const restrictedRuntime = runtime.filter((root) =>
+    runtimeWritable.some((file) => file.startsWith(root + sep)),
+  );
   const blockedConfiguration = [];
   for (const file of configurationRoots) {
     const source = readOnly.find((root) => file.startsWith(root + sep));
@@ -58,7 +60,8 @@ async function sandbox(policy, runtimeRoots, configurationRoots = [], protectedR
     ...writable.map((root) => `(allow file-write* (subpath ${JSON.stringify(root)}))`),
     '(allow file-write* (literal "/dev/null") (literal "/dev/tty"))',
     ...readOnly.map((root) => `(deny file-write* (subpath ${JSON.stringify(root)}))`),
-    ...protectedPaths.map((path) => `(deny file-write* (subpath ${JSON.stringify(path)}))`),
+    ...restrictedRuntime.map((root) => `(deny file-write* (subpath ${JSON.stringify(root)}))`),
+    ...runtimeWritable.map((file) => `(allow file-write* (subpath ${JSON.stringify(file)}))`),
     ...blockedConfiguration.map(
       (root) => `(deny file-read-data (subpath ${JSON.stringify(root)}))`,
     ),

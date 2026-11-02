@@ -4,6 +4,6 @@
   - Without the `nonManagedHooks` pin, it also needs no plugins, only built-in agents and no notification commands.
   - It refuses an account whose `trusted_folders.toml` names the checkout or a parent, or whose folder trust is off; that is checked by inspecting a fresh folder that holds only an `AGENTS.md`.
   - Before, every review needed the pin, and Grok's deployment sync deletes it from an account without an organization policy.
-- The review sandbox keeps the Grok home's own configuration read-only, so one review cannot plant something for the next: hooks, config, policy and trust files, bundled and user agents, plugins, skills and compatibility files.
+- A Grok review may write only `sessions/`, `logs/`, its caches and `auth.json` in the Grok home. The rest is read-only, so one review cannot plant something for the next: hooks, config, policy and trust files, bundled and user agents, skills, memory, the external sign-in command and shell startup files.
 - A Grok terminal (tmux) review is refused, because Grok's terminal would stop at its folder-trust prompt; the runner definition declares this as `terminalReviewRefusal`.
 - Native Grok sessions and account status also sign in through a home's external auth provider (`auth_provider_command`, the method Grok marks `_meta.external_provider`). They still never pick grok.com's interactive login.

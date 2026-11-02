@@ -559,7 +559,16 @@ The account's own hooks still matter. A headless Grok run treats an untrusted fo
 
 The pin is no longer required.
 
-**Review sandbox.** A review may still write its sessions and logs into the Grok home, but the review sandbox denies writes to the account's own configuration, so one review cannot plant something for the next. The denied paths are `hooks`, `hooks-paths`, `config.toml`, `trusted_folders.toml`, `managed_config.toml`, `requirements.toml`, `sandbox.toml`, `bundled/`, `bundles/`, `agents`, `plugins`, `skills`, `roles`, `rules`, `workflows`, `lsp.json`, `AGENTS.md`, `.claude` and `.cursor`. Grok's own sandbox denies the same Grok paths, because an agent placed in `bundled/` loads as built-in and managed or required settings can select it as the main agent. A live native session on macwork and mini starts and finishes with all of them read-only. A plugin dropped into `installed-plugins/` is not denied, but inspection lists it and the preflight refuses it.
+**Review sandbox.** A review may write only what Grok itself writes in its home during a session: `sessions/`, `logs/`, `settings_cache.json`, `models_cache.json`, `auth.json` and `auth.json.lock`, measured on Grok 1.0.70. The rest of the home is read-only, so one review cannot change what the next one loads or runs. That covers:
+
+- hooks, configuration, policy and trust files;
+- `bundled/` agents, which load as built-in, and user agents;
+- skills, memory, and the external sign-in command in `bin/`, which also runs outside the sandbox when account status is read;
+- shell startup files, since a profile's HOME is its Grok home.
+
+A live native session on macwork and mini starts and finishes this way. Grok's own sandbox likewise denies its configuration and bundle paths.
+
+Operations: with `bundled/` read-only during reviews, built-in skills refresh only when Grok starts outside a review. A new review home needs one ordinary start to populate them. Plugins stay inert, because one loads only when the read-only `config.toml` enables it.
 
 **Terminal reviews.** The Grok runner definition declares `terminalReviewRefusal`. Review admission rejects a Grok terminal (tmux) review with that message before any task preparation, and the terminal launcher refuses it too. The message points to the native transport. In an untrusted checkout that carries project configuration, Grok's terminal stops at "Do you trust the contents of this directory?", and answering Yes would trust the PR.
 
@@ -587,7 +596,7 @@ The cost is that a Grok reviewer no longer reads the repository's `AGENTS.md`, p
 
 - `checkGrokReviewWorkspace` replaces `trustGrokWorkspace` in `@farmslot/agent-runtime` `scripts/workspace-trust.cjs`, and `workspaceTrustByRunner.grok` points to it.
 - `trustGrokFolders` stays, for worker slots.
-- `reviewProtectedRuntimePaths` on a runner definition (Grok: `grokProtectedHomePaths`) and a fourth `protectedRuntimePaths` argument to the review sandbox.
+- `reviewWritableRuntimePaths` on a runner definition (Grok: `grokReviewWritableHomePaths`) and a fourth `runtimeWritablePaths` argument to the review sandbox: a runtime root that names writable paths is read-only apart from them.
 - `terminalReviewRefusal` on a runner definition, and `runnerTerminalReviewRefusal` in the gateway's review admission.
 - `grokAuthMethod` (the Grok adapter and account observer), and `AcpAuthMethod` / `selectAcpAuthMethod`: an ACP adapter's `authMethod` may now pick among the advertised methods.
 - `@farmslot/agent-runtime` needs a release. Until it is rolled out, nodes keep trusting review checkouts.

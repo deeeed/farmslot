@@ -12,7 +12,7 @@ const implementation = createRequire(import.meta.url)('../../scripts/review-file
     policy: NativeWorkerFilesystemPolicy,
     runtimeRoots: string[],
     configurationRoots?: string[],
-    protectedRuntimePaths?: string[],
+    runtimeWritablePaths?: string[],
   ): Promise<{ sandbox: NativeProcessSandbox; temporaryDirectory: string }>;
 };
 export const hostReviewSandboxAvailable = implementation.available;
