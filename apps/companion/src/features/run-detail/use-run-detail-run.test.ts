@@ -84,6 +84,7 @@ async function mount(listed: Run[], saved?: Run, online = false, answers: Answer
   transport.connection.authority = authority;
   // The held connection: connected, or dropped for less than its grace.
   let held = online;
+  let clockAhead = 0;
   if (online) transport.setConnection({ connected: true, id: 1 });
   let revision = 1;
   const dependencies = resourceQuery<RunGetResult>('run.get', { runId: 'run-1' }).dependencies;
@@ -126,6 +127,8 @@ async function mount(listed: Run[], saved?: Run, online = false, answers: Answer
         ) => select({ runs: listed, observation: { status: 'stale' } }),
       },
     },
+    // The hook's clock, which `age` moves ahead of the cache's.
+    { Date: { now: () => Date.now() + clockAhead, parse: (text: string) => Date.parse(text) } },
   );
   return {
     transport,
@@ -137,6 +140,10 @@ async function mount(listed: Run[], saved?: Run, online = false, answers: Answer
         epoch: 'conformance-epoch',
         changes: dependencies.map((key) => ({ key, revision, kind: 'updated' as const })),
       });
+    },
+    /** Time passes for the hook: every read the cache holds is `ms` older. */
+    age(ms: number) {
+      clockAhead += ms;
     },
     /** The gateway connection drops; `stillHeld` while within the held connection's grace. */
     drop(stillHeld: boolean) {
@@ -315,6 +322,20 @@ test('a connection drop keeps run.get through the grace, then shows a newer row'
     assert.equal(dropped.run?.summary, 'newer listed row');
     assert.equal(dropped.fromList, true);
     assert.equal(dropped.runActionable, false);
+  } finally {
+    await detail.dispose();
+  }
+});
+
+test('online, a failed reread of a read over 60 s old shows a newer row', async () => {
+  const detail = await afterWrite({ fail: 'READ_FAILED' });
+  try {
+    assert.equal(detail.render().run?.summary, 'run.get');
+    detail.age(120_000);
+    const aged = detail.render();
+    assert.equal(aged.run?.summary, 'newer listed row');
+    assert.equal(aged.fromList, true);
+    assert.equal(aged.runActionable, false);
   } finally {
     await detail.dispose();
   }

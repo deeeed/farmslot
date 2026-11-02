@@ -350,7 +350,6 @@ export function runCockpitCounts(
 ) {
   const loaded = !runHasTrimmedDetail(run);
   return {
-    loaded,
     artifactFiles: detailCountLabel(manifestCount, loaded),
     beforeAfter: detailCountLabel(visualPairCount, loaded),
     beforeAfterDisabled: !loaded || visualPairCount === 0,

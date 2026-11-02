@@ -12,9 +12,10 @@ import { useRunStore } from '../../store/runs';
  * The run Run Detail renders: run.get's answer, or the run collections' row for that id while
  * run.get has nothing usable to show (loading, or saved data the screen would call saved). The
  * row, which the Review list already holds, stands in so a listed run never opens on a skeleton.
- * Over a saved run.get it shows only when it was updated later. Usable run.get data is never
- * replaced: a run write marks it stale and rereads it, run.list can land first, and one failed
- * reread stays quiet (`heldDataUsable`). A refusal such as RUN_NOT_FOUND drops the row.
+ * Over a saved run.get it shows only when it was updated later. Usable run.get data is not
+ * replaced: a run write marks it stale and rereads it, and run.list can land first. A failed
+ * reread stays quiet only while the last good read is under 60 s old (`heldDataUsable`); after
+ * that a newer row shows. A refusal such as RUN_NOT_FOUND drops the row.
  *
  * Display and actions use different rules. A row is display data only: run.list leaves large
  * detail out (`runHasTrimmedDetail`), and run actions check run.get's own run
@@ -31,8 +32,9 @@ export function useRunDetailRun(runId: string) {
   const listedRun = useRunStore((state) => state.runs.find((candidate) => candidate.id === runId));
   const listObservation = useRunStore((state) => state.observation);
   const direct = runObservation.data?.run;
-  const runActionable = canActOn(runObservation, connected);
-  const directShown = heldDataUsable(runObservation, connected);
+  const now = Date.now();
+  const runActionable = canActOn(runObservation, connected, now);
+  const directShown = heldDataUsable(runObservation, connected, now);
   const row = readRefused(runObservation.error) ? undefined : listedRun;
   const fromList = Boolean(
     row && !directShown && (!direct || Date.parse(row.updatedAt) > Date.parse(direct.updatedAt)),
