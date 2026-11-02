@@ -17,6 +17,7 @@ import {
   RecordedEvidenceReadError,
   resolveRunSlotId,
   type Run,
+  type RunDecision,
   type RunEngineState,
   type RunProbeWorkerSignalResult,
   type RunReplayStepParams,
@@ -52,6 +53,7 @@ import { pendingDecisionForRun } from '../../run-engine/decision-projection.js';
 import { resolveEngineDecision } from '../../run-engine/engine-decisions.js';
 import {
   hasValidPrNumber,
+  isGateDecision,
   reopenSupersededGateDecisions,
   supersedeStaleHumanGateDecisions,
 } from '../../run-engine/gate-policy.js';
@@ -915,16 +917,23 @@ export function replaySlotReclaimCheck(
 }
 
 // Index of the pipeline step that produces a given decision, using the
-// DecisionType prefix convention (monitor_* → MONITOR, ci_* → CI_WATCH). Returns
-// -1 for types whose ownership is not step-scoped by prefix; the completion/gate
-// clearing branches handle those. A replay re-runs every step from its target
-// onward, so a still-open decision owned by one of those re-run steps is stale
-// and must be dropped — otherwise a monitor handoff from a prior generation
-// lingers after a replay from prepare and re-blocks the reset run.
-function decisionOwningStepIndex(type: string, flowSteps: readonly string[] | undefined): number {
+// DecisionType prefix convention (monitor_* → MONITOR, ci_* → CI_WATCH) and the
+// cards HUMAN_GATE presents (gate and no-change decisions). Returns -1 for types
+// whose ownership is not step-scoped; the completion/gate clearing branches
+// handle those. A replay re-runs every step from its target onward, so a
+// still-open decision owned by one of those re-run steps is stale and must be
+// dropped — otherwise a monitor handoff from a prior generation lingers after a
+// replay from prepare and re-blocks the reset run, and an open gate card's
+// readiness refresh moves the replayed run to blocked (F324).
+function decisionOwningStepIndex(
+  type: RunDecision['type'],
+  flowSteps: readonly string[] | undefined,
+): number {
   if (!flowSteps) return -1;
   if (type.startsWith('monitor_')) return flowSteps.indexOf(PS.MONITOR);
   if (type.startsWith('ci_')) return flowSteps.indexOf(PS.CI_WATCH);
+  if (isGateDecision({ type }) || type === 'engine_no_change')
+    return flowSteps.indexOf(PS.HUMAN_GATE);
   return -1;
 }
 
@@ -1661,6 +1670,9 @@ async function replayRunStep(
       targetIdx <= humanGateIdx;
     const replaysPostGate = targetIdx >= 0 && humanGateIdx >= 0 && targetIdx > humanGateIdx;
     const replaysTaskGeneration = targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx <= writeTaskIdx;
+    // A replay from the gate or any step before it reaches the gate again, which
+    // presents a fresh decision.
+    const replaysThroughGate = targetIdx >= 0 && humanGateIdx >= 0 && targetIdx <= humanGateIdx;
     // Supersede pending human-gate decisions NOW, before any awaited work: the
     // engine loop was just cancelled, so a stale decision resolving during the
     // slot/artifact awaits below would trigger runResolveDecision's restart
@@ -1669,10 +1681,13 @@ async function replayRunStep(
     // resolver rejects already-resolved decisions from here on. Retained (not
     // deleted) for audit; 'superseded' is not an approval action so
     // decision-replay can never mistake it for an operator verdict. Scoped to
-    // the gate/task-generation replay paths only — a no-human-gate finalize
-    // retry must keep its pending decisions actionable.
+    // replays that run the gate again — a no-human-gate finalize retry must keep
+    // its pending decisions actionable. Left open, the old gate's card re-blocks
+    // the replayed run: its readiness projection moves the run to blocked
+    // mid-dispatch, which stops the step (F324: 4c0038bd failed with "Run stopped
+    // while awaiting its execution node").
     const supersededGateAudit =
-      replaysTaskGeneration || replaysCompletionOrGate
+      replaysTaskGeneration || replaysThroughGate
         ? existing.decisions.filter(
             (d) =>
               (d.type === 'engine_human_gate' || d.type === 'engine_review_posting') &&
@@ -2235,6 +2250,7 @@ async function replayRunStep(
         : replaysPostGate
           ? existing.decisions
           : existing.decisions.filter((d) => {
+              if (supersededIds.has(d.id)) return true;
               if (d.resolvedAt) return false;
               // Drop an unresolved decision whose owning step is being replayed
               // (targetIdx onward re-runs and regenerates it). Preserve ones owned
