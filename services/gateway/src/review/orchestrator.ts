@@ -52,7 +52,6 @@ import { runSupersededSince } from '../run-engine/run-generation.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
-import { resolveScriptedCommandFromRawProjectJson } from '../runners/scripted-config.js';
 import {
   normalizeRunner,
   readRunnerLaunchBlocker,
@@ -62,6 +61,7 @@ import {
   runnerSupportsModel,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { resolveScriptedCommandFromRawProjectJson } from '../runners/scripted-config.js';
 import { resolvePersistedRunnerSessionBinding } from '../runners/session-process.js';
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
 import {
