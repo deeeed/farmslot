@@ -139,8 +139,9 @@ const SHAPES: Record<ShapeName, Shape> = {
       project: REVIEW_PROJECT,
       flowType: 'dev',
       mode: 'validation',
-      // A Jira-shaped key passes dev ticket validation; ticketData means nothing is fetched.
-      ticketOrPr: 'RI-1',
+      // A Jira-shaped key passes dev ticket validation; ticketData means nothing is fetched. One
+      // per run: a second run on the same ticket raises a collision decision the baseline lacks.
+      ticketOrPr: `RI-${slotId.replace(/^.*-/, '')}`,
       ticketData: {
         source: 'manual',
         ...REVIEW_TICKET,
