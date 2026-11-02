@@ -12,6 +12,8 @@ import type {
   RunStep,
 } from '@farmslot/protocol';
 
+import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
+
 // The renderers reach the browser gateway client at import time.
 mock.module('../../gateway-client.js', {
   namedExports: { gateway: { request: async () => ({}), subscribe: () => () => {} } },
@@ -46,6 +48,7 @@ const { renderRunArtifactExplorer, renderRunDetailView } =
 const { RunPipeline } = await import('./run-pipeline.js');
 const { runDetailPanelOpen, toggleRunDetailPanel } = await import('./run-detail-panels.js');
 const { LiveArtifactRefresh } = await import('./run-artifact-live-refresh.js');
+const { rememberCollapsiblePanel } = await import('../shared/collapsible-panel.js');
 const { litBinding, litText } = await import('../../testing/lit-text.js');
 
 type RunDetailViewContext = Parameters<typeof renderRunDetailView>[0];
@@ -356,5 +359,50 @@ test('review and interactive actions remain available below the canvas', () => {
     'data-panel="run-results"',
     'data-marker="review-gate"',
     'data-marker="interactive-gate"',
+  ]);
+});
+
+test('a selected canvas or hash-linked step stays visible while progress is collapsed', () => {
+  rememberCollapsiblePanel('run-step-progress', false);
+  for (const selected of ['monitor', 'pre-gate-publication-review-active']) {
+    const element = pipeline();
+    element.selectedStepName = selected;
+    const text = litText(element.render());
+    const progress = text.indexOf('data-panel="run-step-progress"');
+    const closed = text.indexOf('</section>', progress);
+    const inspector = text.indexOf('name="canvas-detail"');
+    assert.ok(inspector > closed && inspector < text.indexOf('name="artifacts"'));
+    assert.match(text, /data-panel="run-step-progress"\s+data-open="false"/);
+  }
+  assert.doesNotMatch(litText(pipeline().render()), /name="canvas-detail"/);
+  rememberCollapsiblePanel('run-step-progress', true);
+});
+
+test('background transfer activity never inserts a row above the live panels', () => {
+  const element = pipeline();
+  const afterCanvas = () => {
+    const text = litText(element.render());
+    return text.slice(text.lastIndexOf('</svg>') + 6);
+  };
+  const idle = afterCanvas();
+  const transfer: FileTransferUiEntry = {
+    transferId: 'mirror',
+    runId: run.id,
+    path: 'artifacts',
+    phase: 'mirror',
+    state: 'running',
+    bytesTransferred: 0,
+    totalBytes: 100,
+    updatedAt: 0,
+  };
+  Reflect.set(element, 'transferProgress', transfer);
+  assert.equal(afterCanvas(), idle);
+  element.collapsiblePanels = false;
+  assert.match(litText(element.render()), /class="pipeline-transfer-strip"/);
+  const view = litText(renderRunDetailView({ ...context(), panelOpen: () => true }));
+  inOrder(view, [
+    'data-panel="run-grade"',
+    'data-panel="run-transfers"',
+    '<file-transfer-progress-banner',
   ]);
 });

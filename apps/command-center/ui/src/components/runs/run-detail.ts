@@ -31,7 +31,6 @@ import { validVisualJudgmentReason } from '@farmslot/protocol';
 import {
   buildRunResolveDecisionParams,
   cancelledRunSlotChoices,
-  isTerminalRunStatus,
   liveGateParkView,
   Methods,
   sortRunsForFamilyView,
@@ -88,7 +87,7 @@ import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-art
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
-import { LiveArtifactRefresh } from './run-artifact-live-refresh.js';
+import { LiveArtifactRefresh, liveArtifactRefreshActive } from './run-artifact-live-refresh.js';
 import {
   checkInteractiveHandoffSignal,
   confirmForceComplete,
@@ -329,7 +328,7 @@ export class RunDetail extends RunDetailState {
     const run = this.run?.id === this.runId ? this.run : null;
     this._liveArtifacts.update({
       runId: this.runId,
-      active: Boolean(run && !isTerminalRunStatus(run.status)),
+      active: liveArtifactRefreshActive(run),
       open: runDetailPanelOpen('run-artifacts'),
       unavailable:
         this.mockData ||

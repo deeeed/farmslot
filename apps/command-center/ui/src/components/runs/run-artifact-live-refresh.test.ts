@@ -6,6 +6,8 @@ import type { RunRefreshMirrorResult } from '@farmslot/protocol';
 import {
   LIVE_ARTIFACT_REFRESH_INTERVAL_MS,
   LiveArtifactRefresh,
+  liveArtifactRefreshActive,
+  type LiveArtifactRefreshRun,
   type LiveArtifactRefreshTarget,
 } from './run-artifact-live-refresh.js';
 
@@ -168,4 +170,53 @@ test('a rejected refresh keeps the mirror usable and remains throttled', async (
   refresh.update(live);
   assert.equal(calls, 1);
   refresh.dispose();
+});
+
+test('automatic capture never runs while a result or human decision is held', () => {
+  for (const status of ['needs-decision', 'human-gating', 'done', 'failed', 'cancelled'] as const) {
+    const h = harness();
+    h.refresh.update({ ...live, active: liveArtifactRefreshActive({ status, decisions: [] }) });
+    h.advance(LIVE_ARTIFACT_REFRESH_INTERVAL_MS * 3);
+    assert.deepEqual(h.calls, [], status);
+  }
+});
+
+test('a pending output review stops capture even before its status catches up', () => {
+  const run: LiveArtifactRefreshRun = {
+    status: 'reviewing',
+    decisions: [
+      {
+        id: 'output-review',
+        type: 'engine_output_review',
+        title: 'Review report',
+        description: '',
+        actions: [],
+        createdAt: '2026-11-03T00:00:00Z',
+        payload: {
+          kind: 'output-review',
+          manifestDigest: 'snapshot',
+          reportPath: 'artifacts/report.md',
+        },
+      },
+    ],
+  };
+  const h = harness();
+  h.refresh.update({ ...live, active: liveArtifactRefreshActive(run) });
+  assert.deepEqual(h.calls, []);
+});
+
+test('entering a held decision cancels the next automatic capture', async () => {
+  const h = harness();
+  h.refresh.update({
+    ...live,
+    active: liveArtifactRefreshActive({ status: 'monitoring', decisions: [] }),
+  });
+  await h.settle();
+  h.refresh.update({
+    ...live,
+    active: liveArtifactRefreshActive({ status: 'needs-decision', decisions: [] }),
+  });
+  h.advance(LIVE_ARTIFACT_REFRESH_INTERVAL_MS * 3);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.timers.size, 0);
 });

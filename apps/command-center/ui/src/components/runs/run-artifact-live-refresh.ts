@@ -1,4 +1,24 @@
-import type { RunRefreshMirrorResult } from '@farmslot/protocol';
+import {
+  awaitsHumanDecision,
+  isHeldForResultDecision,
+  isTerminalRunStatus,
+  type Run,
+  type RunRefreshMirrorResult,
+} from '@farmslot/protocol';
+import { pendingOutputReview } from '@farmslot/review-dispatch';
+
+export type LiveArtifactRefreshRun = Pick<Run, 'status' | 'decisions'>;
+
+/** Capturing again can retire a result review, so only working runs refresh automatically. */
+export function liveArtifactRefreshActive(run: LiveArtifactRefreshRun | null | undefined): boolean {
+  return Boolean(
+    run &&
+    !isTerminalRunStatus(run.status) &&
+    !isHeldForResultDecision(run) &&
+    !awaitsHumanDecision(run) &&
+    !pendingOutputReview(run),
+  );
+}
 
 /** The live artifact explorer pulls a run's files from its slot at most this often. */
 export const LIVE_ARTIFACT_REFRESH_INTERVAL_MS = 20_000;

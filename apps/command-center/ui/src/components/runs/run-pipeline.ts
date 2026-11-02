@@ -225,7 +225,7 @@ export class RunPipeline extends LitElement {
         ${this.collapsiblePanels ? nothing : this.renderChecklist()}
         <run-ci-watch-status .run=${this.run}></run-ci-watch-status>
         ${this.renderRunSummary()}
-        ${this.transferProgress?.state === 'running'
+        ${!this.collapsiblePanels && this.transferProgress?.state === 'running'
           ? html`
               <div
                 class="pipeline-transfer-strip"
@@ -290,17 +290,20 @@ export class RunPipeline extends LitElement {
     const checklist = runChecklistProgressView(this.run, this.taskProgress);
     const acceptance = this.renderAcceptancePanel();
     const inputs = acceptance === nothing ? null : acceptancePanelInputs(this);
+    const progressOpen = runDetailPanelOpen('run-step-progress');
+    const detachedInspector = Boolean(this.selectedStepName) && !progressOpen;
     return html`
       ${renderCollapsiblePanel({
         id: 'run-step-progress',
         label: 'Step progress',
         summary: checklist ? `${checklist.counts} · ${checklist.label}` : 'no checklist',
-        open: runDetailPanelOpen('run-step-progress'),
+        open: progressOpen,
         onToggle: () => this.togglePanel('run-step-progress'),
         body: () =>
           html`${this.renderChecklist()}<slot name="canvas-detail"></slot
             >${this.renderProgressSection()}`,
       })}
+      ${detachedInspector ? html`<slot name="canvas-detail"></slot>` : nothing}
       <slot name="artifacts"></slot>
       ${inputs || this.acceptanceRowHeld
         ? renderCollapsiblePanel({

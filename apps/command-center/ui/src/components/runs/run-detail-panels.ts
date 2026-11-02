@@ -14,6 +14,7 @@ export const RUN_DETAIL_PANEL_DEFAULTS = {
   'run-sessions': false,
   'run-posture': false,
   'run-grade': false,
+  'run-transfers': false,
 } as const;
 
 export type RunDetailPanelId = keyof typeof RUN_DETAIL_PANEL_DEFAULTS;

@@ -645,7 +645,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     <source-status-panel
       .context=${{ target: { scope: 'run', targetId: r.id }, actions: ['pin', 'unpin'] }}
     ></source-status-panel>
-    <file-transfer-progress-banner inline run-id=${r.id}></file-transfer-progress-banner>
     <a
       class="context-read-link"
       href=${`#intelligence?tab=assessments&suggestion=copilot-context&run=${encodeURIComponent(r.id)}`}
@@ -1523,6 +1522,14 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           body: () => ctx.renderGrade(r.grade!),
         })
       : nothing}
+    ${renderCollapsiblePanel({
+      id: 'run-transfers',
+      label: 'Transfers',
+      open: ctx.panelOpen('run-transfers'),
+      onToggle: () => ctx.togglePanel('run-transfers'),
+      body: () =>
+        html`<file-transfer-progress-banner inline run-id=${r.id}></file-transfer-progress-banner>`,
+    })}
     ${ctx._renderEvidenceOverlay(r)}
   `;
 }
