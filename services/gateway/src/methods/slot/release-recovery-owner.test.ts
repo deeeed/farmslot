@@ -186,7 +186,6 @@ test(
         expectedRunId: owner.id,
         keepWork: true,
         preserveAgents: true,
-        skipArtifacts: true,
       },
       () => {},
     );
@@ -233,7 +232,6 @@ test(
         keepWork: true,
         keepWarm: true,
         preserveAgents: true,
-        skipArtifacts: true,
       },
       () => {},
     );
@@ -280,7 +278,6 @@ for (const nested of [false, true]) {
             expectedRunId: owner.id,
             keepWork: true,
             preserveAgents: true,
-            skipArtifacts: true,
           },
           () => {},
         ));
@@ -337,7 +334,6 @@ for (const advanceEpoch of [false, true]) {
           expectedRunId: owner.id,
           keepWork: true,
           preserveAgents: true,
-          skipArtifacts: true,
         },
         () => {},
       );

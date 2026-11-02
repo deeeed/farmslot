@@ -29,6 +29,10 @@ test('autonomous dev and fix-bug runs get the run contract', () => {
     // CI-FIX.md, sent after publication, asks the same worker to push its fix.
     assert.match(section, /CI-FIX\.md, may include its own push step; follow it/);
     assert.match(section, /Never credit or attribute the work to an AI agent/);
+    assert.match(
+      section,
+      /releasing the slot copies nothing back\. If you build a binary after the evidence capture, capture it again or publish it from this run\./,
+    );
   }
 });
 

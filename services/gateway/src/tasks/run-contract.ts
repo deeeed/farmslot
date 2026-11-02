@@ -41,6 +41,7 @@ export function runContractSection(run: RunContractRun, taskDir: string): string
     run.completionPolicy === 'artifact-only'
       ? '- Commit the change locally with a Conventional Commit. This run is artifact-only and never publishes: never `git push` and never run a `gh pr` write. The local commit and the task artifacts are its output.'
       : '- Commit the change locally with a Conventional Commit. Until Farmslot publishes the PR, never `git push` and never run a `gh pr` write: Farmslot publishes the branch and the PR after the operator approves it at the publication gate. A later Farmslot follow-up checklist, such as CI-FIX.md, may include its own push step; follow it.',
+    "- Evidence must be in the run's bundle when it completes: releasing the slot copies nothing back. If you build a binary after the evidence capture, capture it again or publish it from this run.",
     '- Never credit or attribute the work to an AI agent in commits, PR text or code comments.',
   ].join('\n');
 }

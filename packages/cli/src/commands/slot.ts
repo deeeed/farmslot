@@ -36,7 +36,6 @@ interface PrepareOptions {
 interface ReleaseOptions {
   keepWarm?: boolean;
   keepWork?: boolean;
-  skipArtifacts?: boolean;
   reset?: boolean;
   killTmux?: boolean;
 }
@@ -216,7 +215,6 @@ export function registerSlotCommand(program: Command): void {
     .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
     .option('--keep-warm', 'Keep Metro/device running')
     .option('--keep-work', 'Keep branch and changes')
-    .option('--skip-artifacts', 'Skip artifact collection')
     .option('--reset', 'Force git reset even with uncommitted work')
     .option('--kill-tmux', 'Kill tmux session after release')
     .action(async (id: string | undefined, opts: ReleaseOptions, cmd: Command) => {
@@ -228,7 +226,6 @@ export function registerSlotCommand(program: Command): void {
           slotId,
           keepWarm: opts.keepWarm,
           keepWork: opts.keepWork,
-          skipArtifacts: opts.skipArtifacts,
           forceReset: opts.reset,
           killTmux: opts.killTmux,
         };

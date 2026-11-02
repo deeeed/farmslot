@@ -14,6 +14,7 @@ import {
 } from '../recipe/recipe-rerun-model.js';
 import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
+import { RUN_MIRROR_REFRESH_TITLE } from '../shared/run-mirror-refresh.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
 import { renderSlotRecipeDrawer } from './slot-recipe-drawer.js';
@@ -297,7 +298,7 @@ export function renderRecipeEvidenceSection(
                         ?disabled=${view._mirrorRefreshing ||
                         view._runActionsBlocked ||
                         !view._recipeRunsCurrent}
-                        title="Re-sync artifacts from slot disk → orchestrator mirror"
+                        title=${RUN_MIRROR_REFRESH_TITLE}
                         @click=${() => void view._refreshArtifactMirror()}
                       >
                         ${view._mirrorRefreshing
