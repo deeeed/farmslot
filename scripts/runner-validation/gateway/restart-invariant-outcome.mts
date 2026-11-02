@@ -9,6 +9,8 @@ export interface RunOutcome {
   decisions: string[];
   /** The run's slot after it settled, `lifecycle/phase` from fleet.status. */
   slot: string | null;
+  /** REVIEW's verdict per loop. Not compared: it tells verdict drift from a restart bug. */
+  reviews: string[];
 }
 
 export interface SlotView {
@@ -27,7 +29,26 @@ export function runOutcome(run: Run, slot: SlotView | undefined): RunOutcome {
           `${decision.type}:${decision.resolvedAt ? (decision.resolvedAction ?? 'resolved') : 'open'}`,
       ),
     slot: slot ? `${slot.lifecycle}/${slot.phase ?? '-'}` : null,
+    reviews: reviewAttempts(run),
   };
+}
+
+function reviewAttempts(run: Run): string[] {
+  const outputs = run.steps.find((step) => step.name === 'review')?.outputs as
+    | { attempts?: Array<{ loopNumber?: number; verdict?: string; unresolvedCount?: number }> }
+    | undefined;
+  return (outputs?.attempts ?? []).map(
+    (attempt) =>
+      `loop ${attempt.loopNumber ?? '?'}: ${attempt.verdict ?? '?'}${attempt.unresolvedCount ? ` (${attempt.unresolvedCount})` : ''}`,
+  );
+}
+
+/** A note when REVIEW's verdicts differ from the baseline's, so a difference may be the model's. */
+export function verdictDrift(baseline: RunOutcome, observed: RunOutcome): string | undefined {
+  const verdicts = (outcome: RunOutcome) =>
+    outcome.reviews.map((entry) => entry.replace(/ \(\d+\)$/, ''));
+  if (verdicts(baseline).join() === verdicts(observed).join()) return undefined;
+  return `reviewer verdicts differ from the baseline's ([${baseline.reviews.join(', ')}] vs [${observed.reviews.join(', ')}]): the difference may be the model's, not the restart's`;
 }
 
 /** Every way `observed` differs from `baseline`; empty when they match. */

@@ -87,6 +87,9 @@ function reviewWorker(holds: string): string {
     'git add src',
     'git commit -qm "feat: add formatName"',
     reports('Adds formatName in src/format-name.ts.'),
+    // Without a manifest the reviewer may flag its absence in one loop and not the next, which
+    // would make the verdicts, not the restarts, decide the outcome.
+    `printf '%s\\n' '{"version":1,"summary":"A library function only: no screenshots or recordings apply.","before_after_pairs":[],"standalone":[]}' > "$FARMSLOT_TASK_DIR/artifacts/evidence-manifest.json"`,
   ].join('\n');
 }
 

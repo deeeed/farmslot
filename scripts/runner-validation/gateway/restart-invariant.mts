@@ -39,6 +39,7 @@ import {
 } from './restart-invariant-fixtures.mjs';
 import {
   outcomeDifferences,
+  verdictDrift,
   type RunOutcome,
   runOutcome,
   type SlotView,
@@ -680,6 +681,8 @@ interface Check {
   observed?: RunOutcome;
   baseline?: RunOutcome;
   differences: string[];
+  /** Set when a difference comes with different reviewer verdicts (see verdictDrift). */
+  note?: string;
   restartLog?: RestartRecord[];
   error?: string;
   evidence?: string;
@@ -759,6 +762,9 @@ try {
         observed: result.outcome,
         baseline,
         differences,
+        ...(differences.length && verdictDrift(baseline, result.outcome)
+          ? { note: verdictDrift(baseline, result.outcome) }
+          : {}),
         restartLog: result.restarts,
         evidence: result.evidence,
       };
@@ -768,6 +774,7 @@ try {
     }
     await log(`${label}: ${check.pass ? 'MATCHES BASELINE' : 'DIFFERS'}`, {
       differences: check.differences,
+      ...(check.note ? { note: check.note } : {}),
       ...(check.error ? { error: check.error } : {}),
     });
     for (const step of steps) {
