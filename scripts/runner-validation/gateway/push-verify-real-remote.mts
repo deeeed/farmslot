@@ -1,13 +1,14 @@
-// Read-only proof of push verification against the real private GitHub remote,
-// over the SSH URL slot clones use (F326, Terminal #298). A temporary clone that
-// fetches main only gets an already pushed branch explicitly, plus a stale
+// Read-only proof of push verification against a real GitHub remote, over the
+// SSH URL slot clones use (F326, Terminal #298). A temporary clone that fetches
+// main only gets an already pushed branch explicitly, plus a stale
 // origin/<branch> ref one commit behind. This checkout's push inspection must
-// read 0 unpushed with the remote checked; the base ref's inspection must read
-// more than 0 on the same clone. Nothing is pushed and no remote ref is changed.
+// read 0 unpushed with the remote checked; the inspection at --base, a ref
+// without the fix, must read more than 0 on the same clone. Nothing is pushed
+// and no remote ref is changed.
 //
 //   TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
 //     scripts/runner-validation/gateway/push-verify-real-remote.mts \
-//     [--remote git@github.com:deeeed/farmslot.git] [--branch <pushed branch>] [--base origin/main]
+//     --branch <pushed branch> --base <ref without the fix> [--remote <ssh url>]
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,10 +22,14 @@ import type { ExecResult } from '@farmslot/protocol';
 const { remote, branch, base } = parseArgs({
   options: {
     remote: { type: 'string', default: 'git@github.com:deeeed/farmslot.git' },
-    branch: { type: 'string', default: 'fix/push-verify-against-remote' },
-    base: { type: 'string', default: 'origin/main' },
+    branch: { type: 'string' },
+    base: { type: 'string' },
   },
 }).values;
+if (!branch || !base) {
+  console.error('usage: push-verify-real-remote.mts --branch <pushed branch> --base <ref>');
+  process.exit(2);
+}
 
 const checkout = path.resolve(import.meta.dirname, '../../..');
 const moduleDir = path.join(checkout, 'services/gateway/src/run-engine');
@@ -79,7 +84,7 @@ const shells: Record<string, (command: string) => Promise<ExecResult>> = {
 };
 type Inspect = typeof import('../../../services/gateway/src/run-engine/push-verification.js');
 
-async function inspectAll(module: Inspect) {
+const inspectAll = async (module: Inspect) => {
   const states: Record<string, Awaited<ReturnType<Inspect['inspectWorktreePublishState']>>> = {};
   for (const [shell, execute] of Object.entries(shells)) {
     const started = Date.now();
@@ -87,7 +92,7 @@ async function inspectAll(module: Inspect) {
     console.log(`${shell}: ${JSON.stringify(states[shell])} in ${Date.now() - started} ms`);
   }
   return states;
-}
+};
 
 console.log(
   JSON.stringify({ remote, fetchRefspecs, branch, tip, staleOriginRef: stale, clone }, null, 2),
