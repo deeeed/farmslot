@@ -64,7 +64,7 @@ import {
   stripRunnerNoise,
 } from '../runners/registry.js';
 import { readRunProgress, runDecisionWaitingStatus } from '../runners/run-progress.js';
-import { RunnerExecutionError } from '../runners/runner-execution-error.js';
+import { isRunnerTransportAbort, RunnerExecutionError } from '../runners/runner-execution-error.js';
 import {
   probeRunnerDescendantPid,
   resolveRunnerSessionForRun,
@@ -2080,8 +2080,13 @@ export async function checkAgentLive(
       turn.source !== 'pane' &&
       turn.source !== 'unknown' &&
       turn.failure
-    )
-      throw new RunnerExecutionError(turn.failure);
+    ) {
+      if (!isRunnerTransportAbort(turn.failure)) throw new RunnerExecutionError(turn.failure);
+      // The live worker sits at its prompt; the waiting and stuck nudges continue it.
+      console.warn(
+        `[run-monitor] slot=${slotId} run=${runId?.slice(0, 8) ?? '-'} turn ended on a dropped model connection (${turn.failure}); monitoring continues`,
+      );
+    }
     const r = await source.exec(
       vars,
       tmuxShellSnippet(

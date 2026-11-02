@@ -1231,6 +1231,21 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         return;
       }
 
+      // A monitor error is not a worker outcome (those arrive as MonitorTerminalError): the
+      // worker may still be working. Hold it and its slot for an operator, as an uncertain
+      // prompt delivery does, instead of failing the run and tearing the worker down (F328:
+      // ce1c5583's live Pi worker was sent /exit).
+      if (stepName === S.MONITOR) {
+        stepPartialIO.delete(runId);
+        updateRunStep(runId, stepName, { status: 'failed', detail: msg });
+        updateRun(runId, {
+          status: 'reconciling',
+          error: `${msg}\n\nThe worker and its slot were left running; replay the monitor to resume watching it.`,
+        });
+        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        return;
+      }
+
       // Persist partial I/O even on failure — valuable for debugging and fine-tuning
       const partialIO = stepPartialIO.get(runId);
       stepPartialIO.delete(runId);

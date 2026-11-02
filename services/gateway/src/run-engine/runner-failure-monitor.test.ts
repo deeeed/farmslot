@@ -32,3 +32,24 @@ test('a live Pi process with a terminal native auth error fails the monitor with
     message: failure,
   });
 });
+
+// F328 ce1c5583: Pi's model stream dropped mid-turn ("terminated"); the worker stayed alive.
+test('a Pi turn ended on a dropped model connection leaves the live worker monitored', async () => {
+  const readers = {
+    slot: async () => makeVars(),
+    target: async () => ({ target: 'fixture:dev', session: 'fixture' }),
+    exec: async () => ({ exitCode: 0, stdout: '42\n', stderr: '' }),
+    process: async () => ({ state: 'present' as const, pid: '99' }),
+    turn: async (): Promise<ObservabilityReading<RunnerSessionDeliveryState>> => ({
+      value: 'idle',
+      source: 'hook',
+      confidence: 'high',
+      observedAt: Date.now(),
+      failure: 'terminated',
+    }),
+  };
+  assert.equal(
+    await checkAgentLive('fixture', 'pi', undefined, undefined, undefined, readers),
+    'working',
+  );
+});
