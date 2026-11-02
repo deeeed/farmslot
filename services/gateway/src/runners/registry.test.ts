@@ -2138,7 +2138,7 @@ describe('buildLaunchCommand', () => {
         /-e '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/bin\/pi-farmslot-observability\.ts'/,
       );
       assert.match(cmd, /--thinking medium/);
-      assert.match(cmd, /--model xai\/grok-4\.6/);
+      assert.match(cmd, /--model xai\/grok-4\.7/);
       assert.doesNotMatch(cmd, /(^|[\s])-p([\s]|$)/);
       assert.doesNotMatch(cmd, /--mode json/);
       assert.doesNotMatch(cmd, /Read TASK/);
@@ -2376,15 +2376,15 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /continuing without hooks/, 'trust seeding is required for Grok');
       assert.match(
         cmd,
-        /--slot-id '[^']*'\) && \{ cd '\/tmp\/repo' && grok --effort xhigh --model grok-4\.6; \}$/,
+        /--slot-id '[^']*'\) && \{ cd '\/tmp\/repo' && grok --effort xhigh --model grok-4\.7; \}$/,
       );
     });
 
-    it('falls back to inline Grok launcher with grok-4.6 and xhigh effort', () => {
+    it('falls back to inline Grok launcher with grok-4.7 and xhigh effort', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.ok(
-        cmd.endsWith(`cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.6; }`),
+        cmd.endsWith(`cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.7; }`),
       );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
@@ -2415,7 +2415,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.6; \}$/,
+        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.7; \}$/,
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);

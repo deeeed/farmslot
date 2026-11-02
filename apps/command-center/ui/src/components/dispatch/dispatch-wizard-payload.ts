@@ -219,6 +219,9 @@ export interface DispatchCandidatesDraft {
   prepareProfile: string | undefined;
   /** Skip Prepare keeps each slot's checkout, so a slot whose repo cannot prepare stays eligible. */
   skipPrepare: boolean;
+  /** A chosen Pi or OpenCode model makes rows on nodes that do not list it ineligible. */
+  runner?: string;
+  model?: string;
   comparison:
     | {
         familyId: string;
@@ -246,6 +249,8 @@ export function buildDispatchCandidatesParams(
     app: input.app,
     prepareProfile: effectivePrepareProfile(input),
     ...(input.skipPrepare ? { skipPrepare: true } : {}),
+    ...(input.runner ? { runner: input.runner } : {}),
+    ...(input.model ? { model: input.model } : {}),
     ...(input.forceRefresh ? { forceRefresh: true } : {}),
     ...(input.comparison
       ? {

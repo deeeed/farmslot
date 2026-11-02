@@ -4,8 +4,13 @@ import { mock, test } from 'node:test';
 import {
   Methods,
   type NativeCommandReceipt,
+  type NativeSessionCatalogResult,
   type NativeSessionReadResult,
 } from '@farmslot/protocol';
+import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+
+import type { NativeSessionFixture } from './native-session-view.js';
+import type { NativeSessionApi } from './native-workspace.js';
 
 // The view keeps its command and draft in localStorage, which node lacks.
 const stored = new Map<string, string>();
@@ -22,6 +27,70 @@ mock.module('./native-workspace.js', { namedExports: {} });
 mock.module('../../gateway-client.js', { namedExports: { gateway: {} } });
 
 const { NativeSessionView } = await import('./native-session-view.js');
+
+test('native Default sends the selected node model after switching execution nodes', async () => {
+  const catalog: NativeSessionCatalogResult = {
+    runners: [
+      {
+        runner: 'pi',
+        models: ['xai/grok-4.7'],
+        nodeModels: { macpro: ['xai/grok-4.7'], mini: ['litellm/glm-5p3'] },
+        defaultModel: 'xai/grok-4.7',
+        modes: ['default'],
+      },
+    ],
+    contexts: [],
+  };
+  const picker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['chat'] },
+    catalog: catalogForNativeRunners(catalog.runners, undefined, 'macpro'),
+    sequence: [{ runner: 'pi', model: 'xai/grok-4.7', effort: null, mode: 'cold' }],
+  });
+  let requested: unknown;
+  const api: NativeSessionApi = {
+    request: async (method, params) => {
+      assert.equal(method, Methods.NATIVE_SESSION_CREATE);
+      requested = params;
+      throw new Error('Request captured without starting a session');
+    },
+  };
+  const fixture: NativeSessionFixture = {
+    catalog: async () => catalog,
+    list: async () => ({ sessions: [] }),
+    read: async () => page(receipt(false)),
+  };
+  const view = Object.create(NativeSessionView.prototype) as {
+    updated(changed: Map<string, unknown>): void;
+    create(): Promise<void>;
+  };
+  Object.defineProperty(view, 'isConnected', { value: true });
+  Object.assign(view, {
+    requestUpdate: () => undefined,
+    catalog,
+    executionPicker: picker,
+    executionNodeId: 'mini',
+    connected: true,
+    fixture,
+    api,
+    profileReady: true,
+    revision: 0,
+    cwd: '/fixture',
+    mode: 'default',
+  });
+  view.updated(new Map([['executionNodeId', 'macpro']]));
+  assert.equal(picker.selection?.model, 'litellm/glm-5p3');
+  // The Default button stores null, exactly as the shared picker does on a click.
+  picker.setModel(picker.rows[0].id, null);
+  await view.create();
+  assert.deepEqual(requested, {
+    executionNodeId: 'mini',
+    runner: 'pi',
+    model: 'litellm/glm-5p3',
+    effort: undefined,
+    mode: 'default',
+    cwd: '/fixture',
+  });
+});
 
 /** The private state and methods the tests drive. */
 interface View {

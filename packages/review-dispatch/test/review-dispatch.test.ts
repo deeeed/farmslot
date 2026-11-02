@@ -6,6 +6,8 @@ import {
   type ReviewSelection,
   type ReviewSessionTrace,
   type Run,
+  type RunnerModelCatalogResult,
+  type RunnerVisibleModelState,
 } from '@farmslot/protocol';
 
 import {
@@ -13,6 +15,7 @@ import {
   assertReviewRequestPayload,
   assertReviewSelection,
   assertReviewSequence,
+  catalogForNativeRunners,
   catalogWithRunnerModels,
   createReviewDispatchCatalog,
   executionModelFromSelection,
@@ -221,6 +224,76 @@ test('catalog updates preserve choices and expose unavailable capabilities as va
   assert.throws(() => vm.toRequestPayload(), /effort/);
   vm.setEffort(vm.rows[0].id, 'high');
   assert.equal(vm.canInvoke('request-review'), true);
+});
+
+test('a node catalog lists Pi models with groups and nodes until an operator saves a set', () => {
+  const nodeCatalog: RunnerModelCatalogResult = {
+    runner: 'pi',
+    status: 'ready',
+    source: 'catalog-command',
+    models: [
+      { id: 'litellm/glm-5p3', reasoningModes: [], listed: true, nodes: ['macpro'] },
+      { id: 'xai/grok-4.7', reasoningModes: [], listed: true },
+    ],
+  };
+  const unsaved: RunnerVisibleModelState = {
+    runner: 'pi',
+    defaultModel: 'grok-4.7',
+    defaultConfigured: false,
+    configured: false,
+    models: [],
+    pickerModels: ['grok-4.7', 'litellm/kimi-k3'],
+    retainedModel: 'litellm/kimi-k3',
+  };
+  const pi = (visible: RunnerVisibleModelState[]) =>
+    createReviewDispatchCatalog({
+      runnerModels: [nodeCatalog],
+      visibleModels: visible,
+    }).runners.find((runner) => runner.id === 'pi')!;
+  assert.deepEqual(pi([unsaved]).models, [
+    {
+      id: 'litellm/glm-5p3',
+      label: undefined,
+      efforts: undefined,
+      group: 'Consensys LiteLLM',
+      nodes: ['macpro'],
+    },
+    { id: 'xai/grok-4.7', label: undefined, efforts: undefined, group: 'xAI' },
+    { id: 'litellm/kimi-k3' },
+  ]);
+  assert.equal(pi([unsaved]).defaultModel, 'grok-4.7');
+  const saved = {
+    ...unsaved,
+    configured: true,
+    models: ['xai/grok-4.7'],
+    pickerModels: ['xai/grok-4.7', 'grok-4.7'],
+  };
+  assert.deepEqual(
+    pi([saved]).models.map((model) => model.id),
+    ['xai/grok-4.7', 'grok-4.7'],
+  );
+});
+
+test('a native picker lists the models of the node its session runs on', () => {
+  const pi = {
+    runner: 'pi',
+    models: ['xai/grok-4.7'],
+    nodeModels: { mini: ['xai/grok-4.7', 'litellm/glm-5p3'], macpro: ['litellm/glm-5p3'] },
+    defaultModel: 'xai/grok-4.7',
+    modes: ['default' as const],
+  };
+  const models = (node?: string) =>
+    catalogForNativeRunners([pi], undefined, node).runners[0].models;
+  assert.deepEqual(models('mini'), [
+    { id: 'xai/grok-4.7', group: 'xAI' },
+    { id: 'litellm/glm-5p3', group: 'Consensys LiteLLM' },
+  ]);
+  const macpro = catalogForNativeRunners([pi], undefined, 'macpro');
+  assert.deepEqual(models('macpro'), [{ id: 'litellm/glm-5p3', group: 'Consensys LiteLLM' }]);
+  assert.equal(macpro.runners[0].defaultModel, 'litellm/glm-5p3');
+  // A node that has not listed, or no node, keeps the default-only list.
+  assert.deepEqual(models('unlisted'), [{ id: 'xai/grok-4.7', group: 'xAI' }]);
+  assert.deepEqual(models(), [{ id: 'xai/grok-4.7', group: 'xAI' }]);
 });
 
 test('view model owns count limits and action permissions', () => {

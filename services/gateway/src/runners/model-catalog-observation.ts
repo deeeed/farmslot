@@ -13,6 +13,8 @@ import {
 } from '../resources/native-catalog-changes.js';
 
 import {
+  type ModelCatalogNode,
+  queryNodeModelCatalog,
   queryRunnerModelCatalog,
   readRunnerModelCatalog,
   type RunnerModelCatalogSource,
@@ -34,6 +36,8 @@ interface RunnerModelCatalogObservationOptions {
   hasInterest(runner: string): boolean;
   changed(runner: string): void;
   sample?(runner: string, source: RunnerModelCatalogSource): Promise<RunnerModelCatalogResult>;
+  /** Execution nodes a per-node source lists on; none leaves that catalog unavailable. */
+  nodes?(): Promise<ModelCatalogNode[]>;
   home?: string;
   now?: () => number;
 }
@@ -51,12 +55,14 @@ function catalogModel({
   label,
   reasoningModes,
   listed,
+  nodes,
 }: RunnerCatalogModel): RunnerCatalogModel {
   return {
     id,
     ...(label === undefined ? {} : { label }),
     reasoningModes: [...reasoningModes],
     listed,
+    ...(nodes === undefined ? {} : { nodes: [...nodes] }),
   };
 }
 
@@ -286,7 +292,7 @@ export class RunnerModelCatalogObservation {
     if (this.stopped || (current && current.selection > selection)) return current;
     // A file source reads every candidate in order and merges them; all of them are its identity.
     const paths =
-      source && !('command' in source)
+      source && 'relativePath' in source
         ? (typeof source.relativePath === 'string'
             ? [source.relativePath]
             : source.relativePath
@@ -296,7 +302,9 @@ export class RunnerModelCatalogObservation {
       ? JSON.stringify(
           'command' in source
             ? [runner, 'command', source.command, source.args]
-            : [runner, 'file', ...paths],
+            : 'nodeCommand' in source
+              ? [runner, 'nodes', source.nodeCommand, source.args]
+              : [runner, 'file', ...paths],
         )
       : undefined;
     if (current && current.key === key) {
@@ -314,22 +322,24 @@ export class RunnerModelCatalogObservation {
     const next = new CatalogSourceOwner(
       runner,
       key,
-      'command' in source ? 'catalog-command' : 'structured-file',
+      'relativePath' in source ? 'structured-file' : 'catalog-command',
       {
-        sample: () =>
+        sample: async () =>
           sample
             ? sample(runner, source)
             : 'command' in source
               ? queryRunnerModelCatalog(runner, source)
-              : Promise.resolve(readRunnerModelCatalog(runner, source, this.home)),
-        ...('command' in source
-          ? {}
-          : {
+              : 'nodeCommand' in source
+                ? queryNodeModelCatalog(runner, source, (await this.options.nodes?.()) ?? [])
+                : readRunnerModelCatalog(runner, source, this.home),
+        ...('relativePath' in source
+          ? {
               file: {
                 paths,
                 read: () => readRunnerModelCatalog(runner, source, this.home),
               },
-            }),
+            }
+          : {}),
         changed: () => this.options.changed(runner),
         now: this.now,
       },

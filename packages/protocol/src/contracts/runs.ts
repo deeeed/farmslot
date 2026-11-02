@@ -3726,13 +3726,13 @@ export const DEFAULT_CODEX_EFFORT = 'high';
 export const DEFAULT_CURSOR_MODEL = 'claude-opus-5-5-high';
 
 /** Default Grok model used when no slot/task/project/user override is set. */
-export const DEFAULT_GROK_MODEL = 'grok-4.6';
+export const DEFAULT_GROK_MODEL = 'grok-4.7';
 
 /** Default Grok reasoning effort when dispatch/launch omits effort. */
 export const DEFAULT_GROK_EFFORT = 'xhigh';
 
 /** Default PI coding-agent model. Grok/xAI subscription, not Codex-LB or Claude Max. */
-export const DEFAULT_PI_MODEL = 'grok-4.6';
+export const DEFAULT_PI_MODEL = 'grok-4.7';
 
 /** PI `--thinking` levels. Harness-wide, not Grok-specific; models may clamp. */
 export const PI_THINKING_LEVELS = [

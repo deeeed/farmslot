@@ -315,6 +315,11 @@ export interface NativeWorkerHistoryScope {
 export interface NativeRunnerOption {
   runner: string;
   models: string[];
+  /**
+   * Per-node catalogs (Pi, OpenCode): the models each execution node lists, keyed like a
+   * context's `executionNodeId`. A node with no entry has not listed yet and uses `models`.
+   */
+  nodeModels?: Record<string, string[]>;
   defaultModel: string;
   modes: Array<'default' | 'plan'>;
   /** Task dispatch and leased recovery are available in addition to standalone chat. */
@@ -323,6 +328,23 @@ export interface NativeRunnerOption {
   supportsQueuedWorkers?: boolean;
   /** Managed static reviews enforce a read-only checkout without leasing an app slot. */
   supportsWorkspaceReviews?: boolean;
+}
+
+/** The models a new session on `executionNodeId` can choose. */
+export function nativeRunnerModels(
+  option: Pick<NativeRunnerOption, 'models' | 'nodeModels'>,
+  executionNodeId?: string,
+): string[] {
+  return (executionNodeId && option.nodeModels?.[executionNodeId]) || option.models;
+}
+
+/** Keep the default within a known node's listing, including saved global defaults. */
+export function nativeRunnerDefaultModel(
+  option: Pick<NativeRunnerOption, 'models' | 'nodeModels' | 'defaultModel'>,
+  executionNodeId?: string,
+): string {
+  const listed = executionNodeId && option.nodeModels?.[executionNodeId];
+  return listed && !listed.includes(option.defaultModel) ? (listed[0] ?? '') : option.defaultModel;
 }
 export interface NativeSessionCatalogResult {
   runners: NativeRunnerOption[];

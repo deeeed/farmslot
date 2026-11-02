@@ -62,7 +62,11 @@ import {
   type ResourceQueryState,
   SUPERSEDED_READ_GRACE_MS,
 } from '@farmslot/protocol/client-cache';
-import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+import {
+  catalogForNativeRunners,
+  defaultModelForRunner,
+  ReviewDispatchViewModel,
+} from '@farmslot/review-dispatch';
 
 import '../shared/review-dispatch-picker.js';
 import './chat-message.js';
@@ -149,7 +153,11 @@ export class NativeSessionView extends LitElement {
     this.requestUpdate();
   }
   private get model() {
-    return this.executionPicker.selection!.model ?? '';
+    return (
+      this.executionPicker.selection!.model ??
+      defaultModelForRunner(this.runner, this.executionPicker.catalog) ??
+      ''
+    );
   }
   private set model(value: string) {
     this.executionPicker.setModel(this.executionPicker.rows[0].id, value || null);
@@ -325,14 +333,31 @@ export class NativeSessionView extends LitElement {
         this.selectedNodeId !== this.initialExecutionNodeId)
     )
       this.select(this.initialSessionId, this.initialExecutionNodeId);
-    if ((changed.has('profile') || changed.has('catalog')) && this.catalog) {
+    if (
+      (changed.has('profile') || changed.has('catalog') || changed.has('executionNodeId')) &&
+      this.catalog
+    ) {
       this.executionPicker.setCatalog(
         catalogForNativeRunners(
           this.catalog.runners.filter(
             (runner) => !this.profile || runner.runner === this.profile.runner,
           ),
+          undefined,
+          this.executionNodeId,
         ),
       );
+      // Another node may not list the previous model or saved global default.
+      const row = this.executionPicker.rows[0];
+      if (
+        changed.has('executionNodeId') &&
+        row?.selection.model &&
+        this.executionPicker.modelPickerState(row.id).customModel
+      ) {
+        const runner = this.executionPicker.catalog.runners.find(
+          (option) => option.id === row.selection.runner,
+        );
+        this.executionPicker.setModel(row.id, runner?.defaultModel ?? null);
+      }
     }
     if (!changed.has('worker') || !this.isConnected) return;
     const previous = changed.get('worker') as NativeWorkerViewTarget | undefined;
@@ -943,7 +968,9 @@ ${JSON.stringify(
             this.catalog = state.data;
             this.catalogCurrent = state.status === 'ready';
             if (this.catalog)
-              this.executionPicker.setCatalog(catalogForNativeRunners(this.catalog.runners));
+              this.executionPicker.setCatalog(
+                catalogForNativeRunners(this.catalog.runners, undefined, this.executionNodeId),
+              );
             if (!this.cwd && !this.customCwd && this.catalog) {
               this.cwd = this.catalog.contexts[0]?.cwd ?? '';
               this.executionNodeId = this.catalog.contexts[0]?.executionNodeId ?? 'local';
@@ -985,13 +1012,17 @@ ${JSON.stringify(
         this.select('');
         if (this.initialSessionId) {
           this.unavailableNodes = result.unavailableExecutionNodes ?? [];
-          this.executionPicker.setCatalog(catalogForNativeRunners(catalog.runners));
+          this.executionPicker.setCatalog(
+            catalogForNativeRunners(catalog.runners, undefined, this.executionNodeId),
+          );
           this.error = 'Open this task conversation from its run.';
           return;
         }
       }
       this.unavailableNodes = result.unavailableExecutionNodes ?? [];
-      this.executionPicker.setCatalog(catalogForNativeRunners(catalog.runners));
+      this.executionPicker.setCatalog(
+        catalogForNativeRunners(catalog.runners, undefined, this.executionNodeId),
+      );
       if (!catalog.runners.some((option) => option.runner === this.runner)) {
         this.runner = catalog.runners[0]?.runner ?? '';
         this.model = catalog.runners[0]?.defaultModel ?? '';

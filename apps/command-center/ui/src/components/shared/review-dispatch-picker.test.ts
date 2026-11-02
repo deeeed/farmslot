@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import ts from 'typescript';
 
-import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+import { catalogWithRunnerModels, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 mock.module('../../gateway-client.js', { namedExports: { gateway: {} } });
 Object.defineProperty(globalThis, 'location', {
@@ -76,6 +76,53 @@ test('saved custom model opens its secondary editor', () => {
     sequence: [{ runner: 'codex', model: 'my-custom-model', effort: null, mode: 'cold' }],
   });
   assert.match(markup(picker.render()), /data-testid="review-dispatch-custom-model"/);
+});
+
+test('pi models load in place, then group by provider with hints for nodes that lack them', () => {
+  const picker = new ReviewDispatchPicker();
+  const vm = new ReviewDispatchViewModel({
+    context: { allowedActions: ['dispatch'] },
+    sequence: [{ runner: 'pi', model: null, effort: null, mode: 'cold' }],
+  });
+  picker.viewModel = vm;
+  const loading = markup(picker.render());
+  assert.match(
+    loading,
+    /data-testid="review-dispatch-model"[^>]*>\s*<span class="choice-button models-loading">Loading models…</,
+  );
+  assert.doesNotMatch(loading, /data-testid=review-dispatch-model-/);
+  // Loading and loaded share one fixed-height model box, so nothing below it moves.
+  assert.match(loading, /class="field model-field node-catalog"/);
+
+  vm.setCatalog(
+    catalogWithRunnerModels(vm.catalog, {
+      runner: 'pi',
+      status: 'ready',
+      source: 'catalog-command',
+      models: [
+        { id: 'anthropic/claude-haiku-5-5', reasoningModes: [], listed: true },
+        { id: 'xai/grok-4.7', reasoningModes: [], listed: true },
+        { id: 'litellm/glm-5p3', reasoningModes: [], listed: true, nodes: ['macpro'] },
+        { id: 'litellm/kimi-k3', reasoningModes: [], listed: true, nodes: ['macpro', 'mini'] },
+        { id: 'omlx/qwen3.8-27b', reasoningModes: [], listed: true },
+      ],
+    }),
+  );
+  const rendered = markup(picker.render());
+  assert.doesNotMatch(rendered, /Loading models/);
+  assert.match(rendered, /class="field model-field node-catalog"/);
+  const order = ['Consensys LiteLLM', 'xAI', 'Anthropic', 'Local'].map((group) =>
+    rendered.indexOf(`<span class="choice-group">${group}</span>`),
+  );
+  assert.ok(
+    order.every((index, i) => index > 0 && (i === 0 || index > order[i - 1])),
+    String(order),
+  );
+  assert.ok(rendered.indexOf('data-choice-value=litellm/glm-5p3') > order[0]);
+  assert.ok(rendered.indexOf('data-choice-value=litellm/glm-5p3') < order[1]);
+  assert.match(rendered, /litellm\/glm-5p3 <small class="choice-hint">macpro only<\/small>/);
+  assert.match(rendered, /litellm\/kimi-k3 <small class="choice-hint">macpro, mini<\/small>/);
+  assert.doesNotMatch(rendered, /xai\/grok-4\.7 <small/);
 });
 
 test('dispatch execution options stay visible without a disclosure', () => {
