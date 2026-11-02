@@ -45,10 +45,11 @@ test('a pending gate retry stands down once another replay owns the gate (F311)'
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const untouched = preparingGate();
   const replayedByOperator = preparingGate();
-  t.after(() => {
+  t.after(async () => {
     for (const id of [untouched, replayedByOperator]) {
       suspendPublicationReviewRecoveryForRun(id);
-      deleteRun(id);
+      updateRun(id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(id);
     }
   });
   assert.ok(rearmPublicationReviewRecoveryForRun(untouched, { replayPending: true }));
