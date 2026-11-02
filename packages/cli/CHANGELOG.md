@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot slot release --skip-artifacts` is removed: a slot release no longer copies artifacts, so there is nothing to skip (F313).
 - Farm commands wait out a gateway reload instead of failing at once. When the gateway refuses the connection, drops the upgrade or answers it with 503 before the socket opens, a `farmslot` command reconnects for up to 90 s (`FARMSLOT_GATEWAY_RECONNECT_MS`; `0` fails at once). A failure after the socket opened is never retried. A `GatewayClient` built without `reconnectWindowMs`, as probes and scripts build it, still fails at once.
 - `farmslot dispatch preview` prints the criteria a pr-complete run inherits from its parent run, and that criteria given with the run are not used.
 - `farmslot run create` and `farmslot dispatch preview` take `--no-pipeline-review`: an artifact-only dev or fix-bug run with no pipeline review. The preview prints `Review: off (artifact-only run)`. The flag is refused on a backlog dispatch, which would drop it.

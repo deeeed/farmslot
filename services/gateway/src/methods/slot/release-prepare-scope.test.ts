@@ -811,7 +811,7 @@ for (const mode of ['automatic', 'manual', 'ordinary'])
       }
     });
     const result = await slotRelease(
-      { slotId: SLOT_ID, skipArtifacts: true, forceReset: !recovery },
+      { slotId: SLOT_ID, forceReset: !recovery },
       emit,
       recovery
         ? {
