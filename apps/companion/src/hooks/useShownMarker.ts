@@ -3,9 +3,10 @@ import { useCallback } from 'react';
 
 /**
  * Log `[farmslot-perf] shown <screen>` from the second animation frame after the
- * screen takes focus. The frames are vsync-driven, so by the second one the
- * frame that mounts the screen has been drawn, and a stalled mount delays them
- * too. The jank check times a tab press from its touch to this logcat line.
+ * screen takes focus, once React has committed it and JavaScript is free. The
+ * UI thread can still be drawing the mount frame then, so the jank check ends a
+ * tab press at the end of the last frame that started by two vsyncs after this
+ * logcat line.
  */
 export function useShownMarker(screen: string): void {
   useFocusEffect(

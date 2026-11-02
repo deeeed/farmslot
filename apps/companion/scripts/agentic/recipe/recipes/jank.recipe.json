@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion jank check",
-  "description": "Drives Companion's main read-only flows on an Android device and fails on jank. Native frames come from adb gfxinfo framestats: a flow fails below min_sustained_fps over any 500 ms of rendering, and tab presses fail over the p95 or max press limits (touch to the tab's [farmslot-perf] shown logcat line, logged once the tab has drawn: at most about two frames over the draw, never under it). target_fps and target_press_ms are reported, never failed on. Each flow measured on main records main's baseline in its end node (4da00ad80, Pixel 6 at 90 Hz; terminal-open runs only against a sandbox and has none); a window with a coverage gap (failed polls, overwritten frames) is inconclusive and never passes; when the median tab-press p95 of at least 3 fresh release runs on main is more than 20 ms under that baseline, lower the caps and record the new baseline. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured.",
+  "description": "Drives Companion's main read-only flows on an Android device and fails on jank. Native frames come from adb gfxinfo framestats: a flow fails below min_sustained_fps over any 500 ms of rendering, and tab presses fail over the p95 or max press limits (from the touch to the end of the last frame that started by two vsyncs after the tab's post-commit [farmslot-perf] shown logcat line; it can over-read by up to ~2 light frames, and could still miss a mount frame that starts more than two vsyncs after the marker, not seen in 24 Pixel 6 presses). target_fps and target_press_ms are reported, never failed on. Each measured flow records its baseline in its end node (release build 7da49c4df timed by this press rule, Pixel 6 at 90 Hz, idle Review at 60 Hz; run-detail keeps main 4da00ad80's, timed by the frame rule; terminal-open runs only against a sandbox and has none); a window with a coverage gap (failed polls, overwritten frames) is inconclusive and never passes; when the median tab-press p95 of at least 3 fresh release runs on main is more than 20 ms under that baseline, lower the caps and record the new baseline. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured.",
   "paramsSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -14,12 +14,12 @@
       "max_tab_press_p95_ms": {
         "type": "number",
         "default": 210,
-        "description": "Fail when the 95th percentile tab press (gfxinfo and logcat, touch to the tab's post-draw shown line) is above this. Main 4da00ad80 measured 159 ms at 90 Hz. Ratchet: lower it when the median p95 of at least 3 fresh release runs on main is more than 20 ms under the recorded baseline."
+        "description": "Fail when the 95th percentile tab press (gfxinfo and logcat, touch to the end of the last frame that started by two vsyncs after the tab's shown line) is above this. Release build 7da49c4df measured 128 ms at 90 Hz. Ratchet: lower it when the median p95 of at least 3 fresh release runs on main is more than 20 ms under the recorded baseline."
       },
       "max_tab_press_ms": {
         "type": "number",
         "default": 250,
-        "description": "Fail when any tab press is above this, or cannot be timed. Main 4da00ad80 measured 192 ms at 90 Hz."
+        "description": "Fail when any tab press is above this, or cannot be timed. Release build 7da49c4df measured 134 ms at 90 Hz."
       },
       "target_fps": {
         "type": "number",
@@ -412,56 +412,57 @@
           "companion-tab-review": "companion-screen-review"
         },
         "baseline": {
-          "label": "main 4da00ad80 @90Hz",
-          "build": "4da00ad80",
+          "label": "7da49c4df @90Hz",
+          "build": "7da49c4df",
           "device": "Pixel 6",
           "refresh_hz": 90,
-          "press_p95_ms": 158.9,
-          "press_max_ms": 192.2,
+          "press_rule": "end of the last frame that started by two vsyncs after the shown line",
+          "press_p95_ms": 127.6,
+          "press_max_ms": 133.8,
           "runs": [
             {
-              "press_p95_ms": 158.9,
-              "press_max_ms": 192.2,
-              "first_frame_presses": 2,
+              "press_p95_ms": 127.6,
+              "press_max_ms": 133.8,
+              "shown_presses": 12,
               "by_target": {
                 "companion-tab-terminals": {
-                  "p95_ms": 181.2,
-                  "max_ms": 192.2
+                  "p95_ms": 70.0,
+                  "max_ms": 70.3
                 },
                 "companion-tab-advanced": {
-                  "p95_ms": 105.3,
-                  "max_ms": 107.5
+                  "p95_ms": 100.9,
+                  "max_ms": 104.2
                 },
                 "companion-tab-settings": {
-                  "p95_ms": 75.9,
-                  "max_ms": 76.0
+                  "p95_ms": 110.4,
+                  "max_ms": 111.0
                 },
                 "companion-tab-review": {
-                  "p95_ms": 129.6,
-                  "max_ms": 131.6
+                  "p95_ms": 132.7,
+                  "max_ms": 133.8
                 }
               }
             },
             {
-              "press_p95_ms": 132.5,
-              "press_max_ms": 162.1,
-              "first_frame_presses": 1,
+              "press_p95_ms": 121.2,
+              "press_max_ms": 127.5,
+              "shown_presses": 12,
               "by_target": {
                 "companion-tab-terminals": {
-                  "p95_ms": 156.7,
-                  "max_ms": 162.1
+                  "p95_ms": 109.4,
+                  "max_ms": 109.6
                 },
                 "companion-tab-advanced": {
-                  "p95_ms": 60.7,
-                  "max_ms": 61.4
+                  "p95_ms": 92.5,
+                  "max_ms": 93.6
                 },
                 "companion-tab-settings": {
-                  "p95_ms": 91.7,
-                  "max_ms": 95.0
+                  "p95_ms": 115.0,
+                  "max_ms": 116.1
                 },
                 "companion-tab-review": {
-                  "p95_ms": 95.9,
-                  "max_ms": 97.4
+                  "p95_ms": 125.3,
+                  "max_ms": 127.5
                 }
               }
             }
@@ -573,12 +574,12 @@
           "fps": "{{params.target_fps}}"
         },
         "baseline": {
-          "label": "main 4da00ad80 @90Hz",
-          "build": "4da00ad80",
+          "label": "7da49c4df @90Hz",
+          "build": "7da49c4df",
           "device": "Pixel 6",
           "refresh_hz": 90,
-          "sustained_fps": 76.0,
-          "frames": 574
+          "sustained_fps": 70.0,
+          "frames": 555
         },
         "intent": "Close the the Review queue scroll window against its budget.",
         "next": "to-terminals"
@@ -678,12 +679,12 @@
           "fps": "{{params.target_fps}}"
         },
         "baseline": {
-          "label": "main 4da00ad80 @90Hz",
-          "build": "4da00ad80",
+          "label": "7da49c4df @90Hz",
+          "build": "7da49c4df",
           "device": "Pixel 6",
           "refresh_hz": 90,
-          "sustained_fps": 77.2,
-          "frames": 338
+          "sustained_fps": 88.9,
+          "frames": 427
         },
         "intent": "Close the the Terminals list scroll window against its budget.",
         "next": "terminal-open-gate"
@@ -882,11 +883,11 @@
           "fps": "{{params.target_fps}}"
         },
         "baseline": {
-          "label": "main 4da00ad80 idle @60Hz",
-          "build": "4da00ad80",
+          "label": "7da49c4df idle @60Hz",
+          "build": "7da49c4df",
           "device": "Pixel 6",
           "refresh_hz": 60,
-          "frames": 1
+          "frames": 7
         },
         "intent": "Close the idle window against its budget.",
         "next": "report"
