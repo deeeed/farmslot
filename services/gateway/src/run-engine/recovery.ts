@@ -2,6 +2,7 @@
 
 import {
   type ArtifactRef,
+  contextIdFor,
   Events,
   type FlowType,
   isCompletionPrerequisiteFailure,
@@ -19,6 +20,7 @@ import {
   type RunCreateParams,
   type RunStep,
   type SubStepRecord,
+  workerRoleForFlow,
 } from '@farmslot/protocol';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
@@ -26,6 +28,10 @@ import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../core/state.js';
 import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
+import {
+  runnerNeedsPostLaunchPrompt,
+  runnerResolvesPreTaskLaunchBlockers,
+} from '../runners/registry.js';
 import { runDecisionWaitingStatus, type RunProgressObservation } from '../runners/run-progress.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 import { withSourcePlanning } from '../sources/runtime.js';
@@ -354,6 +360,61 @@ export async function representResultDecisions(runs: Run[]): Promise<void> {
       );
     }
   }
+}
+
+/**
+ * How far a DISPATCH that a restart interrupted got with its task. The step writes
+ * `promptDeliveryStartedAt` durably before the launch or send that hands the worker its task, and
+ * a stamp older than the step belongs to an earlier attempt. The verified outcome is the slot's
+ * `agent: working`, which the caller checks. Without it only a live runner that took its prompt on
+ * argv, with no launch blocker left to resolve, is known to hold the task. Read this after runtime
+ * reconciliation, which promotes a live `launching` worker to `working`.
+ */
+function interruptedDispatchDelivery(run: Run): 'unsent' | 'delivered' | 'uncertain' {
+  const dispatch = run.steps.find((step) => step.name === S.DISPATCH);
+  const workerRole = workerRoleForFlow(run.flowType);
+  const worker = workerRole
+    ? run.agentContexts?.find((context) => context.id === contextIdFor(workerRole))
+    : undefined;
+  if (
+    dispatch?.status !== 'running' ||
+    !dispatch.startedAt ||
+    !worker?.promptDeliveryStartedAt ||
+    worker.promptDeliveryStartedAt < dispatch.startedAt
+  )
+    return 'unsent';
+  return worker.status === 'working' &&
+    !runnerNeedsPostLaunchPrompt(worker.runner) &&
+    !runnerResolvesPreTaskLaunchBlockers(worker.runner)
+    ? 'delivered'
+    : 'uncertain';
+}
+
+/** The state the engine leaves on a PromptDeliveryUncertainError, without re-entering the engine. */
+function holdUncertainDispatch(
+  deps: Pick<RunRecoveryCollaborators, 'updateRunStep' | 'updateRun' | 'getRun' | 'broadcast'>,
+  run: Run,
+): void {
+  const message =
+    'A gateway restart interrupted dispatch while the task prompt was being delivered.';
+  deps.updateRunStep(run.id, S.DISPATCH, {
+    status: 'failed',
+    detail: message,
+    outputs: { promptDeliveryUncertain: true },
+  });
+  for (const step of run.steps) {
+    if (step.status === 'pending') deps.updateRunStep(run.id, step.name, { status: 'skipped' });
+  }
+  deps.updateRun(run.id, {
+    status: 'reconciling',
+    error: `${message}\n\nThe runner and claimed slot were preserved because the prompt may already be executing.`,
+    metrics: {
+      ...run.metrics,
+      outcome: 'partial',
+      durationMs: Date.now() - new Date(run.createdAt).getTime(),
+    },
+  });
+  deps.broadcast(Events.RUN_UPDATED, { run: deps.getRun(run.id) });
 }
 
 export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise<void> {
@@ -1069,19 +1130,40 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         continue;
       }
 
-      if (run.transport !== 'native' && run.status === 'dispatching' && slot.agent === 'working') {
-        console.log(
-          `[run-engine] run ${run.id.slice(0, 8)} — slot already working, advancing to monitoring`,
-        );
-        deps.updateRunStep(run.id, S.DISPATCH, {
-          status: 'done',
-          completedAt: new Date().toISOString(),
-        });
-        deps.updateRun(run.id, { status: 'monitoring' });
-        deps.updateRunStep(run.id, S.MONITOR, {
-          status: 'running',
-          startedAt: new Date().toISOString(),
-        });
+      if (run.transport !== 'native' && run.status === 'dispatching') {
+        const delivery =
+          slot.agent === 'working'
+            ? 'delivered'
+            : interruptedDispatchDelivery(deps.getRun(run.id) ?? run);
+        if (delivery === 'uncertain') {
+          console.warn(
+            `[run-engine] run ${run.id.slice(0, 8)} — restart interrupted dispatch with prompt delivery uncertain; preserving the claimed slot and runner`,
+          );
+          holdUncertainDispatch(deps, deps.getRun(run.id) ?? run);
+          continue;
+        }
+        if (delivery === 'delivered') {
+          console.log(
+            `[run-engine] run ${run.id.slice(0, 8)} — worker already has its task, advancing to monitoring`,
+          );
+          await deps.updateSlotStatusIf(run.slotId, (row) => row.current_run_id === run.id, {
+            lifecycle: 'busy',
+            phase: 'working',
+            agent: 'working',
+          });
+          deps.updateRunStep(run.id, S.DISPATCH, {
+            status: 'done',
+            completedAt: new Date().toISOString(),
+          });
+          deps.updateRun(run.id, {
+            status: 'monitoring',
+            activeTaskFile: run.taskFile ?? undefined,
+          });
+          deps.updateRunStep(run.id, S.MONITOR, {
+            status: 'running',
+            startedAt: new Date().toISOString(),
+          });
+        }
       }
 
       if (run.status === 'preparing') {

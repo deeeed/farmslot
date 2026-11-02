@@ -1775,6 +1775,7 @@ export async function dispatchExecute(
       // not survive until a fast worker's terminal signal is first observed.
       signalAttemptId: undefined,
       attemptStartedAt: new Date().toISOString(),
+      promptDeliveryStartedAt: undefined,
       taskFile: `${workerTaskDir}/TASK.md`,
       signalFile: `${workerTaskDir}/SIGNAL.json`,
       runner,
@@ -1850,6 +1851,17 @@ export async function dispatchExecute(
   };
   let runnerProcessStarted = false;
   let resumedReviewSession = false;
+  // Restart recovery reads this to tell a worker that may hold its task from one that cannot, so
+  // it reaches disk before the launch or send that hands the task over.
+  const markPromptDeliveryStarted = async () => {
+    if (!params.runId || !currentRun) return;
+    await upsertAgentContext(params.runId, workerRole, {
+      promptDeliveryStartedAt: new Date().toISOString(),
+    });
+    const { persistRunNow } = await import('../../runs/store.js');
+    await persistRunNow(getRun(params.runId)!, 'dispatch prompt delivery');
+  };
+  const launchCarriesPrompt = !runnerNeedsPostLaunchPrompt(runner);
 
   try {
     const roleWindowName = agentDispatchWindow(workerRole);
@@ -1860,6 +1872,7 @@ export async function dispatchExecute(
     };
     if (repeatReviewResumePlan.kind === 'resume') {
       await runPressureGate();
+      await markPromptDeliveryStarted();
       const binding = repeatReviewResumePlan.binding;
       step(
         'launch',
@@ -1923,6 +1936,7 @@ export async function dispatchExecute(
     if (!resumedReviewSession && usesRoleWindow) {
       workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
       await runPressureGate();
+      if (launchCarriesPrompt) await markPromptDeliveryStarted();
       await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch);
       await settleFreshRoleWindow();
     } else if (!resumedReviewSession) {
@@ -1948,6 +1962,7 @@ export async function dispatchExecute(
       // killing tmux, and resurrecting the session then would revive a worker
       // on a deliberately torn-down slot.
       await runPressureGate();
+      if (launchCarriesPrompt) await markPromptDeliveryStarted();
       const launched = await runLaunchPreludeAndSend({
         runner,
         target: workerTarget,
@@ -2046,6 +2061,7 @@ export async function dispatchExecute(
         handoffAckSinceMs,
       );
       await runPressureGate();
+      await markPromptDeliveryStarted();
       await sendRunnerPostLaunchPrompt(
         vars,
         workerTarget,
@@ -2072,6 +2088,8 @@ export async function dispatchExecute(
       };
       step('task', 'Task prompt delivered and verified');
     }
+    // The worker holds its task: from here restart recovery adopts it instead of re-dispatching.
+    await markSlotBusy(params.slotId, 'working', 'working');
     if (!resumedReviewSession) {
       sessionMeta = await recaptureRunnerSessionMetadataIfMissing(
         vars,
@@ -2127,7 +2145,6 @@ export async function dispatchExecute(
   }
 
   // 6. Update status + start TASK.md watching
-  await markSlotBusy(params.slotId, 'working', 'working');
   if (params.runId) {
     const latestRun = getRun(params.runId);
     if (latestRun) {
