@@ -1,0 +1,1 @@
+- Live recipe context refreshes no longer reuse stale file contents from reads that finished after the artifact cache was invalidated.

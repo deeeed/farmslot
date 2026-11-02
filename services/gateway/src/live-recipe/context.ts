@@ -201,6 +201,7 @@ async function resolveRemotePortableArtifactPath(
 // per-slot node WS, so the same `filePath` returns different content per slot.
 const ARTIFACT_TEXT_CACHE_TTL_MS = 5_000;
 const artifactTextCache = new Map<string, { value: string | null; at: number }>();
+let artifactTextCacheGeneration = 0;
 
 // Use NUL as the separator since neither slotId regex (`[a-z0-9-]+`) nor
 // filesystem paths (POSIX rejects NUL) can contain it — guarantees no collision
@@ -220,6 +221,8 @@ function splitCacheKey(key: string): { slotId: string; filePath: string } | null
 }
 
 export function invalidateArtifactTextCache(prefix?: string, slotId?: string | null): void {
+  // Reads started before invalidation may finish afterward, but cannot refill the cache.
+  artifactTextCacheGeneration++;
   if (!prefix && slotId === undefined) {
     artifactTextCache.clear();
     return;
@@ -250,8 +253,11 @@ export async function readPortableTextIfExists(
   const key = cacheKey(run.slotId, filePath);
   const cached = artifactTextCache.get(key);
   if (cached && Date.now() - cached.at < ARTIFACT_TEXT_CACHE_TTL_MS) return cached.value;
+  const generation = artifactTextCacheGeneration;
   const value = await readPortableTextIfExistsUncached(run, filePath);
-  artifactTextCache.set(key, { value, at: Date.now() });
+  if (generation === artifactTextCacheGeneration) {
+    artifactTextCache.set(key, { value, at: Date.now() });
+  }
   return value;
 }
 

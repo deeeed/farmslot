@@ -45,6 +45,7 @@ export async function rebindUnownedPublicationSlot(
   run: Run,
   overrides: Partial<PublicationSourceReaders> & {
     rebind?: (run: Run) => Promise<string | null>;
+    expectedHeadSha?: string;
   } = {},
 ): Promise<boolean> {
   if (!run.slotId || !run.branch || isGateParkInFlightOrFreed(run)) return false;
@@ -52,7 +53,11 @@ export async function rebindUnownedPublicationSlot(
   const row = await readers.slot(run.slotId);
   if (!row || row.current_run_id) return false;
   const checkout = await readers.git(run).catch(() => null);
-  if (checkout?.branch !== run.branch) return false;
+  if (
+    checkout?.branch !== run.branch ||
+    (overrides.expectedHeadSha && checkout.headSha !== overrides.expectedHeadSha)
+  )
+    return false;
   // Loaded lazily, as in recipe-dispatch-check: run-completion takes no load-time import of methods/.
   const rebind =
     overrides.rebind ??
