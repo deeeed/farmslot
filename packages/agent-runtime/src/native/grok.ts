@@ -1,13 +1,11 @@
-import { createAcpAdapter } from './acp.js';
+import { acpRunsToolsUnasked, createAcpAdapter } from './acp.js';
 
 export const grokNativeAdapter = createAcpAdapter({
   authMethod: 'cached_token',
   args: (options) => [
     '--no-auto-update',
     '--permission-mode',
-    options.processSandbox || (options.safetyTier && options.safetyTier !== 'sandboxed')
-      ? 'bypassPermissions'
-      : 'default',
+    acpRunsToolsUnasked(options) ? 'bypassPermissions' : 'default',
     'agent',
     '--no-leader',
     ...(options.effort ? ['--reasoning-effort', options.effort] : []),

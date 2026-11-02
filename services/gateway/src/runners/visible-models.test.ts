@@ -303,8 +303,9 @@ test('unexpected notification authorization errors propagate after the real file
 
 test('full visible-model preferences notify non-native runner writes and external edits per owner generation', async (t) => {
   setup(t);
+  // Every runner with a model catalog is native now; `scripted` keeps visible preferences too.
   const nonNative = Object.values(KNOWN_RUNNERS).find(
-    (definition) => !definition.nativeTransport && definition.modelCatalog,
+    (definition) => !definition.nativeTransport && definition.id !== 'none',
   )!.id;
   const preferences = (models: string[], defaultModel?: string) => ({
     version: 1 as const,

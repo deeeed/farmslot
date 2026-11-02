@@ -1085,6 +1085,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
       : {}),
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
+    ...(params.pipelineReview === 'none' ? { pipelineReview: 'none' as const } : {}),
     ...(pressureOverride ? { pressureOverride } : {}),
     ...(pressureAdmissionRef ? { pressureAdmissionRef } : {}),
     startRef,

@@ -102,6 +102,11 @@ export interface SlotStatus {
   phase: SlotPhase;
   /** Why completed ownership was released while the workspace remains occupied. */
   heldReason?: string;
+  /**
+   * Nested checkouts releases moved aside on the slot host instead of deleting, and their total
+   * size there, as of the last release that moved one. Cleared only by an operator.
+   */
+  retained?: { items: number; bytes: number };
   warm: boolean;
   taskId: string | null;
   taskFile: string | null;

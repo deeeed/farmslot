@@ -224,8 +224,9 @@ test('an unreadable profile file leaves sessions observable until it is repaired
       assert.equal(source.fence().ready, true);
       assert.throws(() => source.profileStatus('profile'), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
       // The repaired file re-arms the source through its watcher; profile reads come back.
+      // The ceiling only reports a hang: a loaded host re-arms in more than 2 s.
       writeFileSync(file, JSON.stringify({ version: 1, accounts: {} }), { mode: 0o600 });
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < 500; i++) {
         try {
           source.profileStatus('profile');
         } catch (error) {

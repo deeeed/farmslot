@@ -44,14 +44,16 @@ function record(event, extra={}) {
   fs.writeFileSync(path.join(dir,'panes',encodeURIComponent(pane)+'.json'),JSON.stringify(row));
 }
 record('SessionStart'); fs.writeFileSync(path.join(dir,'ready'),'');
-readline.createInterface({input:process.stdin}).on('line', line=> {
+const delayFile=path.join(dir,'delay');
+readline.createInterface({input:process.stdin}).on('line', line=> setTimeout(() => {
   fs.appendFileSync(path.join(dir,'received'),JSON.stringify(line)+'\\n');
+  if(line.includes('fixture-barrier-')) return;
   const mode=fs.readFileSync(path.join(dir,'mode'),'utf8');
   if(mode==='drop') { saved=line; return; }
   const payload=line||saved;
   const sent=fs.readdirSync(path.join(dir,'sent')).map(f=>JSON.parse(fs.readFileSync(path.join(dir,'sent',f),'utf8'))).find(s=>s.prompt===payload);
   record('UserPromptSubmit',{runnerPromptDigest:sent?.digest,turnStartedAt:Date.now()});
-});
+}, fs.existsSync(delayFile) ? Number(fs.readFileSync(delayFile,'utf8')) : 0));
 `,
   );
   fs.writeFileSync(path.join(dir, 'mode'), 'accept');
@@ -102,7 +104,28 @@ function recordIdle() {
   );
 }
 
+let barriers = 0;
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+/**
+ * tmux returns once keys are queued, and the fixture reads them later. A marker line typed last
+ * reaches the fixture after every earlier keystroke, so no key a previous test sent, such as a
+ * question's Enter, can land in this test's log.
+ */
+function drainInput() {
+  const marker = `fixture-barrier-${++barriers}`;
+  tmux(['send-keys', '-t', pane, '-l', marker]);
+  tmux(['send-keys', '-t', pane, 'Enter']);
+  const log = path.join(dir, 'received');
+  const deadline = Date.now() + 5000;
+  // The fixture creates its log with the first line it reads.
+  while (!(fs.existsSync(log) && fs.readFileSync(log, 'utf8').includes(marker))) {
+    assert.ok(Date.now() < deadline, 'the fixture never read the input barrier');
+    sleepSync(10);
+  }
+}
+
 function reset(mode = 'accept') {
+  drainInput();
   fs.writeFileSync(path.join(dir, 'mode'), mode);
   fs.writeFileSync(path.join(dir, 'received'), '');
   recordIdle();
@@ -319,4 +342,18 @@ test('unverified receipt blocks duplicate sends; explicit flush sends only Enter
   assert.deepEqual(received(), ['buffered prompt', '']);
   reset();
   assert.equal((await send(pane, 'claude', '', null, true)).verification, 'queue_not_owned');
+});
+
+test('a test starts only after every key an earlier test sent has reached the fixture', async () => {
+  reset('drop');
+  // A slow fixture reads an earlier test's last key after the next test cleared its log.
+  fs.writeFileSync(path.join(dir, 'delay'), '200');
+  try {
+    tmux(['send-keys', '-t', pane, 'Enter']);
+    reset('drop');
+    await pause(400);
+    assert.deepEqual(received(), []);
+  } finally {
+    fs.writeFileSync(path.join(dir, 'delay'), '0');
+  }
 });
