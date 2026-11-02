@@ -1,5 +1,5 @@
 import type { SlotStatus } from '@farmslot/protocol';
-import { fleetRecoverySummary } from '@farmslot/review-dispatch';
+import { fleetRecoverySummary, type FleetRefreshRow } from '@farmslot/review-dispatch';
 
 export const FLEET_RELEASE_LABEL = 'Release and update to main';
 
@@ -40,6 +40,17 @@ export function fleetReleaseScope(
     eligible: count > 0,
     disabled: !canInspect,
   };
+}
+
+/** One line naming the slots whose local work keeps them out of the bulk release. */
+export function fleetLocalWorkNote(
+  rows: readonly Pick<FleetRefreshRow, 'slotId' | 'eligibility' | 'status'>[],
+): string {
+  const held = rows
+    .filter((row) => row.eligibility.confirmationRequired && row.status !== 'refreshed')
+    .map((row) => row.slotId);
+  if (!held.length) return '';
+  return `Unpushed or uncommitted work on ${held.join(', ')}. Bulk release skips ${held.length === 1 ? 'it' : 'them'}. To discard that work and update, use the slot's own button below.`;
 }
 
 export function setFleetSelection(

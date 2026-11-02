@@ -8,6 +8,7 @@ import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { fleetQuery, getState, requireCurrentFleet } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { fleetLocalWorkNote } from '../fleet-map/fleet-release-scope.js';
 
 /** Inspection rereads the shared fleet observation; release and cancel stay explicit commands. */
 async function fleetRefreshRequest<T>(
@@ -169,6 +170,7 @@ export class FleetRefreshModal extends LitElement {
     if (!this.open || !this.model) return nothing;
     const model = this.model;
     const running = model.phase === 'running';
+    const localWork = fleetLocalWorkNote(model.rows);
     return html`<div class="backdrop" @click=${() => this.close()}>
       <section
         class="dialog"
@@ -182,6 +184,7 @@ export class FleetRefreshModal extends LitElement {
           <button aria-label="Close" @click=${() => this.close()}>Close</button>
         </header>
         ${model.error ? html`<p role="alert" class="warning">${model.error}</p>` : nothing}
+        ${localWork ? html`<p class="warning" data-local-work>${localWork}</p>` : nothing}
         ${model.inspecting ? html`<p role="status">Checking current workspaces…</p>` : nothing}
         ${model.confirmation
           ? html`<div class="confirm" role="alertdialog" aria-label="Discard local work">

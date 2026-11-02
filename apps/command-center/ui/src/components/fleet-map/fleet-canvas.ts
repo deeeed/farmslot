@@ -65,7 +65,10 @@ import {
 } from '../work-graph/work-graph-execution-overlay.js';
 
 import {
+  FLEET_GROUP_STORAGE_KEY,
+  FLEET_VIEW_STORAGE_KEY,
   type FleetCanvasGroupBy,
+  fleetCanvasStoredFallbacks,
   fleetCanvasUrlStateFromHash,
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
@@ -415,10 +418,10 @@ export class FleetCanvas extends LitElement {
   }
 
   private _readUrlParams() {
-    const next = fleetCanvasUrlStateFromHash(location.hash, {
-      groupBy: localStorage.getItem('farmslot:fleet-groupBy'),
-      viewMode: localStorage.getItem('farmslot:fleet-viewMode'),
-    });
+    const next = fleetCanvasUrlStateFromHash(
+      location.hash,
+      fleetCanvasStoredFallbacks(localStorage),
+    );
     if (this.groupBy !== next.groupBy) {
       this.groupBy = next.groupBy;
       if (next.groupBy === 'resource') this.fetchResourceData();
@@ -1107,7 +1110,7 @@ export class FleetCanvas extends LitElement {
 
   private setGroupBy(mode: FleetCanvasGroupBy) {
     this.groupBy = mode;
-    localStorage.setItem('farmslot:fleet-groupBy', mode);
+    localStorage.setItem(FLEET_GROUP_STORAGE_KEY, mode);
     this._writeUrlParams();
     if (mode === 'resource' && !this._resourceFetched) {
       this.fetchResourceData();
@@ -1116,7 +1119,7 @@ export class FleetCanvas extends LitElement {
 
   private setViewMode(mode: FleetCanvasViewMode) {
     this.viewMode = mode;
-    localStorage.setItem('farmslot:fleet-viewMode', mode);
+    localStorage.setItem(FLEET_VIEW_STORAGE_KEY, mode);
     this._writeUrlParams();
   }
 

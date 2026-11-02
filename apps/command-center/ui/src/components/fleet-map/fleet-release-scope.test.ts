@@ -7,6 +7,7 @@ import { FleetRefreshViewModel } from '@farmslot/review-dispatch';
 
 import {
   FLEET_RELEASE_LABEL,
+  fleetLocalWorkNote,
   fleetReleaseScope,
   setFleetSelection,
 } from './fleet-release-scope.js';
@@ -115,6 +116,10 @@ test('the bulk release sends exactly the selected safe slots to fleet.refreshSlo
   assert.deepEqual(
     model.rows.map((row) => row.slotId),
     ['idle-2', 'busy-1', 'unpushed-1'],
+  );
+  assert.equal(
+    fleetLocalWorkNote(model.rows),
+    "Unpushed or uncommitted work on unpushed-1. Bulk release skips it. To discard that work and update, use the slot's own button below.",
   );
   await model.releaseIdle();
   const bulk = calls.filter((call) => call.method === Methods.FLEET_REFRESH_SLOTS);
