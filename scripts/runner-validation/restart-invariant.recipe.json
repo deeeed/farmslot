@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Every pipeline step survives a gateway restart",
+  "description": "On an isolated gateway with a remote node slot (own home, runs, pool, projects, port and tmux server; gh refuses; ssh stays local), run a no-restart baseline of each run shape, then hold a run at a known point in DISPATCH, MONITOR, REVIEW, the review-fix round, HUMAN_GATE package preparation, FINALIZE and the slot release, restart the gateway once with the node up and once with the node away past recovery's node wait, release the hold, and require the run's status, step statuses, decisions presented and slot state to equal the baseline's. The scripted worker drives every run; REVIEW and its fix round use one codex gpt-6-luna low review per round on a two-file change. Writes results.json in the evidence directory.",
+  "workflow": {
+    "entry": "restart-invariant",
+    "nodes": {
+      "restart-invariant": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/restart-invariant.mts",
+        "timeout_ms": 7200000,
+        "intent": "Each pipeline step ends the same way with a gateway restart, node up or node away, as without one.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

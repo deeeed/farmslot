@@ -293,297 +293,9 @@ export async function startRemoteNodeStack(
     await symlink(target, at);
     createdLinks.push(at);
   };
-
-  // ---- FARMSLOT_ROOT: the gateway reads its own branch at boot, so it is a checkout.
-  execFileSync('git', ['clone', '-q', '--shared', '--no-checkout', root, fixture], {
-    stdio: 'pipe',
-  });
-  await writeFile(
-    path.join(fixture, '.owner'),
-    `restart-invariant ${options.ownerTag} ${process.pid}\n`,
-  );
-  for (const name of ['scripts', 'services', 'packages', 'node_modules'])
-    await symlink(path.join(root, name), path.join(fixture, name));
-  // Node support bundles must resolve inside FARMSLOT_ROOT: give those paths real copies.
-  for (const relative of RUNNER_OBSERVABILITY_SUPPORT_PATHS)
-    await materialize(root, fixture, relative);
-  await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated restart-invariant fixture\n');
-  // The no-checkout clone has no .gitignore; pack ownership depends on it.
-  await cp(path.join(root, '.gitignore'), path.join(fixture, '.gitignore'));
-  await mkdir(path.join(home, 'run-archive'), { recursive: true, mode: 0o700 });
-  await mkdir(nodeHome, { recursive: true, mode: 0o700 });
-  for (const name of ['pool', 'node-pool', 'runs', 'slots', 'bin', 'holds'])
-    await mkdir(path.join(fixture, name));
-  await mkdir(tmuxDir, { mode: 0o700 });
-
-  // ---- homes
-  const realHome = userInfo().homedir;
-  const homeLinks: Array<[string, string[]]> = [
-    [nodeUserHome, ['.codex', '.claude', '.claude.json', '.asdf', '.tool-versions']],
-    [gatewayUserHome, ['.asdf', '.tool-versions']],
-  ];
-  for (const [userHome, names] of homeLinks) {
-    await mkdir(userHome, { recursive: true, mode: 0o700 });
-    for (const name of names)
-      if (existsSync(path.join(realHome, name)))
-        await link(path.join(realHome, name), path.join(userHome, name));
-  }
-  // Node commands run through a login shell, where /etc/zprofile reorders PATH. A real node's
-  // profile then puts asdf first; this one does the same and keeps the fixture bin first.
-  await writeFile(
-    path.join(nodeUserHome, '.zprofile'),
-    `export PATH=${JSON.stringify(`${fakeBin}:${path.join(nodeUserHome, '.asdf', 'shims')}`)}:"$PATH"\n`,
-  );
-  // ~/farmslot-node is the node's deployment: for this node, the checkout under test.
-  await mkdir(path.join(nodeUserHome, 'farmslot-node'));
-  for (const name of ['scripts', 'packages', 'services', 'node_modules'])
-    await link(path.join(root, name), path.join(nodeUserHome, 'farmslot-node', name));
-  // The node's installed CLI: an immutable snapshot of the checkout, which task pinning requires.
-  await mkdir(path.join(nodeUserHome, '.local', 'bin'), { recursive: true });
-  await link(
-    path.join(
-      await ensureCliSnapshot(root, options.cliSnapshots, evidence, log),
-      'packages/cli/bin/farmslot.mjs',
-    ),
-    path.join(nodeUserHome, '.local', 'bin', 'farmslot'),
-  );
-
-  // ---- fixture bin: nothing reaches GitHub, ssh stays local, holds are inert until armed.
-  await writeFile(
-    path.join(fakeBin, 'gh'),
-    '#!/bin/sh\necho "restart-invariant: gh is disabled in the isolated stack" >&2\nexit 2\n',
-    { mode: 0o755 },
-  );
-  await writeFile(
-    path.join(fakeBin, 'remote-shim.cjs'),
-    remoteShim(proofHost, nodeUserHome, path.join(fixture, 'remote-shim.log'), holds),
-  );
-  for (const tool of ['ssh', 'scp', 'rsync'])
-    await writeFile(
-      path.join(fakeBin, tool),
-      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(fakeBin, 'remote-shim.cjs'))} ${tool} "$@"\n`,
-      { mode: 0o755 },
-    );
-  await writeFile(path.join(fakeBin, 'git'), gitHold(which('git', process.env), holds), {
-    mode: 0o755,
-  });
-  await writeFile(
-    path.join(fakeBin, 'codex-proxy.cjs'),
-    codexProxy(which('codex', process.env), holds),
-  );
-  await writeFile(
-    path.join(fakeBin, 'codex'),
-    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(fakeBin, 'codex-proxy.cjs'))} "$@"\n`,
-    { mode: 0o755 },
-  );
-
-  // ---- origin and slots
-  const seed = path.join(fixture, 'seed');
-  for (const [file, content] of Object.entries(options.seed)) {
-    await mkdir(path.dirname(path.join(seed, file)), { recursive: true });
-    await writeFile(path.join(seed, file), content);
-  }
-  git(seed, 'init', '-q', '-b', 'main');
-  git(seed, 'add', '-A');
-  git(
-    seed,
-    '-c',
-    'user.name=Fixture',
-    '-c',
-    'user.email=fixture@example.invalid',
-    'commit',
-    '-q',
-    '-m',
-    'fixture: seed',
-  );
-  git(fixture, 'clone', '-q', '--bare', seed, origin);
-  const slotRepo = (slotId: string) => path.join(fixture, 'slots', slotId);
-  for (const slotId of options.slots) {
-    git(fixture, 'clone', '-q', origin, slotRepo(slotId));
-    git(slotRepo(slotId), 'config', 'user.name', 'Fixture Worker');
-    git(slotRepo(slotId), 'config', 'user.email', 'fixture@example.invalid');
-    await appendFile(path.join(slotRepo(slotId), '.git', 'info', 'exclude'), '.task/\n.agent/\n');
-  }
-
-  // ---- projects and pools
-  for (const pack of options.projects(holds)) {
-    const dir = path.join(fixture, 'projects', pack.name);
-    for (const [file, content] of Object.entries(pack.files)) {
-      await mkdir(path.dirname(path.join(dir, file)), { recursive: true });
-      await writeFile(path.join(dir, file), content);
-    }
-    await writeJson(path.join(dir, 'project.json'), {
-      ...pack.projectJson,
-      name: pack.name,
-      repo_url: origin,
-      default_branch: 'main',
-      // Scripted command mode reads the command from the node's support bundle.
-      node_support: { paths: [`projects/${pack.name}/project.json`] },
-    });
-    const pool = (host: string) => ({
-      machine,
-      host,
-      ssh_user: userInfo().username,
-      project: pack.name,
-      platform: 'cli',
-      os: process.platform,
-      slots: options.slots
-        .filter((slotId) => slotId.startsWith(`${pack.name}-`))
-        .map((slotId) => ({
-          id: slotId,
-          enabled: true,
-          mode: 'dispatch',
-          repo: slotRepo(slotId),
-          session: slotId,
-          resources: {},
-        })),
-    });
-    // Gateway view: not this host's name, so every slot command routes through the node.
-    await writeJson(path.join(fixture, 'pool', `${pack.name}.json`), pool(proofHost));
-    // Node view: its slots are local to it (node-side commands check this).
-    await writeJson(path.join(nodePoolDir, `${pack.name}.json`), pool('localhost'));
-  }
-
-  // ---------------------------------------------------------------- processes
-  let port = await freePort();
-  while (port === LIVE_PORT) port = await freePort();
-  const url = `ws://127.0.0.1:${port}`;
-  const token = testGatewayIdentity(home);
-  testGatewayProfile(home, url, token);
-  let nodeToken = '';
   let gateway: ChildProcess | undefined;
   let node: ChildProcess | undefined;
   let connection: GatewayConnection | undefined;
-  let gatewayGeneration = 0;
-  let nodeGeneration = 0;
-
-  const gatewayEnv = (): NodeJS.ProcessEnv => ({
-    ...baseEnv,
-    HOME: gatewayUserHome,
-    FARMSLOT_ROOT: fixture,
-    FARMSLOT_HOME: home,
-    FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
-    FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
-    FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
-    FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
-    FARMSLOT_NATIVE_STATE_DIR: gatewayNativeRoot,
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: OWNER,
-    FARMSLOT_GATEWAY_PROFILE: 'proof',
-    FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
-    FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '1',
-    FARMSLOT_DEMO_POOL: '0',
-    GATEWAY_HOST: '127.0.0.1',
-    GATEWAY_PORT: String(port),
-  });
-  const nodeEnv = (): NodeJS.ProcessEnv => ({
-    ...baseEnv,
-    FARMSLOT_ROOT: fixture,
-    HOME: nodeUserHome,
-    // A real node resolves node through asdf (~/.tool-versions); worker launch preflight checks it.
-    PATH: `${fakeBin}${path.delimiter}${path.join(nodeUserHome, '.asdf', 'shims')}${path.delimiter}${process.env.PATH}`,
-    FARMSLOT_HOME: nodeHome,
-    FARMSLOT_NATIVE_STATE_DIR: nodeNativeRoot,
-    FARMSLOT_POOL_DIR: nodePoolDir,
-    FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: OWNER,
-    FARMSLOT_NODE_TOKEN: nodeToken,
-    FARMSLOT_GATEWAY_TOKEN: '',
-    FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '1',
-    GATEWAY_URL: url,
-    MACHINE_NAME: machine,
-    SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen-control.sock'),
-  });
-
-  const startGateway = async () => {
-    gatewayGeneration += 1;
-    const log = `gateway-${gatewayGeneration}.log`;
-    gateway = startWorkspaceProcess(
-      { root, evidence, env: gatewayEnv() },
-      '@farmslot/gateway',
-      log,
-    );
-    reaper.group(gateway.pid);
-    const client = new GatewayClient({ url, timeout: 30_000, credential: { token } });
-    const started = gateway;
-    connection = await poll(
-      'the isolated gateway',
-      async () => {
-        if (started.exitCode !== null)
-          throw new Error(`Isolated gateway exited (${started.exitCode}); see ${log}`);
-        try {
-          return await client.connect();
-        } catch (error) {
-          // Connection refusal is expected while the gateway starts on its isolated port.
-          if (!(error instanceof GatewayConnectionError)) throw error;
-          return undefined;
-        }
-      },
-      120_000,
-    );
-  };
-  const stopGateway = async () => {
-    connection?.close();
-    connection = undefined;
-    await stopProcess(gateway);
-  };
-  const startNode = () => {
-    nodeGeneration += 1;
-    node = startWorkspaceProcess(
-      { root, evidence, env: nodeEnv() },
-      '@farmslot/node',
-      `node-${nodeGeneration}.log`,
-    );
-    reaper.group(node.pid);
-  };
-  const call = <T,>(method: string, params?: unknown) => {
-    if (!connection) throw new Error(`The isolated gateway is not connected (${method})`);
-    return connection.call<T>(method, params);
-  };
-  const waitForNode = async (connected: boolean, budgetMs = 120_000) => {
-    await poll(
-      `node ${machine} to ${connected ? 'connect' : 'disconnect'}`,
-      async () => {
-        const { nodes } = await call<{ nodes: Array<{ machine: string }> }>('nodes.list');
-        return nodes.some((entry) => entry.machine === machine) === connected ? true : undefined;
-      },
-      budgetMs,
-    );
-  };
-
-  await startGateway();
-  const { principal } = await call<{ principal: { id: string } }>('principal.create', {
-    subject: { type: 'node', displayName: 'restart-invariant node', machine },
-    roles: [],
-  });
-  await call('principal.bindNativeOwner', {
-    nodePrincipalId: principal.id,
-    ownerPrincipalId: OWNER,
-  });
-  const issued = await call<{ secret: string }>('credential.issue', {
-    principalId: principal.id,
-    displayName: 'restart-invariant node',
-  });
-  nodeToken = issued.secret;
-  // The node loader prefers FARMSLOT_ROOT/.env over its env; the credential stays in the fixture.
-  await writeFile(path.join(fixture, '.env'), `FARMSLOT_NODE_TOKEN=${nodeToken}\n`, {
-    mode: 0o600,
-  });
-  startNode();
-  await waitForNode(true);
-  // The startup fleet refresh can still be running; FIND_SLOT reads the fleet snapshot.
-  await call('fleet.refresh', {});
-  await poll(
-    'the fleet to list every slot',
-    async () => {
-      const { fleet } = await call<{ fleet: { slots: Array<{ slot: string }> } }>('fleet.status');
-      return options.slots.every((slotId) => fleet.slots.some((slot) => slot.slot === slotId))
-        ? true
-        : undefined;
-    },
-    120_000,
-  );
-  await log('stack ready', { fixture, port, machine, slots: options.slots.length });
-
   const nativeHostPids = () =>
     [nodeNativeRoot, gatewayNativeRoot].flatMap((rootDir) => {
       const files = [path.join(rootDir, 'host.json')];
@@ -596,88 +308,385 @@ export async function startRemoteNodeStack(
         return typeof pid === 'number' ? [pid] : [];
       });
     });
-
-  return {
-    fixture,
-    holds,
-    slotRepo,
-    connection: () => {
-      if (!connection) throw new Error('The isolated gateway is not connected');
-      return connection;
-    },
-    call,
-    waitForNode,
-    async restartGateway({ nodeAwayMs, whileDown }) {
-      const away = nodeAwayMs !== undefined;
-      if (away) {
-        await stopProcess(node);
-        await waitForNode(false, 60_000);
+  /** Stops everything the stack started and removes the fixture; returns what went wrong. */
+  const cleanup = async (): Promise<string[]> => {
+    const errors: string[] = [];
+    const attempt = async (label: string, operation: () => Promise<unknown>) => {
+      try {
+        await operation();
+      } catch (error) {
+        errors.push(`${label}: ${String(error)}`);
       }
-      const stoppedAt = Date.now();
-      await stopGateway();
-      await whileDown?.();
-      await startGateway();
-      const readyAt = Date.now();
-      await log(`gateway ${gatewayGeneration} ready`, { nodeAway: away });
-      if (!away) {
-        await waitForNode(true);
-        return { downMs: readyAt - stoppedAt };
-      }
-      // The node stays away for nodeAwayMs after the new gateway is ready.
-      while (Date.now() - readyAt < nodeAwayMs) await delay(Math.min(200, nodeAwayMs));
-      startNode();
-      await waitForNode(true);
-      return { downMs: readyAt - stoppedAt, nodeOfflineMs: Date.now() - readyAt };
-    },
-    async cleanup() {
-      const errors: string[] = [];
-      const attempt = async (label: string, operation: () => Promise<unknown>) => {
+    };
+    connection?.close();
+    connection = undefined;
+    await attempt('node', () => stopProcess(node));
+    for (const pid of nativeHostPids())
+      await attempt(`native host ${pid}`, async () => {
+        process.kill(pid, 'SIGTERM');
+        await poll(
+          `native host ${pid} to stop`,
+          async () => (alive(pid) ? undefined : true),
+          15_000,
+        );
+      });
+    await attempt('gateway', () => stopProcess(gateway));
+    await attempt('tmux', async () => {
+      if (existsSync(tmuxSocket))
+        execFileSync('tmux', ['-S', tmuxSocket, 'kill-server'], { stdio: 'ignore' });
+    });
+    // Anything left that names the fixture (runners, held fixture calls) is reported and killed.
+    await attempt('leftovers', async () => {
+      const left = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' })
+        .split('\n')
+        .map((line) => line.trim().match(/^(\d+)\s+(.*)$/))
+        .filter((match): match is RegExpMatchArray => Boolean(match))
+        .filter((match) => match[2]!.includes(fixture) && Number(match[1]) !== process.pid);
+      for (const match of left) {
+        errors.push(`leftover ${match[1]} ${match[2]!.slice(0, 160)}`);
         try {
-          await operation();
+          process.kill(Number(match[1]), 'SIGKILL');
         } catch (error) {
-          errors.push(`${label}: ${String(error)}`);
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
         }
-      };
+      }
+    });
+    // Drop the links into the real home first, so no removal below can reach their targets.
+    for (const at of createdLinks)
+      if ((await lstat(at).catch(() => undefined))?.isSymbolicLink()) await unlink(at);
+    await attempt('fixture', () => rm(fixture, { recursive: true, force: true }));
+    return errors;
+  };
+
+  try {
+    // ---- FARMSLOT_ROOT: the gateway reads its own branch at boot, so it is a checkout.
+    execFileSync('git', ['clone', '-q', '--shared', '--no-checkout', root, fixture], {
+      stdio: 'pipe',
+    });
+    await writeFile(
+      path.join(fixture, '.owner'),
+      `restart-invariant ${options.ownerTag} ${process.pid}\n`,
+    );
+    for (const name of ['scripts', 'services', 'packages', 'node_modules'])
+      await symlink(path.join(root, name), path.join(fixture, name));
+    // Node support bundles must resolve inside FARMSLOT_ROOT: give those paths real copies.
+    for (const relative of RUNNER_OBSERVABILITY_SUPPORT_PATHS)
+      await materialize(root, fixture, relative);
+    await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated restart-invariant fixture\n');
+    // The no-checkout clone has no .gitignore; pack ownership depends on it.
+    await cp(path.join(root, '.gitignore'), path.join(fixture, '.gitignore'));
+    await mkdir(path.join(home, 'run-archive'), { recursive: true, mode: 0o700 });
+    await mkdir(nodeHome, { recursive: true, mode: 0o700 });
+    for (const name of ['pool', 'node-pool', 'runs', 'slots', 'bin', 'holds'])
+      await mkdir(path.join(fixture, name));
+    await mkdir(tmuxDir, { mode: 0o700 });
+
+    // ---- homes
+    const realHome = userInfo().homedir;
+    const homeLinks: Array<[string, string[]]> = [
+      [nodeUserHome, ['.codex', '.claude', '.claude.json', '.asdf', '.tool-versions']],
+      [gatewayUserHome, ['.asdf', '.tool-versions']],
+    ];
+    for (const [userHome, names] of homeLinks) {
+      await mkdir(userHome, { recursive: true, mode: 0o700 });
+      for (const name of names)
+        if (existsSync(path.join(realHome, name)))
+          await link(path.join(realHome, name), path.join(userHome, name));
+    }
+    // Node commands run through a login shell, where /etc/zprofile reorders PATH. A real node's
+    // profile then puts asdf first; this one does the same and keeps the fixture bin first.
+    await writeFile(
+      path.join(nodeUserHome, '.zprofile'),
+      `export PATH=${JSON.stringify(`${fakeBin}:${path.join(nodeUserHome, '.asdf', 'shims')}`)}:"$PATH"\n`,
+    );
+    // ~/farmslot-node is the node's deployment: for this node, the checkout under test.
+    await mkdir(path.join(nodeUserHome, 'farmslot-node'));
+    for (const name of ['scripts', 'packages', 'services', 'node_modules'])
+      await link(path.join(root, name), path.join(nodeUserHome, 'farmslot-node', name));
+    // The node's installed CLI: an immutable snapshot of the checkout, which task pinning requires.
+    await mkdir(path.join(nodeUserHome, '.local', 'bin'), { recursive: true });
+    await link(
+      path.join(
+        await ensureCliSnapshot(root, options.cliSnapshots, evidence, log),
+        'packages/cli/bin/farmslot.mjs',
+      ),
+      path.join(nodeUserHome, '.local', 'bin', 'farmslot'),
+    );
+
+    // ---- fixture bin: nothing reaches GitHub, ssh stays local, holds are inert until armed.
+    await writeFile(
+      path.join(fakeBin, 'gh'),
+      '#!/bin/sh\necho "restart-invariant: gh is disabled in the isolated stack" >&2\nexit 2\n',
+      { mode: 0o755 },
+    );
+    await writeFile(
+      path.join(fakeBin, 'remote-shim.cjs'),
+      remoteShim(proofHost, nodeUserHome, path.join(fixture, 'remote-shim.log'), holds),
+    );
+    for (const tool of ['ssh', 'scp', 'rsync'])
+      await writeFile(
+        path.join(fakeBin, tool),
+        `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(fakeBin, 'remote-shim.cjs'))} ${tool} "$@"\n`,
+        { mode: 0o755 },
+      );
+    await writeFile(path.join(fakeBin, 'git'), gitHold(which('git', process.env), holds), {
+      mode: 0o755,
+    });
+    await writeFile(
+      path.join(fakeBin, 'codex-proxy.cjs'),
+      codexProxy(which('codex', process.env), holds),
+    );
+    await writeFile(
+      path.join(fakeBin, 'codex'),
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(fakeBin, 'codex-proxy.cjs'))} "$@"\n`,
+      { mode: 0o755 },
+    );
+
+    // ---- origin and slots
+    const seed = path.join(fixture, 'seed');
+    for (const [file, content] of Object.entries(options.seed)) {
+      await mkdir(path.dirname(path.join(seed, file)), { recursive: true });
+      await writeFile(path.join(seed, file), content);
+    }
+    git(seed, 'init', '-q', '-b', 'main');
+    git(seed, 'add', '-A');
+    git(
+      seed,
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '-q',
+      '-m',
+      'fixture: seed',
+    );
+    git(fixture, 'clone', '-q', '--bare', seed, origin);
+    const slotRepo = (slotId: string) => path.join(fixture, 'slots', slotId);
+    for (const slotId of options.slots) {
+      git(fixture, 'clone', '-q', origin, slotRepo(slotId));
+      git(slotRepo(slotId), 'config', 'user.name', 'Fixture Worker');
+      git(slotRepo(slotId), 'config', 'user.email', 'fixture@example.invalid');
+      await appendFile(path.join(slotRepo(slotId), '.git', 'info', 'exclude'), '.task/\n.agent/\n');
+    }
+
+    // ---- projects and pools
+    for (const pack of options.projects(holds)) {
+      const dir = path.join(fixture, 'projects', pack.name);
+      for (const [file, content] of Object.entries(pack.files)) {
+        await mkdir(path.dirname(path.join(dir, file)), { recursive: true });
+        await writeFile(path.join(dir, file), content);
+      }
+      await writeJson(path.join(dir, 'project.json'), {
+        ...pack.projectJson,
+        name: pack.name,
+        repo_url: origin,
+        default_branch: 'main',
+        // Scripted command mode reads the command from the node's support bundle.
+        node_support: { paths: [`projects/${pack.name}/project.json`] },
+      });
+      const pool = (host: string) => ({
+        machine,
+        host,
+        ssh_user: userInfo().username,
+        project: pack.name,
+        platform: 'cli',
+        os: process.platform,
+        slots: options.slots
+          .filter((slotId) => slotId.startsWith(`${pack.name}-`))
+          .map((slotId) => ({
+            id: slotId,
+            enabled: true,
+            mode: 'dispatch',
+            repo: slotRepo(slotId),
+            session: slotId,
+            resources: {},
+          })),
+      });
+      // Gateway view: not this host's name, so every slot command routes through the node.
+      await writeJson(path.join(fixture, 'pool', `${pack.name}.json`), pool(proofHost));
+      // Node view: its slots are local to it (node-side commands check this).
+      await writeJson(path.join(nodePoolDir, `${pack.name}.json`), pool('localhost'));
+    }
+
+    // ---------------------------------------------------------------- processes
+    let port = await freePort();
+    while (port === LIVE_PORT) port = await freePort();
+    const url = `ws://127.0.0.1:${port}`;
+    const token = testGatewayIdentity(home);
+    testGatewayProfile(home, url, token);
+    let nodeToken = '';
+    let gatewayGeneration = 0;
+    let nodeGeneration = 0;
+
+    const gatewayEnv = (): NodeJS.ProcessEnv => ({
+      ...baseEnv,
+      HOME: gatewayUserHome,
+      FARMSLOT_ROOT: fixture,
+      FARMSLOT_HOME: home,
+      FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
+      FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
+      FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
+      FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
+      FARMSLOT_NATIVE_STATE_DIR: gatewayNativeRoot,
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: OWNER,
+      FARMSLOT_GATEWAY_PROFILE: 'proof',
+      FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
+      FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '1',
+      FARMSLOT_DEMO_POOL: '0',
+      GATEWAY_HOST: '127.0.0.1',
+      GATEWAY_PORT: String(port),
+    });
+    const nodeEnv = (): NodeJS.ProcessEnv => ({
+      ...baseEnv,
+      FARMSLOT_ROOT: fixture,
+      HOME: nodeUserHome,
+      // A real node resolves node through asdf (~/.tool-versions); worker launch preflight checks it.
+      PATH: `${fakeBin}${path.delimiter}${path.join(nodeUserHome, '.asdf', 'shims')}${path.delimiter}${process.env.PATH}`,
+      FARMSLOT_HOME: nodeHome,
+      FARMSLOT_NATIVE_STATE_DIR: nodeNativeRoot,
+      FARMSLOT_POOL_DIR: nodePoolDir,
+      FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: OWNER,
+      FARMSLOT_NODE_TOKEN: nodeToken,
+      FARMSLOT_GATEWAY_TOKEN: '',
+      FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '1',
+      GATEWAY_URL: url,
+      MACHINE_NAME: machine,
+      SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen-control.sock'),
+    });
+
+    const startGateway = async () => {
+      gatewayGeneration += 1;
+      const log = `gateway-${gatewayGeneration}.log`;
+      gateway = startWorkspaceProcess(
+        { root, evidence, env: gatewayEnv() },
+        '@farmslot/gateway',
+        log,
+      );
+      reaper.group(gateway.pid);
+      const client = new GatewayClient({ url, timeout: 30_000, credential: { token } });
+      const started = gateway;
+      connection = await poll(
+        'the isolated gateway',
+        async () => {
+          if (started.exitCode !== null)
+            throw new Error(`Isolated gateway exited (${started.exitCode}); see ${log}`);
+          try {
+            return await client.connect();
+          } catch (error) {
+            // Connection refusal is expected while the gateway starts on its isolated port.
+            if (!(error instanceof GatewayConnectionError)) throw error;
+            return undefined;
+          }
+        },
+        120_000,
+      );
+    };
+    const stopGateway = async () => {
       connection?.close();
       connection = undefined;
-      await attempt('node', () => stopProcess(node));
-      for (const pid of nativeHostPids())
-        await attempt(`native host ${pid}`, async () => {
-          process.kill(pid, 'SIGTERM');
-          await poll(
-            `native host ${pid} to stop`,
-            async () => (alive(pid) ? undefined : true),
-            15_000,
-          );
-        });
-      await attempt('gateway', () => stopProcess(gateway));
-      await attempt('tmux', async () => {
-        if (existsSync(tmuxSocket))
-          execFileSync('tmux', ['-S', tmuxSocket, 'kill-server'], { stdio: 'ignore' });
-      });
-      // Anything left that names the fixture (runners, held fixture calls) is reported and killed.
-      await attempt('leftovers', async () => {
-        const left = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' })
-          .split('\n')
-          .map((line) => line.trim().match(/^(\d+)\s+(.*)$/))
-          .filter((match): match is RegExpMatchArray => Boolean(match))
-          .filter((match) => match[2]!.includes(fixture) && Number(match[1]) !== process.pid);
-        for (const match of left) {
-          errors.push(`leftover ${match[1]} ${match[2]!.slice(0, 160)}`);
-          try {
-            process.kill(Number(match[1]), 'SIGKILL');
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
-          }
+      await stopProcess(gateway);
+    };
+    const startNode = () => {
+      nodeGeneration += 1;
+      node = startWorkspaceProcess(
+        { root, evidence, env: nodeEnv() },
+        '@farmslot/node',
+        `node-${nodeGeneration}.log`,
+      );
+      reaper.group(node.pid);
+    };
+    const call = <T,>(method: string, params?: unknown) => {
+      if (!connection) throw new Error(`The isolated gateway is not connected (${method})`);
+      return connection.call<T>(method, params);
+    };
+    const waitForNode = async (connected: boolean, budgetMs = 120_000) => {
+      await poll(
+        `node ${machine} to ${connected ? 'connect' : 'disconnect'}`,
+        async () => {
+          const { nodes } = await call<{ nodes: Array<{ machine: string }> }>('nodes.list');
+          return nodes.some((entry) => entry.machine === machine) === connected ? true : undefined;
+        },
+        budgetMs,
+      );
+    };
+
+    await startGateway();
+    const { principal } = await call<{ principal: { id: string } }>('principal.create', {
+      subject: { type: 'node', displayName: 'restart-invariant node', machine },
+      roles: [],
+    });
+    await call('principal.bindNativeOwner', {
+      nodePrincipalId: principal.id,
+      ownerPrincipalId: OWNER,
+    });
+    const issued = await call<{ secret: string }>('credential.issue', {
+      principalId: principal.id,
+      displayName: 'restart-invariant node',
+    });
+    nodeToken = issued.secret;
+    // The node loader prefers FARMSLOT_ROOT/.env over its env; the credential stays in the fixture.
+    await writeFile(path.join(fixture, '.env'), `FARMSLOT_NODE_TOKEN=${nodeToken}\n`, {
+      mode: 0o600,
+    });
+    startNode();
+    await waitForNode(true);
+    // The startup fleet refresh can still be running; FIND_SLOT reads the fleet snapshot.
+    await call('fleet.refresh', {});
+    await poll(
+      'the fleet to list every slot',
+      async () => {
+        const { fleet } = await call<{ fleet: { slots: Array<{ slot: string }> } }>('fleet.status');
+        return options.slots.every((slotId) => fleet.slots.some((slot) => slot.slot === slotId))
+          ? true
+          : undefined;
+      },
+      120_000,
+    );
+    await log('stack ready', { fixture, port, machine, slots: options.slots.length });
+
+    return {
+      fixture,
+      holds,
+      slotRepo,
+      connection: () => {
+        if (!connection) throw new Error('The isolated gateway is not connected');
+        return connection;
+      },
+      call,
+      waitForNode,
+      async restartGateway({ nodeAwayMs, whileDown }) {
+        const away = nodeAwayMs !== undefined;
+        if (away) {
+          await stopProcess(node);
+          await waitForNode(false, 60_000);
         }
-      });
-      // Drop the links into the real home first, so no removal below can reach their targets.
-      for (const at of createdLinks)
-        if ((await lstat(at).catch(() => undefined))?.isSymbolicLink()) await unlink(at);
-      await attempt('fixture', () => rm(fixture, { recursive: true, force: true }));
-      return errors;
-    },
-  };
+        const stoppedAt = Date.now();
+        await stopGateway();
+        await whileDown?.();
+        await startGateway();
+        const readyAt = Date.now();
+        await log(`gateway ${gatewayGeneration} ready`, { nodeAway: away });
+        if (!away) {
+          await waitForNode(true);
+          return { downMs: readyAt - stoppedAt };
+        }
+        // The node stays away for nodeAwayMs after the new gateway is ready.
+        while (Date.now() - readyAt < nodeAwayMs) await delay(Math.min(200, nodeAwayMs));
+        startNode();
+        await waitForNode(true);
+        return { downMs: readyAt - stoppedAt, nodeOfflineMs: Date.now() - readyAt };
+      },
+      cleanup,
+    };
+  } catch (error) {
+    // A stack that failed to start stops what it did start before the caller sees the error.
+    const errors = await cleanup();
+    if (errors.length)
+      throw new AggregateError([error, ...errors], `Stack startup failed: ${String(error)}`);
+    throw error;
+  }
 }
 
 function alive(pid: number): boolean {

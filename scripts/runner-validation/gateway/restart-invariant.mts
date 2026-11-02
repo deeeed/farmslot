@@ -193,6 +193,10 @@ interface StepSpec {
 
 const SETTLED_STEP = new Set(['done', 'failed', 'skipped']);
 const TERMINAL = new Set(['done', 'failed', 'cancelled']);
+// Statuses of a run that waits for a person's decision (runners/run-progress.ts).
+const WAITING = new Set(['needs-decision', 'human-gating', 'blocked', 'review-failed']);
+// No visible change for this long with nothing held: the run is not going to move.
+const STALL_MS = 6 * 60_000;
 const stepStatus = (run: Run, name: string) => run.steps.find((step) => step.name === name)?.status;
 const contexts = (run: Run, role: string) =>
   (run.agentContexts ?? []).filter((context) => context.role === role);
@@ -371,6 +375,8 @@ interface ScenarioResult {
   outcome: RunOutcome;
   durationS: number;
   restarts: RestartRecord[];
+  /** Holds the run never reached after an earlier restart. */
+  unreached: StepName[];
   evidence: string;
 }
 
@@ -410,10 +416,11 @@ async function runScenario(
   const runId = created.id;
   await log(`${label}: run created`, { runId, slotId });
   const restarts: RestartRecord[] = [];
+  const unreached: StepName[] = [];
   const getRun = async () => (await stack.call<{ run: Run }>('run.get', { runId })).run;
   let current = 0;
   let lastBrief = '';
-  let stable = 0;
+  let changedAt = Date.now();
   let terminalSince: number | undefined;
   const deadline = started + shape.timeoutMs;
   for (;;) {
@@ -437,8 +444,8 @@ async function runScenario(
         `${JSON.stringify({ t: seconds(started), summary })}\n`,
       );
       lastBrief = summary;
-      stable = 0;
-    } else stable += 1;
+      changedAt = Date.now();
+    }
 
     if (phase) {
       if (!armed.has(phase) && typeof phase.armAt === 'function' && phase.armAt(view)) {
@@ -473,10 +480,21 @@ async function runScenario(
         current += 1;
         continue;
       }
-      if (phase.missed(view))
-        throw new Inconclusive(
-          `${label}: ${phase.step} moved past its hold point without being held (${summary})`,
-        );
+      const stalled = Date.now() - changedAt >= STALL_MS;
+      if (phase.missed(view) || stalled) {
+        // Before any restart, the hold itself failed. After one, the run went elsewhere than the
+        // baseline: settle it and let the outcome comparison show where.
+        if (restarts.length === 0)
+          throw new Inconclusive(
+            `${label}: ${phase.step} ${stalled ? 'never reached' : 'moved past'} its hold point (${summary})`,
+          );
+        unreached.push(...phases.slice(current).map((pending) => pending.step));
+        await log(`${label}: after the restarts the run never reached the ${phase.step} hold`, {
+          run: summary,
+        });
+        current = phases.length;
+        continue;
+      }
     }
 
     // Decisions the shape answers; a finalize hold arms just before the gate is resolved.
@@ -496,32 +514,29 @@ async function runScenario(
     if (resolved) continue;
 
     if (!phase) {
-      // Settled: terminal with its slot no longer being released, or waiting on a person.
-      const waiting = run.decisions.some((decision) => !decision.resolvedAt);
+      // Settled: terminal with its slot no longer being released, waiting on a person, or
+      // unchanged long enough that nothing will move it (a run a restart stranded).
+      const unchangedMs = Date.now() - changedAt;
+      const waiting =
+        WAITING.has(run.status) && run.decisions.some((decision) => !decision.resolvedAt);
+      let settled = unchangedMs >= STALL_MS || (waiting && unchangedMs >= 5000);
       if (TERMINAL.has(run.status)) {
         terminalSince ??= Date.now();
-        const releasing =
-          view.slot?.phase === 'releasing' || ['busy'].includes(view.slot?.lifecycle ?? '');
-        if ((!releasing && stable >= 3) || Date.now() - terminalSince > 120_000) {
-          await writeJson(path.join(dir, 'run-final.json'), run);
-          return {
-            label,
-            runId,
-            outcome: runOutcome(run, view.slot),
-            durationS: seconds(started),
-            restarts,
-            evidence: dir,
-          };
-        }
-      } else if (waiting && stable >= 6) {
-        const slot = await readSlot(stack, slotId);
+        const releasing = view.slot?.phase === 'releasing' || view.slot?.lifecycle === 'busy';
+        settled ||= (!releasing && unchangedMs >= 1500) || Date.now() - terminalSince > 120_000;
+      }
+      if (settled) {
+        const slot = view.slot ?? (await readSlot(stack, slotId));
         await writeJson(path.join(dir, 'run-final.json'), run);
+        if (unchangedMs >= STALL_MS)
+          await log(`${label}: unchanged for ${STALL_MS / 60_000} min; recording it as settled`);
         return {
           label,
           runId,
           outcome: runOutcome(run, slot),
           durationS: seconds(started),
           restarts,
+          unreached,
           evidence: dir,
         };
       }
@@ -607,7 +622,13 @@ try {
     try {
       const result = await runScenario(stack!, label, shapeName, phases);
       await retire(stack!, result.runId);
-      const differences = outcomeDifferences(baseline, result.outcome);
+      const differences = [
+        ...result.unreached.map(
+          (step) =>
+            `${step}: after the earlier restarts the run never reached this step's hold (the baseline did)`,
+        ),
+        ...outcomeDifferences(baseline, result.outcome),
+      ];
       check = {
         restarts,
         pass: differences.length === 0,
