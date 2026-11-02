@@ -54,6 +54,7 @@ test('a gate re-binds its slot only when no run holds it and the checkout is on 
   assert.deepEqual(rebound, [run.id]);
   const refused: Array<[string, Parameters<typeof rebindUnownedPublicationSlot>[1]]> = [
     ['owned by this run', { slot: async () => owned, git }],
+    ['stale approved head', { slot: async () => unowned, git, expectedHeadSha: 'b'.repeat(40) }],
     [
       'owned by another run',
       { slot: async () => ({ ...owned, current_run_id: 'foreign-run' }), git },

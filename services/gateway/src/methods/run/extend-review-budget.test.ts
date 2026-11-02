@@ -17,6 +17,10 @@ import {
   runReviewRoundBudget,
 } from '../../review/review-round-budget.js';
 import {
+  capturePublicationSource,
+  rebindUnownedPublicationSlot,
+} from '../../run-completion/publication-source.js';
+import {
   createEngineDecision,
   hasEngineDecisionWaiter,
   resolveEngineDecision,
@@ -358,4 +362,44 @@ test('a grant re-presents a waiting publish gate (TAT-4145 bda11b1a)', async (t)
   assert.equal(decisions.length, 1);
   assert.equal(decisions[0]!.resolvedAction, 'hold');
   assert.ok(decisions[0]!.resolvedAt, 'the stored card is resolved, so one gate stays pending');
+});
+
+test('a budget-failed run can extend after its slot was released without starting work', async (t) => {
+  // TAT-4359: terminal budget failure releases the lease but preserves the branch.
+  const { run, params, deps } = fixture(t, 'TAT-4359');
+  for (let i = 0; i < 5; i++) await admitReviewRound(run.id, `spent-${i}`);
+  updateRun(run.id, { status: 'failed', error: 'The five review rounds are spent.' });
+  let owner: string | null = null;
+  let epoch = 2;
+  const readers = {
+    slot: async () => ({ current_run_id: owner, slot_epoch: epoch }),
+    git: async () => ({ branch: run.branch!, headSha: head }),
+  };
+  const dependencies = {
+    authorize: deps.authorize,
+    source: (current: typeof run) => capturePublicationSource(current, readers),
+    rebindSlot: (current: typeof run) =>
+      rebindUnownedPublicationSlot(current, {
+        ...readers,
+        rebind: async () => {
+          owner = run.id;
+          epoch++;
+          return null;
+        },
+      }),
+  };
+  const result = await runExtendReviewBudget(params, emit, dependencies);
+  assert.equal(result.budget.used, 5);
+  assert.equal(result.budget.limit, 7);
+  assert.equal(result.run.status, 'failed', 'a grant does not start a reviewer or replay');
+  assert.equal(owner, run.id);
+  const persisted = JSON.parse(
+    await readFile(path.join(runsDirectory(), `${run.id}.json`), 'utf8'),
+  );
+  assert.deepEqual(persisted.reviewBudgetExtensions, [result.receipt]);
+  const replayed = await runExtendReviewBudget(params, emit, dependencies);
+  assert.deepEqual(replayed.receipt, result.receipt);
+  assert.equal(epoch, 3, 'an idempotent grant does not reclaim again');
+  await admitReviewRound(run.id, 'extended-sixth');
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).remaining, 1);
 });

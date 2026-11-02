@@ -156,7 +156,9 @@ test('cached gateway media waits for restored authentication before making its f
     },
     capabilities: { workspaceAccess: 'farm' },
   });
-  for (let i = 0; i < 20; i++) await flush();
+  const deadline = Date.now() + 1000;
+  while (view.values.length === 0 && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(calls, ['Bearer media-fixture']);
   assert.deepEqual(view.values, ['blob:restored-media']);
   assert.deepEqual(cancelled.values, []);
