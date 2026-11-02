@@ -700,6 +700,7 @@ export class NativeSessionManager {
                 effort: workerLaunch.effort,
                 safetyTier: workerLaunch.safetyTier,
                 approvalPolicy: workerLaunch.approvalPolicy,
+                modelQuestions: workerLaunch.modelQuestions,
                 filesystemPolicy,
               }
             : {}),

@@ -142,6 +142,25 @@ for (const role of ['review', 'primary', 'review-fix'] as const) {
   });
 }
 
+test('only an autonomous run launches its native worker with model questions off', async () => {
+  for (const runMode of ['autonomous', 'interactive', 'validation', undefined] as const) {
+    const { launch } = await prepareNativeWorkerLaunch({
+      vars: makeVars(),
+      project: {},
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      role: 'primary',
+      runMode,
+      safetyTier: 'sandboxed',
+      taskDir: 'tasks/proof',
+      leaseId: 'proof-lease',
+      sessionId: 'proof-session',
+      prepareAccount: false,
+    });
+    assert.equal(launch.modelQuestions, runMode === 'autonomous' ? 'off' : undefined, runMode);
+  }
+});
+
 for (const [runner, model, effort, executable] of [
   ['grok', 'grok-4.7', 'medium', '/usr/local/bin/grok'],
   ['cursor', 'composer-2.5', undefined, '/usr/local/bin/cursor-agent'],

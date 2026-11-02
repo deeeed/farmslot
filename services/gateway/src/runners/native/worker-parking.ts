@@ -178,6 +178,7 @@ export async function rehomeNativeParkHandle(
   const projectVars = await loadProjectVars(run.project);
   const prepared = await prepareNativeWorkerLaunch({
     role: owner.context.role,
+    runMode: run.mode,
     vars,
     taskLibraries: runTaskLibraries(run),
     project: projectVars.projectJson,

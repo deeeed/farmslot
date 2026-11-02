@@ -630,6 +630,7 @@ export async function dispatchNativeWorker(input: {
   const prepared = await prepareNativeWorkerLaunch({
     ...input,
     reviewValidationDepth: context.reviewValidationDepth,
+    runMode: run.mode,
     vars,
     taskLibraries: runTaskLibraries(run),
     taskDir: path.posix.dirname(input.taskFile),

@@ -11,6 +11,7 @@ import {
   PIPELINE_VISUAL_RESULT_SCHEMA,
 } from '@farmslot/protocol';
 
+import { modelQuestionsOffByRunner } from './model-questions.js';
 import { JsonLineProcess } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
 
@@ -439,6 +440,7 @@ export const claudeNativeAdapter: NativeAdapter = {
           : []),
         ...(options.effort ? ['--effort', options.effort] : []),
         ...(options.model ? ['--model', options.model] : []),
+        ...(options.modelQuestions === 'off' ? (modelQuestionsOffByRunner.claude.args ?? []) : []),
         ...(options.resumeSessionId
           ? ['--resume', options.resumeSessionId]
           : ['--session-id', nativeSessionId]),

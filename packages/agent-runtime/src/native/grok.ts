@@ -1,5 +1,6 @@
 import { acpRunsToolsUnasked, createAcpAdapter } from './acp.js';
 import { type AcpObject, acpObject } from './acp-rpc.js';
+import { modelQuestionsOffByRunner } from './model-questions.js';
 
 /**
  * Grok's cached sign-in, or the home's external auth provider (`auth_provider_command`, which Grok
@@ -31,5 +32,7 @@ export const grokNativeAdapter = createAcpAdapter({
     ...(options.effort ? ['--reasoning-effort', options.effort] : []),
     'stdio',
   ],
+  environment: (options) =>
+    options.modelQuestions === 'off' ? { ...modelQuestionsOffByRunner.grok.environment } : {},
   modes: ['default'],
 });

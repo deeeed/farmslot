@@ -13,6 +13,7 @@ import {
   PIPELINE_VISUAL_RESULT_SCHEMA,
 } from '@farmslot/protocol';
 
+import { modelQuestionsOffByRunner } from './model-questions.js';
 import { nativeChecklist } from './plan.js';
 import { JsonLineProcess, NativeRequestRefused } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
@@ -181,6 +182,7 @@ export const codexNativeAdapter: NativeAdapter = {
               'features.hooks=false',
             ]
           : []),
+        ...(options.modelQuestions === 'off' ? (modelQuestionsOffByRunner.codex.args ?? []) : []),
         'app-server',
       ],
       options,

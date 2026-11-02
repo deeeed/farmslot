@@ -614,6 +614,7 @@ export async function restoreTmuxWorker(
         effort: run.effort,
         runtimeDir,
         safetyTier,
+        modelQuestions: run.mode === 'autonomous' ? 'off' : undefined,
         taskDir: run.taskFile ? path.posix.dirname(run.taskFile) : undefined,
         blindTrialCapsule: blindTrialWorkerCapsule(run, selected.role),
       },

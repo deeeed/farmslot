@@ -5,6 +5,7 @@ import type {
   AgentRole,
   NativeProfileReference,
   ReviewValidationDepth,
+  RunCreateMode,
   SafetyTier,
 } from '@farmslot/protocol';
 import {
@@ -42,6 +43,8 @@ export async function prepareNativeWorkerLaunch(input: {
   safetyTier: SafetyTier;
   role: AgentRole;
   reviewValidationDepth?: ReviewValidationDepth;
+  /** An autonomous run has no operator to answer the model's own questions. */
+  runMode?: RunCreateMode;
   domain?: string;
   taskDir: string;
   leaseId: string;
@@ -176,6 +179,7 @@ export async function prepareNativeWorkerLaunch(input: {
       environment,
       safetyTier: input.safetyTier,
       ...(input.role === 'review' ? { approvalPolicy: 'never' } : {}),
+      ...(input.runMode === 'autonomous' ? { modelQuestions: 'off' } : {}),
       ...(accountLabel ? { accountLabel } : {}),
       ...(effort ? { effort } : {}),
     },

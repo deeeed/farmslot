@@ -389,6 +389,7 @@ export async function warmSessionHandoffDispatch(
     prompt,
     effort: requestingRun.effort ?? parentRun?.effort,
     safetyTier,
+    modelQuestions: requestingRun.mode === 'autonomous' ? ('off' as const) : undefined,
     taskDir: workerTaskAbs,
     taskFile: absoluteTaskMd,
     replacementReadySignalPath: binding.context?.signalFile,

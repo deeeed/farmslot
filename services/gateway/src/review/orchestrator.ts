@@ -2967,6 +2967,7 @@ async function sendOwnedFeedbackToWorker(
           deliveryStartedAt ?? fixAttemptStartedAt,
         ),
         safetyTier: latestRun?.safetyTier,
+        modelQuestions: latestRun?.mode === 'autonomous' ? ('off' as const) : undefined,
         runtimeDir,
         taskDir,
         taskFile: fixTaskFile,
@@ -3338,6 +3339,7 @@ async function relaunchWorkerForFix(
     runtimeDir,
     taskDir: taskDir ?? undefined,
     taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
+    modelQuestions: parentRun?.mode === 'autonomous' ? 'off' : undefined,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
   await assertPreflightCurrent();

@@ -1830,6 +1830,7 @@ export async function dispatchExecute(
     // Label only — installer expands credential path on the slot host.
     codexAccountLabel: accountBind?.bind.launchAccountLabel ?? null,
     blindTrialCapsule: currentRun?.engineState?.evalExperiment?.blind?.isolation?.capsulePath,
+    modelQuestions: currentRun?.mode === 'autonomous' ? 'off' : undefined,
   });
 
   agentLaunch = wrapWorkerShellCommand(agentLaunch, {
@@ -1868,6 +1869,7 @@ export async function dispatchExecute(
         prompt: taskPrompt,
         effort,
         safetyTier,
+        modelQuestions: currentRun?.mode === 'autonomous' ? 'off' : undefined,
         runtimeDir: projectVars?.runtimeDir,
         taskDir: workerTaskDir,
         launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,

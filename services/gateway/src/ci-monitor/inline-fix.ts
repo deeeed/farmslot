@@ -329,6 +329,7 @@ export async function sendCiFixNudge(input: {
     model: input.run?.metrics.model,
     effort: input.run?.effort,
     safetyTier: input.run?.safetyTier,
+    modelQuestions: input.run?.mode === 'autonomous' ? 'off' : undefined,
     prompt: input.prompt,
     promptMarker: CI_FIX_CHECKLIST_TARGET.checklist,
     runtimeDir,
@@ -463,6 +464,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     safetyTier: run.safetyTier,
     runtimeDir,
     taskDir: taskDir ?? undefined,
+    modelQuestions: run.mode === 'autonomous' ? 'off' : undefined,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 

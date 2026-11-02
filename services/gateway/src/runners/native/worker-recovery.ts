@@ -382,6 +382,7 @@ async function resumeNativeWorkerExclusive(
       : await prepareNativeWorkerLaunch({
           role: context.role,
           reviewValidationDepth: context.reviewValidationDepth,
+          runMode: run.mode,
           vars,
           taskLibraries: runTaskLibraries(run),
           project: projectVars.projectJson,
