@@ -60,28 +60,25 @@ export async function runLive(options: LiveOptions): Promise<void> {
     connection.close();
     return errors;
   };
+  // The connection stays open for `stop`, which the caller runs on every exit path.
   options.onStop?.(stop);
-  try {
-    // Setup applied? Every canary slot must be in the fleet before anything is dispatched.
-    const { fleet } = await call<{ fleet: { slots: Array<{ slot: string; lifecycle: string }> } }>(
-      'fleet.status',
+  // Setup applied? Every canary slot must be in the fleet before anything is dispatched.
+  const { fleet } = await call<{ fleet: { slots: Array<{ slot: string; lifecycle: string }> } }>(
+    'fleet.status',
+  );
+  const missing = options.nodes.filter(
+    (node) => !fleet.slots.some((slot) => slot.slot === node.slot),
+  );
+  if (missing.length)
+    throw new Error(
+      `Canary slots missing from the live fleet: ${missing.map((node) => node.slot).join(', ')}. Apply the canary setup first.`,
     );
-    const missing = options.nodes.filter(
-      (node) => !fleet.slots.some((slot) => slot.slot === node.slot),
-    );
-    if (missing.length)
-      throw new Error(
-        `Canary slots missing from the live fleet: ${missing.map((node) => node.slot).join(', ')}. Apply the canary setup first.`,
-      );
-    for (const node of options.nodes) {
-      if (options.nativeCheck)
-        options.onCheck(await nativeCheck(call, node.machine, options.budgetsS, 'live'));
-      if (options.lifecycle) options.onCheck(await lifecycle(node, 'lifecycle'));
-      if (node.machine === options.f324Node)
-        options.onCheck(await lifecycle(node, 'f324-replay-open-gate'));
-    }
-  } finally {
-    connection.close();
+  for (const node of options.nodes) {
+    if (options.nativeCheck)
+      options.onCheck(await nativeCheck(call, node.machine, options.budgetsS, 'live'));
+    if (options.lifecycle) options.onCheck(await lifecycle(node, 'lifecycle'));
+    if (node.machine === options.f324Node)
+      options.onCheck(await lifecycle(node, 'f324-replay-open-gate'));
   }
 
   /** One scripted canary run on the node's slot, driven to its end. */

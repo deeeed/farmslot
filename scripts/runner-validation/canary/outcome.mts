@@ -202,10 +202,13 @@ export function reviewDriftExcuses(options: {
   /** Unreached holds and refused decisions. */
   procedural: string[];
   relaunched: boolean;
+  /** A run that failed outright did more than return issues. */
+  runFailed: boolean;
 }): boolean {
   return (
     options.loop2 === 'issues' &&
     options.fixLanded &&
+    !options.runFailed &&
     !options.procedural.length &&
     !options.relaunched
   );

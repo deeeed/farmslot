@@ -43,7 +43,9 @@
         "^step \\d+: expected (complete|human-gate|finalize|ci-watch):done, observed \\1:pending$",
         "^decisions: expected \\[engine_output_review:open\\], observed \\[engine_output_review:open, engine_result_decision:open\\]$",
         "^decision types: expected \\[engine_output_review\\], observed \\[engine_output_review, engine_result_decision\\]$",
-        "^slot: expected ready/-, observed busy/working$"
+        "^slot: expected ready/-, observed busy/working$",
+        "^re-review: expected pass, observed none$",
+        "^\\d+ reviewers ran, expected \\d+$"
       ],
       "ledger": "F332"
     }

@@ -45,6 +45,7 @@ import {
   linkCheckout,
   poll,
   type Reaper,
+  listProcesses,
   startWorkspaceProcess,
   stopProcess,
   writeJson,
@@ -208,14 +209,19 @@ const gitHold = (realGit: string, holds: string) =>
     '  line="$PWD git $*"',
     `  printf '%s\\n' "$line" >> "$hold.seen"`,
     `  if printf '%s\\n' "$line" | grep -qE -- "$(cat "$hold" 2>/dev/null)"; then`,
-    `    printf '%s\\n' "$line" >> "$hold.hit"`,
-    '    i=0',
-    '    while [ -e "$hold" ] && [ $i -lt 9000 ]; do sleep 0.1; i=$((i+1)); done',
+    ...shellHold('"$line"'),
     '  fi',
     'fi',
     `exec ${JSON.stringify(realGit)} "$@"`,
     '',
   ].join('\n');
+
+/** The hold's hit is logged, then the call waits while the hold file exists (15 min ceiling). */
+const shellHold = (logged: string) => [
+  `printf '%s\\n' ${logged} >> "$hold.hit"`,
+  'i=0',
+  'while [ -e "$hold" ] && [ $i -lt 9000 ]; do sleep 0.1; i=$((i+1)); done',
+];
 
 // Every tmux call that could stop a worker (a kill or respawn, C-c, /exit) is logged to
 // holds/tmux-stops.log. While holds/tmux exists, a call whose arguments match the extended regex
@@ -230,9 +236,7 @@ const tmuxWatch = (realTmux: string, holds: string) =>
     'esac',
     'hold="$holds/tmux"',
     'if [ -e "$hold" ] && printf \'%s\\n\' "$*" | grep -qE -- "$(cat "$hold" 2>/dev/null)"; then',
-    `  printf '%s\\n' "$*" >> "$hold.hit"`,
-    '  i=0',
-    '  while [ -e "$hold" ] && [ $i -lt 9000 ]; do sleep 0.1; i=$((i+1)); done',
+    ...shellHold('"$*"'),
     'fi',
     `exec ${JSON.stringify(realTmux)} "$@"`,
     '',
@@ -401,15 +405,13 @@ export async function startRemoteNodeStack(
     });
     // Anything left that names the fixture (runners, held fixture calls) is reported and killed.
     await attempt('leftovers', async () => {
-      const left = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' })
-        .split('\n')
-        .map((line) => line.trim().match(/^(\d+)\s+(.*)$/))
-        .filter((match): match is RegExpMatchArray => Boolean(match))
-        .filter((match) => match[2]!.includes(fixture) && Number(match[1]) !== process.pid);
-      for (const match of left) {
-        errors.push(`leftover ${match[1]} ${match[2]!.slice(0, 160)}`);
+      const left = listProcesses().filter(
+        ({ pid, command }) => command.includes(fixture) && pid !== process.pid,
+      );
+      for (const { pid, command } of left) {
+        errors.push(`leftover ${pid} ${command.slice(0, 160)}`);
         try {
-          process.kill(Number(match[1]), 'SIGKILL');
+          process.kill(pid, 'SIGKILL');
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
         }

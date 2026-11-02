@@ -41,6 +41,10 @@ export const STEPS = [
       'scripts/validate-cross-review-loop-json.test.mjs',
     ],
   ],
+  [
+    'canary outcome tests',
+    ['node', '--import', 'tsx', '--test', 'scripts/runner-validation/canary/outcome.test.mts'],
+  ],
   ['package/service workspace quality', ['yarn', 'quality:workspaces']],
   ['theme quality', ['yarn', 'workspace', '@farmslot/theme', 'quality']],
   ['recipe harness quality', ['yarn', 'workspace', '@farmslot/recipe-runner', 'quality']],

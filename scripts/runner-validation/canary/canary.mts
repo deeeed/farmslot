@@ -109,6 +109,12 @@ const CASES = [
 const only = arg('only')?.split(',');
 for (const name of only ?? [])
   if (!(CASES as readonly string[]).includes(name)) throw new Error(`Unknown case ${name}`);
+const available: readonly string[] =
+  profile === 'canary'
+    ? ['lifecycle', 'f324', 'native-check', 'monitor']
+    : [...RESTART_STEPS, 'review-past-wait', 'worker-survives', ...(withReview ? ['review'] : [])];
+for (const name of only ?? [])
+  if (!available.includes(name)) throw new Error(`Case ${name} does not run in profile ${profile}`);
 const wants = (name: (typeof CASES)[number]) => !only || only.includes(name);
 const surviveSteps = (arg('survive-steps')?.split(',') ?? [...SURVIVE_STEPS]) as SurviveStep[];
 for (const step of surviveSteps)

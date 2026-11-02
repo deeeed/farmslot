@@ -24,7 +24,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { isTerminalRunStatus, type Run } from '../../../packages/protocol/src/index.js';
-import { alive, poll, type Reaper, writeJson } from '../lib/isolated-stack.mjs';
+import { alive, listProcesses, poll, type Reaper, writeJson } from '../lib/isolated-stack.mjs';
 import { type RemoteNodeStack, startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
 import {
@@ -188,8 +188,6 @@ interface HoldPhase {
   needsSlot?: boolean;
   /** Armed before the run is created, whatever `armAt` says (an idle runner). */
   prepare?(context: HoldContext): Promise<void>;
-  /** What to read once held, before the restart. */
-  atHold?(context: HoldContext): void;
   /** Watch the run's worker after the restart, before the release; `release` lifts what kept it. */
   survive?: { release?(context: HoldContext): Promise<void> };
 }
@@ -323,10 +321,23 @@ function restartPhase(
  * no prompt receipt, so a restart while its fix signal still reads running makes recovery resend
  * the fix prompt, which it cannot accept: the fix finishes during the outage instead (#1724).
  */
+const fixContext = (run: Run) => contexts(run, 'review-fix').at(-1);
+const reviewHoldMissed = ({ run }: View) =>
+  SETTLED_STEP.has(stepStatus(run, 'review') ?? '') || contexts(run, 'review-fix').length > 0;
+/** Held with the fix worker mid-turn in its round. */
+const fixRoundHold = (
+  fix: ReturnType<typeof marker>,
+): Pick<HoldPhase, 'arm' | 'held' | 'missed' | 'release'> => ({
+  arm: fix.arm,
+  held: ({ run }) =>
+    fix.hit() && stepStatus(run, 'review') === 'running' && fixContext(run)?.status === 'working',
+  missed: ({ run }) =>
+    SETTLED_STEP.has(stepStatus(run, 'review') ?? '') || fixContext(run)?.status === 'complete',
+  release: fix.release,
+});
+
 function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): HoldPhase[] {
   const review = marker(stack, 'review');
-  const fix = marker(stack, 'fix');
-  const fixContext = (run: Run) => contexts(run, 'review-fix').at(-1);
   return [
     {
       step: 'review',
@@ -338,8 +349,7 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
         review.hit() &&
         stepStatus(run, 'review') === 'running' &&
         contexts(run, 'review').some((context) => context.nativeSession?.acceptedAt),
-      missed: ({ run }) =>
-        SETTLED_STEP.has(stepStatus(run, 'review') ?? '') || contexts(run, 'review-fix').length > 0,
+      missed: reviewHoldMissed,
       release: review.release,
     },
     {
@@ -347,14 +357,7 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
       restarts: ['node-up'],
       nodeAwayMs: reviewFixNodeAwayMs,
       armAt: 'create',
-      arm: fix.arm,
-      held: ({ run }) =>
-        fix.hit() &&
-        stepStatus(run, 'review') === 'running' &&
-        fixContext(run)?.status === 'working',
-      missed: ({ run }) =>
-        SETTLED_STEP.has(stepStatus(run, 'review') ?? '') || fixContext(run)?.status === 'complete',
-      release: fix.release,
+      ...fixRoundHold(marker(stack, 'fix')),
       releaseWhileDown: true,
       // The worker marks the fix complete while the gateway is down; the re-review recovery then
       // launches must find its hold armed.
@@ -393,18 +396,24 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
           (context) => (context.reviewLoopNumber ?? 0) >= 2 && context.nativeSession?.acceptedAt,
         ),
       missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'review') ?? ''),
-      atHold: (context) => {
-        context.fixLanded = !slotHeadHasFile(context.slotRepo, 'src/debug-trace.ts');
+      // Read after the restarts: recovery could still lose the fix before the re-review reads it.
+      release: async (context) => {
+        context.fixLanded = fixInCheckout(context.slotRepo);
+        await review.release(context);
       },
-      release: review.release,
     },
   ];
 }
 
-function slotHeadHasFile(slotRepo: string, file: string): boolean {
+/** The fix round's commit is at HEAD: the debug file it removes is gone, the source it fixes is kept. */
+function fixInCheckout(slotRepo: string): boolean {
   try {
-    execFileSync('git', ['-C', slotRepo, 'cat-file', '-e', `HEAD:${file}`], { stdio: 'ignore' });
-    return true;
+    const present = execFileSync(
+      'git',
+      ['-C', slotRepo, 'ls-tree', '--name-only', 'HEAD', '--', 'src/'],
+      { encoding: 'utf8' },
+    ).split('\n');
+    return present.includes('src/format-name.ts') && !present.includes('src/debug-trace.ts');
   } catch {
     return false;
   }
@@ -490,28 +499,16 @@ function survivePhase(
             (pending.reviewLoopNumber ?? 1) === 1
           );
         },
-        missed: ({ run }) =>
-          SETTLED_STEP.has(stepStatus(run, 'review') ?? '') ||
-          contexts(run, 'review-fix').length > 0,
+        missed: reviewHoldMissed,
         // The scripted reviewer answers the turn once this phase is past.
         release: async () => {},
         survive: {},
       } satisfies HoldPhase;
     case 'review-fix': {
-      const fix = marker(stack, 'fix');
-      const fixContext = (run: Run) => contexts(run, 'review-fix').at(-1);
       return {
         ...base,
         armAt: 'create',
-        arm: fix.arm,
-        held: ({ run }) =>
-          fix.hit() &&
-          stepStatus(run, 'review') === 'running' &&
-          fixContext(run)?.status === 'working',
-        missed: ({ run }) =>
-          SETTLED_STEP.has(stepStatus(run, 'review') ?? '') ||
-          fixContext(run)?.status === 'complete',
-        release: fix.release,
+        ...fixRoundHold(marker(stack, 'fix')),
         survive: {},
       } satisfies HoldPhase;
     }
@@ -542,6 +539,8 @@ interface ScriptedReviewer {
   start(): Promise<void>;
   /** The accepted reviewer whose swallowed turn the test has not answered. */
   pending(run: Run): AgentContext | undefined;
+  /** The reviewer turns the proxy swallowed: one per reviewer unless a prompt was sent again. */
+  turns(): number;
   /** Answers it as the fixture's review template asks: loop 1 issues, later loops pass. */
   answer(run: Run, slotRepo: string): Promise<string | undefined>;
   stop(dir: string): Promise<void>;
@@ -563,6 +562,7 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
       await rm(`${hold}.hit`, { force: true });
       await writeFile(hold, 'swallow\n');
     },
+    turns: () => count(' swallowed'),
     pending(run) {
       if (count(' swallowed') <= answered.size) return undefined;
       return contexts(run, 'review').find(
@@ -662,11 +662,7 @@ interface WorkerSnapshot {
 /** The run's tmux panes, the runner under them, and any reviewer app-server. */
 function snapshotWorker(stack: RemoteNodeStack, slotId: string, run: Run): WorkerSnapshot {
   const panes = stack.panes(slotId).filter((pane) => !pane.dead);
-  const table = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
-    .split('\n')
-    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
-    .filter((match): match is RegExpMatchArray => Boolean(match))
-    .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3]! }));
+  const table = listProcesses();
   const under = new Set<number>();
   const queue = panes.map((pane) => pane.panePid);
   while (queue.length) {
@@ -702,9 +698,11 @@ async function watchWorker(
   slotId: string,
   snapshot: WorkerSnapshot,
   getRun: () => Promise<Run>,
+  step: HoldStep,
 ): Promise<string[]> {
   const stops = path.join(stack.holds, 'tmux-stops.log');
-  let until = Date.now() + SURVIVE_OBSERVE_MS;
+  const deadline = Date.now() + SURVIVE_OBSERVE_MS;
+  let until = deadline;
   let losing = false;
   for (;;) {
     const lost: string[] = [];
@@ -730,7 +728,7 @@ async function watchWorker(
     // stopping it, as it should, not the restart.
     const run = await getRun();
     const failed = run.steps.filter((step) => step.status === 'failed');
-    if (run.status === 'done' && !failed.length) return [];
+    if (step === 'finalize' && run.status === 'done' && !failed.length) return [];
     const relaunched = contexts(run, 'review').filter(
       (context) => !snapshot.reviewers.includes(context.id),
     );
@@ -744,10 +742,31 @@ async function watchWorker(
     if (lost.length && !losing) {
       losing = true;
       until = Date.now() + LOSS_SETTLE_MS;
+    } else if (losing && !lost.length) {
+      // One bad read (a tmux error reads as no panes) must not shorten the watch.
+      losing = false;
+      until = deadline;
     }
     if (Date.now() > until) return lost;
     await delay(500);
   }
+}
+
+/** The reviews a survive hold must still have run: the outcome comparison doesn't see them. */
+function reviewRoundDifferences(scenario: ScenarioResult, baseline: ScenarioResult): string[] {
+  const seen = reviewVerdicts(scenario.run);
+  const expected = reviewVerdicts(baseline.run);
+  return [
+    ...(seen.loop2 === 'pass'
+      ? []
+      : [`re-review: expected pass, observed ${seen.loop2 ?? 'none'}`]),
+    ...(seen.reviewers === expected.reviewers
+      ? []
+      : [`${seen.reviewers} reviewers ran, expected ${expected.reviewers}`]),
+    ...(scenario.reviewerTurns === seen.reviewers
+      ? []
+      : [`${scenario.reviewerTurns ?? 0} reviewer turns for ${seen.reviewers} reviewers`]),
+  ];
 }
 
 // ---------------------------------------------------------------- one run
@@ -765,6 +784,8 @@ interface ScenarioResult extends DrivenRun {
   restarts: RestartRecord[];
   /** Holds the run never reached after an earlier restart. */
   unreached: HoldStep[];
+  /** Under a scripted review: the reviewer turns the proxy swallowed. */
+  reviewerTurns?: number;
   /** For a worker-survives hold: what was watched, and what the restart did to it. */
   watched?: string[];
   survival?: string[];
@@ -868,7 +889,6 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       if (armed.has(phase) && phase.held(view)) {
         await log(`${label}: ${phase.step} held`, { run: brief(run) });
         hold.held = run;
-        phase.atHold?.(hold);
         await writeJson(path.join(dir, `run-held-${current + 1}-${phase.step}.json`), run);
         const snapshot = phase.survive ? snapshotWorker(stack, slotId, run) : undefined;
         if (snapshot) {
@@ -905,9 +925,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           await log(`${label}: restarted (${variant})`, { after: brief(after) });
         }
         if (snapshot) {
-          survival = watched!.length
-            ? await watchWorker(stack, slotId, snapshot, getRun)
-            : ['nothing to watch: no worker pane or runner process at the hold point'];
+          survival = snapshot.processes.length
+            ? await watchWorker(stack, slotId, snapshot, getRun, phase.step)
+            : ['nothing to watch: no runner process at the hold point'];
           await log(`${label}: worker ${survival.length ? 'lost' : 'survived'}`, {
             watched,
             ...(survival.length ? { survival } : {}),
@@ -983,6 +1003,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         unreached,
         ...(watched ? { watched, survival: survival ?? [] } : {}),
         ...(hold.fixLanded !== undefined ? { fixLanded: hold.fixLanded } : {}),
+        ...(shape.scriptedReview ? { reviewerTurns: reviewer.turns() } : {}),
       };
     } finally {
       if (shape.scriptedReview) await reviewer.stop(dir);
@@ -1164,6 +1185,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             ? [`a step failed on a dropped transport: ${failure.split('\n')[0]}`]
             : []),
           ...outcomeDifferences(baseline.outcome, scenario.outcome),
+          ...(scripted ? reviewRoundDifferences(scenario, baseline) : []),
         ];
         return {
           status: differences.length ? 'fail' : 'pass',
@@ -1190,6 +1212,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     let verdicts: ReturnType<typeof reviewVerdicts> | undefined;
     let procedural: string[] = [];
     let fixLanded = false;
+    let runFailed = false;
     const reviewCheck = await check(
       { case: 'review', variant: 'node-up', model, hold: HOLDS.review },
       () => runScenario('review', 'review', reviewPhases(stack, options.reviewFixNodeAwayMs)),
@@ -1199,6 +1222,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         const expectedReviewers = verdicts.loop1 === 'pass' ? 1 : 2;
         procedural = verdicts.loop1 === 'pass' ? result.refused : unreachedDifferences(result);
         fixLanded = result.fixLanded === true;
+        runFailed = result.run.status === 'failed';
         const differences = [
           ...procedural,
           ...outcomeDifferences(REVIEWED_OUTCOME, result.outcome),
@@ -1235,6 +1259,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       fixLanded,
       procedural,
       relaunched,
+      runFailed,
     });
     if (loop2Drift && reviewCheck.status === 'fail') {
       reviewCheck.status = 'not-exercised';

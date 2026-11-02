@@ -51,6 +51,15 @@ export function startWorkspaceProcess(
   return child;
 }
 
+/** Every process on this host. */
+export function listProcesses(): Array<{ pid: number; ppid: number; command: string }> {
+  return execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3]! }));
+}
+
 export function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);

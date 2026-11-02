@@ -19,6 +19,7 @@ export function verdict(
 ): Verdict {
   if (setupError)
     return { ok: false, exitCode: 2, summary: `could not run: ${setupError.split('\n')[0]}` };
+  if (!checks.length) return { ok: false, exitCode: 2, summary: 'could not run: no check ran' };
   const blocking = checks.filter((check) => BLOCKING.has(check.status));
   const known = checks.filter((check) => check.status === 'known');
   const notExercised = checks.filter((check) => check.status === 'not-exercised');

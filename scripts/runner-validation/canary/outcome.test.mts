@@ -52,12 +52,27 @@ test('a passing check with a known entry fails the canary until the entry goes',
 });
 
 test('loop 2 issues excuse a reviewed run only when the restarts did their part', () => {
-  const excused = { loop2: 'issues', fixLanded: true, procedural: [], relaunched: false };
+  const excused = {
+    loop2: 'issues',
+    fixLanded: true,
+    procedural: [],
+    relaunched: false,
+    runFailed: false,
+  };
   assert.equal(reviewDriftExcuses(excused), true);
   assert.equal(reviewDriftExcuses({ ...excused, loop2: 'pass' }), false);
   assert.equal(reviewDriftExcuses({ ...excused, fixLanded: false }), false);
   assert.equal(reviewDriftExcuses({ ...excused, procedural: ['a hold was missed'] }), false);
   assert.equal(reviewDriftExcuses({ ...excused, relaunched: true }), false);
+  assert.equal(reviewDriftExcuses({ ...excused, runFailed: true }), false);
+});
+
+test('a canary that ran no check could not run', () => {
+  assert.deepEqual(verdict([], undefined), {
+    ok: false,
+    exitCode: 2,
+    summary: 'could not run: no check ran',
+  });
 });
 
 test('a failed cleanup blocks an otherwise passing canary', () => {
