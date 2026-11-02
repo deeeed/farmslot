@@ -3,7 +3,7 @@
 // so a probe resolves Node and the package manager exactly as the worker will (F318).
 const { spawnSync } = require('node:child_process');
 const { existsSync } = require('node:fs');
-const { homedir } = require('node:os');
+const { constants, homedir } = require('node:os');
 const { delimiter, join } = require('node:path');
 
 // Project-pinned tools win over a runner's own directory (a runner installed under one Node, or
@@ -49,5 +49,5 @@ if (require.main === module) {
     console.error(result.error.message);
     process.exit(127);
   }
-  process.exit(result.status ?? 1);
+  process.exit(result.status ?? 128 + (constants.signals[result.signal] ?? 0));
 }

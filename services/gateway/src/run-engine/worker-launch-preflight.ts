@@ -167,8 +167,8 @@ export async function admitWorkerLaunch(
     : undefined;
   const inShell = (command: string): string => {
     const body = `cd ${shellQuote(input.vars.remoteRepo)} && ${command}`;
-    if (input.environment && workerEnvironmentScript)
-      return `cd ${shellQuote(input.vars.remoteRepo)} && node ${shellQuote(workerEnvironmentScript)} ${shellQuote(JSON.stringify(input.environment))} /bin/sh -c ${shellQuote(command)}`;
+    if (workerEnvironmentScript)
+      return `node ${shellQuote(workerEnvironmentScript)} ${shellQuote(JSON.stringify(input.environment))} /bin/sh -c ${shellQuote(body)}`;
     if (input.wrapCommand) return input.wrapCommand(body);
     return wrapWorkerShellCommand(withMachineEnv(body, input.vars), {
       vars: input.vars,
