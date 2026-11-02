@@ -16,7 +16,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.46.4 - 2026-11-02
 
-- `@farmslot/recipe-runner/runtime/cdp-trace` also exports the frame helpers adapters share: `percentile`, `round` and `estimateRefreshBudgetMs` (the refresh-rate frame budget from frame start times), and `clockMidpoint`, which times a clock-marker write and places it at the call's midpoint. Additive; the trace collector and frame summaries behave as before.
+- `@farmslot/recipe-runner/runtime/cdp-trace` also exports the frame helpers adapters share: `percentile`, `round`, `estimateRefreshBudgetMs` (the refresh-rate frame budget from frame start times), `lowestWindowedFps` (the lowest frame rate over any window of continuous rendering, clamped to the refresh rate as `activeFps` is, with an optional `maxGapMs` for what counts as continuous), and `clockMidpoint`, which times a clock-marker write and places it at the call's midpoint. Additive; the trace collector and frame summaries behave as before.
 
 ## 0.46.3 - 2026-11-02
 

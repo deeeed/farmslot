@@ -33,6 +33,8 @@ export interface AndroidGfxinfoPerformanceOptions {
   packageId: string;
   /** adb binary; `adb` on PATH by default. */
   adbPath?: string;
+  /** Where `describe()` reports an adb read it had to skip; console by default. */
+  logger?: Pick<Console, 'warn'>;
 }
 
 /** A gfxinfo frame: a recipe-runner frame sample plus what the UI thread did in it. */
@@ -110,6 +112,7 @@ export function createAndroidGfxinfoPerformanceBackend(
   if (!serial) throw new Error('Android performance capture requires the device adb serial.');
   if (!packageId) throw new Error('Android performance capture requires the app package id.');
   const adb = options.adbPath ?? 'adb';
+  const logger = options.logger ?? console;
   let active: ActiveCapture | undefined;
 
   return {
@@ -156,7 +159,16 @@ export function createAndroidGfxinfoPerformanceBackend(
           ['shell', 'getprop', 'ro.product.model'],
           ['shell', 'getprop', 'ro.build.version.release'],
           ['shell', 'dumpsys', 'package', packageId],
-        ].map((args) => adbCommand(adb, serial, args).catch(() => '')),
+        ].map((args) =>
+          adbCommand(adb, serial, args).catch((error: unknown) => {
+            // A field the device didn't answer is left out of the report, which
+            // still renders; the reason is logged.
+            logger.warn(
+              `Android device description skipped adb ${args.join(' ')}: ${errorMessage(error).slice(0, 180)}`,
+            );
+            return '';
+          }),
+        ),
       );
       const field = (name: string) =>
         new RegExp(`\\b${name}=([^\\s]+)`, 'u').exec(packageInfo ?? '')?.[1];

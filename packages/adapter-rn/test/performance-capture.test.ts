@@ -14,7 +14,6 @@ import type {
 } from '../src/android-gfxinfo-performance.js';
 import {
   createPerformanceCaptureSession,
-  lowestSustainedFps,
   measurePress,
   renderPerformanceReport,
   summarizeWindow,
@@ -59,8 +58,13 @@ function capture(
   samples: AndroidFrameSample[],
   {
     coverageGapReasons = [],
+    unavailableReasons = [],
     inputEvents = 'available',
-  }: { coverageGapReasons?: string[]; inputEvents?: 'available' | 'missing' } = {},
+  }: {
+    coverageGapReasons?: string[];
+    unavailableReasons?: string[];
+    inputEvents?: 'available' | 'missing';
+  } = {},
 ): AndroidGfxinfoCaptureResult {
   return {
     inputEvents,
@@ -82,7 +86,7 @@ function capture(
             ? 'partial'
             : 'complete',
       kind: 'android-gfxinfo-framestats',
-      unavailableReasons: [],
+      unavailableReasons,
       coverageGapReasons,
       samples,
       summary: summarizeFrames(samples),
@@ -192,11 +196,29 @@ describe('press latency', () => {
     });
   });
 
-  it('does not take a later update after a pause for the press', () => {
+  it('times a mount that a JavaScript stall delays past the window', () => {
+    // Light feedback at +11 ms, then nothing until the mount at +650 ms.
     const samples = [
       frame(1_000, 6, { input: true, uiThreadMs: 2 }),
       frame(1_011, 5, { uiThreadMs: 1 }),
-      frame(1_900, 30, { uiThreadMs: 30 }),
+      frame(1_650, 30, { uiThreadMs: 24 }),
+    ];
+    assert.deepEqual(measurePress(samples, press, 600, 5_000), {
+      nodeId: 'tab',
+      action: 'ui.press',
+      target: 'tab-terminals',
+      latencyMs: 680,
+      answer: 'mount',
+    });
+  });
+
+  it('leaves an update beyond reach to another cause', () => {
+    // Main's release capture: a cheap Review return, then a 6.9 ms update at +1076 ms.
+    const samples = [
+      frame(1_000, 6, { input: true, uiThreadMs: 3 }),
+      frame(1_011, 5, { uiThreadMs: 1.3 }),
+      frame(1_466, 5, { uiThreadMs: 1.2 }),
+      frame(2_076, 9, { uiThreadMs: 6.9 }),
     ];
     assert.equal(measurePress(samples, press, 600, 5_000).answer, 'first-frame');
   });
@@ -220,33 +242,21 @@ describe('press latency', () => {
 });
 
 describe('sustained FPS', () => {
-  it('reports the slowest stretch of continuous rendering', () => {
-    const smooth = cadence(0, 60, BUDGET_MS);
-    const slow = cadence(1_000, 20, 40, 38);
-    const fps = lowestSustainedFps([...smooth, ...slow], 500);
-    assert.ok(fps !== undefined && fps < 30, `expected < 30 fps, got ${fps}`);
-    assert.ok((lowestSustainedFps(smooth, 500) ?? 0) > 85);
-  });
-
-  it('does not let one long frame read as a sustained drop', () => {
-    const samples = [...cadence(0, 20, BUDGET_MS), frame(222, 150), ...cadence(380, 20, BUDGET_MS)];
-    assert.ok((lowestSustainedFps(samples, 500) ?? 0) > 30);
-  });
-
-  it('counts a slow cadence as rendering', () => {
-    // Every fourth vsync at 90 Hz: 22.5 fps with cheap frames.
-    const fps = lowestSustainedFps(cadence(0, 25, BUDGET_MS * 4), 500);
-    assert.ok(fps !== undefined && fps < 30, `expected < 30 fps, got ${fps}`);
-  });
-
-  it('needs a whole window of rendering', () => {
-    const samples = [...cadence(0, 50, BUDGET_MS), ...cadence(50 * BUDGET_MS + 40, 6, 40)];
-    assert.ok((lowestSustainedFps(samples, 500) ?? 0) > 50);
-    assert.equal(lowestSustainedFps(cadence(0, 6, 40), 500), undefined);
-  });
-
-  it('is absent when nothing rendered continuously', () => {
-    assert.equal(lowestSustainedFps([frame(0, 8), frame(5_000, 8)], 500), undefined);
+  it('counts a slow cadence up to 100 ms apart against the floor', () => {
+    const summary = summarizeWindow({
+      id: 'scroll',
+      startedAtEpochMs: 0,
+      endedAtEpochMs: 2_000,
+      maxDurationMs: 60_000,
+      // Every fourth vsync at 90 Hz.
+      result: capture(cadence(0, 25, BUDGET_MS * 4)),
+      spans: [],
+      sustainedWindowMs: 500,
+      responseWindowMs: 600,
+      budget: { min_sustained_fps: 30 },
+    });
+    assert.equal(summary.sustainedFps, 22.5);
+    assert.equal(summary.budget?.verdict, 'fail');
   });
 });
 
@@ -332,6 +342,25 @@ describe('window budget', () => {
     ]);
   });
 
+  it('lets a coverage gap take precedence over what the partial capture failed', () => {
+    const gap = ['Android gfxinfo poll failed: device offline'];
+    const empty = summarizeWindow({
+      ...base,
+      result: capture([], { coverageGapReasons: gap }),
+      spans: [],
+      budget: { min_frames: 10 },
+    });
+    assert.equal(empty.budget?.verdict, 'inconclusive');
+    assert.equal(empty.budget?.failures.length, 1);
+    const untimed = summarizeWindow({
+      ...base,
+      result: capture(samples.slice(0, 4), { coverageGapReasons: gap }),
+      spans: presses,
+      budget: { max_press_ms: 150 },
+    });
+    assert.equal(untimed.budget?.verdict, 'inconclusive');
+  });
+
   it('is inconclusive with a coverage gap, never a pass', () => {
     const summary = summarizeWindow({
       ...base,
@@ -383,7 +412,10 @@ describe('window budget', () => {
   it('passes an idle window that rendered nothing', () => {
     const summary = summarizeWindow({
       ...base,
-      result: capture([]),
+      // What the gfxinfo backend returns for a capture with no frames.
+      result: capture([], {
+        unavailableReasons: ['No Android gfxinfo frame samples were recorded.'],
+      }),
       spans: [],
       budget: { min_sustained_fps: 30, max_press_ms: 150 },
     });
@@ -487,6 +519,86 @@ describe('app.performance_capture session', () => {
     } finally {
       await rm(artifactsDir, { recursive: true, force: true });
     }
+  });
+
+  it('reports a lost device as inconclusive with an environment cause', async () => {
+    const artifactsDir = await mkdtemp(path.join(os.tmpdir(), 'adapter-rn-perf-'));
+    const gap = ['Android gfxinfo poll failed: device offline'];
+    const results = [
+      capture([], { coverageGapReasons: gap }),
+      capture([frame(1_000, 6, { uiThreadMs: 1 })], { coverageGapReasons: gap }),
+    ];
+    const backend: AndroidGfxinfoPerformanceBackend = {
+      async start() {},
+      async end() {
+        return results.shift() ?? capture([]);
+      },
+      async close() {},
+    };
+    let clock = 0;
+    const session = createPerformanceCaptureSession({
+      env: {},
+      createBackend: () => backend,
+      now: () => clock,
+    });
+    const ctx = context('n', artifactsDir).value;
+    try {
+      await session.handler.execute({ phase: 'start', id: 'scroll' }, ctx);
+      await session.handler.execute(
+        { phase: 'end', id: 'scroll', budget: { min_frames: 10 } },
+        ctx,
+      );
+      await session.handler.execute({ phase: 'start', id: 'tabs' }, ctx);
+      clock = 900;
+      session.recordNodeEvent({ nodeId: 'press', action: 'ui.press', status: 'running' });
+      clock = 1_100;
+      session.recordNodeEvent({ nodeId: 'press', action: 'ui.press', status: 'passed' });
+      clock = 2_000;
+      await session.handler.execute(
+        { phase: 'end', id: 'tabs', budget: { max_press_ms: 250 } },
+        ctx,
+      );
+      await assert.rejects(
+        session.handler.execute({ phase: 'report' }, ctx),
+        (error: unknown) =>
+          error instanceof RecipeExecutionError &&
+          error.causeClass === 'environment' &&
+          error.code === 'PERFORMANCE_INCONCLUSIVE',
+      );
+      const report: unknown = JSON.parse(
+        await readFile(path.join(artifactsDir, 'performance/report.json'), 'utf8'),
+      );
+      assert.ok(
+        matchesObject(report, {
+          verdict: 'inconclusive',
+          windows: [
+            { id: 'scroll', budget: { verdict: 'inconclusive' } },
+            { id: 'tabs', budget: { verdict: 'inconclusive' } },
+          ],
+        }),
+      );
+    } finally {
+      await rm(artifactsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('logs a window it could not end when the run closes', async () => {
+    const warnings: string[] = [];
+    const backend: AndroidGfxinfoPerformanceBackend = {
+      async start() {},
+      async end() {
+        throw new Error('adb: device offline');
+      },
+      async close() {},
+    };
+    const session = createPerformanceCaptureSession({
+      env: {},
+      createBackend: () => backend,
+      logger: { warn: (message: string) => warnings.push(message) },
+    });
+    await session.handler.execute({ phase: 'start', id: 'open' }, context('n', os.tmpdir()).value);
+    await session.close();
+    assert.deepEqual(warnings, ['Performance window open did not end: adb: device offline']);
   });
 
   it('refuses an overlapping window and an unknown phase', async () => {

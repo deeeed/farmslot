@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { runExpoRecipeDocument } from '../src/runner.js';
+import { closeUiTransportQuietly, runExpoRecipeDocument } from '../src/runner.js';
 import { clearMobileToolPathCache } from '../src/tool-paths.js';
 
 import { matchesObject } from './_helpers.js';
@@ -148,4 +148,23 @@ test('a recipe measures a window on the device and reports it', async () => {
     clearMobileToolPathCache();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('a cleanup that rejects is logged, never thrown', async () => {
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (message: string) => warnings.push(message);
+  try {
+    await closeUiTransportQuietly(
+      {
+        async close() {
+          throw new Error('adb: device offline');
+        },
+      },
+      'Performance capture',
+    );
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.deepEqual(warnings, ['Performance capture cleanup failed: adb: device offline']);
 });

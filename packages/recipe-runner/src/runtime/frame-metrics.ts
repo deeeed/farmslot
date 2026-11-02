@@ -138,21 +138,16 @@ function commonFrameBudget(samples: readonly FrameSample[]): number | undefined 
 function activeRenderingIntervals(
   samples: readonly FrameSample[],
   frameBudgetMs: number,
+  maxGapMs = frameBudgetMs * 3.01,
 ): number[] {
   if (samples.every((sample) => sample.cadenceInterval === true)) {
     return samples
       .map((sample) => sample.durationMs)
       .filter(
-        (durationMs) =>
-          Number.isFinite(durationMs) && durationMs > 0 && durationMs <= frameBudgetMs * 3.01,
+        (durationMs) => Number.isFinite(durationMs) && durationMs > 0 && durationMs <= maxGapMs,
       );
   }
-  const ordered = [...samples]
-    .map((sample) => ({
-      ...sample,
-      startedAtEpochMs: sample.startedAtEpochMs ?? sample.completedAtEpochMs - sample.durationMs,
-    }))
-    .sort((first, second) => first.startedAtEpochMs - second.startedAtEpochMs);
+  const ordered = orderedByStart(samples);
   const intervals: number[] = [];
   for (let index = 1; index < ordered.length; index += 1) {
     const previous = ordered[index - 1];
@@ -160,12 +155,95 @@ function activeRenderingIntervals(
     if (!previous || !current) continue;
     const interval = current.startedAtEpochMs - previous.startedAtEpochMs;
     if (!Number.isFinite(interval) || interval <= 0) continue;
-    const continuous = interval <= frameBudgetMs * 3.01;
-    const explainedBySlowFrame =
-      Math.max(previous.durationMs, current.durationMs) >= interval - frameBudgetMs * 1.01;
-    if (continuous || explainedBySlowFrame) intervals.push(interval);
+    if (continuousRendering(previous, current, interval, frameBudgetMs, maxGapMs)) {
+      intervals.push(interval);
+    }
   }
   return intervals;
+}
+
+// Two consecutive frames are one stretch of rendering when the second starts
+// within `maxGapMs`, or when a slow frame between them explains the gap.
+function continuousRendering(
+  previous: FrameSample,
+  current: FrameSample,
+  interval: number,
+  frameBudgetMs: number,
+  maxGapMs: number,
+): boolean {
+  return (
+    interval <= maxGapMs ||
+    Math.max(previous.durationMs, current.durationMs) >= interval - frameBudgetMs * 1.01
+  );
+}
+
+function orderedByStart(
+  samples: readonly FrameSample[],
+): Array<FrameSample & { startedAtEpochMs: number }> {
+  return [...samples]
+    .map((sample) => ({
+      ...sample,
+      startedAtEpochMs: sample.startedAtEpochMs ?? sample.completedAtEpochMs - sample.durationMs,
+    }))
+    .sort((first, second) => first.startedAtEpochMs - second.startedAtEpochMs);
+}
+
+export interface LowestWindowedFpsOptions {
+  /** How much continuous rendering each window covers. */
+  windowMs: number;
+  /** The largest gap between frame starts that still counts as rendering; 3.01 frame budgets by default. */
+  maxGapMs?: number;
+}
+
+/**
+ * The lowest frame rate over any `windowMs` of continuous rendering, clamped
+ * to the refresh rate as `activeFps` is. A window starts at a frame and counts
+ * when the stretch of rendering it starts in lasts the whole `windowMs`,
+ * however few frames that is, so steady slow frames read as a low rate. A
+ * short burst or an idle screen has no such window: undefined.
+ */
+export function lowestWindowedFps(
+  samples: readonly FrameSample[],
+  { windowMs, maxGapMs }: LowestWindowedFpsOptions,
+): number | undefined {
+  const ordered = orderedByStart(
+    samples.filter((sample) => Number.isFinite(sample.durationMs) && sample.durationMs > 0),
+  );
+  const frameBudgetMs = commonFrameBudget(ordered);
+  if (!frameBudgetMs) return undefined;
+  const gapMs = maxGapMs ?? frameBudgetMs * 3.01;
+  const stretches: Array<typeof ordered> = [];
+  for (const sample of ordered) {
+    const stretch = stretches.at(-1);
+    const previous = stretch?.at(-1);
+    const interval = previous ? sample.startedAtEpochMs - previous.startedAtEpochMs : Infinity;
+    if (
+      stretch &&
+      previous &&
+      continuousRendering(previous, sample, interval, frameBudgetMs, gapMs)
+    ) {
+      stretch.push(sample);
+    } else {
+      stretches.push([sample]);
+    }
+  }
+  let lowest: number | undefined;
+  for (const stretch of stretches) {
+    const lastStart = stretch.at(-1)?.startedAtEpochMs ?? 0;
+    for (let start = 0; start < stretch.length; start += 1) {
+      const from = stretch[start]?.startedAtEpochMs ?? 0;
+      if (from + windowMs > lastStart) break;
+      let end = start + 1;
+      while ((stretch[end + 1]?.startedAtEpochMs ?? Infinity) <= from + windowMs) end += 1;
+      const elapsed = (stretch[end]?.startedAtEpochMs ?? from) - from;
+      if (elapsed <= 0) continue;
+      const window = stretch.slice(start, end + 1);
+      const refreshRateHz = 1000 / (commonFrameBudget(window) ?? frameBudgetMs);
+      const fps = Math.min(refreshRateHz, ((end - start) * 1000) / elapsed);
+      lowest = Math.min(lowest ?? fps, fps);
+    }
+  }
+  return lowest === undefined ? undefined : round(lowest);
 }
 
 /**

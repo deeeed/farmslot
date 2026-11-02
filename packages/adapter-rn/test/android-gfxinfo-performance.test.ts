@@ -218,6 +218,32 @@ describe('Android gfxinfo performance', () => {
     assert.equal(result.platform, 'ios');
   });
 
+  it('logs each device read it has to skip', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'adapter-rn-gfxinfo-'));
+    const adbPath = path.join(dir, 'adb');
+    await writeFile(adbPath, '#!/bin/sh\necho "device offline" >&2\nexit 1\n');
+    await chmod(adbPath, 0o755);
+    const warnings: string[] = [];
+    try {
+      const backend = createAndroidGfxinfoPerformanceBackend({
+        serial: 'emulator-5554',
+        packageId: 'com.example',
+        adbPath,
+        logger: { warn: (message: string) => warnings.push(message) },
+      });
+      assert.deepEqual(await backend.describe?.(), {
+        serial: 'emulator-5554',
+        packageId: 'com.example',
+      });
+      assert.equal(warnings.length, 3);
+      assert.ok(
+        warnings.some((warning) => /skipped adb shell dumpsys package com\.example/u.test(warning)),
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('requires a serial and a package id', () => {
     assert.throws(
       () => createAndroidGfxinfoPerformanceBackend({ serial: ' ', packageId: 'com.example' }),

@@ -26,7 +26,13 @@ test('package exports expose stable public harness subpaths', async () => {
   assert.equal(typeof cdp.createCdpWebUiTransport, 'function');
   assert.equal(typeof cdpTrace.createCdpTraceCollector, 'function');
   assert.equal(typeof cdpTrace.summarizeFrames, 'function');
-  for (const helper of ['percentile', 'round', 'estimateRefreshBudgetMs', 'clockMidpoint']) {
+  for (const helper of [
+    'percentile',
+    'round',
+    'estimateRefreshBudgetMs',
+    'clockMidpoint',
+    'lowestWindowedFps',
+  ]) {
     assert.equal(typeof cdpTrace[helper], 'function', helper);
   }
   assert.equal(typeof cli.runRecipeRunnerCli, 'function');

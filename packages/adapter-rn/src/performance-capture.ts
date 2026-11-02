@@ -17,6 +17,7 @@ import {
 } from '@farmslot/recipe-runner';
 import {
   type FrameMetricSummary,
+  lowestWindowedFps,
   percentile,
   type PerformanceSourceStatus,
   round,
@@ -42,8 +43,8 @@ const PRESS_ACTIONS = new Set(['ui.press', 'ui.key_press']);
 const DEFAULT_MAX_DURATION_MS = 5 * 60 * 1000;
 const MAX_DURATION_MS = 60 * 60 * 1000;
 const DEFAULT_SUSTAINED_WINDOW_MS = 500;
-// How long after the touch the answering frame is looked for: the window of
-// the atrace tab-press measurements (biggest Fabric mount within 600 ms).
+// How long after the touch a first frame can answer a press that mounts
+// nothing: the window the atrace tab-press measurements searched (600 ms).
 const DEFAULT_RESPONSE_WINDOW_MS = 600;
 // A mount frame stands out from the touch and animation frames around it
 // (about 1 ms of UI-thread work on a Pixel 6; tab mounts measured 9-80 ms):
@@ -51,14 +52,14 @@ const DEFAULT_RESPONSE_WINDOW_MS = 600;
 // MOUNT_OVER_MEDIAN times the median of the other frames after the touch.
 const MOUNT_MIN_MS = 4;
 const MOUNT_OVER_MEDIAN = 3;
-// A mount up to this many response windows after the touch still answers the
-// press (and reads over any press cap) when nothing else answered in the
-// window, or when rendering ran on without a pause from the window into it.
-const MOUNT_LOOKAHEAD = 2;
+// A mount up to this many response windows after the touch answers the press,
+// even after a pause (a JavaScript stall delays it): 900 ms by default. Main's
+// release captures had a background update 1076 ms after a tab press.
+const MOUNT_LOOKAHEAD = 1.5;
 // Frames closer than this are one stretch of rendering for sustained FPS, so a
 // slow cadence (4 vsyncs at 90 Hz is 22.5 fps) counts against the floor.
 const MAX_ACTIVE_GAP_MS = 100;
-const MIN_SUSTAINED_INTERVALS = 5;
+const DEFAULT_FRAME_BUDGET_MS = 1000 / 60;
 // The metrics failures name, so a reader knows what was measured.
 const PRESS_METRIC = 'gfxinfo input->mount frame';
 const FPS_METRIC = 'gfxinfo, lowest 500 ms';
@@ -140,8 +141,9 @@ export interface PerformanceWindowSummary {
   pressByTarget: Record<string, PressStats>;
   /**
    * `inconclusive` when the capture has a coverage gap (failed polls, frames
-   * gfxinfo overwrote): it never passes. An idle window, no frames and no
-   * gaps, passes.
+   * gfxinfo overwrote), whatever else failed: it never passes, and `failures`
+   * still lists what the partial capture showed. An idle window, no frames and
+   * no gaps, passes.
    */
   budget?: {
     verdict: 'pass' | 'fail' | 'inconclusive';
@@ -307,7 +309,7 @@ export function createPerformanceCaptureSession({
     const inconclusive = summaries.filter((summary) => summary.budget?.verdict === 'inconclusive');
     const environment = {
       device: await describeDevice(),
-      checkout: await describeCheckout(context.projectRoot),
+      checkout: await describeCheckout(context.projectRoot, logger),
     };
     const document = {
       schemaVersion: 1,
@@ -480,7 +482,10 @@ export function summarizeWindow({
     );
   }
   const frames = summarizeFrames(samples);
-  const sustainedFps = lowestSustainedFps(samples, sustainedWindowMs);
+  const sustainedFps = lowestWindowedFps(samples, {
+    windowMs: sustainedWindowMs,
+    maxGapMs: MAX_ACTIVE_GAP_MS,
+  });
   const summary: PerformanceWindowSummary = {
     schemaVersion: 1,
     id,
@@ -518,13 +523,12 @@ export function summarizeWindow({
 /**
  * The press's latency: from the first frame that handled input during the
  * press node to the end of the frame that answered it. The answer is the
- * first later frame that stands out (see MOUNT_MIN_MS): the frame that mounts
- * and draws the new screen. Touch ripples run on the render thread. A mount up
- * to `MOUNT_LOOKAHEAD` response windows after the touch still answers when
- * nothing rendered in the window or rendering ran on into it without a pause,
- * so a late mount reads as slow rather than as an instant press. When no frame
- * stands out the press is timed to the first frame within `responseWindowMs`.
- * A press with no input frame, or no frame after it in the window, is untimed.
+ * first later frame that stands out (see MOUNT_MIN_MS) within
+ * `MOUNT_LOOKAHEAD` response windows of the touch, after a pause too: the
+ * frame that mounts and draws the new screen. Touch ripples run on the render
+ * thread. Only when no frame in reach stands out is the press timed to the
+ * first frame within `responseWindowMs` (`first-frame`). A press with no input
+ * frame, or no frame after it, is untimed.
  */
 export function measurePress(
   samples: readonly AndroidFrameSample[],
@@ -558,34 +562,21 @@ export function measurePress(
         sample.startedAtEpochMs <= searchEnd,
     )
     .sort((left, right) => left.startedAtEpochMs - right.startedAtEpochMs);
-  // Past the window, only frames that continue the rendering under way at its
-  // end (or any, when the window had none): a later mount after a pause is
-  // another update, not this press.
-  const after: AndroidFrameSample[] = [];
-  for (const sample of candidates) {
-    const previous = after.at(-1);
-    if (
-      sample.startedAtEpochMs > windowEnd &&
-      previous &&
-      sample.startedAtEpochMs - previous.startedAtEpochMs > MAX_ACTIVE_GAP_MS
-    ) {
-      break;
-    }
-    after.push(sample);
-  }
   const work = (sample: AndroidFrameSample) => sample.uiThreadMs ?? sample.durationMs;
   const standsOut = (sample: AndroidFrameSample) => {
     const ms = work(sample);
     if (ms < MOUNT_MIN_MS) return false;
-    if (ms >= (sample.frameBudgetMs ?? 1000 / 60)) return true;
-    const others = after
+    if (ms >= (sample.frameBudgetMs ?? DEFAULT_FRAME_BUDGET_MS)) return true;
+    const others = candidates
       .filter((other) => other !== sample)
       .map(work)
       .sort((left, right) => left - right);
     return others.length === 0 || ms >= percentile(others, 0.5) * MOUNT_OVER_MEDIAN;
   };
-  const mount = after.find(standsOut);
-  const response = mount ?? after.find((sample) => sample.startedAtEpochMs <= windowEnd);
+  // Any stand-out frame in reach answers, so a press is never read as instant
+  // while a mount follows it.
+  const mount = candidates.find(standsOut);
+  const response = mount ?? candidates.find((sample) => sample.startedAtEpochMs <= windowEnd);
   if (!response) {
     return {
       ...base,
@@ -597,52 +588,6 @@ export function measurePress(
     latencyMs: round(response.completedAtEpochMs - input.startedAtEpochMs),
     answer: mount ? 'mount' : 'first-frame',
   };
-}
-
-/**
- * The lowest frame rate over any `windowMs` of continuous rendering: frames
- * closer than MAX_ACTIVE_GAP_MS (or a gap a slow frame explains) form one
- * stretch, and only stretches that last a whole `windowMs` from a frame count.
- * Undefined when no stretch is that long (an idle screen, a short burst).
- */
-export function lowestSustainedFps(
-  samples: readonly AndroidFrameSample[],
-  windowMs: number,
-): number | undefined {
-  const ordered = [...samples].sort(
-    (first, second) => first.startedAtEpochMs - second.startedAtEpochMs,
-  );
-  const stretches: AndroidFrameSample[][] = [];
-  for (const sample of ordered) {
-    const stretch = stretches.at(-1);
-    const previous = stretch?.at(-1);
-    const gap = previous ? sample.startedAtEpochMs - previous.startedAtEpochMs : Infinity;
-    const budget = sample.frameBudgetMs ?? 1000 / 60;
-    const explained = previous ? previous.durationMs + budget * 1.01 >= gap : false;
-    if (stretch && (gap <= MAX_ACTIVE_GAP_MS || explained)) stretch.push(sample);
-    else stretches.push([sample]);
-  }
-  let lowest: number | undefined;
-  for (const stretch of stretches) {
-    const last = stretch.at(-1)?.startedAtEpochMs ?? 0;
-    for (let start = 0; start < stretch.length; start += 1) {
-      const from = stretch[start]?.startedAtEpochMs ?? 0;
-      if (from + windowMs > last) break;
-      let end = start;
-      while ((stretch[end + 1]?.startedAtEpochMs ?? Infinity) <= from + windowMs) end += 1;
-      const intervals = end - start;
-      const elapsed = (stretch[end]?.startedAtEpochMs ?? from) - from;
-      if (intervals < MIN_SUSTAINED_INTERVALS || elapsed <= 0) continue;
-      // Sampling jitter never reads faster than the display refreshes.
-      const budgets = stretch
-        .slice(start, end + 1)
-        .map((sample) => sample.frameBudgetMs ?? 1000 / 60);
-      const refreshHz = 1000 / Math.min(...budgets);
-      const fps = round(Math.min(refreshHz, (intervals * 1000) / elapsed));
-      lowest = Math.min(lowest ?? fps, fps);
-    }
-  }
-  return lowest;
 }
 
 // Every failure names the metric, the limit, the measured value, where it was
@@ -717,9 +662,11 @@ function checkBudget(
       ).trimEnd()}`,
     );
   }
+  // A capture with a gap can't support any verdict: a dropped device leaves no
+  // frames and untimed presses, which would otherwise read as the app failing.
   const inconclusive = summary.coverageGapReasons.map((reason) => `coverage gap: ${reason}`);
   return {
-    verdict: failures.length > 0 ? 'fail' : inconclusive.length > 0 ? 'inconclusive' : 'pass',
+    verdict: inconclusive.length > 0 ? 'inconclusive' : failures.length > 0 ? 'fail' : 'pass',
     limits,
     failures,
     inconclusive,
@@ -741,6 +688,7 @@ function formatValue(value: number): string {
 
 async function describeCheckout(
   projectRoot: string,
+  logger: Pick<Console, 'warn'>,
 ): Promise<{ head?: string; dirty?: boolean } | undefined> {
   try {
     const head = (
@@ -754,10 +702,19 @@ async function describeCheckout(
       )
     ).stdout.trim();
     return { head, dirty: status.length > 0 };
-  } catch {
-    // Outside a git checkout the report names no source revision.
+  } catch (error) {
+    // Outside a git checkout the report names no source revision; any other
+    // git failure leaves it out too, and says why.
+    if (!/not a git repository/u.test(execStderr(error))) {
+      logger.warn(`Performance report could not read the checkout: ${errorMessage(error)}`);
+    }
     return undefined;
   }
+}
+
+function execStderr(error: unknown): string {
+  if (error && typeof error === 'object' && 'stderr' in error) return String(error.stderr);
+  return '';
 }
 
 function errorMessage(error: unknown): string {
@@ -835,7 +792,7 @@ export function renderPerformanceReport(
   environment: PerformanceReportEnvironment = {},
 ): string {
   const value = (number: number | undefined, unit = '') =>
-    number === undefined ? 'n/a' : `${Math.round(number * 10) / 10}${unit}`;
+    number === undefined ? 'n/a' : `${formatValue(number)}${unit}`;
   const rows = summaries.map((summary) => {
     const fpsTarget = summary.targets?.fps;
     const toTarget =

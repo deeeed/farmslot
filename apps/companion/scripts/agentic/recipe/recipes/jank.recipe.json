@@ -876,7 +876,7 @@
           "fps": "{{params.target_fps}}"
         },
         "baseline": {
-          "label": "main 4da00ad80 @90Hz",
+          "label": "main 4da00ad80 idle @60Hz",
           "build": "4da00ad80",
           "device": "Pixel 6",
           "refresh_hz": 60,
