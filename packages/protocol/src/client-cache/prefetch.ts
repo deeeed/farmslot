@@ -1,13 +1,15 @@
 import type { ReviewWorkspaceSubject } from '../contracts/review-workspace.js';
+import { awaitsHumanDecision } from '../contracts/run-lifecycle-view.js';
 import type { ReadyGatePrPackage, ReviewDiffSnapshot, Run } from '../contracts/runs.js';
 import type { GitDiffResult, GitLogResult, GitShowBatchResult } from '../rpc/git.js';
 import { Methods } from '../rpc/registry.js';
 import type { RunGetResult } from '../rpc/run.js';
-import { isRunArtifactImagePath } from '../runs/artifact-media.js';
+import { isRunArtifactImagePath, isRunArtifactMediaPath } from '../runs/artifact-media.js';
 import { reviewDiffHash } from '../runs/review-diff-identity.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
 import {
+  base64Bytes,
   gitBlobHashInSlices,
   RESOURCE_CONTENT_LIMITS,
   resourceContentWithinLimits,
@@ -39,6 +41,23 @@ export interface ContentPrefetchArtifact {
   bundleDigest?: string;
 }
 
+/** A pending gate's evidence too large for a content row: a video, or an image over the cap. */
+export interface ContentPrefetchMediaEntry extends ContentPrefetchArtifact {
+  sha256: string;
+  sizeBytes?: number;
+  /** The gate's last update, so the holder can drop the oldest gates first. */
+  gateAt: number;
+}
+
+/**
+ * Keeps a pending gate's large evidence as files, by digest. The client owns where the bytes
+ * live, how much it keeps and on which networks it downloads; prefetch only says what the gate
+ * needs. False skips that entry (no room, or not now) without stopping the gate's other reads.
+ */
+export interface ContentPrefetchMedia {
+  hold(entry: ContentPrefetchMediaEntry, signal: AbortSignal): Promise<boolean>;
+}
+
 export interface ContentPrefetchOptions {
   /** The cache's transport: connection, capabilities and resource changes. */
   transport: Pick<
@@ -55,6 +74,8 @@ export interface ContentPrefetchOptions {
   readArtifact(artifact: ContentPrefetchArtifact, signal: AbortSignal): Promise<Uint8Array>;
   /** The run's project default branch, for an active run without a stack base (`activeRunDiffBase`). */
   defaultBranch?(run: Run): string | undefined;
+  /** Large gate evidence (videos, images over the row cap); without it, they load when opened. */
+  media?: ContentPrefetchMedia;
 }
 
 export interface ContentPrefetcher {
@@ -71,6 +92,12 @@ const MAX_PREFETCH_RUNS = 2;
  * slots are not asked for their log in the background.
  */
 const SLOT_HEAD_CHECK_INTERVAL_MS = 60_000;
+/**
+ * A run whose read failed before its plan was known (a `run.get` timeout on a busy gateway), or a
+ * gate whose package did not fully load (only a new package refetches a gate), has nothing else
+ * that reads it again, so it is retried after these waits; the last one repeats.
+ */
+const RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
 const GITLINK_MODE = '160000';
 
 type PrefetchPlan = 'gate' | 'slot' | 'frozen';
@@ -92,6 +119,7 @@ interface PrefetchRunState {
     lastAt: number;
     timer?: ReturnType<typeof setTimeout>;
   };
+  retry: { failures: number; timer?: ReturnType<typeof setTimeout> };
 }
 
 /** One run's writes, under the cache write token taken before its first read. */
@@ -160,21 +188,15 @@ export function activeRunDiffQuery(params: {
 function pendingPackage(run: Run): ReadyGatePrPackage | undefined {
   const packageId = run.engineState?.publishGate?.packageId;
   if (!packageId) return undefined;
+  let current: ReadyGatePrPackage | undefined;
   for (const decision of run.decisions ?? [])
-    if (
-      !decision.resolvedAt &&
-      decision.payload?.kind === 'ready' &&
-      decision.payload.prPackage?.id === packageId
-    )
-      return decision.payload.prPackage;
-  return undefined;
-}
-
-function base64Bytes(text: string): Uint8Array {
-  const binary = atob(text);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-  return bytes;
+    if (decision.payload?.kind === 'ready' && decision.payload.prPackage?.id === packageId) {
+      if (!decision.resolvedAt) return decision.payload.prPackage;
+      current = decision.payload.prPackage;
+    }
+  // A run still waiting on a person keeps its current package, for example while a review it
+  // requested runs and its ready decision is already resolved.
+  return awaitsHumanDecision(run) ? current : undefined;
 }
 
 /**
@@ -206,6 +228,20 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     if (state.check.timer !== undefined) clearTimeout(state.check.timer);
     state.check.timer = undefined;
     state.check.again = false;
+  }
+
+  function stopRetry(state: PrefetchRunState): void {
+    if (state.retry.timer !== undefined) clearTimeout(state.retry.timer);
+    state.retry.timer = undefined;
+  }
+
+  function retryLater(state: PrefetchRunState): void {
+    const wait = RETRY_DELAYS_MS[Math.min(state.retry.failures, RETRY_DELAYS_MS.length - 1)];
+    state.retry.failures++;
+    state.retry.timer = setTimeout(() => {
+      state.retry.timer = undefined;
+      if (runs.get(state.target.runId) === state && state.status === 'done') refetch(state);
+    }, wait);
   }
 
   function halt(): void {
@@ -243,20 +279,30 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     const ticket = generation;
     const controller = new AbortController();
     const prefetched = state.run;
+    stopRetry(state);
     state.status = 'running';
     state.rerun = false;
     state.run = undefined;
     state.controller = controller;
     running++;
+    let retry = false;
     void prefetchRun(state, prefetched, controller.signal)
+      .then(() => {
+        state.retry.failures = 0;
+      })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted && isRefusal(error)) refuse();
+        if (controller.signal.aborted) return;
+        if (isRefusal(error)) refuse();
+        else retry = state.plan === undefined || state.plan === 'gate';
       })
       .finally(() => {
         if (ticket !== generation) return;
         running--;
         state.controller = undefined;
-        if (runs.get(state.target.runId) === state) state.status = state.rerun ? 'queued' : 'done';
+        if (runs.get(state.target.runId) === state) {
+          state.status = state.rerun ? 'queued' : 'done';
+          if (retry && !state.rerun) retryLater(state);
+        }
         pump();
       });
   }
@@ -471,41 +517,63 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     run: Run,
     prPackage: ReadyGatePrPackage,
     write: PrefetchWrite,
+    gateAt: number,
   ): Promise<void> {
     const { signal } = write;
     const snapshot = prPackage.reviewSnapshot;
     const bundleDigest = prPackage.artifactBundle?.bundleDigest;
+    // A diff that cannot be read now must not cost the gate its evidence: the media still loads,
+    // and the failure is rethrown afterwards so the run is retried.
+    let diffError: unknown;
     if (snapshot?.diffPath && snapshot.diffHash) {
-      const key: ContentKey = { kind: 'diff', id: snapshot.diffHash };
-      let data = (await retain(key, write)) ? await cache.readContent(key) : undefined;
-      if (!data) {
-        const read = await options.readArtifact(
-          { runId: run.id, path: snapshot.diffPath, bundleDigest },
-          signal,
-        );
-        if (!(await store(key, read, write, { untrackedFiles: snapshot.untrackedFiles }))) return;
-        if (resourceContentWithinLimits(key, read)) data = read;
-      }
-      // Prefetch rule 6: a snapshot not taken at the local merge-base loads its bases when opened.
-      if (data && run.slotId && snapshot.baseSha && snapshot.source === 'local-git') {
-        const stored = await prefetchFiles({
-          text: decoder.decode(data),
-          base: snapshot.baseSha,
-          head: snapshot.headSha ?? prPackage.headSha,
-          scope: { slotId: run.slotId },
-          untrackedFiles: snapshot.untrackedFiles,
-          ...write,
-        });
-        if (!stored) return;
+      try {
+        const key: ContentKey = { kind: 'diff', id: snapshot.diffHash };
+        let data = (await retain(key, write)) ? await cache.readContent(key) : undefined;
+        if (!data) {
+          const read = await options.readArtifact(
+            { runId: run.id, path: snapshot.diffPath, bundleDigest },
+            signal,
+          );
+          if (!(await store(key, read, write, { untrackedFiles: snapshot.untrackedFiles }))) return;
+          if (resourceContentWithinLimits(key, read)) data = read;
+        }
+        // Prefetch rule 6: a snapshot not taken at the local merge-base loads its bases when opened.
+        if (data && run.slotId && snapshot.baseSha && snapshot.source === 'local-git') {
+          const stored = await prefetchFiles({
+            text: decoder.decode(data),
+            base: snapshot.baseSha,
+            head: snapshot.headSha ?? prPackage.headSha,
+            scope: { slotId: run.slotId },
+            untrackedFiles: snapshot.untrackedFiles,
+            ...write,
+          });
+          if (!stored) return;
+        }
+      } catch (error) {
+        if (signal.aborted || isRefusal(error)) throw error;
+        diffError = error;
       }
     }
     for (const entry of prPackage.evidenceManifest ?? []) {
+      if (!entry.sha256 || !isRunArtifactMediaPath(entry.path)) continue;
       if (
-        !entry.sha256 ||
         !isRunArtifactImagePath(entry.path) ||
         (entry.sizeBytes ?? 0) > RESOURCE_CONTENT_LIMITS.imageBytes
-      )
+      ) {
+        if (signal.aborted) throw aborted();
+        await options.media?.hold(
+          {
+            runId: run.id,
+            path: entry.path,
+            bundleDigest,
+            sha256: entry.sha256,
+            sizeBytes: entry.sizeBytes,
+            gateAt,
+          },
+          signal,
+        );
         continue;
+      }
       const key: ContentKey = { kind: 'artifact', id: entry.sha256 };
       if (await retain(key, write)) continue;
       const data = await options.readArtifact(
@@ -514,6 +582,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       );
       if (!(await store(key, data, write))) return;
     }
+    if (diffError !== undefined) throw diffError;
   }
 
   /** The diff is the observed query result, kept by the cache as a stale prefetch snapshot. */
@@ -584,7 +653,12 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     if (prPackage) {
       state.plan = 'gate';
       state.packageId = run.engineState?.publishGate?.packageId;
-      return prefetchGate(run, prPackage, { cohort: 'gate', signal, token });
+      return prefetchGate(
+        run,
+        prPackage,
+        { cohort: 'gate', signal, token },
+        updatedAt(state.target),
+      );
     }
     const write: PrefetchWrite = { cohort: 'run', signal, token };
     if (run.reviewWorkspace && run.reviewWorkspaceSubject) {
@@ -606,6 +680,8 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     if (!same) {
       refused = false;
       for (const state of runs.values()) {
+        stopRetry(state);
+        state.retry.failures = 0;
         state.status = 'queued';
         state.run = undefined;
       }
@@ -652,6 +728,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
         if (!listed.has(runId)) {
           state.controller?.abort();
           stopCheck(state);
+          stopRetry(state);
           runs.delete(runId);
         }
       for (const target of listed.values()) {
@@ -662,6 +739,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
             status: 'queued',
             rerun: false,
             check: { again: false, lastAt: -Infinity },
+            retry: { failures: 0 },
           });
           continue;
         }
@@ -677,6 +755,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       unsubscribeConnection();
       unsubscribeChanges();
       halt();
+      for (const state of runs.values()) stopRetry(state);
       runs.clear();
     },
   };

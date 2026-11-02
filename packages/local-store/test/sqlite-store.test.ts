@@ -96,6 +96,49 @@ test('query metadata inspection waits behind a writer and reads only its exact s
   }
 });
 
+test("a store's files go before its row, and a failed file delete leaves the scope to delete again", async () => {
+  const { sqlite, adapter } = database();
+  const files: string[] = [];
+  let fail = true;
+  const deleteFiles = async (scopeId: string) => {
+    if (fail) throw new Error('disk busy');
+    files.push(scopeId);
+  };
+  const rows = () =>
+    (
+      sqlite.prepare('SELECT scope_id FROM resource_stores').all() as Array<{ scope_id: string }>
+    ).map((row) => row.scope_id);
+  const id = resourceStoreScopeId(scope('files'));
+  const first = await createSqliteResourceStore({
+    database: adapter,
+    scope: scope('files'),
+    deleteFiles,
+  });
+  await assert.rejects(first.deleteAll(), /disk busy/);
+  assert.deepEqual(rows(), [id], 'the row stays, so the scope is still known to need deletion');
+  fail = false;
+  // The owner's retry: open the revoked scope again and delete it.
+  const retry = await createSqliteResourceStore({
+    database: adapter,
+    scope: scope('files'),
+    deleteFiles,
+  });
+  await retry.deleteAll();
+  assert.deepEqual(files, [id]);
+  assert.deepEqual(rows(), []);
+});
+
+test('a scope evicted past the store limit takes its files with it', async () => {
+  const { adapter } = database();
+  const files: string[] = [];
+  const deleteFiles = async (scopeId: string) => {
+    files.push(scopeId);
+  };
+  for (const name of ['s1', 's2', 's3', 's4', 's5', 's6'])
+    await createSqliteResourceStore({ database: adapter, scope: scope(name), deleteFiles });
+  assert.deepEqual(files, [resourceStoreScopeId(scope('s1'))]);
+});
+
 test('SQL store runs the exported cache/store conformance against real SQLite', async () => {
   const { sqlite, adapter } = database();
   try {

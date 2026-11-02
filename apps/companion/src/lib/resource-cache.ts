@@ -7,16 +7,23 @@ import {
   createResourceCacheTransport,
   type GatewayResourceCache,
   type ResourceConnectionInputs,
+  resourceStoreScopeId,
 } from '@farmslot/protocol/client-cache';
 
 import { useConnectionStore } from '../store/connection';
 
+import { artifactUrl, setHeldArtifactLookup } from './artifact-url';
 import { startContentPrefetch } from './content-prefetch';
+import { createEvidenceMediaHolder, type EvidenceMediaHolder } from './evidence-media';
+import { nativeEvidenceMediaFiles } from './evidence-media-files';
+import { gatewayResourceSource } from './gateway-http-auth';
 import { fetchRunArtifactBytes } from './held-content';
 import { sharedLifetime } from './shared-lifetime';
 
 let notice: string | undefined;
-let prefetch: { cache: GatewayResourceCache; farm: boolean; stop: () => void } | undefined;
+let prefetch:
+  | { cache: GatewayResourceCache; farm: boolean; media?: EvidenceMediaHolder; stop: () => void }
+  | undefined;
 const listeners = new Set<() => void>();
 const notify = () => {
   for (const listener of listeners) listener();
@@ -33,7 +40,8 @@ const owner = new ResourceCacheOwner({
       },
     };
   },
-  openStore: (metadata) => createNativeSqliteResourceStore({ scope: metadata.scope }),
+  openStore: (metadata) =>
+    createNativeSqliteResourceStore({ scope: metadata.scope, deleteFiles: deleteScopeMedia }),
   onNotice(value) {
     notice = value;
     notify();
@@ -44,7 +52,72 @@ const owner = new ResourceCacheOwner({
   },
 });
 owner.subscribe(notify);
+owner.subscribe(bindMedia);
 owner.subscribe(bindPrefetch);
+
+/**
+ * Pending gates' videos and large images, kept as files by digest for the rendered offline store
+ * scope and deleted with it (ADR-071). They download only on a LAN route: without a network-type
+ * API in this binary, that is how the app knows it is on Wi-Fi.
+ */
+let media: { scope: string; holder: EvidenceMediaHolder } | undefined;
+
+function scopeMedia(scopeId: string): EvidenceMediaHolder {
+  return createEvidenceMediaHolder({
+    files: nativeEvidenceMediaFiles(scopeId),
+    source(entry) {
+      const state = useConnectionStore.getState();
+      return gatewayResourceSource(
+        artifactUrl(
+          state.gatewayUrl,
+          entry.runId,
+          entry.path,
+          undefined,
+          undefined,
+          entry.bundleDigest,
+        ),
+        state.activeProfileHttpAuthHeaders,
+      );
+    },
+    allowed() {
+      const state = useConnectionStore.getState();
+      return state.profiles.find((profile) => profile.id === state.activeProfileId)?.kind === 'lan';
+    },
+    log: (message) => console.info(message),
+  });
+}
+
+/** One holder per rendered store scope; a profile switch keeps the previous scope's files. */
+function bindMedia(): void {
+  const scope = useConnectionStore.getState().signedOut ? undefined : owner.renderMetadata?.scope;
+  const scopeId = scope ? resourceStoreScopeId(scope) : undefined;
+  if (media?.scope === scopeId) return;
+  media?.holder.dispose();
+  media = scopeId ? { scope: scopeId, holder: scopeMedia(scopeId) } : undefined;
+  setHeldArtifactLookup(media?.holder);
+}
+
+/**
+ * A deleted offline store takes its scope's held evidence with it, however it was retired. The
+ * store awaits this, so a failure fails the deletion and the owner deletes the scope again.
+ */
+async function deleteScopeMedia(scopeId: string): Promise<void> {
+  const current = media?.scope === scopeId ? media.holder : undefined;
+  if (current) {
+    media = undefined;
+    setHeldArtifactLookup(undefined);
+  }
+  try {
+    if (current) await current.destroy();
+    else {
+      await nativeEvidenceMediaFiles(scopeId).clear();
+      console.info('[evidence-media] cleared');
+    }
+  } catch (error) {
+    console.warn('[evidence-media] delete failed', error);
+    throw error;
+  }
+}
 
 function connectionInputs(): ResourceConnectionInputs {
   const state = useConnectionStore.getState();
@@ -69,6 +142,7 @@ function sync(): void {
     signedOut: state.signedOut,
     connection: connectionInputs(),
   });
+  bindMedia();
   // Authentication can change farm access without a new cache.
   bindPrefetch();
 }
@@ -80,7 +154,13 @@ function sync(): void {
 function bindPrefetch(): void {
   const cache = owner.cache;
   const farm = getResourceWorkspaceAccess() === 'farm';
-  if (prefetch ? prefetch.cache === cache && prefetch.farm === farm : !cache) return;
+  const holder = media?.holder;
+  if (
+    prefetch
+      ? prefetch.cache === cache && prefetch.farm === farm && prefetch.media === holder
+      : !cache
+  )
+    return;
   prefetch?.stop();
   prefetch = undefined;
   const client = useConnectionStore.getState().client;
@@ -88,9 +168,11 @@ function bindPrefetch(): void {
   prefetch = {
     cache,
     farm,
+    media: holder,
     stop: startContentPrefetch({
       cache,
       farm,
+      media: holder,
       transport: createResourceCacheTransport(client, connectionInputs),
       request: (method, params, signal) => client.request(method, params, undefined, { signal }),
       readArtifact(artifact, signal) {

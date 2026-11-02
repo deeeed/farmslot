@@ -30,11 +30,11 @@ import {
 import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
 import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
+import { useArtifactSource } from '../hooks/useArtifactSource';
 import { recordingAcceptanceReview } from '../lib/acceptance-evidence';
 import {
   type ArtifactHttpHeaders,
   type ArtifactMediaType,
-  artifactSource,
   classifyArtifact,
 } from '../lib/artifact-url';
 import {
@@ -471,7 +471,7 @@ function FullscreenVideo({
   const [videoPath, setVideoPath] = useState('');
   const [durationMs, setDurationMs] = useState(0);
   const [, updateSelection] = useState(0);
-  const source = useMemo(() => artifactSource(uri, item.authHeaders), [item.authHeaders, uri]);
+  const source = useArtifactSource(uri, item.authHeaders, item.sha256);
   const player = useVideoPlayer(source, (value) => {
     value.timeUpdateEventInterval = 0.1;
     value.bufferOptions = { preferredForwardBufferDuration: 2, maxBufferBytes: 4 * 1024 * 1024 };
