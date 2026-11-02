@@ -1,6 +1,7 @@
+import { File } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 
-import { base64Bytes, createSha256 } from '@farmslot/protocol/client-cache';
+import { createSha256 } from '@farmslot/protocol/client-cache';
 
 import type { EvidenceMediaFiles } from './evidence-media';
 
@@ -38,15 +39,8 @@ export function nativeEvidenceMediaFiles(scopeId: string): EvidenceMediaFiles {
       }
       return (await size(to)) ?? 0;
     },
-    async read(uri, position, length) {
-      return base64Bytes(
-        await FileSystem.readAsStringAsync(uri, {
-          encoding: FileSystem.EncodingType.Base64,
-          position,
-          length,
-        }),
-      );
-    },
+    // Native, on a background thread.
+    sha256: (uri) => new File(uri).digest('SHA-256'),
     move: (from, to) => FileSystem.moveAsync({ from, to }),
     remove: (uri) => FileSystem.deleteAsync(uri, { idempotent: true }),
     async readText(uri) {

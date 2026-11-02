@@ -23,7 +23,6 @@ const signal = new AbortController().signal;
 function memoryFiles(served: Map<string, Uint8Array>) {
   const disk = new Map<string, Uint8Array | string>();
   const downloads: string[] = [];
-  const reads: number[] = [];
   const control: { gate?: Promise<void>; removal?: Promise<void>; stall?: boolean } = {};
   const files: EvidenceMediaFiles = {
     directory: DIRECTORY,
@@ -44,10 +43,9 @@ function memoryFiles(served: Map<string, Uint8Array>) {
       disk.set(to, body);
       return body.length;
     },
-    async read(uri, position, length) {
-      reads.push(length);
+    async sha256(uri) {
       await control.gate;
-      return (disk.get(uri) as Uint8Array).slice(position, position + length);
+      return digest(disk.get(uri) as Uint8Array);
     },
     async move(from, to) {
       disk.set(to, disk.get(from)!);
@@ -69,7 +67,7 @@ function memoryFiles(served: Map<string, Uint8Array>) {
     },
   };
   const media = () => [...disk.keys()].filter((key) => !key.endsWith('index.json'));
-  return { files, disk, downloads, reads, control, media };
+  return { files, disk, downloads, control, media };
 }
 
 function setup({ limitBytes = 1000, allowed = true } = {}) {
@@ -193,14 +191,6 @@ test('bytes that do not hash to the manifest digest are never kept', async () =>
   assert.equal(await holder.hold(wrong, signal), false);
   assert.equal(holder.byPath('a', 'run.mp4', 'b1'), undefined);
   assert.deepEqual(media(), []);
-});
-
-test('a large file verifies in 16 KB reads, so hashing never holds the JS thread for long', async () => {
-  const { holder, entry, reads } = setup({ limitBytes: 1024 * 1024 });
-  const body = bytes(15, 100 * 1024);
-  assert.equal(await holder.hold(entry('a', 'run.mp4', body), signal), true);
-  assert.equal(reads.length, Math.ceil(body.length / (16 * 1024)));
-  assert.ok(reads.every((length) => length <= 16 * 1024));
 });
 
 test('sign-out while a file is verifying keeps nothing, and destroy deletes every held file', async () => {

@@ -1,16 +1,10 @@
-import {
-  type ContentPrefetchMedia,
-  type ContentPrefetchMediaEntry,
-  createSha256,
+import type {
+  ContentPrefetchMedia,
+  ContentPrefetchMediaEntry,
 } from '@farmslot/protocol/client-cache';
 
 /** Pending gates' large evidence kept on the device. Past this, older gates make room. */
 export const EVIDENCE_MEDIA_LIMIT_BYTES = 400 * 1024 * 1024;
-/**
- * Bytes per read while verifying. Each read is decoded and hashed on the JS thread, about 1 s per
- * MB on a Pixel 6, so a small read keeps a tab press from waiting behind a whole video.
- */
-const HASH_CHUNK_BYTES = 16 * 1024;
 
 /** The file operations the holder needs; `directory` ends with '/'. */
 export interface EvidenceMediaFiles {
@@ -23,7 +17,11 @@ export interface EvidenceMediaFiles {
     to: string,
     signal: AbortSignal,
   ): Promise<number>;
-  read(uri: string, position: number, length: number): Promise<Uint8Array>;
+  /**
+   * The file's SHA-256 as lowercase hex, hashed off the JS thread: hashing a video in JS held it
+   * for about 1 s per MB on a Pixel 6, long enough to stall tab presses.
+   */
+  sha256(uri: string): Promise<string>;
   move(from: string, to: string): Promise<void>;
   /** Idempotent: a file that is already gone is no error. */
   remove(uri: string): Promise<void>;
@@ -186,13 +184,6 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
     return total() + bytes <= limit;
   }
 
-  async function verify(uri: string, bytes: number, sha256: string): Promise<boolean> {
-    const hash = createSha256();
-    for (let position = 0; position < bytes; position += HASH_CHUNK_BYTES)
-      hash.update(await files.read(uri, position, Math.min(HASH_CHUNK_BYTES, bytes - position)));
-    return hash.hex() === sha256;
-  }
-
   async function fetchFile(entry: ContentPrefetchMediaEntry, signal: AbortSignal) {
     const part = `${files.directory}${entry.sha256}.part`;
     let bytes: number;
@@ -206,7 +197,7 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
         log(`[evidence-media] download failed ${entry.path}: ${String(error)}`);
       return false;
     }
-    const verified = !signal.aborted && (await verify(part, bytes, entry.sha256));
+    const verified = !signal.aborted && (await files.sha256(part)) === entry.sha256;
     return serialized(async () => {
       if (!verified || !live(entry.runId) || !(await makeRoom(bytes, entry.gateAt))) {
         await files.remove(part);
