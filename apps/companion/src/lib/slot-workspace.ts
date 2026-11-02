@@ -5,6 +5,7 @@ import {
   type RecipeRunArtifactGroup,
   type Run,
   type RunDecision,
+  runHasTrimmedDetail,
   type SlotRunHistoryEntry,
 } from '@farmslot/protocol';
 
@@ -296,6 +297,13 @@ function runStepDiffStat(
     )?.diffStat;
 }
 
+const NOT_LOADED = 'not loaded';
+
+/** A count from a run.list row that left detail out is unknown until run.get lands, not zero. */
+function loadedCount(run: Run, count: number): string {
+  return runHasTrimmedDetail(run) ? NOT_LOADED : String(count);
+}
+
 function summarizeSlotWorkspaceDecision(
   run: Run,
   decision: RunDecision,
@@ -306,7 +314,7 @@ function summarizeSlotWorkspaceDecision(
   const primaryArtifactPath = artifactPaths[0] ?? null;
   const visualPairMetric = beforeAfterMetricForArtifactPaths(run, artifactPaths);
   if (payload?.kind === 'ready') {
-    const evidenceCount = extractRunArtifactManifest(run).length;
+    const evidenceCount = loadedCount(run, extractRunArtifactManifest(run).length);
     const diff =
       payload.diffStat.files > 0
         ? `+${payload.diffStat.additions} -${payload.diffStat.deletions}`
@@ -326,7 +334,7 @@ function summarizeSlotWorkspaceDecision(
       artifactPaths,
       metrics: [
         { label: 'Diff', value: diff },
-        { label: 'Evidence', value: String(evidenceCount) },
+        { label: 'Evidence', value: evidenceCount },
         ...visualPairMetric,
         { label: 'Publish', value: formatMetricValue(payload.publicationStatus) },
       ],
@@ -334,8 +342,10 @@ function summarizeSlotWorkspaceDecision(
   }
 
   if (payload?.kind === 'review') {
-    const evidenceCount =
-      (payload.artifactManifest?.length ?? 0) + (payload.reviewInputArtifactPaths?.length ?? 0);
+    const evidenceCount = loadedCount(
+      run,
+      (payload.artifactManifest?.length ?? 0) + (payload.reviewInputArtifactPaths?.length ?? 0),
+    );
     return {
       decision,
       label: 'Review workspace',
@@ -347,16 +357,23 @@ function summarizeSlotWorkspaceDecision(
       artifactPaths,
       metrics: [
         { label: 'Verdict', value: formatMetricValue(payload.recommendation) },
-        { label: 'Comments', value: String(payload.lineComments.length) },
-        { label: 'Evidence', value: String(evidenceCount) },
+        {
+          label: 'Comments',
+          value: decision.payloadTrimmed?.includes('lineComments')
+            ? NOT_LOADED
+            : String(payload.lineComments.length),
+        },
+        { label: 'Evidence', value: evidenceCount },
         ...visualPairMetric,
       ],
     };
   }
 
   if (payload?.kind === 'no-change') {
-    const evidenceCount =
-      payload.artifactManifest?.length ?? payload.evidence?.artifacts?.length ?? 0;
+    const evidenceCount = loadedCount(
+      run,
+      payload.artifactManifest?.length ?? payload.evidence?.artifacts?.length ?? 0,
+    );
     return {
       decision,
       label: 'No-change review',
@@ -368,7 +385,7 @@ function summarizeSlotWorkspaceDecision(
       artifactPaths,
       metrics: [
         { label: 'Disposition', value: formatMetricValue(payload.disposition) },
-        { label: 'Evidence', value: String(evidenceCount) },
+        { label: 'Evidence', value: evidenceCount },
         ...visualPairMetric,
         { label: 'Confidence', value: formatMetricValue(payload.evidence?.confidence) },
       ],

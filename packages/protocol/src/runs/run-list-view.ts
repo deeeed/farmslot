@@ -60,6 +60,19 @@ export function slotMachineMap(
   return new Map(slots.map((slot) => [slot.slot, slot.machine]));
 }
 
+/**
+ * `run.list` leaves large decision payload values out and names them in
+ * `payloadTrimmed`, and omits the output manifest. A view drawn from a list row
+ * reads both from the run's direct `run.get` copy, and shows them as not loaded
+ * until then rather than as empty.
+ */
+export function runHasTrimmedDetail(run: Pick<Run, 'decisions' | 'output'>): boolean {
+  return (
+    Boolean(run.output?.artifactManifestOmitted) ||
+    (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0)
+  );
+}
+
 /** Incoming runs replace stored runs with the same id; newest first. */
 export function mergeRunsById(existing: readonly Run[], incoming: readonly Run[]): Run[] {
   const byId = new Map(existing.map((run) => [run.id, run]));

@@ -13,13 +13,10 @@ import {
 } from 'react-native';
 
 import {
-  buildRunResolveDecisionParams,
   type InteractiveOperatorPacket,
-  Methods,
   type Run,
   validateInteractiveOperatorPacket,
 } from '@farmslot/protocol';
-import { operatorMessageInput } from '@farmslot/review-dispatch';
 
 import { useRunAcceptance } from '../../../hooks/useRunAcceptance';
 import {
@@ -41,6 +38,7 @@ import {
   interactivePacketArtifactOpenUrl,
   interactivePacketArtifactViewerHref,
 } from '../../../lib/interactive-operator-packets';
+import { sendInteractivePacketWrite } from '../../../lib/interactive-packet-writes';
 import { colors, fonts, radii, spacing } from '../../../lib/theme';
 
 interface LoadedInteractivePacket {
@@ -191,26 +189,9 @@ export function InteractiveOperatorPacketsPanel({
         }
       } else if (request.kind === 'open-artifact') {
         await openArtifact(request.artifactPath);
-      } else if (request.kind === 'terminal.send') {
+      } else {
         if (!client) throw new Error('Gateway is not connected.');
-        if (!run.slotId) throw new Error('Run is not attached to a slot.');
-        await client.request(Methods.TERMINAL_SEND, {
-          slotId: run.slotId,
-          runId: run.id,
-          ...operatorMessageInput(request.text),
-        });
-      } else if (request.kind === 'decision.resolve') {
-        if (!client) throw new Error('Gateway is not connected.');
-        const decision = run.decisions.find((candidate) => candidate.id === request.decisionId);
-        if (!decision) throw new Error(`Decision ${request.decisionId} is no longer pending.`);
-        await client.request(
-          Methods.RUN_RESOLVE_DECISION,
-          buildRunResolveDecisionParams({
-            runId: run.id,
-            decision,
-            actionId: request.actionId,
-          }),
-        );
+        await sendInteractivePacketWrite(client, run, request);
       }
       setFeedback(
         request.kind === 'copy'

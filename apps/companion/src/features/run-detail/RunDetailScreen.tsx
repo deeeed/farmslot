@@ -149,7 +149,8 @@ export default function RunDetailScreen() {
   const requestedRecipeRunId = Array.isArray(recipeRun)
     ? (recipeRun[0] ?? null)
     : (recipeRun ?? null);
-  const { runQuery, runObservation, run } = useRunDetailRun(resolvedRunId);
+  const { runQuery, runObservation, listObservation, fromList, run } =
+    useRunDetailRun(resolvedRunId);
   const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const recipeQuery = useMemo(
     () => runEvidenceQuery(resolvedRunId, run, requestedRecipeRunId),
@@ -543,10 +544,13 @@ export default function RunDetailScreen() {
     <View style={baseStyles.container}>
       <ResourceReadStatus
         observations={[
+          // A row on screen is as old as the run list it came from.
+          ...(fromList ? [{ observation: listObservation, label: 'run' }] : []),
           { observation: runObservation, label: 'run' },
           { observation: recipeObservation, label: 'run evidence' },
           ...(progressQuery ? [{ observation: progressObservation, label: 'task progress' }] : []),
         ]}
+        onRetry={() => void retryRun()}
       />
       <Animated.ScrollView
         testID="companion-screen-run-detail"

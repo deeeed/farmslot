@@ -21,6 +21,17 @@ import React from 'react';
 
 import type { RunResourcePostureState } from '@farmslot/protocol';
 
+import {
+  gateParkStateLabel,
+  gateParkSummaryLine,
+} from '../../../../../../packages/protocol/src/contracts/gate-park';
+import {
+  resourcePostureCounts,
+  resourcePostureRowStatus,
+  resourcePostureTransitionFailuresToShow,
+} from '../../../../../../packages/protocol/src/contracts/resource-posture';
+import { formatRuntimeCapabilityTarget } from '../../../../../../packages/protocol/src/contracts/runtime-capabilities';
+
 import type { RunPosturePanel as Panel } from './RunPosturePanel';
 
 type Style = Record<string, unknown>;
@@ -58,6 +69,19 @@ mock.module('react-native', {
       create: (sheet: unknown) => sheet,
       absoluteFill: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
     },
+  },
+});
+
+// The panel and its posture lib use these six; loading their own modules takes a fraction of
+// the time the whole protocol index takes.
+mock.module('@farmslot/protocol', {
+  namedExports: {
+    formatRuntimeCapabilityTarget,
+    gateParkStateLabel,
+    gateParkSummaryLine,
+    resourcePostureCounts,
+    resourcePostureRowStatus,
+    resourcePostureTransitionFailuresToShow,
   },
 });
 

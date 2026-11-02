@@ -6,6 +6,7 @@ import {
   type RecipeRunArtifactGroup,
   type Run,
   type RunDecision,
+  runHasTrimmedDetail,
   type RunStep,
   runStepDisplayDetail,
   type RunStepDisplayStatus,
@@ -396,6 +397,8 @@ export function RunReviewWorkspaceSummary({
     }
   };
   const workspaceVisualPairCount = compareTarget?.pairCount ?? runVisualPairCount;
+  // A run.list row omits the manifest and large payloads until run.get lands.
+  const detailLoaded = !runHasTrimmedDetail(run);
   const tone = colors.accent;
   const diffValue = runWorkspaceDiffValue(run, gate);
   const diffAvailable = hasRunWorkspaceDiff(run, gate);
@@ -517,7 +520,7 @@ export function RunReviewWorkspaceSummary({
       <RunWorkspaceCockpit
         diffValue={diffValue}
         diffAvailable={diffAvailable}
-        manifestCount={manifestCount}
+        manifestCount={detailLoaded ? manifestCount : null}
         recipeArtifactCount={recipeArtifactCount}
         recipeAvailable={recipeAvailable}
         recipeScopeLabel={recipeWorkspaceScopeLabel(selectedRecipeRunId)}
@@ -532,7 +535,7 @@ export function RunReviewWorkspaceSummary({
           ) ?? null
         }
         retroSummary={retroSummary}
-        visualPairCount={workspaceVisualPairCount}
+        visualPairCount={detailLoaded ? workspaceVisualPairCount : null}
         pendingCount={(run.decisions ?? []).filter((decision) => !decision.resolvedAt).length}
         terminalAvailable={!terminal.disabledReason}
         slotId={run.slotId}
@@ -861,7 +864,8 @@ export function RunWorkspaceCockpit({
 }: {
   diffValue: string;
   diffAvailable: boolean;
-  manifestCount: number;
+  /** Null while the run's manifest is not loaded. */
+  manifestCount: number | null;
   recipeArtifactCount: number | null;
   recipeAvailable?: boolean;
   recipeScopeLabel: ReturnType<typeof recipeWorkspaceScopeLabel>;
@@ -870,7 +874,7 @@ export function RunWorkspaceCockpit({
   readyGate: SlotWorkspaceGateSummary | null;
   reviewGate: SlotWorkspaceGateSummary | null;
   retroSummary: SlotWorkspaceRetroSummary | null;
-  visualPairCount: number;
+  visualPairCount: number | null;
   pendingCount: number;
   terminalAvailable: boolean;
   slotId: string | null | undefined;
@@ -954,14 +958,14 @@ export function RunWorkspaceCockpit({
         />
         <CockpitTile
           label="Artifact files"
-          value={String(manifestCount)}
+          value={manifestCount === null ? 'not loaded' : String(manifestCount)}
           onPress={onOpenArtifacts}
         />
         <CockpitTile
           label="Before→After"
-          value={String(visualPairCount)}
+          value={visualPairCount === null ? 'not loaded' : String(visualPairCount)}
           onPress={onOpenCompare}
-          disabled={visualPairCount === 0}
+          disabled={!visualPairCount}
         />
         <CockpitTile
           label="Recipe files"

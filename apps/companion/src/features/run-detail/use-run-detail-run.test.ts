@@ -6,6 +6,7 @@ import type { Run, RunGetResult } from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
   createMemoryResourceStore,
+  readRefused,
   type ResourceQuery,
   resourceQuery,
   type ResourceQueryState,
@@ -17,7 +18,7 @@ import { mountHook } from '../../hooks/hook-harness.fixtures';
 const scope = { gatewayUrl: 'ws://run-detail.invalid/', principalId: 'p', principalGeneration: 0 };
 const authority = { roles: [], workspaceAccess: 'farm' as const };
 
-function run(summary: string): Run {
+function run(summary: string, updatedAt = '2026-11-01T00:00:00.000Z'): Run {
   return {
     id: 'run-1',
     familyId: 'family-1',
@@ -34,22 +35,35 @@ function run(summary: string): Run {
     decisions: [],
     metrics: { nudgeCount: 0, model: null, runner: null },
     createdAt: '2026-11-01T00:00:00.000Z',
-    updatedAt: '2026-11-01T00:00:00.000Z',
+    updatedAt,
   };
 }
 
-type Rendered = { run: Run | null; runObservation: ResourceQueryState<RunGetResult> };
+type Rendered = {
+  run: Run | null;
+  fromList: boolean;
+  runObservation: ResourceQueryState<RunGetResult>;
+};
 
 function isRendered(value: unknown): value is Rendered {
-  return typeof value === 'object' && value !== null && 'run' in value && 'runObservation' in value;
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'run' in value &&
+    'fromList' in value &&
+    'runObservation' in value
+  );
 }
 
 const turns = async () => {
   for (let i = 0; i < 20; i++) await new Promise<void>((resolve) => setImmediate(resolve));
 };
 
-/** The cold start Run Detail opens on: an offline gateway and a run.get saved by an earlier session. */
-async function mount(listed: Run[], saved?: Run) {
+/**
+ * The cold start Run Detail opens on: a run.get saved by an earlier session, and a gateway
+ * that is offline unless `online`, in which case the test answers the read itself.
+ */
+async function mount(listed: Run[], saved?: Run, online = false) {
   const store = createMemoryResourceStore();
   await store.setMetadata({ scope, authority });
   if (saved)
@@ -61,13 +75,14 @@ async function mount(listed: Run[], saved?: Run) {
     });
   const transport = new ResourceCacheConformanceTransport(scope);
   transport.connection.authority = authority;
+  if (online) transport.setConnection({ connected: true, id: 1 });
   const cache = createGatewayResourceCache({ transport, store });
   const stops: Array<() => void> = [];
   const hook = mountHook<[string]>(
     new URL('./use-run-detail-run.ts', import.meta.url),
     'useRunDetailRun',
     {
-      '@farmslot/protocol/client-cache': { resourceQuery },
+      '@farmslot/protocol/client-cache': { readRefused, resourceQuery },
       '../../hooks/useResourceQuery': {
         useResourceQuery<T>(query: ResourceQuery<T> | undefined): ResourceQueryState<T> {
           if (!query) return { status: 'loading' };
@@ -76,7 +91,9 @@ async function mount(listed: Run[], saved?: Run) {
         },
       },
       '../../store/runs': {
-        useRunStore: (select: (state: { runs: Run[] }) => unknown) => select({ runs: listed }),
+        useRunStore: (
+          select: (state: { runs: Run[]; observation: ResourceQueryState }) => unknown,
+        ) => select({ runs: listed, observation: { status: 'stale' } }),
       },
     },
   );
@@ -134,5 +151,47 @@ test('a run with no local copy anywhere has nothing to render', async () => {
     assert.equal(detail.render().run, null);
   } finally {
     await detail.dispose();
+  }
+});
+
+test('a refused run.get drops the row; a failed one keeps it', async () => {
+  for (const [code, kept] of [
+    ['RUN_NOT_FOUND', false],
+    ['READ_FAILED', true],
+  ] as const) {
+    const row = run('listed row');
+    const detail = await mount([row], undefined, true);
+    try {
+      assert.equal(detail.render().run, row);
+      const read = await detail.transport.nextRead();
+      read.reject(code);
+      await turns();
+      const after = detail.render();
+      assert.equal(after.runObservation.error?.code, code);
+      assert.equal(after.run, kept ? row : null, code);
+    } finally {
+      await detail.dispose();
+    }
+  }
+});
+
+test('the newer of the row and the saved run.get is the one shown', async () => {
+  const older = '2026-11-01T00:00:00.000Z';
+  const newer = '2026-11-01T00:05:00.000Z';
+  for (const [rowAt, savedAt, shown] of [
+    [newer, older, 'listed row'],
+    [older, newer, 'saved run.get'],
+  ] as const) {
+    const detail = await mount([run('listed row', rowAt)], run('saved run.get', savedAt));
+    try {
+      detail.render();
+      await turns();
+      const hydrated = detail.render();
+      assert.equal(hydrated.runObservation.status, 'stale');
+      assert.equal(hydrated.run?.summary, shown);
+      assert.equal(hydrated.fromList, shown === 'listed row');
+    } finally {
+      await detail.dispose();
+    }
   }
 });
