@@ -1,31 +1,73 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import os from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { beforeEach, mock, test } from 'node:test';
 
-import { runBundleExport, runBundleImport } from './run-bundle.js';
+// Arthur 11-02: bundle export and import copy whole payloads through several destinations, any
+// of which may be its own volume. Each destination is checked before anything is written.
+const checked: string[] = [];
+let refused: string | null = null;
+const realGuard = await import('../core/heavy-write-room.js');
+mock.module('../core/heavy-write-room.js', {
+  namedExports: {
+    ...realGuard,
+    assertHeavyWriteRoom: async (dir: string) => {
+      checked.push(dir);
+      if (dir === refused)
+        throw new realGuard.HeavyWriteRefusedError(`Refusing to write ${dir}: under the floor`);
+    },
+  },
+});
+const wrote: string[] = [];
+const realBundles = await import('@farmslot/run-bundle');
+mock.module('@farmslot/run-bundle', {
+  namedExports: {
+    ...realBundles,
+    exportRunsToBundle: async () => {
+      wrote.push('export');
+      return {};
+    },
+    importBundle: async () => {
+      wrote.push('import');
+      return {};
+    },
+  },
+});
+const { runBundleExport, runBundleImport } = await import('./run-bundle.js');
+const { farmslotRoot } = await import('../projects/repo-root.js');
+const { runBundleHome } = await import('../run-completion/retained-artifacts.js');
+const { runsDirectory } = await import('../runs/store.js');
 
-// Arthur 11-02: bundle export and import copy whole payloads, so they stop at the free-space
-// floor before writing anything.
-test('bundle export and import refuse below the free-space floor', async (t) => {
-  const tmp = await mkdtemp(path.join(os.tmpdir(), 'run-bundle-floor-'));
-  t.after(() => rm(tmp, { recursive: true, force: true }));
-  const previous = process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
-  process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = '100000000';
-  t.after(() => {
-    if (previous === undefined) delete process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB;
-    else process.env.FARMSLOT_HEAVY_WRITE_FLOOR_GB = previous;
-  });
-  const outputPath = path.join(tmp, 'exports/runs.farmslot-bundle');
-  await assert.rejects(
-    runBundleExport({ outputPath, runId: 'run-floor' }),
-    /under the 100000000\.0 GB floor/,
-  );
-  assert.equal(existsSync(path.dirname(outputPath)), false);
-  await assert.rejects(
-    runBundleImport({ bundlePath: path.join(tmp, 'missing.farmslot-bundle') }),
-    /under the 100000000\.0 GB floor/,
-  );
+const outputPath = path.join(tmpdir(), 'exports/runs.farmslot-bundle');
+const importDestinations = () => [
+  tmpdir(),
+  farmslotRoot,
+  runsDirectory(),
+  path.join(runBundleHome(), 'run-bundles'),
+];
+
+beforeEach(() => {
+  checked.length = 0;
+  wrote.length = 0;
+  refused = null;
+});
+
+test('bundle export and import check every destination volume before writing', async () => {
+  await runBundleExport({ outputPath });
+  assert.deepEqual(checked, [tmpdir(), path.dirname(outputPath)]);
+  checked.length = 0;
+  await runBundleImport({ bundlePath: '/bundles/runs.farmslot-bundle' });
+  assert.deepEqual(checked, importDestinations());
+  assert.deepEqual(wrote, ['export', 'import']);
+});
+
+test('one destination below the floor refuses the bundle copy and nothing is written', async () => {
+  // The temp volume, where export stages media and import extracts, alone is low.
+  refused = tmpdir();
+  await assert.rejects(runBundleExport({ outputPath }), /under the floor/);
+  await assert.rejects(runBundleImport({ bundlePath: '/bundles/b' }), /under the floor/);
+  // An external store volume is low while the temp volume is fine.
+  refused = runsDirectory();
+  await assert.rejects(runBundleImport({ bundlePath: '/bundles/b' }), /under the floor/);
+  assert.deepEqual(wrote, []);
 });

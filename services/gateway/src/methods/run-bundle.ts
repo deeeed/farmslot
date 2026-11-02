@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type {
@@ -21,7 +22,9 @@ export async function runBundleExport(
 ): Promise<RunBundleExportResult> {
   if (!params.outputPath?.trim())
     throw new Error('Invalid run.bundle.export params: missing outputPath');
-  await assertHeavyWriteRoom(path.dirname(path.resolve(params.outputPath)));
+  // Export stages the retained media in the temp directory before writing the bundle.
+  for (const dir of [tmpdir(), path.dirname(path.resolve(params.outputPath))])
+    await assertHeavyWriteRoom(dir);
   return exportRunsToBundle({
     farmslotRoot,
     outputPath: params.outputPath,
@@ -38,9 +41,15 @@ export async function runBundleImport(
 ): Promise<RunBundleImportResult> {
   if (!params.bundlePath?.trim())
     throw new Error('Invalid run.bundle.import params: missing bundlePath');
-  // An import writes run records and their media into the gateway's stores.
-  await assertHeavyWriteRoom(runsDirectory());
-  await assertHeavyWriteRoom(path.join(runBundleHome(), 'run-bundles'));
+  // An import extracts in the temp directory, restores task payloads under the checkout, and
+  // writes run records and their media into the gateway's stores. Each may be its own volume.
+  for (const dir of [
+    tmpdir(),
+    farmslotRoot,
+    runsDirectory(),
+    path.join(runBundleHome(), 'run-bundles'),
+  ])
+    await assertHeavyWriteRoom(dir);
   const result = await importBundle({
     farmslotRoot,
     bundlePath: params.bundlePath,
