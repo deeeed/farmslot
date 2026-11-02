@@ -152,6 +152,24 @@ async function withTimeout<T>(
   }
 }
 
+const BRANCH_SLUG_MAX = 30;
+// "DO NOT MERGE" in any case, spacing or punctuation: [DO NOT MERGE], DO-NOT-MERGE, do_not_merge.
+const DO_NOT_MERGE = /\bdo[\s_-]*not[\s_-]*merge\b/i;
+const DO_NOT_MERGE_SEGMENT = 'do-not-merge';
+
+/**
+ * A title marked DO NOT MERGE keeps the marker in its branch slug, as a leading
+ * `do-not-merge` segment that no truncation can drop. Run 9819c7bf's title said
+ * DO NOT MERGE and its generated slug did not (F327).
+ */
+function keepDoNotMergeMarker(slug: string, title: string): string {
+  if (!DO_NOT_MERGE.test(title)) return slug;
+  const rest = slug.replace(/(^|-)do-not-merge(?=-|$)/g, '').replace(/^-+|-+$/g, '');
+  return `${DO_NOT_MERGE_SEGMENT}${rest ? `-${rest}` : ''}`
+    .slice(0, BRANCH_SLUG_MAX)
+    .replace(/-+$/, '');
+}
+
 export function slugify(text: string): string {
   const slug = text
     .toLowerCase()
@@ -159,7 +177,7 @@ export function slugify(text: string): string {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 30);
+    .slice(0, BRANCH_SLUG_MAX);
   return slug || 'untitled';
 }
 
@@ -172,7 +190,7 @@ export function sanitizeBranchSlug(slug: string): string {
     .replace(/\/+/g, '-')
     .replace(/^-|-$/g, '')
     .replace(/-+/g, '-')
-    .slice(0, 30);
+    .slice(0, BRANCH_SLUG_MAX);
   return clean || 'task';
 }
 
@@ -209,14 +227,17 @@ ${ticket.labels?.length ? `Labels: ${ticket.labels.join(', ')}` : ''}`;
     const parsed = JSON.parse(jsonMatch[0]);
     return {
       summary: taskTitleText(parsed.summary ?? ticket.title),
-      branchSlug: sanitizeBranchSlug(parsed.branchSlug ?? slugify(ticket.title)),
+      branchSlug: keepDoNotMergeMarker(
+        sanitizeBranchSlug(parsed.branchSlug ?? slugify(ticket.title)),
+        ticket.title,
+      ),
       usage: result.usage,
     };
   } catch (err) {
     console.warn(`[intelligence] summary generation failed (non-fatal): ${(err as Error).message}`);
     return {
       summary: taskTitleText(ticket.title),
-      branchSlug: slugify(ticket.title),
+      branchSlug: keepDoNotMergeMarker(slugify(ticket.title), ticket.title),
       usage: { provider: 'fallback', model: 'none', durationMs: 0 },
     };
   }

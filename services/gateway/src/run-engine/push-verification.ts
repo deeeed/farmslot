@@ -66,6 +66,12 @@ export interface WorktreePublishState {
    */
   untrackedFiles?: number;
   unpushedCommits: number;
+  /**
+   * HEAD is not on the run branch: the worker renamed or deleted it (`runBranchExists`
+   * false), or switched to another branch. `head` is HEAD's branch, null when detached.
+   * The commit comparison is skipped; this state never satisfies a mode.
+   */
+  offBranch?: { runBranchExists: boolean; head: string | null };
 }
 
 type GitExecutor = (command: string) => Promise<ExecResult>;
@@ -75,8 +81,9 @@ type GitExecutor = (command: string) => Promise<ExecResult>;
  * It prints NUL-terminated records: the tracked-content and staged path lists,
  * then the untracked list in push mode, each closed by an empty record (no path
  * is empty); then the comparison: `remote` or `base` with a commit count, or
- * `none`. A failing probe prints its name as the last record and exits with its
- * status.
+ * `none`; or, when HEAD is not on the run branch, `moved`, `0` or `1` for whether
+ * the run branch still exists, and HEAD's branch (empty when detached). A failing
+ * probe prints its name as the last record and exits with its status.
  */
 function inspectionScript(branch: string, mode: 'push' | 'commit'): string {
   const remoteRef = `origin/${branch}`;
@@ -99,6 +106,11 @@ function inspectionScript(branch: string, mode: 'push' | 'commit'): string {
           `git ls-files --others --exclude-standard -z || fail $? 'untracked-files probe'; printf '\\0'`,
         ]
       : []),
+    // A renamed or switched branch is the worker's to fix: comparing a missing run
+    // branch failed rev-list with exit 128 (F327).
+    `h=$(git symbolic-ref --quiet --short HEAD); rc=$?`,
+    `[ "$rc" -le 1 ] || fail "$rc" 'HEAD branch probe'`,
+    `if [ "$h" != ${shellQuote(branch)} ]; then exists "$b" ${shellQuote(`rev-parse refs/heads/${branch}`)}; printf 'moved\\0%s\\0%s\\0' "$?" "$h"; exit 0; fi`,
     `exists ${shellQuote(remoteRef)} ${shellQuote(`rev-parse ${remoteRef}`)} && ahead remote ${shellQuote(remoteRef)}`,
     // A new local branch has no origin/<branch> yet. Compare it with its
     // configured upstream when present, otherwise origin/HEAD.
@@ -139,18 +151,22 @@ export async function inspectWorktreePublishState(
   };
   const tracked = new Set([...paths(), ...paths()]);
   const untracked = mode === 'push' ? paths() : undefined;
-  const [comparison, ahead] = records.slice(at);
+  const [comparison, ahead, head] = records.slice(at);
   const commits = parseInt(ahead ?? '', 10) || 0;
+  const offBranch =
+    comparison === 'moved' ? { runBranchExists: ahead === '0', head: head || null } : undefined;
   return {
     dirtyFiles: new Set([...tracked, ...(untracked ?? [])]).size,
     trackedDirtyFiles: tracked.size,
     ...(untracked ? { untrackedFiles: untracked.length } : {}),
+    ...(offBranch ? { offBranch } : {}),
     // Against an upstream or origin/HEAD, counting the entire local branch
     // history produced absurd values (for example 31,508 "unpushed commits")
     // and obscured the actual one-commit state. With neither a feature remote
     // nor a trustworthy base ref, publication cannot be proven: report the safe
     // minimum and keep the gate closed.
-    unpushedCommits: comparison === 'remote' ? commits : Math.max(1, commits),
+    // Off the run branch there is no comparison to count; `offBranch` blocks instead.
+    unpushedCommits: offBranch ? 0 : comparison === 'remote' ? commits : Math.max(1, commits),
   };
 }
 
@@ -228,7 +244,31 @@ function describe(state: WorktreePublishState, mode: 'push' | 'commit' | 'none' 
   return parts.join(' and ') || 'clean';
 }
 
+/** Where HEAD is instead of the run branch, for the worker and the run's reason. */
+function describeOffBranch(
+  branch: string,
+  { runBranchExists, head }: NonNullable<WorktreePublishState['offBranch']>,
+): string {
+  const where = head ? `HEAD is on ${head}` : 'HEAD is detached';
+  return runBranchExists
+    ? `${where}, not on the run branch ${branch}`
+    : `the run branch ${branch} no longer exists; ${where}`;
+}
+
+/** What the worker runs to put its work back on the run branch. */
+function offBranchRepair(
+  branch: string,
+  { runBranchExists, head }: NonNullable<WorktreePublishState['offBranch']>,
+): string {
+  if (runBranchExists)
+    return `check out ${branch} (git checkout ${branch}) and bring your task commits onto it`;
+  return head
+    ? `rename the branch back with: git branch -m ${head} ${branch}`
+    : `recreate it at your commit with: git checkout -b ${branch}`;
+}
+
 export function stateSatisfiesMode(state: WorktreePublishState, mode: 'push' | 'commit'): boolean {
+  if (state.offBranch) return false;
   if (mode === 'commit') {
     // Autonomous dev: worker must commit task work. Publication pushes later.
     // Untracked farm leftovers must not soft-lock after a clean task commit
@@ -281,7 +321,7 @@ export async function verifyWorkerPushedBranch(
   }
 
   console.warn(
-    `[push-verification] run ${runId.slice(0, 8)} — worker signaled complete but ${branch} has ${describe(state, mode)}; sending publish nudge`,
+    `[push-verification] run ${runId.slice(0, 8)} — worker signaled complete but ${state.offBranch ? describeOffBranch(branch, state.offBranch) : `${branch} has ${describe(state, mode)}`}; sending publish nudge`,
   );
 
   let nudged = false;
@@ -289,8 +329,14 @@ export async function verifyWorkerPushedBranch(
     const target = await resolveAgentTarget(slotId, { runId, role: 'primary' });
     const primaryContext = selectAgentContext(run, { role: 'primary' });
     const retainedSession = resolveRunRetainedSessionBinding(run, primaryContext);
-    const instruction =
-      mode === 'push'
+    const instruction = state.offBranch
+      ? `Your completion signal was received but ${describeOffBranch(branch, state.offBranch)}. ` +
+        `Farmslot verifies and publishes the run branch ${branch}. In ${vars.remoteRepo}: ` +
+        `${offBranchRepair(branch, state.offBranch)}, then ` +
+        `${mode === 'push' ? 'publish it with: git push' : 'commit your task changes on it'}. ` +
+        `Do not rename the run branch: a marker such as DO NOT MERGE belongs in the PR title or description. ` +
+        `Verify with git status before finishing.`
+      : mode === 'push'
         ? `Your completion signal was received but the branch is not published. In ${vars.remoteRepo}: ` +
           `stage and commit the changes that belong to your task (leave any unrelated files alone) ` +
           `with a Conventional Commit message describing the fix, then publish the branch with: git push. ` +
@@ -360,7 +406,9 @@ export async function verifyWorkerPushedBranch(
 
   return {
     verified: false,
-    reason: `worker signaled complete but ${branch} still has ${describe(state, mode)} after publish nudge`,
+    reason: state.offBranch
+      ? `worker signaled complete but ${describeOffBranch(branch, state.offBranch)} after publish nudge; ${offBranchRepair(branch, state.offBranch)}, then ${mode === 'push' ? 'push it' : 'commit on it'}`
+      : `worker signaled complete but ${branch} still has ${describe(state, mode)} after publish nudge`,
     dirtyFiles: state.dirtyFiles,
     unpushedCommits: state.unpushedCommits,
     nudged,
