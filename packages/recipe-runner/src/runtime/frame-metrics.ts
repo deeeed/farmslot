@@ -191,10 +191,7 @@ function orderedByStart(
 export interface LowestWindowedFpsOptions {
   /** How much continuous rendering each window covers. */
   windowMs: number;
-  /**
-   * The largest gap between frame starts that still counts as rendering; 3.01
-   * frame budgets by default. Given, frames without a budget count too, unclamped.
-   */
+  /** The largest gap between frame starts that still counts as rendering; 3.01 frame budgets by default. */
   maxGapMs?: number;
 }
 
@@ -212,11 +209,9 @@ export function lowestWindowedFps(
   const ordered = orderedByStart(
     samples.filter((sample) => Number.isFinite(sample.durationMs) && sample.durationMs > 0),
   );
-  // Frames without a refresh budget (legacy captures) still count when the
-  // caller names the gap: only the refresh clamp and a slow frame's slack need it.
   const frameBudgetMs = commonFrameBudget(ordered);
-  const gapMs = maxGapMs ?? (frameBudgetMs ? frameBudgetMs * 3.01 : undefined);
-  if (gapMs === undefined) return undefined;
+  if (!frameBudgetMs) return undefined;
+  const gapMs = maxGapMs ?? frameBudgetMs * 3.01;
   const stretches: Array<typeof ordered> = [];
   for (const sample of ordered) {
     const stretch = stretches.at(-1);
@@ -225,7 +220,7 @@ export function lowestWindowedFps(
     if (
       stretch &&
       previous &&
-      continuousRendering(previous, sample, interval, frameBudgetMs ?? 0, gapMs)
+      continuousRendering(previous, sample, interval, frameBudgetMs, gapMs)
     ) {
       stretch.push(sample);
     } else {
@@ -242,8 +237,8 @@ export function lowestWindowedFps(
       while ((stretch[end + 1]?.startedAtEpochMs ?? Infinity) <= from + windowMs) end += 1;
       const elapsed = (stretch[end]?.startedAtEpochMs ?? from) - from;
       if (elapsed <= 0) continue;
-      const windowBudgetMs = commonFrameBudget(stretch.slice(start, end + 1)) ?? frameBudgetMs;
-      const refreshRateHz = windowBudgetMs ? 1000 / windowBudgetMs : Number.POSITIVE_INFINITY;
+      const window = stretch.slice(start, end + 1);
+      const refreshRateHz = 1000 / (commonFrameBudget(window) ?? frameBudgetMs);
       const fps = Math.min(refreshRateHz, ((end - start) * 1000) / elapsed);
       lowest = Math.min(lowest ?? fps, fps);
     }

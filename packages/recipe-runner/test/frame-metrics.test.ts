@@ -80,11 +80,16 @@ describe('lowest windowed fps', () => {
     assert.equal(lowestWindowedFps(frames(0, 6, 40), { windowMs: 500, maxGapMs: 100 }), undefined);
   });
 
-  it('reads frames without a refresh budget instead of passing them', () => {
-    // A legacy capture: no FrameInterval, and a 50 ms cadence the estimator rejects.
-    const legacy = frames(0, 41, 50).map(({ frameBudgetMs: _budget, ...sample }) => sample);
-    assert.equal(lowestWindowedFps(legacy, { windowMs: 500, maxGapMs: 100 }), 20);
-    assert.equal(lowestWindowedFps(legacy, { windowMs: 500 }), undefined);
+  it('guesses no rate for frames without a refresh budget', () => {
+    // Legacy captures: no FrameInterval, and cadences the estimator rejects.
+    const budgetless = (samples: FrameSample[]) =>
+      samples.map(({ frameBudgetMs: _budget, ...sample }) => sample);
+    const steady = budgetless(frames(0, 41, 50));
+    const slow = budgetless(frames(0, 11, 200, 195));
+    for (const legacy of [steady, slow]) {
+      assert.equal(lowestWindowedFps(legacy, { windowMs: 500, maxGapMs: 100 }), undefined);
+      assert.equal(lowestWindowedFps(legacy, { windowMs: 500 }), undefined);
+    }
   });
 
   it('keeps one long frame from reading as a sustained drop', () => {

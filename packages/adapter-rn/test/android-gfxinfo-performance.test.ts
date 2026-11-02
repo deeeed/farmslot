@@ -12,6 +12,7 @@ import {
   buildAndroidFrameTraceEvents,
   createAndroidGfxinfoPerformanceBackend,
   parseFrameStats,
+  parseShownMarkers,
 } from '../src/android-gfxinfo-performance.js';
 import { createReactNativeTracePerformanceBackend } from '../src/performance-observer.js';
 
@@ -33,21 +34,26 @@ function framestats(rows: number, firstId = 1): string {
 }
 
 // A fake adb: `reset` succeeds, and framestats calls print `responses` in turn
-// (the last one repeats); a response of null exits 1.
-async function fakeAdb(responses: Array<string | null>) {
+// (the last one repeats); a response of null exits 1. Given `logcat`, a logcat
+// call prints it and keeps streaming until it is stopped, and framestats calls
+// wait until it has printed; without, logcat exits 1.
+async function fakeAdb(responses: Array<string | null>, logcat?: string) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'adapter-rn-gfxinfo-'));
   await Promise.all(
     responses.map((response, index) =>
       response === null ? undefined : writeFile(path.join(dir, `out-${index}.txt`), response),
     ),
   );
+  if (logcat !== undefined) await writeFile(path.join(dir, 'logcat.txt'), logcat);
   const script = path.join(dir, 'adb');
   await writeFile(
     script,
     [
       '#!/bin/sh',
       `dir="${dir}"`,
+      'case "$*" in *logcat*) [ -f "$dir/logcat.txt" ] || exit 1; cat "$dir/logcat.txt"; : > "$dir/logcat-printed"; exec sleep 30;; esac',
       'case "$*" in *framestats*) ;; *) exit 0;; esac',
+      'while [ -f "$dir/logcat.txt" ] && [ ! -f "$dir/logcat-printed" ]; do sleep 0.01; done',
       'n=$(cat "$dir/count" 2>/dev/null || echo 0); echo $((n + 1)) > "$dir/count"',
       `last=${responses.length - 1}; [ "$n" -gt "$last" ] && n=$last`,
       '[ -f "$dir/out-$n.txt" ] || exit 1',
@@ -135,6 +141,68 @@ describe('Android gfxinfo performance', () => {
     const legacy = '---PROFILEDATA---\nFlags,IntendedVsync,Vsync,FrameCompleted\n0,10,10,20\n';
     assert.equal(parseFrameStats(legacy).inputEventColumn, false);
     assert.equal(parseFrameStats(framestats(2)).inputEventColumn, true);
+  });
+
+  it('reads shown lines from monotonic logcat onto the frame clock', () => {
+    const output = [
+      '--------- beginning of main',
+      '    1.100  4242  4280 I ReactNativeJS: [farmslot-perf] shown companion-screen-review',
+      '    1.200  4242  4280 I ReactNativeJS: [farmslot-perf] shown',
+      '    1.300  4242  4280 I OtherTag: [farmslot-perf] shown companion-screen-settings',
+      '    1.400  4242  4280 I ReactNativeJS: shown companion-screen-settings',
+      '    1.512  4242  4280 W ReactNativeJS: [farmslot-perf] shown companion-screen-terminals',
+    ].join('\n');
+    assert.deepEqual(
+      parseShownMarkers(output, { hostEpochAtDeviceUptimeMs: 8_000, uncertaintyMs: 1 }),
+      [
+        { screen: 'companion-screen-review', atEpochMs: 9_100 },
+        { screen: 'companion-screen-terminals', atEpochMs: 9_512 },
+      ],
+    );
+  });
+
+  it('streams shown lines during a capture, on the clock of its frames', async () => {
+    const line =
+      '    1.100  4242  4280 I ReactNativeJS: [farmslot-perf] shown companion-screen-review\n';
+    const adb = await fakeAdb([framestats(1)], line);
+    try {
+      const backend = createAndroidGfxinfoPerformanceBackend({
+        serial: 'emulator-5554',
+        packageId: 'com.example',
+        adbPath: adb.adbPath,
+        shownMarkers: true,
+      });
+      await backend.start('w');
+      const result = await backend.end('w');
+      const [marker] = result.shownMarkers?.markers ?? [];
+      const [sample] = result.nativeUi.samples;
+      assert.equal(marker?.screen, 'companion-screen-review');
+      assert.equal(result.shownMarkers?.unavailableReason, undefined);
+      // framestats(1)'s frame starts at 1061.111 ms of device uptime; the line at 1100 ms.
+      assert.equal(
+        Math.round(((marker?.atEpochMs ?? 0) - (sample?.startedAtEpochMs ?? 0)) * 1000),
+        38_889,
+      );
+    } finally {
+      await adb.cleanup();
+    }
+  });
+
+  it('says why a capture has no shown lines when logcat stops on its own', async () => {
+    const adb = await fakeAdb([framestats(1)]);
+    try {
+      const options = { serial: 'emulator-5554', packageId: 'com.example', adbPath: adb.adbPath };
+      const reading = createAndroidGfxinfoPerformanceBackend({ ...options, shownMarkers: true });
+      await reading.start('w');
+      const result = await reading.end('w');
+      assert.deepEqual(result.shownMarkers?.markers, []);
+      assert.match(result.shownMarkers?.unavailableReason ?? '', /adb logcat exited 1/u);
+      const plain = createAndroidGfxinfoPerformanceBackend(options);
+      await plain.start('w');
+      assert.equal((await plain.end('w')).shownMarkers, undefined);
+    } finally {
+      await adb.cleanup();
+    }
   });
 
   it('records a failed poll as a coverage gap', async () => {

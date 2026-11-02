@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import { type ActionExecutionContext, RecipeExecutionError } from '@farmslot/recipe-runner';
-import { summarizeFrames } from '@farmslot/recipe-runner/runtime/cdp-trace';
+import { round, summarizeFrames } from '@farmslot/recipe-runner/runtime/cdp-trace';
 
 import type {
   AndroidFrameSample,
@@ -15,6 +15,7 @@ import type {
 import {
   createPerformanceCaptureSession,
   measurePress,
+  measureShownPress,
   renderPerformanceReport,
   summarizeWindow,
 } from '../src/performance-capture.js';
@@ -60,14 +61,17 @@ function capture(
     coverageGapReasons = [],
     unavailableReasons = [],
     inputEvents = 'available',
+    shownMarkers,
   }: {
     coverageGapReasons?: string[];
     unavailableReasons?: string[];
     inputEvents?: 'available' | 'missing';
+    shownMarkers?: AndroidGfxinfoCaptureResult['shownMarkers'];
   } = {},
 ): AndroidGfxinfoCaptureResult {
   return {
     inputEvents,
+    ...(shownMarkers ? { shownMarkers } : {}),
     platform: 'android',
     javascript: {
       applicability: 'not_applicable',
@@ -258,25 +262,166 @@ describe('press latency', () => {
   });
 });
 
-describe('sustained FPS', () => {
-  it('enforces the floor on a capture without refresh budgets', () => {
-    // Legacy framestats: no FrameInterval, and a 50 ms cadence the estimator rejects.
-    const legacy = cadence(0, 41, 50).map(({ frameBudgetMs: _budget, ...sample }) => sample);
-    const summary = summarizeWindow({
-      id: 'scroll',
-      startedAtEpochMs: 0,
-      endedAtEpochMs: 2_100,
-      maxDurationMs: 60_000,
-      result: capture(legacy),
-      spans: [],
-      sustainedWindowMs: 500,
-      responseWindowMs: 600,
-      budget: { min_sustained_fps: 30 },
+describe('press latency from the shown line', () => {
+  const press = {
+    nodeId: 'tab',
+    action: 'ui.press',
+    target: 'tab-terminals',
+    startedAtEpochMs: 900,
+    endedAtEpochMs: 1_300,
+  };
+  const shown = (atEpochMs: number, screen = 'screen-terminals') => ({ screen, atEpochMs });
+
+  for (const hz of [90, 60]) {
+    const budgetMs = 1000 / hz;
+    const at = (start: number, duration: number, extra: { input?: true; uiThreadMs?: number }) =>
+      frame(start, duration, { ...extra, frameBudgetMs: budgetMs });
+
+    it(`times a light mount a stall delays to +650 ms as slow at ${hz} Hz`, () => {
+      for (const uiThreadMs of [9, 24]) {
+        // Feedback with some UI work at +1 frame, then nothing until the mount.
+        const samples = [
+          at(1_000, 6, { input: true, uiThreadMs: 2 }),
+          at(1_000 + budgetMs, 6, { uiThreadMs: 5 }),
+          at(1_650, uiThreadMs + 6, { uiThreadMs }),
+        ];
+        assert.deepEqual(
+          measureShownPress(samples, press, 'screen-terminals', [shown(1_648)], 5_000),
+          {
+            nodeId: 'tab',
+            action: 'ui.press',
+            target: 'tab-terminals',
+            marker: 'screen-terminals',
+            latencyMs: 650 + uiThreadMs + 6,
+            answer: 'shown',
+          },
+        );
+      }
     });
-    assert.equal(summary.sustainedFps, 20);
-    assert.equal(summary.budget?.verdict, 'fail');
-    assert.match(summary.notes.join(';'), /no refresh budget/u);
+
+    it(`leaves a 6.9 ms update at +800 ms out of a cheap press at ${hz} Hz`, () => {
+      // The screen drew one frame after the touch and logged its line after it.
+      const samples = [
+        at(1_000, 6, { input: true, uiThreadMs: 3 }),
+        at(1_000 + budgetMs, 5, { uiThreadMs: 4 }),
+        at(1_466, 5, { uiThreadMs: 1.2 }),
+        at(1_800, 9, { uiThreadMs: 6.9 }),
+      ];
+      const marker = 1_000 + budgetMs + 6;
+      assert.equal(
+        measureShownPress(samples, press, 'screen-terminals', [shown(marker)], 5_000).latencyMs,
+        round(marker - 1_000),
+      );
+    });
+
+    it(`takes the frame within two frames of the line at ${hz} Hz`, () => {
+      const input = at(1_000, 6, { input: true });
+      const near = [input, at(1_100 + 1.5 * budgetMs, 8, { uiThreadMs: 6 })];
+      assert.equal(
+        measureShownPress(near, press, 'screen-terminals', [shown(1_100)], 5_000).latencyMs,
+        round(100 + 1.5 * budgetMs + 8),
+      );
+      const far = [input, at(1_100 + 2.5 * budgetMs, 8, { uiThreadMs: 6 })];
+      assert.equal(
+        measureShownPress(far, press, 'screen-terminals', [shown(1_100)], 5_000).latencyMs,
+        100,
+      );
+    });
+  }
+
+  it('leaves a press untimed without its screen line before the next press', () => {
+    const samples = [frame(1_000, 6, { input: true }), frame(1_100, 30, { uiThreadMs: 24 })];
+    const result = measureShownPress(
+      samples,
+      press,
+      'screen-terminals',
+      [shown(1_050, 'screen-review'), shown(2_600)],
+      2_500,
+    );
+    assert.equal(result.latencyMs, undefined);
+    assert.match(
+      result.unmeasuredReason ?? '',
+      /no \[farmslot-perf\] shown screen-terminals line/u,
+    );
   });
+
+  it('times mapped presses by the line, and keeps the frame rule without lines, flagged', () => {
+    const samples = [
+      frame(1_000, 6, { input: true, uiThreadMs: 2 }),
+      frame(1_011, 5, { uiThreadMs: 5 }),
+      frame(1_650, 15, { uiThreadMs: 9 }),
+    ];
+    const window = (shownMarkers: AndroidGfxinfoCaptureResult['shownMarkers']) =>
+      summarizeWindow({
+        id: 'tabs',
+        startedAtEpochMs: 0,
+        endedAtEpochMs: 3_000,
+        maxDurationMs: 60_000,
+        result: capture(samples, { shownMarkers }),
+        spans: [press],
+        budget: { max_press_ms: 250 },
+        shownMarkers: { 'tab-terminals': 'screen-terminals' },
+        sustainedWindowMs: 500,
+        responseWindowMs: 600,
+      });
+    const byLine = window({ markers: [shown(1_648)] });
+    assert.equal(byLine.presses[0]?.answer, 'shown');
+    assert.equal(byLine.pressByTarget['tab-terminals']?.shown, 1);
+    assert.equal(byLine.budget?.verdict, 'fail');
+    assert.match(
+      byLine.budget?.failures.join(';') ?? '',
+      /gfxinfo input->shown frame\) 665 ms > 250 ms/u,
+    );
+    assert.deepEqual(byLine.notes, []);
+
+    const noLines = window({
+      markers: [],
+      unavailableReason: 'logcat had no [farmslot-perf] shown line',
+    });
+    assert.equal(noLines.presses[0]?.answer, 'first-frame');
+    assert.equal(noLines.budget?.verdict, 'pass');
+    assert.match(
+      noLines.notes.join(';'),
+      /no \[farmslot-perf\] shown line in this window .*frame rule/u,
+    );
+  });
+});
+
+describe('sustained FPS', () => {
+  // A 50 ms cadence (20 fps), and 195 ms frames every 200 ms (5 fps): the
+  // estimator rejects both, so only FrameInterval gives them a budget.
+  for (const [name, samples, fps] of [
+    ['a 50 ms cadence', cadence(0, 41, 50), 20],
+    ['195 ms frames every 200 ms', cadence(0, 11, 200, 195), 5],
+  ] as const) {
+    const scroll = (result: AndroidGfxinfoCaptureResult) =>
+      summarizeWindow({
+        id: 'scroll',
+        startedAtEpochMs: 0,
+        endedAtEpochMs: 2_100,
+        maxDurationMs: 60_000,
+        result,
+        spans: [],
+        sustainedWindowMs: 500,
+        responseWindowMs: 600,
+        budget: { min_sustained_fps: 30 },
+      });
+
+    it(`fails ${name} with refresh budgets`, () => {
+      const summary = scroll(capture(samples));
+      assert.equal(summary.sustainedFps, fps);
+      assert.equal(summary.budget?.verdict, 'fail');
+    });
+
+    it(`calls ${name} without refresh budgets inconclusive`, () => {
+      // Legacy framestats: no FrameInterval.
+      const legacy = samples.map(({ frameBudgetMs: _budget, ...sample }) => sample);
+      const summary = scroll(capture(legacy));
+      assert.equal(summary.sustainedFps, undefined);
+      assert.equal(summary.budget?.verdict, 'inconclusive');
+      assert.match(summary.budget?.inconclusive.join(';') ?? '', /no refresh budget/u);
+    });
+  }
 
   it('counts a slow cadence up to 100 ms apart against the floor', () => {
     const summary = summarizeWindow({
@@ -345,6 +490,7 @@ describe('window budget', () => {
     assert.deepEqual(summary.press, {
       count: 2,
       timed: 2,
+      shown: 0,
       firstFrame: 0,
       p50Ms: 165,
       p95Ms: 205.5,
@@ -353,6 +499,7 @@ describe('window budget', () => {
     assert.deepEqual(summary.pressByTarget['tab-terminals'], {
       count: 1,
       timed: 1,
+      shown: 0,
       firstFrame: 0,
       p50Ms: 210,
       p95Ms: 210,
@@ -684,7 +831,7 @@ describe('app.performance_capture session', () => {
     assert.deepEqual(warnings, ['Performance window open did not end: adb: device offline']);
   });
 
-  it('refuses an overlapping window and an unknown phase', async () => {
+  it('refuses an overlapping window, an unknown phase and a marker with no screen', async () => {
     const backend: AndroidGfxinfoPerformanceBackend = {
       async start() {},
       async end() {
@@ -702,6 +849,10 @@ describe('app.performance_capture session', () => {
     await assert.rejects(
       session.handler.execute({ phase: 'pause', id: 'one' }, ctx),
       /phase=start/u,
+    );
+    await assert.rejects(
+      session.handler.execute({ phase: 'end', id: 'one', shown_markers: { 'tab-a': ' ' } }, ctx),
+      /shown_markers\.tab-a must name a screen/u,
     );
     await session.close();
   });

@@ -3,7 +3,10 @@
 // device uptime clock onto the host clock, and summarizes the merged frames
 // with recipe-runner's frame metrics. The frames that handled input keep that
 // mark, so a host can time a press from the touch to the frame that answers it.
-import { execFile } from 'node:child_process';
+// Given `shownMarkers`, it also streams the app's `[farmslot-perf] shown
+// <screen>` logcat lines on the same clock, so the answer is the frame after
+// the screen said it was shown.
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import {
@@ -25,6 +28,11 @@ const POLL_INTERVAL_MS = 750;
 const MAX_FRAMES = 100_000;
 const GFXINFO_FRAME_BUFFER_SIZE = 120;
 const GFXINFO_SAFE_NEW_FRAME_LIMIT = Math.floor(GFXINFO_FRAME_BUFFER_SIZE * 0.9);
+const MAX_MARKER_LOG_CHARS = 1024 * 1024;
+// React Native logs console output under this tag, in release builds too.
+// `-v monotonic` prints CLOCK_MONOTONIC seconds, the clock of IntendedVsync.
+const SHOWN_MARKER_LINE =
+  /^\s*(\d+\.\d+)\s+\d+\s+\d+\s+[VDIWEF]\s+ReactNativeJS\s*:\s*\[farmslot-perf\] shown (\S+)\s*$/u;
 
 export interface AndroidGfxinfoPerformanceOptions {
   /** adb serial of the device. */
@@ -35,6 +43,17 @@ export interface AndroidGfxinfoPerformanceOptions {
   adbPath?: string;
   /** Where `describe()` reports an adb read it had to skip; console by default. */
   logger?: Pick<Console, 'warn'>;
+  /**
+   * Also read the `[farmslot-perf] shown <screen>` lines the app logs from
+   * `adb logcat` during each capture (`shownMarkers` on the result).
+   */
+  shownMarkers?: boolean;
+}
+
+/** An app's `[farmslot-perf] shown <screen>` logcat line. */
+export interface AndroidShownMarker {
+  screen: string;
+  atEpochMs: number;
 }
 
 /** A gfxinfo frame: a recipe-runner frame sample plus what the UI thread did in it. */
@@ -50,6 +69,8 @@ export interface AndroidGfxinfoCaptureResult extends PerformanceCaptureResult<'a
   nativeUi: NativeUiPerformanceSourceResult & { samples: AndroidFrameSample[] };
   /** `missing` when the device's framestats has no InputEventId column (before Android 12). */
   inputEvents: 'available' | 'missing';
+  /** With the `shownMarkers` option: the marker lines read, or why logcat gave none. */
+  shownMarkers?: { markers: AndroidShownMarker[]; unavailableReason?: string };
 }
 
 /** What a report says about the device and app it measured. */
@@ -87,9 +108,18 @@ interface ActiveCapture {
   frames: Map<string, AndroidFrameRow>;
   inputEventsMissing: boolean;
   id: string;
+  markerLog?: MarkerLog;
   poll: Promise<void>;
   polling: boolean;
   timer?: NodeJS.Timeout;
+}
+
+interface MarkerLog {
+  child: ChildProcess;
+  closed: Promise<void>;
+  output: string;
+  error?: string;
+  stopping?: true;
 }
 
 export interface AndroidClockSync {
@@ -120,14 +150,23 @@ export function createAndroidGfxinfoPerformanceBackend(
       if (active) {
         throw new Error('Only one Android performance trace may be active.');
       }
-      const clock = await synchronizeAndroidClock(adb, serial, packageId);
-      await adbCommand(adb, serial, ['shell', 'dumpsys', 'gfxinfo', packageId, 'reset']);
+      // Streaming before the clock sync, so no marker after it is missed.
+      const markerLog = options.shownMarkers ? startMarkerLog(adb, serial) : undefined;
+      let clock: AndroidClockSync;
+      try {
+        clock = await synchronizeAndroidClock(adb, serial, packageId);
+        await adbCommand(adb, serial, ['shell', 'dumpsys', 'gfxinfo', packageId, 'reset']);
+      } catch (error) {
+        if (markerLog) await stopMarkerLog(markerLog);
+        throw error;
+      }
       const capture: ActiveCapture = {
         clock,
         coverageGapReasons: [],
         frames: new Map(),
         inputEventsMissing: false,
         id,
+        ...(markerLog ? { markerLog } : {}),
         poll: Promise.resolve(),
         polling: false,
       };
@@ -142,6 +181,7 @@ export function createAndroidGfxinfoPerformanceBackend(
       if (capture.timer) clearInterval(capture.timer);
       await capture.poll;
       await queuePoll(capture);
+      if (capture.markerLog) await stopMarkerLog(capture.markerLog);
       active = undefined;
       return captureResult(capture);
     },
@@ -151,6 +191,7 @@ export function createAndroidGfxinfoPerformanceBackend(
       if (capture.timer) clearInterval(capture.timer);
       await capture.poll;
       await queuePoll(capture);
+      if (capture.markerLog) await stopMarkerLog(capture.markerLog);
       active = undefined;
     },
     async describe() {
@@ -267,7 +308,79 @@ function captureResult(capture: ActiveCapture): AndroidGfxinfoCaptureResult {
     },
     rawTraceEvents,
     inputEvents: capture.inputEventsMissing ? 'missing' : 'available',
+    ...(capture.markerLog
+      ? { shownMarkers: shownMarkersResult(capture.markerLog, capture.clock) }
+      : {}),
   };
+}
+
+function startMarkerLog(adb: string, serial: string): MarkerLog {
+  const child = spawn(
+    adb,
+    ['-s', serial, 'logcat', '-v', 'monotonic', '-T', '1', 'ReactNativeJS:I', '*:S'],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const log: MarkerLog = { child, closed: Promise.resolve(), output: '' };
+  let stderr = '';
+  child.stdout?.setEncoding('utf8');
+  child.stdout?.on('data', (chunk: string) => {
+    if (log.output.length < MAX_MARKER_LOG_CHARS) log.output += chunk;
+  });
+  child.stderr?.setEncoding('utf8');
+  child.stderr?.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+  log.closed = new Promise((resolve) => {
+    child.once('error', (error) => {
+      log.error = `adb logcat failed: ${errorMessage(error).slice(0, 180)}`;
+      resolve();
+    });
+    child.once('close', (code, signal) => {
+      // An exit before the stop lost the stream.
+      if (!log.stopping) {
+        log.error ??= `adb logcat exited ${code ?? signal}: ${stderr.trim().slice(0, 180)}`;
+      }
+      resolve();
+    });
+  });
+  return log;
+}
+
+async function stopMarkerLog(log: MarkerLog): Promise<void> {
+  log.stopping = true;
+  if (log.child.exitCode === null && log.child.signalCode === null) log.child.kill('SIGTERM');
+  const forced = setTimeout(() => log.child.kill('SIGKILL'), 2_000);
+  await log.closed;
+  clearTimeout(forced);
+}
+
+function shownMarkersResult(
+  log: MarkerLog,
+  clock: AndroidClockSync,
+): NonNullable<AndroidGfxinfoCaptureResult['shownMarkers']> {
+  const markers = parseShownMarkers(log.output, clock);
+  return {
+    markers,
+    ...(log.error
+      ? { unavailableReason: log.error }
+      : markers.length === 0
+        ? { unavailableReason: 'logcat had no [farmslot-perf] shown line' }
+        : {}),
+  };
+}
+
+/** `[farmslot-perf] shown <screen>` lines of `adb logcat -v monotonic` output, on the host clock. */
+export function parseShownMarkers(output: string, clock: AndroidClockSync): AndroidShownMarker[] {
+  const markers: AndroidShownMarker[] = [];
+  for (const line of output.split('\n')) {
+    const match = SHOWN_MARKER_LINE.exec(line);
+    if (!match?.[1] || !match[2]) continue;
+    markers.push({
+      screen: match[2],
+      atEpochMs: clock.hostEpochAtDeviceUptimeMs + Number(match[1]) * 1000,
+    });
+  }
+  return markers;
 }
 
 export function androidFrameSample(

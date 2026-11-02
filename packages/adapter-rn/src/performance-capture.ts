@@ -29,6 +29,7 @@ import {
   type AndroidFrameSample,
   type AndroidGfxinfoCaptureResult,
   type AndroidGfxinfoPerformanceBackend,
+  type AndroidShownMarker,
   createAndroidGfxinfoPerformanceBackend,
 } from './android-gfxinfo-performance.js';
 import { resolveMobileToolPath } from './tool-paths.js';
@@ -62,8 +63,12 @@ const MOUNT_LOOKAHEAD = 1.5;
 // slow cadence (4 vsyncs at 90 Hz is 22.5 fps) counts against the floor.
 const MAX_ACTIVE_GAP_MS = 100;
 const DEFAULT_FRAME_BUDGET_MS = 1000 / 60;
+// The frame that draws a shown screen starts within this many frame budgets of
+// its `[farmslot-perf] shown` line; a later frame is another update.
+const SHOWN_FRAME_SLACK = 2;
 // The metrics failures name, so a reader knows what was measured.
 const PRESS_METRIC = 'gfxinfo input->mount frame';
+const SHOWN_PRESS_METRIC = 'gfxinfo input->shown frame';
 const FPS_METRIC = 'gfxinfo, lowest 500 ms';
 
 export interface RecipeNodeSpan {
@@ -115,11 +120,14 @@ export interface PressLatency {
   /** Input frame start to the end of the frame that answered it; absent when not timed. */
   latencyMs?: number;
   /**
+   * `shown`: the frame after the screen's `[farmslot-perf] shown` line.
    * `mount`: the first frame after the touch that stood out is the answer.
    * `first-frame`: none stood out, so the press is timed to the first frame
    * after the touch; the new screen did no measurable UI-thread work.
    */
-  answer?: 'mount' | 'first-frame';
+  answer?: 'shown' | 'mount' | 'first-frame';
+  /** The screen whose shown line times the press (`shown_markers`). */
+  marker?: string;
   /** Why the press has no latency. */
   unmeasuredReason?: string;
 }
@@ -169,6 +177,8 @@ export interface PerformanceWindowSummary {
 export interface PressStats {
   count: number;
   timed: number;
+  /** Timed presses answered by their screen's shown line. */
+  shown: number;
   /** Timed presses with no standout mount frame, answered by the first frame. */
   firstFrame: number;
   p50Ms?: number;
@@ -271,6 +281,7 @@ export function createPerformanceCaptureSession({
       result,
       spans,
       budget: parseBudget(node.budget),
+      shownMarkers: parseShownMarkerMap(node.shown_markers),
       baseline: parseBaseline(node.baseline),
       targets: parseTargets(node.targets),
       sustainedWindowMs: positiveNumber(node.sustained_window_ms) ?? DEFAULT_SUSTAINED_WINDOW_MS,
@@ -278,13 +289,20 @@ export function createPerformanceCaptureSession({
     });
     summaries.push(summary);
     const artifactPath = `performance/${safeId(id)}-summary.json`;
-    // The frames the summary was read from, so a reviewer can check which frame answered a press.
+    // The frames (and shown lines) the summary was read from, so a reviewer can
+    // check which frame answered a press.
     const framesPath = `performance/${safeId(id)}-frames.json`;
     await writeArtifact(context, artifactPath, `${JSON.stringify(summary, null, 2)}\n`);
     await writeArtifact(
       context,
       framesPath,
-      `${JSON.stringify({ schemaVersion: 1, id, spans: windowSpans(spans, summary), frames: result.nativeUi.samples })}\n`,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id,
+        spans: windowSpans(spans, summary),
+        frames: result.nativeUi.samples,
+        ...(result.shownMarkers ? { shownMarkers: result.shownMarkers } : {}),
+      })}\n`,
     );
     return {
       output: { action: PERFORMANCE_CAPTURE_ACTION, phase, artifactPath, framesPath, ...summary },
@@ -426,6 +444,7 @@ function createDeviceBackend(
     serial,
     packageId,
     adbPath: resolveMobileToolPath('adb', { required: true }) ?? 'adb',
+    shownMarkers: true,
   });
 }
 
@@ -437,6 +456,7 @@ export function summarizeWindow({
   result,
   spans,
   budget,
+  shownMarkers = {},
   baseline,
   targets,
   sustainedWindowMs,
@@ -449,6 +469,8 @@ export function summarizeWindow({
   result: AndroidGfxinfoCaptureResult;
   spans: readonly RecipeNodeSpan[];
   budget?: PerformanceBudget;
+  /** Press target -> the screen whose `[farmslot-perf] shown` line answers it. */
+  shownMarkers?: Record<string, string>;
   baseline?: PerformanceBaseline;
   targets?: PerformanceTargets;
   sustainedWindowMs: number;
@@ -458,24 +480,37 @@ export function summarizeWindow({
   const coverageGapReasons = [...result.nativeUi.coverageGapReasons];
   const exceeded = endedAtEpochMs - startedAtEpochMs >= maxDurationMs;
   if (exceeded) coverageGapReasons.push('Performance capture exceeded max_duration_ms.');
-  const presses = spans
-    .filter(
-      (span) =>
-        PRESS_ACTIONS.has(span.action) &&
-        span.startedAtEpochMs >= startedAtEpochMs &&
-        (span.endedAtEpochMs ?? endedAtEpochMs) <= endedAtEpochMs,
-    )
-    .map((span) =>
-      result.inputEvents === 'missing'
-        ? {
-            nodeId: span.nodeId,
-            action: span.action,
-            ...(span.target ? { target: span.target } : {}),
-            unmeasuredReason:
-              "this device's gfxinfo framestats has no InputEventId column (Android 12 or later is needed to time presses)",
-          }
-        : measurePress(samples, span, responseWindowMs, endedAtEpochMs),
-    );
+  const pressSpans = spans.filter(
+    (span) =>
+      PRESS_ACTIONS.has(span.action) &&
+      span.startedAtEpochMs >= startedAtEpochMs &&
+      (span.endedAtEpochMs ?? endedAtEpochMs) <= endedAtEpochMs,
+  );
+  const markers = (result.shownMarkers?.markers ?? []).filter(
+    (marker) => marker.atEpochMs >= startedAtEpochMs && marker.atEpochMs <= endedAtEpochMs,
+  );
+  // An app that logs no shown line (an older build) keeps the frame rule, flagged.
+  const markerTimed = Object.keys(shownMarkers).length > 0 && markers.length > 0;
+  const presses = pressSpans.map((span, index) => {
+    const screen = markerTimed && span.target ? shownMarkers[span.target] : undefined;
+    return result.inputEvents === 'missing'
+      ? {
+          nodeId: span.nodeId,
+          action: span.action,
+          ...(span.target ? { target: span.target } : {}),
+          unmeasuredReason:
+            "this device's gfxinfo framestats has no InputEventId column (Android 12 or later is needed to time presses)",
+        }
+      : screen
+        ? measureShownPress(
+            samples,
+            span,
+            screen,
+            markers,
+            pressSpans[index + 1]?.startedAtEpochMs ?? endedAtEpochMs,
+          )
+        : measurePress(samples, span, responseWindowMs, endedAtEpochMs);
+  });
   const press = pressStats(presses);
   const pressByTarget: Record<string, PressStats> = {};
   for (const target of new Set(presses.map((entry) => entry.target ?? entry.nodeId))) {
@@ -507,9 +542,13 @@ export function summarizeWindow({
     unavailableReasons: [...result.nativeUi.unavailableReasons],
     notes: [],
   };
-  if (frames.frameCount > 0 && frames.refreshRateHz === undefined) {
+  if (Object.keys(shownMarkers).length > 0 && !markerTimed) {
     summary.notes.push(
-      'the capture has no refresh budget; sustained fps is not clamped to a refresh rate',
+      `no [farmslot-perf] shown line in this window (${
+        result.shownMarkers
+          ? (result.shownMarkers.unavailableReason ?? 'none logged during it')
+          : 'the capture did not read logcat'
+      }); its presses were timed by the frame rule (${PRESS_METRIC})`,
     );
   }
   if (
@@ -549,13 +588,7 @@ export function measurePress(
     action: span.action,
     ...(span.target ? { target: span.target } : {}),
   };
-  const spanEnd = span.endedAtEpochMs ?? windowEndEpochMs;
-  const input = samples.find(
-    (sample) =>
-      sample.input === true &&
-      sample.startedAtEpochMs >= span.startedAtEpochMs &&
-      sample.startedAtEpochMs <= spanEnd,
-  );
+  const input = inputFrame(samples, span, windowEndEpochMs);
   if (!input) return { ...base, unmeasuredReason: 'no frame handled input during the press' };
   const searchEnd = Math.min(
     windowEndEpochMs,
@@ -600,6 +633,70 @@ export function measurePress(
   };
 }
 
+/**
+ * A press timed by the app's own word: from the first frame that handled input
+ * during the press node to the end of the first frame that starts at or within
+ * `SHOWN_FRAME_SLACK` frames after the screen's next `[farmslot-perf] shown`
+ * line, the frame that draws it. When the screen drew before the line (it logs
+ * from a focus effect) and nothing follows, the press is timed to the line. No
+ * line before the next press leaves it untimed. Frame sizes play no part, so a
+ * light mount a stall delays reads as slow, and a later update doesn't count.
+ */
+export function measureShownPress(
+  samples: readonly AndroidFrameSample[],
+  span: RecipeNodeSpan,
+  screen: string,
+  markers: readonly AndroidShownMarker[],
+  searchEndEpochMs: number,
+): PressLatency {
+  const base = {
+    nodeId: span.nodeId,
+    action: span.action,
+    ...(span.target ? { target: span.target } : {}),
+    marker: screen,
+  };
+  const input = inputFrame(samples, span, searchEndEpochMs);
+  if (!input) return { ...base, unmeasuredReason: 'no frame handled input during the press' };
+  const shown = markers.find(
+    (marker) =>
+      marker.screen === screen &&
+      marker.atEpochMs >= input.startedAtEpochMs &&
+      marker.atEpochMs <= searchEndEpochMs,
+  );
+  if (!shown) {
+    return {
+      ...base,
+      unmeasuredReason: `no [farmslot-perf] shown ${screen} line after the touch, before the next press`,
+    };
+  }
+  const drawn = samples.find(
+    (sample) =>
+      sample.input !== true &&
+      sample.startedAtEpochMs >= shown.atEpochMs &&
+      sample.startedAtEpochMs <=
+        shown.atEpochMs + SHOWN_FRAME_SLACK * (sample.frameBudgetMs ?? DEFAULT_FRAME_BUDGET_MS),
+  );
+  return {
+    ...base,
+    latencyMs: round((drawn?.completedAtEpochMs ?? shown.atEpochMs) - input.startedAtEpochMs),
+    answer: 'shown',
+  };
+}
+
+function inputFrame(
+  samples: readonly AndroidFrameSample[],
+  span: RecipeNodeSpan,
+  windowEndEpochMs: number,
+): AndroidFrameSample | undefined {
+  const spanEnd = span.endedAtEpochMs ?? windowEndEpochMs;
+  return samples.find(
+    (sample) =>
+      sample.input === true &&
+      sample.startedAtEpochMs >= span.startedAtEpochMs &&
+      sample.startedAtEpochMs <= spanEnd,
+  );
+}
+
 // Every failure names the metric, the limit, the measured value, where it was
 // measured and, given a baseline, the baseline's value. Values print with
 // enough decimals that a value over its limit never reads as equal to it.
@@ -636,7 +733,9 @@ function checkBudget(
       [undefined, undefined],
     );
     failures.push(
-      `press p95 (${PRESS_METRIC}) ${formatAgainst(summary.press.p95Ms, limits.max_press_p95_ms)} ms > ${
+      `press p95 (${
+        summary.presses.every((press) => press.marker) ? SHOWN_PRESS_METRIC : PRESS_METRIC
+      }) ${formatAgainst(summary.press.p95Ms, limits.max_press_p95_ms)} ms > ${
         limits.max_press_p95_ms
       } ms (${summary.id}${
         slowest && stats?.maxMs !== undefined
@@ -648,15 +747,16 @@ function checkBudget(
   if (limits.max_press_ms !== undefined) {
     for (const press of summary.presses) {
       const where = `${press.target ?? press.nodeId}, node ${press.nodeId}`;
+      const metric = press.marker ? SHOWN_PRESS_METRIC : PRESS_METRIC;
       if (press.latencyMs === undefined) {
         failures.push(
-          `press (${PRESS_METRIC}) untimed, counted over ${limits.max_press_ms} ms (${where}): ${
+          `press (${metric}) untimed, counted over ${limits.max_press_ms} ms (${where}): ${
             press.unmeasuredReason
           }${against('max', baseline?.press_max_ms, 'ms')}`,
         );
       } else if (press.latencyMs > limits.max_press_ms) {
         failures.push(
-          `press (${PRESS_METRIC}) ${formatAgainst(press.latencyMs, limits.max_press_ms)} ms > ${
+          `press (${metric}) ${formatAgainst(press.latencyMs, limits.max_press_ms)} ms > ${
             limits.max_press_ms
           } ms (${where})${against('max', baseline?.press_max_ms, 'ms')}`,
         );
@@ -674,7 +774,14 @@ function checkBudget(
   }
   // A capture with a gap can't support any verdict: a dropped device leaves no
   // frames and untimed presses, which would otherwise read as the app failing.
+  // Nor can frames with no refresh budget: sustained FPS and the frame budget
+  // a mount needs would be guesses.
   const inconclusive = summary.coverageGapReasons.map((reason) => `coverage gap: ${reason}`);
+  if (summary.frames.frameCount > 0 && summary.frames.refreshRateHz === undefined) {
+    inconclusive.push(
+      'no refresh budget: gfxinfo gave no FrameInterval and the frame starts show no refresh rate',
+    );
+  }
   return {
     verdict: inconclusive.length > 0 ? 'inconclusive' : failures.length > 0 ? 'fail' : 'pass',
     limits,
@@ -750,6 +857,7 @@ function pressStats(presses: readonly PressLatency[]): PressStats {
   return {
     count: presses.length,
     timed: timed.length,
+    shown: presses.filter((press) => press.answer === 'shown').length,
     firstFrame: presses.filter((press) => press.answer === 'first-frame').length,
     ...(timed.length > 0
       ? {
@@ -759,6 +867,14 @@ function pressStats(presses: readonly PressLatency[]): PressStats {
         }
       : {}),
   };
+}
+
+function answeredBy(stats: PressStats): string {
+  const how = [
+    ...(stats.shown > 0 ? [`${stats.shown} by shown line`] : []),
+    ...(stats.firstFrame > 0 ? [`${stats.firstFrame} first-frame`] : []),
+  ];
+  return how.length > 0 ? ` (${how.join(', ')})` : '';
 }
 
 function checkTargets(
@@ -872,7 +988,7 @@ export function renderPerformanceReport(
     Object.entries(summary.pressByTarget).map(([target, stats]) => [
       summary.id,
       target,
-      `${stats.timed}/${stats.count}${stats.firstFrame > 0 ? ` (${stats.firstFrame} first-frame)` : ''}`,
+      `${stats.timed}/${stats.count}${answeredBy(stats)}`,
       `${value(stats.p50Ms)} / ${value(stats.p95Ms)} / ${value(stats.maxMs)}`,
       summary.targets?.press
         ? stats.maxMs !== undefined && stats.maxMs <= summary.targets.press.target
@@ -927,6 +1043,21 @@ function parseBudget(value: unknown): PerformanceBudget | undefined {
     ...optionalLimit(record, 'max_press_ms'),
     ...optionalLimit(record, 'min_frames'),
   };
+}
+
+function parseShownMarkerMap(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  const map: Record<string, string> = {};
+  for (const [target, screen] of Object.entries(requireRecord(value, 'shown_markers'))) {
+    if (typeof screen !== 'string' || !screen.trim()) {
+      throw new RecipeExecutionError(
+        'harness',
+        `${PERFORMANCE_CAPTURE_ACTION} shown_markers.${target} must name a screen.`,
+      );
+    }
+    map[target] = screen.trim();
+  }
+  return map;
 }
 
 function parseBaseline(value: unknown): PerformanceBaseline | undefined {
