@@ -96,7 +96,7 @@ export interface SlotStatus {
    * selects a slot that carries one.
    */
   repoBlocker?: string;
-  /** Why the gateway could not load this slot's config at the last refresh; the row then has no resources. */
+  /** Why the gateway could not load this slot's config at the last refresh; the row keeps its pool resources but is not probed or dispatchable. */
   configError?: string;
   /** True when this slot id no longer resolves in live pool JSONs — a status-file ghost. Never prepare/dispatch it. */
   missingFromPool?: boolean;

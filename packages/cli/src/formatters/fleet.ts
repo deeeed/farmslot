@@ -46,7 +46,7 @@ export function formatFleetStatus(result: FleetStatusResult): string {
   for (const slot of fleet.slots.filter((s) => s.configError))
     lines.push(
       red(
-        `${slot.slot}: config could not be loaded (${slot.configError}); no resources until it loads`,
+        `${slot.slot}: config could not be loaded (${slot.configError}); not probed or dispatched until it loads`,
       ),
     );
 

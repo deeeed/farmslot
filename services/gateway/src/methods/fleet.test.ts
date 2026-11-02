@@ -490,7 +490,7 @@ function fleetFixture(checkedAt: string, slots: SlotStatus[]): FleetStatus {
 }
 
 function fleetStatusDepsFixture(fleet: FleetStatus, refreshedFleet?: FleetStatus) {
-  const calls = { load: 0, refresh: 0 };
+  const calls = { load: 0, refresh: 0, join: 0 };
   const refreshed = refreshedFleet ?? fleetFixture(new Date().toISOString(), fleet.slots);
   const deps: FleetStatusDeps = {
     async load() {
@@ -499,6 +499,10 @@ function fleetStatusDepsFixture(fleet: FleetStatus, refreshedFleet?: FleetStatus
     },
     async refresh() {
       calls.refresh += 1;
+      return { fleet: refreshed };
+    },
+    async join() {
+      calls.join += 1;
       return { fleet: refreshed };
     },
   };
@@ -618,7 +622,9 @@ test('stale fleet.status marks stale, disables dispatch, and kicks a background 
 
   assert.equal(result.fleet.stale, true);
   assert.ok(result.fleet.slots.every((slot) => slot.dispatchable === false));
-  assert.equal(calls.refresh, 1);
+  // F306: the kick joins a running refresh; it never queues a follow-up probe.
+  assert.equal(calls.join, 1);
+  assert.equal(calls.refresh, 0);
 });
 
 test('slots absent from live pools are marked missingFromPool and never dispatchable', () => {
@@ -666,7 +672,7 @@ test('stale all-ghost fleets do not spin background no-op refreshes', async () =
   const result = await fleetStatus(undefined, deps);
 
   assert.equal(result.fleet.stale, true);
-  assert.equal(calls.refresh, 0);
+  assert.equal(calls.refresh + calls.join, 0);
 });
 
 test('dispatch slot selection never treats ghost slots as free', () => {

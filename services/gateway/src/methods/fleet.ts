@@ -198,7 +198,7 @@ interface SlotCheckResult {
   mode: string;
   dispatchable: boolean;
   repoBlocker?: string;
-  /** Why the slot's config could not be loaded; the row then has no resources. */
+  /** Why the slot's config could not be loaded; the row keeps its pool resources but is not probed or dispatchable. */
   configError?: string;
   resources?: Record<string, Record<string, string | number | boolean>>;
 }
