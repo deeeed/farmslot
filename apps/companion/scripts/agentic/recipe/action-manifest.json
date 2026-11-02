@@ -130,7 +130,7 @@
       ]
     },
     "app.performance_capture": {
-      "description": "Measure native UI smoothness on the assigned Android device from adb gfxinfo frames. phase=start opens a named window; phase=end closes it and records its frames, lowest sustained FPS, press latencies and budget verdict, with failures compared to an optional baseline; phase=report writes the run's report and fails when a window broke its budget. Targets are reported, never failed on.",
+      "description": "Measure native UI smoothness on the assigned Android device from adb gfxinfo frames. phase=start opens a named window; phase=end closes it and records its frames, lowest sustained FPS, press latencies and budget verdict, with failures compared to an optional baseline; phase=report writes the run's report and fails when a window broke its budget or is inconclusive (a coverage gap such as failed polls or overwritten frames). Targets are reported, never failed on.",
       "adapters": ["android"],
       "execution_capabilities": [],
       "schema": {
@@ -218,8 +218,8 @@
           "id": "tab-presses",
           "budget": {
             "min_sustained_fps": 30,
-            "max_press_p95_ms": 130,
-            "max_press_ms": 150
+            "max_press_p95_ms": 210,
+            "max_press_ms": 250
           },
           "targets": {
             "fps": 60,

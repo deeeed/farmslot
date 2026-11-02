@@ -43,10 +43,26 @@ export interface AndroidFrameSample extends FrameSample {
 
 export interface AndroidGfxinfoCaptureResult extends PerformanceCaptureResult<'android'> {
   nativeUi: NativeUiPerformanceSourceResult & { samples: AndroidFrameSample[] };
+  /** `missing` when the device's framestats has no InputEventId column (before Android 12). */
+  inputEvents: 'available' | 'missing';
+}
+
+/** What a report says about the device and app it measured. */
+export interface AndroidDeviceDescription {
+  serial: string;
+  model?: string;
+  androidRelease?: string;
+  packageId: string;
+  versionName?: string;
+  versionCode?: string;
+  /** `debug` when the installed package is debuggable. */
+  buildType?: 'debug' | 'release';
+  lastUpdateTime?: string;
 }
 
 export interface AndroidGfxinfoPerformanceBackend extends PerformanceBackend<'android'> {
   end(id: string): Promise<AndroidGfxinfoCaptureResult>;
+  describe?(): Promise<AndroidDeviceDescription>;
 }
 
 export interface AndroidFrameRow {
@@ -64,6 +80,7 @@ interface ActiveCapture {
   clock: AndroidClockSync;
   coverageGapReasons: string[];
   frames: Map<string, AndroidFrameRow>;
+  inputEventsMissing: boolean;
   id: string;
   poll: Promise<void>;
   polling: boolean;
@@ -78,6 +95,8 @@ export interface AndroidClockSync {
 interface ParsedFrameStats {
   bufferCapacityReached: boolean;
   frames: AndroidFrameRow[];
+  /** False when a framestats header had no InputEventId column. */
+  inputEventColumn: boolean;
 }
 
 export function createAndroidGfxinfoPerformanceBackend(
@@ -101,6 +120,7 @@ export function createAndroidGfxinfoPerformanceBackend(
         clock,
         coverageGapReasons: [],
         frames: new Map(),
+        inputEventsMissing: false,
         id,
         poll: Promise.resolve(),
         polling: false,
@@ -127,6 +147,33 @@ export function createAndroidGfxinfoPerformanceBackend(
       await queuePoll(capture);
       active = undefined;
     },
+    async describe() {
+      const [model, androidRelease, packageInfo] = await Promise.all(
+        [
+          ['shell', 'getprop', 'ro.product.model'],
+          ['shell', 'getprop', 'ro.build.version.release'],
+          ['shell', 'dumpsys', 'package', packageId],
+        ].map((args) => adbCommand(adb, serial, args).catch(() => '')),
+      );
+      const field = (name: string) =>
+        new RegExp(`\\b${name}=([^\\s]+)`, 'u').exec(packageInfo ?? '')?.[1];
+      const lastUpdateTime = /lastUpdateTime=([^\n]+)/u.exec(packageInfo ?? '')?.[1]?.trim();
+      const flags = /pkgFlags=\[([^\]]*)\]/u.exec(packageInfo ?? '')?.[1];
+      return {
+        serial,
+        packageId,
+        ...(model?.trim() ? { model: model.trim() } : {}),
+        ...(androidRelease?.trim() ? { androidRelease: androidRelease.trim() } : {}),
+        ...(field('versionName') ? { versionName: field('versionName') } : {}),
+        ...(field('versionCode') ? { versionCode: field('versionCode') } : {}),
+        ...(flags === undefined
+          ? {}
+          : {
+              buildType: flags.includes('DEBUGGABLE') ? ('debug' as const) : ('release' as const),
+            }),
+        ...(lastUpdateTime ? { lastUpdateTime } : {}),
+      };
+    },
   };
 
   function queuePoll(capture: ActiveCapture): Promise<void> {
@@ -142,6 +189,7 @@ export function createAndroidGfxinfoPerformanceBackend(
           'framestats',
         ]);
         const parsed = parseFrameStats(output);
+        capture.inputEventsMissing ||= !parsed.inputEventColumn;
         let newFrameCount = 0;
         for (const frame of parsed.frames) {
           if (capture.frames.size >= MAX_FRAMES) {
@@ -203,6 +251,7 @@ function captureResult(capture: ActiveCapture): AndroidGfxinfoCaptureResult {
       totalEventCount: rawTraceEvents.length,
     },
     rawTraceEvents,
+    inputEvents: capture.inputEventsMissing ? 'missing' : 'available',
   };
 }
 
@@ -232,6 +281,7 @@ export function parseFrameStats(output: string): ParsedFrameStats {
   let columnsByName: Map<string, number> | undefined;
   let sectionRowCount = 0;
   let sawHeader = false;
+  let inputEventColumn = true;
   for (const line of output.split(/\r?\n/u)) {
     if (line === '---PROFILEDATA---') {
       bufferCapacityReached ||= sectionRowCount >= GFXINFO_FRAME_BUFFER_SIZE;
@@ -242,6 +292,7 @@ export function parseFrameStats(output: string): ParsedFrameStats {
     if (line.startsWith('Flags,')) {
       columnsByName = new Map(line.split(',').map((name, index) => [name.trim(), index]));
       sawHeader = true;
+      inputEventColumn &&= columnsByName.has('InputEventId');
       const missing = ['Flags', 'IntendedVsync', 'Vsync', 'FrameCompleted'].filter(
         (name) => !columnsByName?.has(name),
       );
@@ -286,7 +337,7 @@ export function parseFrameStats(output: string): ParsedFrameStats {
   if (output.includes('---PROFILEDATA---') && !sawHeader) {
     throw new Error('Android gfxinfo framestats header was not found.');
   }
-  return { bufferCapacityReached, frames };
+  return { bufferCapacityReached, frames, inputEventColumn };
 }
 
 function column(

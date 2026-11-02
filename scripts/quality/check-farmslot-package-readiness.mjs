@@ -173,6 +173,7 @@ const packages = [
       'LICENSE',
       'bin/farmslot-adapter-rn.mjs',
       'src/index.ts',
+      'src/performance-observer.ts',
       'templates/scripts/agentic/recipe/recipes/expo.config.recipe.json',
     ],
     packRequiredFiles: [
@@ -182,10 +183,12 @@ const packages = [
       'dist/index.js',
       'dist/index.d.ts',
       'dist/cli.js',
+      'dist/performance-observer.js',
+      'dist/performance-observer.d.ts',
       'templates/scripts/agentic/recipe/recipes/expo.config.recipe.json',
     ],
     importCheck:
-      "const m = await import('./packages/adapter-rn/dist/cli.js'); if (typeof m.runAdapterRnCli !== 'function') throw new Error('missing runAdapterRnCli export');",
+      "const m = await import('./packages/adapter-rn/dist/cli.js'); if (typeof m.runAdapterRnCli !== 'function') throw new Error('missing runAdapterRnCli export'); const p = await import('./packages/adapter-rn/dist/performance-observer.js'); if (typeof p.createAndroidGfxinfoPerformanceBackend !== 'function' || typeof p.createReactNativeTracePerformanceBackend !== 'function') throw new Error('missing performance-observer exports');",
   },
   {
     name: '@farmslot/skills',

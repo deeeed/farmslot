@@ -209,11 +209,7 @@ export async function runExpoRecipeDocument(
     }
     return result;
   } finally {
-    await performance?.close().catch((error: unknown) => {
-      console.warn(
-        `Performance capture cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+    if (performance) await closeUiTransportQuietly(performance, 'Performance capture');
     await closeUiTransportQuietly(transport);
   }
 }
@@ -299,15 +295,18 @@ function recipeUsesNativeUi(recipe: Record<string, unknown>): boolean {
   );
 }
 
-export async function closeUiTransportQuietly(transport: {
-  close?(): Promise<unknown> | void;
-}): Promise<void> {
+export async function closeUiTransportQuietly(
+  transport: {
+    close?(): Promise<unknown> | void;
+  },
+  label = 'Native recipe transport',
+): Promise<void> {
   try {
     await transport.close?.();
   } catch (error) {
     // Cleanup must never convert a passing run to failure or mask the original run error.
     console.warn(
-      `Native recipe transport cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      `${label} cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

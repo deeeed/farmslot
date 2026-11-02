@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
+
+import type { CdpClient, TraceKind } from '@farmslot/recipe-runner/runtime/cdp-trace';
 
 import {
   androidClockSync,
@@ -9,6 +13,51 @@ import {
   createAndroidGfxinfoPerformanceBackend,
   parseFrameStats,
 } from '../src/android-gfxinfo-performance.js';
+import { createReactNativeTracePerformanceBackend } from '../src/performance-observer.js';
+
+const HEADER =
+  'Flags,FrameTimelineVsyncId,IntendedVsync,Vsync,InputEventId,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,FrameDeadline,FrameStartTime,FrameInterval,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,';
+
+function framestats(rows: number, firstId = 1): string {
+  const lines = Array.from({ length: rows }, (_, index) => {
+    const vsync = 1_050_000_000 + (firstId + index) * 11_111_111;
+    return `0,${firstId + index},${vsync},${vsync},0,0,0,0,0,${vsync + 22_000_000},0,11111111,${vsync + 3_000_000},0,0,0,${vsync + 8_000_000},`;
+  });
+  return [
+    'Uptime: 1000 Realtime: 2000',
+    '---PROFILEDATA---',
+    HEADER,
+    ...lines,
+    '---PROFILEDATA---',
+  ].join('\n');
+}
+
+// A fake adb: `reset` succeeds, and framestats calls print `responses` in turn
+// (the last one repeats); a response of null exits 1.
+async function fakeAdb(responses: Array<string | null>) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'adapter-rn-gfxinfo-'));
+  await Promise.all(
+    responses.map((response, index) =>
+      response === null ? undefined : writeFile(path.join(dir, `out-${index}.txt`), response),
+    ),
+  );
+  const script = path.join(dir, 'adb');
+  await writeFile(
+    script,
+    [
+      '#!/bin/sh',
+      `dir="${dir}"`,
+      'case "$*" in *framestats*) ;; *) exit 0;; esac',
+      'n=$(cat "$dir/count" 2>/dev/null || echo 0); echo $((n + 1)) > "$dir/count"',
+      `last=${responses.length - 1}; [ "$n" -gt "$last" ] && n=$last`,
+      '[ -f "$dir/out-$n.txt" ] || exit 1',
+      'cat "$dir/out-$n.txt"',
+      '',
+    ].join('\n'),
+  );
+  await chmod(script, 0o755);
+  return { adbPath: script, cleanup: () => rm(dir, { recursive: true, force: true }) };
+}
 
 const fixtureUrl = new URL('./fixtures/android-gfxinfo-framestats.txt', import.meta.url);
 
@@ -80,6 +129,93 @@ describe('Android gfxinfo performance', () => {
     assert.equal(touchedSample.input, true);
     assert.equal(touchedSample.uiThreadMs, (1841116554974171 - 1841116546248077) / 1_000_000);
     assert.equal(androidFrameSample(plain, clock, undefined).input, undefined);
+  });
+
+  it('flags a device whose framestats has no InputEventId column', () => {
+    const legacy = '---PROFILEDATA---\nFlags,IntendedVsync,Vsync,FrameCompleted\n0,10,10,20\n';
+    assert.equal(parseFrameStats(legacy).inputEventColumn, false);
+    assert.equal(parseFrameStats(framestats(2)).inputEventColumn, true);
+  });
+
+  it('records a failed poll as a coverage gap', async () => {
+    const adb = await fakeAdb([framestats(1), null]);
+    try {
+      const backend = createAndroidGfxinfoPerformanceBackend({
+        serial: 'emulator-5554',
+        packageId: 'com.example',
+        adbPath: adb.adbPath,
+      });
+      await backend.start('w');
+      const result = await backend.end('w');
+      assert.equal(result.nativeUi.status, 'unavailable');
+      assert.match(result.nativeUi.coverageGapReasons.join(';'), /poll failed/u);
+    } finally {
+      await adb.cleanup();
+    }
+  });
+
+  it('records frames gfxinfo may have overwritten between polls as a coverage gap', async () => {
+    const adb = await fakeAdb([framestats(1), framestats(120, 10)]);
+    try {
+      const backend = createAndroidGfxinfoPerformanceBackend({
+        serial: 'emulator-5554',
+        packageId: 'com.example',
+        adbPath: adb.adbPath,
+      });
+      await backend.start('w');
+      const result = await backend.end('w');
+      assert.equal(result.nativeUi.status, 'partial');
+      assert.match(result.nativeUi.coverageGapReasons.join(';'), /overwritten/u);
+    } finally {
+      await adb.cleanup();
+    }
+  });
+
+  it('marks the React Native trace with performance.mark under the host prefix', async () => {
+    const sent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const handlers = new Map<string, (params: Record<string, unknown>) => void>();
+    let markerName = '';
+    const client: CdpClient = {
+      async send(method, params) {
+        sent.push({ method, ...(params ? { params } : {}) });
+        if (method === 'Runtime.evaluate') {
+          markerName = JSON.parse(String(params?.expression).slice('performance.mark('.length, -1));
+        }
+        if (method === 'Tracing.end') {
+          handlers.get('Tracing.dataCollected')?.({
+            value: [{ name: markerName, ph: 'I', pid: 1, ts: 1_000_000 }],
+          });
+          handlers.get('Tracing.tracingComplete')?.({});
+        }
+        return {};
+      },
+      on(method, handler) {
+        handlers.set(method, handler);
+        return () => handlers.delete(method);
+      },
+      close() {},
+    };
+    const kind: TraceKind = {
+      categories: ['blink.user_timing'],
+      rendererScoped: false,
+      scope: 'mobile-host',
+      nativeSource: 'react-native-cdp-frame-timings',
+      javascriptTasks: false,
+      frameTiming: 'cadence',
+    };
+    const backend = createReactNativeTracePerformanceBackend(client, {
+      kind,
+      platform: 'ios',
+      markerPrefix: 'host-clock-',
+    });
+    await backend.start('w');
+    const result = await backend.end('w');
+    assert.match(markerName, /^host-clock-w-\d+$/u);
+    assert.deepEqual(
+      sent.map((call) => call.method),
+      ['Tracing.start', 'Runtime.evaluate', 'Tracing.end'],
+    );
+    assert.equal(result.platform, 'ios');
   });
 
   it('requires a serial and a package id', () => {

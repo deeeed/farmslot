@@ -4,8 +4,10 @@
 // inside it, and the window's budget verdict), and `phase: "report"` writes
 // one report over every window of the run and fails the node when a window
 // broke its budget. Targets are reported, never failed on.
+import { execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   type ActionExecutionContext,
@@ -20,6 +22,7 @@ import {
 } from '@farmslot/recipe-runner/runtime/cdp-trace';
 
 import {
+  type AndroidDeviceDescription,
   type AndroidFrameSample,
   type AndroidGfxinfoCaptureResult,
   type AndroidGfxinfoPerformanceBackend,
@@ -28,6 +31,8 @@ import {
 import { resolveMobileToolPath } from './tool-paths.js';
 
 export const PERFORMANCE_CAPTURE_ACTION = 'app.performance_capture';
+
+const execFileAsync = promisify(execFile);
 
 // Actions whose node is one press: their latency runs from the frame that
 // handled the input to the frame that answered it.
@@ -39,9 +44,19 @@ const DEFAULT_SUSTAINED_WINDOW_MS = 500;
 // the atrace tab-press measurements (biggest Fabric mount within 600 ms).
 const DEFAULT_RESPONSE_WINDOW_MS = 600;
 // A mount frame stands out from the touch and animation frames around it
-// (about 1 ms of UI-thread work on a Pixel 6); tab mounts measured 9-80 ms.
+// (about 1 ms of UI-thread work on a Pixel 6; tab mounts measured 9-80 ms):
+// at least MOUNT_MIN_MS, and either a whole frame budget of UI-thread work or
+// MOUNT_OVER_MEDIAN times the median of the other frames after the touch.
 const MOUNT_MIN_MS = 4;
 const MOUNT_OVER_MEDIAN = 3;
+// A mount up to this many response windows after the touch still answers the
+// press (and reads over any press cap) when nothing else answered in the
+// window, or when rendering ran on without a pause from the window into it.
+const MOUNT_LOOKAHEAD = 2;
+// Frames closer than this are one stretch of rendering for sustained FPS, so a
+// slow cadence (4 vsyncs at 90 Hz is 22.5 fps) counts against the floor.
+const MAX_ACTIVE_GAP_MS = 100;
+const MIN_SUSTAINED_INTERVALS = 5;
 // The metrics failures name, so a reader knows what was measured.
 const PRESS_METRIC = 'gfxinfo input->mount frame';
 const FPS_METRIC = 'gfxinfo, lowest 500 ms';
@@ -76,6 +91,10 @@ export interface PerformanceBaseline {
   sustained_fps?: number;
   press_p95_ms?: number;
   press_max_ms?: number;
+  /** Native frames the window recorded on the baseline. */
+  frames?: number;
+  /** Display refresh rate of the baseline; a different measured rate is noted. */
+  refresh_hz?: number;
   [key: string]: unknown;
 }
 
@@ -91,9 +110,9 @@ export interface PressLatency {
   /** Input frame start to the end of the frame that answered it; absent when not timed. */
   latencyMs?: number;
   /**
-   * `mount`: the heaviest frame after the touch stood out and is the answer.
-   * `first-frame`: none stood out (the screen was already mounted), so the
-   * press is timed to the first frame after the touch.
+   * `mount`: the first frame after the touch that stood out is the answer.
+   * `first-frame`: none stood out, so the press is timed to the first frame
+   * after the touch; the new screen did no measurable UI-thread work.
    */
   answer?: 'mount' | 'first-frame';
   /** Why the press has no latency. */
@@ -117,13 +136,28 @@ export interface PerformanceWindowSummary {
   press: PressStats;
   /** The same statistics per press target, e.g. per tab. */
   pressByTarget: Record<string, PressStats>;
-  budget?: { verdict: 'pass' | 'fail'; limits: PerformanceBudget; failures: string[] };
+  /**
+   * `inconclusive` when the capture has a coverage gap (failed polls, frames
+   * gfxinfo overwrote): it never passes. An idle window, no frames and no
+   * gaps, passes.
+   */
+  budget?: {
+    verdict: 'pass' | 'fail' | 'inconclusive';
+    limits: PerformanceBudget;
+    failures: string[];
+    inconclusive: string[];
+  };
   baseline?: PerformanceBaseline;
   targets?: {
     fps?: { target: number; sustainedFps?: number; activeFps?: number; met: boolean };
     press?: { target: number; p95Ms?: number; maxMs?: number; met: boolean };
   };
+  /** Frames the capture may have missed: poll failures, overwritten frames, an overrun window. */
   coverageGapReasons: string[];
+  /** Why the source has no frames, e.g. an idle screen. Not a gap. */
+  unavailableReasons: string[];
+  /** Observations that don't change the verdict, e.g. a refresh rate unlike the baseline's. */
+  notes: string[];
 }
 
 export interface PressStats {
@@ -157,6 +191,7 @@ export interface PerformanceCaptureSession {
 
 export interface PerformanceCaptureSessionOptions {
   env: Record<string, string | undefined>;
+  logger?: Pick<Console, 'warn'>;
   /** Validate the nodes without a device: no window opens and nothing is measured. */
   dryRun?: boolean;
   createBackend?: (env: Record<string, string | undefined>) => AndroidGfxinfoPerformanceBackend;
@@ -165,6 +200,7 @@ export interface PerformanceCaptureSessionOptions {
 
 export function createPerformanceCaptureSession({
   env,
+  logger = console,
   dryRun = false,
   createBackend = createDeviceBackend,
   now = Date.now,
@@ -259,40 +295,67 @@ export function createPerformanceCaptureSession({
   ): Promise<ActionResult> {
     const title =
       typeof node.title === 'string' && node.title.trim() ? node.title.trim() : 'Performance';
-    const failed = summaries.filter((summary) => summary.budget?.verdict === 'fail');
-    const document = {
-      schemaVersion: 1,
-      verdict: failed.length > 0 ? 'fail' : 'pass',
-      windows: summaries,
-    };
-    const jsonPath = 'performance/report.json';
-    const markdownPath = 'performance/report.md';
-    await writeArtifact(context, jsonPath, `${JSON.stringify(document, null, 2)}\n`);
-    await writeArtifact(context, markdownPath, renderPerformanceReport(title, summaries));
-    const artifacts = [
-      { path: jsonPath, type: 'metric', nodeId: context.nodeId, label: `${title} report` },
-      { path: markdownPath, type: 'report', nodeId: context.nodeId, label: `${title} report` },
-    ];
     if (summaries.length === 0) {
       throw new RecipeExecutionError(
         'harness',
         `${PERFORMANCE_CAPTURE_ACTION} phase=report found no ended capture window.`,
       );
     }
-    if (failed.length > 0) {
+    const failed = summaries.filter((summary) => summary.budget?.verdict === 'fail');
+    const inconclusive = summaries.filter((summary) => summary.budget?.verdict === 'inconclusive');
+    const environment = {
+      device: await describeDevice(),
+      checkout: await describeCheckout(context.projectRoot),
+    };
+    const document = {
+      schemaVersion: 1,
+      verdict: failed.length > 0 ? 'fail' : inconclusive.length > 0 ? 'inconclusive' : 'pass',
+      environment,
+      windows: summaries,
+    };
+    const jsonPath = 'performance/report.json';
+    const markdownPath = 'performance/report.md';
+    await writeArtifact(context, jsonPath, `${JSON.stringify(document, null, 2)}\n`);
+    await writeArtifact(
+      context,
+      markdownPath,
+      renderPerformanceReport(title, summaries, environment),
+    );
+    const artifacts = [
+      { path: jsonPath, type: 'metric', nodeId: context.nodeId, label: `${title} report` },
+      { path: markdownPath, type: 'report', nodeId: context.nodeId, label: `${title} report` },
+    ];
+    if (failed.length > 0 || inconclusive.length > 0) {
       for (const artifact of artifacts) context.registerArtifact(artifact);
+      const reasons = [
+        ...failed.map((summary) => `${summary.id} (${summary.budget?.failures.join('; ')})`),
+        ...inconclusive.map(
+          (summary) => `${summary.id} inconclusive (${summary.budget?.inconclusive.join('; ')})`,
+        ),
+      ];
       throw new RecipeExecutionError(
-        'subject',
-        `Performance budget failed: ${failed
-          .map((summary) => `${summary.id} (${summary.budget?.failures.join('; ')})`)
-          .join(', ')}`,
-        { code: 'PERFORMANCE_BUDGET_FAILED', details: document },
+        failed.length > 0 ? 'subject' : 'environment',
+        `Performance budget ${failed.length > 0 ? 'failed' : 'inconclusive'}: ${reasons.join(', ')}`,
+        {
+          code: failed.length > 0 ? 'PERFORMANCE_BUDGET_FAILED' : 'PERFORMANCE_INCONCLUSIVE',
+          details: document,
+        },
       );
     }
     return {
       output: { action: PERFORMANCE_CAPTURE_ACTION, phase: 'report', ...document },
       artifacts,
     };
+  }
+
+  async function describeDevice(): Promise<AndroidDeviceDescription | undefined> {
+    try {
+      return await backend?.describe?.();
+    } catch (error) {
+      // The report still renders without the device line; the reason is logged.
+      logger.warn(`Performance report could not describe the device: ${errorMessage(error)}`);
+      return undefined;
+    }
   }
 
   return {
@@ -322,7 +385,14 @@ export function createPerformanceCaptureSession({
     async close() {
       const open = [...windows.values()];
       windows.clear();
-      for (const window of open) await finish(window).catch(() => undefined);
+      for (const window of open) {
+        // A window still open here belongs to a run that failed before its
+        // phase=end. Ending it stops the polling; its error must not replace
+        // the run's own, so it is logged.
+        await finish(window).catch((error: unknown) => {
+          logger.warn(`Performance window ${window.id} did not end: ${errorMessage(error)}`);
+        });
+      }
       await backend?.close();
     },
   };
@@ -379,10 +449,7 @@ export function summarizeWindow({
   responseWindowMs: number;
 }): PerformanceWindowSummary {
   const samples = result.nativeUi.samples;
-  const coverageGapReasons = [
-    ...result.nativeUi.unavailableReasons,
-    ...result.nativeUi.coverageGapReasons,
-  ];
+  const coverageGapReasons = [...result.nativeUi.coverageGapReasons];
   const exceeded = endedAtEpochMs - startedAtEpochMs >= maxDurationMs;
   if (exceeded) coverageGapReasons.push('Performance capture exceeded max_duration_ms.');
   const presses = spans
@@ -392,7 +459,17 @@ export function summarizeWindow({
         span.startedAtEpochMs >= startedAtEpochMs &&
         (span.endedAtEpochMs ?? endedAtEpochMs) <= endedAtEpochMs,
     )
-    .map((span) => measurePress(samples, span, responseWindowMs, endedAtEpochMs));
+    .map((span) =>
+      result.inputEvents === 'missing'
+        ? {
+            nodeId: span.nodeId,
+            action: span.action,
+            ...(span.target ? { target: span.target } : {}),
+            unmeasuredReason:
+              "this device's gfxinfo framestats has no InputEventId column (Android 12 or later is needed to time presses)",
+          }
+        : measurePress(samples, span, responseWindowMs, endedAtEpochMs),
+    );
   const press = pressStats(presses);
   const pressByTarget: Record<string, PressStats> = {};
   for (const target of new Set(presses.map((entry) => entry.target ?? entry.nodeId))) {
@@ -418,7 +495,18 @@ export function summarizeWindow({
     press,
     pressByTarget,
     coverageGapReasons,
+    unavailableReasons: [...result.nativeUi.unavailableReasons],
+    notes: [],
   };
+  if (
+    baseline?.refresh_hz !== undefined &&
+    frames.refreshRateHz !== undefined &&
+    Math.abs(frames.refreshRateHz - baseline.refresh_hz) > baseline.refresh_hz * 0.05
+  ) {
+    summary.notes.push(
+      `measured ${Math.round(frames.refreshRateHz)} Hz; the baseline was recorded at ${baseline.refresh_hz} Hz`,
+    );
+  }
   if (baseline) summary.baseline = baseline;
   if (budget) summary.budget = checkBudget(summary, budget, baseline);
   if (targets) summary.targets = checkTargets(summary, targets);
@@ -428,13 +516,13 @@ export function summarizeWindow({
 /**
  * The press's latency: from the first frame that handled input during the
  * press node to the end of the frame that answered it. The answer is the
- * frame with the most UI-thread work within `responseWindowMs` of the input
- * when it stands out (at least `MOUNT_MIN_MS` and `MOUNT_OVER_MEDIAN` times
- * the window's median): the frame that mounts and draws the new screen.
- * Touch ripples run on the render thread. When no frame stands out the screen
- * was already mounted, and the first frame after the touch answers. The answer
- * may land after the press node ends. A press with no input frame, or no frame
- * after it in the window, is untimed.
+ * first later frame that stands out (see MOUNT_MIN_MS): the frame that mounts
+ * and draws the new screen. Touch ripples run on the render thread. A mount up
+ * to `MOUNT_LOOKAHEAD` response windows after the touch still answers when
+ * nothing rendered in the window or rendering ran on into it without a pause,
+ * so a late mount reads as slow rather than as an instant press. When no frame
+ * stands out the press is timed to the first frame within `responseWindowMs`.
+ * A press with no input frame, or no frame after it in the window, is untimed.
  */
 export function measurePress(
   samples: readonly AndroidFrameSample[],
@@ -455,28 +543,53 @@ export function measurePress(
       sample.startedAtEpochMs <= spanEnd,
   );
   if (!input) return { ...base, unmeasuredReason: 'no frame handled input during the press' };
-  const responseEnd = Math.min(windowEndEpochMs, input.startedAtEpochMs + responseWindowMs);
-  const after = samples
+  const searchEnd = Math.min(
+    windowEndEpochMs,
+    input.startedAtEpochMs + responseWindowMs * MOUNT_LOOKAHEAD,
+  );
+  const windowEnd = input.startedAtEpochMs + responseWindowMs;
+  const candidates = samples
     .filter(
       (sample) =>
         sample.input !== true &&
         sample.startedAtEpochMs > input.startedAtEpochMs &&
-        sample.startedAtEpochMs <= responseEnd,
+        sample.startedAtEpochMs <= searchEnd,
     )
     .sort((left, right) => left.startedAtEpochMs - right.startedAtEpochMs);
-  const [first] = after;
-  if (!first) {
+  // Past the window, only frames that continue the rendering under way at its
+  // end (or any, when the window had none): a later mount after a pause is
+  // another update, not this press.
+  const after: AndroidFrameSample[] = [];
+  for (const sample of candidates) {
+    const previous = after.at(-1);
+    if (
+      sample.startedAtEpochMs > windowEnd &&
+      previous &&
+      sample.startedAtEpochMs - previous.startedAtEpochMs > MAX_ACTIVE_GAP_MS
+    ) {
+      break;
+    }
+    after.push(sample);
+  }
+  const work = (sample: AndroidFrameSample) => sample.uiThreadMs ?? sample.durationMs;
+  const standsOut = (sample: AndroidFrameSample) => {
+    const ms = work(sample);
+    if (ms < MOUNT_MIN_MS) return false;
+    if (ms >= (sample.frameBudgetMs ?? 1000 / 60)) return true;
+    const others = after
+      .filter((other) => other !== sample)
+      .map(work)
+      .sort((left, right) => left - right);
+    return others.length === 0 || ms >= percentile(others, 0.5) * MOUNT_OVER_MEDIAN;
+  };
+  const mount = after.find(standsOut);
+  const response = mount ?? after.find((sample) => sample.startedAtEpochMs <= windowEnd);
+  if (!response) {
     return {
       ...base,
       unmeasuredReason: `no frame answered the input within ${responseWindowMs} ms`,
     };
   }
-  const work = (sample: AndroidFrameSample) => sample.uiThreadMs ?? sample.durationMs;
-  const heaviest = after.reduce((top, sample) => (work(sample) > work(top) ? sample : top));
-  const works = after.map(work).sort((left, right) => left - right);
-  const mount =
-    work(heaviest) >= MOUNT_MIN_MS && work(heaviest) >= percentile(works, 0.5) * MOUNT_OVER_MEDIAN;
-  const response = mount ? heaviest : first;
   return {
     ...base,
     latencyMs: round(response.completedAtEpochMs - input.startedAtEpochMs),
@@ -484,7 +597,12 @@ export function measurePress(
   };
 }
 
-/** The lowest active FPS over any `windowMs` span of frames; undefined when no span has enough. */
+/**
+ * The lowest frame rate over any `windowMs` of continuous rendering: frames
+ * closer than MAX_ACTIVE_GAP_MS (or a gap a slow frame explains) form one
+ * stretch, and only stretches that last a whole `windowMs` from a frame count.
+ * Undefined when no stretch is that long (an idle screen, a short burst).
+ */
 export function lowestSustainedFps(
   samples: readonly AndroidFrameSample[],
   windowMs: number,
@@ -492,41 +610,61 @@ export function lowestSustainedFps(
   const ordered = [...samples].sort(
     (first, second) => first.startedAtEpochMs - second.startedAtEpochMs,
   );
+  const stretches: AndroidFrameSample[][] = [];
+  for (const sample of ordered) {
+    const stretch = stretches.at(-1);
+    const previous = stretch?.at(-1);
+    const gap = previous ? sample.startedAtEpochMs - previous.startedAtEpochMs : Infinity;
+    const budget = sample.frameBudgetMs ?? 1000 / 60;
+    const explained = previous ? previous.durationMs + budget * 1.01 >= gap : false;
+    if (stretch && (gap <= MAX_ACTIVE_GAP_MS || explained)) stretch.push(sample);
+    else stretches.push([sample]);
+  }
   let lowest: number | undefined;
-  let end = 0;
-  for (let start = 0; start < ordered.length; start += 1) {
-    const from = ordered[start]?.startedAtEpochMs ?? 0;
-    end = Math.max(end, start);
-    while (end < ordered.length && (ordered[end]?.startedAtEpochMs ?? 0) < from + windowMs) {
-      end += 1;
+  for (const stretch of stretches) {
+    const last = stretch.at(-1)?.startedAtEpochMs ?? 0;
+    for (let start = 0; start < stretch.length; start += 1) {
+      const from = stretch[start]?.startedAtEpochMs ?? 0;
+      if (from + windowMs > last) break;
+      let end = start;
+      while ((stretch[end + 1]?.startedAtEpochMs ?? Infinity) <= from + windowMs) end += 1;
+      const intervals = end - start;
+      const elapsed = (stretch[end]?.startedAtEpochMs ?? from) - from;
+      if (intervals < MIN_SUSTAINED_INTERVALS || elapsed <= 0) continue;
+      // Sampling jitter never reads faster than the display refreshes.
+      const budgets = stretch
+        .slice(start, end + 1)
+        .map((sample) => sample.frameBudgetMs ?? 1000 / 60);
+      const refreshHz = 1000 / Math.min(...budgets);
+      const fps = round(Math.min(refreshHz, (intervals * 1000) / elapsed));
+      lowest = Math.min(lowest ?? fps, fps);
     }
-    const fps = summarizeFrames(ordered.slice(start, end)).activeFps;
-    if (fps !== undefined) lowest = Math.min(lowest ?? fps, fps);
   }
   return lowest;
 }
 
 // Every failure names the metric, the limit, the measured value, where it was
-// measured and, given a baseline, the baseline's value.
+// measured and, given a baseline, the baseline's value. Values print with
+// enough decimals that a value over its limit never reads as equal to it.
 function checkBudget(
   summary: PerformanceWindowSummary,
   limits: PerformanceBudget,
   baseline: PerformanceBaseline | undefined,
 ): NonNullable<PerformanceWindowSummary['budget']> {
   const failures: string[] = [];
-  const fps = (value: number) => `${Math.round(value * 10) / 10} fps`;
-  const ms = (value: number) => `${Math.round(value)} ms`;
-  const against = (name: string, value: number | undefined, format: (value: number) => string) =>
-    baseline && value !== undefined ? `; ${baseline.label} baseline ${name} ${format(value)}` : '';
+  const against = (name: string, value: number | undefined, unit: string) =>
+    baseline && value !== undefined
+      ? `; ${baseline.label} baseline ${name} ${formatValue(value)} ${unit}`
+      : '';
   if (
     limits.min_sustained_fps !== undefined &&
     summary.sustainedFps !== undefined &&
     summary.sustainedFps < limits.min_sustained_fps
   ) {
     failures.push(
-      `sustained fps (${FPS_METRIC}) ${fps(summary.sustainedFps)} < ${fps(
-        limits.min_sustained_fps,
-      )} (${summary.id})${against('sustained', baseline?.sustained_fps, fps)}`,
+      `sustained fps (${FPS_METRIC}) ${formatAgainst(summary.sustainedFps, limits.min_sustained_fps)} fps < ${
+        limits.min_sustained_fps
+      } fps (${summary.id})${against('sustained', baseline?.sustained_fps, 'fps')}`,
     );
   }
   if (
@@ -541,37 +679,87 @@ function checkBudget(
       [undefined, undefined],
     );
     failures.push(
-      `press p95 (${PRESS_METRIC}) ${ms(summary.press.p95Ms)} > ${ms(limits.max_press_p95_ms)} (${
-        summary.id
-      }${slowest && stats?.maxMs !== undefined ? `; slowest ${slowest} ${ms(stats.maxMs)}` : ''})${against(
-        'p95',
-        baseline?.press_p95_ms,
-        ms,
-      )}`,
+      `press p95 (${PRESS_METRIC}) ${formatAgainst(summary.press.p95Ms, limits.max_press_p95_ms)} ms > ${
+        limits.max_press_p95_ms
+      } ms (${summary.id}${
+        slowest && stats?.maxMs !== undefined
+          ? `; slowest ${slowest} ${formatValue(stats.maxMs)} ms`
+          : ''
+      })${against('p95', baseline?.press_p95_ms, 'ms')}`,
     );
   }
   if (limits.max_press_ms !== undefined) {
     for (const press of summary.presses) {
       const where = `${press.target ?? press.nodeId}, node ${press.nodeId}`;
       if (press.latencyMs === undefined) {
-        failures.push(`press (${PRESS_METRIC}) untimed (${where}): ${press.unmeasuredReason}`);
+        failures.push(
+          `press (${PRESS_METRIC}) untimed, counted over ${limits.max_press_ms} ms (${where}): ${
+            press.unmeasuredReason
+          }${against('max', baseline?.press_max_ms, 'ms')}`,
+        );
       } else if (press.latencyMs > limits.max_press_ms) {
         failures.push(
-          `press (${PRESS_METRIC}) ${ms(press.latencyMs)} > ${ms(limits.max_press_ms)} (${where})${against(
-            'max',
-            baseline?.press_max_ms,
-            ms,
-          )}`,
+          `press (${PRESS_METRIC}) ${formatAgainst(press.latencyMs, limits.max_press_ms)} ms > ${
+            limits.max_press_ms
+          } ms (${where})${against('max', baseline?.press_max_ms, 'ms')}`,
         );
       }
     }
   }
   if (limits.min_frames !== undefined && summary.frames.frameCount < limits.min_frames) {
     failures.push(
-      `gfxinfo frames ${summary.frames.frameCount} < ${limits.min_frames} (${summary.id})`,
+      `gfxinfo frames ${summary.frames.frameCount} < ${limits.min_frames} (${summary.id})${against(
+        'frames',
+        baseline?.frames,
+        '',
+      ).trimEnd()}`,
     );
   }
-  return { verdict: failures.length > 0 ? 'fail' : 'pass', limits, failures };
+  const inconclusive = summary.coverageGapReasons.map((reason) => `coverage gap: ${reason}`);
+  return {
+    verdict: failures.length > 0 ? 'fail' : inconclusive.length > 0 ? 'inconclusive' : 'pass',
+    limits,
+    failures,
+    inconclusive,
+  };
+}
+
+/** The value with the fewest decimals (up to 3) that don't round it onto `limit`. */
+function formatAgainst(value: number, limit: number): string {
+  for (let decimals = 0; decimals < 3; decimals += 1) {
+    const text = value.toFixed(decimals);
+    if (Number(text) !== limit) return String(Number(text));
+  }
+  return String(Number(value.toFixed(3)));
+}
+
+function formatValue(value: number): string {
+  return String(Math.round(value * 10) / 10);
+}
+
+async function describeCheckout(
+  projectRoot: string,
+): Promise<{ head?: string; dirty?: boolean } | undefined> {
+  try {
+    const head = (
+      await execFileAsync('git', ['-C', projectRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+    ).stdout.trim();
+    const status = (
+      await execFileAsync(
+        'git',
+        ['-C', projectRoot, 'status', '--porcelain', '--untracked-files=no'],
+        { encoding: 'utf8' },
+      )
+    ).stdout.trim();
+    return { head, dirty: status.length > 0 };
+  } catch {
+    // Outside a git checkout the report names no source revision.
+    return undefined;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function windowSpans(
@@ -634,9 +822,15 @@ function checkTargets(
   };
 }
 
+export interface PerformanceReportEnvironment {
+  device?: AndroidDeviceDescription;
+  checkout?: { head?: string; dirty?: boolean };
+}
+
 export function renderPerformanceReport(
   title: string,
   summaries: readonly PerformanceWindowSummary[],
+  environment: PerformanceReportEnvironment = {},
 ): string {
   const value = (number: number | undefined, unit = '') =>
     number === undefined ? 'n/a' : `${Math.round(number * 10) / 10}${unit}`;
@@ -671,8 +865,34 @@ export function renderPerformanceReport(
     'frames',
     'Hz',
   ];
+  const { device, checkout } = environment;
   const lines = [
     `# ${title}`,
+    '',
+    `- Device: ${
+      device
+        ? [
+            device.model ?? 'unknown model',
+            device.androidRelease ? `Android ${device.androidRelease}` : '',
+            device.serial,
+          ]
+            .filter(Boolean)
+            .join(', ')
+        : 'unknown'
+    }`,
+    `- App: ${
+      device
+        ? [
+            device.packageId,
+            device.versionName,
+            device.buildType ? `${device.buildType} build` : '',
+            device.lastUpdateTime ? `installed ${device.lastUpdateTime}` : '',
+          ]
+            .filter(Boolean)
+            .join(', ')
+        : 'unknown'
+    }`,
+    `- Checkout: ${checkout?.head ? `${checkout.head}${checkout.dirty ? ' (uncommitted changes)' : ''}` : 'unknown'}`,
     '',
     `| ${header.join(' | ')} |`,
     `| ${header.map(() => '---').join(' | ')} |`,
@@ -707,13 +927,22 @@ export function renderPerformanceReport(
       baseline.press_p95_ms === undefined ? '' : `press p95 ${value(baseline.press_p95_ms, ' ms')}`,
       baseline.press_max_ms === undefined ? '' : `max ${value(baseline.press_max_ms, ' ms')}`,
       baseline.sustained_fps === undefined ? '' : `sustained ${value(baseline.sustained_fps)} fps`,
+      baseline.frames === undefined ? '' : `${baseline.frames} frames`,
+      baseline.refresh_hz === undefined ? '' : `${baseline.refresh_hz} Hz`,
     ].filter(Boolean);
     lines.push(`- ${summary.id} baseline, ${baseline.label}: ${parts.join(', ') || 'recorded'}`);
   }
   for (const summary of summaries) {
     for (const failure of summary.budget?.failures ?? []) lines.push(`- FAIL ${failure}`);
+    for (const reason of summary.budget?.inconclusive ?? []) {
+      lines.push(`- INCONCLUSIVE ${summary.id}: ${reason}`);
+    }
+    for (const note of summary.notes) lines.push(`- NOTE ${summary.id}: ${note}`);
   }
-  const gaps = summaries.filter((summary) => summary.coverageGapReasons.length > 0);
+  // Budgeted windows list their gaps as INCONCLUSIVE above.
+  const gaps = summaries.filter(
+    (summary) => !summary.budget && summary.coverageGapReasons.length > 0,
+  );
   for (const summary of gaps) {
     lines.push(`- ${summary.id} coverage: ${summary.coverageGapReasons.join('; ')}`);
   }
@@ -746,6 +975,8 @@ function parseBaseline(value: unknown): PerformanceBaseline | undefined {
     ...optionalLimit(record, 'sustained_fps'),
     ...optionalLimit(record, 'press_p95_ms'),
     ...optionalLimit(record, 'press_max_ms'),
+    ...optionalLimit(record, 'frames'),
+    ...optionalLimit(record, 'refresh_hz'),
   };
 }
 

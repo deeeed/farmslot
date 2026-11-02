@@ -27,27 +27,43 @@ const BUDGET_MS = 1000 / 90;
 function frame(
   startedAtEpochMs: number,
   durationMs: number,
-  extra: { input?: true; uiThreadMs?: number } = {},
+  {
+    frameBudgetMs = BUDGET_MS,
+    ...extra
+  }: { input?: true; uiThreadMs?: number; frameBudgetMs?: number } = {},
 ): AndroidFrameSample {
   return {
     startedAtEpochMs,
     completedAtEpochMs: startedAtEpochMs + durationMs,
     durationMs,
-    frameBudgetMs: BUDGET_MS,
-    overBudget: durationMs > BUDGET_MS * 1.01,
+    frameBudgetMs,
+    overBudget: durationMs > frameBudgetMs * 1.01,
     ...extra,
   };
 }
 
 // `count` consecutive frames every `intervalMs` from `fromMs`.
-function cadence(fromMs: number, count: number, intervalMs: number, durationMs = 8) {
+function cadence(
+  fromMs: number,
+  count: number,
+  intervalMs: number,
+  durationMs = 8,
+  budgetMs = BUDGET_MS,
+) {
   return Array.from({ length: count }, (_, index) =>
-    frame(fromMs + index * intervalMs, durationMs, { uiThreadMs: 2 }),
+    frame(fromMs + index * intervalMs, durationMs, { uiThreadMs: 2, frameBudgetMs: budgetMs }),
   );
 }
 
-function capture(samples: AndroidFrameSample[]): AndroidGfxinfoCaptureResult {
+function capture(
+  samples: AndroidFrameSample[],
+  {
+    coverageGapReasons = [],
+    inputEvents = 'available',
+  }: { coverageGapReasons?: string[]; inputEvents?: 'available' | 'missing' } = {},
+): AndroidGfxinfoCaptureResult {
   return {
+    inputEvents,
     platform: 'android',
     javascript: {
       applicability: 'not_applicable',
@@ -59,10 +75,15 @@ function capture(samples: AndroidFrameSample[]): AndroidGfxinfoCaptureResult {
       summary: {},
     },
     nativeUi: {
-      status: samples.length > 0 ? 'complete' : 'unavailable',
+      status:
+        samples.length === 0
+          ? 'unavailable'
+          : coverageGapReasons.length > 0
+            ? 'partial'
+            : 'complete',
       kind: 'android-gfxinfo-framestats',
       unavailableReasons: [],
-      coverageGapReasons: [],
+      coverageGapReasons,
       samples,
       summary: summarizeFrames(samples),
     },
@@ -142,6 +163,49 @@ describe('press latency', () => {
     });
   });
 
+  it('takes a mount among few frames instead of the first light frame', () => {
+    const mount = [
+      frame(1_000, 6, { input: true, uiThreadMs: 2 }),
+      frame(1_011, 5, { uiThreadMs: 1 }),
+      frame(1_100, 30, { uiThreadMs: 24 }),
+    ];
+    assert.equal(measurePress(mount, press, 600, 5_000).latencyMs, 130);
+    const withLayout = [...mount, frame(1_140, 20, { uiThreadMs: 16 })];
+    assert.equal(measurePress(withLayout, press, 600, 5_000).latencyMs, 130);
+  });
+
+  it('reads a mount just past the window behind light frames as slow', () => {
+    const light = Array.from({ length: 58 }, (_, index) =>
+      frame(1_011 + index * BUDGET_MS, 5, { uiThreadMs: 1 }),
+    );
+    const samples = [
+      frame(1_000, 6, { input: true, uiThreadMs: 2 }),
+      ...light,
+      frame(1_655, 30, { uiThreadMs: 24 }),
+    ];
+    assert.deepEqual(measurePress(samples, press, 600, 5_000), {
+      nodeId: 'tab',
+      action: 'ui.press',
+      target: 'tab-terminals',
+      latencyMs: 685,
+      answer: 'mount',
+    });
+  });
+
+  it('does not take a later update after a pause for the press', () => {
+    const samples = [
+      frame(1_000, 6, { input: true, uiThreadMs: 2 }),
+      frame(1_011, 5, { uiThreadMs: 1 }),
+      frame(1_900, 30, { uiThreadMs: 30 }),
+    ];
+    assert.equal(measurePress(samples, press, 600, 5_000).answer, 'first-frame');
+  });
+
+  it('times a late mount when nothing answered in the window', () => {
+    const samples = [frame(1_000, 6, { input: true }), frame(1_800, 20, { uiThreadMs: 30 })];
+    assert.equal(measurePress(samples, press, 600, 5_000).latencyMs, 820);
+  });
+
   it('leaves a press untimed without an input frame or an answer', () => {
     assert.match(
       measurePress([frame(1_100, 9)], press, 600, 5_000).unmeasuredReason ?? '',
@@ -167,6 +231,18 @@ describe('sustained FPS', () => {
   it('does not let one long frame read as a sustained drop', () => {
     const samples = [...cadence(0, 20, BUDGET_MS), frame(222, 150), ...cadence(380, 20, BUDGET_MS)];
     assert.ok((lowestSustainedFps(samples, 500) ?? 0) > 30);
+  });
+
+  it('counts a slow cadence as rendering', () => {
+    // Every fourth vsync at 90 Hz: 22.5 fps with cheap frames.
+    const fps = lowestSustainedFps(cadence(0, 25, BUDGET_MS * 4), 500);
+    assert.ok(fps !== undefined && fps < 30, `expected < 30 fps, got ${fps}`);
+  });
+
+  it('needs a whole window of rendering', () => {
+    const samples = [...cadence(0, 50, BUDGET_MS), ...cadence(50 * BUDGET_MS + 40, 6, 40)];
+    assert.ok((lowestSustainedFps(samples, 500) ?? 0) > 50);
+    assert.equal(lowestSustainedFps(cadence(0, 6, 40), 500), undefined);
   });
 
   it('is absent when nothing rendered continuously', () => {
@@ -252,8 +328,56 @@ describe('window budget', () => {
       budget: { max_press_ms: 150 },
     });
     assert.deepEqual(summary.budget?.failures, [
-      'press (gfxinfo input->mount frame) untimed (tab-terminals, node b): no frame handled input during the press',
+      'press (gfxinfo input->mount frame) untimed, counted over 150 ms (tab-terminals, node b): no frame handled input during the press',
     ]);
+  });
+
+  it('is inconclusive with a coverage gap, never a pass', () => {
+    const summary = summarizeWindow({
+      ...base,
+      result: capture([], { coverageGapReasons: ['Android gfxinfo poll failed: timeout'] }),
+      spans: [],
+      budget: { min_sustained_fps: 30 },
+    });
+    assert.equal(summary.budget?.verdict, 'inconclusive');
+    assert.deepEqual(summary.budget?.inconclusive, [
+      'coverage gap: Android gfxinfo poll failed: timeout',
+    ]);
+  });
+
+  it('prints a value over its limit so it reads over it', () => {
+    const summary = summarizeWindow({
+      ...base,
+      result: capture([
+        frame(1_000, 6, { input: true, uiThreadMs: 2 }),
+        frame(1_011, 5, { uiThreadMs: 1 }),
+        frame(1_220, 30.4, { uiThreadMs: 25 }),
+      ]),
+      spans: presses.slice(0, 1),
+      budget: { max_press_ms: 250 },
+    });
+    assert.deepEqual(summary.budget?.failures, [
+      'press (gfxinfo input->mount frame) 250.4 ms > 250 ms (tab-review, node a)',
+    ]);
+  });
+
+  it('times no press on a device without input events and says why', () => {
+    const summary = summarizeWindow({
+      ...base,
+      result: capture(samples, { inputEvents: 'missing' }),
+      spans: presses,
+    });
+    assert.match(summary.presses[0]?.unmeasuredReason ?? '', /Android 12 or later/u);
+  });
+
+  it('notes a refresh rate unlike the baseline', () => {
+    const summary = summarizeWindow({
+      ...base,
+      result: capture(cadence(0, 60, 1000 / 60, 8, 1000 / 60)),
+      spans: [],
+      baseline: { label: 'main abc123 @90Hz', refresh_hz: 90 },
+    });
+    assert.deepEqual(summary.notes, ['measured 60 Hz; the baseline was recorded at 90 Hz']);
   });
 
   it('passes an idle window that rendered nothing', () => {
