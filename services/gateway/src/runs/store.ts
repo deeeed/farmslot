@@ -269,9 +269,9 @@ async function ensureDir(): Promise<void> {
   // parents of an unmounted volume would put the farm's runs on the internal disk.
   await mkdir(RUNS_DIR).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'EEXIST') return;
-    if (error.code === 'ENOENT')
+    if (error.code === 'ENOENT' || error.code === 'EACCES')
       throw new Error(
-        `FARMSLOT_RUNS_DIR ${RUNS_DIR} cannot be created: its parent is missing (is its volume mounted?)`,
+        `FARMSLOT_RUNS_DIR ${RUNS_DIR} cannot be created: its parent is missing or not writable (is its volume mounted?)`,
       );
     throw error;
   });

@@ -12,6 +12,7 @@ import {
 } from '@farmslot/protocol';
 
 import { getAgentContexts, selectAgentContext } from '../agents/contexts.js';
+import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import { slotCopyFile, slotFileExists, type SlotLocality, slotStat } from '../core/slot-io.js';
 import { getRun, runSessionArchiveDir, updateRun, updateRunAgentContexts } from '../runs/store.js';
 
@@ -180,8 +181,10 @@ async function copyJsonlArchive(params: {
 
   const destDir = runnerSessionArchiveContextDir(params.runId, params.target.contextId);
   const destFile = path.join(destDir, SESSION_ARCHIVE_TRANSCRIPT);
-  await mkdir(destDir, { recursive: true });
   try {
+    // Checked before mkdir, which would otherwise recreate a missing storage root first.
+    await assertHeavyWriteRoom(destDir);
+    await mkdir(destDir, { recursive: true });
     await slotCopyFile(params.vars, sourcePath, destFile, {
       label: 'runner-session-archive',
       phase: 'download',

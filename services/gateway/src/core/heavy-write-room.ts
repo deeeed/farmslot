@@ -1,7 +1,8 @@
 // core/heavy-write-room.ts — refuse heavy gateway writes that would fill the disk or land in the
 // wrong place. Heavy writes are the slot-to-gateway copies (artifact mirror, session archives,
 // scaffolding, review workspaces) and run-bundle materialization.
-import { stat, statfs } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, stat, statfs } from 'node:fs/promises';
 import path from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
@@ -41,12 +42,19 @@ function configuredRoots(env: NodeJS.ProcessEnv): Array<{ name: string; root: st
 const gb = (bytes: number) => (bytes / 1e9).toFixed(1);
 
 const isDirectory = async (dir: string) => (await stat(dir).catch(() => null))?.isDirectory();
+const isWritableDirectory = async (dir: string) =>
+  (await isDirectory(dir)) &&
+  (await access(dir, constants.W_OK).then(
+    () => true,
+    () => false,
+  ));
 
 /**
  * Refuses a write into `dir` when a configured root holding it cannot exist where it was
- * configured: the root is missing and so is its parent. `mkdir -p` would otherwise rebuild an
- * unmounted volume's path on the internal disk. A missing root inside an existing parent is
- * created as usual.
+ * configured: the root is missing and its parent is missing or not writable. `mkdir -p` would
+ * otherwise rebuild an unmounted volume's path on the internal disk; an unmounted volume's own
+ * mount point sits in a root-owned directory such as /Volumes. A missing root inside an
+ * existing, writable parent is created as usual.
  */
 export async function assertConfiguredRootPresent(
   dir: string,
@@ -55,9 +63,9 @@ export async function assertConfiguredRootPresent(
   const target = path.resolve(dir);
   for (const { name, root } of configuredRoots(env)) {
     if (target !== root && !target.startsWith(`${root}${path.sep}`)) continue;
-    if (!(await isDirectory(root)) && !(await isDirectory(path.dirname(root))))
+    if (!(await isDirectory(root)) && !(await isWritableDirectory(path.dirname(root))))
       throw new HeavyWriteRefusedError(
-        `Refusing to write ${target}: ${name} ${root} is missing and so is its parent (is its volume mounted?)`,
+        `Refusing to write ${target}: ${name} ${root} is missing and cannot be created in its parent (is its volume mounted?)`,
       );
   }
 }

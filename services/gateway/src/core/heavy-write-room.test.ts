@@ -58,7 +58,7 @@ test('a configured root on a missing volume refuses writes into it and nowhere e
     await assert.rejects(
       assertHeavyWriteRoom(target, env),
       new RegExp(
-        `Refusing to write .*: ${name} .* is missing and so is its parent \\(is its volume mounted\\?\\)$`,
+        `Refusing to write .*: ${name} .* is missing and cannot be created in its parent \\(is its volume mounted\\?\\)$`,
       ),
     );
   await assertHeavyWriteRoom(path.join(root, 'projects/tasks'), env);
