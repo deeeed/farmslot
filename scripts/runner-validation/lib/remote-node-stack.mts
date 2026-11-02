@@ -594,6 +594,14 @@ export async function startRemoteNodeStack(
         project: pack.name,
         platform: 'cli',
         os: process.platform,
+        // A fixture `claude` by its path: a login shell can put a real one first on PATH. Claude
+        // launches only through dispatch_cmd, and no other runner's launch reads {claude_path}.
+        ...(options.binFiles?.(holds).claude
+          ? {
+              claude_path: path.join(fakeBin, 'claude'),
+              dispatch_cmd: 'cd {repo} && {claude_path} {safety_flags}',
+            }
+          : {}),
         slots: options.slots
           .filter((slotId) => slotId.startsWith(`${pack.name}-`))
           .map((slotId) => ({
