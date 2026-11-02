@@ -87,6 +87,8 @@ test('every spelling of the marker becomes one canonical segment, never twice', 
     'do not merge. Chart order lines',
     'Temp PR, do not merge, chart order lines',
     '[POC - do not merge] Chart order lines',
+    'Chart order lines. Do not merge.',
+    ' Do Not Merge: chart order lines',
   ])
     assert.equal(await slugFor(title), 'do-not-merge-chart-order-lines', title);
   llmSlug = 'poc-do-not-merge-banner';
@@ -105,6 +107,7 @@ test('a sentence that says do not merge is not a marker', async () => {
     'Perps: do not merge TP/SL orders with the position row',
     'Do not merge duplicate token balances',
     'Token rows do not merge',
+    'Do not merge-commit release branches',
   ])
     assert.equal(await slugFor(title), 'orders-position-row', title);
 });

@@ -161,7 +161,7 @@ const DO_NOT_MERGE_MARKERS = [
   /(?<![a-z0-9])do[._-]*not[._-]*merge(?![a-z0-9])/i,
   // Spaced, as its own clause: punctuation or a title edge on both sides. "Do Not Merge: banner",
   // "temp PR, do not merge, flag", "[POC - do not merge]", "PoC banner - do not merge".
-  /(?:^|[[(\])]\s*|[:;,|–—-]\s*)do\s+not\s+merge\s*(?:$|[\]):;,.!|–—-])/i,
+  /(?:^\s*|[[(\])]\s*|[:;,.!|–—-]\s*)do\s+not\s+merge(?:\s*(?:$|[\]):;,.!|–—])|\s+-)/i,
   // The short form, bracketed or in capitals: [dnm], DNM: chart order lines.
   /[[(]\s*dnm\s*[\])]/i,
   /(?<![A-Za-z0-9])DNM(?![A-Za-z0-9])/,
