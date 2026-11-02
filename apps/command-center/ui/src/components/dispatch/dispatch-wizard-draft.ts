@@ -1,6 +1,7 @@
 import type {
   DevInteractiveProfile,
   FlowType,
+  PoolConfig,
   TaskTemplateSelection,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
@@ -95,17 +96,34 @@ export function projectPrepareProfiles(
   }));
 }
 
+/** Keeps an operator's pick only while the project still declares it; nothing is preselected. */
 export function syncSelectedAppForProject(apps: ReadonlyArray<string>, currentApp: string): string {
   if (apps.length <= 1) return '';
-  return apps.includes(currentApp) ? currentApp : (apps[0] ?? '');
+  return apps.includes(currentApp) ? currentApp : '';
 }
 
+/** The pinned slot's own app, from its pool entry. */
+export function pinnedSlotApp(
+  pools: ReadonlyArray<Pick<PoolConfig, 'slots'>>,
+  slotId: string,
+): string | undefined {
+  if (!slotId) return undefined;
+  return pools.flatMap((pool) => pool.slots).find((slot) => slot.id === slotId)?.app;
+}
+
+/**
+ * The app a dispatch names: the operator's pick, else the pinned slot's own app. With
+ * neither, none is sent and the slot's binding decides, so a correctly bound slot never
+ * gets an app it is not prepared for.
+ */
 export function selectedDispatchApp(
   apps: ReadonlyArray<string>,
-  currentApp: string,
+  pickedApp: string,
+  pinnedSlotApp?: string,
 ): string | undefined {
   if (apps.length <= 1) return undefined;
-  return currentApp || apps[0];
+  if (pickedApp) return pickedApp;
+  return pinnedSlotApp && apps.includes(pinnedSlotApp) ? pinnedSlotApp : undefined;
 }
 
 export function appLabel(app: string): string {

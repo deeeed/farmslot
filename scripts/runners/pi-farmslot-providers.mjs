@@ -177,9 +177,30 @@ function nativePiAuth(binary, model, env) {
       };
   } catch {
     // An unsupported runner or failed process can exit before its structured verdict.
-    return { status: 'invalid', reason: 'auth_check_unavailable' };
   }
-  return { status: 'invalid', reason: 'auth_check_unavailable' };
+  return unavailablePiAuth(result);
+}
+
+/** Why the native check gave no verdict. Its output is never passed on: it can carry credentials. */
+export function unavailablePiAuth(result) {
+  const cause =
+    result.error?.code === 'ETIMEDOUT'
+      ? 'timeout'
+      : result.error?.code === 'ENOENT'
+        ? 'not_found'
+        : result.status === 0
+          ? 'no_verdict'
+          : 'failed';
+  return {
+    status: 'invalid',
+    reason: 'auth_check_unavailable',
+    cause,
+    ...(Number.isInteger(result.status)
+      ? { exitCode: result.status }
+      : cause === 'failed' && typeof result.signal === 'string'
+        ? { signal: result.signal }
+        : {}),
+  };
 }
 
 /** Optional extension discovery never overrides an authenticated native configuration. */

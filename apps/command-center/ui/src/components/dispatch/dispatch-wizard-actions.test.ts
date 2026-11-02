@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import type { ReviewContinuationContext } from '@farmslot/protocol';
+import type { PoolConfig, ReviewContinuationContext } from '@farmslot/protocol';
 import { executionModelFromSelection, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import {
@@ -10,6 +10,7 @@ import {
 } from '../../utils/runner-visible-models.js';
 
 import type { DispatchPayloadDraftInput } from './dispatch-wizard-actions.js';
+import { pinnedSlotApp, selectedDispatchApp } from './dispatch-wizard-draft.js';
 import { buildDispatchQueueAddParams, buildRunCreateParams } from './dispatch-wizard-payload.js';
 
 mock.module('../../gateway-client.js', { namedExports: { gateway: {} } });
@@ -117,4 +118,50 @@ test('wizard runner defaults honor saved preferences without replacing restored 
   } finally {
     setObservedVisibleModels([]);
   }
+});
+
+test('a pinned slot with the app pill untouched sends its own app; unpinned sends none', () => {
+  const apps = ['apps/playground', 'apps/sherpa-voice'];
+  const slot = (id: string, app: string): PoolConfig['slots'][number] => ({
+    id,
+    enabled: true,
+    mode: 'dispatch',
+    project: 'audiolab-farm',
+    repo: `/repos/${id}`,
+    session: id,
+    app,
+  });
+  const pools: PoolConfig[] = [
+    {
+      machine: 'macpro',
+      project: 'audiolab-farm',
+      platform: 'ios',
+      os: 'darwin',
+      host: 'macpro.local',
+      sshUser: 'farm',
+      slots: [
+        slot('macpro-audiolab-4', 'apps/sherpa-voice'),
+        slot('macpro-audiolab-6', 'apps/playground'),
+      ],
+    },
+  ];
+  // What the wizard sends from its pin and pill, through the same draft and run.create builders.
+  const sent = (slotOverride: string, pickedApp = '') => {
+    const draft = buildDispatchWizardPayloadDraft({
+      ...input,
+      project: 'audiolab-farm',
+      flowType: 'dev',
+      runner: 'claude',
+      model: 'sonnet',
+      effort: '',
+      slotOverride,
+      app: selectedDispatchApp(apps, pickedApp, pinnedSlotApp(pools, slotOverride)),
+    });
+    assert.ok(draft);
+    return buildRunCreateParams(draft);
+  };
+  assert.equal(sent('macpro-audiolab-4').app, 'apps/sherpa-voice');
+  assert.equal(sent('macpro-audiolab-6').app, 'apps/playground');
+  assert.equal(sent('').app, undefined);
+  assert.equal(sent('macpro-audiolab-4', 'apps/playground').app, 'apps/playground');
 });

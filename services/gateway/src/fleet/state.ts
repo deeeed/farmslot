@@ -1000,6 +1000,7 @@ export async function loadPoolConfigs(directory = poolDir): Promise<PoolConfig[]
             project: s.project || raw.project,
             repo: s.repo,
             session: s.session,
+            ...(typeof s.app === 'string' && s.app ? { app: s.app } : {}),
             resources: s.resources,
           })),
         });
