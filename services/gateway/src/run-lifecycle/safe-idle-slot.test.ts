@@ -40,8 +40,17 @@ const slot: SlotStatus = {
 mock.module('../fleet/state.js', {
   namedExports: { ...fleet, loadFleetStatus: async () => ({ slots: [slot] }) },
 });
+let inspectGate: Promise<void> | undefined;
+const inspectOptions: unknown[] = [];
 mock.module('../methods/slot/workspace.js', {
-  namedExports: { ...work, inspectSlotWorkspace: async () => workspace },
+  namedExports: {
+    ...work,
+    inspectSlotWorkspace: async (_slotId: string, options?: unknown) => {
+      inspectOptions.push(options);
+      await inspectGate;
+      return workspace;
+    },
+  },
 });
 mock.module('../methods/slot/recover-workspace.js', {
   namedExports: {
@@ -80,7 +89,7 @@ mock.module('../runs/store.js', {
     },
   },
 });
-const { reuseSafeIdleSlot, checkoutBeforeIdleReturn, returnReleasedCheckoutToIdle } =
+const { cleanIdleSlot, reuseSafeIdleSlot, checkoutBeforeIdleReturn, returnReleasedCheckoutToIdle } =
   await import('./safe-idle-slot.js');
 beforeEach(() => {
   workspace = {
@@ -110,6 +119,35 @@ beforeEach(() => {
   failure = undefined;
   parkRunIds = [];
   slotRow = null;
+  inspectGate = undefined;
+  inspectOptions.length = 0;
+});
+
+test('only an unowned default checkout at the remote default reads as clean, without recovery', async () => {
+  Object.assign(workspace, { branch: 'main', headSha: 'c'.repeat(40), publication: 'baseline' });
+  assert.equal(await cleanIdleSlot('proof'), true);
+  assert.deepEqual(inspectOptions, [{ baselineOnly: true }], 'no fetch, no publication analysis');
+  for (const change of [
+    { dirtyCount: 1 },
+    { publication: 'unknown' as const },
+    { branch: 'fix/merged' },
+    { currentRunId: 'finished-run' },
+    { recoveryId: 'interrupted' },
+  ]) {
+    const clean = { ...workspace };
+    Object.assign(workspace, change);
+    assert.equal(await cleanIdleSlot('proof'), false, JSON.stringify(change));
+    workspace = clean;
+  }
+  assert.deepEqual(recovered, []);
+});
+
+test('a clean probe that outlives its budget reads as not clean', async () => {
+  Object.assign(workspace, { branch: 'main', headSha: 'c'.repeat(40), publication: 'baseline' });
+  inspectGate = new Promise(() => {});
+  const started = Date.now();
+  assert.equal(await cleanIdleSlot('proof', 50), false);
+  assert.ok(Date.now() - started < 5_000);
 });
 for (const publication of ['baseline', 'merged', 'pushed'] as const) {
   test(`clean ${publication} work uses fenced safe recovery`, async () => {

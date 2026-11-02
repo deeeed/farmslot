@@ -141,6 +141,62 @@ test(
   },
 );
 
+// F319: Command Center's template preview is a marked read, so the gateway runs the client
+// cache's selector check before the handler. A `<flow>/<name>` template id must get through.
+test(
+  'a marked template preview admits a <flow>/<name> id and still refuses a path',
+  { timeout: 4000 },
+  async () => {
+    const harness = await startServer();
+    const previousHome = process.env.FARMSLOT_HOME;
+    try {
+      process.env.FARMSLOT_HOME = harness.home;
+      const operator = harness.runtime.writer.createPrincipal(
+        { type: 'service', displayName: 'Template preview fixture' },
+        [{ role: 'admin', scope: { kind: 'global' } }],
+      );
+      const credential = harness.runtime.writer.issueCredential(operator.id, 'preview fixture');
+      const ui = await connect(harness.url);
+      const auth = await request(ui, Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        token: credential.secret,
+      });
+      assert.equal(auth.ok, true);
+      const preview = (executionTemplateId: string) =>
+        request(
+          ui,
+          Methods.CONFIG_TEMPLATE_PREVIEW,
+          {
+            project: 'f319-missing-project',
+            flowType: 'pr-complete',
+            executionTemplateId,
+            executionTemplateSourceId: 'project:f319-missing-project',
+            executionTemplateSha256: 'a'.repeat(64),
+          },
+          true,
+        );
+      // Admitted, the read reaches the handler, which fails on the fixture's missing project.
+      const admitted = await preview('pr-complete/default');
+      assert.equal(admitted.ok, false);
+      assert.match(admitted.error?.message ?? '', /Project config not found/);
+      const refused = await preview('pr-complete/../private');
+      assert.equal(refused.ok, false);
+      assert.match(
+        refused.error?.message ?? '',
+        /Invalid configuration selector: executionTemplateId/,
+      );
+      ui.close();
+    } finally {
+      try {
+        await harness.close();
+      } finally {
+        if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+        else process.env.FARMSLOT_HOME = previousHome;
+      }
+    }
+  },
+);
+
 test(
   'a node refusal keeps its error details on the way to the gateway',
   { timeout: 4000 },

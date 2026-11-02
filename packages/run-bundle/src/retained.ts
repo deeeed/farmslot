@@ -829,6 +829,14 @@ export async function runBundleAdmissionUsage(
   return { store: stored, reservations, acquisition, total: stored + reservations + acquisition };
 }
 
+/** Admission refused for capacity, which housekeeping may free; other refusals it cannot. */
+export class RunBundleCapacityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RunBundleCapacityError';
+  }
+}
+
 export async function reserveRunBundleMetadata(
   store: RunBundleStore,
   runId: string,
@@ -871,7 +879,7 @@ export async function reserveRunBundleMetadata(
       reserved + bytes > policy.metadataReserveBytes ||
       (await chargedStoreBytes(store)) + reserved + bytes + acquisitionSize > policy.maxStoreBytes
     )
-      throw new Error(
+      throw new RunBundleCapacityError(
         'Retained report metadata capacity is exhausted; free storage before starting work.',
       );
     await atomicJson(file, { runId, bytes, createdAt: new Date().toISOString() });

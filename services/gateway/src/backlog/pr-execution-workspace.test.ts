@@ -98,6 +98,14 @@ test('workspace admission requires machine opt-in and valid explicit runner/mode
       { code: 'REVIEW_WORKSPACE_UNSUPPORTED' },
     );
   }
+  // A Grok review checkout stays untrusted, so its terminal would stop at the folder-trust prompt.
+  await assert.rejects(
+    inspectReviewWorkspaceTarget(
+      { ...admissionInput, runner: 'grok', model: 'grok-build', transport: 'tmux' },
+      'review-owner',
+    ),
+    { code: 'REVIEW_WORKSPACE_UNSUPPORTED', message: /native Grok transport/ },
+  );
   const noCapacity = path.join(root, 'pool/no-capacity.json');
   writeFileSync(
     noCapacity,

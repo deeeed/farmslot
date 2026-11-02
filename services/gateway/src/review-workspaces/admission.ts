@@ -12,7 +12,10 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
 import { capturePressureAdmissionDecisionsLightweight } from '../methods/dispatch/pressure-admission.js';
 import { resolveNativeExecutionNode } from '../runners/native/node.js';
-import { runnerSupportsReadonlyReviewWorkspace } from '../runners/native/review-workspace.js';
+import {
+  runnerSupportsReadonlyReviewWorkspace,
+  runnerTerminalReviewRefusal,
+} from '../runners/native/review-workspace.js';
 import {
   isKnownRunner,
   runnerSupportsEffort,
@@ -113,6 +116,10 @@ export async function inspectReviewWorkspaceTarget(
       'Review machine is not configured for this project',
     );
   }
+  const terminalRefusal =
+    input.transport === 'tmux' ? runnerTerminalReviewRefusal(input.runner) : undefined;
+  if (terminalRefusal)
+    throw new GatewayMethodError('REVIEW_WORKSPACE_UNSUPPORTED', terminalRefusal);
   if (
     !['native', 'tmux'].includes(input.transport ?? '') ||
     (input.transport === 'native' && !runnerSupportsNativeTaskReuse(input.runner)) ||

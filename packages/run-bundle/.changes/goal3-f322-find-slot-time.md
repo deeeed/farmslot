@@ -1,0 +1,1 @@
+- `reserveRunBundleMetadata` throws `RunBundleCapacityError` when retained-report capacity refuses a reservation, so callers can tell a refusal that housekeeping may free from other failures.
