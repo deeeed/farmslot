@@ -3,7 +3,14 @@ import { randomUUID } from 'node:crypto';
 import type { NativeSessionTool, NativeToolKind } from '@farmslot/protocol';
 
 import { type AcpPendingRequest, acpPermission } from './acp-requests.js';
-import { type AcpObject, acpObject, AcpRpc, acpString } from './acp-rpc.js';
+import {
+  type AcpAuthMethod,
+  type AcpObject,
+  acpObject,
+  AcpRpc,
+  acpString,
+  selectAcpAuthMethod,
+} from './acp-rpc.js';
 import { nativeChecklist } from './plan.js';
 import type { NativeAdapter, NativeAdapterOptions, NativeEventInput } from './types.js';
 
@@ -55,7 +62,7 @@ function acpToolKind(
 
 export interface AcpAdapterConfig {
   args(options: NativeAdapterOptions): string[];
-  authMethod: string;
+  authMethod: AcpAuthMethod;
   clientCapabilities?: AcpObject;
   configureModel?: (
     sessionId: string,
@@ -226,15 +233,10 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
         );
         if (result.protocolVersion !== 1) throw new Error('Unsupported ACP protocol version');
         const supported = acpObject(result.agentCapabilities);
-        if (
-          !Array.isArray(result.authMethods) ||
-          !result.authMethods.map(acpObject).some((method) => method.id === config.authMethod)
-        )
+        const authMethod = selectAcpAuthMethod(result.authMethods, config.authMethod);
+        if (!authMethod)
           throw new Error('Runner did not advertise the required native login method');
-        await rpc.request('authenticate', {
-          methodId: config.authMethod,
-          _meta: { headless: true },
-        });
+        await rpc.request('authenticate', { methodId: authMethod, _meta: { headless: true } });
         sessionCapabilities = { ...capabilities, resume: supported.loadSession === true };
         if (options.resumeSessionId && !sessionCapabilities.resume)
           throw new Error('Runner does not support saved-session loading');

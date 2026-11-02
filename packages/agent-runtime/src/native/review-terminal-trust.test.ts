@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const scripts = fileURLToPath(new URL('../../scripts/', import.meta.url));
 
-test('a scripts-only frozen terminal bundle refuses unsafe account hooks before trust and launch', async (t) => {
+test('a scripts-only frozen terminal bundle refuses unsafe account hooks before launch and trusts nothing', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'frozen-terminal-trust-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const staged = path.join(root, 'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts');
@@ -45,7 +45,7 @@ test('a scripts-only frozen terminal bundle refuses unsafe account hooks before 
   const tmux = path.join(bin, 'tmux');
   await writeFile(
     tmux,
-    `#!${process.execPath}\nconst fs=require('node:fs'),path=require('node:path');const action=process.argv[2];if(action==='has-session')process.exit(1);if(action!=='new-session')throw Error('Unexpected terminal operation');const text=fs.readFileSync(path.join(process.env.GROK_HOME,'trusted_folders.toml'),'utf8');if(!text.includes('trusted = true'))throw Error('Trust must precede launch');fs.writeFileSync(process.env.FIXTURE_LAUNCH,'verified');\n`,
+    `#!${process.execPath}\nconst fs=require('node:fs'),path=require('node:path');const action=process.argv[2];if(action==='has-session')process.exit(1);if(action!=='new-session')throw Error('Unexpected terminal operation');if(fs.existsSync(path.join(process.env.GROK_HOME,'trusted_folders.toml')))throw Error('A review checkout stays untrusted');fs.writeFileSync(process.env.FIXTURE_LAUNCH,'verified');\n`,
   );
   await chmod(tmux, 0o700);
   const executable = path.join(root, 'configured-grok');

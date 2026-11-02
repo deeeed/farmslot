@@ -1,5 +1,6 @@
 import { accountObject, accountString, observeAcpAccount } from './account-common.js';
 import type { NativeAccountProbeOptions, NativeAccountState } from './account-types.js';
+import { grokAuthMethod } from './grok.js';
 
 export function grokAccountState(value: unknown): NativeAccountState {
   const result = accountObject(value);
@@ -19,10 +20,9 @@ export function grokAccountState(value: unknown): NativeAccountState {
   };
 }
 export function observeGrokAccount(options: NativeAccountProbeOptions) {
-  // `cached_token` never selects grok.com's interactive login or an API-key fallback.
   return observeAcpAccount('grok', 'grok', options, {
     args: ['--no-auto-update', 'agent', '--no-leader', 'stdio'],
-    authMethod: 'cached_token',
+    authMethod: grokAuthMethod,
     state: grokAccountState,
   });
 }

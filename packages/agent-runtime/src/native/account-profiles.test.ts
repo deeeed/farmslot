@@ -312,8 +312,8 @@ test('review preflight uses the configured executable outside PATH', () => {
     );
     const preflight = nativeRunnerDefinitions.grok.reviewAccountPreflight!;
     execFileSync(process.execPath, ['-e', preflight.script, root, '', executable], {
-      env: { ...process.env, PATH: '' },
-      timeout: 1500,
+      env: { ...process.env, PATH: '', GROK_HOME: root },
+      timeout: 10_000,
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
