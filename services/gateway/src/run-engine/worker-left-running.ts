@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { Run, RunDecision } from '@farmslot/protocol';
+import { PipelineSteps, type Run, type RunDecision } from '@farmslot/protocol';
 
 /** The card a failing run waits on while its agents may still be running (F328). */
 export const WORKER_LEFT_RUNNING_DECISION = 'engine_worker_left_running';
@@ -23,7 +23,11 @@ export function workerLeftRunningDecision(
         id: REPLAY_STEP_ACTION,
         label: 'Replay step',
         style: 'primary',
-        description: `Run ${stepName} again. The running agents are kept.`,
+        // Only the monitor just observes; any other step may restart what it launched.
+        description:
+          stepName === PipelineSteps.MONITOR
+            ? 'Watch the running agents again. They are kept.'
+            : `Run ${stepName} again. It may restart the running agents.`,
       },
       {
         id: CANCEL_RUN_ACTION,
