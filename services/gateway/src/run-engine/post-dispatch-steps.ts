@@ -542,10 +542,13 @@ function evidenceRefsMatchAllowingAddedDigests(
 export function baseReviewPolicy(run: Run): ReviewValidationDepth {
   const recorded = run.steps.find((step) => step.name === S.REVIEW)?.inputs?.validationDepth;
   if (isReviewValidationDepth(recorded)) return recorded;
-  const launchedBeforeRecording = run.agentContexts?.some(
-    (context) => context.role === 'review' && !context.artifactScope,
-  );
-  return launchedBeforeRecording ? 'full-live' : 'static-code';
+  const launched =
+    run.agentContexts?.filter((context) => context.role === 'review' && !context.artifactScope) ??
+    [];
+  // A replay clears the step's record; the reviewer it launched still has the depth.
+  const reviewedAt = launched.at(-1)?.reviewValidationDepth;
+  if (isReviewValidationDepth(reviewedAt)) return reviewedAt;
+  return launched.length ? 'full-live' : 'static-code';
 }
 
 const MONITOR_TRANSPORT_RETRY_DELAYS_MS = [5_000, 15_000, 45_000];

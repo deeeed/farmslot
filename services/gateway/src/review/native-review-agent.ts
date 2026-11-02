@@ -712,10 +712,11 @@ async function runNativeReviewAttempt(
           (error instanceof NativeWorkerOperationUncertainError && error.operation === 'delivery')
         )
           throw error;
+        const { message, cause } = error as Error;
         throw new NativeReviewResumeFailure(
           new WarmReviewRefusal(
             'session-unavailable',
-            `the retained reviewer could not resume: ${(error as Error).message}`,
+            `the retained reviewer could not resume: ${message}${cause instanceof Error ? ` (${cause.message})` : ''}`,
           ),
           roundId,
           contextId,

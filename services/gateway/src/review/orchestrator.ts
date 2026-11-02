@@ -1302,13 +1302,8 @@ export async function runReviewRetryLoop({
             ?.agentContexts?.find((context) => context.role === 'review-fix' && context.taskFile) ??
           fixContext;
         if (relaunchedFixContext) {
-          const delivery = await deps.resumeFixPromptDelivery(
-            vars,
-            runId,
-            relaunchedFixContext,
-            undefined,
-            { priorPromptSendAttempted: false },
-          );
+          // The relaunch recorded what it handed over: its marker says whether a send remains.
+          const delivery = await deps.resumeFixPromptDelivery(vars, runId, relaunchedFixContext);
           if (delivery.status === 'delivered' || delivery.status === 'deferred') {
             // Deferred acknowledgement is uncertain: the fresh worker may already
             // be fixing. Keep observing its signal instead of failing the run.
@@ -2086,6 +2081,23 @@ export function blockedFixPassReopened(
   return Boolean(fixSignal?.attemptId && fixSignal.attemptId !== fixContext.signalAttemptId);
 }
 
+/** The operator replayed REVIEW since this send was recorded. */
+function operatorReplayedSinceSend(runId: string, contextId: string): boolean {
+  const run = getRun(runId);
+  const sentAt = run?.agentContexts?.find(
+    (context) => context.id === contextId,
+  )?.promptDeliveryStartedAt;
+  return Boolean(
+    sentAt &&
+    run?.recoveryAttempts?.some(
+      (attempt) =>
+        attempt.stepName === PipelineSteps.REVIEW &&
+        attempt.triggeredBy === 'operator' &&
+        attempt.startedAt >= sentAt,
+    ),
+  );
+}
+
 export function canSettleRecoveredFixContext(
   current: AgentContext | undefined,
   snapshot: AgentContext,
@@ -2287,6 +2299,11 @@ async function recoverReviewFixPass({
       ownerReview?.attempts?.at(-1)?.loopNumber ??
       1;
     const recheckLoop = reviewedLoop + 1;
+    // A pipeline review has no gate row: what it reviewed is in the snapshot it persisted.
+    const reviewSnapshot =
+      ownerReview?.reviewSnapshot ??
+      (await readPersistedReviewSnapshot(vars, taskDir, reviewedLoop, findingsArtifactScope))
+        ?.snapshot;
     const priorResult: ReviewAgentResult = {
       reviewId: lineage,
       mode: ownerReview?.mode ?? mode,
@@ -2296,7 +2313,7 @@ async function recoverReviewFixPass({
       issues,
       validationDepth,
       usage: ownerReview?.usage,
-      reviewSnapshot: ownerReview?.reviewSnapshot,
+      reviewSnapshot,
     };
     debugReviewLog(
       `[review] run ${runId.slice(0, 8)} — recovering review fix pass (${fixSignal ? 'signal-present' : 'waiting'})`,
@@ -2360,6 +2377,12 @@ async function recoverReviewFixPass({
           );
           if (reconciled.status === 'signal-present') break;
           delivery = reconciled;
+          // The operator's Replay found no proof again: only a new send can move this round.
+          if (
+            delivery.reason === REVIEW_FIX_DELIVERY_UNCONFIRMED &&
+            operatorReplayedSinceSend(runId, fixContext.id)
+          )
+            delivery = { status: 'relaunch-required' };
         }
         if (delivery.status !== 'relaunch-required' || replacement > 0) break;
         if (!(await relaunchWorkerForFix(vars, workerRunner, model, runId))) {
@@ -2370,13 +2393,8 @@ async function recoverReviewFixPass({
           getRun(runId)?.agentContexts?.find(
             (candidate) => candidate.role === 'review-fix' && candidate.taskFile,
           ) ?? fixContext;
-        delivery = await resumeReviewFixPromptDelivery(
-          vars,
-          runId,
-          deliveryContext,
-          FIX_PROMPT_RECOVERY_DEPS,
-          { priorPromptSendAttempted: false },
-        );
+        // The relaunch recorded what it handed over: its marker says whether a send remains.
+        delivery = await resumeReviewFixPromptDelivery(vars, runId, deliveryContext);
       }
       if (delivery.status !== 'delivered' && delivery.status !== 'deferred') {
         fixSignal = matchingFixSignal(await readOptionalReviewFixSignal(vars, fixSignalPath));
@@ -2538,7 +2556,7 @@ async function recoverReviewFixPass({
       unresolvedCount: issues.length,
       issues,
       validationDepth,
-      ...(ownerReview?.reviewSnapshot ? { reviewSnapshot: ownerReview.reviewSnapshot } : {}),
+      ...(reviewSnapshot ? { reviewSnapshot } : {}),
     };
     if (workerBlockReason && fixDeltaIsKnownEmpty(fixDelta.snapshot)) {
       return {
@@ -3343,11 +3361,12 @@ export async function relaunchWorkerForFix(
   const fixContext = parentRun?.agentContexts?.find(
     (context) => context.role === 'review-fix' && context.taskFile,
   );
-  // A launch carrying the prompt hands it over as a new send, so an earlier worker's signal cannot
-  // confirm it. Any other launch holds none, whatever its predecessor had.
-  const launchDeliveryStartedAt = runnerNeedsPostLaunchPrompt(runner)
-    ? undefined
-    : new Date().toISOString();
+  // A finished round has no attempt to replace: the next send starts its own, and reads its signal.
+  const replacesAttempt = Boolean(fixContext?.attemptStartedAt && fixContext.status !== 'complete');
+  // A launch carrying the prompt hands it over as a new send. Any other holds none, whatever its
+  // predecessor had.
+  const launchDeliveryStartedAt =
+    replacesAttempt && !runnerNeedsPostLaunchPrompt(runner) ? new Date().toISOString() : undefined;
   const prompt =
     parentRun?.project && fixContext?.taskFile && fixContext.attemptStartedAt
       ? reviewFixPrompt(
@@ -3380,16 +3399,21 @@ export async function relaunchWorkerForFix(
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
   await assertPreflightCurrent();
   // Restart recovery reads this to tell what the worker holds: a send reaches disk before the
-  // respawn, and the old worker's stays until the respawn has replaced it.
+  // respawn, and the old worker's stays until the respawn has replaced it. The old worker's mark
+  // start can have moved the attempt since the snapshot above.
   const recordLaunchBoundary = async () => {
-    if (parentRun && fixContext?.attemptStartedAt)
+    const current = getRun(runId)?.agentContexts?.find((context) => context.id === fixContext?.id);
+    if (replacesAttempt && current)
       await recordReviewFixDeliveryBoundary(
         runId,
-        fixContext,
+        current,
         launchDeliveryStartedAt,
-        parentRun.engineState?.generation ?? 0,
+        parentRun?.engineState?.generation ?? 0,
       );
   };
+  // Its signal cannot confirm this worker, whatever the worker's clock says.
+  if (replacesAttempt && fixContext?.signalFile)
+    await removeSlotFiles(vars, [fixContext.signalFile]);
   if (launchDeliveryStartedAt) await recordLaunchBoundary();
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,

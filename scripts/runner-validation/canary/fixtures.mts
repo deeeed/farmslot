@@ -300,6 +300,8 @@ function reviewWorker(holds: string): string {
     'mkdir -p src',
     `cat > src/format-name.ts <<'EOF'\n${FORMAT_NAME}\nEOF`,
     `cat > src/debug-trace.ts <<'EOF'\n${LEFTOVER}\nEOF`,
+    // A fix past the gateway's 50-line limit, which only a reviewer can accept.
+    `[ ! -e '${holds}/large-leftover' ] || seq 1 60 | sed 's|^|// padding |' >> src/debug-trace.ts`,
     'git add src',
     'git commit -qm "feat: add formatName"',
     reports('Adds formatName in src/format-name.ts.'),
@@ -514,8 +516,10 @@ ${FAKE_WORKER_FINISH}
  * from its hooks, so nothing proves delivery; holds/claude-no-finish makes that attempt stay
  * mid-turn until /exit; holds/worker keeps it mid-turn. Then it finishes its task and waits at its
  * prompt until /exit. The two prompt holds are read when the prompt arrives, so lifting them only
- * affects the next launch. On a reviewed project it commits the work its reviewer flags, and a
- * fix round reaches it as Claude's does: a resumed session with the prompt on argv.
+ * affects the next launch. holds/claude-no-session keeps it from reporting a session, so a fix
+ * round reaches it typed at its prompt. On a reviewed project it commits the work its reviewer
+ * flags, and otherwise a fix round reaches it as Claude's does: a resumed session with the prompt
+ * on argv. holds/fix keeps its fix mid-round. Whatever is typed mid-turn goes to claude-input.log.
  */
 export const fakeClaude = (holds: string): string => `#!/usr/bin/env node
 'use strict';
@@ -546,6 +550,7 @@ const hook = (event, extra) => {
       spawnSync('sh', ['-c', handler.command], { input: JSON.stringify({ hook_event_name: event, cwd, ...extra }) });
 };
 let typed = '';
+let settling;
 let onPrompt = () => {};
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.on('data', (chunk) => {
@@ -553,12 +558,15 @@ process.stdin.on('data', (chunk) => {
   if (text.includes('\\u0003')) process.exit(130);
   process.stdout.write(text);
   typed += text;
-  const end = typed.search(/[\\r\\n]/);
-  if (end < 0) return;
-  const line = typed.slice(0, end).trim();
-  typed = typed.slice(end + 1);
-  if (line === '/exit') process.exit(0);
-  if (line) onPrompt(line);
+  clearTimeout(settling);
+  // A pasted prompt's lines arrive as returns: it is whole once a return ends a quiet input.
+  if (!/[\\r\\n]\\s*$/.test(typed)) return;
+  settling = setTimeout(() => {
+    const line = typed.replace(/\\r/g, '\\n').trim();
+    typed = '';
+    if (line === '/exit') process.exit(0);
+    if (line) onPrompt(line);
+  }, 150);
 });
 setTimeout(() => process.exit(0), 15 * 60_000);
 (async () => {
@@ -567,17 +575,18 @@ setTimeout(() => process.exit(0), 15 * 60_000);
   process.stdout.write('starting\\n');
   await whileHeld('claude-startup');
   const lateSession = held('claude-late-session');
-  if (!lateSession) hook('SessionStart', session);
+  const noSession = held('claude-no-session');
+  if (!lateSession && !noSession) hook('SessionStart', session);
   process.stdout.write('\\u276f\\n');
-  const prompt =
-    resumeAt < 0
-      ? await new Promise((resolve) => {
-          onPrompt = resolve;
-        })
-      : args.at(-1);
-  onPrompt = () => {};
+  const nextPrompt = () =>
+    new Promise((resolve) => {
+      onPrompt = resolve;
+    });
+  let prompt = resumeAt < 0 ? await nextPrompt() : args.at(-1);
+  for (;;) {
+  onPrompt = (line) => fs.appendFileSync(path.join(holds, 'claude-input.log'), line + '\\n');
   const noFinish = held('claude-no-finish');
-  if (!held('claude-no-hook')) hook('UserPromptSubmit', { prompt, ...(lateSession ? {} : session) });
+  if (!held('claude-no-hook')) hook('UserPromptSubmit', { prompt, ...(lateSession || noSession ? {} : session) });
   process.stdout.write('working\\n');
   try {
     fs.renameSync(path.join(holds, 'tmux.arm'), path.join(holds, 'tmux'));
@@ -599,6 +608,7 @@ setTimeout(() => process.exit(0), 15 * 60_000);
     git('rm', '-q', 'src/debug-trace.ts');
     git('commit', '-qm', 'fix: remove the leftover debug helper');
     for (let step = 1; step < steps; step++) mark(String(step));
+    await whileHeld('fix');
     mark('complete', '--mark-last');
   } else {
     const taskFile = path.resolve(cwd, prompt.match(/\\S*TASK\\.md/)[0]);
@@ -612,8 +622,10 @@ setTimeout(() => process.exit(0), 15 * 60_000);
     }
 ${FAKE_WORKER_FINISH}
   }
-  hook('Stop', session);
+  hook('Stop', noSession ? {} : session);
   process.stdout.write('\\u276f\\n');
+  prompt = await nextPrompt();
+  }
 })().catch((error) => {
   console.error(error);
   // A crashed fixture reads as a worker gone: say why, or recovery looks at fault.

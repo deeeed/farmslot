@@ -39,6 +39,11 @@ let enteredWait = () => {};
 const reReviewLoops: number[] = [];
 let paneCommand = 'scripted-runner';
 let tmuxTimeouts: RegExp | undefined;
+let reviewDiffStat: string | undefined;
+let fixDelta:
+  | Awaited<ReturnType<typeof import('./snapshots.js').captureFixDeltaSnapshot>>
+  | undefined;
+let signalRemovals = 0;
 const tmuxInput: string[] = [];
 let onRespawn = (_command: string) => {};
 let checklistRestores = 0;
@@ -58,6 +63,13 @@ mock.module('../core/exec.js', {
     execOnSlot: async (_vars: unknown, command: string) => {
       if (/send-keys|paste-buffer|respawn-window/u.test(command)) tmuxInput.push(command);
       if (command.includes('respawn-window')) onRespawn(command);
+      if (/^rm -f .*REVIEW-FIX-SIGNAL/u.test(command)) {
+        signalRemovals += 1;
+        fixSignal = {};
+        return { exitCode: 0, stderr: '', stdout: '' };
+      }
+      if (command.includes('review-diff-stat.json'))
+        return { exitCode: reviewDiffStat ? 0 : 1, stderr: '', stdout: reviewDiffStat ?? '' };
       // The launch acknowledgement's read leads with the file's mtime.
       if (command.includes('REVIEW-FIX-SIGNAL.json'))
         return {
@@ -118,13 +130,30 @@ mock.module('./progress.js', {
     },
   },
 });
+const REVIEWED_SNAPSHOT = {
+  source: 'local-git',
+  baseRef: 'main',
+  baseSha: 'b'.repeat(40),
+  headRef: 'feat/x',
+  headSha: 'c'.repeat(40),
+  diffHash: 'd'.repeat(64),
+  diffStat: { files: 2, additions: 12, deletions: 0 },
+  capturedAt: '2026-11-01T16:58:00.000Z',
+  diffPath: 'artifacts/pipeline-review-loop-1/review.diff',
+} as const;
+const REVIEWED_SNAPSHOT_AFTER_FIX = { ...REVIEWED_SNAPSHOT, headSha: 'e'.repeat(40) };
 const snapshots = await import('./snapshots.js');
 mock.module('./snapshots.js', {
   namedExports: {
     ...snapshots,
     // No local-git delta: the gateway cannot accept the fix itself, so it must re-review.
-    captureFixDeltaSnapshot: async () => ({
-      snapshot: snapshots.unavailableReviewSnapshot('fixture has no checkout'),
+    captureFixDeltaSnapshot: async () =>
+      fixDelta ?? {
+        snapshot: snapshots.unavailableReviewSnapshot('fixture has no checkout'),
+        artifactPaths: [],
+      },
+    captureCurrentReviewSnapshot: async () => ({
+      snapshot: REVIEWED_SNAPSHOT_AFTER_FIX,
       artifactPaths: [],
     }),
   },
@@ -160,6 +189,7 @@ const recoveryModule = './orchestrator.js?restart-fix-signal';
 const {
   executeReview,
   relaunchWorkerForFix,
+  resumeReviewFixPromptDelivery,
   ReviewFixDeliveryError,
 }: typeof import('./orchestrator.js') = await import(recoveryModule);
 
@@ -177,6 +207,9 @@ async function reviewFixRunAtReload(
   reReviewLoops.length = 0;
   tmuxInput.length = 0;
   tmuxTimeouts = undefined;
+  reviewDiffStat = undefined;
+  fixDelta = undefined;
+  signalRemovals = 0;
   checklistRestores = 0;
   const priorOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'restart-fixture-owner';
@@ -518,6 +551,106 @@ function withPrimaryWorker(runId: string, fix: Partial<AgentContext> = {}) {
     ],
   });
 }
+
+test('a small fix recovered after a restart is accepted from the persisted snapshot, with no new reviewer', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
+  reviewDiffStat = JSON.stringify(REVIEWED_SNAPSHOT);
+  fixDelta = {
+    snapshot: {
+      source: 'local-git',
+      baseSha: REVIEWED_SNAPSHOT.baseSha,
+      headSha: REVIEWED_SNAPSHOT_AFTER_FIX.headSha,
+      fixBaseSha: REVIEWED_SNAPSHOT.headSha,
+      fixHeadSha: REVIEWED_SNAPSHOT_AFTER_FIX.headSha,
+      diffPath: 'artifacts/pipeline-review-loop-2/fix-delta.diff',
+      diffHash: 'f'.repeat(64),
+      diffStat: { files: 1, additions: 0, deletions: 6 },
+      capturedAt: '2026-11-01T17:31:27.000Z',
+    },
+    artifactPaths: [],
+    sourceLinesChanged: 6,
+  };
+  let reviewing: ReturnType<typeof executeReview> | undefined;
+
+  await restartRecovery(run, (runId) => {
+    reviewing = executeReview(runId, vars.slotId, { validationDepth: 'static-code' });
+  });
+  assert.ok(reviewing, 'recovery re-entered the review step');
+  const result = await reviewing;
+  assert.deepEqual(reReviewLoops, [], 'the gateway accepts a small fix without another reviewer');
+  assert.equal(result.verdict, 'pass');
+});
+
+for (const runner of ['scripted', 'pi'] as const)
+  test(`the operator's Replay that again finds no proof relaunches a ${runner} worker once`, async (t) => {
+    const run = await reviewFixRunAtReload(t, 'tmux', runner);
+    withPrimaryWorker(run.id);
+    fixSignal = { status: 'running', attemptId: 'earlier', timestamp: '2026-11-01T17:01:00.000Z' };
+    paneCommand = runner === 'pi' ? 'pi-coding-agent' : 'scripted-runner';
+    const sentAt = fixContext(run.id)?.promptDeliveryStartedAt;
+    updateRun(run.id, {
+      recoveryAttempts: [
+        {
+          id: 'card-replay',
+          attempt: 1,
+          stepName: 'review',
+          startedAt: '2026-11-01T17:26:00.000Z',
+          status: 'started',
+          triggeredBy: 'operator',
+        },
+      ],
+    });
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-01T17:26:42Z') });
+
+    const failure = await settled(
+      t,
+      executeReview(run.id, vars.slotId, { validationDepth: 'static-code' }),
+    );
+    assert.equal(
+      tmuxInput.filter((command) => command.includes('respawn-window')).length,
+      1,
+      'one relaunch: it hands over the prompt, so nothing replaces it again',
+    );
+    assert.notEqual(fixContext(run.id)?.promptDeliveryStartedAt, sentAt, 'a new send is recorded');
+    assert.ok(
+      failure instanceof ReviewFixDeliveryError,
+      `the new send has no proof yet, and no Replay answered it: ${JSON.stringify(failure)}`,
+    );
+  });
+
+test('a relaunch clears the earlier worker signal, so a leading worker clock cannot confirm its send', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
+  paneCommand = 'pi-coding-agent';
+  withPrimaryWorker(run.id);
+  // Written before this relaunch, on a clock far ahead of the gateway's.
+  fixSignal = { status: 'running', attemptId: 'earlier', timestamp: '2099-01-01T00:00:00.000Z' };
+  let removalsAtRespawn = 0;
+  onRespawn = () => {
+    removalsAtRespawn = signalRemovals;
+  };
+  t.after(() => {
+    onRespawn = () => {};
+  });
+
+  assert.equal(await relaunchWorkerForFix(vars, 'pi', 'local/model', run.id), true);
+  assert.equal(removalsAtRespawn, 1, 'gone before the new worker can write its own');
+  const delivery = await resumeReviewFixPromptDelivery(vars, run.id, fixContext(run.id)!);
+  assert.equal(delivery.status, 'deferred', 'nothing shows this worker holds its prompt');
+});
+
+test('a relaunch before a new round keeps the finished round signal the next send reads', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
+  paneCommand = 'pi-coding-agent';
+  withPrimaryWorker(run.id, { status: 'complete', promptDeliveryStartedAt: undefined });
+
+  assert.equal(await relaunchWorkerForFix(vars, 'pi', 'local/model', run.id), true);
+  assert.equal(signalRemovals, 0);
+  assert.equal(
+    fixContext(run.id)?.promptDeliveryStartedAt,
+    undefined,
+    'it sends this round nothing',
+  );
+});
 
 test('a launch that carries the prompt records its delivery before the respawn', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
