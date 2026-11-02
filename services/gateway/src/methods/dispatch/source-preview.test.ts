@@ -5,7 +5,11 @@ import type { SlotStatus } from '@farmslot/protocol';
 import { currentProjectSources } from '@farmslot/slot-config';
 
 import { makeRun } from '../../run-engine/test-fixtures.js';
-import type { RunSlotSourcePlans, SourceSlotPlans } from '../../sources/slot-planning.js';
+import type {
+  ProspectiveSlotSourcePlans,
+  RunSlotSourcePlans,
+  SourceSlotPlans,
+} from '../../sources/slot-planning.js';
 import {
   sourceTestLock,
   sourceTestMaterialization,
@@ -109,22 +113,11 @@ mock.module('./target-branch.js', {
 });
 const { dispatchPreview } = await import('./preview.js');
 
-function readyPlans(
-  planned: { flowType: 'dev' | 'pr-complete'; ticketOrPr: string; parentRunId?: string } = {
-    flowType: 'dev',
-    ticketOrPr: 'TAT-1',
-  },
-): RunSlotSourcePlans {
+function readyPlans(): RunSlotSourcePlans {
   const plans: RunSlotSourcePlans = new Map();
   for (const slot of slots) {
     const lock = sourceTestLock(slot.machine);
-    const run = makeRun({
-      id: 'run-1',
-      project: 'demo',
-      flowType: planned.flowType,
-      slotId: null,
-      parentRunId: planned.parentRunId ?? null,
-    });
+    const run = makeRun({ id: 'run-1', project: 'demo', flowType: 'dev', slotId: null });
     run.sourcePlan = sourceTestPlan(lock);
     plans.set(slot.slot, {
       run,
@@ -136,8 +129,8 @@ function readyPlans(
       },
       params: {
         project: 'demo',
-        flowType: planned.flowType,
-        ticketOrPr: planned.ticketOrPr,
+        flowType: 'dev',
+        ticketOrPr: 'TAT-1',
         mode: 'autonomous',
         prepareProfile: slot.slot === 'a' ? 'sandbox-companion' : 'plain',
         runner: 'codex',
@@ -171,19 +164,59 @@ test('public preview bootstraps prospective plans without a caller-supplied inte
   assert.equal(result.preview.model, 'selected-model');
 });
 
-test("a pr-complete preview takes the selected plan's resolved ref and linked parent (F286)", async () => {
-  // run.create's own planning resolved the bare "42" in the selected context (acme/new#42) and
-  // linked its parent; the preview must not resolve it again through any other pack's ci.repo.
-  const result = await dispatchPreview(
-    { project: 'demo', flowType: 'pr-complete', ticketOrPr: '42' },
-    {
-      sourcePlans: readyPlans({
-        flowType: 'pr-complete',
-        ticketOrPr: 'acme/new#42',
-        parentRunId: 'parent-1',
-      }),
-    },
-  );
+/** What a public pr-complete preview plans: run.create's own planning, with the parent it linked. */
+function prospectivePlans(parentRunId: string): ProspectiveSlotSourcePlans {
+  const plans: ProspectiveSlotSourcePlans = new Map();
+  for (const slot of slots) {
+    const lock = sourceTestLock(slot.machine);
+    const params = {
+      project: 'demo',
+      flowType: 'pr-complete' as const,
+      // run.create resolved the bare "42" in this context, and the branch matched the parent.
+      ticketOrPr: 'acme/new#42',
+      branch: 'feat/tat-9009',
+      parentRunId,
+      slotId: slot.slot,
+      mode: 'autonomous' as const,
+      prepareProfile: slot.slot === 'a' ? 'sandbox-companion' : 'plain',
+      runner: 'codex',
+      model: 'selected-model',
+    };
+    plans.set(slot.slot, {
+      creationPlan: {
+        params,
+        workflowExecution: undefined,
+        reviewQa: undefined,
+        qaAfterReview: undefined,
+        directReviewPublication: undefined,
+        executionTemplateSnapshot: undefined,
+        workspaceAdmission: undefined,
+        staticReviewOwner: undefined,
+      },
+      sources: {
+        project: 'demo',
+        pack: lock.packBindings.demo,
+        materialization: sourceTestMaterialization(lock, 'gateway'),
+        packs: lock.packBindings,
+      },
+      params: { ...params, targetBranch: params.branch },
+    });
+  }
+  return plans;
+}
+
+test("a public pr-complete preview names the parent run.create's planning linked (F286)", async (t) => {
+  // The parent matched by branch alone, which only the selected context resolved: the preview
+  // must take the parent the plan recorded, not look again from its own unresolved inputs.
+  prospective = prospectivePlans('parent-1');
+  t.after(() => {
+    prospective = undefined;
+  });
+  const result = await dispatchPreview({
+    project: 'demo',
+    flowType: 'pr-complete',
+    ticketOrPr: '42',
+  });
   assert.deepEqual(inheritedFor, ['parent-1']);
   assert.equal(result.preview.inheritedAcceptance?.fromRunId, 'parent-1');
   assert(observed.every((entry) => entry.nodeId === 'node-b'));

@@ -35,6 +35,13 @@ export interface ProspectiveSlotSourcePlan extends SourceSlotPlan {
 
 export type RunSlotSourcePlans = Map<string, RunSlotSourcePlan | SourceSlotRefusal>;
 
+/** A public preview's plan: run.create's own planning in the selected context, before any run. */
+export function isProspectiveSlotSourcePlan(
+  plan: SourceSlotPlan,
+): plan is ProspectiveSlotSourcePlan {
+  return 'creationPlan' in plan;
+}
+
 export type ProspectiveSlotSourcePlans = Map<string, ProspectiveSlotSourcePlan | SourceSlotRefusal>;
 
 interface SourceContextPlanningDependencies {

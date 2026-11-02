@@ -56,7 +56,7 @@ import {
   withSourcePlanning,
   withSourceRequestPlanning,
 } from '../../sources/runtime.js';
-import type { SourceSlotPlans } from '../../sources/slot-planning.js';
+import { isProspectiveSlotSourcePlan, type SourceSlotPlans } from '../../sources/slot-planning.js';
 import { inheritedPRCompletionAcceptance } from '../../tasks/completion-intake.js';
 import {
   projectUsesExecutionTemplateCatalog,
@@ -1240,13 +1240,18 @@ export async function dispatchPreview(
     if (scopedPlan && 'params' in scopedPlan) params = scopedPlan.params;
     // The task writer holds a pr-complete run to its parent's original criteria, not those given
     // with it: name them before launch (F286, 9f0b6812 inherited family 8a768552's AC1-AC4). The
-    // parent is the one run.create links: a source plan's planned run carries it; otherwise it is
-    // inferred as run.create infers it, even beside a family id (without one, `family` has it).
+    // parent is the one run.create links. A source plan is run.create's own planning in its
+    // selected context and records it; otherwise infer it as run.create does, even beside a family
+    // id (without one, `family` already holds that lookup).
     if (params.flowType === 'pr-complete' && internalOptions.includeProfileFit !== false) {
-      const plannedRun = scopedPlan && 'params' in scopedPlan ? scopedPlan.run : undefined;
+      const planned = scopedPlan && 'params' in scopedPlan ? scopedPlan : undefined;
       let parentRunId: string | undefined;
-      if (plannedRun) parentRunId = plannedRun.parentRunId ?? undefined;
-      else if (params.familyId || sourcePlans)
+      if (planned)
+        parentRunId =
+          (isProspectiveSlotSourcePlan(planned)
+            ? planned.creationPlan.params.parentRunId
+            : planned.run?.parentRunId) ?? undefined;
+      else if (params.familyId)
         parentRunId = resolveDispatchFamilyContext({
           ...params,
           targetBranch: enriched.targetBranch,
