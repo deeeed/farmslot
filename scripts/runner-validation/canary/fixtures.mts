@@ -307,12 +307,22 @@ function pack(name: string, holds: string, review: boolean): ProjectPack {
  * checkout; this one runs the checkout-under-test's scripted runner in command mode instead, so
  * the worker is its project's `work` command. (Command mode itself cannot start on a remote
  * node: it runs with FARMSLOT_ROOT at the node support bundle, which is not a Farmslot root.)
+ * It is the process the engine sees as the scripted runner, so it also arms a dispatch hold once
+ * the worker runs (holds/tmux.arm becomes holds/tmux), and while holds/idle exists it stays alive
+ * after its work is done, as an interactive runner waits at its prompt (15 min ceiling).
  */
 export function slotCli(root: string) {
   return (slotId: string, fixture: string): Record<string, string> => ({
     'packages/cli/bin/farmslot.mjs': [
       '#!/usr/bin/env node',
       "import { spawnSync } from 'node:child_process';",
+      "import { existsSync, renameSync } from 'node:fs';",
+      `const holds = ${JSON.stringify(`${fixture}/holds`)};`,
+      'try {',
+      '  renameSync(`${holds}/tmux.arm`, `${holds}/tmux`);',
+      '} catch {',
+      '  // No dispatch hold to arm.',
+      '}',
       'const args = process.argv.slice(2);',
       "const taskDir = args[args.indexOf('--task-dir') + 1];",
       'const result = spawnSync(',
@@ -320,6 +330,9 @@ export function slotCli(root: string) {
       `  [${JSON.stringify(`${root}/packages/cli/bin/farmslot.mjs`)}, 'scripted-runner', '--task-dir', taskDir, '--mode', 'command', '--project', ${JSON.stringify(slotId.replace(/-\d+$/, ''))}, '--command-ref', 'work'],`,
       `  { stdio: 'inherit', env: { ...process.env, FARMSLOT_ROOT: ${JSON.stringify(fixture)} } },`,
       ');',
+      'const tick = new Int32Array(new SharedArrayBuffer(4));',
+      'const until = Date.now() + 15 * 60_000;',
+      'while (existsSync(`${holds}/idle`) && Date.now() < until) Atomics.wait(tick, 0, 0, 100);',
       'process.exit(result.status ?? 1);',
       '',
     ].join('\n'),

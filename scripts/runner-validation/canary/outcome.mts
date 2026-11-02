@@ -61,6 +61,8 @@ export interface KnownFailure {
   case: string;
   /** A variant, or `*` for any. */
   variant: string;
+  /** Only on this target (a fix in the checkout that the deployed gateway lacks); else both. */
+  target?: 'live' | 'isolated';
   /** Regex the check's differences, error or failure text must match. */
   signature: string;
   ledger: string;
@@ -236,7 +238,9 @@ export function overBudget(
 export function applyKnownFailures(check: CheckResult, known: KnownFailure[]): CheckResult {
   const entries = known.filter(
     (entry) =>
-      entry.case === check.case && (entry.variant === '*' || entry.variant === check.variant),
+      entry.case === check.case &&
+      (entry.variant === '*' || entry.variant === check.variant) &&
+      (!entry.target || entry.target === check.target),
   );
   if (!entries.length) return check;
   if (check.status === 'pass')

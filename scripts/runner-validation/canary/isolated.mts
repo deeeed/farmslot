@@ -10,10 +10,16 @@
 //   re-review, restarting at each; its expected end is derived from the verdicts it recorded.
 // - review-past-wait: a reviewer whose turn the proxy answers itself (no model call), restarted
 //   with its node away past REVIEW's 120 s reconnect wait.
-import { existsSync } from 'node:fs';
+// - worker-survives: a run held with its worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW,
+//   its fix round, HUMAN_GATE package prep or FINALIZE, the gateway restarted with the node up; the
+//   worker must stay alive (no kill, no /exit), the step must resume and the run end like its
+//   baseline. Zero inference: the reviewer's turns are answered by the test (scripted review).
+import { execFile, execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 
 import type { Run } from '../../../packages/protocol/src/index.js';
 import { poll, type Reaper, writeJson } from '../lib/isolated-stack.mjs';
@@ -57,6 +63,19 @@ export const RESTART_STEPS = [
 export type RestartStep = (typeof RESTART_STEPS)[number];
 export type Variant = 'node-up' | 'node-away';
 type HoldStep = RestartStep | 'review' | 'review-fix';
+export const SURVIVE_STEPS = [
+  'dispatch',
+  'monitor',
+  'review',
+  'review-fix',
+  'human-gate-prep',
+  'finalize',
+] as const;
+export type SurviveStep = (typeof SURVIVE_STEPS)[number];
+// How long a worker is watched after the restart before its hold lifts: past a native request's
+// 30 s timeout, so the resumed step's first node calls have answered or failed by then.
+const SURVIVE_OBSERVE_MS = 45_000;
+const TRANSPORT_ABORT = /\bterminated\b|abort|ECONNRESET|socket hang up|connection reset/i;
 
 export interface IsolatedOptions {
   root: string;
@@ -80,6 +99,7 @@ export interface IsolatedOptions {
   restarts?: Array<{ step: RestartStep; variants: Variant[] }>;
   review?: boolean;
   reviewPastWait?: boolean;
+  survive?: SurviveStep[];
   /** Called once the stack exists, so a signal can stop it. */
   onStack?: (stack: RemoteNodeStack) => void;
 }
@@ -100,7 +120,10 @@ const brief = (run: Run) =>
       .join(',') || '-'
   }`;
 
-class Inconclusive extends Error {}
+class Inconclusive extends Error {
+  /** The run it left behind, which the caller retires. */
+  runId?: string;
+}
 
 // ---------------------------------------------------------------- run shapes
 type Decision = Run['decisions'][number];
@@ -113,6 +136,8 @@ interface Shape {
   decide(decision: Decision, run: Run, state: { replayedAt?: string }): DecisionAction | undefined;
   /** Extra reads each poll makes, as a client would (F324: the inbox refreshes gate readiness). */
   onPoll?(stack: RemoteNodeStack, run: Run): Promise<void>;
+  /** The proxy swallows every reviewer turn and the test answers it (scriptedReviewer). */
+  scriptedReview?: boolean;
   timeoutMs: number;
 }
 
@@ -124,7 +149,34 @@ const closeGate = (decision: Decision): DecisionAction | undefined => {
   return action ? { resolve: action } : undefined;
 };
 
-type ShapeName = 'canary' | 'f324' | 'pipe' | 'review';
+type ShapeName = 'canary' | 'f324' | 'pipe' | 'review' | 'scripted-review';
+
+const reviewRunParams = (slotId: string): Record<string, unknown> => ({
+  project: REVIEW_PROJECT,
+  flowType: 'dev',
+  mode: 'validation',
+  // A Jira-shaped key passes dev ticket validation; ticketData means nothing is fetched. One per
+  // run: a second run on the same ticket raises a collision decision.
+  ticketOrPr: `RI-${slotId.replace(/^.*-/, '')}`,
+  ticketData: {
+    source: 'manual',
+    ...REVIEW_TICKET,
+    acceptanceCriteria: [],
+    affectedArea: 'src',
+    stepsToReproduce: [],
+    screenshots: [],
+    labels: [],
+  },
+  slotId,
+  runner: 'scripted',
+  model: 'scripted',
+  transport: 'tmux',
+  scripted: { mode: 'scenario', scenario: 'success' },
+  completionPolicy: 'artifact-only',
+  reviewMode: 'cold',
+  reviewValidationDepth: 'static-code',
+  reviewSequence: [{ ...REVIEWER, mode: 'cold' }],
+});
 
 const SHAPES: Record<ShapeName, Shape> = {
   canary: {
@@ -176,34 +228,17 @@ const SHAPES: Record<ShapeName, Shape> = {
   // so an output-review card is open while the fix round runs (#1724's case).
   review: {
     project: REVIEW_PROJECT,
-    create: (slotId) => ({
-      project: REVIEW_PROJECT,
-      flowType: 'dev',
-      mode: 'validation',
-      // A Jira-shaped key passes dev ticket validation; ticketData means nothing is fetched. One
-      // per run: a second run on the same ticket raises a collision decision.
-      ticketOrPr: `RI-${slotId.replace(/^.*-/, '')}`,
-      ticketData: {
-        source: 'manual',
-        ...REVIEW_TICKET,
-        acceptanceCriteria: [],
-        affectedArea: 'src',
-        stepsToReproduce: [],
-        screenshots: [],
-        labels: [],
-      },
-      slotId,
-      runner: 'scripted',
-      model: 'scripted',
-      transport: 'tmux',
-      scripted: { mode: 'scenario', scenario: 'success' },
-      completionPolicy: 'artifact-only',
-      reviewMode: 'cold',
-      reviewValidationDepth: 'static-code',
-      reviewSequence: [{ ...REVIEWER, mode: 'cold' }],
-    }),
+    create: (slotId) => reviewRunParams(slotId),
     decide: () => undefined,
     timeoutMs: 40 * 60_000,
+  },
+  // The same reviewed run with no model call: loop 1 finds the leftover helper, loop 2 passes.
+  'scripted-review': {
+    project: REVIEW_PROJECT,
+    create: (slotId) => reviewRunParams(slotId),
+    decide: () => undefined,
+    scriptedReview: true,
+    timeoutMs: 20 * 60_000,
   },
 };
 
@@ -238,6 +273,10 @@ interface HoldPhase {
   /** More to do while the gateway is down, after a release there. */
   whileDown?(context: HoldContext): Promise<void>;
   needsSlot?: boolean;
+  /** Armed before the run is created, whatever `armAt` says (an idle runner). */
+  prepare?(context: HoldContext): Promise<void>;
+  /** Watch the run's worker after the restart, before the release; `release` lifts what kept it. */
+  survive?: { release?(context: HoldContext): Promise<void> };
 }
 
 /**
@@ -441,6 +480,329 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
   ];
 }
 
+export const SURVIVE_HOLDS: Record<SurviveStep, string> = {
+  dispatch:
+    "the scripted runner arms a tmux hold when it starts, so DISPATCH's next tmux call waits with the worker launched; the worker waits on holds/worker; the tmux hold lifts while the gateway is down",
+  monitor: 'the scripted worker waits on holds/worker',
+  review:
+    "the codex proxy swallows the reviewer's turn (no model call); the test answers it after the watch",
+  'review-fix':
+    'the relaunched worker commits its fix with the fix round live, then waits on holds/fix; the scripted reviewer returned issues in loop 1 and passes loop 2',
+  'human-gate-prep':
+    "the scripted runner stays alive after its work (holds/idle); git on the run's slot waits while HUMAN_GATE prepares its package, released while the gateway is down",
+  finalize:
+    "the scripted runner stays alive after its work (holds/idle); ssh waits on FINALIZE's session-usage.sh call, released after the watch",
+};
+
+/**
+ * A worker-survives hold: the run held with its worker (or reviewer) mid-turn, a restart with the
+ * node up, the worker watched, then the hold lifted. The scripted runner exits once its work is
+ * done, so for HUMAN_GATE and FINALIZE it is kept alive as an interactive runner would idle.
+ */
+function survivePhase(
+  stack: RemoteNodeStack,
+  step: SurviveStep,
+  reviewer: ScriptedReviewer,
+): HoldPhase {
+  const base = { step, restarts: ['node-up'] as Variant[], nodeAwayMs: 0 };
+  const worker = marker(stack, 'worker');
+  const idle = marker(stack, 'idle');
+  switch (step) {
+    case 'dispatch': {
+      const tmux = marker(stack, 'tmux');
+      const armFile = path.join(stack.holds, 'tmux.arm');
+      return {
+        ...base,
+        armAt: 'create',
+        arm: async (context) => {
+          await worker.arm(context);
+          // Any tmux call once the worker runs: one run at a time, so they are DISPATCH's.
+          await writeFile(armFile, '.\n');
+        },
+        held: ({ run }) => tmux.hit() && stepStatus(run, 'dispatch') === 'running',
+        missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'dispatch') ?? ''),
+        release: async (context) => {
+          await rm(armFile, { force: true });
+          await tmux.release(context);
+        },
+        releaseWhileDown: true,
+        survive: { release: worker.release },
+      } satisfies HoldPhase;
+    }
+    case 'monitor':
+      return { ...restartPhase(stack, 'monitor', 'node-up', 0), survive: {} };
+    case 'human-gate-prep':
+      return {
+        ...restartPhase(stack, 'human-gate-prep', 'node-up', 0),
+        prepare: idle.arm,
+        survive: { release: idle.release },
+      };
+    case 'finalize':
+      return {
+        ...restartPhase(stack, 'finalize', 'node-up', 0),
+        // Held through the restart: once FINALIZE goes on, the slot release stops the worker.
+        releaseWhileDown: false,
+        prepare: idle.arm,
+        survive: { release: idle.release },
+      };
+    case 'review':
+      return {
+        ...base,
+        armAt: 'create',
+        arm: async () => {},
+        held: ({ run }) => {
+          const pending = reviewer.pending(run);
+          return (
+            stepStatus(run, 'review') === 'running' &&
+            pending !== undefined &&
+            (pending.reviewLoopNumber ?? 1) === 1
+          );
+        },
+        missed: ({ run }) =>
+          SETTLED_STEP.has(stepStatus(run, 'review') ?? '') ||
+          contexts(run, 'review-fix').length > 0,
+        // The scripted reviewer answers the turn once this phase is past.
+        release: async () => {},
+        survive: {},
+      } satisfies HoldPhase;
+    case 'review-fix': {
+      const fix = marker(stack, 'fix');
+      const fixContext = (run: Run) => contexts(run, 'review-fix').at(-1);
+      return {
+        ...base,
+        armAt: 'create',
+        arm: fix.arm,
+        held: ({ run }) =>
+          fix.hit() &&
+          stepStatus(run, 'review') === 'running' &&
+          fixContext(run)?.status === 'working',
+        missed: ({ run }) =>
+          SETTLED_STEP.has(stepStatus(run, 'review') ?? '') ||
+          fixContext(run)?.status === 'complete',
+        release: fix.release,
+        survive: {},
+      } satisfies HoldPhase;
+    }
+  }
+}
+
+// ---------------------------------------------------------------- scripted reviewer
+type AgentContext = NonNullable<Run['agentContexts']>[number];
+
+interface ScriptedReviewer {
+  /** Arms holds/review to swallow every reviewer turn; clears what an earlier run left. */
+  start(): Promise<void>;
+  /** The accepted reviewer whose swallowed turn the test has not answered. */
+  pending(run: Run): AgentContext | undefined;
+  /** Answers it as the fixture's review template asks: loop 1 issues, later loops pass. */
+  answer(run: Run, slotRepo: string): Promise<string | undefined>;
+  stop(dir: string): Promise<void>;
+}
+
+const execFileAsync = promisify(execFile);
+
+function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
+  const hold = path.join(stack.holds, 'review');
+  const answered = new Set<string>();
+  // The proxy logs `… swallowed` per turn it answered and `… completed` per batch it ended.
+  const count = (word: string) =>
+    (existsSync(`${hold}.hit`) ? readFileSync(`${hold}.hit`, 'utf8') : '')
+      .split('\n')
+      .filter((line) => line.endsWith(word)).length;
+  return {
+    async start() {
+      answered.clear();
+      await rm(`${hold}.hit`, { force: true });
+      await writeFile(hold, 'swallow\n');
+    },
+    pending(run) {
+      if (count(' swallowed') <= answered.size) return undefined;
+      return contexts(run, 'review').find(
+        (context) => context.nativeSession?.acceptedAt && !answered.has(context.id),
+      );
+    },
+    async answer(run, slotRepo) {
+      const context = this.pending(run);
+      if (!context?.taskFile || !context.signalFile || !context.reviewResultFile) return undefined;
+      answered.add(context.id);
+      const loop = context.reviewLoopNumber ?? 1;
+      const issues = loop === 1;
+      const taskDir = path.join(slotRepo, path.dirname(context.taskFile));
+      const finding = {
+        file: 'src/debug-trace.ts',
+        line: 1,
+        description: 'Leftover debugging helper (a debugger statement and console.log); remove it.',
+        severity: 'major',
+      };
+      await writeFile(
+        path.join(taskDir, 'artifacts', `review-feedback.${context.id}.md`),
+        [
+          `# Review: ${run.ticketOrPr}`,
+          '',
+          `## Verdict: ${issues ? 'ISSUES' : 'PASS'}`,
+          '',
+          '## Summary',
+          issues
+            ? 'Adds formatName and leaves a debugging helper behind.'
+            : 'Adds formatName; the debugging helper is gone.',
+          '',
+          '## Issues',
+          ...(issues ? [`- **${finding.file}:${finding.line}** — ${finding.description}`] : []),
+          '',
+          '## Follow-ups',
+          '- None.',
+          '',
+        ].join('\n'),
+      );
+      await writeFile(
+        path.join(taskDir, context.reviewResultFile),
+        `${JSON.stringify({ schemaVersion: 1, verdict: issues ? 'issues' : 'pass', issues: issues ? [finding] : [] })}\n`,
+      );
+      const checklist = path.basename(context.taskFile);
+      // In the environment the reviewer's own commands get (the proxy records it, secrets left out).
+      const env = JSON.parse(await readFile(`${hold}-env.json`, 'utf8')) as NodeJS.ProcessEnv;
+      const mark = async (...args: string[]) => {
+        try {
+          await execFileAsync(
+            path.join(taskDir, 'mark'),
+            ['--checklist', checklist, '--signal', path.basename(context.signalFile!), ...args],
+            { cwd: slotRepo, env },
+          );
+        } catch (error) {
+          const { stdout, stderr } = error as { stdout?: string; stderr?: string };
+          throw new Inconclusive(
+            `the scripted reviewer's mark ${args.join(' ')} failed: ${`${stdout ?? ''}${stderr ?? ''}`.trim() || String(error)}`,
+          );
+        }
+      };
+      const steps = (await readFile(path.join(taskDir, checklist), 'utf8')).match(
+        /^- \[ \]/gm,
+      )?.length;
+      await mark('start');
+      for (let step = 1; step < (steps ?? 1); step++) await mark(String(step));
+      await mark('complete', '--mark-last');
+      // End the swallowed turn, as the reviewer's own turn would end.
+      const before = count(' completed');
+      await writeFile(hold, 'complete\n');
+      await poll(
+        'the proxy to end the swallowed turn',
+        async () => (count(' completed') > before ? true : undefined),
+        15_000,
+      ).catch(() => undefined);
+      await writeFile(hold, 'swallow\n');
+      return `loop ${loop}: ${issues ? 'issues' : 'pass'}`;
+    },
+    async stop(dir) {
+      await rm(hold, { force: true });
+      await rm(`${hold}-env.json`, { force: true });
+      if (existsSync(`${hold}.hit`)) {
+        await appendFile(path.join(dir, 'hold-review.hit'), await readFile(`${hold}.hit`, 'utf8'));
+        await rm(`${hold}.hit`, { force: true });
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------- watching a worker
+interface WorkerSnapshot {
+  panes: Array<{ paneId: string; panePid: number }>;
+  processes: Array<{ pid: number; command: string }>;
+  reviewers: string[];
+  stopsOffset: number;
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The run's tmux panes, the scripted runner under them, and any reviewer app-server. */
+function snapshotWorker(stack: RemoteNodeStack, slotId: string, run: Run): WorkerSnapshot {
+  const panes = stack.panes(slotId).filter((pane) => !pane.dead);
+  const table = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3]! }));
+  const under = new Set<number>();
+  const queue = panes.map((pane) => pane.panePid);
+  while (queue.length) {
+    const parent = queue.pop()!;
+    for (const row of table)
+      if (row.ppid === parent && !under.has(row.pid)) {
+        under.add(row.pid);
+        queue.push(row.pid);
+      }
+  }
+  const stops = path.join(stack.holds, 'tmux-stops.log');
+  return {
+    panes: panes.map(({ paneId, panePid }) => ({ paneId, panePid })),
+    processes: table
+      .filter(
+        (row) =>
+          (under.has(row.pid) && row.command.includes('scripted-runner')) ||
+          (contexts(run, 'review').length > 0 &&
+            row.command.includes(stack.fixture) &&
+            /codex-proxy\.cjs.*app-server/.test(row.command)),
+      )
+      .map(({ pid, command }) => ({ pid, command })),
+    reviewers: contexts(run, 'review').map((context) => context.id),
+    stopsOffset: existsSync(stops) ? statSync(stops).size : 0,
+  };
+}
+
+/** What the restart did to the watched worker: empty while everything it had stays alive. */
+async function watchWorker(
+  stack: RemoteNodeStack,
+  slotId: string,
+  snapshot: WorkerSnapshot,
+  getRun: () => Promise<Run>,
+): Promise<string[]> {
+  const stops = path.join(stack.holds, 'tmux-stops.log');
+  const until = Date.now() + SURVIVE_OBSERVE_MS;
+  for (;;) {
+    const lost: string[] = [];
+    const panes = stack.panes(slotId);
+    for (const pane of snapshot.panes) {
+      const now = panes.find((candidate) => candidate.paneId === pane.paneId);
+      if (!now) lost.push(`worker pane ${pane.paneId} is gone`);
+      else if (now.dead) lost.push(`worker pane ${pane.paneId} is dead`);
+      else if (now.panePid !== pane.panePid)
+        lost.push(
+          `worker pane ${pane.paneId} was respawned (pid ${pane.panePid} -> ${now.panePid})`,
+        );
+    }
+    for (const watched of snapshot.processes)
+      if (!alive(watched.pid))
+        lost.push(`pid ${watched.pid} exited: ${watched.command.slice(0, 120)}`);
+    if (existsSync(stops)) {
+      const text = await readFile(stops, 'utf8');
+      for (const line of text.slice(snapshot.stopsOffset).split('\n').filter(Boolean))
+        lost.push(`tmux stop sent: ${line}`);
+    }
+    // Read after the worker: a run already done when its worker went is the slot release
+    // stopping it, as it should, not the restart.
+    const run = await getRun();
+    const failed = run.steps.filter((step) => step.status === 'failed');
+    if (run.status === 'done' && !failed.length) return [];
+    const relaunched = contexts(run, 'review').filter(
+      (context) => !snapshot.reviewers.includes(context.id),
+    );
+    if (snapshot.reviewers.length && relaunched.length)
+      lost.push(
+        `a new reviewer was launched: ${relaunched.map((context) => context.id).join(', ')}`,
+      );
+    if (failed.length || TERMINAL.has(run.status))
+      lost.push(`the run went ${run.status}: ${failureText(run) || brief(run)}`);
+    if (lost.length || Date.now() > until) return lost;
+    await delay(500);
+  }
+}
+
 // ---------------------------------------------------------------- one run
 interface RestartRecord {
   step: HoldStep;
@@ -462,6 +824,9 @@ interface ScenarioResult {
   restarts: RestartRecord[];
   /** Holds the run never reached after an earlier restart. */
   unreached: HoldStep[];
+  /** For a worker-survives hold: what was watched, and what the restart did to it. */
+  watched?: string[];
+  survival?: string[];
   /** Decision actions the gateway refused. */
   refused: string[];
   evidence: string;
@@ -471,15 +836,23 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
   const { log, evidence } = options;
   const seconds = (since: number) => Math.round((Date.now() - since) / 100) / 10;
   const restarts = options.restarts ?? [];
+  const survive = options.survive ?? [];
+  const scriptedReviewStep = (step: SurviveStep) => step === 'review' || step === 'review-fix';
+  const survivePipe = survive.filter((step) => !scriptedReviewStep(step)).length;
+  const surviveReview = survive.filter(scriptedReviewStep).length;
   const slots: string[] = [];
   const allocate = (project: string, count: number) =>
     slots.push(...Array.from({ length: count }, (_, index) => `${project}-${index + 1}`));
   allocate(CANARY_PROJECT, (options.lifecycle ? 1 : 0) + (options.f324 ? 1 : 0));
+  // One pipe baseline serves the restart matrix and the worker-survives holds.
+  const pipeRuns = restarts.reduce((sum, entry) => sum + entry.variants.length, 0) + survivePipe;
+  allocate(PIPE_PROJECT, pipeRuns ? 1 + pipeRuns : 0);
   allocate(
-    PIPE_PROJECT,
-    restarts.length ? 1 + restarts.reduce((sum, entry) => sum + entry.variants.length, 0) : 0,
+    REVIEW_PROJECT,
+    (options.review ? 1 : 0) +
+      (options.reviewPastWait ? 1 : 0) +
+      (surviveReview ? 1 + surviveReview : 0),
   );
-  allocate(REVIEW_PROJECT, (options.review ? 1 : 0) + (options.reviewPastWait ? 1 : 0));
 
   const stack = await startRemoteNodeStack({
     root: options.root,
@@ -497,6 +870,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
     log,
   });
   options.onStack?.(stack);
+  const reviewer = scriptedReviewer(stack);
   const slotCounter: Record<string, number> = {};
   const modelCalls = async () =>
     (await readFile(path.join(stack.holds, 'model-calls.log'), 'utf8').catch(() => ''))
@@ -522,15 +896,56 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
     await mkdir(dir, { recursive: true });
     const started = Date.now();
     const hold: HoldContext = { slotId, slotRepo: stack.slotRepo(slotId), dir };
-    // Matrix workers start once MONITOR watches them (fixtures.mts); one run at a time.
+    // Matrix workers start once MONITOR watches them (fixtures.mts); one run at a time, so a
+    // marker an earlier, unfinished scenario left armed goes first.
     const monitoring = path.join(stack.holds, 'monitoring');
-    await rm(monitoring, { force: true });
+    for (const name of ['monitoring', 'worker', 'git', 'ssh', 'fix', 'idle', 'tmux', 'tmux.arm'])
+      await rm(path.join(stack.holds, name), { force: true });
+    if (shape.scriptedReview) await reviewer.start();
+    for (const phase of phases) await phase.prepare?.(hold);
     for (const phase of phases) if (phase.armAt === 'create') await phase.arm(hold);
     const armed = new Set(phases.filter((phase) => phase.armAt === 'create'));
+    const owned: { runId?: string } = {};
+    try {
+      return await drive(
+        shape,
+        label,
+        dir,
+        slotId,
+        hold,
+        phases,
+        armed,
+        monitoring,
+        started,
+        owned,
+      );
+    } catch (error) {
+      if (error instanceof Inconclusive) error.runId ??= owned.runId;
+      throw error;
+    } finally {
+      if (shape.scriptedReview) await reviewer.stop(dir);
+    }
+  }
+
+  async function drive(
+    shape: Shape,
+    label: string,
+    dir: string,
+    slotId: string,
+    hold: HoldContext,
+    phases: HoldPhase[],
+    armed: Set<HoldPhase>,
+    monitoring: string,
+    started: number,
+    owned: { runId?: string },
+  ): Promise<ScenarioResult> {
     const { run: created } = await stack.call<{ run: Run }>('run.create', shape.create(slotId));
     const runId = created.id;
+    owned.runId = runId;
     await log(`${label}: run created`, { runId, slotId });
     const restartLog: RestartRecord[] = [];
+    let watched: string[] | undefined;
+    let survival: string[] | undefined;
     const unreached: HoldStep[] = [];
     const attempted = new Set<string>();
     const refused: string[] = [];
@@ -576,14 +991,24 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
           await log(`${label}: ${phase.step} held`, { run: brief(run) });
           hold.held = run;
           await writeJson(path.join(dir, `run-held-${current + 1}-${phase.step}.json`), run);
+          const snapshot = phase.survive ? snapshotWorker(stack, slotId, run) : undefined;
+          if (snapshot) {
+            watched = [
+              ...snapshot.panes.map((pane) => `pane ${pane.paneId} (pid ${pane.panePid})`),
+              ...snapshot.processes.map(
+                (entry) => `pid ${entry.pid} ${entry.command.slice(0, 120)}`,
+              ),
+            ];
+            await writeJson(path.join(dir, 'watched.json'), snapshot);
+          }
           for (const [index, variant] of phase.restarts.entries()) {
             const last = index === phase.restarts.length - 1;
             const restart = await stack.restartGateway({
               ...(variant === 'node-away' ? { nodeAwayMs: phase.nodeAwayMs } : {}),
-              ...(last && phase.releaseWhileDown
+              ...(last && (phase.releaseWhileDown || phase.whileDown)
                 ? {
                     whileDown: async () => {
-                      await phase.release(hold);
+                      if (phase.releaseWhileDown) await phase.release(hold);
                       await phase.whileDown?.(hold);
                     },
                   }
@@ -601,6 +1026,16 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
               after: brief(after),
             });
             await log(`${label}: restarted (${variant})`, { after: brief(after) });
+          }
+          if (snapshot) {
+            survival = watched!.length
+              ? await watchWorker(stack, slotId, snapshot, getRun)
+              : ['nothing to watch: no worker pane or runner process at the hold point'];
+            await log(`${label}: worker ${survival.length ? 'lost' : 'survived'}`, {
+              watched,
+              ...(survival.length ? { survival } : {}),
+            });
+            await phase.survive?.release?.(hold);
           }
           if (!phase.releaseWhileDown) await phase.release(hold);
           await log(`${label}: ${phase.step} released`);
@@ -620,6 +1055,15 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
             run: summary,
           });
           current = phases.length;
+          continue;
+        }
+      }
+
+      // A scripted review answers each reviewer turn, except one a REVIEW hold still keeps.
+      if (shape.scriptedReview && phase?.step !== 'review') {
+        const answered = await reviewer.answer(run, hold.slotRepo);
+        if (answered) {
+          await log(`${label}: scripted reviewer answered ${answered}`);
           continue;
         }
       }
@@ -695,6 +1139,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
             restarts: restartLog,
             unreached,
             refused,
+            ...(watched ? { watched, survival: survival ?? [] } : {}),
             evidence: dir,
           };
         }
@@ -759,6 +1204,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
       };
     } catch (error) {
       if (!(error instanceof Inconclusive)) throw error;
+      if (error.runId) await retire(error.runId);
       result = {
         ...base,
         target: 'isolated',
@@ -860,10 +1306,32 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
       ),
     );
 
+  // Same-night no-restart baselines, each run once when a case needs it.
+  // A baseline that could not settle makes every case comparing against it unverified.
+  const baselines: Partial<Record<'pipe' | 'scripted-review', ScenarioResult | Inconclusive>> = {};
+  const baselineOf = async (shapeName: 'pipe' | 'scripted-review') => {
+    if (!baselines[shapeName]) {
+      try {
+        const baseline = await runScenario(`baseline-${shapeName}`, shapeName, []);
+        await retire(baseline.runId);
+        await log(`baseline ${shapeName}`, {
+          outcome: baseline.outcome,
+          durationS: baseline.durationS,
+        });
+        baselines[shapeName] = baseline;
+      } catch (error) {
+        if (!(error instanceof Inconclusive)) throw error;
+        if (error.runId) await retire(error.runId);
+        baselines[shapeName] = new Inconclusive(`no ${shapeName} baseline: ${error.message}`);
+      }
+    }
+    const baseline = baselines[shapeName]!;
+    if (baseline instanceof Inconclusive) throw baseline;
+    return baseline;
+  };
+
   if (restarts.length) {
-    const baseline = await runScenario('baseline-pipe', 'pipe', []);
-    await retire(baseline.runId);
-    await log('baseline pipe', { outcome: baseline.outcome, durationS: baseline.durationS });
+    const baseline = await baselineOf('pipe');
     for (const { step, variants } of restarts)
       for (const variant of variants)
         results.push(
@@ -887,6 +1355,53 @@ export async function runIsolated(options: IsolatedOptions): Promise<CheckResult
             },
           ),
         );
+  }
+
+  for (const step of survive) {
+    const scripted = scriptedReviewStep(step);
+    let baseline: ScenarioResult;
+    const result = await check(
+      {
+        case: 'worker-survives',
+        variant: step,
+        model: scripted
+          ? `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer whose turns the test answers (no model call)`
+          : 'scripted',
+        hold: SURVIVE_HOLDS[step],
+      },
+      async () => {
+        baseline = await baselineOf(scripted ? 'scripted-review' : 'pipe');
+        return runScenario(`survive-${step}`, scripted ? 'scripted-review' : 'pipe', [
+          survivePhase(stack, step, reviewer),
+        ]);
+      },
+      (scenario) => {
+        const failure = failureText(scenario.run);
+        const differences = [
+          ...unreachedDifferences(scenario),
+          ...(scenario.survival ?? ['the hold never watched the worker']),
+          ...(TRANSPORT_ABORT.test(failure)
+            ? [`a step failed on a dropped transport: ${failure.split('\n')[0]}`]
+            : []),
+          ...outcomeDifferences(baseline.outcome, scenario.outcome),
+        ];
+        return {
+          status: differences.length ? 'fail' : 'pass',
+          differences,
+          observations: [
+            `watched: ${(scenario.watched ?? []).join('; ') || 'nothing'}`,
+            ...outcomeObservations(baseline.outcome, scenario.outcome),
+            ...(scripted ? [`reviews: ${scenario.outcome.reviews.join(', ') || '-'}`] : []),
+          ],
+          expected: baseline.outcome,
+        };
+      },
+    );
+    if (result.modelCalls > 0) {
+      result.status = 'fail';
+      result.differences.push(`${result.modelCalls} model calls, expected none`);
+    }
+    results.push(result);
   }
 
   if (options.review) {

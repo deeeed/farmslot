@@ -9,15 +9,19 @@
 //            mid-step (MONITOR, node up). --target isolated runs every case on the isolated stack.
 //   nightly  the isolated restart matrix: dispatch, monitor, human-gate package prep, finalize
 //            and release, each with the node up and with it away past recovery's node wait, plus
-//            REVIEW with its node away past the reconnect wait (no model call). --with-review adds
-//            one reviewed run (two codex gpt-6-luna calls): REVIEW and its fix round.
+//            REVIEW with its node away past the reconnect wait (no model call), and worker-survives:
+//            a restart with the worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW, its fix
+//            round, HUMAN_GATE prep and FINALIZE, which must leave it alive (no model call: the test
+//            answers the reviewer). --with-review adds one reviewed run (two codex gpt-6-luna
+//            calls): REVIEW and its fix round.
 //
 // Every model a case would use must be on config.json's allowlist, or the canary stops before
 // dispatching anything. Known failures (config.json) report as KNOWN; one that passes fails the
 // canary until its entry is removed.
 //
 // Run: node --import tsx scripts/runner-validation/canary/canary.mts --profile canary|nightly
-//   [--target live|isolated] [--with-review] [--only lifecycle,f324,…] [--budget step=seconds]…
+//   [--target live|isolated] [--with-review] [--only lifecycle,f324,…]
+//   [--survive-steps dispatch,monitor,…] [--budget step=seconds]…
 //   [--evidence <dir>] [--results <file>] [--status-file <file>] [--hold-file <file>]
 //   [--cli-snapshot <dir> | --cli-snapshots <dir>] [--node-away-s 20] [--review-node-away-s 130]
 //   [--review-fix-node-away-s 100]
@@ -35,7 +39,13 @@ import { cleanupOnExit, startReaper } from '../lib/isolated-stack.mjs';
 import type { RemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
 import { REVIEWER } from './fixtures.mjs';
-import { RESTART_STEPS, runIsolated, type Variant } from './isolated.mjs';
+import {
+  RESTART_STEPS,
+  runIsolated,
+  SURVIVE_STEPS,
+  type SurviveStep,
+  type Variant,
+} from './isolated.mjs';
 import { runLive } from './live.mjs';
 import { applyKnownFailures, type CheckResult, type KnownFailure } from './outcome.mjs';
 import { report } from './report.mjs';
@@ -95,11 +105,16 @@ const CASES = [
   ...RESTART_STEPS,
   'review',
   'review-past-wait',
+  'worker-survives',
 ] as const;
 const only = arg('only')?.split(',');
 for (const name of only ?? [])
   if (!(CASES as readonly string[]).includes(name)) throw new Error(`Unknown case ${name}`);
 const wants = (name: (typeof CASES)[number]) => !only || only.includes(name);
+const surviveSteps = (arg('survive-steps')?.split(',') ?? [...SURVIVE_STEPS]) as SurviveStep[];
+for (const step of surviveSteps)
+  if (!(SURVIVE_STEPS as readonly string[]).includes(step))
+    throw new Error(`Unknown worker-survives step ${step}`);
 const plan =
   profile === 'canary'
     ? {
@@ -112,6 +127,7 @@ const plan =
           : [],
         review: false,
         reviewPastWait: false,
+        survive: [] as SurviveStep[],
       }
     : {
         live: false,
@@ -124,10 +140,15 @@ const plan =
         })),
         review: withReview && wants('review'),
         reviewPastWait: wants('review-past-wait'),
+        survive: wants('worker-survives') ? surviveSteps : [],
       };
 
 // The models those cases would use, checked before anything is dispatched.
-const models = ['scripted', ...(plan.review || plan.reviewPastWait ? [REVIEWER.model] : [])];
+const reviews =
+  plan.review ||
+  plan.reviewPastWait ||
+  plan.survive.some((step) => step === 'review' || step === 'review-fix');
+const models = ['scripted', ...(reviews ? [REVIEWER.model] : [])];
 const refused = models.filter((model) => !config.modelAllowlist.includes(model));
 
 await mkdir(evidence, { recursive: true });
@@ -205,7 +226,8 @@ try {
     plan.f324 ||
     plan.restarts.length ||
     plan.review ||
-    plan.reviewPastWait
+    plan.reviewPastWait ||
+    plan.survive.length
   )
     checks.push(
       ...(await runIsolated({
@@ -226,6 +248,7 @@ try {
         restarts: plan.restarts,
         review: plan.review,
         reviewPastWait: plan.reviewPastWait,
+        survive: plan.survive,
         onStack: (created) => {
           stack = created;
         },

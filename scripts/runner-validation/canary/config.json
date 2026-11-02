@@ -23,8 +23,21 @@
     {
       "case": "f324-replay-open-gate",
       "variant": "*",
+      "target": "live",
       "signature": "Run stopped while awaiting its execution node|not superseded",
       "ledger": "F324"
+    },
+    {
+      "case": "worker-survives",
+      "variant": "dispatch",
+      "signature": "tmux stop sent: .*(/exit|respawn-window)",
+      "ledger": "F-pending (dispatch recovery relaunches the worker)"
+    },
+    {
+      "case": "worker-survives",
+      "variant": "review-fix",
+      "signature": "Recovered review fix worker could not accept its prompt",
+      "ledger": "F-pending (fix-round recovery re-prompts a mid-turn worker)"
     }
   ],
   "live": {

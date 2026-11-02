@@ -96,6 +96,8 @@ export interface RemoteNodeStack {
     whileDown?: () => Promise<void>;
   }): Promise<{ downMs: number; nodeOfflineMs?: number }>;
   waitForNode(connected: boolean, budgetMs?: number): Promise<void>;
+  /** The panes of a tmux session on the stack's private server (none when it has no such session). */
+  panes(session: string): Array<{ paneId: string; panePid: number; dead: boolean }>;
   cleanup(): Promise<string[]>;
 }
 
@@ -210,6 +212,27 @@ const gitHold = (realGit: string, holds: string) =>
     '',
   ].join('\n');
 
+// Every tmux call that could stop a worker (a kill or respawn, C-c, /exit) is logged to
+// holds/tmux-stops.log. While holds/tmux exists, a call whose arguments match the extended regex
+// in it waits (15 min ceiling). A worker arms that hold itself by renaming holds/tmux.arm (slotCli).
+const tmuxWatch = (realTmux: string, holds: string) =>
+  [
+    '#!/bin/sh',
+    `holds=${JSON.stringify(holds)}`,
+    'case " $* " in',
+    '  *" kill-pane "*|*" kill-window "*|*" kill-session "*|*" respawn-pane "*|*" respawn-window "*|*" C-c "*|*"/exit"*)',
+    `    printf '%s %s\\n' "$(date -u +%FT%TZ)" "$*" >> "$holds/tmux-stops.log" ;;`,
+    'esac',
+    'hold="$holds/tmux"',
+    'if [ -e "$hold" ] && printf \'%s\\n\' "$*" | grep -qE -- "$(cat "$hold" 2>/dev/null)"; then',
+    `  printf '%s\\n' "$*" >> "$hold.hit"`,
+    '  i=0',
+    '  while [ -e "$hold" ] && [ $i -lt 9000 ]; do sleep 0.1; i=$((i+1)); done',
+    'fi',
+    `exec ${JSON.stringify(realTmux)} "$@"`,
+    '',
+  ].join('\n');
+
 // The reviewer stays a real codex review. Once a `turn/start` request has been answered (the node
 // has accepted the reviewer's command), codex's further output waits while holds/review exists,
 // so the gateway sees a live, accepted reviewer that cannot finish until the hold is released.
@@ -217,9 +240,11 @@ const gitHold = (realGit: string, holds: string) =>
 // passes through. Every other invocation (--version, login status) runs codex directly.
 // Each turn sent to codex is a model call and is logged to holds/model-calls.log. A hold whose
 // marker reads `swallow` answers the turn itself instead: an accepted reviewer, no model call.
+// Once the marker reads `complete`, the proxy ends every turn it swallowed (the test has written
+// the reviewer's output by then) and logs `completed`; it still swallows any turn that starts then.
 const codexProxy = (realCodex: string, holds: string) => `'use strict';
 const { spawn, spawnSync } = require('node:child_process');
-const { appendFileSync, existsSync, readFileSync } = require('node:fs');
+const { appendFileSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
 const REAL = ${JSON.stringify(realCodex)};
 const HOLD = ${JSON.stringify(path.join(holds, 'review'))};
 const CALLS = ${JSON.stringify(path.join(holds, 'model-calls.log'))};
@@ -228,7 +253,17 @@ if (!args.includes('app-server'))
   process.exit(spawnSync(REAL, args, { stdio: 'inherit' }).status ?? 1);
 const child = spawn(REAL, args, { stdio: ['pipe', 'pipe', 'inherit'] });
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => child.kill(signal));
+// The environment the reviewer's commands get, without secrets, for a test that answers its turn.
+writeFileSync(HOLD + '-env.json', JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([key]) => !/KEY|TOKEN|SECRET|PASSWORD/i.test(key)))), { mode: 0o600 });
 const turnStarts = new Set();
+const marker = () => (existsSync(HOLD) ? readFileSync(HOLD, 'utf8').trim() : '');
+const swallowed = [];
+setInterval(() => {
+  if (!swallowed.length || marker() !== 'complete') return;
+  for (const id of swallowed.splice(0))
+    process.stdout.write(JSON.stringify({ method: 'turn/completed', params: { turn: { id, status: 'completed' } } }) + '\\n');
+  appendFileSync(HOLD + '.hit', new Date().toISOString() + ' completed\\n');
+}, 100).unref();
 let input = '';
 process.stdin.on('data', (chunk) => {
   input += chunk;
@@ -237,9 +272,12 @@ process.stdin.on('data', (chunk) => {
     let message = {};
     try { message = JSON.parse(line); } catch {}
     if (message.method === 'turn/start' && message.id !== undefined) {
-      if (existsSync(HOLD) && readFileSync(HOLD, 'utf8').trim() === 'swallow') {
+      if (marker() === 'swallow' || marker() === 'complete') {
+        const id = 'swallowed-' + message.id;
         appendFileSync(HOLD + '.hit', new Date().toISOString() + ' turn ' + message.id + ' swallowed\\n');
-        process.stdout.write(JSON.stringify({ id: message.id, result: { turn: { id: 'swallowed-' + message.id } } }) + '\\n');
+        process.stdout.write(JSON.stringify({ id: message.id, result: { turn: { id } } }) + '\\n');
+        process.stdout.write(JSON.stringify({ method: 'turn/started', params: { turn: { id } } }) + '\\n');
+        swallowed.push(id);
         continue;
       }
       turnStarts.add(String(message.id));
@@ -460,6 +498,9 @@ export async function startRemoteNodeStack(
         { mode: 0o755 },
       );
     await writeFile(path.join(fakeBin, 'git'), gitHold(which('git', process.env), holds), {
+      mode: 0o755,
+    });
+    await writeFile(path.join(fakeBin, 'tmux'), tmuxWatch(which('tmux', process.env), holds), {
       mode: 0o755,
     });
     await writeFile(
@@ -722,6 +763,35 @@ export async function startRemoteNodeStack(
         startNode();
         await waitForNode(true);
         return { downMs: readyAt - stoppedAt, nodeOfflineMs: Date.now() - readyAt };
+      },
+      panes(session) {
+        // The real tmux on the stack's socket: the fixture's tmux logs and holds.
+        let listed = '';
+        try {
+          listed = execFileSync(
+            'tmux',
+            [
+              '-S',
+              tmuxSocket,
+              'list-panes',
+              '-s',
+              '-t',
+              `=${session}`,
+              '-F',
+              '#{pane_id} #{pane_pid} #{pane_dead}',
+            ],
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+          );
+        } catch {
+          // No such session (or no server yet): no panes.
+        }
+        return listed
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => {
+            const [paneId, pid, dead] = line.split(' ');
+            return { paneId: paneId!, panePid: Number(pid), dead: dead === '1' };
+          });
       },
       cleanup,
     };
