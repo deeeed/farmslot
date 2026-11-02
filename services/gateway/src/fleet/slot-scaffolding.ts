@@ -115,6 +115,72 @@ export interface SlotScaffoldingArchiveOptions {
   artifactsCollected?: boolean;
 }
 
+/**
+ * Directories an install or build recreates. The archive lists them instead of packing them:
+ * macpro-audiolab-4's task held a worker's 14 GB baseline checkout, mostly node_modules and
+ * Android builds, and packing it outlasted the 120 s tar budget (F310).
+ */
+const REBUILDABLE_DIR_NAMES = ['node_modules', 'Pods', '.gradle', '.cxx'];
+const REBUILDABLE_DIR_PATHS = ['*/android/build', '*/android/*/build', '*/ios/build'];
+
+interface SkippedScaffolding {
+  path: string;
+  kind: 'checkout' | 'rebuildable';
+  sizeBytes: number | null;
+  remote?: string;
+  head?: string;
+}
+
+/**
+ * Nested Git checkouts and rebuildable directories under the released task roots. A checkout
+ * whose HEAD is on a remote, with no changes and no local-only commit missing from the slot
+ * repository, can be cloned again; any other one refuses the release so its work stays.
+ */
+async function inventoryRebuildableScaffolding(
+  vars: SlotVars,
+  taskRoots: string[],
+): Promise<SkippedScaffolding[]> {
+  if (!taskRoots.length) return [];
+  const names = REBUILDABLE_DIR_NAMES.map((name) => `-name ${shellQuote(name)}`).join(' -o ');
+  const paths = REBUILDABLE_DIR_PATHS.map((glob) => `-path ${shellQuote(glob)}`).join(' -o ');
+  const script = [
+    `cd ${shellQuote(vars.remoteRepo)} || exit 1`,
+    `for root in ${taskRoots.map(shellQuote).join(' ')}; do`,
+    '  [ -d "$root" ] || continue',
+    `  find "$root" -mindepth 1 -path "$root/artifacts" -prune -o -type d \\( ${names} -o ${paths} \\) -print -prune -o -type d -exec test -e '{}/.git' \\; -print -prune 2>/dev/null`,
+    'done | while IFS= read -r dir; do',
+    '  size="$(du -sk "$dir" 2>/dev/null | cut -f1)"',
+    '  if [ ! -e "$dir/.git" ]; then printf "R\\t%s\\t%s\\n" "$dir" "$size"; continue; fi',
+    '  state=clean',
+    '  [ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ] || state=dirty',
+    '  [ "$state" != clean ] || git -C "$dir" branch -r --contains HEAD 2>/dev/null | grep -q . || state=unpushed',
+    '  if [ "$state" = clean ]; then',
+    '    for commit in $(git -C "$dir" log --format=%H --branches --not --remotes 2>/dev/null); do',
+    '      git cat-file -e "$commit^{commit}" 2>/dev/null || { state=unpushed; break; }',
+    '    done',
+    '  fi',
+    '  printf "C\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$dir" "$size" "$state" "$(git -C "$dir" remote get-url origin 2>/dev/null)" "$(git -C "$dir" rev-parse HEAD 2>/dev/null)"',
+    'done',
+  ].join('\n');
+  const result = await execOnSlot(vars, script, { timeout: 120_000 });
+  if (result.exitCode !== 0) throw new Error(`Cannot inventory scaffolding: ${result.stderr}`);
+  const skipped: SkippedScaffolding[] = [];
+  for (const line of result.stdout.split('\n')) {
+    const [kind, dir, size, state, remote, head] = line.split('\t');
+    if (!dir) continue;
+    const sizeBytes = /^\d+$/.test(size ?? '') ? Number(size) * 1024 : null;
+    if (kind === 'R') skipped.push({ path: dir, kind: 'rebuildable', sizeBytes });
+    else if (kind === 'C') {
+      if (state !== 'clean')
+        throw new Error(
+          `Nested checkout ${dir} has ${state === 'dirty' ? 'uncommitted changes' : 'commits on no remote'}; push or remove it before release`,
+        );
+      skipped.push({ path: dir, kind: 'checkout', sizeBytes, remote: remote || undefined, head });
+    }
+  }
+  return skipped;
+}
+
 /** Copy all sources before removing any; leave warm runtime resources in place. */
 export async function archiveSlotScaffolding(
   vars: SlotVars,
@@ -168,6 +234,12 @@ export async function archiveSlotScaffolding(
   }
   const directory = path.join(options.destination, randomUUID());
   if (!sources.length) return { directory, roots: 0 };
+  const skipped = await inventoryRebuildableScaffolding(
+    vars,
+    sources
+      .filter((source) => taskRoots.includes(source.relative))
+      .map((source) => source.relative),
+  );
   // tar preserves links as links. Copying their targets could leak a mounted
   // reference checkout or lose link metadata when the slot is cleaned.
   const created = await execOnSlot(vars, 'mktemp -d');
@@ -178,12 +250,16 @@ export async function archiveSlotScaffolding(
     const remoteArchive = path.posix.join(temporary, 'scaffolding.tar');
     const checkoutSources = sources.filter((source) => source.absolute !== external);
     const collected = taskRelativeDir && `${task}/${relativeNamespace(taskRelativeDir)}`;
-    const excluded =
-      options.artifactsCollected &&
+    const excluded = [
+      ...(options.artifactsCollected &&
       collected &&
       checkoutSources.some((source) => source.relative === collected)
-        ? `--exclude ${shellQuote(`${collected}/artifacts`)} `
-        : '';
+        ? [`${collected}/artifacts`]
+        : []),
+      ...skipped.map((entry) => entry.path),
+    ]
+      .map((pattern) => `--exclude ${shellQuote(pattern)} `)
+      .join('');
     const packed = await execOnSlot(
       vars,
       `tar -C ${shellQuote(vars.remoteRepo)} ${excluded}-cf ${shellQuote(remoteArchive)} ${checkoutSources.length ? `-- ${checkoutSources.map((source) => shellQuote(source.relative)).join(' ')}` : '-T /dev/null'}`,
@@ -221,7 +297,7 @@ export async function archiveSlotScaffolding(
     }
     await writeFile(
       path.join(directory, 'manifest.json'),
-      `${JSON.stringify({ slotId: vars.slotId, sources: sources.map((source) => source.relative) }, null, 2)}\n`,
+      `${JSON.stringify({ slotId: vars.slotId, sources: sources.map((source) => source.relative), skipped }, null, 2)}\n`,
     );
     for (const source of [
       ...sources.filter((source) => source.absolute !== external).reverse(),

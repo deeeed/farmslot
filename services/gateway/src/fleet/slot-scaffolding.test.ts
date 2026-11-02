@@ -153,6 +153,113 @@ test('a release that collected the artifacts archives the task without them', as
   assert.equal(existsSync(path.join(f.repo, '.task/qa/example')), false);
 });
 
+// F310: macpro-audiolab-4's task held a worker's 14 GB baseline checkout (node_modules and Android
+// builds), and packing it outlasted the 120 s tar budget, so the slot stayed held. Stub sizes.
+function baselineCheckout(f: ReturnType<typeof fixture>) {
+  const origin = path.join(f.root, 'origin.git');
+  git(f.root, 'init', '-q', '--bare', '-b', 'main', origin);
+  const seed = path.join(f.root, 'seed');
+  mkdirSync(seed);
+  git(seed, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(seed, '.gitignore'), 'node_modules/\nbuild/\n');
+  writeFileSync(path.join(seed, 'README.md'), 'baseline');
+  git(seed, 'add', '.');
+  git(seed, 'commit', '-q', '-m', 'seed');
+  git(seed, 'push', '-q', origin, 'main');
+  const baseline = path.join(f.repo, '.task/qa/example/checkouts/baseline');
+  mkdirSync(path.dirname(baseline), { recursive: true });
+  git(f.root, 'clone', '-q', origin, baseline);
+  mkdirSync(path.join(baseline, 'apps/playground/node_modules/pkg'), { recursive: true });
+  writeFileSync(path.join(baseline, 'apps/playground/node_modules/pkg/index.js'), 'dependency');
+  mkdirSync(path.join(baseline, 'apps/sherpa-voice/android/app/build/outputs'), {
+    recursive: true,
+  });
+  writeFileSync(path.join(baseline, 'apps/sherpa-voice/android/app/build/outputs/app.apk'), 'apk');
+  return { origin, baseline };
+}
+
+test('a release lists a pushed baseline checkout and build outputs instead of packing them', async (t) => {
+  const f = fixture(t);
+  git(f.repo, 'init', '-q', '-b', 'main');
+  scaffolding(f.repo);
+  const { origin, baseline } = baselineCheckout(f);
+  // A local-only branch whose commit the slot repository also holds, as on audiolab-4.
+  writeFileSync(path.join(f.repo, 'source.txt'), 'slot work');
+  git(f.repo, 'add', 'source.txt');
+  git(f.repo, 'commit', '-q', '-m', 'slot work');
+  git(baseline, 'fetch', '-q', f.repo, 'main:slot-main');
+  const task = path.join(f.repo, '.task/qa/example');
+  mkdirSync(path.join(task, 'app/android/app/build'), { recursive: true });
+  writeFileSync(path.join(task, 'app/android/app/build/classes.dex'), 'built');
+  mkdirSync(path.join(task, 'tools/node_modules/tool'), { recursive: true });
+  writeFileSync(path.join(task, 'tools/node_modules/tool/index.js'), 'dependency');
+  await excludeSlotScaffolding(f.vars, {}, execute);
+  const result = await archiveSlotScaffolding(
+    f.vars,
+    {},
+    {
+      destination: f.destination,
+      taskRelativeDir: 'qa/example',
+      beforeRemove: async () => undefined,
+    },
+  );
+  const archived = unpack(result.directory, f.root);
+  assert.equal(
+    readFileSync(path.join(archived, '.task/qa/example/TASK.md'), 'utf8'),
+    'completed task',
+  );
+  for (const rebuilt of ['checkouts/baseline', 'app/android/app/build', 'tools/node_modules'])
+    assert.equal(existsSync(path.join(archived, '.task/qa/example', rebuilt)), false, rebuilt);
+  const { skipped } = JSON.parse(
+    readFileSync(path.join(result.directory, 'manifest.json'), 'utf8'),
+  ) as {
+    skipped: Array<{
+      path: string;
+      kind: string;
+      sizeBytes: number;
+      remote?: string;
+      head?: string;
+    }>;
+  };
+  assert.deepEqual(skipped.map((entry) => [entry.kind, entry.path]).sort(), [
+    ['checkout', '.task/qa/example/checkouts/baseline'],
+    ['rebuildable', '.task/qa/example/app/android/app/build'],
+    ['rebuildable', '.task/qa/example/tools/node_modules'],
+  ]);
+  const checkout = skipped.find((entry) => entry.kind === 'checkout')!;
+  assert.equal(checkout.remote, origin);
+  assert.equal(checkout.head, git(origin, 'rev-parse', 'main'));
+  assert.ok(checkout.sizeBytes > 0);
+  assert.equal(existsSync(task), false, 'the released task is removed');
+});
+
+test('a nested checkout with unpushed or uncommitted work keeps the task and refuses release', async (t) => {
+  const f = fixture(t);
+  git(f.repo, 'init', '-q', '-b', 'main');
+  scaffolding(f.repo);
+  const { baseline } = baselineCheckout(f);
+  await excludeSlotScaffolding(f.vars, {}, execute);
+  const release = () =>
+    archiveSlotScaffolding(
+      f.vars,
+      {},
+      {
+        destination: f.destination,
+        taskRelativeDir: 'qa/example',
+        beforeRemove: async () => undefined,
+      },
+    );
+  writeFileSync(path.join(baseline, 'README.md'), 'edited');
+  await assert.rejects(release(), /checkouts\/baseline has uncommitted changes/);
+  git(baseline, 'commit', '-q', '-am', 'local only');
+  await assert.rejects(release(), /checkouts\/baseline has commits on no remote/);
+  assert.equal(readFileSync(path.join(baseline, 'README.md'), 'utf8'), 'edited');
+  assert.equal(
+    readFileSync(path.join(f.repo, '.task/qa/example/TASK.md'), 'utf8'),
+    'completed task',
+  );
+});
+
 test('only the configured task root counts as collected; legacy artifacts stay archived', async (t) => {
   const f = fixture(t);
   scaffolding(f.repo);
