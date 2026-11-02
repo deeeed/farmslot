@@ -73,6 +73,11 @@ if [ "$(cat node_modules/.restart-invariant-lock 2>/dev/null)" != "$lock" ]; the
   fi
   echo "$lock" > node_modules/.restart-invariant-lock
 fi
+# A node deployment has its runtime packages built; worker launch preflights import them.
+if ! nice -n 10 yarn workspace @farmslot/agent-runtime build > "$OUT/build.log" 2>&1; then
+  status BLOCKED "$SHA" "could not run: package build failed (see $OUT/build.log)"
+  exit 2
+fi
 
 RESTART_INVARIANT_STAMP="nightly-$STAMP" TSX_TSCONFIG_PATH="$CHECKOUT/services/gateway/tsconfig.json" \
   nice -n 10 node --import tsx scripts/runner-validation/gateway/restart-invariant.mts \

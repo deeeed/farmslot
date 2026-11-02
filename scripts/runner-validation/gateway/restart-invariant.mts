@@ -18,14 +18,14 @@
 // (setup failure, a hold that never took effect, a run that never settled).
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import type { Run } from '../../../packages/protocol/src/index.js';
-import { cleanupOnExit, startReaper, writeJson } from '../lib/isolated-stack.mjs';
+import { cleanupOnExit, poll, startReaper, writeJson } from '../lib/isolated-stack.mjs';
 import { type RemoteNodeStack, startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
 import {
@@ -176,7 +176,10 @@ interface View {
 /** The run a hold belongs to: its slot, and where its evidence goes. */
 interface HoldContext {
   slotId: string;
+  slotRepo: string;
   dir: string;
+  /** The run as the hold caught it, once it has. */
+  held?: Run;
 }
 
 interface HoldPhase {
@@ -192,13 +195,16 @@ interface HoldPhase {
   release(context: HoldContext): Promise<void>;
   /** A git hold must lift before the new gateway starts: it reads its branch at boot. */
   releaseWhileDown?: boolean;
+  /** More to do while the gateway is down, after a release there. */
+  whileDown?(context: HoldContext): Promise<void>;
   needsSlot?: boolean;
 }
 
 interface StepSpec {
   shape: ShapeName;
   hold: string;
-  phase(stack: RemoteNodeStack, restarts: Variant[]): HoldPhase;
+  /** One phase, or several the run passes through in order (each holds and restarts). */
+  phase(stack: RemoteNodeStack, restarts: Variant[]): HoldPhase | HoldPhase[];
 }
 
 const SETTLED_STEP = new Set(['done', 'failed', 'skipped']);
@@ -229,7 +235,10 @@ function marker(
       await rm(file, { force: true });
       for (const suffix of ['.hit', '.seen'])
         if (existsSync(`${file}${suffix}`)) {
-          await cp(`${file}${suffix}`, path.join(context.dir, `hold-${name}${suffix}`));
+          await appendFile(
+            path.join(context.dir, `hold-${name}${suffix}`),
+            await readFile(`${file}${suffix}`, 'utf8'),
+          );
           // A later phase arming the same marker must see its own hit.
           await rm(`${file}${suffix}`, { force: true });
         }
@@ -300,24 +309,71 @@ const STEPS: Record<StepName, StepSpec> = {
   },
   'review-fix': {
     shape: 'review',
-    hold: 'the relaunched scripted worker marks the fix task started, then waits while holds/fix exists',
-    phase: (stack, restarts) => {
+    hold: 'the relaunched scripted worker commits its fix with the fix round live, then waits on holds/fix before marking it complete; the gateway restarts with the node up and the fix completes while it is down. Then the codex proxy holds the loop-2 re-review (holds/review) for a restart with the node away',
+    // A scripted worker has no prompt receipt, so a restart while its fix signal still reads
+    // running makes recovery resend the fix prompt, which it cannot accept: the fix finishes
+    // during the outage instead (the #1724 shape), and the second restart lands on the re-review.
+    phase: (stack) => {
       const fix = marker(stack, 'fix');
-      return {
-        step: 'review-fix',
-        restarts,
-        nodeAwayMs: REVIEW_NODE_AWAY_MS,
-        armAt: 'create',
-        arm: fix.arm,
-        held: ({ run }) =>
-          fix.hit() &&
-          stepStatus(run, 'review') === 'running' &&
-          contexts(run, 'review-fix').some((context) => context.status === 'working'),
-        missed: ({ run }) =>
-          SETTLED_STEP.has(stepStatus(run, 'review') ?? '') ||
-          contexts(run, 'review-fix').some((context) => context.status === 'complete'),
-        release: fix.release,
-      };
+      const review = marker(stack, 'review');
+      const fixContext = (run: Run) => contexts(run, 'review-fix').at(-1);
+      return [
+        {
+          step: 'review-fix',
+          restarts: ['node-up'],
+          nodeAwayMs: REVIEW_NODE_AWAY_MS,
+          armAt: 'create',
+          arm: fix.arm,
+          held: ({ run }) =>
+            fix.hit() &&
+            stepStatus(run, 'review') === 'running' &&
+            fixContext(run)?.status === 'working',
+          missed: ({ run }) =>
+            SETTLED_STEP.has(stepStatus(run, 'review') ?? '') ||
+            fixContext(run)?.status === 'complete',
+          release: fix.release,
+          releaseWhileDown: true,
+          // The worker marks the fix complete while the gateway is down; the re-review that
+          // recovery then launches must find its hold armed.
+          whileDown: async (context) => {
+            const signalFile = context.held && fixContext(context.held)?.signalFile;
+            if (!signalFile) throw new Error('The held run has no review-fix signal file');
+            await poll(
+              'the fix signal to complete while the gateway is down',
+              async () => {
+                try {
+                  const raw = await readFile(path.join(context.slotRepo, signalFile), 'utf8');
+                  return (JSON.parse(raw) as { status?: string }).status === 'complete'
+                    ? true
+                    : undefined;
+                } catch {
+                  // Missing or mid-write: the next poll reads the finished file.
+                  return undefined;
+                }
+              },
+              120_000,
+            );
+            await review.arm(context);
+          },
+        },
+        {
+          step: 'review-fix',
+          restarts: ['node-away'],
+          nodeAwayMs: REVIEW_NODE_AWAY_MS,
+          // Armed by the fix phase above, while the gateway was down.
+          armAt: 'create',
+          arm: async () => {},
+          held: ({ run }) =>
+            review.hit() &&
+            stepStatus(run, 'review') === 'running' &&
+            contexts(run, 'review').some(
+              (context) =>
+                (context.reviewLoopNumber ?? 0) >= 2 && context.nativeSession?.acceptedAt,
+            ),
+          missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'review') ?? ''),
+          release: review.release,
+        },
+      ];
     },
   },
   'human-gate-prep': {
@@ -435,7 +491,7 @@ async function runScenario(
   const dir = path.join(evidence, label);
   await mkdir(dir, { recursive: true });
   const started = Date.now();
-  const hold: HoldContext = { slotId, dir };
+  const hold: HoldContext = { slotId, slotRepo: stack.slotRepo(slotId), dir };
   // Workers start once MONITOR watches them (restart-invariant-fixtures.mts); one run at a time.
   const monitoring = path.join(stack.holds, 'monitoring');
   await rm(monitoring, { force: true });
@@ -486,12 +542,20 @@ async function runScenario(
       }
       if (armed.has(phase) && phase.held(view)) {
         await log(`${label}: ${phase.step} held`, { run: brief(run) });
-        await writeJson(path.join(dir, `run-held-${phase.step}.json`), run);
+        hold.held = run;
+        await writeJson(path.join(dir, `run-held-${current + 1}-${phase.step}.json`), run);
         for (const [index, variant] of phase.restarts.entries()) {
           const last = index === phase.restarts.length - 1;
           const restart = await stack.restartGateway({
             ...(variant === 'node-away' ? { nodeAwayMs: phase.nodeAwayMs } : {}),
-            ...(last && phase.releaseWhileDown ? { whileDown: () => phase.release(hold) } : {}),
+            ...(last && phase.releaseWhileDown
+              ? {
+                  whileDown: async () => {
+                    await phase.release(hold);
+                    await phase.whileDown?.(hold);
+                  },
+                }
+              : {}),
           });
           const after = await getRun();
           restarts.push({
@@ -583,8 +647,28 @@ async function runScenario(
 /** Leaves nothing active: a later restart would otherwise recover this run too. */
 async function retire(stack: RemoteNodeStack, runId: string) {
   const { run } = await stack.call<{ run: Run }>('run.get', { runId });
-  if (!TERMINAL.has(run.status))
-    await stack.call('run.cancel', { runId, reason: 'restart-invariant: outcome recorded' });
+  if (TERMINAL.has(run.status)) return;
+  const reason = 'restart-invariant: outcome recorded';
+  try {
+    await stack.call('run.cancel', { runId, reason });
+  } catch (error) {
+    // A run held for a result decision refuses cancel: close it through that decision.
+    const close = run.decisions
+      .filter((decision) => !decision.resolvedAt)
+      .flatMap((decision) =>
+        (decision.actions ?? [])
+          .filter((action) => /close/.test(action.id))
+          .map((action) => ({ decisionId: decision.id, actionId: action.id })),
+      )[0];
+    const closed =
+      close &&
+      (await stack.call('run.resolveDecision', { runId, ...close, reason }).then(
+        () => true,
+        () => false,
+      ));
+    // Its outcome is already recorded; later restarts recover it too, which only adds log noise.
+    if (!closed) await log('could not retire the run', { runId, error: String(error) });
+  }
 }
 
 // ---------------------------------------------------------------- the matrix
@@ -705,7 +789,7 @@ try {
           reviewSteps,
           'review',
           'review',
-          reviewSteps.map((name) => STEPS[name].phase(stack!, restarts)),
+          reviewSteps.flatMap((name) => STEPS[name].phase(stack!, restarts)),
           restarts,
         );
         reviewerRuns += 1;
@@ -716,7 +800,7 @@ try {
           [step],
           `${step}-${variant}`,
           'pipe',
-          [STEPS[step].phase(stack, [variant])],
+          [STEPS[step].phase(stack, [variant])].flat(),
           [variant],
         );
     }

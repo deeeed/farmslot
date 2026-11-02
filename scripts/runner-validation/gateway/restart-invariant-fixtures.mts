@@ -71,12 +71,12 @@ function reviewWorker(holds: string): string {
     // The relaunch for the review-fix round: the engine writes REVIEW-FIX.md after relaunching.
     '  i=0; until [ -e "$task/REVIEW-FIX.md" ] || [ $i -ge 6000 ]; do sleep 0.1; i=$((i+1)); done',
     '  mark start',
-    // Held after the fix task is acknowledged: the fix round is live.
-    '  hold fix',
     '  git rm -q src/debug-trace.ts',
     '  git commit -qm "fix: remove the leftover debug helper"',
     '  steps=$(grep -c "^- \\[ \\]" "$task/REVIEW-FIX.md" || true)',
     '  k=1; while [ "$k" -lt "${steps:-1}" ]; do mark "$k"; k=$((k+1)); done',
+    // Held with the fix round live (its signal reads running) until the test lets it finish.
+    '  hold fix',
     '  mark complete --mark-last',
     '  exit 0',
     'fi',
