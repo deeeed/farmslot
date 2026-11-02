@@ -1,0 +1,1 @@
+- Template previews and options on Dispatch accept an execution template id of the form `<flow>/<name>` (for example `pr-complete/default`). Before, the client cache refused every preview with "Invalid configuration selector: executionTemplateId". The id still refuses `\`, empty segments, and `.` or `..` segments, and other configuration selectors stay single segments (F319).
