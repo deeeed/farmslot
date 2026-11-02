@@ -71,6 +71,8 @@ export interface RemoteNodeStackOptions {
   projects: (holds: string) => ProjectPack[];
   /** Files of the seed repository the slots clone. */
   seed: Record<string, string>;
+  /** Untracked files written into a slot's checkout (git-excluded), given its id and the fixture. */
+  slotFiles?: (slotId: string, fixture: string) => Record<string, string>;
   /** Node CLI snapshots by commit, reused across runs. */
   cliSnapshots: string;
   /** Written to `<fixture>/.owner`, so an outside sweep can match a stack it owns. */
@@ -367,11 +369,8 @@ export async function startRemoteNodeStack(
       path.join(fixture, '.owner'),
       `restart-invariant ${options.ownerTag} ${process.pid}\n`,
     );
-    for (const name of ['services', 'packages', 'node_modules'])
+    for (const name of ['scripts', 'services', 'packages', 'node_modules'])
       await symlink(path.join(root, name), path.join(fixture, name));
-    // A pack that declares node_support ships the root scripts in its bundle, which refuses links
-    // out of FARMSLOT_ROOT: check them out for real (same commit as the checkout).
-    git(fixture, 'checkout', '-q', 'HEAD', '--', 'scripts');
     // Node support bundles must resolve inside FARMSLOT_ROOT: give those paths real copies.
     for (const relative of RUNNER_OBSERVABILITY_SUPPORT_PATHS)
       await materialize(root, fixture, relative);
@@ -470,7 +469,15 @@ export async function startRemoteNodeStack(
       git(fixture, 'clone', '-q', origin, slotRepo(slotId));
       git(slotRepo(slotId), 'config', 'user.name', 'Fixture Worker');
       git(slotRepo(slotId), 'config', 'user.email', 'fixture@example.invalid');
-      await appendFile(path.join(slotRepo(slotId), '.git', 'info', 'exclude'), '.task/\n.agent/\n');
+      const extra = options.slotFiles?.(slotId, fixture) ?? {};
+      for (const [file, content] of Object.entries(extra)) {
+        await mkdir(path.dirname(path.join(slotRepo(slotId), file)), { recursive: true });
+        await writeFile(path.join(slotRepo(slotId), file), content, { mode: 0o755 });
+      }
+      await appendFile(
+        path.join(slotRepo(slotId), '.git', 'info', 'exclude'),
+        ['.task/', '.agent/', ...Object.keys(extra).map((file) => `/${file}`), ''].join('\n'),
+      );
     }
 
     // ---- projects and pools
@@ -485,8 +492,6 @@ export async function startRemoteNodeStack(
         name: pack.name,
         repo_url: origin,
         default_branch: 'main',
-        // Scripted command mode reads the command from the node's support bundle.
-        node_support: { paths: [`projects/${pack.name}/project.json`] },
       });
       const pool = (host: string) => ({
         machine,

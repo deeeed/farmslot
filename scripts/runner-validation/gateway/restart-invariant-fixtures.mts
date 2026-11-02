@@ -185,6 +185,30 @@ function pack(name: string, holds: string, review: boolean): ProjectPack {
   };
 }
 
+/**
+ * The slot's own CLI. A scripted scenario launches `packages/cli/bin/farmslot.mjs` from the slot
+ * checkout; this one runs the checkout-under-test's scripted runner in command mode instead, so
+ * the worker is its project's `work` command. (Command mode itself cannot start on a remote
+ * node: it runs with FARMSLOT_ROOT at the node support bundle, which is not a Farmslot root.)
+ */
+export function slotCli(root: string) {
+  return (slotId: string, fixture: string): Record<string, string> => ({
+    'packages/cli/bin/farmslot.mjs': [
+      '#!/usr/bin/env node',
+      "import { spawnSync } from 'node:child_process';",
+      'const args = process.argv.slice(2);',
+      "const taskDir = args[args.indexOf('--task-dir') + 1];",
+      'const result = spawnSync(',
+      '  process.execPath,',
+      `  [${JSON.stringify(`${root}/packages/cli/bin/farmslot.mjs`)}, 'scripted-runner', '--task-dir', taskDir, '--mode', 'command', '--project', ${JSON.stringify(slotId.replace(/-\d+$/, ''))}, '--command-ref', 'work'],`,
+      `  { stdio: 'inherit', env: { ...process.env, FARMSLOT_ROOT: ${JSON.stringify(fixture)} } },`,
+      ');',
+      'process.exit(result.status ?? 1);',
+      '',
+    ].join('\n'),
+  });
+}
+
 export function projectPacks(holds: string): ProjectPack[] {
   return [pack(PIPE_PROJECT, holds, false), pack(REVIEW_PROJECT, holds, true)];
 }

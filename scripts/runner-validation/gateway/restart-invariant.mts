@@ -35,6 +35,7 @@ import {
   REVIEW_TICKET,
   REVIEWER,
   SEED,
+  slotCli,
 } from './restart-invariant-fixtures.mjs';
 import {
   outcomeDifferences,
@@ -123,7 +124,8 @@ const SHAPES: Record<ShapeName, Shape> = {
       runner: 'scripted',
       model: 'scripted',
       transport: 'tmux',
-      scripted: { mode: 'command', commandRef: 'work' },
+      // The slot's CLI turns the scenario launch into the project's `work` command (slotCli).
+      scripted: { mode: 'scenario', scenario: 'success' },
     }),
     decide: (decision) =>
       decision.type === 'engine_human_gate' ? offered(decision, 'close-as-shipped') : undefined,
@@ -152,7 +154,8 @@ const SHAPES: Record<ShapeName, Shape> = {
       runner: 'scripted',
       model: 'scripted',
       transport: 'tmux',
-      scripted: { mode: 'command', commandRef: 'work' },
+      // The slot's CLI turns the scenario launch into the project's `work` command (slotCli).
+      scripted: { mode: 'scenario', scenario: 'success' },
       completionPolicy: 'artifact-only',
       reviewMode: 'cold',
       reviewValidationDepth: 'static-code',
@@ -596,6 +599,7 @@ try {
     ],
     projects: projectPacks,
     seed: SEED,
+    slotFiles: slotCli(root),
     cliSnapshots,
     ownerTag: process.env.RESTART_INVARIANT_STAMP ?? String(process.pid),
     reaper,
