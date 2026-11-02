@@ -15,7 +15,6 @@ import {
   Methods,
   type RecipeRunArtifactGroup,
   reviewChainForRun,
-  type RunGetResult,
   type RunStep,
   type TaskProgressResult,
 } from '@farmslot/protocol';
@@ -109,6 +108,7 @@ import {
   runAcceptanceEvidenceHref,
   runEvidenceQuery,
 } from './run-evidence';
+import { useRunDetailRun } from './use-run-detail-run';
 
 const emptyRecipeRuns: RecipeRunArtifactGroup[] = [];
 
@@ -149,13 +149,7 @@ export default function RunDetailScreen() {
   const requestedRecipeRunId = Array.isArray(recipeRun)
     ? (recipeRun[0] ?? null)
     : (recipeRun ?? null);
-  const runQuery = useMemo(
-    () =>
-      resolvedRunId ? resourceQuery<RunGetResult>('run.get', { runId: resolvedRunId }) : undefined,
-    [resolvedRunId],
-  );
-  const runObservation = useResourceQuery(runQuery);
-  const run = runObservation.data?.run ?? null;
+  const { runQuery, runObservation, run } = useRunDetailRun(resolvedRunId);
   const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const recipeQuery = useMemo(
     () => runEvidenceQuery(resolvedRunId, run, requestedRecipeRunId),
@@ -380,7 +374,8 @@ export default function RunDetailScreen() {
     : null;
   // ADR-054: the run carries the persisted desired policy, but only
   // `runtime.posture.status` re-merges it with what the providers are observed
-  // to be doing, so the summary is never rendered from `run.resourcePosture`.
+  // to be doing, so the summary is never rendered from `run.resourcePosture`;
+  // the panel only sizes its loading card from it.
   const { posture: runPosture } = useRunResourcePosture(
     client,
     resolvedRunId || null,
@@ -662,7 +657,11 @@ export default function RunDetailScreen() {
 
         <NativeWorkerLinks run={run} />
 
-        <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
+        <RunPosturePanel
+          state={runPosture}
+          gatePark={liveGateParkView(run)}
+          reserveFor={run.resourcePosture}
+        />
         <ReviewPublication run={run} context="saved" />
         <ReviewHistoryPanel
           run={run}
