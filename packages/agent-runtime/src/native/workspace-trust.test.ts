@@ -15,7 +15,7 @@ import {
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { mock } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 import { promisify } from 'node:util';
 
 import { NativeSessionManager } from './manager.js';
@@ -101,14 +101,22 @@ async function grokInspector(directory: string) {
     executable,
     // Like Grok 1.0.70: the account's own hooks show only from a folder trusted for them (HOME), and
     // a fresh folder of project instructions reads as trusted only when folder trust is off.
-    `#!${process.execPath}\nconst a=process.argv;if(a.includes('--version'))console.log('grok 1.0.52');else{if(!a.includes('inspect')||!a.includes('--json')||!a.includes('--no-leader'))throw Error('Expected structured account inspection');const raw=process.env.FIXTURE_INSPECTION;let account;try{account=raw?JSON.parse(raw):{grokVersion:'1.0.52',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]}}}catch{process.stdout.write(raw);process.exit(0)}const home=a[a.indexOf('--cwd')+1]===process.env.HOME;const ungated=process.env.GROK_FOLDER_TRUST==='0'||account.ungated===true;process.stdout.write(JSON.stringify(home?{mcpServers:[],lspServers:[],...account,projectTrusted:true,projectInstructions:[]}:{mcpServers:[],lspServers:[],...account,hooks:[],projectTrusted:ungated,projectInstructions:ungated?[{path:'AGENTS.md'}]:[]}));}\n`,
+    `#!${process.execPath}\nconst a=process.argv;if(a.includes('--version'))console.log('grok 1.0.52');else{if(!a.includes('inspect')||!a.includes('--json')||!a.includes('--no-leader'))throw Error('Expected structured account inspection');const raw=process.env.FIXTURE_INSPECTION;let account;try{account=raw?JSON.parse(raw):{grokVersion:'1.0.52',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]}}}catch{process.stdout.write(raw);process.exit(0)}const cwd=a[a.indexOf('--cwd')+1];if(process.env.FIXTURE_CWD_LOG)require('node:fs').appendFileSync(process.env.FIXTURE_CWD_LOG,cwd+'\\n');const home=cwd===process.env.HOME;const ungated=process.env.GROK_FOLDER_TRUST==='0'||account.ungated===true;process.stdout.write(JSON.stringify(home?{mcpServers:[],lspServers:[],...account,projectTrusted:true,projectInstructions:[]}:{mcpServers:[],lspServers:[],...account,hooks:[],projectTrusted:ungated,projectInstructions:ungated?[{path:'AGENTS.md'}]:[]}));}\n`,
     { mode: 0o700 },
   );
   return executable;
 }
 
-test('Grok review account preflight admits only a hook-free account and writes no trust', async (t) => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'grok-account-trust-'));
+// A review home as Grok 1.0.70 reports it after its deployment sync dropped the hook pin.
+const hookFree = {
+  grokVersion: '1.0.70',
+  hooks: [],
+  plugins: [],
+  agents: [{ name: 'explore', source: { type: 'builtin' } }],
+};
+
+async function grokAccountFixture(t: TestContext, name: string) {
+  const directory = await mkdtemp(path.join(tmpdir(), name));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const source = await farmSource(directory, 'review');
   const executable = await grokInspector(directory);
@@ -117,16 +125,21 @@ test('Grok review account preflight admits only a hook-free account and writes n
   const file = path.join(account, 'config.toml');
   const settings = '[compat.claude]\nhooks = false\n';
   await writeFile(file, settings);
-  const trust = nativeRunnerDefinitions.grok.trustWorkspace!;
-  const base = { ...process.env, GROK_HOME: account };
-  const store = path.join(account, 'trusted_folders.toml');
-  // A review home as Grok 1.0.70 reports it after its deployment sync dropped the hook pin.
-  const hookFree = {
-    grokVersion: '1.0.70',
-    hooks: [],
-    plugins: [],
-    agents: [{ name: 'explore', source: { type: 'builtin' } }],
+  return {
+    directory,
+    source,
+    executable,
+    file,
+    settings,
+    trust: nativeRunnerDefinitions.grok.trustWorkspace!,
+    base: { ...process.env, GROK_HOME: account },
+    store: path.join(account, 'trusted_folders.toml'),
   };
+}
+
+test('Grok review account preflight refuses account hooks, servers, plugins, agents and unknown state', async (t) => {
+  const { directory, source, executable, file, settings, trust, base, store } =
+    await grokAccountFixture(t, 'grok-account-refusal-');
   for (const inspection of [
     { grokVersion: '1.0.52', hooks: [{ event: 'session_start', target: 'node pr-script.cjs' }] },
     { grokVersion: '1.0.52', hooks: [{ hookType: 'unknown' }] },
@@ -167,6 +180,13 @@ test('Grok review account preflight admits only a hook-free account and writes n
   assert.throws(
     () => trust(source, base, 'owner', { executable: path.join(directory, 'missing') }),
     /could not be verified/,
+  );
+});
+
+test('Grok review account preflight admits a hook-free or pinned account and writes no trust', async (t) => {
+  const { source, executable, file, settings, trust, base, store } = await grokAccountFixture(
+    t,
+    'grok-account-admission-',
   );
   trust(source, base, 'owner', { executable });
   trust(source, { ...base, FIXTURE_INSPECTION: JSON.stringify(hookFree) }, 'owner', { executable });
@@ -244,10 +264,17 @@ test('Grok review account preflight refuses a checkout the account trusts or lea
     () => trust(source, { ...base, FIXTURE_INSPECTION: managed }, 'owner', { executable }),
     ungated,
   );
-  // The probe folder is removed after each inspection.
+  // Grok inspects a probe folder created under the launch's temporary directory, then it is removed.
   const probes = path.join(directory, 'probes');
+  const cwdLog = path.join(directory, 'inspected-folders');
   await mkdir(probes);
-  trust(source, base, 'owner', { executable, inspectionCwd: probes });
+  trust(source, { ...base, FIXTURE_CWD_LOG: cwdLog }, 'owner', {
+    executable,
+    inspectionCwd: probes,
+  });
+  const inspected = (await readFile(cwdLog, 'utf8')).trim().split('\n');
+  assert.equal(inspected[0], process.env.HOME);
+  assert.ok(inspected[1]?.startsWith(path.join(probes, 'grok-trust-probe-')), inspected[1]);
   assert.deepEqual(await readdir(probes), []);
   await rm(store);
   await mkdir(store);

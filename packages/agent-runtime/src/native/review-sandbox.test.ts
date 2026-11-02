@@ -19,7 +19,13 @@ test(
       output = join(root, 'reports'),
       account = join(root, 'account');
     try {
-      for (const dir of [source, output, join(account, 'hooks'), join(account, 'sessions')])
+      for (const dir of [
+        source,
+        output,
+        join(account, 'hooks'),
+        join(account, 'bundled', 'agents'),
+        join(account, 'sessions'),
+      ])
         await mkdir(dir, { recursive: true });
       await writeFile(join(account, 'config.toml'), 'original');
       const policy = { readOnlyRoots: [source], writableRoots: [output] };
@@ -38,6 +44,10 @@ test(
           config: join(account, 'config.toml'),
           hook: join(account, 'hooks', 'planted.json'),
           agent: join(account, 'agents'),
+          // A bundled agent loads as built-in; managed or required settings can select it.
+          bundledAgent: join(account, 'bundled', 'agents', 'planted.md'),
+          managed: join(account, 'managed_config.toml'),
+          requirements: join(account, 'requirements.toml'),
           session: join(account, 'sessions', 'review.jsonl'),
         }),
       ]);
@@ -45,6 +55,9 @@ test(
         config: false,
         hook: false,
         agent: false,
+        bundledAgent: false,
+        managed: false,
+        requirements: false,
         session: true,
       });
       assert.equal(await readFile(join(account, 'config.toml'), 'utf8'), 'original');

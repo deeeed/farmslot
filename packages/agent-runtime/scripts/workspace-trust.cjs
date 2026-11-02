@@ -219,15 +219,20 @@ const reviewConfigurationRoots = (cwd) =>
     '.lsp.json',
     '.envrc',
   ].map((name) => path.join(fs.realpathSync(cwd), name));
-// What a Grok home loads as the account's own hooks, agents, servers and instructions. A review
-// may write its sessions and logs there, never these.
+// What a Grok home loads as the account's own hooks, agents, servers, policy and instructions.
+// `bundled/` and `bundles/` load as built-in agents, skills and workflows. A review may write its
+// sessions and logs there, never these.
 const grokProtectedHomePaths = (env) =>
   [
     'hooks',
     'hooks-paths',
     'config.toml',
     'trusted_folders.toml',
+    'managed_config.toml',
+    'requirements.toml',
     'sandbox.toml',
+    'bundled',
+    'bundles',
     'agents',
     'plugins',
     'skills',
@@ -239,6 +244,11 @@ const grokProtectedHomePaths = (env) =>
     '.claude',
     '.cursor',
   ].map((name) => path.join(grokHome(env), name));
+// A Grok review checkout stays untrusted (ADR-057 Amendment 13), and Grok's terminal then stops
+// at "Do you trust the contents of this directory?" for any checkout with project configuration.
+const terminalReviewRefusalByRunner = {
+  grok: "Grok terminal reviews are unavailable: the review checkout stays untrusted and Grok's terminal stops at its folder-trust prompt. Use the native Grok transport.",
+};
 const reviewConfigurationRootsByRunner = {
   grok: reviewConfigurationRoots,
   claude: reviewConfigurationRoots,
@@ -259,6 +269,7 @@ module.exports = {
   codexHome,
   grokHome,
   reviewConfigurationRootsByRunner,
+  terminalReviewRefusalByRunner,
   grokProtectedHomePaths,
   codexWorkspaceTrustConfig,
   trustGrokFolders,

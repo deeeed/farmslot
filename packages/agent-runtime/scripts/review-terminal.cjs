@@ -133,13 +133,10 @@ async function main() {
   const {
     workspaceTrustByRunner,
     reviewConfigurationRootsByRunner,
+    terminalReviewRefusalByRunner,
   } = require('./workspace-trust.cjs');
-  // A Grok review checkout stays untrusted (ADR-057 Amendment 13), and Grok's terminal then stops
-  // at "Do you trust the contents of this directory?" for any checkout with project configuration.
-  if (input.runner === 'grok')
-    throw new Error(
-      "Grok terminal reviews are unavailable: the review checkout stays untrusted and Grok's terminal stops at its folder-trust prompt. Use the native Grok transport.",
-    );
+  if (terminalReviewRefusalByRunner[input.runner])
+    throw new Error(terminalReviewRefusalByRunner[input.runner]);
   const guard = await sandbox(
     policy,
     runtimeRoots,

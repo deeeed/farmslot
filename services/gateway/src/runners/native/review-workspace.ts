@@ -88,6 +88,11 @@ export function runnerSupportsReadonlyReviewWorkspace(runner: string): boolean {
   return nativeRunnerDefinitions[runner]?.supportsReadOnlyWorkspace === true;
 }
 
+/** Why the runner cannot review in a terminal (tmux) workspace, or undefined when it can. */
+export function runnerTerminalReviewRefusal(runner: string): string | undefined {
+  return nativeRunnerDefinitions[runner]?.terminalReviewRefusal;
+}
+
 export function assertReviewWorkspaceRun(run: Run | null | undefined): asserts run is Run & {
   reviewWorkspace: NonNullable<Run['reviewWorkspace']>;
   nativeOwnerPrincipalId: string;

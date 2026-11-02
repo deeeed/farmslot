@@ -43,6 +43,7 @@ const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-t
   codexHome(environment: NodeJS.ProcessEnv): string;
   grokHome(environment: NodeJS.ProcessEnv): string;
   reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
+  terminalReviewRefusalByRunner: Record<string, string>;
   grokProtectedHomePaths(environment: NodeJS.ProcessEnv): string[];
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
   workspaceTrustByRunner: Record<
@@ -79,6 +80,8 @@ export interface NativeRunnerDefinition {
   /** Exclude repository configuration before the sandbox can deny its startup read. */
   reviewStartupArgs?: readonly string[];
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
+  /** Why this runner cannot take a terminal (tmux) review workspace, when it cannot. */
+  terminalReviewRefusal?: string;
   /** Paths inside the runtime roots that a review must not write: the account's own configuration. */
   reviewProtectedRuntimePaths?: (environment: NodeJS.ProcessEnv) => string[];
   /** Read-only account inspection before copying support or trusting a review checkout. */
@@ -191,6 +194,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [workspaceTrust.grokHome(env)],
     reviewProtectedRuntimePaths: workspaceTrust.grokProtectedHomePaths,
+    terminalReviewRefusal: workspaceTrust.terminalReviewRefusalByRunner.grok,
     adapter: grokNativeAdapter,
     binary: 'grok',
     supportsWorkers: true,
