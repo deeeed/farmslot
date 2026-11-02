@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   type AcceptanceCriterionRef,
   type AcceptanceDerivationSource,
+  type DispatchInheritedAcceptance,
   isRecord,
   type PRCompletionIntakeIdentity,
   registeredAcceptanceCriteria,
@@ -17,27 +18,92 @@ export interface PRCompletionIntake {
   sources: AcceptanceDerivationSource[];
 }
 
-/** Empty is an explicit registration; unavailable original obligations refuse. */
-export async function originalPRCompletionCriteria(
-  run: Run,
+/** Why a pr-complete run's original criteria can't be read; the task writer refuses with it. */
+export class PRCompletionCriteriaUnavailable extends Error {
+  /** The parent run they were to come from; unset when the run's own ticket lacks them. */
+  readonly parentRunId?: string;
+
+  constructor(message: string, parentRunId?: string) {
+    super(message);
+    this.name = 'PRCompletionCriteriaUnavailable';
+    this.parentRunId = parentRunId;
+  }
+}
+
+type PRCompletionRun = Pick<
+  Run,
+  'acceptanceRegistration' | 'parentRunId' | 'project' | 'ticketData'
+>;
+
+/**
+ * The criteria a pr-complete run is held to, with the parent run they come from when they are
+ * inherited. Empty is an explicit registration; unavailable original obligations refuse.
+ */
+async function originalPRCompletionAcceptance(
+  run: PRCompletionRun,
   getParent = getRunWithArchived,
-): Promise<AcceptanceCriterionRef[]> {
-  if (run.acceptanceRegistration) return run.acceptanceRegistration.original;
+): Promise<{ criteria: AcceptanceCriterionRef[]; fromRunId?: string }> {
+  if (run.acceptanceRegistration) return { criteria: run.acceptanceRegistration.original };
   if (run.parentRunId) {
     const parent = await getParent(run.parentRunId);
     if (!parent || parent.project !== run.project)
-      throw new Error('PR completion: original parent acceptance registration is unavailable');
-    if (parent.ticketData && Array.isArray(parent.ticketData.acceptanceCriteria))
-      return registeredAcceptanceCriteria(
-        parent.ticketData.acceptanceCriteria,
-        parent.acceptanceRegistration,
+      throw new PRCompletionCriteriaUnavailable(
+        'PR completion: original parent acceptance registration is unavailable',
+        run.parentRunId,
       );
+    if (parent.ticketData && Array.isArray(parent.ticketData.acceptanceCriteria))
+      return {
+        criteria: registeredAcceptanceCriteria(
+          parent.ticketData.acceptanceCriteria,
+          parent.acceptanceRegistration,
+        ),
+        fromRunId: parent.id,
+      };
     if (parent.ticketData)
-      throw new Error('PR completion: parent ticketData.acceptanceCriteria is unavailable');
+      throw new PRCompletionCriteriaUnavailable(
+        'PR completion: parent ticketData.acceptanceCriteria is unavailable',
+        parent.id,
+      );
   }
   if (!run.ticketData || !Array.isArray(run.ticketData.acceptanceCriteria))
-    throw new Error('PR completion: original ticket acceptance registration is unavailable');
-  return registeredAcceptanceCriteria(run.ticketData.acceptanceCriteria);
+    throw new PRCompletionCriteriaUnavailable(
+      'PR completion: original ticket acceptance registration is unavailable',
+    );
+  return { criteria: registeredAcceptanceCriteria(run.ticketData.acceptanceCriteria) };
+}
+
+/** Empty is an explicit registration; unavailable original obligations refuse. */
+export async function originalPRCompletionCriteria(
+  run: PRCompletionRun,
+  getParent = getRunWithArchived,
+): Promise<AcceptanceCriterionRef[]> {
+  return (await originalPRCompletionAcceptance(run, getParent)).criteria;
+}
+
+/**
+ * What a pr-complete run following `parentRunId` inherits, for the dispatch preview: the parent's
+ * original criteria, or why they can't be read (the task writer then refuses). Undefined when the
+ * parent has no ticket: the writer then holds the run to its own ticket's criteria.
+ */
+export async function inheritedPRCompletionAcceptance(
+  parentRunId: string,
+  project: string,
+  getParent = getRunWithArchived,
+): Promise<DispatchInheritedAcceptance | undefined> {
+  try {
+    const { criteria, fromRunId } = await originalPRCompletionAcceptance(
+      { parentRunId, project },
+      getParent,
+    );
+    return fromRunId
+      ? { fromRunId, criteria: criteria.map(({ id, text }) => ({ id, text })) }
+      : undefined;
+  } catch (error) {
+    if (!(error instanceof PRCompletionCriteriaUnavailable)) throw error;
+    return error.parentRunId
+      ? { fromRunId: error.parentRunId, criteria: [], unavailable: error.message }
+      : undefined;
+  }
 }
 
 function text(value: unknown, field: string): string {
