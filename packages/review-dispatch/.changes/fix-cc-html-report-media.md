@@ -1,1 +1,0 @@
-- Retained report videos become links to each client's authenticated player, replacing unusable embedded controls. Unavailable videos have an explicit label.
