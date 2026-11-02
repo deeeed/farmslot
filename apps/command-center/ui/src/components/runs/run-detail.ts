@@ -77,7 +77,7 @@ import {
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
-import { readFailureText, ResourceQueryController } from '../shared/resource-query-controller.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   refreshRunMirror,
   runMirrorRefreshUnavailableReason,
@@ -245,7 +245,8 @@ export class RunDetail extends RunDetailState {
       this.syncRun(getState());
     }
     if (changed.has('_recipeObservation')) this._acceptRecipeObservation(this._recipeObservation);
-    if (changed.has('_progressObservation')) this._acceptProgressObservation();
+    if (changed.has('_progressObservation') || (changed.has('_now') && this._taskProgressLoading))
+      this._acceptProgressObservation();
     if (changed.has('_selectedProgressObservation')) this._acceptSelectedProgressObservation();
     this._acceptanceRowRunId = acceptanceRowHeldRunId(
       this.run,
@@ -868,14 +869,12 @@ export class RunDetail extends RunDetailState {
     const result = this.recipeQuery.belongsToWorkspace ? state.data : undefined;
     if (!run || !result) {
       this._recipeRuns = [];
-      // A superseded read has its reread queued, so it is not a read error yet.
-      const failure = run ? readFailureText(this.recipeQuery) : undefined;
       this._recordedEvidence =
-        run && failure
+        run && state.error
           ? {
               artifactPrefix: 'artifacts/',
               contractVersion: run.recordedEvidenceContractVersion ?? 0,
-              errors: [failure],
+              errors: [state.error.message],
             }
           : undefined;
       this._evidenceGroupId = null;
@@ -1148,7 +1147,7 @@ export class RunDetail extends RunDetailState {
     if (this.mockData) return;
     const query = this.progressQuery.belongsToWorkspace ? this.progressQuery : undefined;
     const data = query?.state.data;
-    const ledger = acceptanceLedgerRead(query);
+    const ledger = acceptanceLedgerRead(query, this._now);
     this.taskProgress = data?.structured ?? null;
     this.acceptanceStatus = data?.acceptanceStatus ?? null;
     this.acceptanceCriteria = data?.acceptanceCriteria ?? null;

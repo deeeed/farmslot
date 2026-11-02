@@ -23,7 +23,7 @@ import {
   shouldAcceptTaskProgressUpdate as shouldAcceptTaskProgressForActiveChecklist,
 } from '@farmslot/protocol';
 
-import { isSupersededRead, readFailureText } from '../../utils/resource-read-status.js';
+import { readFailureText } from '../../utils/resource-read-status.js';
 import { artifactLightboxItem } from '../shared/artifact-lightbox-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
@@ -218,12 +218,11 @@ export function acceptanceLedgerRead(
   now = Date.now(),
 ): { error: string | null; pending: boolean } {
   if (!query) return { error: null, pending: true };
-  const { data, error, status } = query.state;
+  const { data } = query.state;
   const failure = readFailureText(query, now);
   return {
     error: failure ?? data?.acceptanceStatusError ?? null,
-    pending:
-      !data && !failure && (status === 'loading' || status === 'stale' || isSupersededRead(error)),
+    pending: !data && !failure,
   };
 }
 
