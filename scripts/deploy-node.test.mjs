@@ -526,6 +526,7 @@ fs.appendFileSync(path.join(home, 'cli-calls.jsonl'), JSON.stringify({
   script: fs.realpathSync(process.argv[1]),
   gwUrl: process.env.GW_URL ?? null,
   farmslotHome: process.env.FARMSLOT_HOME ?? null,
+  reconnectMs: process.env.FARMSLOT_GATEWAY_RECONNECT_MS ?? null,
   credentials: ['FARMSLOT_NODE_TOKEN', 'FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD'].filter((name) => process.env[name]),
 }) + '\\n');
 if (fs.existsSync(path.join(home, 'cli-hangs'))) {
@@ -780,8 +781,9 @@ for (const instance of ['prod', 'dev']) {
       credentials: [],
     };
     assert.deepEqual(fixture.calls(), [
-      { argv: ['--version'], ...expected },
-      { argv: ['rpc', 'gateway.status'], ...expected },
+      { argv: ['--version'], ...expected, reconnectMs: null },
+      // A stopped gateway is classified by the check itself, so it does not wait out a reload.
+      { argv: ['rpc', 'gateway.status'], ...expected, reconnectMs: '0' },
     ]);
   });
 }

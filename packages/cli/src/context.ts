@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 
-import { GatewayClient } from './gateway-client.js';
+import { cliReconnectWindowMs, GatewayClient } from './gateway-client.js';
 import { type GatewayTarget, resolveGatewayTarget } from './gateway-profiles.js';
 import { OutputContext } from './output.js';
 
@@ -42,6 +42,8 @@ export function resolveContext(cmd: Command, options: ResolveContextOptions = {}
       url: target.url,
       timeout: options.timeout ?? Number(opts.timeout),
       credential: target.credential,
+      // A farm command, as a worker runs it, waits out a gateway reload.
+      reconnectWindowMs: cliReconnectWindowMs(),
     }),
     output,
     target,
