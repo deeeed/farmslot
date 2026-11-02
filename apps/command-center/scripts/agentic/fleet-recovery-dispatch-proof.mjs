@@ -119,11 +119,30 @@ try {
     `
     const deep=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?deep(selector,e.shadowRoot):[])];
     const dismiss=deep('button').find(e=>e.textContent.trim()==='Got it'); if(dismiss) dismiss.click();
-    const card=deep('slot-card').find(e=>e.slotData?.slot==='proof-slot');
-    if(!card) throw Error('Proof slot is absent from the real fleet');
-    const button=card.shadowRoot.querySelector('.recovery-action');
-    if(button.disabled) throw Error('Proof recovery action is disabled'); button.click(); return true;
+    return true;
   `,
+  );
+  // The fleet table's one bulk action, scoped to the selected proof row.
+  browser('click', route, 'input[aria-label="Select proof-slot"]');
+  browser('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
+  await poll(
+    async () =>
+      JSON.parse(
+        browser(
+          'eval',
+          route,
+          `const root=document.querySelector('fleet-canvas')?.shadowRoot.querySelector('fleet-refresh-modal')?.shadowRoot;
+      const button=root?.querySelector('article[data-slot="proof-slot"] button');
+      return Boolean(button && !button.disabled && root.querySelectorAll('article[data-slot]').length===1 && !root.querySelector('[role=status]')?.textContent?.includes('Checking current'));`,
+        ),
+      ),
+    Boolean,
+    'inspected proof row in the release review',
+  );
+  browser(
+    'click',
+    route,
+    'fleet-canvas >>> fleet-refresh-modal >>> article[data-slot="proof-slot"] button',
   );
   await poll(
     async () =>
@@ -203,13 +222,13 @@ try {
           route,
           `
     const deep=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?deep(selector,e.shadowRoot):[])];
-    const card=deep('slot-card').find(e=>e.slotData?.slot==='proof-slot');
-    return {owner:card?.slotData?.currentRunId,text:card?.shadowRoot.querySelector('.card-content')?.textContent ?? ''};
+    const row=deep('input[aria-label="Select proof-slot"]')[0]?.closest('tr');
+    return {text:row?.textContent ?? ''};
   `,
         ),
       ),
-    (value) => value.owner === afterId && value.text.includes('Run ' + afterId.slice(0, 8)),
-    'actual owner on the fleet card',
+    (value) => value.text.includes('busy') && value.text.includes('PROOF-2'),
+    'actual owner on the fleet table row',
   );
   browser(
     'eval',

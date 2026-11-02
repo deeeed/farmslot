@@ -40,8 +40,6 @@ async function fleetRefreshRequest<T>(
 export class FleetRefreshModal extends LitElement {
   @property({ type: Boolean }) open = false;
   @property({ attribute: false }) slotIds: string[] = [];
-  @property({ attribute: false }) singleSlotId = '';
-  @property({ type: Boolean }) inspectOnly = false;
   @state() private model: FleetRefreshViewModel | null = null;
   private unsubscribe?: () => void;
   static override styles = css`
@@ -162,12 +160,7 @@ export class FleetRefreshModal extends LitElement {
     );
     this.model = model;
     this.unsubscribe = model.subscribe(() => this.requestUpdate());
-    await model.load(
-      this.singleSlotId ? [this.singleSlotId] : [...this.slotIds],
-      getState().fleet?.slots,
-    );
-    if (this.model === model && this.singleSlotId && !this.inspectOnly)
-      await model.release(this.singleSlotId);
+    await model.load([...this.slotIds], getState().fleet?.slots);
   }
   private close(): void {
     this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
@@ -229,14 +222,12 @@ export class FleetRefreshModal extends LitElement {
             </article>`,
         )}
         <footer>
-          ${!this.singleSlotId
-            ? html`<button
-                ?disabled=${!model.canRelease || running || !model.bulkCount}
-                @click=${() => void model.releaseIdle()}
-              >
-                Release idle slots (${model.bulkCount})
-              </button>`
-            : nothing}
+          <button
+            ?disabled=${!model.canRelease || running || !model.bulkCount}
+            @click=${() => void model.releaseIdle()}
+          >
+            Release idle slots (${model.bulkCount})
+          </button>
           ${model.canCancel
             ? html`<button @click=${() => void model.cancel()}>Cancel remaining</button>`
             : running

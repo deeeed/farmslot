@@ -1,9 +1,9 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import type { SlotStatus } from '@farmslot/protocol';
+import type { SlotStatus, SlotWorkspace } from '@farmslot/protocol';
 
-import { slotBranchDisplay } from './slot-branch-display.js';
+import { slotBehindDefaultLabel, slotBranchDisplay } from './slot-branch-display.js';
 
 function slot(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
   const { slot: slotId, ...rest } = overrides;
@@ -41,6 +41,42 @@ test('slotBranchDisplay treats configured tracking branches as baseline', () => 
   );
   assert.equal(display.label, 'wt/ff-2');
   assert.equal(display.tone, 'tracking');
+});
+
+function workspace(overrides: Partial<SlotWorkspace>): SlotWorkspace {
+  return {
+    epoch: 1,
+    currentRunId: null,
+    cleanupRunId: null,
+    handoffRunId: null,
+    branch: 'feat/demo',
+    headSha: 'abc',
+    dirtyFingerprint: '',
+    recoveryId: null,
+    observedAt: '2026-11-02T00:00:00.000Z',
+    defaultBranch: 'develop',
+    localDefaultSha: 'abc',
+    defaultFetchedAt: null,
+    remoteDefaultSha: null,
+    remoteObservedAt: null,
+    behind: 3,
+    remoteAdvanced: false,
+    publication: 'pushed',
+    dirtyCount: 0,
+    unpublishedCount: 0,
+    ...overrides,
+  };
+}
+
+test('slotBehindDefaultLabel shows only a known, non-zero distance', () => {
+  assert.equal(slotBehindDefaultLabel({}), '');
+  assert.equal(slotBehindDefaultLabel({ workspace: workspace({ behind: null }) }), '');
+  assert.equal(slotBehindDefaultLabel({ workspace: workspace({ behind: 0 }) }), '');
+  assert.equal(slotBehindDefaultLabel({ workspace: workspace({}) }), '3 behind develop');
+  assert.equal(
+    slotBehindDefaultLabel({ workspace: workspace({ behind: 0, remoteAdvanced: true }) }),
+    '0 behind develop · remote advanced',
+  );
 });
 
 test('slotBranchDisplay marks feature branches stale', () => {

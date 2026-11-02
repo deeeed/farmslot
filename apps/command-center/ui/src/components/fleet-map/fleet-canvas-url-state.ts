@@ -56,7 +56,7 @@ export function fleetCanvasUrlStateFromHash(
       ? view
       : isFleetCanvasViewMode(fallbackView)
         ? fallbackView
-        : 'card',
+        : 'list',
     fleetRefreshOpen: isTruthyUrlFlag(params.get(REFRESH_PARAM)),
   };
 }

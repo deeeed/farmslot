@@ -26,3 +26,10 @@ export function slotBranchDisplay(
   if (branch === defaultBranch) return { label: defaultBranch, tone: 'baseline' };
   return { label: branch, tone: 'tracking' };
 }
+
+/** "3 behind main" from the slot's saved workspace observation; empty when the count is not known. */
+export function slotBehindDefaultLabel(slot: Pick<SlotStatus, 'workspace'>): string {
+  const work = slot.workspace;
+  if (work?.behind == null || (work.behind === 0 && !work.remoteAdvanced)) return '';
+  return `${work.behind} behind ${work.defaultBranch ?? DEFAULT_BRANCH}${work.remoteAdvanced ? ' · remote advanced' : ''}`;
+}

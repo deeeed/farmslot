@@ -50,6 +50,8 @@ export class MachineGroup extends LitElement {
   @property({ attribute: false }) machineHealthMap: Map<string, MachineHealth> = new Map();
   @property() gatewayProtocolVersion = '';
   @property() viewMode: 'card' | 'list' = 'card';
+  /** Table rows chosen for the fleet's bulk release. */
+  @property({ attribute: false }) selectedSlotIds: ReadonlySet<string> = new Set();
   /** Per-machine provider subscription seats (bind + CodexBar mirror). */
   @property({ attribute: false }) providerAccounts?: MachineProviderAccountsSnapshot;
   /** Last snapshot-fetch failure from the canvas; shown in the Setup modal's empty state. */
@@ -224,6 +226,16 @@ export class MachineGroup extends LitElement {
       border-bottom: 1px solid ${unsafeCSS(colors.bgCard)}22;
       vertical-align: middle;
       white-space: nowrap;
+    }
+    /* Always rendered in the table, so choosing rows never moves a column. */
+    .slot-table .select-cell {
+      width: 16px;
+      padding-right: 0;
+    }
+    .select-cell input {
+      margin: 0;
+      vertical-align: middle;
+      cursor: pointer;
     }
     .slot-row .lc-dot {
       display: inline-block;
@@ -939,11 +951,36 @@ ${deployHint}"
     `;
   }
 
+  private emitSelection(slotIds: string[], selected: boolean) {
+    this.dispatchEvent(
+      new CustomEvent('fleet-selection-change', {
+        detail: { slotIds, selected },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   private renderListView() {
+    const chosen = this.slots.filter((s) => this.selectedSlotIds.has(s.slot)).length;
+    const all = chosen > 0 && chosen === this.slots.length;
     return html`
       <table class="slot-table">
         <thead>
           <tr>
+            <th class="select-cell">
+              <input
+                type="checkbox"
+                aria-label="Select all slots on ${this.machine}"
+                .checked=${all}
+                .indeterminate=${chosen > 0 && !all}
+                @change=${(e: Event) =>
+                  this.emitSelection(
+                    this.slots.map((s) => s.slot),
+                    (e.target as HTMLInputElement).checked,
+                  )}
+              />
+            </th>
             <th>Slot</th>
             <th>State</th>
             <th>Flow</th>
@@ -996,6 +1033,15 @@ ${deployHint}"
           }
         }}
       >
+        <td class="select-cell" @click=${(e: Event) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            aria-label="Select ${s.slot}"
+            .checked=${this.selectedSlotIds.has(s.slot)}
+            @change=${(e: Event) =>
+              this.emitSelection([s.slot], (e.target as HTMLInputElement).checked)}
+          />
+        </td>
         <td>
           <span class="lc-dot" style="background:${lc}"></span
           ><span class="slot-name">${s.slot.replace(`${this.machine}-`, '')}</span>

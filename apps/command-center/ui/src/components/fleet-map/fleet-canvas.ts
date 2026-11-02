@@ -38,7 +38,6 @@ import type {
 import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
 import type { ResourceQueryError, ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
-import { fleetRecoverySummary } from '@farmslot/review-dispatch';
 
 import './machine-group.js';
 import './machine-pause-dialog.js';
@@ -71,6 +70,7 @@ import {
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
+import { fleetReleaseScope, setFleetSelection } from './fleet-release-scope.js';
 import { fleetSeatsQuery } from './fleet-seats-query.js';
 import { renderFleetSkeleton } from './fleet-skeleton.js';
 import type { MachinePauseBusyAction } from './machine-pause-dialog.js';
@@ -112,8 +112,8 @@ export class FleetCanvas extends LitElement {
   @state() private filterProjects: string[] = [];
   @state() private filterMachines: string[] = [];
   @state() private search = '';
-  @state() private recoverySlotId = '';
-  @state() private recoveryInspectOnly = false;
+  /** Table rows chosen for the bulk release. */
+  @state() private selectedSlotIds: ReadonlySet<string> = new Set();
   @state() private onlineMachines: Set<string> = new Set();
   @state() private nodeInfo: Map<string, NodeInfo> = new Map();
   @state() private gatewayProtocolVersion = '';
@@ -133,7 +133,7 @@ export class FleetCanvas extends LitElement {
   @state() private slotThumbnails: Map<string, { data: string; ts: number }> = new Map();
   @state() private slotDecisions: Map<string, number> = new Map();
   @state() private slotPendingWork: Map<string, SlotPendingWork> = new Map();
-  @state() private viewMode: FleetCanvasViewMode = 'card';
+  @state() private viewMode: FleetCanvasViewMode = 'list';
   @state() private actionsModalSlotId = '';
   @state() private fleetRefreshOpen = false;
   @state() private resourceActionBusy = false;
@@ -1328,10 +1328,14 @@ export class FleetCanvas extends LitElement {
     return html`
       <div
         style="display: contents"
-        @fleet-slot-recovery=${(event: CustomEvent<{ slotId: string; inspectOnly: boolean }>) => {
-          this.recoverySlotId = event.detail.slotId;
-          this.recoveryInspectOnly = event.detail.inspectOnly;
-          this.fleetRefreshOpen = true;
+        @fleet-selection-change=${(
+          event: CustomEvent<{ slotIds: string[]; selected: boolean }>,
+        ) => {
+          this.selectedSlotIds = setFleetSelection(
+            this.selectedSlotIds,
+            event.detail.slotIds,
+            event.detail.selected,
+          );
         }}
       >
         <div class="toolbar">
@@ -1431,9 +1435,7 @@ export class FleetCanvas extends LitElement {
           }}
         ></slot-actions-modal>
         <fleet-refresh-modal
-          .slotIds=${this.filteredSlots.map((slot) => slot.slot)}
-          .singleSlotId=${this.recoverySlotId}
-          .inspectOnly=${this.recoveryInspectOnly}
+          .slotIds=${this.releaseScope.slotIds}
           ?open=${this.fleetRefreshOpen}
           @close=${() => {
             this.fleetRefreshOpen = false;
@@ -1444,24 +1446,25 @@ export class FleetCanvas extends LitElement {
     `;
   }
 
+  /** Selection only counts while the table that shows it is on screen. */
+  private get releaseScope() {
+    const tableShown = this.viewMode === 'list' && this.groupBy !== 'resource';
+    return fleetReleaseScope(this.filteredSlots, tableShown ? this.selectedSlotIds : new Set());
+  }
+
   private renderFleetRefreshTrigger() {
-    const { count: eligible, canInspect } = fleetRecoverySummary(this.filteredSlots);
-    const label = eligible === 0 ? 'Release idle slots' : `Release idle slots (${eligible})`;
+    const scope = this.releaseScope;
     return html`
       <button
-        class="toggle-btn fleet-refresh-trigger ${eligible > 0 ? 'has-eligible' : ''}"
-        ?disabled=${!canInspect || this.fleetRefreshOpen}
-        title=${eligible === 0
-          ? 'No eligible slots — every slot is busy, held, or disabled'
-          : 'Bulk refresh idle slots'}
+        class="toggle-btn fleet-refresh-trigger ${scope.eligible ? 'has-eligible' : ''}"
+        ?disabled=${scope.disabled || this.fleetRefreshOpen}
+        title=${scope.title}
         @click=${() => {
-          this.recoverySlotId = '';
-          this.recoveryInspectOnly = false;
           this.fleetRefreshOpen = true;
           this._writeUrlParams();
         }}
       >
-        ${label}
+        ${scope.label}
       </button>
     `;
   }
@@ -1494,6 +1497,7 @@ export class FleetCanvas extends LitElement {
           .nodeInfoMap=${this.nodeInfo}
           .gatewayProtocolVersion=${this.gatewayProtocolVersion}
           .viewMode=${this.viewMode}
+          .selectedSlotIds=${this.selectedSlotIds}
           .providerAccounts=${this.providerAccountsQuery.state.data?.machines.find(
             (snapshot) => snapshot.machine === g.key,
           )}

@@ -30,6 +30,12 @@ test('fleet canvas URL state falls back for invalid group and view values', () =
   );
 });
 
+test('fleet canvas opens on the table unless the URL or a remembered choice says cards', () => {
+  assert.equal(fleetCanvasUrlStateFromHash('#fleet').viewMode, 'list');
+  assert.equal(fleetCanvasUrlStateFromHash('#fleet?view=card').viewMode, 'card');
+  assert.equal(fleetCanvasUrlStateFromHash('#fleet', { viewMode: 'card' }).viewMode, 'card');
+});
+
 test('fleet canvas hash updates preserve unrelated params', () => {
   assert.equal(
     fleetCanvasUrlStateHash(
