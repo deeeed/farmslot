@@ -2379,6 +2379,7 @@ async function recoverReviewFixPass({
           delivery = reconciled;
           // The operator's Replay found no proof again: only a new send can move this round.
           if (
+            delivery.status === 'blocked' &&
             delivery.reason === REVIEW_FIX_DELIVERY_UNCONFIRMED &&
             operatorReplayedSinceSend(runId, fixContext.id)
           )
