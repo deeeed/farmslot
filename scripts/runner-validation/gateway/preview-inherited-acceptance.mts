@@ -10,37 +10,23 @@
 // reaches GitHub. The CLI runs under `script` (macOS) for the terminal rendering an operator sees.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/preview-inherited-acceptance.mts [evidence-dir]
-import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, type ChildProcess } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
   cleanupOnExit,
-  freePort,
-  poll,
+  type IsolatedStackParts,
+  linkCheckout,
+  startIsolatedStack,
   startReaper,
-  startWorkspaceProcess,
   stopProcess,
+  writeJson as json,
 } from '../lib/isolated-stack.mjs';
-import {
-  GatewayClient,
-  GatewayConnectionError,
-  type GatewayConnection,
-} from '../../../packages/cli/src/gateway-client.js';
 import type { DispatchPreviewResult } from '../../../packages/protocol/src/index.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -57,24 +43,19 @@ const home = path.join(fixture, 'home');
 const env: NodeJS.ProcessEnv = { ...process.env };
 delete env.TMUX;
 delete env.TMUX_PANE;
-let gateway: ChildProcess | undefined;
-let connection: GatewayConnection | undefined;
+const parts: IsolatedStackParts = {};
 const cleanupErrors: unknown[] = [];
 const reaper = startReaper();
 reaper.path(fixture);
 const cleanup = cleanupOnExit(async () => {
   const attempt = (step: () => Promise<unknown>) =>
     step().catch((error: unknown) => cleanupErrors.push(error));
-  connection?.close();
-  await attempt(() => stopProcess(gateway));
+  parts.connection?.close();
+  await attempt(() => stopProcess(parts.gateway));
   await attempt(() => rm(fixture, { recursive: true, force: true }));
   reaper.done();
 });
 
-async function json(file: string, value: unknown) {
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(value, null, 2), { mode: 0o600 });
-}
 const git = (cwd: string, ...args: string[]) =>
   execFileSync(
     'git',
@@ -115,13 +96,7 @@ function parentRun(prNumber: number, criteria?: string[]) {
 let failure: unknown;
 let result: Record<string, unknown> | undefined;
 try {
-  execFileSync('git', ['clone', '--shared', '--no-checkout', root, path.join(fixture, 'root')], {
-    stdio: 'pipe',
-  });
-  const fixtureRoot = path.join(fixture, 'root');
-  for (const entry of ['scripts', 'services', 'packages', 'node_modules', 'package.json'])
-    await symlink(path.join(root, entry), path.join(fixtureRoot, entry));
-  await writeFile(path.join(fixtureRoot, 'CLAUDE.md'), '# Isolated inherited-acceptance fixture\n');
+  await linkCheckout(root, fixture, 'Isolated inherited-acceptance fixture');
   const origin = path.join(fixture, 'origin.git');
   execFileSync('git', ['init', '-q', '--bare', '--initial-branch=main', origin], { stdio: 'pipe' });
   await mkdir(repo);
@@ -139,15 +114,15 @@ try {
   for (const run of [withCriteria, withoutCriteria]) {
     await mkdir(path.dirname(run.taskFile), { recursive: true });
     await writeFile(run.taskFile, `# ${run.ticketOrPr}\n`);
-    await json(path.join(fixtureRoot, 'runs', `${run.id}.json`), run);
+    await json(path.join(fixture, 'runs', `${run.id}.json`), run);
   }
-  await json(path.join(fixtureRoot, 'projects', project, 'project.json'), {
+  await json(path.join(fixture, 'projects', project, 'project.json'), {
     name: project,
     repo_url: origin,
     default_branch: 'main',
     paths: { runtime_dir: '.agent', artifact_dir: '.task' },
   });
-  await json(path.join(fixtureRoot, 'pool', `${project}.json`), {
+  await json(path.join(fixture, 'pool', `${project}.json`), {
     machine: 'localhost',
     host: 'localhost',
     ssh_user: process.env.USER ?? 'operator',
@@ -156,7 +131,7 @@ try {
     os: process.platform,
     slots: [{ id: slotId, enabled: true, repo, session: slotId, resources: {} }],
   });
-  await json(path.join(fixtureRoot, '.farm-status.json'), {
+  await json(path.join(fixture, '.farm-status.json'), {
     checked_at: new Date().toISOString(),
     slots: [
       {
@@ -182,46 +157,17 @@ try {
     '#!/bin/sh\necho "gh is disabled in this fixture" >&2\nexit 1\n',
   );
   await chmod(path.join(shimDir, 'gh'), 0o755);
-  const port = await freePort();
-  const url = `ws://127.0.0.1:${port}`;
-  const token = testGatewayIdentity(home, url);
-  gateway = startWorkspaceProcess(
+  const { connection: gw } = await startIsolatedStack(
     {
       root,
       evidence,
-      env: {
-        ...env,
-        PATH: `${shimDir}:${process.env.PATH}`,
-        FARMSLOT_ROOT: fixtureRoot,
-        FARMSLOT_HOME: home,
-        FARMSLOT_PROJECTS_DIR: path.join(fixtureRoot, 'projects'),
-        FARMSLOT_POOL_DIR: path.join(fixtureRoot, 'pool'),
-        FARMSLOT_RUNS_DIR: path.join(fixtureRoot, 'runs'),
-        GATEWAY_HOST: '127.0.0.1',
-        GATEWAY_PORT: String(port),
-        FARMSLOT_GATEWAY_PROFILE: 'proof',
-        FARMSLOT_DISABLE_ORCHESTRATION: '1',
-      },
+      env,
+      fixture,
+      reaper,
+      gatewayEnv: { PATH: `${shimDir}:${process.env.PATH}` },
     },
-    '@farmslot/gateway',
-    'gateway.log',
+    parts,
   );
-  reaper.group(gateway.pid);
-  const client = new GatewayClient({ url, timeout: 60_000, credential: { token } });
-  connection = await poll(
-    'the isolated gateway',
-    async () => {
-      if (gateway?.exitCode !== null) throw new Error('Isolated gateway exited before readiness');
-      try {
-        return await client.connect();
-      } catch (error) {
-        if (!(error instanceof GatewayConnectionError)) throw error;
-        return undefined;
-      }
-    },
-    60_000,
-  );
-  const gw = connection;
   const preview = async (prNumber: number) =>
     (
       await gw.call<DispatchPreviewResult>('dispatch.preview', {
