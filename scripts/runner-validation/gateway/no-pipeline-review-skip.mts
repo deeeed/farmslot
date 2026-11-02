@@ -40,6 +40,8 @@ const machine = 'pipeline-review-node';
 const slotId = 'pipeline-review-slot';
 const session = path.basename(fixture);
 const repo = path.join(fixture, 'repo');
+// Created once MONITOR watches the worker; the worker's command waits for it.
+const release = path.join(fixture, 'worker-release');
 const baseEnv: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: tmuxDir };
 delete baseEnv.TMUX;
 delete baseEnv.TMUX_PANE;
@@ -89,9 +91,10 @@ try {
     '# Worker: dev\n\n- [ ] Run the configured command.\n',
   );
   // The worker's whole turn: one committed change and the two reports a dev run hands over. It
-  // first stays up long enough for the launch check to see a running worker.
+  // holds until the proof sees MONITOR watching it (the launch check needs a live worker), and gives
+  // up after 120 s if that never comes.
   const work = [
-    'sleep 15',
+    `deadline=$(( $(date +%s) + 120 )); until [ -e '${release}' ]; do [ $(date +%s) -lt $deadline ] || exit 1; sleep 0.2; done`,
     'printf "proof\\n" > pipeline-review-proof.txt',
     'git add pipeline-review-proof.txt',
     'git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm "test: pipeline review proof change"',
@@ -187,6 +190,19 @@ try {
   ).run;
   const runId = run.id;
   assert.equal(run.pipelineReview, 'none');
+  await poll(
+    'MONITOR to watch the worker',
+    async () => {
+      run = (await gw.call<{ run: Run }>('run.get', { runId })).run;
+      if (['failed', 'cancelled'].includes(run.status))
+        throw new Error(`The run ended before MONITOR (${run.status}): ${run.error ?? ''}`);
+      return run.steps.find((step) => step.name === 'monitor')?.status === 'running'
+        ? run
+        : undefined;
+    },
+    180_000,
+  );
+  await writeFile(release, '');
   // Past REVIEW: it either recorded its outcome, or a reviewer was started (the regression).
   const reviewed = await poll(
     'the run to pass REVIEW',
@@ -216,9 +232,11 @@ try {
     async () => {
       run = (await gw.call<{ run: Run }>('run.get', { runId })).run;
       const complete = run.steps.find((step) => step.name === 'complete');
-      if (['failed', 'cancelled'].includes(run.status))
-        throw new Error(`The run ended at ${run.status}: ${run.error ?? ''}`);
-      return complete && complete.status !== 'pending' ? run : undefined;
+      if (['failed', 'cancelled'].includes(run.status) || complete?.status === 'failed')
+        throw new Error(
+          `COMPLETE did not run (${run.status}): ${run.error ?? complete?.detail ?? ''}`,
+        );
+      return complete && ['running', 'done'].includes(complete.status) ? run : undefined;
     },
     120_000,
   );
