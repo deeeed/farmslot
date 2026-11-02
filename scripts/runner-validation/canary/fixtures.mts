@@ -175,6 +175,14 @@ export const reviewRunParams = (slotId: string): Record<string, unknown> => ({
   reviewSequence: [{ ...REVIEWER, mode: 'cold' }],
 });
 
+/** The same reviewed run with a Claude-runner worker: the fixture's `claude` (fakeClaude), no model. */
+export const claudeReviewRunParams = (slotId: string): Record<string, unknown> => ({
+  ...reviewRunParams(slotId),
+  runner: 'claude',
+  model: 'haiku',
+  scripted: undefined,
+});
+
 /** A pack: what every project here shares, plus its own `project.json` fields and files. */
 function buildPack(
   name: string,
@@ -506,7 +514,8 @@ ${FAKE_WORKER_FINISH}
  * from its hooks, so nothing proves delivery; holds/claude-no-finish makes that attempt stay
  * mid-turn until /exit; holds/worker keeps it mid-turn. Then it finishes its task and waits at its
  * prompt until /exit. The two prompt holds are read when the prompt arrives, so lifting them only
- * affects the next launch.
+ * affects the next launch. On a reviewed project it commits the work its reviewer flags, and a
+ * fix round reaches it as Claude's does: a resumed session with the prompt on argv.
  */
 export const fakeClaude = (holds: string): string => `#!/usr/bin/env node
 'use strict';
@@ -527,7 +536,8 @@ const args = process.argv.slice(2);
 const settingsAt = args.indexOf('--settings');
 const settings = settingsAt < 0 ? {} : JSON.parse(fs.readFileSync(args[settingsAt + 1], 'utf8'));
 const cwd = process.cwd();
-const sessionId = randomUUID();
+const resumeAt = args.indexOf('--resume');
+const sessionId = resumeAt < 0 ? randomUUID() : args[resumeAt + 1];
 const transcriptPath = path.join(os.homedir(), '.claude/projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), sessionId + '.jsonl');
 const session = { session_id: sessionId, transcript_path: transcriptPath };
 const hook = (event, extra) => {
@@ -553,15 +563,18 @@ process.stdin.on('data', (chunk) => {
 setTimeout(() => process.exit(0), 15 * 60_000);
 (async () => {
   fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
-  fs.writeFileSync(transcriptPath, JSON.stringify({ type: 'system', sessionId, cwd }) + '\\n');
+  fs.appendFileSync(transcriptPath, JSON.stringify({ type: 'system', sessionId, cwd }) + '\\n');
   process.stdout.write('starting\\n');
   await whileHeld('claude-startup');
   const lateSession = held('claude-late-session');
   if (!lateSession) hook('SessionStart', session);
   process.stdout.write('\\u276f\\n');
-  const prompt = await new Promise((resolve) => {
-    onPrompt = resolve;
-  });
+  const prompt =
+    resumeAt < 0
+      ? await new Promise((resolve) => {
+          onPrompt = resolve;
+        })
+      : args.at(-1);
   onPrompt = () => {};
   const noFinish = held('claude-no-finish');
   if (!held('claude-no-hook')) hook('UserPromptSubmit', { prompt, ...(lateSession ? {} : session) });
@@ -575,9 +588,29 @@ setTimeout(() => process.exit(0), 15 * 60_000);
   if (noFinish) await new Promise(() => {});
   while (held('claude-late-session') && Date.now() < ceiling) await sleep(100);
   if (lateSession) hook('SessionStart', session);
-  const taskFile = path.resolve(cwd, prompt.match(/\\S*TASK\\.md/)[0]);
-  const taskDir = path.dirname(taskFile);
+  const git = (...gitArgs) => execFileSync('git', gitArgs, { cwd, stdio: 'inherit' });
+  const fixFile = prompt.match(/\\S*REVIEW-FIX\\.md/)?.[0];
+  if (fixFile) {
+    const fixTask = path.resolve(cwd, fixFile);
+    const mark = (...markArgs) => execFileSync(path.join(path.dirname(fixTask), 'mark'), ['--checklist', 'REVIEW-FIX.md', '--signal', 'REVIEW-FIX-SIGNAL.json', ...markArgs], { cwd, stdio: 'inherit' });
+    const steps = (fs.readFileSync(fixTask, 'utf8').match(/^- \\[ \\]/gm) ?? []).length;
+    mark('start');
+    git('rm', '-q', 'src/debug-trace.ts');
+    git('commit', '-qm', 'fix: remove the leftover debug helper');
+    for (let step = 1; step < steps; step++) mark(String(step));
+    mark('complete', '--mark-last');
+  } else {
+    const taskFile = path.resolve(cwd, prompt.match(/\\S*TASK\\.md/)[0]);
+    const taskDir = path.dirname(taskFile);
+    if (path.basename(cwd).startsWith(${JSON.stringify(REVIEW_PROJECT)})) {
+      fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, 'src/format-name.ts'), ${JSON.stringify(`${FORMAT_NAME}\n`)});
+      fs.writeFileSync(path.join(cwd, 'src/debug-trace.ts'), ${JSON.stringify(`${LEFTOVER}\n`)});
+      git('add', 'src');
+      git('commit', '-qm', 'feat: add formatName');
+    }
 ${FAKE_WORKER_FINISH}
+  }
   hook('Stop', session);
   process.stdout.write('\\u276f\\n');
 })().catch((error) => {

@@ -153,6 +153,52 @@ test('Replay step on a DISPATCH card goes through the replay that adopts a fresh
   assert.deepEqual(cancelled, []);
 });
 
+test('Replay step on a fix round card replays REVIEW, past its output review still open', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'HOLD-FIX' });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  for (const name of ['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor'])
+    updateRunStep(run.id, name, { status: 'done' });
+  updateRunStep(run.id, 'review', { status: 'failed', detail: 'unconfirmed' });
+  const card = workerLeftRunningDecision(getRun(run.id)!, 'review', 'unconfirmed', ['review-fix']);
+  updateRun(run.id, {
+    status: 'blocked',
+    slotId: 'held-slot',
+    agentContexts: [
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Review fix',
+        status: 'working',
+        runId: run.id,
+        slotId: 'held-slot',
+      },
+    ],
+    decisions: [
+      { ...card, resolvedAt: new Date().toISOString(), resolvedAction: REPLAY_STEP_ACTION },
+      { ...card, id: 'output-review', type: 'engine_output_review' },
+    ],
+  });
+  const replayed: string[] = [];
+  const resumed: string[] = [];
+  continueResolvedRunDecision(
+    { runId: run.id, decisionId: card.id, actionId: REPLAY_STEP_ACTION },
+    () => {},
+    {
+      resumeRun: async (runId) => {
+        resumed.push(runId);
+      },
+      replayStep: async (params, _emit) => {
+        replayed.push(`${params.stepName}:${params.triggeredBy}`);
+        return { run: getRun(run.id)! };
+      },
+    },
+    getRun(run.id)!.engineState?.generation ?? 0,
+  );
+  await until(() => replayed.length > 0);
+  assert.deepEqual(replayed, ['review:operator']);
+  assert.deepEqual(resumed, []);
+});
+
 test('a refused Replay step reopens the card instead of leaving a blocked run without one', async (t) => {
   const { run, card, replayed, resumed, events } = dispatchHeldByRecovery(
     t,

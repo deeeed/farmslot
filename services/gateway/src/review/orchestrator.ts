@@ -33,6 +33,7 @@ import {
   selectAgentContext,
   upsertAgentContext,
 } from '../agents/contexts.js';
+import { signalFromAttempt } from '../agents/runtime-recovery.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { withMachineEnv } from '../core/project-env.js';
@@ -58,7 +59,6 @@ import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   normalizeRunner,
-  PromptDeliveryUncertainError,
   readRunnerLaunchBlocker,
   runnerDefaultModel,
   runnerNeedsPostLaunchPrompt,
@@ -1746,7 +1746,6 @@ type FixPromptRecoveryContext = Pick<
   | 'attemptStartedAt'
   | 'promptDeliveryStartedAt'
   | 'promptAcceptance'
-  | 'signalAttemptId'
   | 'startedAt'
   | 'deliveryBaselineRef'
 >;
@@ -1948,8 +1947,13 @@ export async function resumeReviewFixPromptDelivery(
     accepted.deliveryStartedAt === deliveryStartedAt
   )
     return { status: 'delivered', turnToken: accepted.turnToken };
-  // After a recorded send, only the worker's own signal binds an attempt: it holds this prompt.
-  if (priorPromptSendAttempted && context.signalAttemptId) return { status: 'delivered' };
+  // A signal the worker wrote since the recorded send shows it holds this prompt. An older one is
+  // an earlier round's or worker's. On the worker's clock, a lagging one only leaves it unconfirmed.
+  if (
+    priorPromptSendAttempted &&
+    signalFromAttempt(launchAckBaseline, Date.parse(deliveryStartedAt ?? ''))
+  )
+    return { status: 'delivered' };
   if (!interactive) return { status: 'deferred' };
   // The worker's own mark-start rewrites attemptStartedAt; the delivery boundary is the sent text.
   const prompt = reviewFixPrompt(
@@ -2193,6 +2197,11 @@ async function recoverReviewFixPass({
     return updated !== null;
   };
 
+  // A recorded send on a pass still working may be executing: its worker is not undelivered.
+  const fixSendMayBeExecuting = () => {
+    const current = getRun(runId)?.agentContexts?.find((context) => context.id === fixContext.id);
+    return current?.status === 'working' && Boolean(current.promptDeliveryStartedAt);
+  };
   let recoveryFailure: unknown;
   try {
     const fixSignalPath = slotTaskRelPath(vars, taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal);
@@ -2372,13 +2381,9 @@ async function recoverReviewFixPass({
       if (delivery.status !== 'delivered' && delivery.status !== 'deferred') {
         fixSignal = matchingFixSignal(await readOptionalReviewFixSignal(vars, fixSignalPath));
         if (!fixSignal) {
-          // A recorded send the live worker never confirmed may be executing: it is not undelivered.
-          if (
-            delivery.reason === REVIEW_FIX_DELIVERY_UNCONFIRMED &&
-            getRun(runId)?.agentContexts?.find((context) => context.id === fixContext.id)
-              ?.promptDeliveryStartedAt
-          )
-            throw new PromptDeliveryUncertainError(delivery.reason);
+          // The engine holds a step error with agents maybe running on the worker-left-running card.
+          if (delivery.reason === REVIEW_FIX_DELIVERY_UNCONFIRMED && fixSendMayBeExecuting())
+            throw new ReviewFixDeliveryError(delivery.reason);
           if (
             !(await settleRecoveredFixContext('blocked', fixContext.signalAttemptId ?? undefined))
           )
@@ -2730,10 +2735,7 @@ async function recoverReviewFixPass({
     await finishReviewCleanup(recoveryFailure, [
       async () => {
         // A worker that may be executing the fix keeps its mark helper on REVIEW-FIX.md.
-        if (
-          !nativeReviewOperationIsCurrent() ||
-          recoveryFailure instanceof PromptDeliveryUncertainError
-        )
+        if (!nativeReviewOperationIsCurrent() || (recoveryFailure && fixSendMayBeExecuting()))
           return;
         await withNativeReviewMutation(() =>
           restoreWorkerChecklistTargetFromSlot(
@@ -3341,10 +3343,11 @@ export async function relaunchWorkerForFix(
   const fixContext = parentRun?.agentContexts?.find(
     (context) => context.role === 'review-fix' && context.taskFile,
   );
-  // A launch carrying the prompt hands it over; any other holds none, whatever its predecessor had.
+  // A launch carrying the prompt hands it over as a new send, so an earlier worker's signal cannot
+  // confirm it. Any other launch holds none, whatever its predecessor had.
   const launchDeliveryStartedAt = runnerNeedsPostLaunchPrompt(runner)
     ? undefined
-    : (fixContext?.promptDeliveryStartedAt ?? new Date().toISOString());
+    : new Date().toISOString();
   const prompt =
     parentRun?.project && fixContext?.taskFile && fixContext.attemptStartedAt
       ? reviewFixPrompt(
@@ -3376,17 +3379,22 @@ export async function relaunchWorkerForFix(
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
   await assertPreflightCurrent();
-  // Restart recovery reads this to tell what the worker holds, so it reaches disk first.
-  if (parentRun && fixContext?.attemptStartedAt)
-    await recordReviewFixDeliveryBoundary(
-      runId,
-      fixContext,
-      launchDeliveryStartedAt,
-      parentRun.engineState?.generation ?? 0,
-    );
+  // Restart recovery reads this to tell what the worker holds: a send reaches disk before the
+  // respawn, and the old worker's stays until the respawn has replaced it.
+  const recordLaunchBoundary = async () => {
+    if (parentRun && fixContext?.attemptStartedAt)
+      await recordReviewFixDeliveryBoundary(
+        runId,
+        fixContext,
+        launchDeliveryStartedAt,
+        parentRun.engineState?.generation ?? 0,
+      );
+  };
+  if (launchDeliveryStartedAt) await recordLaunchBoundary();
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
   });
+  if (!launchDeliveryStartedAt) await recordLaunchBoundary();
   await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
   const run = getRun(runId);
   const workerRole = resolved.role ?? primaryRoleForFlow(run?.flowType);

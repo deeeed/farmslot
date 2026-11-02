@@ -31,6 +31,7 @@ import {
   CANARY_PROJECT,
   CANARY_REPO,
   canaryPack,
+  claudeReviewRunParams,
   claudeRunParams,
   fakeClaude,
   fakePi,
@@ -92,6 +93,8 @@ export const SURVIVE_STEPS = [
   'monitor',
   'review',
   'review-fix',
+  'review-fix-claude',
+  'review-fix-claude-card',
   'human-gate-prep',
   'finalize',
   'monitor-transport-abort',
@@ -105,6 +108,8 @@ const LOSS_SETTLE_MS = 5_000;
 // The launch's session capture gives up after 20 s on a runner that has reported no session yet.
 const READINESS_WAIT_MS = 30_000;
 const WORKER_LEFT_RUNNING_CARD = 'engine_worker_left_running';
+// Recovery looks for proof of an unconfirmed fix delivery for 120 s before it gives up.
+const FIX_CARD_WITHIN_MS = 150_000;
 const TRANSPORT_ABORT = /\bterminated\b|abort|ECONNRESET|socket hang up|connection reset/i;
 
 export interface IsolatedOptions {
@@ -158,7 +163,8 @@ type ShapeName =
   | 'claude'
   | 'claude-card'
   | 'review'
-  | 'scripted-review';
+  | 'scripted-review'
+  | 'claude-review';
 
 const SHAPES: Record<ShapeName, Shape> = {
   canary: canaryShape('isolated lifecycle'),
@@ -190,6 +196,15 @@ const SHAPES: Record<ShapeName, Shape> = {
     project: REVIEW_PROJECT,
     create: reviewRunParams,
     decide: () => undefined,
+    scriptedReview: true,
+    timeoutMs: 20 * 60_000,
+  },
+  // A Claude-runner worker, the test pressing the card's Replay step when its hold is over.
+  'claude-review': {
+    project: REVIEW_PROJECT,
+    create: claudeReviewRunParams,
+    decide: (decision) =>
+      decision.type === WORKER_LEFT_RUNNING_CARD ? { resolve: 'replay-step' } : undefined,
     scriptedReview: true,
     timeoutMs: 20 * 60_000,
   },
@@ -232,6 +247,8 @@ interface HoldPhase {
     relaunches?: boolean;
     /** Recovery cannot prove delivery: the run waits on the card, its worker untouched. */
     card?: boolean;
+    /** How long recovery may look for proof before the card must be up. */
+    cardWithinMs?: number;
   };
 }
 
@@ -359,6 +376,7 @@ function restartPhase(
 }
 
 const fixContext = (run: Run) => contexts(run, 'review-fix').at(-1);
+const reviewRunning = ({ run }: View) => stepStatus(run, 'review') === 'running';
 const reviewHoldMissed = ({ run }: View) =>
   SETTLED_STEP.has(stepStatus(run, 'review') ?? '') || contexts(run, 'review-fix').length > 0;
 /** Held with the fix worker mid-turn in its round. */
@@ -480,6 +498,10 @@ export const SURVIVE_HOLDS: Record<SurviveStep, string> = {
     "the codex proxy swallows the reviewer's turn (no model call); the test answers it after the watch",
   'review-fix':
     'the relaunched worker commits its fix with the fix round live, then waits on holds/fix; the scripted reviewer returned issues in loop 1 and passes loop 2',
+  'review-fix-claude':
+    'a Claude-runner worker (no model) resumed with its fix prompt on argv records the prompt hook, then waits on holds/worker before it starts the fix; the scripted reviewer returned issues in loop 1 and passes loop 2',
+  'review-fix-claude-card':
+    'the same worker, except that its prompt hook is withheld, so nothing proves delivery: the test watches the worker through to the card, lets it fix, and presses Replay step',
   'human-gate-prep':
     "the scripted runner stays alive after its work (holds/idle); git on the run's slot waits while HUMAN_GATE prepares its package, released while the gateway is down",
   finalize:
@@ -667,6 +689,27 @@ function survivePhase(
         ...fixRoundHold(marker(stack, 'fix')),
         survive: {},
       } satisfies HoldPhase;
+    }
+    // Armed once REVIEW runs: the worker's task stage must not hold, or lose its hook.
+    case 'review-fix-claude':
+      return {
+        ...base,
+        armAt: reviewRunning,
+        ...fixRoundHold(worker),
+        survive: {},
+      };
+    case 'review-fix-claude-card': {
+      const noHook = marker(stack, 'claude-no-hook');
+      return {
+        ...base,
+        armAt: reviewRunning,
+        ...fixRoundHold(worker),
+        arm: async (context) => {
+          await noHook.arm(context);
+          await worker.arm(context);
+        },
+        survive: { card: true, cardWithinMs: FIX_CARD_WITHIN_MS, release: noHook.release },
+      };
     }
     case 'monitor-transport-abort': {
       const turnFailure = marker(stack, PI_TURN_FAILURE, () => 'terminated\n');
@@ -857,9 +900,11 @@ async function watchWorker(
   getRun: () => Promise<Run>,
   step: HoldStep,
   expectCard = false,
+  cardWithinMs = 0,
 ): Promise<string[]> {
   const stops = path.join(stack.holds, 'tmux-stops.log');
-  const deadline = Date.now() + SURVIVE_OBSERVE_MS;
+  const cardBy = Date.now() + cardWithinMs;
+  const deadline = Date.now() + Math.max(SURVIVE_OBSERVE_MS, cardWithinMs);
   let until = deadline;
   let losing = false;
   for (;;) {
@@ -895,7 +940,7 @@ async function watchWorker(
         `a new reviewer was launched: ${relaunched.map((context) => context.id).join(', ')}`,
       );
     if (expectCard) {
-      if (!(run.status === 'blocked' && openCard(run)))
+      if (!(run.status === 'blocked' && openCard(run)) && Date.now() >= cardBy)
         lost.push(`the run is not waiting on the card: ${brief(run)}`);
     } else if (failed.length || isTerminalRunStatus(run.status))
       lost.push(`the run went ${run.status}: ${failureText(run) || brief(run)}`);
@@ -956,20 +1001,43 @@ function cardObservations(scenario: ScenarioResult): string[] {
   ];
 }
 
-/** The reviews a survive hold must still have run: the outcome comparison doesn't see them. */
-function reviewRoundDifferences(scenario: ScenarioResult, baseline: ScenarioResult): string[] {
+/**
+ * The reviews a survive hold must still have run: the outcome comparison doesn't see them. A fix
+ * recovered after a restart always gets a real re-review (only a gate row keeps the snapshot the
+ * small-fix shortcut compares), so it has one reviewer more than the baseline. There a reviewer
+ * that never got a turn, a retained one whose resume was refused, counts for nothing.
+ */
+function reviewRoundDifferences(
+  scenario: ScenarioResult,
+  baseline: ScenarioResult,
+  recoveredFix: boolean,
+): string[] {
   const seen = reviewVerdicts(scenario.run);
-  const expected = reviewVerdicts(baseline.run);
+  const reviewers = recoveredFix
+    ? contexts(scenario.run, 'review').filter((context) => context.promptDeliveryStartedAt).length
+    : seen.reviewers;
+  const expected = reviewVerdicts(baseline.run).reviewers + (recoveredFix ? 1 : 0);
   return [
     ...(seen.loop2 === 'pass'
       ? []
       : [`re-review: expected pass, observed ${seen.loop2 ?? 'none'}`]),
-    ...(seen.reviewers === expected.reviewers
+    ...(reviewers === expected ? [] : [`${reviewers} reviewers ran, expected ${expected}`]),
+    ...(scenario.reviewerTurns === reviewers
       ? []
-      : [`${seen.reviewers} reviewers ran, expected ${expected.reviewers}`]),
-    ...(scenario.reviewerTurns === seen.reviewers
+      : [`${scenario.reviewerTurns ?? 0} reviewer turns for ${reviewers} reviewers`]),
+  ];
+}
+
+/** After the card the worker kept the fix it held: nothing sent it again. */
+function fixCardDifferences(scenario: ScenarioResult): string[] {
+  if (!scenario.cardRun) return ['the run never waited on the card'];
+  const atCard = fixContext(scenario.cardRun)?.promptDeliveryStartedAt;
+  const final = fixContext(scenario.run)?.promptDeliveryStartedAt;
+  return [
+    ...scenario.refused,
+    ...(atCard && atCard === final
       ? []
-      : [`${scenario.reviewerTurns ?? 0} reviewer turns for ${seen.reviewers} reviewers`]),
+      : [`the fix was sent again: ${atCard ?? '-'} -> ${final ?? '-'}`]),
   ];
 }
 
@@ -1002,7 +1070,8 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
   const { log, evidence, onCheck } = options;
   const restarts = options.restarts ?? [];
   const survive = options.survive ?? [];
-  const scriptedReviewStep = (step: SurviveStep) => step === 'review' || step === 'review-fix';
+  const scriptedReviewStep = (step: SurviveStep) =>
+    step === 'review' || step.startsWith('review-fix');
   const survivePipe = survive.filter((step) => !scriptedReviewStep(step)).length;
   const surviveReview = survive.filter(scriptedReviewStep).length;
   const slots: string[] = [];
@@ -1145,6 +1214,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
                     getRun,
                     phase.step,
                     phase.survive?.card,
+                    phase.survive?.cardWithinMs,
                   )
                 : ['nothing to watch: no runner process at the hold point']),
           ];
@@ -1382,33 +1452,39 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     const pi = step === 'monitor-transport-abort';
     const claude = step.startsWith('dispatch-claude-');
     const card = step.startsWith('dispatch-claude-card');
+    const claudeFix = step.startsWith('review-fix-claude');
+    const fixCard = step === 'review-fix-claude-card';
     let baseline: ScenarioResult;
     const result = await check(
       {
         case: 'worker-survives',
         variant: step,
-        model: scripted
-          ? `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer whose turns the test answers (no model call)`
-          : pi
-            ? 'pi worker with no model (fixture)'
-            : claude
-              ? 'claude worker with no model (fixture)'
-              : 'scripted',
+        model: claudeFix
+          ? `claude worker with no model (fixture), ${REVIEWER.runner} ${REVIEWER.model} reviewer whose turns the test answers (no model call)`
+          : scripted
+            ? `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer whose turns the test answers (no model call)`
+            : pi
+              ? 'pi worker with no model (fixture)'
+              : claude
+                ? 'claude worker with no model (fixture)'
+                : 'scripted',
         hold: SURVIVE_HOLDS[step],
       },
       async () => {
         baseline = await baselineOf(scripted ? 'scripted-review' : 'pipe');
         return runScenario(
           `survive-${step}`,
-          scripted
-            ? 'scripted-review'
-            : pi
-              ? 'pi'
-              : card
-                ? 'claude-card'
-                : claude
-                  ? 'claude'
-                  : 'pipe',
+          claudeFix
+            ? 'claude-review'
+            : scripted
+              ? 'scripted-review'
+              : pi
+                ? 'pi'
+                : card
+                  ? 'claude-card'
+                  : claude
+                    ? 'claude'
+                    : 'pipe',
           [
             survivePhase(stack, step, reviewer),
             // The relaunched attempt, interrupted too: the session it reopens must be its own.
@@ -1436,17 +1512,20 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             : []),
           ...outcomeDifferences(
             baseline.outcome,
-            card ? withoutCard(scenario.outcome) : scenario.outcome,
+            card || fixCard ? withoutCard(scenario.outcome) : scenario.outcome,
           ),
-          ...(scripted ? reviewRoundDifferences(scenario, baseline) : []),
+          ...(scripted
+            ? reviewRoundDifferences(scenario, baseline, step.startsWith('review-fix'))
+            : []),
           ...(card ? cardDifferences(scenario, step) : []),
+          ...(fixCard ? fixCardDifferences(scenario) : []),
         ];
         return {
           status: differences.length ? 'fail' : 'pass',
           differences,
           observations: [
             `watched: ${(scenario.watched ?? []).join('; ') || 'nothing'}`,
-            ...(card ? cardObservations(scenario) : []),
+            ...(card || fixCard ? cardObservations(scenario) : []),
             ...outcomeObservations(baseline.outcome, scenario.outcome),
             ...(scripted ? [`reviews: ${scenario.outcome.reviews.join(', ') || '-'}`] : []),
           ],

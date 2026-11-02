@@ -38,6 +38,7 @@ let fixSignal: Record<string, string> = finishedCurrentAttempt;
 let enteredWait = () => {};
 const reReviewLoops: number[] = [];
 let paneCommand = 'scripted-runner';
+let tmuxTimeouts: RegExp | undefined;
 const tmuxInput: string[] = [];
 let onRespawn = (_command: string) => {};
 let checklistRestores = 0;
@@ -57,14 +58,20 @@ mock.module('../core/exec.js', {
     execOnSlot: async (_vars: unknown, command: string) => {
       if (/send-keys|paste-buffer|respawn-window/u.test(command)) tmuxInput.push(command);
       if (command.includes('respawn-window')) onRespawn(command);
+      // The launch acknowledgement's read leads with the file's mtime.
       if (command.includes('REVIEW-FIX-SIGNAL.json'))
-        return { exitCode: 0, stderr: '', stdout: JSON.stringify(fixSignal) };
+        return {
+          exitCode: 0,
+          stderr: '',
+          stdout: `${command.includes('stat -') ? '1\n' : ''}${JSON.stringify(fixSignal)}`,
+        };
       if (command.includes('REVIEW-FIX.md'))
         return {
           exitCode: 0,
           stderr: '',
           stdout: '## Findings\n\n- **a.ts:1** — fix the finding\n- **b.ts:2** — fix the other\n',
         };
+      if (tmuxTimeouts?.test(command)) return { exitCode: 124, stderr: '', stdout: '' };
       if (command.includes('tmux')) return { exitCode: 0, stderr: '', stdout: `${paneCommand}\n` };
       throw new Error(`Unexpected recovery fixture command: ${command}`);
     },
@@ -150,10 +157,11 @@ const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js'
 const { recoverActiveRuns } = await import('../run-engine/recovery.js');
 // The native and capability readers can preload the facade before their mocks exist.
 const recoveryModule = './orchestrator.js?restart-fix-signal';
-const { executeReview, relaunchWorkerForFix }: typeof import('./orchestrator.js') = await import(
-  recoveryModule
-);
-const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
+const {
+  executeReview,
+  relaunchWorkerForFix,
+  ReviewFixDeliveryError,
+}: typeof import('./orchestrator.js') = await import(recoveryModule);
 
 async function flush() {
   for (let i = 0; i < 8; i++) await new Promise((resolve) => setImmediate(resolve));
@@ -168,6 +176,7 @@ async function reviewFixRunAtReload(
   fixSignal = finishedCurrentAttempt;
   reReviewLoops.length = 0;
   tmuxInput.length = 0;
+  tmuxTimeouts = undefined;
   checklistRestores = 0;
   const priorOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'restart-fixture-owner';
@@ -388,78 +397,115 @@ async function until(done: () => boolean, tickMs = 0, t?: TestContext) {
   }
 }
 
-test('restart leaves a scripted worker mid-fix waiting for its signal, then re-reviews', async (t) => {
-  const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
-  fixSignal = runningCurrentAttempt;
-  paneCommand = 'scripted-runner';
-  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-01T17:26:42Z') });
-  let waiting = false;
-  enteredWait = () => {
-    waiting = true;
-  };
-  let reviewing: ReturnType<typeof executeReview> | undefined;
-
-  await restartRecovery(run, (runId) => {
-    reviewing = executeReview(runId, vars.slotId, { validationDepth: 'static-code' });
-  });
-  assert.ok(reviewing, 'recovery re-entered the review step');
-  let returned = false;
-  void reviewing.finally(() => {
-    returned = true;
-  });
-  await until(() => waiting || returned);
-  assert.equal(returned, false, 'recovery returned instead of waiting for the fix signal');
-  assert.equal(waiting, true);
-  assert.deepEqual(tmuxInput, [], 'the worker holds its prompt: nothing is sent or relaunched');
-  assert.equal(fixContext(run.id)?.status, 'working');
-
-  // The worker finishes while recovery waits.
-  fixSignal = finishedCurrentAttempt;
-  await until(() => returned, 2000, t);
-  const result = await reviewing;
-  assert.deepEqual(reReviewLoops, [2]);
-  assert.equal(result.verdict, 'pass');
-  assert.equal(result.fixDeliveryFailure, undefined);
-  assert.equal(fixContext(run.id)?.status, 'complete');
-});
-
-test('a recorded send nothing confirms holds as uncertain, with the worker and its checklist kept', async (t) => {
-  const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
-  fixSignal = { status: 'running', timestamp: '2026-11-01T17:01:00.000Z' };
-  paneCommand = 'scripted-runner';
-  updateRun(run.id, {
-    agentContexts: getRun(run.id)!.agentContexts?.map((context) => ({
-      ...context,
-      signalAttemptId: undefined,
-    })),
-  });
-  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-01T17:26:42Z') });
-  let reviewing: ReturnType<typeof executeReview> | undefined;
-
-  await restartRecovery(run, (runId) => {
-    reviewing = executeReview(runId, vars.slotId, { validationDepth: 'static-code' });
-  });
-  assert.ok(reviewing, 'recovery re-entered the review step');
-  let settled = false;
+/** Settles a recovered review step under mocked timers, to its result or its error. */
+async function settled(t: TestContext, reviewing: ReturnType<typeof executeReview>) {
+  let done = false;
   const outcome = reviewing.then(
     (result) => {
-      settled = true;
+      done = true;
       return result;
     },
     (error: unknown) => {
-      settled = true;
+      done = true;
       return error;
     },
   );
-  await until(() => settled, 5000, t);
-  const failure = await outcome;
-  assert.ok(
-    failure instanceof PromptDeliveryUncertainError,
-    `expected the uncertain state, got ${JSON.stringify(failure)}`,
-  );
-  assert.deepEqual(tmuxInput, [], 'nothing is sent while delivery is uncertain');
-  assert.equal(fixContext(run.id)?.status, 'working');
-  assert.equal(checklistRestores, 0, 'the worker may be executing: its mark helper stays put');
+  await until(() => done, 5000, t);
+  assert.equal(done, true, 'recovery neither returned nor failed');
+  return outcome;
+}
+
+const WORKER_PANE = { scripted: 'scripted-runner', claude: 'claude' } as const;
+
+for (const runner of ['scripted', 'claude'] as const)
+  test(`restart leaves a ${runner} worker mid-fix waiting for its signal, then re-reviews`, async (t) => {
+    const run = await reviewFixRunAtReload(t, 'tmux', runner);
+    fixSignal = runningCurrentAttempt;
+    paneCommand = WORKER_PANE[runner];
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-01T17:26:42Z') });
+    let waiting = false;
+    enteredWait = () => {
+      waiting = true;
+    };
+    let reviewing: ReturnType<typeof executeReview> | undefined;
+
+    await restartRecovery(run, (runId) => {
+      reviewing = executeReview(runId, vars.slotId, { validationDepth: 'static-code' });
+    });
+    assert.ok(reviewing, 'recovery re-entered the review step');
+    let returned = false;
+    void reviewing.finally(() => {
+      returned = true;
+    });
+    await until(() => waiting || returned);
+    assert.equal(returned, false, 'recovery returned instead of waiting for the fix signal');
+    assert.equal(waiting, true);
+    assert.deepEqual(tmuxInput, [], 'the worker holds its prompt: nothing is sent or relaunched');
+    assert.equal(fixContext(run.id)?.status, 'working');
+
+    // The worker finishes while recovery waits.
+    fixSignal = finishedCurrentAttempt;
+    await until(() => returned, 2000, t);
+    const result = await reviewing;
+    assert.deepEqual(reReviewLoops, [2]);
+    assert.equal(result.verdict, 'pass');
+    assert.equal(result.fixDeliveryFailure, undefined);
+    assert.equal(fixContext(run.id)?.status, 'complete');
+  });
+
+for (const runner of ['scripted', 'claude'] as const)
+  test(`a recorded ${runner} send nothing confirms fails REVIEW for the card, with the worker and its checklist kept`, async (t) => {
+    const run = await reviewFixRunAtReload(t, 'tmux', runner);
+    // The earlier round's signal, and an id the watcher bound from it: neither is this send's.
+    fixSignal = { status: 'running', attemptId: 'earlier', timestamp: '2026-11-01T17:01:00.000Z' };
+    paneCommand = WORKER_PANE[runner];
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-01T17:26:42Z') });
+    let reviewing: ReturnType<typeof executeReview> | undefined;
+
+    await restartRecovery(run, (runId) => {
+      reviewing = executeReview(runId, vars.slotId, { validationDepth: 'static-code' });
+    });
+    assert.ok(reviewing, 'recovery re-entered the review step');
+    const failure = await settled(t, reviewing);
+    // `reconciling` has no client exit: only this error reaches the engine's card.
+    assert.ok(
+      failure instanceof ReviewFixDeliveryError,
+      `expected a step error, got ${JSON.stringify(failure)}`,
+    );
+    assert.deepEqual(tmuxInput, [], 'nothing is sent while delivery is uncertain');
+    assert.equal(fixContext(run.id)?.status, 'working');
+    assert.equal(checklistRestores, 0, 'the worker may be executing: its mark helper stays put');
+  });
+
+for (const [read, timedOut] of [
+  ['session', /has-session|new-session/u],
+  ['pane command', /display-message/u],
+] as const)
+  test(`a timed-out ${read} read is not a gone worker: nothing is sent or relaunched`, async (t) => {
+    const run = await reviewFixRunAtReload(t, 'tmux', 'claude');
+    fixSignal = { status: 'running', attemptId: 'earlier', timestamp: '2026-11-01T17:01:00.000Z' };
+    tmuxTimeouts = timedOut;
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-01T17:26:42Z') });
+    let reviewing: ReturnType<typeof executeReview> | undefined;
+
+    await restartRecovery(run, (runId) => {
+      reviewing = executeReview(runId, vars.slotId, { validationDepth: 'static-code' });
+    });
+    assert.ok(reviewing, 'recovery re-entered the review step');
+    assert.ok((await settled(t, reviewing)) instanceof Error);
+    assert.deepEqual(tmuxInput, []);
+    assert.equal(fixContext(run.id)?.status, 'working');
+    assert.equal(checklistRestores, 0, 'the worker may be executing: its mark helper stays put');
+  });
+
+test('recovery does not wait for a fix round it re-entered, so other runs recover meanwhile', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
+  let recovered = false;
+  void restartRecovery(run, () => new Promise(() => {})).then(() => {
+    recovered = true;
+  });
+  await until(() => recovered);
+  assert.equal(recovered, true, 'the recovery loop awaited the re-entered step');
 });
 
 /** The fix context plus the primary worker a relaunch replaces. */
@@ -476,7 +522,8 @@ function withPrimaryWorker(runId: string, fix: Partial<AgentContext> = {}) {
 test('a launch that carries the prompt records its delivery before the respawn', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
   paneCommand = 'pi-coding-agent';
-  withPrimaryWorker(run.id, { promptDeliveryStartedAt: undefined, signalAttemptId: undefined });
+  const earlier = fixContext(run.id)?.promptDeliveryStartedAt;
+  withPrimaryWorker(run.id);
   let recorded: string | undefined;
   onRespawn = () => {
     recorded = fixContext(run.id)?.promptDeliveryStartedAt;
@@ -487,9 +534,10 @@ test('a launch that carries the prompt records its delivery before the respawn',
 
   assert.equal(await relaunchWorkerForFix(vars, 'pi', 'local/model', run.id), true);
   assert.ok(recorded, 'the delivery boundary was written before the worker could hold the prompt');
+  assert.notEqual(recorded, earlier, 'an earlier worker signal must not confirm this send');
 });
 
-test('a post-launch relaunch clears the boundary, since the new process holds no prompt', async (t) => {
+test('a post-launch relaunch clears the boundary once the new process replaced the old', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'claude');
   paneCommand = 'claude';
   withPrimaryWorker(run.id);
@@ -504,6 +552,11 @@ test('a post-launch relaunch clears the boundary, since the new process holds no
   });
 
   assert.equal(await relaunchWorkerForFix(vars, 'claude', 'sonnet', run.id), true);
-  assert.equal(recorded, undefined, 'restart recovery must send this prompt, not wait for it');
+  assert.equal(recorded, '2026-11-01T17:01:11.352Z', 'until then the old worker may hold it');
+  assert.equal(
+    fixContext(run.id)?.promptDeliveryStartedAt,
+    undefined,
+    'restart recovery must send this prompt, not wait for it',
+  );
   assert.doesNotMatch(launch, /Farmslot fix delivery/u);
 });

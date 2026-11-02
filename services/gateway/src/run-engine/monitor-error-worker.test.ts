@@ -26,9 +26,9 @@ let run: Run;
 let released: string[] = [];
 let killed: string[] = [];
 
-let stepFailure = 'terminated';
+let stepFailure: string | Error = 'terminated';
 const stepError = async () => {
-  throw new Error(stepFailure);
+  throw stepFailure instanceof Error ? stepFailure : new Error(stepFailure);
 };
 mock.module('./post-dispatch-steps.js', {
   namedExports: {
@@ -103,6 +103,7 @@ mock.module('../methods/dispatch/nudge.js', {
   },
 });
 const { startRun } = await import('./orchestrator.js');
+const { ReviewFixDeliveryError } = await import('../review/orchestrator.js');
 
 function agent(id: string, role: AgentContext['role'], status: AgentContext['status']) {
   return { id, role, label: id, runner: 'pi', status, slotId: 'macpro-mm-5', runId: run.id };
@@ -167,6 +168,26 @@ test('a review error leaves the live reviewer and the slot, blocked on a card', 
     run.decisions.find((decision) => decision.type === WORKER_LEFT_RUNNING_DECISION)?.description ??
       '',
     /Still running: review-1\./,
+  );
+});
+
+test('a fix delivery restart recovery could not confirm keeps its worker, blocked on a card', async () => {
+  run = failingRun(S.REVIEW);
+  stepFailure = new ReviewFixDeliveryError('Review-fix prompt delivery remained unconfirmed');
+  run.agentContexts = [
+    agent('fix-bug', 'fix-bug', 'waiting'),
+    agent('review-fix', 'review-fix', 'working'),
+  ];
+
+  await startRun(run.id);
+
+  assert.deepEqual(released, [], 'the worker gets no /exit');
+  assert.deepEqual(killed, []);
+  assert.equal(run.status, 'blocked');
+  assert.match(
+    run.decisions.find((decision) => decision.type === WORKER_LEFT_RUNNING_DECISION)?.description ??
+      '',
+    /Still running: fix-bug, review-fix\./,
   );
 });
 

@@ -167,12 +167,19 @@ test('activity without a recorded send cannot suppress delivery of an unsent fix
   assert.equal(activityReads, 0);
 });
 
+const RECORDED_SEND = '2026-10-29T19:01:25.000Z';
+const workerSignal = (timestamp: string) => async () => ({
+  raw: JSON.stringify({ status: 'running', attemptId: 'worker-attempt', timestamp }),
+  status: 'running',
+  mtimeNs: '1',
+});
+
 for (const runner of ['claude', 'scripted']) {
   test(`a recorded ${runner} fix its worker signalled is adopted without another send`, async () => {
     const f = fixture();
     f.context.runner = runner;
-    f.context.promptDeliveryStartedAt = '2026-10-29T19:01:25Z';
-    f.context.signalAttemptId = 'worker-attempt';
+    f.context.promptDeliveryStartedAt = RECORDED_SEND;
+    f.deps.readLaunchAck = workerSignal('2026-10-29T19:01:26.000Z');
     f.deps.deliver = async () => assert.fail('a worker mid-fix must not receive its prompt again');
     f.deps.persistTarget = async () => assert.fail('an unmoved target keeps its pane id');
     assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
@@ -180,7 +187,46 @@ for (const runner of ['claude', 'scripted']) {
     });
     assert.deepEqual(f.boundaries, []);
   });
+
+  test(`a signal older than the recorded ${runner} send is an earlier round's: it confirms nothing`, async () => {
+    const f = fixture();
+    f.context.runner = runner;
+    f.context.promptDeliveryStartedAt = RECORDED_SEND;
+    f.context.signalAttemptId = 'earlier-round';
+    f.deps.readLaunchAck = workerSignal('2026-10-29T19:01:24.999Z');
+    f.deps.deliver = async (options) => {
+      assert.equal(options.priorPromptSendAttempted, true, 'only a probe, never another send');
+      return { delivered: false, disposition: 'hold', retryable: true, reason: 'unacknowledged' };
+    };
+    assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
+      status: 'deferred',
+    });
+    assert.deepEqual(f.boundaries, []);
+  });
 }
+
+test('a recorded fix whose runner a clean read found gone counts as never delivered', async () => {
+  const f = fixture();
+  f.context.promptDeliveryStartedAt = RECORDED_SEND;
+  f.deps.targetHostsRunner = async () => false;
+  f.deps.deliver = async () => assert.fail('a shell must never receive the fix prompt');
+  assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
+    status: 'relaunch-required',
+  });
+});
+
+test('a recorded fix whose runner could not be read is not gone: nothing is sent or relaunched', async () => {
+  const f = fixture();
+  f.context.promptDeliveryStartedAt = RECORDED_SEND;
+  f.deps.targetHostsRunner = async () => {
+    throw new Error('Cannot confirm runner exit from fixture:dev: pane command probe exited 124');
+  };
+  f.deps.deliver = async () => assert.fail('an unread worker must not receive its prompt again');
+  await assert.rejects(
+    resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps),
+    /probe exited 124/u,
+  );
+});
 
 test('a scripted fix is unconfirmed when recorded alone, and unsupported when unsent or gone', async () => {
   const f = fixture();
@@ -189,7 +235,7 @@ test('a scripted fix is unconfirmed when recorded alone, and unsupported when un
   assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
     status: 'unsupported',
   });
-  f.context.promptDeliveryStartedAt = '2026-10-29T19:01:25Z';
+  f.context.promptDeliveryStartedAt = RECORDED_SEND;
   assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
     status: 'deferred',
   });
