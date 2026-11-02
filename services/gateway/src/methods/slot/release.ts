@@ -796,6 +796,12 @@ async function slotReleaseImpl(
     complete(1);
     throw new Error(reason);
   };
+  /** Refresh the slot's retained totals when this release moved checkouts or it shows some. */
+  const refreshRetention = async (moved: number) => {
+    if (!moved && !(await readSlotField(params.slotId, 'retained'))) return;
+    const retained = await measureSlotRetention(vars).catch(() => undefined);
+    if (retained !== undefined) await guardedTeardownWrite({ retained });
+  };
 
   // 1. Kill running agent. Local-first publication gate-hold skips slotRelease at
   // COMPLETE entirely (see holdSlotForPublicationGate) and keeps the worker warm
@@ -1080,7 +1086,7 @@ async function slotReleaseImpl(
           `Collected ${collected.roots} scaffolding roots to ${collected.directory}`,
         );
         // Moved-aside checkouts stay on the slot host; fleet status shows what they hold (F310).
-        await guardedTeardownWrite({ retained: await measureSlotRetention(vars) });
+        await refreshRetention(collected.moved);
       } catch (error) {
         const reclaimed = await holdAfterCleanupFailure(
           `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`,
@@ -1093,15 +1099,16 @@ async function slotReleaseImpl(
     await assertReleaseClaim();
     if (taskRel && preserveAgents) {
       // No scaffolding collection ran, so nested checkouts would go with the task (F310).
+      let moved = 0;
       try {
-        await retainTaskCheckouts(vars, projectJson, taskRel);
+        moved = await retainTaskCheckouts(vars, projectJson, taskRel);
       } catch (error) {
         const reclaimed = await holdAfterCleanupFailure(
           `Nested checkouts could not be kept; cleanup stopped: ${(error as Error).message}`,
         );
         if (reclaimed) return reclaimed;
       }
-      await guardedTeardownWrite({ retained: await measureSlotRetention(vars) });
+      await refreshRetention(moved);
     }
     if (taskRel) {
       await execOnSlot(

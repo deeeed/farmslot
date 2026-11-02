@@ -319,23 +319,24 @@ export async function retainTaskCheckouts(
   projectJson: RawProjectJson,
   taskRelativeDir: string,
   retainedBase?: string,
-): Promise<void> {
+): Promise<number> {
   const { skipped, retainedRoot, repoRealpath } = await inventoryRebuildableScaffolding(
     vars,
     releasedTaskRoots(projectJson, taskRelativeDir),
     retainedBase,
   );
   const checkouts = skipped.filter((entry) => entry.kind === 'checkout');
-  if (checkouts.length && retainedRoot)
-    await retainNestedCheckouts(
-      vars,
-      checkouts,
-      path.posix.join(retainedRoot, randomUUID()),
-      repoRealpath,
-    );
+  if (!checkouts.length || !retainedRoot) return 0;
+  await retainNestedCheckouts(
+    vars,
+    checkouts,
+    path.posix.join(retainedRoot, randomUUID()),
+    repoRealpath,
+  );
+  return checkouts.length;
 }
 
-type ScaffoldingArchive = { directory: string; roots: number };
+type ScaffoldingArchive = { directory: string; roots: number; moved: number };
 
 /**
  * Copy all sources before removing any; leave warm runtime resources in place. One collection
@@ -403,7 +404,7 @@ async function collectSlotScaffolding(
     sources.push({ relative: 'runner-observability', absolute: external, resolved });
   }
   const directory = path.join(options.destination, randomUUID());
-  if (!sources.length) return { directory, roots: 0 };
+  if (!sources.length) return { directory, roots: 0, moved: 0 };
   const { skipped, retainedRoot, repoRealpath } = await inventoryRebuildableScaffolding(
     vars,
     sources
@@ -503,9 +504,14 @@ async function collectSlotScaffolding(
         throw new Error(`Scaffolding changed during collection: ${source.relative}`);
       await slotDeletePath(vars, source.absolute);
     }
-    return { directory, roots: sources.length };
+    return {
+      directory,
+      roots: sources.length,
+      moved: retainedDir ? skipped.filter((entry) => entry.kind === 'checkout').length : 0,
+    };
   } finally {
-    if (!archived) await rm(directory, { recursive: true, force: true });
     await slotDeletePath(vars, temporary);
+    // A destination that could not be created has nothing to remove.
+    if (!archived) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
   }
 }
