@@ -143,6 +143,10 @@ interface SkippedScaffolding {
   /** Checkouts only: where the release moved it on the slot host. */
   retainedAt?: string;
   linkedWorktree?: boolean;
+  /** Checkouts only: the repository whose objects and refs this checkout uses. */
+  commonDir?: string;
+  /** A clone's registered linked worktrees, by absolute path before the move. */
+  worktrees?: string[];
   dirtyFiles?: number;
   stashes?: number;
   remote?: string;
@@ -159,8 +163,8 @@ async function inventoryRebuildableScaffolding(
   vars: SlotVars,
   taskRoots: string[],
   retainedBase: string | undefined,
-): Promise<{ skipped: SkippedScaffolding[]; retainedRoot: string | null }> {
-  if (!taskRoots.length) return { skipped: [], retainedRoot: null };
+): Promise<{ skipped: SkippedScaffolding[]; retainedRoot: string | null; repoRealpath: string }> {
+  if (!taskRoots.length) return { skipped: [], retainedRoot: null, repoRealpath: '' };
   const names = REBUILDABLE_DIR_NAMES.map((name) => `-name ${shellQuote(name)}`).join(' -o ');
   const paths = REBUILDABLE_DIR_PATHS.map((glob) => `-path ${shellQuote(glob)}`).join(' -o ');
   const script = [
@@ -174,83 +178,159 @@ async function inventoryRebuildableScaffolding(
     '  linked=0; [ -f "$dir/.git" ] && linked=1',
     '  dirty="$(git -C "$dir" status --porcelain --untracked-files=all --ignore-submodules=none 2>/dev/null | wc -l | tr -d " ")"',
     '  stashes="$(git -C "$dir" stash list 2>/dev/null | wc -l | tr -d " ")"',
-    '  printf "C\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$dir" "$size" "$linked" "$dirty" "$stashes" "$(git -C "$dir" remote get-url origin 2>/dev/null)" "$(git -C "$dir" rev-parse HEAD 2>/dev/null)"',
+    '  common="$(cd "$(git -C "$dir" rev-parse --git-common-dir)" 2>/dev/null && pwd -P)"',
+    '  printf "C\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$dir" "$size" "$linked" "$dirty" "$stashes" "$(git -C "$dir" remote get-url origin 2>/dev/null)" "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" "$(df -P "$dir" | awk \'NR==2{print $1}\')" "$common"',
+    '  [ "$linked" = 1 ] || git -C "$dir" worktree list --porcelain 2>/dev/null | sed -n "s/^worktree //p" | while IFS= read -r tree; do printf "W\\t%s\\t%s\\n" "$dir" "$(cd "$tree" 2>/dev/null && pwd -P || printf %s "$tree")"; done',
     'done',
     `base=${retainedBase ? shellQuote(retainedBase) : '"$HOME/slot-retained"'}`,
-    'printf "V\\t%s\\t%s\\t%s\\n" "$(df -P . | awk \'NR==2{print $1}\')" "$(df -P "$(dirname "$base")" | awk \'NR==2{print $1}\')" "$base"',
+    // An existing retention directory may be a link or mount onto another volume.
+    'probe="$base"; [ -e "$probe" ] || probe="$(dirname "$base")"',
+    'printf "V\\t%s\\t%s\\t%s\\n" "$(pwd -P)" "$(df -P "$probe" | awk \'NR==2{print $1}\')" "$base"',
   ].join('\n');
   const result = await execOnSlot(vars, script, { timeout: 120_000 });
   if (result.exitCode !== 0) throw new Error(`Cannot inventory scaffolding: ${result.stderr}`);
   const skipped: SkippedScaffolding[] = [];
-  let volumes: string[] = [];
+  const devices = new Map<string, string>();
+  let volume: string[] = [];
   for (const line of result.stdout.split('\n')) {
     const [kind, ...fields] = line.split('\t');
-    if (kind === 'V') volumes = fields;
-    const [dir, size, linked, dirty, stashes, remote, head] = fields;
+    if (kind === 'V') volume = fields;
+    if (kind === 'W') {
+      const checkout = skipped.find((entry) => entry.path === fields[0]);
+      if (checkout && fields[1]) (checkout.worktrees ??= []).push(fields[1]);
+    }
+    const [dir, size, linked, dirty, stashes, remote, head, device, commonDir] = fields;
     if (!dir || (kind !== 'R' && kind !== 'C')) continue;
     const sizeBytes = /^\d+$/.test(size ?? '') ? Number(size) * 1024 : null;
     if (kind === 'R') skipped.push({ path: dir, kind: 'rebuildable', sizeBytes });
-    else
+    else {
+      devices.set(dir, device ?? '');
       skipped.push({
         path: dir,
         kind: 'checkout',
         sizeBytes,
         linkedWorktree: linked === '1',
+        ...(commonDir ? { commonDir } : {}),
         dirtyFiles: Number(dirty) || 0,
         stashes: Number(stashes) || 0,
         ...(remote ? { remote } : {}),
         ...(head ? { head } : {}),
       });
+    }
   }
-  if (!skipped.some((entry) => entry.kind === 'checkout')) return { skipped, retainedRoot: null };
-  const [repoVolume, baseVolume, base] = volumes;
-  if (!repoVolume || repoVolume !== baseVolume || !base)
+  if (!devices.size) return { skipped, retainedRoot: null, repoRealpath: volume[0] ?? '' };
+  const [repoRealpath, baseDevice, base] = volume;
+  // A move across volumes would copy and delete gigabytes instead of renaming them.
+  const crossing = [...devices].find(([, device]) => !device || device !== baseDevice);
+  if (!repoRealpath || !base || !baseDevice || crossing)
     throw new Error(
-      `Nested checkouts cannot be moved aside: ${base || 'the retention directory'} is not on the slot repository's volume`,
+      `Nested checkouts cannot be moved aside: ${base || 'the retention directory'} is not on the volume of ${crossing?.[0] ?? 'the slot repository'}`,
     );
-  return { skipped, retainedRoot: path.posix.join(base, vars.slotId) };
+  return { skipped, retainedRoot: path.posix.join(base, vars.slotId), repoRealpath };
 }
 
 /**
- * Move the released task's nested checkouts into the slot's retention directory, repair linked
- * worktree registrations, and measure what the slot now retains for fleet status.
+ * Move the released task's nested checkouts into the slot's retention directory and repair their
+ * worktree links: a clone repairs every worktree of it that moved too, wherever it was nested; a
+ * linked worktree of a repository outside the task repairs its own link back.
  */
 async function retainNestedCheckouts(
   vars: SlotVars,
   checkouts: SkippedScaffolding[],
   retainedDir: string,
-  retainedRoot: string,
-): Promise<{ items: number; bytes: number }> {
-  const moves = checkouts.flatMap((entry) => {
-    const target = path.posix.join(retainedDir, entry.path);
-    return [
-      `mkdir -p ${shellQuote(path.posix.dirname(target))}`,
-      `mv ${shellQuote(entry.path)} ${shellQuote(target)}`,
-      ...(entry.linkedWorktree ? [`git -C ${shellQuote(target)} worktree repair`] : []),
-      `printf '%s\\t%s\\n' ${shellQuote(entry.path)} ${shellQuote(target)} >> ${shellQuote(path.posix.join(retainedDir, 'RETAINED.tsv'))}`,
-    ];
+  repoRealpath: string,
+): Promise<void> {
+  const moved = checkouts.map((entry) => ({
+    entry,
+    from: path.posix.join(repoRealpath, entry.path),
+    to: path.posix.join(retainedDir, entry.path),
+  }));
+  const relocate = (target: string) => {
+    const owner = moved.find(({ from }) => target === from || target.startsWith(`${from}/`));
+    return owner && `${owner.to}${target.slice(owner.from.length)}`;
+  };
+  const repairs = moved.flatMap(({ entry, to }) => {
+    if (!entry.linkedWorktree) {
+      const trees = (entry.worktrees ?? []).flatMap((tree) => {
+        const relocated = relocate(tree);
+        return relocated && relocated !== to ? [relocated] : [];
+      });
+      return trees.length
+        ? [`git -C ${shellQuote(to)} worktree repair ${trees.map(shellQuote).join(' ')}`]
+        : [];
+    }
+    // Its repository moved too, so that clone's repair above covers it.
+    if (entry.commonDir && relocate(entry.commonDir)) return [];
+    return [`git -C ${shellQuote(to)} worktree repair`];
   });
   const result = await execOnSlot(
     vars,
     [
       'set -e',
       `cd ${shellQuote(vars.remoteRepo)}`,
-      ...moves,
-      `printf '%s\\t%s\\n' "$(cat ${shellQuote(retainedRoot)}/*/RETAINED.tsv | wc -l | tr -d ' ')" "$(du -sk ${shellQuote(retainedRoot)} | cut -f1)"`,
+      ...moved.flatMap(({ entry, to }) => [
+        `mkdir -p ${shellQuote(path.posix.dirname(to))}`,
+        `mv ${shellQuote(entry.path)} ${shellQuote(to)}`,
+        `printf '%s\\t%s\\n' ${shellQuote(entry.path)} ${shellQuote(to)} >> ${shellQuote(path.posix.join(retainedDir, 'RETAINED.tsv'))}`,
+      ]),
+      ...repairs,
     ].join('\n'),
     { timeout: 120_000 },
   );
   if (result.exitCode !== 0)
     throw new Error(`Cannot move nested checkouts aside: ${result.stderr}`);
-  const [items, kb] = result.stdout.trim().split('\t');
-  return { items: Number(items) || 0, bytes: (Number(kb) || 0) * 1024 };
 }
 
-type ScaffoldingArchive = {
-  directory: string;
-  roots: number;
-  retained?: { items: number; bytes: number };
-};
+/**
+ * What a slot's retention directory holds, for fleet status. Measured after every release
+ * attempt, so a failed release or an operator's cleanup still shows the current totals.
+ */
+export async function measureSlotRetention(
+  vars: SlotVars,
+  retainedBase?: string,
+): Promise<{ items: number; bytes: number } | null> {
+  const base = retainedBase ? shellQuote(retainedBase) : '"$HOME/slot-retained"';
+  const root = `${base}/${shellQuote(vars.slotId)}`;
+  const result = await execOnSlot(
+    vars,
+    `[ -d ${root} ] || exit 0; printf '%s\\t%s\\n' "$(cat ${root}/*/RETAINED.tsv 2>/dev/null | wc -l | tr -d ' ')" "$(du -sk ${root} | cut -f1)"`,
+    { timeout: 60_000 },
+  );
+  if (result.exitCode !== 0) throw new Error(`Cannot measure retained checkouts: ${result.stderr}`);
+  const [items, kb] = result.stdout.trim().split('\t');
+  return Number(items) > 0 ? { items: Number(items), bytes: (Number(kb) || 0) * 1024 } : null;
+}
+
+/**
+ * Move a task's nested checkouts aside without collecting its scaffolding, for releases that
+ * keep the agents and still delete the task directory.
+ */
+export async function retainTaskCheckouts(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  taskRelativeDir: string,
+  retainedBase?: string,
+): Promise<void> {
+  const { task } = slotScaffoldingPaths(projectJson);
+  const taskRoots = [...new Set([task, DEFAULT_TASK_DIR])].map(
+    (root) => `${root}/${relativeNamespace(taskRelativeDir)}`,
+  );
+  const { skipped, retainedRoot, repoRealpath } = await inventoryRebuildableScaffolding(
+    vars,
+    taskRoots,
+    retainedBase,
+  );
+  const checkouts = skipped.filter((entry) => entry.kind === 'checkout');
+  if (checkouts.length && retainedRoot)
+    await retainNestedCheckouts(
+      vars,
+      checkouts,
+      path.posix.join(retainedRoot, randomUUID()),
+      repoRealpath,
+    );
+}
+
+type ScaffoldingArchive = { directory: string; roots: number };
 
 /**
  * Copy all sources before removing any; leave warm runtime resources in place. One collection
@@ -323,7 +403,7 @@ async function collectSlotScaffolding(
   }
   const directory = path.join(options.destination, randomUUID());
   if (!sources.length) return { directory, roots: 0 };
-  const { skipped, retainedRoot } = await inventoryRebuildableScaffolding(
+  const { skipped, retainedRoot, repoRealpath } = await inventoryRebuildableScaffolding(
     vars,
     sources
       .filter((source) => taskRoots.includes(source.relative))
@@ -334,7 +414,6 @@ async function collectSlotScaffolding(
   for (const entry of skipped)
     if (entry.kind === 'checkout' && retainedDir)
       entry.retainedAt = path.posix.join(retainedDir, entry.path);
-  let retained: { items: number; bytes: number } | undefined;
   // tar preserves links as links. Copying their targets could leak a mounted
   // reference checkout or lose link metadata when the slot is cleaned.
   const created = await execOnSlot(vars, 'mktemp -d');
@@ -413,11 +492,11 @@ async function collectSlotScaffolding(
       const checkouts = skipped.filter(
         (entry) => entry.kind === 'checkout' && entry.path.startsWith(`${source.relative}/`),
       );
-      if (checkouts.length && retainedDir && retainedRoot)
-        retained = await retainNestedCheckouts(vars, checkouts, retainedDir, retainedRoot);
+      if (checkouts.length && retainedDir)
+        await retainNestedCheckouts(vars, checkouts, retainedDir, repoRealpath);
       await slotDeletePath(vars, source.absolute);
     }
-    return { directory, roots: sources.length, ...(retained ? { retained } : {}) };
+    return { directory, roots: sources.length };
   } finally {
     if (!archived) await rm(directory, { recursive: true, force: true });
     await slotDeletePath(vars, temporary);

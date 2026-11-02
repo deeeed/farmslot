@@ -56,7 +56,12 @@ import {
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import { readBlindTrialMarker, restoreBlindTrialGit } from '../../evals/blind-trial.js';
-import { archiveSlotScaffolding, excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
+import {
+  archiveSlotScaffolding,
+  excludeSlotScaffolding,
+  measureSlotRetention,
+  retainTaskCheckouts,
+} from '../../fleet/slot-scaffolding.js';
 import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
 import {
   findActiveGateHeldRunForSlot,
@@ -1056,15 +1061,18 @@ async function slotReleaseImpl(
           `Collected ${collected.roots} scaffolding roots to ${collected.directory}`,
         );
         // Moved-aside checkouts stay on the slot host; fleet status shows what they hold (F310).
-        if (collected.retained) await guardedTeardownWrite({ retained: collected.retained });
+        await guardedTeardownWrite({ retained: await measureSlotRetention(vars) });
       } catch (error) {
         await assertReleaseClaim();
         const reason = `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`;
+        // Checkouts may have moved before the failure; status still shows what the slot holds.
+        const retained = await measureSlotRetention(vars).catch(() => undefined);
         const held = await guardedTeardownWrite({
           lifecycle: 'held',
           phase: 'occupied',
           held_reason: reason,
           [SLOT_RELEASING_SINCE]: null,
+          ...(retained !== undefined ? { retained } : {}),
         });
         if (!held) return reclaimedResult();
         complete(1);
@@ -1074,6 +1082,11 @@ async function slotReleaseImpl(
 
     // Clean task files
     await assertReleaseClaim();
+    if (taskRel && preserveAgents) {
+      // No scaffolding collection ran, so nested checkouts would go with the task (F310).
+      await retainTaskCheckouts(vars, projectJson, taskRel);
+      await guardedTeardownWrite({ retained: await measureSlotRetention(vars) });
+    }
     if (taskRel) {
       await execOnSlot(
         vars,

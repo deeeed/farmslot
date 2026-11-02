@@ -172,6 +172,10 @@ mock.module('../../fleet/slot-scaffolding.js', {
       await options.beforeRemove?.();
       return { roots: 0, directory: options.destination };
     },
+    retainTaskCheckouts: async () => {
+      events.push('retain-checkouts');
+    },
+    measureSlotRetention: async () => null,
   },
 });
 
@@ -577,6 +581,16 @@ test('a release copying 1.6 GB of unindexed artifacts adds their transfer time t
     'longer than the copy takes at the measured 5 MB/s',
   );
   assert.equal(releaseArtifactCopyBudgetMs(1024), 60_000, 'a small copy gets the floor');
+});
+
+// F310: a release that keeps the agents collects no scaffolding but still deletes the task, so
+// its nested checkouts are moved aside first.
+test('a release keeping the agents moves nested checkouts aside before deleting the task', async () => {
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  await slotRelease({ slotId: SLOT_ID, preserveAgents: true }, emit);
+  const moved = events.indexOf('retain-checkouts');
+  assert.ok(moved >= 0, 'checkouts moved aside');
+  assert.ok(moved < events.indexOf('task-clean'), 'before the task directory is deleted');
 });
 
 test('a copyback with a failed file keeps the artifacts in the scaffolding archive', async () => {

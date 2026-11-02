@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `SlotStatus.retained` (`{ items, bytes }`): the nested checkouts that slot releases moved aside on the slot host instead of deleting them, and their total size there (F310).
 - `ReadyGatePayload.mergeConflicts`/`behindMain` are probed against the publication base (a stacked run's upstream branch), and a conflict on a publication gate now blocks its advancing actions (doc only; no shape change).
 - `Run.parkedCommits` (`ParkedRunCommits[]`): an artifact-only run's own branch commits, parked under `refs/farmslot/parked/<run>/<head>` when its slot returned to idle (append-only).
 - `Run.releasedCheckout`: the branch and head an artifact-only run left on its slot when COMPLETE released the slot's ownership; a later ownerless return to idle parks only that head.

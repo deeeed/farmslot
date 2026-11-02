@@ -408,7 +408,7 @@ interface RawSlot {
   task_file?: string | null;
   current_run_id?: string | null;
   held_reason?: string;
-  retained?: { items: number; bytes: number };
+  retained?: { items: number; bytes: number } | null;
   current_flow_type?: string | null;
   current_ticket_or_pr?: string | null;
   current_mode?: string | null;

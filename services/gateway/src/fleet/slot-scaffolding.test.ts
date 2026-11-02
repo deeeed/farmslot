@@ -24,14 +24,15 @@ import type { SlotVars } from '../core/config.js';
 const dfStub = mkdtempSync(path.join(tmpdir(), 'slot-scaffolding-df-'));
 writeFileSync(
   path.join(dfStub, 'df'),
-  `#!/bin/sh\ncase "$*" in *cross-volume*) printf 'Filesystem\\n/dev/other\\n' ;; *) exec /bin/df "$@" ;; esac\n`,
+  `#!/bin/sh\nt="$2"; [ -d "$t" ] && t="$(cd "$t" && pwd -P)"\ncase "$t" in *cross-volume*) printf 'Filesystem\\n/dev/other\\n' ;; *) exec /bin/df "$@" ;; esac\n`,
 );
 chmodSync(path.join(dfStub, 'df'), 0o755);
 process.env.PATH = `${dfStub}:${process.env.PATH}`;
 test.after(() => rmSync(dfStub, { recursive: true, force: true }));
 
 await import('../runtime/mock-pty.test-support.js');
-const { archiveSlotScaffolding, excludeSlotScaffolding } = await import('./slot-scaffolding.js');
+const { archiveSlotScaffolding, excludeSlotScaffolding, measureSlotRetention } =
+  await import('./slot-scaffolding.js');
 
 function fixture(t: test.TestContext) {
   const root = mkdtempSync(path.join(tmpdir(), 'slot-scaffolding-'));
@@ -262,8 +263,9 @@ test('a release moves a nested checkout aside and lists build outputs instead of
   assert.ok(
     existsSync(path.join(checkout.retainedAt!, 'apps/playground/node_modules/pkg/index.js')),
   );
-  assert.equal(result.retained?.items, 1);
-  assert.ok((result.retained?.bytes ?? 0) > 0);
+  const retained = await measureSlotRetention(f.vars, retainedBase);
+  assert.equal(retained?.items, 1);
+  assert.ok((retained?.bytes ?? 0) > 0);
   assert.equal(existsSync(task), false, 'the released task is removed');
 });
 
@@ -332,13 +334,58 @@ test('a nested checkout that would cross a volume keeps the task and refuses rel
   await excludeSlotScaffolding(f.vars, {}, execute);
   await assert.rejects(
     release(f, retainedBase),
-    /cannot be moved aside: .*cross-volume.* is not on the slot repository's volume/,
+    /cannot be moved aside: .*cross-volume.* is not on the volume of/,
   );
   assert.equal(readFileSync(path.join(checkouts, 'baseline/README.md'), 'utf8'), 'baseline');
   assert.equal(
     readFileSync(path.join(f.repo, '.task/qa/example/TASK.md'), 'utf8'),
     'completed task',
   );
+});
+
+test('a clone and its own linked worktree move together and stay connected', async (t) => {
+  const f = fixture(t);
+  git(f.repo, 'init', '-q', '-b', 'main');
+  scaffolding(f.repo);
+  const { origin, checkouts, retainedBase } = baselineCheckout(f);
+  // A worker clones the source, then adds a baseline worktree of that clone next to it.
+  const source = path.join(checkouts, 'source');
+  git(f.root, 'clone', '-q', origin, source);
+  git(source, 'worktree', 'add', '-q', '--detach', path.join(checkouts, 'baseline'), 'main');
+  await excludeSlotScaffolding(f.vars, {}, execute);
+  const result = await release(f, retainedBase);
+  const { skipped } = JSON.parse(
+    readFileSync(path.join(result.directory, 'manifest.json'), 'utf8'),
+  ) as {
+    skipped: Skipped;
+  };
+  const at = (name: string) =>
+    skipped.find((entry) => entry.path.endsWith(`checkouts/${name}`))!.retainedAt!;
+  const worktrees = git(at('source'), 'worktree', 'list', '--porcelain');
+  assert.match(worktrees, new RegExp(`worktree ${realpathSync(at('baseline'))}\n`));
+  assert.doesNotMatch(worktrees, /prunable/);
+  assert.equal(git(at('baseline'), 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'main'));
+  const retained = await measureSlotRetention(f.vars, retainedBase);
+  assert.equal(retained?.items, 2);
+  assert.ok((retained?.bytes ?? 0) > 0);
+});
+
+test('a retention directory linked onto another volume refuses the move', async (t) => {
+  const f = fixture(t);
+  git(f.repo, 'init', '-q', '-b', 'main');
+  scaffolding(f.repo);
+  const { origin, checkouts, retainedBase } = baselineCheckout(f);
+  git(f.root, 'clone', '-q', origin, path.join(checkouts, 'baseline'));
+  // An operator relocated the retention directory: it exists, as a link to another volume.
+  const elsewhere = path.join(f.root, 'cross-volume-disk');
+  mkdirSync(elsewhere);
+  symlinkSync(elsewhere, retainedBase);
+  await excludeSlotScaffolding(f.vars, {}, execute);
+  await assert.rejects(
+    release(f, retainedBase),
+    /cannot be moved aside: .* is not on the volume of/,
+  );
+  assert.equal(readFileSync(path.join(checkouts, 'baseline/README.md'), 'utf8'), 'baseline');
 });
 
 // F310: a retry loop ran several collections for audiolab-6 at once, each streaming a 6 GB
