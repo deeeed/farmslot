@@ -1,0 +1,1 @@
+- The hourly retention pass takes `bundle-store.lock` once per run, for that run's checks, walk and stage, instead of holding it for the whole pass. Run admission and output captures now get the lock between runs; before, they waited up to 9 minutes behind a pass (F322).

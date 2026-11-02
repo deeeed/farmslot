@@ -58,6 +58,16 @@ mock.module('@react-native-async-storage/async-storage', {
     removeItem: async () => {},
   },
 });
+// Gate media files stay out of this test: none are held.
+mock.module('expo-file-system/legacy', {
+  namedExports: {
+    cacheDirectory: 'file:///cache/',
+    getInfoAsync: async () => ({ exists: false }),
+    makeDirectoryAsync: async () => {},
+    deleteAsync: async () => {},
+  },
+});
+mock.module('expo-file-system', { namedExports: { File: class {} } });
 mock.module('@farmslot/local-store/native', {
   namedExports: { createNativeSqliteResourceStore: async () => createMemoryResourceStore() },
 });

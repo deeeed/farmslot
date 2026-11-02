@@ -7,8 +7,8 @@ import { Methods, type RunGetResult, type RunRecipeRunsForRunResult } from '@far
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { observeNativeVisualReview } from '../../farmslot/run-collections-proof';
+import { readStoredArtifact } from '../../lib/artifact-response';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
-import { currentFarmConnection } from '../../lib/connection-authority';
 import {
   getResourceCache,
   getResourceWorkspaceKey,
@@ -70,6 +70,7 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
   );
   const targetObservation = useResourceQuery(targetQuery);
   const sourceReady = runObservation.status === 'ready' && recipeObservation.status === 'ready';
+  const sourceAvailable = Boolean(runObservation.data && recipeObservation.data);
   const commandsReady =
     connection === 'connected' && sourceReady && targetObservation.status === 'ready';
   const frame = useRef({
@@ -94,20 +95,19 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const generation = client?.connectionGeneration;
   const gateway = useMemo(() => {
-    if (!focused || !client || !cache || connection !== 'connected') return null;
-    const connected = currentFarmConnection(client, useConnectionStore.getState);
+    if (!focused || !client || !cache) return null;
     return createVisualReviewGateway(
       client,
       { gatewayUrl, authHeaders, profileId },
       {
         cache,
         sourceRunId: runId,
+        readArtifact: (url) => readStoredArtifact(url, authHeaders),
         current: () =>
           mounted.current &&
           currentController.current === controller &&
           cache === getResourceCache() &&
-          workspaceKey === getResourceWorkspaceKey() &&
-          connected(),
+          workspaceKey === getResourceWorkspaceKey(),
       },
       () => {
         const live = useConnectionStore.getState();
@@ -134,8 +134,8 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
   useEffect(() => {
     // Observation invalidation pauses new commands; an on-wire delivery still
     // belongs to this connection and must retain its eventual acknowledgement.
-    controller.setGateway(gateway, sourceReady);
-  }, [controller, gateway, sourceReady]);
+    controller.setGateway(gateway, sourceAvailable);
+  }, [controller, gateway, sourceAvailable]);
   useEffect(() => () => controller.setGateway(null), [controller, gateway]);
   useEffect(() => setExportMessage(null), [controller]);
   const retry = useCallback(async () => {

@@ -1,0 +1,1 @@
+- Record the question-tool setting of native worker processes and terminal worker contexts so retained task handoffs can resume or relaunch when it changes.

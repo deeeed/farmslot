@@ -9,6 +9,16 @@ import type {
 
 import { Methods } from './registry.js';
 
+/** A complete Jira reference recognized by project matching, normalized to its key. */
+export function jiraTicketKey(ticket: string): string | undefined {
+  const reference = ticket.trim();
+  const url = reference.match(
+    /^https?:\/\/[^\s/]+\.atlassian\.net\/browse\/([A-Z]+-\d+)(?:[/?#].*)?$/i,
+  );
+  if (url) return url[1].toUpperCase();
+  return /^[A-Z]+-\d+$/.test(reference) ? reference : undefined;
+}
+
 export const DispatchMethods = {
   preview: Methods.DISPATCH_PREVIEW,
   pressureAdmissionGet: Methods.DISPATCH_PRESSURE_ADMISSION_GET,
@@ -83,6 +93,9 @@ export interface DispatchCandidatesParams {
   forceRefresh?: boolean;
   /** The dispatch keeps each slot's checkout (no prepare): slot repo blockers do not apply. */
   skipPrepare?: boolean;
+  /** The chosen runner and model: a free row on a node whose own catalog lacks the model is ineligible. */
+  runner?: string;
+  model?: string;
 }
 
 /** Optional metadata attached to busy candidates whose branch matches the dispatch's `targetBranch`.

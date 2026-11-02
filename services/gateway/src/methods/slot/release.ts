@@ -16,6 +16,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
   type SlotReleaseResult,
+  type SlotResetExpectation,
 } from '@farmslot/protocol';
 
 import { assertCleanupCurrent, withoutCleanupSignal } from '../../core/cleanup-scope.js';
@@ -133,6 +134,7 @@ async function logDiscardedWork(
   vars: SlotVars,
   slotId: string,
   owner: string | null,
+  parked = false,
 ): Promise<void> {
   const work = await execOnSlot(
     vars,
@@ -140,7 +142,9 @@ async function logDiscardedWork(
   );
   const [head, dirty] = work.stdout.trim().split('\n');
   console.log(
-    `[slot.release] ${slotId}: reset discards HEAD ${head?.trim() || 'unknown'} and ${dirty?.trim() || 'unknown'} dirty file(s)${owner ? ` of run ${owner}` : ''}`,
+    parked
+      ? `[slot.release] ${slotId}: reset moves off HEAD ${head?.trim() || 'unknown'}, kept under refs/farmslot/parked, and discards ${dirty?.trim() || 'unknown'} dirty file(s)`
+      : `[slot.release] ${slotId}: reset discards HEAD ${head?.trim() || 'unknown'} and ${dirty?.trim() || 'unknown'} dirty file(s)${owner ? ` of run ${owner}` : ''}`,
   );
 }
 
@@ -168,6 +172,10 @@ export interface SlotReleaseOptions {
     parkRunId?: string;
     /** The exact head an ownerless return to idle may park (`Run.releasedCheckout`). */
     parkHeadSha?: string;
+    /** What the recovery inspected and parked; the reset refuses if Git changed since. */
+    expect?: SlotResetExpectation;
+    /** The recovery already parked this work, so the reset discards nothing unparked. */
+    parked?: boolean;
   };
 }
 
@@ -969,7 +977,7 @@ async function slotReleaseImpl(
       throw unmergedWorkError(unmergedWork);
     }
   } else if (!keepWork && !parked) {
-    await logDiscardedWork(vars, params.slotId, boundOwner);
+    await logDiscardedWork(vars, params.slotId, boundOwner, options?.workspaceRecovery?.parked);
   }
 
   // 3. Clean task files + git reset. Evidence was pulled into the artifact mirror when the run
@@ -1070,6 +1078,8 @@ async function slotReleaseImpl(
     if (options?.workspaceRecovery) await options.workspaceRecovery.verifyWork();
     const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch, {
       discardLocalWork: options?.workspaceRecovery?.discardLocalWork,
+      expect: options?.workspaceRecovery?.expect,
+      verifyWork: options?.workspaceRecovery?.verifyWork,
     });
     idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));

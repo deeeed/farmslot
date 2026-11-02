@@ -52,7 +52,7 @@ function gateDecision(packageHash: string): RunDecision {
 }
 
 /** One gate on screen, read from the shared cache, with the real controller and draft hooks. */
-function gateWorld({ online = true, runBound = true } = {}) {
+function gateWorld({ online = true, runBound = true, detailStored = true } = {}) {
   const run = { id: params.runId, slotId: 's1', decisions: [gateDecision('pkg-1')] } as Run;
   const sent: Request[] = [];
   const alerts: Array<{ title: string; message?: string; buttons?: AlertButton[] }> = [];
@@ -172,6 +172,17 @@ function gateWorld({ online = true, runBound = true } = {}) {
           status: online ? 'ready' : 'stale',
           data: { run },
           observedAt: 1,
+        }),
+      },
+      '../run-detail/use-run-detail-run': {
+        useRunDetailRun: () => ({
+          runQuery: resourceQuery('run.get', { runId: params.runId }),
+          runObservation: {
+            status: online && detailStored ? 'ready' : 'stale',
+            ...(detailStored ? { data: { run } } : {}),
+            observedAt: 1,
+          },
+          run,
         }),
       },
       '../../lib/acceptance-evidence': { acceptanceEvidenceHref: () => '/' },
@@ -312,6 +323,19 @@ test('an owner switch mid-request suppresses the reply alert and haptics', async
 });
 
 // Pins `actionsCurrent` disabling actions while the drafts stay usable on held data.
+test('gate review renders its stored list row before run.get is stored, with writes disabled', () => {
+  const { world, viewModel, cleanup } = gateWorld({ online: false, detailStored: false });
+  try {
+    const view = viewModel();
+    assert.equal(view.run.id, params.runId);
+    assert.equal(view.observation.data, undefined);
+    assert.equal(view.commandsReady, false);
+    assert.deepEqual(world.sent, []);
+  } finally {
+    cleanup();
+  }
+});
+
 test('choosing and undoing a draft work offline while approve stays disabled', async () => {
   const { world, viewModel, render, cleanup } = gateWorld({ online: false });
   try {

@@ -193,15 +193,18 @@ export async function assertSlotNotOperatorRoot(
   }
 }
 
+interface IdleResetOptions extends ResetSlotRepoToIdleOptions {
+  /** Recheck the caller's content/owner confirmation after the network fetch. */
+  verifyWork?: () => Promise<void>;
+}
+
 export async function resetSlotRepoToIdle(
   vars: SlotVars,
   projectJson: RawProjectJson,
   projectVars: ProjectVars | undefined,
   defaultBranch: string,
-  options?: ResetSlotRepoToIdleOptions,
+  options?: IdleResetOptions,
 ): Promise<SlotIdleResetResult> {
-  // Backstop guard — every caller should also guard at its own entry, but this
-  // is the last line before `git checkout -- . && git clean -fd && reset --hard`.
   await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.idleReset);
   const repo = shellQuote(vars.remoteRepo);
   const linkedWorktree = options?.linkedWorktree ?? (await detectLinkedWorktree(vars));
@@ -211,88 +214,76 @@ export async function resetSlotRepoToIdle(
     projectVars,
     linkedWorktree,
   );
+  const target = linkedWorktree ? trackingBranch : defaultBranch;
   const baseRef = `origin/${defaultBranch}`;
-
   const currentBranch = (
-    await execOnSlot(vars, `git -C ${repo} rev-parse --abbrev-ref HEAD 2>/dev/null`)
+    await execOnSlot(vars, `git -C ${repo} rev-parse --abbrev-ref HEAD`)
   ).stdout.trim();
-
-  if (options?.discardLocalWork) {
-    const discard = await execOnSlot(
-      vars,
-      `cd ${repo} && { ${CLEAR_INDEX_FLAGS_COMMAND}; } && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
-      { noRetry: true },
-    );
-    if (discard.exitCode !== 0) throw new Error('Confirmed local work could not be reset');
-  }
-  await execOnSlot(vars, `cd ${repo} && git checkout -- . 2>/dev/null; git clean -fd 2>/dev/null`);
-
-  const fetchR = await execOnSlot(
+  const fetched = await execOnSlot(
     vars,
-    `cd ${repo} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+    `git -C ${repo} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
   );
-  if (fetchR.exitCode !== 0) {
+  if (fetched.exitCode !== 0)
     throw new Error(
-      `git fetch origin ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${fetchR.stderr.slice(-200) || fetchR.stdout.slice(-200)}`,
+      `git fetch origin ${defaultBranch} failed on ${vars.slotId}: ${fetched.stderr || fetched.stdout}`,
     );
-  }
-
-  if (linkedWorktree) {
-    if (currentBranch !== trackingBranch) {
-      const localExists =
-        (
-          await execOnSlot(
-            vars,
-            `cd ${repo} && git rev-parse --verify ${shellQuote(trackingBranch)} >/dev/null 2>&1`,
-          )
-        ).exitCode === 0;
-      const checkoutCmd = localExists
-        ? `git checkout ${shellQuote(trackingBranch)}`
-        : `git checkout -b ${shellQuote(trackingBranch)} ${shellQuote(baseRef)}`;
-      const coR = await execOnSlot(vars, `cd ${repo} && ${checkoutCmd}`);
-      if (coR.exitCode !== 0) {
-        throw new Error(
-          `worktree checkout ${trackingBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${coR.stderr.slice(-200) || coR.stdout.slice(-200)}`,
-        );
-      }
-    }
-    const resetR = await execOnSlot(
-      vars,
-      `cd ${repo} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseRef)}; }`,
-    );
-    if (resetR.exitCode !== 0) {
-      throw new Error(
-        `worktree reset to ${baseRef} failed on ${vars.slotId} (${vars.remoteRepo}): ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
-      );
-    }
-  } else if (currentBranch === defaultBranch) {
-    const resetR = await execOnSlot(
-      vars,
-      `cd ${repo} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseRef)}; }`,
-    );
-    if (resetR.exitCode !== 0) {
-      throw new Error(
-        `reset to ${baseRef} failed on ${vars.slotId} (${vars.remoteRepo}): ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
-      );
-    }
-  } else {
-    const coR = await execOnSlot(vars, `cd ${repo} && git checkout ${shellQuote(defaultBranch)}`);
-    if (coR.exitCode !== 0) {
-      throw new Error(
-        `checkout ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${coR.stderr.slice(-200) || coR.stdout.slice(-200)}`,
-      );
-    }
-    const resetR = await execOnSlot(
-      vars,
-      `cd ${repo} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseRef)}; }`,
-    );
-    if (resetR.exitCode !== 0) {
-      throw new Error(
-        `reset to ${baseRef} failed on ${vars.slotId} (${vars.remoteRepo}): ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
-      );
-    }
-  }
-
+  await options?.verifyWork?.();
+  const expect = options?.expect;
+  const guards = expect
+    ? [
+        `[ "$(git rev-parse HEAD)" = ${shellQuote(expect.headSha)} ]`,
+        ...Object.entries(expect.branches ?? {}).map(([branch, sha]) =>
+          sha
+            ? `[ "$(git rev-parse --verify --quiet ${shellQuote(`refs/heads/${branch}`)})" = ${shellQuote(sha)} ]`
+            : `! git rev-parse --verify --quiet ${shellQuote(`refs/heads/${branch}`)} >/dev/null`,
+        ),
+        ...(!options?.discardLocalWork
+          ? ['[ -z "$(git status --porcelain --untracked-files=all)" ]']
+          : []),
+      ]
+    : [];
+  const guard = (checks: string[]) =>
+    checks.length
+      ? `{ ${checks.join(' && ')}; } || { echo 'Git changed since inspection; reset refused' >&2; exit 42; }`
+      : ':';
+  // The expected refs are checked in the destructive command, after the slow fetch.
+  const expectedTarget =
+    expect?.branches?.[target] ?? (currentBranch === target ? expect?.headSha : undefined);
+  const script = [
+    `cd ${repo}`,
+    guard(guards),
+    `base=$(git rev-parse ${shellQuote(baseRef)})`,
+    `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; }`,
+    ...(options?.discardLocalWork
+      ? [
+          `{ ${CLEAR_INDEX_FLAGS_COMMAND}; }`,
+          `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
+        ]
+      : []),
+    // On the target branch the final hard reset clears the index, including merge conflicts.
+    ...(currentBranch !== target
+      ? ['if git ls-files --error-unmatch . >/dev/null 2>&1; then git checkout -- .; fi']
+      : []),
+    'git clean -fd',
+    guard(guards.filter((check) => !check.includes('status --porcelain'))),
+    ...(currentBranch !== target
+      ? [
+          `if git show-ref --verify --quiet ${shellQuote(`refs/heads/${target}`)}; then git checkout ${shellQuote(target)}; else git checkout -b ${shellQuote(target)} "$base"; fi`,
+        ]
+      : []),
+    ...(expect
+      ? [
+          guard([
+            `[ "$(git rev-parse HEAD)" = ${expectedTarget ? shellQuote(expectedTarget) : '"$base"'} ]`,
+            `[ "$(git symbolic-ref --short HEAD)" = ${shellQuote(target)} ]`,
+          ]),
+        ]
+      : []),
+    `{ ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard "$base"; }`,
+  ].join(' && ');
+  const reset = await execOnSlot(vars, script, { noRetry: true });
+  if (reset.exitCode !== 0)
+    throw new Error(`Idle reset refused on ${vars.slotId}: ${reset.stderr || reset.stdout}`);
   return { trackingBranch, previousBranch: currentBranch, linkedWorktree };
 }
 

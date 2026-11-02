@@ -32,6 +32,7 @@ import '../terminal/terminal-view.js';
 import { gateway, GatewayRequestError } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { safeLsGet, safeLsSet } from '../../utils/storage.js';
+import { readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { buildChatClientContext } from './chat-client-context.js';
@@ -175,7 +176,9 @@ export class ChatPanel extends ChatPanelState {
 
   private async loadSessions() {
     try {
-      const result = await gateway.request<ChatSessionsResult>(Methods.CHAT_SESSIONS, {});
+      const result = await readStored<ChatSessionsResult>(
+        resourceQuery<ChatSessionsResult>(Methods.CHAT_SESSIONS, {}),
+      );
       this.sessionSummaries = result.sessions;
     } catch (err) {
       const message = errorMessage(err);
@@ -198,9 +201,11 @@ export class ChatPanel extends ChatPanelState {
     const sessionId = this.activeSessionId();
     let liveIds: Set<string>;
     try {
-      const result = await gateway.request<ChatListActionsResult>(Methods.CHAT_LIST_ACTIONS, {
-        sessionId,
-      });
+      const result = await readStored<ChatListActionsResult>(
+        resourceQuery<ChatListActionsResult>(Methods.CHAT_LIST_ACTIONS, {
+          sessionId,
+        }),
+      );
       liveIds = new Set(result.actions.map((a) => a.actionId));
     } catch (err) {
       const message = errorMessage(err);
@@ -245,9 +250,11 @@ export class ChatPanel extends ChatPanelState {
 
   private async loadHistory(sessionId = this.activeSessionId()) {
     try {
-      const result = await gateway.request<ChatHistoryResult>(Methods.CHAT_HISTORY, {
-        sessionId,
-      });
+      const result = await readStored<ChatHistoryResult>(
+        resourceQuery<ChatHistoryResult>(Methods.CHAT_HISTORY, {
+          sessionId,
+        }),
+      );
       if (sessionId !== this.activeSessionId()) return;
       this.messages = result.messages;
       this.sessionCost = result.messages.reduce(

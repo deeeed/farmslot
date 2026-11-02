@@ -1,4 +1,4 @@
-import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
+import { readStoredArtifact } from '../../artifact-response.js';
 import type { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 
 import { traceEntriesToEvidenceManifest } from './slot-view-live-effects.js';
@@ -26,7 +26,9 @@ export async function loadSelectedSlotViewRecipeDependency(
   view._selectedRecipeDependencyLoading = true;
   view._selectedRecipeDependencyError = '';
   try {
-    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, selectedDependency.path));
+    const response = await readStoredArtifact(
+      view._artifactUrl(recipeHost, selectedDependency.path),
+    );
     if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
     if (!response.ok) throw new Error(`${response.status}`);
     const recipeDependencyJson = await response.text();
@@ -71,7 +73,7 @@ export async function loadSelectedSlotViewRecipeArtifactPreview(
   view._selectedRecipeArtifactLoading = true;
   view._selectedRecipeArtifactError = '';
   try {
-    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, artifact.path));
+    const response = await readStoredArtifact(view._artifactUrl(recipeHost, artifact.path));
     if (loadToken !== view._selectedRecipeArtifactPreviewLoadToken) return;
     if (!response.ok) throw new Error(`${response.status}`);
     const artifactText = await response.text();
@@ -116,7 +118,7 @@ export async function loadSelectedSlotViewRecipeEvidenceManifest(
   try {
     const artifact = manifest ?? trace;
     if (!artifact) return;
-    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, artifact.path));
+    const response = await readStoredArtifact(view._artifactUrl(recipeHost, artifact.path));
     if (loadToken !== view._selectedRecipeEvidenceManifestLoadToken) return;
     if (!response.ok) throw new Error(String(response.status));
     const json = await response.json();

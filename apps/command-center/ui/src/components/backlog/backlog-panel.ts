@@ -103,6 +103,7 @@ import {
   renderChoiceButtons,
   renderToggleChips,
 } from '../shared/planning-controls.js';
+import { readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
@@ -1731,9 +1732,11 @@ export class BacklogPanel extends LitElement {
     this._specLoadingItemId = item.id;
     this._specErrors = { ...this._specErrors, [item.id]: '' };
     try {
-      const result = await gateway.request<BacklogSpecGetResult>(Methods.BACKLOG_SPEC_GET, {
-        itemId: item.id,
-      });
+      const result = await readStored<BacklogSpecGetResult>(
+        resourceQuery<BacklogSpecGetResult>(Methods.BACKLOG_SPEC_GET, {
+          itemId: item.id,
+        }),
+      );
       this._specContents = { ...this._specContents, [item.id]: result };
     } catch (error) {
       const nextContents = { ...this._specContents };
@@ -3244,9 +3247,10 @@ export class BacklogPanel extends LitElement {
     if (this._refinementSessionLoading === item.id) return;
     this._refinementSessionLoading = item.id;
     try {
-      const result = await gateway.request<BacklogRefinementSessionGetResult>(
-        Methods.BACKLOG_REFINEMENT_SESSION_GET,
-        { itemId: item.id },
+      const result = await readStored<BacklogRefinementSessionGetResult>(
+        resourceQuery<BacklogRefinementSessionGetResult>(Methods.BACKLOG_REFINEMENT_SESSION_GET, {
+          itemId: item.id,
+        }),
       );
       if (this._selectedItem?.id !== item.id) return;
       this._existingRefinementSession = result;

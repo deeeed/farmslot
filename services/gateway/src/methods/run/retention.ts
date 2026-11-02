@@ -171,7 +171,7 @@ export const RUN_RETENTION_DEPS: RunRetentionDeps = {
   holdsSlot: runHoldsSlot,
   openPrs: readOpenPrs,
   projectRepo,
-  // The pass walks every eligible run's storage under the lock; waiters allow it an hour.
+  // Each eligible run's walk and stage is one turn under the lock; waiters allow a turn an hour.
   withBundleLock: async (operation) =>
     withRunBundleStoreLock(await runBundleStore(), operation, {
       label: 'run retention pass',
@@ -219,90 +219,93 @@ export async function runRetentionPass(
     'native-sessions': [],
     'run-bundles': [],
   };
-  await deps.withBundleLock(() =>
-    reclaimReviewWorkspaceStorage(async () => {
-      // Preserve an old interrupted deletion pass, including its restore metadata, instead of purging it.
-      const trash = path.join(roots.runsDir, 'retention-trash');
-      if (existsSync(trash))
-        await stageStoragePaths(roots.archiveRoot, 'legacy-retention-trash', [
-          { source: trash, store: 'retention-trash' },
-        ]);
-      const processed = new Set<string>();
-      for (const candidate of removable) {
-        try {
-          if (await deps.holdsSlot(candidate)) continue;
-          const run = await getRunWithArchived(candidate.id);
-          if (!run || runRetentionHold(run, context)) continue;
-          const others = [...runs, ...getAllRuns()].filter(
+  // One lock turn per run, so admission and captures interleave with a long pass (F322).
+  const turn = (operation: () => Promise<void>) =>
+    deps.withBundleLock(() =>
+      reclaimReviewWorkspaceStorage(async () => {
+        await operation();
+        return [];
+      }),
+    );
+  await turn(async () => {
+    // Preserve an old interrupted deletion pass, including its restore metadata, instead of purging it.
+    const trash = path.join(roots.runsDir, 'retention-trash');
+    if (existsSync(trash))
+      await stageStoragePaths(roots.archiveRoot, 'legacy-retention-trash', [
+        { source: trash, store: 'retention-trash' },
+      ]);
+  });
+  const processed = new Set<string>();
+  for (const candidate of removable) {
+    await turn(async () => {
+      try {
+        if (await deps.holdsSlot(candidate)) return;
+        const run = await getRunWithArchived(candidate.id);
+        if (!run || runRetentionHold(run, context)) return;
+        const others = [...runs, ...getAllRuns()].filter(
+          (other) =>
+            other.id !== run.id &&
+            (!processed.has(other.id) || Boolean(runRetentionHold(other, context))),
+        );
+        const owned = runOwnedPaths([run], others, roots);
+        const files: { source: string; store: RunRetentionStore; bytes: number }[] = [];
+        for (const store of Object.keys(owned) as (keyof typeof owned)[])
+          for (const source of owned[store]) {
+            if (!existsSync(source) || (store === 'task-dirs' && isTaskDirectoryAdmitting(source)))
+              continue;
+            files.push({ source, store, bytes: await diskBytes(source) });
+          }
+        const pins = await retiredTaskPins(
+          roots.taskPins,
+          new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
+          context.now,
+        );
+        for (const source of pins)
+          files.push({ source, store: 'task-pins', bytes: await diskBytes(source) });
+        if (!files.length) {
+          processed.add(run.id);
+          return;
+        }
+        await recordRunStorageArchive(run.id, storageArchiveManifest(roots.archiveRoot, run.id));
+        await getRunWithArchived(run.id); // Reload after the durable link invalidates archived cache.
+        await stageStoragePaths(roots.archiveRoot, run.id, files, () => {
+          const latest = getCachedRunWithArchived(run.id);
+          if (!latest || runRetentionHold(latest, context)) return false;
+          const current = [...runs, ...getAllRuns()].filter(
             (other) =>
               other.id !== run.id &&
               (!processed.has(other.id) || Boolean(runRetentionHold(other, context))),
           );
-          const owned = runOwnedPaths([run], others, roots);
-          const files: { source: string; store: RunRetentionStore; bytes: number }[] = [];
-          for (const store of Object.keys(owned) as (keyof typeof owned)[])
-            for (const source of owned[store]) {
-              if (
-                !existsSync(source) ||
-                (store === 'task-dirs' && isTaskDirectoryAdmitting(source))
-              )
-                continue;
-              files.push({ source, store, bytes: await diskBytes(source) });
-            }
-          const pins = await retiredTaskPins(
-            roots.taskPins,
-            new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
-            context.now,
-          );
-          for (const source of pins)
-            files.push({ source, store: 'task-pins', bytes: await diskBytes(source) });
-          if (!files.length) {
-            processed.add(run.id);
-            continue;
-          }
-          await recordRunStorageArchive(run.id, storageArchiveManifest(roots.archiveRoot, run.id));
-          await getRunWithArchived(run.id); // Reload after the durable link invalidates archived cache.
-          await stageStoragePaths(roots.archiveRoot, run.id, files, () => {
-            const latest = getCachedRunWithArchived(run.id);
-            if (!latest || runRetentionHold(latest, context)) return false;
-            const current = [...runs, ...getAllRuns()].filter(
-              (other) =>
-                other.id !== run.id &&
-                (!processed.has(other.id) || Boolean(runRetentionHold(other, context))),
-            );
-            const eligible = runOwnedPaths([run], current, roots);
-            return files.every((file) => {
-              if (file.store === 'task-pins') {
-                const provenance: { taskDir?: unknown } = JSON.parse(
-                  readFileSync(path.join(file.source, 'provenance.json'), 'utf8'),
-                );
-                const taskDir = provenance.taskDir;
-                if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
-                return (
-                  !existsSync(taskDir) ||
-                  files.some(
-                    (entry) =>
-                      entry.store === 'task-dirs' && entry.source === path.resolve(taskDir),
-                  )
-                );
-              }
-              return (
-                eligible[file.store].includes(file.source) &&
-                (file.store !== 'task-dirs' || !isTaskDirectoryAdmitting(file.source))
+          const eligible = runOwnedPaths([run], current, roots);
+          return files.every((file) => {
+            if (file.store === 'task-pins') {
+              const provenance: { taskDir?: unknown } = JSON.parse(
+                readFileSync(path.join(file.source, 'provenance.json'), 'utf8'),
               );
-            });
+              const taskDir = provenance.taskDir;
+              if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
+              return (
+                !existsSync(taskDir) ||
+                files.some(
+                  (entry) => entry.store === 'task-dirs' && entry.source === path.resolve(taskDir),
+                )
+              );
+            }
+            return (
+              eligible[file.store].includes(file.source) &&
+              (file.store !== 'task-dirs' || !isTaskDirectoryAdmitting(file.source))
+            );
           });
-          processed.add(run.id);
-          stagedRuns.push({ id: run.id, files });
-        } catch (error) {
-          console.error(
-            `[run-retention] skipped ${candidate.id}; source/journal retained: ${(error as Error).message}`,
-          );
-        }
+        });
+        processed.add(run.id);
+        stagedRuns.push({ id: run.id, files });
+      } catch (error) {
+        console.error(
+          `[run-retention] skipped ${candidate.id}; source/journal retained: ${(error as Error).message}`,
+        );
       }
-      return [];
-    }),
-  );
+    });
+  }
   // Hash, cross-volume copy and fsync happen after both admission locks are released.
   const failed = new Set(await resumeStorageArchives(roots.archiveRoot));
   const archived = [];

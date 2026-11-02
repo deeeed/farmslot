@@ -174,7 +174,10 @@ export function writePiHook(params) {
     slotId: env.FARMSLOT_SLOT_ID || undefined,
     runner: env.FARMSLOT_RUNNER || 'pi',
     ...(event === 'StopFailure' && typeof params.failure === 'string' && params.failure
-      ? { failure: params.failure }
+      ? {
+          failure: params.failure,
+          ...(piFailureKind(params.failure) ? { failureKind: 'transport' } : {}),
+        }
       : {}),
     ...(typeof turnStartedAt === 'number' ? { turnStartedAt } : {}),
     ...(typeof turnActive === 'boolean' ? { turnActive } : {}),
@@ -198,6 +201,21 @@ export function writePiHook(params) {
 export function piMessageTokenUsage(message) {
   const tokens = message?.role === 'assistant' ? message.usage?.totalTokens : undefined;
   return Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
+}
+
+/**
+ * Pi's own transport-failure wording (pi-ai `utils/retry.js`, the network, proxy, fetch and
+ * socket entries): a model connection that failed or was torn down mid-request. Pi's request
+ * deadline is not one; it stays a genuine failure.
+ */
+const PI_TRANSPORT_FAILURE =
+  /network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|request to \S+ failed, reason:|getaddrinfo|ENOTFOUND|EAI_AGAIN|ECONNRESET|upstream.?connect|reset before headers|socket hang up|socket connection was closed|terminated|websocket.?closed|websocket.?error/i;
+
+/** A failed turn's kind for the gateway: 'transport' when the connection dropped, else none. */
+export function piFailureKind(failure) {
+  return typeof failure === 'string' && PI_TRANSPORT_FAILURE.test(failure)
+    ? 'transport'
+    : undefined;
 }
 
 /** The last native assistant result owns this turn's error, never rendered text. */

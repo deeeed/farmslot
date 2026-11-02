@@ -1,0 +1,450 @@
+{
+  "commandCenter": [
+    {
+      "route": "onboarding",
+      "href": "#onboarding",
+      "tag": "app-shell",
+      "kind": "connection"
+    },
+    {
+      "route": "native",
+      "href": "#native",
+      "tag": "native-session-view",
+      "kind": "cached"
+    },
+    {
+      "route": "fleet",
+      "href": "#fleet",
+      "tag": "fleet-canvas",
+      "kind": "cached"
+    },
+    {
+      "route": "terminal",
+      "href": "#terminal?run={activeRunId}",
+      "tag": "terminal-split-view",
+      "kind": "stream"
+    },
+    {
+      "route": "devices",
+      "href": "#devices",
+      "tag": "device-grid",
+      "kind": "cached"
+    },
+    {
+      "route": "dispatch",
+      "href": "#dispatch",
+      "tag": "dispatch-wizard",
+      "kind": "command-form"
+    },
+    {
+      "route": "roadmap",
+      "href": "#roadmap",
+      "tag": "roadmap-panel",
+      "kind": "cached"
+    },
+    {
+      "route": "backlog",
+      "href": "#backlog",
+      "tag": "backlog-panel",
+      "kind": "cached"
+    },
+    {
+      "route": "work-graphs",
+      "href": "#work-graphs",
+      "tag": "work-graph-panel",
+      "kind": "cached"
+    },
+    {
+      "route": "prs",
+      "href": "#prs",
+      "tag": "pr-board",
+      "kind": "cached"
+    },
+    {
+      "route": "decisions",
+      "href": "#decisions",
+      "tag": "decision-inbox",
+      "kind": "cached"
+    },
+    {
+      "route": "runs",
+      "href": "#runs",
+      "tag": "run-list",
+      "kind": "cached"
+    },
+    {
+      "route": "run",
+      "href": "#run/{runId}",
+      "tag": "run-detail",
+      "kind": "cached"
+    },
+    {
+      "route": "family",
+      "href": "#family/{familyId}",
+      "tag": "family-observability",
+      "kind": "cached"
+    },
+    {
+      "route": "run-compare",
+      "href": "#runs/compare?a={runId}&b={otherRunId}",
+      "tag": "run-compare",
+      "kind": "cached"
+    },
+    {
+      "route": "evals",
+      "href": "#evals",
+      "tag": "eval-cockpit",
+      "kind": "alpha"
+    },
+    {
+      "route": "finetune",
+      "href": "#finetune",
+      "tag": "finetune-page",
+      "kind": "alpha"
+    },
+    {
+      "route": "intelligence",
+      "href": "#intelligence",
+      "tag": "intelligence-incidents-panel",
+      "kind": "alpha"
+    },
+    {
+      "route": "analytics",
+      "href": "#analytics",
+      "tag": "analytics-panel",
+      "kind": "cached"
+    },
+    {
+      "route": "config",
+      "href": "#config",
+      "tag": "config-panel",
+      "kind": "cached"
+    },
+    {
+      "route": "doctor",
+      "href": "#doctor",
+      "tag": "gateway-doctor",
+      "kind": "command-form"
+    },
+    {
+      "route": "slot",
+      "href": "#slot/{slotId}",
+      "tag": "slot-view",
+      "kind": "cached"
+    },
+    {
+      "route": "dev",
+      "href": "#dev",
+      "tag": "dev-harness",
+      "kind": "development"
+    }
+  ],
+  "companion": [
+    {
+      "file": "(tabs)/_layout.tsx",
+      "href": "/_layout",
+      "kind": "layout",
+      "reason": "Shared bootstrap and navigation, exercised by its child routes."
+    },
+    {
+      "file": "(tabs)/advanced.tsx",
+      "href": "/advanced",
+      "kind": "local",
+      "reason": "Stored settings, filters or static navigation; no gateway read is needed."
+    },
+    {
+      "file": "(tabs)/backlog.tsx",
+      "href": "/backlog",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "(tabs)/copilot.tsx",
+      "href": "/copilot",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "(tabs)/fleet.tsx",
+      "href": "/fleet",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "(tabs)/inbox.tsx",
+      "href": "/inbox",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "(tabs)/prs.tsx",
+      "href": "/prs",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "(tabs)/roadmap.tsx",
+      "href": "/roadmap",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "(tabs)/runs.tsx",
+      "href": "/runs",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "(tabs)/settings.tsx",
+      "href": "/settings",
+      "kind": "local",
+      "reason": "Stored settings, filters or static navigation; no gateway read is needed."
+    },
+    {
+      "file": "(tabs)/workers.tsx",
+      "href": "/workers",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "_layout.tsx",
+      "href": "/_layout",
+      "kind": "layout",
+      "reason": "Shared bootstrap and navigation, exercised by its child routes."
+    },
+    {
+      "file": "artifacts/[runId].tsx",
+      "href": "/artifacts/{runId}",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "backlog/[id].tsx",
+      "href": "/backlog/{backlogId}",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "backlog/create.tsx",
+      "href": "/backlog/create",
+      "kind": "command-form",
+      "reason": "Unsent input is local; writes require connection and explicit submission."
+    },
+    {
+      "file": "backlog/edit/[id].tsx",
+      "href": "/backlog/edit/{backlogId}",
+      "kind": "command-form",
+      "reason": "Unsent input is local; writes require connection and explicit submission."
+    },
+    {
+      "file": "connection.tsx",
+      "href": "/connection",
+      "kind": "connection",
+      "reason": "ADR-071 connection and pairing exception, no cached farm subject."
+    },
+    {
+      "file": "decision/[id].tsx",
+      "href": "/decision/{decisionId}",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "dev/skeletons.tsx",
+      "href": "/dev/skeletons",
+      "kind": "development",
+      "reason": "Development fixture, no operator read contract."
+    },
+    {
+      "file": "dev/ticket-links.tsx",
+      "href": "/dev/ticket-links",
+      "kind": "development",
+      "reason": "Development fixture, no operator read contract."
+    },
+    {
+      "file": "diff/[runId].tsx",
+      "href": "/diff/{runId}",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "diff/slot/[slotId].tsx",
+      "href": "/diff/slot/{slotId}",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "dispatch-queue.tsx",
+      "href": "/dispatch-queue",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "evidence/[runId].tsx",
+      "href": "/evidence/{runId}",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "family/[familyId].tsx",
+      "href": "/family/{familyId}",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "filters.tsx",
+      "href": "/filters",
+      "kind": "local",
+      "reason": "Stored settings, filters or static navigation; no gateway read is needed."
+    },
+    {
+      "file": "gate-review/[decisionId].tsx",
+      "href": "/gate-review/{decisionId}?runId={gateRunId}",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "index.tsx",
+      "href": "/",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "native.tsx",
+      "href": "/native",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "pair.tsx",
+      "href": "/pair",
+      "kind": "connection",
+      "reason": "ADR-071 connection and pairing exception, no cached farm subject."
+    },
+    {
+      "file": "pr-automation.tsx",
+      "href": "/pr-automation",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "prs.tsx",
+      "href": "/prs",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "roadmap/[id].tsx",
+      "href": "/roadmap/{roadmapId}",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "run/[id].tsx",
+      "href": "/run/{runId}",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "run-filters.tsx",
+      "href": "/run-filters",
+      "kind": "local",
+      "reason": "Stored settings, filters or static navigation; no gateway read is needed."
+    },
+    {
+      "file": "run-terminal/[runId].tsx",
+      "href": "/run-terminal/{runId}",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "slot/[id].tsx",
+      "href": "/slot/{slotId}",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "terminal/[slotId].tsx",
+      "href": "/terminal/{slotId}",
+      "kind": "redirect",
+      "reason": "Legacy URL must reach its canonical workspace from stored metadata."
+    },
+    {
+      "file": "terminal/worker.tsx",
+      "href": "/terminal/worker?runId={activeRunId}",
+      "kind": "stream",
+      "reason": "Worker lookup is cached; terminal output is the named live-stream exception."
+    },
+    {
+      "file": "visual-review/[runId].tsx",
+      "href": "/visual-review/{runId}",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "work-graphs.tsx",
+      "href": "/work-graphs",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "workspace/run/[runId]/_layout.tsx",
+      "href": "/workspace/run/{runId}/_layout",
+      "kind": "layout",
+      "reason": "Shared bootstrap and navigation, exercised by its child routes."
+    },
+    {
+      "file": "workspace/run/[runId]/diff.tsx",
+      "href": "/workspace/run/{runId}/diff",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "workspace/run/[runId]/evidence.tsx",
+      "href": "/workspace/run/{runId}/evidence",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "workspace/run/[runId]/files.tsx",
+      "href": "/workspace/run/{runId}/files",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "workspace/run/[runId]/gate.tsx",
+      "href": "/workspace/run/{gateRunId}/gate?decisionId={decisionId}",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "workspace/run/[runId]/timeline.tsx",
+      "href": "/workspace/run/{runId}/timeline",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "workspace/slot/[slotId]/_layout.tsx",
+      "href": "/workspace/slot/{slotId}/_layout",
+      "kind": "layout",
+      "reason": "Shared bootstrap and navigation, exercised by its child routes."
+    },
+    {
+      "file": "workspace/slot/[slotId]/diff.tsx",
+      "href": "/workspace/slot/{slotId}/diff",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "workspace/slot/[slotId]/slot.tsx",
+      "href": "/workspace/slot/{slotId}/slot",
+      "kind": "cached",
+      "reason": "Farm display reads come from the scoped resource store."
+    },
+    {
+      "file": "workspace/slot/[slotId]/terminal.tsx",
+      "href": "/workspace/slot/{slotId}/terminal",
+      "kind": "stream",
+      "reason": "Worker lookup is cached; terminal output is the named live-stream exception."
+    }
+  ]
+}

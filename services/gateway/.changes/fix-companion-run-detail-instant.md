@@ -1,0 +1,1 @@
+- run.list trims rows with `trimRunForList` from `@farmslot/protocol`, where the trim moved so clients can test against the same rule. No change to what run.list sends.

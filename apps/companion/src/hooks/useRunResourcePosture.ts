@@ -9,9 +9,11 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { Methods, type RuntimePostureStatusResult } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import type { GatewayClient } from '../lib/gateway-client';
 import { isGatewayBackgroundPauseError } from '../lib/recoverable-errors';
+import { readStored } from '../lib/resource-cache';
 import {
   postureAfterPausedRefresh,
   postureWhileRefreshing,
@@ -24,7 +26,11 @@ export function useRunResourcePosture(
   /** Changes whenever the run record changed, so the status is re-read with it. */
   refreshKey: string,
 ): { posture: RunPostureStatusState } {
-  const [posture, setPosture] = useState<RunPostureStatusState>({ status: 'idle' });
+  // A read the effect is about to start is already loading on the first render,
+  // so the panel mounts at its reserved size instead of appearing a frame later.
+  const [posture, setPosture] = useState<RunPostureStatusState>(() =>
+    client && runId ? { status: 'loading' } : { status: 'idle' },
+  );
   const requestRef = useRef(0);
   // Which run, read over which connection, the state on screen describes.
   const heldFor = useRef<{ client: GatewayClient | null; runId: string | null }>({
@@ -43,8 +49,9 @@ export function useRunResourcePosture(
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     setPosture((current) => postureWhileRefreshing(current, sameTarget));
-    client
-      .request<RuntimePostureStatusResult>(Methods.RUNTIME_POSTURE_STATUS, { runId })
+    readStored<RuntimePostureStatusResult>(
+      resourceQuery<RuntimePostureStatusResult>(Methods.RUNTIME_POSTURE_STATUS, { runId }),
+    )
       .then((result) => {
         if (requestRef.current !== requestId) return;
         setPosture({ status: 'ready', slotId: result.slotId, state: result.state });

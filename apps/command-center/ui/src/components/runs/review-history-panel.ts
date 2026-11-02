@@ -27,28 +27,19 @@ import {
 import '../shared/diff-viewer-modal.js';
 import '../diff-viewer/code-viewer.js';
 
+import { readStoredArtifact } from '../../artifact-response.js';
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
-import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
-import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconnect.js';
+import { currentRecoveryEpoch } from '../../utils/reconnect.js';
+import { readStored } from '../shared/read-current.js';
 import { runArtifactApiPath } from '../workspace/workspace-artifacts.js';
 
 import { reviewHistoryStyles } from './review-history-styles.js';
 import { renderReviewAttempt, renderReviewFix } from './step-inspector-review-renderer.js';
 
-/** Live slot review reads share the current owner's workspace cache; a ready entry is current. */
+/** Display reads keep held source available offline; they never authorize a write. */
 async function readReviewWorkspace<T>(method: ResourceReadMethod, params: unknown): Promise<T> {
-  const cache = getResourceCache();
-  const owner = getResourceWorkspaceKey();
-  if (!cache) throw new Error('Workspace store is unavailable');
-  const query = resourceQuery<T>(method, params);
-  let state = cache.read(query);
-  if (state.status !== 'ready') state = await cache.retry(query);
-  if (cache !== getResourceCache() || owner !== getResourceWorkspaceKey())
-    throw new Error('Farm connection changed');
-  if (state.status !== 'ready' || state.data === undefined)
-    throw new Error(state.error?.message ?? 'Wait for a current workspace source');
-  return state.data;
+  return readStored(resourceQuery<T>(method, params));
 }
 
 /** A slotless review run has no live workspace; it reads its frozen head through the run. */
@@ -56,7 +47,9 @@ async function readReviewSource(params: GitShowParams): Promise<GitShowResult> {
   if (params.slotId) return readReviewWorkspace<GitShowResult>(Methods.GIT_SHOW, params);
   const { runId = '', ref, path } = params;
   if (!runId || !ref || !path) throw new Error('Reviewed source is unavailable');
-  return gateway.request<GitShowResult>(Methods.GIT_SHOW, { slotId: '', runId, ref, path });
+  return readStored<GitShowResult>(
+    resourceQuery<GitShowResult>(Methods.GIT_SHOW, { slotId: '', runId, ref, path }),
+  );
 }
 
 @customElement('review-history-panel')
@@ -104,9 +97,10 @@ export class ReviewHistoryPanel extends LitElement {
 
   private async _loadHistory(force = false) {
     const run = this.run;
-    if (!run || gateway.connectionState !== 'connected') return;
+    const cache = getResourceCache();
+    if (!run || !cache) return;
     const epoch = currentRecoveryEpoch();
-    const identity = `${epoch}:${reviewHistoryIdentity(run)}`;
+    const identity = `${getResourceWorkspaceKey()}:${epoch}:${reviewHistoryIdentity(run)}`;
     if (!force && identity === this._historyIdentity) return;
     this._historyIdentity = identity;
     const scope = this._artifactScope(run);
@@ -115,7 +109,7 @@ export class ReviewHistoryPanel extends LitElement {
     this._historyLoading = true;
     const current = () =>
       this.isConnected &&
-      isRecoveryEpochCurrent(epoch) &&
+      cache === getResourceCache() &&
       this.run?.id === run.id &&
       this._historyIdentity === identity;
     this._historyError = '';
@@ -123,28 +117,30 @@ export class ReviewHistoryPanel extends LitElement {
       const artifacts = await loadReviewHistoryArtifacts(
         run,
         async (path) => {
-          const response = await gatewayHttpFetch(runArtifactApiPath(run.id, { path }));
+          const response = await readStoredArtifact(runArtifactApiPath(run.id, { path }));
           if (response.status === 404) return null;
           if (!response.ok) throw new Error(`Artifact HTTP ${response.status}`);
           return response.text();
         },
         async (params) => {
-          if (!isRecoveryEpochCurrent(epoch)) throw new Error('Farm connection changed');
+          if (!current()) throw new Error('Farm connection changed');
           return (await readReviewWorkspace<FsReadResult>(Methods.FS_READ, params)).content;
         },
         async (params) => {
-          if (!isRecoveryEpochCurrent(epoch)) throw new Error('Farm connection changed');
+          if (!current()) throw new Error('Farm connection changed');
           if (params.slotId)
             return (await readReviewWorkspace<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
           const { runId = '', base = '', head = '' } = params;
           if (!runId || !base || !head) throw new Error('Review range is unavailable');
           return (
-            await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
-              slotId: '',
-              runId,
-              base,
-              head,
-            })
+            await readStored<GitDiffResult>(
+              resourceQuery<GitDiffResult>(Methods.GIT_DIFF, {
+                slotId: '',
+                runId,
+                base,
+                head,
+              }),
+            )
           ).diff;
         },
       );
@@ -245,15 +241,16 @@ export class ReviewHistoryPanel extends LitElement {
   @state() private source: {
     key: string;
     runId: string;
-    epoch: number;
     loading: boolean;
     content: string;
     error: string;
   } | null = null;
+  private _sourceCache?: object;
 
   private async _openSource(round: ReviewHistoryRound, finding: ReviewHistoryFinding) {
-    if (!this.run) return;
-    if (this.source?.key === `${round.key}:${finding.id}`) {
+    const cache = getResourceCache();
+    if (!this.run || !cache) return;
+    if (this.source?.key === `${round.key}:${finding.id}` && this._sourceCache === cache) {
       this.source = null;
       return;
     }
@@ -262,15 +259,15 @@ export class ReviewHistoryPanel extends LitElement {
     const selection = {
       key: `${round.key}:${finding.id}`,
       runId: this.run.id,
-      epoch: currentRecoveryEpoch(),
       loading: true,
       content: '',
       error: '',
     };
     this.source = selection;
+    this._sourceCache = cache;
     try {
       const result = await readReviewSource(params);
-      if (this.source !== selection || !isRecoveryEpochCurrent(selection.epoch)) return;
+      if (this.source !== selection || this._sourceCache !== getResourceCache()) return;
       const context = reviewedFindingContext(result.content, finding.line!);
       this.source = {
         ...selection,
@@ -294,7 +291,7 @@ export class ReviewHistoryPanel extends LitElement {
       !source ||
       source.key !== `${round.key}:${finding.id}` ||
       source.runId !== this.run?.id ||
-      !isRecoveryEpochCurrent(source.epoch)
+      this._sourceCache !== getResourceCache()
     )
       return nothing;
     return html`<div class="review-loop-meta">

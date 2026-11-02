@@ -4,7 +4,7 @@ import { beforeEach, mock, test } from 'node:test';
 import type { ActiveResourcePointer, ResourceStatus, Run, SlotResource } from '@farmslot/protocol';
 
 let row: Record<string, unknown>;
-let run: Pick<Run, 'id' | 'status' | 'slotId'>;
+let run: Pick<Run, 'id' | 'status' | 'slotId' | 'steps'>;
 let resources: SlotResource[];
 let states: Record<string, ResourceStatus[]>;
 let active: ActiveResourcePointer | undefined;
@@ -13,6 +13,9 @@ let controlOk = true;
 let refusal: string | undefined;
 let afterProbe: (() => void) | undefined;
 let locked = false;
+/** An earlier runtime action is still running on the slot when the next control starts. */
+let earlierControl = false;
+const details: (string | undefined)[] = [];
 const probesUnderLock: string[] = [];
 const calls: string[] = [];
 const realConfig = await import('../core/config.js');
@@ -34,7 +37,15 @@ mock.module('../core/config.js', {
     }),
   },
 });
-mock.module('../runs/store.js', { namedExports: { getRun: () => run } });
+mock.module('../runs/store.js', {
+  namedExports: {
+    getRun: () => run,
+    updateRunStep: (_id: string, name: string, partial: { detail?: string }) => {
+      details.push(partial.detail);
+      run.steps.find((step) => step.name === name)!.detail = partial.detail;
+    },
+  },
+});
 mock.module('../sources/runtime.js', {
   namedExports: { withSlotSources: async (_id: string, body: () => Promise<void>) => body() },
 });
@@ -47,9 +58,14 @@ mock.module('../methods/runtime-capabilities.js', {
         _resource: string,
         device: boolean,
         body: () => Promise<void>,
+        onWait?: () => void,
       ) => {
         assert.equal(device, true);
         if (refusal) return { ok: false, reason: refusal };
+        if (earlierControl) {
+          earlierControl = false;
+          onWait?.();
+        }
         locked = true;
         try {
           await body();
@@ -110,7 +126,12 @@ beforeEach(() => {
   compileSeconds = undefined;
   bootTimeouts.length = 0;
   row = { current_run_id: 'run', slot_epoch: 1 };
-  run = { id: 'run', slotId: 'slot', status: 'dispatching' };
+  run = {
+    id: 'run',
+    slotId: 'slot',
+    status: 'dispatching',
+    steps: [{ name: 'dispatch', status: 'running', detail: 'Launching worker' }],
+  };
   resources = [resource('browser', 'browser'), resource('server', 'dev-server')];
   states = { browser: ['stopped', 'running'], server: ['stopped', 'running'] };
   active = undefined;
@@ -120,6 +141,8 @@ beforeEach(() => {
   afterProbe = undefined;
   probesUnderLock.length = 0;
   calls.length = 0;
+  earlierControl = false;
+  details.length = 0;
 });
 const ready = (
   gate: () => Promise<void> = async () => {
@@ -256,3 +279,17 @@ for (const field of ['prepare', 'compile'])
       field === 'prepare' ? 3_600_000 : 600_000,
     ]);
   });
+
+// F330: a dispatch waiting on a boot, or on another runtime action, showed no detail.
+test('a boot and its wait are named on the active step, which gets its detail back', async () => {
+  earlierControl = true;
+  await ready();
+  assert.deepEqual(details, [
+    'Starting server on slot (up to 900 s)',
+    'Waiting for an earlier runtime action on slot',
+    'Starting server on slot (up to 900 s)',
+    'Starting browser on slot (up to 900 s)',
+    'Launching worker',
+  ]);
+  assert.equal(run.steps[0]?.detail, 'Launching worker');
+});

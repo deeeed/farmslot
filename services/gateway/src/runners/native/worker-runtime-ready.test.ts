@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { beforeEach, mock, test } from 'node:test';
 
-import { NATIVE_WORKER_ENSURE, NATIVE_WORKER_STATE } from '@farmslot/agent-runtime/native';
+import {
+  NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_ENSURE,
+  NATIVE_WORKER_STATE,
+  NATIVE_WORKER_TRANSFER,
+} from '@farmslot/agent-runtime/native';
 import {
   type NativeWorkerLaunch,
   nativeWorkerLaunchDigest,
@@ -33,7 +38,10 @@ const launch: NativeWorkerLaunch = {
 };
 const vars = makeVars({ slotId: 'runtime-slot', remoteRepo: '/owned/repo', repo: '/owned/repo' });
 const stop = new Error('Reached ENSURE boundary');
+const reserved = new Error('Reached handoff reservation');
 let run: Run;
+/** A retained worker's run, for handoff tests. */
+let source: Run | undefined;
 let host: NativeSessionInfo | undefined;
 let runtimeError: string | undefined;
 let listUnavailable: boolean;
@@ -54,7 +62,7 @@ mock.module('../../security/native-worker-owner.js', {
 mock.module('../../runs/store.js', {
   namedExports: {
     ...store,
-    getRun: () => run,
+    getRun: (id: string) => (id === source?.id ? source : run),
     updateRun: (_id: string, patch: Partial<Run>) => Object.assign(run, patch),
     persistRunNow: async () => {},
   },
@@ -70,7 +78,8 @@ mock.module('../../agents/contexts.js', {
         resolvePatch?: (existing: AgentContext | undefined) => Partial<AgentContext> | null;
       },
     ) => {
-      const existing = run.agentContexts!.find((value) => value.id === patch.id)!;
+      const existing = run.agentContexts!.find((value) => value.id === patch.id);
+      if (!existing) throw reserved;
       const resolved = options?.resolvePatch ? options.resolvePatch(existing) : patch;
       if (!resolved) return null;
       Object.assign(existing, resolved);
@@ -78,12 +87,18 @@ mock.module('../../agents/contexts.js', {
     },
   },
 });
-const launchInputs: Array<{ taskLibraries?: ReadonlyMap<string, string> }> = [];
+const launchInputs: Array<{
+  taskLibraries?: ReadonlyMap<string, string>;
+  modelQuestions?: 'off';
+}> = [];
 mock.module('./worker-launch.js', {
   namedExports: {
-    prepareNativeWorkerLaunch: async (input: { taskLibraries?: ReadonlyMap<string, string> }) => {
+    prepareNativeWorkerLaunch: async (input: {
+      taskLibraries?: ReadonlyMap<string, string>;
+      modelQuestions?: 'off';
+    }) => {
       launchInputs.push(input);
-      return { launch };
+      return { launch: { ...launch, modelQuestions: input.modelQuestions } };
     },
   },
 });
@@ -106,7 +121,11 @@ mock.module('../../run-engine/worker-launch-preflight.js', {
 mock.module('./node.js', {
   namedExports: {
     ...node,
-    routeNativeExecution: async (_owner: string, method: string) => {
+    routeNativeExecution: async (
+      _owner: string,
+      method: string,
+      params?: Record<string, unknown>,
+    ) => {
       calls.push(method);
       if (method === Methods.NATIVE_SESSION_LIST) {
         afterList?.();
@@ -118,6 +137,13 @@ mock.module('./node.js', {
         };
       }
       if (method === NATIVE_WORKER_STATE) return { stateDirectory: '/owned/state' };
+      if (method === Methods.NATIVE_SESSION_READ) return { session: host, pendingRequests: [] };
+      if (method === NATIVE_WORKER_CLOSE) {
+        assert.equal(params?.leaseId, host?.workerLeaseId);
+        host = { ...host!, processStopped: true, state: 'closed' };
+        return { session: host };
+      }
+      if (method === NATIVE_WORKER_TRANSFER) throw new Error('Reached transfer boundary');
       if (method === NATIVE_WORKER_ENSURE) throw stop;
       throw new Error('Unexpected native operation: ' + method);
     },
@@ -156,6 +182,7 @@ beforeEach(() => {
       },
     },
   ];
+  source = undefined;
   host = undefined;
   runtimeError = undefined;
   listUnavailable = false;
@@ -166,7 +193,7 @@ beforeEach(() => {
   launchInputs.length = 0;
 });
 const reservation = () => run.agentContexts![0].nativeSession;
-const dispatch = () =>
+const dispatch = (extra: Partial<Parameters<typeof dispatchNativeWorker>[0]> = {}) =>
   dispatchNativeWorker({
     runId: run.id,
     vars,
@@ -184,6 +211,7 @@ const dispatch = () =>
       if (runtimeError) throw new Error(runtimeError);
     },
     emit: () => {},
+    ...extra,
   });
 
 test('pending reservation retry checks runtime before ENSURE can create a worker', async () => {
@@ -196,8 +224,8 @@ for (const reason of ['stopped runtime failed to boot', 'unknown browser health'
     await assert.rejects(dispatch(), new RegExp(reason));
     assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST, 'runtime-ready']);
   });
-test('an unconfirmed reply with an existing worker does not boot retained runtime', async () => {
-  host = {
+function hostInfo(overrides: Partial<NativeSessionInfo> = {}): NativeSessionInfo {
+  return {
     id: 'pending-session',
     ownerPrincipalId: 'owner',
     executionNodeId: 'local',
@@ -223,7 +251,11 @@ test('an unconfirmed reply with an existing worker does not boot retained runtim
       interrupt: true,
       resume: true,
     },
+    ...overrides,
   };
+}
+test('an unconfirmed reply with an existing worker does not boot retained runtime', async () => {
+  host = hostInfo();
   await assert.rejects(dispatch(), /Reached ENSURE boundary/);
   assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST, NATIVE_WORKER_ENSURE]);
 });
@@ -313,3 +345,91 @@ test('a bound run launches its native worker on the libraries its task pinned', 
     [['perps', `${pin}/inputs/39/recipe-perps`]],
   );
 });
+for (const mode of ['autonomous', 'interactive'] as const)
+  test(`a native ${mode} worker launch carries its run mode's question tool`, async () => {
+    run.mode = mode;
+    await assert.rejects(dispatch(), /Reached ENSURE boundary/);
+    assert.equal(launchInputs[0]?.modelQuestions, mode === 'autonomous' ? 'off' : undefined);
+  });
+
+function retainedSource(mode: Run['mode'], closed: boolean): Run {
+  const retained = makeRun({ id: 'retained-source', slotId: vars.slotId, status: 'done' });
+  Object.assign(retained, { mode, transport: 'native', nativeOwnerPrincipalId: 'owner' });
+  retained.agentContexts = [
+    {
+      id: 'retained-primary',
+      runId: retained.id,
+      slotId: vars.slotId,
+      role: 'primary',
+      label: 'Primary',
+      status: 'complete',
+      taskFile: 'tasks/previous/TASK.md',
+      runner: 'claude',
+      model: 'sonnet',
+      runnerSessionId: 'native-conversation',
+      nativeSession: {
+        sessionId: 'retained-session',
+        ownerPrincipalId: 'owner',
+        executionNodeId: 'local',
+        leaseId: 'retained-lease',
+        commandId: 'retained-command',
+        generation: 'generation',
+        ...(closed ? { closedAt: '2026-11-02T00:00:00.000Z' } : {}),
+      },
+    },
+  ];
+  return retained;
+}
+for (const [from, to, closed] of [
+  ['interactive', 'autonomous', false],
+  ['autonomous', 'interactive', false],
+  // The handoff resumes a closed worker with the new launch.
+  ['interactive', 'autonomous', true],
+  ['autonomous', 'autonomous', false],
+] as const)
+  test(`a ${closed ? 'closed' : 'live'} ${from} worker can be reserved for an ${to} run`, async () => {
+    source = retainedSource(from, closed);
+    run.mode = to;
+    run.agentContexts = [];
+    await assert.rejects(
+      dispatch({ retainedFrom: { runId: source.id, contextId: 'retained-primary' } }),
+      /Reached handoff reservation/,
+    );
+    assert.deepEqual(calls, []);
+  });
+
+for (const [effective, requested, stopped, transferred] of [
+  ['on', 'off', false, false],
+  ['off', 'on', false, false],
+  [undefined, 'off', false, false],
+  ['off', 'off', false, false],
+  ['on', 'off', true, false],
+  // Reconcile a lost transfer reply using the lease the host actually reports.
+  ['on', 'off', false, true],
+] as const)
+  test(`native handoff with effective=${effective}, requested=${requested}, stopped=${stopped}, transferred=${transferred} stops only when needed`, async () => {
+    run.mode = requested === 'off' ? 'autonomous' : 'interactive';
+    source = retainedSource('interactive', stopped);
+    const binding = reservation()!;
+    binding.generation = 'generation';
+    binding.handoffFrom = {
+      runId: source.id,
+      contextId: 'retained-primary',
+      leaseId: 'retained-lease',
+    };
+    host = hostInfo({
+      id: binding.sessionId,
+      generation: binding.generation,
+      workerLeaseId: transferred ? binding.leaseId : 'retained-lease',
+      workerModelQuestions: effective,
+      processStopped: stopped,
+      state: stopped ? 'closed' : 'idle',
+      cwd: vars.remoteRepo,
+    });
+    await assert.rejects(dispatch(), /Native task lease transfer is unconfirmed/);
+    assert.deepEqual(calls, [
+      Methods.NATIVE_SESSION_READ,
+      ...(!stopped && effective !== requested ? [NATIVE_WORKER_CLOSE] : []),
+      NATIVE_WORKER_TRANSFER,
+    ]);
+  });

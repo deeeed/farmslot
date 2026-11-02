@@ -38,6 +38,14 @@ export const IMPLEMENTATION_FILES = new Set([
 // ADR-071 Amendment 2: the only application modules that may fetch over HTTP, each with its reason.
 // Artifact text and diffs are not here: they belong in the content store.
 export const HTTP_FILES = new Map([
+  [
+    'apps/command-center/ui/src/artifact-response.ts',
+    'content store: verifies bytes, then stores them',
+  ],
+  [
+    'apps/companion/src/lib/artifact-response.ts',
+    'content store: verifies bytes, then stores them',
+  ],
   ['apps/companion/src/lib/gateway-http-auth.ts', 'connection: the authenticated gateway fetch'],
   ['apps/companion/src/lib/held-content.ts', 'content store: verifies bytes, then stores them'],
   ['apps/companion/src/components/MediaViewer.tsx', 'large media fetched on open'],

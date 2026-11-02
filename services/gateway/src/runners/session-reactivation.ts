@@ -65,6 +65,8 @@ export interface RunnerSessionReactivationOptions {
   prompt: string;
   effort?: string | null;
   safetyTier?: SafetyTier;
+  /** 'off' for an autonomous run: a relaunched or resumed model has no question tool. */
+  modelQuestions?: 'off';
   runtimeDir?: string;
   taskDir?: string;
   taskFile?: string;
@@ -254,6 +256,7 @@ async function relaunchRunnerWithArgvPrompt(
       runtimeDir: options.runtimeDir,
       taskDir: options.taskDir,
       taskFile: options.taskFile,
+      modelQuestions: options.modelQuestions,
     },
   );
   try {
@@ -442,6 +445,7 @@ async function reactivateRunnerSessionWithPrompt(
       {
         effort: options.effort,
         safetyTier: options.safetyTier,
+        modelQuestions: options.modelQuestions,
         runtimeDir,
         taskDir: options.taskDir,
         initialPrompt: options.prompt,

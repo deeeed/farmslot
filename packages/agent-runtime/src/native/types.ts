@@ -28,6 +28,8 @@ export interface NativeAdapterOptions {
   effort?: string;
   safetyTier?: SafetyTier;
   approvalPolicy?: 'never';
+  /** Removes the model's own question tool (modelQuestionsOffByRunner). */
+  modelQuestions?: 'off';
   filesystemPolicy?: NativeWorkerFilesystemPolicy;
   processSandbox?: NativeProcessSandbox;
 }

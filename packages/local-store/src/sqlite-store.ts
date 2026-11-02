@@ -5,6 +5,7 @@ import {
   type ResourceStoreMetadata,
   type ResourceStoreScope,
   resourceStoreScopeId,
+  storedQueryBatch,
   type StoredResourceContentInfo,
   type StoredResourceQuery,
   type StoredResourceQueryInfo,
@@ -23,6 +24,11 @@ export interface SqliteResourceStoreOptions {
   schemaVersion?: number;
   /** Platform owner broadcasts deletion to other tabs before accepting another read. */
   onDeleted?: (scopeId: string) => void;
+  /**
+   * Files a client keeps beside a scope's store go with it, before its row does. A failure
+   * rejects the deletion, so the owner deletes the scope again before it is read again.
+   */
+  deleteFiles?: (scopeId: string) => Promise<void>;
 }
 
 export const RESOURCE_STORE_SCHEMA_VERSION = 5;
@@ -51,6 +57,14 @@ interface QueryRow extends QueryInfoRow {
 /** A NULL origin was opened. */
 function queryInfo({ origin, cohort, ...info }: QueryInfoRow): StoredResourceQueryInfo {
   return { ...info, ...(origin ? { origin } : {}), ...(cohort ? { cohort } : {}) };
+}
+
+function storedQuery<T>({ data, ...info }: QueryRow): StoredResourceQuery<T> {
+  return {
+    ...queryInfo(info),
+    data: JSON.parse(data) as T,
+    accessedAt: info.accessedAt || info.observedAt,
+  };
 }
 interface ContentRow extends StoredResourceContentInfo {
   // A native driver may bind an empty array as NULL.
@@ -283,6 +297,7 @@ export async function createSqliteResourceStore(
     );
     for (const old of evicted) {
       owner.seal(old.id);
+      await options.deleteFiles?.(old.scope_id);
       await db.run('DELETE FROM resource_stores WHERE id = ?', [old.id]);
       options.onDeleted?.(old.scope_id);
     }
@@ -331,12 +346,7 @@ export async function createSqliteResourceStore(
       )
     )[0];
     if (!saved) return undefined;
-    const { data, ...info } = saved;
-    return {
-      ...queryInfo(info),
-      data: JSON.parse(data) as T,
-      accessedAt: saved.accessedAt || saved.observedAt,
-    };
+    return storedQuery<T>(saved);
   }
 
   /** An upsert, never a replace: replacing the entry would cascade to its rows. */
@@ -409,6 +419,29 @@ export async function createSqliteResourceStore(
     },
     getQuery<T>(id: string) {
       return read(() => selectQuery<T>(id), undefined);
+    },
+    getQueries(maxBytes) {
+      return read(async () => {
+        const info = await db.all<QueryInfoRow>(
+          `SELECT id, observed_at AS observedAt, accessed_at AS accessedAt, bytes, origin, cohort
+          FROM resource_queries WHERE store_id = ?`,
+          [row.id],
+        );
+        const selected = storedQueryBatch(info.map(queryInfo), maxBytes);
+        const result: StoredResourceQuery[] = [];
+        // One serial store operation and one worker reply, with bounded SQLite bind lists.
+        for (let offset = 0; offset < selected.length; offset += 400) {
+          const ids = selected.slice(offset, offset + 400).map((entry) => entry.id);
+          const batch = await db.all<QueryRow>(
+            `SELECT id, data, observed_at AS observedAt, accessed_at AS accessedAt, bytes, origin,
+            cohort FROM resource_queries WHERE store_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
+            [row.id, ...ids],
+          );
+          result.push(...batch.map((entry) => storedQuery(entry)));
+        }
+        const order = new Map(selected.map((entry, index) => [entry.id, index]));
+        return result.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+      }, []);
     },
     putQuery<T>(entry: StoredResourceQuery<T>) {
       return write(...upsertQuery(entry));
@@ -617,7 +650,10 @@ export async function createSqliteResourceStore(
       handle.seal();
       owner.seal(row.id);
       options.onDeleted?.(scopeId);
-      return owner.serial(() => db.run('DELETE FROM resource_stores WHERE id = ?', [row.id]));
+      return owner.serial(async () => {
+        await options.deleteFiles?.(scopeId);
+        await db.run('DELETE FROM resource_stores WHERE id = ?', [row.id]);
+      });
     },
     async close() {
       closed = true;

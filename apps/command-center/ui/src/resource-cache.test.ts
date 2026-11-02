@@ -3,6 +3,9 @@ import { mock, test } from 'node:test';
 
 import type { PendingDecision, Run } from '@farmslot/protocol';
 import { createMemoryResourceStore, type ResourceStore } from '@farmslot/protocol/client-cache';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
+
+import { storedRun } from '../../../../packages/protocol/test/fixtures/run.js';
 
 import { installFakeGateway } from './testing/fake-gateway.js';
 
@@ -52,13 +55,7 @@ test('the owner tab prefetches pending gates and active runs from the shared obs
     epoch: fakeGateway.resourceEpoch,
     dependencies: [{ key: { family, scope: 'farm' }, revision: 0 }],
   });
-  const activeRun = {
-    id: 'active-run',
-    status: 'running',
-    project: 'farm',
-    decisions: [],
-    updatedAt: '2026-10-27T05:00:00.000Z',
-  } as unknown as Run;
+  const activeRun = storedRun('active-run', { status: 'monitoring' });
   const gate = {
     id: 'gate-decision',
     type: 'engine_human_gate',
@@ -71,13 +68,17 @@ test('the owner tab prefetches pending gates and active runs from the shared obs
     runMeta: { runId: 'gate-run' },
     payload: { kind: 'ready' },
   } as unknown as PendingDecision;
-  fakeGateway.responseForRequest = ({ method }) => {
+  const gateRun = storedRun('gate-run', { status: 'human-gating', decisions: [gate] });
+  fakeGateway.responseForRequest = ({ method, params }) => {
     if (method === 'run.list')
-      return { payload: { runs: [activeRun], totalCount: 1 }, resourceState: stamp('runs') };
+      return { payload: { runs: [activeRun, gateRun], totalCount: 2 }, resourceState: stamp('runs') };
     if (method === 'decision.list')
       return { payload: { decisions: [gate] }, resourceState: stamp('decisions') };
-    // Prefetch reads stay unanswered; the test counts which ones start.
-    if (method === 'run.get') return undefined;
+    if (method === 'run.get') return {
+      payload: { run: Reflect.get(params ?? {}, 'runId') === gateRun.id ? gateRun : activeRun },
+      resourceState: { epoch: fakeGateway.resourceEpoch,
+        dependencies: resourceQuery(method, params).dependencies.map((key) => ({ key, revision: 0 })) },
+    };
     if (method === 'config.projects') return { payload: { projects: [] } };
     if (method === 'pr.list') return { payload: { prs: [] } };
     if (method === 'workGraph.list') return { payload: { graphs: [] } };
@@ -112,7 +113,7 @@ test('the owner tab prefetches pending gates and active runs from the shared obs
   assert.ok(fakeGateway.requests.some(({ method }) => method === 'decision.list'));
   assert.deepEqual(prefetchReads(), []);
 
-  // The owner tab without `capabilities.batchedContent` loads content only when opened.
+  // Detail sync is independent of batched content; media prefetch still needs that capability.
   await disposeResourceCache();
   ownerTab = true;
   fakeGateway.authPayload = authPayload(false);
@@ -120,9 +121,10 @@ test('the owner tab prefetches pending gates and active runs from the shared obs
   gateway.reconnect();
   await flush();
   assert.equal(gateway.connectionState, 'connected');
-  assert.deepEqual(prefetchReads(), []);
+  assert.deepEqual(prefetchReads(), ['gate-run', 'active-run']);
 
   // With the capability, the owner prefetches the pending gate first, then the active run.
+  fakeGateway.requests.length = 0;
   fakeGateway.authPayload = authPayload(true);
   gateway.reconnect();
   await flush();

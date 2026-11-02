@@ -30,10 +30,15 @@ import {
   createEngineDecision,
   hasEngineDecisionWaiter,
 } from '../../run-engine/engine-decisions.js';
+import { refreshRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { executeHumanGateStep } from '../../run-engine/post-dispatch-steps.js';
 import { isPublicationReviewRecoveryHeld } from '../../run-engine/recovery.js';
 import { makeRun } from '../../run-engine/test-fixtures.js';
+import {
+  REPLAY_STEP_ACTION,
+  workerLeftRunningDecision,
+} from '../../run-engine/worker-left-running.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, runsDirectory, updateRun } from '../../runs/store.js';
 import {
@@ -4225,6 +4230,260 @@ test('a queue cleanup failure still retires the replay and reopens its gate deci
     /next refresh failed/,
   );
   assert.equal(decision()?.resolvedAt, undefined, 'no phantom replay blocks the next rollback');
+});
+
+// F324 4c0038bd, 2026-11-02: an operator replayed a run from dispatch while its
+// review-exhausted gate card was still open. The card stayed open in the new generation,
+// a readiness refresh of it moved the run to blocked, and dispatch's node wait read
+// that as a stop: "Run stopped while awaiting its execution node".
+const openReadyGate = (id: string): RunDecision => ({
+  id,
+  type: 'engine_human_gate',
+  title: 'MANUAL-000172 — human gate',
+  description: 'Review retries exhausted',
+  actions: [
+    { id: 'hold', label: 'Hold', style: 'secondary' },
+    { id: 'request-review', label: 'Request Review', style: 'primary' },
+  ],
+  createdAt: '2026-11-02T08:59:38.449Z',
+  payload: {
+    kind: 'ready',
+    prNumber: null,
+    repo: null,
+    workerReport: 'done',
+    branch: 'feature',
+    diffStat: { files: 2, additions: 188, deletions: 2 },
+  },
+});
+
+/** A run holding an open gate card: still blocked at its gate, or failed by the replay that kept it. */
+function openGateRun(
+  t: test.TestContext,
+  label: string,
+  shape: 'blocked' | 'failed',
+  {
+    flowType = 'dev',
+    ticketOrPr = `PROJ-${Date.now()}`,
+    decision = openReadyGate(`open-gate-${label}`),
+  }: {
+    flowType?: 'dev' | 'fix-bug' | 'review-pr';
+    ticketOrPr?: string;
+    decision?: RunDecision;
+  } = {},
+): Run {
+  const taskFile = `/tmp/farmslot-${label}/TASK.md`;
+  const created = createRun({ flowType, project: 'farmslot-farm', ticketOrPr });
+  const stopIdx = created.steps.findIndex(
+    (step) => step.name === (shape === 'blocked' ? 'human-gate' : 'dispatch'),
+  );
+  const run = updateRun(created.id, {
+    status: shape,
+    taskFile,
+    decisions: [decision],
+    engineState: { generation: 1 },
+    ...(shape === 'failed'
+      ? {
+          error: 'Run stopped while awaiting its execution node',
+          completedAt: '2026-11-02T09:29:29.708Z',
+        }
+      : {}),
+    steps: created.steps.map((step, idx) => {
+      if (idx < stopIdx)
+        return {
+          ...step,
+          status: 'done' as const,
+          outputs: step.name === 'write-task' ? { taskFile } : {},
+        };
+      if (idx === stopIdx)
+        return {
+          ...step,
+          status: shape === 'blocked' ? ('running' as const) : ('failed' as const),
+        };
+      return shape === 'blocked' ? step : { ...step, status: 'skipped' as const };
+    }),
+  });
+  t.after(() => evictTestRun(run.id, 'failed'));
+  return run;
+}
+
+/** The UI's inbox and run views refresh an open gate card's readiness (decisionList, presentRun). */
+const refreshGateCard = (run: Run) =>
+  refreshRunGateReadiness(run, {
+    deterministic: async () => {},
+    acceptance: async () => ({ criteria: [], ledger: null, issues: ['Review found 5 issues'] }),
+    progress: async () => ({ kind: 'idle' }),
+  });
+
+const dispatchReplay = (runId: string, hooks: RunReplayStepHooks = {}) =>
+  runReplayStep({ runId, stepName: 'dispatch', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+    ...hooks,
+  });
+
+test('a dispatch replay supersedes the open gate card before its engine starts (F324)', async (t) => {
+  const run = openGateRun(t, 'f324-blocked', 'blocked');
+  const gateId = 'open-gate-f324-blocked';
+  let atEngineStart: RunDecision | undefined;
+  await dispatchReplay(run.id, {
+    startEngine: async (runId) => {
+      atEngineStart = structuredClone(getRun(runId)?.decisions.find((d) => d.id === gateId));
+    },
+  });
+
+  assert.equal(atEngineStart?.resolvedAction, 'superseded', 'closed before the engine starts');
+  assert.equal(atEngineStart?.context?.supersededBy, 'gate-reentry');
+  const after = getRun(run.id)!;
+  assert.equal(after.status, 'dispatching');
+  assert.equal(
+    after.decisions.find((d) => d.id === gateId)?.resolvedAction,
+    'superseded',
+    'retained for audit',
+  );
+  assert.equal(
+    after.decisions.some((d) => !d.resolvedAt),
+    false,
+  );
+  const refreshed = await refreshGateCard(after);
+  assert.equal(refreshed.status, 'dispatching');
+  assert.equal(getRun(run.id)?.status, 'dispatching');
+});
+
+test('a gate card opened while a dispatch replay prepares is not carried into its generation', async (t) => {
+  const run = openGateRun(t, 'f324-late', 'blocked');
+  await dispatchReplay(run.id, {
+    afterGenerationBump: async () => {
+      updateRun(run.id, { decisions: [...getRun(run.id)!.decisions, openReadyGate('late-gate')] });
+    },
+  });
+  // The replay re-runs the gate, which presents its own card.
+  assert.equal(
+    getRun(run.id)?.decisions.some((d) => d.id === 'late-gate'),
+    false,
+  );
+});
+
+test('a dispatch replay of a run failed with an open gate card revives it past the card (F324 4c0038bd)', async (t) => {
+  const run = openGateRun(t, 'f324-failed', 'failed');
+  const gateId = 'open-gate-f324-failed';
+  await dispatchReplay(run.id);
+
+  // The old card can no longer move the replayed run to a status that stops dispatch.
+  const refreshed = await refreshGateCard(getRun(run.id)!);
+  assert.equal(refreshed.status, 'dispatching', 'the gate card stopped the replayed dispatch');
+  const after = getRun(run.id)!;
+  assert.equal(after.error, undefined);
+  const gate = after.decisions.find((d) => d.id === gateId);
+  assert.equal(gate?.resolvedAction, 'superseded');
+  assert.equal(gate?.context?.supersededBy, 'gate-reentry');
+  assert.equal(after.engineState?.generation, 2);
+});
+
+test('a dispatch replay that fails before reviving a failed run leaves its gate card replayable (F324)', async (t) => {
+  const run = openGateRun(t, 'f324-rollback', 'failed');
+  const gate = () => getRun(run.id)?.decisions.find((d) => d.id === 'open-gate-f324-rollback');
+  let duringReplay: string | undefined;
+  await assert.rejects(
+    dispatchReplay(run.id, {
+      afterGenerationBump: async () => {
+        duringReplay = gate()?.resolvedAction;
+        throw new Error('slot reclaim refused');
+      },
+    }),
+    /slot reclaim refused/,
+  );
+  assert.equal(duringReplay, 'superseded', 'the replay closed the card first');
+  // The failed replay left the run as it found it.
+  assert.equal(getRun(run.id)?.status, 'failed');
+  assert.equal(gate()?.resolvedAt, undefined);
+
+  // The next replay closes the card again and revives the run.
+  await dispatchReplay(run.id);
+  assert.equal(getRun(run.id)?.status, 'dispatching');
+  assert.equal(gate()?.resolvedAction, 'superseded');
+});
+
+// F328: a step error with an agent still running blocks the run on a card; a replay answers it.
+test("a replay answers the run's worker-left-running card", async (t) => {
+  const run = openGateRun(t, 'f328-left-running', 'failed');
+  const card = workerLeftRunningDecision(getRun(run.id)!, 'dispatch', 'terminated', ['dev']);
+  updateRun(run.id, { status: 'blocked', completedAt: undefined, decisions: [card] });
+
+  await dispatchReplay(run.id);
+
+  const after = getRun(run.id)!;
+  assert.equal(after.status, 'dispatching');
+  const answered = after.decisions.find((d) => d.id === card.id);
+  assert.equal(answered?.resolvedAction, REPLAY_STEP_ACTION);
+  assert.equal(
+    after.decisions.some((d) => !d.resolvedAt),
+    false,
+  );
+});
+
+// A fix-bug worker reported not_reproducible and the gate opened a no-change card; the
+// operator replayed from dispatch instead of answering it.
+test('a dispatch replay drops an open no-change card so its refresh cannot stop the run', async (t) => {
+  const noChange: RunDecision = {
+    id: 'open-no-change',
+    type: 'engine_no_change',
+    title: 'PROJ — no change',
+    description: 'Worker reports not reproducible',
+    actions: [
+      { id: 'accept-no-change', label: 'Accept — not reproducible', style: 'primary' },
+      { id: 'reject-retry', label: 'Reject — retry reproduction', style: 'secondary' },
+    ],
+    createdAt: '2026-11-02T08:59:38.449Z',
+    payload: { kind: 'no-change', disposition: 'not_reproducible' },
+  };
+  const run = openGateRun(t, 'f324-no-change', 'blocked', {
+    flowType: 'fix-bug',
+    decision: noChange,
+  });
+  await dispatchReplay(run.id);
+
+  const refreshed = await refreshGateCard(getRun(run.id)!);
+  assert.equal(refreshed.status, 'dispatching', 'the no-change card stopped the replayed dispatch');
+  // The replayed gate presents its own card.
+  assert.equal(
+    getRun(run.id)?.decisions.some((d) => d.id === 'open-no-change'),
+    false,
+  );
+});
+
+// review-pr puts HUMAN_GATE before COMPLETE, so its gate replay never superseded before F324.
+test('a review-pr gate replay supersedes its open review-posting card', async (t) => {
+  const posting: RunDecision = {
+    id: 'open-review-posting',
+    type: 'engine_review_posting',
+    title: 'example-org/example-app#99324 — review posting',
+    description: 'Post the review?',
+    actions: [{ id: 'post', label: 'Post review', style: 'primary' }],
+    createdAt: '2026-11-02T08:59:38.449Z',
+    payload: {
+      kind: 'review',
+      prNumber: 99324,
+      repo: 'example-org/example-app',
+      recommendation: 'approve',
+      reviewMd: 'Looks good.',
+      lineComments: [],
+    },
+  };
+  const run = openGateRun(t, 'f324-review-pr', 'blocked', {
+    flowType: 'review-pr',
+    ticketOrPr: 'example-org/example-app#99324',
+    decision: posting,
+  });
+  await runReplayStep(
+    { runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' },
+    () => {},
+    { startEngine: async () => {} },
+  );
+
+  const after = getRun(run.id)!;
+  assert.equal(after.status, 'human-gating');
+  const card = after.decisions.find((d) => d.id === 'open-review-posting');
+  assert.equal(card?.resolvedAction, 'superseded', 'retained for audit');
+  assert.equal(card?.context?.supersededBy, 'gate-reentry');
 });
 
 test('a replay refused for PR ownership leaves the discarded run untouched', async (t) => {

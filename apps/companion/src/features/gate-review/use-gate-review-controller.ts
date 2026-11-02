@@ -15,7 +15,7 @@ import {
   type RunDecision,
   type RunGetResult,
 } from '@farmslot/protocol';
-import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import {
   gateReviewLineageOptions,
   ReviewDispatchViewModel,
@@ -27,7 +27,6 @@ import type { MediaViewerItem } from '../../components/MediaViewer';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useGateCriterionDrafts } from '../../hooks/useGateCriterionDrafts';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
-import { useResourceQuery } from '../../hooks/useResourceQuery';
 import type { RunAcceptance } from '../../hooks/useRunAcceptance';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
@@ -60,6 +59,7 @@ import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
 import { heldConnectionCurrent } from '../../store/held-connection';
 import { decisionDetailFromRun } from '../decision-workspace/components/decision-workspace-panels';
+import { useRunDetailRun } from '../run-detail/use-run-detail-run';
 
 export interface GateReviewRouteParams {
   runId: string;
@@ -107,12 +107,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
   const connection = useConnectedTransport();
   const decisionsObservation = useDecisionStore((s) => s.observation);
-  const query = useMemo(
-    () => (runId ? resourceQuery<RunGetResult>('run.get', { runId }) : undefined),
-    [runId],
-  );
-  const observation = useResourceQuery(query);
-  const run = observation.data?.run ?? null;
+  const { runQuery: query, runObservation: observation, run } = useRunDetailRun(runId);
   const actionsCurrent =
     // Decisions authorize publication: they still need a current read (Command Center rereads
     // before acting). The buttons only disable for that read; nothing is shown.

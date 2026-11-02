@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ReviewedFindingContext } from '@farmslot/protocol';
 
 import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
+import { readStoredArtifact } from '../lib/artifact-response';
 import type { ArtifactHttpHeaders } from '../lib/artifact-url';
 import {
   type DiffFileEntry,
@@ -23,7 +24,6 @@ import {
   filterDiffFiles,
   parseUnifiedDiff,
 } from '../lib/diff';
-import { gatewayFetch } from '../lib/gateway-http-auth';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 interface MobileDiffViewerProps {
@@ -93,7 +93,7 @@ export function MobileDiffViewer({
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    gatewayFetch(diffUrl, fetchHeaders, { signal: controller.signal })
+    readStoredArtifact(diffUrl, fetchHeaders, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.text();

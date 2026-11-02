@@ -140,6 +140,12 @@ export class ResourceStoreWorkerClient {
           : undefined;
         return available() ? value : undefined;
       },
+      async getQueries(maxBytes) {
+        const value = available()
+          ? await request<StoredResourceQuery[]>({ operation: 'getQueries', handle, maxBytes })
+          : [];
+        return available() ? value : [];
+      },
       async putQuery(entry) {
         if (available()) await request({ operation: 'putQuery', handle, entry });
       },

@@ -12,7 +12,6 @@ import {
   extractRunArtifactManifest,
   Methods,
   type RecipeRunArtifactGroup,
-  type RunGetResult,
   type RunRecipeRunsForRunResult,
   type RunRefreshMirrorResult,
 } from '@farmslot/protocol';
@@ -22,6 +21,7 @@ import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/vie
 import { observeNativeArtifactFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { acceptanceViewerRecipeRunId } from '../../lib/acceptance-evidence';
+import { readStoredArtifact } from '../../lib/artifact-response';
 import {
   type ArtifactStickyChromeLayout,
   artifactStickyChromeThreshold,
@@ -46,7 +46,6 @@ import {
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { evidenceMediaItems } from '../../lib/evidence-media-items';
-import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { getResourceCache, getResourceWorkspaceKey } from '../../lib/resource-cache';
 import { assertNativeRunReady } from '../../lib/run-collections';
 import { recordVisualClaimReview } from '../../lib/visual-claim-review';
@@ -57,6 +56,7 @@ import {
   workspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
+import { useRunDetailRun } from '../run-detail/use-run-detail-run';
 import { routeParamString } from '../workspace-shared/route-params';
 
 import { useAcceptanceEvidenceViewer } from './use-acceptance-evidence-viewer';
@@ -110,12 +110,7 @@ export function useArtifactViewerController() {
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
-  const runQuery = useMemo(
-    () => (runId ? resourceQuery<RunGetResult>('run.get', { runId }) : undefined),
-    [runId],
-  );
-  const runObservation = useResourceQuery(runQuery);
-  const run = runObservation.data?.run ?? null;
+  const { runQuery, runObservation, run } = useRunDetailRun(runId);
   const workspaceKey = getResourceWorkspaceKey();
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -473,7 +468,7 @@ export function useArtifactViewerController() {
       documentAbortRef.current?.abort();
       const controller = new AbortController();
       documentAbortRef.current = controller;
-      gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
+      readStoredArtifact(url, artifactAuthHeaders, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();

@@ -82,3 +82,20 @@ test('imperative variants and unsafe selectors stay outside the cache', () => {
   ] as const)
     assert.throws(() => resourceQuery(method, params), method);
 });
+
+test('slotless review source is persisted as a frozen snapshot without workspace admission', () => {
+  const params = { runId: 'review', base: 'a'.repeat(40), head: 'b'.repeat(40) };
+  const query = resourceQuery('git.diff', params);
+  assert.equal(query.live, false);
+  assert.equal(query.persisted, true);
+  assert.equal(query.requiresWorkspaceRead, undefined);
+  assert.equal(query.requiresObservedRead, undefined);
+  assert.deepEqual(query.dependencies, []);
+  assert.equal(query.id, resourceQuery('git.diff', { ...params, slotId: '' }).id);
+  assert.equal(resourceDependenciesForRead('git.diff', query.params), undefined);
+  assert.throws(() => resourceQuery('git.diff', { runId: 'review' }), /requires base/);
+  assert.throws(
+    () => resourceQuery('git.show', { runId: 'review', ref: params.head, path: '../outside' }),
+    /relative/,
+  );
+});

@@ -71,6 +71,17 @@ export function determineSelectionMethodForRun(
     ? 'affinity'
     : 'scored';
 }
+/** The runner and model the run names itself ('unknown' names none): what slot checks such as the node catalog compare. */
+export function runExplicitRunnerModel(run: Pick<Run, 'metrics'>): {
+  runner?: string;
+  model?: string;
+} {
+  return {
+    ...(run.metrics.runner ? { runner: normalizeRunner(run.metrics.runner) } : {}),
+    ...(run.metrics.model && run.metrics.model !== 'unknown' ? { model: run.metrics.model } : {}),
+  };
+}
+
 export function resolveRunDispatchRunnerModel(
   run: Pick<Run, 'metrics'>,
   preview: { runner: string; model: string },

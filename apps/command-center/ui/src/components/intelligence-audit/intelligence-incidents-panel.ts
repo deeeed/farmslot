@@ -8,6 +8,7 @@ import {
   Methods,
   type MonitorViolation,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import './assessment-panel.js';
 
@@ -15,6 +16,7 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { buildHash, getHashParam } from '../../utils/url-state.js';
+import { readStored } from '../shared/read-current.js';
 
 function shortId(id: string | undefined): string {
   return id ? id.slice(0, 8) : '-';
@@ -384,9 +386,11 @@ export class IntelligenceIncidentsPanel extends LitElement {
   async load() {
     this.loading = true;
     try {
-      const res = await gateway.request<{ summary: IntelligenceActionsSummary }>(
-        Methods.INTELLIGENCE_ACTIONS_SUMMARY,
-        { limit: 100 },
+      const res = await readStored<{ summary: IntelligenceActionsSummary }>(
+        resourceQuery<{ summary: IntelligenceActionsSummary }>(
+          Methods.INTELLIGENCE_ACTIONS_SUMMARY,
+          { limit: 100 },
+        ),
       );
       this.summary = res.summary;
       this.error = '';

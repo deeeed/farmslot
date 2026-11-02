@@ -21,6 +21,8 @@ export interface ObservabilityReading<T> {
   exactPromptMatch?: boolean;
   /** Error from the exact runner-native terminal turn event, never rendered output. */
   failure?: string;
+  /** 'transport' when the runner reports its model connection dropped: the turn ended, not the runner. */
+  failureKind?: 'transport';
   /** Persisted runner session that emitted the reading, when the provider exposes it. */
   sessionId?: string;
   /** Stable identity of the runner turn that emitted the reading. */
@@ -51,6 +53,8 @@ export interface HookRecord {
   lastTokenProgressAt?: number;
   /** Error emitted by this exact native terminal turn. */
   failure?: string;
+  /** The runner's classification of `failure`; only 'transport' is defined. */
+  failureKind?: string;
   schemaVersion?: number;
   observedAt?: number;
   observed_at?: number;

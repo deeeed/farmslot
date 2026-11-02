@@ -4,6 +4,7 @@ import {
   isCompletionPrerequisiteFailure,
   isHeldForResultDecision,
   isTerminalRunStatus,
+  type SlotParkedCommits,
   type SlotRecovery,
   type SlotStatus,
   type SlotWorkspace,
@@ -75,7 +76,17 @@ export function recoveryFromRow(row: Readonly<Record<string, unknown>>): SlotRec
     completed: phases.filter((item) => completed.includes(item)),
     phase: phases.find((item) => item === phase)!,
     ...(typeof recovery.error === 'string' ? { error: recovery.error } : {}),
+    ...(Array.isArray(recovery.parked) ? { parked: recovery.parked.filter(isParkedCommits) } : {}),
   };
+}
+
+function isParkedCommits(value: unknown): value is SlotParkedCommits {
+  return (
+    isRecord(value) &&
+    typeof value.ref === 'string' &&
+    typeof value.branch === 'string' &&
+    typeof value.commits === 'number'
+  );
 }
 
 const text = (value: unknown): string | null => (typeof value === 'string' && value ? value : null);

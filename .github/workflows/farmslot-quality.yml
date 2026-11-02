@@ -53,7 +53,6 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway }}
       node: ${{ steps.filter.outputs.node }}
       model_transport: ${{ steps.filter.outputs.model_transport }}
-      offline_reads: ${{ steps.filter.outputs.offline_reads }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -254,51 +253,6 @@ jobs:
               - 'scripts/install-runner-observability.mjs'
               - 'scripts/lib/**'
               - 'services/gateway/**'
-            offline_reads:
-              - '.github/workflows/farmslot-quality.yml'
-              - 'package.json'
-              - 'yarn.lock'
-              - '.yarnrc.yml'
-              - 'apps/command-center/ui/**'
-              - 'apps/companion/**'
-              - 'packages/local-store/**'
-              - 'packages/protocol/**'
-              - 'packages/review-dispatch/**'
-              - 'scripts/quality/check-cached-panel-reads*'
-              - 'scripts/quality/offline-reads-baseline.json'
-              - 'scripts/quality/fixtures/cached-panel-reads/**'
-
-  # ADR-071 Amendment 2: application reads come from the local store; only commands and the listed
-  # exceptions reach the gateway.
-  offline-reads:
-    name: Offline-first reads
-    needs: changes
-    if: needs.changes.outputs.offline_reads == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Install workspace dependencies
-        run: yarn install --immutable
-
-      - name: Offline-first read guard tests
-        run: node --test scripts/quality/check-cached-panel-reads.test.mjs
-
-      - name: Offline-first reads
-        run: yarn quality:cached-panel-reads
 
   repo:
     name: Repository quality guards

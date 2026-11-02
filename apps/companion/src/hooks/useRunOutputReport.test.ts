@@ -24,6 +24,7 @@ test('late report read cannot open under a different review context', async (t) 
         },
       },
       '@farmslot/review-dispatch': { isHtmlArtifactPath: () => false },
+      '../lib/artifact-response': { readStoredArtifact: () => assert.fail('The report reader owns its content callback') },
       '../lib/output-report': {
         readRunOutputReport: () => {
           reads++;

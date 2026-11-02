@@ -215,6 +215,9 @@ export async function routeNativeExecution(
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Expected native runner and model strings');
     validateNativeRunner(params.runner, params.model);
+    const { nativeModelNodeBlocker } = await import('../../methods/native-workspace.js');
+    const blocker = await nativeModelNodeBlocker(params.runner, params.model, executionNodeId);
+    if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
   }
   if (executionNodeId === 'local') {
     if (!ownsLocalNativeProfile(owner))

@@ -55,6 +55,8 @@ let commands: string[] = [];
 let afterNudge = false;
 let signatures = 0;
 let inspections = 0;
+// A pr-complete run whose remote never answers and whose local refs show 1 unpushed.
+let pushRun = false;
 const execute = async (_vars: SlotVars, command: string) => {
   commands.push(command);
   const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
@@ -65,6 +67,8 @@ const execute = async (_vars: SlotVars, command: string) => {
   if (!afterNudge)
     throw new Error('guard bypassed: unexpected worktree inspection or publication push');
   if (command.includes("'HEAD probe'")) {
+    // Tracked, staged and untracked paths, then the unchecked remote and the comparison.
+    if (pushRun) return ok(['', '', '', 'unchecked', 'remote', '1', ''].join('\0'));
     // One exec per inspection: tracked paths, staged paths, then the comparison.
     const tracked = ++inspections === 1 ? ['tracked'] : [];
     return ok([...tracked, '', '', 'remote', '0', ''].join('\0'));
@@ -80,7 +84,12 @@ mock.module('../core/config.js', {
 const core = await import('../core/index.js');
 mock.module('../core/index.js', { namedExports: { ...core, execOnSlot: execute } });
 const store = await import('../runs/store.js');
-mock.module('../runs/store.js', { namedExports: { ...store, getRun: () => run } });
+mock.module('../runs/store.js', {
+  namedExports: {
+    ...store,
+    getRun: () => (pushRun ? { ...run, flowType: 'pr-complete' as const } : run),
+  },
+});
 const contexts = await import('../agents/contexts.js');
 mock.module('../agents/contexts.js', {
   namedExports: {
@@ -98,6 +107,7 @@ beforeEach(() => {
   afterNudge = false;
   signatures = 0;
   inspections = 0;
+  pushRun = false;
 });
 
 test('completion rejects unsigned commits before accepting a complete signal', async () => {
@@ -117,6 +127,26 @@ test('completion checks the new commit made after its commit nudge', async (t) =
   t.mock.timers.tick(20_000);
   await rejected;
   assert.equal(signatures, 2);
+});
+
+test('a push block counted from local refs says the remote was not checked', async (t) => {
+  afterNudge = true;
+  pushRun = true;
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const pending = verifyWorkerPushedBranch(run.id, vars.slotId);
+  // Rechecks every 20 s until the 5-minute nudge wait ends.
+  for (let elapsed = 0; elapsed <= 300_000; elapsed += 20_000) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(20_000);
+  }
+  const result = await pending;
+
+  assert.equal(result.verified, false);
+  assert.equal(result.remoteChecked, false);
+  assert.equal(
+    result.reason,
+    'worker signaled complete but feature still has 1 unpushed commit(s) (remote not checked) after publish nudge',
+  );
 });
 
 test('first publication refuses unsigned commits before any push', async () => {

@@ -19,7 +19,10 @@ import {
   type SlotReleaseParams,
 } from '@farmslot/protocol';
 
-import { reconcileRunAgentRuntime } from '../agents/runtime-recovery.js';
+import {
+  dispatchPromptHandoffProven,
+  reconcileRunAgentRuntime,
+} from '../agents/runtime-recovery.js';
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { withoutCleanupSignal } from '../core/cleanup-scope.js';
 import {
@@ -28,7 +31,7 @@ import {
   loadProjectVars,
   loadSlotVars,
 } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import {
@@ -40,7 +43,12 @@ import {
   updateSlotStatusIf,
 } from '../core/state.js';
 import { completedRunOutcome } from '../evals/blocked-first-output.js';
-import { withNodeReconnectWait, withoutNodeReconnectWait } from '../fleet/node-rpc.js';
+import {
+  isNodeConnected,
+  waitForNode,
+  withNodeReconnectWait,
+  withoutNodeReconnectWait,
+} from '../fleet/node-rpc.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import {
@@ -162,6 +170,8 @@ import {
   endTerminalTeardown,
   isTerminalTeardownInFlight,
 } from './terminal-teardown-registry.js';
+import { agentsWithoutExitEvidence } from './worker-exit-evidence.js';
+import { holdRunOnWorkerLeftRunningCard } from './worker-left-running.js';
 type BroadcastFn = (event: string, payload: unknown) => void;
 let broadcastFn: BroadcastFn = () => {};
 let settledBroadcastFn: BroadcastFn = () => {};
@@ -677,6 +687,37 @@ function failedRunSlotCleanupEffect(
   };
 }
 
+/**
+ * A failing run whose agents may still be running waits, blocked on a card, instead of failing:
+ * its failure teardown would release the slot and stop them on nothing but a step error (F328).
+ * The card's Replay step resumes the run at the failed step. True when the run was held, or
+ * another action took it meanwhile.
+ */
+async function holdRunForRunningAgents(
+  runId: string,
+  generation: number,
+  stepName: string,
+  reason: string,
+): Promise<boolean> {
+  const run = getRun(runId);
+  if (!run?.slotId) return false;
+  const running = await agentsWithoutExitEvidence(run);
+  const current = getRun(runId);
+  if (!current || runSupersededSince(current, generation)) return true;
+  if (!running.length) return false;
+  console.warn(
+    `[run-engine] run ${runId.slice(0, 8)} — ${running.join(', ')} may still be running after ${stepName} error; blocked for an operator instead of failing`,
+  );
+  holdRunOnWorkerLeftRunningCard(
+    { updateRunStep, updateRun, getRun, broadcast: broadcastFn },
+    current,
+    stepName,
+    reason,
+    running,
+  );
+  return true;
+}
+
 // Defensive backstop for any step that mutates run.status without throwing. As of the
 // MonitorTerminalError refactor, MONITOR routes through the exception-driven catch and is
 // no longer the primary trigger here — this remains in case a future contributor adds a new
@@ -701,6 +742,12 @@ async function finalizeNonThrownTerminalRun(
     );
     return;
   }
+  const heldStep = steps[currentIdx] ?? steps[steps.length - 1];
+  if (
+    heldStep &&
+    (await holdRunForRunningAgents(runId, generation, heldStep, run.error ?? `Run ${run.status}`))
+  )
+    return;
   for (let j = currentIdx; j < steps.length; j++) {
     const step = run.steps.find((s) => s.name === steps[j]);
     if (!step || step.status === 'pending' || step.status === 'running') {
@@ -1114,6 +1161,11 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
           return;
         }
+        if (
+          err.detail !== RETAINED_SESSION_HANDOFF_HOLD &&
+          (await holdRunForRunningAgents(runId, myGen, stepName, err.message))
+        )
+          return;
         await routeAndRecordTerminalTransition({
           runId,
           kind: 'block',
@@ -1251,6 +1303,11 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         inputs: partialIO?.inputs,
         outputs: failureOutputs,
       });
+      // A refused claim is the one exception to slot teardown: this run never
+      // owned the slot (an in-flight release or rival claim does), so resetting
+      // it here would clear the actual owner's lifecycle fence mid-teardown.
+      const claimRefused = isSlotClaimRefusedError(err);
+      if (!claimRefused && (await holdRunForRunningAgents(runId, myGen, stepName, msg))) return;
       // Skip remaining steps
       for (let j = i + 1; j < steps.length; j++) {
         updateRunStep(runId, steps[j], { status: 'skipped' });
@@ -1258,10 +1315,6 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
 
       const failedRun = getRun(runId)!;
 
-      // A refused claim is the one exception to slot teardown: this run never
-      // owned the slot (an in-flight release or rival claim does), so resetting
-      // it here would clear the actual owner's lifecycle fence mid-teardown.
-      const claimRefused = isSlotClaimRefusedError(err);
       if (claimRefused && failedRun.slotId) {
         console.log(
           `[run-engine] slot ${failedRun.slotId} left untouched after refused claim (${stepName})`,
@@ -1751,6 +1804,17 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     },
     reconcileRunAgentRuntime: async (run) => {
       await reconcileRunAgentRuntime(run);
+    },
+    dispatchPromptAccepted: dispatchPromptHandoffProven,
+    absentExecutionNode: async (slotId) => {
+      // An unloadable slot has no node to wait for: reconciliation hits the same error, then the card.
+      const vars = await loadSlotVars(slotId).catch(() => null);
+      return vars && !isLocal(vars.host, vars.machine) && !isNodeConnected(vars.machine)
+        ? vars.machine
+        : null;
+    },
+    waitForExecutionNode: async (machine) => {
+      await waitForNode(machine, 120_000);
     },
     clearSettledWorkerError,
     rearmHandoffAutoRecovery: (run) =>

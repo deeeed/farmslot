@@ -18,6 +18,26 @@ const scope = {
   principalGeneration: 0,
 };
 
+test('background reply admission obeys its remaining budget while an opened read can persist', async () => {
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  const store = createMemoryResourceStore();
+  const cache = createGatewayResourceCache({ transport, store });
+  const query = resourceQuery<{ value: string }>('sources.status');
+  try {
+    const limited = cache.retry(query, { origin: 'prefetch', maxStoredBytes: 1 });
+    (await transport.nextRead()).resolve({ value: 'larger than the remaining budget' });
+    assert.equal((await limited).data?.value, 'larger than the remaining budget');
+    assert.equal(await store.getQuery(query.id), undefined);
+    const opened = cache.retry(query);
+    (await transport.nextRead()).resolve({ value: 'opened' });
+    await opened;
+    assert.deepEqual((await store.getQuery(query.id))?.data, { value: 'opened' });
+  } finally {
+    await cache.dispose();
+  }
+});
+
 // Exercise the policy with the existing stamped conformance read before enabling run migration.
 function detail(
   runId: string,

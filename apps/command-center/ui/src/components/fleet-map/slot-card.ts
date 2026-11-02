@@ -3,7 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 
 import type { Run, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
-import { fleetWorkspaceRow } from '@farmslot/review-dispatch';
+import { fleetBehindDefaultIfBehind, fleetSlotBranch } from '@farmslot/review-dispatch';
 
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/status-badge.js';
@@ -126,21 +126,12 @@ export class SlotCard extends LitElement {
       color: ${unsafeCSS(colors.textSecondary)};
       line-height: 1.5;
     }
-    .recovery-action {
-      min-height: 44px;
-      margin-top: 8px;
-      padding: 8px 10px;
-      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
-      border-radius: 6px;
-      background: ${unsafeCSS(colors.bgSurface)};
-      color: ${unsafeCSS(colors.textPrimary)};
-      font: inherit;
-      cursor: pointer;
-      width: 100%;
-    }
-    .recovery-action:disabled {
-      opacity: 0.5;
-      cursor: default;
+    /* Exactly one line, so the distance arriving or growing never moves the cards below. */
+    .meta .behind {
+      height: 1.5em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .meta .branch {
       color: ${unsafeCSS(colors.accent)};
@@ -394,12 +385,12 @@ export class SlotCard extends LitElement {
     const hasActiveRun = !!this.linkedRun && s.lifecycle === 'busy';
     const hasExpandableRun = hasActiveRun;
     const legacyIdentity = !!s.currentRunId && !s.currentFamilyId;
-    const recoveryRow = fleetWorkspaceRow(s);
     const branch = slotBranchDisplay(
-      { ...s, branch: recoveryRow.branch },
+      { ...s, branch: fleetSlotBranch(s) },
       getProjectSlotTrackingConfigs(),
     );
     const branchLabel = branch.label;
+    const behind = fleetBehindDefaultIfBehind(s);
     const branchClass =
       branch.tone === 'baseline'
         ? 'branch main'
@@ -519,30 +510,7 @@ export class SlotCard extends LitElement {
                   ></cancelled-run-slot-release>`
                 : ''}
               ${branchLabel ? html`<div class="${branchClass}">${branchLabel}</div>` : ''}
-              <div title=${recoveryRow.referenceTime}>
-                ${recoveryRow.publication} · ${recoveryRow.owner} · ${recoveryRow.behind}
-              </div>
-              <button
-                class="recovery-action"
-                title=${recoveryRow.warning}
-                ?disabled=${!recoveryRow.eligibility.allowed &&
-                recoveryRow.eligibility.reason !== 'unknown'}
-                @click=${(event: Event) => {
-                  event.stopPropagation();
-                  this.dispatchEvent(
-                    new CustomEvent('fleet-slot-recovery', {
-                      detail: {
-                        slotId: s.slot,
-                        inspectOnly: recoveryRow.action === 'Inspect workspace',
-                      },
-                      bubbles: true,
-                      composed: true,
-                    }),
-                  );
-                }}
-              >
-                ${recoveryRow.action}
-              </button>
+              <div class="behind" title=${behind ?? ''}>${behind ?? ''}</div>
               ${s.taskId ? html`<div class="task">${this._formatTaskId(s.taskId)}</div>` : ''}
               ${s.currentLane
                 ? html`<div class="runner">

@@ -1,0 +1,1 @@
+- Add an opt-in read-only snapshot and offline route sweep so both operator clients can verify stored screens without stopping the live gateway.

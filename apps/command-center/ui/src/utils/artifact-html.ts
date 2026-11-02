@@ -4,11 +4,11 @@ import {
   ARTIFACT_HTML_CSP,
   decodeArtifactLink,
   isExternalWebLink,
+  reportVideoLinks,
 } from '@farmslot/review-dispatch';
 
 export interface HtmlArtifactTarget {
-  mediaUrl: string;
-  viewUrl?: string;
+  viewUrl: string;
 }
 
 export function isolatedArtifactHtml(
@@ -17,39 +17,27 @@ export function isolatedArtifactHtml(
 ): string {
   const document = new DOMParser().parseFromString(source, 'text/html');
   const styles = [...document.querySelectorAll('style')].map((style) => style.outerHTML).join('');
-  const content = DOMPurify.sanitize(styles + document.body.innerHTML, {
-    FORCE_BODY: true,
-    ADD_TAGS: ['style'],
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link', 'form'],
-    FORBID_ATTR: ['srcdoc', 'action', 'formaction'],
-    // Preserve ordinary attribute values and relative fragments; extend the
-    // sanitizer's safe URI shape only for explicit Farmslot navigation links.
-    ALLOWED_URI_REGEXP:
-      /^(?:(?:https?|farmslot|farmslot-dev):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
-  });
+  const content = DOMPurify.sanitize(
+    reportVideoLinks(styles + document.body.innerHTML, (path) =>
+      Boolean(resolveArtifact?.(path)?.viewUrl),
+    ),
+    {
+      FORCE_BODY: true,
+      ADD_TAGS: ['style'],
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link', 'form'],
+      FORBID_ATTR: ['srcdoc', 'action', 'formaction'],
+      // Preserve ordinary attribute values and relative fragments; extend the
+      // sanitizer's safe URI shape only for explicit Farmslot navigation links.
+      ALLOWED_URI_REGEXP:
+        /^(?:(?:https?|farmslot|farmslot-dev):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+    },
+  );
   const isolated = new DOMParser().parseFromString(content, 'text/html');
-  const mediaSources = new Set<string>();
   isolated.querySelectorAll('audio,source,track').forEach((node) => node.remove());
   const resolve = (file: string) => {
     const path = decodeArtifactLink(file);
     return path === null ? null : resolveArtifact?.(path);
   };
-  for (const video of isolated.querySelectorAll('video')) {
-    const original = video.getAttribute('src') ?? '';
-    const [file, fragment] = original.split('#');
-    const resolved = resolve(file);
-    video.removeAttribute('src');
-    video.removeAttribute('autoplay');
-    video.querySelectorAll('source,track').forEach((node) => node.remove());
-    if (!resolved || !/\.(mp4|webm|mov)$/i.test(file)) continue;
-    const url = new URL(resolved.mediaUrl, location.href);
-    if (!['http:', 'https:'].includes(url.protocol)) continue;
-    mediaSources.add(url.origin);
-    if (fragment && /^t=\d+(?:\.\d+)?(?:,\d+(?:\.\d+)?)?$/.test(fragment)) url.hash = fragment;
-    video.setAttribute('src', url.toString());
-    video.setAttribute('controls', '');
-    video.setAttribute('preload', 'metadata');
-  }
   for (const anchor of isolated.querySelectorAll('a[href]')) {
     const href = anchor.getAttribute('href')!;
     anchor.removeAttribute('target');
@@ -84,9 +72,6 @@ export function isolatedArtifactHtml(
   // Keep contents navigation inside this report, including closed <details>.
   for (const anchor of isolated.querySelectorAll('a[href^="#"]'))
     anchor.setAttribute('href', `about:srcdoc${anchor.getAttribute('href')}`);
-  const csp = ARTIFACT_HTML_CSP.replace(
-    'media-src data:',
-    `media-src data: ${[...mediaSources].join(' ')}`,
-  );
+  const csp = ARTIFACT_HTML_CSP;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${csp}">${[...isolated.head.querySelectorAll('style')].map((style) => style.outerHTML).join('')}</head><body>${isolated.body.innerHTML}</body></html>`;
 }

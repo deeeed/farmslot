@@ -10,7 +10,7 @@ import {
 } from '@farmslot/adapter-sdk/evidence';
 
 import { artifactUrl } from './artifact-url';
-import { gatewayFetch, type GatewayHttpAuthHeaders } from './gateway-http-auth';
+import { type GatewayHttpAuthHeaders } from './gateway-http-auth';
 
 export function readRunOutputReport(
   model: EvidenceReviewModel,
@@ -19,15 +19,17 @@ export function readRunOutputReport(
     runId,
     authHeaders,
     signal,
+    readArtifact,
   }: {
     gatewayUrl: string;
     runId: string;
     authHeaders: GatewayHttpAuthHeaders;
     signal?: AbortSignal;
+    readArtifact: (url: string, headers: GatewayHttpAuthHeaders, init?: RequestInit) => Promise<Response>;
   },
 ): Promise<EvidenceReviewReport> {
   return readEvidenceReviewReport(model, async (path) => {
-    const response = await gatewayFetch(
+    const response = await readArtifact(
       artifactUrl(
         gatewayUrl,
         runId,

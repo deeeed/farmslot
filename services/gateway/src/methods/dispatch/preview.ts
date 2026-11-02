@@ -44,6 +44,7 @@ import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
+  runnerModelNodeBlocker,
   runnerSupportsNativeTaskReuse,
   runnerSupportsTmuxNudges,
   runnerSupportsTmuxNudgesForLaunch,
@@ -777,6 +778,8 @@ export function candidateIneligibilityReason(
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
     skipPrepare?: boolean;
+    runner?: string | null;
+    model?: string | null;
   },
 ): string | null {
   if (options.isNudgeRow) return null;
@@ -787,6 +790,9 @@ export function candidateIneligibilityReason(
     requiredPrepareProfile: options.requiredPrepareProfile,
     allowWorking: options.replaceableWarm,
     skipPrepare: options.skipPrepare,
+    runner: options.runner,
+    model: options.model,
+    modelNodeBlocker: runnerModelNodeBlocker,
   });
 }
 
@@ -908,6 +914,8 @@ export async function dispatchCandidates(
         targetBranch: scoring.targetBranch,
         requiredPrepareProfile,
         skipPrepare: params.skipPrepare,
+        runner: params.runner,
+        model: params.model,
       });
       // A pressure rejection gates every dispatchable row, fresh AND nudge.
       // a nudge still delivers a new task to the loaded machine. The wizard
@@ -1395,6 +1403,7 @@ export function resolveDispatchPreviewFromFleet(
   const pinnedSlotSelection = options?.automaticLoadPinned ?? isPinnedSlotSelection(params);
   const selectionOptions: SlotSelectionOptions = {
     ...params,
+    modelNodeBlocker: runnerModelNodeBlocker,
     requiredCapabilities: options?.requiredCapabilities,
     capabilityCatalogs: options?.capabilityCatalogs,
     requiredPrepareProfile,

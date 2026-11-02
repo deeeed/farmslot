@@ -1,0 +1,1 @@
+- HTML report videos open in the authenticated player with working playback and seeking. Empty evidence packages show an Evidence heading without a false 0/0 acceptance count; actual evidence errors remain visible.

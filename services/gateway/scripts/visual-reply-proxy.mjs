@@ -9,6 +9,11 @@ export function createVisualReplyProxy(options) {
   return createRunReplyProxy({ ...options, method: 'terminal.send' });
 }
 
+/** Setup-only legacy snapshots followed by an outage of these owned client connections. */
+export function createOfflineSnapshotProxy(options) {
+  return createRunReplyProxy({ ...options, offlineSnapshots: true, armed: false });
+}
+
 /** Private proof transport: delay a scoped RPC response without changing its bytes. */
 export async function createRunReplyProxy({
   upstreamPort,
@@ -17,10 +22,14 @@ export async function createRunReplyProxy({
   params,
   armed = true,
   holdResponse = () => true,
+  offlineSnapshots = false,
+  allowRequest,
+  port = 0,
 }) {
   assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
   assert(Number.isSafeInteger(upstreamPort) && upstreamPort > 0);
-  if (method === 'run.list') assert(runId === undefined && params && typeof params === 'object');
+  if (offlineSnapshots) assert.equal(typeof allowRequest, 'function');
+  else if (method === 'run.list') assert(runId === undefined && params && typeof params === 'object');
   else assert.match(runId, /^[a-f0-9-]{36}$/);
   const methods = new Set([
     'terminal.send',
@@ -29,7 +38,9 @@ export async function createRunReplyProxy({
     'task.progress',
     'run.list',
   ]);
-  assert(methods.has(method));
+  assert(offlineSnapshots || methods.has(method));
+  let offline = false;
+  let blocked = 0;
   let selected = { method, params, armed, holdResponse };
   const matchesParams = (actual) =>
     selected.params === undefined ||
@@ -45,6 +56,11 @@ export async function createRunReplyProxy({
   const counts = new Map();
   const digest = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
   const server = createServer((incoming, outgoing) => {
+    if (offline || (offlineSnapshots && !['GET', 'HEAD'].includes(incoming.method))) {
+      outgoing.writeHead(offline ? 503 : 405);
+      outgoing.end();
+      return;
+    }
     const forwarded = request(
       {
         hostname: '127.0.0.1',
@@ -69,16 +85,30 @@ export async function createRunReplyProxy({
     failure = error;
   });
   sockets.on('connection', (downstream, incoming) => {
+    if (offline) { downstream.close(); return; }
     const upstream = new WebSocket(`ws://127.0.0.1:${upstreamPort}${incoming.url}`);
     const pair = { downstream, upstream };
     pairs.add(pair);
     const waiting = [];
     const targetIds = new Map();
     downstream.on('message', (bytes, binary) => {
+      if (offlineSnapshots) {
+        const frame = binary ? undefined : JSON.parse(String(bytes));
+        if (!frame || frame.type !== 'req' || !allowRequest(frame)) {
+          blocked++;
+          if (frame?.id) downstream.send(JSON.stringify({ type: 'res', id: frame.id, ok: false,
+            error: { code: 'PROOF_READ_ONLY', message: 'This snapshot fixture permits reads only' } }));
+          return;
+        }
+        // Preparation uses real legacy replies, never manufactured data or revision stamps.
+        delete frame.resourceRead;
+        bytes = JSON.stringify(frame);
+        counts.set(frame.method, (counts.get(frame.method) ?? 0) + 1);
+      }
       if (!binary) {
         const frame = JSON.parse(String(bytes));
         if (
-          frame.type === 'req' &&
+          !offlineSnapshots && frame.type === 'req' &&
           (selected.method === 'run.list'
             ? frame.method === 'run.list' && matchesParams(frame.params)
             : (frame.params?.runId ?? frame.params?.worker?.runId) === runId)
@@ -140,7 +170,8 @@ export async function createRunReplyProxy({
       close();
     });
     upstream.on('error', (error) => {
-      failure = error;
+      // Closing an owned connecting socket is the intentional offline transition.
+      if (!offline) failure = error;
       close();
     });
     downstream.on('close', close);
@@ -162,13 +193,21 @@ export async function createRunReplyProxy({
   }
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
+    server.listen(port, '127.0.0.1', resolve);
   });
   return {
     port: server.address().port,
     state() {
       if (failure) throw failure;
-      return { ...evidence, method: selected.method, counts: Object.fromEntries(counts) };
+      return { ...evidence, method: selected.method, counts: Object.fromEntries(counts), offline, blocked };
+    },
+    setOffline(value) {
+      assert(offlineSnapshots, 'Only the snapshot fixture owns an outage switch');
+      offline = value;
+      if (offline) for (const { downstream, upstream } of pairs) {
+        downstream.terminate();
+        upstream.terminate();
+      }
     },
     arm(options = {}) {
       assert(!held, 'Release the current response before selecting another proof boundary');

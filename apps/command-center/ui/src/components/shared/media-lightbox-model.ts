@@ -1,7 +1,45 @@
 import { isRunArtifactImagePath } from '@farmslot/protocol';
-import { isHtmlArtifactPath } from '@farmslot/review-dispatch';
+import { buildArtifactUrlResolver, isHtmlArtifactPath } from '@farmslot/review-dispatch';
 
 import { JSON_EXTS, MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
+import type { HtmlArtifactTarget } from '../../utils/artifact-html.js';
+import { buildHash } from '../../utils/url-state.js';
+import { runDetailEvidenceArtifactHash } from '../runs/run-detail-url-state.js';
+
+import type { LightboxItem } from './media-lightbox-types.js';
+
+/** A report may be the gallery's only item; its retained inventory still names its videos. */
+export function lightboxReportArtifactResolver(
+  document: LightboxItem | undefined,
+  items: readonly LightboxItem[],
+  baseUrl: string,
+): (rawPath: string) => HtmlArtifactTarget | null {
+  const byPath = new Map(items.map((item) => [item.path, item]));
+  const paths = [
+    ...byPath.keys(),
+    ...(document?.evidenceModel?.report?.artifactManifest ?? []).map((file) => file.path),
+  ];
+  const resolve = buildArtifactUrlResolver(paths, (path) => path, document?.path);
+  return (rawPath) => {
+    const path = resolve(rawPath);
+    if (!path) return null;
+    const item = byPath.get(path);
+    const mediaUrl = document?.resolveArtifactUrl?.(path) ?? item?.url;
+    if (!mediaUrl || !URL.canParse(mediaUrl, baseUrl)) return null;
+    const source = new URL(mediaUrl, baseUrl);
+    const runId = source.searchParams.get('runId');
+    if (!runId) return item?.viewUrl ? { viewUrl: item.viewUrl } : null;
+    const params = new URLSearchParams();
+    const recipeRun = source.searchParams.get('recipeRunId');
+    if (recipeRun) params.set('recipeRun', recipeRun);
+    return {
+      viewUrl: new URL(
+        runDetailEvidenceArtifactHash(runId, { path }, buildHash('', params)),
+        baseUrl,
+      ).href,
+    };
+  };
+}
 
 export type LightboxFileType =
   | 'image'

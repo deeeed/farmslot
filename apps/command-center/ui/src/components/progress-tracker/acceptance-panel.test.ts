@@ -32,6 +32,19 @@ function ledger(criteria: AcceptanceCriterionStatus[]): AcceptanceStatusLedger {
   return { schemaVersion: 1, criteria };
 }
 
+test('a package without criteria shows evidence diagnostics without a zero assessment count', () => {
+  const model = createEvidenceReviewModel({
+    context: 'run-detail',
+    contractVersion: 1,
+    readErrors: ['The recorded summary is missing.'],
+  });
+  const text = litText(renderAcceptancePanel(ledger([]), { evidenceModel: model }));
+  assert.match(text, />Evidence<\/span>/);
+  assert.doesNotMatch(text, /acceptance-counts|0\/0 assessed/);
+  assert.match(text, /Invalid/);
+  assert.match(text, /The recorded summary is missing/);
+});
+
 test('supporting files start collapsed and remain available under their original AC', () => {
   const paths = ['artifacts/proof.png', 'artifacts/still.png', 'artifacts/trace.json'];
   const text = litText(

@@ -6,6 +6,7 @@ import { isHtmlArtifactPath } from '@farmslot/review-dispatch';
 
 import type { GatewayHttpAuthHeaders } from '../lib/gateway-http-auth';
 import { readRunOutputReport } from '../lib/output-report';
+import { readStoredArtifact } from '../lib/artifact-response';
 
 export interface RunOutputDocument {
   title: string;
@@ -70,6 +71,7 @@ export function useRunOutputReport({
         runId,
         authHeaders,
         signal: controller.signal,
+        readArtifact: readStoredArtifact,
       });
       if (!controller.signal.aborted && currentIdentity.current === identity)
         setDocument({

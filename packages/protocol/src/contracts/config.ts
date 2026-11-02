@@ -60,6 +60,8 @@ export interface PoolConfig {
     project: string;
     repo: string;
     session: string;
+    /** The app this slot is prepared for, when its project declares several. */
+    app?: string;
     resources?: Record<string, Record<string, string | number | boolean>>;
   }>;
 }
@@ -202,6 +204,17 @@ export interface ProjectRecipeConfig {
   domain?: string;
   template?: string;
   manifest?: string;
+}
+
+/**
+ * The app a project binds when neither the run nor the slot names one: `recipe.app`, else
+ * its only declared app. Task initialization's recipe binding falls back the same way.
+ */
+export function projectDefaultApp(project: {
+  recipe?: Pick<ProjectRecipeConfig, 'app'>;
+  apps?: readonly string[];
+}): string | undefined {
+  return project.recipe?.app ?? (project.apps?.length === 1 ? project.apps[0] : undefined);
 }
 
 /** Validate recipe metadata before resolving or importing any executable source. */

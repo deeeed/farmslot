@@ -61,6 +61,7 @@ import { useRunAcceptance } from '../../hooks/useRunAcceptance';
 import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
+import { readStoredArtifact } from '../../lib/artifact-response';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -91,10 +92,9 @@ import {
   selectedEvidenceMediaItem,
 } from '../../lib/evidence-media-items';
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
-import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { nativeDecisionsQuery } from '../../lib/gateway-run-sync';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
-import { getResourceCache } from '../../lib/resource-cache';
+import { getResourceCache,readStored } from '../../lib/resource-cache';
 import { readErrorMessage } from '../../lib/resource-read-status';
 import { requestAnotherReviewRound } from '../../lib/review-budget';
 import { assertNativeDecisionReady, assertNativeRunReady } from '../../lib/run-collections';
@@ -740,9 +740,10 @@ export default function DecisionDetailScreen({
                 void observePostureTransition(
                   baseline,
                   async () => {
-                    const status = await client.request<RuntimePostureStatusResult>(
-                      Methods.RUNTIME_POSTURE_STATUS,
-                      { runId: sourceRunId },
+                    const status = await readStored<RuntimePostureStatusResult>(
+                      resourceQuery<RuntimePostureStatusResult>(Methods.RUNTIME_POSTURE_STATUS, {
+                        runId: sourceRunId,
+                      }),
                     );
                     return status.state;
                   },
@@ -809,7 +810,7 @@ export default function DecisionDetailScreen({
       documentAbortRef.current = controller;
       setLoadingDocument(artifact.path);
       const current = captureCurrent();
-      gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
+      readStoredArtifact(url, artifactAuthHeaders, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();

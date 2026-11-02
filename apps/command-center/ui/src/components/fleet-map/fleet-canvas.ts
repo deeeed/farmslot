@@ -38,7 +38,6 @@ import type {
 import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
 import type { ResourceQueryError, ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
-import { fleetRecoverySummary } from '@farmslot/review-dispatch';
 
 import './machine-group.js';
 import './machine-pause-dialog.js';
@@ -51,9 +50,17 @@ import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
-import { type AppState, fleetQuery, getState, isHydrating, subscribe } from '../../state.js';
+import {
+  type AppState,
+  fleetQuery,
+  getState,
+  isFleetCurrent,
+  isHydrating,
+  subscribe,
+} from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { readStored } from '../shared/read-current.js';
 import {
   heldDataIsSaved,
   isSupersededRead,
@@ -66,11 +73,19 @@ import {
 } from '../work-graph/work-graph-execution-overlay.js';
 
 import {
+  FLEET_GROUP_STORAGE_KEY,
+  FLEET_VIEW_STORAGE_KEY,
   type FleetCanvasGroupBy,
+  fleetCanvasStoredFallbacks,
   fleetCanvasUrlStateFromHash,
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
+import {
+  fleetReleaseScope,
+  pruneFleetSelection,
+  setFleetSelection,
+} from './fleet-release-scope.js';
 import { fleetSeatsQuery } from './fleet-seats-query.js';
 import { renderFleetSkeleton } from './fleet-skeleton.js';
 import type { MachinePauseBusyAction } from './machine-pause-dialog.js';
@@ -112,8 +127,8 @@ export class FleetCanvas extends LitElement {
   @state() private filterProjects: string[] = [];
   @state() private filterMachines: string[] = [];
   @state() private search = '';
-  @state() private recoverySlotId = '';
-  @state() private recoveryInspectOnly = false;
+  /** Table rows chosen for the bulk release. */
+  @state() private selectedSlotIds: ReadonlySet<string> = new Set();
   @state() private onlineMachines: Set<string> = new Set();
   @state() private nodeInfo: Map<string, NodeInfo> = new Map();
   @state() private gatewayProtocolVersion = '';
@@ -133,7 +148,7 @@ export class FleetCanvas extends LitElement {
   @state() private slotThumbnails: Map<string, { data: string; ts: number }> = new Map();
   @state() private slotDecisions: Map<string, number> = new Map();
   @state() private slotPendingWork: Map<string, SlotPendingWork> = new Map();
-  @state() private viewMode: FleetCanvasViewMode = 'card';
+  @state() private viewMode: FleetCanvasViewMode = 'list';
   @state() private actionsModalSlotId = '';
   @state() private fleetRefreshOpen = false;
   @state() private resourceActionBusy = false;
@@ -188,8 +203,10 @@ export class FleetCanvas extends LitElement {
       height: 100%;
       overflow: hidden;
     }
+    /* Wraps rather than clips, so the bulk release stays reachable in a narrow pane. */
     .toolbar {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: ${unsafeCSS(spacing.md)};
       padding: ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.xl)};
@@ -242,9 +259,24 @@ export class FleetCanvas extends LitElement {
       color: #fff;
       border-color: ${unsafeCSS(colors.accent)};
     }
+    /* One line at a stable width (border-box), so a selection count never rewraps the toolbar. */
     .fleet-refresh-trigger {
       border-radius: 4px;
+      white-space: nowrap;
+      min-width: 43ch;
+    }
+    /* Always present at a fixed width, so the reason coming or going never moves anything. */
+    .fleet-release-hint {
       margin-left: auto;
+      width: 34ch;
+      min-height: 1.4em;
+      line-height: 1.4;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: ${unsafeCSS(colors.textMuted)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
     }
     .fleet-refresh-trigger.has-eligible {
       color: ${unsafeCSS(colors.accent)};
@@ -413,10 +445,10 @@ export class FleetCanvas extends LitElement {
   }
 
   private _readUrlParams() {
-    const next = fleetCanvasUrlStateFromHash(location.hash, {
-      groupBy: localStorage.getItem('farmslot:fleet-groupBy'),
-      viewMode: localStorage.getItem('farmslot:fleet-viewMode'),
-    });
+    const next = fleetCanvasUrlStateFromHash(
+      location.hash,
+      fleetCanvasStoredFallbacks(localStorage),
+    );
     if (this.groupBy !== next.groupBy) {
       this.groupBy = next.groupBy;
       if (next.groupBy === 'resource') this.fetchResourceData();
@@ -490,10 +522,11 @@ export class FleetCanvas extends LitElement {
     this.providerAccountsRefreshError = '';
     try {
       // Explicit live probe (~20s). Its source notification refreshes the shared observation.
-      await gateway.request<ProviderAccountsSnapshotResult>(
-        Methods.PROVIDER_ACCOUNTS_SNAPSHOT,
-        { machines: [machine], forceRefresh: true },
-        45_000,
+      await readStored<ProviderAccountsSnapshotResult>(
+        resourceQuery<ProviderAccountsSnapshotResult>(Methods.PROVIDER_ACCOUNTS_SNAPSHOT, {
+          machines: [machine],
+          forceRefresh: true,
+        }),
       );
     } catch (err) {
       if (owner === getResourceWorkspaceKey())
@@ -509,6 +542,9 @@ export class FleetCanvas extends LitElement {
     const prev = this.slots;
     const previousPressureFilter = JSON.stringify([this.filterProjects, this.filterMachines]);
     this.slots = s.fleet?.slots ?? [];
+    // Only a current read says a slot left: a reconnect's interim reads keep the selection.
+    if (s.fleet && s.fleetObservation.status === 'ready')
+      this.selectedSlotIds = pruneFleetSelection(this.selectedSlotIds, this.slots);
     this.providerAccountsQuery.setQuery(fleetSeatsQuery(this.slots));
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;
@@ -725,9 +761,11 @@ export class FleetCanvas extends LitElement {
       await Promise.all(
         batch.map(async (s) => {
           try {
-            const listRes = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
-              slotId: s.slot,
-            });
+            const listRes = await readStored<ResourceListResult>(
+              resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, {
+                slotId: s.slot,
+              }),
+            );
             if (listRes.resources.length > 0) {
               nextDefs.set(s.slot, listRes.resources);
               nextStatus.set(
@@ -761,11 +799,12 @@ export class FleetCanvas extends LitElement {
     // rings + freshness), so pressure charts paint right after a gateway
     // restart while the full snapshot resolves attribution in the background.
     if (!this.resourcePressure) {
-      void gateway
-        .request<ResourcePressureHistoryResult>(
+      void readStored<ResourcePressureHistoryResult>(
+        resourceQuery<ResourcePressureHistoryResult>(
           Methods.RESOURCE_PRESSURE_HISTORY,
           this.pressureRequestParams(),
-        )
+        ),
+      )
         .then((history) => {
           if (epoch !== this._resourcePressureFetchEpoch || this.resourcePressure) return;
           this.resourcePressureHistory = history;
@@ -780,9 +819,11 @@ export class FleetCanvas extends LitElement {
         });
     }
     try {
-      const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
-        Methods.RESOURCE_PRESSURE_SNAPSHOT,
-        this.pressureRequestParams(),
+      const snapshot = await readStored<ResourcePressureSnapshotResult>(
+        resourceQuery<ResourcePressureSnapshotResult>(
+          Methods.RESOURCE_PRESSURE_SNAPSHOT,
+          this.pressureRequestParams(),
+        ),
       );
       if (epoch !== this._resourcePressureFetchEpoch) return;
       this.resourcePressure = snapshot;
@@ -853,7 +894,9 @@ export class FleetCanvas extends LitElement {
           mode: this.machinePauseMode,
           selector: this._machinePauseSelector,
         }),
-        gateway.request<MachinePauseStatusResult>(Methods.MACHINE_PAUSE_STATUS, { machine }),
+        readStored<MachinePauseStatusResult>(
+          resourceQuery<MachinePauseStatusResult>(Methods.MACHINE_PAUSE_STATUS, { machine }),
+        ),
         gateway.request<MachinePauseRestoreResult>(Methods.MACHINE_PAUSE_RESTORE, {
           machine,
           selector: this._machinePauseRestoreSelector,
@@ -1105,7 +1148,7 @@ export class FleetCanvas extends LitElement {
 
   private setGroupBy(mode: FleetCanvasGroupBy) {
     this.groupBy = mode;
-    localStorage.setItem('farmslot:fleet-groupBy', mode);
+    localStorage.setItem(FLEET_GROUP_STORAGE_KEY, mode);
     this._writeUrlParams();
     if (mode === 'resource' && !this._resourceFetched) {
       this.fetchResourceData();
@@ -1114,7 +1157,7 @@ export class FleetCanvas extends LitElement {
 
   private setViewMode(mode: FleetCanvasViewMode) {
     this.viewMode = mode;
-    localStorage.setItem('farmslot:fleet-viewMode', mode);
+    localStorage.setItem(FLEET_VIEW_STORAGE_KEY, mode);
     this._writeUrlParams();
   }
 
@@ -1129,9 +1172,11 @@ export class FleetCanvas extends LitElement {
   private async previewResourceCleanup() {
     this.resourceActionBusy = true;
     try {
-      const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
-        Methods.RESOURCE_PRESSURE_SNAPSHOT,
-        this.pressureRequestParams(),
+      const snapshot = await readStored<ResourcePressureSnapshotResult>(
+        resourceQuery<ResourcePressureSnapshotResult>(
+          Methods.RESOURCE_PRESSURE_SNAPSHOT,
+          this.pressureRequestParams(),
+        ),
       );
       this.resourcePressure = snapshot;
       this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
@@ -1167,9 +1212,11 @@ export class FleetCanvas extends LitElement {
       });
       const freshTargets = this.cleanupTargetsForFilters(fresh.targets);
       if (!cleanupTargetsRemainEligible(selectedTargets, freshTargets)) {
-        const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
-          Methods.RESOURCE_PRESSURE_SNAPSHOT,
-          this.pressureRequestParams(),
+        const snapshot = await readStored<ResourcePressureSnapshotResult>(
+          resourceQuery<ResourcePressureSnapshotResult>(
+            Methods.RESOURCE_PRESSURE_SNAPSHOT,
+            this.pressureRequestParams(),
+          ),
         );
         this.resourcePressure = snapshot;
         this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
@@ -1257,11 +1304,12 @@ export class FleetCanvas extends LitElement {
     if (this.groupBy !== 'resource' || this._pressureHistoryRefreshTimer) return;
     this._pressureHistoryRefreshTimer = setTimeout(() => {
       this._pressureHistoryRefreshTimer = undefined;
-      gateway
-        .request<ResourcePressureHistoryResult>(
+      readStored<ResourcePressureHistoryResult>(
+        resourceQuery<ResourcePressureHistoryResult>(
           Methods.RESOURCE_PRESSURE_HISTORY,
           this.pressureRequestParams(),
-        )
+        ),
+      )
         .then((history) => {
           this.resourcePressureHistory = history;
         })
@@ -1284,9 +1332,8 @@ export class FleetCanvas extends LitElement {
 
   private async fetchPressureAdmissionControl() {
     try {
-      this.pressureAdmissionControl = await gateway.request<PressureAdmissionGetResult>(
-        Methods.DISPATCH_PRESSURE_ADMISSION_GET,
-        {},
+      this.pressureAdmissionControl = await readStored<PressureAdmissionGetResult>(
+        resourceQuery<PressureAdmissionGetResult>(Methods.DISPATCH_PRESSURE_ADMISSION_GET, {}),
       );
     } catch (err) {
       console.warn(
@@ -1328,10 +1375,14 @@ export class FleetCanvas extends LitElement {
     return html`
       <div
         style="display: contents"
-        @fleet-slot-recovery=${(event: CustomEvent<{ slotId: string; inspectOnly: boolean }>) => {
-          this.recoverySlotId = event.detail.slotId;
-          this.recoveryInspectOnly = event.detail.inspectOnly;
-          this.fleetRefreshOpen = true;
+        @fleet-selection-change=${(
+          event: CustomEvent<{ slotIds: string[]; selected: boolean }>,
+        ) => {
+          this.selectedSlotIds = setFleetSelection(
+            this.selectedSlotIds,
+            event.detail.slotIds,
+            event.detail.selected,
+          );
         }}
       >
         <div class="toolbar">
@@ -1431,12 +1482,11 @@ export class FleetCanvas extends LitElement {
           }}
         ></slot-actions-modal>
         <fleet-refresh-modal
-          .slotIds=${this.filteredSlots.map((slot) => slot.slot)}
-          .singleSlotId=${this.recoverySlotId}
-          .inspectOnly=${this.recoveryInspectOnly}
+          .slotIds=${this.releaseScope.slotIds}
           ?open=${this.fleetRefreshOpen}
-          @close=${() => {
+          @close=${(event: CustomEvent<{ released: boolean }>) => {
             this.fleetRefreshOpen = false;
+            if (event.detail.released) this.selectedSlotIds = new Set();
             this._writeUrlParams();
           }}
         ></fleet-refresh-modal>
@@ -1444,33 +1494,43 @@ export class FleetCanvas extends LitElement {
     `;
   }
 
+  /** Selection only counts while the table that shows it is on screen. */
+  private get releaseScope() {
+    const tableShown = this.viewMode === 'list' && this.groupBy !== 'resource';
+    return fleetReleaseScope(
+      this.filteredSlots,
+      this.selectedSlotIds,
+      tableShown,
+      isFleetCurrent(),
+    );
+  }
+
   private renderFleetRefreshTrigger() {
-    const { count: eligible, canInspect } = fleetRecoverySummary(this.filteredSlots);
-    const label = eligible === 0 ? 'Release idle slots' : `Release idle slots (${eligible})`;
+    const scope = this.releaseScope;
     return html`
+      <span class="fleet-release-hint" id="fleet-release-hint" title=${scope.title}
+        >${scope.reason}</span
+      >
       <button
-        class="toggle-btn fleet-refresh-trigger ${eligible > 0 ? 'has-eligible' : ''}"
-        ?disabled=${!canInspect || this.fleetRefreshOpen}
-        title=${eligible === 0
-          ? 'No eligible slots — every slot is busy, held, or disabled'
-          : 'Bulk refresh idle slots'}
+        class="toggle-btn fleet-refresh-trigger ${scope.eligible ? 'has-eligible' : ''}"
+        aria-describedby="fleet-release-hint"
+        ?disabled=${scope.disabled || this.fleetRefreshOpen}
+        title=${scope.title}
         @click=${() => {
-          this.recoverySlotId = '';
-          this.recoveryInspectOnly = false;
           this.fleetRefreshOpen = true;
           this._writeUrlParams();
         }}
       >
-        ${label}
+        ${scope.label}
       </button>
     `;
   }
   private renderGroupView() {
     if (this.bootstrapFailed && this.slots.length === 0) {
-      return renderFleetSkeleton('Fleet unavailable', () => gateway.reconnect());
+      return renderFleetSkeleton('Fleet unavailable', () => gateway.reconnect(), this.viewMode);
     }
     if (this.hydrating && this.slots.length === 0) {
-      return renderFleetSkeleton();
+      return renderFleetSkeleton('', undefined, this.viewMode);
     }
     if (this.groups.length === 0) {
       return html`<div class="empty">
@@ -1494,6 +1554,7 @@ export class FleetCanvas extends LitElement {
           .nodeInfoMap=${this.nodeInfo}
           .gatewayProtocolVersion=${this.gatewayProtocolVersion}
           .viewMode=${this.viewMode}
+          .selectedSlotIds=${this.selectedSlotIds}
           .providerAccounts=${this.providerAccountsQuery.state.data?.machines.find(
             (snapshot) => snapshot.machine === g.key,
           )}

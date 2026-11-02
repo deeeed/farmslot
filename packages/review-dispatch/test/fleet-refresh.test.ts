@@ -16,8 +16,11 @@ import {
 } from '@farmslot/protocol';
 
 import {
+  fleetBehindDefault,
+  fleetBehindDefaultIfBehind,
   type FleetRefreshClient,
   FleetRefreshViewModel,
+  fleetSlotBranch,
   fleetWorkspaceRow,
 } from '../src/fleet-refresh.js';
 
@@ -92,6 +95,14 @@ function setup(slots: SlotStatus[]) {
         failRead = false;
         throw new Error('Read failed');
       }
+      // The gateway parks an ownerless checkout's unpushed commits before it resets.
+      const target =
+        method === Methods.SLOT_REFRESH &&
+        typeof params === 'object' &&
+        params !== null &&
+        'slotId' in params
+          ? slots.find((candidate) => candidate.slot === params.slotId)?.workspace
+          : undefined;
       if (method === Methods.SLOT_REFRESH) {
         for (let index = 0; index < slots.length; index++) {
           const current = slots[index];
@@ -133,7 +144,23 @@ function setup(slots: SlotStatus[]) {
           },
         };
       } else if (method === Methods.SLOT_REFRESH) {
-        result = { requestId, refreshed: true, branch: 'main', advanced: true };
+        result = {
+          requestId,
+          refreshed: true,
+          branch: 'main',
+          advanced: true,
+          ...(target?.publication === 'unpushed'
+            ? {
+                parked: [
+                  {
+                    ref: `refs/farmslot/parked/manual-node-a-1/${target.headSha}`,
+                    branch: target.branch,
+                    commits: target.unpublishedCount,
+                  },
+                ],
+              }
+            : {}),
+        };
       } else if (method === Methods.FLEET_REFRESH_SLOTS) {
         result = { requestId, scheduled: 1, perSlotRequestIds: { shown: 'server-owned-row-id' } };
       } else if (method === Methods.FLEET_REFRESH_SLOTS_CANCEL) {
@@ -285,7 +312,7 @@ test('a 37-second fleet inspection retains eligible rows without retimestamping 
   model.dispose();
 });
 
-test('slow-inspection grace never admits busy, protected, dirty or unpublished bulk work', () => {
+test('slow-inspection grace never admits busy, protected, dirty or owned unpublished bulk work', () => {
   const observed = Date.parse('2026-10-27T00:00:00.000Z');
   const check = (work: Partial<SlotWorkspace>, fields: Partial<SlotStatus> = {}) =>
     slotRecoveryEligibility(
@@ -295,7 +322,19 @@ test('slow-inspection grace never admits busy, protected, dirty or unpublished b
   assert.equal(check({ protectedReason: 'publication gate' }).allowed, false);
   assert.equal(check({}, { agent: 'working', lifecycle: 'busy' }).allowed, false);
   assert.equal(check({ dirtyCount: 1 }).bulkAllowed, false);
-  assert.equal(check({ publication: 'unpushed', unpublishedCount: 1 }).bulkAllowed, false);
+  // An ownerless checkout's unpushed commits are parked before the reset; dirty files are not.
+  assert.equal(check({ publication: 'unpushed', unpublishedCount: 1 }).bulkAllowed, true);
+  assert.equal(
+    check({ publication: 'unpushed', unpublishedCount: 1, dirtyCount: 1 }).bulkAllowed,
+    false,
+  );
+  const owned = check(
+    { publication: 'unpushed', unpublishedCount: 1, currentRunId: 'run-1', terminalOwner: true },
+    { lifecycle: 'held', currentRunId: 'run-1' },
+  );
+  assert.equal(owned.allowed, true);
+  assert.equal(owned.confirmationRequired, true, "a run's own commits keep their confirmation");
+  assert.equal(owned.bulkAllowed, false);
   assert.equal(check({ publication: 'unknown' }).allowed, false);
   assert.equal(check({ cleanupRunId: 'cleanup' }).allowed, false);
 });
@@ -373,38 +412,41 @@ test('late inspection cannot overwrite a newer scoped inspection', async () => {
   model.dispose();
 });
 
-test('bulk freezes visible membership and never includes held, dirty, unpublished or unknown work', async () => {
+test('bulk freezes visible membership, never includes held, dirty or unknown work, and parks ownerless commits', async () => {
   const { model, calls } = setup([
     slot('shown'),
     slot('hidden'),
     slot('dirty', { dirtyCount: 1 }),
-    slot('local', { publication: 'unpushed' }),
+    slot('local', { publication: 'unpushed', unpublishedCount: 2 }),
     slot('unknown', { publication: 'unknown' }),
     slot('held', {}, { lifecycle: 'held' }),
   ]);
   await model.load(['shown', 'dirty', 'local', 'unknown', 'held']);
-  assert.equal(model.bulkCount, 1);
+  assert.equal(model.bulkCount, 2);
+  assert.match(
+    model.rows.find((row) => row.slotId === 'local')?.warning ?? '',
+    /2 unpushed commits on feature will be parked/,
+  );
   await model.releaseIdle();
   const request = calls.find((call) => call.method === Methods.FLEET_REFRESH_SLOTS);
+  const expectedWorkspace = {
+    epoch: 2,
+    currentRunId: null,
+    cleanupRunId: null,
+    handoffRunId: null,
+    branch: 'feature',
+    headSha: 'a'.repeat(40),
+    dirtyFingerprint: 'b'.repeat(64),
+    recoveryId: null,
+  };
   assert.deepEqual(request?.params, {
     requestId: 'proof-1',
-    slots: [
-      {
-        slotId: 'shown',
-        mode: 'safe',
-        release: true,
-        expectedWorkspace: {
-          epoch: 2,
-          currentRunId: null,
-          cleanupRunId: null,
-          handoffRunId: null,
-          branch: 'feature',
-          headSha: 'a'.repeat(40),
-          dirtyFingerprint: 'b'.repeat(64),
-          recoveryId: null,
-        },
-      },
-    ],
+    slots: ['shown', 'local'].map((slotId) => ({
+      slotId,
+      mode: 'safe',
+      release: true,
+      expectedWorkspace,
+    })),
   });
   model.dispose();
 });
@@ -558,6 +600,22 @@ test('a release refreshes the shared labels from the gateway after verification'
   assert.equal(model.rows[0]?.publication, 'baseline');
   assert.equal(model.rows[0]?.behind, '0 behind main');
   assert.equal(model.rows[0]?.status, 'refreshed');
+  model.dispose();
+});
+
+test('a single ownerless release parks its unpushed commits without a discard confirmation', async () => {
+  const { model, calls } = setup([slot('local', { publication: 'unpushed', unpublishedCount: 2 })]);
+  await model.load(['local']);
+  await model.release('local');
+  assert.equal(model.confirmation, null);
+  const sent = calls.find((call) => call.method === Methods.SLOT_REFRESH)?.params;
+  assert.ok(sent && typeof sent === 'object' && 'mode' in sent);
+  assert.equal(sent.mode, 'safe');
+  assert.equal(model.rows[0]?.status, 'refreshed');
+  assert.equal(
+    model.rows[0]?.detail,
+    `Parked 2 unpushed commits of feature at refs/farmslot/parked/manual-node-a-1/${'a'.repeat(40)}`,
+  );
   model.dispose();
 });
 
@@ -728,4 +786,24 @@ test('bulk logs follow server-owned request identities instead of assuming their
   });
   assert.deepEqual(model.rows[0]?.log, ['Verified fixture']);
   model.dispose();
+});
+
+test('cards, the table and the review share one branch pick and one behind-main label', () => {
+  const current = slot('current', { branch: 'observed', behind: 3 }, { branch: 'cached' });
+  assert.equal(fleetSlotBranch(current), 'observed');
+  assert.equal(fleetSlotBranch({ ...current, workspace: undefined }), 'cached');
+  assert.equal(fleetBehindDefault(current), '3 behind main');
+  assert.equal(fleetWorkspaceRow(current).behind, '3 behind main');
+  // An expired observation is unknown everywhere: no distance on the card, honest text in review.
+  const expired = slot('expired', { behind: 3, observedAt: '2000-01-01T00:00:00Z' });
+  assert.equal(fleetBehindDefault(expired), null);
+  assert.equal(fleetWorkspaceRow(expired).behind, 'Behind main unknown');
+  // Level with main: the fleet shows nothing, the review keeps the zero.
+  const level = slot('level', { behind: 0 });
+  assert.equal(fleetBehindDefaultIfBehind(level), null);
+  assert.equal(fleetWorkspaceRow(level).behind, '0 behind main');
+  assert.equal(
+    fleetBehindDefaultIfBehind(slot('moved', { behind: 0, remoteAdvanced: true })),
+    '0 behind main · remote advanced',
+  );
 });

@@ -4,6 +4,9 @@ import { mock, test } from 'node:test';
 // The diff widget imports Vite CSS and diff2html's ESM build, which Node 22 cannot load; drawing
 // the diff does not decide which diff the modal holds.
 mock.module('../diff-viewer/diff-review.js', { namedExports: {} });
+mock.module('../../artifact-response.js', {
+  namedExports: { readStoredArtifact: (url: string, init?: RequestInit) => fetch(url, init) },
+});
 
 Object.defineProperty(globalThis, 'location', {
   configurable: true,

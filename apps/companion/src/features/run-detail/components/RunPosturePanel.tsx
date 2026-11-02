@@ -14,6 +14,7 @@ import {
   gateParkSummaryLine,
   type GateParkView,
   type ResourcePostureRowStatus,
+  type RunResourcePostureState,
 } from '@farmslot/protocol';
 
 import {
@@ -88,13 +89,34 @@ function GateParkLines({ view }: { view: GateParkView | null }) {
   );
 }
 
+/**
+ * The smallest card a status read can land as: headline, counts, policy, worker,
+ * and the no-capabilities line. Sizes the loading card of a run whose record
+ * carries no posture; it is never shown.
+ */
+const MINIMAL_POSTURE_SHAPE: RunResourcePostureState = {
+  posture: 'active',
+  policySource: 'framework-default',
+  capabilities: [],
+  workerRetained: true,
+  updatedAt: '',
+};
+
 export function RunPosturePanel({
   state,
   gatePark = null,
+  reserveFor = null,
 }: {
   state: RunPostureStatusState;
   /** The run's live gate park, when it has one. Read from the park record, not the posture. */
   gatePark?: GateParkView | null;
+  /**
+   * The posture persisted on the run record, used only to size the loading card.
+   * It is laid out invisibly and hidden from accessibility, so the status read
+   * lands in the space it will fill instead of pushing the sections below down;
+   * what is shown is still only what `runtime.posture.status` returned.
+   */
+  reserveFor?: RunResourcePostureState | null;
 }) {
   // A live park is worth a panel on its own: the posture read can be idle or
   // failed exactly when a run is parked, and hiding where its slot went because
@@ -115,10 +137,22 @@ export function RunPosturePanel({
 
   if (state.status === 'loading' && !state.state) {
     return (
-      <View style={styles.card} testID="companion-run-posture">
-        <Text style={styles.title}>Resource posture</Text>
-        <GateParkLines view={gatePark} />
-        <Text style={styles.muted}>Loading posture…</Text>
+      <View testID="companion-run-posture-reserved">
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          pointerEvents="none"
+          style={styles.reserved}
+        >
+          <PostureCard posture={reserveFor ?? MINIMAL_POSTURE_SHAPE} gatePark={gatePark} />
+        </View>
+        <View style={StyleSheet.absoluteFill}>
+          <View style={[styles.card, styles.fill]} testID="companion-run-posture">
+            <Text style={styles.title}>Resource posture</Text>
+            <GateParkLines view={gatePark} />
+            <Text style={styles.muted}>Loading posture…</Text>
+          </View>
+        </View>
       </View>
     );
   }
@@ -137,7 +171,17 @@ export function RunPosturePanel({
     );
   }
 
-  const summary = summarizeRunPosture(state.state);
+  return <PostureCard posture={state.state} gatePark={gatePark} />;
+}
+
+function PostureCard({
+  posture,
+  gatePark,
+}: {
+  posture: RunResourcePostureState;
+  gatePark: GateParkView | null;
+}) {
+  const summary = summarizeRunPosture(posture);
   const transition = summary.lastTransition;
   return (
     <View style={styles.card} testID="companion-run-posture">
@@ -248,6 +292,9 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeXs,
     lineHeight: 16,
   },
+  fill: {
+    flex: 1,
+  },
   headline: {
     alignItems: 'baseline',
     flexDirection: 'row',
@@ -268,6 +315,9 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: fonts.sizeSm,
     fontWeight: '900',
+  },
+  reserved: {
+    opacity: 0,
   },
   row: {
     borderTopColor: colors.bgCardHover,

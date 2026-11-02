@@ -60,7 +60,7 @@ export function publishReadNotice(
   const stale = heldDataIsSaved(state, context.connected);
   const target = readRoute(query, route);
   const missing = error?.code === 'RUN_NOT_FOUND';
-  const unsupported = state.status === 'unsupported';
+  const unsupported = query.live && state.status === 'unsupported';
   const item: TrayItem | undefined = missing
     ? undefined
     : unsupported

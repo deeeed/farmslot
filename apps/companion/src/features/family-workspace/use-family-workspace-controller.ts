@@ -17,6 +17,7 @@ import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/vie
 import type { MediaViewerItem } from '../../components/MediaViewer';
 import { observeNativeFamilyFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQuery';
+import { readStoredArtifact } from '../../lib/artifact-response';
 import {
   artifactsForRecipeRun,
   artifactUrlForEntry,
@@ -35,7 +36,6 @@ import {
   normalizeFamilyEvidenceFilterParam,
 } from '../../lib/family-evidence';
 import { collectFamilyRetrospectives } from '../../lib/family-retrospectives';
-import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
 import { readErrorMessage } from '../../lib/resource-read-status';
@@ -413,7 +413,7 @@ export function useFamilyWorkspaceController() {
       documentAbortRef.current = controller;
       const url = familyArtifactUrl(gatewayUrl, artifact);
       const current = captureCurrent();
-      gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
+      readStoredArtifact(url, artifactAuthHeaders, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();

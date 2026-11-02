@@ -186,6 +186,11 @@ directories a user opened in a workspace, kept as stale snapshots per slot and
 run. Not persisted: one-off queries such as previews, searches and diagnostics,
 and streams.
 
+Dispatch keeps candidate lists and ticket-matching results by their request parameters.
+Jira ticket matching shares one entry across flow changes. Stored candidates can render
+while a live read refreshes availability; run creation and queue commands still validate
+the current state on the gateway.
+
 **Version-list catch-up.** Until the run list adopts version lists, its
 persisted result is the bounded list each client reads today. When the baseline
 shows that rereading it is slow, the run list adopts them. With `versions: true`
@@ -399,9 +404,14 @@ data instead of `loading`.
 **Run details.** Background sync stores `run.get` for every run in a stored run
 list, not only runs that were opened or prefetched. Until a run's details arrive,
 its screens render its stored list row.
+Gates and active runs come first. Metered and unknown-cost connections sync only
+those details automatically; known unmetered connections also sync history,
+newest first, within the 64 MiB detail budget. A missing network-cost API does
+not assert that a connection is unmetered.
 
 **Artifact text.** Text artifacts a screen shows, such as reports, packets and
-logs, are stored content like diffs and files, and render offline once read.
+logs, are stored content like diffs and files, and render offline once read within
+the content cap. Larger files retain the named large-media exception above.
 
 **Enforcement.** `yarn quality:cached-panel-reads` runs in CI. It fails when
 application code sends a method that is not a registered read, a listed command

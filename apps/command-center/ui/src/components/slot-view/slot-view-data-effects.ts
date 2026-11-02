@@ -9,7 +9,6 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { type ChecklistProgressStep, checklistProgressView } from '@farmslot/review-dispatch';
 
 import { readConfiguration } from '../../configuration-resources.js';
-import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
 
 import type { SlotView } from './slot-view.js';
@@ -22,8 +21,10 @@ export function loadSlotViewSlot(view: SlotView): void {
     const stored = fleet.slots.find((slot) => slot.slot === view.slotId);
     if (stored) {
       view._slot = stored;
-      void view._fetchResources();
-      void view._fetchSlotActions();
+      bindSlotViewResources(view);
+      view._slotActionsQuery.setQuery(
+        resourceQuery<SlotActionListResult>(Methods.SLOT_ACTION_LIST, { slotId: view.slotId }),
+      );
       if (view._shouldShowTaskUI()) {
         bindSlotViewTaskProgress(view);
         // Auto-open task panel when slot has active work (overrides stale localStorage)
@@ -50,40 +51,33 @@ export async function fetchSlotViewRepoPath(view: SlotView, machine: string): Pr
   }
 }
 
-export async function fetchSlotViewResources(view: SlotView): Promise<void> {
-  if (!view.slotId) return;
-  try {
-    const res = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
-      slotId: view.slotId,
-    });
-    view._resources = res.resources;
-    // Auto-open resource panel when slot is working and has resources
-    if (view._shouldShowTaskUI() && res.resources.length > 0) {
-      view._resourcePanelOpen = true;
-    }
-  } catch (err) {
-    console.warn(
-      '[slot-view] resource list failed:',
-      err instanceof Error ? err.message : String(err),
-    );
-    view._resources = [];
-  }
+/** Binds the slot's resources; the next list may open the resource panel, as a slot load did. */
+function bindSlotViewResources(view: SlotView): void {
+  view._resourcesMayOpenPanel = true;
+  view._resourcesQuery.setQuery(
+    resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, { slotId: view.slotId }),
+  );
+  applySlotViewResources(view);
 }
 
-export async function fetchSlotViewActions(view: SlotView): Promise<void> {
-  if (!view.slotId) return;
-  try {
-    const res = await gateway.request<SlotActionListResult>(Methods.SLOT_ACTION_LIST, {
-      slotId: view.slotId,
-    });
-    view._slotActions = res.actions;
-  } catch (err) {
-    console.warn(
-      '[slot-view] slot action list failed:',
-      err instanceof Error ? err.message : String(err),
-    );
-    view._slotActions = [];
+/** An action that changed the slot's resources rereads them once. */
+export async function refreshSlotViewResources(view: SlotView): Promise<void> {
+  view._resourcesMayOpenPanel = true;
+  await view._resourcesQuery.retry();
+  applySlotViewResources(view);
+}
+
+/** Shows the stored resource list; status events patch `_resources` until the list changes. */
+export function applySlotViewResources(view: SlotView): void {
+  const result = view._resourcesQuery.state.data;
+  if (result !== view._resourcesSource) {
+    view._resourcesSource = result;
+    view._resources = result?.resources ?? [];
   }
+  if (!result || !view._resourcesMayOpenPanel) return;
+  view._resourcesMayOpenPanel = false;
+  // Auto-open resource panel when slot is working and has resources
+  if (view._shouldShowTaskUI() && result.resources.length > 0) view._resourcePanelOpen = true;
 }
 
 /** Bind one read for the active checklist; terminal/history tab choices do not retarget it. */

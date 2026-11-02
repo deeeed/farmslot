@@ -23,6 +23,7 @@ import {
   reviewLineagesForRun,
 } from '@farmslot/review-dispatch';
 
+import { readStoredArtifact } from '../../artifact-response.js';
 import { fetchRunArtifactBytes } from '../../content-prefetch.js';
 import { gateway } from '../../gateway-client.js';
 import {
@@ -41,7 +42,7 @@ import {
 } from '../../held-content.js';
 import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { diffSelectionHandOff, visibleDiffSelection } from '../../utils/diff-test-filter.js';
-import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
+import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import {
   currentRecoveryEpoch,
   isRecoveryEpochCurrent,
@@ -545,7 +546,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._legacyTaskPromptError = '';
     try {
       const params = new URLSearchParams({ runId: this.runId, path: 'TASK.md' });
-      const response = await gatewayHttpFetch(`/api/run-artifact?${params}`);
+      const response = await readStoredArtifact(`/api/run-artifact?${params}`);
       if (!response.ok) throw new Error(`${response.status}`);
       const text = await response.text();
       if (captured.current()) this._legacyTaskPromptText = text;

@@ -66,6 +66,7 @@ import {
   syncedDraftProject,
   syncedDraftTargetProjects,
 } from '../shared/planning-projects.js';
+import { readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   applyWorkInventorySort,
@@ -1074,9 +1075,10 @@ export class RoadmapPanel extends LitElement {
     if (this._refinementSessionLoading === item.id) return;
     this._refinementSessionLoading = item.id;
     try {
-      const result = await gateway.request<RoadmapRefinementSessionGetResult>(
-        Methods.ROADMAP_REFINEMENT_SESSION_GET,
-        { itemId: item.id },
+      const result = await readStored<RoadmapRefinementSessionGetResult>(
+        resourceQuery<RoadmapRefinementSessionGetResult>(Methods.ROADMAP_REFINEMENT_SESSION_GET, {
+          itemId: item.id,
+        }),
       );
       if (this._selected?.id !== item.id) return;
       this._existingRefinementSession = result;
@@ -1304,10 +1306,12 @@ export class RoadmapPanel extends LitElement {
     const epoch = gateway.connectionEpoch;
     this._busy = 'search';
     try {
-      const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
-        ...params,
-        search,
-      });
+      const result = await readStored<RoadmapListResult>(
+        resourceQuery<RoadmapListResult>(Methods.ROADMAP_LIST, {
+          ...params,
+          search,
+        }),
+      );
       if (
         generation !== this._listGeneration ||
         workspace !== getResourceWorkspaceKey() ||

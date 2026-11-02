@@ -20,6 +20,33 @@ const resolve = reportArtifactResolver(
   'artifacts/report.html',
 );
 
+test('report videos open the existing artifact player through a user-initiated link', () => {
+  const source =
+    '<video controls src="cases/qa-47016-reverse-run-2/videos/recipe-run.mp4"></video>';
+  const html = isolatedReportHtml(source, resolve);
+  assert.doesNotMatch(html, /<video\b/);
+  assert.match(
+    html,
+    /data-report-video href="cases\/qa-47016-reverse-run-2\/videos\/recipe-run.mp4">Play video/,
+  );
+  assert.deepEqual(
+    reportNavigation(
+      `${REPORT_DOCUMENT_BASE}cases/qa-47016-reverse-run-2/videos/recipe-run.mp4`,
+      resolve,
+      true,
+    ),
+    { kind: 'artifact', path: 'artifacts/cases/qa-47016-reverse-run-2/videos/recipe-run.mp4' },
+  );
+  assert.deepEqual(
+    reportNavigation(
+      `${REPORT_DOCUMENT_BASE}cases/qa-47016-reverse-run-2/videos/recipe-run.mp4`,
+      resolve,
+      false,
+    ),
+    { kind: 'blocked' },
+  );
+});
+
 test('the report carries the shared artifact CSP and keeps no authored meta tag', () => {
   const html = isolatedReportHtml(
     '<!doctype html><html><head><meta http-equiv="refresh" content="0;url=https://example.com"><style>p{}</style></head><body><p>x</p></body></html>',

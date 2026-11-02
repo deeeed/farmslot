@@ -24,6 +24,7 @@ import {
   visibleReviewDispatchCatalog,
 } from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
+import { readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { RetainedNotice } from '../shared/retained-notice.js';
 
@@ -228,8 +229,9 @@ export class EvalCockpit extends EvalCockpitState {
     if (cached?.revision === revision) return;
     if (this._evalPackageLoads.has(revision)) return;
     this._evalPackageLoads.add(revision);
-    gateway
-      .request<EvalTrialResultGetResult>(Methods.EVAL_TRIAL_RESULT_GET, { runId: run.id }, 30_000)
+    readStored<EvalTrialResultGetResult>(
+      resourceQuery<EvalTrialResultGetResult>(Methods.EVAL_TRIAL_RESULT_GET, { runId: run.id }),
+    )
       .then((result) => {
         this._evalPackageSnapshots.set(result.candidatePackagePath, {
           revision,
@@ -379,8 +381,9 @@ export class EvalCockpit extends EvalCockpitState {
     if (this._loadedSlotCapGroupId === capGroupId) return;
     if (this._slotCapDirty && this._slotCapDirtyGroupId === capGroupId) return;
     this._loadedSlotCapGroupId = capGroupId;
-    gateway
-      .request<EvalSuiteCapGetResult>(Methods.EVAL_SUITE_CAP_GET, { capGroupId }, 30_000)
+    readStored<EvalSuiteCapGetResult>(
+      resourceQuery<EvalSuiteCapGetResult>(Methods.EVAL_SUITE_CAP_GET, { capGroupId }),
+    )
       .then((result) => {
         if (this._capGroupId() !== result.capGroupId) return;
         if (this._slotCapDirty && this._slotCapDirtyGroupId === result.capGroupId) return;
@@ -444,10 +447,8 @@ export class EvalCockpit extends EvalCockpitState {
       this._slotCapDirty = false;
       this._slotCapDirtyGroupId = '';
     }
-    const result = await gateway.request<EvalSuiteCapGetResult>(
-      Methods.EVAL_SUITE_CAP_GET,
-      { capGroupId },
-      30_000,
+    const result = await readStored<EvalSuiteCapGetResult>(
+      resourceQuery<EvalSuiteCapGetResult>(Methods.EVAL_SUITE_CAP_GET, { capGroupId }),
     );
     this._evalSlotCap = result.cap;
     this._loadedSlotCapGroupId = result.capGroupId;

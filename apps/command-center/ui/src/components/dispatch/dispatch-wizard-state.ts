@@ -157,7 +157,6 @@ export abstract class DispatchWizardState extends LitElement {
    * cache is warm and subsequent calls hit it in <50ms. The flag is set ONLY on the
    * success path — a failure means we still don't know whether the cache warmed, so
    * the next attempt keeps the cold-cache budget. */
-  _candidatesEverLoaded = false;
   /** Comparison-lane fork context, parsed from #dispatch?lane=comparison&familyId=…&variant=…&parentRunId=… */
   @state() _comparisonLane = false;
   /** Operator chose comparison-sibling dispatch (run picker before ticket entry). */
@@ -180,6 +179,8 @@ export abstract class DispatchWizardState extends LitElement {
   _lastFetchMachines = '';
   /** Last targetBranch passed to dispatch.candidates; re-fetches when pr.list hydrates and flips this from undefined to a branch. */
   _lastFetchTargetBranch: string | undefined;
+  /** Last Pi/OpenCode runner and model passed to dispatch.candidates; their node check depends on it. */
+  _lastFetchNodeModel = '';
   /** Tracks which `(flow, ticket)` pair the previous candidate fetch was for. The scoring
    * context isn't just the ticket — `_resolveTargetBranch` ALSO depends on `_flowType` (only
    * `review-pr` / `pr-complete` look up the PR's head branch). Switching from

@@ -13,6 +13,7 @@ import {
 import type { ResourceQuery, ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import { artifactUrl } from '../../lib/artifact-url';
+import { gatewayFetch } from '../../lib/gateway-http-auth';
 import type { GatewayClient } from '../../lib/gateway-client';
 import {
   createVisualReviewGateway as createGateway,
@@ -72,13 +73,16 @@ const currentArtifacts = {
   ],
 } as unknown as RecipeRunArtifactGroup;
 
-const resources = new WeakMap<Pick<GatewayClient, 'request'>['request'], VisualReviewResources>();
+const resources = new WeakMap<Pick<GatewayClient, 'request'>['request'], Omit<VisualReviewResources, 'readArtifact'>>();
 function createVisualReviewGateway(
   client: Pick<GatewayClient, 'request'>,
   connection: VisualReviewConnection,
   live?: () => VisualReviewConnection,
 ) {
-  return createGateway(client, connection, resources.get(client.request)!, live);
+  return createGateway(client, connection, {
+    ...resources.get(client.request)!,
+    readArtifact: (url) => gatewayFetch(url, connection.authHeaders),
+  }, live);
 }
 
 interface Harness {

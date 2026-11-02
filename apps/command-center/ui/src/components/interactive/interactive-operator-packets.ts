@@ -9,9 +9,10 @@ import {
 } from '@farmslot/protocol';
 import { operatorMessageInput } from '@farmslot/review-dispatch';
 
+import { readStoredArtifact } from '../../artifact-response.js';
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
+import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import { openMediaLightbox } from '../shared/media-lightbox.js';
 import { renderReadyWorkspaceMarkdown } from '../workspace/ready-workspace-markdown.js';
@@ -161,7 +162,7 @@ export class InteractiveOperatorPackets extends LitElement {
 
   private async _readArtifactText(path: string): Promise<string> {
     if (this.artifactTextLoader) return this.artifactTextLoader(path);
-    const res = await gatewayHttpFetch(
+    const res = await readStoredArtifact(
       `/api/run-artifact?${new URLSearchParams({ runId: this.runId, path })}`,
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

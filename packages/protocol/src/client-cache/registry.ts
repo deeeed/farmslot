@@ -4,6 +4,7 @@ import {
   providerAccountsStoredData,
 } from '../contracts/provider-accounts.js';
 import type { ConfigGitHubAccountsResult } from '../rpc/config.js';
+import { jiraTicketKey } from '../rpc/dispatch.js';
 import type { CheckoutUpdateOperation, GatewayStatusResult } from '../rpc/gateway.js';
 import {
   prForSlotObservationParams,
@@ -165,6 +166,24 @@ const configurationDefinition: ResourceQueryDefinition = {
   dependencies: configurationDependencies,
 };
 
+function dispatchObservationParams(
+  params: unknown,
+  allowed: readonly string[],
+): Record<string, unknown> {
+  const value = domainParams(params, allowed);
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'machines') {
+      if (!Array.isArray(item) || item.some((machine) => typeof machine !== 'string'))
+        throw new Error('Dispatch machines must be strings');
+      value[key] = [...new Set(item)].sort();
+    } else if (key === 'forceRefresh' || key === 'skipPrepare') {
+      if (typeof item !== 'boolean') throw new Error(`Dispatch ${key} must be a boolean`);
+    } else if ((key === 'flowType' || key === 'variant') && item === null) delete value[key];
+    else if (typeof item !== 'string') throw new Error(`Dispatch ${key} must be a string`);
+  }
+  return value;
+}
+
 function workerInventoryParams(params: unknown): Record<string, unknown> {
   if (params == null) return { includeDisconnected: true };
   if (typeof params !== 'object' || Array.isArray(params))
@@ -197,6 +216,16 @@ function workerInventoryParams(params: unknown): Record<string, unknown> {
     includeDisconnected: source.includeDisconnected ?? true,
     ...(machines.length ? { machines } : {}),
   };
+}
+
+function validateWorkspacePath(value: unknown): void {
+  if (
+    value !== undefined &&
+    (typeof value !== 'string' ||
+      value.startsWith('/') ||
+      value.replace(/\\/g, '/').split('/').includes('..'))
+  )
+    throw new Error('Workspace path must stay relative');
 }
 
 function workspaceParams(params: unknown): Record<string, unknown> {
@@ -249,13 +278,7 @@ function workspaceParams(params: unknown): Record<string, unknown> {
       for (const field of fields) requiredId(worker, field);
     }
   }
-  if (
-    value.path !== undefined &&
-    (typeof value.path !== 'string' ||
-      value.path.startsWith('/') ||
-      value.path.replace(/\\/g, '/').split('/').includes('..'))
-  )
-    throw new Error('Workspace path must stay relative');
+  validateWorkspacePath(value.path);
   if (value.includeUntracked !== undefined && typeof value.includeUntracked !== 'boolean')
     throw new Error('includeUntracked must be a boolean');
   if (value.includeUntracked && value.target !== 'worktree')
@@ -809,6 +832,57 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       copilotRuntimeKey,
       { ...copilotRuntimeKey, sessionId: String(sessionContextParams(params).sessionId) },
     ],
+  },
+  [Methods.DISPATCH_CANDIDATES]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: 50, maxBytes: 8 * mb },
+    timeoutMs: 60_000,
+    live: true,
+    normalizeParams: (params: unknown) =>
+      dispatchObservationParams(params, [
+        'project',
+        'flowType',
+        'machines',
+        'targetBranch',
+        'ticketOrPr',
+        'app',
+        'prepareProfile',
+        'skipPrepare',
+        'forceRefresh',
+        'lane',
+        'familyId',
+        'variant',
+        'runner',
+        'model',
+      ]),
+    dependencies: (params: unknown) => {
+      const runner =
+        params && typeof params === 'object' ? Reflect.get(params, 'runner') : undefined;
+      return [
+        { family: 'slots', scope: 'farm' },
+        { family: 'node', scope: 'farm' },
+        { family: 'capabilities' },
+        { family: 'runs', scope: 'farm' },
+        ...configurationDependencies(params),
+        ...(typeof runner === 'string' ? [runnerModelCatalogResourceKey({ runner })] : []),
+      ];
+    },
+  },
+  [Methods.DISPATCH_MATCH_PROJECT]: {
+    persisted: true,
+    maxBytes: 1 * mb,
+    retention: { maxEntries: 100, maxBytes: 2 * mb },
+    live: true,
+    normalizeParams: (params: unknown) => {
+      const value = dispatchObservationParams(params, ['ticketOrPr', 'flowType']);
+      requiredId(value, 'ticketOrPr');
+      const ticket = String(value.ticketOrPr).trim();
+      value.ticketOrPr = ticket;
+      if (jiraTicketKey(ticket)) delete value.flowType;
+      return value;
+    },
+    dependencies: configurationDependencies,
   },
   [Methods.CONFIG_PROJECTS]: {
     ...configurationDefinition,
@@ -1473,13 +1547,54 @@ export interface ResourceQuery<T = unknown> {
 }
 
 /** Experimental, portable query factory; mutations and streams are never registered here. */
+function readDefinition(method: ResourceReadMethod, params: unknown): ResourceQueryDefinition {
+  const definition: ResourceQueryDefinition = RESOURCE_QUERY_DEFINITIONS[method];
+  if (!definition) throw new Error(`Unregistered resource read: ${method}`);
+  if (
+    (method !== Methods.GIT_DIFF && method !== Methods.GIT_SHOW) ||
+    !params ||
+    typeof params !== 'object' ||
+    !Reflect.get(params, 'runId') ||
+    Reflect.get(params, 'slotId') ||
+    Reflect.get(params, 'sessionId')
+  )
+    return definition;
+  // A slotless review reads exact retained commits, not a mutable workspace observation.
+  return {
+    ...definition,
+    live: false,
+    requiresObservedRead: false,
+    requiresWorkspaceRead: false,
+    normalizeParams(input) {
+      const value = domainParams(
+        input,
+        method === Methods.GIT_SHOW
+          ? ['slotId', 'runId', 'ref', 'path']
+          : ['slotId', 'runId', 'base', 'head', 'path', 'oldPath'],
+      );
+      requiredId(value, 'runId');
+      for (const field of method === Methods.GIT_SHOW ? ['ref', 'path'] : ['base', 'head'])
+        requiredId(value, field);
+      validateWorkspacePath(value.path);
+      validateWorkspacePath(value.oldPath);
+      return { ...value, slotId: '' };
+    },
+    dependencies: () => [],
+    retentionGroups: (value) => [`run:${requiredId(value, 'runId')}`],
+  };
+}
+
+/** Snapshot reads use the ordinary RPC contract, including on gateways predating registration. */
+export function resourceReadIsLive(method: ResourceReadMethod, params: unknown): boolean {
+  return readDefinition(method, params).live;
+}
+
 export function resourceQuery<T = unknown>(
   method: ResourceReadMethod,
   params: unknown = {},
   nativeReaderId?: string,
 ): ResourceQuery<T> {
-  const definition: ResourceQueryDefinition = RESOURCE_QUERY_DEFINITIONS[method];
-  if (!definition) throw new Error(`Unregistered resource read: ${method}`);
+  const definition = readDefinition(method, params);
   const canonical = canonicalResourceJson(
     definition.normalizeParams ? definition.normalizeParams(params) : (params ?? {}),
   );
@@ -1518,7 +1633,6 @@ export function resourceDependenciesForRead(
   nativeReaderId?: string,
 ): ResourceKey[] | undefined {
   if (!Object.hasOwn(RESOURCE_QUERY_DEFINITIONS, method)) return undefined;
-  const definition: ResourceQueryDefinition =
-    RESOURCE_QUERY_DEFINITIONS[method as ResourceReadMethod];
+  const definition = readDefinition(method as ResourceReadMethod, params);
   return definition.live ? definition.dependencies(params, nativeReaderId) : undefined;
 }

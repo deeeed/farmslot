@@ -123,6 +123,7 @@ import { hashParams } from '../utils/url-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
 import { runStatusColor } from './runs/run-utils.js';
+import { readStored } from './shared/read-current.js';
 import { heldDataIsSaved, ResourceQueryController } from './shared/resource-query-controller.js';
 import { renderRunTitle } from './shared/run-title.js';
 import {
@@ -480,7 +481,9 @@ export class FarmApp extends LitElement {
     this.versionDetailsError = '';
     try {
       // Explicit remote recheck. Its source notification owns the canonical result.
-      await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true }, 30_000);
+      await readStored<GatewayStatusResult>(
+        resourceQuery<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true }),
+      );
     } catch (err) {
       if (owner === getResourceWorkspaceKey() && connection === gateway.resourceConnectionId)
         this.versionDetailsError = err instanceof Error ? err.message : String(err);

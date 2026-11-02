@@ -1300,6 +1300,8 @@ export async function waitForReviewCompletion(
       const acceptance = context.promptAcceptance;
       if (
         reading?.failure &&
+        // A dropped model connection ends the turn, not the reviewer (F328).
+        reading.failureKind !== 'transport' &&
         reading.confidence === 'high' &&
         reading.sessionId === context.runnerSessionId &&
         acceptance?.sessionId === context.runnerSessionId &&

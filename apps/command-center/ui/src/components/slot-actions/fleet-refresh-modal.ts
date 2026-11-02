@@ -8,6 +8,7 @@ import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { fleetQuery, getState, requireCurrentFleet } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { fleetLocalWorkNote } from '../fleet-map/fleet-release-scope.js';
 
 /** Inspection rereads the shared fleet observation; release and cancel stay explicit commands. */
 async function fleetRefreshRequest<T>(
@@ -40,8 +41,6 @@ async function fleetRefreshRequest<T>(
 export class FleetRefreshModal extends LitElement {
   @property({ type: Boolean }) open = false;
   @property({ attribute: false }) slotIds: string[] = [];
-  @property({ attribute: false }) singleSlotId = '';
-  @property({ type: Boolean }) inspectOnly = false;
   @state() private model: FleetRefreshViewModel | null = null;
   private unsubscribe?: () => void;
   static override styles = css`
@@ -163,20 +162,20 @@ export class FleetRefreshModal extends LitElement {
     );
     this.model = model;
     this.unsubscribe = model.subscribe(() => this.requestUpdate());
-    await model.load(
-      this.singleSlotId ? [this.singleSlotId] : [...this.slotIds],
-      getState().fleet?.slots,
-    );
-    if (this.model === model && this.singleSlotId && !this.inspectOnly)
-      await model.release(this.singleSlotId);
+    await model.load([...this.slotIds], getState().fleet?.slots);
   }
   private close(): void {
-    this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
+    // Once a release was sent, the selection that chose it has done its job.
+    const released = this.model?.released ?? false;
+    this.dispatchEvent(
+      new CustomEvent('close', { detail: { released }, bubbles: true, composed: true }),
+    );
   }
   override render() {
     if (!this.open || !this.model) return nothing;
     const model = this.model;
     const running = model.phase === 'running';
+    const localWork = fleetLocalWorkNote(model.rows);
     return html`<div class="backdrop" @click=${() => this.close()}>
       <section
         class="dialog"
@@ -190,6 +189,7 @@ export class FleetRefreshModal extends LitElement {
           <button aria-label="Close" @click=${() => this.close()}>Close</button>
         </header>
         ${model.error ? html`<p role="alert" class="warning">${model.error}</p>` : nothing}
+        ${localWork ? html`<p class="warning" data-local-work>${localWork}</p>` : nothing}
         ${model.inspecting ? html`<p role="status">Checking current workspaces…</p>` : nothing}
         ${model.confirmation
           ? html`<div class="confirm" role="alertdialog" aria-label="Discard local work">
@@ -230,14 +230,12 @@ export class FleetRefreshModal extends LitElement {
             </article>`,
         )}
         <footer>
-          ${!this.singleSlotId
-            ? html`<button
-                ?disabled=${!model.canRelease || running || !model.bulkCount}
-                @click=${() => void model.releaseIdle()}
-              >
-                Release idle slots (${model.bulkCount})
-              </button>`
-            : nothing}
+          <button
+            ?disabled=${!model.canRelease || running || !model.bulkCount}
+            @click=${() => void model.releaseIdle()}
+          >
+            Release idle slots (${model.bulkCount})
+          </button>
           ${model.canCancel
             ? html`<button @click=${() => void model.cancel()}>Cancel remaining</button>`
             : running

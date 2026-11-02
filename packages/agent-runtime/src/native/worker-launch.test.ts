@@ -241,3 +241,24 @@ test('reviewer no-prompt policy is private and can resume without changing sandb
   for (const approvalPolicy of ['untrusted', 'on-request', true])
     assert.throws(() => decodeNativeWorkerLaunch({ ...launch, approvalPolicy }), /approval policy/);
 });
+
+test('an autonomous run turns model questions off without changing the launch digest', async () => {
+  const { decodeNativeWorkerLaunch, nativeWorkerLaunchDigest } = await import('./worker-launch.js');
+  const launch = {
+    leaseId: '10000000-0000-4000-8000-000000000001',
+    safetyTier: 'sandboxed',
+    environment: { set: {}, unset: [] },
+  };
+  const interactive = decodeNativeWorkerLaunch(launch);
+  const autonomous = decodeNativeWorkerLaunch({ ...launch, modelQuestions: 'off' });
+  assert.equal(interactive.modelQuestions, undefined);
+  assert.equal(Object.hasOwn(interactive, 'modelQuestions'), false);
+  assert.equal(autonomous.modelQuestions, 'off');
+  // A journal saved before the run's setting existed still resumes.
+  assert.equal(nativeWorkerLaunchDigest(autonomous), nativeWorkerLaunchDigest(interactive));
+  for (const modelQuestions of ['on', 'never', false, true])
+    assert.throws(
+      () => decodeNativeWorkerLaunch({ ...launch, modelQuestions }),
+      /model questions setting/,
+    );
+});

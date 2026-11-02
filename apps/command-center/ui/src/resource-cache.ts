@@ -15,6 +15,8 @@ import {
   type ContentPrefetchTarget,
   createResourceCacheTransport,
   type GatewayResourceCache,
+  networkCostHint,
+  networkInformationEvents,
   type ResourceConnectionInputs,
   type ResourceStoreMetadata,
   resourceStoreScopeId,
@@ -29,6 +31,7 @@ let notice: string | undefined;
 let persistentCache: GatewayResourceCache | undefined;
 let defaultBranch: ((run: Run) => string | undefined) | undefined;
 let stopConnection: (() => void) | undefined;
+let networkEvents: EventTarget | undefined;
 let suspended = false;
 const listeners = new Set<() => void>();
 const notify = () => {
@@ -70,6 +73,7 @@ function connectionInputs(): ResourceConnectionInputs {
     gatewayUrl: gateway.gatewayUrl,
     connected,
     foreground: document.visibilityState !== 'hidden',
+    metered: networkCostHint(),
     authentication: connected ? gateway.authenticatedConnection : undefined,
     reason: gateway.resourceConnectionReason,
   };
@@ -196,6 +200,8 @@ export function initializeResourceCache(): void {
   window.addEventListener('pagehide', suspendForNavigation);
   window.addEventListener('pageshow', resumeFromNavigation);
   document.addEventListener('visibilitychange', sync);
+  networkEvents = networkInformationEvents();
+  networkEvents?.addEventListener('change', sync);
   stopConnection = gateway.onConnectionChange(sync);
   sync();
 }
@@ -262,6 +268,8 @@ export async function disposeResourceCache(): Promise<void> {
   window.removeEventListener('pagehide', suspendForNavigation);
   window.removeEventListener('pageshow', resumeFromNavigation);
   document.removeEventListener('visibilitychange', sync);
+  networkEvents?.removeEventListener('change', sync);
+  networkEvents = undefined;
   suspended = false;
   const retiring = owner.dispose();
   closeBrowserResourceStores();

@@ -25,6 +25,10 @@ import {
 } from '../../core/index.js';
 import { resolveTmuxPaneId, resolveTmuxSession } from '../../core/tmux.js';
 import { isWorkerAlive } from '../../review/worker-lifecycle.js';
+import {
+  effectiveModelQuestionsForRun,
+  modelQuestionsForRun,
+} from '../../runners/launch-command.js';
 import { readLaunchAckSignalSnapshot } from '../../runners/prompt-delivery-evidence.js';
 import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
 import { dispatchStartedAtMs } from '../../runners/session-path-resolution.js';
@@ -263,6 +267,19 @@ export async function warmSessionHandoffDispatch(
       reason: `model mismatch (slot=${slotModelRaw}, run=${params.model}) — fresh dispatch required`,
     };
   }
+  // A live worker keeps its launch's question tool, which a delivery cannot change.
+  const priorWorker =
+    parentRun &&
+    selectAgentContext(parentRun, {
+      role: primaryRoleForFlow(parentRun.flowType),
+    });
+  if (priorWorker?.modelQuestions !== effectiveModelQuestionsForRun(requestingRun)) {
+    return {
+      handedOff: false,
+      disposition: 'fresh-dispatch',
+      reason: 'worker question tool differs or is unknown; fresh dispatch required',
+    };
+  }
 
   const handoffModel = resolveWarmHandoffModel(slotModelRaw, params.model);
 
@@ -389,6 +406,7 @@ export async function warmSessionHandoffDispatch(
     prompt,
     effort: requestingRun.effort ?? parentRun?.effort,
     safetyTier,
+    modelQuestions: modelQuestionsForRun(requestingRun),
     taskDir: workerTaskAbs,
     taskFile: absoluteTaskMd,
     replacementReadySignalPath: binding.context?.signalFile,
@@ -468,6 +486,7 @@ export async function warmSessionHandoffDispatch(
 
   const workingContext = await upsertAgentContext(params.runId, workerRole, {
     status: 'working',
+    modelQuestions: effectiveModelQuestionsForRun(requestingRun),
     taskFile: `${workerTaskDir}/TASK.md`,
     signalFile: `${workerTaskDir}/SIGNAL.json`,
     runner,

@@ -15,6 +15,11 @@ export const CI_PARITY_STEPS = [
   ['authorization', ['yarn', 'quality:authorization']],
   ['retired scripts', ['yarn', 'quality:retired-scripts']],
   ['import boundaries', ['yarn', 'quality:imports']],
+  ['offline-first reads', ['yarn', 'quality:cached-panel-reads']],
+  [
+    'offline-first read guard tests',
+    ['node', '--test', 'scripts/quality/check-cached-panel-reads.test.mjs'],
+  ],
   [
     'model transport module load',
     [
@@ -26,6 +31,18 @@ export const CI_PARITY_STEPS = [
       '--input-type=module',
       '-e',
       "await import('./.agents/skills/tmux-model-driver/scripts/native-evidence.mjs')",
+    ],
+  ],
+  [
+    'canary outcome tests',
+    [
+      'env',
+      'TSX_TSCONFIG_PATH=services/gateway/tsconfig.json',
+      'node',
+      '--import',
+      'tsx',
+      '--test',
+      'scripts/runner-validation/canary/outcome.test.mts',
     ],
   ],
   ['large files', ['yarn', 'quality:large-files']],

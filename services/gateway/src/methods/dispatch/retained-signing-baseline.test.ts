@@ -53,6 +53,33 @@ writeFileSync(
 const taskFile = path.join(root, 'tasks/pr-complete/proof/TASK.md');
 writeFileSync(taskFile, '# Retained signature proof\n');
 const store = await import('../../runs/store.js');
+// Signing checks exercise a compatible retained worker, beyond the question-tool reuse guard.
+const parent = store.createRun({
+  flowType: 'dev',
+  project: 'proof',
+  ticketOrPr: 'example/repo#1',
+  runner: 'claude',
+});
+await store.persistRunNow(
+  store.updateRun(parent.id, {
+    slotId,
+    status: 'done',
+    agentContexts: [
+      {
+        id: 'dev',
+        runId: parent.id,
+        slotId,
+        role: 'dev',
+        label: 'Worker',
+        status: 'idle',
+        runner: 'claude',
+        model: 'opus',
+        modelQuestions: 'on',
+      },
+    ],
+  }),
+  'retained signing fixture',
+);
 const core = await import('../../core/index.js');
 mock.module('../../core/index.js', {
   namedExports: {
@@ -69,7 +96,9 @@ const fleet = await import('../../fleet/state.js');
 mock.module('../../fleet/state.js', {
   namedExports: {
     ...fleet,
-    loadFleetStatus: async () => ({ slots: [{ slot: slotId, branch: 'feature' }] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: slotId, branch: 'feature', currentRunId: parent.id }],
+    }),
   },
 });
 const preview = await import('./preview.js');
@@ -149,6 +178,7 @@ for (const mode of ['warm', 'nudge'] as const) {
       mode === 'warm'
         ? warmSessionHandoffDispatch(
             {
+              parentRunId: parent.id,
               slotId,
               taskFile,
               runId: run.id,
@@ -263,6 +293,7 @@ for (const mode of ['warm', 'nudge'] as const) {
       mode === 'warm'
         ? warmSessionHandoffDispatch(
             {
+              parentRunId: parent.id,
               slotId,
               taskFile,
               runId: run.id,

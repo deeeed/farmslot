@@ -30,6 +30,7 @@ import {
   parseBranchDiffKey,
   realPath,
 } from './slot-view-model.js';
+import { refreshSlotViewFileIndex } from './slot-view-search-effects.js';
 import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
 
 type LoadContentOptions = {
@@ -116,14 +117,14 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
     if (view._recoveryEpoch === epoch) view._wsLoading = false;
   }
 
-  if (gateway.connectionState !== 'connected') return;
-  // Load file index for quick file search
+  // Load file index for quick file search; its stored list serves search offline too.
   view._loadFileIndex();
-
   // Restore file from URL (if ?file= present)
   await view._restoreFileFromUrl();
   // Restore history modal state from URL (if ?history=1[&historyRun=<id>])
   view._restoreHistoryFromUrl();
+
+  if (gateway.connectionState !== 'connected') return;
 
   // Auto-pin task folder if slot is working and has a taskFile
   view._autoPinTaskFolder();
@@ -625,7 +626,10 @@ export async function handleSlotViewTreeAction(
           runId: target.runId,
           ...(expectedHash ? { expectedHash } : {}),
         });
-        if (target.shown()) view._reloadTree();
+        if (target.shown()) {
+          view._reloadTree();
+          refreshSlotViewFileIndex(view);
+        }
       } catch (err) {
         if (!refusedFileOperation(view, err, target.shown))
           console.error('[slot-view] rename failed:', err);
@@ -669,6 +673,7 @@ export async function handleSlotViewTreeAction(
             view._openFiles.length > 0 ? view._openFiles[view._openFiles.length - 1].path : '';
         }
         view._reloadTree();
+        refreshSlotViewFileIndex(view);
       } catch (err) {
         if (!refusedFileOperation(view, err, target.shown))
           console.error('[slot-view] delete failed:', err);
@@ -696,6 +701,7 @@ export async function createSlotViewFile(view: SlotView) {
       runId: target.runId,
     });
     if (!target.shown()) return;
+    refreshSlotViewFileIndex(view);
     view._newFilePrompt = false;
     view._newFilePath = '';
     // The new file opens through its own read, like every other file: that read makes it editable.

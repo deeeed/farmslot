@@ -14,6 +14,7 @@ import type {
 } from '@farmslot/protocol';
 import { taskTitleText } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../stream-feed/stream-feed.js';
 import '../shared/hydrating-placeholder.js';
@@ -22,6 +23,7 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getRunForSlot, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { RESOURCE_CONTROL_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { readStored } from '../shared/read-current.js';
 
 import {
   isDeviceGridResourceApplicable,
@@ -452,7 +454,6 @@ export class DeviceGrid extends LitElement {
       this._resourceStatuses = new Map();
       return;
     }
-    if (gateway.connectionState !== 'connected') return;
     try {
       const filtered = this._applyFilters(fleet.slots);
 
@@ -463,9 +464,11 @@ export class DeviceGrid extends LitElement {
       const entries = await Promise.allSettled(
         filtered.map(async (slot) => {
           try {
-            const res = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
-              slotId: slot.slot,
-            });
+            const res = await readStored<ResourceListResult>(
+              resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, {
+                slotId: slot.slot,
+              }),
+            );
             return { slot, resources: res.resources };
           } catch {
             return { slot, resources: [] as SlotResource[] };

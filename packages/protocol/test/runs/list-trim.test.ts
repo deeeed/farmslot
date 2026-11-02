@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run, RunDecision } from '@farmslot/protocol';
-
-import { RUN_LIST_PAYLOAD_VALUE_LIMIT, trimDecisionForList, trimRunForList } from './list-trim.js';
+import type { Run, RunDecision } from '../../src/contracts/index.js';
+import {
+  RUN_LIST_PAYLOAD_VALUE_LIMIT,
+  trimDecisionForList,
+  trimRunForList,
+} from '../../src/runs/list-trim.js';
 
 const big = 'x'.repeat(RUN_LIST_PAYLOAD_VALUE_LIMIT);
 
