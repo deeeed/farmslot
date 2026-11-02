@@ -161,6 +161,11 @@ export interface RunRecoveryCollaborators {
   resetSlot: (slotId: string) => Promise<void>;
   retryOccupiedRunSlot: (slotId: string) => Promise<boolean>;
   /**
+   * Run a workspace recovery that a restart interrupted once more, from fresh workspace evidence.
+   * Settles in the background: startup does not wait for the slot's git work.
+   */
+  resumeInterruptedRecovery: (slotId: string) => void;
+  /**
    * Conditional reset: `predicate` runs INSIDE the serialized slot write, so
    * the check and the write cannot be split by a concurrent release. The
    * reconciler needs this because `resetSlot` refuses a releasing slot by
@@ -1238,6 +1243,7 @@ type OrphanRecoveryCollaborators = Pick<
   | 'updateSlotStatusIf'
   | 'broadcast'
   | 'retryOccupiedRunSlot'
+  | 'resumeInterruptedRecovery'
 >;
 
 export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators): Promise<void> {
@@ -1259,10 +1265,12 @@ export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators):
     if (activeSlotIds.has(slot.slot) && !blockedOwner) continue;
     const workspaceRecovery = await deps.readSlotField(slot.slot, 'workspace_recovery');
     if (workspaceRecovery && typeof workspaceRecovery === 'object') {
-      // Recovery is operator-driven. Restart may turn its live fence into a
-      // failed hold, but must never advertise an unverified checkout as ready.
+      // Restart turns a live recovery fence into a failed hold and never advertises an
+      // unverified checkout as ready. It then runs the recovery once more: that re-inspects
+      // the workspace and refuses unverified or local work, so nobody has to retry a release
+      // a deploy interrupted (F316). A failed recovery stays held for the operator.
       if (!deps.isTerminalTeardownInFlight(slot.slot) && slot.phase === SLOT_PHASE_RELEASING) {
-        await deps.updateSlotStatusIf(
+        const held = await deps.updateSlotStatusIf(
           slot.slot,
           (row) =>
             row.workspace_recovery !== null &&
@@ -1275,6 +1283,7 @@ export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators):
             releasing_since: null,
           },
         );
+        if (held) deps.resumeInterruptedRecovery(slot.slot);
       }
       continue;
     }

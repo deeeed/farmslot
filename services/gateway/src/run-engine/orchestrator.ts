@@ -1727,6 +1727,23 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
       const { retryOccupiedRunSlot } = await import('../run-lifecycle/slot-teardown.js');
       return retryOccupiedRunSlot(slotId);
     },
+    resumeInterruptedRecovery: (slotId) => {
+      void (async () => {
+        const { reuseSafeIdleSlot } = await import('../run-lifecycle/safe-idle-slot.js');
+        const result = await reuseSafeIdleSlot(slotId, (event, payload) =>
+          broadcastFn(event, payload),
+        );
+        console.log(
+          result.kind === 'ready'
+            ? `[run-engine] reconcile: resumed the interrupted recovery of ${slotId}; slot is ready`
+            : `[run-engine] reconcile: interrupted recovery of ${slotId} stays held: ${result.reason}`,
+        );
+      })().catch((error) =>
+        console.warn(
+          `[run-engine] reconcile: resuming the interrupted recovery of ${slotId} failed: ${(error as Error).message}`,
+        ),
+      );
+    },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {
       const { stopRunOwnedTmuxWorkers } = await import('../runners/owned-stop.js');
