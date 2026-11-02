@@ -47,20 +47,23 @@ interface ParkedHead {
   branch: string;
   headSha: string;
   ref: string;
-  /** Commits not on any remote (nor the base), newest first. */
+  /** Commits outside the caller's `notRevs`, newest first. */
   commits: string[];
 }
 
 /**
- * The one park both releases use: HEAD stays reachable at `refs/farmslot/parked/<key>/<head>`,
- * a ref that is created and never moved. Returns null, parking nothing, when the checkout fails
- * a check; throws when the ref cannot be written or names another head.
+ * The one park every release uses: the commit stays reachable at
+ * `refs/farmslot/parked/<key>/<sha>`, a ref that is created and never moved. Parking the same
+ * commit again is a no-op, so a resent command never fails. Returns null, parking nothing, when
+ * the checkout fails a check; throws when the ref cannot be written or names another commit.
  */
 async function parkHead(
   vars: SlotVars,
   exec: typeof execOnSlot,
   checks: {
     key: string;
+    /** A local branch to park instead of HEAD. */
+    localBranch?: string;
     /** The checkout must be on this branch. */
     branch?: string;
     /** No staged, unstaged or untracked change. */
@@ -69,15 +72,24 @@ async function parkHead(
     headSha?: string;
     /** The commits must descend from this base, which is excluded from the record. */
     baseSha?: string;
-    /** Park only when HEAD holds commits the remotes lack. */
+    /** Revisions whose history is not counted as parked work. */
+    notRevs: string[];
+    /** Park only when there are commits outside `notRevs`. */
     requireCommits?: boolean;
   },
 ): Promise<ParkedHead | null> {
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   // One round trip: identify the checkout, check it, park it.
   const script = [
-    `head=$(${git} rev-parse HEAD) || exit 3`,
-    `branch=$(${git} symbolic-ref --quiet --short HEAD || echo HEAD)`,
+    ...(checks.localBranch
+      ? [
+          `head=$(${git} rev-parse --verify --quiet ${shellQuote(`refs/heads/${checks.localBranch}^{commit}`)}) || exit 3`,
+          `branch=${shellQuote(checks.localBranch)}`,
+        ]
+      : [
+          `head=$(${git} rev-parse HEAD) || exit 3`,
+          `branch=$(${git} symbolic-ref --quiet --short HEAD || echo HEAD)`,
+        ]),
     ...(checks.branch ? [`[ "$branch" = ${shellQuote(checks.branch)} ] || exit 3`] : []),
     ...(checks.clean
       ? [`[ -z "$(${git} status --porcelain --untracked-files=all)" ] || exit 3`]
@@ -86,9 +98,9 @@ async function parkHead(
     ...(checks.baseSha
       ? [`${git} merge-base --is-ancestor ${shellQuote(checks.baseSha)} "$head" || exit 3`]
       : []),
-    `commits=$(${git} rev-list "$head" --not ${checks.baseSha ? `${shellQuote(checks.baseSha)} ` : ''}--remotes) || exit 4`,
+    `commits=$(${git} rev-list "$head" --not ${checks.notRevs.map(shellQuote).join(' ')}) || exit 4`,
     ...(checks.requireCommits ? ['[ -n "$commits" ] || exit 3'] : []),
-    `ref="refs/farmslot/parked/${checks.key}/$head"`,
+    `ref=${shellQuote(`refs/farmslot/parked/${checks.key}/`)}"$head"`,
     `${git} check-ref-format "$ref" || exit 4`,
     // An empty old value creates the ref or fails: an earlier parking is never moved.
     `${git} update-ref "$ref" "$head" '' 2>/dev/null || [ "$(${git} rev-parse "$ref")" = "$head" ] || exit 4`,
@@ -134,6 +146,7 @@ export async function parkRunBranchCommits(
     // An ownerless return names the head the run left: anything committed on top since is not its.
     headSha: checks.headSha,
     baseSha,
+    notRevs: [baseSha, '--remotes'],
   });
   if (!parked) return null;
   const record: ParkedRunCommits = {
@@ -162,24 +175,51 @@ function refSafe(value: string): string {
 
 /**
  * An ownerless slot's unpushed commits have no run to record them, so the same park keys them
- * by slot: `refs/farmslot/parked/manual-<slot>-<ts>/<head>`. Only the head the operator
- * inspected is parked; returns null when HEAD moved or holds nothing the remotes lack.
+ * by slot: `refs/farmslot/parked/manual-<slot>-<ts>/<sha>`. Inspection already classified the
+ * work as unpushed, so the park does not decide that again: it parks the inspected HEAD and
+ * counts its commits the way inspection does, against `origin/<default>`. Returns null only when
+ * HEAD moved since the inspection.
  */
 export async function parkSlotCommits(
   vars: SlotVars,
   exec: typeof execOnSlot,
-  checks: { headSha: string; now?: Date },
+  checks: { headSha: string; defaultBranch: string; now?: Date },
 ): Promise<SlotParkedCommits | null> {
-  const stamp = (checks.now ?? new Date()).toISOString().replace(/[-:.]/g, '');
   const parked = await parkHead(vars, exec, {
-    key: `manual-${refSafe(vars.slotId)}-${stamp}`,
+    key: manualParkKey(vars, checks.now),
     headSha: checks.headSha,
+    notRevs: [`origin/${checks.defaultBranch}`],
+  });
+  return parked && report(vars, parked);
+}
+
+/**
+ * A reset that switches to `branch` overwrites that local branch too, so its commits missing
+ * from `origin/<default>` are parked first. Returns null when it holds none or does not exist.
+ */
+export async function parkSlotBranch(
+  vars: SlotVars,
+  exec: typeof execOnSlot,
+  checks: { branch: string; defaultBranch: string; headSha: string; now?: Date },
+): Promise<SlotParkedCommits | null> {
+  const parked = await parkHead(vars, exec, {
+    key: manualParkKey(vars, checks.now),
+    localBranch: checks.branch,
+    // Commits HEAD also holds are already parked with it.
+    notRevs: [`origin/${checks.defaultBranch}`, checks.headSha],
     requireCommits: true,
   });
-  if (!parked) return null;
-  const report = { ref: parked.ref, branch: parked.branch, commits: parked.commits.length };
-  console.log(`[slot.release] ${vars.slotId}: ${slotParkedDetail(report)}`);
-  return report;
+  return parked && report(vars, parked);
+}
+
+function manualParkKey(vars: SlotVars, now = new Date()): string {
+  return `manual-${refSafe(vars.slotId)}-${now.toISOString().replace(/[-:.]/g, '')}`;
+}
+
+function report(vars: SlotVars, parked: ParkedHead): SlotParkedCommits {
+  const entry = { ref: parked.ref, branch: parked.branch, commits: parked.commits.length };
+  console.log(`[slot.release] ${vars.slotId}: ${slotParkedDetail([entry])}`);
+  return entry;
 }
 
 /**

@@ -146,3 +146,28 @@ test('resetSlotRepoToIdle returns primary clone to default branch @ origin/main'
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+test('an operator commit made during fetch refuses the idle reset and remains on HEAD', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'idle-reset-fetch-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'slot'),
+    remote = path.join(root, 'origin.git');
+  initPrimaryRepo(repo, remote);
+  git(repo, 'config', 'commit.gpgsign', 'false');
+  const expected = git(repo, 'rev-parse', 'HEAD');
+  const upload = path.join(root, 'upload.sh');
+  writeFileSync(
+    upload,
+    `#!/bin/sh\nset -e\ngit -C '${repo}' -c core.hooksPath=/dev/null commit --allow-empty -qm 'test: operator commit during fetch'\nexec git-upload-pack "$@"\n`,
+  );
+  git(repo, 'config', 'remote.origin.uploadpack', `sh ${upload}`);
+  await assert.rejects(
+    resetSlotRepoToIdle(slotVars(repo, 'fetch-race'), {}, undefined, 'main', {
+      linkedWorktree: false,
+      expect: { headSha: expected, branches: { main: expected } },
+    }),
+    /changed since inspection/,
+  );
+  assert.notEqual(git(repo, 'rev-parse', 'HEAD'), expected);
+  assert.equal(git(repo, 'log', '-1', '--format=%s'), 'test: operator commit during fetch');
+});

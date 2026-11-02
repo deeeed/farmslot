@@ -29,6 +29,8 @@ export interface SlotRecovery {
   completed: SlotRecoveryPhase[];
   phase: SlotRecoveryPhase;
   error?: string;
+  /** What this recovery parked so far, kept across a failure and its retry. */
+  parked?: SlotParkedCommits[];
 }
 
 export interface SlotWorkspace extends SlotWorkspaceIdentity {
@@ -141,8 +143,13 @@ export interface SlotParkedCommits {
   commits: number;
 }
 
-export function slotParkedDetail(parked: SlotParkedCommits): string {
-  return `Parked ${parked.commits} unpushed commit${parked.commits === 1 ? '' : 's'} of ${parked.branch} at ${parked.ref}`;
+export function slotParkedDetail(parked: readonly SlotParkedCommits[]): string {
+  return parked
+    .map(
+      (entry) =>
+        `Parked ${entry.commits} unpushed commit${entry.commits === 1 ? '' : 's'} of ${entry.branch} at ${entry.ref}`,
+    )
+    .join('; ');
 }
 
 export function slotWorkspaceIdentity(work: SlotWorkspaceIdentity): SlotWorkspaceIdentity {

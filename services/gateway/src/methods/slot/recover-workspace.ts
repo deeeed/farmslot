@@ -12,6 +12,7 @@ import {
   type SlotRecoveryRefusal,
   type SlotRefreshParams,
   type SlotRefreshResult,
+  type SlotResetExpectation,
   type SlotWorkspaceIdentity,
   slotWorkspaceIdentity,
 } from '@farmslot/protocol';
@@ -28,13 +29,14 @@ import {
   updateSlotStatusIf,
 } from '../../core/index.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
+import { shellQuote } from '../../core/tmux.js';
 import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import {
   beginTerminalTeardown,
   endTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
-import { parkSlotCommits } from '../../run-lifecycle/validation-run-commits.js';
+import { parkSlotBranch, parkSlotCommits } from '../../run-lifecycle/validation-run-commits.js';
 import { checkFixtures } from '../fleet.js';
 
 import { slotFixtureRefresh } from './fixtures.js';
@@ -89,6 +91,7 @@ export async function recoverSlotWorkspace(
 ): Promise<SlotRefreshResult> {
   const requestId = params.requestId ?? `refresh-${randomUUID()}`;
   const started = Date.now();
+  let parked: SlotParkedCommits[] = [];
   const output = (name: string, detail: string) => {
     emit('slot.refresh.step', { requestId, slotId: params.slotId, name, detail });
     emit('script.output', {
@@ -108,7 +111,15 @@ export async function recoverSlotWorkspace(
     return result;
   };
   const refuse = (reason: SlotRecoveryRefusal, detail: string, branch = ''): SlotRefreshResult =>
-    finish({ requestId, refreshed: false, reason, detail, branch, advanced: false });
+    finish({
+      requestId,
+      refreshed: false,
+      reason,
+      detail: parked.length ? `${detail}; ${slotParkedDetail(parked)}` : detail,
+      branch,
+      advanced: false,
+      ...(parked.length ? { parked } : {}),
+    });
   if (!params.expectedWorkspace)
     return refuse('identity-changed', 'Inspect the workspace before releasing');
   if (activePrepareSlots.has(params.slotId))
@@ -117,7 +128,6 @@ export async function recoverSlotWorkspace(
   activePrepareSlots.add(params.slotId);
   beginTerminalTeardown(params.slotId);
   let recovery: SlotRecovery | undefined;
-  let parked: SlotParkedCommits | null = null;
   let claimed = false;
   let authorized: SlotWorkspaceIdentity = params.expectedWorkspace;
   try {
@@ -128,6 +138,7 @@ export async function recoverSlotWorkspace(
     let workspace = await inspectSlotWorkspace(params.slotId, {
       timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
     });
+    parked = workspace.recovery?.parked?.slice() ?? [];
     if (!sameSlotWorkspace(workspace, params.expectedWorkspace))
       return refuse(
         'identity-changed',
@@ -161,6 +172,7 @@ export async function recoverSlotWorkspace(
             ? ['cleanup']
             : [],
       phase: 'inspect',
+      parked,
     };
     const marker = recovery;
     const entryEpoch = workspace.epoch;
@@ -275,12 +287,50 @@ export async function recoverSlotWorkspace(
       params.mode !== 'force'
     )
       throw new Error('Local work requires discard confirmation');
+    const resetLinked = await detectLinkedWorktree(vars);
+    const targetBranch = resetLinked
+      ? resolveSlotTrackingBranchFromProject(project.projectJson, vars, project, resetLinked)
+      : defaultBranch;
+    const targetHead = await execOnSlot(
+      vars,
+      `git -C ${shellQuote(vars.remoteRepo)} rev-parse --verify --quiet ${shellQuote(`refs/heads/${targetBranch}`)}`,
+      { noRetry: true },
+    );
+    if (targetHead.exitCode !== 0 && targetHead.exitCode !== 1)
+      throw new Error('Cannot inspect the reset branch');
+    const expect: SlotResetExpectation = {
+      headSha: authorized.headSha,
+      branches: { [targetBranch]: targetHead.exitCode === 0 ? targetHead.stdout.trim() : null },
+    };
+    const recordPark = async (entry: SlotParkedCommits | null) => {
+      if (!entry) return;
+      if (!parked.some((item) => item.ref === entry.ref)) parked.push(entry);
+      marker.parked = parked;
+      await save('inspect');
+      output('park', slotParkedDetail([entry]));
+    };
     if (parkOwnerless) {
       await verifyWork();
-      parked = await parkSlotCommits(vars, execOnSlot, { headSha: authorized.headSha });
-      if (!parked) throw new Error('Unpushed commits changed before parking; inspect again');
-      output('park', slotParkedDetail(parked));
+      const entry = await parkSlotCommits(vars, execOnSlot, {
+        headSha: authorized.headSha,
+        defaultBranch,
+      });
+      if (!entry) throw new Error('Unpushed commits changed before parking; inspect again');
+      await recordPark(entry);
     }
+    if (
+      options?.parkOwnerlessCommits &&
+      !workspace.currentRunId &&
+      targetBranch !== workspace.branch &&
+      expect.branches?.[targetBranch]
+    )
+      await recordPark(
+        await parkSlotBranch(vars, execOnSlot, {
+          branch: targetBranch,
+          defaultBranch,
+          headSha: authorized.headSha,
+        }),
+      );
     await save('cleanup', 'inspect');
     if (!marker.completed.includes('cleanup')) {
       const linked = await detectLinkedWorktree(vars);
@@ -308,6 +358,8 @@ export async function recoverSlotWorkspace(
               verifyWork,
               discardLocalWork: params.mode === 'force',
               skipRecycle: options?.skipRecycle,
+              expect,
+              parked: parked.length > 0,
               ...(options?.parkRunId
                 ? { parkRunId: options.parkRunId, parkHeadSha: options.parkHeadSha }
                 : {}),
@@ -335,12 +387,14 @@ export async function recoverSlotWorkspace(
         'discard',
         params.mode === 'force'
           ? `Confirmed work on ${authorized.branch} at ${authorized.headSha}`
-          : parked
+          : parked.length
             ? 'Unpushed commits are parked'
             : 'Verified published work',
       );
       await resetSlotRepoToIdle(vars, project.projectJson, project, defaultBranch, {
         discardLocalWork: params.mode === 'force',
+        expect,
+        verifyWork,
       });
       await advanceIdentity();
       await save('fixtures', 'reset');
@@ -396,7 +450,7 @@ export async function recoverSlotWorkspace(
       refreshed: true,
       branch: verified.branch,
       advanced: params.expectedWorkspace.headSha !== verified.headSha,
-      ...(parked ? { parked } : {}),
+      ...(parked.length ? { parked } : {}),
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

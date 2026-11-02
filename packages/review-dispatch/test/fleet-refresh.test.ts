@@ -150,11 +150,13 @@ function setup(slots: SlotStatus[]) {
           advanced: true,
           ...(target?.publication === 'unpushed'
             ? {
-                parked: {
-                  ref: `refs/farmslot/parked/manual-node-a-1/${target.headSha}`,
-                  branch: target.branch,
-                  commits: target.unpublishedCount,
-                },
+                parked: [
+                  {
+                    ref: `refs/farmslot/parked/manual-node-a-1/${target.headSha}`,
+                    branch: target.branch,
+                    commits: target.unpublishedCount,
+                  },
+                ],
               }
             : {}),
         };

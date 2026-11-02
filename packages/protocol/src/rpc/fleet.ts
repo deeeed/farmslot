@@ -102,8 +102,8 @@ export interface FleetRefreshSlotUpdateEvent {
    * button on this typed flag rather than substring-matching `detail`.
    */
   recoverableViaForce?: boolean;
-  /** Unpushed commits the release parked before resetting the slot. */
-  parked?: SlotParkedCommits;
+  /** Unpushed commits the release parked before resetting, including a failed attempt's. */
+  parked?: SlotParkedCommits[];
 }
 
 export interface FleetRefreshSummaryEvent {

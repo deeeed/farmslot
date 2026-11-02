@@ -459,9 +459,10 @@ export class FleetRefreshViewModel {
       }
       this.update(slotId, {
         status: result.refreshed ? 'refreshed' : 'failed',
-        detail: result.parked
-          ? slotParkedDetail(result.parked)
-          : (result.detail ?? result.reason ?? 'Ready on main'),
+        detail:
+          result.refreshed && result.parked?.length
+            ? slotParkedDetail(result.parked)
+            : (result.detail ?? result.reason ?? 'Ready on main'),
       });
       this.phase = 'done';
       await this.refreshRows();

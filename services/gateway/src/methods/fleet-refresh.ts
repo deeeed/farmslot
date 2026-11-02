@@ -360,6 +360,7 @@ async function runSlot(
       emit(Events.FLEET_REFRESH_SLOT_UPDATE, {
         requestId,
         slotId,
+        ...(result.parked ? { parked: result.parked } : {}),
         status: 'failed' as FleetRefreshSlotStatus,
         detail: result.detail ?? reason ?? 'safe mode aborted',
         reason,
