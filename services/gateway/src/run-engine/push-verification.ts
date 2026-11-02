@@ -196,12 +196,15 @@ export async function inspectWorktreePublishState(
   };
   const tracked = new Set([...paths(), ...paths()]);
   const untracked = mode === 'push' ? paths() : undefined;
+  const dirt = {
+    dirtyFiles: new Set([...tracked, ...(untracked ?? [])]).size,
+    trackedDirtyFiles: tracked.size,
+    ...(untracked ? { untrackedFiles: untracked.length } : {}),
+  };
   if (records[at] === 'moved') {
     const [, exists, head] = records.slice(at);
     return {
-      dirtyFiles: new Set([...tracked, ...(untracked ?? [])]).size,
-      trackedDirtyFiles: tracked.size,
-      ...(untracked ? { untrackedFiles: untracked.length } : {}),
+      ...dirt,
       // Off the run branch there is no comparison to count; `offBranch` blocks instead.
       unpushedCommits: 0,
       offBranch: { runBranchExists: exists === '0', head: head || null },
@@ -211,9 +214,8 @@ export async function inspectWorktreePublishState(
   const [comparison, ahead] = records.slice(unchecked ? at + 1 : at);
   const commits = parseInt(ahead ?? '', 10) || 0;
   return {
-    dirtyFiles: new Set([...tracked, ...(untracked ?? [])]).size,
-    trackedDirtyFiles: tracked.size,
-    ...(untracked ? { untrackedFiles: untracked.length, remoteChecked: !unchecked } : {}),
+    ...dirt,
+    ...(untracked ? { remoteChecked: !unchecked } : {}),
     // Against an upstream or origin/HEAD, counting the entire local branch
     // history produced absurd values (for example 31,508 "unpushed commits")
     // and obscured the actual one-commit state. With neither a feature remote
@@ -321,11 +323,12 @@ function offBranchRepair(
   branch: string,
   { runBranchExists, head }: NonNullable<WorktreePublishState['offBranch']>,
 ): string {
+  const run = shellQuote(branch);
   if (runBranchExists)
-    return `check out ${branch} (git checkout ${branch}) and bring your task commits onto it`;
+    return `check out ${branch} (git checkout ${run}) and bring your task commits onto it`;
   return head
-    ? `rename the branch back with: git branch -m ${head} ${branch}`
-    : `recreate it at your commit with: git checkout -b ${branch}`;
+    ? `rename the branch back with: git branch -m ${shellQuote(head)} ${run}`
+    : `recreate it at your commit with: git checkout -b ${run}`;
 }
 
 export function stateSatisfiesMode(state: WorktreePublishState, mode: 'push' | 'commit'): boolean {
@@ -399,7 +402,8 @@ export async function verifyWorkerPushedBranch(
       ? `Your completion signal was received but ${describeOffBranch(branch, state.offBranch)}. ` +
         `Farmslot verifies and publishes the run branch ${branch}. In ${vars.remoteRepo}: ` +
         `${offBranchRepair(branch, state.offBranch)}, then ` +
-        `${mode === 'push' ? 'publish it with: git push' : 'commit your task changes on it'}. ` +
+        // Explicit: the recreated branch has no upstream, and a renamed one can keep a wrong one.
+        `${mode === 'push' ? `publish it with: git push -u origin ${shellQuote(branch)}` : 'commit your task changes on it'}. ` +
         `Do not rename the run branch: a marker such as DO NOT MERGE belongs in the PR title or description. ` +
         `Verify with git status before finishing.`
       : mode === 'push'

@@ -153,8 +153,19 @@ async function withTimeout<T>(
 }
 
 const BRANCH_SLUG_MAX = 30;
-// "DO NOT MERGE" in any case, spacing or punctuation: [DO NOT MERGE], DO-NOT-MERGE, do_not_merge.
-const DO_NOT_MERGE = /\bdo[\s_-]*not[\s_-]*merge\b/i;
+// A marker, not a sentence: "Do not merge duplicate token balances" is an ordinary title.
+const DO_NOT_MERGE_MARKERS = [
+  // In capitals, with any separator: DO NOT MERGE, DO.NOT.MERGE, DO_NOT_MERGE_POC.
+  /(?<![A-Za-z0-9])DO[\s._-]*NOT[\s._-]*MERGE(?![A-Za-z0-9])/,
+  // Joined, in any case: do-not-merge, do_not_merge, DoNotMerge.
+  /(?<![a-z0-9])do[._-]*not[._-]*merge(?![a-z0-9])/i,
+  // Bracketed: [Do Not Merge], (dnm).
+  /[[(]\s*(?:do\s+not\s+merge|dnm)\s*[\])]/i,
+  // Closing the title after a separator, or the whole title: "PoC banner - do not merge".
+  /(?:^|[:;,|–—-]\s*)do\s+not\s+merge[\s.!]*$/i,
+  // The short form in capitals: DNM: chart order lines.
+  /(?<![A-Za-z0-9])DNM(?![A-Za-z0-9])/,
+];
 const DO_NOT_MERGE_SEGMENT = 'do-not-merge';
 
 /**
@@ -163,8 +174,8 @@ const DO_NOT_MERGE_SEGMENT = 'do-not-merge';
  * DO NOT MERGE and its generated slug did not (F327).
  */
 function keepDoNotMergeMarker(slug: string, title: string): string {
-  if (!DO_NOT_MERGE.test(title)) return slug;
-  const rest = slug.replace(/(^|-)do-not-merge(?=-|$)/g, '').replace(/^-+|-+$/g, '');
+  if (!DO_NOT_MERGE_MARKERS.some((marker) => marker.test(title))) return slug;
+  const rest = slug.replace(/(^|-)(?:do-?not-?merge|dnm)(?=-|$)/g, '').replace(/^-+|-+$/g, '');
   return `${DO_NOT_MERGE_SEGMENT}${rest ? `-${rest}` : ''}`
     .slice(0, BRANCH_SLUG_MAX)
     .replace(/-+$/, '');

@@ -67,7 +67,8 @@ const run = makeRun({
 });
 
 const instructions: string[] = [];
-let repairOnNudge = false;
+// What the worker does with the instruction.
+let onNudge: ((text: string) => void) | undefined;
 const execOnSlot = async (_vars: SlotVars, command: string): Promise<ExecResult> => {
   const { stdout, stderr, status } = spawnSync('bash', ['-c', command], {
     cwd: dir,
@@ -103,8 +104,7 @@ mock.module('../runners/registry.js', {
       text: string,
     ) => {
       instructions.push(text);
-      // The worker follows the instruction.
-      if (repairOnNudge) git('branch', '-m', 'do-not-merge-feature', 'feature');
+      onNudge?.(text);
       return true;
     },
   },
@@ -138,11 +138,11 @@ beforeEach(() => {
   // The worker renamed the run branch to carry the marker.
   git('branch', '-m', 'feature', 'do-not-merge-feature');
   instructions.length = 0;
-  repairOnNudge = false;
+  onNudge = undefined;
 });
 
 test('a renamed run branch gets an instruction to rename it back, and passes once it is', async (t) => {
-  repairOnNudge = true;
+  onNudge = () => git('branch', '-m', 'do-not-merge-feature', 'feature');
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const pending = verifyWorkerPushedBranch(run.id, vars.slotId);
   await settled(() => instructions.length === 1);
@@ -152,7 +152,7 @@ test('a renamed run branch gets an instruction to rename it back, and passes onc
   );
   assert.match(
     instructions[0]!,
-    /rename the branch back with: git branch -m do-not-merge-feature feature, then publish it with: git push/,
+    /rename the branch back with: git branch -m 'do-not-merge-feature' 'feature', then publish it with: git push -u origin 'feature'/,
   );
   assert.match(instructions[0]!, /DO NOT MERGE belongs in the PR title or description/);
   t.mock.timers.tick(20_000);
@@ -178,6 +178,37 @@ test('a run branch still missing after the nudge blocks with what to do, not a g
   assert.equal(result.verified, false);
   assert.equal(
     result.reason,
-    'worker signaled complete but the run branch feature no longer exists; HEAD is on do-not-merge-feature after publish nudge; rename the branch back with: git branch -m do-not-merge-feature feature, then push it',
+    "worker signaled complete but the run branch feature no longer exists; HEAD is on do-not-merge-feature after publish nudge; rename the branch back with: git branch -m 'do-not-merge-feature' 'feature', then push it",
+  );
+});
+
+// R1: a recreated branch has no upstream, so a bare `git push` fails and verification stays blocked.
+test('a detached worker that runs the instruction as written publishes to a real remote', async (t) => {
+  const remote = mkdtempSync(path.join(os.tmpdir(), 'push-verification-off-branch-remote-'));
+  t.after(() => rmSync(remote, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q', '--bare', remote], { env: gitEnv });
+  git('remote', 'add', 'origin', remote);
+  git('update-ref', '-d', 'refs/remotes/origin/feature');
+  git('checkout', '-q', '--detach');
+  git('branch', '-D', 'do-not-merge-feature');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pending = verifyWorkerPushedBranch(run.id, vars.slotId);
+  await settled(() => instructions.length === 1);
+  const [, recreate, publish] =
+    /with: (git checkout -b \S+), then publish it with: (git push -u origin \S+)\./.exec(
+      instructions[0]!,
+    ) ?? [];
+  assert.ok(recreate && publish, instructions[0]);
+  for (const command of [recreate, publish])
+    execFileSync('bash', ['-c', command], { cwd: dir, env: gitEnv, stdio: 'pipe' });
+  t.mock.timers.tick(20_000);
+  const result = await pending;
+  assert.equal(result.verified, true);
+  assert.match(
+    execFileSync('git', ['ls-remote', '--heads', remote, 'feature'], {
+      env: gitEnv,
+      encoding: 'utf8',
+    }),
+    /refs\/heads\/feature/,
   );
 });
