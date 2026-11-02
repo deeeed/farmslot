@@ -45,6 +45,7 @@ import {
 import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { EVAL_TASK_FLOW } from '../core/config.js';
 import { sha256File } from '../core/file-hash.js';
+import { assertConfiguredRootPresent, assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import { inferArtifactPurpose } from '../core/index.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { GatewayMethodError } from '../core/method-error.js';
@@ -146,11 +147,13 @@ export function runBundleStore(create = false) {
       : shouldUseIsolatedRunsDir(process.env, process.argv)
         ? isolatedTestPath('farmslot-test-bundle-home')
         : farmslotHome();
-  return openRunBundleStore({
-    runsDir: runsDirectory(),
-    home,
-    create: create && !process.env.FARMSLOT_SANDBOX_HOME,
-  });
+  const open = () =>
+    openRunBundleStore({
+      runsDir: runsDirectory(),
+      home,
+      create: create && !process.env.FARMSLOT_SANDBOX_HOME,
+    });
+  return create ? assertConfiguredRootPresent(home).then(open) : open();
 }
 
 export function retainedRunBundleRef(
@@ -520,6 +523,7 @@ export async function retainCapturedRunArtifacts(input: {
 }): Promise<MaterializedRunBundle> {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
+  await assertHeavyWriteRoom(store.root);
   await tryArchiveRunArtifactHousekeeping();
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.
