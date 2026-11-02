@@ -31,6 +31,7 @@ import {
   useGatewayProfileController,
 } from '../../features/settings/use-gateway-profile-controller';
 import { SourceStatusSection } from '../../features/sources/SourceStatusSection';
+import { useShownMarker } from '../../hooks/useShownMarker';
 import {
   microphonePermissionIsBlocked,
   microphonePermissionSetupState,
@@ -98,6 +99,7 @@ async function smokeTestVoiceModel(modelId: string): Promise<string> {
 }
 
 export default function SettingsScreen() {
+  useShownMarker('companion-screen-settings');
   const insets = useSafeAreaInsets();
   const {
     gatewayUrl,

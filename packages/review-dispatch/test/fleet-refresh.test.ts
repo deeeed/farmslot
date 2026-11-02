@@ -16,8 +16,11 @@ import {
 } from '@farmslot/protocol';
 
 import {
+  fleetBehindDefault,
+  fleetBehindDefaultIfBehind,
   type FleetRefreshClient,
   FleetRefreshViewModel,
+  fleetSlotBranch,
   fleetWorkspaceRow,
 } from '../src/fleet-refresh.js';
 
@@ -780,4 +783,24 @@ test('bulk logs follow server-owned request identities instead of assuming their
   });
   assert.deepEqual(model.rows[0]?.log, ['Verified fixture']);
   model.dispose();
+});
+
+test('cards, the table and the review share one branch pick and one behind-main label', () => {
+  const current = slot('current', { branch: 'observed', behind: 3 }, { branch: 'cached' });
+  assert.equal(fleetSlotBranch(current), 'observed');
+  assert.equal(fleetSlotBranch({ ...current, workspace: undefined }), 'cached');
+  assert.equal(fleetBehindDefault(current), '3 behind main');
+  assert.equal(fleetWorkspaceRow(current).behind, '3 behind main');
+  // An expired observation is unknown everywhere: no distance on the card, honest text in review.
+  const expired = slot('expired', { behind: 3, observedAt: '2000-01-01T00:00:00Z' });
+  assert.equal(fleetBehindDefault(expired), null);
+  assert.equal(fleetWorkspaceRow(expired).behind, 'Behind main unknown');
+  // Level with main: the fleet shows nothing, the review keeps the zero.
+  const level = slot('level', { behind: 0 });
+  assert.equal(fleetBehindDefaultIfBehind(level), null);
+  assert.equal(fleetWorkspaceRow(level).behind, '0 behind main');
+  assert.equal(
+    fleetBehindDefaultIfBehind(slot('moved', { behind: 0, remoteAdvanced: true })),
+    '0 behind main · remote advanced',
+  );
 });

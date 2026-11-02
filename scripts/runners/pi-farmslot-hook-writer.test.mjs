@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  piFailureKind,
   piMessageTokenUsage,
   piTurnFailure,
   runnerPromptDigest,
@@ -110,11 +111,44 @@ test('a failed native Pi turn retains its OAuth failure reason instead of a norm
     env: { TMUX_PANE: '%fixture', FARMSLOT_RUNNER: 'pi' },
   });
   assert.equal(record.failure, failure);
+  assert.equal(record.failureKind, undefined, 'an auth failure is a genuine runner failure');
   const panes = fs.readdirSync(path.join(obsDir, 'panes'));
   assert.equal(panes.length, 1);
   const stopped = JSON.parse(fs.readFileSync(path.join(obsDir, 'panes', panes[0]), 'utf8'));
   assert.equal(stopped.failure, failure);
   assert.equal(stopped.turnActive, false);
+});
+
+// F328 ce1c5583: Pi's model stream was torn down mid-turn ("terminated").
+test('a turn ended on a dropped model connection is marked a transport failure', (t) => {
+  const obsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-transport-failure-'));
+  t.after(() => fs.rmSync(obsDir, { recursive: true, force: true }));
+  const record = writePiHook({
+    obsDir,
+    sessionId: 'pi-task',
+    event: 'StopFailure',
+    failure: 'terminated',
+    env: { TMUX_PANE: '%fixture', FARMSLOT_RUNNER: 'pi' },
+  });
+  assert.equal(record.failureKind, 'transport');
+  const pane = fs.readdirSync(path.join(obsDir, 'panes'))[0];
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(obsDir, 'panes', pane), 'utf8')).failureKind,
+    'transport',
+  );
+  for (const failure of [
+    'Connection error.',
+    'getaddrinfo ENOTFOUND litellm.example',
+    'read ECONNRESET',
+    'socket hang up',
+    'upstream connect error or disconnect/reset before headers',
+  ])
+    assert.equal(piFailureKind(failure), 'transport', failure);
+  for (const failure of [
+    'OAuth refresh failed for anthropic: invalid_grant',
+    'Pi model request timed out after 300000ms and one retry',
+  ])
+    assert.equal(piFailureKind(failure), undefined, failure);
 });
 
 test('native failed outcomes retain the auth error and a later healthy turn clears it', () => {

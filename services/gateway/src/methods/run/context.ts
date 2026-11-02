@@ -15,6 +15,7 @@ import {
   type RunRecipeRunsForSlotParams,
   type RunRecipeRunsForSlotResult,
   runRecoveryHints,
+  trimRunForList,
 } from '@farmslot/protocol';
 
 import {
@@ -35,7 +36,6 @@ import {
 import { refreshRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
 import { reconcilePublicationPackageForInspection } from '../../run-engine/publish-package-refresh.js';
-import { trimRunForList } from '../../runs/list-trim.js';
 import { runListIdsPage, runListVersions } from '../../runs/list-version.js';
 import {
   getAllRuns,
@@ -107,7 +107,7 @@ export async function runList(params: RunListParams): Promise<RunListResult> {
   // decisionList) — enriching every run in a list would be wasted work.
   const result = listRuns(params);
   // Summaries read the full runs; the listed rows then shed the decision
-  // payload values only a single run's page renders (see runs/list-trim.ts).
+  // payload values only a single run's page renders (see @farmslot/protocol runs/list-trim.ts).
   const withSummaries = attachRunListSummaries(result, params);
   return { ...withSummaries, runs: withSummaries.runs.map(trimRunForList) };
 }

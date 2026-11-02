@@ -18,11 +18,11 @@ import {
   type Run,
   type RunListParams,
   type RunListVersion,
+  trimRunForList,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 
 await import('../../runtime/mock-pty.test-support.js');
-const { trimRunForList } = await import('../../runs/list-trim.js');
 const { RUN_LIST_PAGE_MAX_BYTES } = await import('../../runs/list-version.js');
 const { archiveRun, createRun, deleteRun, getAllRuns, getRun, updateRun } =
   await import('../../runs/store.js');

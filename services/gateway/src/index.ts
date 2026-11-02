@@ -447,9 +447,13 @@ async function main(): Promise<void> {
   stopPRDetailCollection = startPRDetailObservations({
     hasInterest: (method, params) => upstreamObservers.hasInterest(method, params),
   });
+  // Lazy, as the native route loads it: an eager import forms a cycle with that route.
+  const { nativeObservations } = await import('./resources/native-observations.js');
   stopRunnerModelCatalogCollection = startRunnerModelCatalogObservation({
+    // A native picker lists node catalogs too, so it keeps them refreshing.
     hasInterest: (runner) =>
-      upstreamObservers.hasInterest(Methods.RUNNER_MODEL_CATALOG, { runner }),
+      upstreamObservers.hasInterest(Methods.RUNNER_MODEL_CATALOG, { runner }) ||
+      nativeObservations.hasCatalogInterest(),
   });
   stopProviderAccountsCollection = startProviderAccountsObservation({
     // An omitted machine selector observes every fleet machine, including later joiners.

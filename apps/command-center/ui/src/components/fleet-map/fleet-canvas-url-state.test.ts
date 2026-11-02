@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { fleetCanvasUrlStateFromHash, fleetCanvasUrlStateHash } from './fleet-canvas-url-state.js';
+import {
+  FLEET_VIEW_STORAGE_KEY,
+  fleetCanvasStoredFallbacks,
+  fleetCanvasUrlStateFromHash,
+  fleetCanvasUrlStateHash,
+} from './fleet-canvas-url-state.js';
+
+function storage(values: Record<string, string>): Pick<Storage, 'getItem'> {
+  return { getItem: (key) => values[key] ?? null };
+}
 
 test('fleet canvas URL state parses route params and truthy refresh values', () => {
   assert.deepEqual(fleetCanvasUrlStateFromHash('#fleet?group=resource&view=list&refresh=yes'), {
@@ -27,6 +36,29 @@ test('fleet canvas URL state falls back for invalid group and view values', () =
       viewMode: 'list',
       fleetRefreshOpen: false,
     },
+  );
+});
+
+test('fleet canvas opens on the table unless the URL or a remembered choice says cards', () => {
+  assert.equal(fleetCanvasUrlStateFromHash('#fleet').viewMode, 'list');
+  assert.equal(fleetCanvasUrlStateFromHash('#fleet?view=card').viewMode, 'card');
+  assert.equal(fleetCanvasUrlStateFromHash('#fleet', { viewMode: 'card' }).viewMode, 'card');
+});
+
+test('a card choice saved before the table default lapses; a later toggle is respected', () => {
+  const legacy = storage({
+    'farmslot:fleet-viewMode': 'card',
+    'farmslot:fleet-groupBy': 'project',
+  });
+  assert.deepEqual(fleetCanvasUrlStateFromHash('#fleet', fleetCanvasStoredFallbacks(legacy)), {
+    groupBy: 'project',
+    viewMode: 'list',
+    fleetRefreshOpen: false,
+  });
+  const toggled = storage({ [FLEET_VIEW_STORAGE_KEY]: 'card' });
+  assert.equal(
+    fleetCanvasUrlStateFromHash('#fleet', fleetCanvasStoredFallbacks(toggled)).viewMode,
+    'card',
   );
 });
 

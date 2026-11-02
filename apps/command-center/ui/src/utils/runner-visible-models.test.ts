@@ -8,6 +8,8 @@ import { installFakeGateway } from '../testing/fake-gateway.js';
 
 import {
   onVisibleModelsChange,
+  runnerCatalogPending,
+  setObservedRunnerCatalogs,
   setObservedVisibleModels,
   visibleDefaultModel,
   visibleModelIds,
@@ -163,4 +165,29 @@ test('views share one owner-scoped observation that follows the gateway owner ke
   });
   first();
   second();
+});
+
+test('a node-catalog runner stays loading until some execution node has listed its models', () => {
+  assert.equal(runnerCatalogPending('pi'), true, 'unread');
+  setObservedRunnerCatalogs([
+    {
+      runner: 'pi',
+      status: 'unavailable',
+      source: 'catalog-command',
+      detail: 'No execution node has listed its models yet.',
+      models: [],
+    },
+  ]);
+  assert.equal(runnerCatalogPending('pi'), true, 'no node listed yet');
+  setObservedRunnerCatalogs([
+    {
+      runner: 'pi',
+      status: 'ready',
+      source: 'catalog-command',
+      models: [{ id: 'litellm/glm-5p3', reasoningModes: [], listed: true }],
+    },
+  ]);
+  assert.equal(runnerCatalogPending('pi'), false);
+  assert.equal(runnerCatalogPending('claude'), false);
+  setObservedRunnerCatalogs([]);
 });

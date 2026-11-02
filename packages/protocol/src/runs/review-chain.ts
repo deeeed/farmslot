@@ -76,7 +76,8 @@ export function currentReviewChainEntry(
     mode: context.mode,
     validationDepth: context.validationDepth,
     verdict: payload?.recommendation?.trim() || 'pending',
-    unresolvedCount: payload ? payload.lineComments.length : null,
+    // A run.list row can leave lineComments out (`payloadTrimmed`): unknown, not zero.
+    unresolvedCount: payload?.lineComments ? payload.lineComments.length : null,
     artifactRefs: payload?.artifactManifest ?? [],
     runner: run.metrics.runner ?? null,
     model: run.metrics.actualModel ?? run.metrics.model ?? null,

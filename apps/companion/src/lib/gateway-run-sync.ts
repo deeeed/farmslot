@@ -152,6 +152,17 @@ export class NativeRunCollections {
     await this.cache?.retry(nativeDecisionsQuery);
   }
 
+  /** Rereads the run list: the active runs, and the history once it has been opened. */
+  async retryRuns(): Promise<void> {
+    const cache = this.cache;
+    if (!cache) return;
+    const queries = [
+      nativeActiveRunsQuery,
+      ...(this.historyRequested ? nativeRunHistoryQueries(this.versionLists) : []),
+    ];
+    await Promise.all(queries.map((query) => cache.retry(query)));
+  }
+
   dispose(): void {
     this.release();
     this.cache = undefined;

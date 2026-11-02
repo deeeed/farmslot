@@ -14,6 +14,7 @@ Farmslot reviews cover:
 | Gateway / protocol | `yarn typecheck`, `node:test`, behavior traceable in code |
 | CLI / terminal TUI | `node:test`, forced-TTY/mock-timer checks, live `--json` envelope probes; no Recipe/CDP requirement when no browser surface exists |
 | Mobile Companion | iOS/Android recipe when PR touches `apps/companion`; real Metro flag flips — no store injection |
+| Companion UI jank | A PR touching `apps/companion/src/**` needs a passing Companion jank report (`yarn recipe:run:jank:android`, `performance/report.md` verdict pass) run at its head SHA |
 | Publication evidence | `evidence-manifest.json`, hosted `raw.githubusercontent.com` URLs, `artifacts_repo` upload |
 
 ## Secondary regression scan (required on every review)

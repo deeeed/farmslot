@@ -4,6 +4,7 @@ import {
   providerAccountsStoredData,
 } from '../contracts/provider-accounts.js';
 import type { ConfigGitHubAccountsResult } from '../rpc/config.js';
+import { jiraTicketKey } from '../rpc/dispatch.js';
 import type { CheckoutUpdateOperation, GatewayStatusResult } from '../rpc/gateway.js';
 import {
   prForSlotObservationParams,
@@ -153,6 +154,24 @@ const configurationDefinition: ResourceQueryDefinition = {
   normalizeParams: (params) => configurationParams(params, []),
   dependencies: configurationDependencies,
 };
+
+function dispatchObservationParams(
+  params: unknown,
+  allowed: readonly string[],
+): Record<string, unknown> {
+  const value = domainParams(params, allowed);
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'machines') {
+      if (!Array.isArray(item) || item.some((machine) => typeof machine !== 'string'))
+        throw new Error('Dispatch machines must be strings');
+      value[key] = [...new Set(item)].sort();
+    } else if (key === 'forceRefresh' || key === 'skipPrepare') {
+      if (typeof item !== 'boolean') throw new Error(`Dispatch ${key} must be a boolean`);
+    } else if ((key === 'flowType' || key === 'variant') && item === null) delete value[key];
+    else if (typeof item !== 'string') throw new Error(`Dispatch ${key} must be a string`);
+  }
+  return value;
+}
 
 function workerInventoryParams(params: unknown): Record<string, unknown> {
   if (params == null) return { includeDisconnected: true };
@@ -774,6 +793,57 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       copilotRuntimeKey,
       { ...copilotRuntimeKey, sessionId: String(sessionContextParams(params).sessionId) },
     ],
+  },
+  [Methods.DISPATCH_CANDIDATES]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: { maxEntries: 50, maxBytes: 8 * mb },
+    timeoutMs: 60_000,
+    live: true,
+    normalizeParams: (params: unknown) =>
+      dispatchObservationParams(params, [
+        'project',
+        'flowType',
+        'machines',
+        'targetBranch',
+        'ticketOrPr',
+        'app',
+        'prepareProfile',
+        'skipPrepare',
+        'forceRefresh',
+        'lane',
+        'familyId',
+        'variant',
+        'runner',
+        'model',
+      ]),
+    dependencies: (params: unknown) => {
+      const runner =
+        params && typeof params === 'object' ? Reflect.get(params, 'runner') : undefined;
+      return [
+        { family: 'slots', scope: 'farm' },
+        { family: 'node', scope: 'farm' },
+        { family: 'capabilities' },
+        { family: 'runs', scope: 'farm' },
+        ...configurationDependencies(params),
+        ...(typeof runner === 'string' ? [runnerModelCatalogResourceKey({ runner })] : []),
+      ];
+    },
+  },
+  [Methods.DISPATCH_MATCH_PROJECT]: {
+    persisted: true,
+    maxBytes: 1 * mb,
+    retention: { maxEntries: 100, maxBytes: 2 * mb },
+    live: true,
+    normalizeParams: (params: unknown) => {
+      const value = dispatchObservationParams(params, ['ticketOrPr', 'flowType']);
+      requiredId(value, 'ticketOrPr');
+      const ticket = String(value.ticketOrPr).trim();
+      value.ticketOrPr = ticket;
+      if (jiraTicketKey(ticket)) delete value.flowType;
+      return value;
+    },
+    dependencies: configurationDependencies,
   },
   [Methods.CONFIG_PROJECTS]: {
     ...configurationDefinition,

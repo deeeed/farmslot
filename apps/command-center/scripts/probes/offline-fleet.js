@@ -10,9 +10,19 @@ const module = await import(url);
 const state = module.getState();
 if (Reflect.get(view, 'fleetObservation') !== state.fleetObservation)
   throw new Error('Inspect the canonical observation owning the rendered fleet');
-const cards = [...view.shadowRoot.querySelectorAll('machine-group')].flatMap((group) => [
+const groups = [...view.shadowRoot.querySelectorAll('machine-group')];
+const cards = groups.flatMap((group) => [
   ...(group.shadowRoot?.querySelectorAll('slot-card') ?? []),
 ]);
+// The table draws one row per slot, found through its selection checkbox.
+const rows = groups.flatMap((group) =>
+  (group.slots ?? []).map((slot) => {
+    const box = group.shadowRoot?.querySelector(
+      `input[aria-label=${JSON.stringify(`Select ${slot.slot}`)}]`,
+    );
+    return { slot, box, row: box?.closest('tr') };
+  }),
+);
 const shell = document.querySelector('farm-app');
 return {
   mounted: true,
@@ -40,14 +50,24 @@ return {
     shell.nodeQuery.state.data === view.nodeQuery.state.data,
   ),
   versionsRendered: shell?.querySelector('.fa-version-modal')?.textContent,
-  slots: cards.map((card) => ({
-    id: card.slotData?.slot,
-    lifecycle: card.slotData?.lifecycle,
-    canonical: state.fleet?.slots.includes(card.slotData),
-    rendered: Boolean(
-      card.getClientRects().length && card.shadowRoot?.textContent.includes(card.slotData?.slot),
-    ),
-  })),
+  view: cards.length ? 'card' : 'list',
+  slots: cards.length
+    ? cards.map((card) => ({
+        id: card.slotData?.slot,
+        lifecycle: card.slotData?.lifecycle,
+        canonical: state.fleet?.slots.includes(card.slotData),
+        rendered: Boolean(
+          card.getClientRects().length &&
+          card.shadowRoot?.textContent.includes(card.slotData?.slot),
+        ),
+      }))
+    : rows.map(({ slot, box, row }) => ({
+        id: slot.slot,
+        lifecycle: slot.lifecycle,
+        canonical: state.fleet?.slots.includes(slot),
+        rendered: Boolean(row?.getClientRects().length),
+        ticked: Boolean(box?.checked),
+      })),
   stale: view.shadowRoot.querySelector('[data-fleet-freshness="stale"]')?.textContent?.trim(),
   refreshDisabled: view.shadowRoot.querySelector('.fleet-refresh-trigger')?.disabled,
   error: view.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),

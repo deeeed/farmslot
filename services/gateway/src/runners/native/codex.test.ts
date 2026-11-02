@@ -10,6 +10,7 @@ import type { NativeEventInput } from './types.js';
 const fixture = `#!/usr/bin/env node
 const readline = require('node:readline');
 const send = message => process.stdout.write(JSON.stringify(message) + '\\n');
+require('node:fs').writeFileSync('argv.json', JSON.stringify(process.argv.slice(2)));
 readline.createInterface({input:process.stdin}).on('line', line => {
  const m=JSON.parse(line);
  if(m.method==='initialize') send({id:m.id,result:{}});
@@ -177,6 +178,27 @@ test('Codex plan updates are checklists and a completed plan item is a proposal'
   } finally {
     await session.close();
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('an autonomous Codex run starts its app-server without the question tool', async () => {
+  for (const modelQuestions of ['off', undefined] as const) {
+    const cwd = await mkdtemp(join(tmpdir(), 'native-codex-test-'));
+    const executable = join(cwd, 'codex');
+    await writeFile(executable, fixture);
+    await chmod(executable, 0o755);
+    const session = await codexNativeAdapter.start({ cwd, executable, modelQuestions }, () => {});
+    try {
+      assert.deepEqual(
+        JSON.parse(await readFile(join(cwd, 'argv.json'), 'utf8')),
+        modelQuestions
+          ? ['--config', 'tools.experimental_request_user_input={enabled=false}', 'app-server']
+          : ['app-server'],
+      );
+    } finally {
+      await session.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
   }
 });
 

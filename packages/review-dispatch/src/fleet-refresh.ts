@@ -50,7 +50,33 @@ export interface FleetWorkspaceRow {
   eligibility: SlotRecoveryEligibility;
 }
 
-/** Used by both fleet cards and both progress renderers. */
+/** The checked-out branch: the workspace observation's when the slot has one. */
+export function fleetSlotBranch(slot: Pick<SlotStatus, 'branch' | 'workspace'>): string {
+  return slot.workspace?.branch ?? slot.branch;
+}
+
+/**
+ * "3 behind main" from the slot's workspace observation; null when the distance is unknown. A
+ * releasable slot's expired observation is unknown. A busy or manual slot keeps its last
+ * observed distance, since its eligibility is refused before the age check.
+ */
+export function fleetBehindDefault(
+  slot: SlotStatus,
+  eligibility: SlotRecoveryEligibility = slotRecoveryEligibility(slot),
+): string | null {
+  const work = slot.workspace;
+  if (eligibility.reason === 'unknown' || work?.behind == null) return null;
+  return `${work.behind} behind ${work.defaultBranch ?? 'main'}${work.remoteAdvanced ? ' · remote advanced' : ''}`;
+}
+
+/** The fleet's own label: nothing for a slot level with its default branch. */
+export function fleetBehindDefaultIfBehind(slot: SlotStatus): string | null {
+  const work = slot.workspace;
+  if (work?.behind === 0 && !work.remoteAdvanced) return null;
+  return fleetBehindDefault(slot);
+}
+
+/** One row for the Command Center and Companion release reviews. */
 export function fleetWorkspaceRow(slot: SlotStatus): FleetWorkspaceRow {
   const work = slot.workspace;
   const defaultBranch = work?.defaultBranch ?? 'main';
@@ -67,13 +93,10 @@ export function fleetWorkspaceRow(slot: SlotStatus): FleetWorkspaceRow {
   ].filter((value): value is string => !!value);
   return {
     slotId: slot.slot,
-    branch: work?.branch ?? slot.branch ?? 'Unknown branch',
+    branch: fleetSlotBranch(slot) ?? 'Unknown branch',
     owner: owners.length ? owners.join(' / ') : 'Unowned',
     publication: eligibility.reason === 'unknown' ? 'unknown' : (work?.publication ?? 'unknown'),
-    behind:
-      eligibility.reason === 'unknown' || work?.behind == null
-        ? `Behind ${defaultBranch} unknown`
-        : `${work.behind} behind ${defaultBranch}${work.remoteAdvanced ? ' · remote advanced' : ''}`,
+    behind: fleetBehindDefault(slot, eligibility) ?? `Behind ${defaultBranch} unknown`,
     referenceTime:
       work?.defaultFetchedAt && Number.isFinite(Date.parse(work.defaultFetchedAt))
         ? `Fetched ${new Date(work.defaultFetchedAt).toISOString().slice(0, 16).replace('T', ' ')}Z`
@@ -128,6 +151,8 @@ export class FleetRefreshViewModel {
   private scope: ReadonlySet<string> | null = null;
   private requestId = '';
   private bulkRunning = false;
+  /** Sticky: a later inspection resets row statuses, not the fact that a release was sent. */
+  released = false;
   get canCancel(): boolean {
     return this.phase === 'running' && this.bulkRunning;
   }
@@ -415,6 +440,7 @@ export class FleetRefreshViewModel {
   ): Promise<void> {
     if (!this.sameContext()) return;
     const requestId = this.makeId();
+    this.released = true;
     this.bulkRunning = false;
     this.activeTargets = new Set([slotId]);
     this.attach(requestId);
@@ -462,6 +488,7 @@ export class FleetRefreshViewModel {
       }));
     if (!targets.length) return;
     const requestId = this.makeId();
+    this.released = true;
     this.bulkRunning = true;
     this.attach(requestId);
     this.activeTargets = new Set(targets.map((target) => target.slotId));

@@ -1,0 +1,1 @@
+- Show stored Dispatch candidates while live availability refreshes, retain them on a read failure, and reuse cached ticket matching after its first lookup.

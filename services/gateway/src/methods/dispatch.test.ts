@@ -10,6 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
+import { nodeModelCatalogs } from '../runners/model-catalog.js';
 import { runnerLaunchBlockerAutoActionKey } from '../runners/registry.js';
 
 import {
@@ -388,6 +389,79 @@ test('dispatch preview displays the shared Cursor default instead of Claude defa
 
   assert.equal(result.preview.runner, 'cursor');
   assert.equal(result.preview.model, DEFAULT_CURSOR_MODEL);
+});
+
+test('a pi model runs only on nodes whose own catalog lists it', () => {
+  nodeModelCatalogs.record('pi', 'node-a', ['litellm/glm-5p3']);
+  nodeModelCatalogs.record('pi', 'node-b', ['xai/grok-4.7']);
+  const free = { lifecycle: 'ready', phase: null, branch: 'main', runner: 'pi' } as const;
+  const slots = [
+    makeSlot({ ...free, slot: 'b-1', machine: 'node-b' }),
+    makeSlot({ ...free, slot: 'a-1', machine: 'node-a' }),
+    makeSlot({ ...free, slot: 'c-1', machine: 'node-c' }),
+  ];
+  const params = {
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROJ-1',
+    runner: 'pi',
+    model: 'litellm/glm-5p3',
+  } as const;
+  assert.equal(resolveDispatchPreviewFromFleet(params, slots).preview.slotId, 'a-1');
+  assert.throws(
+    () => resolveDispatchPreviewFromFleet({ ...params, slotId: 'b-1' }, slots),
+    /Slot b-1: pi model litellm\/glm-5p3 is not listed on node-b; only on node-a/,
+  );
+  // The slot's own runner applies when the run names none.
+  assert.throws(
+    () => resolveDispatchPreviewFromFleet({ ...params, runner: undefined, slotId: 'b-1' }, slots),
+    /not listed on node-b/,
+  );
+  // A bare Grok id is checked as the xai/ id Pi launches.
+  assert.throws(
+    () => resolveDispatchPreviewFromFleet({ ...params, model: 'grok-4.7', slotId: 'a-1' }, slots),
+    /pi model xai\/grok-4\.7 is not listed on node-a; only on node-b/,
+  );
+  // A node with no listing and a model no node lists are never excluded.
+  assert.equal(
+    resolveDispatchPreviewFromFleet({ ...params, slotId: 'c-1' }, slots).preview.slotId,
+    'c-1',
+  );
+  assert.equal(
+    resolveDispatchPreviewFromFleet({ ...params, model: 'custom/model', slotId: 'b-1' }, slots)
+      .preview.slotId,
+    'b-1',
+  );
+});
+
+test('candidate rows on a node that lacks the chosen pi model are ineligible with the preview reason', () => {
+  nodeModelCatalogs.record('pi', 'node-a', ['litellm/glm-5p3']);
+  nodeModelCatalogs.record('pi', 'node-b', ['xai/grok-4.7']);
+  const free = { lifecycle: 'ready', phase: null, branch: 'main', runner: 'pi' } as const;
+  const onB = makeSlot({ ...free, slot: 'b-1', machine: 'node-b' });
+  const onA = makeSlot({ ...free, slot: 'a-1', machine: 'node-a' });
+  const fleet = [onB, onA];
+  const reason = (slot: SlotStatus, model?: string) =>
+    candidateIneligibilityReason(slot, fleet, { isNudgeRow: false, runner: 'pi', model });
+  const refusal = 'pi model litellm/glm-5p3 is not listed on node-b; only on node-a';
+  assert.equal(reason(onB, 'litellm/glm-5p3'), refusal);
+  assert.equal(reason(onA, 'litellm/glm-5p3'), null);
+  assert.equal(reason(onB), null, 'no model chosen');
+  assert.throws(
+    () =>
+      resolveDispatchPreviewFromFleet(
+        {
+          project: 'farmslot-farm',
+          flowType: 'fix-bug',
+          ticketOrPr: 'PROJ-1',
+          runner: 'pi',
+          model: 'litellm/glm-5p3',
+          slotId: 'b-1',
+        },
+        fleet,
+      ),
+    { message: `Slot b-1: ${refusal}` },
+  );
 });
 
 test('dispatch preview echoes the domain overlay and omits it when unset', () => {

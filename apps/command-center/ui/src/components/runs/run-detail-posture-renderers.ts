@@ -51,6 +51,13 @@ export function postureLabel(posture: ResourcePosture): string {
   return 'Active';
 }
 
+/** The collapsed Resource posture header's one line, from the status already read. */
+export function runPostureHeaderSummary(state: RunPostureStatusState): string {
+  if (state.status === 'error') return 'unavailable';
+  if (state.state) return postureLabel(state.state.posture);
+  return state.status === 'idle' ? 'not read' : 'loading';
+}
+
 export function policySourceLabel(source: ResourcePosturePolicySource): string {
   if (source === 'gate-choice') return 'operator gate choice';
   if (source === 'run-dispatch') return 'run dispatch config';

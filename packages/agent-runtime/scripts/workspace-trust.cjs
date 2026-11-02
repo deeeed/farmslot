@@ -227,6 +227,8 @@ const reviewConfigurationRoots = (cwd) =>
 const grokReviewHomeAccess = (env) => ({
   writablePaths: ['sessions', 'logs'].map((name) => path.join(grokHome(env), name)),
   dataFiles: [path.join(grokHome(env), 'auth.json.lock')],
+  // The log an unsandboxed Grok start appends to.
+  fixedPaths: [path.join(grokHome(env), 'logs', 'unified.jsonl')],
 });
 // A Grok review checkout stays untrusted (ADR-057 Amendment 13), and Grok's terminal then stops
 // at "Do you trust the contents of this directory?" for any checkout with project configuration.

@@ -336,6 +336,74 @@ test('native launch failure is visible despite node clock skew while its runner 
   assert.deepEqual(statuses, ['complete'], 'an older turn cannot fail the current review');
 });
 
+// F328: a gateway restart can tear down a runner's model connection mid-turn ("terminated").
+test('a reviewer turn ended on a dropped model connection keeps the review waiting for its mark', async (t) => {
+  probes = 0;
+  terminalAt = 3;
+  windowPresent = true;
+  processStates = ['present', 'present'];
+  statuses.length = 0;
+  const at = Date.now();
+  currentRun = {
+    ...makeRun(),
+    agentContexts: [
+      {
+        id: 'reviewer',
+        role: 'review',
+        label: 'Review',
+        status: 'working',
+        slotId: 'slot',
+        runId: 'run',
+        runner: 'codex',
+        runnerSessionId: 'exact-session',
+        runnerSessionPath: '/session.jsonl',
+        attemptStartedAt: new Date(at).toISOString(),
+        promptAcceptance: {
+          runner: 'codex',
+          deliveryStartedAt: new Date(at).toISOString(),
+          sessionId: 'exact-session',
+          sessionPath: '/session.jsonl',
+          observedAt: at,
+          turnToken: 'exact-session:current-turn',
+        },
+      },
+    ],
+  };
+  t.after(() => {
+    currentRun = undefined;
+    processStates = [];
+  });
+  const observability = registry.getRunnerObservability('codex');
+  assert.ok(observability);
+  t.mock.method(observability, 'getSessionDeliveryState', async () => ({
+    value: 'idle',
+    source: 'signal',
+    confidence: 'high',
+    observedAt: at,
+    sessionId: 'exact-session',
+    turnToken: 'exact-session:current-turn',
+    failure: 'terminated',
+    failureKind: 'transport',
+  }));
+  assert.equal(
+    await waitForReviewCompletion(
+      vars,
+      '%1',
+      'tasks/review',
+      500,
+      'run',
+      'codex',
+      'reviewer',
+      'REVIEW-SIGNAL.json',
+      'artifacts/feedback.md',
+      null,
+      0,
+    ),
+    true,
+  );
+  assert.deepEqual(statuses, ['complete']);
+});
+
 test('an accepted reviewer that exits before the first poll fails promptly', async (t) => {
   probes = 0;
   terminalAt = Number.POSITIVE_INFINITY;

@@ -22,6 +22,7 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { useShownMarker } from '../../hooks/useShownMarker';
 import { getResourceCache } from '../../lib/resource-cache';
 import { colors, fonts, radii, spacing } from '../../lib/theme';
 import {
@@ -90,6 +91,7 @@ function watchEntryMatchesFilter(entry: TmuxWorkerWatchEntry, filter: WorkerPane
 }
 
 export default function WorkersScreen() {
+  useShownMarker('companion-screen-terminals');
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const focused = useIsFocused();

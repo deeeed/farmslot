@@ -49,7 +49,11 @@ import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { prepareRetainedRunCapabilities } from '../run-engine/declared-capabilities.js';
 import { reportRunnerProgressWarning } from '../run-engine/progress-warning.js';
 import { runSupersededSince } from '../run-engine/run-generation.js';
-import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  modelQuestionsForRun,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+} from '../runners/launch-command.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
@@ -61,6 +65,7 @@ import {
   runnerSupportsModel,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { scriptedRelaunchOptions } from '../runners/scripted-config.js';
 import { resolvePersistedRunnerSessionBinding } from '../runners/session-process.js';
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
 import {
@@ -2967,6 +2972,7 @@ async function sendOwnedFeedbackToWorker(
           deliveryStartedAt ?? fixAttemptStartedAt,
         ),
         safetyTier: latestRun?.safetyTier,
+        modelQuestions: modelQuestionsForRun(latestRun),
         runtimeDir,
         taskDir,
         taskFile: fixTaskFile,
@@ -3328,7 +3334,7 @@ async function relaunchWorkerForFix(
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
   const parentSafetyTier = parentRun?.safetyTier;
   const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-  await ensureNodeSupportBundle(vars, runtimeDir);
+  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   const taskDir = parentRun
     ? await resolveWorkerTaskDir(vars, parentRun.project, parentRun.taskFile)
     : null;
@@ -3338,6 +3344,9 @@ async function relaunchWorkerForFix(
     runtimeDir,
     taskDir: taskDir ?? undefined,
     taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
+    ...(await scriptedRelaunchOptions(runner, parentRun)),
+    scriptedSupportDir: nodeSupport?.supportDir,
+    modelQuestions: modelQuestionsForRun(parentRun),
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
   await assertPreflightCurrent();

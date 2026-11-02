@@ -6,6 +6,8 @@ import type { NativeWorkerFilesystemPolicy } from './worker-launch.js';
 export interface NativeReviewRuntimeAccess {
   writablePaths?: string[];
   dataFiles?: string[];
+  /** Files inside writable paths that keep their identity: writable, never removed or replaced. */
+  fixedPaths?: string[];
 }
 export interface NativeProcessSandbox {
   executable: string;

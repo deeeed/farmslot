@@ -92,6 +92,7 @@ import { schedulerTick } from '../work-graph/store.js';
 import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
+import { pendingDecisionForRun } from './decision-projection.js';
 import { latestResolvedHumanGateDecision, requiresCollisionPrecheck } from './decision-replay.js';
 import { DeferredSlotReleases } from './deferred-slot-release.js';
 import { executeDispatchStep, executePrepareStep } from './dispatch-lifecycle-steps.js';
@@ -162,6 +163,8 @@ import {
   endTerminalTeardown,
   isTerminalTeardownInFlight,
 } from './terminal-teardown-registry.js';
+import { agentsWithoutExitEvidence } from './worker-exit-evidence.js';
+import { workerLeftRunningDecision } from './worker-left-running.js';
 type BroadcastFn = (event: string, payload: unknown) => void;
 let broadcastFn: BroadcastFn = () => {};
 let settledBroadcastFn: BroadcastFn = () => {};
@@ -677,6 +680,43 @@ function failedRunSlotCleanupEffect(
   };
 }
 
+/**
+ * A failing run whose agents may still be running waits, blocked on a card, instead of failing:
+ * its failure teardown would release the slot and stop them on nothing but a step error (F328).
+ * The card's Replay step resumes the run at the failed step. True when the run was held, or
+ * another action took it meanwhile.
+ */
+async function holdRunForRunningAgents(
+  runId: string,
+  generation: number,
+  stepName: string,
+  reason: string,
+): Promise<boolean> {
+  const run = getRun(runId);
+  if (!run?.slotId) return false;
+  const running = await agentsWithoutExitEvidence(run);
+  const current = getRun(runId);
+  if (!current || runSupersededSince(current, generation)) return true;
+  if (!running.length) return false;
+  console.warn(
+    `[run-engine] run ${runId.slice(0, 8)} — ${running.join(', ')} may still be running after ${stepName} error; blocked for an operator instead of failing`,
+  );
+  const decision = workerLeftRunningDecision(current, stepName, reason, running);
+  updateRunStep(runId, stepName, { status: 'failed', detail: reason });
+  updateRun(runId, {
+    status: 'blocked',
+    error: reason,
+    decisions: [...current.decisions, decision],
+  });
+  broadcastFn(Events.RUN_DECISION_NEW, {
+    runId,
+    decision: pendingDecisionForRun(getRun(runId)!, decision),
+    slotId: current.slotId,
+  });
+  broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+  return true;
+}
+
 // Defensive backstop for any step that mutates run.status without throwing. As of the
 // MonitorTerminalError refactor, MONITOR routes through the exception-driven catch and is
 // no longer the primary trigger here — this remains in case a future contributor adds a new
@@ -701,6 +741,12 @@ async function finalizeNonThrownTerminalRun(
     );
     return;
   }
+  const heldStep = steps[currentIdx] ?? steps[steps.length - 1];
+  if (
+    heldStep &&
+    (await holdRunForRunningAgents(runId, generation, heldStep, run.error ?? `Run ${run.status}`))
+  )
+    return;
   for (let j = currentIdx; j < steps.length; j++) {
     const step = run.steps.find((s) => s.name === steps[j]);
     if (!step || step.status === 'pending' || step.status === 'running') {
@@ -1114,6 +1160,11 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
           return;
         }
+        if (
+          err.detail !== RETAINED_SESSION_HANDOFF_HOLD &&
+          (await holdRunForRunningAgents(runId, myGen, stepName, err.message))
+        )
+          return;
         await routeAndRecordTerminalTransition({
           runId,
           kind: 'block',
@@ -1251,6 +1302,11 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         inputs: partialIO?.inputs,
         outputs: failureOutputs,
       });
+      // A refused claim is the one exception to slot teardown: this run never
+      // owned the slot (an in-flight release or rival claim does), so resetting
+      // it here would clear the actual owner's lifecycle fence mid-teardown.
+      const claimRefused = isSlotClaimRefusedError(err);
+      if (!claimRefused && (await holdRunForRunningAgents(runId, myGen, stepName, msg))) return;
       // Skip remaining steps
       for (let j = i + 1; j < steps.length; j++) {
         updateRunStep(runId, steps[j], { status: 'skipped' });
@@ -1258,10 +1314,6 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
 
       const failedRun = getRun(runId)!;
 
-      // A refused claim is the one exception to slot teardown: this run never
-      // owned the slot (an in-flight release or rival claim does), so resetting
-      // it here would clear the actual owner's lifecycle fence mid-teardown.
-      const claimRefused = isSlotClaimRefusedError(err);
       if (claimRefused && failedRun.slotId) {
         console.log(
           `[run-engine] slot ${failedRun.slotId} left untouched after refused claim (${stepName})`,

@@ -2,7 +2,16 @@
 // client, align it to the host clock through a marker written into the trace,
 // and turn it into JavaScript-task and native-frame samples with summaries.
 // The host names what a trace captures with a `TraceKind`.
-import { type FrameMetricSummary, type FrameSample, summarizeFrames } from './frame-metrics.js';
+import {
+  estimateRefreshBudgetMs,
+  type FrameMetricSummary,
+  type FrameSample,
+  lowestWindowedFps,
+  type LowestWindowedFpsOptions,
+  percentile,
+  round,
+  summarizeFrames,
+} from './frame-metrics.js';
 import {
   type JavaScriptTaskMetricSummary,
   type JavaScriptTaskSample,
@@ -10,10 +19,15 @@ import {
 } from './js-task-metrics.js';
 
 export {
+  estimateRefreshBudgetMs,
   type FrameMetricSummary,
   type FrameSample,
   type JavaScriptTaskMetricSummary,
   type JavaScriptTaskSample,
+  lowestWindowedFps,
+  type LowestWindowedFpsOptions,
+  percentile,
+  round,
   summarizeFrames,
   summarizeJavaScriptTasks,
 };
@@ -131,6 +145,20 @@ export interface TraceCapture<P extends string = string> {
 export interface TraceClockSync {
   hostEpochMs: number;
   uncertaintyMs: number;
+}
+
+/**
+ * Runs `write` (the call that writes a clock marker) and places it on the host
+ * clock at the call's midpoint, give or take half its duration. Returns what
+ * `write` returned with that sync.
+ */
+export async function clockMidpoint<T>(
+  write: () => Promise<T>,
+): Promise<TraceClockSync & { value: T }> {
+  const before = Date.now();
+  const value = await write();
+  const after = Date.now();
+  return { hostEpochMs: (before + after) / 2, uncertaintyMs: (after - before) / 2, value };
 }
 
 export interface CdpTraceCollectorOptions<P extends string = string> {
@@ -443,29 +471,7 @@ function nativeFrameSamples(
 }
 
 function estimateFrameBudgetMs(frames: readonly { beginUs: number }[]): number | undefined {
-  const cadenceMs: number[] = [];
-  for (let index = 1; index < frames.length; index += 1) {
-    const previous = frames[index - 1];
-    const current = frames[index];
-    if (!previous || !current) continue;
-    const intervalMs = (current.beginUs - previous.beginUs) / 1000;
-    if (intervalMs >= 3.5 && intervalMs <= 40) cadenceMs.push(intervalMs);
-  }
-  if (cadenceMs.length < 5) return undefined;
-  cadenceMs.sort((first, second) => first - second);
-  const observedBudgetMs = percentile(cadenceMs, 0.1);
-  const refreshRateHz = Math.round(1000 / observedBudgetMs);
-  return refreshRateHz >= 24 && refreshRateHz <= 240 ? 1000 / refreshRateHz : undefined;
-}
-
-function percentile(sorted: readonly number[], quantile: number): number {
-  if (sorted.length === 1) return sorted[0] ?? 0;
-  const position = (sorted.length - 1) * quantile;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-  const lowerValue = sorted[lower] ?? 0;
-  const upperValue = sorted[upper] ?? lowerValue;
-  return lowerValue + (upperValue - lowerValue) * (position - lower);
+  return estimateRefreshBudgetMs(frames.map((frame) => frame.beginUs / 1000));
 }
 
 function javascriptTaskSamples(

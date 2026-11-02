@@ -87,6 +87,7 @@ import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-art
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
+import { LiveArtifactRefresh, liveArtifactRefreshActive } from './run-artifact-live-refresh.js';
 import {
   checkInteractiveHandoffSignal,
   confirmForceComplete,
@@ -103,6 +104,7 @@ import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
 import { renderRunGateSection, runMountsPublicationGate } from './run-detail-decision-renderers.js';
 import {
   acceptanceEvidenceSelection,
+  acceptanceLedgerRead,
   buildRerunAlongsideHref,
   buildRunDiagnosisPrompt,
   type EvidenceLightboxSelection,
@@ -118,6 +120,7 @@ import {
   runOutputEvidenceSelection,
   shouldShowRunCiStatus,
 } from './run-detail-model.js';
+import { runDetailPanelOpen, toggleRunDetailPanel } from './run-detail-panels.js';
 import {
   canResolveWithPostureChoice,
   correlatedPostureTransition,
@@ -138,12 +141,18 @@ import {
   postureTransitionsOf,
   type RunPostureGateStateWithAvailability,
 } from './run-detail-posture-gate-renderers.js';
-import { renderRunPostureSummary } from './run-detail-posture-renderers.js';
 import {
+  renderRunPostureSummary,
+  runPostureHeaderSummary,
+} from './run-detail-posture-renderers.js';
+import {
+  renderEvidenceLightbox,
   renderInteractiveDevGate,
+  renderRunArtifactExplorer,
   renderRunDetailView,
   renderRunEvidence,
   renderRunGrade,
+  type RunEvidenceRenderContext,
 } from './run-detail-renderers.js';
 import { openRunnerSessionOnHost } from './run-detail-session-open.js';
 import {
@@ -244,7 +253,8 @@ export class RunDetail extends RunDetailState {
       this.syncRun(getState());
     }
     if (changed.has('_recipeObservation')) this._acceptRecipeObservation(this._recipeObservation);
-    if (changed.has('_progressObservation')) this._acceptProgressObservation();
+    if (changed.has('_progressObservation') || (changed.has('_now') && this._taskProgressLoading))
+      this._acceptProgressObservation();
     if (changed.has('_selectedProgressObservation')) this._acceptSelectedProgressObservation();
     this._acceptanceRowRunId = acceptanceRowHeldRunId(
       this.run,
@@ -304,6 +314,30 @@ export class RunDetail extends RunDetailState {
     this._ciPokeStatus = state.status;
   });
 
+  /** Why the open artifact explorer's last background sync failed, if it did. */
+  @state() private _artifactSyncError: string | null = null;
+  private readonly _liveArtifacts = new LiveArtifactRefresh({
+    refresh: refreshRunMirror,
+    onError: (error) => {
+      this._artifactSyncError = error;
+    },
+  });
+
+  /** Sync the open explorer's mirror while the run works; never while it is collapsed. */
+  private _syncLiveArtifacts(): void {
+    const run = this.run?.id === this.runId ? this.run : null;
+    this._liveArtifacts.update({
+      runId: this.runId,
+      active: liveArtifactRefreshActive(run),
+      open: runDetailPanelOpen('run-artifacts'),
+      unavailable:
+        this.mockData ||
+        !run ||
+        !runHasTaskSource(run) ||
+        Boolean(runMirrorRefreshUnavailableReason(run, this._fleetSlots)),
+    });
+  }
+
   connectedCallback() {
     super.connectedCallback();
     this._syncState(getState());
@@ -343,6 +377,7 @@ export class RunDetail extends RunDetailState {
       const pollCount = readCiWatchOutputs(ciStep?.outputs)?.pollCount;
       this._ciPoke.observePoll(this.run.id, typeof pollCount === 'number' ? pollCount : null);
     }
+    this._syncLiveArtifacts();
     this._focusSharedPanel();
   }
 
@@ -367,6 +402,7 @@ export class RunDetail extends RunDetailState {
     if (this._clock) clearInterval(this._clock);
     if (this._jumpTimer) clearTimeout(this._jumpTimer);
     this._ciPoke.dispose();
+    this._liveArtifacts.dispose();
   }
 
   /** Fleet slots, so a released or reclaimed slot re-renders the run's slot choices. */
@@ -1143,23 +1179,20 @@ export class RunDetail extends RunDetailState {
 
   private _acceptProgressObservation(): void {
     if (this.mockData) return;
-    const observation = this.progressQuery.belongsToWorkspace
-      ? this.progressQuery.state
-      : undefined;
-    const data = observation?.data;
+    const query = this.progressQuery.belongsToWorkspace ? this.progressQuery : undefined;
+    const data = query?.state.data;
+    const ledger = acceptanceLedgerRead(query, this._now);
     this.taskProgress = data?.structured ?? null;
     this.acceptanceStatus = data?.acceptanceStatus ?? null;
     this.acceptanceCriteria = data?.acceptanceCriteria ?? null;
-    this.acceptanceStatusError = observation?.error?.message ?? data?.acceptanceStatusError ?? null;
+    this.acceptanceStatusError = ledger.error;
     this.acceptanceEvidenceLinks = data?.acceptanceEvidenceLinks ?? null;
     this.acceptanceEvidenceLinksError = data?.acceptanceEvidenceLinksError ?? null;
     this._taskProgressLoading = Boolean(
       this.run &&
       runHasTaskSource(this.run) &&
       (this.run.slotId || this.run.reviewWorkspace) &&
-      !data &&
-      !observation?.error &&
-      (!observation || observation.status === 'loading' || observation.status === 'stale'),
+      ledger.pending,
     );
   }
 
@@ -1624,8 +1657,8 @@ export class RunDetail extends RunDetailState {
     }
   }
 
-  private _renderRunEvidence(run: Run) {
-    return renderRunEvidence(run, {
+  private _runEvidenceContext(run: Run): RunEvidenceRenderContext {
+    return {
       selectedSharedEvidence: hashParams().get('panel') === 'evidence',
       taskProgress: this.taskProgress,
       evidenceLightboxItems: this._evidenceLightboxItems,
@@ -1661,7 +1694,11 @@ export class RunDetail extends RunDetailState {
       closingOutput: this._closingOutput,
       actionsBlocked: this._actionsBlocked(),
       closeOutput: (decision) => void this._closeOutput(run, decision),
-    });
+    };
+  }
+
+  private _renderRunEvidence(run: Run) {
+    return renderRunEvidence(run, this._runEvidenceContext(run), false);
   }
 
   private _renderInteractivePackets(run: Run) {
@@ -1778,6 +1815,7 @@ export class RunDetail extends RunDetailState {
           now: this._now,
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
+      _renderEvidenceOverlay: (run) => renderEvidenceLightbox(this._runEvidenceContext(run)),
       // The gate disappears when the decision resolves, so the correlated result
       // and the pending notice live on the persistent summary instead.
       _renderPosture: (run) =>
@@ -1802,6 +1840,18 @@ export class RunDetail extends RunDetailState {
           liveGateParkView(run),
           run.slotId,
         ),
+      postureSummary: runPostureHeaderSummary(this._postureStatus),
+      _renderArtifactExplorer: (run) =>
+        renderRunArtifactExplorer(run, {
+          artifactUrl: this._artifactUrl,
+          onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
+          syncError: this._artifactSyncError,
+        }),
+      panelOpen: runDetailPanelOpen,
+      togglePanel: (id) => {
+        toggleRunDetailPanel(id);
+        this.requestUpdate();
+      },
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
       _renderAgentSessions: (run) =>
         renderRunAgentSessions(run, {

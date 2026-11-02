@@ -11,6 +11,7 @@ import type {
   TaskProgressStructured,
 } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus } from '@farmslot/protocol';
+import { fleetBehindDefaultIfBehind, fleetSlotBranch } from '@farmslot/review-dispatch';
 
 import './slot-card.js';
 import '../shared/cancelled-run-slot-release.js';
@@ -50,6 +51,8 @@ export class MachineGroup extends LitElement {
   @property({ attribute: false }) machineHealthMap: Map<string, MachineHealth> = new Map();
   @property() gatewayProtocolVersion = '';
   @property() viewMode: 'card' | 'list' = 'card';
+  /** Table rows chosen for the fleet's bulk release. */
+  @property({ attribute: false }) selectedSlotIds: ReadonlySet<string> = new Set();
   /** Per-machine provider subscription seats (bind + CodexBar mirror). */
   @property({ attribute: false }) providerAccounts?: MachineProviderAccountsSnapshot;
   /** Last snapshot-fetch failure from the canvas; shown in the Setup modal's empty state. */
@@ -225,6 +228,16 @@ export class MachineGroup extends LitElement {
       vertical-align: middle;
       white-space: nowrap;
     }
+    /* Always rendered in the table, so choosing rows never moves a column. */
+    .slot-table .select-cell {
+      width: 16px;
+      padding-right: 0;
+    }
+    .select-cell input {
+      margin: 0;
+      vertical-align: middle;
+      cursor: pointer;
+    }
     .slot-row .lc-dot {
       display: inline-block;
       width: 8px;
@@ -318,6 +331,14 @@ export class MachineGroup extends LitElement {
     .slot-row .muted {
       color: ${unsafeCSS(colors.textMuted)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    /* A fixed width, so a distance arriving never resizes the other columns. */
+    .slot-row .behind-cell {
+      display: inline-block;
+      width: 16ch;
+      vertical-align: middle;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .slot-row .branch-cell {
       color: ${unsafeCSS(colors.accent)};
@@ -939,11 +960,36 @@ ${deployHint}"
     `;
   }
 
+  private emitSelection(slotIds: string[], selected: boolean) {
+    this.dispatchEvent(
+      new CustomEvent('fleet-selection-change', {
+        detail: { slotIds, selected },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   private renderListView() {
+    const chosen = this.slots.filter((s) => this.selectedSlotIds.has(s.slot)).length;
+    const all = chosen > 0 && chosen === this.slots.length;
     return html`
       <table class="slot-table">
         <thead>
           <tr>
+            <th class="select-cell">
+              <input
+                type="checkbox"
+                aria-label="Select all slots on ${this.machine}"
+                .checked=${all}
+                .indeterminate=${chosen > 0 && !all}
+                @change=${(e: Event) =>
+                  this.emitSelection(
+                    this.slots.map((s) => s.slot),
+                    (e.target as HTMLInputElement).checked,
+                  )}
+              />
+            </th>
             <th>Slot</th>
             <th>State</th>
             <th>Flow</th>
@@ -954,6 +1000,7 @@ ${deployHint}"
             <th>Progress</th>
             <th>Model</th>
             <th>Branch</th>
+            <th>Behind</th>
             <th></th>
           </tr>
         </thead>
@@ -976,7 +1023,9 @@ ${deployHint}"
     const hasRun = !!run;
     const isWorking = s.lifecycle === 'busy' && s.phase === 'working';
     const cancelledHold = cancelledRunSlotHold(s);
-    const branch = slotBranchDisplay(s, getProjectSlotTrackingConfigs());
+    const checkedOut = fleetSlotBranch(s);
+    const behind = fleetBehindDefaultIfBehind(s);
+    const branch = slotBranchDisplay({ ...s, branch: checkedOut }, getProjectSlotTrackingConfigs());
     const branchLabel = branch.label;
     const branchClass =
       branch.tone === 'baseline'
@@ -996,6 +1045,15 @@ ${deployHint}"
           }
         }}
       >
+        <td class="select-cell" @click=${(e: Event) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            aria-label="Select ${s.slot}"
+            .checked=${this.selectedSlotIds.has(s.slot)}
+            @change=${(e: Event) =>
+              this.emitSelection([s.slot], (e.target as HTMLInputElement).checked)}
+          />
+        </td>
         <td>
           <span class="lc-dot" style="background:${lc}"></span
           ><span class="slot-name">${s.slot.replace(`${this.machine}-`, '')}</span>
@@ -1045,7 +1103,10 @@ ${deployHint}"
             : html`<span class="muted">-</span>`}
         </td>
         <td class="muted">${s.model ?? run?.metrics?.model ?? '-'}</td>
-        <td class="${branchClass}" title="${s.branch}">${branchLabel}</td>
+        <td class="${branchClass}" title="${checkedOut}">${branchLabel}</td>
+        <td class="muted">
+          <span class="behind-cell" title=${behind ?? ''}>${behind ?? ''}</span>
+        </td>
         <td style="white-space:nowrap">
           ${hasRun
             ? html`<button

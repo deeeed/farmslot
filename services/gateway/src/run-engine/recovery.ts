@@ -45,6 +45,7 @@ import {
 import { reviewPostingActions } from './review-gate.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
 import { runSupersededSince } from './run-generation.js';
+import { REPLAY_STEP_ACTION, WORKER_LEFT_RUNNING_DECISION } from './worker-left-running.js';
 
 const S = PipelineSteps;
 const RECONCILE_INTERVAL_MS = 60_000; // 60s
@@ -664,6 +665,37 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       ['blocked', 'fixing', 'review-failed', 'reconciling', 'human-gating'].includes(run.status)
     ) {
       const unresolved = run.decisions.filter((d) => !d.resolvedAt);
+      // A monitor that a step error parked only observes, so restart watches again (F328).
+      const parked =
+        unresolved.length === 1 && unresolved[0].type === WORKER_LEFT_RUNNING_DECISION
+          ? unresolved[0]
+          : undefined;
+      const parkedMonitor = run.steps.find((s) => s.name === S.MONITOR);
+      if (
+        parked?.context?.step === S.MONITOR &&
+        parkedMonitor?.status === 'failed' &&
+        !parkedMonitor.outputs?.promptDeliveryUncertain &&
+        !parkedMonitor.outputs?.nativeWorkerOperationUncertain
+      ) {
+        console.log(
+          `[run-engine] run ${run.id.slice(0, 8)} — re-entering the monitor a step error parked`,
+        );
+        deps.updateRunStep(run.id, S.MONITOR, { status: 'pending', detail: undefined });
+        deps.updateRun(run.id, {
+          status: 'monitoring',
+          decisions: run.decisions.map((d) =>
+            d.id === parked.id
+              ? { ...d, resolvedAt: new Date().toISOString(), resolvedAction: REPLAY_STEP_ACTION }
+              : d,
+          ),
+        });
+        deps.startRun(run.id).catch((err) => {
+          console.error(
+            `[run-engine] parked monitor re-entry failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
+          );
+        });
+        continue;
+      }
       if (unresolved.length > 0) {
         for (const d of unresolved) {
           if (d.type === 'engine_review_posting' && run.taskFile) {

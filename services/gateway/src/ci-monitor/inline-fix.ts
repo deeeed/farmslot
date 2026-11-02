@@ -59,7 +59,11 @@ import {
   prepareBranchMaintenance,
 } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
-import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  modelQuestionsForRun,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+} from '../runners/launch-command.js';
 import { runnerActivityIsBusy } from '../runners/observability-files.js';
 import { isObservabilityReadingAuthoritative } from '../runners/observability-send-decision.js';
 import type {
@@ -81,6 +85,7 @@ import {
   type RunnerSendRecoveryContext,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { scriptedRelaunchOptions } from '../runners/scripted-config.js';
 import {
   isRunnerAliveUnderPane,
   resolveRunRetainedSessionBinding,
@@ -329,6 +334,7 @@ export async function sendCiFixNudge(input: {
     model: input.run?.metrics.model,
     effort: input.run?.effort,
     safetyTier: input.run?.safetyTier,
+    modelQuestions: modelQuestionsForRun(input.run),
     prompt: input.prompt,
     promptMarker: CI_FIX_CHECKLIST_TARGET.checklist,
     runtimeDir,
@@ -457,12 +463,15 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   // Inherit parent run's safety tier (ADR-023) so CI-watch relaunch keeps the posture.
   const runtimeDir = await resolveProjectRuntimeDir(run.project);
   const taskDir = await resolveSlotTaskDir(runId, run.project);
-  await ensureNodeSupportBundle(vars, runtimeDir);
+  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
     effort: run.effort,
     safetyTier: run.safetyTier,
     runtimeDir,
     taskDir: taskDir ?? undefined,
+    ...(await scriptedRelaunchOptions(runner, run)),
+    scriptedSupportDir: nodeSupport?.supportDir,
+    modelQuestions: modelQuestionsForRun(run),
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 

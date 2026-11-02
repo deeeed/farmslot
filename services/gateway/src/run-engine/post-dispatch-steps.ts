@@ -42,6 +42,7 @@ import {
   freezeEvalFirstOutputPackage,
   readFrozenEvalFirstOutputPackage,
 } from '../evals/package-store.js';
+import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
@@ -206,6 +207,9 @@ export interface PostDispatchStepContext {
     mode: Run['mode'],
   ) => Promise<boolean>;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
+  monitorRunForStep?: typeof monitorRun;
+  /** Waits before each retry of a monitor that lost its node connection. */
+  monitorTransportRetryDelaysMs?: readonly number[];
   prepareCompletionPackageForRun?: typeof prepareCompletionPackage;
   executeReviewForRun?: typeof executeReview;
   readEvalWorkerProgress?: typeof readRunProgress;
@@ -544,6 +548,8 @@ export function baseReviewPolicy(run: Run): ReviewValidationDepth {
   return launchedBeforeRecording ? 'full-live' : 'static-code';
 }
 
+const MONITOR_TRANSPORT_RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
+
 export async function executeMonitorStep(
   runId: string,
   context: PostDispatchStepContext,
@@ -568,11 +574,29 @@ export async function executeMonitorStep(
   };
   const retiredResult = (): StepIO => ({ inputs, outputs: { exitReason: 'aborted' } });
   let monitorResult: MonitorResult | undefined;
-  try {
-    monitorResult = await monitorRun(runId, current.slotId, controller.signal);
-  } catch (err) {
-    if (activeMonitors.get(runId) === controller) activeMonitors.delete(runId);
-    throw err;
+  // The monitor only observes, so one that lost its node connection (a gateway or node
+  // restart) watches again from its persisted state, a bounded number of times (F328).
+  const retryDelays = context.monitorTransportRetryDelaysMs ?? MONITOR_TRANSPORT_RETRY_DELAYS_MS;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      monitorResult = await (context.monitorRunForStep ?? monitorRun)(
+        runId,
+        current.slotId,
+        controller.signal,
+      );
+      break;
+    } catch (err) {
+      const delay = retryDelays[attempt];
+      if (isNodeTransportUnavailableError(err) && delay !== undefined && canSettle()) {
+        console.warn(
+          `[run-engine] run ${runId.slice(0, 8)} — monitor lost its node (${err.message}); watching again in ${delay}ms`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        if (canSettle()) continue;
+      }
+      if (activeMonitors.get(runId) === controller) activeMonitors.delete(runId);
+      throw err;
+    }
   }
   // The controller stays registered through push verification below so run
   // cancellation can still interrupt the bounded post-completion wait; the

@@ -102,6 +102,7 @@ import {
   withMachineRunTransition,
   withRunTransitionWhileMachineHeld,
 } from '../run-lifecycle/transition-coordinator.js';
+import { modelQuestionsForRun } from '../runners/launch-command.js';
 import {
   inspectNativeParkHandle,
   inspectNativeParkTarget,
@@ -489,7 +490,8 @@ async function defaultInspectRecoveryHandle(
   if (!inspection.supported) throw new Error(inspection.reason ?? 'runner recovery unsupported');
 }
 
-async function defaultReloadRunner(
+/** Exported for its reload-option wiring test. */
+export async function defaultReloadRunner(
   run: Run,
   handle: MachinePauseRecoveryHandle,
   continuationPrompt: string,
@@ -511,6 +513,7 @@ async function defaultReloadRunner(
       run,
       run.agentContexts?.find((context) => context.id === handle.contextId)?.role,
     ),
+    modelQuestions: modelQuestionsForRun(run),
   });
   if (!result.ok) throw new Error(result.error);
   if (!result.live || result.acknowledgement.kind !== 'structured') {

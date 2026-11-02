@@ -1,15 +1,17 @@
-import { type FlowType, parseGitHubRef, PR_BOUND_FLOW_TYPES } from '@farmslot/protocol';
+import {
+  type FlowType,
+  jiraTicketKey,
+  parseGitHubRef,
+  PR_BOUND_FLOW_TYPES,
+} from '@farmslot/protocol';
 
 import { execFileArgv } from '../../core/index.js';
 
 /** Extract a standalone ticket key from Jira/GitHub URLs or clean up input. */
 export function normalizeTicketRef(input: string): string {
   const trimmed = input.trim();
-  // Jira URL: https://xxx.atlassian.net/browse/PROJ-2368
-  const jiraMatch = trimmed.match(
-    /^https?:\/\/[^\s/]+\.atlassian\.net\/browse\/([A-Z]+-\d+)(?:[/?#].*)?$/i,
-  );
-  if (jiraMatch) return jiraMatch[1].toUpperCase();
+  const jiraKey = jiraTicketKey(trimmed);
+  if (jiraKey) return jiraKey;
   // GitHub PR URL: https://github.com/owner/repo/pull/123
   const ghPR = trimmed.match(
     /^https?:\/\/(?:www\.)?github\.com\/([a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+)\/pull\/(\d+)(?:[/?#].*)?$/,
