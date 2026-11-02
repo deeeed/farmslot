@@ -3,6 +3,7 @@
 // timeouts are idle-based (size-scaled) instead of a fixed sendNodeRequest wall clock.
 
 import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { createWriteStream, existsSync } from 'node:fs';
 import { open, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
@@ -603,8 +604,13 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
     const message = err instanceof Error ? err.message : String(err);
     publish(isCancel ? 'cancelled' : 'failed', { error: message }, true);
     if (writeStream) {
-      writeStream.destroy();
+      const stream = writeStream;
       writeStream = null;
+      // A stream that has not opened its file yet still opens it after destroy(). Removing the
+      // partial before that let it reappear after this cleanup and outlive the transfer.
+      stream.destroy();
+      // An open that fails emits 'error' first; the original error is the one to report.
+      if (!stream.closed) await once(stream, 'close').catch(() => undefined);
     }
     // Never touch finalLocalPath here — only the sibling partial.
     if (workPath && !params.keepPartialOnFailure && !isCancel) {
