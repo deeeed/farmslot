@@ -28,7 +28,12 @@ export function verdict(checks: CheckResult[], setupError: string | undefined): 
   const parts = [`${passed}/${checks.length} checks pass`];
   if (blocking.length)
     parts.push(
-      `${blocking.length} ${blocking.map((check) => `${check.status.toUpperCase()} ${name(check)}`).join(', ')}`,
+      `${blocking.length} ${blocking
+        .map((check) => {
+          const why = check.error ?? check.differences[0];
+          return `${check.status.toUpperCase()} ${name(check)}${why ? ` (${why.slice(0, 120)})` : ''}`;
+        })
+        .join(', ')}`,
     );
   if (known.length)
     parts.push(
