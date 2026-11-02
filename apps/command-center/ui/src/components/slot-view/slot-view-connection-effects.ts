@@ -2,7 +2,7 @@ import type { ResourceStatusUpdatedPayload, SlotResource, SlotStatus } from '@fa
 import { Events } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import { subscribe } from '../../state.js';
+import { getState, subscribe } from '../../state.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 import type { SlotView } from './slot-view.js';
@@ -44,7 +44,9 @@ export function connectSlotView(view: SlotView): void {
   // Drafts follow the fleet record: runs that are no longer current, and unreadable slots.
   let draftFleet: unknown;
 
-  // Follow the same fleet projection as the rest of the application.
+  // Follow the same fleet projection as the rest of the application. subscribe() does not replay
+  // the current state, so a view opened after fleet hydration starts from it.
+  view._fleetSlots = getState().fleet?.slots ?? NO_SLOTS;
   view._unsubState = subscribe((state) => {
     if (state.fleetObservation !== draftFleet) {
       draftFleet = state.fleetObservation;

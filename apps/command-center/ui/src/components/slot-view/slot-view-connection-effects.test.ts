@@ -8,8 +8,10 @@ import type { AppState } from '../../state.js';
 import type { SlotView } from './slot-view.js';
 
 let changed: ((state: AppState) => void) | undefined;
+let current: AppState = { fleet: null } as AppState;
 mock.module('../../state.js', {
   namedExports: {
+    getState: () => current,
     subscribe: (listener: typeof changed) => {
       changed = listener;
       return () => {
@@ -84,9 +86,12 @@ test('an open slot follows its shared fleet projection without repeating initial
     _copyFeedback: { clear() {} },
   } as unknown as SlotView;
   mounted = view;
-  connectSlotView(view);
-  const updated = { ...original, lifecycle: 'ready' } as SlotStatus;
   const source = { slot: 'source-slot', lifecycle: 'ready', currentRunId: null } as SlotStatus;
+  // Opened after fleet hydration: the view starts from the current fleet, before any update.
+  current = { fleet: { slots: [original, source] } } as AppState;
+  connectSlotView(view);
+  assert.deepEqual(view._fleetSlots, [original, source]);
+  const updated = { ...original, lifecycle: 'ready' } as SlotStatus;
   changed!({ fleet: { slots: [updated, source] } } as AppState);
   assert.equal(view._slot, updated);
   // A run loaded from another slot syncs from that slot, so the view keeps every fleet slot.
