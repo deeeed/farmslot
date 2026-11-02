@@ -119,7 +119,7 @@ async function fixture(t: test.TestContext, maxNudges = 0) {
     },
   });
   /** The live Pi pane, whose last turn ended on `failure`. */
-  const paneEndedOn = (failure: string, failureKind?: 'transport') => ({
+  const paneEndedOn = (failure: string, failureKind?: 'transport', observedAt = Date.now()) => ({
     slot: async () => makeVars({ slotId, session: slotId }),
     target: async () => ({ target: `${slotId}:dev`, session: slotId }),
     exec: async () => ({ exitCode: 0, stdout: '42\n', stderr: '' }),
@@ -128,7 +128,7 @@ async function fixture(t: test.TestContext, maxNudges = 0) {
       value: 'idle',
       source: 'hook',
       confidence: 'high',
-      observedAt: Date.now(),
+      observedAt,
       failure,
       ...(failureKind ? { failureKind } : {}),
     }),
@@ -192,6 +192,29 @@ test(
     assert.equal(getRun(f.run.id)?.slotId, f.slotId, 'the worker keeps its slot');
     resolveMonitorDecision(card()!.id, 'abort');
     assert.equal((await execution).exitReason, 'aborted');
+  },
+);
+
+// R2: Continue answers that failed turn. Its record stays until the next hook event.
+test(
+  'Continue on a runner_unavailable card keeps watching instead of asking again',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await fixture(t);
+    const pane = f.paneEndedOn('OAuth refresh failed for anthropic: invalid_grant');
+    const execution = f.start({
+      workerStatus: (slot, runner, runId, role, contextId) =>
+        checkAgentLive(slot, runner, runId, role, contextId, pane),
+      violations: async () => [],
+    });
+    const card = () => getRun(f.run.id)?.decisions.find((decision) => !decision.resolvedAt);
+    await until(() => card() !== undefined);
+    resolveMonitorDecision(card()!.id, 'continue');
+    await until(() => getRun(f.run.id)?.status === 'monitoring');
+    await f.writeSignal(signal('blocked'));
+
+    assert.equal((await execution).exitReason, 'worker-done');
+    assert.equal(getRun(f.run.id)?.decisions.length, 1);
   },
 );
 

@@ -11,12 +11,17 @@ import { deleteTestRunIfPresent } from '../../run-engine/test-fixtures.js';
 import {
   CANCEL_RUN_ACTION,
   REPLAY_STEP_ACTION,
+  WORKER_LEFT_RUNNING_DECISION,
   workerLeftRunningDecision,
 } from '../../run-engine/worker-left-running.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../../runs/store.js';
 import { continueResolvedRunDecision } from '../run.js';
 
-function parkedRun(t: test.TestContext, actionId: string) {
+function parkedRun(
+  t: test.TestContext,
+  actionId: string,
+  decisionType = WORKER_LEFT_RUNNING_DECISION,
+) {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: `PARK-${actionId}` });
   t.after(() => deleteTestRunIfPresent(run.id));
   for (const name of ['find-slot', 'write-task', 'prepare', 'dispatch'])
@@ -27,7 +32,14 @@ function parkedRun(t: test.TestContext, actionId: string) {
     status: 'blocked',
     error: 'terminated',
     slotId: 'parked-slot',
-    decisions: [{ ...card, resolvedAt: new Date().toISOString(), resolvedAction: actionId }],
+    decisions: [
+      {
+        ...card,
+        type: decisionType,
+        resolvedAt: new Date().toISOString(),
+        resolvedAction: actionId,
+      },
+    ],
   });
   const resumed: string[] = [];
   const cancelled: string[] = [];
@@ -65,6 +77,13 @@ test('Replay step on a worker-left-running card resumes the run at the failed st
 
 test('Cancel run on a worker-left-running card cancels the run instead of resuming it', async (t) => {
   const { run, resumed, cancelled } = parkedRun(t, CANCEL_RUN_ACTION);
+  await until(() => cancelled.length > 0);
+  assert.deepEqual(cancelled, [run.id]);
+  assert.deepEqual(resumed, []);
+});
+
+test('Abort Run on a runner_unavailable card cancels the run instead of waking the monitor', async (t) => {
+  const { run, resumed, cancelled } = parkedRun(t, 'abort', 'monitor_runner_unavailable');
   await until(() => cancelled.length > 0);
   assert.deepEqual(cancelled, [run.id]);
   assert.deepEqual(resumed, []);

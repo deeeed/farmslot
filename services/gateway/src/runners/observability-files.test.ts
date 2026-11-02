@@ -469,6 +469,25 @@ test('a bound terminal hook exposes the native turn failure to its monitor', () 
   assert.equal(deriveRunnerSessionDeliveryState(record, 'pi-task')?.failure, record.failure);
 });
 
+test('a Pi record written before failureKind existed still reads as a dropped connection', () => {
+  const reading = (failure: string) =>
+    deriveRunnerSessionDeliveryState(
+      {
+        hook_event_name: 'StopFailure',
+        session_id: 'pi-task',
+        observedAt: NOW,
+        turnActive: false,
+        failure,
+      },
+      'pi-task',
+    );
+  assert.equal(reading('terminated')?.failureKind, 'transport');
+  assert.equal(
+    reading('OAuth refresh failed for anthropic: invalid_grant')?.failureKind,
+    undefined,
+  );
+});
+
 test('session delivery retains structured tool progress separately from active-turn observations', () => {
   const reading = deriveRunnerSessionDeliveryState(
     {

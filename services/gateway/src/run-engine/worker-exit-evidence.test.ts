@@ -54,7 +54,7 @@ test('a live agent without a signal or an exit has no exit evidence', async () =
   }
 });
 
-test('a terminal signal, a gone process or pane, or a runner-reported failure is exit evidence', async () => {
+test('a terminal signal or a gone process or pane is exit evidence', async () => {
   const cases: Array<Partial<WorkerExitReaders>> = [
     {
       signal: async () => ({ ...running, ok: true, code: 'ready' }),
@@ -62,14 +62,18 @@ test('a terminal signal, a gone process or pane, or a runner-reported failure is
     },
     { signal: async () => running, liveness: async () => 'no-tmux' },
     { signal: async () => running, liveness: async () => 'idle' },
-    {
-      signal: async () => running,
-      liveness: async () => {
-        throw new RunnerExecutionError('OAuth refresh failed for anthropic: invalid_grant');
-      },
-    },
   ];
   for (const readers of cases) assert.deepEqual(await evidence([agent('working')], readers), []);
+});
+
+test('a failure the runner reported is no exit evidence: its process is still at its prompt', async () => {
+  const still = await evidence([agent('working')], {
+    signal: async () => running,
+    liveness: async () => {
+      throw new RunnerExecutionError('OAuth refresh failed for anthropic: invalid_grant');
+    },
+  });
+  assert.equal(still.length, 1);
 });
 
 test('a turn ended on a dropped model connection is no exit evidence', async () => {

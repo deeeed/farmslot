@@ -1076,6 +1076,9 @@ export async function monitorRun(
   ) => createBlockedDecision(id, reason, description, actions, { signal, generation }, question);
   // A failure the runner itself reported (an expired login) waits for the operator in a
   // runner_unavailable decision with the worker kept, instead of failing the step (#1427, F328).
+  // Continue answers that failed turn: its record stays until the next hook event, so it must not
+  // ask again, and the stuck nudge continues the worker. A later failure raises its own card.
+  let answeredFailureAt: number | undefined;
   const observeUntilRunnerAvailable = async (
     observe: () => Promise<AgentLiveStatus>,
   ): Promise<AgentLiveStatus | 'aborted'> => {
@@ -1084,6 +1087,8 @@ export async function monitorRun(
         return await observe();
       } catch (error) {
         if (!(error instanceof RunnerExecutionError)) throw error;
+        if (error.observedAt !== undefined && error.observedAt === answeredFailureAt)
+          return 'working';
         console.log(
           `[run-monitor] run ${runId.slice(0, 8)} — runner failed its turn; blocking instead of failing: ${error.message}`,
         );
@@ -1093,6 +1098,7 @@ export async function monitorRun(
           `${error.message} Restore the provider account or authentication in the retained runner pane, then choose Continue. The worktree and current task state are preserved.`,
         );
         if (actionId === 'abort') return 'aborted';
+        answeredFailureAt = error.observedAt;
       }
     }
   };
@@ -2110,7 +2116,8 @@ export async function checkAgentLive(
     ) {
       // A dropped model connection ends the turn, not the worker: the waiting and stuck nudges
       // continue it (F328). Without the runner's transport classification it is genuine.
-      if (turn.failureKind !== 'transport') throw new RunnerExecutionError(turn.failure);
+      if (turn.failureKind !== 'transport')
+        throw new RunnerExecutionError(turn.failure, turn.observedAt);
     }
     const r = await source.exec(
       vars,

@@ -1862,6 +1862,23 @@ export function continueResolvedRunDecision(
   dependencies: RunResolveDecisionDependencies,
   gateGeneration: number,
 ): boolean {
+  // Abort Run on a runner_unavailable card ends the run. Waking the monitor's waiter instead
+  // would settle the step and start REVIEW on unfinished work (F328).
+  if (
+    params.actionId === 'abort' &&
+    getRun(params.runId)?.decisions.find((d) => d.id === params.decisionId)?.type ===
+      'monitor_runner_unavailable'
+  ) {
+    void (dependencies.cancelRun ?? runCancel)({
+      runId: params.runId,
+      reason: 'Aborted by the operator after its runner became unavailable',
+    }).catch((err: unknown) => {
+      console.error(
+        `[run-engine] abort of run ${params.runId.slice(0, 8)} failed: ${(err as Error).message}`,
+      );
+    });
+    return false;
+  }
   // Unblock whichever resolver owns this decision
   resolveMonitorDecision(params.decisionId, params.actionId);
   const engineResumed = resolveEngineDecision(params.decisionId, params.actionId);

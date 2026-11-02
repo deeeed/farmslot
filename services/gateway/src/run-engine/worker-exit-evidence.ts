@@ -1,7 +1,5 @@
 import type { AgentContext, Run } from '@farmslot/protocol';
 
-import { RunnerExecutionError } from '../runners/runner-execution-error.js';
-
 import { checkAgentLive, probeWorkerSignalForRun } from './run-monitor.js';
 
 export interface WorkerExitReaders {
@@ -18,9 +16,8 @@ const MAYBE_RUNNING: ReadonlySet<AgentContext['status']> = new Set([
 
 /**
  * The run's agents that may still be running without positive evidence that they finished or
- * are gone. Evidence is a terminal signal file, a terminal turn the runner itself reported (a
- * dropped model connection is not one), or the agent's process or pane missing. A step error
- * alone never is: tearing down on it killed ce1c5583's live Pi worker (F328). Failure paths
+ * are gone. Evidence is a terminal signal file, or the agent's process or pane missing. A turn
+ * that failed is not: the process is still at its prompt. A step error alone never is: tearing down on it killed ce1c5583's live Pi worker (F328). Failure paths
  * stop agents only when this is empty.
  */
 export async function agentsWithoutExitEvidence(
@@ -68,7 +65,7 @@ async function agentExited(
       context.id,
     );
     return status === 'idle' || status === 'no-tmux';
-  } catch (error) {
-    return error instanceof RunnerExecutionError;
+  } catch {
+    return false;
   }
 }

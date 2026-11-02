@@ -155,7 +155,7 @@ import { copyWorkerArtifacts, readReviewArtifacts } from './review-artifacts.js'
 import { executeReviewGate, setReviewGateBroadcast } from './review-gate.js';
 import { runSupersededSince } from './run-generation.js';
 import { refreshRunLinks } from './run-links.js';
-import { checkAgentLive, rearmInteractiveHandoffAutoRecovery } from './run-monitor.js';
+import { rearmInteractiveHandoffAutoRecovery } from './run-monitor.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 import { executeGradeStep, executeWriteTaskStep } from './task-steps.js';
 import {
@@ -225,12 +225,6 @@ const S = PipelineSteps;
  * guarded on the fence epoch, mirroring slotRelease. A slot already
  * mid-release is left to the release that owns the teardown.
  */
-/** The slot's worker process or pane is gone (F328: tearing down needs that evidence). */
-async function slotWorkerExited(slotId: string): Promise<boolean> {
-  const status = await checkAgentLive(slotId);
-  return status === 'idle' || status === 'no-tmux';
-}
-
 export async function cleanupSlotAfterRunFailure(
   slotId: string,
   runId: string,
@@ -239,11 +233,7 @@ export async function cleanupSlotAfterRunFailure(
   // Injected only so the escalated branch is reachable from a test without
   // mocking a module; production always takes the lazy import below.
   teardownWorker?: (slotId: string) => Promise<void>,
-  options: {
-    preserveRetainedWorker?: boolean;
-    /** Exit evidence for the slot's worker; injectable for the escalated branch's tests. */
-    workerExited?: (slotId: string) => Promise<boolean>;
-  } = {},
+  options: { preserveRetainedWorker?: boolean } = {},
 ): Promise<void> {
   const failed = getRun(runId);
   if (failed?.status === 'failed') {
@@ -291,17 +281,7 @@ export async function cleanupSlotAfterRunFailure(
       // it must be dead before the slot is published ready — otherwise the
       // next PREPARE races a live worker in the same checkout. A failed kill
       // leaves the releasing fence up: non-dispatchable and visible to the
-      // operator, instead of a dispatchable row hiding a live worker. So does a
-      // worker with no exit evidence: a failure alone never kills it (F328).
-      const exited = await (options.workerExited ?? slotWorkerExited)(slotId).catch(() => false);
-      if (!exited) {
-        console.warn(
-          `[run-engine] worker on ${slotId} may still be running after ${reason}; leaving it and the releasing fence up`,
-        );
-        throw new Error(
-          `worker on ${slotId} may still be running after ${reason}; slot left fenced as releasing with the worker untouched`,
-        );
-      }
+      // operator, instead of a dispatchable row hiding a live worker.
       try {
         const kill =
           teardownWorker ?? (await import('../methods/dispatch/nudge.js')).teardownWorkerOnSlot;
