@@ -92,6 +92,11 @@ const MAX_PREFETCH_RUNS = 2;
  * slots are not asked for their log in the background.
  */
 const SLOT_HEAD_CHECK_INTERVAL_MS = 60_000;
+/**
+ * A run whose read failed before its plan was known (a `run.get` timeout on a busy gateway) has
+ * nothing else that reads it again, so it is retried after these waits; the last one repeats.
+ */
+const RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
 const GITLINK_MODE = '160000';
 
 type PrefetchPlan = 'gate' | 'slot' | 'frozen';
@@ -113,6 +118,7 @@ interface PrefetchRunState {
     lastAt: number;
     timer?: ReturnType<typeof setTimeout>;
   };
+  retry: { failures: number; timer?: ReturnType<typeof setTimeout> };
 }
 
 /** One run's writes, under the cache write token taken before its first read. */
@@ -223,6 +229,20 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     state.check.again = false;
   }
 
+  function stopRetry(state: PrefetchRunState): void {
+    if (state.retry.timer !== undefined) clearTimeout(state.retry.timer);
+    state.retry.timer = undefined;
+  }
+
+  function retryLater(state: PrefetchRunState): void {
+    const wait = RETRY_DELAYS_MS[Math.min(state.retry.failures, RETRY_DELAYS_MS.length - 1)];
+    state.retry.failures++;
+    state.retry.timer = setTimeout(() => {
+      state.retry.timer = undefined;
+      if (runs.get(state.target.runId) === state && state.status === 'done') refetch(state);
+    }, wait);
+  }
+
   function halt(): void {
     generation++;
     running = 0;
@@ -258,20 +278,30 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     const ticket = generation;
     const controller = new AbortController();
     const prefetched = state.run;
+    stopRetry(state);
     state.status = 'running';
     state.rerun = false;
     state.run = undefined;
     state.controller = controller;
     running++;
+    let failedUnplanned = false;
     void prefetchRun(state, prefetched, controller.signal)
+      .then(() => {
+        state.retry.failures = 0;
+      })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted && isRefusal(error)) refuse();
+        if (controller.signal.aborted) return;
+        if (isRefusal(error)) refuse();
+        else failedUnplanned = state.plan === undefined;
       })
       .finally(() => {
         if (ticket !== generation) return;
         running--;
         state.controller = undefined;
-        if (runs.get(state.target.runId) === state) state.status = state.rerun ? 'queued' : 'done';
+        if (runs.get(state.target.runId) === state) {
+          state.status = state.rerun ? 'queued' : 'done';
+          if (failedUnplanned && !state.rerun) retryLater(state);
+        }
         pump();
       });
   }
@@ -640,6 +670,8 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     if (!same) {
       refused = false;
       for (const state of runs.values()) {
+        stopRetry(state);
+        state.retry.failures = 0;
         state.status = 'queued';
         state.run = undefined;
       }
@@ -686,6 +718,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
         if (!listed.has(runId)) {
           state.controller?.abort();
           stopCheck(state);
+          stopRetry(state);
           runs.delete(runId);
         }
       for (const target of listed.values()) {
@@ -696,6 +729,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
             status: 'queued',
             rerun: false,
             check: { again: false, lastAt: -Infinity },
+            retry: { failures: 0 },
           });
           continue;
         }
@@ -711,6 +745,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       unsubscribeConnection();
       unsubscribeChanges();
       halt();
+      for (const state of runs.values()) stopRetry(state);
       runs.clear();
     },
   };

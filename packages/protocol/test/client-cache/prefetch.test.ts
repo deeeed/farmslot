@@ -399,6 +399,54 @@ test('an authorization refusal stops prefetch for the rest of the connection', a
   );
 });
 
+test('a run whose run.get failed is read again after 5 s, 30 s, then every 2 min until it succeeds', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const { world, prefetcher, change, connect, calls } = harness();
+  let failures = 4;
+  world.fail = (call) =>
+    call.method === Methods.RUN_GET && failures-- > 0 ? 'TIMEOUT' : undefined;
+  world.runs.set('g1', { id: 'g1', slotId: null, decisions: [] } as unknown as Run);
+  prefetcher.setTargets([target('g1', true, 1)]);
+  await flush();
+  // Nothing else reads a run whose plan is unknown: not a newer update, a change or a resume.
+  prefetcher.setTargets([target('g1', true, 2)]);
+  change({ family: 'package', runId: 'g1' }, { family: 'run', runId: 'g1' });
+  connect({ foreground: false });
+  connect({ foreground: true });
+  await flush();
+  assert.equal(calls(Methods.RUN_GET).length, 1);
+  for (const [wait, reads] of [
+    [5_000, 2],
+    [30_000, 3],
+    [120_000, 4],
+    [120_000, 5],
+  ] as const) {
+    t.mock.timers.tick(wait - 1);
+    await flush();
+    assert.equal(calls(Methods.RUN_GET).length, reads - 1);
+    t.mock.timers.tick(1);
+    await flush();
+    assert.equal(calls(Methods.RUN_GET).length, reads);
+  }
+  // The fifth read succeeded: nothing is tried again.
+  t.mock.timers.tick(10 * 60_000);
+  await flush();
+  assert.equal(calls(Methods.RUN_GET).length, 5);
+});
+
+test('a failed run.get is not read again once its run is no longer listed', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const { world, prefetcher, calls } = harness();
+  world.fail = (call) => (call.method === Methods.RUN_GET ? 'TIMEOUT' : undefined);
+  world.runs.set('g1', { id: 'g1', slotId: null, decisions: [] } as unknown as Run);
+  prefetcher.setTargets([target('g1', true, 1)]);
+  await flush();
+  prefetcher.setTargets([]);
+  t.mock.timers.tick(5_000);
+  await flush();
+  assert.equal(calls(Methods.RUN_GET).length, 1);
+});
+
 test('a gate reads run.get, its retained diff, batched bases, then evidence images', async () => {
   const { world, prefetcher } = harness();
   world.pageSize = 1;
