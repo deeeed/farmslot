@@ -99,7 +99,8 @@ type HoldStep = RestartStep | SurviveStep;
 // 30 s timeout, so the resumed step's first node calls have answered or failed by then.
 const SURVIVE_OBSERVE_MS = 45_000;
 const LOSS_SETTLE_MS = 5_000;
-const READINESS_WAIT_MS = 8_000;
+// The launch's session capture gives up after 20 s on a runner that has reported no session yet.
+const READINESS_WAIT_MS = 30_000;
 const TRANSPORT_ABORT = /\bterminated\b|abort|ECONNRESET|socket hang up|connection reset/i;
 
 export interface IsolatedOptions {
@@ -500,7 +501,7 @@ function survivePhase(
         ...base,
         armAt: 'create',
         arm: startup.arm,
-        // Past the launch's session capture: DISPATCH is polling the pane for a ready prompt.
+        // Past the launch's session capture, DISPATCH polls the pane for a ready prompt.
         held: ({ run }) => {
           if (!startup.hit() || stepStatus(run, 'dispatch') !== 'running') return false;
           startupSeenAt ||= Date.now();
