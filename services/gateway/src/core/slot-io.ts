@@ -40,12 +40,12 @@ import {
 
 import { isLocal } from './exec.js';
 import { sha256File } from './file-hash.js';
-import { assertHeavyWriteRoom } from './heavy-write-room.js';
 import {
   AggregateTransferSession,
   copyFileChunked,
   readRemoteFileChunkedToBuffer,
 } from './file-transfer.js';
+import { assertHeavyWriteRoom } from './heavy-write-room.js';
 import { replaceReadOnlyDestination } from './owned-copy.js';
 
 export const MAX_ARTIFACT_TREE_DEPTH = 12;

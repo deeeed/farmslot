@@ -22,11 +22,7 @@ export function heavyWriteFloorBytes(
   argv: readonly string[] = process.argv,
 ): number {
   const raw = env.FARMSLOT_HEAVY_WRITE_FLOOR_GB?.trim();
-  const gb = raw
-    ? Number(raw)
-    : isGatewayTestProcess(env, argv)
-      ? 0
-      : HEAVY_WRITE_FLOOR_DEFAULT_GB;
+  const gb = raw ? Number(raw) : isGatewayTestProcess(env, argv) ? 0 : HEAVY_WRITE_FLOOR_DEFAULT_GB;
   return (Number.isFinite(gb) && gb >= 0 ? gb : HEAVY_WRITE_FLOOR_DEFAULT_GB) * 1e9;
 }
 
