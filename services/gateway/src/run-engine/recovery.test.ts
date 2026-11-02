@@ -2998,6 +2998,9 @@ test('startup re-enters a human gate that stopped before presenting a decision (
   const atGate = (status: Run['status']) =>
     minimalActiveRun({
       status,
+      ticketOrPr: 'GATE-PREPARING-RECOVERY',
+      familyRootTicketOrPr: 'GATE-PREPARING-RECOVERY',
+      taskFile: '/tmp/gate-preparing-recovery/TASK.md',
       steps: FLOW_STEPS['fix-bug'].map((name) => ({
         name,
         status:
