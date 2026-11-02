@@ -28,6 +28,18 @@ export const CI_PARITY_STEPS = [
       "await import('./.agents/skills/tmux-model-driver/scripts/native-evidence.mjs')",
     ],
   ],
+  [
+    'canary outcome tests',
+    [
+      'env',
+      'TSX_TSCONFIG_PATH=services/gateway/tsconfig.json',
+      'node',
+      '--import',
+      'tsx',
+      '--test',
+      'scripts/runner-validation/canary/outcome.test.mts',
+    ],
+  ],
   ['large files', ['yarn', 'quality:large-files']],
   ['project hook conformance', ['yarn', 'test:project-hooks']],
 ];

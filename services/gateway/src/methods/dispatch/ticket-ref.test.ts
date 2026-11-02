@@ -3,6 +3,15 @@ import test from 'node:test';
 
 import { normalizeTicketRef, resolvePrRef, validateTicketRef } from './ticket-ref.js';
 
+test('shared Jira parsing preserves existing URL normalization and branch references', () => {
+  assert.equal(
+    normalizeTicketRef(' https://consensys.atlassian.net/browse/tat-4355/ '),
+    'TAT-4355',
+  );
+  for (const ref of ['TAT-4355', 'tat-4355', 'fix-123', 'release-7.70.0'])
+    assert.equal(normalizeTicketRef(ref), ref);
+});
+
 test('QA replay accepts admitted task titles while other flows retain their reference grammar', () => {
   const title = 'Recorded iOS AC3 after two local passes';
   for (const input of [title, 'PROJ-2585', 'https://github.com/example/app/pull/42']) {

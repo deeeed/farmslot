@@ -1,6 +1,6 @@
 import type { ProjectConfig, ScriptedRunnerConfig } from '@farmslot/protocol';
 
-import type { RawProjectJson } from '../core/config.js';
+import { loadProjectVars, type RawProjectJson } from '../core/config.js';
 
 export interface ResolvedScriptedCommand {
   command: string;
@@ -95,4 +95,29 @@ export function resolveScriptedCommandFromRawProjectJson(
     ...(timeoutMs ? { timeoutMs } : {}),
     ...(raw.cwd?.trim() ? { cwd: raw.cwd } : {}),
   };
+}
+
+/** The project command a run's scripted config names; none for another runner or a scenario. */
+export function scriptedCommandForRunner(
+  runner: string,
+  scripted: ScriptedRunnerConfig | null | undefined,
+  projectJson: RawProjectJson,
+  projectName: string,
+): ResolvedScriptedCommand | undefined {
+  return runner === 'scripted' && scripted?.mode === 'command'
+    ? resolveScriptedCommandFromRawProjectJson(scripted.commandRef, projectJson, projectName)
+    : undefined;
+}
+
+/** A relaunch's scripted options: a scripted worker keeps the config dispatch launched it with. */
+export async function scriptedRelaunchOptions(
+  runner: string,
+  run: { project: string; scripted?: ScriptedRunnerConfig | null } | null | undefined,
+): Promise<{ scripted?: ScriptedRunnerConfig; scriptedCommand?: ResolvedScriptedCommand }> {
+  const scripted = runner === 'scripted' ? run?.scripted : undefined;
+  if (!run || !scripted) return {};
+  if (scripted.mode !== 'command') return { scripted };
+  const { projectJson } = await loadProjectVars(run.project);
+  const scriptedCommand = scriptedCommandForRunner(runner, scripted, projectJson, run.project);
+  return { scripted, ...(scriptedCommand ? { scriptedCommand } : {}) };
 }

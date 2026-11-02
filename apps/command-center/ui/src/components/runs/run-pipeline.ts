@@ -18,7 +18,12 @@ import {
   isTerminalRunStatus,
   Methods,
 } from '@farmslot/protocol';
-import { runActivityStepStatus, runActivityView } from '@farmslot/review-dispatch';
+import {
+  acceptancePanelPresentation,
+  runActivityStepStatus,
+  runActivityView,
+  runChecklistProgressView,
+} from '@farmslot/review-dispatch';
 
 import '../progress-tracker/progress-tracker.js';
 import './run-checklist-progress.js';
@@ -32,6 +37,7 @@ import {
   renderAcceptancePanel,
 } from '../progress-tracker/acceptance-panel.js';
 import { SubtaskOpenState } from '../progress-tracker/subtask-block.js';
+import { renderCollapsiblePanel } from '../shared/collapsible-panel.js';
 import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
   primaryTransferForRun,
@@ -40,6 +46,11 @@ import {
 } from '../shared/file-transfer-progress-store.js';
 
 import { isRunWorking } from './run-detail-model.js';
+import {
+  type RunDetailPanelId,
+  runDetailPanelOpen,
+  toggleRunDetailPanel,
+} from './run-detail-panels.js';
 import {
   activeTaskProgressStepId,
   ciWatchOutputsForRun,
@@ -105,6 +116,11 @@ export class RunPipeline extends LitElement {
   @property({ attribute: false }) acceptanceRowHeld?: boolean;
   /** Run detail's header already shows a blocked run's reason, so the status row leaves it out. */
   @property({ type: Boolean, attribute: 'reason-in-header' }) reasonInHeader = false;
+  /**
+   * Run detail: step progress and acceptance criteria become collapsible panels, with the
+   * host's `canvas-detail` slot under the canvas and its `artifacts` slot between them.
+   */
+  @property({ type: Boolean, attribute: 'collapsible-panels' }) collapsiblePanels = false;
   @state() private monitorExpanded = false;
   /**
    * Command Center opens an unsettled child on first sight (this panel exists
@@ -206,13 +222,10 @@ export class RunPipeline extends LitElement {
         >
           ${this.renderSvgContent(layout)}
         </svg>
-        <run-checklist-progress
-          .run=${this.run}
-          .progress=${this.taskProgress}
-        ></run-checklist-progress>
+        ${this.collapsiblePanels ? nothing : this.renderChecklist()}
         <run-ci-watch-status .run=${this.run}></run-ci-watch-status>
         ${this.renderRunSummary()}
-        ${this.transferProgress?.state === 'running'
+        ${!this.collapsiblePanels && this.transferProgress?.state === 'running'
           ? html`
               <div
                 class="pipeline-transfer-strip"
@@ -244,18 +257,77 @@ export class RunPipeline extends LitElement {
               </div>
             `
           : nothing}
-        ${this.monitorExpanded &&
-        this._activeTaskProgress() &&
-        pipelineDetachedProgressVisible(this.run, this.selectedStepName, this._activeTaskProgress())
-          ? this.renderProgressPanel()
-          : nothing}
-        ${this.acceptanceRowHeld === undefined
-          ? this.renderAcceptancePanel()
-          : html`<div class="acceptance-slot" ?data-held=${this.acceptanceRowHeld}>
-              ${this.renderAcceptancePanel()}
-            </div>`}
+        ${this.collapsiblePanels
+          ? this.renderPanels()
+          : html`${this.renderProgressSection()}${this.renderAcceptanceSection()}`}
       </div>
     `;
+  }
+
+  private renderChecklist() {
+    return html`<run-checklist-progress
+      .run=${this.run}
+      .progress=${this.taskProgress}
+    ></run-checklist-progress>`;
+  }
+
+  private renderProgressSection() {
+    return this.monitorExpanded &&
+      this._activeTaskProgress() &&
+      pipelineDetachedProgressVisible(this.run, this.selectedStepName, this._activeTaskProgress())
+      ? this.renderProgressPanel()
+      : nothing;
+  }
+
+  private renderAcceptanceSection(panel = this.renderAcceptancePanel()) {
+    return this.acceptanceRowHeld === undefined
+      ? panel
+      : html`<div class="acceptance-slot" ?data-held=${this.acceptanceRowHeld}>${panel}</div>`;
+  }
+
+  /** Run detail's order: canvas detail, step progress, the host's artifacts, criteria. */
+  private renderPanels() {
+    const checklist = runChecklistProgressView(this.run, this.taskProgress);
+    const acceptance = this.renderAcceptancePanel();
+    const inputs = acceptance === nothing ? null : acceptancePanelInputs(this);
+    const progressOpen = runDetailPanelOpen('run-step-progress');
+    const detachedInspector = Boolean(this.selectedStepName) && !progressOpen;
+    return html`
+      ${renderCollapsiblePanel({
+        id: 'run-step-progress',
+        label: 'Step progress',
+        summary: checklist ? `${checklist.counts} · ${checklist.label}` : 'no checklist',
+        open: progressOpen,
+        onToggle: () => this.togglePanel('run-step-progress'),
+        body: () =>
+          html`${this.renderChecklist()}<slot name="canvas-detail"></slot
+            >${this.renderProgressSection()}`,
+      })}
+      ${detachedInspector ? html`<slot name="canvas-detail"></slot>` : nothing}
+      <slot name="artifacts"></slot>
+      ${inputs || this.acceptanceRowHeld
+        ? renderCollapsiblePanel({
+            id: 'run-acceptance',
+            label: 'Acceptance criteria',
+            summary: inputs
+              ? acceptancePanelPresentation(
+                  inputs.ledger,
+                  inputs.criteria ?? inputs.ledger.criteria,
+                  inputs.evidenceModel,
+                  inputs.registration,
+                ).counts
+              : 'loading',
+            open: runDetailPanelOpen('run-acceptance'),
+            onToggle: () => this.togglePanel('run-acceptance'),
+            body: () => this.renderAcceptanceSection(acceptance),
+          })
+        : nothing}
+    `;
+  }
+
+  private togglePanel(id: RunDetailPanelId): void {
+    toggleRunDetailPanel(id);
+    this.requestUpdate();
   }
 
   private _selectStep(step: RunStep): void {
@@ -325,6 +397,13 @@ export class RunPipeline extends LitElement {
       reviewTaskProgress: this._reviewTaskProgress(),
       transferProgress: this.transferProgress,
       toggleProgressPanel: () => {
+        // A collapsed step-progress panel opens to show what was asked for.
+        if (this.collapsiblePanels && !runDetailPanelOpen('run-step-progress')) {
+          toggleRunDetailPanel('run-step-progress');
+          this.monitorExpanded = true;
+          this.requestUpdate();
+          return;
+        }
         this.monitorExpanded = !this.monitorExpanded;
       },
       onStepSelect: (step) => this._selectStep(step),
