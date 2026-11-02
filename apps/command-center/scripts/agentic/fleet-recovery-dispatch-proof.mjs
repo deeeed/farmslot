@@ -104,8 +104,7 @@ try {
   );
   fs.writeFileSync(path.join(output, 'scoring-before.json'), JSON.stringify(before, null, 2));
   await cleanupRun(beforeId);
-  // This fixture has no monitor loop. Re-probe its owned slots after seeding local work.
-  await connection.call('fleet.status', { forceRefresh: true });
+  // This fixture has no monitor loop. Drive its passive read after seeding local work.
   await poll(
     () => connection.call('fleet.status'),
     (value) =>
@@ -180,6 +179,26 @@ try {
     'content-bound discard confirmation',
   );
   browser('click', route, 'fleet-canvas >>> fleet-refresh-modal >>> .confirm button:last-child');
+  await poll(
+    async () =>
+      JSON.parse(
+        browser(
+          'eval',
+          route,
+          `
+      const canvas=document.querySelector('fleet-canvas');
+      const modal=canvas?.shadowRoot.querySelector('fleet-refresh-modal');
+      const row=modal?.shadowRoot.querySelector('article[data-slot="proof-slot"]');
+      return {text:row?.textContent ?? '',complete:row?.querySelector('.detail')?.textContent.trim().startsWith('refreshed ')};
+    `,
+        ),
+      ),
+    (value) =>
+      value.complete &&
+      value.text.includes('main · baseline · Unowned') &&
+      !value.text.includes('Slot is working'),
+    'fresh completed modal metadata',
+  );
   const ready = await poll(
     () => connection.call('fleet.status'),
     (value) =>
@@ -193,34 +212,20 @@ try {
       ),
     'CC recovery readback',
   );
-  await poll(
-    async () =>
-      JSON.parse(
-        browser(
-          'eval',
-          route,
-          `
-      const canvas=document.querySelector('fleet-canvas');
-      const modal=canvas?.shadowRoot.querySelector('fleet-refresh-modal');
-      return {text:modal?.shadowRoot.querySelector('article[data-slot="proof-slot"]')?.textContent ?? ''};
-    `,
-        ),
-      ),
-    (value) =>
-      value.text.includes('main · baseline · Unowned') && !value.text.includes('Slot is working'),
-    'fresh completed modal metadata',
-  );
   browser('screenshot', route, path.join(output, 'cc-recovery-complete.png'));
   const afterId = await run('AFTER');
   const after = await poll(
     () => readRun(afterId),
-    (value) => value.steps.some((step) => step.name === 'find-slot' && step.status === 'done'),
+    (value) =>
+      value.steps.some((step) => step.name === 'find-slot' && step.status === 'done') ||
+      value.decisions.some((decision) => decision.type === 'engine_no_suitable_slot'),
     'unrestricted scored selection',
   );
+  fs.writeFileSync(path.join(output, 'scoring-after.json'), JSON.stringify(after, null, 2));
+  assert.equal(after.slotId, 'proof-slot', JSON.stringify(after.decisions));
   const selection = after.steps.find((step) => step.name === 'find-slot').outputs;
   assert.equal(selection.selectionMethod, 'scored');
   assert.equal(selection.selectedSlot, 'proof-slot');
-  assert.equal(after.slotId, 'proof-slot');
   assert.equal(after.allowedSlots, null);
   assert.equal(
     after.decisions.some((decision) => decision.type === 'engine_no_suitable_slot'),
@@ -267,7 +272,7 @@ try {
   );
   assert.equal(fs.existsSync(manualWork[0]), false, 'confirmed fixture dirt was removed');
   fs.unlinkSync(manualWork[1]); // Restore the second fixture for the native safe-bulk proof.
-  fs.writeFileSync(path.join(output, 'scoring-after.json'), JSON.stringify(after, null, 2));
+
   fs.writeFileSync(
     path.join(output, 'cc-scored-selection.json'),
     JSON.stringify(
