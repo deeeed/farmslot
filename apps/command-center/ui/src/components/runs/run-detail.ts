@@ -78,6 +78,7 @@ import {
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { refreshRunMirror } from '../shared/run-mirror-refresh.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
@@ -89,7 +90,6 @@ import {
   confirmRunDecision,
   confirmRunLifecycleAction,
   jumpToSuccessorWhenAvailable,
-  refreshRunEvidence,
   rescueRunLinkage,
   resolveBranchNudgePick,
   resolveInteractiveDevAction,
@@ -1611,12 +1611,8 @@ export class RunDetail extends RunDetailState {
     this._outputError = '';
     try {
       this._assertRunReady(run.id);
-      const result = await gateway.request<{ ok: boolean; reason?: string }>(
-        Methods.RUN_REFRESH_MIRROR,
-        { runId: run.id },
-        120_000,
-      );
-      if (!result.ok) throw new Error(result.reason ?? 'Could not retrieve worker output');
+      const result = await refreshRunMirror(run.id);
+      if (!result.ok) throw new Error(result.reason || 'Could not retrieve worker output');
     } catch (error) {
       if (!current()) return;
       this._outputError = error instanceof Error ? error.message : String(error);
@@ -1704,7 +1700,6 @@ export class RunDetail extends RunDetailState {
       _directRunRefreshFailed: this._directRunRefreshFailed,
       _directRunUnavailable: this._directRunUnavailable,
       _rescueInProgress: this._rescueInProgress,
-      _evidenceRefreshInProgress: this._evidenceRefreshInProgress,
       _pendingConfirm: this._pendingConfirm,
       linkedTriageAssessmentId:
         this._triageDecisionLink?.runId === this.runId &&
@@ -1724,7 +1719,6 @@ export class RunDetail extends RunDetailState {
       _terminalRole: this._terminalRole,
       _actionsBlocked: () => this._actionsBlocked(),
       _rescueLinkage: (runId) => this._rescueLinkage(runId),
-      _refreshEvidence: (runId) => this._refreshEvidence(runId),
       _confirmForceComplete: (run) => this._confirmForceComplete(run),
       _confirmLifecycleAction: (run, action) =>
         confirmRunLifecycleAction(run, action, {
@@ -2064,16 +2058,6 @@ export class RunDetail extends RunDetailState {
       rescueInProgress: () => this._rescueInProgress,
       setRescueInProgress: (inProgress) => {
         this._rescueInProgress = inProgress;
-      },
-    });
-  }
-
-  private async _refreshEvidence(runId: string) {
-    await refreshRunEvidence(runId, {
-      actionsBlocked: () => this._actionsBlocked(),
-      refreshInProgress: () => this._evidenceRefreshInProgress,
-      setRefreshInProgress: (inProgress) => {
-        this._evidenceRefreshInProgress = inProgress;
       },
     });
   }

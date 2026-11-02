@@ -7,7 +7,6 @@ import type {
   RunForceCompleteResult,
   RunInteractiveDevResolveResult,
   RunProbeWorkerSignalResult,
-  RunRefreshMirrorResult,
   RunRehydratePrNumberResult,
   RunResolveDecisionResult,
 } from '@farmslot/protocol';
@@ -112,34 +111,6 @@ export async function rescueRunLinkage(
     alert(`PR rescue failed: ${(err as Error).message}`);
   } finally {
     context.setRescueInProgress(false);
-  }
-}
-
-export interface EvidenceRefreshContext {
-  actionsBlocked: () => boolean;
-  refreshInProgress: () => boolean;
-  setRefreshInProgress: (inProgress: boolean) => void;
-}
-
-/** Pulls the run's evidence from its slot into the artifact mirror again (`run.refreshMirror`). */
-export async function refreshRunEvidence(
-  runId: string,
-  context: EvidenceRefreshContext,
-): Promise<void> {
-  if (context.actionsBlocked() || context.refreshInProgress()) return;
-  context.setRefreshInProgress(true);
-  try {
-    // Every changed evidence file is copied from the slot, which can take minutes.
-    const res = await gateway.request<RunRefreshMirrorResult>(
-      Methods.RUN_REFRESH_MIRROR,
-      { runId },
-      SLOT_OPERATION_TIMEOUT_MS,
-    );
-    if (!res.ok) alert(`Evidence refresh failed: ${res.reason}`);
-  } catch (err) {
-    alert(`Evidence refresh failed: ${(err as Error).message}`);
-  } finally {
-    context.setRefreshInProgress(false);
   }
 }
 

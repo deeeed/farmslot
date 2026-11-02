@@ -123,7 +123,6 @@ export interface RunDetailViewContext {
   _directRunRefreshFailed: boolean;
   _directRunUnavailable: boolean;
   _rescueInProgress: boolean;
-  _evidenceRefreshInProgress: boolean;
   _pendingConfirm: string | null;
   linkedTriageAssessmentId: string;
   onTriageDecisionLink: (runId: string, assessmentId: string | null) => void;
@@ -134,7 +133,6 @@ export interface RunDetailViewContext {
   _publicationActions: Record<string, { busy: boolean; error?: string }>;
   _retryReviewPublication: (run: Run) => Promise<void>;
   _rescueLinkage: (runId: string) => void | Promise<void>;
-  _refreshEvidence: (runId: string) => void | Promise<void>;
   _confirmForceComplete: (run: Run) => void;
   _confirmLifecycleAction: (run: Run, action: RunLifecycleAction) => void | Promise<void>;
   _requestCopilotRunDiagnosis: (run: Run) => void;
@@ -330,7 +328,7 @@ function renderRunEvidenceContent(run: Run, ctx: RunEvidenceRenderContext): unkn
               ?disabled=${ctx.actionsBlocked || ctx.refreshingOutput || ctx.closingOutput}
               @click=${ctx.refreshOutput}
             >
-              ${ctx.refreshingOutput ? 'Retrieving files…' : 'Refresh output'}
+              ${ctx.refreshingOutput ? 'Retrieving files…' : 'Refresh evidence'}
             </button>`
           : nothing}
         ${evidence.showEvalPackageHint
@@ -632,19 +630,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               @click=${() => ctx._rescueLinkage(r.id)}
             >
               ${ctx._rescueInProgress ? 'Linking…' : 'Rescue PR linkage'}
-            </button>
-          `
-        : nothing}
-      ${r.slotId
-        ? html`
-            <button
-              class="gate-action-btn"
-              style="border-color:${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px"
-              title="Copy this run's evidence from slot ${r.slotId} into the gateway again, replacing the copy taken at completion."
-              ?disabled=${actionsBlocked || ctx._evidenceRefreshInProgress}
-              @click=${() => ctx._refreshEvidence(r.id)}
-            >
-              ${ctx._evidenceRefreshInProgress ? 'Refreshing…' : 'Refresh evidence'}
             </button>
           `
         : nothing}

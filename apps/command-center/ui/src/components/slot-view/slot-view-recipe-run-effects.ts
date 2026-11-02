@@ -1,9 +1,7 @@
 import type { RecipeRunArtifactGroup, Run } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
 
-import { gateway } from '../../gateway-client.js';
-import { transferBoundRequestOptions } from '../../gateway-request-timeout.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
+import { refreshRunMirror } from '../shared/run-mirror-refresh.js';
 
 import {
   isSlotViewPinnedLinkedRun,
@@ -82,17 +80,13 @@ export async function refreshSlotViewArtifactMirror(view: SlotViewRecipePresente
   try {
     const run = view._requireCurrentRecipes();
     current = view._captureRunScope();
-    const result = await gateway.request<{ ok: boolean; copied?: number; reason?: string }>(
-      Methods.RUN_REFRESH_MIRROR,
-      { runId: run.id },
-      transferBoundRequestOptions(run.id),
-    );
+    const result = await refreshRunMirror(run.id);
     if (!current()) return;
     view._mirrorRefreshFeedback = result.ok
       ? result.copied
         ? `Synced ${result.copied}`
         : 'Up to date'
-      : (result.reason ?? 'Artifact sync failed');
+      : result.reason || 'Artifact sync failed';
     if (result.ok) view._artifactMirrorEpoch += 1;
   } catch (error) {
     if (current())

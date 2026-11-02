@@ -19,7 +19,7 @@ mock.module('../../gateway-client.js', {
 mock.module('../shared/slot-prepare-client.js', {
   namedExports: { navigateToPreparedSlot: () => {}, runSlotPrepareForRun: async () => {} },
 });
-const { confirmRunLifecycleAction, refreshRunEvidence } = await import('./run-detail-actions.js');
+const { confirmRunLifecycleAction } = await import('./run-detail-actions.js');
 
 test('archive waits as long as a slot release, since it may release the run slot', async () => {
   let navigated = false;
@@ -54,29 +54,4 @@ test('delete waits as long as a slot release, since a cancelled run releases its
     { method: Methods.RUN_DELETE, params: { runId: 'run-1' }, timeout: SLOT_OPERATION_TIMEOUT_MS },
   ]);
   assert.equal(navigated, true);
-});
-
-// F313: a release no longer copies evidence back, so the run page pulls it again on request.
-test('refresh evidence asks the gateway to mirror the run again, once at a time', async () => {
-  requests.length = 0;
-  const states: boolean[] = [];
-  let inProgress = false;
-  const context = {
-    actionsBlocked: () => false,
-    refreshInProgress: () => inProgress,
-    setRefreshInProgress: (value: boolean) => {
-      inProgress = value;
-      states.push(value);
-    },
-  };
-  await Promise.all([refreshRunEvidence('run-1', context), refreshRunEvidence('run-1', context)]);
-
-  assert.deepEqual(requests, [
-    {
-      method: Methods.RUN_REFRESH_MIRROR,
-      params: { runId: 'run-1' },
-      timeout: SLOT_OPERATION_TIMEOUT_MS,
-    },
-  ]);
-  assert.deepEqual(states, [true, false]);
 });

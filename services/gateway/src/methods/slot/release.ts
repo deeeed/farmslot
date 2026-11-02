@@ -540,8 +540,8 @@ async function slotReleaseImpl(
   const step = (name: string, detail: string) => {
     emit('slot.release.step', { requestId, slotId: params.slotId, name, detail });
     out(`[${name}] ${detail}`);
-    // The gateway log names the step too: releases the engine or an archive starts have no
-    // caller reading the stream, and 8385c3c3's timed out with nothing logged (F313).
+    // The gateway log names the step too: releases that the engine or an archive starts have
+    // no caller reading the stream, and 8385c3c3's timed out with nothing logged (F313).
     console.log(`[slot.release] ${params.slotId} ${name} +${Date.now() - startTime}ms: ${detail}`);
   };
 

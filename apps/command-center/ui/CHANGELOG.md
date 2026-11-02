@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- A run with a slot has a Refresh evidence button on its page. It calls `run.refreshMirror`, which copies the run's evidence from the slot into the gateway again, and shows the gateway's reason when that fails. A slot release no longer copies evidence, so this is how to pick up evidence changed after completion, and the pipeline's finalize node no longer shows release artifact copies (F313).
+- A run's results card names its refresh button Refresh evidence (was Refresh output). A slot release no longer copies evidence (F313), so this button, like the slot view's Sync artifacts, is how to pick up evidence that changed after completion. Both share one `run.refreshMirror` request that stays open while the copy reports progress. Before, the results card gave up after 120 s, while a changed 882 MB package needs about 7 minutes at 2 MB/s. The pipeline's finalize node no longer shows release artifact copies.
 - Native chat and dispatch enable "Node default account" without waiting for the node's profile list; a pending or failed read only affects the profile choices, and its error shows beside the picker. A selected profile still waits for its login status. The add control reads "Add another account" (ADR-057 Amendment 11).
 - The Runs list's Runner / model cell names the worker's effort when a record has it (`grok/grok-4.7 · medium`); runs without one show runner and model as before.
 - The evidence review's criteria list and each criterion's moment come from the shared `evidenceReviewToc` (`@farmslot/adapter-sdk/evidence`), the same table of contents Companion shows. No visible change.

@@ -10,7 +10,7 @@ const run = detail.run;
 const root = detail.shadowRoot;
 const editor = root.querySelector('run-tag-editor:not([kind="tickets"])');
 const commands = [...root.querySelectorAll('button')].filter((button) =>
-  /^(Delete run|Refresh output)$/.test(button.textContent.trim()),
+  /^(Delete run|Refresh evidence)$/.test(button.textContent.trim()),
 );
 const recipe = Reflect.get(detail, '_recipeObservation');
 const tray = document.querySelector('farm-notification-tray')?.shadowRoot;
