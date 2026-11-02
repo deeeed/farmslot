@@ -52,6 +52,7 @@ import { runSupersededSince } from '../run-engine/run-generation.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
+import { resolveScriptedCommandFromRawProjectJson } from '../runners/scripted-config.js';
 import {
   normalizeRunner,
   readRunnerLaunchBlocker,
@@ -3328,16 +3329,35 @@ async function relaunchWorkerForFix(
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
   const parentSafetyTier = parentRun?.safetyTier;
   const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-  await ensureNodeSupportBundle(vars, runtimeDir);
+  const nodeSupport = await ensureNodeSupportBundle(vars, runtimeDir);
   const taskDir = parentRun
     ? await resolveWorkerTaskDir(vars, parentRun.project, parentRun.taskFile)
     : null;
+  // A scripted worker relaunches with the run's own scripted config, as dispatch launched it.
+  const scripted = runner === 'scripted' ? parentRun?.scripted : undefined;
+  let scriptedCommand: ReturnType<typeof resolveScriptedCommandFromRawProjectJson> | undefined;
+  if (scripted?.mode === 'command' && parentRun) {
+    const { loadProjectVarsOrNull } = await import('../run-engine/project-vars.js');
+    const projectVars = await loadProjectVarsOrNull(
+      parentRun.project,
+      'review fix relaunch',
+      runId,
+    );
+    scriptedCommand = resolveScriptedCommandFromRawProjectJson(
+      scripted.commandRef,
+      projectVars?.projectJson ?? {},
+      vars.projectName,
+    );
+  }
   let launchCmd = buildLaunchCommand(vars, runner, effectiveModel, prompt, {
     effort: parentRun?.effort,
     safetyTier: parentSafetyTier,
     runtimeDir,
     taskDir: taskDir ?? undefined,
     taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
+    scripted,
+    scriptedCommand,
+    scriptedSupportDir: nodeSupport?.supportDir,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
   await assertPreflightCurrent();
