@@ -1,1 +1,0 @@
-- A Grok review cannot remove, rename or replace `sessions/`, `logs/` or `logs/unified.jsonl` in the Grok home, so it cannot move a link or a prepared directory into their place for a later Grok start to write through. The farm creates any of them that is missing before the review starts, and refuses to start when one is a link or the wrong type.
