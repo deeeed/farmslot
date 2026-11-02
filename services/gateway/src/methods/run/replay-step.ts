@@ -17,6 +17,7 @@ import {
   RecordedEvidenceReadError,
   resolveRunSlotId,
   type Run,
+  type RunDecision,
   type RunEngineState,
   type RunProbeWorkerSignalResult,
   type RunReplayStepParams,
@@ -52,6 +53,7 @@ import { pendingDecisionForRun } from '../../run-engine/decision-projection.js';
 import { resolveEngineDecision } from '../../run-engine/engine-decisions.js';
 import {
   hasValidPrNumber,
+  isGateDecision,
   reopenSupersededGateDecisions,
   supersedeStaleHumanGateDecisions,
 } from '../../run-engine/gate-policy.js';
@@ -916,17 +918,21 @@ export function replaySlotReclaimCheck(
 
 // Index of the pipeline step that produces a given decision, using the
 // DecisionType prefix convention (monitor_* → MONITOR, ci_* → CI_WATCH) and the
-// gate decisions (→ HUMAN_GATE). Returns -1 for types whose ownership is not
-// step-scoped; the completion/gate clearing branches handle those. A replay
-// re-runs every step from its target onward, so a still-open decision owned by
-// one of those re-run steps is stale and must be dropped — otherwise a monitor
-// handoff from a prior generation lingers after a replay from prepare and
-// re-blocks the reset run.
-function decisionOwningStepIndex(type: string, flowSteps: readonly string[] | undefined): number {
+// cards HUMAN_GATE presents (gate and no-change decisions). Returns -1 for types
+// whose ownership is not step-scoped; the completion/gate clearing branches
+// handle those. A replay re-runs every step from its target onward, so a
+// still-open decision owned by one of those re-run steps is stale and must be
+// dropped — otherwise a monitor handoff from a prior generation lingers after a
+// replay from prepare and re-blocks the reset run, and an open gate card's
+// readiness refresh moves the replayed run to blocked (F324).
+function decisionOwningStepIndex(
+  type: RunDecision['type'],
+  flowSteps: readonly string[] | undefined,
+): number {
   if (!flowSteps) return -1;
   if (type.startsWith('monitor_')) return flowSteps.indexOf(PS.MONITOR);
   if (type.startsWith('ci_')) return flowSteps.indexOf(PS.CI_WATCH);
-  if (type === 'engine_human_gate' || type === 'engine_review_posting')
+  if (isGateDecision({ type }) || type === 'engine_no_change')
     return flowSteps.indexOf(PS.HUMAN_GATE);
   return -1;
 }
