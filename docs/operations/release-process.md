@@ -5,7 +5,7 @@ Manual release cuts for operator-facing surfaces. Continuous merges still deploy
 ## Daily development
 
 1. Change code in a workspace (`apps/command-center/ui`, `services/gateway`, `packages/protocol`, …).
-2. Add the release note as a file of its own: `<workspace>/.changes/<branch-name>.md`, holding one or more `- ` bullets. Parallel PRs never edit the same lines, so release notes no longer conflict. A bullet added straight to `CHANGELOG.md` → `## Unreleased` still counts.
+2. Add the release note as a file of its own: `<workspace>/.changes/<branch-name>.md` with each `/` as `-` (`fix/foo` → `fix-foo.md`), holding one or more `- ` bullets. Parallel PRs never edit the same lines, so release notes no longer conflict. A bullet added straight to `CHANGELOG.md` → `## Unreleased` still counts.
 3. Open a PR. CI runs `yarn quality:changelogs:pr` and requires a fragment or a non-placeholder bullet when workspace code changed. A fragment that is empty or holds anything but bullets fails the guard.
 
 Placeholder lines (ignored by guards) mention "active-development baseline" or "add user-facing changes here".

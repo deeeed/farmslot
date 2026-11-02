@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import {
+  FRAGMENT_DIR,
   fragmentFiles,
   fragmentProblems,
   isFragmentPath,
@@ -115,6 +116,14 @@ function checkStructure() {
     if (!content.includes('## Unreleased')) {
       fail(`${changelogPath} must include an '## Unreleased' section.`);
     }
+    // Readers only see `.changes/<name>.md`; a branch path such as `.changes/fix/foo.md` would be lost.
+    const changesDir = path.join(repoRoot, relativeDir, FRAGMENT_DIR);
+    if (existsSync(changesDir))
+      for (const entry of readdirSync(changesDir, { withFileTypes: true }))
+        if (!entry.isFile() || !entry.name.endsWith('.md'))
+          fail(
+            `${relativeDir}/${FRAGMENT_DIR}/${entry.name} is not a fragment: name it ${relativeDir}/${FRAGMENT_DIR}/<branch-name>.md, with each '/' as '-'.`,
+          );
     for (const fragment of fragmentFiles(path.join(repoRoot, relativeDir))) {
       for (const problem of fragmentProblems(readFileSync(fragment, 'utf8')))
         fail(`${path.relative(repoRoot, fragment)} ${problem}.`);
@@ -205,7 +214,7 @@ function checkPrDiff() {
     const changelogPath = `${workspace}/CHANGELOG.md`;
     if (!bucket.changelogTouched) {
       fail(
-        `${workspace} code changed (${bucket.codeChanges.slice(0, 3).join(', ')}${bucket.codeChanges.length > 3 ? ', …' : ''}) but it has no release note: add ${workspace}/.changes/<branch-name>.md with one '- ' bullet.`,
+        `${workspace} code changed (${bucket.codeChanges.slice(0, 3).join(', ')}${bucket.codeChanges.length > 3 ? ', …' : ''}) but it has no release note: add ${workspace}/.changes/<branch-name>.md (each '/' as '-') with one '- ' bullet.`,
       );
       continue;
     }

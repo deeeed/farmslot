@@ -97,7 +97,7 @@ test('changelog guard: a feature plus a gateway reference change needs an apps/d
   assert.equal(result.status, 1, result.stdout);
   assert.match(
     result.stderr,
-    /apps\/docs code changed .* but it has no release note: add apps\/docs\/\.changes\/<branch-name>\.md/,
+    /apps\/docs code changed .* but it has no release note: add apps\/docs\/\.changes\/<branch-name>\.md \(each '\/' as '-'\)/,
   );
   assert.doesNotMatch(result.stderr, /packages\/protocol/);
 });
@@ -131,6 +131,18 @@ test('changelog guard: a malformed fragment fails, even beside a CHANGELOG.md bu
   assert.match(
     result.stderr,
     /packages\/protocol\/\.changes\/add-value-2\.md has a line that is not a '- ' bullet/,
+  );
+});
+
+test('changelog guard: a fragment under a branch-path subdirectory fails', (t) => {
+  const repo = makeRepo(t);
+  repo.write('packages/protocol/src/index.ts', 'export const value = 2;\n');
+  repo.write('packages/protocol/.changes/feat/add-value-2.md', '- Add `value` 2.\n');
+  const result = repo.guard('feat(protocol): add value 2');
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(
+    result.stderr,
+    /packages\/protocol\/\.changes\/feat is not a fragment: name it packages\/protocol\/\.changes\/<branch-name>\.md, with each '\/' as '-'/,
   );
 });
 

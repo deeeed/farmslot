@@ -91,7 +91,7 @@ Every self-review, review and review-pr consumes the shared policy from `node pa
 
 Before saying a farmslot PR is ready (or suggesting merge):
 
-1. **Changelog** — if the diff touches a publishable workspace package (`apps/command-center/ui`, `services/gateway`, `packages/*`, etc.), add its release note as a file of its own, `<package>/.changes/<branch-name>.md`, holding `- ` bullets, in the same PR. Don't edit `CHANGELOG.md` directly: fragments never conflict between PRs, and the release cut writes them into the changelog. Hygiene CI runs `check-workspace-changelogs.mjs --pr-diff` and **fails** when the release note is missing.
+1. **Changelog** — if the diff touches a publishable workspace package (`apps/command-center/ui`, `services/gateway`, `packages/*`, etc.), add its release note as a file of its own, `<package>/.changes/<branch-name>.md` with each `/` as `-` (`fix/foo` → `fix-foo.md`), holding `- ` bullets, in the same PR. Don't edit `CHANGELOG.md` directly: fragments never conflict between PRs, and the release cut writes them into the changelog. Hygiene CI runs `check-workspace-changelogs.mjs --pr-diff` and **fails** when the release note is missing.
    Keep Unreleased concise. Consolidate related work into one user-facing bullet per behavior area, and update that bullet as follow-up fixes land. Do not list each internal race, test, code path, or review finding as a separate release note.
 2. **CI green** — wait for `gh pr checks` on the PR (hygiene + quality gates for the touched area). Do not claim ready while checks are pending, failed, or skipped-only for the relevant packages.
 3. **Independent review** — run at least one independent code-reviewer agent against the **same HEAD SHA** that is on the PR.

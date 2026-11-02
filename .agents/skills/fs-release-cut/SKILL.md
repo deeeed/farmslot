@@ -73,7 +73,7 @@ chore(release): cut command-center-ui@X.Y.Z, gateway@X.Y.Z, …
 
 ## PR rule
 
-Any PR that changes workspace code adds its release note as `<workspace>/.changes/<branch-name>.md` (one or more `- ` bullets), so parallel PRs never conflict on `CHANGELOG.md`. A bullet under `## Unreleased` still counts. CI enforces via `yarn quality:changelogs:pr`. `release-status`, curation and the cut read fragments as part of `## Unreleased`; the cut writes them into the changelog and deletes them.
+Any PR that changes workspace code adds its release note as `<workspace>/.changes/<branch-name>.md`, each `/` as `-` (one or more `- ` bullets), so parallel PRs never conflict on `CHANGELOG.md`. A bullet under `## Unreleased` still counts. CI enforces via `yarn quality:changelogs:pr`. `release-status`, curation and the cut read fragments as part of `## Unreleased`; the cut writes them into the changelog and deletes them.
 
 ## Stop conditions
 
