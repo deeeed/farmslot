@@ -3862,34 +3862,53 @@ test('an automatic human-gate replay keeps the reviews still planned for the gat
   const reviewSequence = [
     { runner: 'codex', model: 'gpt-6-luna', effort: 'low', mode: 'cold' as const },
   ];
-  const planned = async (label: string, triggeredBy: 'auto-recovery' | 'operator') => {
-    const run = await blockedGateRun(t, label, []);
-    // The replay re-reads the run's task: it has to exist.
-    const { taskFile } = run;
-    assert.ok(taskFile);
-    await mkdir(path.dirname(taskFile), { recursive: true });
-    await writeFile(taskFile, '# Task\n');
-    t.after(() => rm(path.dirname(taskFile), { recursive: true, force: true }));
-    updateRun(run.id, {
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+    'complete',
+  ]);
+  const planned = async (triggeredBy: 'auto-recovery' | 'operator') => {
+    const taskFile = `/tmp/farmslot-gate-plan-${triggeredBy}/TASK.md`;
+    const created = createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: `PROJ-${Date.now()}-${triggeredBy}`,
+    });
+    const run = updateRun(created.id, {
       status: 'human-gating',
+      taskFile,
       engineState: {
-        ...run.engineState,
         publishGate: {
           reviewSequence,
           reviewSequenceRequestedAt: '2026-11-02T01:30:00.000Z',
           publicationStatus: 'not_published',
         },
       },
+      steps: created.steps.map((step) =>
+        doneThroughComplete.has(step.name)
+          ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+          : step.name === 'human-gate'
+            ? { ...step, status: 'running', detail: 'Preparing operator decision' }
+            : step,
+      ),
+    });
+    t.after(async () => {
+      cancelRunEngine(run.id);
+      if (getRun(run.id)) await evictTestRun(run.id, 'failed');
     });
     await runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy }, () => {}, {
       startEngine: async () => {},
     });
     return getRun(run.id)?.engineState?.publishGate;
   };
-  const recovered = await planned('gate-plan-recovery', 'auto-recovery');
+  const recovered = await planned('auto-recovery');
   assert.deepEqual(recovered?.reviewSequence, reviewSequence);
   assert.equal(recovered?.reviewSequenceRequestedAt, '2026-11-02T01:30:00.000Z');
-  assert.equal((await planned('gate-plan-operator', 'operator'))?.reviewSequence, undefined);
+  assert.equal((await planned('operator'))?.reviewSequence, undefined);
 });
 
 const holdGate = (id: string): RunDecision => ({
