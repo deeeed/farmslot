@@ -380,8 +380,9 @@ async function claimSelectedSlot(
     const slotRunner = (await readSlotRow(slotId))?.runner;
     assertNativeRunForSlot(run, typeof slotRunner === 'string' ? slotRunner : undefined);
   }
-  // Selection asked when it chose the slot, so this replays that answer; it asks
-  // only for a path that did not, still before source admission and the claim.
+  // The gate for every claim, before source admission and the claim itself. Paths
+  // that may change a slot before claiming it (safe reuse, takeovers, picks) asked
+  // already and replay here; a clean scored pick and affinity are first asked here.
   await confirmAppBinding(run, slotId, context.createEngineDecision);
   if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
   const pool = (await loadPoolConfigs()).find((pool) =>
@@ -892,11 +893,14 @@ export async function executeFindSlotStep(
       result = await findSlotAttempt(runId, run, generation, context, automaticLoadPinned);
     } catch (error) {
       if (error instanceof AppBindingContinued && !runSupersededSince(getRun(runId), generation)) {
-        // An operator's pick stays the pick, as after a lost claim: the restart
-        // claims that slot or fails on it, and scoring never swaps in another.
+        // As after a lost claim: an operator's pick stays the pick, so the restart claims
+        // that slot or fails on it and scoring never swaps in another. An unpinned restart
+        // may land on another machine, so its preview is admitted afresh.
         if (operatorPickedSlot(getRun(runId)!) === error.slotId) {
           updateRun(runId, { slotId: error.slotId });
           automaticLoadPinned = true;
+        } else if (!getRun(runId)!.slotId) {
+          updateRun(runId, { pressureAdmissionRef: undefined });
         }
         run = getRun(runId)!;
         continue;

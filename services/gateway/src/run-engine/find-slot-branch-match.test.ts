@@ -35,6 +35,8 @@ const slotApps = new Map<string, string>();
 let projectApps: ProjectAppFixture | undefined;
 // A strict fleet read that fails, or pool files the last refresh could not read.
 let fleetReadFailure = false;
+// Runs that carry a dispatch preview's pressure admission and consume it at the claim.
+let pressureRefs = false;
 let fleetPoolErrors: Array<{ file: string; error: string }> | undefined;
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
@@ -288,8 +290,11 @@ mock.module('../methods/dispatch.js', {
     findAffinitySlot: () => null,
     selectBranchAffinityRefreshSlots: () => [],
     capturePressureAdmissionDecisionsLightweight: () => pressureDecisions,
-    consumedPressureAdmissionRef: () => {
-      throw new Error('unexpected pressure override');
+    consumedPressureAdmissionRef: (
+      ref: import('@farmslot/protocol').PressureAdmissionReference,
+    ) => {
+      if (!pressureRefs) throw new Error('unexpected pressure override');
+      return { ...ref, consumedAt: new Date().toISOString() };
     },
     resolveExecutePressureOutcome: ({ decision }: { decision?: PressureAdmissionDecision }) => {
       assert.equal(decision?.state, 'disabled');
@@ -433,6 +438,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   projectApps = undefined;
   fleetReadFailure = false;
   fleetPoolErrors = undefined;
+  pressureRefs = false;
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -1676,3 +1682,45 @@ test('continue on kill-and-dispatch-fresh asks again when the busy slot changes 
   assert.deepEqual(freshTeardowns, [], 'no worker was killed');
   assert.deepEqual(claims, []);
 });
+
+test('a clean scored pick is asked about at the claim, before anything touches the slot', async () => {
+  reset('fix-bug', 'TAT-4137');
+  sherpaRunOn();
+  // F322: a clean candidate skips safe reuse, so the claim is the first gate it meets.
+  cleanSlots.add('macpro-mmt-1');
+  const asked: AppBindingAsk[] = [];
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, appBindingContext('abort', asked)),
+    abortedOnPlayground,
+  );
+  assert.equal(asked.length, 1);
+  assert.deepEqual(
+    {
+      claims: asked[0]!.claims,
+      reuseCalls: asked[0]!.reuseCalls,
+      freshTeardowns: asked[0]!.freshTeardowns,
+      finishedReclaims: asked[0]!.finishedReclaims,
+    },
+    untouched,
+  );
+  assert.deepEqual({ claims, reuseCalls, freshTeardowns, finishedReclaims }, untouched);
+  assert.equal(liveRows.has('macpro-mmt-1'), false, 'the slot row is untouched');
+});
+
+for (const pinned of [false, true]) {
+  test(`continue ${pinned ? 'keeps a pinned' : 'drops an unpinned'} run's pressure preview before selecting again`, async () => {
+    reset('fix-bug', 'TAT-4137');
+    sherpaRunOn(pinned ? 'macpro-mmt-1' : undefined);
+    cleanSlots.add('macpro-mmt-1');
+    pressureRefs = true;
+    run.pressureAdmissionRef = { machine: 'macpro', pressureGeneration: 'before-the-card' };
+    const asked: AppBindingAsk[] = [];
+    const result = await executeFindSlotStep(run.id, run, 0, appBindingContext('continue', asked));
+    assert.equal(asked.length, 1);
+    assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-1');
+    assert.deepEqual(claims, ['macpro-mmt-1']);
+    // An unpinned reselect may land on another machine, so it is admitted afresh, as after a
+    // lost claim; a pinned run keeps the slot and the preview it was admitted with.
+    assert.equal(run.pressureAdmissionRef?.machine, pinned ? 'macpro' : undefined);
+  });
+}
