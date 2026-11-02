@@ -17,6 +17,20 @@ export function acpString(value: unknown): string {
 
 export type AcpRequest = (method: string, params: AcpObject) => Promise<unknown>;
 
+/** A runner's headless sign-in: one fixed ACP auth method, or a pick among those it advertises. */
+export type AcpAuthMethod = string | ((methods: AcpObject[]) => string | undefined);
+
+/** The advertised auth method to authenticate with, or undefined when none is acceptable. */
+export function selectAcpAuthMethod(
+  advertised: unknown,
+  wanted: AcpAuthMethod,
+): string | undefined {
+  if (!Array.isArray(advertised)) return undefined;
+  const methods = advertised.map(acpObject);
+  if (typeof wanted === 'function') return wanted(methods);
+  return methods.some((method) => method.id === wanted) ? wanted : undefined;
+}
+
 /** The values a session config option offers, or undefined when the runner has no such option. */
 export function acpConfigChoices(session: AcpObject, id: string): string[] | undefined {
   const options = ((session.configOptions as AcpObject[] | undefined) ?? []).find(

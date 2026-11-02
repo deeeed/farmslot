@@ -9,7 +9,7 @@ import type {
   NativeAccountProbeOptions,
   NativeAccountState,
 } from './account-types.js';
-import { AcpRpc } from './acp-rpc.js';
+import { type AcpAuthMethod, AcpRpc, selectAcpAuthMethod } from './acp-rpc.js';
 
 export class AccountProbeError extends Error {
   constructor(readonly reason: NonNullable<NativeAccountObservation['reason']>) {
@@ -194,7 +194,7 @@ export function observeAcpAccount(
   probe: {
     args: string[];
     env?: Record<string, string>;
-    authMethod: string;
+    authMethod: AcpAuthMethod;
     state(result: unknown): NativeAccountState;
   },
 ): Promise<NativeAccountObservation> {
@@ -230,17 +230,11 @@ export function observeAcpAccount(
           }),
         );
         if (init.protocolVersion !== 1) throw new AccountProbeError('malformed-status');
-        if (
-          !Array.isArray(init.authMethods) ||
-          !init.authMethods.map(accountObject).some((method) => method.id === probe.authMethod)
-        )
-          return { ...unavailableAccount(), reason: 'native-auth-unavailable' };
+        const methodId = selectAcpAuthMethod(init.authMethods, probe.authMethod);
+        if (!methodId) return { ...unavailableAccount(), reason: 'native-auth-unavailable' };
         // Never select an interactive login or an API-key fallback during observation.
         return probe.state(
-          await child.request('authenticate', {
-            methodId: probe.authMethod,
-            _meta: { headless: true },
-          }),
+          await child.request('authenticate', { methodId, _meta: { headless: true } }),
         );
       },
       () => exited && cleanupConfirmed,

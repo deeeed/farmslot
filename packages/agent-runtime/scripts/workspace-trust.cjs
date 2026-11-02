@@ -172,10 +172,11 @@ function farmReviewWorkspace(cwd, owner) {
     throw new Error('Review workspace ownership marker does not match this launch');
   return true;
 }
-function trustGrokWorkspace(cwd, env = process.env, owner, launch) {
+// A Grok review checkout stays untrusted, so Grok loads none of its hooks, agents, MCP or LSP
+// servers, instructions or skills. The preflight refuses an account that already trusts it.
+function checkGrokReviewWorkspace(cwd, env = process.env, owner, launch) {
   if (!farmReviewWorkspace(cwd, owner)) return;
   assertGrokReviewAccount(cwd, env, launch);
-  trustGrokFolders([path.resolve(cwd), fs.realpathSync(cwd)], env);
 }
 function configureCodexReviewWorkspace(cwd, env = process.env, owner) {
   if (!farmReviewWorkspace(cwd, owner)) return;
@@ -239,11 +240,11 @@ module.exports = {
   reviewConfigurationRootsByRunner,
   codexWorkspaceTrustConfig,
   trustGrokFolders,
-  trustGrokWorkspace,
+  checkGrokReviewWorkspace,
   configureCodexReviewWorkspace,
   workspaceTrustByRunner: {
     codex: configureCodexReviewWorkspace,
-    grok: trustGrokWorkspace,
+    grok: checkGrokReviewWorkspace,
     claude: trustClaudeWorkspace,
   },
   trustClaudeWorkspace,

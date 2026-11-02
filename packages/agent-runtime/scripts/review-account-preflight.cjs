@@ -1,7 +1,7 @@
 const { execFileSync } = require('node:child_process');
-const { existsSync, realpathSync } = require('node:fs');
+const { existsSync, readFileSync, realpathSync } = require('node:fs');
 const { homedir } = require('node:os');
-const { join, resolve } = require('node:path');
+const { dirname, join, resolve } = require('node:path');
 
 function grokProfileEnvironment(directory, base = process.env) {
   const home = base.HOME || homedir();
@@ -36,11 +36,38 @@ function canResumeGrokProfileContext(previous, current, ambientHome) {
   );
 }
 
+// Grok loads a checkout's hooks, agents, MCP and LSP servers, instructions and skills only once the
+// folder is trusted, and a grant covers the folder's subdirectories. So a review checkout is refused
+// when the trust store names it or any parent, in any form, or when folder trust is switched off.
+function grokTrustAdmitsCheckout(cwd, env) {
+  const grokHome = env.GROK_HOME || join(env.HOME || homedir(), '.grok');
+  if (env.GROK_FOLDER_TRUST !== undefined) return true;
+  const read = (file) => {
+    try {
+      return readFileSync(join(grokHome, file), 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return '';
+      throw error;
+    }
+  };
+  if (read('config.toml').includes('folder_trust')) return true;
+  const store = read('trusted_folders.toml');
+  const folders = new Set();
+  for (const start of [resolve(cwd), ...(existsSync(cwd) ? [realpathSync(cwd)] : [])])
+    for (let folder = start; ; folder = dirname(folder)) {
+      folders.add(folder);
+      if (dirname(folder) === folder) break;
+    }
+  return [...folders].some(
+    (folder) => store.includes(JSON.stringify(folder)) || store.includes(`'${folder}'`),
+  );
+}
+
 function assertGrokReviewAccount(cwd, env, launch = {}) {
   const remedy =
-    'Set allow_managed_hooks_only = true in the selected GROK_HOME/requirements.toml, ' +
-    'disable or remove native, plugin and compatibility hooks, and verify grok inspect --json ' +
-    'reports nonManagedHooks disabled and every hook disabled; then retry. Use another runner if enforced hooks cannot be disabled.';
+    'Use a GROK_HOME with no hooks, plugins or agents of its own, or set allow_managed_hooks_only = true ' +
+    'in its requirements.toml; keep the review checkout and its parents out of its trusted_folders.toml; ' +
+    'verify with grok inspect --json; then retry. Use another runner if the account cannot meet this.';
   const executable = launch.executable || 'grok';
   // Account discovery must not confuse intentionally masked PR configuration with unreadable account hooks.
   const inspectionCwd = launch.inspectionCwd || cwd;
@@ -69,15 +96,34 @@ function assertGrokReviewAccount(cwd, env, launch = {}) {
   // Do not classify commands as safe: a global hook can invoke any PR-supplied file.
   if (inspection.hooks.some((hook) => hook?.disabled !== true))
     throw new Error('Grok review refused: this account has startup hooks enabled. ' + remedy);
-  // The native pin also covers agent/frontmatter and notification hooks loaded after inspection.
-  if (
-    !Array.isArray(inspection.permissions?.enforced) ||
-    !inspection.permissions.enforced.some(
+  let admitted;
+  try {
+    admitted = grokTrustAdmitsCheckout(cwd, env);
+  } catch {
+    throw new Error('Grok review refused: folder trust could not be verified. ' + remedy);
+  }
+  if (admitted)
+    throw new Error(
+      'Grok review refused: this account trusts the review checkout or turns folder trust off. ' +
+        remedy,
+    );
+  // Plugin and agent frontmatter hooks load after inspection. The native pin disables them;
+  // without it, the account must have no plugins and only built-in agents.
+  const pinned =
+    Array.isArray(inspection.permissions?.enforced) &&
+    inspection.permissions.enforced.some(
       (pin) => pin?.setting === 'nonManagedHooks' && pin.enabled === false,
-    )
+    );
+  if (
+    !pinned &&
+    (!Array.isArray(inspection.plugins) ||
+      inspection.plugins.length > 0 ||
+      !Array.isArray(inspection.agents) ||
+      inspection.agents.some((agent) => agent?.source?.type !== 'builtin'))
   )
     throw new Error(
-      'Grok review refused: account startup hooks are not disabled by policy. ' + remedy,
+      'Grok review refused: account plugins or agents can load hooks and are not disabled by policy. ' +
+        remedy,
     );
 }
 
