@@ -559,16 +559,19 @@ The account's own hooks still matter. A headless Grok run treats an untrusted fo
 
 The pin is no longer required.
 
-**Review sandbox.** A review may write only what Grok itself writes in its home during a session: `sessions/`, `logs/`, `settings_cache.json`, `models_cache.json`, `auth.json` and `auth.json.lock`, measured on Grok 1.0.70. The rest of the home is read-only, so one review cannot change what the next one loads or runs. That covers:
+**Review sandbox.** In its Grok home a review may write only `sessions/` and `logs/`, plus the bytes of `auth.json.lock`, which a token refresh takes. The lock must already be a regular file; the farm creates it if missing, and a review cannot rename, remove or replace it. No link can be made anywhere in the home. The rest of the home is read-only, so one review cannot change what the next one loads, runs, signs in with or sends requests to. That covers:
 
 - hooks, configuration, policy and trust files;
 - `bundled/` agents, which load as built-in, and user agents;
-- skills, memory, and the external sign-in command in `bin/`, which also runs outside the sandbox when account status is read;
+- skills and memory;
+- the model catalog cache, which names the endpoint later sessions call;
+- the stored login;
+- the external sign-in command in `bin/`, which also runs outside the sandbox when account status is read;
 - shell startup files, since a profile's HOME is its Grok home.
 
-A live native session on macwork and mini starts and finishes this way. Grok's own sandbox likewise denies its configuration and bundle paths.
+Grok's own writes to its caches and login fail inside a review and are not needed. A live native session on macwork and mini signs in, starts and finishes this way.
 
-Operations: with `bundled/` read-only during reviews, built-in skills refresh only when Grok starts outside a review. A new review home needs one ordinary start to populate them. Plugins stay inert, because one loads only when the read-only `config.toml` enables it.
+Operations: built-in skills, the model catalog cache and a stored login refresh only when Grok starts outside a review. A new review home needs one ordinary start before its first review. Plugins stay inert, because one loads only when the read-only `config.toml` enables it.
 
 **Terminal reviews.** The Grok runner definition declares `terminalReviewRefusal`. Review admission rejects a Grok terminal (tmux) review with that message before any task preparation, and the terminal launcher refuses it too. The message points to the native transport. In an untrusted checkout that carries project configuration, Grok's terminal stops at "Do you trust the contents of this directory?", and answering Yes would trust the PR.
 
@@ -596,7 +599,7 @@ The cost is that a Grok reviewer no longer reads the repository's `AGENTS.md`, p
 
 - `checkGrokReviewWorkspace` replaces `trustGrokWorkspace` in `@farmslot/agent-runtime` `scripts/workspace-trust.cjs`, and `workspaceTrustByRunner.grok` points to it.
 - `trustGrokFolders` stays, for worker slots.
-- `reviewWritableRuntimePaths` on a runner definition (Grok: `grokReviewWritableHomePaths`) and a fourth `runtimeWritablePaths` argument to the review sandbox: a runtime root that names writable paths is read-only apart from them.
+- `reviewRuntimeAccess` on a runner definition (Grok: `grokReviewHomeAccess`) and a fourth `runtimeAccess` argument to the review sandbox (`{ writablePaths, dataFiles }`). A runtime root that names them is read-only apart from them, and no link can be made in it.
 - `terminalReviewRefusal` on a runner definition, and `runnerTerminalReviewRefusal` in the gateway's review admission.
 - `grokAuthMethod` (the Grok adapter and account observer), and `AcpAuthMethod` / `selectAcpAuthMethod`: an ACP adapter's `authMethod` may now pick among the advertised methods.
 - `@farmslot/agent-runtime` needs a release. Until it is rolled out, nodes keep trusting review checkouts.

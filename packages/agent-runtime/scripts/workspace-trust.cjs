@@ -219,19 +219,15 @@ const reviewConfigurationRoots = (cwd) =>
     '.lsp.json',
     '.envrc',
   ].map((name) => path.join(fs.realpathSync(cwd), name));
-// What Grok 1.0.70 writes in its home during a review session. Everything else in the home stays
-// read-only: hooks, configuration, policy, bundled and user agents, skills, the external sign-in
-// command in bin/, memory, and shell startup files (a profile's HOME is its Grok home). So one
-// review cannot change what the next one loads or runs.
-const grokReviewWritableHomePaths = (env) =>
-  [
-    'sessions',
-    'logs',
-    'settings_cache.json',
-    'models_cache.json',
-    'auth.json',
-    'auth.json.lock',
-  ].map((name) => path.join(grokHome(env), name));
+// What a Grok review may write in its home: its sessions and logs, and the bytes of the sign-in
+// lock that a token refresh takes. Everything else stays read-only: hooks, configuration, policy,
+// bundled and user agents, skills, memory, the model catalog cache, the stored login, the external
+// sign-in command in bin/, and shell startup files (a profile's HOME is its Grok home). So one
+// review cannot change what the next one loads, runs, signs in with or sends requests to.
+const grokReviewHomeAccess = (env) => ({
+  writablePaths: ['sessions', 'logs'].map((name) => path.join(grokHome(env), name)),
+  dataFiles: [path.join(grokHome(env), 'auth.json.lock')],
+});
 // A Grok review checkout stays untrusted (ADR-057 Amendment 13), and Grok's terminal then stops
 // at "Do you trust the contents of this directory?" for any checkout with project configuration.
 const terminalReviewRefusalByRunner = {
@@ -258,7 +254,7 @@ module.exports = {
   grokHome,
   reviewConfigurationRootsByRunner,
   terminalReviewRefusalByRunner,
-  grokReviewWritableHomePaths,
+  grokReviewHomeAccess,
   codexWorkspaceTrustConfig,
   trustGrokFolders,
   checkGrokReviewWorkspace,
