@@ -1,11 +1,6 @@
-export interface SlotAppBinding {
-  /** The pool slot's `app` (`SlotVars.resourceVars.app`). */
-  slotApp: string | undefined;
-  /** The project's `recipe.app`. */
-  recipeApp: string | undefined;
-  /** The project's declared `apps`. */
-  apps: readonly string[] | undefined;
-}
+import { projectDefaultApp } from '@farmslot/protocol';
+
+export type ProjectAppDefaults = Parameters<typeof projectDefaultApp>[0];
 
 export interface BoundApp {
   app: string;
@@ -27,27 +22,31 @@ function normalizeApp(value: string | null | undefined): string {
 }
 
 /**
- * The app a slot is bound to: its pool `app`, else the project's `recipe.app`,
- * else the project's only declared app. Task initialization binds the recipe
- * the same way, and the slot's runtime hooks never see `run.app`.
+ * The app a slot is bound to: its pool `app`, else the project's default app.
+ * Task initialization re-reads the pool on the node and freezes the recipe
+ * binding from these, so `run.app` never reaches it. Prepare does set
+ * `resourceVars.app` from the run for its own hooks and fixtures, but Metro and
+ * launch actions follow the slot's domain overlay.
  */
-export function boundApp(binding: SlotAppBinding): BoundApp | null {
-  const slotApp = normalizeApp(binding.slotApp);
-  if (slotApp) return { app: slotApp, source: 'slot' };
-  const projectApp =
-    normalizeApp(binding.recipeApp) ||
-    (binding.apps?.length === 1 ? normalizeApp(binding.apps[0]) : '');
-  return projectApp ? { app: projectApp, source: 'project' } : null;
+export function boundApp(
+  slotApp: string | undefined,
+  project: ProjectAppDefaults,
+): BoundApp | null {
+  const own = normalizeApp(slotApp);
+  if (own) return { app: own, source: 'slot' };
+  const fallback = normalizeApp(projectDefaultApp(project));
+  return fallback ? { app: fallback, source: 'project' } : null;
 }
 
 /** Null when the run names no app, the slot has no binding, or they agree. */
 export function appBindingMismatch(
   runApp: string | null | undefined,
-  binding: SlotAppBinding,
+  slotApp: string | undefined,
+  project: ProjectAppDefaults,
 ): AppBindingMismatch | null {
   const requested = normalizeApp(runApp);
   if (!requested) return null;
-  const bound = boundApp(binding);
+  const bound = boundApp(slotApp, project);
   if (!bound || bound.app === requested) return null;
   return { runApp: requested, slotApp: bound.app, source: bound.source };
 }

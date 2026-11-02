@@ -1,1 +1,2 @@
+- The dispatch wizard no longer preselects a multi-app project's first app. With a slot pinned, the app pill defaults to that slot's own app; with nothing pinned, a dispatch names an app only when the operator picks one, and the selected slot's binding decides otherwise. Before, a Sherpa slot pinned with the pill untouched was sent apps/playground (F306).
 - An app binding mismatch decision shows on the run pipeline's find-slot step instead of at complete (F306).

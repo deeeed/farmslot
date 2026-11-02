@@ -1267,8 +1267,8 @@ export interface AppBindingMismatchPayload {
   slotApp: string;
   /** `slot`: the pool slot's `app`; `project`: the project's default app. */
   source: 'slot' | 'project';
-  /** Pool slots of the run's project bound to the run's app. */
-  boundSlots: string[];
+  /** Enabled slots of the run's project bound to the run's app; absent when they could not be listed. */
+  boundSlots?: string[];
 }
 
 export interface ImprovementFileChange {

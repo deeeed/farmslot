@@ -125,7 +125,7 @@ import {
 } from '../tasks/execution-template-catalog.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
 
-import { appBindingMismatch, boundApp, type SlotAppBinding } from './app-binding.js';
+import { appBindingMismatch, boundApp, type ProjectAppDefaults } from './app-binding.js';
 import { canReplayBranchAffinityDecision, findLatestResolvedDecision } from './decision-replay.js';
 import { assertNativeRunForSlot } from './dispatch-policy.js';
 import { BlockedRunError } from './errors.js';
@@ -217,29 +217,40 @@ export function activeWorkerFreshReuseAllowed(flowType: Run['flowType']): boolea
   return flowType === 'review-pr' || flowType === 'pr-complete' || flowType === 'update-branch';
 }
 
-/** Enabled pool slots of the project whose app binding is `app`. */
+/**
+ * Enabled slots of the project bound to `app`, from one pool read and the fleet's
+ * enablement. Undefined, and logged, when they could not be listed.
+ */
 async function slotsBoundToApp(
   project: string,
   app: string,
-  defaults: Omit<SlotAppBinding, 'slotApp'>,
-): Promise<string[]> {
-  const ids = (await loadPoolConfigs()).flatMap((pool) =>
-    pool.slots.filter((slot) => slot.project === project && slot.enabled).map((slot) => slot.id),
-  );
-  const slots = await Promise.allSettled(ids.map((id) => loadSlotVars(id)));
-  return ids.filter((_, index) => {
-    const slot = slots[index]!;
-    return (
-      slot.status === 'fulfilled' &&
-      boundApp({ ...defaults, slotApp: slot.value.resourceVars.app })?.app === app
+  defaults: ProjectAppDefaults,
+): Promise<string[] | undefined> {
+  try {
+    const [pools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus()]);
+    const enabled = new Set(
+      fleet.slots.filter((slot) => slot.enabled && !slot.missingFromPool).map((slot) => slot.slot),
     );
-  });
+    return pools
+      .flatMap((pool) => pool.slots)
+      .filter(
+        (slot) =>
+          slot.project === project &&
+          enabled.has(slot.id) &&
+          boundApp(slot.app, defaults)?.app === app,
+      )
+      .map((slot) => slot.id);
+  } catch (error) {
+    console.warn(
+      `[run-engine] could not list ${project} slots bound to ${app}: ${(error as Error).message}`,
+    );
+    return undefined;
+  }
 }
 
-function sameAppBinding(
-  prior: RunDecisionPayload | undefined,
-  current: AppBindingMismatchPayload,
-): boolean {
+type AppBindingKey = Pick<AppBindingMismatchPayload, 'slotId' | 'runApp' | 'slotApp'>;
+
+function sameAppBinding(prior: RunDecisionPayload | undefined, current: AppBindingKey): boolean {
   return (
     prior?.kind === 'app_binding_mismatch' &&
     prior.slotId === current.slotId &&
@@ -248,10 +259,39 @@ function sameAppBinding(
   );
 }
 
+/** The latest answer for this binding; a superseded card ends the search. */
+function answeredAppBinding(run: Run, key: AppBindingKey): string | undefined {
+  for (let index = run.decisions.length - 1; index >= 0; index--) {
+    const decision = run.decisions[index]!;
+    if (decision.type !== 'engine_app_binding_mismatch' || !decision.resolvedAt) continue;
+    if (decision.resolvedAction === 'superseded') return undefined;
+    if (sameAppBinding(decision.payload, key)) return decision.resolvedAction;
+  }
+  return undefined;
+}
+
+function appBindingAborted({ slotId, runApp, slotApp }: AppBindingKey): Error {
+  return new Error(
+    `App binding mismatch: ${slotId} is bound to ${slotApp}, not ${runApp}; aborted before the claim`,
+  );
+}
+
 /**
- * The slot's task binding, Metro and launch actions follow the slot's app, never
- * `run.app` (F306). A run naming another app waits for the operator: abort, or
- * continue on the slot's app. Only a continue for this same binding replays.
+ * A fresh Continue: what selection saw (eligibility, pressure, the slot's owner)
+ * may have changed while the card was open, so the attempt starts over and
+ * replays the answer.
+ */
+class AppBindingContinued extends Error {
+  constructor(slotId: string) {
+    super(`Continued on ${slotId}'s app binding; selecting again`);
+  }
+}
+
+/**
+ * The slot's task binding, Metro and launch actions follow its app, never
+ * `run.app` (F306). Asked when a slot is chosen, before anything on it changes:
+ * Abort fails the run, Continue restarts selection. A stored answer for the same
+ * slot and apps replays, an abort included.
  */
 async function confirmAppBinding(
   run: Run,
@@ -260,19 +300,25 @@ async function confirmAppBinding(
 ): Promise<void> {
   if (!run.app?.trim()) return;
   const [slot, project] = await Promise.all([loadSlotVars(slotId), loadProjectVars(run.project)]);
-  const defaults = { recipeApp: project.projectJson.recipe?.app, apps: project.projectJson.apps };
-  const mismatch = appBindingMismatch(run.app, { ...defaults, slotApp: slot.resourceVars.app });
+  const mismatch = appBindingMismatch(run.app, slot.resourceVars.app, project.projectJson);
   if (!mismatch) return;
   const { runApp, slotApp, source } = mismatch;
+  const key = { slotId, runApp, slotApp };
+  const answered = answeredAppBinding(getRun(run.id) ?? run, key);
+  if (answered === 'continue') return;
+  if (answered) throw appBindingAborted(key);
+  const boundSlots = await slotsBoundToApp(run.project, runApp, project.projectJson);
   const payload: AppBindingMismatchPayload = {
     kind: 'app_binding_mismatch',
-    slotId,
-    ...mismatch,
-    boundSlots: await slotsBoundToApp(run.project, runApp, defaults),
+    ...key,
+    source,
+    ...(boundSlots ? { boundSlots } : {}),
   };
-  const bound = payload.boundSlots.length
-    ? `Slots bound to ${runApp}: ${payload.boundSlots.join(', ')}.`
-    : `No ${run.project} slot is bound to ${runApp}.`;
+  const bound = !boundSlots
+    ? `The slots bound to ${runApp} could not be listed.`
+    : boundSlots.length
+      ? `Slots bound to ${runApp}: ${boundSlots.join(', ')}.`
+      : `No ${run.project} slot is bound to ${runApp}.`;
   const action = await decide(
     run.id,
     'app_binding_mismatch',
@@ -288,19 +334,14 @@ async function confirmAppBinding(
         id: 'continue',
         label: `Continue on ${slotApp}`,
         style: 'secondary',
-        description: `Claim ${slotId}. Its task and runtime stay bound to ${slotApp}.`,
+        description: `Select again and claim ${slotId}. Its task and runtime stay bound to ${slotApp}.`,
       },
     ],
     payload,
-    {
-      canReplay: (prior) =>
-        prior.resolvedAction === 'continue' && sameAppBinding(prior.payload, payload),
-    },
+    { canReplay: (prior) => sameAppBinding(prior.payload, key) },
   );
-  if (action !== 'continue')
-    throw new Error(
-      `App binding mismatch: ${slotId} is bound to ${slotApp}, not ${runApp}; aborted before the claim`,
-    );
+  if (action !== 'continue') throw appBindingAborted(key);
+  throw new AppBindingContinued(slotId);
 }
 
 /** The binding the operator continued on for the slot the run claimed, if any. */
@@ -336,7 +377,8 @@ async function claimSelectedSlot(
     const slotRunner = (await readSlotRow(slotId))?.runner;
     assertNativeRunForSlot(run, typeof slotRunner === 'string' ? slotRunner : undefined);
   }
-  // Before source admission and the claim: an abort leaves the slot as it was.
+  // Selection asked when it chose the slot, so this replays that answer; it asks
+  // only for a path that did not, still before source admission and the claim.
   await confirmAppBinding(run, slotId, context.createEngineDecision);
   if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
   const pool = (await loadPoolConfigs()).find((pool) =>
@@ -846,6 +888,10 @@ export async function executeFindSlotStep(
     try {
       result = await findSlotAttempt(runId, run, generation, context, automaticLoadPinned);
     } catch (error) {
+      if (error instanceof AppBindingContinued && !runSupersededSince(getRun(runId), generation)) {
+        run = getRun(runId)!;
+        continue;
+      }
       const conflict = slotClaimConflict(error);
       if (!conflict || runSupersededSince(getRun(runId), generation)) throw error;
       // An operator's pick in this attempt pins it like a requested slot.
@@ -953,6 +999,8 @@ async function findSlotAttempt(
   context: FindSlotStepContext,
   automaticLoadPinned: boolean,
 ): Promise<FindSlotAttempt> {
+  // A pinned slot is already chosen: its app is asked about before anything else runs.
+  if (run.slotId) await confirmAppBinding(run, run.slotId, context.createEngineDecision);
   if (run.sourcePlan && run.slotId) {
     const pool = (await loadPoolConfigs()).find((pool) =>
       pool.slots.some((slot) => slot.id === run.slotId),
@@ -1503,6 +1551,9 @@ async function findSlotAttempt(
         );
 
         if (actionId === 'abort') throw new Error('Aborted: branch-affinity nudge declined');
+        // Nudge and fresh take over the busy slot: ask about its app before any takeover step.
+        if (actionId === 'nudge' || actionId === 'fresh')
+          await confirmAppBinding(run, top.slot.slot, createEngineDecision);
         if (actionId === 'nudge') {
           // Same nudge gating as the wizard shortcut above.
           await assertEngineBoundSlotPressureAdmitted(runId, run, top.slot.machine);
@@ -1618,6 +1669,7 @@ async function findSlotAttempt(
               );
             }
             assertAllowedSlotSelection(run, pickedSlotId);
+            await confirmAppBinding(run, pickedSlotId, createEngineDecision);
             if (run.sourcePlan)
               await refreshRunSourcePlan(runId, {
                 nodeId: picked.machine,
@@ -1674,6 +1726,8 @@ async function findSlotAttempt(
       remaining = remaining.filter((slot) => slot.slot !== candidate.slot);
       if (runSupersededSince(getRun(runId), generation))
         throw runChangedError(runId, candidate.slot);
+      // Safe reuse may release or reset the candidate: ask about its app first.
+      await confirmAppBinding(run, candidate.slot, createEngineDecision);
       const recover = async () =>
         (await import('../run-lifecycle/safe-idle-slot.js')).reuseSafeIdleSlot(
           candidate.slot,
@@ -1824,6 +1878,7 @@ async function findSlotAttempt(
         );
       }
       assertAllowedSlotSelection(run, pickedSlotId);
+      await confirmAppBinding(run, pickedSlotId, createEngineDecision);
       if (run.sourcePlan)
         await refreshRunSourcePlan(runId, {
           nodeId: picked.machine,

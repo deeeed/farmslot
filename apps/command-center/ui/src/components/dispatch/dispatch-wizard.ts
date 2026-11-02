@@ -635,6 +635,14 @@ export class DispatchWizard extends DispatchWizardState {
     );
   }
 
+  /** The pinned slot's own app, from its pool entry: the app pill's default. */
+  private _pinnedSlotApp(): string | undefined {
+    if (!this._slotOverride) return undefined;
+    return (this.mockMode ? this.mockPools : this._reviewPools)
+      .flatMap((pool) => pool.slots)
+      .find((slot) => slot.id === this._slotOverride)?.app;
+  }
+
   private _selectedSlotPlatform(): string | undefined {
     return this._allProjectSlots.find((slot) => slot.slot === this._slotOverride)?.platform;
   }
@@ -1575,7 +1583,11 @@ export class DispatchWizard extends DispatchWizardState {
       allowedSlots: this._blockingState().allowedSlots,
       branch: this._resolveTargetBranch(getState().prs),
       ...dispatchWizardExecutionOptions(this._flowType, this._executionPicker),
-      app: selectedDispatchApp(projectApps(this._projectConfigs, this._project), this._app),
+      app: selectedDispatchApp(
+        projectApps(this._projectConfigs, this._project),
+        this._app,
+        this._pinnedSlotApp(),
+      ),
       taskTemplate,
       domain: this._domain || undefined,
       executionTemplateId: this._selectedExecutionTemplateId || undefined,
@@ -2091,6 +2103,7 @@ export class DispatchWizard extends DispatchWizardState {
       selectedDispatchApp: selectedDispatchApp(
         projectApps(this._projectConfigs, this._project),
         this._app,
+        this._pinnedSlotApp(),
       ),
       templateOptions: this._templateOptions,
       templateOptionsLoading: this._templateOptionsLoading,

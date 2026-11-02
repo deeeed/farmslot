@@ -564,6 +564,8 @@ test('autoResolveEngineDecision never auto-dismisses review publication', () => 
   );
 });
 
+// Unknown reasons already resolve to null; this pins the policy if autonomous mode ever
+// gains a default answer, which must never pick Continue for this card.
 test('autoResolveEngineDecision leaves an app binding mismatch to the operator', () => {
   const actions = [
     { id: 'abort', label: 'Abort run', style: 'danger' as const },

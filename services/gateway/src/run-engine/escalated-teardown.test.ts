@@ -18,11 +18,15 @@ const execFileAsync = promisify(execFile);
  * Driven in a subprocess against an isolated status file, because the module
  * resolves its path once at load and the real one is the operator's fleet.
  */
-async function runAgainstStatusFile(statusPath: string, script: string) {
+async function runAgainstStatusFile(
+  statusPath: string,
+  script: string,
+  env: NodeJS.ProcessEnv = {},
+) {
   const gatewayRoot = path.resolve(import.meta.dirname, '..', '..');
   return execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
     cwd: gatewayRoot,
-    env: { ...process.env, NODE_TEST_CONTEXT: '1', FARMSLOT_TEST_STATUS_FILE: statusPath },
+    env: { ...process.env, NODE_TEST_CONTEXT: '1', FARMSLOT_TEST_STATUS_FILE: statusPath, ...env },
   });
 }
 
@@ -107,7 +111,8 @@ test('a retained-session handoff hold clears its reservation and never kills the
 
 // A find-slot abort before the claim (F306 app binding) fails a run pinned to a
 // slot it never claimed: the slot is idle or another run's, so failure cleanup
-// owes it nothing.
+// owes it nothing. The failed run is in an isolated run store, so the
+// ownership check for a failed run is the one that answers.
 for (const [label, row] of [
   ['an idle slot', { lifecycle: 'ready', phase: null, current_run_id: null }],
   [
@@ -121,19 +126,24 @@ for (const [label, row] of [
 
     const { stdout } = await runAgainstStatusFile(
       statusPath,
-      `const { cleanupSlotAfterRunFailure } = await import('./src/run-engine/orchestrator.js');
+      `const store = await import('./src/runs/store.js');
+       const { cleanupSlotAfterRunFailure } = await import('./src/run-engine/orchestrator.js');
+       const run = store.createRun({ project: 'fixture', flowType: 'dev', ticketOrPr: 'F306 abort' });
+       store.updateRun(run.id, { status: 'failed', slotId: 'pinned-slot' });
        const touched = [];
        await cleanupSlotAfterRunFailure(
          'pinned-slot',
-         'aborted-run',
+         run.id,
          'find-slot failure',
          async () => { touched.push('destructive cleanup'); },
          async () => { touched.push('worker teardown'); },
        );
-       console.log(JSON.stringify({ touched }));`,
+       console.log(JSON.stringify({ touched, status: store.getRun(run.id).status }));`,
+      { FARMSLOT_RUNS_DIR: path.join(path.dirname(statusPath), 'runs') },
     );
 
-    const { touched } = JSON.parse(stdout.trim().split('\n').at(-1)!);
+    const { touched, status } = JSON.parse(stdout.trim().split('\n').at(-1)!);
+    assert.equal(status, 'failed');
     assert.deepEqual(touched, [], 'no teardown runs for a slot the run never claimed');
     assert.deepEqual(JSON.parse(readFileSync(statusPath, 'utf8')).slots[0], before);
   });
