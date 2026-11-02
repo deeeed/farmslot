@@ -3856,6 +3856,36 @@ async function blockedGateRun(t: test.TestContext, label: string, decisions: Run
   return run;
 }
 
+// F311: a restart stopped a gate after the pipeline review and before its planned codex review.
+// Recovery's replay re-enters that gate with the plan; an operator's replay starts it fresh.
+test('an automatic human-gate replay keeps the reviews still planned for the gate (F311)', async (t) => {
+  const reviewSequence = [
+    { runner: 'codex', model: 'gpt-6-luna', effort: 'low', mode: 'cold' as const },
+  ];
+  const planned = async (label: string, triggeredBy: 'auto-recovery' | 'operator') => {
+    const run = await blockedGateRun(t, label, []);
+    updateRun(run.id, {
+      status: 'human-gating',
+      engineState: {
+        ...run.engineState,
+        publishGate: {
+          reviewSequence,
+          reviewSequenceRequestedAt: '2026-11-02T01:30:00.000Z',
+          publicationStatus: 'not_published',
+        },
+      },
+    });
+    await runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy }, () => {}, {
+      startEngine: async () => {},
+    });
+    return getRun(run.id)?.engineState?.publishGate;
+  };
+  const recovered = await planned('gate-plan-recovery', 'auto-recovery');
+  assert.deepEqual(recovered?.reviewSequence, reviewSequence);
+  assert.equal(recovered?.reviewSequenceRequestedAt, '2026-11-02T01:30:00.000Z');
+  assert.equal((await planned('gate-plan-operator', 'operator'))?.reviewSequence, undefined);
+});
+
 const holdGate = (id: string): RunDecision => ({
   id,
   type: 'engine_human_gate',

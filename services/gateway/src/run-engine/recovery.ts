@@ -848,11 +848,10 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
 
       const runningStepName = run.steps.find((s) => s.status === 'running')?.name;
       // A gate still preparing its decision when the process stopped has none yet, and only
-      // re-entering it presents one (F311: ba397e2c sat at "Preparing operator decision").
+      // re-entering it presents one (F311: ba397e2c sat at "Preparing operator decision"). The
+      // gate's own reviews leave the status at fixing or reconciling, so the running step decides.
       const gateNeverPresented =
-        run.decisions.length === 0 &&
-        run.status === 'human-gating' &&
-        runningStepName === S.HUMAN_GATE;
+        run.decisions.length === 0 && run.status !== 'blocked' && runningStepName === S.HUMAN_GATE;
       if (run.decisions.length === 0 && !gateNeverPresented) {
         console.log(
           `[run-engine] run ${run.id.slice(0, 8)} — blocked terminal state with no decisions; keeping blocked`,
@@ -877,6 +876,14 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         try {
           await deps.replayHumanGate(run.id);
         } catch (err) {
+          // A slot's node that hasn't reconnected yet refuses the replay; the publication-review
+          // watcher retries it with backoff before handing the gate to the operator.
+          if (deps.rearmPublicationReviewRecovery(run, { replayPending: true })) {
+            console.warn(
+              `[run-engine] run ${run.id.slice(0, 8)} — human-gate re-entry failed; re-arming: ${(err as Error).message.slice(0, 200)}`,
+            );
+            continue;
+          }
           const message = `Human-gate recovery needs an operator retry: ${(err as Error).message.slice(0, 160)}`;
           const current = deps.getRun(run.id) ?? run;
           await markTerminalReviewArtifactOperatorRequired(deps, current, message);
