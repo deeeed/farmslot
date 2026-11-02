@@ -69,7 +69,7 @@ Manual and disabled slots do not accept automatic dispatch.
 | `farmslot slot prepare <id>` | Sync fixtures, checkout branch, and run project preflight.                 |
 | `farmslot dispatch preview`  | Preview slot/project fit before creating a run.                            |
 | `farmslot run create ...`    | Create a supervised run from a Jira/GitHub ref or an existing `TASK.md`.   |
-| `farmslot slot release <id>` | Collect artifacts, clean up, and optionally re-prepare with `--keep-warm`. |
+| `farmslot slot release <id>` | Clean up the task and slot, then optionally re-prepare with `--keep-warm`. |
 | `farmslot rpc <method>`      | Raw gateway escape hatch for protocol methods and agent integrations.      |
 
 Create runs from either source:

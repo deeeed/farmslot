@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A run's results card button that re-pulls the run's files from its slot (`run.refreshMirror`) is now called Sync artifacts, as in the slot view (was Refresh output). Both carry the tooltip "Pull this run's latest files from its slot". A slot release no longer copies files back (F313), so this is how to pick up files that changed after completion. When the slot no longer holds the run's task, the results-card button is disabled with "Slot released; files were synced at <time>". Both buttons share one request, which stays open while the copy reports progress. Before, the results card gave up after 120 s, while a changed 882 MB package needs about 7 minutes at 2 MB/s. The pipeline's finalize node no longer shows release artifact copies.
 - Native chat and dispatch enable "Node default account" without waiting for the node's profile list; a pending or failed read only affects the profile choices, and its error shows beside the picker. A selected profile still waits for its login status. The add control reads "Add another account" (ADR-057 Amendment 11).
 - The Runs list's Runner / model cell names the worker's effort when a record has it (`grok/grok-4.7 · medium`); runs without one show runner and model as before.
 - The evidence review's criteria list and each criterion's moment come from the shared `evidenceReviewToc` (`@farmslot/adapter-sdk/evidence`), the same table of contents Companion shows. No visible change.

@@ -35,12 +35,7 @@ let markerWrites = 0;
 let claimDuringPaneProbe = false;
 let claimAfterTaskClean = false;
 let hasMirrorArtifacts = false;
-let copyOptions: Record<string, unknown> | undefined;
-let scaffoldingExcludesArtifacts: boolean | undefined;
-let copyFailure = false;
-let copyTotals: { files: number; bytes: number } | undefined;
 let retainFailure = false;
-let teardownExtensions: Array<{ slotId: string; ms: number }> = [];
 let claimAfterReap = false;
 let cdpPort: string | undefined;
 /** The browser session a cancelled run left on the slot's CDP port: pid -> survives SIGKILL. */
@@ -140,16 +135,6 @@ const execForTest = async (_vars: unknown, cmd: string) => {
   }
   return ok();
 };
-const realTeardown = await import('../../run-engine/terminal-teardown-registry.js');
-mock.module('../../run-engine/terminal-teardown-registry.js', {
-  namedExports: {
-    ...realTeardown,
-    extendTerminalTeardown: (slotId: string, ms: number) => {
-      teardownExtensions.push({ slotId, ms });
-      realTeardown.extendTerminalTeardown(slotId, ms);
-    },
-  },
-});
 const realExec = await import('../../core/exec.js');
 mock.module('../../core/exec.js', { namedExports: { ...realExec, execOnSlot: execForTest } });
 
@@ -163,13 +148,8 @@ mock.module('../../fleet/slot-scaffolding.js', {
     archiveSlotScaffolding: async (
       _vars: unknown,
       _project: unknown,
-      options: {
-        destination: string;
-        beforeRemove?: () => Promise<void>;
-        artifactsCollected?: boolean;
-      },
+      options: { destination: string; beforeRemove?: () => Promise<void> },
     ) => {
-      scaffoldingExcludesArtifacts = options.artifactsCollected;
       await options.beforeRemove?.();
       return { roots: 0, directory: options.destination };
     },
@@ -242,20 +222,8 @@ const realCopy = await import('../../core/slot-io.js');
 mock.module('../../core/slot-io.js', {
   namedExports: {
     ...realCopy,
-    slotCopyDir: async (
-      _vars: unknown,
-      _from: string,
-      _to: string,
-      options: Record<string, unknown>,
-    ) => {
-      copyOptions = options;
-      if (copyTotals) (options.onTotals as (totals: unknown) => void)(copyTotals);
-      if (copyFailure)
-        (options.onEntryFailure as (error: unknown) => void)({
-          sourcePath: '/slot/.task/dev/proof/artifacts/new.png',
-          message: 'transient read failure',
-        });
-      events.push('mirror-complete');
+    slotCopyDir: async () => {
+      events.push('artifact-copy');
     },
   },
 });
@@ -298,8 +266,7 @@ mock.module('../../runners/native/worker.js', {
 
 const realRuns = await import('../../runs/store.js');
 
-const { releaseArtifactCopyBudgetMs, slotRelease, slotReleasePreflight } =
-  await import('./release.js');
+const { slotRelease, slotReleasePreflight } = await import('./release.js');
 const { runArchive, runCleanup, runDelete } = await import('../run/admin.js');
 const { activePrepareAborts } = await import('./shared.js');
 const { slotPrepare } = await import('./prepare.js');
@@ -319,12 +286,7 @@ beforeEach(async () => {
   claimDuringPaneProbe = false;
   claimAfterTaskClean = false;
   hasMirrorArtifacts = false;
-  copyOptions = undefined;
-  scaffoldingExcludesArtifacts = undefined;
-  copyFailure = false;
-  copyTotals = undefined;
   retainFailure = false;
-  teardownExtensions = [];
   claimAfterReap = false;
   cdpPort = undefined;
   browserSession = new Map();
@@ -531,16 +493,11 @@ test('missing owner records refuse release with explicit named RPC guidance', as
   assert.equal(markerWrites, 0);
 });
 
-test('a claim during artifact collection refuses task deletion and storage cleanup', async () => {
+test('a claim during scaffolding collection refuses task deletion and storage cleanup', async () => {
   slotRow.task_file = '.task/dev/proof/TASK.md';
-  hasMirrorArtifacts = true;
   const lateClaim = (event: string, payload: unknown) => {
     emit(event, payload);
-    if (
-      event === 'slot.release.step' &&
-      (payload as { name: string }).name === 'artifacts' &&
-      (payload as { detail: string }).detail.startsWith('Artifacts collected')
-    ) {
+    if (event === 'slot.release.step' && (payload as { name: string }).name === 'scaffolding') {
       slotRow = {
         ...slotRow,
         current_run_id: 'incoming',
@@ -551,40 +508,37 @@ test('a claim during artifact collection refuses task deletion and storage clean
     }
   };
   await assert.rejects(slotRelease({ slotId: SLOT_ID }, lateClaim), /non-terminal run incoming/);
-  assert.ok(events.includes('mirror-complete'));
   assert.ok(!events.includes('task-clean'));
   assert.ok(!events.includes('storage-clean'));
   assert.equal(slotRow.current_run_id, 'incoming');
   assert.equal(slotRow.slot_epoch, 2);
 });
 
-// F298: macpro-audiolab-6's release copied its 882 MB of artifacts again, though the completion
-// mirror held all but the excluded recipe runs, and the teardown timed out after 300 s every time.
-test('release copyback keeps artifacts the completion mirror already holds', async () => {
+// F313: releases copied artifacts the completion mirror already held (882 MB on audiolab-6, F298)
+// or never indexed (851 MB of APKs on audiolab-4), all inside the 300 s teardown budget.
+test('a release copies no artifacts back, however many the task holds', async () => {
   slotRow.task_file = '.task/dev/proof/TASK.md';
   hasMirrorArtifacts = true;
   await slotRelease({ slotId: SLOT_ID }, emit);
-  assert.ok(events.includes('mirror-complete'));
-  assert.equal(copyOptions?.skipUnchanged, true);
-  assert.equal(scaffoldingExcludesArtifacts, true, 'the scaffolding archive skips them too');
+  assert.ok(!events.includes('artifact-copy'));
+  assert.ok(!slotCommands.some((command) => command.includes('/artifacts')));
+  assert.ok(events.includes('task-clean'));
 });
 
-// F298 follow-up: after #1726, 9dd08510's release still copied 851 MB of APKs the mirror never
-// indexed, inside the 300 s teardown budget. The copy now adds a budget for its own bytes.
-test('a release copying 1.6 GB of unindexed artifacts adds their transfer time to the teardown', async () => {
+// F313: 8385c3c3's archive released macpro-audiolab-6 with no caller reading the step stream,
+// and timed out at 360 s with nothing in the gateway log to say which step hung.
+test('every release step reaches the gateway log with its slot and elapsed time', async (t) => {
   slotRow.task_file = '.task/dev/proof/TASK.md';
-  hasMirrorArtifacts = true;
-  const bytes = 1.6 * 1024 ** 3;
-  copyTotals = { files: 2, bytes };
+  const log = t.mock.method(console, 'log', () => undefined);
   await slotRelease({ slotId: SLOT_ID }, emit);
-  assert.deepEqual(teardownExtensions, [
-    { slotId: SLOT_ID, ms: releaseArtifactCopyBudgetMs(bytes) },
-  ]);
-  assert.ok(
-    teardownExtensions[0]!.ms > (bytes / (5 * 1024 * 1024)) * 1000,
-    'longer than the copy takes at the measured 5 MB/s',
-  );
-  assert.equal(releaseArtifactCopyBudgetMs(1024), 60_000, 'a small copy gets the floor');
+  const steps = log.mock.calls
+    .map((call) => String(call.arguments[0]))
+    .filter((line) => line.startsWith(`[slot.release] ${SLOT_ID} `));
+  const streamed = emitted.filter((entry) => entry.event === 'slot.release.step');
+  assert.ok(streamed.length > 0);
+  assert.equal(steps.length, streamed.length, 'one log line per streamed step');
+  for (const line of steps) assert.match(line, /^\[slot\.release\] \S+ \S+ \+\d+ms: /);
+  assert.ok(steps.some((line) => / scaffolding \+\d+ms: /.test(line)));
 });
 
 // F310: a release that keeps the agents collects no scaffolding but still deletes the task, so
@@ -613,20 +567,10 @@ test('a release keeping the agents that cannot keep its checkouts holds the slot
   assert.ok(events.includes('task-clean'));
 });
 
-test('a copyback with a failed file keeps the artifacts in the scaffolding archive', async () => {
-  slotRow.task_file = '.task/dev/proof/TASK.md';
-  hasMirrorArtifacts = true;
-  copyFailure = true;
-  await slotRelease({ slotId: SLOT_ID }, emit);
-  assert.equal(scaffoldingExcludesArtifacts, false);
-});
-
 test('a claim during task deletion refuses the following storage cleanup', async () => {
   slotRow.task_file = '.task/dev/proof/TASK.md';
-  hasMirrorArtifacts = true;
   claimAfterTaskClean = true;
   await assert.rejects(slotRelease({ slotId: SLOT_ID }, emit), /non-terminal run incoming/);
-  assert.ok(events.includes('mirror-complete'));
   assert.ok(events.includes('task-clean'));
   assert.ok(!events.includes('storage-clean'));
   assert.equal(slotRow.current_run_id, 'incoming');
@@ -867,7 +811,7 @@ for (const mode of ['automatic', 'manual', 'ordinary'])
       }
     });
     const result = await slotRelease(
-      { slotId: SLOT_ID, skipArtifacts: true, forceReset: !recovery },
+      { slotId: SLOT_ID, forceReset: !recovery },
       emit,
       recovery
         ? {

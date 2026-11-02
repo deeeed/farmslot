@@ -70,16 +70,6 @@ test('transferForPipelineNode separates package-refresh from finalize', () => {
     }),
     updatedAt: 1,
   };
-  const release: FileTransferUiEntry = {
-    ...progress({
-      transferId: 'rel',
-      phase: 'mirror',
-      label: 'release-artifacts',
-      state: 'running',
-      runId: 'r',
-    }),
-    updatedAt: 2,
-  };
   const upload: FileTransferUiEntry = {
     ...progress({
       transferId: 'u',
@@ -92,8 +82,6 @@ test('transferForPipelineNode separates package-refresh from finalize', () => {
   };
   assert.equal(transferForPipelineNode(mirror, 'package-refresh')?.transferId, 'm');
   assert.equal(transferForPipelineNode(mirror, 'finalize'), null);
-  assert.equal(transferForPipelineNode(release, 'package-refresh'), null);
-  assert.equal(transferForPipelineNode(release, 'finalize')?.transferId, 'rel');
   assert.equal(transferForPipelineNode(upload, 'package-refresh'), null);
   assert.equal(transferForPipelineNode(upload, 'finalize')?.transferId, 'u');
 });
