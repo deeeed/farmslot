@@ -3864,6 +3864,12 @@ test('an automatic human-gate replay keeps the reviews still planned for the gat
   ];
   const planned = async (label: string, triggeredBy: 'auto-recovery' | 'operator') => {
     const run = await blockedGateRun(t, label, []);
+    // The replay re-reads the run's task: it has to exist.
+    const { taskFile } = run;
+    assert.ok(taskFile);
+    await mkdir(path.dirname(taskFile), { recursive: true });
+    await writeFile(taskFile, '# Task\n');
+    t.after(() => rm(path.dirname(taskFile), { recursive: true, force: true }));
     updateRun(run.id, {
       status: 'human-gating',
       engineState: {
