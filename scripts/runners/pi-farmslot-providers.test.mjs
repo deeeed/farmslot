@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -127,6 +130,25 @@ test('extension-provider preflight uses live authenticated model discovery witho
   });
   assert.deepEqual(result, { status: 'ready', provider: 'ollama' });
   assert.equal(requests, 1);
+});
+
+test('a native check without a verdict names its cause and never passes its output on', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-auth-cause-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const runner = (name, body) => {
+    const file = join(dir, name);
+    writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    return file;
+  };
+  for (const [binary, expected] of [
+    [join(dir, 'missing'), { cause: 'not_found' }],
+    [runner('failed', 'echo secret-token; exit 3'), { cause: 'failed', exitCode: 3 }],
+    [runner('silent', 'echo secret-token'), { cause: 'no_verdict', exitCode: 0 }],
+  ])
+    assert.deepEqual(
+      await checkPiProviderAuth(binary, 'anthropic/claude-haiku-4-5', { FARMSLOT_PI_OLLAMA: '0' }),
+      { status: 'invalid', reason: 'auth_check_unavailable', ...expected },
+    );
 });
 
 test('openaiBaseUrl adds http and /v1', () => {

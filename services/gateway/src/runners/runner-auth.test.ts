@@ -42,6 +42,69 @@ for (const [payload, exitCode, passes] of [
   });
 }
 
+for (const [name, replies, calls, outcome] of [
+  ['a timed-out check is retried once', [{ exitCode: 124 }, { stdout: '{"status":"ready"}' }], 2],
+  [
+    'two timeouts name the timeout',
+    [{ exitCode: 124 }, { exitCode: 124 }],
+    2,
+    /auth_check_unavailable \(the check timed out after 30 s, twice\)/,
+  ],
+  [
+    "the runner's own timeout is retried and named",
+    Array(2).fill({
+      stdout: '{"status":"invalid","reason":"auth_check_unavailable","cause":"timeout"}',
+      exitCode: 1,
+    }),
+    2,
+    /\(the runner's own auth check timed out, twice\)/,
+  ],
+  [
+    "the runner's failed check names its exit code",
+    [
+      {
+        stdout:
+          '{"status":"invalid","reason":"auth_check_unavailable","cause":"failed","exitCode":3}',
+        exitCode: 1,
+      },
+    ],
+    1,
+    /\(the runner's auth check failed \(exit 3\)\)/,
+  ],
+  [
+    'output without a verdict names the exit code',
+    [{ stdout: 'secret-token', exitCode: 2 }],
+    1,
+    /\(the check exited 2 without a verdict\)/,
+  ],
+] as const) {
+  test(`auth check cause: ${name}`, async () => {
+    let invoked = 0;
+    const action = assertRunnerAuthBeforeLaunch(
+      makeVars(),
+      'pi',
+      'anthropic/claude-haiku-4-5',
+      {},
+      undefined,
+      undefined,
+      {
+        execute: async () => {
+          const reply = replies[invoked++];
+          return { stdout: '', exitCode: 0, ...reply, stderr: 'secret-token' };
+        },
+      },
+    );
+    if (outcome)
+      await assert.rejects(action, (error: Error) => {
+        assert.match(error.message, outcome);
+        assert.doesNotMatch(error.message, /secret-token/);
+        return true;
+      });
+    else await action;
+    assert.equal(invoked, calls);
+  });
+}
+
 test('runners without an auth-check capability do not inherit Pi checks', async () => {
   await assertRunnerAuthBeforeLaunch(makeVars(), 'claude', 'haiku', {}, undefined, undefined, {
     definition: getRunnerDefinition('claude'),
