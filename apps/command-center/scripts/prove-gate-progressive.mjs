@@ -128,14 +128,15 @@ const cdp = async (...args) => {
 };
 /** The fleet's bulk release acts on selected table rows: tick every machine's select-all. */
 const selectAllFleetRows = async () => {
-  const labels = JSON.parse(
+  const { total, unchecked } = JSON.parse(
     await cdp(
       'eval',
       route,
-      `const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);return all.filter(e=>e.localName==='input'&&e.getAttribute('aria-label')?.startsWith('Select all slots on ')&&!e.checked).map(e=>e.getAttribute('aria-label'));`,
+      `const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);const boxes=all.filter(e=>e.localName==='input'&&e.getAttribute('aria-label')?.startsWith('Select all slots on '));return {total:boxes.length,unchecked:boxes.filter(e=>!e.checked).map(e=>e.getAttribute('aria-label'))};`,
     ),
   );
-  for (const label of labels) await cdp('click', route, `input[aria-label="${label}"]`);
+  assert(total > 0, 'The fleet table must show rows to select before the bulk release');
+  for (const label of unchecked) await cdp('click', route, `input[aria-label="${label}"]`);
 };
 try {
   for (const name of [
@@ -569,7 +570,7 @@ try {
   const origin = `http://127.0.0.1:${ui.httpServer.address().port}`;
   env.FARMSLOT_UI_URL = origin;
   env.FARMSLOT_GATEWAY = `ws://127.0.0.1:${proxyPort}/ws`;
-  route = `fleet?proof=${run.id}`;
+  route = `fleet?proof=${run.id}&view=list`;
   await cdp('goto', origin + '/#' + route, '--new');
   await cdp(
     'eval',

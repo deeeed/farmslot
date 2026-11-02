@@ -8,6 +8,8 @@ export interface FleetReleaseScope {
   slotIds: string[];
   label: string;
   title: string;
+  /** Why the action is disabled, short enough to show beside it; empty when enabled. */
+  reason: string;
   /** Some slot in scope can be released in bulk right now. */
   eligible: boolean;
   disabled: boolean;
@@ -24,23 +26,30 @@ export function fleetReleaseScope(
 ): FleetReleaseScope {
   const chosen = visible.filter((slot) => selected.has(slot.slot));
   const { count, canInspect } = fleetRecoverySummary(chosen);
-  const title = !selectable
-    ? 'Switch to the table to select slots to release'
+  const [reason, title] = !selectable
+    ? ['Switch to the table to select', 'Switch to the table to select slots to release']
     : !selected.size
-      ? 'Select slots to release'
+      ? ['Select slots to release', 'Select slots to release']
       : !chosen.length
-        ? 'The selected slots are hidden by the current filters'
+        ? ['Selection hidden by filters', 'The selected slots are hidden by the current filters']
         : !canInspect
-          ? 'No selected slot can be released — each is busy, held, or disabled'
-          : `Review the ${chosen.length} selected slot${chosen.length === 1 ? '' : 's'} before releasing`;
+          ? [
+              'Selected slots can’t be released',
+              'No selected slot can be released — each is busy, held, or disabled',
+            ]
+          : [
+              '',
+              `Review the ${chosen.length} selected slot${chosen.length === 1 ? '' : 's'} before releasing`,
+            ];
   return {
     slotIds: chosen.map((slot) => slot.slot),
     label: chosen.length
       ? `${FLEET_RELEASE_LABEL} (${chosen.length} selected)`
       : FLEET_RELEASE_LABEL,
     title,
+    reason,
     eligible: count > 0,
-    disabled: !selectable || !chosen.length || !canInspect,
+    disabled: reason !== '',
   };
 }
 

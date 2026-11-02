@@ -8,6 +8,10 @@
       "claim": "After a local-work decision, a real CC release and discard confirmation make the next unrestricted run select that slot without a picker decision."
     },
     {
+      "id": "selection-release",
+      "claim": "Real clicks in the CC fleet table release exactly the ticked safe rows: no selection or a filter-hidden selection disables the bulk action, and a finished release clears the selection."
+    },
+    {
       "id": "recovery-safety",
       "claim": "Recovery verifies default HEAD and fixtures, binds discard to actual content, preserves retained evidence, and holds failed work until a guarded retry succeeds, and keeps completed teardown cold after cancellation."
     },
@@ -29,6 +33,14 @@
         "timeout_ms": 660000,
         "intent": "Recover one stale slot through the authenticated CC fleet and inspect the next unrestricted run selection through the public gateway.",
         "proves": ["recovery-selection"],
+        "next": "cc-selection-release"
+      },
+      "cc-selection-release": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/agentic/fleet-selection-release-proof.mjs",
+        "timeout_ms": 600000,
+        "intent": "Tick one safe and one unsafe fixture row with real clicks, hide them with a search, then release through the review and check each checkout's real Git branch.",
+        "proves": ["selection-release"],
         "next": "native-actions"
       },
       "rpc-safety": {

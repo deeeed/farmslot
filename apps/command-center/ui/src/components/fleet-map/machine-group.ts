@@ -11,7 +11,7 @@ import type {
   TaskProgressStructured,
 } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus } from '@farmslot/protocol';
-import { fleetBehindDefault, fleetSlotBranch } from '@farmslot/review-dispatch';
+import { fleetBehindDefaultIfBehind, fleetSlotBranch } from '@farmslot/review-dispatch';
 
 import './slot-card.js';
 import '../shared/cancelled-run-slot-release.js';
@@ -331,6 +331,14 @@ export class MachineGroup extends LitElement {
     .slot-row .muted {
       color: ${unsafeCSS(colors.textMuted)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    /* A fixed width, so a distance arriving never resizes the other columns. */
+    .slot-row .behind-cell {
+      display: inline-block;
+      width: 16ch;
+      vertical-align: middle;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .slot-row .branch-cell {
       color: ${unsafeCSS(colors.accent)};
@@ -1016,6 +1024,7 @@ ${deployHint}"
     const isWorking = s.lifecycle === 'busy' && s.phase === 'working';
     const cancelledHold = cancelledRunSlotHold(s);
     const checkedOut = fleetSlotBranch(s);
+    const behind = fleetBehindDefaultIfBehind(s);
     const branch = slotBranchDisplay({ ...s, branch: checkedOut }, getProjectSlotTrackingConfigs());
     const branchLabel = branch.label;
     const branchClass =
@@ -1095,7 +1104,9 @@ ${deployHint}"
         </td>
         <td class="muted">${s.model ?? run?.metrics?.model ?? '-'}</td>
         <td class="${branchClass}" title="${checkedOut}">${branchLabel}</td>
-        <td class="muted">${fleetBehindDefault(s) ?? ''}</td>
+        <td class="muted">
+          <span class="behind-cell" title=${behind ?? ''}>${behind ?? ''}</span>
+        </td>
         <td style="white-space:nowrap">
           ${hasRun
             ? html`<button

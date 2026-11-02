@@ -3,7 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 
 import type { Run, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
-import { fleetBehindDefault, fleetSlotBranch } from '@farmslot/review-dispatch';
+import { fleetBehindDefaultIfBehind, fleetSlotBranch } from '@farmslot/review-dispatch';
 
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/status-badge.js';
@@ -126,9 +126,12 @@ export class SlotCard extends LitElement {
       color: ${unsafeCSS(colors.textSecondary)};
       line-height: 1.5;
     }
-    /* Always one line tall, so the distance arriving never moves the cards below. */
+    /* Exactly one line, so the distance arriving or growing never moves the cards below. */
     .meta .behind {
-      min-height: 1.5em;
+      height: 1.5em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .meta .branch {
       color: ${unsafeCSS(colors.accent)};
@@ -387,7 +390,7 @@ export class SlotCard extends LitElement {
       getProjectSlotTrackingConfigs(),
     );
     const branchLabel = branch.label;
-    const behind = fleetBehindDefault(s);
+    const behind = fleetBehindDefaultIfBehind(s);
     const branchClass =
       branch.tone === 'baseline'
         ? 'branch main'
@@ -507,7 +510,7 @@ export class SlotCard extends LitElement {
                   ></cancelled-run-slot-release>`
                 : ''}
               ${branchLabel ? html`<div class="${branchClass}">${branchLabel}</div>` : ''}
-              <div class="behind">${behind ?? ''}</div>
+              <div class="behind" title=${behind ?? ''}>${behind ?? ''}</div>
               ${s.taskId ? html`<div class="task">${this._formatTaskId(s.taskId)}</div>` : ''}
               ${s.currentLane
                 ? html`<div class="runner">

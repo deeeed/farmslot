@@ -53,7 +53,11 @@ export function fleetSlotBranch(slot: Pick<SlotStatus, 'branch' | 'workspace'>):
   return slot.workspace?.branch ?? slot.branch;
 }
 
-/** "3 behind main" from a current workspace observation; null when the distance is unknown. */
+/**
+ * "3 behind main" from the slot's workspace observation; null when the distance is unknown. A
+ * releasable slot's expired observation is unknown. A busy or manual slot keeps its last
+ * observed distance, since its eligibility is refused before the age check.
+ */
 export function fleetBehindDefault(
   slot: SlotStatus,
   eligibility: SlotRecoveryEligibility = slotRecoveryEligibility(slot),
@@ -61,6 +65,13 @@ export function fleetBehindDefault(
   const work = slot.workspace;
   if (eligibility.reason === 'unknown' || work?.behind == null) return null;
   return `${work.behind} behind ${work.defaultBranch ?? 'main'}${work.remoteAdvanced ? ' · remote advanced' : ''}`;
+}
+
+/** The fleet's own label: nothing for a slot level with its default branch. */
+export function fleetBehindDefaultIfBehind(slot: SlotStatus): string | null {
+  const work = slot.workspace;
+  if (work?.behind === 0 && !work.remoteAdvanced) return null;
+  return fleetBehindDefault(slot);
 }
 
 /** One row for the Command Center and Companion release reviews. */
@@ -136,6 +147,8 @@ export class FleetRefreshViewModel {
   private scope: ReadonlySet<string> | null = null;
   private requestId = '';
   private bulkRunning = false;
+  /** Sticky: a later inspection resets row statuses, not the fact that a release was sent. */
+  released = false;
   get canCancel(): boolean {
     return this.phase === 'running' && this.bulkRunning;
   }
@@ -423,6 +436,7 @@ export class FleetRefreshViewModel {
   ): Promise<void> {
     if (!this.sameContext()) return;
     const requestId = this.makeId();
+    this.released = true;
     this.bulkRunning = false;
     this.activeTargets = new Set([slotId]);
     this.attach(requestId);
@@ -468,6 +482,7 @@ export class FleetRefreshViewModel {
       }));
     if (!targets.length) return;
     const requestId = this.makeId();
+    this.released = true;
     this.bulkRunning = true;
     this.attach(requestId);
     this.activeTargets = new Set(targets.map((target) => target.slotId));

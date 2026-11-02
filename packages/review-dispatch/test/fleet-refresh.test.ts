@@ -17,6 +17,7 @@ import {
 
 import {
   fleetBehindDefault,
+  fleetBehindDefaultIfBehind,
   type FleetRefreshClient,
   FleetRefreshViewModel,
   fleetSlotBranch,
@@ -741,4 +742,12 @@ test('cards, the table and the review share one branch pick and one behind-main 
   const expired = slot('expired', { behind: 3, observedAt: '2000-01-01T00:00:00Z' });
   assert.equal(fleetBehindDefault(expired), null);
   assert.equal(fleetWorkspaceRow(expired).behind, 'Behind main unknown');
+  // Level with main: the fleet shows nothing, the review keeps the zero.
+  const level = slot('level', { behind: 0 });
+  assert.equal(fleetBehindDefaultIfBehind(level), null);
+  assert.equal(fleetWorkspaceRow(level).behind, '0 behind main');
+  assert.equal(
+    fleetBehindDefaultIfBehind(slot('moved', { behind: 0, remoteAdvanced: true })),
+    '0 behind main · remote advanced',
+  );
 });

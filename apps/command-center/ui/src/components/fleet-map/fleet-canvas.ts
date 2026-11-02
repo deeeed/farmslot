@@ -251,12 +251,22 @@ export class FleetCanvas extends LitElement {
       color: #fff;
       border-color: ${unsafeCSS(colors.accent)};
     }
-    /* One line at a stable width, so a selection count never rewraps the toolbar. */
+    /* One line at a stable width (border-box), so a selection count never rewraps the toolbar. */
     .fleet-refresh-trigger {
       border-radius: 4px;
-      margin-left: auto;
       white-space: nowrap;
-      min-width: 40ch;
+      min-width: 43ch;
+    }
+    /* Always present at a fixed width, so the reason coming or going never moves anything. */
+    .fleet-release-hint {
+      margin-left: auto;
+      width: 34ch;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: ${unsafeCSS(colors.textMuted)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
     }
     .fleet-refresh-trigger.has-eligible {
       color: ${unsafeCSS(colors.accent)};
@@ -1469,8 +1479,12 @@ export class FleetCanvas extends LitElement {
   private renderFleetRefreshTrigger() {
     const scope = this.releaseScope;
     return html`
+      <span class="fleet-release-hint" id="fleet-release-hint" title=${scope.title}
+        >${scope.reason}</span
+      >
       <button
         class="toggle-btn fleet-refresh-trigger ${scope.eligible ? 'has-eligible' : ''}"
+        aria-describedby="fleet-release-hint"
         ?disabled=${scope.disabled || this.fleetRefreshOpen}
         title=${scope.title}
         @click=${() => {

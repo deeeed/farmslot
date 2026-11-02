@@ -65,6 +65,11 @@ test('with nothing selected the bulk action is disabled and says so', () => {
   assert.equal(scope.label, FLEET_RELEASE_LABEL);
   assert.equal(scope.disabled, true);
   assert.equal(scope.title, 'Select slots to release');
+  assert.equal(
+    scope.reason,
+    'Select slots to release',
+    'shown beside the button, not only on hover',
+  );
 });
 
 test('a selection narrows the bulk action to the chosen visible rows', () => {
@@ -72,6 +77,7 @@ test('a selection narrows the bulk action to the chosen visible rows', () => {
   assert.deepEqual(scope.slotIds, ['idle-2']);
   assert.equal(scope.label, `${FLEET_RELEASE_LABEL} (1 selected)`);
   assert.equal(scope.disabled, false);
+  assert.equal(scope.reason, '');
 });
 
 test('a filter that hides the selection disables the action instead of widening it', () => {
@@ -80,6 +86,7 @@ test('a filter that hides the selection disables the action instead of widening 
   assert.deepEqual(scope.slotIds, []);
   assert.equal(scope.disabled, true);
   assert.equal(scope.title, 'The selected slots are hidden by the current filters');
+  assert.equal(scope.reason, 'Selection hidden by filters');
 });
 
 test('cards and the resource view have no rows to select', () => {
