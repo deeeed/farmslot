@@ -1,11 +1,22 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
-import type { Run, RuntimeCapabilityLease } from '@farmslot/protocol';
+import type {
+  Run,
+  RuntimeCapabilityCatalogEntry,
+  RuntimeCapabilityLease,
+} from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
-import type { WarmSweepSummary } from '../runtime-capabilities/registry.js';
+import {
+  RuntimeCapabilityRegistry,
+  type WarmSweepSummary,
+} from '../runtime-capabilities/registry.js';
+import { RuntimeCapabilityStore } from '../runtime-capabilities/store.js';
 
 import {
   assertDeviceTargetAvailable,
@@ -343,6 +354,104 @@ test('an unreadable project config on another machine does not refuse', async ()
   assert.equal(refusal, null);
   assert.equal(catalogReads, 0, "another machine's project config is never read");
 });
+
+// F330: a boot or shutdown no longer holds the registry lock, so the device it
+// drives must stay fenced from other slots on its machine while it runs.
+test(
+  'a device control holds its slot device against other slots until it finishes',
+  { timeout: 5_000 },
+  async (t) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'device-control-guard-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const device = {
+      id: 'device',
+      project: 'fixture',
+      label: 'device',
+      version: '1',
+      dependencies: [],
+      sharePolicy: 'exclusive',
+      actions: {
+        acquire: { kind: 'slot-action', actionId: 'device.acquire' },
+        health: { kind: 'slot-action', actionId: 'device.health' },
+        release: { kind: 'slot-action', actionId: 'device.release' },
+      },
+      releaseEffects: [],
+      provenance: { project: 'fixture', providerId: 'device', version: '1', digest: 'fixture' },
+      availability: { state: 'available' },
+      parameters: { type: 'object', properties: { simulator: { type: 'string' } } },
+      cost: { class: 'low', resources: [{ id: 'simulator', kind: 'device', access: 'exclusive' }] },
+    } satisfies RuntimeCapabilityCatalogEntry;
+    const simulators: Record<string, string> = {
+      'slot-a': 'SIM-A',
+      'slot-b': 'SIM-B',
+      'slot-c': 'SIM-C',
+      'slot-twin': 'SIM-A',
+    };
+    const registry = new RuntimeCapabilityRegistry({
+      store: new RuntimeCapabilityStore(path.join(directory, 'leases.json')),
+      catalogForSlot: async (slotId) => ({ slotId, project: 'fixture', capabilities: [device] }),
+      runAction: async () => ({ ok: true }),
+      assertTargetAvailable: (input) =>
+        assertDeviceTargetAvailable(input, {
+          loadSlotVars: async (slotId) => ({
+            machine: 'fixture-host',
+            resourceVars: { simulator: simulators[slotId] ?? '' },
+          }),
+          catalogForSlot: async () => ({ capabilities: [device] }),
+        }),
+    });
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const booting = registry.withSlotResourceShutdown(
+      'slot-a',
+      'booting-run',
+      'ios-sim',
+      true,
+      async () => {
+        enter();
+        await released;
+      },
+    );
+    await entered;
+    const acquire = (slotId: string, ownerRunId: string, parameters: Record<string, unknown>) =>
+      registry.acquire({
+        slotId,
+        capabilityId: 'device',
+        ownerRunId,
+        parameters,
+        proofRequirement: { capabilityId: 'device', reason: 'validation', mode: 'state' },
+      });
+    try {
+      const refused = await acquire('slot-b', 'next-run', { simulator: 'SIM-A' });
+      assert.equal(refused.ok, false);
+      if (!refused.ok)
+        assert.match(
+          refused.conflict.reason,
+          /slot 'slot-a' on fixture-host, which is starting or stopping that device/,
+        );
+      const twin = await registry.withSlotResourceShutdown(
+        'slot-twin',
+        'twin-run',
+        'ios-sim',
+        true,
+        async () => 'stopped',
+      );
+      assert.equal(twin.ok, false, "another slot's control on the same device is refused too");
+      if (!twin.ok) assert.match(twin.reason, /slot 'slot-a'/);
+      assert.equal((await acquire('slot-c', 'other-run', {})).ok, true, 'a different device');
+    } finally {
+      release();
+    }
+    assert.deepEqual(await booting, { ok: true, value: undefined });
+    assert.equal((await acquire('slot-b', 'next-run', { simulator: 'SIM-A' })).ok, true);
+  },
+);
 
 // ── MANUAL-000114: what a finished completion owes its reservation ────────────
 

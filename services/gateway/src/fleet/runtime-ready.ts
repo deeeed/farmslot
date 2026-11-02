@@ -6,7 +6,7 @@ import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.j
 import { readSlotRow } from '../core/state.js';
 import { getRuntimeCapabilityRegistry } from '../methods/runtime-capabilities.js';
 import { PREPARE_PREFLIGHT_TIMEOUT_MS } from '../methods/slot/prepare-command.js';
-import { getRun } from '../runs/store.js';
+import { getRun, updateRunStep } from '../runs/store.js';
 import { withSlotSources } from '../sources/runtime.js';
 
 import {
@@ -72,6 +72,19 @@ export async function ensureRunRuntimeReady(
         (a, b) =>
           Number(b.definition.type === 'dev-server') - Number(a.definition.type === 'dev-server'),
       );
+    // A boot can take its whole launch budget, so name it on the run's active
+    // step as the launch preflight does, and put the step's detail back after.
+    const steps = getRun(runId)?.steps ?? [];
+    const step =
+      steps.find((entry) => entry.status === 'running') ??
+      steps.find((entry) => entry.name === 'dispatch');
+    const stepDetail = step?.detail;
+    let shownDetail = stepDetail;
+    const showDetail = (detail: string | undefined) => {
+      if (!step || detail === shownDetail) return;
+      shownDetail = detail;
+      updateRunStep(runId, step.name, { detail });
+    };
     for (const resource of resources) {
       await assertOwner();
       const observed = await probeResourceStatus(slotId, resource.id);
@@ -83,7 +96,9 @@ export async function ensureRunRuntimeReady(
         );
       let deadline = 0;
       let ready = observed;
-      // Reuse the acquisition lock and its slot/device ownership fence. A pack's
+      const starting = `Starting ${resource.id} on ${slotId} (up to ${Math.ceil(bootTimeoutMs / 1000)} s)`;
+      showDetail(starting);
+      // Reuse the slot/device ownership fence of the capability registry. A pack's
       // server hook may also launch its device, so inspect device claims for both.
       const controlled = await getRuntimeCapabilityRegistry().withSlotResourceShutdown(
         slotId,
@@ -91,6 +106,7 @@ export async function ensureRunRuntimeReady(
         resource.id,
         true,
         async () => {
+          showDetail(starting);
           await beforeBoot();
           await assertOwner();
           const active = getActiveResource(slotId, resource.id);
@@ -115,12 +131,13 @@ export async function ensureRunRuntimeReady(
           ready = await probeResourceStatus(slotId, resource.id);
           await assertOwner();
         },
+        () => showDetail(`Waiting for an earlier runtime action on ${slotId}`),
       );
       if (!controlled.ok)
         throw new Error(`Runtime ${resource.id} on ${slotId}: ${controlled.reason}`);
       // A host still busy from the boot (CoreSimulator right after `simctl boot`) can
       // time out one health probe, so keep probing within the launch budget, outside
-      // the capability lock other slots' operations share.
+      // the slot's runtime control queue.
       while (ready.status === 'stopped' && Date.now() < deadline) {
         await timers.setTimeout(Math.min(options.pollMs ?? HEALTH_POLL_MS, deadline - Date.now()));
         if (Date.now() >= deadline) break;
@@ -132,6 +149,7 @@ export async function ensureRunRuntimeReady(
           `Runtime ${resource.id} on ${slotId} is ${ready.status} after boot: ${ready.detail ?? 'not healthy'}`,
         );
     }
+    showDetail(stepDetail);
     await assertOwner();
   });
 }

@@ -168,6 +168,11 @@ export interface RuntimeCapabilityRegistryOptions {
     claimsDevice: boolean;
     /** Leases that currently hold a provider, across every slot. */
     activeLeases: readonly RuntimeCapabilityLease[];
+    /**
+     * Device controls (a resource boot or shutdown) in progress, across every
+     * slot. A slot starting or stopping its device holds it as a lease would.
+     */
+    controls?: readonly { slotId: string; ownerRunId: string; resourceId: string }[];
   }) => Promise<string | null>;
   /**
    * The host-pressure verdict for one acquire: a refusal, an unenforced
@@ -541,6 +546,14 @@ export class RuntimeCapabilityRegistry {
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
+  /** Per-slot tail of runtime controls: a slot's run one at a time, different slots' in parallel. */
+  private readonly slotControlTails = new Map<string, Promise<void>>();
+  /** Device controls running now, which the device guard treats as holders. */
+  private readonly deviceControls = new Set<{
+    slotId: string;
+    ownerRunId: string;
+    resourceId: string;
+  }>();
   /**
    * Claims reserved for a waiter, announced once the reservation is durable.
    *
@@ -840,33 +853,64 @@ export class RuntimeCapabilityRegistry {
     return this.status({ slotId });
   }
 
-  /** Terminal slot shutdown shares the acquisition lock and cross-slot device guard. */
+  /**
+   * A slot resource boot or shutdown, checked under the acquisition lock but run
+   * outside it: one slot's controls queue behind each other, never other slots'.
+   * A device control stays visible to the cross-slot device guard while it runs.
+   * `onWait` fires when an earlier control on this slot is still running.
+   */
   async withSlotResourceShutdown<T>(
     slotId: string,
     ownerRunId: string,
     resourceId: string,
     device: boolean,
     shutdown: () => Promise<T>,
+    onWait?: () => void,
   ): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
-    return this.mutate(async () => {
-      const leases = this.options.store.snapshot().leases.filter(leaseNeedsRetention);
-      if (leases.some((lease) => lease.slotId === slotId && lease.owner.runId !== ownerRunId))
-        return { ok: false, reason: 'Another runtime capability owner still uses this slot' };
-      if (device) {
-        if (!this.options.assertTargetAvailable)
-          return { ok: false, reason: 'Device ownership inspection is unavailable' };
-        const reason = await this.options.assertTargetAvailable({
-          slotId,
-          ownerRunId,
-          capabilityId: resourceId,
-          parameters: {},
-          claimsDevice: true,
-          activeLeases: leases,
-        });
-        if (reason) return { ok: false, reason };
-      }
-      return { ok: true, value: await shutdown() };
+    const previous = this.slotControlTails.get(slotId);
+    let release!: () => void;
+    const tail = new Promise<void>((resolve) => {
+      release = resolve;
     });
+    this.slotControlTails.set(slotId, tail);
+    try {
+      if (previous) {
+        onWait?.();
+        await previous;
+      }
+      const control = { slotId, ownerRunId, resourceId };
+      const refusal = await this.mutate(async () => {
+        const leases = this.options.store.snapshot().leases.filter(leaseNeedsRetention);
+        if (leases.some((lease) => lease.slotId === slotId && lease.owner.runId !== ownerRunId))
+          return 'Another runtime capability owner still uses this slot';
+        if (device) {
+          if (!this.options.assertTargetAvailable)
+            return 'Device ownership inspection is unavailable';
+          const reason = await this.options.assertTargetAvailable({
+            slotId,
+            ownerRunId,
+            capabilityId: resourceId,
+            parameters: {},
+            claimsDevice: true,
+            activeLeases: leases,
+            controls: [...this.deviceControls],
+          });
+          if (reason) return reason;
+          // Registered under the same lock as its checks, so no acquire slips between.
+          this.deviceControls.add(control);
+        }
+        return null;
+      });
+      if (refusal) return { ok: false, reason: refusal };
+      try {
+        return { ok: true, value: await shutdown() };
+      } finally {
+        this.deviceControls.delete(control);
+      }
+    } finally {
+      release();
+      if (this.slotControlTails.get(slotId) === tail) this.slotControlTails.delete(slotId);
+    }
   }
 
   /** Run eviction must retain every unresolved provider, even after slot detach. */
@@ -1159,6 +1203,7 @@ export class RuntimeCapabilityRegistry {
         // Warm leases included: their provider is still up, so a target naming
         // that device would be adopted and then stopped by the warm sweeper.
         activeLeases: snapshot.leases.filter(runsProvider),
+        controls: [...this.deviceControls],
       });
       if (refusal) {
         return {

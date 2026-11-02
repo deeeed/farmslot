@@ -75,6 +75,7 @@ let stoppedResources: string[] = [];
 let shutdownFailure: string | null = null;
 let shutdownSkipped = false;
 let resourceStillHealthy = false;
+let shutdownHookNeverSettles = false;
 let onResolveResources: (() => void) | null = null;
 
 function browserSessionCensus() {
@@ -340,6 +341,21 @@ mock.module('../fleet/resource-manager.js', {
     executeResourceHealth: async () => ({ ok: resourceStillHealthy }),
   },
 });
+// Loaded after the resource-manager mock, so the real stop below still uses it.
+const realSlotCleanup = await import('../fleet/slot-cleanup.js');
+mock.module('../fleet/slot-cleanup.js', {
+  namedExports: {
+    ...realSlotCleanup,
+    shutdownSlotResource: async (
+      ...args: Parameters<typeof realSlotCleanup.shutdownSlotResource>
+    ) => {
+      if (!shutdownHookNeverSettles) return realSlotCleanup.shutdownSlotResource(...args);
+      // The hook timed out and is still running: its late settle never lands.
+      args[4].push(new Promise<void>(() => {}));
+      return { resourceId: args[1], kind: 'skipped', reason: 'timeout after 15000ms', torn: false };
+    },
+  },
+});
 
 const realRelease = await import('../methods/slot/release.js');
 mock.module('../methods/slot/release.js', {
@@ -397,8 +413,12 @@ mock.module('../evals/blind-trial.js', {
     },
   },
 });
-const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } =
-  await import('./slot-teardown.js');
+const {
+  slotTeardownBlocker,
+  stopRunOwnedTmuxAndWatches,
+  retryOccupiedRunSlot,
+  shutdownRunSlotResources,
+} = await import('./slot-teardown.js');
 const { replaySlotReclaimCheck } = await import('../methods/run/replay-step.js');
 const { buildFleetRefreshSnapshot } = await import('../methods/fleet.js');
 const { defaultCancelCollaborators } = await import('./cancel-transition.js');
@@ -457,6 +477,7 @@ beforeEach(() => {
   shutdownFailure = null;
   shutdownSkipped = false;
   resourceStillHealthy = false;
+  shutdownHookNeverSettles = false;
   onResolveResources = null;
 });
 
@@ -545,6 +566,23 @@ test('a skipped shutdown and a surviving healthy resource retain cleanup ownersh
   assert.equal((await releaseCompletedRunSlot(run)).released, false);
   assert.match(String(slotRow?.held_reason), /still running/);
 });
+
+// F330: mini-mme-3's teardown waited with no bound on a hook that never settled.
+test(
+  'a shutdown hook that never settles returns within the grace, unconfirmed',
+  { timeout: 5_000 },
+  async () => {
+    run.status = 'done';
+    configuredResources = slotRuntimeResources().filter((resource) => resource.id === 'ios-sim');
+    shutdownHookNeverSettles = true;
+    const unconfirmed: string[] = [];
+    assert.equal(
+      await shutdownRunSlotResources(run, unconfirmed, { settleGraceMs: 20 }),
+      'ios-sim: shutdown hook still running after its timeout',
+    );
+    assert.deepEqual(unconfirmed, ['ios-sim']);
+  },
+);
 
 test('a successor claiming the slot before runtime shutdown keeps all resources', async () => {
   run.status = 'done';
