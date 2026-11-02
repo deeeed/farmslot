@@ -166,3 +166,34 @@ test('activity without a recorded send cannot suppress delivery of an unsent fix
   assert.deepEqual(await pending, { status: 'delivered', turnToken: 'new-fix' });
   assert.equal(activityReads, 0);
 });
+
+for (const runner of ['claude', 'scripted']) {
+  test(`a recorded ${runner} fix its worker signalled is adopted without another send`, async () => {
+    const f = fixture();
+    f.context.runner = runner;
+    f.context.promptDeliveryStartedAt = '2026-10-29T19:01:25Z';
+    f.context.signalAttemptId = 'worker-attempt';
+    f.deps.deliver = async () => assert.fail('a worker mid-fix must not receive its prompt again');
+    assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
+      status: 'delivered',
+    });
+    assert.deepEqual(f.boundaries, []);
+  });
+}
+
+test('a scripted fix is unconfirmed when recorded alone, and unsupported when unsent or gone', async () => {
+  const f = fixture();
+  f.context.runner = 'scripted';
+  f.deps.deliver = async () => assert.fail('a scripted runner takes no prompt');
+  assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
+    status: 'unsupported',
+  });
+  f.context.promptDeliveryStartedAt = '2026-10-29T19:01:25Z';
+  assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
+    status: 'deferred',
+  });
+  f.deps.targetHostsRunner = async () => false;
+  assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
+    status: 'unsupported',
+  });
+});
