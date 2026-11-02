@@ -413,19 +413,25 @@ export function useFamilyWorkspaceController() {
       documentAbortRef.current = controller;
       const url = familyArtifactUrl(gatewayUrl, artifact);
       const current = captureCurrent();
-      readStoredArtifact(url, artifactAuthHeaders, { signal: controller.signal })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.text();
-        })
-        .then((body) => {
-          if (current() && !controller.signal.aborted)
-            setDocumentViewer({
-              title: artifact.path.split('/').pop() ?? artifact.path,
-              body,
-              sharedArtifact: { runId: artifact.runId, path: artifact.path },
-            });
-        })
+      const applyStored = (response: Response) =>
+        Promise.resolve(response)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.text();
+          })
+          .then((body) => {
+            if (current() && !controller.signal.aborted)
+              setDocumentViewer({
+                title: artifact.path.split('/').pop() ?? artifact.path,
+                body,
+                sharedArtifact: { runId: artifact.runId, path: artifact.path },
+              });
+          });
+      readStoredArtifact(url, artifactAuthHeaders, {
+        signal: controller.signal,
+        onStored: applyStored,
+      })
+        .then(applyStored)
         .catch((err: Error) => {
           // Abort is the expected cleanup path when navigating or opening another document.
           if (err.name === 'AbortError' || !current()) return;

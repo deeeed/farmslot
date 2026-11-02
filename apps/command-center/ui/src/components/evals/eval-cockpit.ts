@@ -229,21 +229,23 @@ export class EvalCockpit extends EvalCockpitState {
     if (cached?.revision === revision) return;
     if (this._evalPackageLoads.has(revision)) return;
     this._evalPackageLoads.add(revision);
+    const applyStored = (result: EvalTrialResultGetResult) => {
+      this._evalPackageSnapshots.set(result.candidatePackagePath, {
+        revision,
+        pkg: result.candidatePackage,
+        packagePath: result.candidatePackagePath,
+      });
+      this._applyEvalPackageToCells(
+        result.run,
+        result.candidatePackage,
+        result.candidatePackagePath,
+      );
+    };
     readStored<EvalTrialResultGetResult>(
       resourceQuery<EvalTrialResultGetResult>(Methods.EVAL_TRIAL_RESULT_GET, { runId: run.id }),
+      applyStored,
     )
-      .then((result) => {
-        this._evalPackageSnapshots.set(result.candidatePackagePath, {
-          revision,
-          pkg: result.candidatePackage,
-          packagePath: result.candidatePackagePath,
-        });
-        this._applyEvalPackageToCells(
-          result.run,
-          result.candidatePackage,
-          result.candidatePackagePath,
-        );
-      })
+      .then(applyStored)
       .catch((error) => {
         this._error = `Failed to load eval package for run ${run.id.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`;
       })
@@ -381,14 +383,16 @@ export class EvalCockpit extends EvalCockpitState {
     if (this._loadedSlotCapGroupId === capGroupId) return;
     if (this._slotCapDirty && this._slotCapDirtyGroupId === capGroupId) return;
     this._loadedSlotCapGroupId = capGroupId;
+    const applyStored = (result: EvalSuiteCapGetResult) => {
+      if (this._capGroupId() !== result.capGroupId) return;
+      if (this._slotCapDirty && this._slotCapDirtyGroupId === result.capGroupId) return;
+      this._evalSlotCap = result.cap;
+    };
     readStored<EvalSuiteCapGetResult>(
       resourceQuery<EvalSuiteCapGetResult>(Methods.EVAL_SUITE_CAP_GET, { capGroupId }),
+      applyStored,
     )
-      .then((result) => {
-        if (this._capGroupId() !== result.capGroupId) return;
-        if (this._slotCapDirty && this._slotCapDirtyGroupId === result.capGroupId) return;
-        this._evalSlotCap = result.cap;
-      })
+      .then(applyStored)
       .catch((error) => {
         if (this._loadedSlotCapGroupId === capGroupId) this._loadedSlotCapGroupId = '';
         this._error = `Slot cap preview load failed: ${error instanceof Error ? error.message : String(error)}`;

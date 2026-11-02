@@ -763,18 +763,25 @@ export class FleetCanvas extends LitElement {
       await Promise.all(
         batch.map(async (s) => {
           try {
-            const listRes = await readStored<ResourceListResult>(
-              resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, {
-                slotId: s.slot,
-              }),
+            const applyStored = (listRes: ResourceListResult) => {
+              if (listRes.resources.length > 0) {
+                nextDefs.set(s.slot, listRes.resources);
+                nextStatus.set(
+                  s.slot,
+                  new Map(listRes.resources.map((resource) => [resource.id, resource.status])),
+                );
+              }
+              this.slotResourceDefs = new Map(nextDefs);
+              this.slotResourceStatus = new Map(nextStatus);
+            };
+            applyStored(
+              await readStored<ResourceListResult>(
+                resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, {
+                  slotId: s.slot,
+                }),
+                applyStored,
+              ),
             );
-            if (listRes.resources.length > 0) {
-              nextDefs.set(s.slot, listRes.resources);
-              nextStatus.set(
-                s.slot,
-                new Map(listRes.resources.map((resource) => [resource.id, resource.status])),
-              );
-            }
           } catch (err) {
             console.warn(
               `[fleet-canvas] resource list failed for ${s.slot}:`,
@@ -801,16 +808,18 @@ export class FleetCanvas extends LitElement {
     // rings + freshness), so pressure charts paint right after a gateway
     // restart while the full snapshot resolves attribution in the background.
     if (!this.resourcePressure) {
+      const applyStored = (history: ResourcePressureHistoryResult) => {
+        if (epoch !== this._resourcePressureFetchEpoch || this.resourcePressure) return;
+        this.resourcePressureHistory = history;
+      };
       void readStored<ResourcePressureHistoryResult>(
         resourceQuery<ResourcePressureHistoryResult>(
           Methods.RESOURCE_PRESSURE_HISTORY,
           this.pressureRequestParams(),
         ),
+        applyStored,
       )
-        .then((history) => {
-          if (epoch !== this._resourcePressureFetchEpoch || this.resourcePressure) return;
-          this.resourcePressureHistory = history;
-        })
+        .then(applyStored)
         .catch((err: unknown) => {
           // First-paint acceleration only. The full snapshot below is the
           // authoritative fetch and reports its own failure.
@@ -821,15 +830,20 @@ export class FleetCanvas extends LitElement {
         });
     }
     try {
-      const snapshot = await readStored<ResourcePressureSnapshotResult>(
-        resourceQuery<ResourcePressureSnapshotResult>(
-          Methods.RESOURCE_PRESSURE_SNAPSHOT,
-          this.pressureRequestParams(),
+      const applyStored = (snapshot: ResourcePressureSnapshotResult) => {
+        if (epoch !== this._resourcePressureFetchEpoch) return;
+        this.resourcePressure = snapshot;
+        this.resourceWatchesEnabled = snapshot.watchState.enabled;
+      };
+      applyStored(
+        await readStored<ResourcePressureSnapshotResult>(
+          resourceQuery<ResourcePressureSnapshotResult>(
+            Methods.RESOURCE_PRESSURE_SNAPSHOT,
+            this.pressureRequestParams(),
+          ),
+          applyStored,
         ),
       );
-      if (epoch !== this._resourcePressureFetchEpoch) return;
-      this.resourcePressure = snapshot;
-      this.resourceWatchesEnabled = snapshot.watchState.enabled;
     } catch (err) {
       console.warn(
         '[fleet-canvas] resource pressure fetch failed:',
@@ -1174,14 +1188,19 @@ export class FleetCanvas extends LitElement {
   private async previewResourceCleanup() {
     this.resourceActionBusy = true;
     try {
-      const snapshot = await readStored<ResourcePressureSnapshotResult>(
-        resourceQuery<ResourcePressureSnapshotResult>(
-          Methods.RESOURCE_PRESSURE_SNAPSHOT,
-          this.pressureRequestParams(),
+      const applyStored = (snapshot: ResourcePressureSnapshotResult) => {
+        this.resourcePressure = snapshot;
+        this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
+      };
+      applyStored(
+        await readStored<ResourcePressureSnapshotResult>(
+          resourceQuery<ResourcePressureSnapshotResult>(
+            Methods.RESOURCE_PRESSURE_SNAPSHOT,
+            this.pressureRequestParams(),
+          ),
+          applyStored,
         ),
       );
-      this.resourcePressure = snapshot;
-      this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
     } catch (err) {
       this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
     } finally {
@@ -1306,15 +1325,17 @@ export class FleetCanvas extends LitElement {
     if (this.groupBy !== 'resource' || this._pressureHistoryRefreshTimer) return;
     this._pressureHistoryRefreshTimer = setTimeout(() => {
       this._pressureHistoryRefreshTimer = undefined;
+      const applyStored = (history: ResourcePressureHistoryResult) => {
+        this.resourcePressureHistory = history;
+      };
       readStored<ResourcePressureHistoryResult>(
         resourceQuery<ResourcePressureHistoryResult>(
           Methods.RESOURCE_PRESSURE_HISTORY,
           this.pressureRequestParams(),
         ),
+        applyStored,
       )
-        .then((history) => {
-          this.resourcePressureHistory = history;
-        })
+        .then(applyStored)
         .catch((err: unknown) => {
           console.warn(
             '[fleet-canvas] pressure history event refresh failed:',
@@ -1334,8 +1355,12 @@ export class FleetCanvas extends LitElement {
 
   private async fetchPressureAdmissionControl() {
     try {
+      const applyStored = (data: PressureAdmissionGetResult) => {
+        this.pressureAdmissionControl = data;
+      };
       this.pressureAdmissionControl = await readStored<PressureAdmissionGetResult>(
         resourceQuery<PressureAdmissionGetResult>(Methods.DISPATCH_PRESSURE_ADMISSION_GET, {}),
+        applyStored,
       );
     } catch (err) {
       console.warn(

@@ -164,12 +164,20 @@ export class DiffViewerModal extends LitElement {
     this._pendingLoad = pending;
     this._loading = true;
     try {
-      const response = await readStoredArtifact(this.artifactUrl, { signal: pending.signal });
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      const text = await response.text();
-      if (pending.signal.aborted) return;
-      this._loadedText = text;
-      this._selectDefault();
+      const applyStored = async (response: Response) => {
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        const text = await response.text();
+        if (pending.signal.aborted) return;
+        this._loadedText = text;
+        this._loading = false;
+        this._selectDefault();
+      };
+      await applyStored(
+        await readStoredArtifact(this.artifactUrl, {
+          signal: pending.signal,
+          onStored: applyStored,
+        }),
+      );
     } catch (err) {
       if (pending.signal.aborted) return;
       this._loadedText = '';

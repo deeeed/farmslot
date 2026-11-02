@@ -1484,6 +1484,7 @@ export function createGatewayResourceCache(
     async readStored<T>(query: ResourceQuery<T>) {
       if (disposed) throw new Error('Resource cache is disposed');
       const ownerVersion = hydrationOwnerVersion;
+      await barrier;
       const entry = entryFor(query);
       await entry.hydration;
       if (disposed || ownerVersion !== hydrationOwnerVersion)

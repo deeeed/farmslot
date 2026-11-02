@@ -26,7 +26,7 @@ interface ConformanceData {
 }
 interface ConformanceRead {
   signal: AbortSignal;
-  resolve(data: ConformanceData, revision?: number): void;
+  resolve(data: unknown, revision?: number): void;
   reject(code: string): void;
 }
 type StoreFactory = (scope: ResourceStoreScope) => ResourceStore | Promise<ResourceStore>;

@@ -546,10 +546,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._legacyTaskPromptError = '';
     try {
       const params = new URLSearchParams({ runId: this.runId, path: 'TASK.md' });
-      const response = await readStoredArtifact(`/api/run-artifact?${params}`);
-      if (!response.ok) throw new Error(`${response.status}`);
-      const text = await response.text();
-      if (captured.current()) this._legacyTaskPromptText = text;
+      const applyStored = async (response: Response) => {
+        if (!response.ok) throw new Error(`${response.status}`);
+        const text = await response.text();
+        if (captured.current()) this._legacyTaskPromptText = text;
+      };
+      await applyStored(
+        await readStoredArtifact(`/api/run-artifact?${params}`, { onStored: applyStored }),
+      );
     } catch (error) {
       if (!captured.current()) return;
       this._legacyTaskPromptError = error instanceof Error ? error.message : String(error);

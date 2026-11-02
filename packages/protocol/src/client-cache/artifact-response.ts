@@ -9,6 +9,7 @@ export interface StoredArtifactRead {
   signal?: AbortSignal;
   /** Explicit reloads wait for fresh bytes; ordinary display opens saved bytes immediately. */
   refresh?: boolean;
+  onStored?(response: Response): unknown;
   onRefreshError?(error: unknown | undefined): void;
 }
 
@@ -34,11 +35,13 @@ export async function readStoredArtifactResponse({
   signal,
   refresh = false,
   onRefreshError,
+  onStored,
 }: StoredArtifactRead): Promise<Response> {
   const cache = current();
   if (!cache) throw new Error('The offline store is not open yet');
   const source = new URL(url, 'https://artifact.invalid');
   if (source.pathname !== '/api/run-artifact') throw new Error('Expected a retained artifact URL');
+  refresh ||= source.searchParams.has('m');
   // Mirror refresh is an explicit reread, not part of the retained file's identity.
   for (const name of ['token', 'password', 'm']) source.searchParams.delete(name);
   source.hash = '';
@@ -84,6 +87,24 @@ export async function readStoredArtifactResponse({
       headers: response.headers,
     });
   };
+  if (held && !refresh && onStored) {
+    await onStored(textResponse(held));
+    assertCurrent();
+    try {
+      const response = await fetchFresh();
+      if (response.status >= 500 && onRefreshError) {
+        onRefreshError(new Error(`HTTP ${response.status}`));
+        return textResponse(held);
+      }
+      onRefreshError?.(response.ok ? undefined : new Error(`HTTP ${response.status}`));
+      return response;
+    } catch (error) {
+      assertCurrent();
+      if (!onRefreshError) throw error;
+      onRefreshError(error);
+      return textResponse(held);
+    }
+  }
   if (held && !refresh && onRefreshError) {
     // The saved response is the display fallback. Report refresh failures separately so
     // temporary network loss cannot hide it or leave a rejected background promise.

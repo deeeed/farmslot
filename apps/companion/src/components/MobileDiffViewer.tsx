@@ -93,15 +93,19 @@ export function MobileDiffViewer({
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    readStoredArtifact(diffUrl, fetchHeaders, { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.text();
-      })
-      .then((body) => {
-        if (controller.signal.aborted) return;
-        setLoadedText(body);
-      })
+    const applyStored = (response: Response) =>
+      Promise.resolve(response)
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.text();
+        })
+        .then((body) => {
+          if (controller.signal.aborted) return;
+          setLoadedText(body);
+          setLoading(false);
+        });
+    readStoredArtifact(diffUrl, fetchHeaders, { signal: controller.signal, onStored: applyStored })
+      .then(applyStored)
       .catch((err: Error) => {
         if (err.name === 'AbortError') return;
         setLoadedText('');

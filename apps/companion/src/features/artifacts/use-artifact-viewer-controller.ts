@@ -468,15 +468,21 @@ export function useArtifactViewerController() {
       documentAbortRef.current?.abort();
       const controller = new AbortController();
       documentAbortRef.current = controller;
-      readStoredArtifact(url, artifactAuthHeaders, { signal: controller.signal })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.text();
-        })
-        .then((body) => {
-          if (!controller.signal.aborted && scopeRef.current === scopeKey)
-            setDocumentViewer({ title: path.split('/').pop() ?? path, body, sharedArtifact });
-        })
+      const applyStored = (response: Response) =>
+        Promise.resolve(response)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.text();
+          })
+          .then((body) => {
+            if (!controller.signal.aborted && scopeRef.current === scopeKey)
+              setDocumentViewer({ title: path.split('/').pop() ?? path, body, sharedArtifact });
+          });
+      readStoredArtifact(url, artifactAuthHeaders, {
+        signal: controller.signal,
+        onStored: applyStored,
+      })
+        .then(applyStored)
         .catch((err: Error) => {
           // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
           if (err.name === 'AbortError' || scopeRef.current !== scopeKey) return;

@@ -8,9 +8,12 @@ import {
  * A one-shot read for display (ADR-071 Amendment 2): through the shared cache while connected,
  * and the stored result, whatever its age, while offline. Rejects only when nothing is held.
  */
-export async function readStored<T>(query: ResourceQuery<T>): Promise<T> {
+export async function readStored<T>(
+  query: ResourceQuery<T>,
+  onStored?: (data: T) => unknown,
+): Promise<T> {
   const { getResourceCache } = await import('../../resource-cache.js');
-  return readStoredResource(getResourceCache, query);
+  return readStoredResource(getResourceCache, query, onStored);
 }
 
 /** A write that lands during a reread leaves it stale; the next try reads past it. */

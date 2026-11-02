@@ -676,6 +676,7 @@ export class NativeSessionView extends LitElement {
       if (revision === this.revision) this.turnDiffs = new Map(this.turnDiffs).set(key, value);
     };
     this.turnDiffs = new Map(this.turnDiffs).set(key, {});
+    const applyStored = (result: NativeSessionTurnDiffResult) => settle({ diff: result.diff });
     readStored<NativeSessionTurnDiffResult>(
       resourceQuery<NativeSessionTurnDiffResult>(Methods.NATIVE_SESSION_TURN_DIFF, {
         sessionId: session.id,
@@ -684,10 +685,8 @@ export class NativeSessionView extends LitElement {
         path,
         ...(this.worker ? { worker: this.workerControl } : {}),
       }),
-    ).then(
-      (result) => settle({ diff: result.diff }),
-      (error: unknown) => settle({ error: (error as Error).message }),
-    );
+      applyStored,
+    ).then(applyStored, (error: unknown) => settle({ error: (error as Error).message }));
   }
 
   /** A command shows what it ran and its last lines, its raw input and output one tap away. */

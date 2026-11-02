@@ -1206,21 +1206,24 @@ export class FamilyObservability extends FamilyObservabilityState {
     if (this._mdPreviewCache.has(key)) return;
     putCapped(this._mdPreviewCache, key, { status: 'loading' }, MD_CACHE_LIMIT);
     const current = this._captureCurrent();
-    readStoredArtifact(url)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
-      .then((text) => {
-        if (!current()) return;
-        putCapped(
-          this._mdPreviewCache,
-          key,
-          { status: 'ok', data: familyMarkdownPreviewText(text) },
-          MD_CACHE_LIMIT,
-        );
-        this._mdPreviewVersion += 1;
-      })
+    const applyStored = (response: Response) =>
+      Promise.resolve(response)
+        .then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.text();
+        })
+        .then((text) => {
+          if (!current()) return;
+          putCapped(
+            this._mdPreviewCache,
+            key,
+            { status: 'ok', data: familyMarkdownPreviewText(text) },
+            MD_CACHE_LIMIT,
+          );
+          this._mdPreviewVersion += 1;
+        });
+    readStoredArtifact(url, { onStored: applyStored })
+      .then(applyStored)
       .catch((err: Error) => {
         if (!current()) return;
         putCapped(this._mdPreviewCache, key, { status: 'err', error: err.message }, MD_CACHE_LIMIT);

@@ -31,8 +31,11 @@ export function reportArtifactRefreshError(error: unknown | undefined): void {
   notify();
 }
 
-export function readStored<T>(query: ResourceQuery<T>): Promise<T> {
-  return readStoredResource(getResourceCache, query);
+export function readStored<T>(
+  query: ResourceQuery<T>,
+  onStored?: (data: T) => unknown,
+): Promise<T> {
+  return readStoredResource(getResourceCache, query, onStored);
 }
 let prefetch:
   | { cache: GatewayResourceCache; farm: boolean; media?: EvidenceMediaHolder; stop: () => void }

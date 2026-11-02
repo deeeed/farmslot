@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
+
 import { LitElement } from 'lit';
-import { Methods, type IntelligenceActionsSummary } from '@farmslot/protocol';
+
+import { type IntelligenceActionsSummary, Methods } from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
   createMemoryResourceStore,
   resourceQuery,
 } from '@farmslot/protocol/client-cache';
+
 import { ResourceCacheConformanceTransport } from '../../../../../../packages/protocol/src/client-cache/conformance.js';
 
 mock.module('./assessment-panel.js', { namedExports: {} });
@@ -73,3 +76,41 @@ for (const Panel of [IntelligenceAuditPanel, IntelligenceIncidentsPanel]) {
     }
   });
 }
+
+test('a mounted Intelligence panel replaces saved summary after the online refresh', async () => {
+  const scope = {
+    gatewayUrl: 'ws://intelligence.invalid',
+    principalId: 'owner',
+    principalGeneration: 0,
+  };
+  const authority = { roles: [], workspaceAccess: 'farm' as const };
+  const store = createMemoryResourceStore();
+  await store.setMetadata({ scope, authority });
+  const query = resourceQuery(Methods.INTELLIGENCE_ACTIONS_SUMMARY, { limit: 100 });
+  const summary: IntelligenceActionsSummary = {
+    total: 7,
+    byActor: {},
+    byOutcome: {},
+    records: [],
+    metadata: { parseFailures: 0, shapeDriftFailures: 0 },
+  };
+  await store.putQuery({ id: query.id, data: { summary }, bytes: 150, observedAt: 123 });
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.connection.authority = authority;
+  transport.setConnection({ connected: true, id: 1 });
+  current = createGatewayResourceCache({ transport, store });
+  const panel = new IntelligenceIncidentsPanel();
+  try {
+    const refreshed = panel.load();
+    const pending = await transport.nextRead();
+    for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(Reflect.get(panel, 'summary').total, 7);
+    assert.equal(Reflect.get(panel, 'loading'), false);
+    pending.resolve({ summary: { ...summary, total: 8 } });
+    await refreshed;
+    assert.equal(Reflect.get(panel, 'summary').total, 8);
+  } finally {
+    await current.dispose();
+    current = undefined;
+  }
+});

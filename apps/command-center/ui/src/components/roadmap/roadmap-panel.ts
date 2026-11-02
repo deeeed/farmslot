@@ -1075,13 +1075,18 @@ export class RoadmapPanel extends LitElement {
     if (this._refinementSessionLoading === item.id) return;
     this._refinementSessionLoading = item.id;
     try {
-      const result = await readStored<RoadmapRefinementSessionGetResult>(
-        resourceQuery<RoadmapRefinementSessionGetResult>(Methods.ROADMAP_REFINEMENT_SESSION_GET, {
-          itemId: item.id,
-        }),
+      const applyStored = (result: RoadmapRefinementSessionGetResult) => {
+        if (this._selected?.id !== item.id) return;
+        this._existingRefinementSession = result;
+      };
+      applyStored(
+        await readStored<RoadmapRefinementSessionGetResult>(
+          resourceQuery<RoadmapRefinementSessionGetResult>(Methods.ROADMAP_REFINEMENT_SESSION_GET, {
+            itemId: item.id,
+          }),
+          applyStored,
+        ),
       );
-      if (this._selected?.id !== item.id) return;
-      this._existingRefinementSession = result;
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1306,19 +1311,24 @@ export class RoadmapPanel extends LitElement {
     const epoch = gateway.connectionEpoch;
     this._busy = 'search';
     try {
-      const result = await readStored<RoadmapListResult>(
-        resourceQuery<RoadmapListResult>(Methods.ROADMAP_LIST, {
-          ...params,
-          search,
-        }),
+      const applyStored = (result: RoadmapListResult) => {
+        if (
+          generation !== this._listGeneration ||
+          workspace !== getResourceWorkspaceKey() ||
+          epoch !== gateway.connectionEpoch
+        )
+          return;
+        this._adoptListResult(result);
+      };
+      applyStored(
+        await readStored<RoadmapListResult>(
+          resourceQuery<RoadmapListResult>(Methods.ROADMAP_LIST, {
+            ...params,
+            search,
+          }),
+          applyStored,
+        ),
       );
-      if (
-        generation !== this._listGeneration ||
-        workspace !== getResourceWorkspaceKey() ||
-        epoch !== gateway.connectionEpoch
-      )
-        return;
-      this._adoptListResult(result);
     } catch (error) {
       if (generation === this._listGeneration && workspace === getResourceWorkspaceKey())
         this._error = (error as Error).message;

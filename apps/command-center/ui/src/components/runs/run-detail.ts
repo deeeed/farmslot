@@ -671,20 +671,25 @@ export class RunDetail extends RunDetailState {
       this._postureStatus = { status: 'loading' };
     }
     try {
-      const result = await readStored<RuntimePostureStatusResult>(
-        resourceQuery<RuntimePostureStatusResult>(Methods.RUNTIME_POSTURE_STATUS, { runId }),
-      );
-      if (!stillCurrent()) return;
-      this._postureStatus = {
-        status: 'ready',
-        slotId: result.slotId,
-        state: result.state,
+      const applyStored = (result: RuntimePostureStatusResult) => {
+        if (!stillCurrent()) return;
+        this._postureStatus = {
+          status: 'ready',
+          slotId: result.slotId,
+          state: result.state,
+        };
+        // The clear in `updated()` runs before this lands, so a rejection selected
+        // at a wait the run has since left would keep blocking until some other
+        // shared-state update happened to re-render. Re-check against the posture
+        // that just arrived.
+        this._maybeClearInapplicablePostureChoice();
       };
-      // The clear in `updated()` runs before this lands, so a rejection selected
-      // at a wait the run has since left would keep blocking until some other
-      // shared-state update happened to re-render. Re-check against the posture
-      // that just arrived.
-      this._maybeClearInapplicablePostureChoice();
+      applyStored(
+        await readStored<RuntimePostureStatusResult>(
+          resourceQuery<RuntimePostureStatusResult>(Methods.RUNTIME_POSTURE_STATUS, { runId }),
+          applyStored,
+        ),
+      );
     } catch (err) {
       if (!stillCurrent()) return;
       // Never fall back to "no posture": an unreadable status is its own state.

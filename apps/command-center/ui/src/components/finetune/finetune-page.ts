@@ -220,10 +220,15 @@ export class FinetunePage extends LitElement {
   private async loadIndex() {
     this.loading = true;
     try {
+      const applyStored = (data: FinetuneIndexResult) => {
+        this.indexData = data;
+        this.loading = false;
+      };
       this.indexData = await readStored<FinetuneIndexResult>(
         resourceQuery<FinetuneIndexResult>(Methods.FINETUNE_INDEX, {
           project: this.projectFilter || undefined,
         }),
+        applyStored,
       );
     } catch (err) {
       console.error('[finetune] index load failed:', err);

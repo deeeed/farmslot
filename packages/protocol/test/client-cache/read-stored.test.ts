@@ -73,3 +73,30 @@ test('a cold local display does not wait for a connected slow gateway', async ()
     await cache.dispose();
   }
 });
+
+test('one-shot displays paint the saved value and then receive the completed reread', async () => {
+  const query = resourceQuery<{ value: string }>('sources.status');
+  const store = createMemoryResourceStore();
+  const authority = { roles: [], workspaceAccess: 'farm' as const };
+  await store.setMetadata({ scope, authority });
+  await store.putQuery({ id: query.id, data: { value: '7' }, bytes: 13, observedAt: 123 });
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.connection.authority = authority;
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport, store });
+  let shown = '';
+  const apply = (data: { value: string }) => {
+    shown = data.value;
+  };
+  try {
+    const result = readStoredResource(() => cache, query, apply).then(apply);
+    const pending = await transport.nextRead();
+    for (let i = 0; i < 3; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(shown, '7');
+    pending.resolve({ value: '8' });
+    await result;
+    assert.equal(shown, '8');
+  } finally {
+    await cache.dispose();
+  }
+});

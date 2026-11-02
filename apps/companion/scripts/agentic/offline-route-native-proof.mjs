@@ -34,8 +34,17 @@ const results = [];
 await fs.mkdir(output, { recursive: true });
 try {
   for (const entry of cases.companion) {
-    if (['layout', 'connection', 'development'].includes(entry.kind)) {
-      results.push({ ...entry, result: 'NAMED EXCEPTION' });
+    if (
+      ['layout', 'connection', 'development', 'stream'].includes(entry.kind) ||
+      entry.href.includes('terminal')
+    ) {
+      results.push({
+        ...entry,
+        result: 'NAMED EXCEPTION',
+        proofReason: entry.href.includes('terminal')
+          ? 'Live terminal opening can resize its pane; requires an owned sandbox rather than the read-only farm.'
+          : entry.reason,
+      });
       continue;
     }
     try {

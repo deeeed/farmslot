@@ -5,10 +5,14 @@ import { useConnectionStore } from '../store/connection';
 import { gatewayFetch, type GatewayHttpAuthHeaders } from './gateway-http-auth';
 import { getResourceCache, reportArtifactRefreshError } from './resource-cache';
 
+export interface StoredArtifactRequestInit extends RequestInit {
+  onStored?(response: Response): unknown;
+}
+
 export function readStoredArtifact(
   url: string,
   headers: GatewayHttpAuthHeaders,
-  init?: RequestInit,
+  init?: StoredArtifactRequestInit,
 ): Promise<Response> {
   return readStoredArtifactResponse({
     current: getResourceCache,
@@ -17,6 +21,7 @@ export function readStoredArtifact(
     read: () => gatewayFetch(url, headers, init),
     signal: init?.signal ?? undefined,
     refresh: init?.cache === 'reload',
+    onStored: init?.onStored,
     onRefreshError: reportArtifactRefreshError,
   });
 }

@@ -306,14 +306,20 @@ export class IntelligenceAuditPanel extends LitElement {
   async load() {
     this.loading = true;
     try {
-      const res = await readStored<{ summary: IntelligenceActionsSummary }>(
-        resourceQuery<{ summary: IntelligenceActionsSummary }>(
-          Methods.INTELLIGENCE_ACTIONS_SUMMARY,
-          { limit: 100 },
+      const applyStored = (res: { summary: IntelligenceActionsSummary }) => {
+        this.summary = res.summary;
+        this.error = '';
+        this.loading = false;
+      };
+      applyStored(
+        await readStored<{ summary: IntelligenceActionsSummary }>(
+          resourceQuery<{ summary: IntelligenceActionsSummary }>(
+            Methods.INTELLIGENCE_ACTIONS_SUMMARY,
+            { limit: 100 },
+          ),
+          applyStored,
         ),
       );
-      this.summary = res.summary;
-      this.error = '';
     } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
     } finally {

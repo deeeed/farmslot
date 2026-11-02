@@ -49,13 +49,15 @@ export function useRunResourcePosture(
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     setPosture((current) => postureWhileRefreshing(current, sameTarget));
+    const applyStored = (result: RuntimePostureStatusResult) => {
+      if (requestRef.current !== requestId) return;
+      setPosture({ status: 'ready', slotId: result.slotId, state: result.state });
+    };
     readStored<RuntimePostureStatusResult>(
       resourceQuery<RuntimePostureStatusResult>(Methods.RUNTIME_POSTURE_STATUS, { runId }),
+      applyStored,
     )
-      .then((result) => {
-        if (requestRef.current !== requestId) return;
-        setPosture({ status: 'ready', slotId: result.slotId, state: result.state });
-      })
+      .then(applyStored)
       .catch((err: Error) => {
         if (requestRef.current !== requestId) return;
         if (isGatewayBackgroundPauseError(err)) {

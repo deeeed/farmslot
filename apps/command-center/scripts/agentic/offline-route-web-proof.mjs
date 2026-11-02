@@ -108,7 +108,7 @@ try {
   } else subjects = JSON.parse(await fs.readFile(subjectFile, 'utf8'));
   for (const entry of cases.commandCenter) {
     try {
-      if (['connection', 'development'].includes(entry.kind)) {
+      if (['connection', 'development', 'stream'].includes(entry.kind)) {
         results.push({ route: entry.route, classification: entry.kind, result: 'NAMED EXCEPTION' });
         continue;
       }

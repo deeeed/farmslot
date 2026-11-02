@@ -810,15 +810,23 @@ export default function DecisionDetailScreen({
       documentAbortRef.current = controller;
       setLoadingDocument(artifact.path);
       const current = captureCurrent();
-      readStoredArtifact(url, artifactAuthHeaders, { signal: controller.signal })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.text();
-        })
-        .then((body) => {
-          if (current())
-            setDocumentViewer({ title: documentTitle(artifact.path), body, sharedArtifact });
-        })
+      const applyStored = (response: Response) =>
+        Promise.resolve(response)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.text();
+          })
+          .then((body) => {
+            if (current()) {
+              setDocumentViewer({ title: documentTitle(artifact.path), body, sharedArtifact });
+              setLoadingDocument(null);
+            }
+          });
+      readStoredArtifact(url, artifactAuthHeaders, {
+        signal: controller.signal,
+        onStored: applyStored,
+      })
+        .then(applyStored)
         .catch((err: Error) => {
           // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
           if (err.name === 'AbortError' || !current()) return;

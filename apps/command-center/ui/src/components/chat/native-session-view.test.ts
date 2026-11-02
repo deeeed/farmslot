@@ -7,13 +7,13 @@ import {
   type NativeSessionCatalogResult,
   type NativeSessionReadResult,
 } from '@farmslot/protocol';
-import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 import {
   createGatewayResourceCache,
   createMemoryResourceStore,
-  nativeObservationQuery,
   type GatewayResourceCache,
+  nativeObservationQuery,
 } from '@farmslot/protocol/client-cache';
+import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { ResourceCacheConformanceTransport } from '../../../../../../packages/protocol/src/client-cache/conformance.js';
 import { litText } from '../../testing/lit-text.js';

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
 import { createRequire } from 'node:module';
+import test from 'node:test';
 
 import { ResourceCacheConformanceTransport } from '../../src/client-cache/conformance.js';
 import {
@@ -186,6 +186,65 @@ test('artifact text decodes UTF-8 with the native Response polyfill', async () =
       writable: true,
       value: NetworkResponse,
     });
+    await cache.dispose();
+  }
+});
+
+test('mirror epoch URLs wait for changed bytes instead of returning a held predecessor', async () => {
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  try {
+    const options = {
+      current: () => cache,
+      url,
+      online: true,
+      read: async () => new Response('old mirror'),
+    };
+    await readStoredArtifactResponse(options);
+    const refreshed = await readStoredArtifactResponse({
+      ...options,
+      url: `${url}&m=1`,
+      read: async () => new Response('new mirror'),
+      onRefreshError: () => assert.fail('refresh failed'),
+    });
+    assert.equal(await refreshed.text(), 'new mirror');
+  } finally {
+    await cache.dispose();
+  }
+});
+
+test('an open artifact viewer receives held text before its refreshed text', async () => {
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  try {
+    const options = {
+      current: () => cache,
+      url,
+      online: true,
+      read: async () => new Response('saved'),
+    };
+    await readStoredArtifactResponse(options);
+    let shown = '';
+    let finish: ((response: Response) => void) | undefined;
+    const apply = async (response: Response) => {
+      shown = await response.text();
+    };
+    const result = readStoredArtifactResponse({
+      ...options,
+      onStored: apply,
+      read: () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    }).then(apply);
+    while (!finish) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(shown, 'saved');
+    finish(new Response('fresh'));
+    await result;
+    assert.equal(shown, 'fresh');
+  } finally {
     await cache.dispose();
   }
 });
