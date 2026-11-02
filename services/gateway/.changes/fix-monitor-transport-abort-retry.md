@@ -1,1 +1,2 @@
-- A worker turn that ends because the runner's model connection dropped ("terminated", ECONNRESET, socket hang up) no longer fails the monitor; it keeps watching the live worker. A monitor error no longer fails the run or tears down its worker: the run waits in reconciling with the worker and slot untouched (F328).
+- A worker turn that ends because the runner's model connection dropped ("terminated", ECONNRESET, socket hang up) no longer fails the monitor; it keeps watching the live worker (F328).
+- A failing run no longer tears down an agent without evidence that it finished or is gone (its signal file, a failure the runner itself reported, or its process or pane missing). Without it, the run waits in reconciling with the agent and its slot left running (F328).

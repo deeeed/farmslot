@@ -162,6 +162,7 @@ import {
   endTerminalTeardown,
   isTerminalTeardownInFlight,
 } from './terminal-teardown-registry.js';
+import { agentsWithoutExitEvidence } from './worker-exit-evidence.js';
 type BroadcastFn = (event: string, payload: unknown) => void;
 let broadcastFn: BroadcastFn = () => {};
 let settledBroadcastFn: BroadcastFn = () => {};
@@ -677,6 +678,32 @@ function failedRunSlotCleanupEffect(
   };
 }
 
+/**
+ * A failing run whose agents may still be running waits for an operator instead: its failure
+ * teardown would release the slot and stop them on nothing but a step error (F328). True when
+ * the run was held, or another action took it meanwhile.
+ */
+async function holdRunForRunningAgents(
+  runId: string,
+  generation: number,
+  reason: string,
+): Promise<boolean> {
+  const run = getRun(runId);
+  if (!run?.slotId) return false;
+  const running = await agentsWithoutExitEvidence(run);
+  if (runSupersededSince(getRun(runId), generation)) return true;
+  if (!running.length) return false;
+  console.warn(
+    `[run-engine] run ${runId.slice(0, 8)} — ${running.join(', ')} may still be running; held for an operator instead of failing`,
+  );
+  updateRun(runId, {
+    status: 'reconciling',
+    error: `${reason}\n\nLeft running with the slot: ${running.join(', ')}. No signal file or exit shows they finished. Replay the step to resume, or cancel the run to stop them.`,
+  });
+  broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+  return true;
+}
+
 // Defensive backstop for any step that mutates run.status without throwing. As of the
 // MonitorTerminalError refactor, MONITOR routes through the exception-driven catch and is
 // no longer the primary trigger here — this remains in case a future contributor adds a new
@@ -701,6 +728,7 @@ async function finalizeNonThrownTerminalRun(
     );
     return;
   }
+  if (await holdRunForRunningAgents(runId, generation, run.error ?? `Run ${run.status}`)) return;
   for (let j = currentIdx; j < steps.length; j++) {
     const step = run.steps.find((s) => s.name === steps[j]);
     if (!step || step.status === 'pending' || step.status === 'running') {
@@ -1114,6 +1142,11 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
           return;
         }
+        if (
+          err.detail !== RETAINED_SESSION_HANDOFF_HOLD &&
+          (await holdRunForRunningAgents(runId, myGen, err.message))
+        )
+          return;
         await routeAndRecordTerminalTransition({
           runId,
           kind: 'block',
@@ -1231,21 +1264,6 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         return;
       }
 
-      // A monitor error is not a worker outcome (those arrive as MonitorTerminalError): the
-      // worker may still be working. Hold it and its slot for an operator, as an uncertain
-      // prompt delivery does, instead of failing the run and tearing the worker down (F328:
-      // ce1c5583's live Pi worker was sent /exit).
-      if (stepName === S.MONITOR) {
-        stepPartialIO.delete(runId);
-        updateRunStep(runId, stepName, { status: 'failed', detail: msg });
-        updateRun(runId, {
-          status: 'reconciling',
-          error: `${msg}\n\nThe worker and its slot were left running; replay the monitor to resume watching it.`,
-        });
-        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-        return;
-      }
-
       // Persist partial I/O even on failure — valuable for debugging and fine-tuning
       const partialIO = stepPartialIO.get(runId);
       stepPartialIO.delete(runId);
@@ -1266,6 +1284,11 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         inputs: partialIO?.inputs,
         outputs: failureOutputs,
       });
+      // A refused claim is the one exception to slot teardown: this run never
+      // owned the slot (an in-flight release or rival claim does), so resetting
+      // it here would clear the actual owner's lifecycle fence mid-teardown.
+      const claimRefused = isSlotClaimRefusedError(err);
+      if (!claimRefused && (await holdRunForRunningAgents(runId, myGen, msg))) return;
       // Skip remaining steps
       for (let j = i + 1; j < steps.length; j++) {
         updateRunStep(runId, steps[j], { status: 'skipped' });
@@ -1273,10 +1296,6 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
 
       const failedRun = getRun(runId)!;
 
-      // A refused claim is the one exception to slot teardown: this run never
-      // owned the slot (an in-flight release or rival claim does), so resetting
-      // it here would clear the actual owner's lifecycle fence mid-teardown.
-      const claimRefused = isSlotClaimRefusedError(err);
       if (claimRefused && failedRun.slotId) {
         console.log(
           `[run-engine] slot ${failedRun.slotId} left untouched after refused claim (${stepName})`,
