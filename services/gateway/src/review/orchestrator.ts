@@ -1912,12 +1912,14 @@ export async function resumeReviewFixPromptDelivery(
   const targetSeparator = target.indexOf(':');
   const targetWindow =
     targetSeparator === -1 ? null : target.slice(targetSeparator + 1).split('.', 1)[0] || null;
-  await deps.persistTarget(runId, run, {
-    session,
-    window: targetWindow,
-    pane: null,
-    target,
-  });
+  // Only a moved target is rewritten: the stored one keeps the pane id that later proves exit.
+  if (target !== storedTarget)
+    await deps.persistTarget(runId, run, {
+      session,
+      window: targetWindow,
+      pane: null,
+      target,
+    });
   const targetHostsRunner = deps.targetHostsRunner
     ? await deps.targetHostsRunner(vars, target, runner, undefined, true)
     : true;

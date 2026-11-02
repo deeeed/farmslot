@@ -174,6 +174,7 @@ for (const runner of ['claude', 'scripted']) {
     f.context.promptDeliveryStartedAt = '2026-10-29T19:01:25Z';
     f.context.signalAttemptId = 'worker-attempt';
     f.deps.deliver = async () => assert.fail('a worker mid-fix must not receive its prompt again');
+    f.deps.persistTarget = async () => assert.fail('an unmoved target keeps its pane id');
     assert.deepEqual(await resumeReviewFixPromptDelivery(f.vars, f.run.id, f.context, f.deps), {
       status: 'delivered',
     });
