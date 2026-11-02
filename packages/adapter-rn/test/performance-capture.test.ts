@@ -276,56 +276,77 @@ describe('press latency from the shown line', () => {
     const budgetMs = 1000 / hz;
     const at = (start: number, duration: number, extra: { input?: true; uiThreadMs?: number }) =>
       frame(start, duration, { ...extra, frameBudgetMs: budgetMs });
+    const input = at(1_000, 6, { input: true, uiThreadMs: 2 });
+    // The app logs its line from the second animation frame after focus: two
+    // vsyncs after the frame that drew the screen, plus the log write.
+    const afterDraw = (drawn: AndroidFrameSample) => drawn.startedAtEpochMs + 2 * budgetMs + 1;
+    const tabs = (samples: AndroidFrameSample[], markers: number[]) =>
+      summarizeWindow({
+        id: 'tabs',
+        startedAtEpochMs: 0,
+        endedAtEpochMs: 3_000,
+        maxDurationMs: 60_000,
+        result: capture(samples, { shownMarkers: { markers: markers.map((ms) => shown(ms)) } }),
+        spans: [press],
+        budget: { max_press_p95_ms: 210, max_press_ms: 250 },
+        shownMarkers: { 'tab-terminals': 'screen-terminals' },
+        sustainedWindowMs: 500,
+        responseWindowMs: 600,
+      });
 
-    it(`times a light mount a stall delays to +650 ms as slow at ${hz} Hz`, () => {
+    it(`reads the line, never under the draw, and picks no frame at ${hz} Hz`, () => {
+      // Focus came 2 ms after the touch; nothing drew until the mount 8 frames later.
+      const mount = at(1_000 + 8 * budgetMs, 8, { uiThreadMs: 6 });
+      const marker = afterDraw(mount);
+      const samples = [input, mount, at(marker + 2, 9, { uiThreadMs: 5 })];
+      const result = measureShownPress(samples, press, 'screen-terminals', [shown(marker)], 5_000);
+      assert.deepEqual(result, {
+        nodeId: 'tab',
+        action: 'ui.press',
+        target: 'tab-terminals',
+        marker: 'screen-terminals',
+        latencyMs: round(marker - 1_000),
+        answer: 'shown',
+      });
+      assert.ok((result.latencyMs ?? 0) >= mount.completedAtEpochMs - 1_000);
+    });
+
+    it(`fails a mount a 650 ms stall delays at ${hz} Hz`, () => {
       for (const uiThreadMs of [9, 24]) {
         // Feedback with some UI work at +1 frame, then nothing until the mount.
-        const samples = [
-          at(1_000, 6, { input: true, uiThreadMs: 2 }),
-          at(1_000 + budgetMs, 6, { uiThreadMs: 5 }),
-          at(1_650, uiThreadMs + 6, { uiThreadMs }),
-        ];
-        assert.deepEqual(
-          measureShownPress(samples, press, 'screen-terminals', [shown(1_648)], 5_000),
-          {
-            nodeId: 'tab',
-            action: 'ui.press',
-            target: 'tab-terminals',
-            marker: 'screen-terminals',
-            latencyMs: 650 + uiThreadMs + 6,
-            answer: 'shown',
-          },
+        const mount = at(1_650, uiThreadMs + 6, { uiThreadMs });
+        const summary = tabs(
+          [input, at(1_000 + budgetMs, 6, { uiThreadMs: 5 }), mount],
+          [afterDraw(mount)],
+        );
+        assert.equal(summary.presses[0]?.latencyMs, round(afterDraw(mount) - 1_000));
+        assert.equal(summary.budget?.verdict, 'fail');
+        assert.ok(
+          summary.budget?.failures.includes(
+            `press (gfxinfo input->shown marker) ${Math.round(afterDraw(mount) - 1_000)} ms > 250 ms (tab-terminals, node tab)`,
+          ),
         );
       }
     });
 
-    it(`leaves a 6.9 ms update at +800 ms out of a cheap press at ${hz} Hz`, () => {
-      // The screen drew one frame after the touch and logged its line after it.
-      const samples = [
-        at(1_000, 6, { input: true, uiThreadMs: 3 }),
-        at(1_000 + budgetMs, 5, { uiThreadMs: 4 }),
-        at(1_466, 5, { uiThreadMs: 1.2 }),
-        at(1_800, 9, { uiThreadMs: 6.9 }),
-      ];
-      const marker = 1_000 + budgetMs + 6;
-      assert.equal(
-        measureShownPress(samples, press, 'screen-terminals', [shown(marker)], 5_000).latencyMs,
-        round(marker - 1_000),
-      );
+    it(`fails a UI-thread stall that holds the line back at ${hz} Hz`, () => {
+      // A 300 ms mount frame delays the animation frames the line waits for.
+      const mount = at(1_000 + budgetMs, 300, { uiThreadMs: 295 });
+      const marker = mount.completedAtEpochMs + 2 * budgetMs;
+      const summary = tabs([input, mount], [marker]);
+      assert.ok((summary.presses[0]?.latencyMs ?? 0) > 300);
+      assert.equal(summary.budget?.verdict, 'fail');
     });
 
-    it(`takes the frame within two frames of the line at ${hz} Hz`, () => {
-      const input = at(1_000, 6, { input: true });
-      const near = [input, at(1_100 + 1.5 * budgetMs, 8, { uiThreadMs: 6 })];
-      assert.equal(
-        measureShownPress(near, press, 'screen-terminals', [shown(1_100)], 5_000).latencyMs,
-        round(100 + 1.5 * budgetMs + 8),
+    it(`bounds a cheap press past a 6.9 ms update at +800 ms at ${hz} Hz`, () => {
+      // The screen drew one frame after the touch; a live update follows later.
+      const drawn = at(1_000 + budgetMs, 5, { uiThreadMs: 4 });
+      const summary = tabs(
+        [input, drawn, at(1_466, 5, { uiThreadMs: 1.2 }), at(1_800, 9, { uiThreadMs: 6.9 })],
+        [afterDraw(drawn)],
       );
-      const far = [input, at(1_100 + 2.5 * budgetMs, 8, { uiThreadMs: 6 })];
-      assert.equal(
-        measureShownPress(far, press, 'screen-terminals', [shown(1_100)], 5_000).latencyMs,
-        100,
-      );
+      assert.equal(summary.presses[0]?.latencyMs, round(3 * budgetMs + 1));
+      assert.equal(summary.budget?.verdict, 'pass');
     });
   }
 
@@ -342,6 +363,26 @@ describe('press latency from the shown line', () => {
     assert.match(
       result.unmeasuredReason ?? '',
       /no \[farmslot-perf\] shown screen-terminals line/u,
+    );
+    const next = { ...press, nodeId: 'tab-2', startedAtEpochMs: 2_500, endedAtEpochMs: 2_700 };
+    const summary = summarizeWindow({
+      id: 'tabs',
+      startedAtEpochMs: 0,
+      endedAtEpochMs: 3_000,
+      maxDurationMs: 60_000,
+      result: capture([...samples, frame(2_550, 6, { input: true })], {
+        shownMarkers: { markers: [shown(2_600)] },
+      }),
+      spans: [press, next],
+      budget: { max_press_ms: 250 },
+      shownMarkers: { 'tab-terminals': 'screen-terminals' },
+      sustainedWindowMs: 500,
+      responseWindowMs: 600,
+    });
+    assert.equal(summary.budget?.verdict, 'fail');
+    assert.match(
+      summary.budget?.failures[0] ?? '',
+      /press \(gfxinfo input->shown marker\) untimed, counted over 250 ms \(tab-terminals, node tab\): no \[farmslot-perf\] shown screen-terminals line/u,
     );
   });
 
@@ -364,15 +405,19 @@ describe('press latency from the shown line', () => {
         sustainedWindowMs: 500,
         responseWindowMs: 600,
       });
-    const byLine = window({ markers: [shown(1_648)] });
+    const byLine = window({ markers: [shown(1_674)] });
     assert.equal(byLine.presses[0]?.answer, 'shown');
     assert.equal(byLine.pressByTarget['tab-terminals']?.shown, 1);
     assert.equal(byLine.budget?.verdict, 'fail');
     assert.match(
       byLine.budget?.failures.join(';') ?? '',
-      /gfxinfo input->shown frame\) 665 ms > 250 ms/u,
+      /gfxinfo input->shown marker\) 674 ms > 250 ms/u,
     );
     assert.deepEqual(byLine.notes, []);
+    assert.match(
+      renderPerformanceReport('Jank', [byLine]),
+      /^- tabs shown presses: touch frame to the screen's `\[farmslot-perf\] shown` line, logged from the second animation frame after focus\. An upper bound within about 2 frames of the draw \(22\.2 ms at 90 Hz\); it never reads under the draw\.$/mu,
+    );
 
     const noLines = window({
       markers: [],
