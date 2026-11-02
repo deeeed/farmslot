@@ -1,0 +1,1 @@
+- A native worker's environment is built in one place, `scripts/native-worker-env.cjs` (exported as `@farmslot/agent-runtime/scripts/native-worker-env.cjs`). It also runs a command in that environment, so the gateway's launch preflight probes the Node the worker will run (F318).

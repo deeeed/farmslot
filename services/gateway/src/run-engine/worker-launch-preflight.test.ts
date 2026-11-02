@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, mock, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { isRecord, type Run, type RunStep } from '@farmslot/protocol';
 
@@ -28,6 +31,17 @@ const project: ProjectVars = {
   projectJson: {},
   runtimeDir: 'temp/farmslot',
   artifactDir: 'artifacts',
+};
+const workerEnvironmentScript = fileURLToPath(
+  new URL('../../../../packages/agent-runtime/scripts/native-worker-env.cjs', import.meta.url),
+);
+const { nativeWorkerProcessEnvironment } = createRequire(import.meta.url)(
+  workerEnvironmentScript,
+) as {
+  nativeWorkerProcessEnvironment(
+    environment: { set: Record<string, string>; unset: string[] },
+    base: NodeJS.ProcessEnv,
+  ): NodeJS.ProcessEnv;
 };
 const config = await import('../core/config.js');
 const state = await import('../core/state.js');
@@ -109,7 +123,10 @@ mock.module('../methods/runtime-capabilities.js', {
 mock.module('../tasks/agent-runtime-script.js', {
   namedExports: {
     ...runtimeScript,
-    agentRuntimeScriptForSlot: async () => '/fixture/scripts/task-init-cli.mjs',
+    agentRuntimeScriptForSlot: async (_vars: unknown, filename: string) =>
+      filename === 'native-worker-env.cjs'
+        ? workerEnvironmentScript
+        : '/fixture/scripts/task-init-cli.mjs',
   },
 });
 mock.module('../core/exec.js', {
@@ -162,6 +179,43 @@ test('native realpath-normalized checkout admits and still fences a later config
       error instanceof WorkerLaunchInputsChangedError &&
       /Worker launch inputs changed during preflight/.test(error.message),
   );
+});
+
+test('a native launch probe resolves the same Node as the native worker environment (F318)', async (t) => {
+  const nativeVars = { ...vars, remoteRepo: await realpath(configuredPath) };
+  await (
+    await admitWorkerLaunch({
+      vars: nativeVars,
+      projectVars: project,
+      environment: { set: { PREFLIGHT_FIXTURE: 'native' }, unset: [] },
+    })
+  )();
+  const probe = commands.find((command) => command.includes('nodeMissing'));
+  assert.ok(probe);
+  // A host like macpro: Homebrew's node first on PATH, the project's Node behind asdf's shims.
+  // Homebrew's node may run the environment helper; the probe itself must not reach it.
+  const home = await mkdtemp(path.join(os.tmpdir(), 'native-toolchain-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const brew = path.join(home, 'homebrew-bin');
+  const shims = path.join(home, '.asdf', 'shims');
+  await mkdir(brew);
+  await mkdir(shims, { recursive: true });
+  await writeFile(
+    path.join(brew, 'node'),
+    `#!/bin/sh\ncase "$1" in */native-worker-env.cjs) exec ${process.execPath} "$@";; esac\necho homebrew node answered >&2\nexit 97\n`,
+  );
+  await writeFile(path.join(shims, 'node'), `#!/bin/sh\nexec ${process.execPath} "$@"\n`);
+  await chmod(path.join(brew, 'node'), 0o755);
+  await chmod(path.join(shims, 'node'), 0o755);
+  const host = { HOME: home, PATH: `${brew}:/usr/bin:/bin` };
+  const worker = spawnSync('/bin/sh', ['-c', 'command -v node'], {
+    env: nativeWorkerProcessEnvironment({ set: {}, unset: [] }, host),
+    encoding: 'utf8',
+  });
+  assert.equal(worker.stdout.trim(), path.join(shims, 'node'));
+  const result = spawnSync('/bin/sh', ['-c', probe], { env: host, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).tools.node.version, process.version);
 });
 
 test('a returned relaunch fence rejects cancellation during its last asynchronous read', async () => {

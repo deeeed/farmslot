@@ -159,16 +159,16 @@ export async function admitWorkerLaunch(
       );
     assertRunCurrent();
   };
+  // A native worker runs in the environment its node's agent-runtime builds (asdf's shims ahead
+  // of PATH included). Probe in that same environment, through the same function, so the probe
+  // sees the worker's Node rather than the host's first one (F318).
+  const workerEnvironmentScript = input.environment
+    ? await agentRuntimeScriptForSlot(input.vars, 'native-worker-env.cjs')
+    : undefined;
   const inShell = (command: string): string => {
     const body = `cd ${shellQuote(input.vars.remoteRepo)} && ${command}`;
-    if (input.environment) {
-      const env = input.environment;
-      return [
-        ...(env.unset.length ? [`unset ${env.unset.map(shellQuote).join(' ')}`] : []),
-        ...Object.entries(env.set).map(([name, value]) => `export ${name}=${shellQuote(value)}`),
-        body,
-      ].join(' && ');
-    }
+    if (input.environment && workerEnvironmentScript)
+      return `cd ${shellQuote(input.vars.remoteRepo)} && node ${shellQuote(workerEnvironmentScript)} ${shellQuote(JSON.stringify(input.environment))} /bin/sh -c ${shellQuote(command)}`;
     if (input.wrapCommand) return input.wrapCommand(body);
     return wrapWorkerShellCommand(withMachineEnv(body, input.vars), {
       vars: input.vars,
