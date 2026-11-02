@@ -93,11 +93,12 @@ const resolve = {
 } as const;
 
 function recordingClient() {
-  const sent: string[] = [];
+  const requests: Array<{ method: string; params: unknown }> = [];
   return {
-    sent,
-    request: async (method: string) => {
-      sent.push(method);
+    requests,
+    sent: () => requests.map(({ method }) => method),
+    request: async (method: string, params: unknown) => {
+      requests.push({ method, params });
       return {};
     },
   };
@@ -113,7 +114,7 @@ test('a list row on screen sends nothing while run.get has not answered', async 
       sendInteractivePacketWrite(client, row, request),
       /Wait for the current run before acting/u,
     );
-  assert.deepEqual(client.sent, []);
+  assert.deepEqual(client.sent(), []);
 });
 
 test('a list row sends nothing once run.get has answered with its own run', async () => {
@@ -122,14 +123,21 @@ test('a list row sends nothing once run.get has answered with its own run', asyn
   const client = recordingClient();
   for (const request of [send, resolve])
     await assert.rejects(sendInteractivePacketWrite(client, run(), request), /The run changed/u);
-  assert.deepEqual(client.sent, []);
+  assert.deepEqual(client.sent(), []);
 });
 
-test("run.get's own run sends the write", async () => {
+test("run.get's own run sends both writes, built from it", async () => {
   const { sendInteractivePacketWrite } = await import('./interactive-packet-writes');
   const current = run();
   states.set(runQuery.id, { status: 'ready', data: { run: current } });
   const client = recordingClient();
   await sendInteractivePacketWrite(client, current, send);
-  assert.deepEqual(client.sent, ['terminal.send']);
+  await sendInteractivePacketWrite(client, current, resolve);
+  assert.deepEqual(client.sent(), ['terminal.send', 'run.resolveDecision']);
+  // The resolution is built from the run the readiness check returned.
+  const [decision] = current.decisions;
+  assert.deepEqual(
+    client.requests[1]?.params,
+    buildRunResolveDecisionParams({ runId: current.id, decision, actionId: 'approve' }),
+  );
 });

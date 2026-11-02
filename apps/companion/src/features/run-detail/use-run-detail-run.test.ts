@@ -4,12 +4,14 @@ import { URL } from 'node:url';
 
 import type { Run, RunGetResult } from '@farmslot/protocol';
 import {
+  canActOn,
   createGatewayResourceCache,
   createMemoryResourceStore,
   readRefused,
   type ResourceQuery,
   resourceQuery,
   type ResourceQueryState,
+  type ResourceReadMethod,
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceCacheConformanceTransport } from '../../../../../packages/protocol/src/client-cache/conformance';
@@ -42,6 +44,7 @@ function run(summary: string, updatedAt = '2026-11-01T00:00:00.000Z'): Run {
 type Rendered = {
   run: Run | null;
   fromList: boolean;
+  runActionable: boolean;
   runObservation: ResourceQueryState<RunGetResult>;
 };
 
@@ -63,7 +66,7 @@ const turns = async () => {
  * The cold start Run Detail opens on: a run.get saved by an earlier session, and a gateway
  * that is offline unless `online`, in which case the test answers the read itself.
  */
-async function mount(listed: Run[], saved?: Run, online = false) {
+async function mount(listed: Run[], saved?: Run, online = false, answer?: Run) {
   const store = createMemoryResourceStore();
   await store.setMetadata({ scope, authority });
   if (saved)
@@ -76,13 +79,25 @@ async function mount(listed: Run[], saved?: Run, online = false) {
   const transport = new ResourceCacheConformanceTransport(scope);
   transport.connection.authority = authority;
   if (online) transport.setConnection({ connected: true, id: 1 });
+  // A gateway that answers run.get with `answer` at once.
+  if (answer)
+    transport.request = async <T>(method: ResourceReadMethod, params: unknown) => {
+      transport.requestCount++;
+      const result: RunGetResult = { run: answer };
+      const dependencies = resourceQuery(method, params).dependencies.map((key) => ({
+        key,
+        revision: 1,
+      }));
+      return { data: result as T, resourceState: { epoch: 'conformance-epoch', dependencies } };
+    };
   const cache = createGatewayResourceCache({ transport, store });
   const stops: Array<() => void> = [];
   const hook = mountHook<[string]>(
     new URL('./use-run-detail-run.ts', import.meta.url),
     'useRunDetailRun',
     {
-      '@farmslot/protocol/client-cache': { readRefused, resourceQuery },
+      '@farmslot/protocol/client-cache': { canActOn, readRefused, resourceQuery },
+      '../../store/held-connection': { useHeldConnection: () => online },
       '../../hooks/useResourceQuery': {
         useResourceQuery<T>(query: ResourceQuery<T> | undefined): ResourceQueryState<T> {
           if (!query) return { status: 'loading' };
@@ -193,5 +208,23 @@ test('the newer of the row and the saved run.get is the one shown', async () => 
     } finally {
       await detail.dispose();
     }
+  }
+});
+
+test('online, a current run.get stays on screen when a newer row arrives', async () => {
+  const listed = [run('listed row', '2026-11-01T00:00:00.000Z')];
+  const detail = await mount(listed, undefined, true, run('run.get', '2026-11-01T00:01:00.000Z'));
+  try {
+    assert.equal(detail.render().fromList, true);
+    await turns();
+    // Read over a live connection: current, so it can be acted on.
+    assert.equal(detail.render().runActionable, true);
+    // A run write lands in run.list before run.get's reread does.
+    listed[0] = run('newer listed row', '2026-11-01T00:02:00.000Z');
+    const after = detail.render();
+    assert.equal(after.run?.summary, 'run.get');
+    assert.equal(after.fromList, false);
+  } finally {
+    await detail.dispose();
   }
 });

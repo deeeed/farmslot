@@ -6,7 +6,6 @@ import {
   type RecipeRunArtifactGroup,
   type Run,
   type RunDecision,
-  runHasTrimmedDetail,
   type RunStep,
   runStepDisplayDetail,
   type RunStepDisplayStatus,
@@ -31,8 +30,11 @@ import {
 import { type DecisionPresentation, presentDecision } from '../../../lib/decision-presentation';
 import { diffArtifactCandidate } from '../../../lib/diff';
 import {
+  detailCountLabel,
   hasRunWorkspaceDiff,
   isActionableWorkspaceDiffValue,
+  runCockpitCounts,
+  runGateRailCounts,
   runWorkspaceDiffValue,
   selectSlotGatePreviewArtifacts,
   selectSlotRecipeArtifactsForPreviewScope,
@@ -194,6 +196,7 @@ export function RunFocusedArtifactCard({
   diffAvailable,
   diffValue,
   comparePairCount,
+  detailLoaded,
   onOpenArtifact,
   onOpenFiles,
   onOpenRecipe,
@@ -215,6 +218,8 @@ export function RunFocusedArtifactCard({
   diffAvailable: boolean;
   diffValue: string;
   comparePairCount: number;
+  /** False while the run is a run.list row that left detail out. */
+  detailLoaded: boolean;
   onOpenArtifact: () => void;
   onOpenFiles: () => void;
   onOpenRecipe: () => void;
@@ -270,7 +275,7 @@ export function RunFocusedArtifactCard({
         />
         <CockpitTile
           label="Before→After"
-          value={String(comparePairCount)}
+          value={detailCountLabel(comparePairCount, detailLoaded)}
           onPress={onOpenCompare}
           disabled={comparePairCount === 0}
         />
@@ -397,8 +402,21 @@ export function RunReviewWorkspaceSummary({
     }
   };
   const workspaceVisualPairCount = compareTarget?.pairCount ?? runVisualPairCount;
+  const readyGate =
+    gates.find((workspaceGate) => workspaceGate.label === 'Ready workspace') ?? null;
+  const reviewGate =
+    gates.find(
+      (workspaceGate) =>
+        workspaceGate.label === 'Review workspace' || workspaceGate.label === 'No-change review',
+    ) ?? null;
   // A run.list row omits the manifest and large payloads until run.get lands.
-  const detailLoaded = !runHasTrimmedDetail(run);
+  const counts = runCockpitCounts(run, {
+    manifestCount,
+    visualPairCount: workspaceVisualPairCount,
+    readyGate,
+    reviewGate,
+    retroSummary,
+  });
   const tone = colors.accent;
   const diffValue = runWorkspaceDiffValue(run, gate);
   const diffAvailable = hasRunWorkspaceDiff(run, gate);
@@ -510,7 +528,7 @@ export function RunReviewWorkspaceSummary({
           onOpenTerminal={onOpenTerminal}
           terminalLabel={terminalLabel}
           terminalDisabledReason={terminal.disabledReason}
-          artifactCount={manifestCount}
+          artifactCount={counts.artifactFiles}
           recipeArtifactCount={recipeArtifactCount}
           recipeAvailable={recipeAvailable}
           diffValue={diffValue}
@@ -520,22 +538,15 @@ export function RunReviewWorkspaceSummary({
       <RunWorkspaceCockpit
         diffValue={diffValue}
         diffAvailable={diffAvailable}
-        manifestCount={detailLoaded ? manifestCount : null}
+        counts={counts}
         recipeArtifactCount={recipeArtifactCount}
         recipeAvailable={recipeAvailable}
         recipeScopeLabel={recipeWorkspaceScopeLabel(selectedRecipeRunId)}
         familyId={run.familyId}
         gateCount={gates.length}
-        readyGate={gates.find((workspaceGate) => workspaceGate.label === 'Ready workspace') ?? null}
-        reviewGate={
-          gates.find(
-            (workspaceGate) =>
-              workspaceGate.label === 'Review workspace' ||
-              workspaceGate.label === 'No-change review',
-          ) ?? null
-        }
+        readyGate={readyGate}
+        reviewGate={reviewGate}
         retroSummary={retroSummary}
-        visualPairCount={detailLoaded ? workspaceVisualPairCount : null}
         pendingCount={(run.decisions ?? []).filter((decision) => !decision.resolvedAt).length}
         terminalAvailable={!terminal.disabledReason}
         slotId={run.slotId}
@@ -576,6 +587,7 @@ export function RunWorkspaceGateRail({
   onOpenCompareTarget,
   onOpenCompareFallbackArtifact,
   onOpenDiff,
+  detailLoaded,
 }: {
   gates: SlotWorkspaceGateSummary[];
   runId: string;
@@ -590,6 +602,8 @@ export function RunWorkspaceGateRail({
   onOpenCompareTarget: () => void;
   onOpenCompareFallbackArtifact: (artifactPath: string) => void;
   onOpenDiff: () => void;
+  /** False while the run is a run.list row that left detail out. */
+  detailLoaded: boolean;
 }) {
   return (
     <View style={styles.workspaceGateRailPanel}>
@@ -620,6 +634,7 @@ export function RunWorkspaceGateRail({
             visualPairSummary.pairs.length > 0
               ? visualPairSummary.pairs.length
               : (compareTarget?.pairCount ?? 0);
+          const railCounts = runGateRailCounts(gate, comparePairCount, detailLoaded);
           const diffValue = workspaceGateDiffMetricValue(gate);
           const diffAvailable = isActionableWorkspaceDiffValue(diffValue);
           const openPrimaryEvidence = () => onOpenArtifacts(gate.primaryArtifactPath ?? undefined);
@@ -647,18 +662,18 @@ export function RunWorkspaceGateRail({
                 />
                 <RunGateAction
                   label="Evidence"
-                  value={String(gate.artifactPaths.length)}
+                  value={railCounts.evidence}
                   onPress={openPrimaryEvidence}
-                  disabled={gate.artifactPaths.length === 0}
+                  disabled={railCounts.evidenceDisabled}
                 />
                 <RunGateAction
                   label="Before→After"
-                  value={String(comparePairCount)}
+                  value={railCounts.beforeAfter}
                   onPress={() => {
                     if (primaryVisualPair) onOpenArtifacts(primaryVisualPair.after.path);
                     else onOpenCompareTarget();
                   }}
-                  disabled={comparePairCount === 0}
+                  disabled={railCounts.beforeAfterDisabled}
                 />
                 <RunGateAction
                   label="Diff"
@@ -760,7 +775,8 @@ export function RunBeforeAfterPriorityPanel({
   pair: VisualArtifactPair;
   pairCount: number;
   authHeaders: ArtifactHttpHeaders;
-  artifactCount: number;
+  /** The run's file count, or "not loaded" on a trimmed list row. */
+  artifactCount: string;
   recipeArtifactCount: number | null;
   recipeAvailable?: boolean;
   diffValue: string;
@@ -801,7 +817,7 @@ export function RunBeforeAfterPriorityPanel({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.runBeforeAfterPriorityRail}
       >
-        <CockpitTile label="Evidence" value={String(artifactCount)} onPress={onOpenArtifacts} />
+        <CockpitTile label="Evidence" value={artifactCount} onPress={onOpenArtifacts} />
         <CockpitTile
           label="Recipe"
           value={
@@ -834,7 +850,7 @@ export function workspaceGateToneColor(gate: SlotWorkspaceGateSummary): string {
 export function RunWorkspaceCockpit({
   diffValue,
   diffAvailable,
-  manifestCount,
+  counts,
   recipeArtifactCount,
   recipeAvailable,
   recipeScopeLabel,
@@ -843,7 +859,6 @@ export function RunWorkspaceCockpit({
   readyGate,
   reviewGate,
   retroSummary,
-  visualPairCount,
   pendingCount,
   terminalAvailable,
   slotId,
@@ -864,8 +879,7 @@ export function RunWorkspaceCockpit({
 }: {
   diffValue: string;
   diffAvailable: boolean;
-  /** Null while the run's manifest is not loaded. */
-  manifestCount: number | null;
+  counts: ReturnType<typeof runCockpitCounts>;
   recipeArtifactCount: number | null;
   recipeAvailable?: boolean;
   recipeScopeLabel: ReturnType<typeof recipeWorkspaceScopeLabel>;
@@ -874,7 +888,6 @@ export function RunWorkspaceCockpit({
   readyGate: SlotWorkspaceGateSummary | null;
   reviewGate: SlotWorkspaceGateSummary | null;
   retroSummary: SlotWorkspaceRetroSummary | null;
-  visualPairCount: number | null;
   pendingCount: number;
   terminalAvailable: boolean;
   slotId: string | null | undefined;
@@ -926,7 +939,7 @@ export function RunWorkspaceCockpit({
         <CockpitTile
           label="Ready"
           value={readyGate ? runGateStateLabel(readyGate) : '-'}
-          hint={readyGate ? runGateCockpitHint(readyGate) : undefined}
+          hint={counts.readyHint}
           onPress={() => {
             if (readyGate) onOpenGate(readyGate);
           }}
@@ -935,7 +948,7 @@ export function RunWorkspaceCockpit({
         <CockpitTile
           label="Review gate"
           value={reviewGate ? runGateStateLabel(reviewGate) : '-'}
-          hint={reviewGate ? runGateCockpitHint(reviewGate) : undefined}
+          hint={counts.reviewHint}
           onPress={() => {
             if (reviewGate) onOpenGate(reviewGate);
           }}
@@ -944,7 +957,7 @@ export function RunWorkspaceCockpit({
         <CockpitTile
           label="Retro gate"
           value={retroSummary?.statusLabel ?? '-'}
-          hint={retroSummary ? runRetroCockpitHint(retroSummary) : undefined}
+          hint={counts.retroHint}
           onPress={() => {
             if (retroSummary) onOpenRetro(retroSummary);
           }}
@@ -958,14 +971,14 @@ export function RunWorkspaceCockpit({
         />
         <CockpitTile
           label="Artifact files"
-          value={manifestCount === null ? 'not loaded' : String(manifestCount)}
+          value={counts.artifactFiles}
           onPress={onOpenArtifacts}
         />
         <CockpitTile
           label="Before→After"
-          value={visualPairCount === null ? 'not loaded' : String(visualPairCount)}
+          value={counts.beforeAfter}
           onPress={onOpenCompare}
-          disabled={!visualPairCount}
+          disabled={counts.beforeAfterDisabled}
         />
         <CockpitTile
           label="Recipe files"
@@ -1001,20 +1014,6 @@ export function runGateStateLabel(gate: SlotWorkspaceGateSummary): string {
   if (gate.tone === 'ready') return 'ready';
   if (gate.tone === 'warning') return 'warning';
   return 'resolved';
-}
-export function runGateCockpitHint(gate: SlotWorkspaceGateSummary): string {
-  const diffValue = workspaceGateDiffMetricValue(gate);
-  const artifactLabel = `${gate.artifactPaths.length} file${
-    gate.artifactPaths.length === 1 ? '' : 's'
-  }`;
-  return diffValue ? `${artifactLabel} · ${diffValue}` : artifactLabel;
-}
-export function runRetroCockpitHint(retro: SlotWorkspaceRetroSummary): string {
-  const fileLabel = `${retro.artifactPaths.length} file${
-    retro.artifactPaths.length === 1 ? '' : 's'
-  }`;
-  if (retro.visualPairCount === 0) return fileLabel;
-  return `${fileLabel} · ${retro.visualPairCount} before→after`;
 }
 export function CockpitTile({
   label,

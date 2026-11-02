@@ -297,11 +297,80 @@ function runStepDiffStat(
     )?.diffStat;
 }
 
-const NOT_LOADED = 'not loaded';
+export const NOT_LOADED = 'not loaded';
 
-/** A count from a run.list row that left detail out is unknown until run.get lands, not zero. */
+/**
+ * A count read from run detail. A run.list row that left detail out (`runHasTrimmedDetail`)
+ * doesn't know it until run.get lands, so it reads as not loaded rather than as zero.
+ */
+export function detailCountLabel(count: number, loaded: boolean): string {
+  return loaded ? String(count) : NOT_LOADED;
+}
+
 function loadedCount(run: Run, count: number): string {
-  return runHasTrimmedDetail(run) ? NOT_LOADED : String(count);
+  return detailCountLabel(count, !runHasTrimmedDetail(run));
+}
+
+function fileCountLabel(count: number, loaded: boolean): string {
+  if (!loaded) return `files ${NOT_LOADED}`;
+  return `${count} file${count === 1 ? '' : 's'}`;
+}
+
+/** A gate's cockpit hint: its file count and diff. */
+export function runGateCockpitHint(gate: SlotWorkspaceGateSummary, loaded: boolean): string {
+  const diffValue = workspaceGateDiffMetricValue(gate);
+  const artifactLabel = fileCountLabel(gate.artifactPaths.length, loaded);
+  return diffValue ? `${artifactLabel} · ${diffValue}` : artifactLabel;
+}
+
+/** A retro gate's cockpit hint: its file count and before→after pairs. */
+export function runRetroCockpitHint(retro: SlotWorkspaceRetroSummary, loaded: boolean): string {
+  const fileLabel = fileCountLabel(retro.artifactPaths.length, loaded);
+  if (!loaded || retro.visualPairCount === 0) return fileLabel;
+  return `${fileLabel} · ${retro.visualPairCount} before→after`;
+}
+
+/** The counts Run Detail's workspace cockpit shows, not loaded on a trimmed list row. */
+export function runCockpitCounts(
+  run: Pick<Run, 'decisions' | 'output'>,
+  {
+    manifestCount,
+    visualPairCount,
+    readyGate,
+    reviewGate,
+    retroSummary,
+  }: {
+    manifestCount: number;
+    visualPairCount: number;
+    readyGate: SlotWorkspaceGateSummary | null;
+    reviewGate: SlotWorkspaceGateSummary | null;
+    retroSummary: SlotWorkspaceRetroSummary | null;
+  },
+) {
+  const loaded = !runHasTrimmedDetail(run);
+  return {
+    loaded,
+    artifactFiles: detailCountLabel(manifestCount, loaded),
+    beforeAfter: detailCountLabel(visualPairCount, loaded),
+    beforeAfterDisabled: !loaded || visualPairCount === 0,
+    readyHint: readyGate ? runGateCockpitHint(readyGate, loaded) : undefined,
+    reviewHint: reviewGate ? runGateCockpitHint(reviewGate, loaded) : undefined,
+    retroHint: retroSummary ? runRetroCockpitHint(retroSummary, loaded) : undefined,
+  };
+}
+
+/** One gate rail card's Evidence and Before→After counts, not loaded on a trimmed list row. */
+export function runGateRailCounts(
+  gate: Pick<SlotWorkspaceGateSummary, 'artifactPaths'>,
+  comparePairCount: number,
+  loaded: boolean,
+) {
+  return {
+    evidence: detailCountLabel(gate.artifactPaths.length, loaded),
+    evidenceDisabled: loaded && gate.artifactPaths.length === 0,
+    beforeAfter: detailCountLabel(comparePairCount, loaded),
+    beforeAfterDisabled: comparePairCount === 0,
+  };
 }
 
 function summarizeSlotWorkspaceDecision(

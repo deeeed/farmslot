@@ -39,6 +39,8 @@ import { openHumanGateDecision } from '../../lib/gate-review';
 import { collectRunInteractivePacketArtifacts } from '../../lib/interactive-operator-packets';
 import {
   hasRunWorkspaceDiff,
+  runCockpitCounts,
+  runGateRailCounts,
   runWorkspaceDiffValue,
   selectSlotCompareTarget,
   summarizeSlotWorkspaceGates,
@@ -150,13 +152,24 @@ function firstRender(run: Run) {
   fallbackTaskProgressSummary(run);
   runWorkspaceDiffValue(run, gates[0] ?? null);
   hasRunWorkspaceDiff(run, gates[0] ?? null);
-  summarizeSlotWorkspaceRetro(run);
-  selectSlotCompareTarget({
+  const retroSummary = summarizeSlotWorkspaceRetro(run);
+  const compareTarget = selectSlotCompareTarget({
     runArtifacts: manifest,
     recipeRuns: [],
     selectedRecipeRunId: null,
     evidenceModel,
   });
+  // What the workspace cockpit and the gate rail show, as RunReviewWorkspaceSummary feeds them.
+  const visualPairCount = compareTarget?.pairCount ?? 0;
+  const reviewGate = gates.find((gate) => gate.label === 'Review workspace') ?? null;
+  const cockpit = runCockpitCounts(run, {
+    manifestCount: manifest.length,
+    visualPairCount,
+    readyGate: null,
+    reviewGate,
+    retroSummary,
+  });
+  const rail = reviewGate ? runGateRailCounts(reviewGate, visualPairCount, cockpit.loaded) : null;
   deriveRunLifecycleView(run);
   cancelledRunSlotChoices(run, []);
   openHumanGateDecision(run);
@@ -170,7 +183,7 @@ function firstRender(run: Run) {
   reviewHistoryIdentity(run);
   reviewHistoryArtifactPaths(run);
   collectRunInteractivePacketArtifacts(run);
-  return { gates, chain, saved: savedReviewView(run) };
+  return { gates, chain, cockpit, rail, saved: savedReviewView(run) };
 }
 
 const metric = (gates: ReturnType<typeof summarizeSlotWorkspaceGates>, label: string) =>
@@ -185,16 +198,30 @@ test('the gateway trims this review row the way run.list sends it', () => {
 });
 
 test('a trimmed review row renders, and what it left out reads as not loaded', () => {
-  const { gates, chain, saved } = firstRender(trimRunForList(reviewRun));
+  const { gates, chain, cockpit, rail, saved } = firstRender(trimRunForList(reviewRun));
   assert.equal(metric(gates, 'Comments'), 'not loaded');
   assert.equal(metric(gates, 'Evidence'), 'not loaded');
   assert.equal(chain.at(-1)?.unresolvedCount, null);
   assert.equal(saved?.verdict, 'REQUEST_CHANGES');
+  assert.deepEqual(
+    [
+      cockpit.artifactFiles,
+      cockpit.beforeAfter,
+      cockpit.reviewHint,
+      rail?.evidence,
+      rail?.beforeAfter,
+    ],
+    ['not loaded', 'not loaded', 'files not loaded', 'not loaded', 'not loaded'],
+  );
 });
 
 test('the full run.get copy still counts what the row left out', () => {
-  const { gates, chain } = firstRender(reviewRun);
+  const { gates, chain, cockpit, rail } = firstRender(reviewRun);
   assert.equal(metric(gates, 'Comments'), '5');
   assert.equal(metric(gates, 'Evidence'), '1');
   assert.equal(chain.at(-1)?.unresolvedCount, 5);
+  assert.equal(cockpit.artifactFiles, '3');
+  assert.match(cockpit.beforeAfter, /^\d+$/u);
+  assert.match(cockpit.reviewHint ?? '', /^\d+ files?/u);
+  assert.match(rail?.evidence ?? '', /^\d+$/u);
 });

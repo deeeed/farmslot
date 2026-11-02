@@ -15,6 +15,7 @@ import {
   Methods,
   type RecipeRunArtifactGroup,
   reviewChainForRun,
+  runHasTrimmedDetail,
   type RunStep,
   type TaskProgressResult,
 } from '@farmslot/protocol';
@@ -48,7 +49,7 @@ import { gateReviewHref, openHumanGateDecision } from '../../lib/gate-review';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
 import { readErrorMessage } from '../../lib/resource-read-status';
-import { assertNativeRunReady } from '../../lib/run-collections';
+import { assertNativeRunReady, retryNativeRuns } from '../../lib/run-collections';
 import {
   runWorkspaceDiffValue,
   selectSlotCompareTarget,
@@ -103,6 +104,7 @@ import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
 import { RunResultsCard } from './components/RunResultsCard';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
+import { retryRunDetailReads, runDetailReadObservations } from './run-detail-reads';
 import {
   assertRunEvidenceReady,
   runAcceptanceEvidenceHref,
@@ -149,7 +151,7 @@ export default function RunDetailScreen() {
   const requestedRecipeRunId = Array.isArray(recipeRun)
     ? (recipeRun[0] ?? null)
     : (recipeRun ?? null);
-  const { runQuery, runObservation, listObservation, fromList, run } =
+  const { runQuery, runObservation, runActionable, listObservation, fromList, run } =
     useRunDetailRun(resolvedRunId);
   const outputReview = useMemo(() => pendingOutputReview(run), [run]);
   const recipeQuery = useMemo(
@@ -259,11 +261,20 @@ export default function RunDetailScreen() {
     authHeaders: artifactAuthHeaders,
     contextKey: JSON.stringify([profileId, authorityEpoch, recipeQuery?.id]),
   });
-  const retryRun = useCallback(async () => {
-    if (runQuery) await getResourceCache()?.retry(runQuery);
-    if (recipeQuery) await getResourceCache()?.retry(recipeQuery);
-    if (progressQuery) await getResourceCache()?.retry(progressQuery);
-  }, [runQuery, recipeQuery, progressQuery]);
+  const retryRun = useCallback(
+    () =>
+      retryRunDetailReads({
+        fromList,
+        listObservation,
+        retryList: retryNativeRuns,
+        retryReads: async () => {
+          if (runQuery) await getResourceCache()?.retry(runQuery);
+          if (recipeQuery) await getResourceCache()?.retry(recipeQuery);
+          if (progressQuery) await getResourceCache()?.retry(progressQuery);
+        },
+      }),
+    [fromList, listObservation, runQuery, recipeQuery, progressQuery],
+  );
 
   useEffect(() => {
     setError(null);
@@ -424,7 +435,8 @@ export default function RunDetailScreen() {
     Boolean(client) &&
     connectionStatus === 'connected' &&
     runObservation.status === 'ready';
-  const cancelledSlot = cancelledRunSlotChoices(run, fleetSlots ?? []);
+  // The release is a write: only run.get's own run decides whether it is offered, never a row.
+  const cancelledSlot = runActionable ? cancelledRunSlotChoices(run, fleetSlots ?? []) : null;
   const focusedArtifactPath = requestedArtifactPath.trim() || null;
   const focusedArtifactIsDiff = Boolean(
     focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
@@ -543,13 +555,13 @@ export default function RunDetailScreen() {
   return (
     <View style={baseStyles.container}>
       <ResourceReadStatus
-        observations={[
-          // A row on screen is as old as the run list it came from.
-          ...(fromList ? [{ observation: listObservation, label: 'run' }] : []),
-          { observation: runObservation, label: 'run' },
-          { observation: recipeObservation, label: 'run evidence' },
-          ...(progressQuery ? [{ observation: progressObservation, label: 'task progress' }] : []),
-        ]}
+        observations={runDetailReadObservations({
+          fromList,
+          listObservation,
+          runObservation,
+          evidenceObservation: recipeObservation,
+          progressObservation: progressQuery ? progressObservation : undefined,
+        })}
         onRetry={() => void retryRun()}
       />
       <Animated.ScrollView
@@ -684,6 +696,7 @@ export default function RunDetailScreen() {
             diffAvailable={activeDiffValue !== '-' || Boolean(run.slotId)}
             diffValue={activeDiffValue !== '-' ? activeDiffValue : run.slotId ? 'workspace' : '-'}
             comparePairCount={compareTarget?.pairCount ?? 0}
+            detailLoaded={!runHasTrimmedDetail(run)}
             onOpenArtifact={() =>
               openRunEvidenceArtifact(
                 focusedArtifactPath,
