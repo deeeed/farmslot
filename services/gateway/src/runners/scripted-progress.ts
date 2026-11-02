@@ -2,25 +2,17 @@ import path from 'node:path';
 
 import { isRecord, primaryRoleForFlow } from '@farmslot/protocol';
 
-import { loadProjectVars } from '../core/config.js';
 import { slotFileExists, slotReadFile, slotStat } from '../core/slot-io.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../tasks/worker-signals.js';
 
 import type { MonitorProgressKind } from './observability-progress.js';
 import type { RunnerTaskProgressInput } from './observability-types.js';
-import {
-  type ResolvedScriptedCommand,
-  resolveScriptedCommandFromRawProjectJson,
-} from './scripted-config.js';
+import { type ResolvedScriptedCommand, scriptedRelaunchOptions } from './scripted-config.js';
 
 async function declaredCommand(input: RunnerTaskProgressInput): Promise<ResolvedScriptedCommand> {
-  const { projectJson } = await loadProjectVars(input.run.project);
-  if (input.run.scripted?.mode !== 'command') throw new Error('Command mode is required');
-  return resolveScriptedCommandFromRawProjectJson(
-    input.run.scripted.commandRef,
-    projectJson,
-    input.run.project,
-  );
+  const { scriptedCommand } = await scriptedRelaunchOptions('scripted', input.run);
+  if (!scriptedCommand) throw new Error('Command mode is required');
+  return scriptedCommand;
 }
 
 /** A terminal child result and its current monitor receipt prove command completion. */

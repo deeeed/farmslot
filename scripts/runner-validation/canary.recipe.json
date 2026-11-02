@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "The canary: a scripted lifecycle and every pipeline step through a gateway restart",
+  "description": "On an isolated gateway with a remote node slot (own home, runs, pool, projects, port and tmux server; gh refuses; ssh stays local). The canary profile runs a scripted canary run through find-slot, write-task, prepare, dispatch, monitor, complete, gate, close and release against the step budgets in canary/config.json, replays a run from dispatch while its gate card is open (F324), and restarts the gateway mid-MONITOR with the node up. The nightly profile holds a run at a known point in DISPATCH, MONITOR, HUMAN_GATE package preparation, FINALIZE and the slot release, restarts the gateway once with the node up and once with the node away past recovery's node wait, releases the hold, and requires the run to end like a same-night no-restart baseline; it also restarts REVIEW with its node away past the 120 s reconnect wait (known), and restarts the gateway with the worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW, its fix round, HUMAN_GATE prep and FINALIZE, requiring the worker to stay alive (no kill, no /exit) and the run to end like its baseline (the test answers the reviewer's turns); and the same with a Pi-runner worker in MONITOR whose model stream drops as the gateway restarts. Both are zero inference. Each writes results.json in its evidence directory.",
+  "workflow": {
+    "entry": "canary",
+    "nodes": {
+      "canary": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/canary/canary.mts --profile canary --target isolated",
+        "timeout_ms": 1800000,
+        "intent": "A scripted run goes through the whole lifecycle within its step budgets, a replay with the gate open supersedes the card, and a gateway restart mid-MONITOR changes nothing.",
+        "next": "nightly"
+      },
+      "nightly": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/canary/canary.mts --profile nightly",
+        "timeout_ms": 5400000,
+        "intent": "Each pipeline step ends the same way with a gateway restart, node up or node away, as without one, and a worker or reviewer mid-turn survives it.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
