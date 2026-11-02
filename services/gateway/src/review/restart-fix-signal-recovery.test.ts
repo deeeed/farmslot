@@ -638,6 +638,28 @@ test('a relaunch clears the earlier worker signal, so a leading worker clock can
   assert.equal(delivery.status, 'deferred', 'nothing shows this worker holds its prompt');
 });
 
+test('a post-launch relaunch clears the boundary even if the old worker moved its attempt meanwhile', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'claude');
+  paneCommand = 'claude';
+  withPrimaryWorker(run.id);
+  onRespawn = () => {
+    // The old worker's mark start rewrites attemptStartedAt.
+    updateRun(run.id, {
+      agentContexts: getRun(run.id)!.agentContexts?.map((context) =>
+        context.id === 'review-fix'
+          ? { ...context, attemptStartedAt: '2026-11-01T17:02:00.000Z' }
+          : context,
+      ),
+    });
+  };
+  t.after(() => {
+    onRespawn = () => {};
+  });
+
+  assert.equal(await relaunchWorkerForFix(vars, 'claude', 'sonnet', run.id), true);
+  assert.equal(fixContext(run.id)?.promptDeliveryStartedAt, undefined);
+});
+
 test('a relaunch before a new round keeps the finished round signal the next send reads', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
   paneCommand = 'pi-coding-agent';

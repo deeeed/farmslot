@@ -1583,7 +1583,10 @@ test('runReviewRetryLoop: a deferred reserved delivery is acknowledged only by i
       feedbackErrors: [new ReviewFixDeliveryError('unacknowledged retained handoff')],
       fixSignals,
     });
-    deps.resumeFixPromptDelivery = async () => ({ status: 'deferred' });
+    deps.resumeFixPromptDelivery = async (_vars, _runId, _context, _deps, options) => {
+      assert.equal(options, undefined, 'the relaunch recorded whether a send remains');
+      return { status: 'deferred' };
+    };
     let delivered = 0;
     const result = await runReviewRetryLoop({
       ...baseArgs,
