@@ -284,7 +284,7 @@ function nativeCatalogPreferenceFingerprint(home: string): string {
       .map((definition) => {
         const visible = describeVisibleModels(definition.id, undefined, home);
         const defaultModel =
-          visible.defaultModel ||
+          (visible.defaultConfigured && visible.defaultModel) ||
           definition.nativeChoices!.defaultModel ||
           definition.defaultModel ||
           '';

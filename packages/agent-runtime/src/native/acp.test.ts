@@ -4,14 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { observeOpenCodeAccount } from './account-opencode.js';
 import { acpPermission, cursorRequest } from './acp-requests.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
+import { opencodeEnvironment, opencodeNativeAdapter } from './opencode.js';
 import type { NativeEventInput } from './types.js';
 
 const fixture = `#!/usr/bin/env node
 if(process.argv.includes('--version')) { console.log('fixture 1'); process.exit(0); }
 const fs=require('node:fs');
+if(process.env.OPENCODE_PERMISSION!==undefined)fs.writeFileSync('opencode-permission',process.env.OPENCODE_PERMISSION);
 let session='fixture-session',prompt,authenticated=false;
 const configOptions=[{id:'model',currentValue:'specific-model',options:[{value:'specific-model'}]}];
 const send=m=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...m})+'\\n');
@@ -20,7 +23,7 @@ const result=(id,value)=>send({id,result:value});
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);fs.appendFileSync('wire',line+'\\n');
  if(m.jsonrpc!=='2.0')process.exit(9);
- if(m.method==='initialize')return result(m.id,{protocolVersion:1,agentCapabilities:{loadSession:true},authMethods:[{id:'cursor_login'},{id:'cached_token'}]});
+ if(m.method==='initialize')return result(m.id,{protocolVersion:1,agentCapabilities:{loadSession:true},authMethods:[{id:'cursor_login'},{id:'cached_token'},{id:'opencode-login'}]});
  if(m.method==='authenticate'){authenticated=true;return result(m.id,{})}
  if(m.method==='session/new'||m.method==='session/load'){
   if(!authenticated)process.exit(10);
@@ -76,6 +79,7 @@ function setup() {
 for (const [runner, adapter] of [
   ['cursor', cursorNativeAdapter],
   ['grok', grokNativeAdapter],
+  ['opencode', opencodeNativeAdapter],
 ] as const) {
   test(`${runner} ACP excludes replay/foreign updates and retains exact identity`, async () => {
     const f = setup();
@@ -118,9 +122,8 @@ for (const [runner, adapter] of [
       assert.equal(
         calls.find(
           (call) =>
-            call.method ===
-            (runner === 'cursor' ? 'session/set_config_option' : 'session/set_model'),
-        ).params[runner === 'cursor' ? 'value' : 'modelId'],
+            call.method === (runner === 'grok' ? 'session/set_model' : 'session/set_config_option'),
+        ).params[runner === 'grok' ? 'modelId' : 'value'],
         'specific-model',
       );
       await session.close();
@@ -131,6 +134,59 @@ for (const [runner, adapter] of [
     }
   });
 }
+
+test('OpenCode asks before each tool only at the sandboxed tier', () => {
+  for (const [safetyTier, permission] of [
+    [undefined, '{"*":"ask"}'],
+    ['sandboxed', '{"*":"ask"}'],
+    // Other tiers keep OpenCode's own rules, as the tmux launch does.
+    ['full-auto', undefined],
+    ['dangerous', undefined],
+  ] as const)
+    assert.equal(
+      opencodeEnvironment({ cwd: '/w', executable: 'opencode', safetyTier }).OPENCODE_PERMISSION,
+      permission,
+      String(safetyTier),
+    );
+});
+
+test('the OpenCode permission override reaches the runner process', async () => {
+  const f = setup();
+  const session = await opencodeNativeAdapter.start(
+    { ...f, safetyTier: 'sandboxed' },
+    () => undefined,
+  );
+  try {
+    assert.deepEqual(JSON.parse(readFileSync(join(f.cwd, 'opencode-permission'), 'utf8')), {
+      '*': 'ask',
+    });
+  } finally {
+    await session.close();
+    f.cleanup();
+  }
+});
+
+test('OpenCode account observation signs in over ACP', async () => {
+  const f = setup();
+  try {
+    const observed = await observeOpenCodeAccount({ cwd: f.cwd, executable: f.executable });
+    assert.deepEqual([observed.installed, observed.login], [true, 'authenticated']);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('OpenCode refuses a model it does not offer', async () => {
+  const f = setup();
+  try {
+    await assert.rejects(
+      opencodeNativeAdapter.start({ ...f, model: 'other/model' }, () => undefined),
+      /OpenCode model is unavailable: other\/model/,
+    );
+  } finally {
+    f.cleanup();
+  }
+});
 
 test('a Cursor shell call keeps its kind when an update adds the command', async () => {
   const f = setup();
@@ -287,7 +343,7 @@ test('ACP permission updates can omit previously streamed tool fields', () => {
   });
 });
 
-for (const runner of ['cursor', 'grok']) {
+for (const runner of ['cursor', 'grok', 'opencode']) {
   test(`${runner} native registration binds worker leases and refuses unproven modes`, async () => {
     const { NativeSessionManager } = await import('./manager.js');
     const { randomUUID } = await import('node:crypto');
@@ -313,7 +369,11 @@ for (const runner of ['cursor', 'grok']) {
         manager.create('owner', { runner, cwd: f.cwd, mode: 'plan' }),
         /does not support/,
       );
-      const adapter = runner === 'cursor' ? cursorNativeAdapter : grokNativeAdapter;
+      const adapter = {
+        cursor: cursorNativeAdapter,
+        grok: grokNativeAdapter,
+        opencode: opencodeNativeAdapter,
+      }[runner]!;
       assert.equal(adapter.capabilities.questions, false);
     } finally {
       if (workerId) await manager.close('owner', workerId);
