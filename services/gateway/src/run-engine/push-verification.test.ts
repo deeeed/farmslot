@@ -276,6 +276,18 @@ for (const shell of SHELLS) {
     assert.deepEqual(state.offBranch, { runBranchExists: true, head: null });
   });
 
+  test(`${name}: a renamed run branch the remote still has is reported before the remote comparison`, async (t) => {
+    const repo = mainOnlyClone(t);
+    repo.commit('feat: one');
+    repo.git('push', '-q', 'origin', 'feature');
+    repo.git('branch', '-m', 'feature', 'do-not-merge-feature');
+
+    const { state } = await inspect(repo.dir, 'push');
+
+    assert.deepEqual(state.offBranch, { runBranchExists: false, head: 'do-not-merge-feature' });
+    assert.equal(state.remoteChecked, undefined);
+  });
+
   test(`${name}: new branch inspection keeps publication blocked when no comparison ref exists`, async (t) => {
     const repo = repository(t);
     repo.commit('feat: one');
