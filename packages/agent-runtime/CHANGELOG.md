@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A run's reviewer contract carries no recipe rules. A reviewer shares its worker's task directory, so a blocked worker's `artifacts/recipe.json` made every reviewer's terminal mark require the worker's `recipe-coverage.md` and evidence manifest. The reviewer could not finish, and the gate review failed (F312).
 
 ## 0.39.23 - 2026-11-02
 
