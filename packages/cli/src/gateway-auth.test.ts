@@ -42,7 +42,7 @@ test('a person-session probe of a stopped gateway reports it at once', async () 
     },
     2_000,
   );
-  assert.notEqual(probe.state, 'authenticated');
+  assert.equal(probe.state, 'unreachable');
   // Its token refresh fails at once as well, rather than waiting out a reload.
   assert.ok(Date.now() - started < 1_000);
 });

@@ -257,6 +257,53 @@ test('a reload that outlasts the wait fails with the transport reason', async (t
   assert.match(notices[0], /not accepting connections \(reloading\?\); retrying for up to 1s/);
 });
 
+const personSession = {
+  refreshToken: 'fsr_' + 'a'.repeat(32) + '_' + 'r'.repeat(43),
+  session: {
+    id: 'a'.repeat(32),
+    principalId: 'person',
+    principalGeneration: 0,
+    deviceName: 'Fixture',
+    deviceKind: 'cli' as const,
+    createdAt: '2026-10-16T00:00:00.000Z',
+    lastRefreshedAt: '2026-10-16T00:00:00.000Z',
+    refreshExpiresAt: '2099-01-01T00:00:00.000Z',
+    revokedAt: null,
+  },
+};
+
+test('a person-session token refresh shares the command wait', async (t) => {
+  const notices: string[] = [];
+  t.mock.method(process.stderr, 'write', (text: string) => {
+    notices.push(text);
+    return true;
+  });
+  const tty = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY');
+  Object.defineProperty(process.stderr, 'isTTY', { configurable: true, value: true });
+  t.after(() => {
+    if (tty) Object.defineProperty(process.stderr, 'isTTY', tty);
+    else Reflect.deleteProperty(process.stderr, 'isTTY');
+  });
+  const url = await closedPort();
+  for (const open of [
+    (client: GatewayClient) => client.connect(),
+    (client: GatewayClient) => client.call('fleet.status'),
+  ]) {
+    notices.length = 0;
+    const client = new GatewayClient({
+      url,
+      timeout: 2000,
+      reconnectWindowMs: 1500,
+      credential: { personSession: structuredClone(personSession) },
+    });
+    const started = Date.now();
+    await assert.rejects(open(client), GatewayConnectionError);
+    // A refresh with its own window would stack a second wait and notice inside the first.
+    assert.equal(notices.length, 1);
+    assert.ok(Date.now() - started < 2500, 'one window bounds the wait');
+  }
+});
+
 test('only farmslot commands wait, for FARMSLOT_GATEWAY_RECONNECT_MS or 90 s', async () => {
   assert.equal(cliReconnectWindowMs({}), GATEWAY_RECONNECT_WINDOW_MS);
   assert.equal(GATEWAY_RECONNECT_WINDOW_MS, 90_000);

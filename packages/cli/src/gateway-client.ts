@@ -176,7 +176,7 @@ export class GatewayClient {
             url: this.url,
             timeout: this.timeout,
             credential: accessToken ? { token: accessToken } : null,
-            reconnectWindowMs: this.reconnectWindowMs,
+            // The caller's attempt waits out a reload, so a refresh shares its one deadline.
           }).call(method, params),
         onAccess: async (grant) => {
           if (this.activeConnection)
@@ -392,26 +392,20 @@ export class GatewayClient {
     params: unknown = {},
     onEvent?: (event: EventFrame) => void,
   ): Promise<T> {
-    const credential = await this.currentCredentials();
-    if (this.personClient)
-      return this.personClient.withAccess((token) =>
-        this.callWithCredential<T>(method, params, onEvent, { token }),
-      );
-    try {
-      return await this.callWithCredential<T>(method, params, onEvent, credential);
-    } catch (error) {
-      await forgetRejectedPersonCredential(error, this.credential);
-      throw error;
-    }
-  }
-
-  private callWithCredential<T>(
-    method: string,
-    params: unknown,
-    onEvent: ((event: EventFrame) => void) | undefined,
-    credential: { token?: string; password?: string } | null,
-  ): Promise<T> {
-    return this.untilReconnected(() => this.callOnce<T>(method, params, onEvent, credential));
+    // One wait covers the person-session token refresh and the call itself.
+    return this.untilReconnected(async () => {
+      const credential = await this.currentCredentials();
+      if (this.personClient)
+        return this.personClient.withAccess((token) =>
+          this.callOnce<T>(method, params, onEvent, { token }),
+        );
+      try {
+        return await this.callOnce<T>(method, params, onEvent, credential);
+      } catch (error) {
+        await forgetRejectedPersonCredential(error, this.credential);
+        throw error;
+      }
+    });
   }
 
   private callOnce<T>(
