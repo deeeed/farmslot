@@ -9,9 +9,8 @@
 // record the retry, launch its worker, and reach MONITOR. Nothing else is substituted.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/launch-inputs-reload.mts [evidence-dir]
-import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import {
   chmod,
@@ -29,17 +28,14 @@ import { fileURLToPath } from 'node:url';
 
 import {
   cleanupOnExit,
-  freePort,
+  type IsolatedStackParts,
+  linkCheckout,
   poll,
+  startIsolatedStack,
   startReaper,
-  startWorkspaceProcess,
   stopProcess,
+  writeJson as json,
 } from '../lib/isolated-stack.mjs';
-import {
-  GatewayClient,
-  GatewayConnectionError,
-  type GatewayConnection,
-} from '../../../packages/cli/src/gateway-client.js';
 import type { Run } from '../../../packages/protocol/src/index.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -58,7 +54,6 @@ const rewrote = path.join(fixture, 'pool-rewritten');
 const baseEnv: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: tmuxDir };
 delete baseEnv.TMUX;
 delete baseEnv.TMUX_PANE;
-const stack = (env: NodeJS.ProcessEnv) => ({ root, evidence, env: { ...baseEnv, ...env } });
 // A cancelled recipe SIGKILLs this process within a second; the reaper then stops what it owned.
 const reaper = startReaper();
 reaper.path(fixture);
@@ -66,24 +61,23 @@ reaper.path(tmuxDir);
 reaper.command(['tmux', 'kill-server'], baseEnv);
 // What the worker's shell saw for the rewritten value: the retry must launch on the new inputs.
 const workerPin = path.join(fixture, 'worker-pin');
-let gateway: ChildProcess | undefined;
-let node: ChildProcess | undefined;
-let connection: GatewayConnection | undefined;
+const parts: IsolatedStackParts = {};
 let run: Run | undefined;
 const cleanupErrors: unknown[] = [];
 // Every owned resource is attempted, on the normal path and when the recipe is cancelled.
 const cleanup = cleanupOnExit(async () => {
   const attempt = (step: () => Promise<unknown>) =>
     step().catch((error: unknown) => cleanupErrors.push(error));
+  const { connection } = parts;
   if (connection && run && !['done', 'failed', 'cancelled'].includes(run.status)) {
     const { id } = run;
     await attempt(() =>
-      connection!.call('run.cancel', { runId: id, reason: 'launch inputs reload fixture cleanup' }),
+      connection.call('run.cancel', { runId: id, reason: 'launch inputs reload fixture cleanup' }),
     );
   }
   connection?.close();
-  await attempt(() => stopProcess(node));
-  await attempt(() => stopProcess(gateway));
+  await attempt(() => stopProcess(parts.node));
+  await attempt(() => stopProcess(parts.gateway));
   // The proof's own tmux server under its private TMUX_TMPDIR; no other server is touched.
   spawnSync('tmux', ['kill-server'], { stdio: 'ignore', env: baseEnv });
   await attempt(() => rm(fixture, { recursive: true, force: true }));
@@ -91,25 +85,12 @@ const cleanup = cleanupOnExit(async () => {
   reaper.done();
 });
 
-async function json(file: string, value: unknown) {
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(value, null, 2), { mode: 0o600 });
-}
 const tmux = (...args: string[]) =>
   execFileSync('tmux', args, { encoding: 'utf8', env: baseEnv }).trim();
 
-execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
-execFileSync('git', ['clone', '--shared', '--no-checkout', root, repo], { stdio: 'pipe' });
-for (const dir of [fixture, repo])
-  for (const entry of ['scripts', 'services', 'packages', 'node_modules', 'package.json'])
-    await symlink(path.join(root, entry), path.join(dir, entry));
-// The launch preflight checks the slot's package manager the way a worker would run it.
-for (const entry of ['.yarnrc.yml', '.yarn', 'yarn.lock', '.nvmrc'])
-  if (existsSync(path.join(root, entry)))
-    await symlink(path.join(root, entry), path.join(repo, entry));
+await linkCheckout(root, fixture, 'Isolated launch-inputs reload fixture');
+await linkCheckout(root, repo, 'Isolated launch-inputs reload checkout');
 await symlink(path.join(fixture, 'projects'), path.join(repo, 'projects'));
-await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated launch-inputs reload fixture\n');
-await writeFile(path.join(repo, 'CLAUDE.md'), '# Isolated launch-inputs reload checkout\n');
 const project = path.join(fixture, 'projects/launch-reload');
 await mkdir(path.join(project, 'templates/prompts'), { recursive: true });
 await writeFile(
@@ -185,73 +166,14 @@ await json(path.join(fixture, '.farm-status.json'), {
   ],
 });
 
-const port = await freePort();
-const token = testGatewayIdentity(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`);
-gateway = startWorkspaceProcess(
-  stack({
-    FARMSLOT_ROOT: fixture,
-    FARMSLOT_HOME: path.join(fixture, 'home'),
-    FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
-    FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
-    FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
-    FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
-    GATEWAY_HOST: '127.0.0.1',
-    GATEWAY_PORT: String(port),
-    FARMSLOT_GATEWAY_PROFILE: 'proof',
-    FARMSLOT_DISABLE_ORCHESTRATION: '1',
-    FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
-  }),
-  '@farmslot/gateway',
-  'gateway.log',
-);
-reaper.group(gateway.pid);
 let failure: unknown;
 let result: Record<string, unknown> | undefined;
 try {
   tmux('new-session', '-d', '-s', session, '-c', repo);
-  const client = new GatewayClient({
-    url: `ws://127.0.0.1:${port}`,
-    timeout: 30_000,
-    credential: { token },
-  });
-  connection = await poll(
-    'the isolated gateway',
-    async () => {
-      if (gateway?.exitCode !== null) throw new Error('Isolated gateway exited before readiness');
-      try {
-        return await client.connect();
-      } catch (error) {
-        // Connection refusal is expected while the gateway starts on its isolated port.
-        if (!(error instanceof GatewayConnectionError)) throw error;
-        return undefined;
-      }
-    },
-    60_000,
+  const { connection: gw } = await startIsolatedStack(
+    { root, evidence, env: baseEnv, fixture, reaper, node: { machine } },
+    parts,
   );
-  const gw = connection;
-  const { principal } = await gw.call<{ principal: { id: string } }>('principal.create', {
-    subject: { type: 'node', machine, displayName: 'Launch reload fixture node' },
-    roles: [],
-  });
-  const credential = await gw.call<{ secret: string }>('credential.issue', {
-    principalId: principal.id,
-    displayName: 'Launch reload fixture node',
-  });
-  const nodeRoot = path.join(fixture, 'node');
-  await mkdir(nodeRoot, { recursive: true });
-  node = startWorkspaceProcess(
-    stack({
-      FARMSLOT_ROOT: nodeRoot,
-      FARMSLOT_HOME: path.join(nodeRoot, 'home'),
-      FARMSLOT_NODE_TOKEN: credential.secret,
-      GATEWAY_URL: `ws://127.0.0.1:${port}`,
-      MACHINE_NAME: machine,
-      SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen.sock'),
-    }),
-    '@farmslot/node',
-    'node.log',
-  );
-  reaper.group(node.pid);
 
   run = (
     await gw.call<{ run: Run }>('run.create', {

@@ -1,13 +1,14 @@
-// branch-freshness.ts — Early behind-main + merge-tree conflict probe for
-// human-gate rework and ready-gate soft chips. Non-destructive: never rebases
+// branch-freshness.ts — Early behind-base + merge-tree conflict probe for
+// human-gate rework and ready-gate chips; a known conflict with the publication
+// base also blocks publication approval (F302). Non-destructive: never rebases
 // or force-pushes; only reports counts/conflict state and operator-facing hints.
 //
 // Fail-closed: when origin/<branch> is missing or a count cannot be computed,
 // fields are omitted (unknown) — never treated as ahead=0 or mergeConflicts=true.
 
-import type { ReadyGatePayload } from '@farmslot/protocol';
+import { DEFAULT_BRANCH, type ReadyGatePayload, type Run } from '@farmslot/protocol';
 
-import type { SlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import {
@@ -294,12 +295,13 @@ export async function probeSlotBranchFreshness(
   vars: SlotVars,
   defaultBranch: string,
   strategy: MergeMainStrategy = 'merge',
+  timeoutMs = 45_000,
 ): Promise<BranchFreshnessSummary | null> {
   if (!vars.remoteRepo) return null;
   const branch = sanitizeDefaultBranch(defaultBranch);
   const script = buildBranchFreshnessProbeScript(vars.remoteRepo, branch);
   try {
-    const result = await execOnSlot(vars, script, { timeout: 45_000 });
+    const result = await execOnSlot(vars, script, { timeout: timeoutMs });
     // Even non-zero exit may still carry markers after set +e.
     if (
       !result.stdout.includes('REF_OK:') ||
@@ -363,4 +365,82 @@ export function applyBranchFreshnessToReadyGatePayload(
   next.mergeConflictPaths = [...freshness.mergeConflictPaths];
   next.branchFreshnessHint = freshness.hint;
   return next;
+}
+
+/**
+ * Why a branch that conflicts with its publication base must not be approved (F302), with the
+ * probe's strategy-aware next step. `paths` is the probe's capped sample.
+ */
+export function baseMergeConflictMessage(input: {
+  paths: readonly string[];
+  hint?: string;
+}): string {
+  const sample = input.paths.length
+    ? ` in ${input.paths.join(', ')}${input.paths.length >= CONFLICT_PATH_CAP ? ', …' : ''}`
+    : '';
+  const next = input.hint?.split('Next: ')[1];
+  return `Resolve the base conflict first: this branch conflicts with its publication base${sample}, so publishing would fail.${next ? ` Next: ${next}` : ''} Then re-record what changed and refresh the package.`;
+}
+
+export interface RunBaseFreshness {
+  /** The base the run publishes against: a stacked run's upstream branch, else the default. */
+  base: string;
+  defaultBranch: string;
+  freshness: BranchFreshnessSummary | null;
+}
+
+/**
+ * The slot's freshness against the base its publication push checks (`publicationBaseForRun`),
+ * for the gate, its package refresh and approval alike.
+ */
+export async function probeRunBaseFreshness(
+  run: Pick<Run, 'slotId' | 'project' | 'stack' | 'parentRunId'>,
+  options: { timeoutMs?: number } = {},
+): Promise<RunBaseFreshness | null> {
+  if (!run.slotId) return null;
+  const [vars, { projectJson }] = await Promise.all([
+    loadSlotVars(run.slotId),
+    loadProjectVars(run.project),
+  ]);
+  const defaultBranch = String(getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH);
+  const { publicationBaseForRun } = await import('./stack-base.js');
+  const base = await publicationBaseForRun(run, defaultBranch);
+  const freshness = await probeSlotBranchFreshness(
+    vars,
+    base,
+    resolveBranchUpdateStrategy(projectJson),
+    options.timeoutMs,
+  );
+  return { base, defaultBranch, freshness };
+}
+
+/** Approval waits on the probe interactively; an unknown result leaves the push's own check. */
+const APPROVAL_PROBE_TIMEOUT_MS = 15_000;
+
+/**
+ * Approval refuses a package whose branch conflicts with its publication base. The base can move
+ * after the package was built (ba397e2c went behind main by 3), so approval probes again. Only a
+ * known result at the package's HEAD counts; `assertRunGateReady` enforces the gate's recorded
+ * one. Returns the refusal and the conflicting probe.
+ */
+export async function approvalBaseMergeConflict(
+  run: Pick<Run, 'slotId' | 'project' | 'stack' | 'parentRunId'>,
+  payload: { prPackage?: { headSha?: string | null } | null },
+  probe: typeof probeRunBaseFreshness = probeRunBaseFreshness,
+): Promise<{ refusal: string; observed: BranchFreshnessSummary } | undefined> {
+  let observed: BranchFreshnessSummary | null = null;
+  try {
+    observed = (await probe(run, { timeoutMs: APPROVAL_PROBE_TIMEOUT_MS }))?.freshness ?? null;
+  } catch (error) {
+    console.warn(
+      `[run-engine] approval base probe unavailable for slot ${run.slotId}: ${(error as Error).message.slice(0, 200)}`,
+    );
+  }
+  const headSha = payload.prPackage?.headSha;
+  if (observed?.mergeConflicts !== true || (headSha && observed.headSha !== headSha))
+    return undefined;
+  return {
+    refusal: baseMergeConflictMessage({ paths: observed.mergeConflictPaths, hint: observed.hint }),
+    observed,
+  };
 }
