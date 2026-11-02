@@ -5,6 +5,10 @@
 // 1. A run pinned to it with app=apps/sherpa-voice stops on an app_binding_mismatch card while the
 //    slot's ownership row is unchanged. Abort fails the run, and the row is still unchanged.
 // 2. A run with the slot's own app passes find-slot without a card; the proof then cancels it.
+// 3. Continue on the card: find-slot selects again, replays the answer (still one card), claims the
+//    slot and records `appBinding`.
+// 4. Abort across a gateway restart: the card outlives its waiter; resolved on the restarted
+//    gateway, Abort fails the run with no second card and the slot as it was.
 // The worker is the scripted runner and waits on a file the proof never writes, so no model runs.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/app-binding-mismatch.mts [evidence-dir]
@@ -52,13 +56,17 @@ const privateTmuxServer = () => existsSync(path.join(tmuxDir, `tmux-${process.ge
 const reaper = startReaper();
 reaper.path(fixture);
 reaper.path(tmuxDir);
+// The proof's own socket directory only: a dispatch the matching run reaches may start a server there.
+reaper.command(['tmux', 'kill-server'], baseEnv);
 const parts: IsolatedStackParts = {};
+// The gateway started again on the same fixture for node 4 (the node is not restarted).
+const restarted: IsolatedStackParts = {};
 const runs: Run[] = [];
 const cleanupErrors: unknown[] = [];
 const cleanup = cleanupOnExit(async () => {
   const attempt = (step: () => Promise<unknown>) =>
     step().catch((error: unknown) => cleanupErrors.push(error));
-  const { connection } = parts;
+  const connection = restarted.connection ?? parts.connection;
   for (const run of runs) {
     if (!connection) break;
     const current = await connection
@@ -73,8 +81,10 @@ const cleanup = cleanupOnExit(async () => {
         connection.call('run.cancel', { runId: run.id, reason: 'app binding fixture cleanup' }),
       );
   }
-  connection?.close();
+  restarted.connection?.close();
+  parts.connection?.close();
   await attempt(() => stopProcess(parts.node));
+  await attempt(() => stopProcess(restarted.gateway));
   await attempt(() => stopProcess(parts.gateway));
   // Only a server on this proof's own socket directory, and only if a step started one.
   if (privateTmuxServer()) spawnSync('tmux', ['kill-server'], { stdio: 'ignore', env: baseEnv });
@@ -150,7 +160,7 @@ try {
       },
     ],
   });
-  const { connection: gw } = await startIsolatedStack(
+  let { connection: gw } = await startIsolatedStack(
     { root, evidence, env: baseEnv, fixture, reaper, node: { machine } },
     parts,
   );
@@ -185,24 +195,48 @@ try {
   const appCards = (run: Run): RunDecision[] =>
     run.decisions.filter((decision) => decision.type === 'engine_app_binding_mismatch');
   const findSlot = (run: Run) => run.steps.find((step) => step.name === 'find-slot');
+  const waitForCard = (runId: string) =>
+    poll(
+      'the app binding card',
+      async () => {
+        const run = await readRun(runId);
+        if (['failed', 'cancelled', 'done'].includes(run.status))
+          throw new Error(`The run ended before asking (${run.status}): ${run.error ?? ''}`);
+        if (findSlot(run)?.status === 'done')
+          throw new Error(`find-slot claimed ${run.slotId} without asking about its app`);
+        return appCards(run).find((decision) => !decision.resolvedAt);
+      },
+      120_000,
+    );
+  const waitForFailure = (runId: string) =>
+    poll(
+      'the aborted run to fail',
+      async () => {
+        const run = await readRun(runId);
+        if (appCards(run).length > 1) throw new Error('A second app binding card opened');
+        return run.status === 'failed' ? run : undefined;
+      },
+      60_000,
+    );
+  const waitForStop = (runId: string) =>
+    poll(
+      'the run to stop',
+      async () => {
+        const run = await readRun(runId);
+        return ['cancelled', 'failed', 'done'].includes(run.status) ? run : undefined;
+      },
+      120_000,
+    );
+  const abortedMessage = new RegExp(
+    `App binding mismatch: ${slotId} is bound to apps/playground, not apps/sherpa-voice`,
+  );
 
   const before = await ownership();
   await json(path.join(evidence, 'slot-before.json'), before);
 
   // 1. Another app: a card before any claim, then Abort.
   const mismatched = await createRun('apps/sherpa-voice');
-  const card = await poll(
-    'the app binding card',
-    async () => {
-      const run = await readRun(mismatched.id);
-      if (['failed', 'cancelled', 'done'].includes(run.status))
-        throw new Error(`The run ended before asking (${run.status}): ${run.error ?? ''}`);
-      if (findSlot(run)?.status === 'done')
-        throw new Error(`find-slot claimed ${run.slotId} without asking about its app`);
-      return appCards(run).find((decision) => !decision.resolvedAt);
-    },
-    120_000,
-  );
+  const card = await waitForCard(mismatched.id);
   await json(path.join(evidence, 'card.json'), card);
   assert.deepEqual(card.payload, {
     kind: 'app_binding_mismatch',
@@ -223,21 +257,9 @@ try {
     decisionId: card.id,
     actionId: 'abort',
   });
-  const aborted = await poll(
-    'the aborted run to fail',
-    async () => {
-      const run = await readRun(mismatched.id);
-      return run.status === 'failed' ? run : undefined;
-    },
-    60_000,
-  );
+  const aborted = await waitForFailure(mismatched.id);
   await json(path.join(evidence, 'aborted-run.json'), aborted);
-  assert.match(
-    aborted.error ?? '',
-    new RegExp(
-      `App binding mismatch: ${slotId} is bound to apps/playground, not apps/sherpa-voice`,
-    ),
-  );
+  assert.match(aborted.error ?? '', abortedMessage);
   const afterAbort = await ownership();
   assert.deepEqual(afterAbort, before, 'the aborted run left the slot as it was');
 
@@ -263,14 +285,78 @@ try {
   assert.equal(matchedStep.outputs?.selectedSlot, slotId);
   assert.equal(matchedStep.outputs?.appBinding, undefined);
   await gw.call('run.cancel', { runId: matching.id, reason: 'app binding proof done' });
-  const cancelled = await poll(
-    'the matching run to stop',
+  const cancelled = await waitForStop(matching.id);
+
+  // 3. Continue: select again, replay the answer, claim, record the binding.
+  const continuing = await createRun('apps/sherpa-voice');
+  const continueCard = await waitForCard(continuing.id);
+  await gw.call('run.resolveDecision', {
+    runId: continuing.id,
+    decisionId: continueCard.id,
+    actionId: 'continue',
+  });
+  const claimed = await poll(
+    'find-slot to claim after Continue',
     async () => {
-      const run = await readRun(matching.id);
-      return ['cancelled', 'failed', 'done'].includes(run.status) ? run : undefined;
+      const run = await readRun(continuing.id);
+      if (['failed', 'cancelled'].includes(run.status))
+        throw new Error(`The run ended after Continue (${run.status}): ${run.error ?? ''}`);
+      return findSlot(run)?.status === 'done' ? run : undefined;
     },
     120_000,
   );
+  await json(path.join(evidence, 'continued-run.json'), claimed);
+  assert.equal(appCards(claimed).length, 1, 'the restarted attempt replays the answer');
+  const continuedStep = findSlot(claimed)!;
+  assert.equal(continuedStep.outputs?.selectedSlot, slotId);
+  assert.deepEqual(continuedStep.outputs?.appBinding, continueCard.payload);
+  const claimedRow = await poll(
+    'the slot row to name the continued run',
+    async () => {
+      const row = await ownership();
+      return row.currentRunId === continuing.id ? row : undefined;
+    },
+    30_000,
+  );
+  await gw.call('run.cancel', { runId: continuing.id, reason: 'app binding proof done' });
+  await waitForStop(continuing.id);
+  const settled = await poll(
+    'the slot to be released',
+    async () => {
+      const row = await ownership();
+      return row.lifecycle === 'ready' && !row.currentRunId && !row.phase ? row : undefined;
+    },
+    120_000,
+  );
+
+  // 4. Abort across a gateway restart: the resolver resumes find-slot with no live waiter.
+  const restarting = await createRun('apps/sherpa-voice');
+  const restartCard = await waitForCard(restarting.id);
+  gw.close();
+  await stopProcess(parts.gateway);
+  const afterRestart = path.join(evidence, 'after-restart');
+  await mkdir(afterRestart, { recursive: true });
+  ({ connection: gw } = await startIsolatedStack(
+    { root, evidence: afterRestart, env: baseEnv, fixture, reaper },
+    restarted,
+  ));
+  const reloaded = await readRun(restarting.id);
+  assert.deepEqual(
+    appCards(reloaded).map((decision) => [decision.id, decision.resolvedAt ?? null]),
+    [[restartCard.id, null]],
+    'the card survives the restart, unanswered',
+  );
+  await gw.call('run.resolveDecision', {
+    runId: restarting.id,
+    decisionId: restartCard.id,
+    actionId: 'abort',
+  });
+  const abortedAfterRestart = await waitForFailure(restarting.id);
+  await json(path.join(evidence, 'aborted-after-restart.json'), abortedAfterRestart);
+  assert.equal(appCards(abortedAfterRestart).length, 1, 'no second card after the restart');
+  assert.match(abortedAfterRestart.error ?? '', abortedMessage);
+  const afterRestartAbort = await ownership();
+  assert.deepEqual(afterRestartAbort, settled, 'the slot is as it was before the run');
 
   result = {
     pass: true,
@@ -281,6 +367,19 @@ try {
     slotAfterAbort: afterAbort,
     aborted: { id: aborted.id, status: aborted.status, error: aborted.error },
     matching: { id: passed.id, findSlot: matchedStep.outputs, finalStatus: cancelled.status },
+    continued: {
+      id: claimed.id,
+      cards: appCards(claimed).length,
+      findSlot: continuedStep.outputs,
+      slotRow: claimedRow,
+    },
+    abortedAfterRestart: {
+      id: abortedAfterRestart.id,
+      cards: appCards(abortedAfterRestart).length,
+      error: abortedAfterRestart.error,
+      slotBefore: settled,
+      slotAfter: afterRestartAbort,
+    },
   };
   await json(path.join(evidence, 'result.json'), result);
 } catch (error) {

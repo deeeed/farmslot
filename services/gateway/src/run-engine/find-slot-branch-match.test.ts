@@ -33,7 +33,9 @@ interface ProjectAppFixture {
 }
 const slotApps = new Map<string, string>();
 let projectApps: ProjectAppFixture | undefined;
-let poolReadFailure = false;
+// A strict fleet read that fails, or pool files the last refresh could not read.
+let fleetReadFailure = false;
+let fleetPoolErrors: Array<{ file: string; error: string }> | undefined;
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
   namedExports: {
@@ -157,13 +159,13 @@ mock.module('../runs/store.js', {
 mock.module('../fleet/state.js', {
   namedExports: {
     ...fleet,
-    loadFleetStatus: async () => ({ slots }),
+    loadFleetStatus: async (_force?: boolean, strict?: boolean) => {
+      if (strict && fleetReadFailure) throw new Error('status file unreadable');
+      return { slots, ...(fleetPoolErrors ? { poolErrors: fleetPoolErrors } : {}) };
+    },
     loadProjectConfig: async () => null,
     loadProjectConfigs: async () => [{ name: project, defaultBranch: 'main', slotSelection }],
-    loadPoolConfigs: async () => {
-      if (poolReadFailure) throw new Error('pool directory unreadable');
-      return pools;
-    },
+    loadPoolConfigs: async () => pools,
   },
 });
 const sourceRuntime = await import('../sources/runtime.js');
@@ -423,7 +425,8 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   previewPins.length = 0;
   slotApps.clear();
   projectApps = undefined;
-  poolReadFailure = false;
+  fleetReadFailure = false;
+  fleetPoolErrors = undefined;
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -1453,18 +1456,187 @@ test('kill-and-dispatch-fresh asks about the busy slot app before any takeover s
   assert.deepEqual({ claims, reuseCalls, freshTeardowns, finishedReclaims }, untouched);
 });
 
-test('the card says when the bound slots could not be listed', async () => {
+for (const [cause, fail] of [
+  [
+    'the status file cannot be read',
+    () => {
+      fleetReadFailure = true;
+    },
+  ],
+  [
+    'a pool file could not be read',
+    () => {
+      fleetPoolErrors = [{ file: 'macwork.json', error: 'Unexpected end of JSON input' }];
+    },
+  ],
+] as const) {
+  test(`the card says the bound slots could not be listed when ${cause}`, async () => {
+    reset('fix-bug', 'TAT-4137');
+    sherpaRunOn('macpro-mmt-1');
+    fail();
+    const asked: AppBindingAsk[] = [];
+    await assert.rejects(
+      executeFindSlotStep(run.id, run, 0, appBindingContext('abort', asked)),
+      abortedOnPlayground,
+    );
+    assert.match(
+      asked[0]!.description,
+      /The slots bound to apps\/sherpa-voice could not be listed\./,
+    );
+    assert.equal(asked[0]!.payload.boundSlots, undefined);
+  });
+}
+
+const resolvedAt = () => new Date().toISOString();
+const appAnswer = (payload: AppBindingMismatchPayload, action: string): RunDecision => ({
+  id: `app-binding-${payload.slotId}-${action}`,
+  type: 'engine_app_binding_mismatch',
+  title: 'App binding mismatch',
+  description: '',
+  actions: [
+    { id: 'abort', label: 'Abort run', style: 'danger' },
+    { id: 'continue', label: `Continue on ${payload.slotApp}`, style: 'secondary' },
+  ],
+  createdAt: resolvedAt(),
+  resolvedAt: resolvedAt(),
+  resolvedAction: action,
+  payload,
+});
+
+test('continue after a picker pick claims that pick even when another slot frees up', async () => {
+  reset('dev', 'TAT-9100');
+  expectedTarget = undefined;
+  // `cold` is the automatic choice but has local work; `hot` is only pickable by hand.
+  const cold = candidate('cold', 'mini', 'fix/cold');
+  const hot = candidate('hot', 'macpro', 'fix/hot');
+  slots.splice(0, slots.length, cold, hot);
+  pressureDecisions.set('mini', loadDecision('mini', 0.2));
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.95));
+  reuseOutcomes.set(cold.slot, { kind: 'local-work', reason: 'dirty files' });
+  slotApps.set(cold.slot, 'apps/sherpa-voice');
+  slotApps.set(hot.slot, 'apps/playground');
+  projectApps = { apps: ['apps/playground', 'apps/sherpa-voice'] };
+  pools = [
+    poolOf('mini', [[cold.slot, 'apps/sherpa-voice', true]]),
+    poolOf('macpro', [[hot.slot, 'apps/playground', true]]),
+  ];
+  run.app = 'apps/sherpa-voice';
+  expectedSlot = hot.slot;
+  const appCards: AppBindingMismatchPayload[] = [];
+  const result = await executeFindSlotStep(run.id, run, 0, {
+    ...context,
+    createEngineDecision: async (_id, reason, description, actions, payload) => {
+      if (reason === 'no_suitable_slot') {
+        run.decisions.push({
+          id: 'operator-pick',
+          type: `engine_${reason}`,
+          title: 'Pick a slot',
+          description,
+          actions,
+          createdAt: resolvedAt(),
+          resolvedAt: resolvedAt(),
+          resolvedAction: 'pick',
+          selectionData: { slotId: hot.slot },
+        });
+        return 'pick';
+      }
+      assert.equal(reason, 'app_binding_mismatch');
+      assert.ok(payload?.kind === 'app_binding_mismatch');
+      appCards.push(payload);
+      // The automatic choice becomes safely reusable while the card is open.
+      reuseOutcomes.set(cold.slot, { kind: 'ready' });
+      run.decisions.push(appAnswer(payload, 'continue'));
+      return 'continue';
+    },
+  });
+  assert.deepEqual(
+    appCards.map((card) => card.slotId),
+    [hot.slot],
+  );
+  assert.equal(result.outputs?.selectedSlot, hot.slot);
+  assert.deepEqual(claims, [hot.slot]);
+});
+
+test('the recorded binding is the claimed slot one, not the latest answer for another slot', async () => {
   reset('fix-bug', 'TAT-4137');
   sherpaRunOn('macpro-mmt-1');
-  poolReadFailure = true;
-  const asked: AppBindingAsk[] = [];
+  // Continue on macpro-mmt-1, then on macwork-mmt-1, then the run lands on macpro-mmt-1.
+  const onWarm: AppBindingMismatchPayload = { ...playgroundSlotMismatch, slotId: 'macwork-mmt-1' };
+  run.decisions.push(appAnswer(playgroundSlotMismatch, 'continue'), appAnswer(onWarm, 'continue'));
+  const result = await executeFindSlotStep(run.id, run, 0, {
+    ...context,
+    createEngineDecision: async (_id, reason) => {
+      throw new Error(`unexpected ${reason} decision`);
+    },
+  });
+  assert.deepEqual(claims, ['macpro-mmt-1']);
+  assert.deepEqual(result.outputs?.appBinding, playgroundSlotMismatch);
+});
+
+test('continue on kill-and-dispatch-fresh asks again when the busy slot changes owner, killing nothing', async () => {
+  reset('pr-complete', 'example-org/terminal#210');
+  sherpaRunOn();
+  const warm = slots[2]!;
+  Object.assign(warm, {
+    lifecycle: 'busy',
+    agent: 'working',
+    branch,
+    currentRunId: 'owner-a',
+    dispatchedAt: '2026-11-02T10:00:00.000Z',
+  });
+  nudgeCandidates = [
+    {
+      slot: warm,
+      uncommittedCount: 0,
+      uncommittedFiles: [],
+      nudgeCount: 0,
+      ctxPct: null,
+      prMatchKind: 'branch-slug',
+      riskFlags: [],
+      canNudge: false,
+    },
+  ];
+  const nudgeOwners: Array<string | null> = [];
+  const appCards: AppBindingMismatchPayload[] = [];
   await assert.rejects(
-    executeFindSlotStep(run.id, run, 0, appBindingContext('abort', asked)),
-    abortedOnPlayground,
+    executeFindSlotStep(run.id, run, 0, {
+      ...context,
+      createEngineDecision: async (_id, reason, description, actions, payload, options) => {
+        if (reason === 'branch_affinity_nudge') {
+          assert.ok(payload?.kind === 'branch_affinity_nudge');
+          const prior = [...run.decisions]
+            .reverse()
+            .find((decision) => decision.type === `engine_${reason}` && decision.resolvedAt);
+          if (prior && options?.canReplay?.(prior)) return prior.resolvedAction!;
+          nudgeOwners.push(payload.candidate.currentRunId);
+          // Kill & dispatch fresh first; decline the card that shows the new owner.
+          const action = nudgeOwners.length === 1 ? 'fresh' : 'abort';
+          run.decisions.push({
+            id: `nudge-${nudgeOwners.length}`,
+            type: `engine_${reason}`,
+            title: 'Nudge',
+            description,
+            actions,
+            createdAt: resolvedAt(),
+            resolvedAt: resolvedAt(),
+            resolvedAction: action,
+            payload,
+          });
+          return action;
+        }
+        assert.equal(reason, 'app_binding_mismatch');
+        assert.ok(payload?.kind === 'app_binding_mismatch');
+        appCards.push(payload);
+        // The worker finishes and another run takes the slot while the card is open.
+        Object.assign(warm, { currentRunId: 'owner-b', dispatchedAt: '2026-11-02T10:05:00.000Z' });
+        run.decisions.push(appAnswer(payload, 'continue'));
+        return 'continue';
+      },
+    }),
+    /Aborted: branch-affinity nudge declined/,
   );
-  assert.match(
-    asked[0]!.description,
-    /The slots bound to apps\/sherpa-voice could not be listed\./,
-  );
-  assert.equal(asked[0]!.payload.boundSlots, undefined);
+  assert.deepEqual(nudgeOwners, ['owner-a', 'owner-b'], 'a new nudge card shows the new owner');
+  assert.equal(appCards.length, 1);
+  assert.deepEqual(freshTeardowns, [], 'no worker was killed');
+  assert.deepEqual(claims, []);
 });

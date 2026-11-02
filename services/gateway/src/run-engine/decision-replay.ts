@@ -125,10 +125,13 @@ export function markResolvedHumanGateReviewRequestConsumed(
  * "newest-first" invariant is unit-testable — picking the oldest match would
  * silently break payload-aware replay (a canReplay-rejected prior decision
  * gets a new resolution appended; subsequent dedup must see the new one).
+ * `matches` narrows the walk to decisions about one subject (a slot, say);
+ * a superseded entry still ends it.
  */
 export function findLatestResolvedDecision(
   decisions: RunDecision[],
   reason: string,
+  matches?: (decision: RunDecision) => boolean,
 ): RunDecision | undefined {
   const expectedType = `engine_${reason}`;
   for (let i = decisions.length - 1; i >= 0; i--) {
@@ -137,6 +140,7 @@ export function findLatestResolvedDecision(
     // Do not skip over a superseded entry: it invalidates all older replay
     // candidates until a replacement decision is resolved.
     if (d.resolvedAction === 'superseded') return undefined;
+    if (matches && !matches(d)) continue;
     return d;
   }
   return undefined;

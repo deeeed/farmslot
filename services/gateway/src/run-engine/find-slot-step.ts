@@ -227,7 +227,13 @@ async function slotsBoundToApp(
   defaults: ProjectAppDefaults,
 ): Promise<string[] | undefined> {
   try {
-    const [pools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus()]);
+    // Strict: an unreadable status file, or a pool file the last refresh could not
+    // read, means the list would be incomplete, not empty.
+    const [pools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus(false, true)]);
+    if (fleet.poolErrors?.length)
+      throw new Error(
+        `unreadable pool files: ${fleet.poolErrors.map((entry) => entry.file).join(', ')}`,
+      );
     const enabled = new Set(
       fleet.slots.filter((slot) => slot.enabled && !slot.missingFromPool).map((slot) => slot.slot),
     );
@@ -259,17 +265,6 @@ function sameAppBinding(prior: RunDecisionPayload | undefined, current: AppBindi
   );
 }
 
-/** The latest answer for this binding; a superseded card ends the search. */
-function answeredAppBinding(run: Run, key: AppBindingKey): string | undefined {
-  for (let index = run.decisions.length - 1; index >= 0; index--) {
-    const decision = run.decisions[index]!;
-    if (decision.type !== 'engine_app_binding_mismatch' || !decision.resolvedAt) continue;
-    if (decision.resolvedAction === 'superseded') return undefined;
-    if (sameAppBinding(decision.payload, key)) return decision.resolvedAction;
-  }
-  return undefined;
-}
-
 function appBindingAborted({ slotId, runApp, slotApp }: AppBindingKey): Error {
   return new Error(
     `App binding mismatch: ${slotId} is bound to ${slotApp}, not ${runApp}; aborted before the claim`,
@@ -282,7 +277,7 @@ function appBindingAborted({ slotId, runApp, slotApp }: AppBindingKey): Error {
  * replays the answer.
  */
 class AppBindingContinued extends Error {
-  constructor(slotId: string) {
+  constructor(readonly slotId: string) {
     super(`Continued on ${slotId}'s app binding; selecting again`);
   }
 }
@@ -304,7 +299,11 @@ async function confirmAppBinding(
   if (!mismatch) return;
   const { runApp, slotApp, source } = mismatch;
   const key = { slotId, runApp, slotApp };
-  const answered = answeredAppBinding(getRun(run.id) ?? run, key);
+  const answered = findLatestResolvedDecision(
+    (getRun(run.id) ?? run).decisions,
+    'app_binding_mismatch',
+    (decision) => sameAppBinding(decision.payload, key),
+  )?.resolvedAction;
   if (answered === 'continue') return;
   if (answered) throw appBindingAborted(key);
   const boundSlots = await slotsBoundToApp(run.project, runApp, project.projectJson);
@@ -346,12 +345,16 @@ async function confirmAppBinding(
 
 /** The binding the operator continued on for the slot the run claimed, if any. */
 function acceptedAppBinding(run: Run | undefined): AppBindingMismatchPayload | undefined {
-  const decision = run && findLatestResolvedDecision(run.decisions, 'app_binding_mismatch');
-  const payload = decision?.payload;
+  if (!run?.slotId) return undefined;
+  const decision = findLatestResolvedDecision(
+    run.decisions,
+    'app_binding_mismatch',
+    (candidate) =>
+      candidate.payload?.kind === 'app_binding_mismatch' && candidate.payload.slotId === run.slotId,
+  );
   return decision?.resolvedAction === 'continue' &&
-    payload?.kind === 'app_binding_mismatch' &&
-    payload.slotId === run?.slotId
-    ? payload
+    decision.payload?.kind === 'app_binding_mismatch'
+    ? decision.payload
     : undefined;
 }
 
@@ -889,6 +892,12 @@ export async function executeFindSlotStep(
       result = await findSlotAttempt(runId, run, generation, context, automaticLoadPinned);
     } catch (error) {
       if (error instanceof AppBindingContinued && !runSupersededSince(getRun(runId), generation)) {
+        // An operator's pick stays the pick, as after a lost claim: the restart
+        // claims that slot or fails on it, and scoring never swaps in another.
+        if (operatorPickedSlot(getRun(runId)!) === error.slotId) {
+          updateRun(runId, { slotId: error.slotId });
+          automaticLoadPinned = true;
+        }
         run = getRun(runId)!;
         continue;
       }

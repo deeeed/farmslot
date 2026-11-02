@@ -89,6 +89,7 @@ import {
   interactiveTemplateOption,
   modeForFlow,
   parseQaInputOverrides,
+  pinnedSlotApp,
   projectApps,
   projectPrepareProfiles,
   publicationReviewsEnabled,
@@ -635,12 +636,13 @@ export class DispatchWizard extends DispatchWizardState {
     );
   }
 
-  /** The pinned slot's own app, from its pool entry: the app pill's default. */
-  private _pinnedSlotApp(): string | undefined {
-    if (!this._slotOverride) return undefined;
-    return (this.mockMode ? this.mockPools : this._reviewPools)
-      .flatMap((pool) => pool.slots)
-      .find((slot) => slot.id === this._slotOverride)?.app;
+  /** The pick, else the pinned slot's own app: the pill's selection and what run.create sends. */
+  private _dispatchApp(): string | undefined {
+    return selectedDispatchApp(
+      projectApps(this._projectConfigs, this._project),
+      this._app,
+      pinnedSlotApp(this.mockMode ? this.mockPools : this._reviewPools, this._slotOverride),
+    );
   }
 
   private _selectedSlotPlatform(): string | undefined {
@@ -1583,11 +1585,7 @@ export class DispatchWizard extends DispatchWizardState {
       allowedSlots: this._blockingState().allowedSlots,
       branch: this._resolveTargetBranch(getState().prs),
       ...dispatchWizardExecutionOptions(this._flowType, this._executionPicker),
-      app: selectedDispatchApp(
-        projectApps(this._projectConfigs, this._project),
-        this._app,
-        this._pinnedSlotApp(),
-      ),
+      app: this._dispatchApp(),
       taskTemplate,
       domain: this._domain || undefined,
       executionTemplateId: this._selectedExecutionTemplateId || undefined,
@@ -2100,11 +2098,7 @@ export class DispatchWizard extends DispatchWizardState {
       selectedSlotPlatform: this._selectedSlotPlatform() ?? '',
       refreshSlots: () => this._refreshDispatchSnapshot(),
       projectApps: projectApps(this._projectConfigs, this._project),
-      selectedDispatchApp: selectedDispatchApp(
-        projectApps(this._projectConfigs, this._project),
-        this._app,
-        this._pinnedSlotApp(),
-      ),
+      selectedDispatchApp: this._dispatchApp(),
       templateOptions: this._templateOptions,
       templateOptionsLoading: this._templateOptionsLoading,
       templateOptionsError: this._templateOptionsError,

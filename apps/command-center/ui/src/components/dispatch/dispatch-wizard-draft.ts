@@ -1,6 +1,7 @@
 import type {
   DevInteractiveProfile,
   FlowType,
+  PoolConfig,
   TaskTemplateSelection,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
@@ -99,6 +100,15 @@ export function projectPrepareProfiles(
 export function syncSelectedAppForProject(apps: ReadonlyArray<string>, currentApp: string): string {
   if (apps.length <= 1) return '';
   return apps.includes(currentApp) ? currentApp : '';
+}
+
+/** The pinned slot's own app, from its pool entry. */
+export function pinnedSlotApp(
+  pools: ReadonlyArray<Pick<PoolConfig, 'slots'>>,
+  slotId: string,
+): string | undefined {
+  if (!slotId) return undefined;
+  return pools.flatMap((pool) => pool.slots).find((slot) => slot.id === slotId)?.app;
 }
 
 /**
