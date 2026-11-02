@@ -498,7 +498,7 @@ export async function shutdownRunSlotResources(
       run.id,
       resource.id,
       resource.definition.type === 'device',
-      async () => {
+      async (retainDevice) => {
         if (!(await stillOwned()))
           throw new Error('Slot ownership changed before runtime shutdown');
         const pending: Promise<void>[] = [];
@@ -509,18 +509,20 @@ export async function shutdownRunSlotResources(
           !!resource.definition.hooks?.health,
           pending,
         );
-        // Retain the device fence until a timed-out hook settles, within a bound.
+        // Wait a bounded time for a timed-out hook; past that the slot queue moves on,
+        // but the device stays fenced until the hook actually settles.
+        const hooks = Promise.allSettled(pending);
         let timer: ReturnType<typeof setTimeout> | undefined;
         const settled = await Promise.race([
-          Promise.allSettled(pending).then(() => true),
+          hooks.then(() => true),
           new Promise<false>((resolve) => {
             timer = setTimeout(() => resolve(false), settleGraceMs);
           }),
         ]);
         clearTimeout(timer);
-        return settled
-          ? result
-          : { ...result, torn: false, reason: 'shutdown hook still running after its timeout' };
+        if (settled) return result;
+        retainDevice(hooks);
+        return { ...result, torn: false, reason: 'shutdown hook still running after its timeout' };
       },
     );
     if (!guarded.ok) failures.push(`${resource.id}: ${guarded.reason}`);

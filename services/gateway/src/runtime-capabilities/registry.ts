@@ -858,13 +858,15 @@ export class RuntimeCapabilityRegistry {
    * outside it: one slot's controls queue behind each other, never other slots'.
    * A device control stays visible to the cross-slot device guard while it runs.
    * `onWait` fires when an earlier control on this slot is still running.
+   * `retainDevice` keeps the device holder until work the callback leaves running
+   * settles, while the slot's queue moves on.
    */
   async withSlotResourceShutdown<T>(
     slotId: string,
     ownerRunId: string,
     resourceId: string,
     device: boolean,
-    shutdown: () => Promise<T>,
+    shutdown: (retainDevice: (stillRunning: Promise<unknown>) => void) => Promise<T>,
     onWait?: () => void,
   ): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
     const previous = this.slotControlTails.get(slotId);
@@ -902,10 +904,22 @@ export class RuntimeCapabilityRegistry {
         return null;
       });
       if (refusal) return { ok: false, reason: refusal };
+      let stillRunning: Promise<unknown> | undefined;
       try {
-        return { ok: true, value: await shutdown() };
+        return {
+          ok: true,
+          value: await shutdown((running) => {
+            stillRunning = running;
+          }),
+        };
       } finally {
-        this.deviceControls.delete(control);
+        const retained = stillRunning;
+        if (retained)
+          void retained.then(
+            () => this.deviceControls.delete(control),
+            () => this.deviceControls.delete(control),
+          );
+        else this.deviceControls.delete(control);
       }
     } finally {
       release();

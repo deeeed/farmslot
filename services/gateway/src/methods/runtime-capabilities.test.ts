@@ -386,6 +386,8 @@ test(
       'slot-b': 'SIM-B',
       'slot-c': 'SIM-C',
       'slot-twin': 'SIM-A',
+      'slot-d': 'SIM-D',
+      'slot-twin-d': 'SIM-D',
     };
     const registry = new RuntimeCapabilityRegistry({
       store: new RuntimeCapabilityStore(path.join(directory, 'leases.json')),
@@ -450,6 +452,48 @@ test(
     }
     assert.deepEqual(await booting, { ok: true, value: undefined });
     assert.equal((await acquire('slot-b', 'next-run', { simulator: 'SIM-A' })).ok, true);
+
+    // A shutdown that returns past its grace while its hook still runs frees its slot's
+    // queue, but keeps the device fenced until that hook settles.
+    let settle!: () => void;
+    const hook = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const stopped = await registry.withSlotResourceShutdown(
+      'slot-d',
+      'stopping-run',
+      'ios-sim',
+      true,
+      async (retainDevice) => {
+        retainDevice(hook);
+        return 'unconfirmed';
+      },
+    );
+    assert.deepEqual(stopped, { ok: true, value: 'unconfirmed' });
+    const late = await acquire('slot-twin-d', 'late-run', { simulator: 'SIM-D' });
+    assert.equal(late.ok, false, 'the device stays fenced while the hook runs');
+    if (!late.ok) assert.match(late.conflict.reason, /slot 'slot-d'/);
+    assert.deepEqual(
+      await registry.withSlotResourceShutdown(
+        'slot-d',
+        'next-d',
+        'server',
+        false,
+        async () => 'ok',
+      ),
+      { ok: true, value: 'ok' },
+      "the slot's queue is free",
+    );
+    await assert.rejects(
+      registry.withSlotResourceShutdown('slot-d', 'throwing-run', 'ios-sim', true, async () => {
+        throw new Error('hook failed');
+      }),
+      /hook failed/,
+    );
+    settle();
+    await hook;
+    await Promise.resolve();
+    assert.equal((await acquire('slot-twin-d', 'late-run', { simulator: 'SIM-D' })).ok, true);
   },
 );
 

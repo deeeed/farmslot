@@ -76,6 +76,7 @@ let shutdownFailure: string | null = null;
 let shutdownSkipped = false;
 let resourceStillHealthy = false;
 let shutdownHookNeverSettles = false;
+const retainedDevices: Promise<unknown>[] = [];
 let onResolveResources: (() => void) | null = null;
 
 function browserSessionCensus() {
@@ -293,7 +294,7 @@ mock.module('../methods/runtime-capabilities.js', {
         owner: string,
         _resourceId: string,
         _device: boolean,
-        shutdown: () => Promise<T>,
+        shutdown: (retainDevice: (stillRunning: Promise<unknown>) => void) => Promise<T>,
       ) =>
         leases.some((lease) => {
           const leaseOwner = lease.owner;
@@ -306,7 +307,10 @@ mock.module('../methods/runtime-capabilities.js', {
           );
         })
           ? { ok: false, reason: 'Another runtime capability owner still uses this slot' }
-          : { ok: true, value: await shutdown() },
+          : {
+              ok: true,
+              value: await shutdown((stillRunning) => retainedDevices.push(stillRunning)),
+            },
       settledStatus: async () => ({
         catalog: [],
         leases,
@@ -478,6 +482,7 @@ beforeEach(() => {
   shutdownSkipped = false;
   resourceStillHealthy = false;
   shutdownHookNeverSettles = false;
+  retainedDevices.length = 0;
   onResolveResources = null;
 });
 
@@ -581,6 +586,7 @@ test(
       'ios-sim: shutdown hook still running after its timeout',
     );
     assert.deepEqual(unconfirmed, ['ios-sim']);
+    assert.equal(retainedDevices.length, 1, 'the device stays fenced until the hook settles');
   },
 );
 
