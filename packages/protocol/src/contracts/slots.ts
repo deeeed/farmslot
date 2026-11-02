@@ -96,6 +96,8 @@ export interface SlotStatus {
    * selects a slot that carries one.
    */
   repoBlocker?: string;
+  /** Why the gateway could not load this slot's config at the last refresh; the row keeps its pool resources but is not probed or dispatchable. */
+  configError?: string;
   /** True when this slot id no longer resolves in live pool JSONs — a status-file ghost. Never prepare/dispatch it. */
   missingFromPool?: boolean;
   lifecycle: SlotLifecycle;
@@ -169,6 +171,14 @@ export interface FleetStatus {
    * must not surface prepare/dispatch suggestions from a stale fleet snapshot.
    */
   stale?: boolean;
+  /** Pool files the last refresh could not parse; their slots keep the rows of the last good read. */
+  poolErrors?: FleetPoolReadError[];
+}
+
+/** A pool file a fleet refresh could not parse, and the parse error. */
+export interface FleetPoolReadError {
+  file: string;
+  error: string;
 }
 
 // Slot contracts include resource/action shapes used by slot UI and gateway actions.
