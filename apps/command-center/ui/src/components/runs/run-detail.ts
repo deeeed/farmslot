@@ -77,7 +77,7 @@ import {
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { readFailureText, ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   refreshRunMirror,
   runMirrorRefreshUnavailableReason,
@@ -103,6 +103,7 @@ import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
 import { renderRunGateSection, runMountsPublicationGate } from './run-detail-decision-renderers.js';
 import {
   acceptanceEvidenceSelection,
+  acceptanceLedgerRead,
   buildRerunAlongsideHref,
   buildRunDiagnosisPrompt,
   type EvidenceLightboxSelection,
@@ -867,12 +868,14 @@ export class RunDetail extends RunDetailState {
     const result = this.recipeQuery.belongsToWorkspace ? state.data : undefined;
     if (!run || !result) {
       this._recipeRuns = [];
+      // A superseded read has its reread queued, so it is not a read error yet.
+      const failure = run ? readFailureText(this.recipeQuery) : undefined;
       this._recordedEvidence =
-        run && state.error
+        run && failure
           ? {
               artifactPrefix: 'artifacts/',
               contractVersion: run.recordedEvidenceContractVersion ?? 0,
-              errors: [state.error.message],
+              errors: [failure],
             }
           : undefined;
       this._evidenceGroupId = null;
@@ -1143,23 +1146,20 @@ export class RunDetail extends RunDetailState {
 
   private _acceptProgressObservation(): void {
     if (this.mockData) return;
-    const observation = this.progressQuery.belongsToWorkspace
-      ? this.progressQuery.state
-      : undefined;
-    const data = observation?.data;
+    const query = this.progressQuery.belongsToWorkspace ? this.progressQuery : undefined;
+    const data = query?.state.data;
+    const ledger = acceptanceLedgerRead(query);
     this.taskProgress = data?.structured ?? null;
     this.acceptanceStatus = data?.acceptanceStatus ?? null;
     this.acceptanceCriteria = data?.acceptanceCriteria ?? null;
-    this.acceptanceStatusError = observation?.error?.message ?? data?.acceptanceStatusError ?? null;
+    this.acceptanceStatusError = ledger.error;
     this.acceptanceEvidenceLinks = data?.acceptanceEvidenceLinks ?? null;
     this.acceptanceEvidenceLinksError = data?.acceptanceEvidenceLinksError ?? null;
     this._taskProgressLoading = Boolean(
       this.run &&
       runHasTaskSource(this.run) &&
       (this.run.slotId || this.run.reviewWorkspace) &&
-      !data &&
-      !observation?.error &&
-      (!observation || observation.status === 'loading' || observation.status === 'stale'),
+      ledger.pending,
     );
   }
 
