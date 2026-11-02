@@ -19,6 +19,7 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from './resource-cache';
+import { sharedLifetime } from './shared-lifetime';
 
 function sameRows<T>(previous: readonly T[], next: readonly T[]): boolean {
   return previous.length === next.length && previous.every((row, index) => row === next[index]);
@@ -77,7 +78,8 @@ function bind(): void {
   );
 }
 
-export function initializeNativeRunCollections(): () => void {
+/** Each mounted app root holds the collections; they stop only after the last root releases them. */
+export const initializeNativeRunCollections = sharedLifetime(() => {
   const stopCache = subscribeResourceCache(bind);
   const stopConnection = useConnectionStore.subscribe(bind);
   bind();
@@ -86,7 +88,7 @@ export function initializeNativeRunCollections(): () => void {
     stopConnection();
     collections.dispose();
   };
-}
+});
 
 export const openNativeRunHistory = () => collections.openHistory();
 export const nativeRunHistoryLimit = () => collections.historyLimit();
