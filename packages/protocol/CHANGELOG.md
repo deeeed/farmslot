@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `SlotStatus.retained` (`{ items, bytes }`): the nested checkouts that slot releases moved aside on the slot host instead of deleting them, and their total size there (F310).
 - `ReadyGatePayload.mergeConflicts`/`behindMain` are probed against the publication base (a stacked run's upstream branch), and a conflict on a publication gate now blocks its advancing actions (doc only; no shape change).
 - A client-cache observer that throws no longer stops the other observers or the cache's reads; each failing observer is logged once with `console.error`. Before, an observer that threw as a read started, or on its first delivery from `observe`, left that query loading with no request sent until the next reconnect.
 - `DispatchPreview.inheritedAcceptance`: the parent run and its original criteria a pr-complete run is held to, or `unavailable` with the reason.

@@ -39,6 +39,7 @@ let copyOptions: Record<string, unknown> | undefined;
 let scaffoldingExcludesArtifacts: boolean | undefined;
 let copyFailure = false;
 let copyTotals: { files: number; bytes: number } | undefined;
+let retainFailure = false;
 let teardownExtensions: Array<{ slotId: string; ms: number }> = [];
 let claimAfterReap = false;
 let cdpPort: string | undefined;
@@ -172,6 +173,12 @@ mock.module('../../fleet/slot-scaffolding.js', {
       await options.beforeRemove?.();
       return { roots: 0, directory: options.destination };
     },
+    retainTaskCheckouts: async () => {
+      if (retainFailure)
+        throw new Error('/slot-retained is not on the volume of checkouts/baseline');
+      events.push('retain-checkouts');
+    },
+    measureSlotRetention: async () => null,
   },
 });
 
@@ -316,6 +323,7 @@ beforeEach(async () => {
   scaffoldingExcludesArtifacts = undefined;
   copyFailure = false;
   copyTotals = undefined;
+  retainFailure = false;
   teardownExtensions = [];
   claimAfterReap = false;
   cdpPort = undefined;
@@ -577,6 +585,32 @@ test('a release copying 1.6 GB of unindexed artifacts adds their transfer time t
     'longer than the copy takes at the measured 5 MB/s',
   );
   assert.equal(releaseArtifactCopyBudgetMs(1024), 60_000, 'a small copy gets the floor');
+});
+
+// F310: a release that keeps the agents collects no scaffolding but still deletes the task, so
+// its nested checkouts are moved aside first.
+test('a release keeping the agents moves nested checkouts aside before deleting the task', async () => {
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  await slotRelease({ slotId: SLOT_ID, preserveAgents: true }, emit);
+  const moved = events.indexOf('retain-checkouts');
+  assert.ok(moved >= 0, 'checkouts moved aside');
+  assert.ok(moved < events.indexOf('task-clean'), 'before the task directory is deleted');
+});
+
+test('a release keeping the agents that cannot keep its checkouts holds the slot, and a retry completes', async () => {
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  retainFailure = true;
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, preserveAgents: true }, emit),
+    /Nested checkouts could not be kept; cleanup stopped: .*not on the volume/,
+  );
+  assert.equal(slotRow.lifecycle, 'held');
+  assert.match(String(slotRow.held_reason), /Nested checkouts could not be kept/);
+  assert.ok(!events.includes('task-clean'), 'the task directory stays');
+  retainFailure = false;
+  await slotRelease({ slotId: SLOT_ID, preserveAgents: true }, emit);
+  assert.ok(events.includes('retain-checkouts'));
+  assert.ok(events.includes('task-clean'));
 });
 
 test('a copyback with a failed file keeps the artifacts in the scaffolding archive', async () => {
