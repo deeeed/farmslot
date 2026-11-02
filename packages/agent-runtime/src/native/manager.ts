@@ -56,6 +56,7 @@ import {
   nativeWorkerEnvironment,
   type NativeWorkerLaunch,
   nativeWorkerLaunchDigest,
+  nativeWorkerProjectToolsFirst,
   type NativeWorkerResumeParams,
   validateNativeWorkerFilesystemPolicy,
 } from './worker-launch.js';
@@ -559,10 +560,15 @@ export class NativeSessionManager {
     }
     // A private worker source policy identifies a farm-created review workspace.
     // Ordinary native conversations never write trust into the operator's configuration.
-    const runnerEnvironment = nativeEnvironment(resolved.executable, {
+    const sessionEnvironment = nativeEnvironment(resolved.executable, {
       ...environment,
       ...(hostProtection ? { TMPDIR: hostProtection.temporaryDirectory } : {}),
     });
+    // A worker resolves Node like its launch probe: project-pinned tools ahead of the runner's own
+    // directory, which may hold the Node the runner was installed with (F318).
+    const runnerEnvironment = workerLaunch
+      ? nativeWorkerProjectToolsFirst(sessionEnvironment)
+      : sessionEnvironment;
     if (filesystemPolicy)
       transport.trustWorkspace?.(params.cwd, runnerEnvironment, ownerPrincipalId, {
         executable: resolved.executable,

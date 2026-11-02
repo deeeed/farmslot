@@ -9,6 +9,7 @@ const workerEnvironment = createRequire(import.meta.url)('../../scripts/native-w
     environment: NativeWorkerLaunch['environment'],
     base: NodeJS.ProcessEnv,
   ): NodeJS.ProcessEnv;
+  projectToolsFirst(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 };
 
 /** Private gateway/node/host contract. Public session RPCs never accept this environment. */
@@ -221,3 +222,6 @@ export function nativeWorkerLaunchDigest(launch: NativeWorkerLaunch): string {
 export function nativeWorkerEnvironment(launch: NativeWorkerLaunch): NodeJS.ProcessEnv {
   return workerEnvironment.nativeWorkerProcessEnvironment(launch.environment, process.env);
 }
+
+/** A worker's final runner environment keeps project-pinned tools ahead of the runner's own directory. */
+export const nativeWorkerProjectToolsFirst = workerEnvironment.projectToolsFirst;

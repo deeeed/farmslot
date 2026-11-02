@@ -35,13 +35,14 @@ const project: ProjectVars = {
 const workerEnvironmentScript = fileURLToPath(
   new URL('../../../../packages/agent-runtime/scripts/native-worker-env.cjs', import.meta.url),
 );
-const { nativeWorkerProcessEnvironment } = createRequire(import.meta.url)(
+const { nativeWorkerProcessEnvironment, projectToolsFirst } = createRequire(import.meta.url)(
   workerEnvironmentScript,
 ) as {
   nativeWorkerProcessEnvironment(
     environment: { set: Record<string, string>; unset: string[] },
     base: NodeJS.ProcessEnv,
   ): NodeJS.ProcessEnv;
+  projectToolsFirst(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 };
 const config = await import('../core/config.js');
 const state = await import('../core/state.js');
@@ -208,14 +209,42 @@ test('a native launch probe resolves the same Node as the native worker environm
   await chmod(path.join(brew, 'node'), 0o755);
   await chmod(path.join(shims, 'node'), 0o755);
   const host = { HOME: home, PATH: `${brew}:/usr/bin:/bin` };
+  // The worker's final environment, as the native host builds it: the runner's own directory
+  // (here one holding the Node it was installed with) ahead of PATH, then project tools first.
+  const runnerDirectory = path.join(home, 'runner-bin');
+  await mkdir(runnerDirectory);
+  await writeFile(path.join(runnerDirectory, 'node'), '#!/bin/sh\nexit 98\n');
+  await chmod(path.join(runnerDirectory, 'node'), 0o755);
+  const workerEnvironment = nativeWorkerProcessEnvironment({ set: {}, unset: [] }, host);
   const worker = spawnSync('/bin/sh', ['-c', 'command -v node'], {
-    env: nativeWorkerProcessEnvironment({ set: {}, unset: [] }, host),
+    env: projectToolsFirst({
+      ...workerEnvironment,
+      PATH: `${runnerDirectory}:${workerEnvironment.PATH}`,
+    }),
     encoding: 'utf8',
   });
   assert.equal(worker.stdout.trim(), path.join(shims, 'node'));
   const result = spawnSync('/bin/sh', ['-c', probe], { env: host, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).tools.node.version, process.version);
+});
+
+test('the native worker environment wrapper keeps a probe output, status and missing Node', () => {
+  const run = (environment: object, command: string) =>
+    spawnSync(
+      process.execPath,
+      [workerEnvironmentScript, JSON.stringify(environment), '/bin/sh', '-c', command],
+      { encoding: 'utf8' },
+    );
+  const failed = run({ set: {}, unset: [] }, 'printf probe-output; exit 3');
+  assert.equal(failed.stdout, 'probe-output');
+  assert.equal(failed.status, 3);
+  // A launch whose PATH holds no Node reaches the toolchain probe's own report.
+  const missing = run(
+    { set: { PATH: '/usr/bin:/bin', HOME: os.tmpdir() }, unset: ['ASDF_DATA_DIR'] },
+    "command -v node >/dev/null 2>&1 && echo found || printf '%s' '{\"nodeMissing\":true}'",
+  );
+  assert.deepEqual(JSON.parse(missing.stdout), { nodeMissing: true });
 });
 
 test('a returned relaunch fence rejects cancellation during its last asynchronous read', async () => {

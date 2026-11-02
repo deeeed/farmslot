@@ -6,6 +6,17 @@ const { existsSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { delimiter, join } = require('node:path');
 
+// Project-pinned tools win over a runner's own directory (a runner installed under one Node, or
+// bundling one) and over machine-global installs such as Homebrew's node, as in tmux worker shells
+// (scripts/lib/worker-env-prefix.sh). The native host applies this last, after it puts the runner's
+// directory ahead of PATH.
+function projectToolsFirst(env) {
+  const shims = join(env.ASDF_DATA_DIR ?? join(env.HOME ?? homedir(), '.asdf'), 'shims');
+  if (!existsSync(shims)) return env;
+  const rest = (env.PATH ?? '').split(delimiter).filter((entry) => entry && entry !== shims);
+  return { ...env, PATH: [shims, ...rest].join(delimiter) };
+}
+
 /** The host's environment without the launch's unset names, plus its set values. */
 function nativeWorkerProcessEnvironment(environment, base = process.env) {
   const unset = new Set(environment.unset);
@@ -16,19 +27,15 @@ function nativeWorkerProcessEnvironment(environment, base = process.env) {
   ]);
   env.DISABLE_OMC = '1';
   env.DISABLE_OMX = '1';
-  // Project-pinned tools win over machine-global installs such as Homebrew's node, as in tmux
-  // worker shells (scripts/lib/worker-env-prefix.sh).
-  const shims = join(env.ASDF_DATA_DIR ?? join(env.HOME ?? homedir(), '.asdf'), 'shims');
-  if (existsSync(shims)) env.PATH = `${shims}${delimiter}${env.PATH ?? ''}`;
   delete env.CLAUDECODE;
   // Workers do not need control-plane credentials, including configured overrides.
   delete env.FARMSLOT_NODE_TOKEN;
   delete env.FARMSLOT_GATEWAY_TOKEN;
   delete env.FARMSLOT_GATEWAY_PASSWORD;
-  return env;
+  return projectToolsFirst(env);
 }
 
-module.exports = { nativeWorkerProcessEnvironment };
+module.exports = { nativeWorkerProcessEnvironment, projectToolsFirst };
 
 // `node native-worker-env.cjs <environment-json> <command> [args...]` runs the command in that
 // environment and exits with its status.
