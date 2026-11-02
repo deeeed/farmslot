@@ -93,8 +93,9 @@ const MAX_PREFETCH_RUNS = 2;
  */
 const SLOT_HEAD_CHECK_INTERVAL_MS = 60_000;
 /**
- * A run whose read failed before its plan was known (a `run.get` timeout on a busy gateway) has
- * nothing else that reads it again, so it is retried after these waits; the last one repeats.
+ * A run whose read failed before its plan was known (a `run.get` timeout on a busy gateway), or a
+ * gate whose package did not fully load (only a new package refetches a gate), has nothing else
+ * that reads it again, so it is retried after these waits; the last one repeats.
  */
 const RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
 const GITLINK_MODE = '160000';
@@ -284,7 +285,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     state.run = undefined;
     state.controller = controller;
     running++;
-    let failedUnplanned = false;
+    let retry = false;
     void prefetchRun(state, prefetched, controller.signal)
       .then(() => {
         state.retry.failures = 0;
@@ -292,7 +293,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         if (isRefusal(error)) refuse();
-        else failedUnplanned = state.plan === undefined;
+        else retry = state.plan === undefined || state.plan === 'gate';
       })
       .finally(() => {
         if (ticket !== generation) return;
@@ -300,7 +301,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
         state.controller = undefined;
         if (runs.get(state.target.runId) === state) {
           state.status = state.rerun ? 'queued' : 'done';
-          if (failedUnplanned && !state.rerun) retryLater(state);
+          if (retry && !state.rerun) retryLater(state);
         }
         pump();
       });
@@ -521,28 +522,36 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     const { signal } = write;
     const snapshot = prPackage.reviewSnapshot;
     const bundleDigest = prPackage.artifactBundle?.bundleDigest;
+    // A diff that cannot be read now must not cost the gate its evidence: the media still loads,
+    // and the failure is rethrown afterwards so the run is retried.
+    let diffError: unknown;
     if (snapshot?.diffPath && snapshot.diffHash) {
-      const key: ContentKey = { kind: 'diff', id: snapshot.diffHash };
-      let data = (await retain(key, write)) ? await cache.readContent(key) : undefined;
-      if (!data) {
-        const read = await options.readArtifact(
-          { runId: run.id, path: snapshot.diffPath, bundleDigest },
-          signal,
-        );
-        if (!(await store(key, read, write, { untrackedFiles: snapshot.untrackedFiles }))) return;
-        if (resourceContentWithinLimits(key, read)) data = read;
-      }
-      // Prefetch rule 6: a snapshot not taken at the local merge-base loads its bases when opened.
-      if (data && run.slotId && snapshot.baseSha && snapshot.source === 'local-git') {
-        const stored = await prefetchFiles({
-          text: decoder.decode(data),
-          base: snapshot.baseSha,
-          head: snapshot.headSha ?? prPackage.headSha,
-          scope: { slotId: run.slotId },
-          untrackedFiles: snapshot.untrackedFiles,
-          ...write,
-        });
-        if (!stored) return;
+      try {
+        const key: ContentKey = { kind: 'diff', id: snapshot.diffHash };
+        let data = (await retain(key, write)) ? await cache.readContent(key) : undefined;
+        if (!data) {
+          const read = await options.readArtifact(
+            { runId: run.id, path: snapshot.diffPath, bundleDigest },
+            signal,
+          );
+          if (!(await store(key, read, write, { untrackedFiles: snapshot.untrackedFiles }))) return;
+          if (resourceContentWithinLimits(key, read)) data = read;
+        }
+        // Prefetch rule 6: a snapshot not taken at the local merge-base loads its bases when opened.
+        if (data && run.slotId && snapshot.baseSha && snapshot.source === 'local-git') {
+          const stored = await prefetchFiles({
+            text: decoder.decode(data),
+            base: snapshot.baseSha,
+            head: snapshot.headSha ?? prPackage.headSha,
+            scope: { slotId: run.slotId },
+            untrackedFiles: snapshot.untrackedFiles,
+            ...write,
+          });
+          if (!stored) return;
+        }
+      } catch (error) {
+        if (signal.aborted || isRefusal(error)) throw error;
+        diffError = error;
       }
     }
     for (const entry of prPackage.evidenceManifest ?? []) {
@@ -573,6 +582,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       );
       if (!(await store(key, data, write))) return;
     }
+    if (diffError !== undefined) throw diffError;
   }
 
   /** The diff is the observed query result, kept by the cache as a stale prefetch snapshot. */
