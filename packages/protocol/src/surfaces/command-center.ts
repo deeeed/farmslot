@@ -168,7 +168,7 @@ export const COMMAND_CENTER_SURFACES: CommandCenterSurfaceDefinition[] = [
     routePattern: '#run/:runId',
     routeRegex: '^run/([^/?#]+)$',
     routeParamNames: ['runId'],
-    queryParams: ['step'],
+    queryParams: ['step', 'round'],
     componentPath: 'apps/command-center/ui/src/components/runs/run-detail.ts',
     componentSymbol: 'RunDetail',
     primaryEntities: ['run', 'steps', 'decisions', 'slot', 'task progress'],

@@ -1584,3 +1584,57 @@ test('TAT-4006: a reviewer lost to a host outage settles no-verdict, so five adm
   const budget = await runReviewRoundBudget(getRun(run.id)!);
   assert.equal(reviewRoundBudgetLabel(budget), 'Review rounds 4/5 · 1/3 no-verdict');
 });
+
+test('recovering an old overlapping receipt after a newer loop never appends it or replaces the newer result', () => {
+  const first: NonNullable<ReviewStatus['attempts']>[number] = {
+    loopNumber: 1,
+    mode: 'cold',
+    verdict: 'issues',
+    unresolvedCount: 1,
+    startedAt: '2026-11-03T08:33:35Z',
+    completedAt: '2026-11-03T08:42:59Z',
+    issues: [{ file: 'order.ts', description: 'Keep sessions private' }],
+    session: { mode: 'cold', reviewId: 'review-a', continuity: 'fresh', sessionId: 'session-a' },
+    reviewSnapshot: {
+      source: 'local-git',
+      headSha: '29839d67',
+      capturedAt: '2026-11-03T08:33:38Z',
+      diffPath: 'artifacts/loop-1/review.diff',
+      diffHash: 'one',
+    },
+  };
+  const existing: ReviewStatus = {
+    id: 'review-a',
+    source: 'human-gate',
+    mode: 'warm',
+    loopNumber: 2,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    recoveryContinuationPending: true,
+    attempts: [
+      first,
+      {
+        ...first,
+        loopNumber: 2,
+        startedAt: '2026-11-03T08:54:49Z',
+        completedAt: '2026-11-03T09:04:03Z',
+        reviewSnapshot: {
+          ...first.reviewSnapshot,
+          source: 'local-git',
+          capturedAt: '2026-11-03T08:54:53Z',
+          headSha: '512a1667',
+          diffPath: 'artifacts/loop-2/review.diff',
+        },
+      },
+    ],
+  };
+  const recovered: ReviewStatus = {
+    ...existing,
+    attempts: [
+      { ...first, startedAt: '2026-11-03T08:34:37Z', completedAt: '2026-11-03T08:42:44Z' },
+    ],
+  };
+  assert.equal(recoveredReviewAlreadyIngested(existing, recovered), true);
+  assert.equal(appendRecoveredContinuationAttempt(existing, recovered), existing);
+  assert.equal(existing.attempts?.length, 2);
+});

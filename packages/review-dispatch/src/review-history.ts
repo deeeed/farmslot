@@ -7,9 +7,11 @@ import {
   type GitDiffParams,
   isTerminalRunStatus,
   observedReviewSessionContinuity,
+  openReviewFindingCount,
   type ReviewAttempt,
   type ReviewChainEntry,
   reviewChainForRun,
+  reviewFindingId,
   type ReviewMode,
   reviewResultForRun,
   type ReviewStatus,
@@ -17,18 +19,25 @@ import {
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
-import { compareReviewHistoryRounds, reviewHistoryTimeline } from './review-history-timeline.js';
+import { sameReviewAttemptReceipt } from './review-attempt-receipt.js';
+import {
+  compareReviewHistoryRounds,
+  reviewHistoryRoundCards,
+  reviewHistoryTimeline,
+} from './review-history-timeline.js';
 import { runActivityView, runReviewActivityContext } from './run-activity.js';
 import { reviewAttemptFailureReason } from './run-review-failures.js';
 
 export interface ReviewHistoryFinding {
   id: string;
+  /** Keep the structured approval identity independent from its display formatting. */
+  recordedDescription?: string;
   title: string;
   details: string;
   severity: string;
   file: string;
   line: number | null;
-  status: 'new' | 'still-open' | 'resolved';
+  status: 'new' | 'still-open' | 'resolved' | 'accepted' | 'unconfirmed';
   statusLabel: string;
   resolvedBy: string | null;
 }
@@ -204,6 +213,7 @@ function findings(value: unknown): ReviewHistoryFinding[] {
     return [
       {
         id: text(issue.id) ?? digestRecipeDocument({ file: issue.file ?? issue.path, title }),
+        recordedDescription: description,
         title,
         details: body.startsWith(title) ? body.slice(title.length).trim() : body,
         severity: text(issue.severity) ?? priority?.[1] ?? 'Severity not recorded',
@@ -316,11 +326,16 @@ export function reviewHistoryView(
     const stepAttempts = Array.isArray(step?.outputs?.attempts)
       ? step.outputs.attempts.map(record).filter(isRecord)
       : [];
-    const attempts: ReviewAttempt[] = review
+    const recordedAttempts: ReviewAttempt[] = review
       ? review.attempts?.length
         ? review.attempts
         : [review]
       : [];
+    // A recovered receipt is audit history, not a second review of the same saved result.
+    const attempts = recordedAttempts.filter(
+      (attempt, index) =>
+        !recordedAttempts.slice(0, index).some((prior) => sameReviewAttemptReceipt(prior, attempt)),
+    );
     const loops = [
       ...new Set([
         ...attempts.map((attempt) => attempt.loopNumber),
@@ -469,7 +484,10 @@ export function reviewHistoryView(
         .at(-1);
       const previousHead =
         previousActor?.deliveryBaselineRef ?? previousActor?.pipelineVisualReviewInput?.headSha;
-      const headSha = text(snapshot?.headSha) ?? expectedHead ?? null;
+      const headSha =
+        text(snapshot?.headSha) ??
+        expectedHead ??
+        (attempt && attempt === attempts.at(-1) ? text(review?.reviewedHeadSha) : null);
       const reconstructedFix = !fix && previousHead && headSha && previousHead !== headSha;
       const fixBaseSha =
         text(fix?.fixBaseSha ?? fix?.baseSha) ?? (reconstructedFix ? previousHead : null);
@@ -556,8 +574,9 @@ export function reviewHistoryView(
             (actor ? reviewAttemptFailureReason(run, actor) : null))
           : null;
       const unresolved =
-        attempt?.unresolvedCount ??
+        (review && attempt ? openReviewFindingCount(review, attempt) : attempt?.unresolvedCount) ??
         number(raw?.unresolvedCount) ??
+        number(saved?.unresolvedCount) ??
         (recorded ? issueRows.length : null);
       return {
         key: actor?.id ?? `${id}:${loop}`,
@@ -716,6 +735,31 @@ export function reviewHistoryView(
   orderedRounds.forEach((round, index) => {
     round.roundNumber = index + 1;
   });
+  const events = reviewHistoryTimeline(run, orderedRounds);
+  for (const round of orderedRounds) {
+    const head = round.headSha;
+    if (!head) continue;
+    for (const finding of round.findings) {
+      const accepted = run.decisions.some(
+        (decision) =>
+          decision.publicationApproval?.headSha === head &&
+          decision.publicationApproval?.acceptedFindings?.findings.some(
+            (entry) =>
+              entry.reviewId === round.reviewId &&
+              reviewFindingId(entry.reviewId, head, entry) ===
+                reviewFindingId(round.reviewId, head, {
+                  file: finding.file,
+                  line: finding.line ?? undefined,
+                  description: finding.recordedDescription ?? finding.title,
+                }),
+          ),
+      );
+      if (accepted) {
+        finding.status = 'accepted';
+        finding.statusLabel = 'Accepted for publication';
+      }
+    }
+  }
   const roundCount = orderedRounds.length;
   const replayStep = run.steps.find((step) => step.name === 'review' && step.status === 'running');
   const activeReplay =
@@ -740,6 +784,7 @@ export function reviewHistoryView(
     .filter(Boolean)
     .join(' · ');
   return {
+    cards: reviewHistoryRoundCards(events),
     checks,
     segments,
     roundCount,
@@ -752,10 +797,7 @@ export function reviewHistoryView(
       diffPath:
         entry.artifactRefs.find((artifact) => artifact.path.endsWith('.diff'))?.path ?? null,
     })),
-    events: reviewHistoryTimeline(
-      run,
-      checks.flatMap((check) => check.rounds),
-    ),
+    events,
   };
 }
 

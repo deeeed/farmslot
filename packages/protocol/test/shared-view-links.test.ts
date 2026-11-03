@@ -388,3 +388,23 @@ test('a run terminal without an observed worktree never promises a missing web p
   assert.equal(result.status, 'unavailable');
   if (result.status === 'unavailable') assert.match(result.message, /this run terminal/);
 });
+
+test('expanded review rounds survive shared desktop and Companion run links', () => {
+  const route = '#run/saved-run?round=review-a&round=review-b';
+  assert.equal(resolveSharedViewLink({ route }, base).status, 'available');
+  const result = resolveSharedViewLink(
+    {
+      companion: {
+        pathname: '/workspace/run/saved-run/timeline',
+        params: { round: ['review-a', 'review-b'] },
+      },
+    },
+    base,
+  );
+  assert.equal(result.status, 'available');
+  if (result.status === 'available')
+    assert.deepEqual(new URLSearchParams(result.route.split('?')[1]).getAll('round'), [
+      'review-a',
+      'review-b',
+    ]);
+});

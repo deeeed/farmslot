@@ -32,11 +32,12 @@ import { readStoredArtifact } from '../../artifact-response.js';
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { currentRecoveryEpoch } from '../../utils/reconnect.js';
+import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
 import { readStored } from '../shared/read-current.js';
 import { runArtifactApiPath } from '../workspace/workspace-artifacts.js';
 
 import { reviewHistoryStyles } from './review-history-styles.js';
-import { renderReviewAttempt, renderReviewFix } from './step-inspector-review-renderer.js';
+import { renderReviewAttempt } from './step-inspector-review-renderer.js';
 
 /** Display reads keep held source available offline; they never authorize a write. */
 async function readReviewWorkspace<T>(method: ResourceReadMethod, params: unknown): Promise<T> {
@@ -57,10 +58,23 @@ async function readReviewSource(params: GitShowParams): Promise<GitShowResult> {
 export class ReviewHistoryPanel extends LitElement {
   @property({ attribute: false }) run?: Run;
   static styles = reviewHistoryStyles;
+  private hashChanged = () => this.requestUpdate();
+  private _toggleRound(key: string, open: boolean) {
+    const params = hashParams();
+    const selected = new Set(params.getAll('round'));
+    if (open) selected.add(key);
+    else selected.delete(key);
+    params.delete('round');
+    for (const value of selected) params.append('round', value);
+    const route = parseHashRoute().route;
+    history.replaceState(null, '', buildHash(route, params));
+    this.requestUpdate();
+  }
   private clock?: ReturnType<typeof setInterval>;
   private unsubscribeConnection?: () => void;
   connectedCallback() {
     super.connectedCallback();
+    window.addEventListener('hashchange', this.hashChanged);
     this.clock = setInterval(() => this.requestUpdate(), 30000);
     this.unsubscribeConnection = gateway.onConnectionChange((state) => {
       if (state === 'connected') void this._loadHistory(true);
@@ -68,6 +82,7 @@ export class ReviewHistoryPanel extends LitElement {
     });
   }
   disconnectedCallback() {
+    window.removeEventListener('hashchange', this.hashChanged);
     this.unsubscribeConnection?.();
     clearInterval(this.clock);
     super.disconnectedCallback();
@@ -210,37 +225,29 @@ export class ReviewHistoryPanel extends LitElement {
         ? html`<div class="history-warning" role="alert">${this._historyError}</div>`
         : nothing}
       <div class="timeline">
-        ${history.events.map((event) =>
-          event.kind === 'review'
-            ? keyed(
-                event.key,
-                html`<article
-                  class="history-round-group"
-                  data-round-group=${event.round.roundNumber}
-                >
-                  ${history.events.flatMap((entry) =>
-                    entry.kind === 'fix' && entry.roundKey === event.key && !entry.fix.running
-                      ? [renderReviewFix(entry.fix, openArtifact)]
-                      : [],
-                  )}
-                  ${renderReviewAttempt(
-                    event.round,
-                    this._historyLoading,
-                    openArtifact,
-                    (finding) => void this._openSource(event.round, finding),
-                    (finding) => this._renderSource(event.round, finding),
-                  )}
-                  ${history.events.flatMap((entry) =>
-                    entry.kind === 'fix' && entry.roundKey === event.key && entry.fix.running
-                      ? [renderReviewFix(entry.fix, openArtifact)]
-                      : [],
-                  )}
-                </article>`,
-              )
-            : event.kind === 'gate'
-              ? html`<div class="history-gate">${event.label}</div>`
-              : nothing,
+        ${history.cards.map((card) =>
+          keyed(
+            card.round.key,
+            renderReviewAttempt(
+              card.round,
+              this._historyLoading,
+              openArtifact,
+              (finding) => void this._openSource(card.round, finding),
+              (finding) => this._renderSource(card.round, finding),
+              {
+                ...card,
+                open: hashParams().getAll('round').includes(card.round.key),
+                toggle: (open) => this._toggleRound(card.round.key, open),
+              },
+            ),
+          ),
         )}
+        ${history.events
+          .filter((event) => event.kind === 'gate')
+          .map(
+            (event) =>
+              html`<div class="history-gate">${event.kind === 'gate' ? event.label : ''}</div>`,
+          )}
       </div>
       <diff-viewer-modal
         .open=${Boolean(

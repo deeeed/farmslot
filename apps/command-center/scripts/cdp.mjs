@@ -644,11 +644,24 @@ async function loginInTab(hash) {
   const form = await evalInTab(
     hash,
     `const deadline=Date.now()+5000;
-     while(!document.querySelector('.auth-card,#connection-form') && Date.now()<deadline)
+     while(!document.querySelector('.auth-card,#connection-form,.onboarding-connect') && Date.now()<deadline)
        await new Promise(resolve=>setTimeout(resolve,50));
+     if(document.querySelector('.onboarding-connect')) return 'onboarding';
      return document.querySelector('#connection-form') ? 'desktop' : 'browser';`,
   );
-  if (form === 'desktop') {
+  if (form === 'onboarding') {
+    // Reuse the selected test profile through the same connect-link form as a person.
+    const payload = Buffer.from(
+      JSON.stringify({
+        v: 1,
+        url: GATEWAY_URL,
+        ...(mode === 'token' ? { token: secret } : { password: secret }),
+      }),
+    ).toString('base64url');
+    await inputInTab(hash, '.onboarding-connect input', `https://farmslot.io/#connect=${payload}`);
+    await clickInTab(hash, '.onboarding-connect button[type=submit]');
+    hash = 'doctor';
+  } else if (form === 'desktop') {
     await inputInTab(hash, '#auth-mode', mode, true);
     await inputInTab(hash, '#secret', secret);
     await clickInTab(hash, '#connection-form button[type=submit]');

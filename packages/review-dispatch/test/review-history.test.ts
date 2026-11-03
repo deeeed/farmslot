@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { AgentContext, Run } from '@farmslot/protocol';
+import type { AgentContext, ReviewAttempt, Run } from '@farmslot/protocol';
 
 import {
   loadReviewHistoryArtifacts,
@@ -11,7 +11,10 @@ import {
   reviewHistoryIdentity,
   reviewHistoryView,
 } from '../src/review-history.js';
-import { reviewHistorySourceRequest } from '../src/review-history-timeline.js';
+import {
+  reviewHistorySourceRequest,
+  reviewHistoryTimeline,
+} from '../src/review-history-timeline.js';
 
 function run(): Run {
   return {
@@ -918,7 +921,7 @@ test('actorless completed attempts keep chronological 1..N labels with loop repl
   assert.equal(history.roundCount, 3, 'a recorded actorless result remains visible');
 });
 
-test('round labels run once across reviewers and keep each fix adjacent to its review', () => {
+test('round labels run once across reviewers and attach each fix to the preceding review', () => {
   const current = run();
   current.agentContexts = [
     { ...actor(1), reviewId: 'review-a' },
@@ -950,7 +953,7 @@ test('round labels run once across reviewers and keep each fix adjacent to its r
   const next = history.events[fixIndex + 1];
   assert.equal(fix.kind, 'fix');
   assert.equal(next.kind, 'review');
-  if (fix.kind === 'fix' && next.kind === 'review') assert.equal(fix.roundKey, next.key);
+  if (fix.kind === 'fix') assert.equal(fix.roundKey, rounds[0].key);
 });
 
 test('fix grouping uses its frozen range before and after artifact metadata resolves', () => {
@@ -986,4 +989,299 @@ test('fix grouping uses its frozen range before and after artifact metadata reso
     'the same code fix is not an extra card on the later review',
   );
   assert.deepEqual(association({ 'history:git': { content: 'enabled' } }), association({}));
+});
+
+test('a recovered copy of an older result is not another round or a later result for its actor', () => {
+  const current = run();
+  const first: ReviewAttempt = {
+    loopNumber: 1,
+    mode: 'cold',
+    verdict: 'issues',
+    unresolvedCount: 1,
+    startedAt: '2026-11-03T08:33:35.080Z',
+    completedAt: '2026-11-03T08:42:59.859Z',
+    issues: [{ file: 'order.ts', line: 4, description: 'Keep the session private' }],
+    session: {
+      mode: 'cold',
+      reviewId: 'pipeline-review-history-run',
+      continuity: 'fresh',
+      sessionId: 'native-thread',
+    },
+    reviewSnapshot: {
+      source: 'local-git',
+      headSha: '29839d67',
+      capturedAt: '2026-11-03T08:33:38.392Z',
+      diffPath: 'artifacts/check/review-loop-1/review.diff',
+      diffHash: 'first-diff',
+    },
+  };
+  current.agentContexts = [
+    {
+      ...actor(1),
+      startedAt: first.startedAt,
+      completedAt: '2026-11-03T09:31:39.646Z',
+      attemptStartedAt: '2026-11-03T08:34:37.662Z',
+      deliveryBaselineRef: '29839d67',
+    },
+    {
+      ...actor(2),
+      startedAt: '2026-11-03T08:54:49.237Z',
+      completedAt: '2026-11-03T09:04:05.335Z',
+      deliveryBaselineRef: '512a1667',
+    },
+  ];
+  current.engineState = {
+    publishGate: {
+      reviews: [
+        {
+          id: 'pipeline-review-history-run',
+          runner: 'codex',
+          model: 'gpt-6.1-sol',
+          source: 'pipeline',
+          loopNumber: 3,
+          mode: 'warm',
+          verdict: 'issues',
+          unresolvedCount: 1,
+          attempts: [
+            first,
+            {
+              ...first,
+              loopNumber: 2,
+              mode: 'warm',
+              startedAt: '2026-11-03T08:54:49.237Z',
+              completedAt: '2026-11-03T09:04:03.818Z',
+              reviewSnapshot: {
+                ...first.reviewSnapshot,
+                source: 'local-git',
+                headSha: '512a1667',
+                capturedAt: '2026-11-03T08:54:53Z',
+                diffPath: 'artifacts/check/review-loop-2/review.diff',
+              },
+            },
+            {
+              ...first,
+              loopNumber: 3,
+              mode: 'warm',
+              startedAt: '2026-11-03T08:34:37.662Z',
+              completedAt: '2026-11-03T08:42:44.919Z',
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const history = reviewHistoryView(current);
+  assert.equal(history.roundCount, 2);
+  assert.equal(history.checks[0].rounds[0].mode, 'cold');
+  assert.equal(history.checks[0].rounds[0].durationMs, 564779);
+  assert.equal(
+    current.engineState.publishGate?.reviews?.[0].attempts?.length,
+    3,
+    'audit receipts are preserved',
+  );
+});
+
+test('a later reviewer issues result triggers the next fix even when a different reviewer had passed that head', () => {
+  const current = run();
+  current.agentContexts = [actor(1)];
+  const base = reviewHistoryView(current).checks[0].rounds[0];
+  const earlier = {
+    ...base,
+    key: 'earlier-pass',
+    reviewId: 'check-a',
+    roundNumber: 1,
+    verdict: 'pass',
+    headSha: 'same-head',
+    startedAt: '2026-10-21T10:00:00Z',
+    completedAt: '2026-10-21T10:01:00Z',
+  };
+  const issues = {
+    ...base,
+    key: 'later-issues',
+    reviewId: 'check-b',
+    roundNumber: 2,
+    verdict: 'issues',
+    headSha: 'same-head',
+    startedAt: '2026-10-21T10:02:00Z',
+    completedAt: '2026-10-21T10:03:00Z',
+  };
+  const next = {
+    ...base,
+    key: 'next-review',
+    reviewId: 'check-a',
+    roundNumber: 3,
+    startedAt: '2026-10-21T10:05:00Z',
+    completedAt: '2026-10-21T10:06:00Z',
+    hasFix: true,
+    fixBaseSha: 'same-head',
+    fixHeadSha: 'new-head',
+  };
+  const fix = reviewHistoryTimeline(current, [earlier, issues, next]).find(
+    (event) => event.kind === 'fix',
+  );
+  assert.equal(fix?.roundKey, 'later-issues');
+});
+
+for (const scenario of [
+  {
+    name: 'accepted prefixed prose keeps its original identity',
+    description: '[P1] Keep the active session. Do not reuse a retired receipt.',
+    head: 'head-a',
+    accepted: true,
+  },
+  {
+    name: 'an approval cannot accept the same finding at another head',
+    description: 'Keep the active session',
+    head: 'head-b',
+    accepted: false,
+  },
+  {
+    name: 'an actorless recorded head retains its accepted findings without a snapshot',
+    description: 'Keep the active session',
+    head: 'head-a',
+    accepted: true,
+    actorless: true,
+  },
+])
+  test(scenario.name, () => {
+    const current = run();
+    current.agentContexts = [
+      { ...actor(1), reviewId: 'review-a', deliveryBaselineRef: scenario.head },
+    ];
+    const { description } = scenario;
+    const artifacts = {
+      'artifacts/review-result-1.json': {
+        content: JSON.stringify({
+          verdict: 'issues',
+          issues: [{ file: 'order.ts', line: 12, description }],
+        }),
+      },
+    };
+    current.decisions = [
+      {
+        id: 'accepted-gate',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: '',
+        actions: [],
+        createdAt: current.createdAt,
+        publicationApproval: {
+          principalId: 'operator',
+          displayName: 'Operator',
+          subjectKind: 'person',
+          packageHash: 'package-a',
+          visualJudgmentReceiptIds: [],
+          claimOverrideReceiptIds: [],
+          approvedAt: current.updatedAt,
+          headSha: 'head-a',
+          acceptedFindings: {
+            digest: 'accepted',
+            findings: [{ reviewId: 'review-a', file: 'order.ts', line: 12, description }],
+          },
+        },
+      },
+    ];
+    if (scenario.actorless) {
+      current.agentContexts = [];
+      current.engineState = {
+        publishGate: {
+          reviews: [
+            {
+              id: 'review-a',
+              source: 'human-gate',
+              runner: 'codex',
+              model: 'gpt-6.1-sol',
+              mode: 'cold',
+              loopNumber: 1,
+              verdict: 'issues',
+              unresolvedCount: 1,
+              reviewedHeadSha: 'head-a',
+              issues: [{ file: 'order.ts', line: 12, description }],
+            },
+          ],
+        },
+      };
+    }
+    const history = reviewHistoryView(current, artifacts);
+    assert.equal(history.cards[0].round.findings[0].status === 'accepted', scenario.accepted);
+    assert.equal(history.cards[0].openFindings.length, scenario.accepted ? 0 : 1);
+  });
+
+test('a passing review keeps advisory findings visible without counting them as open', () => {
+  const current = run();
+  current.agentContexts = [actor(1)];
+  current.engineState = {
+    publishGate: {
+      reviews: [
+        {
+          id: 'pipeline-review-history-run',
+          source: 'pipeline',
+          runner: 'codex',
+          model: 'gpt-6.1-sol',
+          loopNumber: 1,
+          mode: 'cold',
+          verdict: 'pass',
+          unresolvedCount: 0,
+          attempts: [
+            {
+              loopNumber: 1,
+              mode: 'cold',
+              verdict: 'pass',
+              unresolvedCount: 0,
+              startedAt: current.agentContexts[0].startedAt,
+              completedAt: current.agentContexts[0].completedAt,
+              issues: [{ file: 'order.ts', description: 'Optional wording', severity: 'nit' }],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const history = reviewHistoryView(current);
+  assert.equal(history.cards[0].round.findings.length, 1);
+  assert.equal(history.cards[0].openFindings.length, 0);
+});
+
+test('omission after a fix does not invent a recorded resolution for a finding', () => {
+  const current = run();
+  current.agentContexts = [actor(1)];
+  const base = reviewHistoryView(current).checks[0].rounds[0];
+  const first = {
+    ...base,
+    key: 'first',
+    roundNumber: 1,
+    verdict: 'issues',
+    resultRecorded: true,
+    startedAt: '2026-10-21T10:00:00Z',
+    completedAt: '2026-10-21T10:01:00Z',
+    findings: [
+      {
+        id: 'issue-a',
+        title: 'Preserve the active order',
+        details: '',
+        severity: 'major',
+        file: 'order.ts',
+        line: 12,
+        status: 'new' as const,
+        statusLabel: 'New',
+        resolvedBy: null,
+      },
+    ],
+  };
+  const later = {
+    ...base,
+    key: 'later',
+    roundNumber: 2,
+    verdict: 'pass',
+    resultRecorded: true,
+    findings: [],
+    startedAt: '2026-10-21T10:03:00Z',
+    completedAt: '2026-10-21T10:04:00Z',
+    hasFix: true,
+    fixStartedAt: '2026-10-21T10:01:30Z',
+    fixCompletedAt: '2026-10-21T10:02:00Z',
+  };
+  reviewHistoryTimeline(current, [first, later]);
+  assert.equal(first.findings[0].status, 'unconfirmed');
+  assert.equal(first.findings[0].resolvedBy, null);
 });
