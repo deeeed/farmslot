@@ -1915,15 +1915,19 @@ export function continueResolvedRunDecision(
       // and clears a stale one, where resuming the engine would restart a worker that finished.
       // A refused replay can leave DISPATCH done with the signal adopted: replaying it again would
       // clear that signal and relaunch, so the resume below continues at MONITOR instead.
+      // So on a REVIEW card: it keeps a live fix, and an open output review would stop the resume.
       const card = afterResolve.decisions.find((d) => d.id === params.decisionId);
+      const cardStep = card?.context?.step;
       if (
         params.actionId === REPLAY_STEP_ACTION &&
         card?.type === WORKER_LEFT_RUNNING_DECISION &&
-        card.context?.step === PipelineSteps.DISPATCH &&
-        afterResolve.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.status !== 'done'
+        ((cardStep === PipelineSteps.DISPATCH &&
+          afterResolve.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.status !==
+            'done') ||
+          cardStep === PipelineSteps.REVIEW)
       ) {
         await (dependencies.replayStep ?? runReplayStep)(
-          { runId: params.runId, stepName: PipelineSteps.DISPATCH, triggeredBy: 'operator' },
+          { runId: params.runId, stepName: cardStep, triggeredBy: 'operator' },
           emit,
         ).catch((err: Error) => {
           // A refused replay (slot unreachable, say) must leave the operator a way out.

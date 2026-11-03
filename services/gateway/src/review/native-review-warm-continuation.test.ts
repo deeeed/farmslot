@@ -141,7 +141,7 @@ mock.module('../runners/native/worker.js', {
         throw new NativeWorkerOperationUncertainError(
           operation,
           resumeFailure === 'delivery' ? 'prompt acceptance timed out' : 'transfer refused',
-          undefined,
+          new Error('no live session'),
         );
       }
       await upsertAgentContext(input.runId, 'review', {
@@ -591,7 +591,10 @@ test('a resume that remains unavailable after reconciliation falls back under th
   const result = await reReview(run.id);
   assert.equal(result.mode, 'cold');
   assert.equal(result.session?.fallback?.reason, 'session-unavailable');
-  assert.match(result.session?.fallback?.detail ?? '', /could not resume/);
+  assert.match(
+    result.session?.fallback?.detail ?? '',
+    /could not resume: transfer refused \(no live session\)$/,
+  );
   assert.equal(dispatches.length, 4);
   assert.ok(dispatches[1]!.retainedFrom);
   assert.equal(dispatches[1]!.contextId, dispatches[2]!.contextId);

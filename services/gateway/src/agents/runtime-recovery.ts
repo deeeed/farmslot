@@ -477,7 +477,10 @@ export async function reconcileRunAgentRuntime(run: Run): Promise<void> {
 }
 
 /** A worker signal written at or after this attempt's marker; an older one is an earlier attempt's. */
-function signalFromAttempt(snapshot: LaunchAckSignalSnapshot | null, sinceMs: number): boolean {
+export function signalFromAttempt(
+  snapshot: LaunchAckSignalSnapshot | null,
+  sinceMs: number,
+): boolean {
   if (!snapshot?.raw) return false;
   try {
     const normalized = normalizeWorkerSignal(JSON.parse(snapshot.raw));

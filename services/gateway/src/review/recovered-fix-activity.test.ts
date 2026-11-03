@@ -39,6 +39,7 @@ mock.module('../core/exec.js', {
           stderr: '',
           stdout: '## Findings\n\n- **a.ts:1** — fix the finding\n',
         };
+      if (command.includes('review-diff-stat.json')) return { exitCode: 1, stderr: '', stdout: '' };
       throw new Error(`Unexpected recovery fixture command: ${command}`);
     },
   },
