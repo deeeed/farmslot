@@ -8,6 +8,7 @@ import {
   EVIDENCE_ATTESTATION_ACTION,
   type RecipeRepairScope,
   renderAcceptanceCoverage,
+  reviewFindingId,
   type ReviewStatus,
   type RunDecision,
   type RunGateReadiness,
@@ -25,6 +26,7 @@ import {
   publicationGateCriteria,
   publicationGateView,
   publicationReviewBlockingReason,
+  reviewFindingEntries,
   untestableOverrideView,
 } from '../src/publication-gate.js';
 
@@ -513,6 +515,95 @@ test('unchanged-head PASS retains findings; a PASS on the fixed head clears them
       { headSha: 'fixed-head' },
     ),
     undefined,
+  );
+});
+
+test('an issues continuation replaces earlier findings only within its lineage and captured head', () => {
+  const snapshot = {
+    source: 'local-git' as const,
+    headSha: 'same-head',
+    capturedAt: '2026-11-03T03:40:00Z',
+  };
+  const earlier = {
+    mode: 'cold' as const,
+    loopNumber: 1,
+    verdict: 'issues' as const,
+    unresolvedCount: 4,
+    reviewSnapshot: snapshot,
+  };
+  const current: ReviewStatus = {
+    id: 'pipeline-review',
+    source: 'pipeline',
+    mode: 'warm',
+    loopNumber: 2,
+    verdict: 'issues',
+    unresolvedCount: 2,
+    reviewedHeadSha: snapshot.headSha,
+    reviewSnapshot: snapshot,
+    attempts: [earlier, { ...earlier, loopNumber: 2, unresolvedCount: 2 }],
+  };
+  const other: ReviewStatus = { ...current, id: 'independent-review', attempts: undefined };
+  assert.deepEqual(
+    reviewFindingEntries([current, other]).map(({ review, entry, findings }) => ({
+      reviewId: review.id,
+      current: entry === review,
+      findings,
+    })),
+    [
+      { reviewId: current.id, current: true, findings: 2 },
+      { reviewId: other.id, current: true, findings: 2 },
+    ],
+  );
+  assert.match(
+    publicationReviewBlockingReason(
+      {
+        status: 'human-gating',
+        engineState: { publishGate: { reviews: [current] } },
+      },
+      { headSha: snapshot.headSha },
+    ) ?? '',
+    /Review found 2 issues/,
+  );
+  const issue = { file: 'artifacts/recipe.json', description: 'Compare original values.' };
+  const settled: ReviewStatus = {
+    ...current,
+    unresolvedCount: 1,
+    issues: [issue],
+    settledFindings: [
+      {
+        reviewId: current.id,
+        headSha: snapshot.headSha,
+        findingId: reviewFindingId(current.id, snapshot.headSha, issue),
+        receiptId: 'person-receipt',
+        claimId: 'AC-1',
+      },
+    ],
+  };
+  assert.deepEqual(reviewFindingEntries([settled]), []);
+  const failed: ReviewStatus = { ...current, verdict: 'failed' };
+  assert.deepEqual(
+    reviewFindingEntries([failed]).map(({ findings }) => findings),
+    [2],
+  );
+  const differentHead: ReviewStatus = {
+    ...current,
+    attempts: [earlier],
+    reviewedHeadSha: 'changed-head',
+    reviewSnapshot: { ...snapshot, headSha: 'changed-head' },
+  };
+  assert.deepEqual(
+    reviewFindingEntries([differentHead]).map(({ findings }) => findings),
+    [4, 2],
+  );
+  const unknownHead: ReviewStatus = {
+    ...current,
+    reviewedHeadSha: undefined,
+    reviewSnapshot: undefined,
+    attempts: [earlier],
+  };
+  assert.deepEqual(
+    reviewFindingEntries([unknownHead]).map(({ findings }) => findings),
+    [4, 2],
   );
 });
 

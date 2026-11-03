@@ -1572,7 +1572,7 @@ test('unresolved approval accepts valid head findings, never missing reviews or 
   assert.deepEqual(gateActionsForReadiness(actions, changed), actions.slice(1));
 });
 
-test('accepting findings takes every finding the block counts at the head, each from its own valid result', async () => {
+test('accepting findings binds only the latest issues attempt at a head, each from its own valid result', async () => {
   const { publicationGateDecisionActions } = await import('./gate-policy.js');
   const prepared = makeReadyGatePackage({
     reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
@@ -1602,7 +1602,7 @@ test('accepting findings takes every finding the block counts at the head, each 
     reviewSnapshot: prepared.reviewSnapshot,
     artifactPaths: [`artifacts/r1/loop-${loopNumber}/review-result.json`],
   });
-  // A re-review on unchanged code narrowed F1+F2 to F1; the block still counts both.
+  // A same-lineage re-review at the same head replaces F1+F2 with F1.
   const narrowed: ReviewStatus = {
     id: 'r1',
     source: 'pipeline',
@@ -1643,10 +1643,22 @@ test('accepting findings takes every finding the block counts at the head, each 
       inputs,
     );
   const offered = await readiness([narrowed]);
-  assert.deepEqual(offered.findings, [
-    { reviewId: 'r1', ...f1 },
-    { reviewId: 'r1', ...f2 },
-  ]);
+  assert.deepEqual(offered.findings, [{ reviewId: 'r1', ...f1 }]);
+  assert.equal(
+    offered.findingsDigest,
+    `sha256:${createHash('sha256')
+      .update(JSON.stringify([{ reviewId: 'r1', ...f1 }]))
+      .digest('hex')}`,
+  );
+  results['artifacts/r1/loop-1/review-result.json'] = undefined;
+  const withoutSupersededArtifact = await readiness([narrowed]);
+  assert.deepEqual(withoutSupersededArtifact.findings, offered.findings);
+  assert.equal(withoutSupersededArtifact.findingsDigest, offered.findingsDigest);
+  results['artifacts/r1/loop-1/review-result.json'] = {
+    schemaVersion: 1,
+    verdict: 'issues',
+    issues: [f1, f2],
+  };
   // Another reviewer passing the unchanged head keeps the finding open, and Accept defined.
   const definitions = publicationGateDecisionActions({
     reviewSatisfied: true,
@@ -1669,12 +1681,12 @@ test('accepting findings takes every finding the block counts at the head, each 
     (await readiness([{ ...narrowed, reviewedReviewSubjectHash: 'other-subject' }])).findings,
     undefined,
   );
-  delete results['artifacts/r1/loop-1/review-result.json'];
+  delete results['artifacts/r1/loop-2/review-result.json'];
   assert.equal((await readiness([narrowed])).findings, undefined);
-  results['artifacts/r1/loop-1/review-result.json'] = {
+  results['artifacts/r1/loop-2/review-result.json'] = {
     schemaVersion: 1,
     verdict: 'issues',
-    issues: [f1, f2],
+    issues: [f1],
   };
   const pending: ReviewStatus = {
     ...pass,

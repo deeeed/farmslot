@@ -286,22 +286,19 @@ export function reviewFindingEntries(reviews: readonly ReviewStatus[]): ReviewFi
       final.reviewSnapshot.headSha === (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
     )
       return [];
-    return [...(review.attempts ?? []), review].flatMap((entry) => {
+    // A completed issues re-review replaces this lineage's findings at that head.
+    // Failed continuations, other heads and independent review rows retain theirs.
+    const findingsByHead = new Map<string | ReviewAttempt, ReviewFindingEntry>();
+    for (const entry of [...(review.attempts ?? []), review]) {
       const findings = openReviewFindingCount(review, entry);
-      return entry.verdict === 'issues' && findings > 0
-        ? [
-            {
-              review,
-              entry,
-              findings,
-              head:
-                entry === review
-                  ? (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
-                  : entry.reviewSnapshot?.headSha,
-            },
-          ]
-        : [];
-    });
+      if (entry.verdict !== 'issues') continue;
+      const head =
+        entry === review
+          ? (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
+          : entry.reviewSnapshot?.headSha;
+      findingsByHead.set(head ?? entry, { review, entry, findings, head });
+    }
+    return [...findingsByHead.values()].filter(({ findings }) => findings > 0);
   });
 }
 
