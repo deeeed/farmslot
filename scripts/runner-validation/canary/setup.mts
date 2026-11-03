@@ -3,6 +3,7 @@
 //
 //   node --import tsx scripts/runner-validation/canary/setup.mts --farm ~/dev/farmslot [--apply]
 //
+// --config <file> selects a canary configuration, including an isolated proof node.
 // Without --apply it prints what it would do. With it:
 // - on each node in config.json (over ssh to the host its pool file names): ~/farmslot-canary/
 //   origin.git, a bare repo holding the canary repo (fixtures.mts CANARY_REPO), and
@@ -26,7 +27,12 @@ const farmArg = argv[argv.indexOf('--farm') + 1];
 if (!argv.includes('--farm') || !farmArg) throw new Error('--farm <farm checkout> is required');
 const farm = path.resolve(farmArg.replace(/^~(?=\/|$)/, homedir()));
 const apply = argv.includes('--apply');
-const config = JSON.parse(readFileSync(new URL('./config.json', import.meta.url), 'utf8')) as {
+const configArg = argv.includes('--config') ? argv[argv.indexOf('--config') + 1] : undefined;
+if (argv.includes('--config') && (!configArg || configArg.startsWith('--')))
+  throw new Error('--config <file> is required');
+const config = JSON.parse(
+  readFileSync(configArg ?? new URL('./config.json', import.meta.url), 'utf8'),
+) as {
   live: { nodes: Array<{ machine: string; slot: string }> };
 };
 
@@ -36,6 +42,7 @@ interface PoolFile {
   ssh_user?: string;
   os?: string;
   project?: string;
+  env?: Record<string, string>;
 }
 
 /** The farm's existing pool file for a machine: where its host and ssh user come from. */
@@ -71,7 +78,6 @@ const seedScript = Object.entries(CANARY_REPO)
   )
   .join('\n');
 
-let origin: string | undefined;
 const pools: Array<{ file: string; content: string }> = [];
 for (const node of config.live.nodes) {
   const pool = machinePool(node.machine);
@@ -79,11 +85,6 @@ for (const node of config.live.nodes) {
   const nodeHome = ssh(host, 'printf %s "$HOME"');
   const base = `${nodeHome}/farmslot-canary`;
   const slotRepo = `${base}/slot`;
-  origin ??= `${base}/origin.git`;
-  if (origin !== `${base}/origin.git`)
-    console.warn(
-      `${node.machine}: its origin path differs from the project's repo_url (${origin}); the slot still works`,
-    );
   const script = [
     'set -euo pipefail',
     `base='${base}'`,
@@ -118,6 +119,7 @@ for (const node of config.live.nodes) {
         project: CANARY_PROJECT,
         platform: 'cli',
         os: pool.os ?? 'darwin',
+        env: pool.env ?? {},
         slots: [
           {
             id: node.slot,
@@ -135,7 +137,7 @@ for (const node of config.live.nodes) {
   });
 }
 
-const pack = canaryPack(origin!);
+const pack = canaryPack();
 const projectDir = path.join(farm, 'projects', CANARY_PROJECT);
 if (existsSync(path.join(projectDir, 'project.json')))
   console.log(`kept ${projectDir}: it exists (remove it to rewrite)`);
