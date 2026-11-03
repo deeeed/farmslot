@@ -372,4 +372,36 @@ export const nativeSessionStyles = css`
       border-left: 0;
     }
   }
+  .launch-prompt {
+    display: grid;
+    gap: 12px;
+    font-size: 18px;
+  }
+  .launch-prompt textarea {
+    min-height: 200px;
+    resize: vertical;
+    padding: 16px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .launch-controls {
+    align-items: start;
+    display: grid;
+    grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr);
+    gap: 12px;
+  }
+  .launch-controls label {
+    align-content: start;
+    min-width: 0;
+  }
+  @media (max-width: 760px) {
+    .launch-controls {
+      align-items: start;
+      grid-template-columns: 1fr;
+    }
+  }
+  .launch-error {
+    min-height: 24px;
+    box-sizing: border-box;
+  }
 `;

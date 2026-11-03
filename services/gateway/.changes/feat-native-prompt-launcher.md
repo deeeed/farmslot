@@ -1,0 +1,1 @@
+- Validate the prompt-first native launcher through real browser controls and persisted first-message delivery.

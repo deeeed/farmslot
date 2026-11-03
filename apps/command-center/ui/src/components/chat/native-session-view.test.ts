@@ -34,6 +34,12 @@ Object.assign(globalThis, {
 // The workspace pane pulls CSS and Monaco that node can't load; the gateway client opens sockets.
 mock.module('./native-workspace.js', { namedExports: {} });
 mock.module('../../gateway-client.js', { namedExports: { gateway: {} } });
+mock.module('../../state.js', {
+  namedExports: {
+    getState: () => ({ globalFilters: { projects: [], machines: [] }, fleet: null }),
+    subscribe: () => () => undefined,
+  },
+});
 let offlineCache: GatewayResourceCache | undefined;
 mock.module('../../resource-cache.js', {
   namedExports: {
@@ -164,6 +170,7 @@ for (const [executionNodeId, homeDirectory] of [
       cwd: `${homeDirectory}/project`,
       profileReady: true,
       mode: 'default',
+      prompt: 'Read the workspace',
       fixture: {
         catalog: async () => catalog,
         list: async () => ({ sessions: [] }),
@@ -186,7 +193,7 @@ for (const [executionNodeId, homeDirectory] of [
     const change = litBindings(Reflect.get(view, 'render').call(view), '@change=')[1];
     assert(typeof change === 'function');
     const event = new Event('change');
-    Object.defineProperty(event, 'target', { value: { value: '__custom__' } });
+    Object.defineProperty(event, 'target', { value: { value: `custom:${executionNodeId}` } });
     Reflect.apply(change, view, [event]);
     assert.equal(Reflect.get(view, 'executionNodeId'), executionNodeId);
     assert.equal(Reflect.get(view, 'cwd'), homeDirectory);
@@ -240,11 +247,11 @@ test('custom directory does not redirect an unavailable selected machine or crea
   const change = litBindings(Reflect.get(view, 'render').call(view), '@change=')[1];
   assert(typeof change === 'function');
   const event = new Event('change');
-  Object.defineProperty(event, 'target', { value: { value: '__custom__' } });
+  Object.defineProperty(event, 'target', { value: { value: 'custom:macwork' } });
   Reflect.apply(change, view, [event]);
   assert.equal(Reflect.get(view, 'executionNodeId'), 'macwork');
   await Reflect.get(view, 'create').call(view);
-  assert.equal(Reflect.get(view, 'error'), 'Refresh native host');
+  assert.equal(Reflect.get(view, 'cwd'), '', 'disabled target is not selected');
   assert.equal(requests, 0);
 });
 
@@ -286,7 +293,6 @@ test('native Default sends the selected node model after switching execution nod
   Object.defineProperty(view, 'isConnected', { value: true });
   Object.assign(view, {
     requestUpdate: () => undefined,
-    catalog,
     executionPicker: picker,
     executionNodeId: 'mini',
     connected: true,
@@ -295,6 +301,13 @@ test('native Default sends the selected node model after switching execution nod
     profileReady: true,
     revision: 0,
     cwd: '/fixture',
+    catalog: {
+      ...catalog,
+      executionNodes: [{ executionNodeId: 'mini', label: 'mini', homeDirectory: '/fixture' }],
+    },
+    customCwd: true,
+    prompt: 'Read the workspace',
+    unavailableNodes: [],
     mode: 'default',
   });
   view.updated(new Map([['executionNodeId', 'macpro']]));
@@ -530,4 +543,162 @@ test('Edit removes the queued message, and the composer gets its text back', asy
   await view.poll();
   assert.equal(view.localCommand, undefined);
   assert.equal(view.draft, `${text}\n\ntyped meanwhile`);
+});
+
+test('prompt-first creation sends the first message once and keeps its delivery id', async () => {
+  stored.clear();
+  const result = page(receipt(false));
+  result.session.state = 'idle';
+  result.session.runner = 'codex';
+  const calls: Array<{ method: string; params: unknown }> = [];
+  let release: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const api: NativeSessionApi = {
+    async request<T>(
+      method: Parameters<NativeSessionApi['request']>[0],
+      params?: unknown,
+    ): Promise<T> {
+      calls.push({ method, params });
+      if (method === Methods.NATIVE_SESSION_CREATE) {
+        await pending;
+        return { session: result.session } as T;
+      }
+      if (method === Methods.NATIVE_SESSION_SEND) return { accepted: true } as T;
+      throw new Error(`Unexpected test RPC ${method}`);
+    },
+  };
+  const picker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['chat'] },
+    catalog: {
+      runners: [
+        {
+          id: 'codex',
+          models: [{ id: 'gpt-6.1-sol' }],
+          defaultModel: 'gpt-6.1-sol',
+          efforts: [],
+          defaultEffort: null,
+          allowCustomModels: false,
+        },
+      ],
+    },
+  });
+  const view = new NativeSessionView();
+  Object.defineProperty(view, 'isConnected', { value: true });
+  Object.assign(view, {
+    api,
+    fixture: {
+      catalog: async () => ({ runners: [], contexts: [] }),
+      list: async () => ({ sessions: [] }),
+      read: async () => result,
+    },
+    connected: true,
+    profileReady: true,
+    catalog: {
+      runners: [],
+      contexts: [],
+      executionNodes: [{ executionNodeId: 'local', label: 'local', homeDirectory: '/fixture' }],
+    },
+    customCwd: true,
+    executionPicker: picker,
+    cwd: '/fixture',
+    executionNodeId: 'local',
+    prompt: 'Read the workspace',
+    revision: 0,
+    requestUpdate: () => undefined,
+    selectRouted(id: string) {
+      Object.assign(this, { selectedId: id, busy: false, revision: 1 });
+    },
+    sessionKey: (key: string) => `prompt-first:${key}`,
+    refreshSessions: async () => undefined,
+    schedule: () => undefined,
+  });
+  const create = Reflect.get(view, 'create');
+  assert.equal(typeof create, 'function');
+  const first = create.call(view);
+  await create.call(view);
+  assert.equal(calls.length, 1, 'a second Enter must not start another session');
+  release?.();
+  await first;
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    [Methods.NATIVE_SESSION_CREATE, Methods.NATIVE_SESSION_SEND],
+  );
+  const command = JSON.parse(stored.get('prompt-first:command:session') ?? '{}');
+  assert.equal(command.text, 'Read the workspace');
+  assert.equal(command.sessionId, result.session.id);
+  assert.match(command.commandId, /^[0-9a-f-]{36}$/);
+  assert.equal(Reflect.get(view, 'prompt'), '');
+  assert.equal(
+    Reflect.get(view, 'busy'),
+    false,
+    'creating and first delivery release the same transition',
+  );
+});
+
+test('embedded launch controls keep the current route and New restores the target', () => {
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const previousHistory = Object.getOwnPropertyDescriptor(globalThis, 'history');
+  const location = { hash: '#runs?projects=terminal' };
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      replaceState(_state: unknown, _unused: string, url: string) {
+        location.hash = url;
+      },
+    },
+  });
+  try {
+    const view = new NativeSessionView();
+    Object.assign(view, {
+      cwd: '/workspace/custom',
+      executionNodeId: 'mini',
+      customCwd: true,
+      requestUpdate: () => undefined,
+      schedule: () => undefined,
+    });
+    Reflect.get(view, 'syncLaunchUrl').call(view);
+    assert.equal(location.hash, '#runs?projects=terminal');
+    location.hash = '#native?cwd=%2Fworkspace%2Fcustom&custom=true&executionNodeId=mini';
+    Reflect.get(view, 'selectRouted').call(view, 'existing', 'mini');
+    Reflect.get(view, 'selectRouted').call(view, '');
+    assert.equal(new URLSearchParams(location.hash.split('?')[1]).get('executionNodeId'), 'mini');
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+    else Reflect.deleteProperty(globalThis, 'location');
+    if (previousHistory) Object.defineProperty(globalThis, 'history', previousHistory);
+    else Reflect.deleteProperty(globalThis, 'history');
+  }
+});
+
+test('launcher URL restores a permitted custom model', () => {
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { hash: '#native?runner=codex&model=custom-provider-model' },
+  });
+  try {
+    const catalog: NativeSessionCatalogResult = {
+      runners: [
+        { runner: 'codex', models: ['listed'], defaultModel: 'listed', modes: ['default'] },
+      ],
+      contexts: [],
+    };
+    const view = new NativeSessionView();
+    Object.assign(view, {
+      catalog,
+      requestUpdate: () => undefined,
+      executionPicker: new ReviewDispatchViewModel({
+        context: { allowedActions: ['chat'] },
+        catalog: catalogForNativeRunners(catalog.runners),
+      }),
+    });
+    Reflect.get(view, 'updated').call(view, new Map());
+    assert.equal(Reflect.get(view, 'model'), 'custom-provider-model');
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+    else Reflect.deleteProperty(globalThis, 'location');
+  }
 });

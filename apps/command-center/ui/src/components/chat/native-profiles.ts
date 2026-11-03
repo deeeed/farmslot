@@ -9,6 +9,8 @@ import {
 } from '@farmslot/protocol';
 import { nativeObservationQuery } from '@farmslot/protocol/client-cache';
 
+import '../shared/choice-picker.js';
+
 import { gateway } from '../../gateway-client.js';
 import {
   getResourceCache,
@@ -348,12 +350,13 @@ export class NativeProfiles extends LitElement {
     const profile = this.profiles.find((item) => item.id === this.selected);
     const disabled = this.disabled || this.busy;
     return html` <label
-        >Account profile<select
+        >Account profile<choice-picker
+          overlay
           data-testid="native-profile"
           .value=${this.selected}
           ?disabled=${this.disabled || this.mutating}
           @change=${(event: Event) =>
-            this.chooseAfterNavigation((event.target as HTMLSelectElement).value)}
+            this.chooseAfterNavigation((event.target as HTMLElement & { value: string }).value)}
         >
           <option value="" .selected=${!this.selected}>Node default account</option>
           ${this.selected && !profile
@@ -367,7 +370,7 @@ export class NativeProfiles extends LitElement {
                 ${item.id} · ${item.runner}${item.state === 'retiring' ? ' · retiring' : ''}
               </option>`,
           )}
-        </select></label
+        </choice-picker></label
       >
       <div class="row">
         ${this.error

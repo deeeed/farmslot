@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 
 import { ReviewDispatchPicker } from '../../review-dispatch/ReviewDispatchPicker';
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
@@ -12,13 +12,26 @@ export function NativeSessionSetup({
   viewModel: vm,
   actions,
   onCreate,
-}: Setup & { onCreate: () => void }) {
+}: {
+  viewModel: Setup['viewModel'];
+  actions: Omit<Setup['actions'], 'create'>;
+  onCreate: (prompt: string) => void;
+}) {
+  const [prompt, setPrompt] = useState('');
   const [choosingWorkspace, setChoosingWorkspace] = useState(false);
   const runner = vm.catalog?.runners.find((item) => item.runner === vm.runner);
-  const selectedWorkspace = vm.catalog?.contexts[vm.contextIndex];
+  const selectedWorkspace = vm.choices.find((choice) => choice.key === vm.contextKey);
   return (
     <View testID="companion-native-setup" style={styles.card}>
-      <Text style={styles.heading}>New conversation</Text>
+      <Text style={styles.heading}>What would you like to work on?</Text>
+      <TextInput
+        testID="companion-native-prompt"
+        style={[styles.input, { minHeight: 160, textAlignVertical: 'top' }]}
+        multiline
+        value={prompt}
+        onChangeText={setPrompt}
+        editable={!vm.controlsDisabled}
+      />
       <Text style={styles.muted}>Workspace</Text>
       {selectedWorkspace ? (
         <View testID="companion-native-selected-workspace">
@@ -46,27 +59,37 @@ export function NativeSessionSetup({
         </Text>
       ) : null}
       {choosingWorkspace
-        ? vm.catalog?.contexts.map((context, index) => (
+        ? vm.choices.map((context, index) => (
             <Pressable
               key={`${context.executionNodeId}:${context.cwd}`}
               testID={`companion-native-context-${index}`}
               accessibilityRole="button"
-              accessibilityState={{ selected: index === vm.contextIndex }}
+              accessibilityState={{ selected: context.key === vm.contextKey }}
               style={styles.button}
-              disabled={vm.controlsDisabled}
+              disabled={vm.controlsDisabled || !!context.unavailableReason}
               onPress={() => {
-                actions.selectContext(index);
+                actions.selectChoice(context.key);
                 setChoosingWorkspace(false);
               }}
             >
               <Text style={styles.buttonText}>
-                {index === vm.contextIndex ? '✓ ' : ''}
+                {context.key === vm.contextKey ? '✓ ' : ''}
                 {context.label} · {context.executionNodeId ?? 'local'}
               </Text>
-              <Text style={styles.muted}>{context.cwd}</Text>
+              <Text style={styles.muted}>{context.unavailableReason ?? context.cwd}</Text>
             </Pressable>
           ))
         : null}
+      {vm.custom ? (
+        <TextInput
+          testID="companion-native-cwd"
+          style={styles.input}
+          value={vm.customCwd}
+          onChangeText={actions.selectCustomCwd}
+          editable={!vm.controlsDisabled}
+          autoCapitalize="none"
+        />
+      ) : null}
       {vm.executionPicker ? (
         <ReviewDispatchPicker
           model={vm.executionPicker}
@@ -79,6 +102,7 @@ export function NativeSessionSetup({
             if (!selection) return;
             actions.selectRunner(selection.runner);
             actions.selectModel(selection.model ?? '');
+            actions.selectEffort(selection.effort ?? null);
           }}
         />
       ) : null}
@@ -107,17 +131,17 @@ export function NativeSessionSetup({
           ))}
         </View>
       ) : null}
-      {!vm.loading && !vm.catalog?.contexts.length ? (
+      {!vm.loading && !vm.choices.length ? (
         <Text style={styles.muted}>No workspaces are available for this account.</Text>
       ) : null}
       <View style={styles.row}>
         <Pressable
           testID="companion-native-create"
           accessibilityRole="button"
-          accessibilityState={{ disabled: !vm.canCreate }}
+          accessibilityState={{ disabled: !vm.canCreate || !prompt.trim() }}
           style={styles.button}
-          disabled={!vm.canCreate}
-          onPress={onCreate}
+          disabled={!vm.canCreate || !prompt.trim()}
+          onPress={() => onCreate(prompt.trim())}
         >
           <Text style={styles.buttonText}>{vm.creating ? 'Starting…' : 'Start conversation'}</Text>
         </Pressable>

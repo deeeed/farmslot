@@ -173,8 +173,8 @@ export function NativeConversationScreen({
               <NativeSessionSetup
                 viewModel={vm.creation}
                 actions={actions.creation}
-                onCreate={() => {
-                  void actions.creation.create().then((session) => {
+                onCreate={(prompt) => {
+                  void actions.creation.create(prompt).then((session) => {
                     if (session) onSelect(session);
                   });
                 }}

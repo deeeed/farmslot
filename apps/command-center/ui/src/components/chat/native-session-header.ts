@@ -4,6 +4,7 @@ import type { NativeSessionInfo } from '@farmslot/protocol';
 import type { NativeWork, ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import './native-read-status-view.js';
+import '../shared/choice-picker.js';
 
 import type { NativeReadStatusRowContext } from './native-read-status-view.js';
 import type { NativeWorkerViewTarget } from './native-worker-target.js';
@@ -50,16 +51,20 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
         ? html`<strong data-testid="native-worker-label">${ctx.worker.label}</strong>
             <a href=${`#run/${ctx.worker.runId}`}>Task controls</a>`
         : html`<label class="inline"
-              >Session<select
+              >Sessions<choice-picker
+                overlay
                 data-testid="native-session-select"
                 @change=${(e: Event) => {
-                  const value = (e.target as HTMLSelectElement).value;
+                  const value = (e.target as HTMLElement & { value: string }).value;
                   const selected = ctx.sessions.find((item) => ctx.sessionChoice(item) === value);
                   if (selected) ctx.select(selected.id, selected.executionNodeId);
                   else if (!value) ctx.select('');
                 }}
+                .value=${ctx.selectedId
+                  ? ctx.sessionChoice({ id: ctx.selectedId, executionNodeId: ctx.selectedNodeId })
+                  : ''}
               >
-                <option value="" .selected=${!ctx.selectedId}>New session</option>
+                <option value="" .selected=${!ctx.selectedId}>Existing sessions</option>
                 ${ctx.selectedId &&
                 !ctx.sessions.some(
                   (item) =>
@@ -87,11 +92,17 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
                       ${item.id.slice(0, 8)} · ${item.state}
                     </option>`,
                 )}
-              </select></label
+              </choice-picker></label
             >
-            <button data-testid="native-new" ?disabled=${ctx.busy} @click=${() => ctx.select('')}>
-              New session
-            </button> `}
+            ${session
+              ? html`<button
+                  data-testid="native-new"
+                  ?disabled=${ctx.busy}
+                  @click=${() => ctx.select('')}
+                >
+                  New session
+                </button>`
+              : nothing} `}
       ${session && ctx.workspaceAllowed
         ? html`<button
             aria-pressed=${ctx.workspace}

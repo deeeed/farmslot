@@ -82,6 +82,7 @@ export function useNativeConversationController(params: NativeConversationParams
   const access = useWorkspaceRenderAccess();
   const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
   const creation = useNativeSessionSetup(!params.sessionId);
+  const launching = useRef(false);
   const [draft, setDraft] = useState(params.draft ?? '');
   const [pending, setPending] = useState<PendingCommand>();
   const [responses, setResponses] = useState<string[]>([]);
@@ -501,6 +502,28 @@ export function useNativeConversationController(params: NativeConversationParams
       }),
       JSON.stringify(content),
     );
+  const deliverFirstMessage = async (next: NativeSessionInfo, text: string) => {
+    const command = newCommand(
+      { sessionId: next.id, executionNodeId: next.executionNodeId },
+      next.generation,
+      text,
+    );
+    try {
+      await saveConversation(next, { draft: '', pending: command, responses: [] });
+    } catch (cause) {
+      setError(
+        `The session started, but its first message could not be saved: ${message(cause)}. Open it from the session list.`,
+      );
+      return false;
+    }
+    try {
+      await deliver(command);
+    } catch (cause) {
+      // The pending command keeps its id when the conversation reconciles uncertain delivery.
+      setError(`First-message delivery is unconfirmed: ${message(cause)}`);
+    }
+    return true;
+  };
   const entries = nativeTimeline(transcript.events);
   const rows = nativeTimelineRows(entries);
   const work = nativeWork(transcript.events);
@@ -624,7 +647,22 @@ export function useNativeConversationController(params: NativeConversationParams
       runObservation: params.runId ? runObservation : undefined,
     },
     actions: {
-      creation: creation.actions,
+      creation: {
+        ...creation.actions,
+        create: async (prompt: string) => {
+          if (!prompt.trim() || launching.current || !client) return;
+          launching.current = true;
+          try {
+            const generation = client.connectionGeneration;
+            const next = await creation.actions.create();
+            if (!next || !alive.current || client.connectionGeneration !== generation) return;
+            if (!(await deliverFirstMessage(next, prompt.trim()))) return;
+            return alive.current && client.connectionGeneration === generation ? next : undefined;
+          } finally {
+            launching.current = false;
+          }
+        },
+      },
       resume: {
         profiles: resume.actions.profiles,
         resume: async () => {
@@ -656,22 +694,7 @@ export function useNativeConversationController(params: NativeConversationParams
             const generation = client?.connectionGeneration;
             const next = await resume.actions.implement();
             if (!next || !alive.current || client?.connectionGeneration !== generation) return;
-            const command = newCommand(
-              { sessionId: next.id, executionNodeId: next.executionNodeId },
-              next.generation,
-              nativeImplementPrompt(plan),
-            );
-            try {
-              await saveConversation(next, { draft: '', pending: command, responses: [] });
-            } catch (cause) {
-              if (alive.current)
-                setError(
-                  `The plan's session started, but its message could not be kept: ${message(cause)}. Copy the plan and send it there.`,
-                );
-              return;
-            }
-            // Unconfirmed delivery shows, and is retried, in the conversation this opens.
-            await deliver(command).catch(() => undefined);
+            if (!(await deliverFirstMessage(next, nativeImplementPrompt(plan)))) return;
             // A reader who left this screen meanwhile is not taken to the new conversation.
             return alive.current ? next : undefined;
           } finally {
