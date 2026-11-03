@@ -10,6 +10,7 @@ import { loadSlotVars, poolDir } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { nativeSessionManager } from '../runners/native/manager.js';
 import { resolveNativeExecutionNode } from '../runners/native/node.js';
 import {
   assertStandaloneAdmin,
@@ -36,15 +37,17 @@ export async function standaloneCatalogTargets(
       const row: NativeSessionExecutionNode = { executionNodeId: machine, label: machine };
       try {
         const owner = standaloneOwner(reader, machine);
-        const node = resolveNativeExecutionNode(owner, machine);
+        const node = machine === 'local' ? undefined : resolveNativeExecutionNode(owner, machine);
         let result: unknown;
         try {
-          result = await sendNodeRequest(
-            node,
-            'native.session.metadata',
-            { owner },
-            { timeout: 5_000, requireSameConnection: true },
-          );
+          result = node
+            ? await sendNodeRequest(
+                node,
+                'native.session.metadata',
+                { owner },
+                { timeout: 5_000, requireSameConnection: true },
+              )
+            : nativeSessionManager.metadata();
         } catch (error) {
           // A failed target metadata RPC makes that row unavailable, without hiding other machines.
           throw new GatewayMethodError(
@@ -54,7 +57,7 @@ export async function standaloneCatalogTargets(
         }
         if (
           standaloneOwner(reader, machine) !== owner ||
-          resolveNativeExecutionNode(owner, machine) !== node
+          (node && resolveNativeExecutionNode(owner, machine) !== node)
         )
           throw new GatewayMethodError(
             'NATIVE_SOURCE_UNAVAILABLE',
@@ -80,7 +83,12 @@ export async function standaloneCatalogTargets(
             'NATIVE_SOURCE_UNAVAILABLE',
             'Refresh the native host for standalone admin sessions',
           );
-        return { row, supportsProfiles: node.nativeSessions.supportsProfiles === true };
+        return {
+          row,
+          owner,
+          node,
+          supportsProfiles: !node || node.nativeSessions.supportsProfiles === true,
+        };
       } catch (error) {
         assertStandaloneAdmin(reader);
         if (!(error instanceof GatewayMethodError) && !(error instanceof Error && 'code' in error))
@@ -92,7 +100,24 @@ export async function standaloneCatalogTargets(
   );
   const contexts: NativeSessionCatalogResult['contexts'] = [];
   const contextMachines = new Map<string, string>();
-  for (const { row, supportsProfiles } of targets) {
+  for (const { row, owner, node, supportsProfiles } of targets) {
+    if (owner !== undefined && !row.unavailableReason) {
+      try {
+        if (
+          standaloneOwner(reader, row.executionNodeId) !== owner ||
+          (node && resolveNativeExecutionNode(owner, row.executionNodeId) !== node)
+        )
+          throw new GatewayMethodError(
+            'NATIVE_SOURCE_UNAVAILABLE',
+            'Execution node changed while reading the catalog',
+          );
+      } catch (error) {
+        assertStandaloneAdmin(reader);
+        if (!(error instanceof GatewayMethodError) && !(error instanceof Error && 'code' in error))
+          throw error;
+        row.unavailableReason = error.message;
+      }
+    }
     const home = row.homeDirectory;
     if (row.unavailableReason || home === undefined) continue;
     const machine = row.executionNodeId;

@@ -50,7 +50,7 @@ test('native target metadata reports its actual home and refuses an old ready ho
   const secret = 'fixture-private-ipc-secret';
   writeFileSync(
     path.join(hostRoot, 'host.json'),
-    JSON.stringify({ pid: process.pid, socket, token: secret }),
+    JSON.stringify({ executionNodeId: 'fixture-machine', pid: process.pid, socket, token: secret }),
     { mode: 0o600 },
   );
   const old = service.metadata('owner');
@@ -58,7 +58,13 @@ test('native target metadata reports its actual home and refuses an old ready ho
   assert.equal(JSON.stringify(old).includes(secret), false);
   writeFileSync(
     path.join(hostRoot, 'host.json'),
-    JSON.stringify({ pid: process.pid, socket, token: secret, supportsStandaloneDelegation: true }),
+    JSON.stringify({
+      executionNodeId: 'fixture-machine',
+      pid: process.pid,
+      socket,
+      token: secret,
+      supportsStandaloneDelegation: true,
+    }),
     { mode: 0o600 },
   );
   assert.equal(service.metadata('owner').supportsStandaloneDelegation, true);

@@ -1578,6 +1578,14 @@ ${JSON.stringify(
                 this.requestUpdate();
               }}
             ></review-dispatch-picker>
+            ${(this.catalog?.executionNodes ?? [])
+              .filter((node) => node.unavailableReason)
+              .map(
+                (node) =>
+                  html`<p class="error" role="status" data-testid="native-target-unavailable">
+                    ${node.label}: ${node.unavailableReason}
+                  </p>`,
+              )}
             <label
               >Working directory<select
                 data-testid="native-context"

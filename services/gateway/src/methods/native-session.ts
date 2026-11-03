@@ -2,7 +2,11 @@ import { NativeSessionMethodError } from '@farmslot/agent-runtime/native/service
 import { Methods, type Principal } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
-import { listNativeExecutions, routeNativeExecution } from '../runners/native/node.js';
+import {
+  listNativeExecutions,
+  resolveNativeExecutionNode,
+  routeNativeExecution,
+} from '../runners/native/node.js';
 import {
   NATIVE_WORKER_READ_METHODS,
   routeNativeWorkerRead,
@@ -84,23 +88,39 @@ export async function nativeSessionRoute(
         const pages = await Promise.allSettled(
           targets.map(async (executionNodeId) => {
             const owner = standaloneOwner(actingPrincipal, executionNodeId);
-            return await routeNativeExecution(owner, method, { executionNodeId });
+            const node =
+              executionNodeId === 'local'
+                ? undefined
+                : resolveNativeExecutionNode(owner, executionNodeId);
+            const result = await routeNativeExecution(owner, method, { executionNodeId });
+            return { owner, node, result };
           }),
         );
         const sessions: import('@farmslot/protocol').NativeSessionInfo[] = [];
         const unavailableExecutionNodes: Array<{ executionNodeId: string; message: string }> = [];
         for (const [index, page] of pages.entries()) {
-          if (page.status === 'fulfilled') {
-            const result = page.value as import('@farmslot/protocol').NativeSessionListResult;
-            sessions.push(...result.sessions.filter((session) => !session.workerManaged));
-          } else {
+          try {
+            if (page.status === 'rejected') throw page.reason;
+            const executionNodeId = targets[index];
+            const { owner, node, result } = page.value;
+            // A fast response is not authority while another target is still pending.
+            if (
+              standaloneOwner(actingPrincipal, executionNodeId) !== owner ||
+              (node && resolveNativeExecutionNode(owner, executionNodeId) !== node)
+            )
+              throw new GatewayMethodError(
+                'NATIVE_SOURCE_UNAVAILABLE',
+                'Native target authority changed while listing sessions',
+              );
+            const inventory = result as import('@farmslot/protocol').NativeSessionListResult;
+            sessions.push(...inventory.sessions.filter((session) => !session.workerManaged));
+          } catch (error) {
             unavailableExecutionNodes.push({
               executionNodeId: targets[index],
-              message: page.reason instanceof Error ? page.reason.message : String(page.reason),
+              message: error instanceof Error ? error.message : String(error),
             });
           }
         }
-        // Recheck person authority after the cross-node awaits, without changing request authorship.
         standaloneOwners(actingPrincipal);
         return { sessions, unavailableExecutionNodes };
       }
@@ -123,7 +143,9 @@ export async function nativeSessionRoute(
       if (inspected.session.workerManaged)
         throw new GatewayMethodError(
           'AUTH_FORBIDDEN',
-          'Worker-managed sessions require pinned worker controls',
+          allowWorkers
+            ? 'Worker-managed sessions require pinned worker controls'
+            : 'Native workspace enrollment does not grant worker access',
         );
       if (delegated && standaloneOwner(actingPrincipal, executionNodeId) !== owner)
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native target owner changed');

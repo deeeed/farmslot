@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import test, { after } from 'node:test';
+import test, { after, mock } from 'node:test';
 
 import { WebSocket } from 'ws';
 
@@ -23,7 +23,7 @@ Object.assign(process.env, {
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
   FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
   FARMSLOT_NATIVE_STATE_DIR: path.join(root, 'native'),
-  FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'farm-automation',
+  FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: '',
   FARMSLOT_DISABLE_ORCHESTRATION: '1',
   FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
   FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
@@ -34,6 +34,7 @@ const { runWithSessionOriginator, currentSessionOriginator } =
   await import('../security/work-originator.js');
 const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
 const { handleNodeResponse } = await import('../fleet/node-rpc.js');
+const { nativeSessionManager } = await import('../runners/native/manager.js');
 const { nativeSessionRoute } = await import('./native-session.js');
 const { authorizeNativeObservation, GatewayNativeObservations, nativeObservations } =
   await import('../resources/native-observations.js');
@@ -75,6 +76,8 @@ const mutations: string[] = [];
 let worker = false;
 let hostSupportsDelegation = true;
 const sockets = new Map<string, WebSocket>();
+let holdMetadataReply: ((machine: string, reply: () => void) => void) | undefined;
+let holdListReply: ((machine: string, reply: () => void) => void) | undefined;
 const receipts = new Map(
   machines.map((nodeId) => [
     nodeId,
@@ -112,14 +115,17 @@ for (const machine of machines) {
       const frame = JSON.parse(raw);
       if (frame.method === 'native.session.metadata') {
         assert.deepEqual(frame.params, { owner: owners[machine] });
-        handleNodeResponse(
-          frame.id,
-          true,
-          { homeDirectory: homes[machine], supportsStandaloneDelegation: hostSupportsDelegation },
-          undefined,
-          undefined,
-          socket,
-        );
+        const reply = () =>
+          handleNodeResponse(
+            frame.id,
+            true,
+            { homeDirectory: homes[machine], supportsStandaloneDelegation: hostSupportsDelegation },
+            undefined,
+            undefined,
+            socket,
+          );
+        if (holdMetadataReply) holdMetadataReply(machine, reply);
+        else reply();
         return;
       }
       if (frame.method === 'exec') {
@@ -202,14 +208,18 @@ for (const machine of machines) {
           accepted: true,
         };
       } else assert.fail(`Unexpected method ${frame.params.method}`);
-      handleNodeResponse(
-        frame.id,
-        true,
-        frame.params.observe ? { value: result, nativeSource: receipts.get(machine) } : result,
-        undefined,
-        undefined,
-        socket,
-      );
+      const reply = () =>
+        handleNodeResponse(
+          frame.id,
+          true,
+          frame.params.observe ? { value: result, nativeSource: receipts.get(machine) } : result,
+          undefined,
+          undefined,
+          socket,
+        );
+      if (frame.params.method === Methods.NATIVE_SESSION_LIST && holdListReply)
+        holdListReply(machine, reply);
+      else reply();
     },
   } as WebSocket;
   sockets.set(machine, socket);
@@ -290,6 +300,146 @@ test('catalog names all targets, reads their actual homes and keeps custom paths
     );
 });
 
+test('gateway-local journals remain discoverable separately from the same-host node', async () => {
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = farm.id;
+  const local = {
+    ...sessions.get('macwork')!,
+    id: 'local-session',
+    executionNodeId: 'local',
+    ownerPrincipalId: farm.id,
+  };
+  const list = mock.method(nativeSessionManager, 'list', async () => [local]);
+  try {
+    const catalog = await call(Methods.NATIVE_SESSION_CATALOG, {});
+    assert(catalog && typeof catalog === 'object');
+    assert.deepEqual(
+      Reflect.get(catalog, 'executionNodes').find(
+        (row: { executionNodeId: string }) => row.executionNodeId === 'local',
+      ),
+      {
+        executionNodeId: 'local',
+        label: 'local',
+        homeDirectory: os.homedir(),
+      },
+    );
+    const inventory = await call(Methods.NATIVE_SESSION_LIST, {});
+    assert(inventory && typeof inventory === 'object');
+    assert(
+      Reflect.get(inventory, 'sessions').some((row: NativeSessionInfo) => row.id === local.id),
+    );
+    const authority = await authorizeNativeObservation(arthur, {
+      key: { family: 'native-session', scope: 'owner', ownerId: arthur.id },
+      method: Methods.NATIVE_SESSION_LIST,
+      params: {},
+    });
+    assert.equal(authority.owners?.local, farm.id);
+    assert(authority.nodes.includes('macwork'));
+  } finally {
+    list.mock.restore();
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = '';
+  }
+});
+
+for (const method of [Methods.NATIVE_SESSION_LIST, Methods.NATIVE_SESSION_CATALOG])
+  for (const change of ['connection', 'owner'] as const)
+    test(`${method} fences a completed page after a target ${change} change`, async () => {
+      const local = {
+        ...sessions.get('macwork')!,
+        id: 'local-session',
+        executionNodeId: 'local',
+        ownerPrincipalId: farm.id,
+      };
+      const localList = mock.method(nativeSessionManager, 'list', async () => [local]);
+      if (change === 'owner') process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = farm.id;
+      let releaseSlow: (() => void) | undefined;
+      let fastDone!: () => void;
+      let slowStarted!: () => void;
+      const fast = new Promise<void>((resolve) => {
+        fastDone = resolve;
+      });
+      const slow = new Promise<void>((resolve) => {
+        slowStarted = resolve;
+      });
+      const hold = (machine: string, reply: () => void) => {
+        if (machine === 'mini') {
+          releaseSlow = reply;
+          slowStarted();
+        } else {
+          reply();
+          if (machine === 'macpro') fastDone();
+        }
+      };
+      try {
+        if (method === Methods.NATIVE_SESSION_LIST) holdListReply = hold;
+        else holdMetadataReply = hold;
+        const pending = call(method, {});
+        await Promise.all([fast, slow]);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        if (change === 'owner') process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = nodeOwner.id;
+        else
+          registerNode(
+            'macpro',
+            1,
+            sockets.get('macpro')!,
+            undefined,
+            undefined,
+            { ownerPrincipalId: farm.id, supportsStandaloneDelegation: true },
+            { principalId: 'node-macpro', valid: () => true },
+          );
+        assert(releaseSlow);
+        releaseSlow();
+        const result = await pending;
+        assert(result && typeof result === 'object');
+        const target = change === 'owner' ? 'local' : 'macpro';
+        if (method === Methods.NATIVE_SESSION_LIST) {
+          assert(
+            !Reflect.get(result, 'sessions').some(
+              (row: NativeSessionInfo) => row.executionNodeId === target,
+            ),
+          );
+          assert(
+            Reflect.get(result, 'unavailableExecutionNodes').some(
+              (row: { executionNodeId: string }) => row.executionNodeId === target,
+            ),
+          );
+        } else {
+          assert(
+            !Reflect.get(result, 'contexts').some(
+              (row: { executionNodeId: string }) => row.executionNodeId === target,
+            ),
+          );
+          assert.match(
+            Reflect.get(result, 'executionNodes').find(
+              (row: { executionNodeId: string }) => row.executionNodeId === target,
+            ).unavailableReason,
+            /changed/,
+          );
+        }
+      } finally {
+        holdListReply = undefined;
+        holdMetadataReply = undefined;
+        localList.mock.restore();
+        process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = '';
+        releaseSlow?.();
+        registerNode(
+          'macpro',
+          1,
+          sockets.get('macpro')!,
+          undefined,
+          undefined,
+          {
+            ownerPrincipalId: farm.id,
+            supportsStandaloneDelegation: true,
+            supportsEnsure: true,
+            supportsWorkers: true,
+            supportsProfiles: true,
+            supportsObservations: true,
+          },
+          { principalId: 'node-macpro', valid: () => true },
+        );
+      }
+    });
+
 test('standalone worker bypasses and caller-supplied attribution are refused before mutation', async () => {
   const before = mutations.length;
   worker = true;
@@ -350,41 +500,51 @@ test('standalone worker bypasses and caller-supplied attribution are refused bef
 });
 
 test('farm review, publication and request-local identity stay unchanged', async () => {
-  await runWithSessionOriginator(arthur, async () => {
-    const before = currentSessionOriginator();
-    const expected = {
-      ownerId: farm.id,
-      requester: { principalId: 'arthur', principalGeneration: 1 },
-    };
-    assert.deepEqual(resolveStaticReviewOwner('live'), expected);
-    for (const machine of machines)
-      assert.equal(
-        nativeReviewerOwner(makeRun({ transport: 'tmux' }), await loadSlotVars(`${machine}-slot`)),
-        farm.id,
-      );
-    const publication: Pick<Run, 'reviewPublication' | 'prWork'> = {
-      reviewPublication: {
-        direct: {
-          ownerId: farm.id,
-          requested: true,
-          pr: { host: 'github.com' as const, repo: 'fixture/repo', number: 1 },
-          policy: { enabled: false, source: 'built-in' as const },
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = farm.id;
+  const localList = mock.method(nativeSessionManager, 'list', async () => []);
+  try {
+    await runWithSessionOriginator(arthur, async () => {
+      const before = currentSessionOriginator();
+      const expected = {
+        ownerId: farm.id,
+        requester: { principalId: 'arthur', principalGeneration: 1 },
+      };
+      assert.deepEqual(resolveStaticReviewOwner('live'), expected);
+      for (const machine of machines)
+        assert.equal(
+          nativeReviewerOwner(
+            makeRun({ transport: 'tmux' }),
+            await loadSlotVars(`${machine}-slot`),
+          ),
+          farm.id,
+        );
+      const publication: Pick<Run, 'reviewPublication' | 'prWork'> = {
+        reviewPublication: {
+          direct: {
+            ownerId: farm.id,
+            requested: true,
+            pr: { host: 'github.com' as const, repo: 'fixture/repo', number: 1 },
+            policy: { enabled: false, source: 'built-in' as const },
+          },
+          checkedAt: '2026-11-03T00:00:00Z',
         },
-        checkedAt: '2026-11-03T00:00:00Z',
-      },
-    };
-    assert.deepEqual(supervisedPublicationOwner(publication, arthur.id, true), {
-      ownerId: farm.id,
-      ownerGeneration: undefined,
+      };
+      assert.deepEqual(supervisedPublicationOwner(publication, arthur.id, true), {
+        ownerId: farm.id,
+        ownerGeneration: undefined,
+      });
+      await nativeSessionRoute(Methods.NATIVE_SESSION_LIST, {}, arthur);
+      assert.deepEqual(currentSessionOriginator(), before);
+      assert.deepEqual(resolveStaticReviewOwner('live'), expected);
+      assert.deepEqual(supervisedPublicationOwner(publication, arthur.id, true), {
+        ownerId: farm.id,
+        ownerGeneration: undefined,
+      });
     });
-    await nativeSessionRoute(Methods.NATIVE_SESSION_LIST, {}, arthur);
-    assert.deepEqual(currentSessionOriginator(), before);
-    assert.deepEqual(resolveStaticReviewOwner('live'), expected);
-    assert.deepEqual(supervisedPublicationOwner(publication, arthur.id, true), {
-      ownerId: farm.id,
-      ownerGeneration: undefined,
-    });
-  });
+  } finally {
+    localList.mock.restore();
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = '';
+  }
 });
 
 test('observed reads separate the generation-one reader from each configured source owner', async () => {
@@ -593,6 +753,17 @@ test(
         });
       }
       if (process.env.FARMSLOT_NATIVE_LAUNCH_BROWSER_PROOF === '1') {
+        await writeFile(
+          path.join(root, 'pool/offline-proof.json'),
+          JSON.stringify({
+            machine: 'offline-proof',
+            host: 'offline-proof.invalid',
+            ssh_user: 'fixture',
+            os: 'macos',
+            project: 'fixture',
+            slots: [],
+          }),
+        );
         const { createServer: createVite } = await import('vite');
         const { fileURLToPath } = await import('node:url');
         const { CdpWebPage } =
@@ -654,13 +825,19 @@ test(
           // Never read browser storage or print credential-bearing DOM values.
           await page.session.call('Input.insertText', { text: credential.secret });
           await page.click('.auth-submit');
-          await page.waitForSelector('[data-testid="native-context"]', { timeoutMs: 30_000 });
+          await page.waitForSelector('native-session-view', { timeoutMs: 30_000 });
           // Fresh fixture origins show the release dialog; dismiss it through the real control.
           const releaseDialog = await page.evaluate<boolean>(
             `(() => [...document.querySelectorAll('whats-new-modal')].some((dialog) => dialog.open))()`,
           );
           if (releaseDialog) await page.clickText('Got it');
-          await page.clickText('codex');
+          await page.click('[data-testid="native-new"]');
+          await page.waitForSelector('[data-testid="native-context"]', { timeoutMs: 10_000 });
+          await page.waitForExpression(
+            `(() => { const rows=document.querySelector('native-session-view')?.shadowRoot?.querySelectorAll('[data-testid=native-target-unavailable]'); return [...(rows??[])].some(row=>row.textContent.includes('offline-proof')&&row.textContent.includes('Target has no configured native owner')); })()`,
+            { timeoutMs: 10_000 },
+          );
+          await page.click('[data-testid="review-dispatch-runner-codex"]');
           await page.waitForExpression(
             `(() => { const v=document.querySelector('native-session-view'); const s=v?.shadowRoot?.querySelector('[data-testid=native-context]'); return Boolean(s&&!s.disabled&&s.getBoundingClientRect().width>0); })()`,
             { timeoutMs: 10_000 },
@@ -775,6 +952,20 @@ test(
             executionNodeId: 'macwork',
             sessionId: current.id,
           });
+        } catch (error) {
+          const output = process.env.FARMSLOT_NATIVE_LAUNCH_PROOF_DIR;
+          if (output && path.resolve(output).startsWith('/tmp/cx-native-launch-')) {
+            await mkdir(output, { recursive: true });
+            const screen = await page.session.call<{ data: string }>('Page.captureScreenshot', {
+              format: 'png',
+            });
+            await writeFile(path.join(output, 'failure.png'), Buffer.from(screen.data, 'base64'));
+            const diagnostic = await page.evaluate(
+              `(() => { const v=document.querySelector('native-session-view'); return {body:document.body.innerText,native:v?{error:v.error,catalogError:v.catalogError,inventoryError:v.inventoryError,connected:v.connected,creating:v.creating,catalog:v.catalog}:null}; })()`,
+            );
+            await writeFile(path.join(output, 'failure.json'), JSON.stringify(diagnostic, null, 2));
+          }
+          throw error;
         } finally {
           page.session.close();
         }

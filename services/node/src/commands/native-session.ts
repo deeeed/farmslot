@@ -1,9 +1,6 @@
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { NATIVE_WORKER_METHODS, NativeSessionClient } from '@farmslot/agent-runtime/native';
-import type { HostIdentity } from '@farmslot/agent-runtime/native/ipc';
 import {
   NativeHostObservation,
   type NativeSourceReceipt,
@@ -13,7 +10,6 @@ import {
   parseNativeSessionRequester,
   routeNativeSession,
 } from '@farmslot/agent-runtime/native/service';
-import { alive, readJson } from '@farmslot/agent-runtime/native/storage';
 import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-service';
 import type { NativeExecutionNodeDeclaration } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
@@ -54,21 +50,7 @@ export class NativeNodeSessions {
       throw Object.assign(new Error('Native profile is not owned by this principal'), {
         code: 'AUTH_FORBIDDEN',
       });
-    let supportsStandaloneDelegation = true;
-    const file = path.join(this.client.root, 'host.json');
-    if (existsSync(file) && existsSync(path.join(this.client.root, 'ready.json'))) {
-      try {
-        const host = readJson<HostIdentity>(file);
-        if (alive(host.pid) && existsSync(host.socket))
-          supportsStandaloneDelegation = host.supportsStandaloneDelegation === true;
-      } catch {
-        // Corrupt private host metadata must not leak credential-bearing JSON parse errors.
-        throw Object.assign(new Error('Native host metadata is unavailable'), {
-          code: 'NATIVE_SOURCE_UNAVAILABLE',
-        });
-      }
-    }
-    return { homeDirectory: homedir(), supportsStandaloneDelegation };
+    return this.client.metadata();
   }
 
   private observation?: NativeHostObservation;

@@ -236,6 +236,7 @@ test('custom directory does not redirect an unavailable selected machine or crea
       },
     },
   });
+  assert.match(litText(Reflect.get(view, 'render').call(view)), /macwork.*Refresh native host/s);
   const change = litBindings(Reflect.get(view, 'render').call(view), '@change=')[1];
   assert(typeof change === 'function');
   const event = new Event('change');
