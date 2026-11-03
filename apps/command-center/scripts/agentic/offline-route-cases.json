@@ -85,6 +85,12 @@
       "kind": "cached"
     },
     {
+      "route": "run-diff",
+      "href": "#run/{diffRunId}?tab=diff",
+      "tag": "ready-workspace",
+      "kind": "cached"
+    },
+    {
       "route": "family",
       "href": "#family/{familyId}",
       "tag": "family-observability",

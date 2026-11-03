@@ -574,12 +574,7 @@ export class FleetCanvas extends LitElement {
     );
     this.syncProgressQueries();
     // Fetch resource data when slots arrive and we're in resource view
-    if (
-      this.groupBy === 'resource' &&
-      !this._resourceFetched &&
-      this.slots.length > 0 &&
-      prev.length === 0
-    ) {
+    if (this.groupBy === 'resource' && this.slots.length > 0 && prev.length === 0) {
       this.fetchResourceData();
     }
     // Build slotRuns map for working slots

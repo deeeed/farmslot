@@ -1,1 +1,1 @@
-- Screens read from the local store; only commands and the ADR-071 Amendment 2 exceptions reach the gateway, and CI fails on any other gateway read.
+- Screens read from the local store; only commands and the ADR-071 Amendment 2 exceptions reach the gateway, and CI fails on any other gateway read. Synced run diffs open every changed file without per-file loaders.

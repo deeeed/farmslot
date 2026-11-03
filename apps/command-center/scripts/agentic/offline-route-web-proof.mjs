@@ -62,48 +62,63 @@ try {
   let subjects;
   const subjectFile = path.join(output, '..', 'subjects.json');
   if (phase === 'warm') {
-    subjects = await page.evaluate(async (requestedRun) => {
-      const { gateway } = await import('/src/gateway-client.ts');
-      const methods = ['run.list', 'fleet.status', 'decision.list', 'backlog.list', 'roadmap.list'];
-      const args = [
-        { limit: 1000, sort: 'newest' },
-        {},
-        {},
-        { includeArchived: true },
-        { includeArchived: true },
-      ];
-      const replies = await Promise.allSettled(
-        methods.map((method, index) => gateway.request(method, args[index])),
-      );
-      const value = (index) =>
-        replies[index].status === 'fulfilled' ? replies[index].value : undefined;
-      const runs = value(0)?.runs ?? [];
-      const run =
-        runs.find((entry) => entry.id === requestedRun) ??
-        runs.find((entry) => entry.status === 'done') ??
-        runs[0];
-      const active = runs.find((entry) => !['done', 'cancelled', 'failed'].includes(entry.status));
-      const decisions = value(2)?.decisions ?? [];
-      const gate =
-        decisions.find(
-          (entry) =>
-            entry.type === 'engine_human_gate' &&
-            entry.runMeta?.runId &&
-            entry.payload?.kind === 'ready',
-        ) ?? decisions[0];
-      return {
-        runId: run?.id,
-        otherRunId: runs.find((entry) => entry.id !== run?.id)?.id,
-        activeRunId: active?.id,
-        slotId: active?.slotId ?? value(1)?.fleet?.slots?.[0]?.slot,
-        familyId: run?.familyId,
-        decisionId: gate?.id,
-        gateRunId: gate?.runMeta?.runId,
-        backlogId: value(3)?.items?.[0]?.id,
-        roadmapId: value(4)?.items?.[0]?.id,
-        readFailures: methods.filter((_method, index) => replies[index].status === 'rejected'),
-      };
-    }, process.env.FARMSLOT_PROOF_RUN_ID ?? '');
+    subjects = await page.evaluate(
+      async ({ requestedRun, requestedDiffRun }) => {
+        const { gateway } = await import('/src/gateway-client.ts');
+        const methods = [
+          'run.list',
+          'fleet.status',
+          'decision.list',
+          'backlog.list',
+          'roadmap.list',
+        ];
+        const args = [
+          { limit: 1000, sort: 'newest' },
+          {},
+          {},
+          { includeArchived: true },
+          { includeArchived: true },
+        ];
+        const replies = await Promise.allSettled(
+          methods.map((method, index) => gateway.request(method, args[index])),
+        );
+        const value = (index) =>
+          replies[index].status === 'fulfilled' ? replies[index].value : undefined;
+        const runs = value(0)?.runs ?? [];
+        const run =
+          runs.find((entry) => entry.id === requestedRun) ??
+          runs.find((entry) => entry.status === 'done') ??
+          runs[0];
+        const active = runs.find(
+          (entry) => !['done', 'cancelled', 'failed'].includes(entry.status),
+        );
+        const decisions = value(2)?.decisions ?? [];
+        const gate =
+          decisions.find(
+            (entry) =>
+              entry.type === 'engine_human_gate' &&
+              entry.runMeta?.runId &&
+              entry.payload?.kind === 'ready',
+          ) ?? decisions[0];
+        return {
+          runId: run?.id,
+          diffRunId: runs.find((entry) => entry.id === requestedDiffRun)?.id ?? run?.id,
+          otherRunId: runs.find((entry) => entry.id !== run?.id)?.id,
+          activeRunId: active?.id,
+          slotId: active?.slotId ?? value(1)?.fleet?.slots?.[0]?.slot,
+          familyId: run?.familyId,
+          decisionId: gate?.id,
+          gateRunId: gate?.runMeta?.runId,
+          backlogId: value(3)?.items?.[0]?.id,
+          roadmapId: value(4)?.items?.[0]?.id,
+          readFailures: methods.filter((_method, index) => replies[index].status === 'rejected'),
+        };
+      },
+      {
+        requestedRun: process.env.FARMSLOT_PROOF_RUN_ID ?? '',
+        requestedDiffRun: process.env.FARMSLOT_PROOF_DIFF_RUN_ID ?? '',
+      },
+    );
     await fs.writeFile(subjectFile, JSON.stringify(subjects, null, 2));
   } else subjects = JSON.parse(await fs.readFile(subjectFile, 'utf8'));
   for (const entry of cases.commandCenter) {
@@ -188,6 +203,7 @@ try {
               prs: state.prsObservation?.data !== undefined,
               decisions: state.decisionsObservation?.data !== undefined,
               run: Boolean(element.run?.id),
+              'run-diff': (element._diffFiles?.length ?? 0) > 0,
               slot: Boolean(element._slot?.slot),
               native: Boolean(element.catalog),
               devices: (element._availableResources?.length ?? 0) > 0,
@@ -212,6 +228,98 @@ try {
             (value.resourceGroups > 0 && !value.text.includes('Resource details loading'))),
         `${entry.route} rendered stored body`,
       );
+      let changedFiles;
+      if (entry.route === 'run-diff') {
+        await poll(
+          () =>
+            host.evaluate((view) => ({
+              count: view._diffFiles?.length ?? 0,
+              held: typeof view._heldDiff === 'string',
+              loading: view._diffLoading,
+            })),
+          (state) => state.count > 0 && !state.loading,
+          'stored run diff',
+        );
+        const session = await page.context().newCDPSession(page);
+        const fileReads = [];
+        await session.send('Network.enable');
+        session.on('Network.webSocketFrameSent', ({ response }) => {
+          let frame;
+          // CDP also sees Vite heartbeat and binary frames, which are not Farmslot JSON.
+          try {
+            frame = JSON.parse(response.payloadData);
+          } catch {
+            return;
+          }
+          if (frame.type === 'req' && frame.method === 'git.diff' && frame.params?.path)
+            fileReads.push(frame.params.path);
+        });
+        const witness = await host.evaluateHandle((view) => {
+          const root = view.renderRoot ?? view.shadowRoot ?? view;
+          const skeletons = [];
+          const observer = new MutationObserver(() => {
+            if (root.querySelector('.rdy-diff-content farm-skeleton')) skeletons.push(Date.now());
+          });
+          observer.observe(root, { childList: true, subtree: true });
+          return { skeletons, observer };
+        });
+        changedFiles = [];
+        try {
+          const showTests = host.locator(
+            'button[data-testid="diff-hide-tests"][aria-pressed="true"]',
+          );
+          if (await showTests.count()) await showTests.click();
+          const buttons = host.locator('button.rdy-ft');
+          const paths = await buttons.evaluateAll((nodes) => nodes.map((node) => node.title));
+          assert(paths.length > 0, 'The changed-file tabs must exist');
+          for (const file of paths) {
+            await host.locator('button.rdy-ft[title=' + JSON.stringify(file) + ']').click();
+            const rendered = await poll(
+              () =>
+                host.evaluate(async (view) => {
+                  await view.updateComplete;
+                  const root = view.renderRoot ?? view.shadowRoot ?? view;
+                  const diff = root.querySelector('.rdy-diff-content diff-review');
+                  const { heldFileDiff } = await import('/src/held-content.ts');
+                  const { getResourceCache } = await import('/src/resource-cache.ts');
+                  const hash = view.decision?.payload?.prPackage?.reviewSnapshot?.diffHash;
+                  const stored = hash
+                    ? await getResourceCache()?.openContent({ kind: 'diff', id: hash })
+                    : undefined;
+                  const text = stored
+                    ? new TextDecoder('utf-8', { ignoreBOM: true }).decode(stored)
+                    : undefined;
+                  return {
+                    path: view._selectedFile,
+                    loading: view._fileDiffLoading,
+                    bound: diff?.diff,
+                    expected:
+                      text === undefined ? undefined : heldFileDiff(text, view._selectedFile),
+                  };
+                }),
+              (value) => value.path === file && value.bound !== undefined && !value.loading,
+              'stored changed file ' + file,
+            );
+            assert.notEqual(rendered.expected, undefined, 'The whole diff must already be stored');
+            assert.equal(
+              rendered.bound,
+              rendered.expected,
+              'Rendered text must be the stored file section',
+            );
+            changedFiles.push({ path: file, bytes: rendered.bound.length, result: 'LOCAL' });
+          }
+          assert.deepEqual(fileReads, [], 'Selecting a synced file must send no per-file RPC');
+          assert.deepEqual(
+            await witness.evaluate((value) => value.skeletons),
+            [],
+            'No per-file skeleton may appear',
+          );
+        } finally {
+          await witness.evaluate((value) => value.observer.disconnect());
+          await witness.dispose();
+          await session.detach();
+        }
+      }
       const shot = `${String(results.length).padStart(2, '0')}-${entry.route}.png`;
       await page.screenshot({ path: path.join(output, shot) });
       results.push({
@@ -219,6 +327,7 @@ try {
         href,
         kind: entry.kind,
         snapshot,
+        changedFiles,
         screenshot: shot,
         result: 'RENDERED',
       });
