@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { WebSocket } from 'ws';
@@ -14,6 +17,7 @@ import { type ResourceKey, resourceKeyId } from '@farmslot/protocol/client-cache
 
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { createRun, deleteRun, updateRun } from '../runs/store.js';
+import { createGatewayAuthRuntime } from '../security/auth.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import {
@@ -46,6 +50,48 @@ test('private reader keys reject A/B and node subjects before source access', as
   );
   // Admin does not adopt A's key or gain A's collection by method-level authority.
   await assert.rejects(authorizeNativeObservation(admin, interest), { code: 'AUTH_FORBIDDEN' });
+});
+
+test('an observed collection preserves the reused-person native ownership refusal', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'native-reused-person-read-'));
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = home;
+  try {
+    const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
+    const roles = [{ role: 'admin' as const, scope: { kind: 'global' as const } }];
+    runtime.writer.createPrincipal(
+      { type: 'service', displayName: 'Bootstrap' },
+      roles,
+      'bootstrap',
+    );
+    runtime.writer.issueCredential('bootstrap', 'Fixture bootstrap');
+    runtime.writer.createPrincipal(
+      { type: 'service', displayName: 'Original owner' },
+      [],
+      'reused',
+    );
+    runtime.writer.retirePrincipals(['reused']);
+    const person = runtime.writer.createPrincipal(
+      { type: 'person', displayName: 'Replacement person' },
+      roles,
+      'reused',
+      { reuseRetiredId: true },
+    );
+    assert.equal(person.generation, 1);
+    const interest: NativeInterest = {
+      key: { family: 'native-session', scope: 'owner', ownerId: person.id },
+      method: 'native.session.catalog',
+      params: {},
+    };
+    await assert.rejects(authorizeNativeObservation(person, interest), {
+      code: 'AUTH_FORBIDDEN',
+      message: /replacement identity at a reused id/,
+    });
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('registered exact socket owns source admission, replacement revokes old socket and receipts', () => {

@@ -8,6 +8,7 @@ export interface NativeReadStatusContext {
   taskHistory: boolean;
   refreshingHistory?: boolean;
   readError?: string;
+  readErrorCode?: string;
   unavailableSince?: number;
   observedAt?: number;
   saved?: boolean;
@@ -19,8 +20,10 @@ export interface NativeReadStatusContext {
 }
 
 export function nativeReadStatus(ctx: NativeReadStatusContext) {
-  const waiting = !ctx.connected || Boolean(ctx.readError) || ctx.unavailableSince !== undefined;
-  const unavailable = waiting && ctx.now - (ctx.unavailableSince ?? ctx.now) >= 60_000;
+  const denied = ctx.connected && ctx.readErrorCode === 'AUTH_FORBIDDEN';
+  const waiting =
+    !ctx.connected || denied || Boolean(ctx.readError) || ctx.unavailableSince !== undefined;
+  const unavailable = denied || (waiting && ctx.now - (ctx.unavailableSince ?? ctx.now) >= 60_000);
   const state = ctx.unsupported
     ? 'unsupported'
     : waiting
@@ -35,30 +38,33 @@ export function nativeReadStatus(ctx: NativeReadStatusContext) {
   const text =
     state === 'unsupported'
       ? 'Update the gateway to read history.'
-      : state === 'unavailable'
-        ? ctx.connected
-          ? 'Unavailable · Retry'
-          : 'Unavailable · Reconnect'
-        : state === 'reconnecting'
-          ? 'Reconnecting'
-          : state === 'refreshing'
-            ? 'Refreshing history'
-            : state === 'loading'
-              ? 'Loading history'
-              : ctx.taskHistory
-                ? 'Task history'
-                : ctx.selected && ctx.sessionState === 'running' && ctx.work
-                  ? nativeWorkLabel(ctx.work, ctx.now)
-                  : ctx.selected
-                    ? `Live${ctx.sessionState ? ` · ${ctx.sessionState}` : ''}`
-                    : 'Ready';
-  const age =
-    ctx.observedAt === undefined
+      : denied
+        ? 'Native access denied'
+        : state === 'unavailable'
+          ? ctx.connected
+            ? 'Unavailable · Retry'
+            : 'Unavailable · Reconnect'
+          : state === 'reconnecting'
+            ? 'Reconnecting'
+            : state === 'refreshing'
+              ? 'Refreshing history'
+              : state === 'loading'
+                ? 'Loading history'
+                : ctx.taskHistory
+                  ? 'Task history'
+                  : ctx.selected && ctx.sessionState === 'running' && ctx.work
+                    ? nativeWorkLabel(ctx.work, ctx.now)
+                    : ctx.selected
+                      ? `Live${ctx.sessionState ? ` · ${ctx.sessionState}` : ''}`
+                      : 'Ready';
+  const age = denied
+    ? (ctx.readError ?? 'This account is not authorized for this native workspace.')
+    : ctx.observedAt === undefined
       ? ctx.selected
         ? 'No history read yet'
         : ''
       : ctx.saved
         ? `Saved conversation history, ${sourceObservationAge(ctx.observedAt, ctx.now)}. Actions wait for a current read.`
         : `Updated ${sourceObservationAge(ctx.observedAt, ctx.now).replace(/ old$/, ' ago')}`;
-  return { state, text, age, retry: waiting && ctx.connected && !ctx.unsupported };
+  return { state, text, age, retry: waiting && ctx.connected && !ctx.unsupported && !denied };
 }

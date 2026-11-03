@@ -180,7 +180,9 @@ export class NativeSessionView extends LitElement {
   @state() private error = '';
   @state() private pollError = '';
   @state() private inventoryError = '';
+  @state() private inventoryErrorCode?: string;
   @state() private catalogError = '';
+  @state() private catalogErrorCode?: string;
   @state() private workspace = false;
   @state() private fullscreen = false;
   private readonly fullscreenChanged = () => {
@@ -936,6 +938,7 @@ ${JSON.stringify(
             this.inventoryCurrent = state.status === 'ready';
             this.inventoryUnsupported = state.status === 'unsupported';
             this.inventoryError = state.error?.message ?? '';
+            this.inventoryErrorCode = state.error?.code;
             const sessions = state.data?.sessions ?? [];
             this.sessions = sessions
               .filter((session) => !session.workerManaged)
@@ -966,6 +969,7 @@ ${JSON.stringify(
           (state) => {
             this.catalogUnsupported = state.status === 'unsupported';
             this.catalogError = state.error?.message ?? '';
+            this.catalogErrorCode = state.error?.code;
             this.catalog = state.data;
             this.catalogCurrent = state.status === 'ready';
             if (this.catalog && !this.selectedId) this.creating = true;
@@ -1509,6 +1513,11 @@ ${JSON.stringify(
         sessionChoice: (item) => this.sessionChoice(item),
         select: (id, node = 'local') => this.selectRouted(id, node),
         readError: this.pollError || this.inventoryError || this.catalogError,
+        readErrorCode: this.pollError
+          ? this.historyObservation.error?.code
+          : this.inventoryError
+            ? this.inventoryErrorCode
+            : this.catalogErrorCode,
         unavailableSince: this.readUnavailableSince,
         observedAt: this.historyObservation.observedAt,
         historyObservation: this.historyObservation,
