@@ -204,13 +204,15 @@ function buildPack(
       },
       paths: { runtime_dir: '.agent', artifact_dir: '.task' },
       execution_templates: {
-        sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
+        sources: [
+          { id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'templates/shared' } },
+        ],
       },
       ...options.projectJson,
     },
     files: {
-      'shared/dev/shared.md': `---\nplatforms: [cli]\n---\n\n# ${options.title} development\n\n- [ ] ${options.devStep}\n`,
-      'shared/validation/shared.md': `---\nplatforms: [cli]\n---\n\n# ${options.title} validation\n\n- [ ] Validate the change.\n`,
+      'templates/shared/dev/shared.md': `---\nplatforms: [cli]\n---\n\n# ${options.title} development\n\n- [ ] ${options.devStep}\n`,
+      'templates/shared/validation/shared.md': `---\nplatforms: [cli]\n---\n\n# ${options.title} validation\n\n- [ ] Validate the change.\n`,
       'templates/prompts/worker-dispatch.md': `${options.dispatchPrompt}\n`,
       'templates/prompts/worker-nudge.md': 'Continue {{TASK_FILE}}.\n',
       ...options.files,
@@ -218,14 +220,14 @@ function buildPack(
   };
 }
 
-/** The canary demo project, for a repo at `origin`. */
-export const canaryPack = (origin: string): ProjectPack =>
+/** The canary demo project; each slot owns its local origin. */
+export const canaryPack = (): ProjectPack =>
   buildPack(CANARY_PROJECT, {
     title: 'Canary',
     devStep: 'Run the scripted canary scenario.',
     dispatchPrompt: 'Read {{TASK_FILE}} and follow it.',
     projectJson: {
-      repo_url: origin,
+      hooks: { post_merge_install: 'true' },
       default_branch: 'main',
       review: { enabled: false },
       monitoring: { poll_interval_min: 0.02, total_timeout_min: 15 },

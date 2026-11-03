@@ -1221,7 +1221,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     evidence,
     machine: 'ri-node',
     slots,
-    projects: (holds) => [canaryPack(''), ...projectPacks(holds)],
+    projects: (holds) => [canaryPack(), ...projectPacks(holds)],
     seeds: { [CANARY_PROJECT]: CANARY_REPO, [PIPE_PROJECT]: SEED, [REVIEW_PROJECT]: SEED },
     slotFiles: (slotId, fixture) =>
       slotId.startsWith(`${CANARY_PROJECT}-`) ? {} : slotCli(options.root)(slotId, fixture),

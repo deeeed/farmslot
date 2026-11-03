@@ -37,7 +37,7 @@ fi
 
 if ! git -C "$CHECKOUT" rev-parse --git-dir >/dev/null 2>&1; then
   source_repo="$(git -C "$HERE" rev-parse --show-toplevel)"
-  git clone -q --reference "$source_repo" --dissociate "$(git -C "$source_repo" remote get-url origin)" "$CHECKOUT"
+  git clone -q "$(git -C "$source_repo" remote get-url origin)" "$CHECKOUT"
 fi
 mkdir -p "$CANARY_HOME" "$HOME/Library/LaunchAgents"
 sed -e "s#__CHECKOUT__#$CHECKOUT#g" -e "s#__CANARY_HOME__#$CANARY_HOME#g" "$HERE/$LABEL.plist" > "$PLIST"
