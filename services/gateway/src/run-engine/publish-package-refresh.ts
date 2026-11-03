@@ -16,7 +16,7 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
+import { loadSlotVars, SlotConfigError } from '../core/config.js';
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
@@ -326,18 +326,6 @@ export function summarizePublishPackageRefreshEvidence(
   return { preservedEvidenceKeys, droppedEvidence, droppedEvidenceKeys, addedEvidenceKeys };
 }
 
-export function reviewPolicyForPublishPackageRefresh(
-  run: Run,
-  projectConfig: Parameters<typeof publicationReviewPolicyForRun>[1],
-  oldPayload: Pick<ReadyGatePayload, 'reviewPolicy'>,
-): ReadyGatePayload['reviewPolicy'] {
-  const reviewPolicy =
-    oldPayload.reviewPolicy?.requestedBy === 'human-gate'
-      ? publicationReviewPolicyForRun(run, projectConfig)
-      : oldPayload.reviewPolicy;
-  return reviewPolicy;
-}
-
 function reviewWasStampedForPackage(
   review: ReviewStatus,
   reviewedPackage: ReadyGatePrPackage,
@@ -494,15 +482,8 @@ async function refreshPublishPackageTransitionLocked(
     params.publicationTarget === 'draft' || params.publicationTarget === 'ready'
       ? params.publicationTarget
       : (oldPayload.publicationTarget ?? oldPayload.prPackage?.publicationTarget ?? 'ready');
-  const projectConfig =
-    oldPayload.reviewPolicy?.requestedBy === 'human-gate'
-      ? (await loadProjectVars(run.project)).projectJson
-      : undefined;
-  const reviewPolicyForRefresh = reviewPolicyForPublishPackageRefresh(
-    run,
-    projectConfig,
-    oldPayload,
-  );
+  // A refresh keeps the review policy the gate had, a requested review's as much as a dispatch one.
+  const reviewPolicyForRefresh = oldPayload.reviewPolicy;
 
   // A refresh must describe the current HEAD, not the durable snapshot captured
   // before later review-fix commits changed the contribution.
