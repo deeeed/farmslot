@@ -1,0 +1,1 @@
+- Define admin-person standalone session requester attribution, execution-target availability and real home metadata.

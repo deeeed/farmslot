@@ -1015,6 +1015,13 @@ test('worker host rejects public input and accepts only leased commands and perm
       generation: session.generation,
       leaseId: launch.leaseId,
     };
+    // Trusted farm dispatch, monitoring and recovery read through the shared service.
+    const snapshot = await routeNativeSession(client, 'owner', Methods.NATIVE_SESSION_READ, {
+      sessionId: session.id,
+      limit: 1,
+    });
+    assert(snapshot && typeof snapshot === 'object');
+    assert.equal(Reflect.get(snapshot, 'session').workerManaged, true);
     await assert.rejects(
       client.send('owner', session.id, 'unleased', 'approval'),
       /requires its run context/,
@@ -1114,6 +1121,14 @@ test('old native hosts retain ordinary reads but refuse ensured creation before 
     await assert.rejects(
       client.ensure('owner', { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd }),
       /host upgrade required/,
+    );
+    await assert.rejects(
+      client.create(
+        'owner',
+        { runner: 'codex', cwd: fixture.cwd },
+        { principalId: 'person', principalGeneration: 1 },
+      ),
+      /host upgrade required for standalone requester/,
     );
     assert.deepEqual(requests, ['list']);
     await assert.rejects(
@@ -2332,6 +2347,57 @@ test('a steer whose runner stopped before replying stays unknown, and is never r
     const pid = existsSync(descendant) ? Number(readFileSync(descendant, 'utf8')) : 0;
     if (pid && alive(pid)) process.kill(pid, 'SIGKILL');
     for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+  }
+});
+
+test('delegated standalone attribution survives IPC, journal reload and resume without changing its owner', async () => {
+  const fixture = setup();
+  const client = new NativeSessionClient(fixture.root);
+  const requester = { principalId: 'arthur', principalGeneration: 1 };
+  let reloaded: NativeSessionManager | undefined;
+  try {
+    for (const principalGeneration of [-1, 1.5])
+      assert.throws(
+        () =>
+          decodeRequest({
+            method: 'create',
+            owner: 'owner',
+            params: { runner: 'codex', cwd: fixture.cwd },
+            requester: { ...requester, principalGeneration },
+          }),
+        /requester/,
+      );
+    const created = (await routeNativeSession(
+      client,
+      'owner',
+      Methods.NATIVE_SESSION_CREATE,
+      { runner: 'codex', cwd: fixture.cwd, effort: 'high' },
+      requester,
+    )) as { session: NativeSessionInfo };
+    assert.equal(created.session.ownerPrincipalId, 'owner');
+    assert.equal(created.session.requestedByPrincipalId, 'arthur');
+    assert.equal(created.session.requestedByPrincipalGeneration, 1);
+    assert.equal(created.session.effort, 'high');
+    await client.close('owner', created.session.id);
+    reloaded = new NativeSessionManager(join(fixture.root, 'sessions'));
+    const stored = reloaded.read('owner', created.session.id).session;
+    assert.equal(stored.requestedByPrincipalId, 'arthur');
+    assert.equal(stored.requestedByPrincipalGeneration, 1);
+    const resumed = await reloaded.create(
+      'owner',
+      { runner: 'codex', cwd: fixture.cwd, resumeSessionId: stored.nativeSessionId },
+      undefined,
+      { principalId: 'another-admin', principalGeneration: 0 },
+    );
+    assert.equal(resumed.ownerPrincipalId, 'owner');
+    assert.equal(resumed.requestedByPrincipalId, 'arthur');
+    assert.equal(resumed.requestedByPrincipalGeneration, 1);
+    await reloaded.close('owner', resumed.id);
+  } finally {
+    if (reloaded)
+      for (const session of reloaded.list('owner')) await reloaded.close('owner', session.id);
+    await stopNativeStack(fixture);
     fixture.restore();
   }
 });

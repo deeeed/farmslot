@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +11,7 @@ import type {
   NativeSessionEnsureParams,
   NativeSessionInfo,
   NativeSessionReadResult,
+  NativeSessionRequester,
   NativeSessionResponse,
   NativeSessionSendResult,
 } from '@farmslot/protocol';
@@ -47,6 +49,25 @@ export class NativeSessionClient {
     readonly executionNodeId = 'local',
   ) {
     this.root = resolve(root);
+  }
+  /** Public target metadata only; never starts a host or exposes its IPC credential. */
+  metadata() {
+    let supportsStandaloneDelegation = true;
+    const file = join(this.root, 'host.json');
+    if (existsSync(file) && existsSync(join(this.root, 'ready.json'))) {
+      try {
+        const host = readJson<HostIdentity>(file);
+        this.assertHostNode(host);
+        if (alive(host.pid) && existsSync(host.socket))
+          supportsStandaloneDelegation = host.supportsStandaloneDelegation === true;
+      } catch {
+        // Corrupt private metadata must not leak credential-bearing JSON parse errors.
+        throw Object.assign(new Error('Native host metadata is unavailable'), {
+          code: 'NATIVE_SOURCE_UNAVAILABLE',
+        });
+      }
+    }
+    return { homeDirectory: homedir(), supportsStandaloneDelegation };
   }
   workerStateDirectory(owner: string, sessionId: string): string {
     return join(this.root, 'workers', createHash('sha256').update(owner).digest('hex'), sessionId);
@@ -155,6 +176,8 @@ export class NativeSessionClient {
       !host.supportsStructuredResults
     )
       throw new Error('Native host upgrade required for schema-bound review results');
+    if ('requester' in request && request.requester && !host.supportsStandaloneDelegation)
+      throw new Error('Native host upgrade required for standalone requester attribution');
     const result = await requestHost<T>(host, request);
     if ('params' in request && request.params.profileId) {
       const session = result as NativeSessionInfo;
@@ -166,15 +189,15 @@ export class NativeSessionClient {
     }
     return result;
   }
-  create(owner: string, params: NativeSessionCreateParams) {
+  create(owner: string, params: NativeSessionCreateParams, requester?: NativeSessionRequester) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
       throw new Error('Native session targets another execution node');
-    return this.call<NativeSessionInfo>({ method: 'create', owner, params });
+    return this.call<NativeSessionInfo>({ method: 'create', owner, params, requester });
   }
-  ensure(owner: string, params: NativeSessionEnsureParams) {
+  ensure(owner: string, params: NativeSessionEnsureParams, requester?: NativeSessionRequester) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
       throw new Error('Native session targets another execution node');
-    return this.call<NativeSessionInfo>({ method: 'ensure', owner, params });
+    return this.call<NativeSessionInfo>({ method: 'ensure', owner, params, requester });
   }
   ensureWorker(owner: string, params: NativeSessionEnsureParams, launch: NativeWorkerLaunch) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)

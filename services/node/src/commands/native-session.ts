@@ -6,7 +6,10 @@ import {
   type NativeSourceReceipt,
 } from '@farmslot/agent-runtime/native/observation';
 import { validateNativeProfileParams } from '@farmslot/agent-runtime/native/profile-service';
-import { routeNativeSession } from '@farmslot/agent-runtime/native/service';
+import {
+  parseNativeSessionRequester,
+  routeNativeSession,
+} from '@farmslot/agent-runtime/native/service';
 import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-service';
 import type { NativeExecutionNodeDeclaration } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
@@ -26,6 +29,7 @@ export class NativeNodeSessions {
         throw new Error('Native execution requires a distinct node machine ID');
       this.declaration = {
         ownerPrincipalId: owner.trim(),
+        supportsStandaloneDelegation: true,
         supportsEnsure: true,
         supportsWorkers: true,
         supportsWorkerStopAttestation: true,
@@ -38,6 +42,15 @@ export class NativeNodeSessions {
       path.join(root, 'nodes', encodeURIComponent(machine)),
       machine,
     );
+  }
+
+  /** Public target metadata only; never starts a host or exposes its IPC credential. */
+  metadata(owner: string) {
+    if (!this.declaration || owner !== this.declaration.ownerPrincipalId)
+      throw Object.assign(new Error('Native profile is not owned by this principal'), {
+        code: 'AUTH_FORBIDDEN',
+      });
+    return this.client.metadata();
   }
 
   private observation?: NativeHostObservation;
@@ -118,6 +131,7 @@ export class NativeNodeSessions {
       this.declaration.ownerPrincipalId,
       value.method,
       value.params,
+      parseNativeSessionRequester(value.requester),
     );
   }
 }

@@ -1904,3 +1904,62 @@ under the native owner.
 The [principal core spec](../plans/principal-core-implementation-spec.md) owns
 the normative store, dispatch and regression requirements. The
 [identity reference](../reference/identity-and-credentials.md) owns operator guidance.
+
+## Amendment 6: admin-person standalone native sessions, 2026-11-03
+
+**Status:** Accepted, 2026-11-03. Live identity and node cutovers remain explicit operator actions.
+
+### Decision
+
+An authenticated person with current global-admin authority may launch and control
+standalone native sessions on the gateway host or any enrolled execution node.
+The gateway resolves the execution owner from the selected target's configured
+profile or issued node assignment. Execution and runner accounts remain with
+that owner. The person's identity and generation are recorded as requester;
+they do not become native execution ownership.
+
+The generation-zero native-owner fence remains in force. A replaced person may
+request delegated standalone execution at their current generation, but cannot
+inherit a former identity's native ownership or override a target's owner.
+Requester attribution is audit metadata, not a new permission or account grant.
+Every operation rechecks current person-admin authority and the target's current
+assignment. The authority permits supervision of standalone sessions under that
+configured owner, including existing sessions; it does not transfer their history
+or ownership to the person. A session belonging to a different former target
+owner is not adopted after reassignment.
+
+Standalone delegation never admits worker-managed sessions. Existing pinned
+worker controls, farm run creation, native review ownership, static-review
+delegation and review publication keep their current identities and checks.
+
+The catalog exposes all execution targets, their availability reasons, slot
+contexts and target-reported home directories. A custom directory stays on the
+selected target. Request parameters never supply execution owners or requester
+attribution. Direct RPCs and observed reads use the same authority; client caches
+remain scoped to the authenticated reader and identity generation.
+
+### Rationale
+
+One person should not need a different identity or a transferred native account
+for each machine. Existing admin supervision and delegated review authorship
+already separate the person making a request from the native account executing
+it. Standalone sessions use that separation without changing farm authorship.
+
+### Consequences
+
+The existing native session contract and journal gain server-derived requester
+attribution. Catalog target and home metadata serve the shared launcher in
+Command Center and Companion. Existing ensure/send command identities support
+prompt-first launch without another launch endpoint or automatic replay.
+Protocol, gateway, node and native-host changes ship together; unsupported targets
+remain visible with a reason until updated. There is no mixed-version adapter,
+identity-generation reset, automatic node re-enrollment or journal migration.
+
+Existing person identities, including replacement generations, can be the one
+operator login. Restoring machine ownership to the automation service and
+retiring temporary identities remain explicit operator actions, after checking
+active sessions and owner-scoped configuration. This amendment does not perform
+or require automatic cleanup.
+
+The normative requirements are in the
+[principal core spec](../plans/principal-core-implementation-spec.md#amendment-6-admin-person-standalone-native-sessions).

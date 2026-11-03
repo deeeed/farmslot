@@ -1355,3 +1355,59 @@ implementer could otherwise choose differently:
   that, a gateway starting between an offline operation's check and its write would defeat the check.
   Both paths keep the lock short-lived, and the interleaving has its own test obligation.
 - **`credentials.lock` is the lock file's name**, ADR-aligned rather than proposed.
+
+## Amendment 6: admin-person standalone native sessions
+
+**Status:** Accepted, 2026-11-03, under ADR-051 Amendment 6.
+
+- A standalone native request delegates only when its freshly resolved caller is
+  an authenticated person with global admin authority. The requester may have any
+  current identity generation. Retirement, expiry, replacement or loss of the
+  required authority refuses the next operation. Service and node subjects gain
+  no person-supervision capability.
+- Resolve the execution owner server-side from the selected local profile or
+  issued node assignment. That owner must still resolve at generation zero.
+  Preserve the registered socket, current credential and owner-assignment
+  checks. Neither caller parameters nor a saved requester can select an owner
+  or grant authority. Refuse client-supplied owner and requester fields.
+- Persist `requestedByPrincipalId` and `requestedByPrincipalGeneration` in newly
+  delegated native session records before accepting the first prompt. Derive
+  them from the authenticated request, pass them only through trusted internal
+  routing, and retain them across restart and resume. Existing session ownership
+  and attribution are never rewritten. Historical records without requester
+  attribution remain explicitly unattributed; no authorization depends on a
+  missing-field fallback.
+- Catalog, inventory, ensure/create, read, send, steer, respond, interrupt,
+  queued-command cancellation, resume, close and workspace reads use the same
+  standalone delegation decision. Admin supervision permits access to standalone
+  sessions owned by the selected target's current configured owner. Requester
+  metadata does not restrict or enlarge that capability. Every standalone route
+  rejects worker-managed sessions, regardless of the caller's admin role;
+  existing pinned worker routes remain separate. Reserved creation and command
+  receipts retain their idempotency and no-automatic-replay behavior.
+- Observed collection/history/profile/workspace reads derive backing owners from
+  the same target authority as direct RPCs. Resource keys and cache scope retain
+  the authenticated reader id and generation. Private source receipts retain
+  their actual execution owner; a projection never relabels source identity.
+  Revoked readers and replaced target assignments cannot admit stale bytes or
+  receive later notifications.
+- The catalog exposes targets independently of slot presence. Each target has
+  an execution node id, label, availability and reason when unavailable, plus its
+  actual home directory when available. Slot contexts remain bound to their
+  target. Resolve homes on the target; never construct `/home/<name>` or
+  `/Users/<name>` from a username. A custom directory and account-profile
+  selection stay on the chosen target. Clients submit target, cwd and runner
+  choices, never execution identity. The shared launcher can ensure a session
+  and send its first prompt using existing stable command ids.
+- Existing farm run creators, worker owners, static-review requesters, native
+  reviewer owners, publication owners and GitHub accounts must be unchanged.
+  Person standalone launch must not mutate the request-local identity used by
+  other operations. Farm transport defaults stay tmux; an interactive launcher
+  default does not change workflow policy.
+- Prove generation-zero and replacement-generation person admins can launch and
+  control standalone sessions on multiple automation-owned targets from one
+  login. Cover custom paths and real target homes, restart/resume attribution,
+  explicit unavailable targets, role/session revocation, assignment replacement,
+  owner/requester forgery, worker-session bypass attempts, observed-read/cache
+  isolation and unchanged farm review/publication identities. User-interface
+  proof uses the shared launcher and real inputs, without state injection.

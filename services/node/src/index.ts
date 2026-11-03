@@ -428,6 +428,10 @@ async function handleRequest(
         sendResponse(frame.id, true, await sources.status(), undefined, undefined, socket);
         break;
       }
+      case 'native.session.metadata': {
+        sendResponse(frame.id, true, nativeSessions.metadata(requireString(params, 'owner')));
+        break;
+      }
       case 'native.session': {
         sendResponse(
           frame.id,

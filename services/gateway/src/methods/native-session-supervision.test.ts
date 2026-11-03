@@ -76,6 +76,7 @@ mock.module('../runners/native/node.js', {
           ownerPrincipalId: ownerId,
           executionNodeId: params.executionNodeId,
           workerLeaseId: params.leaseId,
+          workerManaged: true,
         },
         scope: { leaseId: params.leaseId },
       };
@@ -141,7 +142,7 @@ test('a replacement admin supervises the pinned generation-zero worker without o
       nativeSessionRoute(Methods.NATIVE_SESSION_INTERRUPT, params, person),
     );
     assert.equal(calls.at(-1)?.owner, owner.id);
-    const count = calls.length;
+    let count = calls.length;
     await assert.rejects(
       runWithSessionOriginator(person, () =>
         nativeSessionRoute(
@@ -161,13 +162,14 @@ test('a replacement admin supervises the pinned generation-zero worker without o
           person,
         ),
       ),
-      /replacement identity/,
+      /pinned worker|no configured native owner/,
     );
+    count = calls.length;
     await assert.rejects(
       runWithSessionOriginator(person, () =>
         nativeSessionRoute(Methods.NATIVE_SESSION_LIST, params, person),
       ),
-      /replacement identity/,
+      /pinned route/,
     );
     await assert.rejects(
       runWithSessionOriginator(person, () =>
@@ -184,5 +186,5 @@ test('a replacement admin supervises the pinned generation-zero worker without o
     assert.equal(calls.length, count);
   }
   assert.equal(run.nativeOwnerPrincipalId, owner.id);
-  assert.equal(calls.length, 6);
+  assert.equal(calls.filter((call) => call.method !== Methods.NATIVE_SESSION_READ).length, 6);
 });

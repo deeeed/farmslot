@@ -23,6 +23,7 @@ import {
   type NativeSessionInfo,
   type NativeSessionListResult,
   type NativeSessionReadResult,
+  type NativeSessionRequester,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
@@ -192,6 +193,7 @@ export async function routeNativeExecution(
   owner: string,
   method: string,
   params: Record<string, unknown>,
+  requester?: NativeSessionRequester,
 ): Promise<unknown> {
   // Resolve the observation owner after the native route module initializes.
   // Its authorization helper also uses this route; eager imports form a cycle.
@@ -211,10 +213,11 @@ export async function routeNativeExecution(
   ) {
     if (
       typeof params.runner !== 'string' ||
-      (params.model !== undefined && typeof params.model !== 'string')
+      (params.model !== undefined && typeof params.model !== 'string') ||
+      (params.effort !== undefined && typeof params.effort !== 'string')
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Expected native runner and model strings');
-    validateNativeRunner(params.runner, params.model);
+    validateNativeRunner(params.runner, params.model, params.effort);
     const { nativeModelNodeBlocker } = await import('../../methods/native-workspace.js');
     const blocker = await nativeModelNodeBlocker(params.runner, params.model, executionNodeId);
     if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
@@ -233,7 +236,7 @@ export async function routeNativeExecution(
     }
     return worker
       ? routeNativeWorkerSession(nativeSessionManager, owner, method, params)
-      : routeNativeSession(nativeSessionManager, owner, method, params);
+      : routeNativeSession(nativeSessionManager, owner, method, params, requester);
   }
   const resolved = resolveAfterNodeReconnect(executionNodeId, () =>
     resolveNativeExecutionNode(owner, executionNodeId),
@@ -268,7 +271,13 @@ export async function routeNativeExecution(
     result = await sendNodeRequest(
       node,
       'native.session',
-      { owner, method, params, ...(isNativeObservedRead() ? { observe: true } : {}) },
+      {
+        owner,
+        method,
+        params,
+        ...(requester ? { requester } : {}),
+        ...(isNativeObservedRead() ? { observe: true } : {}),
+      },
       { timeout: 60_000, requireSameConnection: true },
     );
   } catch (error) {
@@ -394,6 +403,19 @@ export async function routeNativeExecution(
     if (!sessions)
       throw new GatewayMethodError('NATIVE_SESSION_ERROR', 'Native node omitted session identity');
     for (const info of sessions) {
+      if (
+        requester &&
+        method === Methods.NATIVE_SESSION_CREATE &&
+        !params.resumeSessionId &&
+        (!info ||
+          typeof info !== 'object' ||
+          info.requestedByPrincipalId !== requester.principalId ||
+          info.requestedByPrincipalGeneration !== requester.principalGeneration)
+      )
+        throw new GatewayMethodError(
+          'NATIVE_SESSION_ERROR',
+          'Native node omitted requester attribution',
+        );
       if (
         !info ||
         typeof info !== 'object' ||

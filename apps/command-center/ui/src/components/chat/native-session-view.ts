@@ -1209,6 +1209,13 @@ ${JSON.stringify(
       this.error = 'Select a ready account profile for this node';
       return;
     }
+    const target = this.catalog?.executionNodes?.find(
+      (node) => node.executionNodeId === this.executionNodeId,
+    );
+    if (!resume && target?.unavailableReason) {
+      this.error = target.unavailableReason;
+      return;
+    }
     this.busy = true;
     this.error = '';
     const revision = this.revision;
@@ -1571,6 +1578,14 @@ ${JSON.stringify(
                 this.requestUpdate();
               }}
             ></review-dispatch-picker>
+            ${(this.catalog?.executionNodes ?? [])
+              .filter((node) => node.unavailableReason)
+              .map(
+                (node) =>
+                  html`<p class="error" role="status" data-testid="native-target-unavailable">
+                    ${node.label}: ${node.unavailableReason}
+                  </p>`,
+              )}
             <label
               >Working directory<select
                 data-testid="native-context"
@@ -1583,8 +1598,12 @@ ${JSON.stringify(
                   const value = (e.target as HTMLSelectElement).value;
                   this.customCwd = value === '__custom__';
                   if (this.customCwd) {
-                    this.cwd = '';
-                    this.executionNodeId = 'local';
+                    const target =
+                      this.catalog?.executionNodes?.find(
+                        (node) => node.executionNodeId === this.executionNodeId,
+                      ) ?? this.catalog?.executionNodes?.[0];
+                    this.cwd = target?.homeDirectory ?? '';
+                    this.executionNodeId = target?.executionNodeId ?? this.executionNodeId;
                   } else {
                     const context = this.catalog?.contexts.find(
                       (item) => this.contextChoice(item) === value,
@@ -1616,14 +1635,12 @@ ${JSON.stringify(
                       ${context.executionNodeId ?? 'local'} · ${context.cwd}
                     </option>`,
                 )}
-                <option value="__custom__" .selected=${this.customCwd}>
-                  Other local directory
-                </option>
+                <option value="__custom__" .selected=${this.customCwd}>Other directory</option>
               </select></label
             >
             ${this.customCwd
               ? html`<label
-                  >Local directory<input
+                  >Directory on ${this.executionNodeId}<input
                     data-testid="native-cwd"
                     .value=${this.cwd}
                     ?disabled=${this.busy}
@@ -1685,7 +1702,12 @@ ${JSON.stringify(
               <button
                 class="primary"
                 data-testid="native-create"
-                ?disabled=${!this.connected ||
+                ?disabled=${Boolean(
+                  this.catalog?.executionNodes?.find(
+                    (node) => node.executionNodeId === this.executionNodeId,
+                  )?.unavailableReason,
+                ) ||
+                !this.connected ||
                 (!this.fixture && !this.catalogCurrent) ||
                 this.busy ||
                 !this.cwd.trim() ||

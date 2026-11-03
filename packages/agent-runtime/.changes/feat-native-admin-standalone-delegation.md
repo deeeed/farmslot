@@ -1,0 +1,1 @@
+- Persist standalone session requester attribution without changing execution ownership, and keep worker sessions behind their pinned controls.

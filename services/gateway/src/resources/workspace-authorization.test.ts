@@ -31,6 +31,14 @@ mock.module('../security/authorization.js', {
 mock.module('../security/credential-store.js', {
   namedExports: { loadCredentialStore: () => ({ principals: [] }) },
 });
+mock.module('../security/native-standalone.js', {
+  namedExports: {
+    isStandaloneAdmin: () => false,
+    assertStandaloneAdmin: () => {
+      throw new Error('worker alias must not delegate');
+    },
+  },
+});
 mock.module('../security/native-node.js', {
   namedExports: {
     nativeOwnerAssignedMachines: () => new Set(assigned ? ['node'] : []),

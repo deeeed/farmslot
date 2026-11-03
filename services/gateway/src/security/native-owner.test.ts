@@ -22,9 +22,10 @@ import {
   gatewayWorkspaceAccess,
 } from './authorization.js';
 import { hasNativeWorkspaceAccess, nativeOwnerCanUseWorkers } from './native-owner.js';
+import { isStandaloneAdmin } from './native-standalone.js';
 import { runWithSessionOriginator } from './work-originator.js';
 
-test('worker authority follows resolved solo mode and its activation latch', () => {
+test('worker authority follows resolved solo mode and its activation latch', async () => {
   const home = mkdtempSync(join(tmpdir(), 'native-solo-authority-'));
   try {
     const runtime = createGatewayAuthRuntime({
@@ -35,6 +36,13 @@ test('worker authority follows resolved solo mode and its activation latch', () 
     const solo = { authenticated: true, clientKind: 'ui' as const };
     const principal = authorizeGatewayMethod(runtime, solo, Methods.NATIVE_SESSION_READ);
     assert.equal(principal.id, 'local-admin');
+    assert.equal(isStandaloneAdmin(principal), false);
+    for (const method of [Methods.NATIVE_SESSION_CATALOG, Methods.NATIVE_SESSION_LIST]) {
+      const result = await runWithSessionOriginator(principal, () =>
+        nativeSessionRoute(method, {}, principal),
+      );
+      assert(result && typeof result === 'object');
+    }
     assert.equal(gatewayWorkspaceAccess(principal, runtime.store.snapshot().principals), 'farm');
     assert.equal(nativeOwnerCanUseWorkers(principal), true);
     const owner = runtime.writer.createPrincipal({ type: 'person', displayName: 'Owner' }, []);

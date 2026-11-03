@@ -22,13 +22,18 @@ import {
   visibleModelPreferenceChanges,
 } from '../runners/visible-models.js';
 import { loadCredentialStore } from '../security/credential-store.js';
-import { nativeOwnerAssignedMachines } from '../security/native-node.js';
+import { isGenerationZeroPrincipal, nativeOwnerAssignedMachines } from '../security/native-node.js';
 import {
   hasNativeWorkspaceAccess,
   nativeOwnerCanUseWorkers,
   ownsLocalNativeProfile,
   requireNativeSessionOwner,
 } from '../security/native-owner.js';
+import {
+  isStandaloneAdmin,
+  standaloneOwner,
+  standaloneOwners,
+} from '../security/native-standalone.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import {
@@ -73,10 +78,16 @@ interface NativeCollectionMetadata {
   assignments: string;
   nodes: Map<string, { connection: object | undefined; metadata: string }>;
 }
-function collectionMetadata(ownerId: string, nodes: readonly string[]): NativeCollectionMetadata {
+function collectionMetadata(
+  ownerId: string,
+  nodes: readonly string[],
+  owners?: Readonly<Record<string, string>>,
+): NativeCollectionMetadata {
   const store = loadCredentialStore();
   const issued = store.principals.filter(
-    (p) => p.subject.type === 'node' && p.subject.nativeOwnerPrincipalId === ownerId,
+    (p) =>
+      p.subject.type === 'node' &&
+      p.subject.nativeOwnerPrincipalId === (owners?.[p.subject.machine] ?? ownerId),
   );
   // Private in-memory equality only. No credential secrets or foreign owner data is retained.
   const assignments = JSON.stringify(
@@ -99,7 +110,9 @@ function collectionMetadata(ownerId: string, nodes: readonly string[]): NativeCo
           {
             connection: node?.ws,
             metadata: JSON.stringify({
-              local: id === 'local' ? ownsLocalNativeProfile(ownerId) : undefined,
+              local: id === 'local' ? ownsLocalNativeProfile(owners?.[id] ?? ownerId) : undefined,
+              ownerGeneration:
+                store.principals.find((p) => p.id === (owners?.[id] ?? ownerId))?.generation ?? 0,
               declaration: node?.nativeSessions,
               principalId: node?.nativeAuthority?.principalId,
               valid: node?.nativeAuthority?.valid(),
@@ -129,6 +142,10 @@ export function isNativeObservedRead(): boolean {
 export interface NativeReadAuthority {
   ownerId: string;
   nodes: string[];
+  owners?: Readonly<Record<string, string>>;
+}
+function sourceOwner(authority: NativeReadAuthority, node: string): string {
+  return authority.owners?.[node] ?? authority.ownerId;
 }
 
 /** Used unchanged for read admission, stamping and event/key filtering. Authentication is resolved
@@ -148,6 +165,10 @@ export async function authorizeNativeObservation(
         interest.params.executionNodeId !== undefined
       )
         throw new GatewayMethodError('INVALID_PARAMS', 'Native collection target mismatch');
+      if (isStandaloneAdmin(reader)) {
+        const owners = Object.fromEntries(standaloneOwners(reader));
+        return { ownerId: reader.id, nodes: Object.keys(owners), owners };
+      }
       const ownerId = requireNativeSessionOwner();
       if (!hasNativeWorkspaceAccess(reader, loadCredentialStore().principals))
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native owner view is unavailable');
@@ -181,7 +202,9 @@ export async function authorizeNativeObservation(
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native history binding changed');
       return { ownerId: binding.ownerPrincipalId, nodes: [binding.executionNodeId] };
     }
-    const ownerId = requireNativeSessionOwner();
+    const ownerId = isStandaloneAdmin(reader)
+      ? standaloneOwner(reader, key.nodeId)
+      : requireNativeSessionOwner();
     if (key.nodeId === 'local') {
       if (!ownsLocalNativeProfile(ownerId))
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native local profile is unavailable');
@@ -201,6 +224,8 @@ export async function authorizeNativeObservation(
 }
 
 interface NativeConnection {
+  /** Invalidation hint only; publication always reauthorizes the actual reader. */
+  standaloneAdmin?: boolean;
   /** Must re-resolve the CURRENT authenticated session, including revocation and generation. */
   principal: () => Principal;
   interests: Map<string, NativeInterest>;
@@ -418,6 +443,8 @@ export class GatewayNativeObservations {
     const client = this.clients.get(connection);
     if (!client) throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native read connection ended');
     const reader = client.principal();
+    client.standaloneAdmin = isStandaloneAdmin(reader);
+    let collectionOwners: Readonly<Record<string, string>> | undefined;
     const sources = new Map<string, NativeSourceReceipt>();
     let catalogBefore: NativeCatalogSourceReceipt | undefined;
     const poolCatalogBefore = this.poolCatalogRevision;
@@ -440,16 +467,35 @@ export class GatewayNativeObservations {
       const catalog = interest.method === 'native.session.catalog';
       const partialList = collection && interest.method === 'native.session.list';
       if (catalog || partialList)
-        metadata.set(interest, collectionMetadata(authority.ownerId, authority.nodes));
+        metadata.set(
+          interest,
+          collectionMetadata(authority.ownerId, authority.nodes, authority.owners),
+        );
       // Catalog consumes pool/registration/preference metadata, never transcript journals.
       if (catalog) continue;
-      if (partialList) admitted = new Set();
+      if (partialList) {
+        admitted = new Set();
+        collectionOwners = authority.owners;
+      }
       for (const node of authority.nodes) {
+        // An invalid backing owner disables only this admin target; caller authority still fails closed.
+        if (
+          partialList &&
+          authority.owners &&
+          !isGenerationZeroPrincipal(loadCredentialStore().principals, sourceOwner(authority, node))
+        ) {
+          skipped.add(node);
+          skippedReceipts.set(
+            node,
+            JSON.stringify(node === 'local' ? this.localReceipt : this.remote.get(node)?.receipt),
+          );
+          continue;
+        }
         if (partialList && node !== 'local') {
           const registered = getNode(node);
           if (
             !registered ||
-            registered.nativeSessions?.ownerPrincipalId !== authority.ownerId ||
+            registered.nativeSessions?.ownerPrincipalId !== sourceOwner(authority, node) ||
             !registered.nativeAuthority?.valid() ||
             !(registered.nativeSessions as { supportsObservations?: boolean }).supportsObservations
           ) {
@@ -462,7 +508,7 @@ export class GatewayNativeObservations {
         try {
           if (node === 'local' && this.local && !this.local.current().ready)
             await this.local.retry();
-          sources.set(node, this.fence(node, authority.ownerId));
+          sources.set(node, this.fence(node, sourceOwner(authority, node)));
           if (partialList) admitted!.add(node);
         } catch (error) {
           // Only source/transport unavailability is a partial-inventory outcome.
@@ -514,7 +560,7 @@ export class GatewayNativeObservations {
         beforeMetadata &&
         !sameCollectionMetadata(
           beforeMetadata,
-          collectionMetadata(authority.ownerId, authority.nodes),
+          collectionMetadata(authority.ownerId, authority.nodes, authority.owners),
         )
       )
         throw new NativeSourceUnavailable();
@@ -528,15 +574,22 @@ export class GatewayNativeObservations {
             throw new NativeSourceUnavailable();
           // Recovery during a held page changes its availability projection. Refetch it.
           const registered = node === 'local' ? undefined : getNode(node);
+          const validOwner =
+            !authority.owners ||
+            isGenerationZeroPrincipal(
+              loadCredentialStore().principals,
+              sourceOwner(authority, node),
+            );
           const supportsSource =
-            node === 'local' ||
-            (registered?.nativeSessions?.ownerPrincipalId === authority.ownerId &&
-              (registered.nativeSessions as { supportsObservations?: boolean })
-                .supportsObservations === true);
+            validOwner &&
+            (node === 'local' ||
+              (registered?.nativeSessions?.ownerPrincipalId === sourceOwner(authority, node) &&
+                (registered.nativeSessions as { supportsObservations?: boolean })
+                  .supportsObservations === true));
           let recovered = false;
           try {
             if (supportsSource) {
-              this.fence(node, authority.ownerId);
+              this.fence(node, sourceOwner(authority, node));
               recovered = true;
             }
           } catch (error) {
@@ -551,10 +604,15 @@ export class GatewayNativeObservations {
         checkedSources.add(node);
         const before = sources.get(node);
         if (!before) throw new NativeSourceUnavailable('gateway-read-receipt-missing');
-        assertNativeSourceCurrent(before, this.fence(node, authority.ownerId), 'gateway-read');
+        assertNativeSourceCurrent(
+          before,
+          this.fence(node, sourceOwner(authority, node)),
+          'gateway-read',
+        );
       }
     }
-    if (!rejected && admitted) validatePartialNativeList(payload, admitted, skipped, reader.id);
+    if (!rejected && admitted)
+      validatePartialNativeList(payload, admitted, skipped, reader.id, collectionOwners);
     if (catalogBefore) {
       if (poolCatalogBefore !== this.poolCatalogRevision) throw new NativeSourceUnavailable();
       const after = this.catalogSample(client, client.principal());
@@ -639,7 +697,7 @@ export class GatewayNativeObservations {
         const key = interest.key;
         if (!families.includes(key.family)) continue;
         if (
-          ('scope' in key && key.ownerId === ownerId) ||
+          ('scope' in key && (key.ownerId === ownerId || client.standaloneAdmin)) ||
           ('nodeId' in key && key.nodeId === nodeId)
         )
           keys.set(keyId(key), key);
@@ -653,6 +711,7 @@ export function validatePartialNativeList(
   admitted: ReadonlySet<string>,
   skipped: ReadonlySet<string>,
   ownerId: string,
+  owners?: Readonly<Record<string, string>>,
 ): void {
   const result = payload as
     | { sessions?: NativeSessionInfo[]; unavailableExecutionNodes?: { executionNodeId: string }[] }
@@ -667,7 +726,7 @@ export function validatePartialNativeList(
   if (
     result.sessions.some(
       (s) =>
-        s.ownerPrincipalId !== ownerId ||
+        s.ownerPrincipalId !== (owners?.[s.executionNodeId] ?? ownerId) ||
         !admitted.has(s.executionNodeId) ||
         unavailable.has(s.executionNodeId),
     ) ||

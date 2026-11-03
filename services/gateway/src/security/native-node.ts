@@ -39,6 +39,7 @@ export function nativeNodeDeclaration(
     );
   const capabilities = value as Record<string, unknown>;
   for (const field of [
+    'supportsStandaloneDelegation',
     'supportsEnsure',
     'supportsWorkers',
     'supportsProfiles',
