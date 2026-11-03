@@ -17,6 +17,12 @@ const BROWSER_QUERY = 'artifactQuery';
 const BROWSER_TYPES = 'artifactTypes';
 const BROWSER_FILE = 'artifactFile';
 const BROWSER_PREVIEW = 'artifactPreview';
+export const ARTIFACT_BROWSER_PARAMS = [
+  BROWSER_QUERY,
+  BROWSER_TYPES,
+  BROWSER_FILE,
+  BROWSER_PREVIEW,
+] as const;
 
 export function artifactBrowserViewFromRunDetailHash(
   hash: string = location.hash,
@@ -169,10 +175,7 @@ export function runInventoryHashFromDetail(hash: string = location.hash): string
     ARTIFACT_VIEW_PARAM,
     'artifactTrace',
     'artifactPhase',
-    BROWSER_QUERY,
-    BROWSER_TYPES,
-    BROWSER_FILE,
-    BROWSER_PREVIEW,
+    ...ARTIFACT_BROWSER_PARAMS,
   ]) {
     params.delete(key);
   }

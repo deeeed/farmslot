@@ -844,9 +844,9 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
-// Serve a file relative to a run's task artifact directory.
 const taskArtifactPaths = new WeakMap<readonly ArtifactRef[], ReadonlySet<string>>();
 
+// Serve a file relative to a run's task artifact directory.
 // URL: /api/run-artifact?runId=X&path=Y[&recipeRunId=Z]  (path is relative to task dir or selected recipe-run artifact root)
 export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {

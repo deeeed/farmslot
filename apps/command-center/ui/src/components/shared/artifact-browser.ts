@@ -51,11 +51,15 @@ export class ArtifactBrowser extends LitElement {
   /** Folders and attempt groups the user opened or closed, by node key. */
   @state() private toggled = new Map<string, boolean>();
   @state() private wide = false;
-  /** Too narrow for a side pane: the chosen file previews in a panel over the list. */
+  @state() private sizeKnown = false;
   /** Node key of the tree row that holds keyboard focus. */
   @state() private focusedKey: string | null = null;
   private readonly resizeObserver = new ResizeObserver(([entry]) => {
-    if (entry) this.wide = entry.contentRect.width >= SPLIT_MIN_WIDTH;
+    if (!entry) return;
+    this.wide = entry.contentRect.width >= SPLIT_MIN_WIDTH;
+    this.sizeKnown = true;
+    if (!this.viewState && this.wide && this.localView.preview)
+      this.localView = { ...this.localView, preview: false };
   });
   private previewItems: { source: readonly ArtifactBrowserItem[]; items: LightboxItem[] } | null =
     null;
@@ -77,7 +81,7 @@ export class ArtifactBrowser extends LitElement {
     return this.view.types;
   }
   private get overlay(): boolean {
-    return this.view.preview && !this.wide;
+    return this.sizeKnown && this.view.preview && !this.wide;
   }
   private get selected(): number | null {
     if (!this.viewState) return this.localSelected;
@@ -102,9 +106,9 @@ export class ArtifactBrowser extends LitElement {
     );
   }
 
-  private selectFile(index: number, preview = this.view.preview): void {
+  private selectFile(index: number, preview = this.view.preview, replace = false): void {
     if (!this.viewState) this.localSelected = index;
-    this.updateView({ path: this.artifacts[index]?.path ?? null, preview });
+    this.updateView({ path: this.artifacts[index]?.path ?? null, preview }, replace);
   }
 
   static styles = css`
@@ -331,7 +335,7 @@ export class ArtifactBrowser extends LitElement {
 
   private open(index: number, event?: Event) {
     event?.preventDefault();
-    this.selectFile(index, true);
+    this.selectFile(index, this.viewState ? true : !this.wide);
   }
 
   /** Closing hands focus back to the file it previewed. */
@@ -352,6 +356,10 @@ export class ArtifactBrowser extends LitElement {
   }
 
   private renderPreview(selected: number) {
+    if (this.viewState?.path && this.selected === null)
+      return html`<div class="preview empty" role="status">
+        File unavailable: ${this.viewState.path}
+      </div>`;
     return html`<media-lightbox
       class="preview"
       embedded
@@ -424,7 +432,7 @@ export class ArtifactBrowser extends LitElement {
   }
 
   private currentSelection(): number {
-    return this.selected ?? this.keyFiles()[0]?.index ?? 0;
+    return this.selected ?? (this.viewState?.path ? -1 : (this.keyFiles()[0]?.index ?? 0));
   }
 
   private highlight(name: string) {
@@ -484,7 +492,7 @@ export class ArtifactBrowser extends LitElement {
       else this.open(node.index);
     } else if (action.kind === 'focus') {
       void this.focusRow(node);
-      if (this.wide && node.kind === 'file') this.selectFile(node.index);
+      if (this.wide && node.kind === 'file') this.selectFile(node.index, this.view.preview, true);
     }
   }
 

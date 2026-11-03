@@ -388,7 +388,7 @@ test('serveRunArtifact falls back to the latest recipe package when recipeRunId 
   });
 });
 
-test('serveRunArtifact prefers a recipe package when an omitted recipeRunId points at stale root media', async (t) => {
+test('serveRunArtifact prefers a recipe package for undeclared stale root media', async (t) => {
   await withRemoteRun(t, async ({ runId, liveRunDir, taskDir }) => {
     const videoPath = path.join(liveRunDir, 'video.mp4');
     await writeFile(videoPath, 'cached-video', 'utf-8');
@@ -408,20 +408,33 @@ test('serveRunArtifact prefers a recipe package when an omitted recipeRunId poin
   });
 });
 
-test('serveRunArtifact keeps a declared task report distinct from the selected recipe report', async (t) => {
+test('serveRunArtifact keeps declared task files distinct from selected recipe files', async (t) => {
   await withRemoteRun(t, async ({ runId, taskDir, liveRunDir, liveGroupId }) => {
-    const report = '# Task report\n';
-    const recipeReport = '# Recipe report\n';
-    const sha256 = createHash('sha256').update(report).digest('hex');
-    await writeFile(path.join(taskDir, 'artifacts/report.md'), report);
+    const files = [
+      {
+        name: 'report.md',
+        task: '# Task report\n',
+        recipe: '# Recipe report\n',
+        purpose: 'report',
+      },
+      { name: 'video.mp4', task: 'declared root video', recipe: 'recipe video', purpose: 'video' },
+    ] as const;
+    for (const file of files) {
+      await writeFile(path.join(taskDir, 'artifacts', file.name), file.task);
+      await writeFile(path.join(liveRunDir, file.name), file.recipe);
+    }
     await writeFile(path.join(taskDir, 'artifacts/pr-description.md'), '# Publication copy\n');
-    await writeFile(path.join(liveRunDir, 'report.md'), recipeReport);
+    const artifactManifest = files.map((file) => ({
+      path: `artifacts/${file.name}`,
+      purpose: file.purpose,
+      sha256: createHash('sha256').update(file.task).digest('hex'),
+    }));
     updateRun(runId, {
       output: {
         capturedAt: new Date().toISOString(),
         workerFinished: true,
-        artifactManifest: [{ path: 'artifacts/report.md', purpose: 'report', sha256 }],
-        manifestDigest: sha256,
+        artifactManifest,
+        manifestDigest: createHash('sha256').update(JSON.stringify(artifactManifest)).digest('hex'),
         reportPath: 'artifacts/pr-description.md',
       },
     });
@@ -437,20 +450,23 @@ test('serveRunArtifact keeps a declared task report distinct from the selected r
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
-    const url = new URL(`http://127.0.0.1:${address.port}/api/run-artifact`);
-    url.searchParams.set('runId', runId);
-    url.searchParams.set('path', 'artifacts/report.md');
-    for (const version of [sha256, null]) {
-      if (version) url.searchParams.set('v', version);
-      else url.searchParams.delete('v');
-      const response = await fetch(url);
-      assert.equal(response.status, 200, await response.clone().text());
-      assert.equal(await response.text(), report);
+    for (const file of files) {
+      const url = new URL(`http://127.0.0.1:${address.port}/api/run-artifact`);
+      url.searchParams.set('runId', runId);
+      url.searchParams.set('path', `artifacts/${file.name}`);
+      const sha256 = createHash('sha256').update(file.task).digest('hex');
+      for (const version of [sha256, null]) {
+        if (version) url.searchParams.set('v', version);
+        else url.searchParams.delete('v');
+        const response = await fetch(url);
+        assert.equal(response.status, 200, await response.clone().text());
+        assert.equal(await response.text(), file.task);
+      }
+      url.searchParams.set('recipeRunId', liveGroupId);
+      const recipeResponse = await fetch(url);
+      assert.equal(recipeResponse.status, 200);
+      assert.equal(await recipeResponse.text(), file.recipe);
     }
-    url.searchParams.set('recipeRunId', liveGroupId);
-    const recipeResponse = await fetch(url);
-    assert.equal(recipeResponse.status, 200);
-    assert.equal(await recipeResponse.text(), recipeReport);
   });
 });
 

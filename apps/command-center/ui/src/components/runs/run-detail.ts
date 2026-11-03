@@ -69,6 +69,7 @@ import {
 import {
   type ArtifactBrowserView,
   type ArtifactBrowserViewChange,
+  emptyArtifactBrowserView,
   hasArtifactBrowserView,
 } from '../shared/artifact-browser-model.js';
 import { type EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
@@ -346,15 +347,21 @@ export class RunDetail extends RunDetailState {
     );
   }
 
-  private _changeArtifactBrowserView({ view, replace }: ArtifactBrowserViewChange): void {
+  private _changeArtifactBrowserView(
+    { view, replace }: ArtifactBrowserViewChange,
+    keepOpen = true,
+  ): void {
     // A direct interaction is already in the panel; keep the search field's focus.
     this._artifactBrowserFocusedRun = this.runId;
+    if (keepOpen && !runDetailPanelOpen('run-artifacts')) toggleRunDetailPanel('run-artifacts');
+    const panel = hashParams().get('panel');
+    if (panel === 'timeline' || panel === 'evidence')
+      this._sharedPanelFocusKey = `${this.runId}:${panel}`;
     const hash = runDetailArtifactBrowserHash(this.runId, view);
     if (hash === location.hash) return;
-    if (replace) {
-      history.replaceState(history.state, '', hash);
-      this._onHashChange();
-    } else location.hash = hash;
+    // Like the Runs filter writer, keep our own update out of navigation-focus handling.
+    history[replace ? 'replaceState' : 'pushState'](history.state, '', hash);
+    this.requestUpdate();
   }
 
   /** Sync the open explorer's mirror while the run works; never while it is collapsed. */
@@ -1905,10 +1912,10 @@ export class RunDetail extends RunDetailState {
       togglePanel: (id) => {
         if (id === 'run-artifacts' && hasArtifactBrowserView(this._artifactBrowserRouteView())) {
           if (runDetailPanelOpen(id)) toggleRunDetailPanel(id);
-          this._changeArtifactBrowserView({
-            view: { query: '', types: new Set(), path: null, preview: false },
-            replace: false,
-          });
+          this._changeArtifactBrowserView(
+            { view: emptyArtifactBrowserView(), replace: false },
+            false,
+          );
           return;
         }
         toggleRunDetailPanel(id);

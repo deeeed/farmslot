@@ -16,6 +16,7 @@ import {
 
 import { familyRunHash } from '../components/runs/family-observability-url-state.js';
 import {
+  runDetailArtifactBrowserHash,
   runDetailEvidenceArtifactHash,
   runDetailStepHash,
 } from '../components/runs/run-detail-url-state.js';
@@ -43,6 +44,16 @@ test('actual navigation builders round trip through the desktop contract', () =>
   const routes = [
     new URL(target.viewUrl).hash,
     runDetailStepHash('run-1', 'monitor', '#runs?run=run-1'),
+    runDetailArtifactBrowserHash(
+      'run-1',
+      {
+        query: 'report',
+        types: new Set(['markdown']),
+        path: 'artifacts/report.md',
+        preview: false,
+      },
+      '#runs?run=run-1',
+    ),
     runDetailEvidenceArtifactHash('run-1', { path: 'artifacts/report.md' }, '#run/run-1'),
     runsHashWithState(
       { tab: 'history', status: 'failed', q: 'release', tag: 'daily', family: 'f1' },

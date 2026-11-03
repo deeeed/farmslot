@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { runDetailArtifactBrowserHash } from './components/runs/run-detail-url-state.js';
 import {
   filtersHash,
   parseFiltersFromHash,
@@ -67,4 +68,19 @@ test('rewriting shared empty filters retains their explicit meaning through relo
   assert.equal(hash, '#runs?projects=&machines=&runsTab=all');
   assert.deepEqual(parseFiltersFromHash(hash), { projects: [], machines: [] });
   assert.equal(filtersHash({ projects: [], machines: [] }, '#fleet'), '#fleet');
+});
+
+test('changing embedded runs or returning to the list clears artifact browser choices', () => {
+  const hash = runDetailArtifactBrowserHash(
+    'run-1',
+    {
+      query: 'report',
+      types: new Set(['markdown']),
+      path: 'artifacts/report.md',
+      preview: false,
+    },
+    '#runs?run=run-1&projects=cc',
+  );
+  assert.equal(runsHashWithState({ run: 'run-2' }, hash), '#runs?run=run-2&projects=cc');
+  assert.equal(runsHashWithState({ run: '', tab: 'all' }, hash), '#runs?projects=cc&runsTab=all');
 });

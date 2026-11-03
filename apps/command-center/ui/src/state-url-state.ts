@@ -1,3 +1,4 @@
+import { ARTIFACT_BROWSER_PARAMS } from './components/runs/run-detail-url-state.js';
 import { EVIDENCE_REVIEWER_PARAMS } from './components/shared/evidence-reviewer-url-state.js';
 import { buildHash, parseHashRoute } from './utils/url-state.js';
 
@@ -42,6 +43,7 @@ const RUN_DETAIL_PARAMS = [
   'artifact',
   'artifactAc',
   'artifactView',
+  ...ARTIFACT_BROWSER_PARAMS,
   ...EVIDENCE_REVIEWER_PARAMS,
 ] as const;
 
