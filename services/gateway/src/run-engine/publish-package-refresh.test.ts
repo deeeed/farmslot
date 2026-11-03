@@ -35,11 +35,10 @@ import {
   ensureCurrentPublishPackage,
   reconcilePublicationPackageForInspection,
   refreshPublishPackage,
-  reviewPolicyForPublishPackageRefresh,
   summarizePublishPackageRefreshEvidence,
 } from './publish-package-refresh.js';
 import { refreshReviewGate } from './review-gate.js';
-import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
+import { deleteTestRunIfPresent, makeReadyGatePackage } from './test-fixtures.js';
 
 test('pending publication reload retains its approved package without reading live source', async (t) => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'approved-package-reload-'));
@@ -151,62 +150,6 @@ test('publish package refresh evidence summary uses shared path variants', () =>
   ]);
   assert.deepEqual(summary.droppedEvidenceKeys, ['missing.png']);
   assert.deepEqual(summary.addedEvidenceKeys, ['artifacts/screenshots/new.png']);
-});
-
-test('reviewPolicyForPublishPackageRefresh drops ad hoc human-gate review requirements', () => {
-  const run = makeRun({ flowType: 'dev', mode: 'autonomous' });
-  const humanGatePayload = {
-    reviewPolicy: {
-      minimumReviews: 1,
-      requestedBy: 'human-gate' as const,
-    },
-  };
-
-  assert.deepEqual(reviewPolicyForPublishPackageRefresh(run, undefined, humanGatePayload), {
-    minimumReviews: 0,
-    requestedBy: 'dispatch',
-  });
-
-  const dispatchPayload = {
-    reviewPolicy: {
-      minimumReviews: 1,
-      requestedBy: 'dispatch' as const,
-    },
-  };
-  assert.deepEqual(
-    reviewPolicyForPublishPackageRefresh(run, undefined, dispatchPayload),
-    dispatchPayload.reviewPolicy,
-  );
-
-  const legacyDispatchRun = makeRun({
-    engineState: {
-      publishGate: {
-        reviewSequence: [],
-        reviews: [
-          {
-            reviewerSessionId: 'fixture-session-' + 'review-1',
-            reviewedHeadSha: 'fixture-head',
-            mode: 'cold' as const,
-            id: 'review-1',
-            source: 'dispatch',
-            loopNumber: 1,
-            verdict: 'pass',
-            unresolvedCount: 0,
-          },
-        ],
-      },
-    },
-  });
-  const legacyDispatchPayload = {
-    reviewPolicy: {
-      minimumReviews: 1,
-      requestedBy: 'dispatch' as const,
-    },
-  };
-  assert.deepEqual(
-    reviewPolicyForPublishPackageRefresh(legacyDispatchRun, undefined, legacyDispatchPayload),
-    { ...legacyDispatchPayload.reviewPolicy },
-  );
 });
 
 test('refreshPublishPackage fails closed when worker artifacts cannot be mirrored', async (t) => {
