@@ -199,7 +199,7 @@ export interface PostDispatchStepContext {
   ) => Promise<PublishGateReviewPlanResult>;
   executeReadyGate: (runId: string, options?: { generation?: number }) => Promise<string>;
   executeReviewGate: (runId: string, stepGeneration?: number) => Promise<void>;
-  getDiffStat: (run: Run) => Promise<DiffStat>;
+  getDiffStat: (run: Run, options?: { fresh?: boolean }) => Promise<DiffStat>;
   interactiveLightweightSkipOutputs: (step: string) => StepIO;
   isHumanGateEnabled: (
     project: string,
@@ -348,7 +348,8 @@ export async function reconcilePublishGateReviewPlanResult(
     },
   });
   getRun(runId)!;
-  const diffStat = await context.getDiffStat(getRun(runId)!);
+  // A package states the diff at its own HEAD; the durable capture predates any fix since.
+  const diffStat = await context.getDiffStat(getRun(runId)!, { fresh: true });
   const prepared = await prepareGatePackageAfterReviews(runId, () =>
     (context.prepareCompletionPackageForRun ?? prepareCompletionPackage)(runId, {
       diffStat,
@@ -1499,7 +1500,7 @@ export async function executeHumanGateStep(
         );
       } else if (recoveredReviewIds.length > 0) {
         const beforeRefresh = await readReadyGatePreparedPackage(getRun(runId)!);
-        const diffStat = await getDiffStat(getRun(runId)!);
+        const diffStat = await getDiffStat(getRun(runId)!, { fresh: true });
         const prepared = await prepareGatePackageAfterReviews(runId, () =>
           prepareCompletionPackage(runId, {
             diffStat,
@@ -1761,14 +1762,15 @@ export async function executeCompleteStep(
   const skipRetrospective = hasCIWatch;
 
   // Run completion (artifact copy, PR comment, title, labels). Must run
-  // BEFORE getDiffStat because branch discovery happens inside it. Worker
-  // artifact copy excludes gateway-owned diff artifacts, so getDiffStat
-  // below preserves any READY_GATE snapshot instead of copy-back data.
+  // BEFORE the durable getDiffStat because branch discovery happens inside it.
+  // Worker artifact copy excludes gateway-owned diff artifacts, so that read
+  // preserves any READY_GATE snapshot instead of copy-back data. A local-first
+  // package recaptures instead: it states the diff at its own HEAD.
   updateRunStep(runId, S.COMPLETE, { detail: 'Completing...' });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   if (shouldPrepareLocalFirstPackage(current)) {
     updateRunStep(runId, S.COMPLETE, { detail: 'Preparing local PR package...' });
-    const diffStat = await getDiffStat(current);
+    const diffStat = await getDiffStat(current, { fresh: true });
     const prepared = await prepareCompletionPackage(runId, {
       diffStat,
       requireArtifactMirror: true,
