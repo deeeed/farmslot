@@ -537,8 +537,8 @@ test('F338 lists untimed originals and same-attempt inspection screenshots witho
     ]);
   }
   assert.ok(input.artifactPaths);
-  input.artifactPaths.push(rotated.videoPath);
-  input.artifactDigests[rotated.videoPath] = rotated.videoDigest;
+  input.artifactPaths = [...input.artifactPaths, rotated.videoPath];
+  input.artifactDigests = { ...input.artifactDigests, [rotated.videoPath]: rotated.videoDigest };
   assert.ok(
     input.manifest &&
       typeof input.manifest === 'object' &&
