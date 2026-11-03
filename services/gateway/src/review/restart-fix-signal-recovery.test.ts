@@ -62,11 +62,13 @@ mock.module('../core/exec.js', {
     ...execution,
     execOnSlot: async (_vars: unknown, command: string) => {
       if (/send-keys|paste-buffer|respawn-window/u.test(command)) tmuxInput.push(command);
-      if (command.includes('respawn-window')) onRespawn(command);
-      if (/^rm -f .*REVIEW-FIX-SIGNAL/u.test(command)) {
-        signalRemovals += 1;
-        fixSignal = {};
-        return { exitCode: 0, stderr: '', stdout: '' };
+      if (command.includes('respawn-window')) {
+        // What the replaced worker wrote up to here, then what the respawned command runs.
+        onRespawn(command);
+        if (/rm -f [^&]*REVIEW-FIX-SIGNAL/u.test(command)) {
+          signalRemovals += 1;
+          fixSignal = {};
+        }
       }
       if (command.includes('review-diff-stat.json'))
         return { exitCode: reviewDiffStat ? 0 : 1, stderr: '', stdout: reviewDiffStat ?? '' };
@@ -618,28 +620,28 @@ for (const runner of ['scripted', 'pi'] as const)
     );
   });
 
-test('a relaunch clears the earlier worker signal, so a leading worker clock cannot confirm its send', async (t) => {
+test('the replaced worker signal cannot confirm a relaunch, however late and whatever its clock', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
   paneCommand = 'pi-coding-agent';
   withPrimaryWorker(run.id);
-  // Written before this relaunch, on a clock far ahead of the gateway's.
-  fixSignal = { status: 'running', attemptId: 'earlier', timestamp: '2099-01-01T00:00:00.000Z' };
-  let removalsAtRespawn = 0;
+  fixSignal = { status: 'running', attemptId: 'earlier', timestamp: '2026-11-01T17:01:20.703Z' };
   onRespawn = () => {
-    removalsAtRespawn = signalRemovals;
+    // Its last mark, right up to the respawn that stops it, on a clock far ahead of the gateway's.
+    fixSignal = { status: 'running', attemptId: 'earlier', timestamp: '2099-01-01T00:00:00.000Z' };
   };
   t.after(() => {
     onRespawn = () => {};
   });
 
   assert.equal(await relaunchWorkerForFix(vars, 'pi', 'local/model', run.id), true);
-  assert.equal(removalsAtRespawn, 1, 'gone before the new worker can write its own');
+  assert.equal(signalRemovals, 1, 'the respawned command removes it before it launches the worker');
   const delivery = await resumeReviewFixPromptDelivery(vars, run.id, fixContext(run.id)!);
   assert.equal(delivery.status, 'deferred', 'nothing shows this worker holds its prompt');
 });
 
 test('a post-launch relaunch clears the boundary even if the old worker moved its attempt meanwhile', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'claude');
+  fixSignal = runningCurrentAttempt;
   paneCommand = 'claude';
   withPrimaryWorker(run.id);
   onRespawn = () => {
@@ -660,22 +662,39 @@ test('a post-launch relaunch clears the boundary even if the old worker moved it
   assert.equal(fixContext(run.id)?.promptDeliveryStartedAt, undefined);
 });
 
-test('a relaunch before a new round keeps the finished round signal the next send reads', async (t) => {
+for (const [ended, signal] of [
+  ['complete', { status: 'complete', timestamp: '2026-11-01T17:01:30.000Z' }],
+  ['blocked', { status: 'blocked', reason: 'stuck', timestamp: '2026-11-01T17:01:30.000Z' }],
+  ['failed', { status: 'failed', reason: 'broke', timestamp: '2026-11-01T17:01:30.000Z' }],
+] as const)
+  test(`a relaunch before a new round keeps the ${ended} round signal the next send reads`, async (t) => {
+    const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
+    paneCommand = 'pi-coding-agent';
+    withPrimaryWorker(run.id, { status: ended, promptDeliveryStartedAt: undefined });
+    fixSignal = signal;
+
+    assert.equal(await relaunchWorkerForFix(vars, 'pi', 'local/model', run.id), true);
+    assert.equal(signalRemovals, 0, 'without it a Pi or Cursor replacement holds for 15 minutes');
+    assert.equal(
+      fixContext(run.id)?.promptDeliveryStartedAt,
+      undefined,
+      'it sends this round nothing',
+    );
+  });
+
+test('a relaunch before a new round of a finished one whose signal is gone sends it nothing', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
   paneCommand = 'pi-coding-agent';
   withPrimaryWorker(run.id, { status: 'complete', promptDeliveryStartedAt: undefined });
+  fixSignal = {};
 
   assert.equal(await relaunchWorkerForFix(vars, 'pi', 'local/model', run.id), true);
-  assert.equal(signalRemovals, 0);
-  assert.equal(
-    fixContext(run.id)?.promptDeliveryStartedAt,
-    undefined,
-    'it sends this round nothing',
-  );
+  assert.equal(fixContext(run.id)?.promptDeliveryStartedAt, undefined);
 });
 
 test('a launch that carries the prompt records its delivery before the respawn', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
+  fixSignal = runningCurrentAttempt;
   paneCommand = 'pi-coding-agent';
   const earlier = fixContext(run.id)?.promptDeliveryStartedAt;
   withPrimaryWorker(run.id);
@@ -694,6 +713,7 @@ test('a launch that carries the prompt records its delivery before the respawn',
 
 test('a post-launch relaunch clears the boundary once the new process replaced the old', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'claude');
+  fixSignal = runningCurrentAttempt;
   paneCommand = 'claude';
   withPrimaryWorker(run.id);
   let recorded: string | undefined = 'unset';

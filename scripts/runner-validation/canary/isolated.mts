@@ -112,7 +112,8 @@ const LOSS_SETTLE_MS = 5_000;
 // The launch's session capture gives up after 20 s on a runner that has reported no session yet.
 const READINESS_WAIT_MS = 30_000;
 const WORKER_LEFT_RUNNING_CARD = 'engine_worker_left_running';
-// Recovery looks for proof of an unconfirmed fix delivery for 120 s before it gives up.
+// Recovery looks for proof of an unconfirmed fix delivery for 120 s before it gives up: a hold
+// shorter than this cannot tell a worker it adopted from one still inside that window.
 const FIX_CARD_WITHIN_MS = 150_000;
 const RESTART_TWICE: Variant[] = ['node-up', 'node-up'];
 const TRANSPORT_ABORT = /\bterminated\b|abort|ECONNRESET|socket hang up|connection reset/i;
@@ -252,8 +253,8 @@ interface HoldPhase {
     relaunches?: boolean;
     /** Recovery cannot prove delivery: the run waits on the card, its worker untouched. */
     card?: boolean;
-    /** How long recovery may look for proof before the card must be up. */
-    cardWithinMs?: number;
+    /** How long to watch, and how long recovery may look for proof before the card must be up. */
+    watchMs?: number;
   };
 }
 
@@ -755,7 +756,7 @@ function survivePhase(
         restarts: RESTART_TWICE,
         armAt: 'create',
         ...fixRoundHold(marker(stack, 'fix')),
-        survive: {},
+        survive: { watchMs: FIX_CARD_WITHIN_MS },
       } satisfies HoldPhase;
     }
     case 'review-fix-large': {
@@ -776,7 +777,7 @@ function survivePhase(
         restarts: RESTART_TWICE,
         armAt: reviewRunning,
         ...fixRoundHold(worker),
-        survive: {},
+        survive: { watchMs: FIX_CARD_WITHIN_MS },
       };
     case 'review-fix-claude-typed': {
       const noSession = marker(stack, 'claude-no-session');
@@ -805,7 +806,7 @@ function survivePhase(
         },
         // fixCardFollowUp lifts what holds the worker.
         release: async () => {},
-        survive: { card: true, cardWithinMs: FIX_CARD_WITHIN_MS },
+        survive: { card: true, watchMs: FIX_CARD_WITHIN_MS },
       };
     }
     case 'monitor-transport-abort': {
@@ -997,11 +998,10 @@ async function watchWorker(
   getRun: () => Promise<Run>,
   step: HoldStep,
   expectCard = false,
-  cardWithinMs = 0,
+  watchMs = SURVIVE_OBSERVE_MS,
 ): Promise<string[]> {
   const stops = path.join(stack.holds, 'tmux-stops.log');
-  const cardBy = Date.now() + cardWithinMs;
-  const deadline = Date.now() + Math.max(SURVIVE_OBSERVE_MS, cardWithinMs);
+  const deadline = Date.now() + watchMs;
   let until = deadline;
   let losing = false;
   for (;;) {
@@ -1037,7 +1037,7 @@ async function watchWorker(
         `a new reviewer was launched: ${relaunched.map((context) => context.id).join(', ')}`,
       );
     if (expectCard) {
-      if (!(run.status === 'blocked' && openCard(run)) && Date.now() >= cardBy)
+      if (!(run.status === 'blocked' && openCard(run)) && (losing || Date.now() >= deadline))
         lost.push(`the run is not waiting on the card: ${brief(run)}`);
     } else if (failed.length || isTerminalRunStatus(run.status))
       lost.push(`the run went ${run.status}: ${failureText(run) || brief(run)}`);
@@ -1114,9 +1114,9 @@ function reviewRoundDifferences(
 ): string[] {
   const seen = reviewVerdicts(scenario.run);
   const expected = reviewVerdicts(baseline.run).reviewers + extraReviewers + refusedResumes;
-  const fallbacks = contexts(scenario.run, 'review').filter(
-    (context) => context.reviewFallback,
-  ).length;
+  const fallbacks = contexts(scenario.run, 'review').flatMap((context) =>
+    context.reviewFallback ? [context.reviewFallback.detail] : [],
+  );
   return [
     ...(seen.loop2 === 'pass'
       ? []
@@ -1127,7 +1127,12 @@ function reviewRoundDifferences(
     ...(scenario.reviewerTurns === seen.reviewers - refusedResumes
       ? []
       : [`${scenario.reviewerTurns ?? 0} reviewer turns for ${seen.reviewers} reviewers`]),
-    ...(fallbacks === refusedResumes ? [] : [`${fallbacks} reviewers fell back cold`]),
+    ...(fallbacks.length === refusedResumes
+      ? []
+      : [`${fallbacks.length} reviewers fell back cold`]),
+    ...fallbacks
+      .filter((detail) => !detail?.includes('has not produced a live session'))
+      .map((detail) => `a refused resume the proxy does not explain: ${detail}`),
   ];
 }
 
@@ -1135,23 +1140,23 @@ const reviewDepth = (run: Run) =>
   run.steps.find((entry) => entry.name === 'review')?.outputs?.validationDepth;
 
 /**
- * Where Replay step took a fix card: a worker holding the fix keeps it, unsent; any other gets it
- * sent again. Either way the re-review keeps the review's depth.
+ * Where a fix round's recovery took it: a worker holding the fix keeps it, unsent, and only a card's
+ * Replay step may send it again, to a worker that lost it. Either way it keeps the review's depth.
  */
-function fixCardDifferences(
+function fixRoundDifferences(
   scenario: ScenarioResult,
   baseline: ScenarioResult,
   step: SurviveStep,
 ): string[] {
-  if (!scenario.cardRun) return ['the run never waited on the card'];
-  const atCard = fixContext(scenario.cardRun)?.promptDeliveryStartedAt;
+  const held = scenario.cardRun ?? scenario.heldRun;
+  if (!held) return ['the fix round was never held'];
+  const before = fixContext(held)?.promptDeliveryStartedAt;
   const final = fixContext(scenario.run)?.promptDeliveryStartedAt;
-  const sentAgain = atCard !== final;
+  const sentAgain = before !== final;
+  const expectResend =
+    step === 'review-fix-claude-card-dead' || step === 'review-fix-claude-card-silent';
   return [
-    ...scenario.refused,
-    ...(sentAgain === (step !== 'review-fix-claude-card')
-      ? []
-      : [`fix sends across the card: ${atCard ?? '-'} -> ${final ?? '-'}`]),
+    ...(sentAgain === expectResend ? [] : [`fix sends: ${before ?? '-'} -> ${final ?? '-'}`]),
     ...(reviewDepth(scenario.run) === reviewDepth(baseline.run)
       ? []
       : [
@@ -1184,6 +1189,8 @@ interface ScenarioResult extends DrivenRun {
   cardRun?: Run;
   /** What was typed at the fixture's Claude-runner worker mid-turn. */
   typedMidTurn?: string;
+  /** The run at its first worker hold. */
+  heldRun?: Run;
   fixLanded?: boolean;
 }
 
@@ -1270,6 +1277,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     let watched: string[] | undefined;
     let survival: string[] | undefined;
     let cardRun: Run | undefined;
+    let heldRun: Run | undefined;
     const unreached: HoldStep[] = [];
     let current = 0;
     let runId = '';
@@ -1289,6 +1297,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       if (armed.has(phase) && phase.held(view)) {
         await log(`${label}: ${phase.step} held`, { run: brief(run) });
         hold.held = run;
+        heldRun ??= run;
         await writeJson(path.join(dir, `run-held-${current + 1}-${phase.step}.json`), run);
         const snapshot = phase.survive ? snapshotWorker(stack, slotId, run) : undefined;
         if (snapshot) {
@@ -1338,7 +1347,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
                     getRun,
                     phase.step,
                     phase.survive?.card,
-                    phase.survive?.cardWithinMs,
+                    phase.survive?.watchMs,
                   )
                 : ['nothing to watch: no runner process at the hold point']),
           ];
@@ -1419,6 +1428,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         ...(watched ? { watched, survival: survival ?? [] } : {}),
         ...(hold.fixLanded !== undefined ? { fixLanded: hold.fixLanded } : {}),
         ...(cardRun ? { cardRun } : {}),
+        ...(heldRun ? { heldRun } : {}),
         typedMidTurn: await readFile(path.join(stack.holds, 'claude-input.log'), 'utf8').catch(
           () => '',
         ),
@@ -1658,7 +1668,10 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             ? reviewRoundDifferences(scenario, baseline, extraReviewers, large ? 1 : 0)
             : []),
           ...(card ? cardDifferences(scenario, step) : []),
-          ...(fixCard ? fixCardDifferences(scenario, baseline, step) : []),
+          ...(fixCard && !scenario.cardRun ? ['the run never waited on the card'] : []),
+          ...(reviewFix
+            ? [...scenario.refused, ...fixRoundDifferences(scenario, baseline, step)]
+            : []),
           ...(reviewFix && scenario.typedMidTurn
             ? [`typed at the worker mid-turn: ${scenario.typedMidTurn.slice(0, 200)}`]
             : []),

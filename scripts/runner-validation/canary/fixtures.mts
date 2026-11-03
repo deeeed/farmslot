@@ -519,7 +519,8 @@ ${FAKE_WORKER_FINISH}
  * affects the next launch. holds/claude-no-session keeps it from reporting a session, so a fix
  * round reaches it typed at its prompt. On a reviewed project it commits the work its reviewer
  * flags, and otherwise a fix round reaches it as Claude's does: a resumed session with the prompt
- * on argv. holds/fix keeps its fix mid-round. Whatever is typed mid-turn goes to claude-input.log.
+ * on argv. holds/fix keeps its fix mid-round. Any input mid-turn, submitted or not, goes to
+ * claude-input.log.
  */
 export const fakeClaude = (holds: string): string => `#!/usr/bin/env node
 'use strict';
@@ -551,6 +552,7 @@ const hook = (event, extra) => {
 };
 let typed = '';
 let settling;
+let midTurn = false;
 let onPrompt = () => {};
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.on('data', (chunk) => {
@@ -559,13 +561,16 @@ process.stdin.on('data', (chunk) => {
   process.stdout.write(text);
   typed += text;
   clearTimeout(settling);
-  // A pasted prompt's lines arrive as returns: it is whole once a return ends a quiet input.
-  if (!/[\\r\\n]\\s*$/.test(typed)) return;
   settling = setTimeout(() => {
-    const line = typed.replace(/\\r/g, '\\n').trim();
+    // A pasted prompt's lines arrive as returns: it is whole once a return ends a quiet input.
+    // Mid-turn nothing need be whole: a prompt left unsubmitted in the composer counts too.
+    if (!midTurn && !/[\\r\\n]\\s*$/.test(typed)) return;
+    const raw = typed;
+    const line = raw.replace(/\\r/g, '\\n').trim();
     typed = '';
     if (line === '/exit') process.exit(0);
-    if (line) onPrompt(line);
+    if (midTurn) fs.appendFileSync(path.join(holds, 'claude-input.log'), JSON.stringify(raw) + '\\n');
+    else if (line) onPrompt(line);
   }, 150);
 });
 setTimeout(() => process.exit(0), 15 * 60_000);
@@ -584,7 +589,7 @@ setTimeout(() => process.exit(0), 15 * 60_000);
     });
   let prompt = resumeAt < 0 ? await nextPrompt() : args.at(-1);
   for (;;) {
-  onPrompt = (line) => fs.appendFileSync(path.join(holds, 'claude-input.log'), line + '\\n');
+  midTurn = true;
   const noFinish = held('claude-no-finish');
   if (!held('claude-no-hook')) hook('UserPromptSubmit', { prompt, ...(lateSession || noSession ? {} : session) });
   process.stdout.write('working\\n');
@@ -626,6 +631,7 @@ ${FAKE_WORKER_FINISH}
   if (noSession && fixFile) hook('SessionStart', session);
   hook('Stop', noSession && !fixFile ? {} : session);
   process.stdout.write('\\u276f\\n');
+  midTurn = false;
   prompt = await nextPrompt();
   }
 })().catch((error) => {

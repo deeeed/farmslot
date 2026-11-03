@@ -9,6 +9,7 @@ import {
   isPipelineRepairVisualReviewInput,
   isRecord,
   isTerminalRunStatus,
+  isTerminalWorkerSignalStatus,
   PipelineSteps,
   primaryRoleForFlow,
   type ReviewAttempt,
@@ -3362,8 +3363,15 @@ export async function relaunchWorkerForFix(
   const fixContext = parentRun?.agentContexts?.find(
     (context) => context.role === 'review-fix' && context.taskFile,
   );
-  // A finished round has no attempt to replace: the next send starts its own, and reads its signal.
-  const replacesAttempt = Boolean(fixContext?.attemptStartedAt && fixContext.status !== 'complete');
+  // A finished attempt has nothing to replace: the next send starts its own, and reads its signal.
+  const priorSignal = fixContext?.signalFile
+    ? await readLaunchAckSignalSnapshot(vars, fixContext.signalFile)
+    : null;
+  const replacesAttempt = Boolean(
+    fixContext?.attemptStartedAt &&
+    fixContext.status !== 'complete' &&
+    !isTerminalWorkerSignalStatus(priorSignal?.status),
+  );
   // A launch carrying the prompt hands it over as a new send. Any other holds none, whatever its
   // predecessor had.
   const launchDeliveryStartedAt =
@@ -3397,7 +3405,13 @@ export async function relaunchWorkerForFix(
     scriptedSupportDir: nodeSupport?.supportDir,
     modelQuestions: modelQuestionsForRun(parentRun),
   });
-  launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
+  // In the respawned command, so the replaced worker is gone: its signal cannot confirm this one,
+  // however late it wrote it and whatever its clock says.
+  const clearReplacedSignal =
+    replacesAttempt && fixContext?.signalFile
+      ? `rm -f ${shellQuote(fixContext.signalFile)} && `
+      : '';
+  launchCmd = `${WORKER_ENV_PREFIX} && ${clearReplacedSignal}${launchCmd}`;
   await assertPreflightCurrent();
   // Restart recovery reads this to tell what the worker holds: a send reaches disk before the
   // respawn, and the old worker's stays until the respawn has replaced it. The old worker's mark
@@ -3412,9 +3426,6 @@ export async function relaunchWorkerForFix(
         parentRun?.engineState?.generation ?? 0,
       );
   };
-  // Its signal cannot confirm this worker, whatever the worker's clock says.
-  if (replacesAttempt && fixContext?.signalFile)
-    await removeSlotFiles(vars, [fixContext.signalFile]);
   if (launchDeliveryStartedAt) await recordLaunchBoundary();
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
