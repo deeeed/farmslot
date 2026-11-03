@@ -6,6 +6,7 @@ export * from './ci-watch-status.js';
 export * from './criterion-drafts.js';
 export * from './execution.js';
 export * from './fleet-refresh.js';
+export * from './native-launch.js';
 export * from './native-worker-target.js';
 export * from './operator-message.js';
 export * from './provenance.js';

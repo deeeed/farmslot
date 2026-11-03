@@ -66,6 +66,8 @@ import {
 import {
   catalogForNativeRunners,
   defaultModelForRunner,
+  nativeLaunchChoices,
+  nativeLaunchContextKey,
   ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
 
@@ -82,6 +84,7 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from '../../resource-cache.js';
+import { getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
@@ -168,6 +171,62 @@ export class NativeSessionView extends LitElement {
   @state() private mode: 'default' | 'plan' = 'default';
   @state() private cwd = '';
   @state() private customCwd = false;
+  @state() private prompt = '';
+  private launchUrlRestored = false;
+  private globalStop?: () => void;
+  private get launchChoices() {
+    return this.catalog
+      ? nativeLaunchChoices(this.catalog, getState().globalFilters, getState().fleet?.slots ?? [])
+      : [];
+  }
+  private get launchSelectionKey() {
+    const key = this.customCwd
+      ? `custom:${this.executionNodeId}`
+      : nativeLaunchContextKey({ cwd: this.cwd, executionNodeId: this.executionNodeId });
+    return this.launchChoices.some((choice) => choice.key === key) ? key : '';
+  }
+  private get launchReady() {
+    return (
+      !!this.cwd.trim() &&
+      this.launchChoices.some(
+        (choice) =>
+          choice.executionNodeId === this.executionNodeId &&
+          !choice.unavailableReason &&
+          (this.customCwd
+            ? choice.kind === 'custom'
+            : choice.kind === 'workspace' && choice.cwd === this.cwd),
+      )
+    );
+  }
+  private chooseLaunch(value: string) {
+    const previousNode = this.executionNodeId;
+    const choice = this.launchChoices.find((entry) => entry.key === value);
+    if (!choice || choice.unavailableReason) return;
+    this.customCwd = choice.kind === 'custom';
+    this.executionNodeId = choice.executionNodeId;
+    this.cwd = choice.cwd;
+    this.error = '';
+    if (previousNode !== this.executionNodeId) {
+      this.profile = undefined;
+      this.profileReady = true;
+      this.profileNodeId = this.executionNodeId;
+    }
+    this.syncLaunchUrl();
+  }
+  private syncLaunchUrl() {
+    if (this.worker || this.selectedId || this.fixture) return;
+    const params = hashParams();
+    params.set('cwd', this.cwd);
+    params.set('executionNodeId', this.executionNodeId);
+    params.set('custom', String(this.customCwd));
+    params.set('runner', this.runner);
+    params.set('model', this.model);
+    params.set('mode', this.mode);
+    const effort = this.executionPicker.toSelection().effort;
+    if (effort) params.set('effort', effort);
+    else params.delete('effort');
+    history.replaceState(null, '', buildHash('native', params));
+  }
   @state() private transcript: NativeTranscript = { events: [], cursor: 0 };
   @state() private historyScope?: NativeWorkerHistoryScope;
   @state() private receipts: NativeCommandReceipt[] = [];
@@ -319,6 +378,29 @@ export class NativeSessionView extends LitElement {
 
   protected updated(changed: PropertyValues) {
     this.renderedRevision = this.revision;
+    if (
+      !this.fixture &&
+      !this.worker &&
+      !this.selectedId &&
+      this.catalog &&
+      !this.launchUrlRestored
+    ) {
+      this.launchUrlRestored = true;
+      const params = hashParams();
+      const requestedRunner = params.get('runner');
+      if (requestedRunner && this.catalog.runners.some((entry) => entry.runner === requestedRunner))
+        this.runner = requestedRunner;
+      const requestedModel = params.get('model');
+      const runner = this.executionPicker.catalog.runners.find((entry) => entry.id === this.runner);
+      if (requestedModel && runner?.models.some((entry) => entry.id === requestedModel))
+        this.model = requestedModel;
+      this.mode = params.get('mode') === 'plan' ? 'plan' : 'default';
+      const effort = params.get('effort');
+      const row = this.executionPicker.rows[0];
+      if (effort && row && runner?.efforts.includes(effort))
+        this.executionPicker.setEffort(row.id, effort);
+    }
+
     if (
       changed.has('initialSessionId') &&
       changed.get('initialSessionId') &&
@@ -776,6 +858,13 @@ ${JSON.stringify(
 
   connectedCallback() {
     super.connectedCallback();
+    this.globalStop = subscribe(() => this.requestUpdate());
+    const params = hashParams();
+    if (params.has('cwd')) {
+      this.cwd = params.get('cwd') ?? '';
+      this.executionNodeId = params.get('executionNodeId') ?? 'local';
+      this.customCwd = params.get('custom') === 'true';
+    }
     document.addEventListener('fullscreenchange', this.fullscreenChanged);
     this.connected = Boolean(this.fixture) || gateway.connectionState === 'connected';
     if (!this.fixture) {
@@ -805,6 +894,7 @@ ${JSON.stringify(
     document.removeEventListener('fullscreenchange', this.fullscreenChanged);
     this.revision++;
     clearTimeout(this.timer);
+    this.globalStop?.();
     this.unsubscribe?.();
     this.historyStop?.();
     this.ownerStop?.();
@@ -831,12 +921,6 @@ ${JSON.stringify(
       : JSON.stringify([session.executionNodeId, session.id]);
   }
 
-  private contextChoice(context: { executionNodeId?: string; cwd: string }) {
-    return !context.executionNodeId || context.executionNodeId === 'local'
-      ? context.cwd
-      : JSON.stringify([context.executionNodeId, context.cwd]);
-  }
-
   private async connect() {
     const scope = this.fixture ? 'fixture' : (getResourceWorkspaceKey() ?? '');
     if (scope !== this.storageScope) {
@@ -846,7 +930,9 @@ ${JSON.stringify(
       this.inventoryUnsupported = false;
       this.catalogUnsupported = false;
       this.revision++;
-      this.selectedId = safeLsGet(this.key('selected')) ?? '';
+      this.selectedId = this.fixture
+        ? (safeLsGet(this.key('selected')) ?? '')
+        : this.initialSessionId;
       this.selectedNodeId = safeLsGet(this.key('selected-node')) ?? 'local';
       this.session = undefined;
       this.sessions = [];
@@ -876,6 +962,7 @@ ${JSON.stringify(
 
   private loadLocal() {
     this.draft = safeLsGet(this.sessionKey(`draft:${this.selectedId}`)) ?? '';
+    if (!this.selectedId) this.prompt = safeLsGet(this.key('new-prompt')) ?? '';
     // Terminal text the reader added to this conversation before it opened: taken only once the
     // view reads the worker's own session (connect() first loads the standalone selection).
     const context =
@@ -978,8 +1065,8 @@ ${JSON.stringify(
                 catalogForNativeRunners(this.catalog.runners, undefined, this.executionNodeId),
               );
             if (!this.cwd && !this.customCwd && this.catalog) {
-              this.cwd = this.catalog.contexts[0]?.cwd ?? '';
-              this.executionNodeId = this.catalog.contexts[0]?.executionNodeId ?? 'local';
+              const choice = this.launchChoices.find((choice) => !choice.unavailableReason);
+              if (choice) this.chooseLaunch(choice.key);
             }
           },
         ),
@@ -1034,8 +1121,8 @@ ${JSON.stringify(
         this.model = catalog.runners[0]?.defaultModel ?? '';
       }
       if (!this.cwd && !this.customCwd) {
-        this.cwd = catalog.contexts[0]?.cwd ?? '';
-        this.executionNodeId = catalog.contexts[0]?.executionNodeId ?? 'local';
+        const choice = this.launchChoices.find((choice) => !choice.unavailableReason);
+        if (choice) this.chooseLaunch(choice.key);
       }
       if (!this.selectedId) this.creating = true;
     } catch (error) {
@@ -1195,6 +1282,9 @@ ${JSON.stringify(
   }
 
   private async create(resume?: NativeSessionInfo) {
+    if (this.busy) return;
+    const firstPrompt = resume ? '' : this.prompt.trim();
+    if (!resume && (!firstPrompt || !this.launchReady)) return;
     if (
       this.worker ||
       !this.connected ||
@@ -1218,7 +1308,7 @@ ${JSON.stringify(
     }
     this.busy = true;
     this.error = '';
-    const revision = this.revision;
+    let revision = this.revision;
     const params: NativeSessionCreateParams = resume
       ? {
           executionNodeId: resume.executionNodeId,
@@ -1248,8 +1338,29 @@ ${JSON.stringify(
         params,
       );
       if (revision !== this.revision || !this.isConnected) return;
-      this.select(result.session.id, result.session.executionNodeId);
+      this.selectRouted(result.session.id, result.session.executionNodeId);
+      revision = this.revision;
       this.session = result.session;
+      this.busy = true;
+      if (firstPrompt) {
+        const command: LocalCommand = {
+          sessionId: result.session.id,
+          executionNodeId: result.session.executionNodeId,
+          generation: result.session.generation,
+          commandId: crypto.randomUUID(),
+          text: firstPrompt,
+        };
+        if (!safeLsSet(this.sessionKey(`command:${command.sessionId}`), JSON.stringify(command))) {
+          this.draft = firstPrompt;
+          this.error =
+            'The session started. Browser storage is unavailable; send the prompt from this conversation.';
+          return;
+        }
+        this.localCommand = command;
+        this.prompt = '';
+        safeLsRemove(this.key('new-prompt'));
+        await this.deliver(command);
+      }
       await this.refreshSessions();
     } catch (error) {
       if (revision === this.revision)
@@ -1552,7 +1663,9 @@ ${JSON.stringify(
           this.workspace = !this.workspace;
         },
       })}
-      ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
+      <div class="error launch-error" role=${this.error ? 'alert' : 'status'} aria-live="polite">
+        ${this.error || nothing}
+      </div>
       ${this.worker && (this.taskHistory || (this.session && !this.workerControl))
         ? html`<p class="meta" data-testid="native-worker-read-only">
             ${this.taskHistory
@@ -1568,85 +1681,88 @@ ${JSON.stringify(
       )}
       ${this.creating
         ? html`<section class="new-session">
-            <p>Start an agent workspace using an installed runner and its own account.</p>
-            <review-dispatch-picker
-              .viewModel=${this.executionPicker}
-              .discover=${false}
-              .disabled=${this.busy}
-              @review-dispatch-change=${() => {
-                this.mode = 'default';
-                this.requestUpdate();
-              }}
-            ></review-dispatch-picker>
-            ${(this.catalog?.executionNodes ?? [])
-              .filter((node) => node.unavailableReason)
-              .map(
-                (node) =>
-                  html`<p class="error" role="status" data-testid="native-target-unavailable">
-                    ${node.label}: ${node.unavailableReason}
-                  </p>`,
-              )}
-            <label
-              >Working directory<select
-                data-testid="native-context"
-                .value=${this.customCwd
-                  ? '__custom__'
-                  : this.contextChoice({ cwd: this.cwd, executionNodeId: this.executionNodeId })}
+            <label class="launch-prompt"
+              >What would you like to work on?
+              <textarea
+                data-testid="native-prompt"
+                rows="7"
+                .value=${this.prompt}
                 ?disabled=${this.busy}
-                @change=${(e: Event) => {
-                  const previousNode = this.executionNodeId;
-                  const value = (e.target as HTMLSelectElement).value;
-                  this.customCwd = value === '__custom__';
-                  if (this.customCwd) {
-                    const target =
-                      this.catalog?.executionNodes?.find(
-                        (node) => node.executionNodeId === this.executionNodeId,
-                      ) ?? this.catalog?.executionNodes?.[0];
-                    this.cwd = target?.homeDirectory ?? '';
-                    this.executionNodeId = target?.executionNodeId ?? this.executionNodeId;
-                  } else {
-                    const context = this.catalog?.contexts.find(
-                      (item) => this.contextChoice(item) === value,
-                    );
-                    if (context) {
-                      this.cwd = context.cwd;
-                      this.executionNodeId = context.executionNodeId ?? 'local';
-                    }
-                  }
-                  if (previousNode !== this.executionNodeId) {
-                    this.profile = undefined;
-                    this.profileReady = true;
-                    this.profileNodeId = this.executionNodeId;
+                @input=${(event: Event) => {
+                  this.prompt = (event.target as HTMLTextAreaElement).value;
+                  safeLsSet(this.key('new-prompt'), this.prompt);
+                }}
+                @keydown=${(event: KeyboardEvent) => {
+                  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+                    event.preventDefault();
+                    void this.create();
                   }
                 }}
+              ></textarea>
+            </label>
+            ${this.launchChoices.filter((choice) => choice.kind === 'custom' && choice.unavailableReason).map((choice) => html`<p class="error" role="status" data-testid="native-target-unavailable">${choice.label}: ${choice.unavailableReason}</p>`)}
+            <div class="launch-controls">
+              <label
+                >Where to run<choice-picker
+                  overlay
+                  data-testid="native-context"
+                  .value=${this.launchSelectionKey}
+                  placeholder="Choose where to run"
+                  ?disabled=${this.busy}
+                  @change=${(event: Event) =>
+                    this.chooseLaunch((event.target as HTMLElement & { value: string }).value)}
+                >
+                  ${this.launchChoices.map(
+                    (context, index, choices) =>
+                      html` ${index === 0 ||
+                        choices[index - 1].kind !== context.kind ||
+                        choices[index - 1].project !== context.project ||
+                        choices[index - 1].executionNodeId !== context.executionNodeId
+                          ? html`<option disabled value=${`group:${index}`}>
+                              ${context.kind === 'custom'
+                                ? 'Custom directories'
+                                : (context.project ?? 'Workspaces')}
+                              · ${context.executionNodeId}
+                            </option>`
+                          : nothing}
+                        <option
+                          value=${context.key}
+                          ?disabled=${Boolean(context.unavailableReason)}
+                        >
+                          ${context.label} ·
+                          ${context.cwd}${context.unavailableReason
+                            ? ` · ${context.unavailableReason}`
+                            : ''}
+                        </option>`,
+                  )}
+                </choice-picker></label
               >
-                ${(this.catalog?.contexts ?? []).map(
-                  (context) =>
-                    html`<option
-                      value=${this.contextChoice(context)}
-                      .selected=${!this.customCwd &&
-                      this.contextChoice(context) ===
-                        this.contextChoice({
-                          cwd: this.cwd,
-                          executionNodeId: this.executionNodeId,
-                        })}
-                    >
-                      ${context.label}${context.project ? ` · ${context.project}` : ''} ·
-                      ${context.executionNodeId ?? 'local'} · ${context.cwd}
-                    </option>`,
-                )}
-                <option value="__custom__" .selected=${this.customCwd}>Other directory</option>
-              </select></label
-            >
-            ${this.customCwd
-              ? html`<label
-                  >Directory on ${this.executionNodeId}<input
-                    data-testid="native-cwd"
-                    .value=${this.cwd}
-                    ?disabled=${this.busy}
-                    @input=${(e: Event) => (this.cwd = (e.target as HTMLInputElement).value)}
-                /></label>`
-              : nothing}
+              ${this.customCwd
+                ? html`<label
+                    >Directory on ${this.executionNodeId}<input
+                      data-testid="native-cwd"
+                      .value=${this.cwd}
+                      ?disabled=${this.busy}
+                      @input=${(event: Event) => {
+                        this.cwd = (event.target as HTMLInputElement).value;
+                        this.error = '';
+                        this.syncLaunchUrl();
+                      }}
+                  /></label>`
+                : nothing}
+              <review-dispatch-picker
+                .viewModel=${this.executionPicker}
+                .discover=${false}
+                .disabled=${this.busy}
+                @review-dispatch-change=${() => {
+                  this.mode = 'default';
+                  this.error = '';
+                  this.syncLaunchUrl();
+                  this.requestUpdate();
+                }}
+              ></review-dispatch-picker>
+            </div>
+
             ${this.catalog?.contexts.some(
               (context) =>
                 (context.executionNodeId ?? 'local') === this.executionNodeId &&
@@ -1662,6 +1778,7 @@ ${JSON.stringify(
                     @native-profile-change=${(event: CustomEvent<NativeProfileSelection>) => {
                       const selected = event.detail;
                       if (selected.executionNodeId !== this.executionNodeId) return;
+                      this.error = '';
                       this.profile = selected.profile;
                       this.profileReady = selected.ready;
                       this.profileNodeId = selected.executionNodeId;
@@ -1677,12 +1794,19 @@ ${JSON.stringify(
                 )
               : nothing}
             <label
-              >Interaction mode<select
+              >Interaction mode<choice-picker
+                overlay
                 data-testid="native-mode"
                 .value=${this.mode}
                 ?disabled=${this.busy}
-                @change=${(e: Event) =>
-                  (this.mode = (e.target as HTMLSelectElement).value as 'default' | 'plan')}
+                @change=${(e: Event) => {
+                  this.mode =
+                    (e.target as HTMLElement & { value: string }).value === 'plan'
+                      ? 'plan'
+                      : 'default';
+                  this.error = '';
+                  this.syncLaunchUrl();
+                }}
               >
                 ${(
                   this.catalog?.runners.find((option) => option.runner === this.runner)?.modes ?? []
@@ -1692,12 +1816,8 @@ ${JSON.stringify(
                       ${mode === 'plan' ? 'Plan' : 'Default'}
                     </option>`,
                 )}
-              </select></label
+              </choice-picker></label
             >
-            <p class="meta">
-              Model choices are configured suggestions. Your runner account determines access and
-              billing. The selected machine runs the session using its configured owner's account.
-            </p>
             <div>
               <button
                 class="primary"
@@ -1710,6 +1830,8 @@ ${JSON.stringify(
                 !this.connected ||
                 (!this.fixture && !this.catalogCurrent) ||
                 this.busy ||
+                !this.launchReady ||
+                !this.prompt.trim() ||
                 !this.cwd.trim() ||
                 !this.runner ||
                 !this.profileReady}

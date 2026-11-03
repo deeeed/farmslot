@@ -75,6 +75,7 @@ const homes = {
 };
 const sessions = new Map<string, NativeSessionInfo>();
 const mutations: string[] = [];
+const sentPrompts: Array<{ machine: string; commandId: string; text: string }> = [];
 let worker = false;
 let hostSupportsDelegation = true;
 const sockets = new Map<string, WebSocket>();
@@ -203,6 +204,7 @@ for (const machine of machines) {
         result = { session: info };
       } else if (frame.params.method === Methods.NATIVE_SESSION_SEND) {
         mutations.push('send');
+        sentPrompts.push({ machine, commandId: params.commandId, text: params.text });
         result = {
           commandId: params.commandId,
           state: 'accepted',
@@ -891,6 +893,12 @@ test(
         const page = await CdpWebPage.connectToTarget(tab);
         try {
           await page.session.call('Page.bringToFront');
+          await page.session.call('Emulation.setDeviceMetricsOverride', {
+            width: 1440,
+            height: 1000,
+            deviceScaleFactor: 1,
+            mobile: false,
+          });
           await page.waitForSelector('.auth-input', { timeoutMs: 30_000 });
           await page.click('.auth-input');
           // The disposable fixture secret stays in memory and is typed through the actual form.
@@ -933,34 +941,24 @@ test(
               Buffer.from(image.data, 'base64'),
             );
           }
-          // Keyboard navigation avoids the OS-native popup while exercising the select's real change handler.
-          await page.evaluate(
-            `document.querySelector('native-session-view').shadowRoot.querySelector('[data-testid=native-context]').focus()`,
-          );
-          await page.session.call('Input.dispatchKeyEvent', {
-            type: 'keyDown',
-            key: 'o',
-            code: 'KeyO',
-            windowsVirtualKeyCode: 79,
-            text: 'o',
-            unmodifiedText: 'o',
-          });
-          await page.session.call('Input.dispatchKeyEvent', {
-            type: 'keyUp',
-            key: 'o',
-            code: 'KeyO',
-            windowsVirtualKeyCode: 79,
-          });
-          await page.keyPress('Tab');
-          if (debugDirectory) {
-            const selection = await page.evaluate(
-              `(() => { const v=document.querySelector('native-session-view'); return {selected:v.shadowRoot.querySelector('[data-testid=native-context]').value,custom:v.customCwd,node:v.executionNodeId,cwd:v.cwd}; })()`,
+          const openLocations = async () => {
+            const point = await page.evaluate<{ x: number; y: number }>(
+              `(() => { const p=document.querySelector('native-session-view').shadowRoot.querySelector('[data-testid=native-context]'); const b=p.shadowRoot.querySelector('.trigger');b.scrollIntoView({block:'center'});const r=b.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`,
             );
-            await writeFile(
-              path.join(debugDirectory, 'after-custom.json'),
-              JSON.stringify(selection, null, 2),
+            await page.clickPoint(point.x, point.y);
+          };
+          const targetHomes = [];
+          for (const machine of machines) {
+            await openLocations();
+            await page.click(`[data-choice-value="custom:${machine}"]`);
+            const selected = await page.evaluate<{ node: string; cwd: string }>(
+              `(() => { const v=document.querySelector('native-session-view'); return {node:v.executionNodeId,cwd:v.shadowRoot.querySelector('[data-testid=native-cwd]').value}; })()`,
             );
+            assert.deepEqual(selected, { node: machine, cwd: homes[machine] });
+            targetHomes.push(selected);
           }
+          await openLocations();
+          await page.click('[data-choice-value="custom:macwork"]');
           await page.waitForSelector('[data-testid="native-cwd"]', { timeoutMs: 10_000 });
           const initial = await page.evaluate<{ home: string; node: string }>(
             `(() => { const v=document.querySelector('native-session-view'); return {home:v.shadowRoot.querySelector('[data-testid=native-cwd]').value,node:v.executionNodeId}; })()`,
@@ -968,11 +966,41 @@ test(
           assert.deepEqual(initial, { home: homes.macwork, node: 'macwork' });
           const custom = `${homes.macwork}/ui-custom`;
           await page.setInput('[data-testid="native-cwd"]', custom);
+          await page.setInput(
+            '[data-testid="native-prompt"]',
+            'Read this workspace without changing files.',
+          );
           await page.waitForExpression(
             `(() => { const v=document.querySelector('native-session-view'); const b=v?.shadowRoot?.querySelector('[data-testid=native-create]'); return Boolean(b&&!b.disabled); })()`,
             { timeoutMs: 15_000 },
           );
-          await page.click('[data-testid="native-create"]');
+          const launchUrl = await page.evaluate<string>('location.hash');
+          const launchParams = new URLSearchParams(launchUrl.split('?')[1]);
+          assert.equal(launchParams.get('cwd'), custom);
+          assert.equal(launchParams.get('executionNodeId'), 'macwork');
+          assert.equal(launchParams.get('custom'), 'true');
+          const previousDocument = await page.evaluate<number>('performance.timeOrigin');
+          await page.session.call('Page.reload');
+          await page.waitForExpression(
+            `(() => {const v=document.querySelector('native-session-view');return performance.timeOrigin !== ${previousDocument} && v?.catalogCurrent && v.shadowRoot.querySelector('[data-testid=native-prompt]')?.value==='Read this workspace without changing files.';})()`,
+            { timeoutMs: 30_000 },
+          );
+          const restored = await page.evaluate(
+            `(() => {const v=document.querySelector('native-session-view');return {cwd:v.cwd,node:v.executionNodeId,custom:v.customCwd,selects:v.shadowRoot.querySelectorAll('select').length};})()`,
+          );
+          assert.deepEqual(restored, { cwd: custom, node: 'macwork', custom: true, selects: 0 });
+          if (debugDirectory) {
+            const image = await page.session.call<{ data: string }>('Page.captureScreenshot', {
+              format: 'png',
+            });
+            await writeFile(
+              path.join(debugDirectory, 'prompt-launcher.png'),
+              Buffer.from(image.data, 'base64'),
+            );
+          }
+          const sentBefore = sentPrompts.length;
+          await page.click('[data-testid="native-prompt"]');
+          await page.keyPress('Enter');
           await page.waitForExpression(
             `(() => { const v=document.querySelector('native-session-view'); return v?.session?.cwd===${JSON.stringify(custom)}; })()`,
             { timeoutMs: 15_000 },
@@ -995,6 +1023,13 @@ test(
             generation: 1,
             cwd: custom,
           });
+          await page.waitForExpression(`!document.querySelector('native-session-view').busy`, {
+            timeoutMs: 10_000,
+          });
+          assert.equal(sentPrompts.length, sentBefore + 1);
+          assert.equal(sentPrompts.at(-1)?.text, 'Read this workspace without changing files.');
+          assert.equal(sentPrompts.at(-1)?.machine, 'macwork');
+          assert.match(sentPrompts.at(-1)?.commandId ?? '', /^[0-9a-f-]{36}$/);
           const output = process.env.FARMSLOT_NATIVE_LAUNCH_PROOF_DIR;
           if (output) {
             assert(path.resolve(output).startsWith('/tmp/cx-native-launch-'));
@@ -1013,6 +1048,10 @@ test(
                   pass: true,
                   initial,
                   session: current,
+                  restored,
+                  targetHomes,
+                  promptSentOnce: true,
+                  commandId: sentPrompts.at(-1)?.commandId,
                   isolation: 'private gateway, fixture identity and synthetic execution nodes',
                 },
                 null,

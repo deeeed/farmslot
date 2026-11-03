@@ -9,6 +9,7 @@ export class ChoicePicker extends LitElement {
   static formAssociated = true;
   private readonly internals = this.attachInternals();
   @property() value = '';
+  @property({ type: Boolean, reflect: true }) overlay = false;
   @property({ type: Boolean, reflect: true }) disabled = false;
   @property({ type: Boolean }) required = false;
   @property() placeholder = 'Choose…';
@@ -59,6 +60,17 @@ export class ChoicePicker extends LitElement {
     .trigger:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+    :host([overlay]) {
+      position: relative;
+    }
+    :host([overlay]) .panel {
+      position: absolute;
+      z-index: 20;
+      top: 100%;
+      left: 0;
+      right: 0;
+      box-shadow: 0 8px 24px #0006;
     }
     .panel {
       border: 1px solid ${unsafeCSS(colors.accentDim)};

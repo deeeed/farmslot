@@ -9,12 +9,19 @@ import {
   type NativeSessionInfo,
 } from '@farmslot/protocol';
 import { nativeObservationQuery } from '@farmslot/protocol/client-cache';
-import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+import {
+  catalogForNativeRunners,
+  nativeLaunchChoices,
+  nativeLaunchContextKey,
+  ReviewDispatchViewModel,
+} from '@farmslot/review-dispatch';
 
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { getResourceCache, getResourceNativeOwnerId } from '../../lib/resource-cache';
 import { readErrorMessage } from '../../lib/resource-read-status';
 import { useConnectionStore } from '../../store/connection';
+import { useFilterStore } from '../../store/filters';
+import { useFleetStore } from '../../store/fleet';
 import { heldConnectionCurrent } from '../../store/held-connection';
 
 import { useNativeProfileSelection } from './use-native-profile-selection';
@@ -25,6 +32,10 @@ export function useNativeSessionSetup(enabled: boolean) {
   const principalId = useConnectionStore((state) => state.principalId);
   const access = useConnectionStore((state) => state.workspaceAccess);
   const [contextKey, setContextKey] = useState('');
+  const [customCwd, setCustomCwd] = useState<string>();
+  const [effort, setEffort] = useState<string | null>(null);
+  const filters = useFilterStore((state) => state.filters);
+  const fleet = useFleetStore((state) => state.fleet);
   const [runnerId, setRunnerId] = useState('');
   const [modelId, setModelId] = useState('');
   const [mode, setMode] = useState<'default' | 'plan'>('default');
@@ -55,21 +66,30 @@ export function useNativeSessionSetup(enabled: boolean) {
     [enabled, nativeOwner],
   );
   const catalogObservation = useResourceQuery(catalogQuery);
-  const catalog = catalogObservation.data;
+  const savedCatalog = catalogObservation.data;
+  const choices = useMemo(
+    () => (savedCatalog ? nativeLaunchChoices(savedCatalog, filters, fleet?.slots ?? []) : []),
+    [savedCatalog, filters, fleet],
+  );
+  const catalog = savedCatalog;
   const loading = catalogObservation.status === 'loading';
   useEffect(() => {
     if (catalogObservation.status !== 'ready' || !catalog) return;
     setRunnerId((current) => current || catalog.runners[0]?.runner || '');
     setContextKey(
-      (current) => current || (catalog.contexts[0] ? workspaceKey(catalog.contexts[0]) : ''),
+      (current) => current || choices.find((choice) => !choice.unavailableReason)?.key || '',
     );
-  }, [catalogObservation.status, catalog]);
+  }, [catalogObservation.status, catalog, choices]);
   const runner = runnerId
     ? catalog?.runners.find((item) => item.runner === runnerId)
     : catalog?.runners[0];
+  const choice = choices.find((item) => item.key === contextKey);
+  const context =
+    choice && !choice.unavailableReason
+      ? { ...choice, cwd: choice.kind === 'custom' ? (customCwd ?? choice.cwd) : choice.cwd }
+      : undefined;
   const contextIndex =
-    catalog?.contexts.findIndex((item) => workspaceKey(item) === contextKey) ?? -1;
-  const context = catalog?.contexts[contextIndex];
+    catalog?.contexts.findIndex((item) => nativeLaunchContextKey(item) === contextKey) ?? -1;
   // Pi and OpenCode list the models of the node the session will run on.
   const executionNode = context?.executionNodeId ?? 'local';
   const model =
@@ -83,16 +103,7 @@ export function useNativeSessionSetup(enabled: boolean) {
       catalog?.runners.length
         ? new ReviewDispatchViewModel({
             context: { allowedActions: ['chat'] },
-            catalog: {
-              runners: catalog.runners.map((entry) => ({
-                id: entry.runner,
-                models: nativeRunnerModels(entry, executionNode).map((id) => ({ id })),
-                defaultModel: nativeRunnerDefaultModel(entry, executionNode),
-                allowCustomModels: false,
-                efforts: [],
-                defaultEffort: null,
-              })),
-            },
+            catalog: catalogForNativeRunners(catalog.runners, undefined, executionNode),
             sequence: [
               {
                 runner: runner?.runner ?? catalog.runners[0].runner,
@@ -100,13 +111,13 @@ export function useNativeSessionSetup(enabled: boolean) {
                   runner && nativeRunnerModels(runner, executionNode).includes(modelId)
                     ? modelId
                     : null,
-                effort: null,
+                effort,
                 mode: 'cold',
               },
             ],
           })
         : undefined,
-    [catalog, runner, modelId, executionNode],
+    [catalog, runner, modelId, executionNode, effort],
   );
   const selectedNode = useRef('local');
   if (context) selectedNode.current = context.executionNodeId ?? 'local';
@@ -122,6 +133,8 @@ export function useNativeSessionSetup(enabled: boolean) {
   const launchKey = JSON.stringify([
     catalogKey,
     contextKey,
+    context?.cwd,
+    effort,
     runner?.runner,
     model,
     selectedMode,
@@ -132,6 +145,10 @@ export function useNativeSessionSetup(enabled: boolean) {
   return {
     viewModel: {
       catalog,
+      choices,
+      contextKey,
+      customCwd: context?.cwd ?? '',
+      custom: choice?.kind === 'custom',
       executionPicker,
       contextIndex,
       contextUnavailable: !!contextKey && !context,
@@ -148,7 +165,7 @@ export function useNativeSessionSetup(enabled: boolean) {
         enabled &&
         status === 'connected' &&
         access !== 'none' &&
-        !!context &&
+        !!context?.cwd.trim() &&
         !!runner &&
         !loading &&
         catalogReady &&
@@ -167,14 +184,34 @@ export function useNativeSessionSetup(enabled: boolean) {
           profiles.actions.refresh();
         },
       },
+      selectChoice: (key: string) => {
+        const next = choices.find((choice) => choice.key === key);
+        if (!next || next.unavailableReason) return;
+        launchKeyRef.current = '';
+        setError('');
+        setContextKey(key);
+        setCustomCwd(next.cwd);
+      },
+      selectCustomCwd: (value: string) => {
+        launchKeyRef.current = '';
+        setError('');
+        setCustomCwd(value);
+      },
+      selectEffort: (value: string | null) => {
+        launchKeyRef.current = '';
+        setError('');
+        setEffort(value);
+      },
       selectContext: (index: number) => {
+        setError('');
         const next = catalog?.contexts[index];
-        if (next && workspaceKey(next) !== contextKey) {
+        if (next && nativeLaunchContextKey(next) !== contextKey) {
           launchKeyRef.current = '';
-          setContextKey(workspaceKey(next));
+          setContextKey(nativeLaunchContextKey(next));
         }
       },
       selectRunner: (value: string) => {
+        setError('');
         if (value === runnerId) return;
         launchKeyRef.current = '';
         setRunnerId(value);
@@ -182,11 +219,13 @@ export function useNativeSessionSetup(enabled: boolean) {
         setMode('default');
       },
       selectModel: (value: string) => {
+        setError('');
         if (value === modelId) return;
         launchKeyRef.current = '';
         setModelId(value);
       },
       selectMode: (value: 'default' | 'plan') => {
+        setError('');
         if (value === mode) return;
         launchKeyRef.current = '';
         setMode(value);
@@ -235,6 +274,7 @@ export function useNativeSessionSetup(enabled: boolean) {
               runner: runner.runner,
               ...(model ? { model } : {}),
               mode: selectedMode,
+              ...(effort ? { effort } : {}),
               ...nativeProfileSessionParams(profile),
             },
             30_000,
@@ -254,8 +294,4 @@ export function useNativeSessionSetup(enabled: boolean) {
       },
     },
   };
-}
-
-function workspaceKey(context: NativeSessionCatalogResult['contexts'][number]) {
-  return JSON.stringify([context.executionNodeId ?? 'local', context.cwd]);
 }
