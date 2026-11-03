@@ -1,0 +1,1 @@
+- Run detail hides empty progress and transfer panels, groups chronological review rounds with their fixes, and labels the task estimate with its purpose.

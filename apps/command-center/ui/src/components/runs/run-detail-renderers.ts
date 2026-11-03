@@ -55,6 +55,7 @@ import { renderCollapsiblePanel } from '../shared/collapsible-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import type { EvidenceReviewerView } from '../shared/evidence-reviewer-url-state.js';
+import { getFileTransfersForRun } from '../shared/file-transfer-progress-store.js';
 import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
 import { RUN_MIRROR_REFRESH_TITLE } from '../shared/run-mirror-refresh.js';
 import { renderRunTitle } from '../shared/run-title.js';
@@ -511,13 +512,16 @@ export function renderRunArtifactExplorer(
 export function renderRunGrade(grade: RunGrade): unknown {
   const dc = GRADE_COLORS[grade.difficulty] ?? colors.textMuted;
   return html`
+    <p class="grade-rationale">Task difficulty and suggested model, estimated before execution.</p>
     <div class="grade-card">
       <span class="grade-difficulty" style="background:${dc}22; color:${dc}"
         >${grade.difficulty}</span
       >
       <span class="grade-rationale">${grade.rationale}</span>
       ${grade.modelRecommendation
-        ? html`<span style="color:${colors.textMuted}">${grade.modelRecommendation}</span>`
+        ? html`<span style="color:${colors.textMuted}"
+            >Suggested model: ${grade.modelRecommendation}</span
+          >`
         : nothing}
     </div>
   `;
@@ -1515,21 +1519,26 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ${r.grade
       ? renderCollapsiblePanel({
           id: 'run-grade',
-          label: 'Grade',
+          label: 'Task estimate',
           summary: [r.grade.difficulty, r.grade.modelRecommendation].filter(Boolean).join(' · '),
           open: ctx.panelOpen('run-grade'),
           onToggle: () => ctx.togglePanel('run-grade'),
           body: () => ctx.renderGrade(r.grade!),
         })
       : nothing}
-    ${renderCollapsiblePanel({
-      id: 'run-transfers',
-      label: 'Transfers',
-      open: ctx.panelOpen('run-transfers'),
-      onToggle: () => ctx.togglePanel('run-transfers'),
-      body: () =>
-        html`<file-transfer-progress-banner inline run-id=${r.id}></file-transfer-progress-banner>`,
-    })}
+    ${getFileTransfersForRun(r.id).length
+      ? renderCollapsiblePanel({
+          id: 'run-transfers',
+          label: 'Transfers',
+          open: ctx.panelOpen('run-transfers'),
+          onToggle: () => ctx.togglePanel('run-transfers'),
+          body: () =>
+            html`<file-transfer-progress-banner
+              inline
+              run-id=${r.id}
+            ></file-transfer-progress-banner>`,
+        })
+      : nothing}
     ${ctx._renderEvidenceOverlay(r)}
   `;
 }

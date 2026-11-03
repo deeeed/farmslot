@@ -71,6 +71,13 @@ export function runChecklistProgressView(
     (step) => step.name === 'ci-watch' && step.status === 'running',
   )?.outputs;
   const effective = progress ?? (ci?.fixInProgress === true ? ciFixTaskProgress(ci) : undefined);
+  return runChecklistProgressSummary(effective);
+}
+
+/** Display projection for an already-held checklist, independent of whether its reader is active. */
+export function runChecklistProgressSummary(
+  effective: TaskProgressStructured | null | undefined,
+): RunChecklistProgressView | null {
   const completed = effective?.completedSteps;
   const total = effective?.totalSteps;
   let label = effective?.currentStep;
