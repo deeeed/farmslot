@@ -74,6 +74,7 @@ import {
   evidenceReviewerViewKey,
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
+import { subscribeFileTransferStore } from '../shared/file-transfer-progress-store.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -337,8 +338,11 @@ export class RunDetail extends RunDetailState {
     });
   }
 
+  private _unsubTransfers?: () => void;
+
   connectedCallback() {
     super.connectedCallback();
+    this._unsubTransfers = subscribeFileTransferStore(() => this.requestUpdate());
     this._syncState(getState());
     window.addEventListener('hashchange', this._onHashChange);
     this.unsub = subscribe((s) => this._syncState(s));
@@ -398,6 +402,8 @@ export class RunDetail extends RunDetailState {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this._onHashChange);
     this.unsub?.();
+    this._unsubTransfers?.();
+    this._unsubTransfers = undefined;
     if (this._clock) clearInterval(this._clock);
     if (this._jumpTimer) clearTimeout(this._jumpTimer);
     this._ciPoke.dispose();

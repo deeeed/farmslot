@@ -22,20 +22,31 @@ export interface ReviewHistoryFix {
 
 export type ReviewHistoryEvent =
   | { kind: 'review'; key: string; at: string | null; round: ReviewHistoryRound }
-  | { kind: 'fix'; key: string; at: string | null; fix: ReviewHistoryFix }
+  | { kind: 'fix'; key: string; roundKey: string; at: string | null; fix: ReviewHistoryFix }
   | { kind: 'gate'; key: string; at: string | null; label: string };
+
+/** A completed result without a start belongs at its completion, never before the first round. */
+export function compareReviewHistoryRounds(a: ReviewHistoryRound, b: ReviewHistoryRound): number {
+  const time = (round: ReviewHistoryRound) => round.startedAt ?? round.completedAt ?? '\uffff';
+  // Recovery attempts can share their start and loop. Keep producer order for that tie.
+  return time(a).localeCompare(time(b)) || a.loopNumber - b.loopNumber;
+}
 
 /** A replay keeps its own event, even if the engine resets the charged loop number. */
 export function reviewHistoryTimeline(
   run: Run,
   rounds: ReviewHistoryRound[],
 ): ReviewHistoryEvent[] {
-  const ordered = [...rounds].sort((a, b) => (a.startedAt ?? '').localeCompare(b.startedAt ?? ''));
+  const ordered = [...rounds].sort(compareReviewHistoryRounds);
   const events: ReviewHistoryEvent[] = [];
   const fixes: ReviewHistoryFix[] = [];
   for (const round of ordered) {
     if (round.hasFix) {
-      const key = round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`;
+      // Artifact hydration may replace a pathname with a Git alias for the same code fix.
+      const key =
+        round.fixBaseSha && round.fixHeadSha
+          ? `${round.reviewId}:fix:${round.fixBaseSha}:${round.fixHeadSha}`
+          : (round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`);
       let fix = fixes.find((entry) => entry.key === key);
       if (!fix) {
         fix = {
@@ -59,12 +70,18 @@ export function reviewHistoryTimeline(
         events.push({
           kind: 'fix',
           key,
+          roundKey: round.key,
           at: fix.startedAt ?? fix.completedAt ?? round.startedAt,
           fix,
         });
       }
     }
-    events.push({ kind: 'review', key: round.key, at: round.startedAt, round });
+    events.push({
+      kind: 'review',
+      key: round.key,
+      at: round.startedAt ?? round.completedAt,
+      round,
+    });
   }
   // Match the same finding across line/severity changes. A different reviewer's omission is
   // not confirmation, and an incomplete/failed result cannot resolve another round's work.
@@ -122,7 +139,14 @@ export function reviewHistoryTimeline(
       diffError: null,
       verifiedAt: null,
     };
-    events.push({ kind: 'fix', key: fix.key, at: fix.startedAt, fix });
+    const index = events.findIndex((event) => event.kind === 'review' && event.key === round.key);
+    events.splice(index + 1, 0, {
+      kind: 'fix',
+      key: fix.key,
+      roundKey: round.key,
+      at: fix.startedAt,
+      fix,
+    });
   }
   const gate = [...run.decisions]
     .reverse()
@@ -137,10 +161,7 @@ export function reviewHistoryTimeline(
       at: gate.createdAt,
       label: 'Waiting for your decision',
     });
-  return events.sort(
-    (a, b) =>
-      (a.at ?? '').localeCompare(b.at ?? '') || (a.kind === b.kind ? 0 : a.kind === 'fix' ? -1 : 1),
-  );
+  return events;
 }
 
 /** Both clients open source at the head owned by this round, never the current checkout. */

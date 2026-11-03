@@ -17,7 +17,7 @@ import {
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
-import { reviewHistoryTimeline } from './review-history-timeline.js';
+import { compareReviewHistoryRounds, reviewHistoryTimeline } from './review-history-timeline.js';
 import { runActivityView, runReviewActivityContext } from './run-activity.js';
 import { reviewAttemptFailureReason } from './run-review-failures.js';
 
@@ -341,9 +341,7 @@ export function reviewHistoryView(
           (left.actor?.startedAt ?? '').localeCompare(right.actor?.startedAt ?? '') ||
           left.loop - right.loop,
       );
-    let roundNumber = 0;
     const rounds = sources.map(({ loop, actor }): ReviewHistoryRound => {
-      roundNumber = Math.max(roundNumber + 1, loop);
       const sameLoop = actors.filter((context) => context.reviewLoopNumber === loop);
       const ownsAttempt = (
         entry: { startedAt?: string; completedAt?: string; verdict?: string; headSha?: string },
@@ -565,7 +563,7 @@ export function reviewHistoryView(
         key: actor?.id ?? `${id}:${loop}`,
         reviewId: id,
         loopNumber: loop,
-        roundNumber,
+        roundNumber: 0,
         runner: actor?.runner ?? review?.runner ?? text(step?.outputs?.runner) ?? 'Unknown runner',
         model: actor?.model ?? review?.model ?? text(step?.outputs?.model) ?? 'default',
         mode: mode === 'warm' || mode === 'cold' ? mode : null,
@@ -684,6 +682,7 @@ export function reviewHistoryView(
       };
     });
     if (!rounds.length) continue;
+    rounds.sort(compareReviewHistoryRounds);
     const latest = rounds.at(-1)!;
     const reviewerActive = actors.some((context) =>
       ['launching', 'working', 'waiting'].includes(context.status),
@@ -713,7 +712,11 @@ export function reviewHistoryView(
       rounds,
     });
   }
-  const roundCount = checks.reduce((sum, check) => sum + check.rounds.length, 0);
+  const orderedRounds = checks.flatMap((check) => check.rounds).sort(compareReviewHistoryRounds);
+  orderedRounds.forEach((round, index) => {
+    round.roundNumber = index + 1;
+  });
+  const roundCount = orderedRounds.length;
   const replayStep = run.steps.find((step) => step.name === 'review' && step.status === 'running');
   const activeReplay =
     run.status === 'reviewing' &&

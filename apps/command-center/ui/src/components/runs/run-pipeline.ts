@@ -22,6 +22,7 @@ import {
   acceptancePanelPresentation,
   runActivityStepStatus,
   runActivityView,
+  runChecklistProgressSummary,
   runChecklistProgressView,
 } from '@farmslot/review-dispatch';
 
@@ -287,23 +288,29 @@ export class RunPipeline extends LitElement {
 
   /** Run detail's order: canvas detail, step progress, the host's artifacts, criteria. */
   private renderPanels() {
-    const checklist = runChecklistProgressView(this.run, this.taskProgress);
+    const checklist =
+      runChecklistProgressView(this.run, this.taskProgress) ??
+      runChecklistProgressSummary(this._activeTaskProgress());
+    const hasProgress = Boolean(checklist);
+    const progressSummary = checklist ? `${checklist.counts} · ${checklist.label}` : '';
     const acceptance = this.renderAcceptancePanel();
     const inputs = acceptance === nothing ? null : acceptancePanelInputs(this);
     const progressOpen = runDetailPanelOpen('run-step-progress');
     const detachedInspector = Boolean(this.selectedStepName) && !progressOpen;
     return html`
-      ${renderCollapsiblePanel({
-        id: 'run-step-progress',
-        label: 'Step progress',
-        summary: checklist ? `${checklist.counts} · ${checklist.label}` : 'no checklist',
-        open: progressOpen,
-        onToggle: () => this.togglePanel('run-step-progress'),
-        body: () =>
-          html`${this.renderChecklist()}<slot name="canvas-detail"></slot
-            >${this.renderProgressSection()}`,
-      })}
-      ${detachedInspector ? html`<slot name="canvas-detail"></slot>` : nothing}
+      ${hasProgress
+        ? renderCollapsiblePanel({
+            id: 'run-step-progress',
+            label: 'Step progress',
+            summary: progressSummary,
+            open: progressOpen,
+            onToggle: () => this.togglePanel('run-step-progress'),
+            body: () =>
+              html`${this.renderChecklist()}<slot name="canvas-detail"></slot
+                >${this.renderProgressSection()}`,
+          })
+        : nothing}
+      ${detachedInspector || !hasProgress ? html`<slot name="canvas-detail"></slot>` : nothing}
       <slot name="artifacts"></slot>
       ${inputs || this.acceptanceRowHeld
         ? renderCollapsiblePanel({
