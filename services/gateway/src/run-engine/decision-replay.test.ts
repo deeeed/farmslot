@@ -154,6 +154,35 @@ test('latestResolvedHumanGateDecision prefers latest approval after review reque
   assert.equal(latestResolvedHumanGateDecision([decisions[0]], true)?.id, undefined);
 });
 
+test('an unresolved gate re-entry blocks replay of an older approval until resolved', () => {
+  const approval: RunDecision = {
+    ...makeCollisionDecision([]),
+    type: 'engine_human_gate',
+    resolvedAction: 'approve-publish',
+  };
+  const reentry: RunDecision = {
+    ...approval,
+    id: 'reentered-gate',
+    resolvedAt: undefined,
+    resolvedAction: undefined,
+    context: { gateReentry: true },
+  };
+  for (const approvalOnly of [false, true]) {
+    assert.equal(latestResolvedHumanGateDecision([approval, reentry], approvalOnly), undefined);
+    assert.equal(
+      latestResolvedHumanGateDecision([approval, { ...reentry, context: undefined }], approvalOnly),
+      approval,
+      'ordinary pending decisions retain the existing replay policy',
+    );
+    const resolved = {
+      ...reentry,
+      resolvedAt: approval.resolvedAt,
+      resolvedAction: 'approve-publish',
+    };
+    assert.equal(latestResolvedHumanGateDecision([approval, resolved], approvalOnly), resolved);
+  }
+});
+
 test('human gate review requests replay once after stale engine resume', () => {
   const decision: RunDecision = {
     id: 'request-extra',

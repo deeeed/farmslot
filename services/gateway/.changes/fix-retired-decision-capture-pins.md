@@ -1,0 +1,1 @@
+- Verify re-entered gates prevent stale approval replay and retired approval evidence survives record archival.
