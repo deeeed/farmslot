@@ -365,3 +365,35 @@ for (const scenario of ['changed-subject', 'changed-diff']) {
     assert.equal((await f.readiness()).state, 'not-ready', scenario);
   });
 }
+
+test('recovered issues mark their launch inputs reviewed without replacing the passing baseline', async (t) => {
+  const f = await fixture(t);
+  const passing = 'a'.repeat(64);
+  const launched = 'b'.repeat(64);
+  await writeFile(
+    path.join(f.taskDir, f.ctx.reviewResultFile!),
+    JSON.stringify({
+      schemaVersion: 1,
+      verdict: 'issues',
+      issues: [{ file: 'src/example.ts', description: 'Remaining finding' }],
+    }),
+  );
+  const current = getRun(f.run.id)!;
+  updateRun(f.run.id, {
+    engineState: {
+      ...current.engineState,
+      reviewedInputs: { fingerprint: passing, recordedAt: '2026-11-03T00:00:00Z' },
+      reviewInputsAtLaunch: launched,
+      publishGate: {
+        ...current.engineState?.publishGate,
+        reviews: [{ ...f.existing, verdict: 'skipped', unresolvedCount: 0, attempts: [] }],
+      },
+    },
+  });
+  const recovered = await f.recover();
+  assert.ok(recovered.recoveredIds.includes(f.existing.id));
+  const state = getRun(f.run.id)!.engineState!;
+  assert.equal(state.publishGate?.reviews?.[0]?.verdict, 'issues');
+  assert.equal(state.reviewedInputs?.fingerprint, passing);
+  assert.equal(state.reviewedInputs?.rerunFor, launched);
+});

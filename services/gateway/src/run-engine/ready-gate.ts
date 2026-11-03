@@ -71,7 +71,7 @@ import {
   assertReviewRoundAvailable,
   reviewNoVerdictCapReason,
 } from '../review/review-round-budget.js';
-import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
+import { recordReviewedInputs, reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import {
   assertLineageBelongsToRun,
   latestReviewOfLineage,
@@ -313,6 +313,7 @@ async function resumeInterruptedPublicationReviewOnce(
       },
     },
   });
+  if (persisted.verdict === 'issues') await recordReviewedInputs(runId, 'issues');
   return { reviewId: interrupted.id, verdict: result.verdict };
 }
 
@@ -421,6 +422,7 @@ async function resumeVisualRepairOnce(
       },
     },
   });
+  if (persisted.verdict === 'issues') await recordReviewedInputs(runId, 'issues');
   if (activeVisualRepair(getRun(runId)!)?.status === 'delivered') {
     updateVisualRepair(runId, repair.repairId, {
       status: 'completed',
@@ -692,6 +694,7 @@ export async function executePublishGateReviewPlan(
         },
       },
     });
+    if (reviewStatus.verdict === 'issues') await recordReviewedInputs(runId, 'issues');
     if (reviewResult.verdict !== 'pass') break;
   }
   return { reviewIds };

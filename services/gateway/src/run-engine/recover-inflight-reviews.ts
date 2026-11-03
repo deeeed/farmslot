@@ -1048,8 +1048,9 @@ async function ingestRecoveredReviewer(
       },
     },
   });
-  // A recovered pass vouches for what its document gave the reviewer (F42).
-  if (persisted.verdict === 'pass' && !repairing) await recordReviewedInputs(runId);
+  // Recovered verdicts settle the original launch inputs, including an issues re-review.
+  if ((persisted.verdict === 'pass' || persisted.verdict === 'issues') && !repairing)
+    await recordReviewedInputs(runId, persisted.verdict);
   // The attempt returned a verdict after all, so a no-verdict settlement no longer applies.
   const roundId = reviewContextRoundId(ctx);
   if (roundId && (persisted.verdict === 'pass' || persisted.verdict === 'issues'))

@@ -264,6 +264,61 @@ test('resumeInterruptedPublicationReview keeps feedback recoverable when deliver
   );
 });
 
+for (const verdict of ['issues', 'blocked'] as const) {
+  test(`a gate ${verdict} result settles input freshness only after a completed verdict`, async (t) => {
+    const passing = 'a'.repeat(64);
+    const launched = 'b'.repeat(64);
+    const run = createRun({
+      flowType: 'dev',
+      project: 'example-mobile-farm',
+      ticketOrPr: 'TAT-4355',
+      runner: 'codex',
+      engineState: { reviewedInputs: { fingerprint: passing, recordedAt: '2026-11-03T00:00:00Z' } },
+    });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    const result = await executePublishGateReviewPlan(
+      run.id,
+      'slot-1',
+      [{ runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'cold' }],
+      'human-gate',
+      {
+        assertLaunchAllowed: async () => {},
+        executeReview: async () => {
+          assert.equal(getRun(run.id)!.engineState!.reviewedInputs!.rerunFor, undefined);
+          updateRun(run.id, {
+            engineState: { ...getRun(run.id)!.engineState, reviewInputsAtLaunch: launched },
+          });
+          return {
+            verdict,
+            retryCount: 0,
+            issues:
+              verdict === 'issues'
+                ? [{ file: 'src/example.ts', description: 'Remaining finding' }]
+                : [],
+            reviewerSessionId: 'gate-session',
+            reviewSnapshot: {
+              source: 'local-git',
+              headSha: 'c'.repeat(40),
+              capturedAt: '2026-11-03T01:00:00Z',
+            },
+          };
+        },
+      },
+    );
+    const current = getRun(run.id)!;
+    assert.equal(current.engineState?.publishGate?.reviews?.at(-1)?.id, result.reviewIds[0]);
+    assert.equal(
+      current.engineState?.publishGate?.reviews?.at(-1)?.verdict,
+      verdict === 'issues' ? 'issues' : 'failed',
+    );
+    assert.equal(current.engineState?.reviewedInputs?.fingerprint, passing);
+    assert.equal(
+      current.engineState?.reviewedInputs?.rerunFor,
+      verdict === 'issues' ? launched : undefined,
+    );
+  });
+}
+
 test('empty publish-gate review plans clear a prior recoverable rejection', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
