@@ -16,8 +16,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import type { ArtifactRef, Run, RunArtifactBundleRef } from '@farmslot/protocol';
+import type { ArtifactRef, Run, RunArtifactBundleRef, RunDecision } from '@farmslot/protocol';
 
+import { appendDecisionHistoryFile, decisionHistoryFile } from './decision-history.js';
 import { exportRunsToBundle } from './export.js';
 import { importBundle } from './import.js';
 import {
@@ -925,6 +926,107 @@ test('an unresolved imported decision pins its target-owned payload through its 
   const bundle = await readRetainedRunBundle(f.store, result.ref, f.run.id);
   assert.equal(await bundle.readText('artifacts/capture.mp4'), 'video bytes');
 });
+
+for (const archived of [false, true]) {
+  for (const receipt of ['approval', 'attestation', 'none'] as const) {
+    test(`retired ${receipt} capture retention in ${archived ? 'archived' : 'current'} records`, async (t) => {
+      const f = await fixture(t);
+      const result = await materializeRunBundle(f.request);
+      // Imported history keeps the source identity; retention must pin the target-owned bytes.
+      const sourceRef = { ...result.ref, storeId: 'source-store', bundleDigest: 'f'.repeat(64) };
+      f.run.importProvenance = {
+        importedFromRunId: f.run.id,
+        importedAt: f.run.createdAt,
+        mode: 'mirror',
+        artifactBundleRefs: { [sourceRef.bundleDigest]: result.ref },
+      };
+      const retired: RunDecision = {
+        id: 'retired-gate',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: '',
+        actions: [],
+        createdAt: f.run.createdAt,
+        resolvedAt: f.run.updatedAt,
+        resolvedAction: 'approve-publish',
+        payload: {
+          kind: 'ready',
+          branch: 'fix/retention',
+          prNumber: null,
+          repo: null,
+          workerReport: '',
+          diffStat: { files: 1, additions: 1, deletions: 0 },
+          prPackage: {
+            id: 'package',
+            packageHash: 'package-hash',
+            artifactPath: 'artifacts/pr-package.json',
+            branch: 'fix/retention',
+            diffStat: { files: 1, additions: 1, deletions: 0 },
+            draftTitle: 'Fix',
+            draftBody: '',
+            reviewArtifactIds: [],
+            gatePolicy: {
+              owner: 'human',
+              dispatchMode: 'interactive',
+              publishAuthority: 'human',
+              reason: 'Approval required',
+            },
+            publicationTarget: 'ready',
+            publicationStatus: 'not_published',
+            createdAt: f.run.createdAt,
+            artifactBundle: sourceRef,
+          },
+        },
+      };
+      if (receipt === 'approval')
+        retired.publicationApproval = {
+          principalId: 'operator',
+          displayName: 'Operator',
+          subjectKind: 'person',
+          packageHash: 'package-hash',
+          visualJudgmentReceiptIds: [],
+          claimOverrideReceiptIds: [],
+          approvedAt: f.run.updatedAt,
+        };
+      if (receipt === 'attestation')
+        retired.evidenceAttestation = {
+          schemaVersion: 1,
+          runId: f.run.id,
+          decisionId: retired.id,
+          packageHash: 'package-hash',
+          selectedEvidenceKeys: [],
+          approver: {
+            principalId: 'operator',
+            displayName: 'Operator',
+            credentialId: 'credential',
+          },
+          reason: 'Inspected the retained recording.',
+          approvedAt: f.run.updatedAt,
+          waivedReasons: [],
+        };
+      const recordDir = archived ? path.join(f.store.runsDir, 'archive') : f.store.runsDir;
+      await mkdir(recordDir, { recursive: true });
+      const record = path.join(recordDir, `${f.run.id}.json`);
+      await writeFile(record, JSON.stringify({ ...f.run, decisionHistoryCount: 1 }));
+      appendDecisionHistoryFile(decisionHistoryFile(record), [retired]);
+      const now = Date.now() + 31 * 86_400_000;
+      const selected = await runBundleHousekeepingPaths(f.store, now);
+      assert.equal(
+        selected.some((entry) => entry.store === 'run-bundles'),
+        receipt === 'none',
+      );
+      await collectRunBundleGarbage(f.store, undefined, now);
+      if (receipt === 'none') {
+        await assert.rejects(readRetainedRunBundle(f.store, result.ref, f.run.id), {
+          code: 'ENOENT',
+        });
+      } else {
+        const bundle = await readRetainedRunBundle(f.store, result.ref, f.run.id);
+        assert.equal(await bundle.readText('artifacts/capture.mp4'), 'video bytes');
+      }
+    });
+  }
+}
 
 test('near-full storage commits the report before media admission and fills the same capture after capacity recovery', async (t) => {
   const f = await fixture(t);

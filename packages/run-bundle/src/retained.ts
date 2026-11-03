@@ -43,7 +43,11 @@ import {
 
 import { loadAllRunRecords } from './collect.js';
 import { shouldSkipBundleFilesystemEntry } from './copy-tree.js';
-import { captureDecisionHistoryPrefix, decisionHistoryFile } from './decision-history.js';
+import {
+  captureDecisionHistoryPrefix,
+  decisionHistoryFile,
+  readDecisionHistoryFile,
+} from './decision-history.js';
 import { sha256Text } from './hashing.js';
 import { parseManifest } from './import.js';
 import {
@@ -1339,25 +1343,31 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
     referenced.add(ref.bundleDigest);
     if (pin) pinned.add(ref.bundleDigest);
   };
-  for (const run of [
-    ...loadAllRunRecords(store.runsDir),
-    ...loadAllRunRecords(path.join(store.runsDir, 'archive')),
-  ]) {
-    const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) =>
-      retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
-    const active = isActiveListRun(run);
-    if (active) activeRuns.set(run.id, run.engineState?.generation);
-    for (const { ref, decision } of runBundleRefs(run))
-      retain(
-        ref,
-        decision
-          ? !decision.resolvedAt ||
-              (decision.payload?.kind === 'ready' &&
-                ['published_draft', 'published_ready'].includes(
-                  decision.payload.prPackage?.publicationStatus ?? '',
-                ))
-          : active,
-      );
+  for (const runsDir of [store.runsDir, path.join(store.runsDir, 'archive')]) {
+    for (const run of loadAllRunRecords(runsDir)) {
+      const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) =>
+        retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
+      const active = isActiveListRun(run);
+      if (active) activeRuns.set(run.id, run.engineState?.generation);
+      for (const { ref, decision } of runBundleRefs(run))
+        retain(
+          ref,
+          decision
+            ? !decision.resolvedAt ||
+                (decision.payload?.kind === 'ready' &&
+                  ['published_draft', 'published_ready'].includes(
+                    decision.payload.prPackage?.publicationStatus ?? '',
+                  ))
+            : active,
+        );
+      // Retired approvals/attestations remain audit dependencies after replay removes the card.
+      for (const decision of readDecisionHistoryFile(
+        decisionHistoryFile(path.join(runsDir, `${run.id}.json`)),
+      )) {
+        if (decision.publicationApproval || decision.evidenceAttestation)
+          retain(decisionArtifactBundleRef(run, decision.payload), true);
+      }
+    }
   }
   const intentsDir = path.join(store.runsDir, 'bundle-intents');
   await mkdir(intentsDir, { recursive: true });

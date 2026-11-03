@@ -1,0 +1,1 @@
+- Preserve retained evidence referenced by retired publication approvals or evidence attestations through housekeeping and media expiry.
