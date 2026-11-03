@@ -1,4 +1,5 @@
-import { ARTIFACT_BROWSER_PARAMS } from './components/runs/run-detail-url-state.js';
+import { ARTIFACT_BROWSER_PARAMS } from '@farmslot/protocol/surfaces/view-links';
+
 import { EVIDENCE_REVIEWER_PARAMS } from './components/shared/evidence-reviewer-url-state.js';
 import { buildHash, parseHashRoute } from './utils/url-state.js';
 

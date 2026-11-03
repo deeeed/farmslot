@@ -1,3 +1,5 @@
+import { ARTIFACT_BROWSER_PARAMS } from '@farmslot/protocol/surfaces/view-links';
+
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import type { ArtifactBrowserView } from '../shared/artifact-browser-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
@@ -13,16 +15,7 @@ export interface RunDetailArtifactSelection {
 }
 
 const STEP_PARAM = 'step';
-const BROWSER_QUERY = 'artifactQuery';
-const BROWSER_TYPES = 'artifactTypes';
-const BROWSER_FILE = 'artifactFile';
-const BROWSER_PREVIEW = 'artifactPreview';
-export const ARTIFACT_BROWSER_PARAMS = [
-  BROWSER_QUERY,
-  BROWSER_TYPES,
-  BROWSER_FILE,
-  BROWSER_PREVIEW,
-] as const;
+const [BROWSER_QUERY, BROWSER_TYPES, BROWSER_FILE, BROWSER_PREVIEW] = ARTIFACT_BROWSER_PARAMS;
 
 export function artifactBrowserViewFromRunDetailHash(
   hash: string = location.hash,
