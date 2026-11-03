@@ -29,7 +29,11 @@ import {
   type Run,
   type WorkerSignal,
 } from '@farmslot/protocol';
-import { resolveReviewMode, reviewArtifactDir } from '@farmslot/review-dispatch';
+import {
+  resolveReviewMode,
+  reviewArtifactDir,
+  sameReviewAttemptReceipt,
+} from '@farmslot/review-dispatch';
 
 import { upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
@@ -1230,6 +1234,11 @@ export function recoveredReviewAlreadyIngested(
   if (existing.verdict === 'skipped') return false;
   const existingAttempt = existing.attempts?.at(-1);
   const recoveredAttempt = recovered.attempts?.at(-1);
+  if (
+    recoveredAttempt &&
+    existing.attempts?.some((attempt) => sameReviewAttemptReceipt(attempt, recoveredAttempt))
+  )
+    return true;
   if (existingAttempt?.startedAt && recoveredAttempt?.startedAt) {
     // Attempt start is the opaque generation identity. Completion clocks can
     // be inverted across the worker, node, and gateway, so they are only a
@@ -1274,6 +1283,7 @@ export function appendRecoveredContinuationAttempt(
 ): ReviewStatus {
   const prior = existing.attempts ?? [];
   const fresh = recovered.attempts?.at(-1);
+  if (fresh && prior.some((attempt) => sameReviewAttemptReceipt(attempt, fresh))) return existing;
   if (fresh && fresh.loopNumber > lastReviewAttemptLoop(existing))
     return applyReviewRetryCap(
       {

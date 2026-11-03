@@ -581,6 +581,8 @@ export function renderAcceptancePanel(
   ledger: AcceptanceStatusLedger,
   options: {
     expanded?: boolean;
+    /** The parent owns the only collapsible heading. */
+    embedded?: boolean;
     criterionDrafts?: import('@farmslot/review-dispatch').CriterionDraft[];
     attestationReason?: string;
     registration?: AcceptanceRegistration;
@@ -633,6 +635,160 @@ export function renderAcceptancePanel(
   const hasAcceptance = rows.length > 0 || Boolean(options.registration) || Boolean(options.error);
   // Like the links, a manifest read error only matters while there is no ledger.
   const linksError = ledger.criteria.length === 0 ? options.evidenceLinksError : null;
+  const body = html`
+    ${view.registration?.pending.map(
+      (message) =>
+        html`<p class="ac-note" data-testid="acceptance-registration-pending">${message}</p>`,
+    )}
+    ${view.registration?.exclusions.length
+      ? html`<details class="ac-note" data-testid="acceptance-exclusions">
+          <summary>Excluded sources (${view.registration.exclusions.length})</summary>
+          ${view.registration.exclusions.map(
+            (source) =>
+              html`<p data-source-id=${source.sourceId}>
+                ${source.url
+                  ? html`<a href=${source.url} target="_blank" rel="noopener noreferrer"
+                      >${source.label}</a
+                    >`
+                  : source.label}:
+                ${source.reason}
+              </p>`,
+          )}
+        </details>`
+      : nothing}
+    <div class="ac-rows">
+      ${options.error
+        ? html`<div class="ac-error" data-testid="acceptance-error">
+            ledger unreadable: ${options.error}
+          </div>`
+        : nothing}
+      ${linksError
+        ? html`<div class="ac-note ac-source" data-testid="acceptance-evidence-error">
+            evidence manifest unreadable: ${linksError}
+          </div>`
+        : nothing}
+      ${renderAcceptanceClaimList(
+        acceptanceClaimRows({
+          criterionDrafts: options.criterionDrafts,
+          attestationReason: options.attestationReason,
+          criteria: options.criteria,
+          ledger,
+          registration: options.registration,
+          claims: rows.map(({ view, link }) => ({ ...view, evidenceLinked: Boolean(link) })),
+          judgmentRows: options.judgments?.rows ?? model.judgmentRows(null),
+          pendingVisualClaimIds: model.pendingVisualClaimIds,
+          recording: model.recording,
+        }),
+        {
+          ...options.judgments,
+          canFocus: options.judgments?.focusClaim
+            ? undefined
+            : (id) => Boolean(model.claimFocusPath(id)),
+          focusClaim:
+            options.judgments?.focusClaim ??
+            (options.openEvidence
+              ? (id) => {
+                  const row = rows.find(({ view }) => view.id === id);
+                  if (!row || !model.claimFocusPath(id)) return;
+                  model.selectClaim(id);
+                  const selected = model.claimDisplay(id).selected[0]?.artifactPath;
+                  options.openEvidence?.({
+                    criterion: row.view,
+                    evidence: row.evidence,
+                    index: selected ? Math.max(0, row.evidence.indexOf(selected)) : 0,
+                    evidenceModel: model,
+                  });
+                }
+              : undefined),
+          details: (id) => {
+            const row = rows.find(({ view }) => view.id === id);
+            const offers: EvidenceReviewClaimOffers = {
+              playable: Boolean(options.openEvidence),
+              overridable: Boolean(options.markUntestable),
+            };
+            return row && model.claimHasDetails(id, offers)
+              ? renderRowDetails(
+                  row,
+                  model,
+                  options.evidenceHref,
+                  options.openEvidence,
+                  options.markUntestable,
+                  options.overrideEditor,
+                )
+              : nothing;
+          },
+        },
+      )}
+      ${model.packageStatus
+        ? html`<div
+            class="ac-package"
+            data-testid="evidence-package-status"
+            data-status=${model.packageStatus.status}
+            data-tone=${model.packageStatus.tone}
+          >
+            <div class="ac-package-heading">
+              <span class="ac-verdict">${model.packageStatus.status}</span>
+              <code>${model.packageStatus.path}</code>
+              <span>${model.packageStatus.summary}</span>
+            </div>
+            ${model.packageStatus.action ? html`<p>${model.packageStatus.action}</p>` : nothing}
+            ${model.packageStatus.issues.length
+              ? html`<details data-testid="evidence-package-details">
+                  <summary>Show details (${model.packageStatus.issues.length} issues)</summary>
+                  <ul>
+                    ${model.packageStatus.issues.map(
+                      (issue) =>
+                        html`<li>${issue.message} <span>(${issue.count} messages)</span></li>`,
+                    )}
+                  </ul>
+                </details>`
+              : nothing}
+          </div>`
+        : nothing}
+      ${model.displayWarnings.length
+        ? html`<details class="ac-note ac-warning-details" data-testid="acceptance-warning-details">
+            <summary>Evidence details (${model.displayWarnings.length})</summary>
+            ${model.displayWarnings.map((warning) => html`<p>${warning}</p>`)}
+          </details>`
+        : nothing}
+      ${options.showOccurrences && model?.currentOccurrences.length
+        ? html`<div class="ac-step-groups" data-testid="recipe-proof-steps">
+            ${proofStepGroups(model.currentOccurrences).map(
+              (group) =>
+                html`<details class="ac-step-group" ?open=${group.failed > 0}>
+                  <summary>
+                    <span class="ac-step-group-label">${group.label}</span>
+                    <span class="ac-step-group-count">${group.steps.length} steps</span>
+                    <span class="ac-check-status" data-ok=${String(group.failed === 0)}
+                      >${group.failed ? `${group.failed} failed` : 'pass'}</span
+                    >
+                  </summary>
+                  <ul class="ac-checks">
+                    ${group.steps.map(
+                      (occurrence) =>
+                        html`<li>
+                          <button
+                            class="ac-check ac-proof-step"
+                            data-testid="recipe-proof-step"
+                            data-trace-index=${occurrence.traceIndex}
+                            @click=${() => options.openOccurrence?.(occurrence.traceIndex)}
+                          >
+                            <span class="ac-check-status" data-ok=${String(occurrence.ok)}
+                              >${occurrence.ok ? 'pass' : 'fail'}</span
+                            >
+                            <span class="ac-check-intent">${occurrence.intent}</span>
+                            <code class="ac-check-node">${occurrence.nodeId}</code>
+                          </button>
+                        </li>`,
+                    )}
+                  </ul>
+                </details>`,
+            )}
+          </div>`
+        : nothing}
+    </div>
+  `;
+  if (options.embedded) return html`<div data-testid="acceptance-panel">${body}</div>`;
   return html`
     <details
       class="ac-panel"
@@ -661,160 +817,7 @@ export function renderAcceptancePanel(
             >`
           : nothing}
       </summary>
-      ${view.registration?.pending.map(
-        (message) =>
-          html`<p class="ac-note" data-testid="acceptance-registration-pending">${message}</p>`,
-      )}
-      ${view.registration?.exclusions.length
-        ? html`<details class="ac-note" data-testid="acceptance-exclusions">
-            <summary>Excluded sources (${view.registration.exclusions.length})</summary>
-            ${view.registration.exclusions.map(
-              (source) =>
-                html`<p data-source-id=${source.sourceId}>
-                  ${source.url
-                    ? html`<a href=${source.url} target="_blank" rel="noopener noreferrer"
-                        >${source.label}</a
-                      >`
-                    : source.label}:
-                  ${source.reason}
-                </p>`,
-            )}
-          </details>`
-        : nothing}
-      <div class="ac-rows">
-        ${options.error
-          ? html`<div class="ac-error" data-testid="acceptance-error">
-              ledger unreadable: ${options.error}
-            </div>`
-          : nothing}
-        ${linksError
-          ? html`<div class="ac-note ac-source" data-testid="acceptance-evidence-error">
-              evidence manifest unreadable: ${linksError}
-            </div>`
-          : nothing}
-        ${renderAcceptanceClaimList(
-          acceptanceClaimRows({
-            criterionDrafts: options.criterionDrafts,
-            attestationReason: options.attestationReason,
-            criteria: options.criteria,
-            ledger,
-            registration: options.registration,
-            claims: rows.map(({ view, link }) => ({ ...view, evidenceLinked: Boolean(link) })),
-            judgmentRows: options.judgments?.rows ?? model.judgmentRows(null),
-            pendingVisualClaimIds: model.pendingVisualClaimIds,
-            recording: model.recording,
-          }),
-          {
-            ...options.judgments,
-            canFocus: options.judgments?.focusClaim
-              ? undefined
-              : (id) => Boolean(model.claimFocusPath(id)),
-            focusClaim:
-              options.judgments?.focusClaim ??
-              (options.openEvidence
-                ? (id) => {
-                    const row = rows.find(({ view }) => view.id === id);
-                    if (!row || !model.claimFocusPath(id)) return;
-                    model.selectClaim(id);
-                    const selected = model.claimDisplay(id).selected[0]?.artifactPath;
-                    options.openEvidence?.({
-                      criterion: row.view,
-                      evidence: row.evidence,
-                      index: selected ? Math.max(0, row.evidence.indexOf(selected)) : 0,
-                      evidenceModel: model,
-                    });
-                  }
-                : undefined),
-            details: (id) => {
-              const row = rows.find(({ view }) => view.id === id);
-              const offers: EvidenceReviewClaimOffers = {
-                playable: Boolean(options.openEvidence),
-                overridable: Boolean(options.markUntestable),
-              };
-              return row && model.claimHasDetails(id, offers)
-                ? renderRowDetails(
-                    row,
-                    model,
-                    options.evidenceHref,
-                    options.openEvidence,
-                    options.markUntestable,
-                    options.overrideEditor,
-                  )
-                : nothing;
-            },
-          },
-        )}
-        ${model.packageStatus
-          ? html`<div
-              class="ac-package"
-              data-testid="evidence-package-status"
-              data-status=${model.packageStatus.status}
-              data-tone=${model.packageStatus.tone}
-            >
-              <div class="ac-package-heading">
-                <span class="ac-verdict">${model.packageStatus.status}</span>
-                <code>${model.packageStatus.path}</code>
-                <span>${model.packageStatus.summary}</span>
-              </div>
-              ${model.packageStatus.action ? html`<p>${model.packageStatus.action}</p>` : nothing}
-              ${model.packageStatus.issues.length
-                ? html`<details data-testid="evidence-package-details">
-                    <summary>Show details (${model.packageStatus.issues.length} issues)</summary>
-                    <ul>
-                      ${model.packageStatus.issues.map(
-                        (issue) =>
-                          html`<li>${issue.message} <span>(${issue.count} messages)</span></li>`,
-                      )}
-                    </ul>
-                  </details>`
-                : nothing}
-            </div>`
-          : nothing}
-        ${model.displayWarnings.length
-          ? html`<details
-              class="ac-note ac-warning-details"
-              data-testid="acceptance-warning-details"
-            >
-              <summary>Evidence details (${model.displayWarnings.length})</summary>
-              ${model.displayWarnings.map((warning) => html`<p>${warning}</p>`)}
-            </details>`
-          : nothing}
-        ${options.showOccurrences && model?.currentOccurrences.length
-          ? html`<div class="ac-step-groups" data-testid="recipe-proof-steps">
-              ${proofStepGroups(model.currentOccurrences).map(
-                (group) =>
-                  html`<details class="ac-step-group" ?open=${group.failed > 0}>
-                    <summary>
-                      <span class="ac-step-group-label">${group.label}</span>
-                      <span class="ac-step-group-count">${group.steps.length} steps</span>
-                      <span class="ac-check-status" data-ok=${String(group.failed === 0)}
-                        >${group.failed ? `${group.failed} failed` : 'pass'}</span
-                      >
-                    </summary>
-                    <ul class="ac-checks">
-                      ${group.steps.map(
-                        (occurrence) =>
-                          html`<li>
-                            <button
-                              class="ac-check ac-proof-step"
-                              data-testid="recipe-proof-step"
-                              data-trace-index=${occurrence.traceIndex}
-                              @click=${() => options.openOccurrence?.(occurrence.traceIndex)}
-                            >
-                              <span class="ac-check-status" data-ok=${String(occurrence.ok)}
-                                >${occurrence.ok ? 'pass' : 'fail'}</span
-                              >
-                              <span class="ac-check-intent">${occurrence.intent}</span>
-                              <code class="ac-check-node">${occurrence.nodeId}</code>
-                            </button>
-                          </li>`,
-                      )}
-                    </ul>
-                  </details>`,
-              )}
-            </div>`
-          : nothing}
-      </div>
+      ${body}
     </details>
   `;
 }

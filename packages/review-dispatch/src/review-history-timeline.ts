@@ -40,18 +40,32 @@ export function reviewHistoryTimeline(
   const ordered = [...rounds].sort(compareReviewHistoryRounds);
   const events: ReviewHistoryEvent[] = [];
   const fixes: ReviewHistoryFix[] = [];
-  for (const round of ordered) {
+  for (const [roundIndex, round] of ordered.entries()) {
     if (round.hasFix) {
       // Artifact hydration may replace a pathname with a Git alias for the same code fix.
       const key =
         round.fixBaseSha && round.fixHeadSha
           ? `${round.reviewId}:fix:${round.fixBaseSha}:${round.fixHeadSha}`
           : (round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`);
+      const previous = ordered.slice(0, roundIndex);
+      const prior = previous.filter((entry) => entry.reviewId === round.reviewId);
+      const trigger =
+        [...previous]
+          .reverse()
+          .find(
+            (entry) =>
+              entry.verdict === 'issues' && entry.headSha && entry.headSha === round.fixBaseSha,
+          ) ??
+        [...prior].reverse().find((entry) => entry.verdict === 'issues') ??
+        prior.at(-1) ??
+        previous.at(-1);
       let fix = fixes.find((entry) => entry.key === key);
       if (!fix) {
         fix = {
           key,
-          label: `Fix before round ${round.roundNumber}`,
+          label: trigger
+            ? `Fix after round ${trigger.roundNumber}`
+            : 'Fix before first recorded review',
           startedAt: round.fixStartedAt,
           completedAt: round.fixCompletedAt,
           durationMs: round.fixDurationMs,
@@ -70,7 +84,7 @@ export function reviewHistoryTimeline(
         events.push({
           kind: 'fix',
           key,
-          roundKey: round.key,
+          roundKey: trigger?.key ?? round.key,
           at: fix.startedAt ?? fix.completedAt ?? round.startedAt,
           fix,
         });
@@ -91,7 +105,7 @@ export function reviewHistoryTimeline(
     for (const finding of round.findings) {
       if (prior.some((entry) => entry.findings.some((other) => other.id === finding.id))) {
         finding.status = 'still-open';
-        finding.statusLabel = 'Still open';
+        finding.statusLabel = 'Carried forward';
       }
       const later = ordered
         .slice(index + 1)
@@ -178,4 +192,34 @@ export function reviewHistorySourceRequest(
     ref: round.headSha,
     path: finding.file,
   };
+}
+
+export interface ReviewHistoryRoundCard {
+  round: ReviewHistoryRound;
+  fixes: ReviewHistoryFix[];
+  totalDurationMs: number | null;
+  openFindings: ReviewHistoryFinding[];
+}
+
+/** Both clients keep the review and the fixes it triggered inside one stable card. */
+export function reviewHistoryRoundCards(events: ReviewHistoryEvent[]): ReviewHistoryRoundCard[] {
+  return events.flatMap((event) => {
+    if (event.kind !== 'review') return [];
+    const fixes = events.flatMap((candidate) =>
+      candidate.kind === 'fix' && candidate.roundKey === event.key ? [candidate.fix] : [],
+    );
+    return [
+      {
+        round: event.round,
+        fixes,
+        totalDurationMs:
+          event.round.durationMs === null || fixes.some((fix) => fix.durationMs === null)
+            ? null
+            : event.round.durationMs + fixes.reduce((sum, fix) => sum + (fix.durationMs ?? 0), 0),
+        openFindings: event.round.findings.filter(
+          (finding) => finding.status !== 'resolved' && finding.status !== 'accepted',
+        ),
+      },
+    ];
+  });
 }

@@ -1,9 +1,13 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import { type ReviewChainEntry, reviewChainForRun, type Run } from '@farmslot/protocol';
-import { type ReviewHistoryFix, type ReviewHistoryRound } from '@farmslot/review-dispatch';
+import {
+  type ReviewHistoryFix,
+  type ReviewHistoryRound,
+  type ReviewHistoryRoundCard,
+} from '@farmslot/review-dispatch';
 
 import { MobileDiffViewer } from '../../../components/MobileDiffViewer';
 import { formatPreciseDuration } from '../../workspace-shared/format';
@@ -13,15 +17,26 @@ import { useReviewHistory } from '../use-review-history';
 type History = ReturnType<typeof useReviewHistory>;
 
 function ReviewRoundCard({
-  round,
+  card,
   history,
   onOpenArtifact,
 }: {
-  round: ReviewHistoryRound;
+  card: ReviewHistoryRoundCard;
   history: History;
   onOpenArtifact: (path: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const round = card.round;
+  const router = useRouter();
+  const params = useLocalSearchParams<{ round?: string | string[] }>();
+  const selected = new Set(
+    Array.isArray(params.round) ? params.round : params.round ? [params.round] : [],
+  );
+  const expanded = selected.has(round.key);
+  const setExpanded = (value: boolean) => {
+    if (value) selected.add(round.key);
+    else selected.delete(round.key);
+    router.setParams({ round: [...selected] });
+  };
   const running = round.verdict === 'pending';
   const duration =
     round.durationMs ??
@@ -46,6 +61,18 @@ function ReviewRoundCard({
             </Text>
           </View>
           <Text style={styles.meta}>
+            {round.resultRecorded ? `${round.findings.length} findings` : 'Findings not recorded'} ·{' '}
+            {card.fixes.length ? 'Fix yes' : 'Fix no'} ·{' '}
+            {card.totalDurationMs != null
+              ? `${formatPreciseDuration(card.totalDurationMs)} total`
+              : 'Total time not recorded'}
+          </Text>
+        </View>
+        <Text style={styles.expand}>{expanded ? '−' : '+'}</Text>
+      </Pressable>
+      {expanded ? (
+        <View style={styles.roundDetails}>
+          <Text style={styles.meta}>
             {round.runner} / {round.model} · {round.modeLabel}
           </Text>
           <Text style={styles.meta}>
@@ -54,11 +81,7 @@ function ReviewRoundCard({
               ? ` · ${running ? 'Running · ' : ''}${formatPreciseDuration(Math.max(0, duration))}`
               : ''}
           </Text>
-        </View>
-        <Text style={styles.expand}>{expanded ? '−' : '+'}</Text>
-      </Pressable>
-      {expanded ? (
-        <View style={styles.roundDetails}>
+
           {round.startedAt ? (
             <Text style={styles.meta}>
               Started {new Date(round.startedAt).toLocaleString()} · {round.reviewRange}
@@ -104,6 +127,18 @@ function ReviewRoundCard({
           {!round.findings.length ? (
             <Text style={styles.meta}>
               {history.loading ? 'Loading recorded findings…' : round.findingsLabel}
+            </Text>
+          ) : null}
+          {card.fixes.length ? (
+            card.fixes.map((fix) => (
+              <ReviewFixCard key={fix.key} fix={fix} onOpenArtifact={onOpenArtifact} />
+            ))
+          ) : (
+            <Text style={styles.meta}>No fix recorded after this round.</Text>
+          )}
+          {card.openFindings.length ? (
+            <Text style={styles.meta}>
+              {card.openFindings.length} findings remain open or awaiting another review.
             </Text>
           ) : null}
           {round.diffText !== null ? (
@@ -250,21 +285,22 @@ export function ReviewHistoryPanel({
               ) : null}
             </View>
           ))}
-        {history.events.map((event) =>
-          event.kind === 'review' ? (
-            <ReviewRoundCard
-              key={event.key}
-              round={event.round}
-              history={history}
-              onOpenArtifact={openArtifact}
-            />
-          ) : event.kind === 'fix' ? (
-            <ReviewFixCard key={event.key} fix={event.fix} onOpenArtifact={openArtifact} />
-          ) : (
-            <Text key={event.key} style={styles.pending}>
-              {event.label}
-            </Text>
-          ),
+        {history.cards.map((card) => (
+          <ReviewRoundCard
+            key={card.round.key}
+            card={card}
+            history={history}
+            onOpenArtifact={openArtifact}
+          />
+        ))}
+        {history.events.flatMap((event) =>
+          event.kind === 'gate'
+            ? [
+                <Text key={event.key} style={styles.pending}>
+                  {event.label}
+                </Text>,
+              ]
+            : [],
         )}
         {history.activeReplay ? (
           <Text

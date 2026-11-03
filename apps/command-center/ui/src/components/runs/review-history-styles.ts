@@ -196,4 +196,28 @@ export const reviewHistoryStyles = css`
       margin-right: 0;
     }
   }
+  .round-fixes {
+    border-top: 1px solid #2a2a44;
+    padding-top: 10px;
+  }
+  .round-fixes h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+  }
+  .round-meta {
+    min-height: 18px;
+  }
+  .review-history-round > summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    min-height: 56px;
+  }
+  .review-history-round > summary > .round-meta {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+  }
 `;

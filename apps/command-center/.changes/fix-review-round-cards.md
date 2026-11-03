@@ -1,0 +1,1 @@
+- Validate review-round grouping and the single acceptance-criteria collapse against real recorded run data.

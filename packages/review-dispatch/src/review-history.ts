@@ -17,7 +17,12 @@ import {
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
-import { compareReviewHistoryRounds, reviewHistoryTimeline } from './review-history-timeline.js';
+import { sameReviewAttemptReceipt } from './review-attempt-receipt.js';
+import {
+  compareReviewHistoryRounds,
+  reviewHistoryRoundCards,
+  reviewHistoryTimeline,
+} from './review-history-timeline.js';
 import { runActivityView, runReviewActivityContext } from './run-activity.js';
 import { reviewAttemptFailureReason } from './run-review-failures.js';
 
@@ -28,7 +33,7 @@ export interface ReviewHistoryFinding {
   severity: string;
   file: string;
   line: number | null;
-  status: 'new' | 'still-open' | 'resolved';
+  status: 'new' | 'still-open' | 'resolved' | 'accepted';
   statusLabel: string;
   resolvedBy: string | null;
 }
@@ -316,11 +321,16 @@ export function reviewHistoryView(
     const stepAttempts = Array.isArray(step?.outputs?.attempts)
       ? step.outputs.attempts.map(record).filter(isRecord)
       : [];
-    const attempts: ReviewAttempt[] = review
+    const recordedAttempts: ReviewAttempt[] = review
       ? review.attempts?.length
         ? review.attempts
         : [review]
       : [];
+    // A recovered receipt is audit history, not a second review of the same saved result.
+    const attempts = recordedAttempts.filter(
+      (attempt, index) =>
+        !recordedAttempts.slice(0, index).some((prior) => sameReviewAttemptReceipt(prior, attempt)),
+    );
     const loops = [
       ...new Set([
         ...attempts.map((attempt) => attempt.loopNumber),
@@ -716,6 +726,25 @@ export function reviewHistoryView(
   orderedRounds.forEach((round, index) => {
     round.roundNumber = index + 1;
   });
+  const events = reviewHistoryTimeline(run, orderedRounds);
+  for (const round of orderedRounds) {
+    for (const finding of round.findings) {
+      const accepted = run.decisions.some((decision) =>
+        decision.publicationApproval?.acceptedFindings?.findings.some(
+          (entry) =>
+            entry.reviewId === round.reviewId &&
+            entry.file === finding.file &&
+            (!entry.line || entry.line === finding.line) &&
+            (entry.description === finding.title ||
+              entry.description === [finding.title, finding.details].filter(Boolean).join('\n')),
+        ),
+      );
+      if (accepted) {
+        finding.status = 'accepted';
+        finding.statusLabel = 'Accepted for publication';
+      }
+    }
+  }
   const roundCount = orderedRounds.length;
   const replayStep = run.steps.find((step) => step.name === 'review' && step.status === 'running');
   const activeReplay =
@@ -740,6 +769,7 @@ export function reviewHistoryView(
     .filter(Boolean)
     .join(' · ');
   return {
+    cards: reviewHistoryRoundCards(events),
     checks,
     segments,
     roundCount,
@@ -752,10 +782,7 @@ export function reviewHistoryView(
       diffPath:
         entry.artifactRefs.find((artifact) => artifact.path.endsWith('.diff'))?.path ?? null,
     })),
-    events: reviewHistoryTimeline(
-      run,
-      checks.flatMap((check) => check.rounds),
-    ),
+    events,
   };
 }
 

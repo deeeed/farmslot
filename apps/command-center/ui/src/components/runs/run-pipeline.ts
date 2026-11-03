@@ -446,6 +446,7 @@ export class RunPipeline extends LitElement {
     const { ledger, ...options } = inputs;
     return renderAcceptancePanel(ledger, {
       ...options,
+      embedded: this.collapsiblePanels,
       showOccurrences: true,
       openOccurrence: (traceIndex) =>
         this.dispatchEvent(

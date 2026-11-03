@@ -4,6 +4,7 @@ import type {
   ReviewHistoryFinding,
   ReviewHistoryFix,
   ReviewHistoryRound,
+  ReviewHistoryRoundCard,
 } from '@farmslot/review-dispatch';
 
 import { formatDuration } from './run-utils.js';
@@ -14,6 +15,7 @@ export function renderReviewAttempt(
   openArtifact: (path: string) => void,
   openFinding: (finding: ReviewHistoryFinding) => void,
   renderSource: (finding: ReviewHistoryFinding) => unknown,
+  card?: ReviewHistoryRoundCard & { open: boolean; toggle: (open: boolean) => void },
 ): unknown {
   const running = round.verdict === 'pending';
   const duration =
@@ -23,6 +25,12 @@ export function renderReviewAttempt(
     class="review-history-round"
     data-round=${round.roundNumber}
     data-event=${round.key}
+    ?open=${card?.open}
+    @toggle=${(event: Event) => {
+      const details = event.currentTarget;
+      if (card && details instanceof HTMLDetailsElement && details.open !== card.open)
+        card.toggle(details.open);
+    }}
   >
     <summary>
       <span class="round-heading"
@@ -35,6 +43,15 @@ export function renderReviewAttempt(
               : round.verdict}</span
         >
       </span>
+      <span class="round-meta"
+        >${round.resultRecorded ? `${round.findings.length} findings` : 'Findings not recorded'} ·
+        ${card?.fixes.length ? 'Fix yes' : 'Fix no'} ·
+        ${card?.totalDurationMs != null
+          ? `${formatDuration(card.totalDurationMs)} total`
+          : 'Total time not recorded'}</span
+      >
+    </summary>
+    <div class="review-history-body">
       <span class="round-meta"
         >${round.runner} / ${round.model} <span class="chip">${round.modeLabel}</span></span
       >
@@ -50,8 +67,7 @@ export function renderReviewAttempt(
               : 'Timing unavailable'}</span
         >
       </span>
-    </summary>
-    <div class="review-history-body">
+
       ${round.failureReason
         ? html`<div class="history-warning" role="status">${round.failureReason}</div>`
         : nothing}
@@ -87,6 +103,19 @@ export function renderReviewAttempt(
         ? html`<div class="review-loop-meta">
             ${loading ? 'Loading recorded findings…' : round.findingsLabel}
           </div>`
+        : nothing}
+      ${card
+        ? html`<section class="round-fixes">
+            <h4>Following fix</h4>
+            ${card.fixes.length
+              ? card.fixes.map((fix) => renderReviewFix(fix, openArtifact))
+              : html`<p class="review-loop-meta">No fix recorded after this round.</p>`}
+            ${card.openFindings.length
+              ? html`<div class="review-loop-meta">
+                  ${card.openFindings.length} findings remain open or awaiting another review.
+                </div>`
+              : nothing}
+          </section>`
         : nothing}
       ${round.diffPath
         ? html`<button

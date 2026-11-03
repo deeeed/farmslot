@@ -508,3 +508,11 @@ test('waiting checklist summaries retain running-step and completion labels', ()
   element.taskProgress = { ...progress, currentStep: null, completedSteps: 2, phases: [] };
   assert.match(litText(element.render()), /2\/2 · Checklist complete/);
 });
+
+test('the parent acceptance panel owns the only collapse header', () => {
+  const inner = litText(pipeline().render());
+  assert.equal((inner.match(/data-panel="run-acceptance"/g) ?? []).length, 1);
+  assert.doesNotMatch(inner, /class="ac-summary"/);
+  const plain = litText(Object.assign(pipeline(), { collapsiblePanels: false }).render());
+  assert.match(plain, /class="ac-summary"/);
+});
