@@ -45,6 +45,7 @@ import {
   RECORDED_EVIDENCE_RUN_CONTRACT_VERSION,
   type Run,
   type RunCreateParams,
+  type RunDecision,
   type RunLane,
   runListPage,
   type RunStatus,
@@ -553,6 +554,7 @@ export function isSyntheticLeak(run: Run): boolean {
   if (run.taskFile || run.activeTaskFile) return false;
   if (run.prNumber !== undefined && run.prNumber !== null) return false;
   if ((run.decisions ?? []).length > 0) return false;
+  if (run.decisionHistory?.length) return false;
   if (run.steps.length === 0 || !run.steps.every((s) => s.status === 'pending')) return false;
   if (!run.createdAt || !run.completedAt) return false;
   const createdAt = Date.parse(run.createdAt);
@@ -1296,9 +1298,47 @@ export function recordAdoptedTmuxWorker(id: string, partial: Partial<Run>): Run 
   return updateRun(id, partial, workerAdoptionAuthorization);
 }
 
+/** Match exact occurrences first: older package-refresh rows can share an id and timestamp. */
+function retainDecisionHistory(run: Run, decisions: RunDecision[]): Run['decisionHistory'] {
+  if (decisions === run.decisions) return run.decisionHistory;
+  const remaining = new Map<string, RunDecision[]>();
+  for (const decision of decisions) {
+    const entries = remaining.get(decision.id) ?? [];
+    entries.push(decision);
+    remaining.set(decision.id, entries);
+  }
+  const unmatched = run.decisions.filter((decision) => {
+    const entries = remaining.get(decision.id);
+    const index = entries?.findIndex((entry) => isDeepStrictEqual(entry, decision)) ?? -1;
+    if (index < 0) return true;
+    entries!.splice(index, 1);
+    return false;
+  });
+  // Updating a row keeps it; reopening a resolved row retires the previous occurrence.
+  const retired = unmatched.filter((decision) => {
+    const entries = remaining.get(decision.id);
+    const index =
+      entries?.findIndex(
+        (entry) =>
+          entry.createdAt === decision.createdAt && (!decision.resolvedAt || entry.resolvedAt),
+      ) ?? -1;
+    if (index < 0) return true;
+    entries!.splice(index, 1);
+    return false;
+  });
+  return retired.length
+    ? [...(run.decisionHistory ?? []), ...structuredClone(retired)]
+    : run.decisionHistory;
+}
+
 export function updateRun(id: string, partial: Partial<Run>, authorization?: symbol): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
+  if (
+    'decisionHistory' in partial &&
+    !isDeepStrictEqual(partial.decisionHistory, run.decisionHistory)
+  )
+    throw new Error('Decision history is managed by the run store and cannot be replaced');
   if (
     'engineState' in partial &&
     !isDeepStrictEqual(
@@ -1427,7 +1467,16 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
   // A real transition only: re-applying the same status (a restart resuming its
   // step) is not progress for the Runs list.
   const statusChanged = statusProvided && partial.status !== previousStatus;
-  Object.assign(run, partial, { updatedAt }, statusChanged ? { statusChangedAt: updatedAt } : {});
+  const decisionHistory = partial.decisions
+    ? retainDecisionHistory(run, partial.decisions)
+    : run.decisionHistory;
+  Object.assign(
+    run,
+    partial,
+    { updatedAt },
+    decisionHistory ? { decisionHistory } : {},
+    statusChanged ? { statusChangedAt: updatedAt } : {},
+  );
   syncPrimaryAgentContextStatus(run, previousStatus, updatedAt, statusProvided);
   if (shouldInvalidateRecipeRunGroups) {
     invalidateRecipeRunGroupCache(id);
@@ -1858,6 +1907,8 @@ async function commitRetainedRunMutation(
     const previousResources = captureRunResources(run);
     const baseline = structuredClone(run);
     const snapshot = build(run);
+    const decisionHistory = retainDecisionHistory(run, snapshot.decisions);
+    if (decisionHistory) snapshot.decisionHistory = decisionHistory;
     if (live && !isTerminalRunStatus(snapshot.status))
       assertPRRunActivation(snapshot, getAllRuns());
     if (live) {

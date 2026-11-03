@@ -1,0 +1,2 @@
+- Replays retain cleared decision rows in the run record for later audit without changing which decisions drive execution.
+- A publication gate presented again after a replay or restart keeps its id when the work is unchanged. Changed work gets a new id, and approvals still apply only to the selected package.

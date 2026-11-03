@@ -539,6 +539,30 @@ export function reopenSupersededGateDecisions(
   return { decisions: next, reopened };
 }
 
+/** Re-present the same work without changing the superseded audit row's identity. */
+export function supersededGateForSamePackage(
+  decisions: RunDecision[],
+  payload: RunDecision['payload'],
+  history: RunDecision[] = [],
+): RunDecision | undefined {
+  const prepared = payload?.kind === 'ready' ? payload.prPackage : undefined;
+  const latest = [...history, ...decisions]
+    .filter(isGateDecision)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .at(-1);
+  const prior = latest?.payload?.kind === 'ready' ? latest.payload.prPackage : undefined;
+  return prepared?.headSha &&
+    prepared.reviewSubjectHash &&
+    latest?.resolvedAction === 'superseded' &&
+    latest.context?.supersededBy === GATE_REENTRY &&
+    prior?.headSha === prepared.headSha &&
+    prior?.reviewSubjectHash === prepared.reviewSubjectHash &&
+    prior?.draftTitle === prepared.draftTitle &&
+    prior?.draftBody === prepared.draftBody
+    ? latest
+    : undefined;
+}
+
 export function validatePackageApprovalSelection(
   preparedPackage: ReadyGatePrPackage,
   decision: RunDecision | undefined,

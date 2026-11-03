@@ -29,7 +29,10 @@ export function latestResolvedHumanGateDecision(
 ): RunDecision | undefined {
   for (let i = decisions.length - 1; i >= 0; i--) {
     const decision = decisions[i];
-    if (decision.type !== 'engine_human_gate' || !decision.resolvedAt) continue;
+    if (decision.type !== 'engine_human_gate') continue;
+    // Its superseded predecessor is in history; the replacement keeps the replay barrier.
+    if (!decision.resolvedAt && decision.context?.gateReentry === true) return undefined;
+    if (!decision.resolvedAt) continue;
     // Supersession is a replay barrier. Looking past it can resurrect the
     // approval whose stale waiter was deliberately invalidated.
     if (decision.resolvedAction === 'superseded') return undefined;

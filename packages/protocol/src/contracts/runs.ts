@@ -3027,6 +3027,8 @@ export interface Run {
   mergedAt?: string | null;
   steps: RunStep[];
   decisions: RunDecision[];
+  /** Whole decision rows retired from execution, retained only for audit. Omitted from run lists. */
+  decisionHistory?: RunDecision[];
   reviewResult?: RunReviewResult;
   metrics: RunMetrics;
   createdAt: string;
