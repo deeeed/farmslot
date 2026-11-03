@@ -728,6 +728,11 @@ test('syncing ready run detail stores its whole diff before the first Diff-tab o
   });
   const view = makePresenter();
   view._activeTab = 'evidence';
+  t.mock.method(view, '_beginRecovery', async () => undefined);
+  t.mock.method(view, '_syncDecisionActionState', () => undefined);
+  t.mock.method(view, '_hydratePublicationTarget', () => undefined);
+  t.mock.method(view, '_hydrateEvidenceSelection', () => undefined);
+  view.willUpdate();
   view.updated(new Map());
   const deadline = Date.now() + 1000;
   while (!(await fixture.cache.hasContent(diffKey))) {

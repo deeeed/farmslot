@@ -296,6 +296,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (!this._initialized && this._gateDecision && this.slotId) {
       this._initialized = true;
       this._loadedSourceIdentity = this.sourceIdentity;
+      void this._packageDiffText();
       this._hydratePublicationTarget();
       void this._beginRecovery();
     }
