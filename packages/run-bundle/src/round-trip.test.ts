@@ -1,12 +1,22 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
 import type { Run, RunDecision } from '@farmslot/protocol';
 
-import { exportRunsToBundle, importBundle, listBundle } from './index.js';
+import { packFarmrunDirectory, unpackFarmrunArchive } from './archive.js';
+import { sha256Text } from './hashing.js';
+import { exportRunsToBundle, importBundle, listBundle, parseManifest } from './index.js';
 import { fixtureBundleStore, retainFixtureTask } from './retained.test-support.js';
 
 function writeFixtureRun(root: string, run: Run, taskBody = '# Task'): void {
@@ -319,7 +329,17 @@ test('farmrun seed import remaps parentRunId redirectedToRunId and familyId', as
   }
 });
 
-async function historyBundleFixture(t: TestContext, archived = false) {
+interface HistoryFixtureOptions {
+  legacy?: boolean;
+  torn?: boolean;
+  resolved?: boolean;
+}
+
+async function historyBundleFixture(
+  t: TestContext,
+  archived = false,
+  options: HistoryFixtureOptions = {},
+) {
   const source = mkdtempSync(path.join(tmpdir(), 'history-export-'));
   const target = mkdtempSync(path.join(tmpdir(), 'history-import-'));
   t.after(() => {
@@ -357,12 +377,27 @@ async function historyBundleFixture(t: TestContext, archived = false) {
     context: { receiptId: 'untouched' },
   };
   const bytes = JSON.stringify(row) + '\n' + JSON.stringify(row) + '\n';
+  if (options.legacy) delete run.decisionHistoryCount;
+  if (options.resolved) {
+    run.decisions = [
+      {
+        ...row,
+        resolvedAt: '2026-11-03T00:01:00Z',
+        resolvedAction: 'hold',
+        selectionData: { packageId: 'newer-backup' },
+      },
+    ];
+  }
   writeMinimalFarmslotRoot(source);
   writeMinimalFarmslotRoot(target);
   const sourceDir = path.join(source, '.runs', ...(archived ? ['archive'] : []));
   mkdirSync(sourceDir, { recursive: true });
   writeFileSync(path.join(sourceDir, `${id}.json`), JSON.stringify(run));
-  writeFileSync(path.join(sourceDir, `${id}.decisions.jsonl`), bytes);
+  if (!options.legacy)
+    writeFileSync(
+      path.join(sourceDir, `${id}.decisions.jsonl`),
+      bytes + (options.torn ? '{"id":' : ''),
+    );
   const bundlePath = path.join(source, 'history.farmrun');
   const exported = await exportRunsToBundle({
     farmslotRoot: source,
@@ -403,94 +438,224 @@ for (const scenario of [
   'divergent history',
   'different active rows',
   'archived target',
+  'missing counted journal',
+  'legacy bundle',
+  'truncated target',
+  'truncated archived target',
+  'torn target tail',
 ] as const) {
   test(`forced mirror preserves ${scenario}`, { timeout: 4000 }, async (t) => {
-    const { target, id, run, row, bytes, bundlePath } = await historyBundleFixture(t);
-    const directory = path.join(
-      target,
-      '.runs',
-      ...(scenario === 'archived target' ? ['archive'] : []),
+    const { target, id, run, row, bytes, bundlePath, exported } = await historyBundleFixture(
+      t,
+      false,
+      {
+        legacy: scenario === 'legacy bundle',
+        resolved: scenario === 'different active rows',
+      },
     );
+    const archived = scenario === 'archived target' || scenario === 'truncated archived target';
+    const directory = path.join(target, '.runs', ...(archived ? ['archive'] : []));
     mkdirSync(directory, { recursive: true });
     const journal = path.join(directory, `${id}.decisions.jsonl`);
     const record = path.join(directory, `${id}.json`);
-    const ahead = bytes + JSON.stringify({ ...row, description: 'target-only' }) + '\n';
+    const targetOnly = { ...row, description: 'target-only', context: { receiptId: 'keep-whole' } };
+    const line = JSON.stringify(targetOnly) + '\n';
     const history =
       scenario === 'longer target'
-        ? ahead
-        : scenario === 'divergent history'
-          ? JSON.stringify({ ...row, description: 'divergent' }) + '\n'
+        ? bytes + line
+        : scenario === 'divergent history' || archived
+          ? line
           : bytes;
-    const recordBytes = JSON.stringify({
-      ...run,
-      decisions: scenario === 'different active rows' ? [row] : [],
-      decisionHistoryCount: scenario === 'longer target' ? 3 : 2,
-    });
+    const decisions =
+      scenario === 'different active rows'
+        ? [row, run.decisions[0], targetOnly, targetOnly]
+        : scenario === 'legacy bundle' || archived
+          ? [targetOnly]
+          : [];
+    const truncated = scenario.startsWith('truncated');
+    const recordBytes = truncated
+      ? '{"id":'
+      : JSON.stringify({
+          ...run,
+          decisions,
+          decisionHistoryCount: 99,
+        });
     writeFileSync(record, recordBytes);
-    writeFileSync(journal, history);
-    const importing = importBundle({
-      farmslotRoot: target,
-      bundlePath,
-      mode: 'mirror',
-      force: true,
-    });
-    if (scenario === 'longer target') {
-      await importing;
-      assert.equal(JSON.parse(readFileSync(record, 'utf8')).decisionHistoryCount, 3);
-    } else {
-      await assert.rejects(importing, /requires an owner decision/);
-      assert.equal(readFileSync(record, 'utf8'), recordBytes);
+    if (scenario !== 'missing counted journal')
+      writeFileSync(journal, history + (scenario === 'torn target tail' ? '{"id":' : ''));
+    if (scenario === 'legacy bundle') {
+      assert.equal(exported.manifest.entries[`runs/${id}.decisions.jsonl`], undefined);
+      assert.equal(run.decisionHistoryCount, undefined);
     }
-    assert.equal(readFileSync(journal, 'utf8'), history);
-    if (scenario === 'archived target')
-      assert.equal(existsSync(path.join(target, '.runs', `${id}.json`)), false);
+    await importBundle({ farmslotRoot: target, bundlePath, mode: 'mirror', force: true });
+    const expected =
+      scenario === 'divergent history'
+        ? line + bytes
+        : archived
+          ? line + bytes + (truncated ? '' : line)
+          : scenario === 'different active rows'
+            ? bytes + JSON.stringify(row) + '\n' + line + line
+            : scenario === 'legacy bundle' || scenario === 'longer target'
+              ? bytes + line
+              : bytes;
+    const actual = readFileSync(journal, 'utf8');
+    // A target-only torn tail can remain when the merge has nothing to append.
+    assert.equal(actual.slice(0, actual.lastIndexOf('\n') + 1), expected);
+    const restored = JSON.parse(readFileSync(record, 'utf8'));
+    assert.deepEqual(restored.decisions, run.decisions);
+    assert.equal(restored.decisionHistoryCount, expected.split('\n').length - 1);
+    assert.equal(existsSync(path.join(target, '.runs', `${id}.json`)), !archived);
+    const displacedFiles = readdirSync(directory).filter((name) =>
+      name.startsWith(`${id}.json.displaced-`),
+    );
+    assert.equal(displacedFiles.length, truncated ? 1 : 0);
+    if (truncated)
+      assert.equal(readFileSync(path.join(directory, displacedFiles[0]), 'utf8'), recordBytes);
   });
 }
 
-test('retained artifact captures include the retired-row journal', { timeout: 4000 }, async (t) => {
-  const root = mkdtempSync(path.join(tmpdir(), 'history-capture-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  writeMinimalFarmslotRoot(root);
-  const id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-  const run: Run = {
-    id,
-    familyId: id,
-    lane: 'comparison',
-    variant: null,
-    flowType: 'dev',
-    mode: 'interactive',
-    status: 'cancelled',
-    project: 'example-history',
-    ticketOrPr: 'PROJ-351',
-    slotId: null,
-    branch: null,
-    taskFile: path.join(root, 'projects/example-history/tasks/dev/history/TASK.md'),
-    steps: [],
-    decisions: [],
-    decisionHistoryCount: 1,
-    metrics: { nudgeCount: 0, model: null, runner: null },
-    createdAt: '2026-11-03T00:00:00Z',
-    updatedAt: '2026-11-03T00:00:00Z',
-  };
-  writeFixtureRun(root, run);
-  const bytes =
-    JSON.stringify({
-      id: 'retired',
-      type: 'engine_human_gate',
-      title: 'Publish',
-      description: 'whole',
-      actions: [],
-      createdAt: run.createdAt,
-    }) + '\n';
-  writeFileSync(path.join(root, '.runs', `${id}.decisions.jsonl`), bytes);
-  await retainFixtureTask(root, run);
-  assert.ok(run.artifactBundle);
-  const store = await fixtureBundleStore(root);
-  const { readRetainedRunBundle } = await import('./index.js');
-  const retained = await readRetainedRunBundle(store, run.artifactBundle, run.id);
-  assert.ok(retained.manifest.entries[`runs/${id}.decisions.jsonl`]);
-  assert.equal(
-    readFileSync(path.join(retained.directory, `runs/${id}.decisions.jsonl`), 'utf8'),
-    bytes,
+for (const archived of [false, true]) {
+  test(
+    `torn ${archived ? 'archived' : 'live'} source exports complete rows without changing source`,
+    { timeout: 4000 },
+    async (t) => {
+      const { source, target, id, bytes, bundlePath, exported } = await historyBundleFixture(
+        t,
+        archived,
+        { torn: true },
+      );
+      const journal = path.join(
+        source,
+        '.runs',
+        ...(archived ? ['archive'] : []),
+        `${id}.decisions.jsonl`,
+      );
+      const original = Buffer.from(bytes + '{"id":');
+      assert.deepEqual(readFileSync(journal), original);
+      assert.equal(
+        exported.manifest.entries[`runs/${id}.decisions.jsonl`].bytes,
+        Buffer.byteLength(bytes),
+      );
+      await importBundle({ farmslotRoot: target, bundlePath, mode: 'mirror' });
+      assert.equal(
+        readFileSync(path.join(target, '.runs', `${id}.decisions.jsonl`), 'utf8'),
+        bytes,
+      );
+      assert.equal(
+        JSON.parse(readFileSync(path.join(target, '.runs', `${id}.json`), 'utf8'))
+          .decisionHistoryCount,
+        2,
+      );
+      assert.deepEqual(readFileSync(journal), original);
+    },
   );
-});
+}
+
+for (const mode of ['seed', 'reference-only', 'mirror'] as const) {
+  test(
+    `an older bundle with a torn journal imports complete rows through ${mode}`,
+    { timeout: 4000 },
+    async (t) => {
+      const { target, id, bytes, bundlePath } = await historyBundleFixture(t);
+      const directory = unpackFarmrunArchive(bundlePath);
+      t.after(() => rmSync(path.dirname(directory), { recursive: true, force: true }));
+      const historyPath = `runs/${id}.decisions.jsonl`;
+      const torn = bytes + '{"id":';
+      writeFileSync(path.join(directory, historyPath), torn);
+      const manifest = parseManifest(directory);
+      manifest.entries[historyPath] = {
+        path: historyPath,
+        sha256: sha256Text(torn),
+        bytes: Buffer.byteLength(torn),
+      };
+      writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify(manifest));
+      const olderBundle = path.join(target, 'older-torn.farmrun');
+      packFarmrunDirectory(directory, olderBundle);
+      const imported = await importBundle({ farmslotRoot: target, bundlePath: olderBundle, mode });
+      const targetId = imported.importedRunIds[0];
+      assert.equal(
+        readFileSync(path.join(target, '.runs', `${targetId}.decisions.jsonl`), 'utf8'),
+        bytes,
+      );
+      assert.equal(
+        JSON.parse(readFileSync(path.join(target, '.runs', `${targetId}.json`), 'utf8'))
+          .decisionHistoryCount,
+        2,
+      );
+      assert.equal(readFileSync(path.join(directory, historyPath), 'utf8'), torn);
+    },
+  );
+}
+
+test(
+  'retained artifact captures round-trip complete rows without changing a torn source',
+  { timeout: 4000 },
+  async (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), 'history-capture-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    writeMinimalFarmslotRoot(root);
+    const id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const run: Run = {
+      id,
+      familyId: id,
+      lane: 'comparison',
+      variant: null,
+      flowType: 'dev',
+      mode: 'interactive',
+      status: 'cancelled',
+      project: 'example-history',
+      ticketOrPr: 'PROJ-351',
+      slotId: null,
+      branch: null,
+      taskFile: path.join(root, 'projects/example-history/tasks/dev/history/TASK.md'),
+      steps: [],
+      decisions: [],
+      decisionHistoryCount: 1,
+      metrics: { nudgeCount: 0, model: null, runner: null },
+      createdAt: '2026-11-03T00:00:00Z',
+      updatedAt: '2026-11-03T00:00:00Z',
+    };
+    writeFixtureRun(root, run);
+    const bytes =
+      JSON.stringify({
+        id: 'retired',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: 'whole',
+        actions: [],
+        createdAt: run.createdAt,
+      }) + '\n';
+    const journal = path.join(root, '.runs', `${id}.decisions.jsonl`);
+    const original = Buffer.concat([Buffer.from(bytes), Buffer.from([123, 34, 0xe2, 0x82])]);
+    writeFileSync(journal, original);
+    await retainFixtureTask(root, run);
+    assert.ok(run.artifactBundle);
+    const store = await fixtureBundleStore(root);
+    const { readRetainedRunBundle } = await import('./index.js');
+    const retained = await readRetainedRunBundle(store, run.artifactBundle, run.id);
+    assert.ok(retained.manifest.entries[`runs/${id}.decisions.jsonl`]);
+    assert.equal(
+      readFileSync(path.join(retained.directory, `runs/${id}.decisions.jsonl`), 'utf8'),
+      bytes,
+    );
+    assert.deepEqual(readFileSync(journal), original);
+    const target = path.join(root, 'restored');
+    mkdirSync(target);
+    writeMinimalFarmslotRoot(target);
+    const capturedBundle = path.join(root, 'captured.farmrun');
+    packFarmrunDirectory(retained.directory, capturedBundle);
+    await importBundle({
+      farmslotRoot: target,
+      bundlePath: capturedBundle,
+      mode: 'mirror',
+      retentionStore: await fixtureBundleStore(target),
+    });
+    assert.equal(readFileSync(path.join(target, '.runs', `${id}.decisions.jsonl`), 'utf8'), bytes);
+    assert.equal(
+      JSON.parse(readFileSync(path.join(target, '.runs', `${id}.json`), 'utf8'))
+        .decisionHistoryCount,
+      1,
+    );
+    assert.deepEqual(readFileSync(journal), original);
+  },
+);

@@ -54,14 +54,16 @@ export function selectRunsForExport(input: {
   positionalRunId?: string;
 }): Run[] {
   const runsDir = resolveRunsDir(input.farmslotRoot);
-  const all = [
-    ...new Map(
-      [...loadAllRunRecords(path.join(runsDir, 'archive')), ...loadAllRunRecords(runsDir)].map(
-        (run) => [run.id, run],
-      ),
-    ).values(),
-  ];
+  const archiveDir = path.join(runsDir, 'archive');
   if (input.familyId) {
+    const all = [
+      ...new Map(
+        [...loadAllRunRecords(archiveDir), ...loadAllRunRecords(runsDir)].map((run) => [
+          run.id,
+          run,
+        ]),
+      ).values(),
+    ];
     const familyRuns = all.filter((run) => run.familyId === input.familyId);
     if (familyRuns.length === 0) {
       throw new Error(`No runs found for familyId ${input.familyId}`);
@@ -77,10 +79,13 @@ export function selectRunsForExport(input: {
   }
   const selected: Run[] = [];
   for (const runId of requested) {
-    const run =
-      all.find((candidate) => candidate.id === runId) ??
-      all.find((candidate) => candidate.id.startsWith(runId)) ??
-      loadRunRecord(runsDir, runId);
+    const exactDir = [runsDir, archiveDir].find((dir) =>
+      existsSync(path.join(dir, `${runId}.json`)),
+    );
+    const run = exactDir
+      ? loadRunRecord(exactDir, runId)
+      : ((existsSync(runsDir) ? loadRunRecord(runsDir, runId) : null) ??
+        (existsSync(archiveDir) ? loadRunRecord(archiveDir, runId) : null));
     if (!run) throw new Error(`Run not found: ${runId}`);
     if (!selected.some((candidate) => candidate.id === run.id)) selected.push(run);
   }

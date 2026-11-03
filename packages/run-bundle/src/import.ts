@@ -21,6 +21,7 @@ import {
   type RunBundleImportRequest,
   type RunBundleImportResult,
   type RunBundleManifest,
+  type RunDecision,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import {
@@ -30,7 +31,11 @@ import {
 } from '@farmslot/protocol/runs/portable-bundle';
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
-import { decisionHistoryFile, mergeDecisionHistoryFile } from './decision-history.js';
+import {
+  appendDecisionHistoryFile,
+  decisionHistoryFile,
+  mergeDecisionHistoryFile,
+} from './decision-history.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir } from './paths.js';
 import {
@@ -270,6 +275,13 @@ function remapNestedRunIdReferences(run: Run, idMap: Record<string, string>): Ru
   return next;
 }
 
+interface ImportHistoryTarget {
+  source: string;
+  record: string;
+  retired: RunDecision[];
+  displaced?: Buffer;
+}
+
 export async function importBundle(
   request: RunBundleImportRequest & { retentionStore?: RunBundleStore },
 ): Promise<RunBundleImportResult> {
@@ -287,17 +299,14 @@ export async function importBundle(
     const importedRunIds: string[] = [];
     const packagePaths: string[] = [];
     const stagedRuns: Run[] = [];
-    const historySources = new Map<string, string>();
+    const historyTargets = new Map<string, ImportHistoryTarget>();
 
     for (const entry of manifest.runs) {
       const bundled = loadBundledRun(bundleDir, entry.runPath, manifest);
       if (request.mode === 'mirror') assertSafeRunId(bundled.id);
-      const existingPath = path.join(runsDir, `${bundled.id}.json`);
-      if (
-        request.mode === 'mirror' &&
-        existsSync(path.join(runsDir, 'archive', `${bundled.id}.json`))
-      )
-        throw new Error('Mirror import of an archived run requires an owner decision');
+      const livePath = path.join(runsDir, `${bundled.id}.json`);
+      const archivedPath = path.join(runsDir, 'archive', `${bundled.id}.json`);
+      const existingPath = existsSync(livePath) ? livePath : archivedPath;
       if (request.mode === 'mirror' && existsSync(existingPath) && !request.force) {
         throw new Error(
           `mirror import refused: run id ${bundled.id} already exists — pass --force to overwrite`,
@@ -311,19 +320,33 @@ export async function importBundle(
         throw new Error(`Bundle contains unlisted file: ${historyPath}`);
       if (bundled.decisionHistoryCount && !manifest.entries[historyPath])
         throw new Error(`Decision history missing for run ${bundled.id}`);
-      const historyTarget = decisionHistoryFile(path.join(runsDir, `${next.id}.json`));
+      const target: ImportHistoryTarget = {
+        source: historySource,
+        record:
+          request.mode === 'mirror' && existsSync(existingPath)
+            ? existingPath
+            : path.join(runsDir, `${next.id}.json`),
+        retired: [],
+      };
       if (request.mode === 'mirror' && existsSync(existingPath)) {
-        const existing: Run = JSON.parse(readFileSync(existingPath, 'utf8'));
-        if (!isDeepStrictEqual(existing.decisions, bundled.decisions))
-          throw new Error(
-            'Mirror replacement of different active decisions requires an owner decision',
-          );
-        if (existing.decisionHistoryCount && !existsSync(historyTarget))
-          throw new Error('Mirror target decision history is missing; requires an owner decision');
+        const bytes = readFileSync(existingPath);
+        let existing: Run | undefined;
+        try {
+          existing = JSON.parse(bytes.toString('utf8'));
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error;
+          // Disaster recovery must retain the damaged original before replacing it.
+          target.displaced = bytes;
+        }
+        const remaining = [...bundled.decisions];
+        target.retired = (existing?.decisions ?? []).filter((row) => {
+          const index = remaining.findIndex((incoming) => isDeepStrictEqual(incoming, row));
+          if (index < 0) return true;
+          remaining.splice(index, 1);
+          return false;
+        });
       }
-      const count = mergeDecisionHistoryFile(historySource, historyTarget, { dryRun: true });
-      if (count) next.decisionHistoryCount = count;
-      historySources.set(next.id, historySource);
+      historyTargets.set(next.id, target);
       if (entry.taskKey) {
         const taskFile = restoreTaskTree({
           bundleDir,
@@ -346,11 +369,18 @@ export async function importBundle(
         remapImportedRunLineage(staged, idMap, request.mode),
         idMap,
       );
-      const count = mergeDecisionHistoryFile(
-        historySources.get(next.id)!,
-        decisionHistoryFile(path.join(runsDir, `${next.id}.json`)),
-      );
-      if (count) next.decisionHistoryCount = count;
+      const target = historyTargets.get(next.id)!;
+      const history = decisionHistoryFile(target.record);
+      const count = mergeDecisionHistoryFile(target.source, history);
+      appendDecisionHistoryFile(history, target.retired);
+      next.decisionHistoryCount = count + target.retired.length;
+      if (target.displaced) {
+        writeFileSync(
+          `${target.record}.displaced-${Date.now()}-${randomUUID().slice(0, 8)}`,
+          target.displaced,
+          { flag: 'wx', flush: true },
+        );
+      }
       if (next.taskFile) {
         for (const name of ['reference.result-package.json', 'candidate.result-package.json']) {
           const candidate = path.join(path.dirname(next.taskFile), 'artifacts', 'packages', name);
@@ -417,7 +447,7 @@ export async function importBundle(
                   }
                 : {}),
             };
-            persistRunRecord(runsDir, stripRunnerSessionArchives(next));
+            persistRunRecord(path.dirname(target.record), stripRunnerSessionArchives(next));
             for (const artifact of artifacts) {
               if (isRunBundleMedia(artifact.path))
                 rmSync(path.join(path.dirname(next.taskFile!), artifact.path), { force: true });
@@ -428,7 +458,7 @@ export async function importBundle(
         // Imported missing data stays unavailable; it never points back into the source gateway.
         delete next.artifactBundle;
         if (next.output) delete next.output.artifactBundle;
-        persistRunRecord(runsDir, stripRunnerSessionArchives(next));
+        persistRunRecord(path.dirname(target.record), stripRunnerSessionArchives(next));
       }
       importedRunIds.push(next.id);
     }

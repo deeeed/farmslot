@@ -64,20 +64,32 @@ export function appendDecisionHistoryFile(file: string, rows: RunDecision[]): vo
   appendDecisionHistoryBytes(file, rows.map((row) => `${JSON.stringify(row)}\n`).join(''));
 }
 
-/** Preserve both copies on refusal. A forced mirror cannot discard divergent rows. */
+/** Snapshot only newline-terminated rows, leaving any interrupted append untouched. */
+export function captureDecisionHistoryPrefix(file: string): Buffer {
+  const bytes = fs.readFileSync(file);
+  return bytes.subarray(0, bytes.lastIndexOf(10) + 1);
+}
+
+/** Keep target rows in place and append incoming lines absent from the target. */
 export function mergeDecisionHistoryFile(
   source: string,
   target: string,
   options: { dryRun?: boolean } = {},
 ): number {
-  const incoming = fs.existsSync(source) ? fs.readFileSync(source, 'utf8') : '';
-  const existing = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
-  if ((incoming && !incoming.endsWith('\n')) || (existing && !existing.endsWith('\n')))
-    throw new Error('Cannot transport decision history with an incomplete tail');
-  if (!incoming.startsWith(existing) && !existing.startsWith(incoming))
-    throw new Error('Import refused: divergent decision history requires an owner decision');
-  if (!options.dryRun && incoming.length > existing.length)
-    appendDecisionHistoryBytes(target, incoming.slice(existing.length));
-  const retained = incoming.length > existing.length ? incoming : existing;
-  return retained.split('\n').length - 1;
+  const incoming = fs.existsSync(source)
+    ? captureDecisionHistoryPrefix(source).toString('utf8')
+    : '';
+  const existing = fs.existsSync(target)
+    ? captureDecisionHistoryPrefix(target).toString('utf8')
+    : '';
+  const existingLines = existing.split('\n').slice(0, -1);
+  const known = new Set(existingLines);
+  // Compare against the target only, preserving repeated incoming occurrences when absent.
+  const missing = incoming
+    .split('\n')
+    .slice(0, -1)
+    .filter((line) => !known.has(line));
+  if (!options.dryRun)
+    appendDecisionHistoryBytes(target, missing.map((line) => `${line}\n`).join(''));
+  return existingLines.length + missing.length;
 }

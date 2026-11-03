@@ -22,7 +22,7 @@ import {
 import { packFarmrunDirectory, writeBundleManifest } from './archive.js';
 import { selectRunsForExport } from './collect.js';
 import { copyDirectoryRecursive, registerDirectoryEntries } from './copy-tree.js';
-import { decisionHistoryFile } from './decision-history.js';
+import { captureDecisionHistoryPrefix, decisionHistoryFile } from './decision-history.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir, sanitizeBundleRunId } from './paths.js';
 import { openRunBundleStore, readRetainedRunBundle, resolveRunBundleEntry } from './retained.js';
@@ -61,10 +61,10 @@ function addFileEntry(
   relativePath: string,
   sourcePath: string,
   entries: Record<string, RunBundleEntryMeta>,
+  content: Buffer = readFileSync(sourcePath),
 ): void {
   const destPath = path.join(bundleDir, relativePath);
   mkdirSync(path.dirname(destPath), { recursive: true });
-  const content = readFileSync(sourcePath);
   writeFileSync(destPath, content);
   entries[relativePath] = {
     sha256: sha256File(destPath),
@@ -108,8 +108,11 @@ export async function exportRunsToBundle(
       );
       if (run.decisionHistoryCount && !existsSync(history))
         throw new Error(`Decision history missing for run ${run.id}`);
-      if (existsSync(history))
-        addFileEntry(bundleDir, decisionHistoryFile(runFile), history, entries);
+      if (existsSync(history)) {
+        const prefix = captureDecisionHistoryPrefix(history);
+        addFileEntry(bundleDir, decisionHistoryFile(runFile), history, entries, prefix);
+        sanitized.decisionHistoryCount = prefix.toString('utf8').split('\n').length - 1;
+      }
       const runJson = JSON.stringify(sanitized, null, 2);
       writeFileSync(path.join(bundleDir, runFile), runJson, 'utf-8');
       entries[runFile] = {

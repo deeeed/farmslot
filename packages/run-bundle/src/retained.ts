@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createWriteStream, existsSync, statSync } from 'node:fs';
+import { constants, createWriteStream, existsSync } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -43,7 +43,7 @@ import {
 
 import { loadAllRunRecords } from './collect.js';
 import { shouldSkipBundleFilesystemEntry } from './copy-tree.js';
-import { decisionHistoryFile } from './decision-history.js';
+import { captureDecisionHistoryPrefix, decisionHistoryFile } from './decision-history.js';
 import { sha256Text } from './hashing.js';
 import { parseManifest } from './import.js';
 import {
@@ -1587,6 +1587,8 @@ export async function materializeRunBundle(
       : decisionHistoryFile(path.join(store.runsDir, 'archive', `${run.id}.json`));
     if (!prior && run.decisionHistoryCount && !existsSync(historyFile))
       throw new Error(`Decision history missing for run ${run.id}`);
+    const historyPrefix =
+      !prior && existsSync(historyFile) ? captureDecisionHistoryPrefix(historyFile) : undefined;
     const intent: CaptureIntent = prior
       ? JSON.parse(prior)
       : {
@@ -1594,8 +1596,17 @@ export async function materializeRunBundle(
           key: request.captureKey,
           bundleId: randomUUID(),
           exportedAt: new Date().toISOString(),
-          runJson: `${JSON.stringify(sanitizeRunForBundleExport(run, 'reference'), null, 2)}\n`,
-          ...(existsSync(historyFile) ? { decisionHistoryBytes: statSync(historyFile).size } : {}),
+          runJson: `${JSON.stringify(
+            {
+              ...sanitizeRunForBundleExport(run, 'reference'),
+              ...(historyPrefix
+                ? { decisionHistoryCount: historyPrefix.toString('utf8').split('\n').length - 1 }
+                : {}),
+            },
+            null,
+            2,
+          )}\n`,
+          ...(historyPrefix ? { decisionHistoryBytes: historyPrefix.byteLength } : {}),
           ...(run.engineState?.generation !== undefined
             ? { generation: run.engineState.generation }
             : {}),
