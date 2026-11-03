@@ -1,0 +1,1 @@
+- Preserve retired decision journals through live or archived run export and every import mode. Forced mirrors append compatible history and refuse divergent history without overwriting either copy.

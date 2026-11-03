@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { Run, RunDecision } from '@farmslot/protocol';
 
 import { exportRunsToBundle, importBundle, listBundle } from './index.js';
 import { fixtureBundleStore, retainFixtureTask } from './retained.test-support.js';
@@ -317,4 +317,180 @@ test('farmrun seed import remaps parentRunId redirectedToRunId and familyId', as
     rmSync(targetRoot, { recursive: true, force: true });
     rmSync(bundlePath, { force: true });
   }
+});
+
+async function historyBundleFixture(t: TestContext, archived = false) {
+  const source = mkdtempSync(path.join(tmpdir(), 'history-export-'));
+  const target = mkdtempSync(path.join(tmpdir(), 'history-import-'));
+  t.after(() => {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  });
+  const id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const run: Run = {
+    id,
+    familyId: id,
+    lane: 'comparison',
+    variant: null,
+    flowType: 'dev',
+    mode: 'interactive',
+    status: 'cancelled',
+    project: 'example-history',
+    ticketOrPr: 'PROJ-351',
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    decisionHistoryCount: 2,
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: '2026-11-03T00:00:00Z',
+    updatedAt: '2026-11-03T00:00:00Z',
+  };
+  const row: RunDecision = {
+    id: 'same-id',
+    type: 'engine_human_gate',
+    title: 'Publish',
+    description: 'whole row',
+    actions: [],
+    createdAt: run.createdAt,
+    context: { receiptId: 'untouched' },
+  };
+  const bytes = JSON.stringify(row) + '\n' + JSON.stringify(row) + '\n';
+  writeMinimalFarmslotRoot(source);
+  writeMinimalFarmslotRoot(target);
+  const sourceDir = path.join(source, '.runs', ...(archived ? ['archive'] : []));
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, `${id}.json`), JSON.stringify(run));
+  writeFileSync(path.join(sourceDir, `${id}.decisions.jsonl`), bytes);
+  const bundlePath = path.join(source, 'history.farmrun');
+  const exported = await exportRunsToBundle({
+    farmslotRoot: source,
+    outputPath: bundlePath,
+    profile: 'reference',
+    runIds: [id],
+  });
+  return { source, target, id, run, row, bytes, bundlePath, exported };
+}
+
+for (const mode of ['seed', 'reference-only', 'mirror'] as const) {
+  for (const archived of [false, true]) {
+    test(
+      `retired rows round-trip unchanged through ${mode} from ${archived ? 'archive' : 'live'}`,
+      { timeout: 4000 },
+      async (t) => {
+        const { target, id, bytes, bundlePath, exported } = await historyBundleFixture(t, archived);
+        assert.ok(exported.manifest.entries[`runs/${id}.decisions.jsonl`]);
+        const imported = await importBundle({ farmslotRoot: target, bundlePath, mode });
+        const targetId = imported.importedRunIds[0];
+        const file = path.join(target, '.runs', `${targetId}.decisions.jsonl`);
+        assert.equal(readFileSync(file, 'utf8'), bytes);
+        const record = JSON.parse(
+          readFileSync(path.join(target, '.runs', `${targetId}.json`), 'utf8'),
+        );
+        assert.equal(record.decisionHistoryCount, 2);
+        if (mode === 'mirror') {
+          await importBundle({ farmslotRoot: target, bundlePath, mode, force: true });
+          assert.equal(readFileSync(file, 'utf8'), bytes, 'repeated mirror appends no duplicates');
+        }
+      },
+    );
+  }
+}
+
+for (const scenario of [
+  'longer target',
+  'divergent history',
+  'different active rows',
+  'archived target',
+] as const) {
+  test(`forced mirror preserves ${scenario}`, { timeout: 4000 }, async (t) => {
+    const { target, id, run, row, bytes, bundlePath } = await historyBundleFixture(t);
+    const directory = path.join(
+      target,
+      '.runs',
+      ...(scenario === 'archived target' ? ['archive'] : []),
+    );
+    mkdirSync(directory, { recursive: true });
+    const journal = path.join(directory, `${id}.decisions.jsonl`);
+    const record = path.join(directory, `${id}.json`);
+    const ahead = bytes + JSON.stringify({ ...row, description: 'target-only' }) + '\n';
+    const history =
+      scenario === 'longer target'
+        ? ahead
+        : scenario === 'divergent history'
+          ? JSON.stringify({ ...row, description: 'divergent' }) + '\n'
+          : bytes;
+    const recordBytes = JSON.stringify({
+      ...run,
+      decisions: scenario === 'different active rows' ? [row] : [],
+      decisionHistoryCount: scenario === 'longer target' ? 3 : 2,
+    });
+    writeFileSync(record, recordBytes);
+    writeFileSync(journal, history);
+    const importing = importBundle({
+      farmslotRoot: target,
+      bundlePath,
+      mode: 'mirror',
+      force: true,
+    });
+    if (scenario === 'longer target') {
+      await importing;
+      assert.equal(JSON.parse(readFileSync(record, 'utf8')).decisionHistoryCount, 3);
+    } else {
+      await assert.rejects(importing, /requires an owner decision/);
+      assert.equal(readFileSync(record, 'utf8'), recordBytes);
+    }
+    assert.equal(readFileSync(journal, 'utf8'), history);
+    if (scenario === 'archived target')
+      assert.equal(existsSync(path.join(target, '.runs', `${id}.json`)), false);
+  });
+}
+
+test('retained artifact captures include the retired-row journal', { timeout: 4000 }, async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'history-capture-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeMinimalFarmslotRoot(root);
+  const id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const run: Run = {
+    id,
+    familyId: id,
+    lane: 'comparison',
+    variant: null,
+    flowType: 'dev',
+    mode: 'interactive',
+    status: 'cancelled',
+    project: 'example-history',
+    ticketOrPr: 'PROJ-351',
+    slotId: null,
+    branch: null,
+    taskFile: path.join(root, 'projects/example-history/tasks/dev/history/TASK.md'),
+    steps: [],
+    decisions: [],
+    decisionHistoryCount: 1,
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: '2026-11-03T00:00:00Z',
+    updatedAt: '2026-11-03T00:00:00Z',
+  };
+  writeFixtureRun(root, run);
+  const bytes =
+    JSON.stringify({
+      id: 'retired',
+      type: 'engine_human_gate',
+      title: 'Publish',
+      description: 'whole',
+      actions: [],
+      createdAt: run.createdAt,
+    }) + '\n';
+  writeFileSync(path.join(root, '.runs', `${id}.decisions.jsonl`), bytes);
+  await retainFixtureTask(root, run);
+  assert.ok(run.artifactBundle);
+  const store = await fixtureBundleStore(root);
+  const { readRetainedRunBundle } = await import('./index.js');
+  const retained = await readRetainedRunBundle(store, run.artifactBundle, run.id);
+  assert.ok(retained.manifest.entries[`runs/${id}.decisions.jsonl`]);
+  assert.equal(
+    readFileSync(path.join(retained.directory, `runs/${id}.decisions.jsonl`), 'utf8'),
+    bytes,
+  );
 });

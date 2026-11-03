@@ -1,1 +1,1 @@
-- Run records retain retired decision rows in decisionHistory. Run lists and summaries omit that history.
+- Run records expose decisionHistoryCount for retired decision rows stored separately from routine run reads and events.

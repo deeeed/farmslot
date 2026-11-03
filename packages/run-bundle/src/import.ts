@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   isRunBundleManifest,
@@ -29,6 +30,7 @@ import {
 } from '@farmslot/protocol/runs/portable-bundle';
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
+import { decisionHistoryFile, mergeDecisionHistoryFile } from './decision-history.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir } from './paths.js';
 import {
@@ -285,10 +287,17 @@ export async function importBundle(
     const importedRunIds: string[] = [];
     const packagePaths: string[] = [];
     const stagedRuns: Run[] = [];
+    const historySources = new Map<string, string>();
 
     for (const entry of manifest.runs) {
       const bundled = loadBundledRun(bundleDir, entry.runPath, manifest);
+      if (request.mode === 'mirror') assertSafeRunId(bundled.id);
       const existingPath = path.join(runsDir, `${bundled.id}.json`);
+      if (
+        request.mode === 'mirror' &&
+        existsSync(path.join(runsDir, 'archive', `${bundled.id}.json`))
+      )
+        throw new Error('Mirror import of an archived run requires an owner decision');
       if (request.mode === 'mirror' && existsSync(existingPath) && !request.force) {
         throw new Error(
           `mirror import refused: run id ${bundled.id} already exists — pass --force to overwrite`,
@@ -296,6 +305,25 @@ export async function importBundle(
       }
 
       let next = applyImportMode(bundled, request.mode, manifest, idMap);
+      const historyPath = decisionHistoryFile(entry.runPath);
+      const historySource = resolvePathInsideRoot(path.resolve(bundleDir), historyPath);
+      if (existsSync(historySource) && !manifest.entries[historyPath])
+        throw new Error(`Bundle contains unlisted file: ${historyPath}`);
+      if (bundled.decisionHistoryCount && !manifest.entries[historyPath])
+        throw new Error(`Decision history missing for run ${bundled.id}`);
+      const historyTarget = decisionHistoryFile(path.join(runsDir, `${next.id}.json`));
+      if (request.mode === 'mirror' && existsSync(existingPath)) {
+        const existing: Run = JSON.parse(readFileSync(existingPath, 'utf8'));
+        if (!isDeepStrictEqual(existing.decisions, bundled.decisions))
+          throw new Error(
+            'Mirror replacement of different active decisions requires an owner decision',
+          );
+        if (existing.decisionHistoryCount && !existsSync(historyTarget))
+          throw new Error('Mirror target decision history is missing; requires an owner decision');
+      }
+      const count = mergeDecisionHistoryFile(historySource, historyTarget, { dryRun: true });
+      if (count) next.decisionHistoryCount = count;
+      historySources.set(next.id, historySource);
       if (entry.taskKey) {
         const taskFile = restoreTaskTree({
           bundleDir,
@@ -318,6 +346,11 @@ export async function importBundle(
         remapImportedRunLineage(staged, idMap, request.mode),
         idMap,
       );
+      const count = mergeDecisionHistoryFile(
+        historySources.get(next.id)!,
+        decisionHistoryFile(path.join(runsDir, `${next.id}.json`)),
+      );
+      if (count) next.decisionHistoryCount = count;
       if (next.taskFile) {
         for (const name of ['reference.result-package.json', 'candidate.result-package.json']) {
           const candidate = path.join(path.dirname(next.taskFile), 'artifacts', 'packages', name);

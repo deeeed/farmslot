@@ -22,6 +22,7 @@ import {
 import { packFarmrunDirectory, writeBundleManifest } from './archive.js';
 import { selectRunsForExport } from './collect.js';
 import { copyDirectoryRecursive, registerDirectoryEntries } from './copy-tree.js';
+import { decisionHistoryFile } from './decision-history.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir, sanitizeBundleRunId } from './paths.js';
 import { openRunBundleStore, readRetainedRunBundle, resolveRunBundleEntry } from './retained.js';
@@ -100,6 +101,15 @@ export async function exportRunsToBundle(
     for (const run of runs) {
       const sanitized = sanitizeRunForBundleExport(run, profile);
       const runFile = `runs/${sanitizeBundleRunId(run.id)}.json`;
+      const runsDir = resolveRunsDir(request.farmslotRoot);
+      const record = path.join(runsDir, `${run.id}.json`);
+      const history = decisionHistoryFile(
+        existsSync(record) ? record : path.join(runsDir, 'archive', `${run.id}.json`),
+      );
+      if (run.decisionHistoryCount && !existsSync(history))
+        throw new Error(`Decision history missing for run ${run.id}`);
+      if (existsSync(history))
+        addFileEntry(bundleDir, decisionHistoryFile(runFile), history, entries);
       const runJson = JSON.stringify(sanitized, null, 2);
       writeFileSync(path.join(bundleDir, runFile), runJson, 'utf-8');
       entries[runFile] = {

@@ -54,7 +54,13 @@ export function selectRunsForExport(input: {
   positionalRunId?: string;
 }): Run[] {
   const runsDir = resolveRunsDir(input.farmslotRoot);
-  const all = loadAllRunRecords(runsDir);
+  const all = [
+    ...new Map(
+      [...loadAllRunRecords(path.join(runsDir, 'archive')), ...loadAllRunRecords(runsDir)].map(
+        (run) => [run.id, run],
+      ),
+    ).values(),
+  ];
   if (input.familyId) {
     const familyRuns = all.filter((run) => run.familyId === input.familyId);
     if (familyRuns.length === 0) {

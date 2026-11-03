@@ -5,6 +5,7 @@ import type { FlowType, RunDecision } from '@farmslot/protocol';
 
 import { latestResolvedHumanGateDecision } from '../../run-engine/decision-replay.js';
 import { deleteTestRunIfPresent } from '../../run-engine/test-fixtures.js';
+import * as store from '../../runs/store.js';
 import { createRun, getRun, updateRun } from '../../runs/store.js';
 
 import { runReplayStep } from './replay-step.js';
@@ -71,7 +72,7 @@ for (const [flowType, stepName, kept] of [
         after.decisions.map(({ id }) => id),
         kept,
       );
-      assert.deepEqual(after.decisionHistory ?? [], [
+      assert.deepEqual(store.readDecisionHistory(run.id), [
         ...prior,
         ...original.filter(({ id }) => !kept.includes(id)),
       ]);
@@ -79,12 +80,12 @@ for (const [flowType, stepName, kept] of [
         latestResolvedHumanGateDecision(after.decisions),
         stepName === 'finalize' ? after.decisions[0] : undefined,
       );
-      const retained = structuredClone(after.decisionHistory ?? []);
+      const retained = structuredClone(store.readDecisionHistory(run.id));
       await replay();
       const repeated = getRun(run.id)!;
-      assert.deepEqual((repeated.decisionHistory ?? []).slice(0, retained.length), retained);
+      assert.deepEqual(store.readDecisionHistory(run.id).slice(0, retained.length), retained);
       assert.deepEqual(
-        [...repeated.decisions, ...(repeated.decisionHistory ?? [])].map(({ id }) => id).sort(),
+        [...repeated.decisions, ...store.readDecisionHistory(run.id)].map(({ id }) => id).sort(),
         [...prior, ...original].map(({ id }) => id).sort(),
       );
     },

@@ -34,7 +34,14 @@ import {
   runDecisionWaitingStatus,
   type RunProgressObservation,
 } from '../runners/run-progress.js';
-import { getRun, getRunWithArchived, listRuns, updateRun, updateRunStep } from '../runs/store.js';
+import {
+  getRun,
+  getRunWithArchived,
+  listRuns,
+  readDecisionHistory,
+  updateRun,
+  updateRunStep,
+} from '../runs/store.js';
 import { samePrincipalOwner } from '../security/work-originator.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
@@ -865,10 +872,22 @@ export async function createEngineDecision(
   const adoptedAfterRead = adoptedHumanGateAction(reason, current!);
   if (adoptedAfterRead) return adoptedAfterRead;
 
-  const presentedAgain =
-    reason === 'human_gate'
-      ? supersededGateForSamePackage(current!.decisions, payload, current!.decisionHistory)
-      : undefined;
+  let presentedAgain =
+    reason === 'human_gate' ? supersededGateForSamePackage(current!.decisions, payload) : undefined;
+  if (
+    !presentedAgain &&
+    reason === 'human_gate' &&
+    payload?.kind === 'ready' &&
+    payload.prPackage?.headSha &&
+    payload.prPackage.reviewSubjectHash &&
+    current!.decisionHistoryCount
+  ) {
+    presentedAgain = supersededGateForSamePackage(
+      current!.decisions,
+      payload,
+      readDecisionHistory(runId),
+    );
+  }
   const decision: RunDecision = {
     id: presentedAgain?.id ?? randomUUID(),
     type: `engine_${reason}`,

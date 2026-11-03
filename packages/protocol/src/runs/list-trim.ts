@@ -55,17 +55,16 @@ export function trimDecisionForList(decision: RunDecision): RunDecision {
 
 /** A copy of `run` for run.list; the store's own object is never mutated. */
 export function trimRunForList(run: Run): Run {
-  const { decisionHistory, ...listed } = run;
   const output = run.output?.artifactManifest.length
     ? { ...run.output, artifactManifest: [], artifactManifestOmitted: true }
     : run.output;
-  let changed = decisionHistory !== undefined || output !== run.output;
+  let changed = output !== run.output;
   const decisions = (run.decisions ?? []).map((decision) => {
     const next = trimDecisionForList(decision);
     if (next !== decision) changed = true;
     return next;
   });
-  return changed ? { ...listed, output, decisions } : run;
+  return changed ? { ...run, output, decisions } : run;
 }
 
 /**

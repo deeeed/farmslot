@@ -1,6 +1,7 @@
 // run-store.ts — In-memory Run cache + JSON file persistence
 // Each run persisted as .runs/{id}.json
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import {
   mkdir,
   open,
@@ -55,7 +56,13 @@ import {
   taskTitleText,
 } from '@farmslot/protocol';
 import { parseReviewRequestContext, resolveReviewMode } from '@farmslot/review-dispatch';
-import { parseRunRecordFile } from '@farmslot/run-bundle';
+import {
+  appendDecisionHistoryFile,
+  decisionHistoryFile,
+  mergeDecisionHistoryFile,
+  parseRunRecordFile,
+  readDecisionHistoryFile,
+} from '@farmslot/run-bundle';
 import { planRunSources } from '@farmslot/slot-config';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
@@ -144,6 +151,16 @@ const runs = new Map<string, Run>();
 /** Resolved persistence root shared by run-adjacent durable journals. */
 export function runsDirectory(): string {
   return RUNS_DIR;
+}
+
+/** Read audit rows on demand, including archived runs. No routine run read loads the journal. */
+export function readDecisionHistory(id: string): RunDecision[] {
+  const live = decisionHistoryFile(path.join(RUNS_DIR, `${id}.json`));
+  const file =
+    runs.has(id) || fs.existsSync(live)
+      ? live
+      : decisionHistoryFile(path.join(ARCHIVE_DIR, `${id}.json`));
+  return readDecisionHistoryFile(file);
 }
 
 export const SESSION_ARCHIVES_DIRNAME = 'session-archives';
@@ -534,11 +551,10 @@ export async function discardUndurableRun(id: string): Promise<void> {
   try {
     await unlink(path.join(RUNS_DIR, `${id}.json`));
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return;
-    // Surface real I/O failures — a leftover file would resurrect on restart.
-    throw err;
+    // A missing record is expected before the first persist; other failures could resurrect it.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
+  await rm(decisionHistoryFile(path.join(RUNS_DIR, `${id}.json`)), { force: true });
 }
 
 // Synthetic-run detector. Test fixtures call createRun() directly, which
@@ -554,7 +570,7 @@ export function isSyntheticLeak(run: Run): boolean {
   if (run.taskFile || run.activeTaskFile) return false;
   if (run.prNumber !== undefined && run.prNumber !== null) return false;
   if ((run.decisions ?? []).length > 0) return false;
-  if (run.decisionHistory?.length) return false;
+  if (run.decisionHistoryCount) return false;
   if (run.steps.length === 0 || !run.steps.every((s) => s.status === 'pending')) return false;
   if (!run.createdAt || !run.completedAt) return false;
   const createdAt = Date.parse(run.createdAt);
@@ -570,14 +586,17 @@ function syntheticLeakPurgeEnabled(): boolean {
 async function quarantineRunFile(id: string, filePath: string, run?: Run): Promise<void> {
   await mkdir(QUARANTINE_DIR, { recursive: true });
   const dst = path.join(QUARANTINE_DIR, `${id}-${Date.now()}.json`);
+  const sourceHistory = decisionHistoryFile(filePath);
+  mergeDecisionHistoryFile(sourceHistory, decisionHistoryFile(dst));
   try {
-    await rename(filePath, dst);
+    fs.renameSync(filePath, dst);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     if (!run) throw err;
-    // The source file was already moved or removed; preserve the latest in-memory snapshot.
-    await writeFile(dst, JSON.stringify(run, null, 2), 'utf-8');
+    // A missing source record can still have a latest in-memory snapshot to preserve.
+    fs.writeFileSync(dst, JSON.stringify(run, null, 2), 'utf-8');
   }
+  fs.rmSync(sourceHistory, { force: true });
   console.warn(`[run-store] quarantined synthetic/leaked run ${id} -> ${dst}`);
 }
 
@@ -1299,8 +1318,8 @@ export function recordAdoptedTmuxWorker(id: string, partial: Partial<Run>): Run 
 }
 
 /** Match exact occurrences first: older package-refresh rows can share an id and timestamp. */
-function retainDecisionHistory(run: Run, decisions: RunDecision[]): Run['decisionHistory'] {
-  if (decisions === run.decisions) return run.decisionHistory;
+function retainDecisionHistory(run: Run, decisions: RunDecision[]): RunDecision[] {
+  if (decisions === run.decisions) return [];
   const remaining = new Map<string, RunDecision[]>();
   for (const decision of decisions) {
     const entries = remaining.get(decision.id) ?? [];
@@ -1326,19 +1345,17 @@ function retainDecisionHistory(run: Run, decisions: RunDecision[]): Run['decisio
     entries!.splice(index, 1);
     return false;
   });
-  return retired.length
-    ? [...(run.decisionHistory ?? []), ...structuredClone(retired)]
-    : run.decisionHistory;
+  return retired;
 }
 
 export function updateRun(id: string, partial: Partial<Run>, authorization?: symbol): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
   if (
-    'decisionHistory' in partial &&
-    !isDeepStrictEqual(partial.decisionHistory, run.decisionHistory)
+    'decisionHistoryCount' in partial &&
+    partial.decisionHistoryCount !== run.decisionHistoryCount
   )
-    throw new Error('Decision history is managed by the run store and cannot be replaced');
+    throw new Error('Decision history count is managed by the run store and cannot be replaced');
   if (
     'engineState' in partial &&
     !isDeepStrictEqual(
@@ -1467,14 +1484,14 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
   // A real transition only: re-applying the same status (a restart resuming its
   // step) is not progress for the Runs list.
   const statusChanged = statusProvided && partial.status !== previousStatus;
-  const decisionHistory = partial.decisions
-    ? retainDecisionHistory(run, partial.decisions)
-    : run.decisionHistory;
+  const retired = partial.decisions ? retainDecisionHistory(run, partial.decisions) : [];
+  appendDecisionHistoryFile(decisionHistoryFile(path.join(RUNS_DIR, `${id}.json`)), retired);
+  const decisionHistoryCount = (run.decisionHistoryCount ?? 0) + retired.length;
   Object.assign(
     run,
     partial,
     { updatedAt },
-    decisionHistory ? { decisionHistory } : {},
+    decisionHistoryCount ? { decisionHistoryCount } : {},
     statusChanged ? { statusChangedAt: updatedAt } : {},
   );
   syncPrimaryAgentContextStatus(run, previousStatus, updatedAt, statusProvided);
@@ -1673,6 +1690,7 @@ async function deleteRunBody(id: string): Promise<boolean> {
   } catch {
     /* file may not exist */
   }
+  await rm(decisionHistoryFile(path.join(RUNS_DIR, `${id}.json`)), { force: true });
   try {
     await rm(runSessionArchiveDir(id), { recursive: true, force: true });
   } catch (err) {
@@ -1905,12 +1923,20 @@ async function commitRetainedRunMutation(
     if (!live) normalizePersistedRun(authority);
     assertCurrent(authority);
     const previousResources = captureRunResources(run);
-    const baseline = structuredClone(run);
     const snapshot = build(run);
-    const decisionHistory = retainDecisionHistory(run, snapshot.decisions);
-    if (decisionHistory) snapshot.decisionHistory = decisionHistory;
     if (live && !isTerminalRunStatus(snapshot.status))
       assertPRRunActivation(snapshot, getAllRuns());
+    const retired = retainDecisionHistory(run, snapshot.decisions);
+    appendDecisionHistoryFile(
+      decisionHistoryFile(live ? path.join(RUNS_DIR, `${id}.json`) : file),
+      retired,
+    );
+    if (retired.length) {
+      snapshot.decisionHistoryCount = (run.decisionHistoryCount ?? 0) + retired.length;
+      // If persistence races and rolls back, the appended audit rows still exist.
+      if (live) live.decisionHistoryCount = snapshot.decisionHistoryCount;
+    }
+    const baseline = structuredClone(run);
     if (live) {
       await persistBody(live, snapshot, true);
       try {
@@ -2041,7 +2067,6 @@ async function archiveRunBody(id: string): Promise<boolean> {
   }
   assertNativeWorkersReleased(run);
   await assertCompletionFailureReleased(run, 'archive');
-  const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
   // A blocked run is not a terminal outcome, so emitAnalyticsForTerminalRun
   // returns null for it on purpose: the archived JSON is its record and the
   // analytics sink only counts done / failed / cancelled runs.
@@ -2063,22 +2088,31 @@ async function archiveRunBody(id: string): Promise<boolean> {
   await mkdir(ARCHIVE_DIR, { recursive: true });
   const src = path.join(RUNS_DIR, `${id}.json`);
   const dst = path.join(ARCHIVE_DIR, `${id}.json`);
+  const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
+  mergeDecisionHistoryFile(decisionHistoryFile(src), decisionHistoryFile(dst));
   // Write the stamped archive record directly to the archive destination. A
   // pending background persist from the terminal status update may still be
   // racing on src; renaming src could move that stale pre-archive JSON and lose
   // archivedAt. Direct dst write makes the archived record authoritative.
-  await writeFile(dst, JSON.stringify(archivedRun, null, 2), 'utf-8');
+  fs.writeFileSync(dst, JSON.stringify(archivedRun, null, 2), { encoding: 'utf-8', flush: true });
+  const archiveDirectory = fs.openSync(ARCHIVE_DIR, 'r');
+  try {
+    fs.fsyncSync(archiveDirectory);
+  } finally {
+    fs.closeSync(archiveDirectory);
+  }
   // Evict only after both the archive copy and live-file removal succeed. Reporting
   // an unlink failure after eviction tells callers the archive failed while leaving
   // no live run to retry; the temporary duplicate is harmless because combined reads
   // dedupe with the live record winning.
   try {
-    await unlink(src);
+    fs.unlinkSync(src);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     // Source absence is expected when the run file was already removed or never
     // persisted before archive; dst above is the durable archived copy.
   }
+  fs.rmSync(decisionHistoryFile(src), { force: true });
   runs.delete(id);
   invalidateArchivedRunsCache();
   publishRunResources(captureRunResources(archivedRun));
@@ -2135,6 +2169,7 @@ export async function deleteArchivedRun(id: string): Promise<boolean> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw err;
   }
+  await rm(decisionHistoryFile(path.join(ARCHIVE_DIR, `${id}.json`)), { force: true });
   // Drop the one record rather than rescanning the whole archive on the next read.
   if (archivedRunsCache) {
     archivedRunsCache = archivedRunsCache.filter((run) => run.id !== id);

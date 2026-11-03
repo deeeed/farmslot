@@ -17,6 +17,7 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { admitReviewRound, settleReviewRoundNoVerdict } from '../review/review-round-budget.js';
 import { TerminalReviewArtifactError } from '../review/terminal-result.js';
 import type { RunProgressObservation } from '../runners/run-progress.js';
+import * as store from '../runs/store.js';
 import { createRun, getAllRuns, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { hasHeldPublicationApproval, latestResolvedHumanGateDecision } from './decision-replay.js';
@@ -1182,7 +1183,10 @@ test(
     );
     assert.equal(again.id, first.id);
     const after = getRun(run.id)!;
-    assert.deepEqual(after.decisionHistory?.at(-1), original);
+    assert.deepEqual(
+      store.readDecisionHistory(run.id).at(-1),
+      JSON.parse(JSON.stringify(original)),
+    );
     assert.equal(after.decisions.filter(({ id }) => id === first.id).length, 1);
     assert.equal(
       after.decisions.find(({ id }) => id === first.id),
@@ -1205,7 +1209,10 @@ test(
     );
     recordDecisionResolution(run.id, again.id, 'abort');
     assert.equal(again.resolvedAction, 'abort');
-    assert.deepEqual(after.decisionHistory?.at(-1), original);
+    assert.deepEqual(
+      store.readDecisionHistory(run.id).at(-1),
+      JSON.parse(JSON.stringify(original)),
+    );
     assert.equal(resolveEngineDecision(again.id, 'abort'), true);
   },
 );
@@ -1270,11 +1277,11 @@ test(
     if (again.id !== first.id) resolveEngineDecision(first.id, 'abort');
     assert.equal(again.id, first.id);
     assert.deepEqual(resolvedIds, [], 'the retired waiter cannot resolve the replacement card');
-    assert.deepEqual(getRun(run.id)!.decisionHistory, originals);
+    assert.deepEqual(store.readDecisionHistory(run.id), JSON.parse(JSON.stringify(originals)));
     assert.deepEqual(getRun(run.id)!.decisions, [again]);
     recordDecisionResolution(run.id, again.id, 'abort');
     assert.equal(again.resolvedAction, 'abort');
-    assert.deepEqual(getRun(run.id)!.decisionHistory, originals);
+    assert.deepEqual(store.readDecisionHistory(run.id), JSON.parse(JSON.stringify(originals)));
     assert.equal(resolveEngineDecision(again.id, 'abort'), true);
   },
 );
@@ -1598,3 +1605,36 @@ for (const mode of ['cold', 'warm', 'continue-review-fix'] as const) {
     assert.equal(await repeated, 'abort');
   });
 }
+
+test(
+  'ordinary gate entry and active-card re-entry do not read retired rows',
+  { timeout: 4000 },
+  async (t) => {
+    const { run, next } = sourceGateFixture(t);
+    const fs = (await import('node:fs')).default;
+    const read = fs.readFileSync;
+    t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof fs.readFileSync>) => {
+      assert.equal(String(args[0]).endsWith('.decisions.jsonl'), false, 'unneeded history read');
+      return read(...args);
+    });
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    const first = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    assert.equal(supersedeStaleHumanGateDecisions(getRun(run.id)!.decisions), 1);
+    assert.equal(resolveEngineDecision(first.id, 'abort'), true);
+    // Give the run real history while leaving the matching superseded gate active.
+    updateRun(run.id, {
+      decisions: [
+        ...getRun(run.id)!.decisions,
+        { ...first, id: 'unrelated', type: 'engine_review_failed' },
+      ],
+    });
+    updateRun(run.id, {
+      decisions: getRun(run.id)!.decisions.filter(({ id }) => id !== 'unrelated'),
+    });
+    const again = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    assert.equal(again.id, first.id);
+    assert.equal(resolveEngineDecision(again.id, 'abort'), true);
+  },
+);
