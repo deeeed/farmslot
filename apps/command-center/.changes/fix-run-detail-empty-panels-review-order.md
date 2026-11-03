@@ -1,1 +1,0 @@
-- Validate live run-detail review ordering, empty-panel visibility and layout stability during refresh.

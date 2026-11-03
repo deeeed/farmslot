@@ -1,1 +1,0 @@
-- Expose untimed recording availability and same-attempt inspection screenshots separately from measured timelines and AC proof bindings.

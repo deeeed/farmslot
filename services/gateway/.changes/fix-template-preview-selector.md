@@ -1,1 +1,0 @@
-- A marked `config.templatePreview` or `config.templateOptions` read with a `<flow>/<name>` execution template id reaches its handler instead of failing with "Invalid configuration selector: executionTemplateId" (F319, from the shared protocol selector rule).

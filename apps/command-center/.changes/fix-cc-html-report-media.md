@@ -1,1 +1,0 @@
-- Add a live HTML report proof that clicks every video link, checks authenticated playback and seeking, and keeps the report sandbox opaque.

@@ -1,1 +1,0 @@
-- Allow an authenticated review-budget extension to reclaim a failed run’s released slot when its branch and approved head are unchanged, so the extension can be recorded before review replay. Foreign owners, parked work and changed checkouts still refuse.

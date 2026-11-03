@@ -4,6 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.75.0 - 2026-11-03
+
 - `SlotReleaseParams.skipArtifacts` is removed: a slot release no longer copies artifacts, so there is nothing to skip (F313).
 - `SlotStatus.retained` (`{ items, bytes }`): the nested checkouts that slot releases moved aside on the slot host instead of deleting them, and their total size there (F310).
 - `ReadyGatePayload.mergeConflicts`/`behindMain` are probed against the publication base (a stacked run's upstream branch), and a conflict on a publication gate now blocks its advancing actions (doc only; no shape change).
@@ -13,10 +17,26 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - `Run.releasedCheckout`: the branch and head an artifact-only run left on its slot when COMPLETE released the slot's ownership; a later ownerless return to idle parks only that head.
 - `RunEngineState.publishGate.refusedEvidencePackageId`: the prepared package a human-gate replay found the worker's evidence refused against; while it is still `packageId`, the gate rebuilds rather than reuses it.
 - `RunPipelineReviewPolicy` (`'default' | 'none'`) on `Run`, `RunCreateParams` and `DispatchPreviewParams` (with `completionPolicy`), `DispatchPreview.pipelineReview`, and the shared `pipelineReviewOffReason` / `pipelineReviewPolicyError` rule. Only an artifact-only dev or fix-bug run may turn its pipeline review off, and not alongside `reviewSequence`, `reviewPolicy` or an eval experiment; an unknown value is refused.
-- Active-development baseline; add user-facing changes here before release or package publication.
 - `compareText` orders strings as `localeCompare` does, through one shared `Intl.Collator`. Run lists and family groups sort with it.
 - Content prefetch hashes files and artifacts in 16 KB slices, one per macrotask, so a large file no longer blocks a frame; content a person opens still verifies at once.
 - Change notifications match queries by dependency ids computed when the query is first observed.
+- `ContentPrefetchOptions.media` (`ContentPrefetchMedia`, `ContentPrefetchMediaEntry`): a pending gate's videos and images over the content row cap go to a client media holder by digest, with the gate's age, instead of loading only when opened. `base64Bytes` and `createSha256` (chunked SHA-256) are exported from the client cache.
+- A gate or run whose first `run.get` fails (a timeout on a busy gateway, not a refusal), or a gate whose package does not fully load, is prefetched again after 5 s, 30 s, then every 2 minutes until a read succeeds or the run leaves the targets. Before, nothing read it again until the gateway connection changed, so a pending gate's evidence, videos included, never reached the device. A gate whose review diff cannot be read still hands its videos and large images to the media holder.
+- `awaitsHumanDecision(run)` is exported: a run at its human gate (also while a review it requested is still running and its ready decision is already resolved) or blocked at an open one, the runs the review queues show as waiting on a decision. Prefetch treats such a run as a gate and keeps prefetching its current package after its ready decision is resolved.
+- `CommandMethod` is now the closed `GATEWAY_COMMAND_METHODS` list, and `GATEWAY_READ_EXCEPTIONS` names the only reads a client sends outside the shared cache (ADR-071 Amendment 2: offline-first reads).
+- New `AppBindingMismatchPayload` (`kind: 'app_binding_mismatch'`) in `RunDecisionPayload`: the slot, the run's app, the slot's app and its source, and the project's slots bound to the run's app when they could be listed, and `operatorPick` when the slot came from a slot picker (F306).
+- New `projectDefaultApp(project)`: `recipe.app`, else the project's only declared app.
+- `PoolConfig` slots may carry `app`.
+- Record the question-tool setting of native worker processes and terminal worker contexts so retained task handoffs can resume or relaunch when it changes.
+- `trimRunForList`, `trimDecisionForList` and `RUN_LIST_PAYLOAD_VALUE_LIMIT` move here from the gateway (`runs/list-trim`), beside the new `runHasTrimmedDetail(run)`, moved from Command Center: whether a run.list row left out its output manifest or any decision payload value, which a view shows as not loaded until `run.get` lands. One module now holds what run.list leaves out and how a client tells.
+- `readRefused(error)` (client-cache): whether a read error is a gateway refusal (`RUN_NOT_FOUND`, `NOT_FOUND`, `RESOURCE_NOT_FOUND`, `AUTH_REQUIRED`, `AUTH_FORBIDDEN`), the same codes on which the cache evicts saved data. A network failure or timeout is not one.
+- `currentReviewChainEntry` reports `unresolvedCount: null` when the review result's `lineComments` is missing, as on a run.list row that trimmed it, instead of throwing.
+- `slotRecoveryEligibility` treats a clean ownerless checkout with unpushed commits as safe for bulk release with no confirmation, because the release parks those commits. New `parksSlotCommits`, `SlotParkedCommits` and `slotParkedDetail`. `SlotRefreshResult` and `FleetRefreshSlotUpdateEvent` gain an optional `parked` report.
+- `FleetStatus.poolErrors` lists pool files the last fleet refresh could not parse, and `SlotStatus.configError` gives why a slot's config could not be loaded.
+- Recording timelines accept equal adjacent presentation timestamps without dropping decoded frames; backwards, invalid and out-of-duration timestamps remain invalid.
+- Template previews and options on Dispatch accept an execution template id of the form `<flow>/<name>` (for example `pr-complete/default`). Before, every preview failed with "Invalid configuration selector: executionTemplateId". Command Center checks the selector before sending, and the gateway checks it again on marked reads, so both must run this version. The id still refuses `\`, empty segments, and `.` or `..` segments, and other configuration selectors stay single segments (F319).
+- `isPickerCatalogModel` and `runnerModelProviderLabel` hold the one rule for which node catalog models a picker shows: LiteLLM ("Consensys LiteLLM"), xAI, Anthropic and local omlx/lmstudio models, without Claude 4.x or older or Grok before 4.7. `RunnerCatalogModel.nodes` names the execution nodes that list a model when some node does not. Pi and OpenCode have no `RUNNER_PICKER_MODELS` seed any more, `PI_ANTHROPIC_MODELS` is removed, and `DEFAULT_PI_MODEL` and `DEFAULT_GROK_MODEL` are `grok-4.7`. `NativeRunnerOption.nodeModels` holds each execution node's models for Pi and OpenCode, and `nativeRunnerModels(option, executionNodeId)` picks the list for a session's node. `DispatchCandidatesParams` takes the chosen `runner` and `model`.
+- Keep bounded Dispatch candidate and ticket-match snapshots in the shared client store, with candidate invalidation when fleet, run, configuration or model catalogs change.
 
 ## 0.74.10 - 2026-11-01
 

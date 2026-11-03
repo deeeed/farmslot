@@ -6,6 +6,11 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.26.2 - 2026-11-03
+
+- Expose untimed recording availability and same-attempt inspection screenshots separately from measured timelines and AC proof bindings.
+- Recorded-evidence frame stepping skips repeated presentation times so Previous Frame continues through recordings with duplicate timestamps.
+
 ## 0.26.1 - 2026-11-02
 
 - Align `@farmslot/recipe-runner` 0.46.4.

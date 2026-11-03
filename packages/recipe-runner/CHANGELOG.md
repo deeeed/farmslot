@@ -4,15 +4,16 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Consumer harness 0.94.8 sends Extension background market orders' `usdAmount` as the notional (margin × leverage), so orders above 1x fill the requested size instead of failing the fill-size check.
-
-- Consumer harness 0.94.7 uses recipe-cli 0.32.1 for pool-selected providers on new and retained tasks without rewriting original provenance.
-
-- Consumer harness 0.94.6 scopes receipt-backed Extension testnet cleanup to the owned market and preserves other markets.
-
-- Harness 0.94.5 verifies Extension RPC readiness through the registered background API and checks optional Perps probes independently.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.46.5 - 2026-11-03
+
+- Consumer harness 0.94.8 sends Extension background market orders' `usdAmount` as the notional (margin × leverage), so orders above 1x fill the requested size instead of failing the fill-size check.
+- Consumer harness 0.94.7 uses recipe-cli 0.32.1 for pool-selected providers on new and retained tasks without rewriting original provenance.
+- Consumer harness 0.94.6 scopes receipt-backed Extension testnet cleanup to the owned market and preserves other markets.
+- Harness 0.94.5 verifies Extension RPC readiness through the registered background API and checks optional Perps probes independently.
+- Supply the duplicate-frame recording fix to MetaMask Harness 0.94.12 recipe providers through the coordinated protocol and adapter dependency cohort.
+- Use a video's measured presentation timestamps before ffprobe's heuristic estimates, preserving simctl recordings with duplicate frame times and their timelines.
 
 ## 0.46.4 - 2026-11-02
 
