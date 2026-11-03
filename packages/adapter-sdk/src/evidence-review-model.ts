@@ -1181,6 +1181,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       if (
         openedPath &&
         recording?.artifactPath !== openedPath &&
+        !claim.evidence.some((artifact) => artifact.artifactPath === openedPath) &&
+        !declaredVideos.some((artifact) => artifact.artifactPath === openedPath) &&
         !screenshots.some(({ artifact }) => artifact.artifactPath === openedPath)
       )
         return { recording: null, screenshots: [] };

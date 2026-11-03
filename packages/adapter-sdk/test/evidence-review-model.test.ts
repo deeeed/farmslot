@@ -520,6 +520,32 @@ test('video and trace digest mismatches remain visible and disable all seeking',
 
 test('F338 lists untimed originals and same-attempt inspection screenshots without changing claims', () => {
   const input = untimedRecordingFixture(qaPackage(1));
+  assert.ok(input.claims);
+  const original = input.claims.recording.segments[0];
+  assert.ok(original);
+  const rotated = {
+    ...original,
+    videoPath: 'video-2.mp4',
+    videoDigest: digest('rotated original'),
+  };
+  input.claims.recording.segments.push(rotated);
+  for (const claim of input.claims.criteria) {
+    claim.evidence.push(rotated.videoPath);
+    claim.moments = claim.moments.flatMap((moment) => [
+      moment,
+      { ...moment, videoDigest: rotated.videoDigest },
+    ]);
+  }
+  assert.ok(input.artifactPaths);
+  input.artifactPaths.push(rotated.videoPath);
+  input.artifactDigests[rotated.videoPath] = rotated.videoDigest;
+  assert.ok(
+    input.manifest &&
+      typeof input.manifest === 'object' &&
+      'artifacts' in input.manifest &&
+      Array.isArray(input.manifest.artifacts),
+  );
+  input.manifest.artifacts.push({ path: rotated.videoPath, type: 'video' });
   const model = createEvidenceReviewModel({
     package: input,
     artifactPrefix: 'artifacts/recipe-runs/transport-id/',
@@ -534,6 +560,11 @@ test('F338 lists untimed originals and same-attempt inspection screenshots witho
     [['artifacts/recipe-runs/transport-id/stills/1.png', true]],
   );
   assert.equal(model.recordingForPath(media.recording!.artifactPath)?.hasTimeline, false);
+  assert.deepEqual(
+    model.claimMedia('check-1', 'artifacts/recipe-runs/transport-id/video-2.mp4').screenshots,
+    media.screenshots,
+    'every original from the selected attempt keeps its inspection context',
+  );
   assert.equal(model.recordings.length, 0, 'availability never fabricates a measured timeline');
   assert.equal(model.selectClaim('check-1')?.timing, 'untimed');
   assert.deepEqual(model.selection?.clips, []);

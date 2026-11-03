@@ -287,3 +287,26 @@ test('untimed review keeps same-attempt screenshots as inspection context', () =
   assert.equal(model.selection?.timing, 'untimed');
   assert.deepEqual(model.selection?.clips, []);
 });
+
+test('a baseline selection does not add head screenshots to the native viewer', () => {
+  const head = createEvidenceReviewModel({
+    package: untimedRecordingFixture(fixture.input),
+    artifactPrefix: 'artifacts/head/',
+  });
+  const baseline = createEvidenceReviewModel({
+    package: untimedRecordingFixture(fixture.input),
+    artifactPrefix: 'artifacts/baseline/',
+  });
+  baseline.selectClaim('check-1');
+  assert.ok(baseline.selection);
+  // A comparison selects baseline files while retaining the head's claim catalogue.
+  const model = { ...head, selection: baseline.selection };
+  const path = baseline.claimMedia('check-1').recording?.artifactPath;
+  assert.ok(path);
+  const opening = selectedEvidenceMediaItem(model, path, (value) => `/proof/${value}`, {});
+  const items = evidenceViewerSessionItems([opening], opening.uri);
+  assert.deepEqual(
+    items.map((item) => item.path),
+    [path],
+  );
+});
