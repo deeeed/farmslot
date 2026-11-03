@@ -16,7 +16,7 @@ import {
 import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { ResourceCacheConformanceTransport } from '../../../../../../packages/protocol/src/client-cache/conformance.js';
-import { litText } from '../../testing/lit-text.js';
+import { litBinding, litText } from '../../testing/lit-text.js';
 
 import type { NativeSessionFixture } from './native-session-view.js';
 import type { NativeSessionApi } from './native-workspace.js';
@@ -92,6 +92,44 @@ test('native route renders stored catalog while disconnected and keeps creation 
     assert.match(rendered, /Stored working directory/);
     assert.doesNotMatch(rendered, /Connect to the gateway to choose a runner/);
     assert.equal(transport.requestCount, 0);
+  } finally {
+    for (const stop of Reflect.get(view, 'inventoryStops')) stop();
+    await offlineCache.dispose();
+    offlineCache = undefined;
+  }
+});
+
+test('cold native collection refusals retain their code through the real cache and header', async () => {
+  const scope = {
+    gatewayUrl: 'ws://native-denial.invalid',
+    principalId: 'offline-native-owner',
+    principalGeneration: 1,
+  };
+  const authority = { roles: [], workspaceAccess: 'farm' as const };
+  const store = createMemoryResourceStore();
+  await store.setMetadata({ scope, authority });
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.connection.connected = true;
+  transport.connection.authority = authority;
+  const capabilities = transport.connection.capabilities;
+  assert(capabilities?.resourceChanges);
+  transport.connection.capabilities = {
+    ...capabilities,
+    resourceChanges: { ...capabilities.resourceChanges, observedReads: 1 },
+  };
+  offlineCache = createGatewayResourceCache({ transport, store });
+  const view = new NativeSessionView();
+  Reflect.set(view, 'connected', true);
+  try {
+    await Reflect.get(view, 'refreshSessions').call(view);
+    for (let i = 0; i < 2; i++) (await transport.nextRead()).reject('AUTH_FORBIDDEN');
+    for (let i = 0; i < 10; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(Reflect.get(view, 'catalogCurrent'), false);
+    const status = litBinding(Reflect.get(view, 'render').call(view), '.context=');
+    assert(status && typeof status === 'object');
+    assert.equal(Reflect.get(status, 'readErrorCode'), 'AUTH_FORBIDDEN');
+    assert.equal(Reflect.get(status, 'connected'), true);
+    assert.equal(transport.requestCount, 2);
   } finally {
     for (const stop of Reflect.get(view, 'inventoryStops')) stop();
     await offlineCache.dispose();

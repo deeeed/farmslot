@@ -83,3 +83,22 @@ test('a continuously superseded read gains the canonical saved caption at the sh
   );
   assert.match(litText(renderNativeReadStatus(context, 160_000)), /Saved conversation history/);
 });
+
+test('a connected native ownership refusal is visible and never presented as reconnecting', () => {
+  const message =
+    'arthur is a replacement identity at a reused id; native execution ownership stays with the original identity, so configure another native owner.';
+  const context = {
+    connected: true,
+    selected: false,
+    caughtUp: false,
+    taskHistory: false,
+    readError: message,
+    readErrorCode: 'AUTH_FORBIDDEN',
+    unavailableSince: 100_000,
+    refresh() {},
+  };
+  const output = litText(renderNativeReadStatus(context, 100_001));
+  assert.match(output, /Native access denied/);
+  assert.match(output, /replacement identity at a reused id/);
+  assert.doesNotMatch(output, /Reconnecting|>Retry</);
+});

@@ -148,9 +148,9 @@ export async function authorizeNativeObservation(
         interest.params.executionNodeId !== undefined
       )
         throw new GatewayMethodError('INVALID_PARAMS', 'Native collection target mismatch');
+      const ownerId = requireNativeSessionOwner();
       if (!hasNativeWorkspaceAccess(reader, loadCredentialStore().principals))
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native owner view is unavailable');
-      const ownerId = requireNativeSessionOwner();
       const nodes = [...nativeOwnerAssignedMachines(loadCredentialStore().principals, ownerId)];
       if (ownsLocalNativeProfile(ownerId)) nodes.push('local');
       return { ownerId, nodes: [...new Set(nodes)] };

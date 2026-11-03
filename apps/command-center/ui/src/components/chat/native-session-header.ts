@@ -27,6 +27,7 @@ interface NativeSessionHeaderContext {
   sessionChoice(session: Pick<NativeSessionInfo, 'id' | 'executionNodeId'>): string;
   select(id: string, node?: string): void;
   readError?: string;
+  readErrorCode?: string;
   unavailableSince?: number;
   observedAt?: number;
   historyObservation?: ResourceQueryState<unknown>;
