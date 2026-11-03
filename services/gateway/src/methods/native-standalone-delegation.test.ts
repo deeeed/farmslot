@@ -34,6 +34,8 @@ const { runWithSessionOriginator, currentSessionOriginator } =
   await import('../security/work-originator.js');
 const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
 const { handleNodeResponse } = await import('../fleet/node-rpc.js');
+const { registerWorkspaceReadAlias, canReadWorkspaceResourceKey } =
+  await import('../resources/workspace-authorization.js');
 const { nativeSessionManager } = await import('../runners/native/manager.js');
 const { nativeSessionRoute } = await import('./native-session.js');
 const { authorizeNativeObservation, GatewayNativeObservations, nativeObservations } =
@@ -544,6 +546,76 @@ test('farm review, publication and request-local identity stay unchanged', async
   } finally {
     localList.mock.restore();
     process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = '';
+  }
+});
+
+test('delegated workspace aliases keep invalidations while offline and revoke on owner or role change', async () => {
+  const credential = auth.writer.issueCredential(arthur.id, 'Private workspace alias fixture');
+  const grant = auth.writer.exchangePersonCredential(credential.secret, {
+    deviceName: 'Fixture',
+    deviceKind: 'cli',
+  });
+  const resolved = auth.resolver.resolveSecret(grant.accessToken, 'token');
+  assert(resolved.ok && resolved.authentication);
+  const state = {
+    authenticated: true,
+    clientKind: 'ui',
+    authentication: resolved.authentication,
+  } as import('../server/client-state.js').ClientState;
+  const key = {
+    family: 'workspace' as const,
+    ownerId: arthur.id,
+    nodeId: 'mini',
+    sessionId: 'mini-session',
+  };
+  registerWorkspaceReadAlias(state, key, {
+    ownerId: farm.id,
+    sessionId: 'mini-session',
+    nodeId: 'mini',
+    cwd: homes.mini,
+    generation: 'generation',
+    accountContextId: 'mini',
+    state: 'idle',
+  });
+  assert.equal(await canReadWorkspaceResourceKey(auth, state, key), true);
+  const localKey = { ...key, nodeId: 'local' };
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = farm.id;
+  registerWorkspaceReadAlias(state, localKey, {
+    ownerId: farm.id,
+    sessionId: 'mini-session',
+    nodeId: 'local',
+    cwd: os.homedir(),
+    generation: 'generation',
+    accountContextId: 'local',
+    state: 'idle',
+  });
+  try {
+    assert.equal(await canReadWorkspaceResourceKey(auth, state, localKey), true);
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = nodeOwner.id;
+    assert.equal(await canReadWorkspaceResourceKey(auth, state, localKey), false);
+    unregisterByWs(sockets.get('mini')!);
+    assert.equal(await canReadWorkspaceResourceKey(auth, state, key), true);
+    auth.writer.revokeRole(arthur.id, 'admin', { kind: 'global' });
+    assert.equal(await canReadWorkspaceResourceKey(auth, state, key), false);
+  } finally {
+    auth.writer.grantRole(arthur.id, 'admin', { kind: 'global' });
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = '';
+    registerNode(
+      'mini',
+      1,
+      sockets.get('mini')!,
+      undefined,
+      undefined,
+      {
+        ownerPrincipalId: farm.id,
+        supportsStandaloneDelegation: true,
+        supportsEnsure: true,
+        supportsWorkers: true,
+        supportsProfiles: true,
+        supportsObservations: true,
+      },
+      { principalId: 'node-mini', valid: () => true },
+    );
   }
 });
 

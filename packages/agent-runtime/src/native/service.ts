@@ -107,19 +107,8 @@ export async function routeNativeSession(
       'Native session targets another execution node',
     );
   try {
-    if (
-      p.worker === undefined &&
-      typeof p.sessionId === 'string' &&
-      method !== Methods.NATIVE_SESSION_ENSURE &&
-      !NATIVE_PROFILE_METHODS.includes(method)
-    ) {
-      const inspected = await client.read(principal, p.sessionId, undefined, 1);
-      if (inspected.session.workerManaged)
-        throw new NativeSessionMethodError(
-          'INVALID_PARAMS',
-          'Worker session requires its run context and pinned worker controls',
-        );
-    }
+    // Public standalone access is fenced by the gateway; trusted farm callers also read here.
+    // The host still requires a current worker lease for every worker mutation.
     if (NATIVE_PROFILE_METHODS.includes(method))
       return await routeNativeProfile(client, principal, method, p);
     switch (method) {

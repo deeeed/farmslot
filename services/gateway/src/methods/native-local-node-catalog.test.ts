@@ -170,3 +170,15 @@ test('an explicit same-host node keeps its own model restriction', async () => {
   assert.ok(await nativeModelNodeBlocker('pi', 'xai/grok-4.7', 'macwork'));
   assert.ok(await nativeModelNodeBlocker('pi', 'xai/grok-4.7', 'local'));
 });
+
+test('delegated local target uses its actual pool machine model catalog', async () => {
+  nodeModelCatalogs.record('pi', 'macwork', ['litellm/glm-5p3']);
+  const catalog = await nativeCatalog(person.id, true, person);
+  const pi = catalog.runners.find((runner) => runner.runner === 'pi');
+  assert.deepEqual(pi?.nodeModels?.local, ['litellm/glm-5p3']);
+  assert(
+    catalog.contexts.some(
+      (context) => context.executionNodeId === 'local' && context.slotId === 'macwork-fixture',
+    ),
+  );
+});

@@ -7,6 +7,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { loadSlotVars, poolDir } from '../core/config.js';
+import { isLocal } from '../core/index.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
@@ -121,14 +122,18 @@ export async function standaloneCatalogTargets(
     const home = row.homeDirectory;
     if (row.unavailableReason || home === undefined) continue;
     const machine = row.executionNodeId;
-    contextMachines.set(machine, machine);
+    const targetPools = pools.filter((pool) =>
+      machine === 'local' ? isLocal(pool.host, pool.machine) : pool.machine === machine,
+    );
+    const modelMachine = machine === 'local' ? targetPools[0]?.machine : machine;
+    if (modelMachine) contextMachines.set(machine, modelMachine);
     contexts.push({
       executionNodeId: machine,
       cwd: home,
       label: 'Home directory',
       supportsProfiles,
     });
-    for (const pool of pools.filter((pool) => pool.machine === machine)) {
+    for (const pool of targetPools) {
       for (const slot of pool.slots) {
         if (!slot.repo) continue;
         const vars = await loadSlotVars(slot.id);

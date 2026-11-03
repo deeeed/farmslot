@@ -1015,6 +1015,13 @@ test('worker host rejects public input and accepts only leased commands and perm
       generation: session.generation,
       leaseId: launch.leaseId,
     };
+    // Trusted farm dispatch, monitoring and recovery read through the shared service.
+    const snapshot = await routeNativeSession(client, 'owner', Methods.NATIVE_SESSION_READ, {
+      sessionId: session.id,
+      limit: 1,
+    });
+    assert(snapshot && typeof snapshot === 'object');
+    assert.equal(Reflect.get(snapshot, 'session').workerManaged, true);
     await assert.rejects(
       client.send('owner', session.id, 'unleased', 'approval'),
       /requires its run context/,

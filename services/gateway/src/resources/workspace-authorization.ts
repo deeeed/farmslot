@@ -12,6 +12,7 @@ import {
   requireGenerationZeroOwner,
 } from '../security/native-node.js';
 import { nativeOwnerCanUseWorkers, ownsLocalNativeProfile } from '../security/native-owner.js';
+import { assertStandaloneAdmin, isStandaloneAdmin } from '../security/native-standalone.js';
 import {
   assertNativeRunOwner,
   resolveReviewWorkspaceOwner,
@@ -109,7 +110,10 @@ export async function canReadWorkspaceResourceKey(
         if (run.transport !== 'native') resolveReviewWorkspaceOwner(binding.ownerPrincipalId);
         return true;
       }
-      if (principal.id !== identity.ownerId) return false;
+      if (principal.id !== identity.ownerId) {
+        if (!isStandaloneAdmin(principal)) return false;
+        assertStandaloneAdmin(principal);
+      }
       // Standalone session IDs retain the successful read's exact profile/context pin.
       // Rechecking process/session liveness here would suppress its failure invalidation.
       return true;
