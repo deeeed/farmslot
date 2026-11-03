@@ -171,6 +171,25 @@ export function initDispatchQueue(
   _createAndStartRun = createAndStartRun;
 }
 
+/** Finish one isolated fixture before another can install callbacks or reload its queue. */
+export async function resetDispatchQueueForTests(): Promise<void> {
+  if (!shouldUseIsolatedQueueFile(process.env, process.argv))
+    throw new Error('resetDispatchQueueForTests is available only in an isolated test runtime');
+  _broadcast = null;
+  _createAndStartRun = null;
+  // Removing the rows revokes any callback still waiting before createRun.
+  queue.length = 0;
+  cancelDispatchRetries();
+  try {
+    await dispatchInFlight;
+  } finally {
+    // A callback can schedule a claim-loss retry as it finishes above.
+    cancelDispatchRetries();
+    resetDispatchRetryBackoff();
+    await persistQueueNow();
+  }
+}
+
 /**
  * Re-validate exclusive ownership immediately before durable run creation.
  * Call after every await inside createAndStartRun that precedes createRun /
@@ -1503,8 +1522,14 @@ function liveQueuedItem(itemId: string): QueueItem | null {
 
 /** Backoff for claim-loss / retry loops so a slow uncontested path cannot spin. */
 let dispatchRetryBackoffMs = 0;
+const pendingDispatchRetries = new Set<() => void>();
 const DISPATCH_RETRY_BACKOFF_MIN_MS = 250;
 const DISPATCH_RETRY_BACKOFF_MAX_MS = 30_000;
+
+function cancelDispatchRetries(): void {
+  for (const cancel of pendingDispatchRetries) cancel();
+  pendingDispatchRetries.clear();
+}
 
 function resetDispatchRetryBackoff(): void {
   dispatchRetryBackoffMs = 0;
@@ -1519,7 +1544,9 @@ function scheduleDispatchRetry(reason: string): void {
     delayMs === 0
       ? DISPATCH_RETRY_BACKOFF_MIN_MS
       : Math.min(delayMs * 2, DISPATCH_RETRY_BACKOFF_MAX_MS);
+  let cancel: () => void;
   const runRetry = () => {
+    pendingDispatchRetries.delete(cancel);
     tryDispatchNext().catch((err) => {
       console.error(
         `[dispatch-queue] retry after ${reason} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1527,10 +1554,13 @@ function scheduleDispatchRetry(reason: string): void {
     });
   };
   if (delayMs <= 0) {
-    setImmediate(runRetry);
+    const retry = setImmediate(runRetry);
+    cancel = () => clearImmediate(retry);
   } else {
-    setTimeout(runRetry, delayMs);
+    const retry = setTimeout(runRetry, delayMs);
+    cancel = () => clearTimeout(retry);
   }
+  pendingDispatchRetries.add(cancel);
 }
 
 function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
