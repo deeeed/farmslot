@@ -911,7 +911,6 @@ test(
             `(() => [...document.querySelectorAll('whats-new-modal')].some((dialog) => dialog.open))()`,
           );
           if (releaseDialog) await page.clickText('Got it');
-          await page.click('[data-testid="native-new"]');
           await page.waitForSelector('[data-testid="native-context"]', { timeoutMs: 10_000 });
           await page.waitForExpression(
             `(() => { const rows=document.querySelector('native-session-view')?.shadowRoot?.querySelectorAll('[data-testid=native-target-unavailable]'); return [...(rows??[])].some(row=>row.textContent.includes('offline-proof')&&row.textContent.includes('Target has no configured native owner')); })()`,
@@ -942,10 +941,22 @@ test(
             );
           }
           const openLocations = async () => {
+            const before = await page.evaluate<number>(
+              `document.querySelector('native-session-view').shadowRoot.querySelector('[data-testid=native-create]').offsetTop`,
+            );
             const point = await page.evaluate<{ x: number; y: number }>(
               `(() => { const p=document.querySelector('native-session-view').shadowRoot.querySelector('[data-testid=native-context]'); const b=p.shadowRoot.querySelector('.trigger');b.scrollIntoView({block:'center'});const r=b.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`,
             );
             await page.clickPoint(point.x, point.y);
+            await page.waitForSelector('[role="listbox"]', { timeoutMs: 10_000 });
+            const after = await page.evaluate<number>(
+              `document.querySelector('native-session-view').shadowRoot.querySelector('[data-testid=native-create]').offsetTop`,
+            );
+            assert.equal(
+              after,
+              before,
+              'Opening the location picker must not move the launch controls',
+            );
           };
           const targetHomes = [];
           for (const machine of machines) {

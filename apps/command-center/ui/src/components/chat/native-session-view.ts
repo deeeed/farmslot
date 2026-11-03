@@ -1700,7 +1700,14 @@ ${JSON.stringify(
                 }}
               ></textarea>
             </label>
-            ${this.launchChoices.filter((choice) => choice.kind === 'custom' && choice.unavailableReason).map((choice) => html`<p class="error" role="status" data-testid="native-target-unavailable">${choice.label}: ${choice.unavailableReason}</p>`)}
+            ${this.launchChoices
+              .filter((choice) => choice.kind === 'custom' && choice.unavailableReason)
+              .map(
+                (choice) =>
+                  html`<p class="error" role="status" data-testid="native-target-unavailable">
+                    ${choice.label}: ${choice.unavailableReason}
+                  </p>`,
+              )}
             <div class="launch-controls">
               <label
                 >Where to run<choice-picker
