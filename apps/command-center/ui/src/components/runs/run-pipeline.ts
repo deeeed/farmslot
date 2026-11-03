@@ -22,6 +22,7 @@ import {
   acceptancePanelPresentation,
   runActivityStepStatus,
   runActivityView,
+  runChecklistProgressSummary,
   runChecklistProgressView,
 } from '@farmslot/review-dispatch';
 
@@ -287,14 +288,11 @@ export class RunPipeline extends LitElement {
 
   /** Run detail's order: canvas detail, step progress, the host's artifacts, criteria. */
   private renderPanels() {
-    const checklist = runChecklistProgressView(this.run, this.taskProgress);
-    const activeProgress = this._activeTaskProgress();
-    const hasProgress = Boolean(checklist || activeProgress);
-    const progressSummary = checklist
-      ? `${checklist.counts} · ${checklist.label}`
-      : activeProgress
-        ? `${activeProgress.completedSteps}/${activeProgress.totalSteps} · ${activeProgress.currentStep ?? 'Checklist'}`
-        : '';
+    const checklist =
+      runChecklistProgressView(this.run, this.taskProgress) ??
+      runChecklistProgressSummary(this._activeTaskProgress());
+    const hasProgress = Boolean(checklist);
+    const progressSummary = checklist ? `${checklist.counts} · ${checklist.label}` : '';
     const acceptance = this.renderAcceptancePanel();
     const inputs = acceptance === nothing ? null : acceptancePanelInputs(this);
     const progressOpen = runDetailPanelOpen('run-step-progress');

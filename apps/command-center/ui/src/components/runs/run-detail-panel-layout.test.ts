@@ -476,3 +476,35 @@ test('waiting for the operator preserves an existing monitor checklist', () => {
   element.run = run;
   assert.match(litText(element.render()), /data-panel="run-step-progress"/);
 });
+
+test('waiting checklist summaries retain running-step and completion labels', () => {
+  const element = pipeline();
+  element.run = {
+    ...run,
+    waitingForOperator: {
+      contextId: 'worker',
+      attemptId: 'attempt',
+      who: 'operator',
+      reason: 'Confirm the next step',
+      since: '2026-11-02T20:00:00Z',
+    },
+  };
+  const progress = element.taskProgress!;
+  for (const currentStep of [null, '  ']) {
+    element.taskProgress = {
+      ...progress,
+      currentStep,
+      phases: [
+        {
+          name: 'Review',
+          completedSteps: 1,
+          totalSteps: 2,
+          steps: [{ index: 0, name: 'Inspect diff', status: 'running' }],
+        },
+      ],
+    };
+    assert.match(litText(element.render()), /1\/2 · Inspect diff/);
+  }
+  element.taskProgress = { ...progress, currentStep: null, completedSteps: 2, phases: [] };
+  assert.match(litText(element.render()), /2\/2 · Checklist complete/);
+});
