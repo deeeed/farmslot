@@ -19,12 +19,14 @@ export function untimedRecordingFixture(
     timing: 'untimed',
     evidence: videos,
   }));
+  assert.ok(input.artifactPaths);
   input.artifactPaths = input.artifactPaths.filter((path) => !timelinePaths.has(path));
   if (isRecord(input.manifest) && Array.isArray(input.manifest.artifacts)) {
-    input.manifest.artifacts = input.manifest.artifacts.filter(
+    const entries = input.manifest.artifacts.filter(
       (file) => !isRecord(file) || !timelinePaths.has(String(file.path)),
     );
-    for (const file of input.manifest.artifacts) {
+    input.manifest.artifacts = entries;
+    for (const file of entries) {
       if (isRecord(file) && file.type === 'screenshot') {
         delete file.nodeId;
         delete file.capture;
