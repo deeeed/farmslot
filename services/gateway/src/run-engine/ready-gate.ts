@@ -1114,10 +1114,10 @@ export async function executeReadyGate(
   const workerLearnings = await readTaskArtifactText(current, 'learnings.md');
 
   // Build diff stat
-  // A prepared package captured its own HEAD and nothing below reads this stat.
+  // A prepared package captured its own HEAD, so this gate pays for no second capture.
   // Without one, earlier completion snapshots remain durable history, but
   // cannot supply this gate.
-  const diffStat = await getDiffStat(current, { fresh: !preparedPackage });
+  const diffStat = preparedPackage?.diffStat ?? (await getDiffStat(current, { fresh: true }));
 
   const videoProofWarning = localVideoProofWarning(preparedPackage?.evidenceManifest);
   // Out-of-band merge detection: if this branch already has a MERGED PR the
@@ -1447,7 +1447,7 @@ export async function executeReadyGate(
       prNumber,
       repo: ciRepo,
       gateSummary,
-      diffStat: preparedPackage?.diffStat ?? diffStat,
+      diffStat,
       workerReport: report ?? '',
       branch: preparedPackage?.branch ?? current.branch ?? '',
       slotId: current.slotId ?? undefined,

@@ -282,4 +282,5 @@ test('a failed fetch without a local base ref states no diff and the gate still 
   );
   assert.equal(durable.source, 'unavailable');
   assert.equal(durable.missingReason, 'base-ref-unavailable');
+  assert.equal(captureCount(), 1, 'the gate does not retry an unavailable capture');
 });
