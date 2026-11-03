@@ -1,4 +1,4 @@
-import type { ResourceStore } from '@farmslot/protocol/client-cache';
+import { readStoredQueryBatch, type ResourceStore } from '@farmslot/protocol/client-cache';
 
 import {
   createSqliteResourceStore,
@@ -62,6 +62,9 @@ export function createStoreWorkerHandler(
             break;
           case 'getQuery':
             value = await store.getQuery(request.key);
+            break;
+          case 'getQueries':
+            value = await readStoredQueryBatch(store, request.maxBytes);
             break;
           case 'putQuery':
             value = await store.putQuery(request.entry);

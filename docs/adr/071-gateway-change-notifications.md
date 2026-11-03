@@ -360,3 +360,69 @@ these fields.
    `git.show` and prefetch, first for pending gates and then for active runs.
 6. Add version-list catch-up to the run list if the baseline justifies it, and
    lift Companion's run history cap with it.
+
+## Amendment 2 (2026-11-02): Offline-first reads
+
+**Status:** Proposed (2026-11-02). The owner set the rule; this amendment records
+its exceptions and how CI enforces it.
+
+### Decision
+
+Command Center and Companion read everything they render from the local store,
+through the shared cache. Only commands go to the gateway, plus the exceptions
+below. A screen with stored data shows it on its first frame, connected or not,
+and never shows a skeleton, a spinner or a prompt to connect in its place.
+
+**Commands.** A command changes gateway state or does work the user asked for:
+a gate decision, dispatch, cancel, sending a message, a forced upstream check,
+rerunning diagnostics. Previews and searches of input the user has not sent yet
+are commands too: they have no stable identity to store, and Amendment 1 already
+leaves them unpersisted. Commands are identified by method, not by file.
+`@farmslot/protocol/client-cache` keeps the closed list, and `CommandMethod` is
+that list, so a screen may send a listed command directly. Amendment 1's rules
+for commands are unchanged.
+
+**Exceptions.** Only these read gateway state outside the cache. The same
+module keeps their methods next to the command list.
+
+| Exception      | Covers                                                                                                     | Reason                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Live streams   | Terminal output and windows, worker session history, slot preparation progress, device streams and screens | Output arrives continuously and has no value to keep; the pane and device lists are cached. |
+| Large media    | Evidence video, and images and files over the content cap, fetched on open                                 | Too large for the shared byte budget; content under the cap is stored and shown offline.    |
+| Connection     | `gateway.ping`, authentication, token refresh, pairing exchange                                            | These open the connection the cache reads through and read no farm state.                   |
+| Identity admin | Principal, credential and pairing-candidate lists                                                          | The store holds no credentials, and stale authority data would mislead an administrator.    |
+
+**What is kept.** Every registered read is persisted with its size bound,
+replacing Amendment 1's list. A read registered before its writers publish its
+keys is not `live`: it shows its stored result, rereads whenever it is opened
+and reports that it has no live updates.
+
+**Startup.** When the store opens, the cache loads up to 8 MiB of the most recently used
+stored queries in one batch. Those queries start `stale` with their data instead
+of `loading`; other saved queries hydrate when opened.
+
+**Run details.** Background sync stores `run.get` for every run in a stored run
+list, not only runs that were opened or prefetched. Until a run's details arrive,
+its screens render its stored list row.
+Gates and active runs come first. Metered and unknown-cost connections sync only
+those details automatically; known unmetered connections also sync history,
+newest first, within the 64 MiB detail budget. A missing network-cost API does
+not assert that a connection is unmetered.
+
+**Artifact text.** Text artifacts a screen shows, such as reports, packets and
+logs, are stored content like diffs and files, and render offline once read within
+the content cap. Larger files retain the named large-media exception above.
+
+**Enforcement.** `yarn quality:cached-panel-reads` runs in CI. It fails when
+application code sends a method that is not a registered read, a listed command
+or a listed exception; reads a registered method directly; or fetches gateway
+HTTP outside the media and connection modules. A route test renders every
+Companion and Command Center route offline from a seeded store and fails on a
+skeleton or a connect prompt where stored data exists.
+
+### Consequences
+
+New screens add their reads to the registry instead of calling the gateway.
+Adding an exception means amending this table. Offline, commands stay disabled,
+so previews, searches and diagnostics are unavailable until the client
+reconnects.

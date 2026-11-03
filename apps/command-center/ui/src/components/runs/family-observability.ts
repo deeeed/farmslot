@@ -25,11 +25,11 @@ import '../shared/media-lightbox.js';
 import '../shared/diff-viewer-modal.js';
 import './grade-semantic-picker.js';
 
+import { readStoredArtifact } from '../../artifact-response.js';
 import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
-import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import type { LightboxPair } from '../shared/media-lightbox-types.js';
@@ -1206,21 +1206,24 @@ export class FamilyObservability extends FamilyObservabilityState {
     if (this._mdPreviewCache.has(key)) return;
     putCapped(this._mdPreviewCache, key, { status: 'loading' }, MD_CACHE_LIMIT);
     const current = this._captureCurrent();
-    gatewayHttpFetch(url)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
-      .then((text) => {
-        if (!current()) return;
-        putCapped(
-          this._mdPreviewCache,
-          key,
-          { status: 'ok', data: familyMarkdownPreviewText(text) },
-          MD_CACHE_LIMIT,
-        );
-        this._mdPreviewVersion += 1;
-      })
+    const applyStored = (response: Response) =>
+      Promise.resolve(response)
+        .then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.text();
+        })
+        .then((text) => {
+          if (!current()) return;
+          putCapped(
+            this._mdPreviewCache,
+            key,
+            { status: 'ok', data: familyMarkdownPreviewText(text) },
+            MD_CACHE_LIMIT,
+          );
+          this._mdPreviewVersion += 1;
+        });
+    readStoredArtifact(url, { onStored: applyStored })
+      .then(applyStored)
       .catch((err: Error) => {
         if (!current()) return;
         putCapped(this._mdPreviewCache, key, { status: 'err', error: err.message }, MD_CACHE_LIMIT);

@@ -23,6 +23,7 @@ import {
   reviewLineagesForRun,
 } from '@farmslot/review-dispatch';
 
+import { readStoredArtifact } from '../../artifact-response.js';
 import { fetchRunArtifactBytes } from '../../content-prefetch.js';
 import { gateway } from '../../gateway-client.js';
 import {
@@ -41,7 +42,7 @@ import {
 } from '../../held-content.js';
 import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { diffSelectionHandOff, visibleDiffSelection } from '../../utils/diff-test-filter.js';
-import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
+import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import {
   currentRecoveryEpoch,
   isRecoveryEpochCurrent,
@@ -295,6 +296,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (!this._initialized && this._gateDecision && this.slotId) {
       this._initialized = true;
       this._loadedSourceIdentity = this.sourceIdentity;
+      void this._packageDiffText();
       this._hydratePublicationTarget();
       void this._beginRecovery();
     }
@@ -342,6 +344,8 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._diffLoading = false;
       this._branchDiffLoaded = false;
       this._fileDiffLoading = false;
+      // Sync the immutable source with the run detail, before its first file is opened.
+      if (this._payload?.prPackage?.reviewSnapshot?.diffHash) void this._packageDiffText();
     }
     if ((changed.has('slotId') || sourceChanged) && this._initialized) {
       void this._beginRecovery();
@@ -545,10 +549,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._legacyTaskPromptError = '';
     try {
       const params = new URLSearchParams({ runId: this.runId, path: 'TASK.md' });
-      const response = await gatewayHttpFetch(`/api/run-artifact?${params}`);
-      if (!response.ok) throw new Error(`${response.status}`);
-      const text = await response.text();
-      if (captured.current()) this._legacyTaskPromptText = text;
+      const applyStored = async (response: Response) => {
+        if (!response.ok) throw new Error(`${response.status}`);
+        const text = await response.text();
+        if (captured.current()) this._legacyTaskPromptText = text;
+      };
+      await applyStored(
+        await readStoredArtifact(`/api/run-artifact?${params}`, { onStored: applyStored }),
+      );
     } catch (error) {
       if (!captured.current()) return;
       this._legacyTaskPromptError = error instanceof Error ? error.message : String(error);
@@ -700,19 +708,21 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
    * Content rules 1 and 2: the package's retained diff by `diffHash`. Held bytes come first;
    * while connected, the retained artifact is read, and shown and kept only when it verifies.
    */
-  async _packageDiffText(): Promise<VerifiedText> {
+  async _packageDiffText(fetch = true): Promise<VerifiedText> {
     const prPackage = this._payload?.prPackage;
+    const runId = this.runId;
     const snapshot = prPackage?.reviewSnapshot;
     if (!snapshot?.diffHash) return undefined;
     const key = { kind: 'diff' as const, id: snapshot.diffHash };
     const path = snapshot.diffPath;
     const held = await openHeldText(key);
-    if (held !== undefined || !path || gateway.connectionState !== 'connected') return held;
+    if (held !== undefined || !fetch || !path || gateway.connectionState !== 'connected')
+      return held;
     return readVerifiedText(
       key,
       () =>
         fetchRunArtifactBytes({
-          runId: this.runId,
+          runId,
           path,
           bundleDigest: prPackage?.artifactBundle?.bundleDigest,
         }),
@@ -722,10 +732,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   /** Lists the package diff's files in place of the slot diff. False when it is not available. */
-  async _showPackageDiff(): Promise<boolean> {
+  async _showPackageDiff(fetch = true): Promise<boolean> {
     const captured = this._queries.capture();
     const packageHash = this._payload?.prPackage?.packageHash;
-    const text = await this._packageDiffText();
+    const text = await this._packageDiffText(fetch);
     if (
       typeof text !== 'string' ||
       !captured.ownsView() ||
@@ -800,9 +810,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       captured.current() &&
       epoch === this._recoveryEpoch &&
       isRecoveryEpochCurrent(epoch);
-    this._diffLoading = true;
     this._reads.releaseMethods([Methods.GIT_BRANCH_DIFF]);
     try {
+      const held = await this._showPackageDiff(false);
+      if (!current()) return;
+      this._diffLoading = !held;
       const result = await this._reads.read<GitBranchDiffResult>(
         Methods.GIT_BRANCH_DIFF,
         committedReviewBranchDiffRequest(
@@ -812,15 +824,13 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         ),
         (next) => {
           if (!current()) return;
-          this._heldDiff = undefined;
-          this._diffFiles = next.files;
+          if (this._heldDiff === undefined) this._diffFiles = next.files;
           this._diffTestPatterns = next.testFilePatterns ?? null;
         },
       );
       if (!current()) return;
-      this._heldDiff = undefined;
+      if (this._heldDiff === undefined) this._diffFiles = result.files;
       this._diffError = '';
-      this._diffFiles = result.files;
       this._branchDiffLoaded = true;
       this._diffTestPatterns = result.testFilePatterns ?? null;
       const selected = visibleDiffSelection(this._diffSplit().visible, this._selectedFile);
@@ -899,7 +909,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       isRecoveryEpochCurrent(epoch);
     this._selectedFile = filePath;
     this._syncViewStateToHash();
-    this._fileDiffLoading = true;
+    this._fileDiffLoading = false;
     this._fileDiff = '';
     this._fileDiffError = '';
     const show = (diff: string) => {
@@ -910,11 +920,21 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         this._diffModalText = diff;
       }
     };
-    if (this._heldDiff !== undefined) {
-      show(heldFileDiff(this._heldDiff, filePath) ?? '');
-      this._fileDiffLoading = false;
+    const held = this._heldDiff ?? (await this._packageDiffText(false));
+    if (
+      !captured.ownsView() ||
+      this._fileDiffRequest !== request ||
+      this._selectedFile !== filePath ||
+      this.sourceIdentity !== identity
+    )
+      return;
+    if (typeof held === 'string') {
+      this._heldDiff = held;
+      this._diffFiles = heldDiffFiles(held);
+      show(heldFileDiff(held, filePath) ?? '');
       return;
     }
+    this._fileDiffLoading = true;
     this._reads.releaseMethods([Methods.GIT_DIFF]);
     try {
       const result = await this._reads.read<GitDiffResult>(

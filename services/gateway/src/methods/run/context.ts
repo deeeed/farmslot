@@ -36,7 +36,7 @@ import {
 import { refreshRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
 import { reconcilePublicationPackageForInspection } from '../../run-engine/publish-package-refresh.js';
-import { runListIdsPage, runListVersions } from '../../runs/list-version.js';
+import { runListIdsPage, runListVersion, runListVersions } from '../../runs/list-version.js';
 import {
   getAllRuns,
   getLiveRunsByIds,
@@ -83,7 +83,8 @@ export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   // The first paint must not wait for worker/source/evidence I/O. The ordinary
   // read still reconciles current readiness; command handlers retain their guards.
   if (params.view === 'snapshot') return { run };
-  return { run: await presentRun(run), recoveryHints: runRecoveryHints(run) };
+  const listVersion = runListVersion(trimRunForList(run));
+  return { run: await presentRun(run), listVersion, recoveryHints: runRecoveryHints(run) };
 }
 
 export async function runList(params: RunListParams): Promise<RunListResult> {

@@ -27,6 +27,7 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../shared/slot-prepare-options.js';
 
@@ -36,6 +37,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { runSlotPrepare } from '../shared/slot-prepare-client.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
@@ -61,7 +63,7 @@ export class SlotActionsPanel extends LitElement {
   @property({ attribute: false }) slotOverride: SlotStatus | null = null;
 
   @state() private _slot: SlotStatus | null = null;
-  @state() private _slotActions: SlotActionSummary[] = [];
+  private readonly _actionsQuery = new ResourceQueryController<SlotActionListResult>(this);
   @state() private _runningSlotActionIds: string[] = [];
   @state() private _output: string[] = [];
   @state() private _running = false;
@@ -102,7 +104,7 @@ export class SlotActionsPanel extends LitElement {
     super.connectedCallback();
     if (!this.slotId) return;
     void this._loadSlot();
-    void this._loadActions();
+    this._loadActions();
 
     this._unsubs.push(
       subscribe(() => {
@@ -170,7 +172,7 @@ export class SlotActionsPanel extends LitElement {
       this._exitCode = null;
       this._lastRefreshReason = undefined;
       void this._loadSlot();
-      void this._loadActions();
+      this._loadActions();
     }
   }
 
@@ -208,17 +210,15 @@ export class SlotActionsPanel extends LitElement {
     }
   }
 
-  private async _loadActions() {
-    try {
-      const result = await gateway.request<SlotActionListResult>(Methods.SLOT_ACTION_LIST, {
-        slotId: this.slotId,
-      });
-      this._slotActions = result.actions ?? [];
-    } catch (err) {
-      // Project may not declare any slot_actions — that's not an error.
-      this._slotActions = [];
-      void err;
-    }
+  private _loadActions() {
+    this._actionsQuery.setQuery(
+      resourceQuery<SlotActionListResult>(Methods.SLOT_ACTION_LIST, { slotId: this.slotId }),
+    );
+  }
+
+  /** The stored configured actions; a project may declare none, and a failed read shows none. */
+  private get _slotActions(): SlotActionSummary[] {
+    return this._actionsQuery.state.data?.actions ?? [];
   }
 
   // ── Built-in actions ──

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 
+import { gatewayFetch } from './gateway-http-auth';
 import { readRunOutputReport } from './output-report';
 
 const body = '<h1>Release validation</h1><p>Coverage gaps: none recorded.</p>';
@@ -37,6 +38,7 @@ test('a run report is read from its retained bundle with the profile headers', a
     gatewayUrl: 'ws://gateway.test:7801',
     runId: 'run-qa',
     authHeaders: { Authorization: 'Bearer person-token' },
+    readArtifact: gatewayFetch,
   });
   assert.equal(report.body, body);
   assert.equal(report.path, 'artifacts/report.html');
@@ -57,6 +59,7 @@ test('report bytes that differ from the retained digest are never shown', async 
       gatewayUrl: 'ws://gateway.test:7801',
       runId: 'run-qa',
       authHeaders: {},
+      readArtifact: gatewayFetch,
     }),
     /bytes do not match/,
   );
@@ -69,6 +72,7 @@ test('a gateway error is reported instead of an empty report', async (t) => {
       gatewayUrl: 'ws://gateway.test:7801',
       runId: 'run-qa',
       authHeaders: {},
+      readArtifact: gatewayFetch,
     }),
     /HTTP 404/,
   );

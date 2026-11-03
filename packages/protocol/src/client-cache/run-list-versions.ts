@@ -10,6 +10,7 @@ import {
 
 import type { ResourceReadStamp } from './keys.js';
 import { resourceQuery } from './registry.js';
+import { type RunDetailTarget, runDetailTarget } from './run-details.js';
 import type { ResourceRowsMerge, StoredResourceRows } from './store.js';
 import type { ResourceReadResult } from './types.js';
 
@@ -346,6 +347,15 @@ export class RunListCollection {
       }),
       'newest',
     );
+  }
+
+  detailTargets(): RunDetailTarget[] {
+    return this.order.flatMap((id) => {
+      const row = this.rows.get(id);
+      return row
+        ? [runDetailTarget(row.body ?? row.projection, this.listed?.get(id) ?? row.version)]
+        : [];
+    });
   }
 
   /** Forget everything: a new store, owner or refusal. A running read is abandoned. */

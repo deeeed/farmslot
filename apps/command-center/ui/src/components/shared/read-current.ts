@@ -1,4 +1,20 @@
-import type { GatewayResourceCache, ResourceQuery } from '@farmslot/protocol/client-cache';
+import {
+  type GatewayResourceCache,
+  readStoredResource,
+  type ResourceQuery,
+} from '@farmslot/protocol/client-cache';
+
+/**
+ * A one-shot read for display (ADR-071 Amendment 2): through the shared cache while connected,
+ * and the stored result, whatever its age, while offline. Rejects only when nothing is held.
+ */
+export async function readStored<T>(
+  query: ResourceQuery<T>,
+  onStored?: (data: T) => unknown,
+): Promise<T> {
+  const { getResourceCache } = await import('../../resource-cache.js');
+  return readStoredResource(getResourceCache, query, onStored);
+}
 
 /** A write that lands during a reread leaves it stale; the next try reads past it. */
 const READ_CURRENT_TRIES = 3;
@@ -17,4 +33,23 @@ export async function readCurrent<T>(
     if (!stale.length) return;
     await Promise.all(stale.map((query) => cache.retry(query)));
   }
+}
+
+/** A one-shot action preflight must finish a successful read from its current owner. */
+export async function readFresh<T>(
+  cache: GatewayResourceCache,
+  query: ResourceQuery<T>,
+  isCurrent: () => boolean,
+): Promise<T> {
+  const startedAt = Date.now();
+  const state = await cache.retry(query);
+  if (
+    !isCurrent() ||
+    state.error ||
+    state.data === undefined ||
+    (query.live && state.status !== 'ready') ||
+    (state.observedAt ?? -Infinity) < startedAt
+  )
+    throw new Error('A current read is required before acting');
+  return state.data;
 }

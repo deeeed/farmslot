@@ -3,9 +3,9 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import '../diff-viewer/diff-review.js';
 
+import { readStoredArtifact } from '../../artifact-response.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { formatDiffFileCount, visibleDiffSelection } from '../../utils/diff-test-filter.js';
-import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { type DiffFileEntry, parseUnifiedDiff } from '../../utils/unified-diff.js';
 
 import { DiffTestFilterController } from './diff-test-filter-controller.js';
@@ -164,12 +164,20 @@ export class DiffViewerModal extends LitElement {
     this._pendingLoad = pending;
     this._loading = true;
     try {
-      const response = await gatewayHttpFetch(this.artifactUrl, { signal: pending.signal });
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      const text = await response.text();
-      if (pending.signal.aborted) return;
-      this._loadedText = text;
-      this._selectDefault();
+      const applyStored = async (response: Response) => {
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        const text = await response.text();
+        if (pending.signal.aborted) return;
+        this._loadedText = text;
+        this._loading = false;
+        this._selectDefault();
+      };
+      await applyStored(
+        await readStoredArtifact(this.artifactUrl, {
+          signal: pending.signal,
+          onStored: applyStored,
+        }),
+      );
     } catch (err) {
       if (pending.signal.aborted) return;
       this._loadedText = '';

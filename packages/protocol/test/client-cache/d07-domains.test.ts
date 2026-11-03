@@ -35,7 +35,7 @@ test('D07 remaining domains use memory-only observed reads with canonical select
             ? { id: 'record-1' }
             : {};
     const query = resourceQuery(method, params);
-    assert.equal(query.persisted, false, method);
+    assert.equal(query.persisted, true, method);
     assert.equal(query.requiresObservedRead, true, method);
     assert.deepEqual(resourceDependenciesForRead(method, query.params), query.dependencies, method);
   }

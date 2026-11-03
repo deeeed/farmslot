@@ -14,6 +14,7 @@ import type {
 } from '@farmslot/protocol';
 import { taskTitleText } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../stream-feed/stream-feed.js';
 import '../shared/hydrating-placeholder.js';
@@ -22,6 +23,7 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getRunForSlot, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { RESOURCE_CONTROL_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { readStored } from '../shared/read-current.js';
 
 import {
   isDeviceGridResourceApplicable,
@@ -452,31 +454,14 @@ export class DeviceGrid extends LitElement {
       this._resourceStatuses = new Map();
       return;
     }
-    if (gateway.connectionState !== 'connected') return;
     try {
       const filtered = this._applyFilters(fleet.slots);
 
-      const resources: AvailableResource[] = [];
-      const statusMap = new Map<string, ResourceStatus>();
-
-      // Fetch resources for all slots in parallel
-      const entries = await Promise.allSettled(
-        filtered.map(async (slot) => {
-          try {
-            const res = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
-              slotId: slot.slot,
-            });
-            return { slot, resources: res.resources };
-          } catch {
-            return { slot, resources: [] as SlotResource[] };
-          }
-        }),
-      );
-
-      if (fleet !== getState().fleet) return;
-      for (const entry of entries) {
-        if (entry.status !== 'fulfilled') continue;
-        const { slot, resources: slotResources } = entry.value;
+      const resourcesBySlot = new Map<string, AvailableResource[]>();
+      const applyResources = (slot: SlotStatus, slotResources: SlotResource[]) => {
+        if (fleet !== getState().fleet) return;
+        const resources: AvailableResource[] = [];
+        const statusMap = new Map(this._resourceStatuses);
         for (const r of slotResources) {
           if (!r.definition.streamable || !isDeviceGridResourceApplicable(slot, r)) continue;
           const status = resolveDeviceGridResourceStatus(slot, r);
@@ -495,10 +480,26 @@ export class DeviceGrid extends LitElement {
           });
           statusMap.set(`${slot.slot}:${r.id}`, status);
         }
-      }
-
-      this._availableResources = resources;
-      this._resourceStatuses = statusMap;
+        resourcesBySlot.set(slot.slot, resources);
+        this._availableResources = [...resourcesBySlot.values()].flat();
+        this._resourceStatuses = statusMap;
+      };
+      await Promise.allSettled(
+        filtered.map(async (slot) => {
+          const applyStored = (result: ResourceListResult) =>
+            applyResources(slot, result.resources);
+          try {
+            applyStored(
+              await readStored<ResourceListResult>(
+                resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, { slotId: slot.slot }),
+                applyStored,
+              ),
+            );
+          } catch {
+            applyResources(slot, []);
+          }
+        }),
+      );
     } catch {
       /* ignore — not connected */
     }

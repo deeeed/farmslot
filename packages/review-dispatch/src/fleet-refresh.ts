@@ -18,7 +18,6 @@ import {
   slotWorkspaceIdentity,
 } from '@farmslot/protocol';
 
-const FLEET_INSPECTION_TIMEOUT_MS = 120_000;
 const CHECKING_WORKSPACE = 'Checking workspace. Try release again when ready.';
 
 interface FleetRowRead {
@@ -34,6 +33,9 @@ interface PendingWorkspaceInspection {
 
 export interface FleetRefreshClient {
   contextKey(): string;
+  /** The current fleet from the client's shared cache; inspection never reads the gateway directly. */
+  readFleet(): Promise<FleetStatusResult>;
+  /** Release and cancel commands. */
   request<T>(method: string, params?: unknown, timeout?: number): Promise<T>;
   subscribe(event: string, callback: (payload: unknown) => void): () => void;
 }
@@ -227,11 +229,7 @@ export class FleetRefreshViewModel {
       else if (this.phase === 'review' || this.phase === 'done') void refreshObservedRows();
     });
     try {
-      const { fleet } = await this.client.request<FleetStatusResult>(
-        Methods.FLEET_STATUS,
-        {},
-        FLEET_INSPECTION_TIMEOUT_MS,
-      );
+      const { fleet } = await this.client.readFleet();
       if (generation !== this.loadGeneration) return;
       if (context !== this.client.contextKey())
         throw new Error('Farm connection changed; inspect again');
@@ -332,11 +330,7 @@ export class FleetRefreshViewModel {
         while (read.again) {
           read.again = false;
           if (read.generation !== this.loadGeneration || !this.sameContext()) return;
-          const { fleet } = await this.client.request<FleetStatusResult>(
-            Methods.FLEET_STATUS,
-            {},
-            FLEET_INSPECTION_TIMEOUT_MS,
-          );
+          const { fleet } = await this.client.readFleet();
           if (read.generation !== this.loadGeneration || !this.sameContext()) return;
           // A newer observation arrived during this read; take one current
           // snapshot instead of applying the older reply over it.

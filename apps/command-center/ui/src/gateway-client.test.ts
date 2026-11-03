@@ -16,6 +16,33 @@ import {
   GATEWAY_TOKEN_STORAGE_KEY,
 } from './gateway-url.js';
 
+for (const [method, params] of [
+  ['chat.sessions', {}],
+  ['git.diff', { slotId: '', runId: 'retained', base: 'a'.repeat(40), head: 'b'.repeat(40) }],
+  ['git.show', { slotId: '', runId: 'retained', ref: 'b'.repeat(40), path: 'src/file.ts' }],
+] as const) {
+  test(`${method} snapshots use ordinary RPC and preserve the cache reply contract`, async (t) => {
+    const fake = installFakeGateway(t);
+    const { GatewayClient, gateway } = await import('./gateway-client.js');
+    const client = new GatewayClient('ws://localhost:1234/ws', { token: 'proof' });
+    t.after(() => {
+      client.disconnect();
+      gateway.disconnect();
+    });
+    client.connect();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const socket = fake.sockets.at(-1)!;
+    const reading = client.requestResource<{ value: string }>(method, params);
+    const request = fake.requests.at(-1)!;
+    assert.equal(request.resourceRead, undefined);
+    socket.response(request.id, { value: 'retained snapshot' });
+    assert.deepEqual(await reading, {
+      data: { value: 'retained snapshot' },
+      resourceState: undefined,
+    });
+  });
+}
+
 test(
   'shared Sources reads survive slow receipt verification while ordinary reads still time out',
   { timeout: 4000 },

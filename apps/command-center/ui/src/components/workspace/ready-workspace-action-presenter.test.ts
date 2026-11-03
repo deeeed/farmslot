@@ -198,6 +198,14 @@ function packageDecision(packageHash: string): RunDecision {
   };
 }
 
+async function waitForPendingRead(ready: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (!ready()) {
+    assert(Date.now() < deadline, 'the controlled source read did not start');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
 test('a package revision replaces an in-flight branch read and finishes recovery', async (t) => {
   let finish!: (value: { files: GitBranchDiffFile[] }) => void;
   branchDiffReply = () =>
@@ -212,6 +220,7 @@ test('a package revision replaces an in-flight branch read and finishes recovery
   view._initialized = true;
   view._recoveryPhase = 'rehydrating';
   const old = view._loadBranchDiff();
+  await waitForPendingRead(() => Boolean(finish));
   branchDiffReply = async () => ({ files: [codeFile] });
   view.decision = packageDecision('new');
   view.updated(new Map([['decision', undefined]]));
@@ -237,6 +246,7 @@ test('a package revision replaces a pending body without admitting its stale rep
   view.updated(new Map());
   view._initialized = true;
   const old = view._selectFile(codeFile.path);
+  await waitForPendingRead(() => Boolean(finish));
   fileDiffReply = async () => ({ diff: 'current package body' });
   view.decision = packageDecision('new');
   view.updated(new Map([['decision', undefined]]));
@@ -261,6 +271,7 @@ test('a slow file reply cannot replace the file selected afterward', async (t) =
   });
   const view = makePresenter();
   const old = view._selectFile('old.ts');
+  await waitForPendingRead(() => Boolean(finish));
   await view._selectFile('new.ts');
   finish({ diff: 'wrong old diff' });
   await old;

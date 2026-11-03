@@ -6,7 +6,11 @@ import { createNativeSqliteResourceStore } from '@farmslot/local-store/native';
 import {
   createResourceCacheTransport,
   type GatewayResourceCache,
+  networkCostHint,
+  networkInformationEvents,
+  readStoredResource,
   type ResourceConnectionInputs,
+  type ResourceQuery,
   resourceStoreScopeId,
 } from '@farmslot/protocol/client-cache';
 
@@ -21,6 +25,18 @@ import { fetchRunArtifactBytes } from './held-content';
 import { sharedLifetime } from './shared-lifetime';
 
 let notice: string | undefined;
+let artifactNotice: string | undefined;
+export function reportArtifactRefreshError(error: unknown | undefined): void {
+  artifactNotice = error ? 'Could not refresh this artifact. Showing the saved copy.' : undefined;
+  notify();
+}
+
+export function readStored<T>(
+  query: ResourceQuery<T>,
+  onStored?: (data: T) => unknown,
+): Promise<T> {
+  return readStoredResource(getResourceCache, query, onStored);
+}
 let prefetch:
   | { cache: GatewayResourceCache; farm: boolean; media?: EvidenceMediaHolder; stop: () => void }
   | undefined;
@@ -128,6 +144,7 @@ function connectionInputs(): ResourceConnectionInputs {
     id: client?.connectionGeneration ?? 0,
     connected,
     foreground: AppState.currentState === 'active',
+    metered: networkCostHint(),
     gatewayUrl: state.gatewayUrl,
     profileId: state.activeProfileId || undefined,
     authentication: connected ? client?.authenticatedConnection : undefined,
@@ -192,10 +209,13 @@ function bindPrefetch(): void {
 export const initializeNativeResourceCache = sharedLifetime(() => {
   const stopStore = useConnectionStore.subscribe(sync);
   const appState = AppState.addEventListener('change', sync);
+  const networkEvents = networkInformationEvents();
+  networkEvents?.addEventListener('change', sync);
   sync();
   return () => {
     stopStore();
     appState.remove();
+    networkEvents?.removeEventListener('change', sync);
     void owner.dispose().catch((error: unknown) => {
       notice = `Offline storage could not close: ${error instanceof Error ? error.message : String(error)}`;
       notify();
@@ -213,7 +233,7 @@ export function getResourceWorkspaceKey(): string | undefined {
   return owner.renderKey;
 }
 export function getResourceStoreNotice(): string | undefined {
-  return owner.cache ? notice : undefined;
+  return owner.cache ? (notice ?? artifactNotice) : undefined;
 }
 export function subscribeResourceCache(listener: () => void): () => void {
   listeners.add(listener);

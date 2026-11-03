@@ -19,6 +19,7 @@ test('local parity scopes formatting without dropping global checks and stops at
   assert.ok(!steps[0][1].includes(path.join(root, deleted)));
   assert.ok(steps.some(([, command]) => command.includes('quality:authorization')));
   assert.ok(steps.some(([, command]) => command.includes('test:project-hooks')));
+  assert.ok(steps.some(([, command]) => command.includes('quality:cached-panel-reads')));
   let calls = 0;
   const result = runTimedSteps(steps, {
     prefix: 'proof',

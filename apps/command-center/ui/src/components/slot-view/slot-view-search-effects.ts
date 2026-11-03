@@ -1,5 +1,6 @@
 import type { DiagnosticsRunResult, GitFilesResult, SearchQueryResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 
@@ -66,19 +67,18 @@ export function openSlotViewSearchResult(view: SlotView, file: string, _line: nu
   view._handleFileSelect(file);
 }
 
-export async function loadSlotViewFileIndex(view: SlotView) {
-  if (view._fileIndex.length > 0 || !view._isLive) return;
-  try {
-    const result = await gateway.request<GitFilesResult>(Methods.GIT_FILES, {
-      slotId: view.slotId,
-    });
-    view._fileIndex = result.files;
-  } catch (err) {
-    console.warn(
-      '[slot-view] load file index failed:',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
+/** Binds the slot's stored file list; it is read again each time the view opens it. */
+export function loadSlotViewFileIndex(view: SlotView) {
+  view._fileIndexQuery.setQuery(
+    view._isLive
+      ? resourceQuery<GitFilesResult>(Methods.GIT_FILES, { slotId: view.slotId })
+      : undefined,
+  );
+}
+
+/** A file command that added, removed or renamed files rereads the file list once. */
+export function refreshSlotViewFileIndex(view: SlotView) {
+  void view._fileIndexQuery.retry();
 }
 
 export function handleSlotViewSearchInput(view: SlotView) {

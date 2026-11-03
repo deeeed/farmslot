@@ -2,7 +2,6 @@ import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
-  DeviceInventoryParams,
   DeviceInventoryResult,
   RecipeCommandParams,
   RecipeCommandResult,
@@ -12,6 +11,7 @@ import {
   Methods,
   RUNTIME_CAPABILITY_TARGET_KEYS,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import './recipe-output-panel.js';
 
@@ -19,6 +19,7 @@ import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey, subscribeResourceCache } from '../../resource-cache.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import type { RecipeOutputPanel } from './recipe-output-panel.js';
 import { deviceTargetChoices, RECIPE_TARGET_OTHER } from './recipe-rerun-target.js';
@@ -62,14 +63,12 @@ export class RecipeRunnerControls extends LitElement {
   @property({ attribute: false }) beforeRun?: () => void;
 
   @state() private _running = false;
-  /** The machine's devices, or null until the first read answers. */
-  @state() private _inventory: DeviceInventoryResult | null = null;
-  @state() private _inventoryError = '';
+  /** The machine's stored devices; the controller follows the workspace owner. */
+  private readonly _inventoryQuery = new ResourceQueryController<DeviceInventoryResult>(this);
   /** True while the operator is typing an identity the picker did not offer. */
   @state() private _typingIdentity = false;
   private _inventoryTimer: ReturnType<typeof setInterval> | null = null;
   private _scope = '';
-  private _inventoryScope = '';
   private _stopOwner?: () => void;
   @state() private _copyFeedback = '';
   @state() private _copyError = '';
@@ -88,8 +87,8 @@ export class RecipeRunnerControls extends LitElement {
     super.connectedCallback();
     this._stopOwner = subscribeResourceCache(() => this._syncView());
     this._syncView();
-    // Identity sync reads immediately; the existing interval remains for the fleet migration.
-    this._inventoryTimer = setInterval(() => void this._loadInventory(), INVENTORY_POLL_MS);
+    // Devices come and go while the controls are open; the stored list is reread on this interval.
+    this._inventoryTimer = setInterval(() => void this._inventoryQuery.retry(), INVENTORY_POLL_MS);
   }
 
   override disconnectedCallback() {
@@ -97,7 +96,6 @@ export class RecipeRunnerControls extends LitElement {
     this._stopOwner?.();
     this._stopOwner = undefined;
     this._scope = '';
-    this._inventoryScope = '';
     this._copyFeedbackTimer.clear();
     if (this._inventoryTimer) clearInterval(this._inventoryTimer);
     this._inventoryTimer = null;
@@ -121,13 +119,16 @@ export class RecipeRunnerControls extends LitElement {
       this._copyError = '';
       this._copyFeedbackTimer.clear();
     }
-    const inventoryScope = JSON.stringify([getResourceWorkspaceKey(), this.slotId]);
-    if (inventoryScope !== this._inventoryScope) {
-      this._inventoryScope = inventoryScope;
-      this._inventory = null;
-      this._inventoryError = '';
-      if (this.isConnected) void this._loadInventory();
-    }
+    // MANUAL-000124: the devices this slot's machine has. The free-text field is the fallback
+    // for a machine whose inventory cannot be read; the Gateway still refuses an identity its
+    // own inventory contradicts.
+    this._inventoryQuery.setQuery(
+      this.slotId
+        ? resourceQuery<DeviceInventoryResult>(Methods.RESOURCE_DEVICE_INVENTORY, {
+            slotId: this.slotId,
+          })
+        : undefined,
+    );
   }
 
   override willUpdate(): void {
@@ -145,40 +146,6 @@ export class RecipeRunnerControls extends LitElement {
         gateway.connectionState === 'connected' &&
         gateway.resourceConnectionId === connection,
     };
-  }
-
-  /**
-   * Read the devices this slot's machine has (MANUAL-000124).
-   *
-   * A failure is recorded and shown, not thrown: the free-text field is the
-   * documented fallback for a machine whose inventory cannot be read, and the
-   * Gateway still refuses an identity its own inventory contradicts.
-   */
-  private async _loadInventory() {
-    if (!this.slotId) return;
-    const slotId = this.slotId;
-    const owner = getResourceWorkspaceKey();
-    const connection = gateway.resourceConnectionId;
-    const current = () =>
-      this.isConnected &&
-      this.slotId === slotId &&
-      owner === getResourceWorkspaceKey() &&
-      connection === gateway.resourceConnectionId &&
-      gateway.connectionState === 'connected';
-    try {
-      const params: DeviceInventoryParams = { slotId };
-      const result = await gateway.request<DeviceInventoryResult>(
-        Methods.RESOURCE_DEVICE_INVENTORY,
-        params,
-      );
-      if (!current()) return;
-      this._inventory = result;
-      this._inventoryError = '';
-    } catch (error) {
-      if (!current()) return;
-      this._inventory = null;
-      this._inventoryError = error instanceof Error ? error.message : String(error);
-    }
   }
 
   private _setRunning(running: boolean) {
@@ -242,7 +209,11 @@ export class RecipeRunnerControls extends LitElement {
   override render() {
     const canRun = Boolean(this.runId && this.slotId && !this.disabled && !this._running);
     const canCopy = Boolean(this.runId && this.slotId && !this.disabled);
-    const choices = deviceTargetChoices(this._inventory?.devices ?? [], this.targetKey);
+    const inventoryState = this._inventoryQuery.state;
+    const inventory = inventoryState.data;
+    // A stored list is shown whatever its status; a failure is shown only without one.
+    const inventoryError = inventory ? '' : (inventoryState.error?.message ?? '');
+    const choices = deviceTargetChoices(inventory?.devices ?? [], this.targetKey);
     // The picker may only render a value it can DISPLAY. An identity typed
     // before the inventory answered — or one the machine stopped listing — has
     // no matching option, so the browser would show the first option, "slot
@@ -256,12 +227,12 @@ export class RecipeRunnerControls extends LitElement {
     // because the machine listed nothing for this key, or a fallback because the
     // inventory itself could not be read. Silence would make the last two look
     // like "this machine has no devices".
-    const inventoryNote = this._inventoryError
-      ? `Device list unavailable (${this._inventoryError}); type the identity.`
-      : this._inventory && choices.length === 0
-        ? `${this._inventory.machine} lists no ${this.targetKey}; type the identity.`
-        : !identityIsOffered && this._inventory
-          ? `${this._inventory.machine} does not list '${this.targetValue}'; it will be sent as typed.`
+    const inventoryNote = inventoryError
+      ? `Device list unavailable (${inventoryError}); type the identity.`
+      : inventory && choices.length === 0
+        ? `${inventory.machine} lists no ${this.targetKey}; type the identity.`
+        : !identityIsOffered && inventory
+          ? `${inventory.machine} does not list '${this.targetValue}'; it will be sent as typed.`
           : '';
     return html`
       <div

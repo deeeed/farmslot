@@ -60,6 +60,7 @@ import {
 } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { readStored } from '../shared/read-current.js';
 import {
   heldDataIsSaved,
   isSupersededRead,
@@ -523,7 +524,10 @@ export class FleetCanvas extends LitElement {
       // Explicit live probe (~20s). Its source notification refreshes the shared observation.
       await gateway.request<ProviderAccountsSnapshotResult>(
         Methods.PROVIDER_ACCOUNTS_SNAPSHOT,
-        { machines: [machine], forceRefresh: true },
+        {
+          machines: [machine],
+          forceRefresh: true,
+        },
         45_000,
       );
     } catch (err) {
@@ -570,12 +574,7 @@ export class FleetCanvas extends LitElement {
     );
     this.syncProgressQueries();
     // Fetch resource data when slots arrive and we're in resource view
-    if (
-      this.groupBy === 'resource' &&
-      !this._resourceFetched &&
-      this.slots.length > 0 &&
-      prev.length === 0
-    ) {
+    if (this.groupBy === 'resource' && this.slots.length > 0 && prev.length === 0) {
       this.fetchResourceData();
     }
     // Build slotRuns map for working slots
@@ -750,33 +749,65 @@ export class FleetCanvas extends LitElement {
       return;
     }
 
-    // Phase 1: fetch resource definitions (fast — reads project.json, no hooks)
-    // Renders table immediately with "unknown" status dots
+    const cache = getResourceCache();
+    const workspace = getResourceWorkspaceKey();
+    const current = () => cache === getResourceCache() && workspace === getResourceWorkspaceKey();
     const nextDefs = new Map<string, SlotResource[]>();
     const nextStatus = new Map<string, Map<string, ResourceStatus>>(this.slotResourceStatus);
+    const applyResources = (slotId: string, list: ResourceListResult) => {
+      if (!current()) return;
+      if (list.resources.length) {
+        nextDefs.set(slotId, list.resources);
+        nextStatus.set(
+          slotId,
+          new Map(list.resources.map((resource) => [resource.id, resource.status])),
+        );
+        this._resourceFetched = true;
+      } else {
+        nextDefs.delete(slotId);
+        nextStatus.delete(slotId);
+      }
+      this.slotResourceDefs = new Map(nextDefs);
+      this.slotResourceStatus = new Map(nextStatus);
+    };
+    // Hydrate every local slot before network batching, so a slow first batch cannot hide
+    // held groups in later batches. Explicit rereads below retain their four-request limit.
+    let heldLists = 0;
+    await Promise.all(
+      resourceSlots.map(async (slot) => {
+        const query = resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, {
+          slotId: slot.slot,
+        });
+        const held = await cache?.readStored?.(query, false);
+        if (held?.data && current()) {
+          heldLists++;
+          applyResources(slot.slot, held.data);
+        }
+      }),
+    );
+    if (!current()) return;
+    if (heldLists === resourceSlots.length) this._resourceFetched = true;
     for (let index = 0; index < resourceSlots.length; index += 4) {
       const batch = resourceSlots.slice(index, index + 4);
       await Promise.all(
-        batch.map(async (s) => {
+        batch.map(async (slot) => {
           try {
-            const listRes = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
-              slotId: s.slot,
-            });
-            if (listRes.resources.length > 0) {
-              nextDefs.set(s.slot, listRes.resources);
-              nextStatus.set(
-                s.slot,
-                new Map(listRes.resources.map((resource) => [resource.id, resource.status])),
-              );
-            }
+            const applyStored = (list: ResourceListResult) => applyResources(slot.slot, list);
+            applyStored(
+              await readStored<ResourceListResult>(
+                resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, { slotId: slot.slot }),
+                applyStored,
+              ),
+            );
           } catch (err) {
             console.warn(
-              `[fleet-canvas] resource list failed for ${s.slot}:`,
+              `[fleet-canvas] resource list failed for ${slot.slot}:`,
               err instanceof Error ? err.message : String(err),
             );
           }
         }),
       );
+      if (!current()) return;
     }
     this.slotResourceDefs = nextDefs;
     this.slotResourceStatus = nextStatus;
@@ -795,15 +826,18 @@ export class FleetCanvas extends LitElement {
     // rings + freshness), so pressure charts paint right after a gateway
     // restart while the full snapshot resolves attribution in the background.
     if (!this.resourcePressure) {
-      void gateway
-        .request<ResourcePressureHistoryResult>(
+      const applyStored = (history: ResourcePressureHistoryResult) => {
+        if (epoch !== this._resourcePressureFetchEpoch || this.resourcePressure) return;
+        this.resourcePressureHistory = history;
+      };
+      void readStored<ResourcePressureHistoryResult>(
+        resourceQuery<ResourcePressureHistoryResult>(
           Methods.RESOURCE_PRESSURE_HISTORY,
           this.pressureRequestParams(),
-        )
-        .then((history) => {
-          if (epoch !== this._resourcePressureFetchEpoch || this.resourcePressure) return;
-          this.resourcePressureHistory = history;
-        })
+        ),
+        applyStored,
+      )
+        .then(applyStored)
         .catch((err: unknown) => {
           // First-paint acceleration only. The full snapshot below is the
           // authoritative fetch and reports its own failure.
@@ -814,13 +848,20 @@ export class FleetCanvas extends LitElement {
         });
     }
     try {
-      const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
-        Methods.RESOURCE_PRESSURE_SNAPSHOT,
-        this.pressureRequestParams(),
+      const applyStored = (snapshot: ResourcePressureSnapshotResult) => {
+        if (epoch !== this._resourcePressureFetchEpoch) return;
+        this.resourcePressure = snapshot;
+        this.resourceWatchesEnabled = snapshot.watchState.enabled;
+      };
+      applyStored(
+        await readStored<ResourcePressureSnapshotResult>(
+          resourceQuery<ResourcePressureSnapshotResult>(
+            Methods.RESOURCE_PRESSURE_SNAPSHOT,
+            this.pressureRequestParams(),
+          ),
+          applyStored,
+        ),
       );
-      if (epoch !== this._resourcePressureFetchEpoch) return;
-      this.resourcePressure = snapshot;
-      this.resourceWatchesEnabled = snapshot.watchState.enabled;
     } catch (err) {
       console.warn(
         '[fleet-canvas] resource pressure fetch failed:',
@@ -887,7 +928,9 @@ export class FleetCanvas extends LitElement {
           mode: this.machinePauseMode,
           selector: this._machinePauseSelector,
         }),
-        gateway.request<MachinePauseStatusResult>(Methods.MACHINE_PAUSE_STATUS, { machine }),
+        readStored<MachinePauseStatusResult>(
+          resourceQuery<MachinePauseStatusResult>(Methods.MACHINE_PAUSE_STATUS, { machine }),
+        ),
         gateway.request<MachinePauseRestoreResult>(Methods.MACHINE_PAUSE_RESTORE, {
           machine,
           selector: this._machinePauseRestoreSelector,
@@ -1163,12 +1206,19 @@ export class FleetCanvas extends LitElement {
   private async previewResourceCleanup() {
     this.resourceActionBusy = true;
     try {
-      const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
-        Methods.RESOURCE_PRESSURE_SNAPSHOT,
-        this.pressureRequestParams(),
+      const applyStored = (snapshot: ResourcePressureSnapshotResult) => {
+        this.resourcePressure = snapshot;
+        this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
+      };
+      applyStored(
+        await readStored<ResourcePressureSnapshotResult>(
+          resourceQuery<ResourcePressureSnapshotResult>(
+            Methods.RESOURCE_PRESSURE_SNAPSHOT,
+            this.pressureRequestParams(),
+          ),
+          applyStored,
+        ),
       );
-      this.resourcePressure = snapshot;
-      this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
     } catch (err) {
       this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
     } finally {
@@ -1201,9 +1251,11 @@ export class FleetCanvas extends LitElement {
       });
       const freshTargets = this.cleanupTargetsForFilters(fresh.targets);
       if (!cleanupTargetsRemainEligible(selectedTargets, freshTargets)) {
-        const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
-          Methods.RESOURCE_PRESSURE_SNAPSHOT,
-          this.pressureRequestParams(),
+        const snapshot = await readStored<ResourcePressureSnapshotResult>(
+          resourceQuery<ResourcePressureSnapshotResult>(
+            Methods.RESOURCE_PRESSURE_SNAPSHOT,
+            this.pressureRequestParams(),
+          ),
         );
         this.resourcePressure = snapshot;
         this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
@@ -1291,14 +1343,17 @@ export class FleetCanvas extends LitElement {
     if (this.groupBy !== 'resource' || this._pressureHistoryRefreshTimer) return;
     this._pressureHistoryRefreshTimer = setTimeout(() => {
       this._pressureHistoryRefreshTimer = undefined;
-      gateway
-        .request<ResourcePressureHistoryResult>(
+      const applyStored = (history: ResourcePressureHistoryResult) => {
+        this.resourcePressureHistory = history;
+      };
+      readStored<ResourcePressureHistoryResult>(
+        resourceQuery<ResourcePressureHistoryResult>(
           Methods.RESOURCE_PRESSURE_HISTORY,
           this.pressureRequestParams(),
-        )
-        .then((history) => {
-          this.resourcePressureHistory = history;
-        })
+        ),
+        applyStored,
+      )
+        .then(applyStored)
         .catch((err: unknown) => {
           console.warn(
             '[fleet-canvas] pressure history event refresh failed:',
@@ -1318,9 +1373,12 @@ export class FleetCanvas extends LitElement {
 
   private async fetchPressureAdmissionControl() {
     try {
-      this.pressureAdmissionControl = await gateway.request<PressureAdmissionGetResult>(
-        Methods.DISPATCH_PRESSURE_ADMISSION_GET,
-        {},
+      const applyStored = (data: PressureAdmissionGetResult) => {
+        this.pressureAdmissionControl = data;
+      };
+      this.pressureAdmissionControl = await readStored<PressureAdmissionGetResult>(
+        resourceQuery<PressureAdmissionGetResult>(Methods.DISPATCH_PRESSURE_ADMISSION_GET, {}),
+        applyStored,
       );
     } catch (err) {
       console.warn(

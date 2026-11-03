@@ -261,6 +261,8 @@ export interface RunGetParams {
 
 export interface RunGetResult {
   run: Run;
+  /** Version of the stored list row before presentation-only enrichment. */
+  listVersion?: string;
   recoveryHints?: string[];
 }
 

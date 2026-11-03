@@ -17,13 +17,14 @@ import { defaultModelForRunner } from '@farmslot/review-dispatch';
 import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
-import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import {
   visibleDefaultModel,
   visibleReviewDispatchCatalog,
 } from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
+import { readFresh, readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { RetainedNotice } from '../shared/retained-notice.js';
 
@@ -228,20 +229,23 @@ export class EvalCockpit extends EvalCockpitState {
     if (cached?.revision === revision) return;
     if (this._evalPackageLoads.has(revision)) return;
     this._evalPackageLoads.add(revision);
-    gateway
-      .request<EvalTrialResultGetResult>(Methods.EVAL_TRIAL_RESULT_GET, { runId: run.id }, 30_000)
-      .then((result) => {
-        this._evalPackageSnapshots.set(result.candidatePackagePath, {
-          revision,
-          pkg: result.candidatePackage,
-          packagePath: result.candidatePackagePath,
-        });
-        this._applyEvalPackageToCells(
-          result.run,
-          result.candidatePackage,
-          result.candidatePackagePath,
-        );
-      })
+    const applyStored = (result: EvalTrialResultGetResult) => {
+      this._evalPackageSnapshots.set(result.candidatePackagePath, {
+        revision,
+        pkg: result.candidatePackage,
+        packagePath: result.candidatePackagePath,
+      });
+      this._applyEvalPackageToCells(
+        result.run,
+        result.candidatePackage,
+        result.candidatePackagePath,
+      );
+    };
+    readStored<EvalTrialResultGetResult>(
+      resourceQuery<EvalTrialResultGetResult>(Methods.EVAL_TRIAL_RESULT_GET, { runId: run.id }),
+      applyStored,
+    )
+      .then(applyStored)
       .catch((error) => {
         this._error = `Failed to load eval package for run ${run.id.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`;
       })
@@ -379,13 +383,16 @@ export class EvalCockpit extends EvalCockpitState {
     if (this._loadedSlotCapGroupId === capGroupId) return;
     if (this._slotCapDirty && this._slotCapDirtyGroupId === capGroupId) return;
     this._loadedSlotCapGroupId = capGroupId;
-    gateway
-      .request<EvalSuiteCapGetResult>(Methods.EVAL_SUITE_CAP_GET, { capGroupId }, 30_000)
-      .then((result) => {
-        if (this._capGroupId() !== result.capGroupId) return;
-        if (this._slotCapDirty && this._slotCapDirtyGroupId === result.capGroupId) return;
-        this._evalSlotCap = result.cap;
-      })
+    const applyStored = (result: EvalSuiteCapGetResult) => {
+      if (this._capGroupId() !== result.capGroupId) return;
+      if (this._slotCapDirty && this._slotCapDirtyGroupId === result.capGroupId) return;
+      this._evalSlotCap = result.cap;
+    };
+    readStored<EvalSuiteCapGetResult>(
+      resourceQuery<EvalSuiteCapGetResult>(Methods.EVAL_SUITE_CAP_GET, { capGroupId }),
+      applyStored,
+    )
+      .then(applyStored)
       .catch((error) => {
         if (this._loadedSlotCapGroupId === capGroupId) this._loadedSlotCapGroupId = '';
         this._error = `Slot cap preview load failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -444,10 +451,20 @@ export class EvalCockpit extends EvalCockpitState {
       this._slotCapDirty = false;
       this._slotCapDirtyGroupId = '';
     }
-    const result = await gateway.request<EvalSuiteCapGetResult>(
-      Methods.EVAL_SUITE_CAP_GET,
-      { capGroupId },
-      30_000,
+    const cache = getResourceCache();
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    if (gateway.connectionState !== 'connected')
+      throw new Error('Connect before launching an evaluation');
+    if (!cache) throw new Error('The offline store is not open yet');
+    const result = await readFresh(
+      cache,
+      resourceQuery<EvalSuiteCapGetResult>(Methods.EVAL_SUITE_CAP_GET, { capGroupId }),
+      () =>
+        cache === getResourceCache() &&
+        owner === getResourceWorkspaceKey() &&
+        connection === gateway.resourceConnectionId &&
+        gateway.connectionState === 'connected',
     );
     this._evalSlotCap = result.cap;
     this._loadedSlotCapGroupId = result.capGroupId;

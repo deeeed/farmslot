@@ -4,8 +4,11 @@ import { customElement } from 'lit/decorators.js';
 import type {
   AgentContextSummary,
   GatewayStatusResult,
+  GitFilesResult,
   NodesListResult,
+  ResourceListResult,
   Run,
+  SlotActionListResult,
   SlotActionSummary,
   SlotStatus,
   TaskProgressResult,
@@ -85,12 +88,12 @@ import {
   toggleSlotViewSidebar,
 } from './slot-view-control-effects.js';
 import {
+  applySlotViewResources,
   applySlotViewTaskProgress,
   bindSlotViewTaskProgress,
-  fetchSlotViewActions,
   fetchSlotViewRepoPath,
-  fetchSlotViewResources,
   loadSlotViewSlot,
+  refreshSlotViewResources,
 } from './slot-view-data-effects.js';
 import { refreshSlotViewDrafts } from './slot-view-edit-effects.js';
 import {
@@ -243,6 +246,16 @@ export class SlotView extends SlotViewRecipePresenter {
       this.progressAgeTimer = undefined;
     }
     applySlotViewTaskProgress(this);
+  });
+  readonly _resourcesQuery = new ResourceQueryController<ResourceListResult>(this, () =>
+    applySlotViewResources(this),
+  );
+  readonly _slotActionsQuery = new ResourceQueryController<SlotActionListResult>(this, (state) => {
+    this._slotActions = state.data?.actions ?? [];
+  });
+  /** The file list behind file search. */
+  readonly _fileIndexQuery = new ResourceQueryController<GitFilesResult>(this, (state) => {
+    this._fileIndex = state.data?.files ?? [];
   });
   /** The editor's diff tab; opened from the tree and search too, so it filters itself. */
   readonly _testFilter = new DiffTestFilterController(this, {
@@ -432,12 +445,8 @@ export class SlotView extends SlotViewRecipePresenter {
     await fetchSlotViewRepoPath(this, machine);
   }
 
-  async _fetchResources() {
-    await fetchSlotViewResources(this);
-  }
-
-  async _fetchSlotActions() {
-    await fetchSlotViewActions(this);
+  async _refreshResources() {
+    await refreshSlotViewResources(this);
   }
 
   _onResourcePanelClose() {
@@ -921,8 +930,8 @@ export class SlotView extends SlotViewRecipePresenter {
     openSlotViewSearchResult(this, file, _line);
   }
 
-  async _loadFileIndex() {
-    return await loadSlotViewFileIndex(this);
+  _loadFileIndex() {
+    loadSlotViewFileIndex(this);
   }
 
   _onSearchInput() {

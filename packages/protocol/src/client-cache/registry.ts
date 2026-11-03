@@ -29,6 +29,7 @@ import {
   assessmentDependencies,
   assessmentHistoryParams,
   copilotRuntimeKey,
+  domainId,
   domainParams,
   idParams,
   observerEvidenceParams,
@@ -77,6 +78,15 @@ export interface ResourceQueryDefinition {
 
 const mb = 1024 * 1024;
 export const UPSTREAM_QUERY_MAX_BYTES = 2 * mb;
+/**
+ * Every listed run's `run.get` details: about 30 MB for a 137-run farm in 2026-11, so twice that
+ * with headroom. Background sync stops before it would exceed this, so it never evicts its own runs.
+ */
+export const RUN_DETAIL_STORE_BYTES = 64 * mb;
+/** A read keyed by its parameters keeps its most recently observed results up to these bytes. */
+function keptUpTo(maxBytes: number): ResourceQueryRetention {
+  return { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes };
+}
 function requiredId(params: unknown, field: string): string {
   const value = params && typeof params === 'object' ? Reflect.get(params, field) : undefined;
   if (typeof value !== 'string' || !value) throw new Error(`Resource query requires ${field}`);
@@ -147,8 +157,9 @@ function configurationDependencies(params: unknown): ResourceKey[] {
 }
 
 const configurationDefinition: ResourceQueryDefinition = {
-  persisted: false,
+  persisted: true,
   maxBytes: 2 * mb,
+  retention: keptUpTo(8 * mb),
   live: true,
   requiresObservedRead: true,
   normalizeParams: (params) => configurationParams(params, []),
@@ -207,6 +218,16 @@ function workerInventoryParams(params: unknown): Record<string, unknown> {
   };
 }
 
+function validateWorkspacePath(value: unknown): void {
+  if (
+    value !== undefined &&
+    (typeof value !== 'string' ||
+      value.startsWith('/') ||
+      value.replace(/\\/g, '/').split('/').includes('..'))
+  )
+    throw new Error('Workspace path must stay relative');
+}
+
 function workspaceParams(params: unknown): Record<string, unknown> {
   if (!params || typeof params !== 'object' || Array.isArray(params))
     throw new Error('Workspace query requires parameters');
@@ -257,13 +278,7 @@ function workspaceParams(params: unknown): Record<string, unknown> {
       for (const field of fields) requiredId(worker, field);
     }
   }
-  if (
-    value.path !== undefined &&
-    (typeof value.path !== 'string' ||
-      value.path.startsWith('/') ||
-      value.path.replace(/\\/g, '/').split('/').includes('..'))
-  )
-    throw new Error('Workspace path must stay relative');
+  validateWorkspacePath(value.path);
   if (value.includeUntracked !== undefined && typeof value.includeUntracked !== 'boolean')
     throw new Error('includeUntracked must be a boolean');
   if (value.includeUntracked && value.target !== 'worktree')
@@ -320,8 +335,9 @@ const workspaceDefinition: ResourceQueryDefinition = {
 };
 
 const domainDefinition: ResourceQueryDefinition = {
-  persisted: false,
+  persisted: true,
   maxBytes: 2 * mb,
+  retention: keptUpTo(8 * mb),
   live: true,
   requiresObservedRead: true,
   normalizeParams: (params) => domainParams(params, []),
@@ -529,6 +545,29 @@ export function upstreamSourceObservation(data: unknown): UpstreamObservation | 
       ? { error: { code: observation.error.code, message: observation.error.message } }
       : {}),
   };
+}
+
+function machineParams(params: unknown, extra: readonly string[] = []): Record<string, unknown> {
+  const value = domainParams(params, ['machine', 'machines', ...extra]);
+  const selectors = (one: string, many: string): string[] => {
+    const list = value[many] ?? [];
+    if (!Array.isArray(list)) throw new Error(`${many} must be a list`);
+    const all: unknown[] = value[one] === undefined ? list : [value[one], ...list];
+    return [...new Set(all.map((entry) => domainId(entry, one)))].sort();
+  };
+  const selected = selectors('machine', 'machines');
+  const scoped = selectors('project', 'projects');
+  return {
+    ...(selected.length ? { machines: selected } : {}),
+    ...(scoped.length ? { projects: scoped } : {}),
+  };
+}
+
+function chatHistoryParams(params: unknown): Record<string, unknown> {
+  const { limit, ...session } = domainParams(params, ['sessionId', 'limit']);
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || Number(limit) < 1))
+    throw new Error('Invalid chat history limit');
+  return { ...sessionContextParams(session), ...(limit === undefined ? {} : { limit }) };
 }
 
 /** Closed to runtime registration. Each migration changes its owning definition here. */
@@ -925,7 +964,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       nativeObservationDependencies(Methods.NATIVE_SESSION_LIST, params, nativeReaderId ?? ''),
   },
   [Methods.NATIVE_SESSION_CATALOG]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
     retention: { maxEntries: 1, maxBytes: 2 * mb },
     live: true,
@@ -943,7 +982,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       nativeObservationDependencies(Methods.NATIVE_PROFILE_LIST, params, nativeReaderId ?? ''),
   },
   [Methods.NATIVE_PROFILE_STATUS]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
     retention: { maxEntries: 10, maxBytes: 2 * mb },
     live: true,
@@ -964,8 +1003,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
 
   [Methods.TMUX_WORKER_LIST]: {
     requiresObservedRead: true,
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
+    retention: keptUpTo(4 * mb),
     timeoutMs: 10_000,
     live: true,
     normalizeParams: workerInventoryParams,
@@ -994,8 +1034,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     dependencies: () => [{ family: 'planning', collection: 'work-graphs' }],
   },
   [Methods.WORK_GRAPH_GET]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
+    retention: keptUpTo(16 * mb),
     live: true,
     normalizeParams: planningObservationParams,
     dependencies: (params: unknown) => [
@@ -1027,8 +1068,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     ],
   },
   [Methods.ROADMAP_GET]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
+    retention: keptUpTo(16 * mb),
     live: true,
     normalizeParams: planningObservationParams,
     dependencies: (params: unknown) => [
@@ -1042,6 +1084,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
   [Methods.SOURCES_STATUS]: {
     persisted: true,
     maxBytes: 2 * mb,
+    retention: { maxEntries: 1, maxBytes: 2 * mb },
     timeoutMs: 120_000,
     live: true,
     dependencies: () => [{ family: 'sources', scope: 'farm' }],
@@ -1055,10 +1098,11 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     // Every write to any run changes the farm runs key, several times a minute on a busy farm.
     rereadIntervalMs: { runs: 30_000 },
   },
+  // Background sync stores every listed run's details (ADR-071 Amendment 2), so bytes bound it.
   [Methods.RUN_GET]: {
     persisted: true,
     maxBytes: 20 * mb,
-    retention: { maxEntries: 50, maxBytes: 20 * mb },
+    retention: keptUpTo(RUN_DETAIL_STORE_BYTES),
     live: true,
     dependencies: (params: unknown) => [
       { family: 'run', runId: requiredId(params, 'runId') },
@@ -1074,8 +1118,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     dependencies: () => [{ family: 'decisions', scope: 'farm' }],
   },
   [Methods.FAMILY_OBSERVABILITY_GET]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
+    retention: keptUpTo(16 * mb),
     live: true,
     dependencies: (params: unknown) => [
       { family: 'family', familyId: requiredId(params, 'familyId') },
@@ -1084,8 +1129,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     ],
   },
   [Methods.RUN_RECIPE_RUNS_FOR_RUN]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
+    retention: keptUpTo(32 * mb),
     timeoutMs: 60_000,
     live: true,
     dependencies: (params: unknown) => [
@@ -1094,8 +1140,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     ],
   },
   [Methods.RUN_SLOT_HISTORY]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
+    retention: keptUpTo(4 * mb),
     live: true,
     dependencies: () => [
       { family: 'runs', scope: 'farm' },
@@ -1103,8 +1150,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     ],
   },
   [Methods.RUN_FOR_SLOT]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 20 * mb,
+    retention: keptUpTo(40 * mb),
     live: true,
     dependencies: (params: unknown) => [
       { family: 'runs', scope: 'farm' },
@@ -1112,8 +1160,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     ],
   },
   [Methods.RUN_RECIPE_RUNS_FOR_SLOT]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
+    retention: keptUpTo(16 * mb),
     timeoutMs: 60_000,
     live: true,
     dependencies: (params: unknown) => [
@@ -1122,8 +1171,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     ],
   },
   [Methods.RUN_TAGS_LIST]: {
-    persisted: false,
+    persisted: true,
     maxBytes: 2 * mb,
+    retention: keptUpTo(2 * mb),
     live: true,
     dependencies: () => [{ family: 'runs', scope: 'farm' }],
   },
@@ -1187,6 +1237,244 @@ export const RESOURCE_QUERY_DEFINITIONS = {
         ];
       return [{ family: 'slot', slotId: requiredId(params, 'slotId') }];
     },
+  },
+  // ADR-071 Amendment 2: reads that screens used to send straight to the gateway. A read is
+  // `live` only where every writer of its state publishes its keys; the others show their stored
+  // result and reread when opened.
+  [Methods.RUNTIME_POSTURE_STATUS]: {
+    persisted: true,
+    maxBytes: 1 * mb,
+    retention: keptUpTo(16 * mb),
+    live: true,
+    normalizeParams: (params: unknown) => idParams(params, ['runId']),
+    dependencies: (params: unknown) => [
+      { family: 'run', runId: requiredId(params, 'runId') },
+      { family: 'capabilities' },
+      { family: 'sources', scope: 'farm' },
+    ],
+  },
+  [Methods.RESOURCE_LIST]: {
+    persisted: true,
+    maxBytes: 1 * mb,
+    retention: keptUpTo(16 * mb),
+    live: true,
+    normalizeParams: (params: unknown) => idParams(params, ['slotId']),
+    dependencies: (params: unknown) => [
+      { family: 'slot', slotId: requiredId(params, 'slotId') },
+      { family: 'configuration', scope: 'farm' },
+      { family: 'sources', scope: 'farm' },
+    ],
+  },
+  // Probes slots and asks nodes for their panes, so changes never reread it on their own.
+  [Methods.RESOURCE_PRESSURE_SNAPSHOT]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: keptUpTo(8 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => machineParams(params, ['project', 'projects']),
+    dependencies: () => [],
+  },
+  [Methods.RESOURCE_PRESSURE_HISTORY]: {
+    persisted: true,
+    maxBytes: 1 * mb,
+    retention: keptUpTo(8 * mb),
+    live: true,
+    normalizeParams: (params: unknown) => machineParams(params),
+    dependencies: (params: unknown) => {
+      const machines = (machineParams(params).machines ?? []) as string[];
+      // Every node sample advances the farm slots key, which covers an unfiltered read.
+      return machines.length
+        ? machines.map((nodeId) => ({ family: 'pressure' as const, nodeId }))
+        : [{ family: 'slots', scope: 'farm' }];
+    },
+  },
+  // Runs simctl and adb on a cache miss; `refresh` stays an imperative probe.
+  [Methods.RESOURCE_DEVICE_INVENTORY]: {
+    persisted: true,
+    maxBytes: 1 * mb,
+    retention: keptUpTo(8 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => {
+      const { refresh, ...observation } = domainParams(params, ['slotId', 'refresh']);
+      if (refresh !== undefined && refresh !== false)
+        throw new Error('Device inventory observations cannot refresh');
+      return idParams(observation, ['slotId']);
+    },
+    dependencies: () => [],
+  },
+  [Methods.SLOT_ACTION_LIST]: {
+    persisted: true,
+    maxBytes: 1 * mb,
+    retention: keptUpTo(8 * mb),
+    live: true,
+    normalizeParams: (params: unknown) => {
+      const value = domainParams(params, ['slotId', 'placement']);
+      domainId(value.slotId, 'slotId');
+      if (value.placement !== undefined) domainId(value.placement, 'placement');
+      return value;
+    },
+    dependencies: (params: unknown) => [
+      { family: 'slot', slotId: requiredId(params, 'slotId') },
+      { family: 'configuration', scope: 'farm' },
+      { family: 'sources', scope: 'farm' },
+    ],
+  },
+  [Methods.GIT_FILES]: {
+    persisted: true,
+    maxBytes: 10 * mb,
+    retention: { maxEntries: 8, maxBytes: 40 * mb },
+    live: false,
+    normalizeParams: (params: unknown) => idParams(params, ['slotId']),
+    dependencies: () => [],
+  },
+  // Spec files are also edited outside the gateway, and nothing watches them yet.
+  [Methods.BACKLOG_SPEC_GET]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: keptUpTo(16 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => idParams(params, ['itemId']),
+    dependencies: () => [{ family: 'planning', collection: 'backlog' }],
+  },
+  // Whether the refinement's tmux session exists is not observed.
+  [Methods.BACKLOG_REFINEMENT_SESSION_GET]: {
+    persisted: true,
+    maxBytes: 256 * 1024,
+    retention: keptUpTo(2 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => idParams(params, ['itemId']),
+    dependencies: () => [{ family: 'planning', collection: 'backlog' }],
+  },
+  [Methods.ROADMAP_REFINEMENT_SESSION_GET]: {
+    persisted: true,
+    maxBytes: 256 * 1024,
+    retention: keptUpTo(2 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => idParams(params, ['itemId']),
+    dependencies: (params: unknown) => [
+      { family: 'planning', collection: 'roadmap' },
+      { family: 'planning', collection: 'roadmap', itemId: requiredId(params, 'itemId') },
+    ],
+  },
+  [Methods.CHAT_HISTORY]: {
+    persisted: true,
+    maxBytes: 5 * mb,
+    retention: keptUpTo(20 * mb),
+    live: true,
+    normalizeParams: chatHistoryParams,
+    dependencies: (params: unknown) => [
+      { ...copilotRuntimeKey, sessionId: String(chatHistoryParams(params).sessionId) },
+    ],
+  },
+  // Creating, pinning and saving a session publish no key yet.
+  [Methods.CHAT_SESSIONS]: {
+    persisted: true,
+    maxBytes: 1 * mb,
+    retention: keptUpTo(1 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => domainParams(params, []),
+    dependencies: () => [copilotRuntimeKey],
+  },
+  // Pending confirmations expire, and issuing or confirming one publishes no key yet.
+  [Methods.CHAT_LIST_ACTIONS]: {
+    persisted: true,
+    maxBytes: 256 * 1024,
+    retention: keptUpTo(2 * mb),
+    live: false,
+    normalizeParams: sessionContextParams,
+    dependencies: () => [],
+  },
+  // Audit records are appended to files without publishing a key.
+  [Methods.INTELLIGENCE_ACTIONS_SUMMARY]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: keptUpTo(8 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => {
+      const value = domainParams(params, ['limit', 'dateFrom', 'dateTo']);
+      if (value.limit !== undefined && !Number.isSafeInteger(value.limit))
+        throw new Error('Invalid intelligence page size');
+      for (const field of ['dateFrom', 'dateTo'])
+        if (value[field] !== undefined && Number.isNaN(Date.parse(String(value[field]))))
+          throw new Error(`Invalid intelligence selector: ${field}`);
+      return value;
+    },
+    dependencies: () => [],
+  },
+  // Setting a cap publishes no key yet.
+  [Methods.EVAL_SUITE_CAP_GET]: {
+    timeoutMs: 30_000,
+    persisted: true,
+    maxBytes: 256 * 1024,
+    retention: keptUpTo(2 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => idParams(params, ['capGroupId']),
+    dependencies: () => [],
+  },
+  [Methods.EVAL_TRIAL_RESULT_GET]: {
+    timeoutMs: 30_000,
+    persisted: true,
+    maxBytes: 20 * mb,
+    retention: keptUpTo(40 * mb),
+    live: true,
+    normalizeParams: (params: unknown) => idParams(params, ['runId']),
+    dependencies: (params: unknown) => [
+      { family: 'run', runId: requiredId(params, 'runId') },
+      { family: 'artifacts', runId: requiredId(params, 'runId') },
+    ],
+  },
+  [Methods.FINETUNE_INDEX]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: keptUpTo(8 * mb),
+    live: true,
+    normalizeParams: (params: unknown) => {
+      const value = domainParams(params, ['project']);
+      if (value.project !== undefined) domainId(value.project, 'project');
+      return value;
+    },
+    rereadIntervalMs: { runs: 30_000 },
+    dependencies: () => [{ family: 'runs', scope: 'farm' }],
+  },
+  // Its pressure section probes slots like `resource.pressure.snapshot`.
+  [Methods.MACHINE_PAUSE_STATUS]: {
+    persisted: true,
+    maxBytes: 2 * mb,
+    retention: keptUpTo(8 * mb),
+    live: false,
+    normalizeParams: (params: unknown) => idParams(params, ['machine']),
+    dependencies: () => [],
+  },
+  // Toggling admission writes its control file without publishing a key.
+  [Methods.DISPATCH_PRESSURE_ADMISSION_GET]: {
+    persisted: true,
+    maxBytes: 256 * 1024,
+    retention: { maxEntries: 1, maxBytes: 256 * 1024 },
+    live: false,
+    normalizeParams: (params: unknown) => domainParams(params, []),
+    dependencies: () => [],
+  },
+  // One turn's diff of one file does not change; a pruned checkpoint reads NOT_FOUND.
+  [Methods.NATIVE_SESSION_TURN_DIFF]: {
+    persisted: true,
+    maxBytes: 5 * mb,
+    retention: { maxEntries: 50, maxBytes: 20 * mb },
+    live: false,
+    normalizeParams: (params: unknown) => {
+      const { sequence, path, ...target } = domainParams(params, [
+        'sessionId',
+        'executionNodeId',
+        'worker',
+        'sequence',
+        'path',
+      ]);
+      if (!Number.isSafeInteger(sequence) || Number(sequence) < 0)
+        throw new Error('Invalid native turn sequence');
+      if (typeof path !== 'string' || !path) throw new Error('Native turn diff requires a path');
+      validateWorkspacePath(path);
+      return { ...nativeHistoryParams(target), sequence, path };
+    },
+    dependencies: () => [],
   },
 } satisfies Record<string, ResourceQueryDefinition>;
 
@@ -1256,13 +1544,54 @@ export interface ResourceQuery<T = unknown> {
 }
 
 /** Experimental, portable query factory; mutations and streams are never registered here. */
+function readDefinition(method: ResourceReadMethod, params: unknown): ResourceQueryDefinition {
+  const definition: ResourceQueryDefinition = RESOURCE_QUERY_DEFINITIONS[method];
+  if (!definition) throw new Error(`Unregistered resource read: ${method}`);
+  if (
+    (method !== Methods.GIT_DIFF && method !== Methods.GIT_SHOW) ||
+    !params ||
+    typeof params !== 'object' ||
+    !Reflect.get(params, 'runId') ||
+    Reflect.get(params, 'slotId') ||
+    Reflect.get(params, 'sessionId')
+  )
+    return definition;
+  // A slotless review reads exact retained commits, not a mutable workspace observation.
+  return {
+    ...definition,
+    live: false,
+    requiresObservedRead: false,
+    requiresWorkspaceRead: false,
+    normalizeParams(input) {
+      const value = domainParams(
+        input,
+        method === Methods.GIT_SHOW
+          ? ['slotId', 'runId', 'ref', 'path']
+          : ['slotId', 'runId', 'base', 'head', 'path', 'oldPath'],
+      );
+      requiredId(value, 'runId');
+      for (const field of method === Methods.GIT_SHOW ? ['ref', 'path'] : ['base', 'head'])
+        requiredId(value, field);
+      validateWorkspacePath(value.path);
+      validateWorkspacePath(value.oldPath);
+      return { ...value, slotId: '' };
+    },
+    dependencies: () => [],
+    retentionGroups: (value) => [`run:${requiredId(value, 'runId')}`],
+  };
+}
+
+/** Snapshot reads use the ordinary RPC contract, including on gateways predating registration. */
+export function resourceReadIsLive(method: ResourceReadMethod, params: unknown): boolean {
+  return readDefinition(method, params).live;
+}
+
 export function resourceQuery<T = unknown>(
   method: ResourceReadMethod,
   params: unknown = {},
   nativeReaderId?: string,
 ): ResourceQuery<T> {
-  const definition: ResourceQueryDefinition = RESOURCE_QUERY_DEFINITIONS[method];
-  if (!definition) throw new Error(`Unregistered resource read: ${method}`);
+  const definition = readDefinition(method, params);
   const canonical = canonicalResourceJson(
     definition.normalizeParams ? definition.normalizeParams(params) : (params ?? {}),
   );
@@ -1301,7 +1630,6 @@ export function resourceDependenciesForRead(
   nativeReaderId?: string,
 ): ResourceKey[] | undefined {
   if (!Object.hasOwn(RESOURCE_QUERY_DEFINITIONS, method)) return undefined;
-  const definition: ResourceQueryDefinition =
-    RESOURCE_QUERY_DEFINITIONS[method as ResourceReadMethod];
+  const definition = readDefinition(method as ResourceReadMethod, params);
   return definition.live ? definition.dependencies(params, nativeReaderId) : undefined;
 }

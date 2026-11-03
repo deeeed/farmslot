@@ -27,7 +27,7 @@ test('projects have one aggregate 2 MiB persisted collection; previews and regis
     resourceQuery('llm.auth.list'),
     resourceQuery('llm.tiers'),
   ]) {
-    assert.equal(query.persisted, false, query.method);
+    assert.equal(query.persisted, true, query.method);
     assert.equal(query.live, true, query.method);
     assert.equal(query.requiresObservedRead, true, query.method);
     assert.deepEqual(resourceDependenciesForRead(query.method, query.params), query.dependencies);

@@ -71,7 +71,7 @@ export async function executeConfiguredSlotViewAction(
     }
     const refresh = result.refresh ?? action.refresh;
     if (refresh.includes('resources')) {
-      await view._fetchResources();
+      await view._refreshResources();
     }
     if (refresh.includes('fleet')) {
       await gateway.request(Methods.FLEET_REFRESH, {});

@@ -21,6 +21,7 @@ import {
   workspaceAccessFromAuth,
 } from '@farmslot/protocol';
 import {
+  requestResourceRead,
   type ResourceConnectionReason,
   type ResourceReadMethod,
   type ResourceReadResult,
@@ -745,11 +746,13 @@ export class GatewayClient {
     params: unknown,
     signal?: AbortSignal,
   ): Promise<ResourceReadResult<T>> {
-    return this.request<ResourceReadResult<T>>(method, params, {
-      timeout: resourceReadTimeout(method) ?? DEFAULT_TIMEOUT,
-      includeResourceState: true,
-      signal,
-    });
+    return requestResourceRead<T>(method, params, <Reply>(observed: boolean) =>
+      this.request<Reply>(method, params, {
+        timeout: resourceReadTimeout(method) ?? DEFAULT_TIMEOUT,
+        includeResourceState: observed,
+        signal,
+      }),
+    );
   }
 
   replaceResourceObservers(

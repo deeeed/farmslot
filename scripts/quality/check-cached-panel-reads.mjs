@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,6 +35,38 @@ export const IMPLEMENTATION_FILES = new Set([
   'apps/companion/src/farmslot/sources-cache-proof.ts',
 ]);
 
+// ADR-071 Amendment 2: the only application modules that may fetch over HTTP, each with its reason.
+// Artifact text and diffs are not here: they belong in the content store.
+export const HTTP_FILES = new Map([
+  [
+    'apps/command-center/ui/src/artifact-response.ts',
+    'content store: verifies bytes, then stores them',
+  ],
+  [
+    'apps/companion/src/lib/artifact-response.ts',
+    'content store: verifies bytes, then stores them',
+  ],
+  ['apps/companion/src/lib/gateway-http-auth.ts', 'connection: the authenticated gateway fetch'],
+  ['apps/companion/src/lib/held-content.ts', 'content store: verifies bytes, then stores them'],
+  ['apps/companion/src/components/MediaViewer.tsx', 'large media fetched on open'],
+  ['apps/companion/src/farmslot/recipe-bridge-relay.ts', 'local recipe runner, not the gateway'],
+  [
+    'apps/command-center/ui/src/utils/gateway-origin.ts',
+    'connection: the authenticated gateway fetch',
+  ],
+  [
+    'apps/command-center/ui/src/content-prefetch.ts',
+    'content store: verifies bytes, then stores them',
+  ],
+  [
+    'apps/command-center/ui/src/components/shared/gateway-media-src.ts',
+    'large media fetched on open',
+  ],
+  ['apps/command-center/ui/src/components/shared/media-lightbox.ts', 'large media fetched on open'],
+]);
+const httpNames = new Set(['fetch', 'gatewayFetch', 'gatewayHttpFetch']);
+const defaultBaseline = 'scripts/quality/offline-reads-baseline.json';
+
 // Exceptions name the actual parameter contract, never an entire client/file.
 // An unknown boolean, false, or a spread overriding true cannot prove a command.
 const imperativeContracts = [
@@ -45,6 +77,12 @@ const imperativeContracts = [
     'CONFIG_GITHUB_ACCOUNTS',
     'packages/protocol/src/rpc/config.ts',
     'ConfigGitHubAccountsParams',
+    'refresh',
+  ],
+  [
+    'RESOURCE_DEVICE_INVENTORY',
+    'packages/protocol/src/rpc/resources.ts',
+    'DeviceInventoryParams',
     'refresh',
   ],
   [
@@ -146,6 +184,41 @@ export function readCachedMethods(repoRoot = defaultRoot) {
       workspaceMethods.add(methods.get(key.expression.name.text));
   }
   if (!cached.size) throw new Error('Cached query registry is empty');
+  const commandSource = parse(
+    path.join(repoRoot, 'packages/protocol/src/client-cache/command-method.ts'),
+  );
+  const listed = (node) => {
+    node = unwrap(node);
+    if (!node || !ts.isArrayLiteralExpression(node))
+      throw new Error('Command and exception lists must remain closed arrays');
+    return node.elements.map((element) => {
+      element = unwrap(element);
+      if (
+        !ts.isPropertyAccessExpression(element) ||
+        element.expression.getText(commandSource) !== 'Methods' ||
+        !methods.has(element.name.text)
+      )
+        throw new Error(`Unresolved command method: ${element.getText(commandSource)}`);
+      return methods.get(element.name.text);
+    });
+  };
+  let commandList;
+  each(commandSource, (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === 'GATEWAY_COMMAND_METHODS'
+    )
+      commandList = node.initializer;
+  });
+  const commands = new Set(listed(commandList));
+  const exceptions = new Map();
+  for (const property of objectVariable(commandSource, 'GATEWAY_READ_EXCEPTIONS').properties) {
+    if (!ts.isPropertyAssignment(property)) throw new Error('Read exceptions must remain closed');
+    for (const method of listed(property.initializer))
+      exceptions.set(method, property.name.getText(commandSource));
+  }
+  if (!commands.size) throw new Error('Command list is empty');
   const imperative = new Map();
   for (const [constant, relative, name, flag] of imperativeContracts) {
     const file = parse(path.join(repoRoot, relative));
@@ -160,7 +233,7 @@ export function readCachedMethods(repoRoot = defaultRoot) {
       throw new Error(`Imperative contract changed: ${relative} ${name}.${flag}`);
     imperative.set(methods.get(constant), flag);
   }
-  return { cached, methods, imperative, workspaceMethods };
+  return { cached, methods, imperative, workspaceMethods, commands, exceptions };
 }
 
 export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) {
@@ -170,12 +243,14 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
     IMPLEMENTATION_FILES.has(relative(file)) ||
     testFile.test(relative(file)) ||
     relative(file).startsWith('packages/protocol/src/client-cache/') ||
-    relative(file) === 'packages/local-store/src/owner.ts';
+    // The store implementation, including its browser tab lock; it never calls the gateway.
+    relative(file).startsWith('packages/local-store/src/');
   const inputs = (files ?? roots.flatMap((directory) => collect(path.join(repoRoot, directory))))
     .map((file) => path.resolve(repoRoot, file))
     .filter((file) => !ignored(file))
     .sort();
-  const { cached, methods, imperative, workspaceMethods } = readCachedMethods(repoRoot);
+  const { cached, methods, imperative, workspaceMethods, commands, exceptions } =
+    readCachedMethods(repoRoot);
   const program = ts.createProgram({
     rootNames: inputs,
     options: {
@@ -193,6 +268,7 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
         '@farmslot/protocol/*': ['packages/protocol/src/*'],
         '@farmslot/local-store': ['packages/local-store/src/index.ts'],
         '@farmslot/local-store/*': ['packages/local-store/src/*'],
+        '@farmslot/review-dispatch': ['packages/review-dispatch/src/index.ts'],
         '@/*': ['apps/companion/src/*'],
       },
     },
@@ -965,12 +1041,22 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
           }),
         });
       }
-      const commands = names.filter((name) => typeof name === 'string' && !cached.has(name));
-      if (commands.length && !names.some((name) => name === unknown || name?.stringConstraint))
+      const uncached = names.filter((name) => typeof name === 'string' && !cached.has(name));
+      for (const method of new Set(
+        uncached.filter((name) => !commands.has(name) && !exceptions.has(name)),
+      ))
+        findings.set(`${here.file}:${here.line}:${here.column}:${method}`, {
+          ...here,
+          method,
+          transport: position(call),
+          message: `${method} reads outside the shared cache: register it, or list it as a command (ADR-071 Amendment 2)`,
+          receiverConstraints: [],
+        });
+      if (uncached.length && !names.some((name) => name === unknown || name?.stringConstraint))
         imperativeCalls.set(`${here.file}:${here.line}:${here.column}`, {
           ...here,
           transport: position(call),
-          methods: [...new Set(commands)].sort(),
+          methods: [...new Set(uncached)].sort(),
         });
       return;
     }
@@ -1046,6 +1132,29 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
     );
   }
   for (const file of inputs) walk(program.getSourceFile(file), new Map(), undefined, new Set());
+  for (const file of inputs) {
+    if (HTTP_FILES.has(relative(file))) continue;
+    each(program.getSourceFile(file), (node) => {
+      if (!ts.isCallExpression(node)) return;
+      const callee = unwrap(node.expression);
+      const name = ts.isIdentifier(callee)
+        ? callee
+        : ts.isPropertyAccessExpression(callee) &&
+            ['globalThis', 'window', 'self'].includes(callee.expression.getText())
+          ? callee.name
+          : undefined;
+      if (!name || !httpNames.has(symbol(name)?.name ?? name.text)) return;
+      const here = position(node);
+      findings.set(`${here.file}:${here.line}:${here.column}:http`, {
+        ...here,
+        method: 'http',
+        transport: here,
+        message:
+          'HTTP read outside the content store and the listed media and connection modules (ADR-071 Amendment 2)',
+        receiverConstraints: [],
+      });
+    });
+  }
   return {
     scannedFiles: inputs.length,
     registeredMethods: [...cached].sort(),
@@ -1062,22 +1171,56 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
   };
 }
 
+const baselineKey = ({ file, method }) => `${file}|${method}`;
+
+/**
+ * Splits findings by the checked-in list of violations still being fixed. The list only shrinks:
+ * an entry with no remaining finding is stale and fails like a new violation.
+ */
+export function applyBaseline(findings, baseline) {
+  const allowed = new Set(baseline.map(baselineKey));
+  const found = new Set(findings.map(baselineKey));
+  return {
+    known: findings.filter((finding) => allowed.has(baselineKey(finding))),
+    fresh: findings.filter((finding) => !allowed.has(baselineKey(finding))),
+    stale: baseline.filter((entry) => !found.has(baselineKey(entry))),
+  };
+}
+
+export function baselineEntries(findings) {
+  return [
+    ...new Map(
+      findings.map(({ file, method }) => [baselineKey({ file, method }), { file, method }]),
+    ).values(),
+  ].sort((a, b) => a.file.localeCompare(b.file) || a.method.localeCompare(b.method));
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
+  const flags = new Set(['--json', '--files', '--write-baseline']);
   const jsonOutput = args.includes('--json');
-  const selected = args.filter((arg) => arg !== '--json' && arg !== '--files');
+  const selected = args.filter((arg) => !flags.has(arg));
   if (selected.length && !args.includes('--files'))
     throw new Error('Use --files <paths...> for focused fixture checks');
-  const result = analyzeCachedPanelReads({
-    files: args.includes('--files') ? selected : undefined,
-  });
-  if (jsonOutput) console.log(JSON.stringify(result, null, 2));
+  const focused = args.includes('--files');
+  const result = analyzeCachedPanelReads({ files: focused ? selected : undefined });
+  const baselinePath = path.join(defaultRoot, defaultBaseline);
+  if (args.includes('--write-baseline')) {
+    if (focused) throw new Error('Write the baseline from a full run');
+    writeFileSync(baselinePath, `${JSON.stringify(baselineEntries(result.findings), null, 2)}\n`);
+  }
+  // A focused run sees only some files, so it cannot tell a fixed entry from an unscanned one.
+  const baseline = focused ? [] : JSON.parse(readFileSync(baselinePath, 'utf8'));
+  const { known, fresh, stale } = applyBaseline(result.findings, baseline);
+  if (jsonOutput) console.log(JSON.stringify({ ...result, known, fresh, stale }, null, 2));
   else {
-    for (const finding of result.findings)
+    for (const finding of fresh)
       console.error(`${finding.file}:${finding.line}:${finding.column}: ${finding.message}`);
+    for (const entry of stale)
+      console.error(`${entry.file}: ${entry.method} is fixed; remove it from ${defaultBaseline}`);
     console.log(
-      `Cached panel reads: ${result.findings.length} violation(s), ${result.scannedFiles} files, ${result.registeredMethods.length} registered methods; ${result.unresolvedTransports.length} unresolved transport call(s).`,
+      `Offline-first reads: ${fresh.length} new violation(s), ${known.length} listed in ${defaultBaseline}, ${stale.length} stale; ${result.scannedFiles} files, ${result.registeredMethods.length} registered methods; ${result.unresolvedTransports.length} unresolved transport call(s).`,
     );
   }
-  if (result.findings.length || result.unresolvedTransports.length) process.exitCode = 1;
+  if (fresh.length || stale.length || result.unresolvedTransports.length) process.exitCode = 1;
 }

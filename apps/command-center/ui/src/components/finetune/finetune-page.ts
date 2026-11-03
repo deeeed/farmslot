@@ -7,9 +7,11 @@ import type {
   FinetuneIndexResult,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { readStored } from '../shared/read-current.js';
 
 type Tab = 'index' | 'sft' | 'dpo';
 
@@ -218,9 +220,16 @@ export class FinetunePage extends LitElement {
   private async loadIndex() {
     this.loading = true;
     try {
-      this.indexData = await gateway.request<FinetuneIndexResult>(Methods.FINETUNE_INDEX, {
-        project: this.projectFilter || undefined,
-      });
+      const applyStored = (data: FinetuneIndexResult) => {
+        this.indexData = data;
+        this.loading = false;
+      };
+      this.indexData = await readStored<FinetuneIndexResult>(
+        resourceQuery<FinetuneIndexResult>(Methods.FINETUNE_INDEX, {
+          project: this.projectFilter || undefined,
+        }),
+        applyStored,
+      );
     } catch (err) {
       console.error('[finetune] index load failed:', err);
     }

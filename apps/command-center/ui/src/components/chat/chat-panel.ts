@@ -32,6 +32,7 @@ import '../terminal/terminal-view.js';
 import { gateway, GatewayRequestError } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { safeLsGet, safeLsSet } from '../../utils/storage.js';
+import { readFresh, readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { buildChatClientContext } from './chat-client-context.js';
@@ -175,8 +176,15 @@ export class ChatPanel extends ChatPanelState {
 
   private async loadSessions() {
     try {
-      const result = await gateway.request<ChatSessionsResult>(Methods.CHAT_SESSIONS, {});
-      this.sessionSummaries = result.sessions;
+      const applyStored = (result: ChatSessionsResult) => {
+        this.sessionSummaries = result.sessions;
+      };
+      applyStored(
+        await readStored<ChatSessionsResult>(
+          resourceQuery<ChatSessionsResult>(Methods.CHAT_SESSIONS, {}),
+          applyStored,
+        ),
+      );
     } catch (err) {
       const message = errorMessage(err);
       if (
@@ -198,10 +206,19 @@ export class ChatPanel extends ChatPanelState {
     const sessionId = this.activeSessionId();
     let liveIds: Set<string>;
     try {
-      const result = await gateway.request<ChatListActionsResult>(Methods.CHAT_LIST_ACTIONS, {
-        sessionId,
-      });
-      liveIds = new Set(result.actions.map((a) => a.actionId));
+      const cache = getResourceCache();
+      if (!cache) return;
+      const connection = gateway.resourceConnectionId;
+      const result = await readFresh(
+        cache,
+        resourceQuery<ChatListActionsResult>(Methods.CHAT_LIST_ACTIONS, { sessionId }),
+        () =>
+          cache === getResourceCache() &&
+          connection === gateway.resourceConnectionId &&
+          gateway.connectionState === 'connected' &&
+          sessionId === this.activeSessionId(),
+      );
+      liveIds = new Set(result.actions.map((action) => action.actionId));
     } catch (err) {
       const message = errorMessage(err);
       // Older gateways without the method are a known forward-compat case;
@@ -245,16 +262,23 @@ export class ChatPanel extends ChatPanelState {
 
   private async loadHistory(sessionId = this.activeSessionId()) {
     try {
-      const result = await gateway.request<ChatHistoryResult>(Methods.CHAT_HISTORY, {
-        sessionId,
-      });
-      if (sessionId !== this.activeSessionId()) return;
-      this.messages = result.messages;
-      this.sessionCost = result.messages.reduce(
-        (sum, message) => sum + (message.usage?.costUsd ?? 0),
-        0,
+      const applyStored = (result: ChatHistoryResult) => {
+        if (sessionId !== this.activeSessionId()) return;
+        this.messages = result.messages;
+        this.sessionCost = result.messages.reduce(
+          (sum, message) => sum + (message.usage?.costUsd ?? 0),
+          0,
+        );
+        this.scrollToBottom();
+      };
+      applyStored(
+        await readStored<ChatHistoryResult>(
+          resourceQuery<ChatHistoryResult>(Methods.CHAT_HISTORY, {
+            sessionId,
+          }),
+          applyStored,
+        ),
       );
-      this.scrollToBottom();
     } catch (err) {
       const message = errorMessage(err);
       const isOptionalHistoryError =

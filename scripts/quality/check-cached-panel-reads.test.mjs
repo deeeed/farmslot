@@ -9,6 +9,9 @@ import ts from 'typescript';
 
 import {
   analyzeCachedPanelReads,
+  applyBaseline,
+  baselineEntries,
+  HTTP_FILES,
   IMPLEMENTATION_FILES,
   readCachedMethods,
 } from './check-cached-panel-reads.mjs';
@@ -78,6 +81,46 @@ test('fixture rejects cached reads through direct, aliased and indirect RPC call
 test('fixture accepts shared-cache observations and parameter-proven commands', () => {
   const result = analyzeCachedPanelReads({ repoRoot: root, files: [fixture('compliant.ts')] });
   assert.deepEqual(result.findings, []);
+});
+
+test('offline-first: uncached reads and HTTP reads fail; commands and listed exceptions pass', () => {
+  const { commands, exceptions } = readCachedMethods(root);
+  assert(commands.has('run.cancel'));
+  assert.equal(exceptions.get('terminal.subscribe'), 'stream');
+  assert(!commands.has('backlog.spec.get') && !exceptions.has('backlog.spec.get'));
+  const result = analyzeCachedPanelReads({ repoRoot: root, files: [fixture('offline-reads.ts')] });
+  const source = readFileSync(fixture('offline-reads.ts'), 'utf8').split('\n');
+  const named = (finding) =>
+    source[finding.line - 1].match(/^export const (\w+) =/)?.[1] ?? `line ${finding.line}`;
+  assert.deepEqual(
+    result.findings.map((finding) => [named(finding), finding.method]),
+    [
+      ['uncachedRead', 'backlog.spec.get'],
+      ['artifactText', 'http'],
+      ['plainFetch', 'http'],
+    ],
+  );
+  assert(HTTP_FILES.has('apps/companion/src/components/MediaViewer.tsx'));
+});
+
+test('the violation list only shrinks: a fixed entry is stale until removed', () => {
+  const findings = [
+    { file: 'a.ts', line: 1, method: 'backlog.spec.get' },
+    { file: 'a.ts', line: 9, method: 'backlog.spec.get' },
+    { file: 'b.ts', line: 2, method: 'http' },
+  ];
+  const baseline = [
+    { file: 'a.ts', method: 'backlog.spec.get' },
+    { file: 'c.ts', method: 'chat.history' },
+  ];
+  const { known, fresh, stale } = applyBaseline(findings, baseline);
+  assert.equal(known.length, 2);
+  assert.deepEqual(fresh, [findings[2]]);
+  assert.deepEqual(stale, [baseline[1]]);
+  assert.deepEqual(baselineEntries(findings), [
+    { file: 'a.ts', method: 'backlog.spec.get' },
+    { file: 'b.ts', method: 'http' },
+  ]);
 });
 
 test('parameter branches, concrete fixture receivers and constructor cache providers are classified', () => {

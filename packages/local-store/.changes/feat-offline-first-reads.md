@@ -1,0 +1,1 @@
+- Hydrate recently stored reads in one bounded startup batch on native SQLite and browser workers, while preserving owner isolation and observation age.

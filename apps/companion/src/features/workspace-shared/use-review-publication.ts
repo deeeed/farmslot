@@ -156,7 +156,6 @@ export function useReviewPublication(
     setSource({ scope: capturedScope, index, loading: true });
     try {
       const context = await loadReviewFindingSource(
-        client,
         params,
         payload.lineComments[index].line,
         current,

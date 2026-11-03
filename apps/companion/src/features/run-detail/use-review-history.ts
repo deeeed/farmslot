@@ -8,6 +8,7 @@ import {
   type ReviewedFindingContext,
   type Run,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   loadReviewHistoryArtifacts,
   mergeReviewHistoryArtifacts,
@@ -21,9 +22,9 @@ import {
   reviewHistoryView,
 } from '@farmslot/review-dispatch';
 
+import { readStoredArtifact } from '../../lib/artifact-response';
 import { artifactUrl } from '../../lib/artifact-url';
-import { currentFarmConnection } from '../../lib/connection-authority';
-import { gatewayFetch } from '../../lib/gateway-http-auth';
+import { getResourceCache, getResourceWorkspaceKey, readStored } from '../../lib/resource-cache';
 import { loadReviewFindingSource, readReviewWorkspace } from '../../lib/review-curation';
 import { useConnectionStore } from '../../store/connection';
 
@@ -49,13 +50,15 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
     error?: string;
   }>();
   useEffect(() => {
-    if (!client || status !== 'connected') return;
+    const cache = getResourceCache();
+    if (!cache) return;
     let disposed = false;
-    const current = currentFarmConnection(client, useConnectionStore.getState);
+    const owner = getResourceWorkspaceKey();
+    const current = () => cache === getResourceCache() && owner === getResourceWorkspaceKey();
     void loadReviewHistoryArtifacts(
       run,
       async (path) => {
-        const response = await gatewayFetch(artifactUrl(url, run.id, path), headers);
+        const response = await readStoredArtifact(artifactUrl(url, run.id, path), headers);
         if (response.status === 404) return null;
         if (!response.ok) throw new Error(`Artifact HTTP ${response.status}`);
         return response.text();
@@ -71,7 +74,9 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
         const { runId = '', base = '', head = '' } = params;
         if (!runId || !base || !head) throw new Error('Review range is unavailable');
         return (
-          await client.request<GitDiffResult>(Methods.GIT_DIFF, { slotId: '', runId, base, head })
+          await readStored<GitDiffResult>(
+            resourceQuery<GitDiffResult>(Methods.GIT_DIFF, { slotId: '', runId, base, head }),
+          )
         ).diff;
       },
     )
@@ -108,17 +113,21 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
     error?: string;
   }>();
   const inspect = async (round: ReviewHistoryRound, finding: ReviewHistoryFinding) => {
-    if (!client || status !== 'connected') return;
+    const cache = getResourceCache();
+    if (!cache) return;
     const params = reviewHistorySourceRequest(run, round, finding);
     if (!params) return;
     const request = {};
     selection.current = request;
     const key = `${round.key}:${finding.id}`;
-    const connected = currentFarmConnection(client, useConnectionStore.getState);
-    const current = () => selection.current === request && connected();
+    const owner = getResourceWorkspaceKey();
+    const current = () =>
+      selection.current === request &&
+      cache === getResourceCache() &&
+      owner === getResourceWorkspaceKey();
     setSource({ identity, key, loading: true });
     try {
-      const context = await loadReviewFindingSource(client, params, finding.line!, current);
+      const context = await loadReviewFindingSource(params, finding.line!, current);
       if (context) setSource({ identity, key, context });
     } catch (error) {
       if (current())

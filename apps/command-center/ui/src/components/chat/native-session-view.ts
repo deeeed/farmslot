@@ -59,6 +59,7 @@ import {
   type NativeWork,
   nativeWork,
   type ResourceQuery,
+  resourceQuery,
   type ResourceQueryState,
   SUPERSEDED_READ_GRACE_MS,
 } from '@farmslot/protocol/client-cache';
@@ -85,6 +86,7 @@ import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { readStored } from '../shared/read-current.js';
 import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-controller.js';
 
 import { draftWithContext, takeNativeChatContext } from './native-chat-context.js';
@@ -674,18 +676,17 @@ export class NativeSessionView extends LitElement {
       if (revision === this.revision) this.turnDiffs = new Map(this.turnDiffs).set(key, value);
     };
     this.turnDiffs = new Map(this.turnDiffs).set(key, {});
-    this.api
-      .request<NativeSessionTurnDiffResult>(Methods.NATIVE_SESSION_TURN_DIFF, {
+    const applyStored = (result: NativeSessionTurnDiffResult) => settle({ diff: result.diff });
+    readStored<NativeSessionTurnDiffResult>(
+      resourceQuery<NativeSessionTurnDiffResult>(Methods.NATIVE_SESSION_TURN_DIFF, {
         sessionId: session.id,
         executionNodeId: session.executionNodeId,
         sequence,
         path,
         ...(this.worker ? { worker: this.workerControl } : {}),
-      })
-      .then(
-        (result) => settle({ diff: result.diff }),
-        (error: unknown) => settle({ error: (error as Error).message }),
-      );
+      }),
+      applyStored,
+    ).then(applyStored, (error: unknown) => settle({ error: (error as Error).message }));
   }
 
   /** A command shows what it ran and its last lines, its raw input and output one tap away. */
@@ -967,6 +968,7 @@ ${JSON.stringify(
             this.catalogError = state.error?.message ?? '';
             this.catalog = state.data;
             this.catalogCurrent = state.status === 'ready';
+            if (this.catalog && !this.selectedId) this.creating = true;
             if (this.catalog)
               this.executionPicker.setCatalog(
                 catalogForNativeRunners(this.catalog.runners, undefined, this.executionNodeId),
