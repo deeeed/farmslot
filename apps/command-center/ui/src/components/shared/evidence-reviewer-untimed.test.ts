@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import type { RecordedEvidencePackageInput } from '@farmslot/protocol';
-import { untimedRecordingFixture } from '../../../../../../packages/adapter-sdk/test/untimed-fixture.js';
+import test from 'node:test';
 
 import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import type { RecordedEvidencePackageInput } from '@farmslot/protocol';
+
+import { untimedRecordingFixture } from '../../../../../../packages/adapter-sdk/test/untimed-fixture.js';
 
 import { evidenceReviewerSelection } from './evidence-reviewer-recording.js';
 
