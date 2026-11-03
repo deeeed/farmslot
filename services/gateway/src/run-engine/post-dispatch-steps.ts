@@ -1762,9 +1762,10 @@ export async function executeCompleteStep(
   const skipRetrospective = hasCIWatch;
 
   // Run completion (artifact copy, PR comment, title, labels). Must run
-  // BEFORE getDiffStat because branch discovery happens inside it. Worker
-  // artifact copy excludes gateway-owned diff artifacts, so getDiffStat
-  // below preserves any READY_GATE snapshot instead of copy-back data.
+  // BEFORE the durable getDiffStat because branch discovery happens inside it.
+  // Worker artifact copy excludes gateway-owned diff artifacts, so that read
+  // preserves any READY_GATE snapshot instead of copy-back data. A local-first
+  // package recaptures instead: it states the diff at its own HEAD.
   updateRunStep(runId, S.COMPLETE, { detail: 'Completing...' });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   if (shouldPrepareLocalFirstPackage(current)) {

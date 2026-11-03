@@ -704,8 +704,12 @@ export async function captureRunDiffSnapshot(
       defaultBranch,
       baseSpec.commitish,
     );
+    // A failed fetch still leaves the remote-tracking ref, and HEAD's merge base with it is the
+    // same branch point. With no ref at all, the rev-parse below refuses.
     if (fetchError) {
-      return unavailableDiff('base-ref-unavailable', diffKind, fetchError);
+      console.warn(
+        `[run-engine] diff capture base fetch failed for run ${run.id}: ${fetchError.slice(0, 200)}`,
+      );
     }
     const headRefResult = await execOnSlot(vars, 'git rev-parse HEAD', { timeout: 10000 });
     if (headRefResult.exitCode !== 0) {

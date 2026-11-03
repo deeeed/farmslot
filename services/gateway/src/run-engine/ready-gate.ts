@@ -1114,9 +1114,10 @@ export async function executeReadyGate(
   const workerLearnings = await readTaskArtifactText(current, 'learnings.md');
 
   // Build diff stat
-  // The publication package must describe the final reviewed HEAD. Earlier
-  // completion snapshots remain durable history, but cannot supply this gate.
-  const diffStat = await getDiffStat(current, { fresh: true });
+  // A prepared package captured its own HEAD and nothing below reads this stat.
+  // Without one, earlier completion snapshots remain durable history, but
+  // cannot supply this gate.
+  const diffStat = await getDiffStat(current, { fresh: !preparedPackage });
 
   const videoProofWarning = localVideoProofWarning(preparedPackage?.evidenceManifest);
   // Out-of-band merge detection: if this branch already has a MERGED PR the

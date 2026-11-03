@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
@@ -18,6 +18,7 @@ const nativeState = await import('../core/state.js');
 let repo = '';
 let slotOwner = '';
 let githubRequests = 0;
+const slotCommands: string[] = [];
 mock.module('../core/config.js', {
   namedExports: {
     ...nativeConfig,
@@ -39,6 +40,7 @@ mock.module('../core/exec.js', {
     ...nativeExec,
     execOnSlot: async (_vars: unknown, command: string) => {
       assert.ok(!command.includes('tmux'), 'the fixture never invokes a real runner');
+      slotCommands.push(command);
       return nativeExec.execLocal(command, { cwd: repo });
     },
   },
@@ -179,7 +181,8 @@ async function checkoutWithReviewFix() {
   await writeFile(path.join(repo, 'src/second.ts'), lines('second', 112));
   git('add', '.');
   git('commit', '-qm', 'test: review fix');
-  return { runId: run.id, headSha: git('rev-parse', 'HEAD') };
+  slotCommands.length = 0;
+  return { runId: run.id, headSha: git('rev-parse', 'HEAD'), git, taskDir };
 }
 
 async function presentGate(runId: string) {
@@ -227,6 +230,11 @@ const preparers: Record<string, (runId: string) => Promise<unknown>> = {
   'the complete step': (runId) => executeCompleteStep(runId, stepContext),
 };
 
+// Only a capture that recomputes the diff resolves its base this way; a durable read runs nothing.
+const captureCount = () =>
+  slotCommands.filter((command) => command === "git rev-parse --verify 'origin/main^{commit}'")
+    .length;
+
 for (const [preparer, prepare] of Object.entries(preparers)) {
   test(`the gate states the diff at its HEAD when ${preparer} prepared the package`, async () => {
     const { runId, headSha } = await checkoutWithReviewFix();
@@ -241,6 +249,37 @@ for (const [preparer, prepare] of Object.entries(preparers)) {
     const { headline, payload } = await presentGate(runId);
     assert.equal(headline, '**Files:** 2 (+312 -3)');
     assert.deepEqual(payload?.diffStat, { files: 2, additions: 312, deletions: 3 });
+    assert.equal(captureCount(), 1, 'the package and the gate share one capture');
     assert.equal(githubRequests, 0);
   });
 }
+
+test('a failed fetch states the diff at HEAD against the local base ref', async () => {
+  const { runId, git, taskDir } = await checkoutWithReviewFix();
+  git('remote', 'set-url', 'origin', path.join(root, 'no-such-origin.git'));
+  await preparers['a review of the fix']!(runId);
+  const { headline, payload } = await presentGate(runId);
+  assert.equal(headline, '**Files:** 2 (+312 -3)');
+  assert.deepEqual(payload?.diffStat, { files: 2, additions: 312, deletions: 3 });
+  const durable = JSON.parse(
+    await readFile(path.join(taskDir, 'artifacts/diff-stat.json'), 'utf8'),
+  );
+  assert.equal(durable.source, 'artifact');
+  assert.equal(durable.available, true);
+  assert.equal(durable.baseSha, git('rev-parse', 'origin/main'));
+});
+
+test('a failed fetch without a local base ref states no diff and the gate still presents', async () => {
+  const { runId, git, taskDir } = await checkoutWithReviewFix();
+  git('remote', 'set-url', 'origin', path.join(root, 'no-such-origin.git'));
+  git('update-ref', '-d', 'refs/remotes/origin/main');
+  await preparers['a review of the fix']!(runId);
+  const { headline, payload } = await presentGate(runId);
+  assert.equal(headline, '**Files:** 0 (+0 -0)');
+  assert.deepEqual(payload?.diffStat, { files: 0, additions: 0, deletions: 0 });
+  const durable = JSON.parse(
+    await readFile(path.join(taskDir, 'artifacts/diff-stat.json'), 'utf8'),
+  );
+  assert.equal(durable.source, 'unavailable');
+  assert.equal(durable.missingReason, 'base-ref-unavailable');
+});
