@@ -12,7 +12,7 @@ import { digestRecipeDocument } from './digest.js';
 
 /** Optional recording data; a recipe runner need not implement video capture. */
 export interface RecipeVideoTiming {
-  /** Decoded presentation timestamps in milliseconds on the video's seek clock. */
+  /** Nondecreasing decoded presentation timestamps on the video's seek clock, in milliseconds. */
   framesMs: number[];
   durationMs: number;
   /** Bounds for the runner-clock time corresponding to media time zero. */
@@ -143,12 +143,12 @@ export function validateRecipeRecordingTimelineDocument(value: unknown): RecipeV
       if (
         !finite(timestamp) ||
         timestamp < 0 ||
-        timestamp <= previous ||
+        timestamp < previous ||
         (finite(value.durationMs) && timestamp >= value.durationMs)
       )
         issue(
           `framesMs[${index}]`,
-          'Frame timestamps must increase strictly within the media duration.',
+          'Frame timestamps must be nondecreasing within the media duration.',
         );
       previous = timestamp;
     }

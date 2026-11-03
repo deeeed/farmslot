@@ -818,6 +818,54 @@ test('measured frame stepping preserves the existing player controls', () => {
   );
 });
 
+test('real simctl duplicate timestamps preserve selection, frame ranges and both seek directions', () => {
+  const fixture: { durationSeconds: string; ptsAndBestEffortSeconds: [string, string][] } =
+    JSON.parse(
+      readFileSync(
+        new URL(
+          '../../protocol/test/fixtures/simctl-duplicate-frame-timestamps.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    );
+  const framesMs = fixture.ptsAndBestEffortSeconds.map(([pts]) => Number(pts) * 1000);
+  const source = recording(
+    [entry('first duplicate', 2500, 2600), entry('second duplicate', 9000, 9200)],
+    0,
+    Number(fixture.durationSeconds) * 1000,
+  );
+  source.timeline.framesMs = framesMs;
+  const model = createEvidenceReviewModel({ recordings: [source] });
+  assert.deepEqual(model.errors, []);
+  assert.equal(model.selectOccurrence(0)?.timing, 'measured');
+  const duplicates = framesMs.filter((time, index) => index > 0 && time === framesMs[index - 1]);
+  assert.equal(duplicates.length, 2);
+  for (const time of duplicates) {
+    const previous = framesMs.filter((value) => value < time).at(-1)!;
+    const next = framesMs.find((value) => value > time)!;
+    assert.equal(model.adjacentFrameMs(source.videoPath, time, -1), previous);
+    assert.equal(model.adjacentFrameMs(source.videoPath, time, 1), next);
+    assert.deepEqual(model.displayedFrameRangeMs(source.videoPath, time), [time, next]);
+  }
+});
+
+test('duplicate frame groups keep seeking bounded at both ends', () => {
+  for (const framesMs of [
+    [0, 0, 100, 200, 200],
+    [0, 0, 0],
+  ]) {
+    const source = recording([entry('verify', 50, 100)], 0, 300);
+    source.timeline.framesMs = framesMs;
+    const model = createEvidenceReviewModel({ recordings: [source] });
+    assert.deepEqual(model.errors, []);
+    assert.equal(model.adjacentFrameMs(source.videoPath, 0, -1), 0);
+    const last = framesMs.at(-1)!;
+    assert.equal(model.adjacentFrameMs(source.videoPath, last, 1), last);
+    assert.deepEqual(model.displayedFrameRangeMs(source.videoPath, last), [last, 300]);
+  }
+});
+
 test('both player renderers inherit bounded seeking, stopping and ordered segment transitions', () => {
   const trace = [entry('cross-boundary', 1_500, 2_500)];
   const first = recording(trace, 0, 2_000, 'first.mp4');

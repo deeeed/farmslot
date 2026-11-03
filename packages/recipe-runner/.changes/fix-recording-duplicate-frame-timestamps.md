@@ -1,0 +1,1 @@
+- Use a video's measured presentation timestamps before ffprobe's heuristic estimates, preserving simctl recordings with duplicate frame times and their timelines.

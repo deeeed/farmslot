@@ -1462,7 +1462,15 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       const timeline = errors.length ? undefined : timelines.get(videoPath);
       if (!timeline?.framesMs.length || !Number.isFinite(timeMs)) return null;
       const current = Math.max(0, upperFrame(timeline.framesMs, timeMs + 0.001) - 1);
-      return timeline.framesMs[clamp(current + direction, 0, timeline.framesMs.length - 1)]!;
+      let next = current + direction;
+      // Time-based seeking cannot distinguish frames with the same presentation time.
+      while (
+        next >= 0 &&
+        next < timeline.framesMs.length &&
+        timeline.framesMs[next] === timeline.framesMs[current]
+      )
+        next += direction;
+      return timeline.framesMs[clamp(next, 0, timeline.framesMs.length - 1)]!;
     },
     displayedFrameRangeMs(videoPath, timeMs, mediaDurationMs) {
       const timeline = errors.length ? undefined : timelines.get(videoPath);
