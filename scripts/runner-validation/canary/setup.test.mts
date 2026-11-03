@@ -225,6 +225,9 @@ test('nightly installation clones from a linked worktree without relying on its 
     '#!/bin/sh\ncase "$1" in print) exit 1;; bootstrap) exit 0;; *) exit 2;; esac\n',
     { mode: 0o755 },
   );
+  writeFileSync(path.join(bin, 'plutil'), '#!/bin/sh\n[ "$1" = "-lint" ] && [ -f "$2" ]\n', {
+    mode: 0o755,
+  });
   const result = spawnSync(
     'bash',
     [
