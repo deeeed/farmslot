@@ -539,29 +539,6 @@ export function reopenSupersededGateDecisions(
   return { decisions: next, reopened };
 }
 
-/**
- * The superseded gate a re-entry presents again when nothing the operator judged has changed:
- * same head, review subject and description. A replay or restart then keeps the gate's id. This
- * is not what stops a stale approval, which `validatePackageApprovalSelection` binds to the package.
- */
-export function supersededGateForSamePackage(
-  decisions: RunDecision[],
-  payload: RunDecision['payload'],
-): RunDecision | undefined {
-  const prepared = payload?.kind === 'ready' ? payload.prPackage : undefined;
-  const latest = decisions.filter(isGateDecision).at(-1);
-  const prior = latest?.payload?.kind === 'ready' ? latest.payload.prPackage : undefined;
-  return prepared?.reviewSubjectHash &&
-    latest?.resolvedAction === 'superseded' &&
-    latest.context?.supersededBy === GATE_REENTRY &&
-    prior?.headSha === prepared.headSha &&
-    prior?.reviewSubjectHash === prepared.reviewSubjectHash &&
-    prior?.draftTitle === prepared.draftTitle &&
-    prior?.draftBody === prepared.draftBody
-    ? latest
-    : undefined;
-}
-
 export function validatePackageApprovalSelection(
   preparedPackage: ReadyGatePrPackage,
   decision: RunDecision | undefined,

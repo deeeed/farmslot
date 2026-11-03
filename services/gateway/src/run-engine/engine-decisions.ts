@@ -47,7 +47,6 @@ import {
 import {
   hasValidPrNumber,
   isGateDecision,
-  supersededGateForSamePackage,
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
 import {
@@ -865,10 +864,8 @@ export async function createEngineDecision(
   const adoptedAfterRead = adoptedHumanGateAction(reason, current!);
   if (adoptedAfterRead) return adoptedAfterRead;
 
-  const presentedAgain =
-    reason === 'human_gate' ? supersededGateForSamePackage(current!.decisions, payload) : undefined;
   const decision: RunDecision = {
-    id: presentedAgain?.id ?? randomUUID(),
+    id: randomUUID(),
     type: `engine_${reason}`,
     title: `${run.ticketOrPr || `Run ${runId.slice(0, 8)}`} — ${reason.replace(/_/g, ' ')}`,
     description,
@@ -889,15 +886,7 @@ export async function createEngineDecision(
       reason,
       isPrerequisiteGatePayload(payload) ? payload.gateReadiness : undefined,
     ),
-    // A row presented again stays where it is, as audit and replay barrier, under its own id.
-    decisions: [
-      ...current!.decisions.map((entry) =>
-        entry === presentedAgain
-          ? { ...entry, id: `${entry.id}-reentry-${decision.createdAt}` }
-          : entry,
-      ),
-      decision,
-    ],
+    decisions: [...current!.decisions, decision],
   });
   if (current!.steps.some((step) => step.name === 'human-gate' && step.status === 'running'))
     updateRunStep(runId, 'human-gate', { detail: 'Waiting for operator decision' });
