@@ -19,8 +19,10 @@ import { TerminalReviewArtifactError } from '../review/terminal-result.js';
 import type { RunProgressObservation } from '../runners/run-progress.js';
 import { createRun, getAllRuns, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
+import { latestResolvedHumanGateDecision } from './decision-replay.js';
 import { resolveEngineDecision, setEngineDecisionRuntime } from './engine-decisions.js';
 import { BlockedRunError, OwnedWorkerBusyError } from './errors.js';
+import { supersedeStaleHumanGateDecisions } from './gate-policy.js';
 import {
   executePublishGateReviewPlan,
   executeReadyGate,
@@ -1124,6 +1126,75 @@ test(
       'abort',
     );
     assert.equal(getRun(run.id)!.decisions.length, before, 'no gate decision was opened');
+  },
+);
+
+test(
+  'a re-entered gate keeps its id until what the operator judged changes (F346)',
+  { timeout: 5_000 },
+  async (t) => {
+    const { run, next } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    const approved: RunDecision = {
+      id: 'older-approval',
+      type: 'engine_human_gate',
+      title: 'Publish',
+      description: '',
+      actions: [],
+      createdAt: '2026-11-03T00:00:00Z',
+      resolvedAt: '2026-11-03T00:01:00Z',
+      resolvedAction: 'approve-publish',
+    };
+    updateRun(run.id, { decisions: [approved] });
+    // What a replay does to an open gate: supersede, move the generation, present again.
+    const reenter = async (gate: RunDecision, presented: typeof prepared) => {
+      const current = getRun(run.id)!;
+      assert.equal(supersedeStaleHumanGateDecisions(current.decisions), 1);
+      const generation = (current.engineState?.generation ?? 0) + 1;
+      updateRun(run.id, {
+        decisions: current.decisions,
+        engineState: { ...current.engineState, generation },
+      });
+      assert.equal(resolveEngineDecision(gate.id, 'abort'), true);
+      return next(executeReadyGate(run.id, { ensurePackage: async () => presented, generation }));
+    };
+    const first = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    assert.notEqual(first.id, approved.id);
+
+    // A successor capture of the same work: new package identity, same head, subject and text.
+    const again = await reenter(first, { ...prepared, id: 'pkg-2', packageHash: 'hash-2' });
+    assert.equal(again.id, first.id, 'nothing the operator judged changed');
+    const history = getRun(run.id)!.decisions;
+    assert.equal(new Set(history.map(({ id }) => id)).size, history.length, 'ids stay unique');
+    const audit = history.at(-2)!;
+    assert.equal(audit.resolvedAction, 'superseded', 'the superseded row stays for audit');
+    assert.notEqual(audit.id, first.id);
+    assert.equal(history.at(-1)!.resolvedAt, undefined);
+    assert.equal(
+      latestResolvedHumanGateDecision(history),
+      undefined,
+      'the superseded row still bars replaying the older approval',
+    );
+
+    for (const changed of [
+      { headSha: 'new-head' },
+      { reviewSubjectHash: 'new-subject' },
+      { draftBody: 'New description' },
+    ]) {
+      const previous = getRun(run.id)!.decisions.at(-1)!;
+      const reissued = await reenter(previous, { ...prepared, ...changed });
+      assert.notEqual(reissued.id, previous.id, JSON.stringify(changed));
+      assert.equal(reissued.resolvedAt, undefined);
+      assert.equal(
+        getRun(run.id)!.decisions.find(({ id }) => id === previous.id)?.resolvedAction,
+        'superseded',
+      );
+      // Back to the shown package for the next change.
+      const back = getRun(run.id)!.decisions.at(-1)!;
+      await reenter(back, prepared);
+    }
   },
 );
 
