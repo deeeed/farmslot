@@ -1,10 +1,11 @@
 {
-  "version": "0.30.1",
-  "date": "2026-10-29",
+  "version": "0.31.0",
+  "date": "2026-11-03",
   "items": [
-    "Read runs, fleet and workspaces offline with their saved age.",
-    "Open retained gate diffs and evidence offline; actions requiring current data stay disabled.",
-    "Save workspace edits with conflict checks and keep unsaved drafts on the device.",
-    "Share live observations and catch up after reconnecting."
+    "Run detail opens with the pipeline canvas and keeps artifacts and results in collapsible panels.",
+    "Untimed recordings play with same-attempt screenshots marked as inspection context.",
+    "Model pickers list the models available on each selected node.",
+    "Fleet release parks an ownerless slot’s unpushed commits and reports where they were saved.",
+    "Changed-file diffs open from the local store and refresh in the background."
   ]
 }

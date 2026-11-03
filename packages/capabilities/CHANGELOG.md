@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.3 - 2026-11-03
+
+- Align published dependency pins with the coordinated protocol, recorded-evidence and duplicate-timestamp timeline fixes.
+
 ## 0.6.2 - 2026-10-29
 
 - Observe opened workspace names, bytes and linked-worktree Git metadata through one owned filesystem source.

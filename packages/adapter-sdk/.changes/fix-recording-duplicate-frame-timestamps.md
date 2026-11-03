@@ -1,1 +1,0 @@
-- Recorded-evidence frame stepping skips repeated presentation times so Previous Frame continues through recordings with duplicate timestamps.

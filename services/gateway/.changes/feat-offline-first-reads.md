@@ -1,1 +1,0 @@
-- Share the existing run-list version calculation with clients so offline run-detail sync can skip unchanged records without changing served versions.

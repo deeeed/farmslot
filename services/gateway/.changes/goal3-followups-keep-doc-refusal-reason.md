@@ -1,1 +1,0 @@
-- When slot teardown leaves a closed run's unrecorded worker running, the gateway log now says why ("[slot-teardown] <slot>: left pane <id> running: <reason>"). The deferral message on the slot is unchanged (F315 follow-up).

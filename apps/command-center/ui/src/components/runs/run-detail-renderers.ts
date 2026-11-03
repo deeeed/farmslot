@@ -51,6 +51,10 @@ import { gateway } from '../../gateway-client.js';
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
+import type {
+  ArtifactBrowserView,
+  ArtifactBrowserViewChange,
+} from '../shared/artifact-browser-model.js';
 import { renderCollapsiblePanel } from '../shared/collapsible-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
@@ -470,6 +474,8 @@ export interface RunArtifactExplorerRenderContext {
   ) => void;
   /** Why the last background sync failed; the mirrored copy stays on screen. */
   syncError: string | null;
+  artifactView?: ArtifactBrowserView;
+  onArtifactViewChange?: (change: ArtifactBrowserViewChange) => void;
 }
 
 /**
@@ -500,6 +506,9 @@ export function renderRunArtifactExplorer(
               : 'done'}
           .artifacts=${artifacts}
           .artifactUrl=${ctx.artifactUrl}
+          .artifactView=${ctx.artifactView}
+          @artifact-browser-change=${(event: CustomEvent<ArtifactBrowserViewChange>) =>
+            ctx.onArtifactViewChange?.(event.detail)}
           default-open
           @step-artifact-click=${(
             event: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,

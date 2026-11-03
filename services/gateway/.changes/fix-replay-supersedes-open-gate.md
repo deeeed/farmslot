@@ -1,1 +1,0 @@
-- A replay from the human gate or any earlier step now supersedes the run's open gate decisions and drops its open no-change decision. Before, an open card carried into the replay could move the run to blocked and stop the replayed step with "Run stopped while awaiting its execution node" (F324).

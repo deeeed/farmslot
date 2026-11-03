@@ -4,14 +4,20 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.16.0 - 2026-11-03
+
 - The offline run-detail probe finds the results card's Sync artifacts button by its new label (F313).
 - Give an owned gateway outage 90 seconds to restart, so a slow watcher restart no longer reads as a lost gateway.
 - Prove acceptance criteria stay absent before task creation and real read errors remain visible afterward.
 - Add a recorded browser recipe for remembered worker panel disclosure and stable conversation read status.
 - Add the isolated stable-layout browser recipe and blocking UI review checklist rule.
-
 - Add a rendered-row probe for finished workers waiting for their monitor and for stale or unavailable checklist observations.
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add an opt-in read-only snapshot and offline route sweep so both operator clients can verify stored screens without stopping the live gateway.
+- The fleet proofs follow Fleet opening as a table. The recovery proof selects its slot row, opens the release review from the toolbar and releases that row there, and the scroll proof reaches the last table row; both pin `view=list`. A new browser proof, also a node in the fleet recovery recipe, releases exactly the ticked rows. The offline fleet proof keeps a card leg, then reads the bulk action in the table with its owned row ticked. The gate proof pins `view=list` and selects every row before it opens the review. The progress-reader proof still opens `#fleet?view=card`.
+- Add a live HTML report proof that clicks every video link, checks authenticated playback and seeking, and keeps the report sandbox opaque.
+- Validate live run-detail review ordering, empty-panel visibility and layout stability during refresh.
 
 ## 0.15.1 - 2026-10-29
 

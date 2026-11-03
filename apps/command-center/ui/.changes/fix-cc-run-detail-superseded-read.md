@@ -1,1 +1,0 @@
-- Run detail no longer shows "ledger unreadable: The file observation changed during this read" under Acceptance criteria. The gateway refuses a read whose file changed while it ran and has already queued the reread, so the panel keeps the ledger it holds, or keeps waiting for one, and names a failure only after reads have kept failing for 60 seconds, as the run list does.

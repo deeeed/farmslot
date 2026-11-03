@@ -1,1 +1,0 @@
-- `FleetStatus.poolErrors` lists pool files the last fleet refresh could not parse, and `SlotStatus.configError` gives why a slot's config could not be loaded.

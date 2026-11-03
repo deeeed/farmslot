@@ -1,1 +1,0 @@
-- Model options carry an optional provider `group` and the `nodes` that list them. A runner with no saved visible set and no seed (Pi, OpenCode) shows its node catalog instead of only its default. `catalogForNativeRunners` takes the session's execution node and lists that node's models, grouped by provider.

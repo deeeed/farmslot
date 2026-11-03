@@ -32,8 +32,15 @@ const entity =
 const config =
   /^config\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}){0,4}$/;
 // These parameters select views or prefill forms. No link submits a form.
-export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set(
-  (
+export const ARTIFACT_BROWSER_PARAMS = [
+  'artifactQuery',
+  'artifactTypes',
+  'artifactFile',
+  'artifactPreview',
+] as const;
+
+export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set([
+  ...(
     'a b activity artifact artifactAc artifactRun artifactTrace artifactPhase artifactView assessment backlogProject backlogStatus capture create demo dispatchConfig draft draftMode file item resource runId contextId history historyRun host recipeRun recipeDependency ' +
     'recipeNode recipeArtifact recipeEvidenceMode recipeViewer recipeViewerMode recipeViewerPair review reviewAt reviewCheck reviewDrawer reviewFile comment commentFile commentLine commentHead ' +
     'cmpSort cmpTab diffArtifact diffRun direction evidence evidencePreview family familyId flow flowType focus gate graph intent lane ' +
@@ -42,7 +49,8 @@ export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set(
     'reviewValidationDepth run runner runsTab slot sort start_ref startRef state status step suggestion tab tag ticket tokens trajectory transport ' +
     'validationDepth variant view window worker group promote runnerPicker slotSelector spec workGraphProject wgSort wgDirection sharedView sessionId executionNodeId'
   ).split(' '),
-);
+  ...ARTIFACT_BROWSER_PARAMS,
+]);
 
 export function validViewRoute(route: unknown): route is string {
   if (

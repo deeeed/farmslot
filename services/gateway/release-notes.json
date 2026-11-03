@@ -1,11 +1,11 @@
 {
-  "version": "0.30.1",
-  "date": "2026-10-29",
+  "version": "0.31.0",
+  "date": "2026-11-03",
   "items": [
-    "Serve bounded live observations and versioned run lists for offline clients.",
-    "Check file hashes and run ownership before applying workspace edits.",
-    "Move retained run storage to the archive and keep every run record.",
-    "Use sampled CPU idle for placement and warn when an explicit slot is busy.",
-    "Keep native reviews bound to the selected pool."
+    "A restart during dispatch adopts a surviving worker only after proving the task was delivered.",
+    "Review-budget extensions work after a failed run releases its slot, without automatically replaying.",
+    "Autonomous workers disable their model question tool while retaining operator steering.",
+    "Duplicate video presentation timestamps retain the recording timeline; backwards and invalid timestamps still refuse timing.",
+    "Refreshing a publication package preserves the reviews the operator requested."
   ]
 }

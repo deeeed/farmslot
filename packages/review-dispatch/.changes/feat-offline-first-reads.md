@@ -1,1 +1,0 @@
-- `FleetRefreshClient` gains `readFleet()`: fleet inspection reads the client's cached fleet instead of sending `fleet.status` through `request`, which now carries only release and cancel commands.
