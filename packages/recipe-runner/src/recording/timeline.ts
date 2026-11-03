@@ -31,7 +31,7 @@ export async function probeVideoTiming(
       'v:0',
       '-show_frames',
       '-show_entries',
-      'frame=best_effort_timestamp_time,pkt_duration_time:format=duration',
+      'frame=pts_time,best_effort_timestamp_time,pkt_duration_time:format=duration',
       '-of',
       'json',
       file,
@@ -39,22 +39,28 @@ export async function probeVideoTiming(
     { timeout: 120_000, maxBuffer: 32 * 1024 * 1024 },
   );
   const probe = JSON.parse(stdout) as {
-    frames?: { best_effort_timestamp_time?: string; pkt_duration_time?: string }[];
+    frames?: {
+      pts_time?: string;
+      best_effort_timestamp_time?: string;
+      pkt_duration_time?: string;
+    }[];
     format?: { duration?: string };
   };
-  const framesMs = (probe.frames ?? []).map(
-    (frame) => Number(frame.best_effort_timestamp_time) * 1000,
-  );
+  const framesMs = (probe.frames ?? []).map((frame) => {
+    // Best-effort heuristics can replace duplicate PTS with a backwards DTS.
+    const raw = frame.pts_time === undefined ? frame.best_effort_timestamp_time : frame.pts_time;
+    return typeof raw === 'string' && raw.trim() ? Number(raw) * 1000 : NaN;
+  });
   const first = framesMs[0];
   const last = framesMs.at(-1);
   if (
     first === undefined ||
     last === undefined ||
     framesMs.some(
-      (time, i) => !Number.isFinite(time) || time < 0 || (i > 0 && time <= framesMs[i - 1]!),
+      (time, i) => !Number.isFinite(time) || time < 0 || (i > 0 && time < framesMs[i - 1]!),
     )
   )
-    throw new Error('Video has no strictly ordered presentation timestamps.');
+    throw new Error('Video has invalid or backwards presentation timestamps.');
   const durationMs = Number(probe.format?.duration) * 1000;
   if (!Number.isFinite(durationMs) || durationMs <= last)
     throw new Error('Video duration does not contain its measured frames.');
