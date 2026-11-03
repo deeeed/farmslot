@@ -5,7 +5,7 @@ import type {
 } from '../rpc/resource-observers.js';
 import { Events } from '../transport/events.js';
 
-import type { ResourceReadMethod } from './registry.js';
+import { resourceReadIsLive, type ResourceReadMethod } from './registry.js';
 import { type ResourceStoreIdentity, resourceStoreScopeId } from './store.js';
 import type {
   ResourceCacheConnection,
@@ -30,10 +30,26 @@ export interface ResourceClientConnection {
   reconnect(): void;
 }
 
+interface ResourceReadRequest {
+  <T>(observed: boolean): Promise<T>;
+}
+
+/** The cache stores snapshots too; only live queries request the server observation envelope. */
+export function requestResourceRead<T>(
+  method: ResourceReadMethod,
+  params: unknown,
+  request: ResourceReadRequest,
+): Promise<ResourceReadResult<T>> {
+  return resourceReadIsLive(method, params)
+    ? request<ResourceReadResult<T>>(true)
+    : request<T>(false).then((data) => ({ data, resourceState: undefined }));
+}
+
 export interface ResourceConnectionInputs {
   id: string | number;
   connected: boolean;
   foreground?: boolean;
+  metered?: boolean;
   gatewayUrl: string;
   profileId?: string;
   authentication?: GatewayAuthConnectResult;
@@ -63,6 +79,7 @@ export function createResourceCacheTransport(
       id: state.id,
       connected: state.connected,
       foreground: state.foreground,
+      metered: state.metered,
       authMode: auth?.authMode ?? saved?.authMode ?? 'token',
       scope: {
         ...saved?.metadata.scope,

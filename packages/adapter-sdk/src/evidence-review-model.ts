@@ -149,6 +149,24 @@ export interface EvidenceReviewArtifact {
   mediaType: EvidenceReviewMediaType;
 }
 
+/** A playable original is available even when capture produced no measured timeline. */
+export interface EvidenceReviewMediaRecording {
+  videoPath: string;
+  videoDigest?: string;
+  hasTimeline: boolean;
+}
+
+export interface EvidenceReviewScreenshot {
+  artifact: EvidenceReviewArtifact;
+  /** Same-attempt inspection context, not a new binding to this criterion. */
+  inspection: boolean;
+}
+
+export interface EvidenceReviewClaimMedia {
+  recording: EvidenceReviewArtifact | null;
+  screenshots: readonly EvidenceReviewScreenshot[];
+}
+
 export interface EvidenceReviewArtifactPair<T> {
   before: T;
   after: T;
@@ -259,6 +277,8 @@ export interface EvidenceReviewComparisonViewRow extends EvidenceReviewCompariso
 
 export interface EvidenceReviewModel {
   readonly artifactInventory: readonly ArtifactRef[];
+  claimMedia(claimId: string, openedPath?: string): EvidenceReviewClaimMedia;
+  recordingForPath(artifactPath: string): EvidenceReviewMediaRecording | undefined;
   claimDisplay(claimId: string): EvidenceReviewClaimDisplay;
   judgmentRows(principal: SelfPrincipalSummary | null): readonly EvidenceReviewJudgmentRow[];
   rawArtifacts<T extends { path: string }>(inventory: readonly T[]): readonly T[];
@@ -697,6 +717,22 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     }
   >();
   const headTimelines = new Map(timelines);
+  const mediaRecordings = new Map<string, EvidenceReviewMediaRecording>();
+  const registerRecordings = (
+    sources: readonly Pick<EvidenceReviewMediaRecording, 'videoPath' | 'videoDigest'>[],
+    measured = false,
+  ) => {
+    for (const source of sources) {
+      const path = `${input.artifactPrefix ?? ''}${source.videoPath}`;
+      if (!mediaRecordings.has(path) || measured || timelines.has(source.videoPath))
+        mediaRecordings.set(path, {
+          videoPath: source.videoPath,
+          videoDigest: source.videoDigest,
+          hasTimeline: measured || timelines.has(source.videoPath),
+        });
+    }
+  };
+  registerRecordings([...headTimelines.values(), ...segments]);
   for (const timeline of headTimelines.values())
     playbackSources.set(timeline.videoPath, { segments, timelines: headTimelines });
   const addDependencyTimelines = (source: RecordedEvidencePackageInput, prefix: string) => {
@@ -714,6 +750,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       timelines.set(videoPath, timeline);
       playbackSources.set(videoPath, { segments: childSegments, timelines: childTimelines });
     }
+    registerRecordings([...childTimelines.values(), ...childSegments]);
     for (const child of source.comparisonDependencies ?? [])
       addDependencyTimelines(child.input, `${prefix}${child.artifactRoot}/`);
   };
@@ -817,6 +854,10 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       },
     ]),
   );
+  for (const source of retainedClipSources.values()) {
+    registerRecordings([...source.timelines.values()], true);
+    registerRecordings(source.segments);
+  }
   // Long recordings may list every original in the retained ledger. Present
   // only this claim's measured originals; the full file inventory stays browsable.
   for (const claim of claims) {
@@ -850,6 +891,10 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         input.artifactPrefix,
       );
   }
+  for (const claim of claims)
+    for (const file of claim.evidence)
+      if (file.mediaType === 'video' && !mediaRecordings.has(file.artifactPath))
+        mediaRecordings.set(file.artifactPath, { videoPath: file.path, hasTimeline: false });
   const select = (
     caption: string,
     files: readonly EvidenceReviewArtifact[],
@@ -1088,6 +1133,61 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   };
   return {
     artifactInventory: input.artifacts ?? [],
+    recordingForPath(path) {
+      return mediaRecordings.get(path);
+    },
+    claimMedia(id, openedPath) {
+      const claim = byClaim.get(id);
+      if (!claim || input.evidencePending) return { recording: null, screenshots: [] };
+      const retained = retainedSources.get(id);
+      const source = retained?.input ?? pkg;
+      const prefix = retained?.prefix ?? '';
+      const originals = source?.claims?.recording?.segments ?? [];
+      const declaredVideos = artifacts(
+        originals.map(({ videoPath }) => `${prefix}${videoPath}`),
+        input.artifactPrefix,
+      );
+      const recording =
+        claim.evidence.find((file) => file.mediaType === 'video') ??
+        declaredVideos[0] ??
+        artifacts([...headTimelines.keys()], input.artifactPrefix)[0] ??
+        null;
+      const bound = claim.evidence.filter((file) => file.mediaType === 'image');
+      const boundPaths = new Set(bound.map((file) => file.artifactPath));
+      const sameAttempt =
+        recording &&
+        mediaRecordings.get(recording.artifactPath)?.hasTimeline === false &&
+        source &&
+        !errors.length &&
+        isRecord(source.manifest) &&
+        Array.isArray(source.manifest.artifacts)
+          ? source.manifest.artifacts
+              .filter(isRecord)
+              .flatMap((file) =>
+                file.type === 'screenshot' &&
+                typeof file.path === 'string' &&
+                source.artifactPaths?.includes(file.path)
+                  ? [`${prefix}${file.path}`]
+                  : [],
+              )
+          : [];
+      const screenshots = [
+        ...bound.map((artifact) => ({ artifact, inspection: false })),
+        ...artifacts(sameAttempt, input.artifactPrefix)
+          .filter((file) => file.mediaType === 'image' && !boundPaths.has(file.artifactPath))
+          .map((artifact) => ({ artifact, inspection: true })),
+      ];
+      // Comparison captures can share an AC ID while belonging to another execution.
+      if (
+        openedPath &&
+        recording?.artifactPath !== openedPath &&
+        !claim.evidence.some((artifact) => artifact.artifactPath === openedPath) &&
+        !declaredVideos.some((artifact) => artifact.artifactPath === openedPath) &&
+        !screenshots.some(({ artifact }) => artifact.artifactPath === openedPath)
+      )
+        return { recording: null, screenshots: [] };
+      return { recording, screenshots };
+    },
     claimDisplay,
     claimHasDetails(id, { playable = false, overridable = false } = {}) {
       const claim = byClaim.get(id);
@@ -1462,7 +1562,15 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       const timeline = errors.length ? undefined : timelines.get(videoPath);
       if (!timeline?.framesMs.length || !Number.isFinite(timeMs)) return null;
       const current = Math.max(0, upperFrame(timeline.framesMs, timeMs + 0.001) - 1);
-      return timeline.framesMs[clamp(current + direction, 0, timeline.framesMs.length - 1)]!;
+      let next = current + direction;
+      // Time-based seeking cannot distinguish frames with the same presentation time.
+      while (
+        next >= 0 &&
+        next < timeline.framesMs.length &&
+        timeline.framesMs[next] === timeline.framesMs[current]
+      )
+        next += direction;
+      return timeline.framesMs[clamp(next, 0, timeline.framesMs.length - 1)]!;
     },
     displayedFrameRangeMs(videoPath, timeMs, mediaDurationMs) {
       const timeline = errors.length ? undefined : timelines.get(videoPath);

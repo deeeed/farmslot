@@ -213,6 +213,7 @@ test('a review refresh on fleet.updated rereads through the cache and never send
   const model = new FleetRefreshViewModel(
     {
       contextKey: () => 'owner-a',
+      readFleet: () => request<FleetStatusResult>(Methods.FLEET_STATUS),
       request,
       subscribe: (event, callback) => {
         listeners.set(event, () => callback(undefined));

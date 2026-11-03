@@ -11,6 +11,34 @@ import {
   updateNoticeKey,
 } from './notification-tray.js';
 
+test('a snapshot read has no missing-live-updates notice but retains actual failures', () => {
+  notificationTray.setOwner('snapshot-read');
+  const source = {};
+  const query = resourceQuery('chat.sessions');
+  assert.equal(query.live, false);
+  publishReadNotice(
+    source,
+    'snapshot-read',
+    query,
+    { status: 'unsupported', data: {}, observedAt: Date.now() },
+    '#runs',
+    {
+      connected: true,
+    },
+  );
+  assert.equal(notificationTray.items.length, 0);
+  publishReadNotice(
+    source,
+    'snapshot-read',
+    query,
+    { status: 'error', error: { code: 'READ_FAILED', message: 'Posture unavailable' } },
+    '#runs',
+    { connected: true },
+  );
+  assert.equal(notificationTray.items[0]?.body, 'Posture unavailable');
+  notificationTray.setOwner(undefined);
+});
+
 test('tray notices follow the shared saved-age policy instead of every in-flight read', () => {
   notificationTray.setOwner('saved-policy');
   const source = {};

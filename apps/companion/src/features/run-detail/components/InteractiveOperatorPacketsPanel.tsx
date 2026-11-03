@@ -19,6 +19,7 @@ import {
 } from '@farmslot/protocol';
 
 import { useRunAcceptance } from '../../../hooks/useRunAcceptance';
+import { readStoredArtifact } from '../../../lib/artifact-response';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
@@ -30,7 +31,7 @@ import {
   openHumanGateDecision,
 } from '../../../lib/gate-review';
 import type { GatewayClient } from '../../../lib/gateway-client';
-import { gatewayFetch, usesPersonHttpAccess } from '../../../lib/gateway-http-auth';
+import { usesPersonHttpAccess } from '../../../lib/gateway-http-auth';
 import {
   collectRunInteractivePacketArtifacts,
   interactivePacketActionRequest,
@@ -99,7 +100,7 @@ export function InteractiveOperatorPacketsPanel({
       return;
     }
     const readArtifactText = async (path: string): Promise<string> => {
-      const response = await gatewayFetch(
+      const response = await readStoredArtifact(
         artifactUrl(gatewayUrl, run.id, path),
         artifactAuthHeaders,
       );

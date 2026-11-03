@@ -133,7 +133,11 @@ export function EvidenceAcOverlay({
               const match = review.rows.find((candidate) => candidate.id === claim.id);
               const state = match ? acceptanceClaimLabel(match) : '';
               const at =
-                startMs === null ? 'not recorded' : formatEvidenceReviewVideoTime(startMs / 1000);
+                startMs === null
+                  ? model.recordingForPath(model.artifactPath(videoPath))?.hasTimeline === false
+                    ? 'Untimed recording'
+                    : 'not recorded'
+                  : formatEvidenceReviewVideoTime(startMs / 1000);
               return (
                 <Pressable
                   key={claim.id}

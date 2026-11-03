@@ -1,6 +1,7 @@
 import type { NativeSessionReadResult, NativeSessionTargetParams } from '../rpc/native-session.js';
 import { Methods } from '../rpc/registry.js';
-import type { RunListParams, RunListResult } from '../rpc/run.js';
+import type { RunGetResult, RunListParams, RunListResult } from '../rpc/run.js';
+import { runListVersion } from '../runs/list-version.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
 import { ResourceCollectorAdmission } from './collector-admission.js';
@@ -24,6 +25,7 @@ import {
   storedNativeHistoryMatches,
 } from './native-history.js';
 import { type ResourceQuery, resourceQuery } from './registry.js';
+import { createRunDetailSync, type RunDetailTarget, runDetailTarget } from './run-details.js';
 import {
   isRunListCollectionRead,
   RUN_LIST_COLLECTION_ID,
@@ -34,7 +36,7 @@ import {
   type ContentKey,
   createMemoryResourceStore,
   normalizeResourceStoreScope,
-  type ResourceContentPlacement,
+  readStoredQueryBatch,
   type ResourceStore,
   type ResourceStoreMetadata,
   resourceStoreScopeId,
@@ -51,6 +53,7 @@ import type {
   ResourceContentRetain,
   ResourceContentWriteToken,
   ResourceQueryError,
+  ResourceQueryPlacement,
   ResourceQueryState,
   ResourceReadResult,
 } from './types.js';
@@ -66,7 +69,7 @@ interface PendingRead {
   controller: AbortController;
   promise: Promise<void>;
   /** Set only while every caller sharing this read is a prefetch. */
-  prefetch?: ResourceContentPlacement;
+  prefetch?: ResourceQueryPlacement;
   /** Another caller joined, so the starting caller's abort no longer cancels the read. */
   shared?: boolean;
 }
@@ -145,6 +148,7 @@ function normalizeConnection(connection: ResourceCacheConnection): ResourceCache
 }
 
 const defaultContentBudgetBytes = 500 * 1024 * 1024;
+const startupQueryBytes = 8 * 1024 * 1024;
 // Only the identity crosses the store seam, never a caller's other fields.
 const contentKey = ({ kind, id }: ContentKey): ContentKey => ({ kind, id });
 
@@ -165,6 +169,9 @@ export function createGatewayResourceCache(
   const transport = options.transport;
   let store = options.store ?? createMemoryResourceStore();
   let metadata: ResourceStoreMetadata | undefined;
+  let startupStore: ResourceStore | undefined;
+  let startupOwnerVersion = -1;
+  const startupQueries = new Map<string, StoredResourceQuery>();
   let connection = normalizeConnection(transport.getConnection());
   let usable = false;
   let disposed = false;
@@ -202,10 +209,53 @@ export function createGatewayResourceCache(
     maxBodyBytes: resourceQuery(Methods.RUN_LIST).maxBytes,
   });
   let runListLoad: { store: ResourceStore; promise: Promise<void> } | undefined;
+  const fallbackDetailTargets = new Map<string, RunDetailTarget>();
+  const detailSync = createRunDetailSync({
+    connection: () => connection,
+    list: async () => (await readStoredContent((target) => target.listQueries())) ?? [],
+    stored: (runId) =>
+      readStoredContent((target) =>
+        target.getQuery<RunGetResult>(resourceQuery(Methods.RUN_GET, { runId }).id),
+      ),
+    touch: async (runId) => {
+      const target = store;
+      const ownerVersion = hydrationOwnerVersion;
+      await updateStore(
+        target,
+        () => target === store && !target.deleted && ownerVersion === hydrationOwnerVersion,
+        () =>
+          target.touchQuery?.(resourceQuery(Methods.RUN_GET, { runId }).id, Date.now()) ??
+          Promise.resolve(),
+      );
+    },
+    fetch: (runId, maxStoredBytes, signal) =>
+      retryQuery<RunGetResult>(
+        resourceQuery(Methods.RUN_GET, { runId }),
+        { origin: 'prefetch', cohort: 'run', maxStoredBytes },
+        signal,
+      ),
+    onError: (error) =>
+      options.onStorageNotice?.(
+        `Background run details could not sync: ${queryError(error).message}`,
+      ),
+  });
+
+  function refreshDetailTargets(): void {
+    const versioned = runList.detailTargets();
+    detailSync.setTargets(
+      store.persistent && usable
+        ? runList.held
+          ? versioned
+          : [...fallbackDetailTargets.values()]
+        : [],
+    );
+  }
 
   function forgetRunList(): void {
     runList.clear();
     runListLoad = undefined;
+    fallbackDetailTargets.clear();
+    detailSync.reset();
   }
 
   function updateCollectors(): void {
@@ -232,6 +282,9 @@ export function createGatewayResourceCache(
     unsubscribeStore();
     store = next;
     storeVersion++;
+    startupStore = undefined;
+    startupQueries.clear();
+    detailSync.reset();
     unsubscribeStore = store.onDeleted(storeDeleted);
   }
 
@@ -370,6 +423,45 @@ export function createGatewayResourceCache(
     for (const entry of entries.values()) if (entry.state.status !== 'ready') hydrateEntry(entry);
   }
 
+  async function warmStoredQueries(): Promise<void> {
+    if (
+      !store.persistent ||
+      (startupStore === store && startupOwnerVersion === hydrationOwnerVersion)
+    )
+      return;
+    const readingStore = store;
+    const incarnation = storeVersion;
+    const ownerVersion = hydrationOwnerVersion;
+    const current = () =>
+      !disposed &&
+      store === readingStore &&
+      !readingStore.deleted &&
+      incarnation === storeVersion &&
+      ownerVersion === hydrationOwnerVersion;
+    try {
+      const batch = await readStoredQueryBatch(readingStore, startupQueryBytes);
+      if (!current()) return;
+      const collection = batch.find((saved) => saved.id === RUN_LIST_COLLECTION_ID);
+      const rows =
+        collection && readingStore.getRows
+          ? await readingStore.getRows(RUN_LIST_COLLECTION_ID)
+          : undefined;
+      if (!current()) return;
+      startupQueries.clear();
+      let remaining = startupQueryBytes;
+      for (const saved of batch) {
+        if (saved.bytes > remaining) continue;
+        remaining -= saved.bytes;
+        if (saved.id !== RUN_LIST_COLLECTION_ID) startupQueries.set(saved.id, saved);
+      }
+      if (rows) runList.hydrate(rows);
+      startupStore = readingStore;
+      startupOwnerVersion = ownerVersion;
+    } catch (error) {
+      await recoverStore(error, readingStore);
+    }
+  }
+
   function schedule(entry: QueryEntry): void {
     if (entry.queued || disposed) return;
     entry.queued = true;
@@ -404,8 +496,13 @@ export function createGatewayResourceCache(
       !scopeChanged &&
       !authorityChanged &&
       !revoke
-    )
+    ) {
+      if (connection.metered !== next.metered) {
+        connection = { ...connection, metered: next.metered };
+        refreshDetailTargets();
+      }
       return;
+    }
     const ticket = ++version;
     runList.abort();
     // Stored facts belong to an owner, not a socket attempt. Fence a revoked
@@ -416,6 +513,7 @@ export function createGatewayResourceCache(
     }
     connection = next;
     usable = false;
+    refreshDetailTargets();
     updateCollectors();
     revisions.clear();
     for (const entry of entries.values()) {
@@ -504,7 +602,10 @@ export function createGatewayResourceCache(
           }
         }
         if (disposed || ticket !== version) return;
+        if (!revoke && canPersist(next)) await warmStoredQueries();
+        if (disposed || ticket !== version) return;
         usable = next.connected && next.foreground !== false && !revoke;
+        refreshDetailTargets();
         updateCollectors();
         if (usable) for (const entry of entries.values()) schedule(entry);
       })
@@ -594,8 +695,40 @@ export function createGatewayResourceCache(
       failures: 0,
     };
     entries.set(query.id, entry);
-    hydrateEntry(entry);
+    const saved = isRunListView(query) ? heldRunListView(query) : takeStartupQuery(query);
+    if (applyStoredQuery(entry, saved)) {
+      entry.hydrated = true;
+      queueMicrotask(prune);
+    } else hydrateEntry(entry);
     return entry;
+  }
+
+  function takeStartupQuery(query: ResourceQuery): StoredResourceQuery | undefined {
+    if (startupStore !== store || startupOwnerVersion !== hydrationOwnerVersion) return undefined;
+    const id = nativeHistoryStorageId(query);
+    const saved = startupQueries.get(id);
+    startupQueries.delete(id);
+    return saved;
+  }
+
+  function applyStoredQuery(entry: QueryEntry, saved: StoredResourceQuery | undefined): boolean {
+    const query = entry.query;
+    if (
+      !saved ||
+      !query.persisted ||
+      saved.bytes > query.maxBytes ||
+      (query.method === Methods.NATIVE_SESSION_READ &&
+        !storedNativeHistoryMatches(query.params as NativeSessionTargetParams, saved.data))
+    )
+      return false;
+    const sourceObservation = query.sourceObservation?.(saved.data);
+    entry.state = {
+      status: 'stale',
+      data: saved.data,
+      observedAt: saved.observedAt,
+      ...(sourceObservation ? { sourceObservation, error: sourceObservation.error } : {}),
+    };
+    return true;
   }
 
   function hydrateEntry(entry: QueryEntry): void {
@@ -611,7 +744,8 @@ export function createGatewayResourceCache(
       const readingStore = store;
       try {
         const saved = query.persisted
-          ? ((isRunListView(query) ? await storedRunListView(query, readingStore) : undefined) ??
+          ? (takeStartupQuery(query) ??
+            (isRunListView(query) ? await storedRunListView(query, readingStore) : undefined) ??
             (await readingStore.getQuery(nativeHistoryStorageId(query))))
           : undefined;
         if (
@@ -622,18 +756,8 @@ export function createGatewayResourceCache(
           ownerVersion === hydrationOwnerVersion &&
           entry.hydrationSerial === hydrationSerial &&
           entry.state.status !== 'ready' &&
-          saved &&
-          saved.bytes <= query.maxBytes &&
-          (query.method !== Methods.NATIVE_SESSION_READ ||
-            storedNativeHistoryMatches(query.params as NativeSessionTargetParams, saved.data))
+          applyStoredQuery(entry, saved)
         ) {
-          const sourceObservation = query.sourceObservation?.(saved.data);
-          entry.state = {
-            status: 'stale',
-            data: saved.data,
-            observedAt: saved.observedAt,
-            ...(sourceObservation ? { sourceObservation, error: sourceObservation.error } : {}),
-          };
           notify(entry);
         }
       } catch (error) {
@@ -666,6 +790,10 @@ export function createGatewayResourceCache(
         };
       await runListLoad.promise;
     }
+    return heldRunListView(query);
+  }
+
+  function heldRunListView(query: ResourceQuery): StoredResourceQuery | undefined {
     const data = runList.view(query.params as RunListParams);
     return data && runList.observedAt !== undefined
       ? { id: query.id, data, observedAt: runList.observedAt, bytes: 0 }
@@ -738,7 +866,7 @@ export function createGatewayResourceCache(
   async function fetchEntry(
     entry: QueryEntry,
     observedOnly = false,
-    placement?: ResourceContentPlacement,
+    placement?: ResourceQueryPlacement,
     signal?: AbortSignal,
   ): Promise<void> {
     const prefetch = placement?.origin === 'prefetch' ? placement : undefined;
@@ -791,7 +919,14 @@ export function createGatewayResourceCache(
       const shared = entry.pending.prefetch;
       entry.pending.prefetch =
         shared && prefetch
-          ? { origin: 'prefetch', cohort: shared.cohort === 'gate' ? 'gate' : prefetch.cohort }
+          ? {
+              origin: 'prefetch',
+              cohort: shared.cohort === 'gate' ? 'gate' : prefetch.cohort,
+              maxStoredBytes: Math.min(
+                shared.maxStoredBytes ?? Infinity,
+                prefetch.maxStoredBytes ?? Infinity,
+              ),
+            }
           : undefined;
       return entry.pending.promise;
     }
@@ -945,6 +1080,7 @@ export function createGatewayResourceCache(
         const saved: StoredResourceQuery | undefined =
           serialized !== undefined &&
           bytes <= entry.query.maxBytes &&
+          (entry.listeners.size > 0 || bytes <= (pending.prefetch?.maxStoredBytes ?? Infinity)) &&
           (!retention || bytes <= retention.maxBytes)
             ? {
                 id: nativeHistoryStorageId(entry.query),
@@ -1022,7 +1158,9 @@ export function createGatewayResourceCache(
                 )
                 .sort(
                   (a, b) =>
-                    a.observedAt - b.observedAt ||
+                    (entry.query.method === Methods.RUN_GET
+                      ? (a.accessedAt ?? a.observedAt) - (b.accessedAt ?? b.observedAt)
+                      : a.observedAt - b.observedAt) ||
                     (entries.get(a.id)?.lastUsed ?? 0) - (entries.get(b.id)?.lastUsed ?? 0),
                 );
               if (!current()) return;
@@ -1038,6 +1176,14 @@ export function createGatewayResourceCache(
             }
             if (current()) await writingStore.putQuery(row);
           });
+        }
+        if (store.persistent && entry.query.method === Methods.RUN_LIST) {
+          const listed = reply.data as RunListResult;
+          if (Array.isArray(listed.runs)) {
+            for (const run of listed.runs)
+              fallbackDetailTargets.set(run.id, runDetailTarget(run, runListVersion(run)));
+          }
+          refreshDetailTargets();
         }
       } catch (error) {
         if (
@@ -1257,6 +1403,17 @@ export function createGatewayResourceCache(
     });
   }
 
+  async function retryQuery<T>(
+    query: ResourceQuery<T>,
+    placement?: ResourceQueryPlacement,
+    signal?: AbortSignal,
+  ): Promise<ResourceQueryState<T>> {
+    if (disposed) throw new Error('Resource cache is disposed');
+    const entry = entryFor(query);
+    await fetchEntry(entry, false, placement, signal);
+    return entry.state as ResourceQueryState<T>;
+  }
+
   return {
     observedKey(match) {
       for (const entry of entries.values())
@@ -1324,16 +1481,19 @@ export function createGatewayResourceCache(
       if (disposed) throw new Error('Resource cache is disposed');
       return entryFor(query).state as ResourceQueryState<T>;
     },
-    async retry<T>(
-      query: ResourceQuery<T>,
-      placement?: ResourceContentPlacement,
-      signal?: AbortSignal,
-    ) {
+    async readStored<T>(query: ResourceQuery<T>, refresh = true) {
       if (disposed) throw new Error('Resource cache is disposed');
+      const ownerVersion = hydrationOwnerVersion;
+      await barrier;
       const entry = entryFor(query);
-      await fetchEntry(entry, false, placement, signal);
+      await entry.hydration;
+      if (disposed || ownerVersion !== hydrationOwnerVersion)
+        throw new Error('The offline store owner changed');
+      // fetchEntry records network refusals in the query state and notifies its readers.
+      if (refresh && entry.state.data !== undefined) void fetchEntry(entry);
       return entry.state as ResourceQueryState<T>;
     },
+    retry: retryQuery,
     async retryAfterPending<T>(query: ResourceQuery<T>) {
       if (disposed) throw new Error('Resource cache is disposed');
       const entry = entryFor(query);
@@ -1347,6 +1507,15 @@ export function createGatewayResourceCache(
     readContent: (key) => readContentBytes((target) => target.getContent(contentKey(key)), false),
     runListProjections: () => runList.projections(),
     openContent: (key) => readContentBytes((target) => target.getContent(contentKey(key)), true),
+    async forgetContent(key) {
+      const target = store;
+      const ownerVersion = hydrationOwnerVersion;
+      await updateStore(
+        target,
+        () => target === store && !target.deleted && ownerVersion === hydrationOwnerVersion,
+        () => target.deleteContent(contentKey(key)),
+      );
+    },
     readContentByAlias: (alias) =>
       readContentBytes((target) => target.getContentByAlias(alias), false),
     openContentByAlias: (alias) =>
@@ -1358,6 +1527,7 @@ export function createGatewayResourceCache(
       if (disposed) return;
       const withdrawing = collectors.close();
       disposed = true;
+      detailSync.reset();
       version++;
       unsubscribeChanges();
       unsubscribeConnection();

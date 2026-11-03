@@ -31,6 +31,7 @@ import {
   CANARY_PROJECT,
   CANARY_REPO,
   canaryPack,
+  claudeReviewRunParams,
   claudeRunParams,
   fakeClaude,
   fakePi,
@@ -92,6 +93,12 @@ export const SURVIVE_STEPS = [
   'monitor',
   'review',
   'review-fix',
+  'review-fix-large',
+  'review-fix-claude',
+  'review-fix-claude-typed',
+  'review-fix-claude-card',
+  'review-fix-claude-card-dead',
+  'review-fix-claude-card-silent',
   'human-gate-prep',
   'finalize',
   'monitor-transport-abort',
@@ -105,6 +112,10 @@ const LOSS_SETTLE_MS = 5_000;
 // The launch's session capture gives up after 20 s on a runner that has reported no session yet.
 const READINESS_WAIT_MS = 30_000;
 const WORKER_LEFT_RUNNING_CARD = 'engine_worker_left_running';
+// Recovery looks for proof of an unconfirmed fix delivery for 120 s before it gives up: a hold
+// shorter than this cannot tell a worker it adopted from one still inside that window.
+const FIX_CARD_WITHIN_MS = 150_000;
+const RESTART_TWICE: Variant[] = ['node-up', 'node-up'];
 const TRANSPORT_ABORT = /\bterminated\b|abort|ECONNRESET|socket hang up|connection reset/i;
 
 export interface IsolatedOptions {
@@ -158,7 +169,8 @@ type ShapeName =
   | 'claude'
   | 'claude-card'
   | 'review'
-  | 'scripted-review';
+  | 'scripted-review'
+  | 'claude-review';
 
 const SHAPES: Record<ShapeName, Shape> = {
   canary: canaryShape('isolated lifecycle'),
@@ -190,6 +202,15 @@ const SHAPES: Record<ShapeName, Shape> = {
     project: REVIEW_PROJECT,
     create: reviewRunParams,
     decide: () => undefined,
+    scriptedReview: true,
+    timeoutMs: 20 * 60_000,
+  },
+  // A Claude-runner worker, the test pressing the card's Replay step when its hold is over.
+  'claude-review': {
+    project: REVIEW_PROJECT,
+    create: claudeReviewRunParams,
+    decide: (decision) =>
+      decision.type === WORKER_LEFT_RUNNING_CARD ? { resolve: 'replay-step' } : undefined,
     scriptedReview: true,
     timeoutMs: 20 * 60_000,
   },
@@ -232,6 +253,8 @@ interface HoldPhase {
     relaunches?: boolean;
     /** Recovery cannot prove delivery: the run waits on the card, its worker untouched. */
     card?: boolean;
+    /** How long to watch, and how long recovery may look for proof before the card must be up. */
+    watchMs?: number;
   };
 }
 
@@ -359,6 +382,7 @@ function restartPhase(
 }
 
 const fixContext = (run: Run) => contexts(run, 'review-fix').at(-1);
+const reviewRunning = ({ run }: View) => stepStatus(run, 'review') === 'running';
 const reviewHoldMissed = ({ run }: View) =>
   SETTLED_STEP.has(stepStatus(run, 'review') ?? '') || contexts(run, 'review-fix').length > 0;
 /** Held with the fix worker mid-turn in its round. */
@@ -375,18 +399,20 @@ const fixRoundHold = (
 
 /**
  * The reviewed run's holds: its loop-1 reviewer (node up), its fix round (node up, the fix
- * completing while the gateway is down), its loop-2 re-review (node away). A scripted worker has
- * no prompt receipt, so a restart while its fix signal still reads running makes recovery resend
- * the fix prompt, which it cannot accept: the fix finishes during the outage instead (#1724).
+ * completing while the gateway is down), its loop-2 re-review (node away). The review-fix
+ * worker-survives variants cover a restart with the fix still running.
  */
 function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): HoldPhase[] {
   const review = marker(stack, 'review');
+  // Past what the gateway can accept itself, so the fix leads to the re-review held below.
+  const large = marker(stack, 'large-leftover');
   return [
     {
       step: 'review',
       restarts: ['node-up'],
       nodeAwayMs: reviewFixNodeAwayMs,
       armAt: 'create',
+      prepare: large.arm,
       arm: review.arm,
       held: ({ run }) =>
         review.hit() &&
@@ -448,6 +474,58 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
   ];
 }
 
+/**
+ * What follows the fix card. Restarts must find it open with its worker kept, and must keep a fix
+ * Replay step adopted going: restart recovery skips a run still carrying an uncertainty mark.
+ */
+function fixCardFollowUp(stack: RemoteNodeStack, step: SurviveStep): HoldPhase[] {
+  const noHook = marker(stack, 'claude-no-hook');
+  const noFinish = marker(stack, 'claude-no-finish');
+  const worker = marker(stack, 'worker');
+  const fix = marker(stack, 'fix');
+  const base = {
+    step,
+    restarts: ['node-up'] as Variant[],
+    nodeAwayMs: 0,
+    armAt: 'create' as const,
+    arm: async () => {},
+    // REVIEW still reads failed, from the card, when these phases start.
+    missed: ({ run }: View) => stepStatus(run, 'review') === 'done',
+    held: ({ run }: View) => run.status === 'blocked' && Boolean(openCard(run)),
+    release: async (context: HoldContext) => {
+      await noHook.release(context);
+      await noFinish.release(context);
+      await worker.release(context);
+    },
+  };
+  switch (step) {
+    case 'review-fix-claude-card':
+      return [
+        { ...base, survive: { card: true } },
+        {
+          ...base,
+          arm: fix.arm,
+          held: ({ run }) => fix.hit() && reviewRunning({ run }),
+          release: fix.release,
+          survive: {},
+        },
+      ];
+    case 'review-fix-claude-card-dead':
+      return [
+        {
+          ...base,
+          whileDown: async (context) => {
+            if (!context.held) throw new Error('The card was never held');
+            for (const { pid } of snapshotWorker(stack, context.slotId, context.held).processes)
+              if (alive(pid)) process.kill(pid, 'SIGKILL');
+          },
+        },
+      ];
+    default:
+      return [{ ...base, restarts: [] }];
+  }
+}
+
 /** The fix round's commit is at HEAD: the debug file it removes is gone, the source it fixes is kept. */
 function fixInCheckout(slotRepo: string): boolean {
   try {
@@ -480,6 +558,18 @@ export const SURVIVE_HOLDS: Record<SurviveStep, string> = {
     "the codex proxy swallows the reviewer's turn (no model call); the test answers it after the watch",
   'review-fix':
     'the relaunched worker commits its fix with the fix round live, then waits on holds/fix; the scripted reviewer returned issues in loop 1 and passes loop 2',
+  'review-fix-large':
+    'the same, with a fix past the 50 lines the gateway can accept itself, so recovery leads to a real re-review',
+  'review-fix-claude':
+    'a Claude-runner worker (no model) resumed with its fix prompt on argv records the prompt hook, then waits on holds/worker before it starts the fix; the scripted reviewer returned issues in loop 1',
+  'review-fix-claude-typed':
+    'the same worker with no session recorded, so its fix prompt is typed at its prompt; it waits on holds/worker mid-turn, and nothing may be typed again',
+  'review-fix-claude-card':
+    'the same resumed worker, except that its prompt hook is withheld, so nothing proves delivery: the test watches the worker through to the card, restarts again with the card open, lets it fix, presses Replay step, and restarts a third time with the fix mid-round',
+  'review-fix-claude-card-dead':
+    'the worker on the card is killed while the gateway is down; Replay step then has to run REVIEW again with no live fix',
+  'review-fix-claude-card-silent':
+    'the worker on the card never acts on its prompt; Replay step finds no proof again, so it relaunches and sends',
   'human-gate-prep':
     "the scripted runner stays alive after its work (holds/idle); git on the run's slot waits while HUMAN_GATE prepares its package, released while the gateway is down",
   finalize:
@@ -663,10 +753,61 @@ function survivePhase(
     case 'review-fix': {
       return {
         ...base,
+        restarts: RESTART_TWICE,
         armAt: 'create',
         ...fixRoundHold(marker(stack, 'fix')),
-        survive: {},
+        survive: { watchMs: FIX_CARD_WITHIN_MS },
       } satisfies HoldPhase;
+    }
+    case 'review-fix-large': {
+      const large = marker(stack, 'large-leftover');
+      return {
+        ...base,
+        restarts: RESTART_TWICE,
+        armAt: 'create',
+        ...fixRoundHold(marker(stack, 'fix')),
+        prepare: large.arm,
+        survive: { release: large.release },
+      } satisfies HoldPhase;
+    }
+    // Armed once REVIEW runs: the worker's task stage must not hold, or lose its hook.
+    case 'review-fix-claude':
+      return {
+        ...base,
+        restarts: RESTART_TWICE,
+        armAt: reviewRunning,
+        ...fixRoundHold(worker),
+        survive: { watchMs: FIX_CARD_WITHIN_MS },
+      };
+    case 'review-fix-claude-typed': {
+      const noSession = marker(stack, 'claude-no-session');
+      return {
+        ...base,
+        restarts: RESTART_TWICE,
+        armAt: reviewRunning,
+        ...fixRoundHold(worker),
+        prepare: noSession.arm,
+        survive: { release: noSession.release },
+      };
+    }
+    case 'review-fix-claude-card':
+    case 'review-fix-claude-card-dead':
+    case 'review-fix-claude-card-silent': {
+      const noHook = marker(stack, 'claude-no-hook');
+      const noFinish = marker(stack, 'claude-no-finish');
+      return {
+        ...base,
+        armAt: reviewRunning,
+        ...fixRoundHold(worker),
+        arm: async (context) => {
+          await noHook.arm(context);
+          if (step === 'review-fix-claude-card-silent') await noFinish.arm(context);
+          await worker.arm(context);
+        },
+        // fixCardFollowUp lifts what holds the worker.
+        release: async () => {},
+        survive: { card: true, watchMs: FIX_CARD_WITHIN_MS },
+      };
     }
     case 'monitor-transport-abort': {
       const turnFailure = marker(stack, PI_TURN_FAILURE, () => 'terminated\n');
@@ -857,9 +998,10 @@ async function watchWorker(
   getRun: () => Promise<Run>,
   step: HoldStep,
   expectCard = false,
+  watchMs = SURVIVE_OBSERVE_MS,
 ): Promise<string[]> {
   const stops = path.join(stack.holds, 'tmux-stops.log');
-  const deadline = Date.now() + SURVIVE_OBSERVE_MS;
+  const deadline = Date.now() + watchMs;
   let until = deadline;
   let losing = false;
   for (;;) {
@@ -895,7 +1037,7 @@ async function watchWorker(
         `a new reviewer was launched: ${relaunched.map((context) => context.id).join(', ')}`,
       );
     if (expectCard) {
-      if (!(run.status === 'blocked' && openCard(run)))
+      if (!(run.status === 'blocked' && openCard(run)) && (losing || Date.now() >= deadline))
         lost.push(`the run is not waiting on the card: ${brief(run)}`);
     } else if (failed.length || isTerminalRunStatus(run.status))
       lost.push(`the run went ${run.status}: ${failureText(run) || brief(run)}`);
@@ -956,20 +1098,70 @@ function cardObservations(scenario: ScenarioResult): string[] {
   ];
 }
 
-/** The reviews a survive hold must still have run: the outcome comparison doesn't see them. */
-function reviewRoundDifferences(scenario: ScenarioResult, baseline: ScenarioResult): string[] {
+/**
+ * The reviews a survive hold must still have run: the outcome comparison doesn't see them. A
+ * recovered fix costs what an uninterrupted one does: `extraReviewers` is only for the variants
+ * whose reviewer is real work (a fix too large to accept, a worker lost before its fix).
+ * `refusedResumes` is the proxy's doing, not recovery's: a swallowed turn never reaches codex, so
+ * that thread cannot resume and its re-review falls back cold. With real turns the review row
+ * resumes the same session, no fallback and no no-verdict receipt.
+ */
+function reviewRoundDifferences(
+  scenario: ScenarioResult,
+  baseline: ScenarioResult,
+  extraReviewers: number,
+  refusedResumes: number,
+): string[] {
   const seen = reviewVerdicts(scenario.run);
-  const expected = reviewVerdicts(baseline.run);
+  const expected = reviewVerdicts(baseline.run).reviewers + extraReviewers + refusedResumes;
+  const fallbacks = contexts(scenario.run, 'review').flatMap((context) =>
+    context.reviewFallback ? [context.reviewFallback.detail] : [],
+  );
   return [
     ...(seen.loop2 === 'pass'
       ? []
       : [`re-review: expected pass, observed ${seen.loop2 ?? 'none'}`]),
-    ...(seen.reviewers === expected.reviewers
+    ...(seen.reviewers === expected
       ? []
-      : [`${seen.reviewers} reviewers ran, expected ${expected.reviewers}`]),
-    ...(scenario.reviewerTurns === seen.reviewers
+      : [`${seen.reviewers} reviewers ran, expected ${expected}`]),
+    ...(scenario.reviewerTurns === seen.reviewers - refusedResumes
       ? []
       : [`${scenario.reviewerTurns ?? 0} reviewer turns for ${seen.reviewers} reviewers`]),
+    ...(fallbacks.length === refusedResumes
+      ? []
+      : [`${fallbacks.length} reviewers fell back cold`]),
+    ...fallbacks
+      .filter((detail) => !detail?.includes('has not produced a live session'))
+      .map((detail) => `a refused resume the proxy does not explain: ${detail}`),
+  ];
+}
+
+const reviewDepth = (run: Run) =>
+  run.steps.find((entry) => entry.name === 'review')?.outputs?.validationDepth;
+
+/**
+ * Where a fix round's recovery took it: a worker holding the fix keeps it, unsent, and only a card's
+ * Replay step may send it again, to a worker that lost it. Either way it keeps the review's depth.
+ */
+function fixRoundDifferences(
+  scenario: ScenarioResult,
+  baseline: ScenarioResult,
+  step: SurviveStep,
+): string[] {
+  const held = scenario.cardRun ?? scenario.heldRun;
+  if (!held) return ['the fix round was never held'];
+  const before = fixContext(held)?.promptDeliveryStartedAt;
+  const final = fixContext(scenario.run)?.promptDeliveryStartedAt;
+  const sentAgain = before !== final;
+  const expectResend =
+    step === 'review-fix-claude-card-dead' || step === 'review-fix-claude-card-silent';
+  return [
+    ...(sentAgain === expectResend ? [] : [`fix sends: ${before ?? '-'} -> ${final ?? '-'}`]),
+    ...(reviewDepth(scenario.run) === reviewDepth(baseline.run)
+      ? []
+      : [
+          `review depth: expected ${String(reviewDepth(baseline.run))}, observed ${String(reviewDepth(scenario.run))}`,
+        ]),
   ];
 }
 
@@ -995,6 +1187,10 @@ interface ScenarioResult extends DrivenRun {
   survival?: string[];
   /** The run as it waited on the card, once its watch was over. */
   cardRun?: Run;
+  /** What was typed at the fixture's Claude-runner worker mid-turn. */
+  typedMidTurn?: string;
+  /** The run at its first worker hold. */
+  heldRun?: Run;
   fixLanded?: boolean;
 }
 
@@ -1002,7 +1198,8 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
   const { log, evidence, onCheck } = options;
   const restarts = options.restarts ?? [];
   const survive = options.survive ?? [];
-  const scriptedReviewStep = (step: SurviveStep) => step === 'review' || step === 'review-fix';
+  const scriptedReviewStep = (step: SurviveStep) =>
+    step === 'review' || step.startsWith('review-fix');
   const survivePipe = survive.filter((step) => !scriptedReviewStep(step)).length;
   const surviveReview = survive.filter(scriptedReviewStep).length;
   const slots: string[] = [];
@@ -1065,6 +1262,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       'idle',
       'tmux',
       'tmux.arm',
+      'large-leftover',
+      'claude-no-session',
+      'claude-input.log',
       PI_TURN_FAILURE,
     ])
       for (const suffix of ['', '.hit', '.seen'])
@@ -1077,6 +1277,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     let watched: string[] | undefined;
     let survival: string[] | undefined;
     let cardRun: Run | undefined;
+    let heldRun: Run | undefined;
     const unreached: HoldStep[] = [];
     let current = 0;
     let runId = '';
@@ -1096,6 +1297,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       if (armed.has(phase) && phase.held(view)) {
         await log(`${label}: ${phase.step} held`, { run: brief(run) });
         hold.held = run;
+        heldRun ??= run;
         await writeJson(path.join(dir, `run-held-${current + 1}-${phase.step}.json`), run);
         const snapshot = phase.survive ? snapshotWorker(stack, slotId, run) : undefined;
         if (snapshot) {
@@ -1145,6 +1347,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
                     getRun,
                     phase.step,
                     phase.survive?.card,
+                    phase.survive?.watchMs,
                   )
                 : ['nothing to watch: no runner process at the hold point']),
           ];
@@ -1225,10 +1428,19 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         ...(watched ? { watched, survival: survival ?? [] } : {}),
         ...(hold.fixLanded !== undefined ? { fixLanded: hold.fixLanded } : {}),
         ...(cardRun ? { cardRun } : {}),
+        ...(heldRun ? { heldRun } : {}),
+        typedMidTurn: await readFile(path.join(stack.holds, 'claude-input.log'), 'utf8').catch(
+          () => '',
+        ),
         ...(shape.scriptedReview ? { reviewerTurns: reviewer.turns() } : {}),
       };
     } finally {
       if (shape.scriptedReview) await reviewer.stop(dir);
+      const crash = path.join(stack.holds, 'claude-worker.err');
+      if (existsSync(crash)) {
+        await log(`${label}: the fixture worker crashed`, { error: await readFile(crash, 'utf8') });
+        await rm(crash, { force: true });
+      }
     }
   }
 
@@ -1382,35 +1594,45 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     const pi = step === 'monitor-transport-abort';
     const claude = step.startsWith('dispatch-claude-');
     const card = step.startsWith('dispatch-claude-card');
+    const claudeFix = step.startsWith('review-fix-claude');
+    const fixCard = step.startsWith('review-fix-claude-card');
+    const reviewFix = step.startsWith('review-fix');
+    const large = step === 'review-fix-large';
+    const extraReviewers = large || step === 'review-fix-claude-card-dead' ? 1 : 0;
     let baseline: ScenarioResult;
     const result = await check(
       {
         case: 'worker-survives',
         variant: step,
-        model: scripted
-          ? `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer whose turns the test answers (no model call)`
-          : pi
-            ? 'pi worker with no model (fixture)'
-            : claude
-              ? 'claude worker with no model (fixture)'
-              : 'scripted',
+        model: claudeFix
+          ? `claude worker with no model (fixture), ${REVIEWER.runner} ${REVIEWER.model} reviewer whose turns the test answers (no model call)`
+          : scripted
+            ? `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer whose turns the test answers (no model call)`
+            : pi
+              ? 'pi worker with no model (fixture)'
+              : claude
+                ? 'claude worker with no model (fixture)'
+                : 'scripted',
         hold: SURVIVE_HOLDS[step],
       },
       async () => {
         baseline = await baselineOf(scripted ? 'scripted-review' : 'pipe');
         return runScenario(
           `survive-${step}`,
-          scripted
-            ? 'scripted-review'
-            : pi
-              ? 'pi'
-              : card
-                ? 'claude-card'
-                : claude
-                  ? 'claude'
-                  : 'pipe',
+          claudeFix
+            ? 'claude-review'
+            : scripted
+              ? 'scripted-review'
+              : pi
+                ? 'pi'
+                : card
+                  ? 'claude-card'
+                  : claude
+                    ? 'claude'
+                    : 'pipe',
           [
             survivePhase(stack, step, reviewer),
+            ...(fixCard ? fixCardFollowUp(stack, step) : []),
             // The relaunched attempt, interrupted too: the session it reopens must be its own.
             ...(step === 'dispatch-claude-card'
               ? [
@@ -1440,17 +1662,26 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             : []),
           ...outcomeDifferences(
             baseline.outcome,
-            card ? withoutCard(scenario.outcome) : scenario.outcome,
+            card || fixCard ? withoutCard(scenario.outcome) : scenario.outcome,
           ),
-          ...(scripted ? reviewRoundDifferences(scenario, baseline) : []),
+          ...(scripted
+            ? reviewRoundDifferences(scenario, baseline, extraReviewers, large ? 1 : 0)
+            : []),
           ...(card ? cardDifferences(scenario, step) : []),
+          ...(fixCard && !scenario.cardRun ? ['the run never waited on the card'] : []),
+          ...(reviewFix
+            ? [...scenario.refused, ...fixRoundDifferences(scenario, baseline, step)]
+            : []),
+          ...(reviewFix && scenario.typedMidTurn
+            ? [`typed at the worker mid-turn: ${scenario.typedMidTurn.slice(0, 200)}`]
+            : []),
         ];
         return {
           status: differences.length ? 'fail' : 'pass',
           differences,
           observations: [
             `watched: ${(scenario.watched ?? []).join('; ') || 'nothing'}`,
-            ...(card ? cardObservations(scenario) : []),
+            ...(card || fixCard ? cardObservations(scenario) : []),
             ...outcomeObservations(baseline.outcome, scenario.outcome),
             ...(scripted ? [`reviews: ${scenario.outcome.reviews.join(', ') || '-'}`] : []),
           ],

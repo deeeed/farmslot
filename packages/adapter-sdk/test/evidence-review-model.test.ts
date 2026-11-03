@@ -26,6 +26,8 @@ import {
   runEvidencePending,
 } from '../src/evidence.js';
 
+import { untimedRecordingFixture } from './untimed-fixture.js';
+
 const zero = Date.parse('2026-01-01T00:00:00Z');
 const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 const videoDigest = digest('original recording');
@@ -153,6 +155,11 @@ test('a measured proof stays primary while its supporting stills remain raw and 
   const claim = model.claims.find((row) => row.id === 'check-1');
   assert.ok(claim);
   const display = model.claimDisplay(claim.id);
+  assert.deepEqual(
+    model.claimMedia('case-1').screenshots.filter(({ inspection }) => inspection),
+    [],
+    'measured criteria without bound stills do not borrow manifest screenshots',
+  );
   assert.equal(display.clip, claim.clips[0]);
   assert.deepEqual(display.selected, []);
   assert.deepEqual(
@@ -511,6 +518,60 @@ test('video and trace digest mismatches remain visible and disable all seeking',
   }
 });
 
+test('F338 lists untimed originals and same-attempt inspection screenshots without changing claims', () => {
+  const input = untimedRecordingFixture(qaPackage(1));
+  assert.ok(input.claims);
+  const original = input.claims.recording.segments[0];
+  assert.ok(original);
+  const rotated = {
+    ...original,
+    videoPath: 'video-2.mp4',
+    videoDigest: digest('rotated original'),
+  };
+  input.claims.recording.segments.push(rotated);
+  for (const claim of input.claims.criteria) {
+    claim.evidence.push(rotated.videoPath);
+    claim.moments = claim.moments.flatMap((moment) => [
+      moment,
+      { ...moment, videoDigest: rotated.videoDigest },
+    ]);
+  }
+  assert.ok(input.artifactPaths);
+  input.artifactPaths = [...input.artifactPaths, rotated.videoPath];
+  input.artifactDigests = { ...input.artifactDigests, [rotated.videoPath]: rotated.videoDigest };
+  assert.ok(
+    input.manifest &&
+      typeof input.manifest === 'object' &&
+      'artifacts' in input.manifest &&
+      Array.isArray(input.manifest.artifacts),
+  );
+  input.manifest.artifacts.push({ path: rotated.videoPath, type: 'video' });
+  const model = createEvidenceReviewModel({
+    package: input,
+    artifactPrefix: 'artifacts/recipe-runs/transport-id/',
+    packagePath: 'artifacts/recipe-runs/transport-id/',
+  });
+  assert.deepEqual(model.errors, []);
+  const before = structuredClone(model.claims);
+  const media = model.claimMedia('check-1');
+  assert.equal(media.recording?.artifactPath, 'artifacts/recipe-runs/transport-id/video.mp4');
+  assert.deepEqual(
+    media.screenshots.map(({ artifact, inspection }) => [artifact.artifactPath, inspection]),
+    [['artifacts/recipe-runs/transport-id/stills/1.png', true]],
+  );
+  assert.equal(model.recordingForPath(media.recording!.artifactPath)?.hasTimeline, false);
+  assert.deepEqual(
+    model.claimMedia('check-1', 'artifacts/recipe-runs/transport-id/video-2.mp4').screenshots,
+    media.screenshots,
+    'every original from the selected attempt keeps its inspection context',
+  );
+  assert.equal(model.recordings.length, 0, 'availability never fabricates a measured timeline');
+  assert.equal(model.selectClaim('check-1')?.timing, 'untimed');
+  assert.deepEqual(model.selection?.clips, []);
+  assert.deepEqual(model.claims, before, 'inspection context never adds AC proof or verdicts');
+  assert.equal(model.recordingForPath('artifacts/recipe-baseline-run/video.mp4'), undefined);
+});
+
 test('outside footage is never trimmed into proof, and untimed files stay visible', () => {
   const model = createEvidenceReviewModel({ recordings: [recording([entry('early', -100, 100)])] });
   assert.equal(model.selectOccurrence(0)?.timing, 'outside-recording');
@@ -816,6 +877,54 @@ test('measured frame stepping preserves the existing player controls', () => {
     model.displayedFrameRangeMs(source.timeline.videoPath, 1_450, 1_500),
     [1_400, 1_500],
   );
+});
+
+test('real simctl duplicate timestamps preserve selection, frame ranges and both seek directions', () => {
+  const fixture: { durationSeconds: string; ptsAndBestEffortSeconds: [string, string][] } =
+    JSON.parse(
+      readFileSync(
+        new URL(
+          '../../protocol/test/fixtures/simctl-duplicate-frame-timestamps.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    );
+  const framesMs = fixture.ptsAndBestEffortSeconds.map(([pts]) => Number(pts) * 1000);
+  const source = recording(
+    [entry('first duplicate', 2500, 2600), entry('second duplicate', 9000, 9200)],
+    0,
+    Number(fixture.durationSeconds) * 1000,
+  );
+  source.timeline.framesMs = framesMs;
+  const model = createEvidenceReviewModel({ recordings: [source] });
+  assert.deepEqual(model.errors, []);
+  assert.equal(model.selectOccurrence(0)?.timing, 'measured');
+  const duplicates = framesMs.filter((time, index) => index > 0 && time === framesMs[index - 1]);
+  assert.equal(duplicates.length, 2);
+  for (const time of duplicates) {
+    const previous = framesMs.filter((value) => value < time).at(-1)!;
+    const next = framesMs.find((value) => value > time)!;
+    assert.equal(model.adjacentFrameMs(source.videoPath, time, -1), previous);
+    assert.equal(model.adjacentFrameMs(source.videoPath, time, 1), next);
+    assert.deepEqual(model.displayedFrameRangeMs(source.videoPath, time), [time, next]);
+  }
+});
+
+test('duplicate frame groups keep seeking bounded at both ends', () => {
+  for (const framesMs of [
+    [0, 0, 100, 200, 200],
+    [0, 0, 0],
+  ]) {
+    const source = recording([entry('verify', 50, 100)], 0, 300);
+    source.timeline.framesMs = framesMs;
+    const model = createEvidenceReviewModel({ recordings: [source] });
+    assert.deepEqual(model.errors, []);
+    assert.equal(model.adjacentFrameMs(source.videoPath, 0, -1), 0);
+    const last = framesMs.at(-1)!;
+    assert.equal(model.adjacentFrameMs(source.videoPath, last, 1), last);
+    assert.deepEqual(model.displayedFrameRangeMs(source.videoPath, last), [last, 300]);
+  }
 });
 
 test('both player renderers inherit bounded seeking, stopping and ordered segment transitions', () => {
@@ -1528,6 +1637,11 @@ test('comparison roles retain original executions, exact claim rows, independent
   const row = model.comparisons.find((row) => row.claim.id === 'check-1')!;
   assert.equal(row.sourceUrl, 'https://example.test/TAT-1');
   assert.equal(row.selectedBefore?.recipeRunId, 'baseline');
+  assert.deepEqual(
+    model.claimMedia('check-1', row.selectedBefore!.artifactPath).screenshots,
+    [],
+    'opening a baseline capture never borrows head inspection context',
+  );
   assert.equal(row.selectedAfter?.recipeRunId, 'head');
   assert.notEqual(row.selectedBefore?.identity, row.selectedAfter?.identity);
   assert.equal(row.selectedBefore?.clips[0]?.moment?.recipeRunId, 'baseline');

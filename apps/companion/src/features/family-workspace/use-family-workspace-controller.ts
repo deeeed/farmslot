@@ -17,6 +17,7 @@ import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/vie
 import type { MediaViewerItem } from '../../components/MediaViewer';
 import { observeNativeFamilyFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQuery';
+import { closeArtifactDocument, readStoredArtifact } from '../../lib/artifact-response';
 import {
   artifactsForRecipeRun,
   artifactUrlForEntry,
@@ -35,7 +36,6 @@ import {
   normalizeFamilyEvidenceFilterParam,
 } from '../../lib/family-evidence';
 import { collectFamilyRetrospectives } from '../../lib/family-retrospectives';
-import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
 import { readErrorMessage } from '../../lib/resource-read-status';
@@ -413,19 +413,25 @@ export function useFamilyWorkspaceController() {
       documentAbortRef.current = controller;
       const url = familyArtifactUrl(gatewayUrl, artifact);
       const current = captureCurrent();
-      gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.text();
-        })
-        .then((body) => {
-          if (current() && !controller.signal.aborted)
-            setDocumentViewer({
-              title: artifact.path.split('/').pop() ?? artifact.path,
-              body,
-              sharedArtifact: { runId: artifact.runId, path: artifact.path },
-            });
-        })
+      const applyStored = (response: Response) =>
+        Promise.resolve(response)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.text();
+          })
+          .then((body) => {
+            if (current() && !controller.signal.aborted)
+              setDocumentViewer({
+                title: artifact.path.split('/').pop() ?? artifact.path,
+                body,
+                sharedArtifact: { runId: artifact.runId, path: artifact.path },
+              });
+          });
+      readStoredArtifact(url, artifactAuthHeaders, {
+        signal: controller.signal,
+        onStored: applyStored,
+      })
+        .then(applyStored)
         .catch((err: Error) => {
           // Abort is the expected cleanup path when navigating or opening another document.
           if (err.name === 'AbortError' || !current()) return;
@@ -745,7 +751,7 @@ export function useFamilyWorkspaceController() {
     viewerUri,
     setViewerUri,
     documentViewer,
-    setDocumentViewer,
+    closeDocument: () => closeArtifactDocument(documentAbortRef, () => setDocumentViewer(null)),
     evidenceFilter,
     setEvidenceFilter,
     router,

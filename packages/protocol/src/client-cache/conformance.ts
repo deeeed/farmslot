@@ -6,7 +6,12 @@ import { createGatewayResourceCache } from './cache.js';
 import { gitBlobHash } from './content.js';
 import { canonicalResourceJson, type ResourceReadStamp } from './keys.js';
 import { type ResourceQuery, resourceQuery, type ResourceReadMethod } from './registry.js';
-import type { ResourceStore, ResourceStoreMetadata, ResourceStoreScope } from './store.js';
+import {
+  readStoredQueryBatch,
+  type ResourceStore,
+  type ResourceStoreMetadata,
+  type ResourceStoreScope,
+} from './store.js';
 import type {
   GatewayResourceCache,
   ResourceCacheConnection,
@@ -21,7 +26,7 @@ interface ConformanceData {
 }
 interface ConformanceRead {
   signal: AbortSignal;
-  resolve(data: ConformanceData, revision?: number): void;
+  resolve(data: unknown, revision?: number): void;
   reject(code: string): void;
 }
 type StoreFactory = (scope: ResourceStoreScope) => ResourceStore | Promise<ResourceStore>;
@@ -210,6 +215,15 @@ export async function runResourceStoreConformance(factory: StoreFactory): Promis
         cohort: 'gate',
       });
       const listed = await store.listQueries();
+      const batch = await readStoredQueryBatch(store, 27);
+      verify(
+        batch.length === 1 && batch[0].id === 'placed' && batch[0].bytes === 27,
+        'startup query batch must keep the newest entry within its byte bound',
+      );
+      verify(
+        (await readStoredQueryBatch(store, 0)).length === 0,
+        'an empty startup budget reads no query bodies',
+      );
       const placed = listed.find((row) => row.id === 'placed');
       const reread = await store.getQuery('placed');
       verify(

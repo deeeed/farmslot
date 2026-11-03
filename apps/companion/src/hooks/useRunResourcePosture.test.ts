@@ -3,6 +3,7 @@ import test from 'node:test';
 import { URL } from 'node:url';
 
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { isGatewayBackgroundPauseError } from '../lib/recoverable-errors';
 import { postureAfterPausedRefresh, postureWhileRefreshing } from '../lib/run-resource-posture';
@@ -17,6 +18,8 @@ function mount() {
     'useRunResourcePosture',
     {
       '@farmslot/protocol': { Methods },
+      '@farmslot/protocol/client-cache': { resourceQuery },
+      '../lib/resource-cache': { readStored: () => new Promise<never>(() => undefined) },
       '../lib/recoverable-errors': { isGatewayBackgroundPauseError },
       '../lib/run-resource-posture': { postureAfterPausedRefresh, postureWhileRefreshing },
     },

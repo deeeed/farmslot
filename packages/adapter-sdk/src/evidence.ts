@@ -3,6 +3,7 @@ export type {
   EvidenceReviewArtifact,
   EvidenceReviewClaim,
   EvidenceReviewClaimDisplay,
+  EvidenceReviewClaimMedia,
   EvidenceReviewClaimOffers,
   EvidenceReviewClip,
   EvidenceReviewComparisonFilter,
@@ -14,6 +15,7 @@ export type {
   EvidenceReviewGateSnapshot,
   EvidenceReviewInput,
   EvidenceReviewJudgmentRow,
+  EvidenceReviewMediaRecording,
   EvidenceReviewMediaType,
   EvidenceReviewModel,
   EvidenceReviewOccurrence,
@@ -22,6 +24,7 @@ export type {
   EvidenceReviewRecording,
   EvidenceReviewRecordingInput,
   EvidenceReviewRecordingSelection,
+  EvidenceReviewScreenshot,
   EvidenceReviewSelection,
   EvidenceReviewTiming,
 } from './evidence-review-model.js';

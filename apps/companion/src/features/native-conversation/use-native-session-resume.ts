@@ -73,7 +73,7 @@ export function useNativeSessionResume(
   const ready = enabled && profiles.viewModel.ready && connection === 'connected' && !busy;
   const start = async (
     allowed: boolean,
-    request: (
+    createParams: (
       from: NativeSessionInfo,
       selected: NativeProfileReference | undefined,
     ) => NativeSessionCreateParams,
@@ -99,7 +99,7 @@ export function useNativeSessionResume(
       assertCurrent();
       const result = await client.request<{ session: NativeSessionInfo }>(
         Methods.NATIVE_SESSION_CREATE,
-        request(session, selected),
+        createParams(session, selected),
         30_000,
       );
       if (

@@ -9,6 +9,7 @@ import {
   resourceQuery,
   type ResourceQueryRetention,
   type ResourceStore,
+  RUN_DETAIL_STORE_BYTES,
 } from '../../src/client-cache/index.js';
 
 const scope = {
@@ -16,6 +17,26 @@ const scope = {
   principalId: 'owner',
   principalGeneration: 0,
 };
+
+test('background reply admission obeys its remaining budget while an opened read can persist', async () => {
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  const store = createMemoryResourceStore();
+  const cache = createGatewayResourceCache({ transport, store });
+  const query = resourceQuery<{ value: string }>('sources.status');
+  try {
+    const limited = cache.retry(query, { origin: 'prefetch', maxStoredBytes: 1 });
+    (await transport.nextRead()).resolve({ value: 'larger than the remaining budget' });
+    assert.equal((await limited).data?.value, 'larger than the remaining budget');
+    assert.equal(await store.getQuery(query.id), undefined);
+    const opened = cache.retry(query);
+    (await transport.nextRead()).resolve({ value: 'opened' });
+    await opened;
+    assert.deepEqual((await store.getQuery(query.id))?.data, { value: 'opened' });
+  } finally {
+    await cache.dispose();
+  }
+});
 
 // Exercise the policy with the existing stamped conformance read before enabling run migration.
 function detail(
@@ -36,18 +57,18 @@ async function read(
   return done;
 }
 
-test('the registered run detail policy caps the whole method at 50 entries and 20 MB', () => {
+test('run details are bounded by bytes, not count, so every listed run can be kept', () => {
   assert.deepEqual(resourceQuery('run.get', { runId: 'run' }).retention, {
-    maxEntries: 50,
-    maxBytes: 20 * 1024 * 1024,
+    maxEntries: Number.MAX_SAFE_INTEGER,
+    maxBytes: RUN_DETAIL_STORE_BYTES,
   });
 });
 
 test('migrated run collections and details admit stamped reads and bounded persistence', () => {
-  for (const [method, maxBytes] of [
-    ['run.list', 20 * 1024 * 1024],
-    ['run.get', 20 * 1024 * 1024],
-    ['decision.list', 10 * 1024 * 1024],
+  for (const [method, maxBytes, retained] of [
+    ['run.list', 20 * 1024 * 1024, 20 * 1024 * 1024],
+    ['run.get', 20 * 1024 * 1024, RUN_DETAIL_STORE_BYTES],
+    ['decision.list', 10 * 1024 * 1024, 10 * 1024 * 1024],
   ] as const) {
     const query = resourceQuery(method, method === 'run.get' ? { runId: 'retained' } : {});
     assert.equal(query.live, true, `${method} must receive a server read stamp`);
@@ -55,7 +76,7 @@ test('migrated run collections and details admit stamped reads and bounded persi
     assert.equal(query.maxBytes, maxBytes);
     assert.equal(
       query.retention?.maxBytes,
-      maxBytes,
+      retained,
       `${method} must bound all parameter variants together`,
     );
   }

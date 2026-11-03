@@ -49,6 +49,8 @@ export interface ResourceCacheConnection {
   id: number | string;
   connected: boolean;
   foreground?: boolean;
+  /** Unknown cost is treated conservatively by automatic history-detail sync. */
+  metered?: boolean;
   authMode: GatewayAuthMode;
   scope: ResourceStoreScope;
   authority?: ResourceStoreAuthority;
@@ -120,9 +122,16 @@ export interface ResourceContentRetain extends ResourceContentPlacement {
   token?: ResourceContentWriteToken;
 }
 
+export interface ResourceQueryPlacement extends ResourceContentPlacement {
+  /** A background batch must not persist a reply larger than its remaining byte budget. */
+  maxStoredBytes?: number;
+}
+
 export interface GatewayResourceCache {
   observe<T>(query: ResourceQuery<T>, listener: (state: ResourceQueryState<T>) => void): () => void;
   read<T>(query: ResourceQuery<T>): ResourceQueryState<T>;
+  /** Waits only for local hydration, then refreshes in the background. Optional for test doubles. */
+  readStored?<T>(query: ResourceQuery<T>, refresh?: boolean): Promise<ResourceQueryState<T>>;
   /**
    * A `prefetch` placement persists a workspace snapshot as prefetched content: it counts toward
    * the prefetch half of the budget and evicts only what prefetch may evict. A later read the user
@@ -142,7 +151,7 @@ export interface GatewayResourceCache {
   observedKey?(match: (key: ResourceKey) => boolean): boolean;
   retry<T>(
     query: ResourceQuery<T>,
-    placement?: ResourceContentPlacement,
+    placement?: ResourceQueryPlacement,
     signal?: AbortSignal,
   ): Promise<ResourceQueryState<T>>;
   /**
@@ -157,6 +166,8 @@ export interface GatewayResourceCache {
   readContent(key: ContentKey): Promise<Uint8Array | undefined>;
   /** Stored bytes the user opened: refreshes recency and protects them from prefetch eviction. */
   openContent(key: ContentKey): Promise<Uint8Array | undefined>;
+  /** An explicit refusal removes held bytes and their aliases. */
+  forgetContent(key: ContentKey): Promise<void>;
   readContentByAlias(alias: string): Promise<Uint8Array | undefined>;
   openContentByAlias(alias: string): Promise<Uint8Array | undefined>;
   /** Verifies, applies the caps and the shared budget, and returns false when refused. */

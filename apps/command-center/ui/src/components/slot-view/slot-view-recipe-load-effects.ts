@@ -1,4 +1,4 @@
-import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
+import { readStoredArtifact } from '../../artifact-response.js';
 import type { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 
 import { traceEntriesToEvidenceManifest } from './slot-view-live-effects.js';
@@ -26,21 +26,28 @@ export async function loadSelectedSlotViewRecipeDependency(
   view._selectedRecipeDependencyLoading = true;
   view._selectedRecipeDependencyError = '';
   try {
-    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, selectedDependency.path));
-    if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
-    if (!response.ok) throw new Error(`${response.status}`);
-    const recipeDependencyJson = await response.text();
-    if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
-    view._selectedRecipeDependencyJson = recipeDependencyJson;
-    if (
-      view._selectedRecipeNodeId &&
-      !recipeNodeExists(view._selectedRecipeDependencyJson, view._selectedRecipeNodeId)
-    ) {
-      view._selectedRecipeNodeId = '';
-      view._recipeEvidenceMode = 'all';
-      view._selectedRecipeArtifactPath = null;
-      view._recipeEvidenceCache = null;
-    }
+    const applyStored = async (response: Response) => {
+      if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
+      if (!response.ok) throw new Error(`${response.status}`);
+      const recipeDependencyJson = await response.text();
+      if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
+      view._selectedRecipeDependencyJson = recipeDependencyJson;
+      view._selectedRecipeDependencyLoading = false;
+      if (
+        view._selectedRecipeNodeId &&
+        !recipeNodeExists(view._selectedRecipeDependencyJson, view._selectedRecipeNodeId)
+      ) {
+        view._selectedRecipeNodeId = '';
+        view._recipeEvidenceMode = 'all';
+        view._selectedRecipeArtifactPath = null;
+        view._recipeEvidenceCache = null;
+      }
+    };
+    await applyStored(
+      await readStoredArtifact(view._artifactUrl(recipeHost, selectedDependency.path), {
+        onStored: applyStored,
+      }),
+    );
   } catch (error) {
     if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
     view._selectedRecipeDependencyJson = '';
@@ -71,12 +78,19 @@ export async function loadSelectedSlotViewRecipeArtifactPreview(
   view._selectedRecipeArtifactLoading = true;
   view._selectedRecipeArtifactError = '';
   try {
-    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, artifact.path));
-    if (loadToken !== view._selectedRecipeArtifactPreviewLoadToken) return;
-    if (!response.ok) throw new Error(`${response.status}`);
-    const artifactText = await response.text();
-    if (loadToken !== view._selectedRecipeArtifactPreviewLoadToken) return;
-    view._selectedRecipeArtifactText = artifactText;
+    const applyStored = async (response: Response) => {
+      if (loadToken !== view._selectedRecipeArtifactPreviewLoadToken) return;
+      if (!response.ok) throw new Error(`${response.status}`);
+      const artifactText = await response.text();
+      if (loadToken !== view._selectedRecipeArtifactPreviewLoadToken) return;
+      view._selectedRecipeArtifactText = artifactText;
+      view._selectedRecipeArtifactLoading = false;
+    };
+    await applyStored(
+      await readStoredArtifact(view._artifactUrl(recipeHost, artifact.path), {
+        onStored: applyStored,
+      }),
+    );
   } catch (error) {
     if (loadToken !== view._selectedRecipeArtifactPreviewLoadToken) return;
     view._selectedRecipeArtifactText = '';
@@ -116,19 +130,25 @@ export async function loadSelectedSlotViewRecipeEvidenceManifest(
   try {
     const artifact = manifest ?? trace;
     if (!artifact) return;
-    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, artifact.path));
-    if (loadToken !== view._selectedRecipeEvidenceManifestLoadToken) return;
-    if (!response.ok) throw new Error(String(response.status));
-    const json = await response.json();
-    if (loadToken !== view._selectedRecipeEvidenceManifestLoadToken) return;
-    if (manifest) {
-      const parsed = parseEvidenceManifestEntriesWithDiagnostics(json);
-      view._selectedRecipeEvidenceManifest = parsed.entries;
-      view._selectedRecipeEvidenceManifestDroppedVideoCount = parsed.droppedVideoEntryCount;
-    } else {
-      view._selectedRecipeEvidenceManifest = traceEntriesToEvidenceManifest(json);
-      view._selectedRecipeEvidenceManifestDroppedVideoCount = 0;
-    }
+    const applyStored = async (response: Response) => {
+      if (loadToken !== view._selectedRecipeEvidenceManifestLoadToken) return;
+      if (!response.ok) throw new Error(String(response.status));
+      const json = await response.json();
+      if (loadToken !== view._selectedRecipeEvidenceManifestLoadToken) return;
+      if (manifest) {
+        const parsed = parseEvidenceManifestEntriesWithDiagnostics(json);
+        view._selectedRecipeEvidenceManifest = parsed.entries;
+        view._selectedRecipeEvidenceManifestDroppedVideoCount = parsed.droppedVideoEntryCount;
+      } else {
+        view._selectedRecipeEvidenceManifest = traceEntriesToEvidenceManifest(json);
+        view._selectedRecipeEvidenceManifestDroppedVideoCount = 0;
+      }
+    };
+    await applyStored(
+      await readStoredArtifact(view._artifactUrl(recipeHost, artifact.path), {
+        onStored: applyStored,
+      }),
+    );
   } catch (err) {
     console.warn(
       '[slot-view] evidence manifest load failed:',

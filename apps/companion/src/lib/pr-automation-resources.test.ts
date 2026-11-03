@@ -12,7 +12,7 @@ let pending: ((value: ResourceQueryState<PRPushListResult>) => void) | undefined
 const cache = {
   read(query: ResourceQuery<unknown>) {
     assert.equal(query.method, 'prPush.list');
-    assert.equal(query.persisted, false);
+    assert.equal(query.persisted, true);
     return state;
   },
   retry(query: ResourceQuery<unknown>) {

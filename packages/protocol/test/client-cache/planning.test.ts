@@ -36,8 +36,8 @@ test('roadmap projections follow their authored item, backlog lineage, graph and
     { family: 'planning', collection: 'work-graphs' },
     { family: 'runs', scope: 'farm' },
   ]);
-  assert.equal(resourceQuery('roadmap.get', { itemId: 'roadmap-item' }).persisted, false);
-  assert.equal(resourceQuery('workGraph.get', { graphId: 'graph' }).persisted, false);
+  assert.equal(resourceQuery('roadmap.get', { itemId: 'roadmap-item' }).persisted, true);
+  assert.equal(resourceQuery('workGraph.get', { graphId: 'graph' }).persisted, true);
 });
 
 test('a planning observation cannot perform a search or a forced refresh', () => {

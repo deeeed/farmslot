@@ -2,18 +2,17 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import {
-  createEvidenceReviewModel,
-  type EvidenceReviewModel,
-  evidenceReviewToc,
-} from '@farmslot/adapter-sdk/evidence';
+import { createEvidenceReviewModel, evidenceReviewToc } from '@farmslot/adapter-sdk/evidence';
 import type { RecordedEvidencePackageInput } from '@farmslot/protocol';
+
+import { untimedRecordingFixture } from '../../../../packages/adapter-sdk/test/untimed-fixture';
 
 import {
   evidenceClaimPlayback,
   evidenceMediaItems,
   evidenceRecordingForPath,
   evidenceViewerSelection,
+  evidenceViewerSessionItems,
   recordedEvidenceArtifactUrl,
   selectedEvidenceMediaItem,
 } from './evidence-media-items';
@@ -52,9 +51,28 @@ test('baseline and head recording filenames do not share markers', () => {
   assert.ok(head);
   const path = `comparison-dependencies/baseline/${head.videoPath}`;
   const baseline = { ...head, videoPath: path };
-  const both: EvidenceReviewModel = { ...model, recordings: [head, baseline] };
-  assert.equal(evidenceRecordingForPath(both, model.artifactPath(path)), baseline);
-  assert.equal(evidenceRecordingForPath(both, model.artifactPath(head.videoPath)), head);
+  const both = createEvidenceReviewModel({
+    artifactPrefix: 'artifacts/head/',
+    recordings: [head, baseline].map((timeline) => ({
+      timeline,
+      videoPath: timeline.videoPath,
+      videoDigest: timeline.videoDigest,
+      trace: fixture.input.trace,
+    })),
+  });
+  assert.deepEqual(both.errors, []);
+  assert.equal(
+    evidenceRecordingForPath(both, model.artifactPath(path))?.videoPath,
+    baseline.videoPath,
+  );
+  assert.equal(
+    evidenceRecordingForPath(both, model.artifactPath(head.videoPath))?.videoPath,
+    head.videoPath,
+  );
+  assert.equal(
+    evidenceRecordingForPath(both, model.artifactPath(head.videoPath))?.hasTimeline,
+    true,
+  );
   assert.equal(evidenceRecordingForPath(both, `another-attempt/${head.videoPath}`), undefined);
 });
 
@@ -232,5 +250,63 @@ test("choosing a criterion from the recording's contents plays from its moment",
   assert.equal(
     evidenceClaimPlayback(model, 'not-a-criterion', recording.videoPath, 1000),
     undefined,
+  );
+});
+
+test('untimed review keeps same-attempt screenshots as inspection context', () => {
+  const input = untimedRecordingFixture(fixture.input);
+  const model = createEvidenceReviewModel({
+    package: input,
+    artifactPrefix: 'artifacts/selected/',
+  });
+  model.selectClaim('check-1');
+  const media = model.claimMedia('check-1');
+  assert.ok(media.recording);
+  const opening = selectedEvidenceMediaItem(
+    model,
+    media.recording.artifactPath,
+    (value) => `/proof/${value}`,
+    {},
+    { runId: 'run-proof' },
+  );
+  const items = evidenceViewerSessionItems([opening], opening.uri);
+  assert.ok(
+    items.some((item) => item.mediaType === 'image' && item.title?.includes('not AC-bound')),
+  );
+  assert.ok(
+    items
+      .filter((item) => item.mediaType === 'image')
+      .every(
+        (item) =>
+          item.sharedArtifact?.traceIndex === undefined &&
+          item.sharedArtifact?.criterionId === undefined,
+      ),
+  );
+  assert.ok(items.every((item) => item.path?.startsWith('artifacts/selected/')));
+  assert.equal(evidenceRecordingForPath(model, opening.path)?.hasTimeline, false);
+  assert.equal(model.selection?.timing, 'untimed');
+  assert.deepEqual(model.selection?.clips, []);
+});
+
+test('a baseline selection does not add head screenshots to the native viewer', () => {
+  const head = createEvidenceReviewModel({
+    package: untimedRecordingFixture(fixture.input),
+    artifactPrefix: 'artifacts/head/',
+  });
+  const baseline = createEvidenceReviewModel({
+    package: untimedRecordingFixture(fixture.input),
+    artifactPrefix: 'artifacts/baseline/',
+  });
+  baseline.selectClaim('check-1');
+  assert.ok(baseline.selection);
+  // A comparison selects baseline files while retaining the head's claim catalogue.
+  const model = { ...head, selection: baseline.selection };
+  const path = baseline.claimMedia('check-1').recording?.artifactPath;
+  assert.ok(path);
+  const opening = selectedEvidenceMediaItem(model, path, (value) => `/proof/${value}`, {});
+  const items = evidenceViewerSessionItems([opening], opening.uri);
+  assert.deepEqual(
+    items.map((item) => item.path),
+    [path],
   );
 });

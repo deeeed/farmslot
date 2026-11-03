@@ -685,3 +685,64 @@ test('an image mismatch is settled per owner: another principal reads the source
   assert.equal((await load()).url, 'blob:restored-image');
   assert.equal(fetches, 2);
 });
+
+for (const online of [true, false]) {
+  test(`first open of every stored package file paints without a per-file read (${online ? 'online' : 'offline'})`, async (t) => {
+    gateway.connectionState = 'connected';
+    const fixture = openCache(t);
+    assert.equal(
+      await fixture.cache.storeContent({
+        key: diffKey,
+        data: encoder.encode(packageDiff),
+        origin: 'prefetch',
+        cohort: 'gate',
+      }),
+      true,
+    );
+    if (!online) fixture.goOffline();
+    const view = makePresenter();
+    let requests = 0;
+    t.mock.method(view._reads, 'read', () => {
+      requests++;
+      return new Promise<never>(() => undefined);
+    });
+    const first = view._selectFile('src/added.ts');
+    assert.equal(requests, 0, 'a synced whole diff must serve a never-opened file locally');
+    await first;
+    assert.equal(view._fileDiff, `${addedSection}\n`);
+    assert.equal(view._fileDiffLoading, false);
+    await view._selectFile('src/gate.ts');
+    assert.equal(view._fileDiff, changedSection);
+    assert.equal(view._fileDiffLoading, false);
+    assert.equal(requests, 0);
+  });
+}
+
+test('syncing ready run detail stores its whole diff before the first Diff-tab open', async (t) => {
+  gateway.connectionState = 'connected';
+  const fixture = openCache(t);
+  let artifacts = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    artifacts++;
+    return new Response(packageDiff);
+  });
+  const view = makePresenter();
+  view._activeTab = 'evidence';
+  t.mock.method(view, '_beginRecovery', async () => undefined);
+  t.mock.method(view, '_syncDecisionActionState', () => undefined);
+  t.mock.method(view, '_hydratePublicationTarget', () => undefined);
+  t.mock.method(view, '_hydrateEvidenceSelection', () => undefined);
+  view.willUpdate();
+  view.updated(new Map());
+  const deadline = Date.now() + 1000;
+  while (!(await fixture.cache.hasContent(diffKey))) {
+    assert(Date.now() < deadline, 'run detail did not sync its verified source');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(artifacts, 1, 'the run sync reads one whole snapshot');
+  fixture.goOffline();
+  await view._selectFile('src/added.ts');
+  assert.equal(view._fileDiff, `${addedSection}\n`);
+  assert.equal(view._fileDiffLoading, false);
+  assert.equal(artifacts, 1);
+});

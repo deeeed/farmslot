@@ -20,23 +20,6 @@
       "signature": "No node connected for machine \\S+ after 120000ms",
       "differences": ["^REVIEW did not keep its reviewer: failed \\("],
       "ledger": "F336"
-    },
-    {
-      "case": "worker-survives",
-      "variant": "review-fix",
-      "signature": "Recovered review fix worker could not accept its prompt",
-      "differences": [
-        "^the run went needs-decision: Recovered review fix worker could not accept its prompt",
-        "^run status: expected done, observed needs-decision$",
-        "^step \\d+: expected review:done, observed review:failed$",
-        "^step \\d+: expected (complete|human-gate|finalize|ci-watch):done, observed \\1:pending$",
-        "^decisions: expected \\[engine_output_review:open\\], observed \\[engine_output_review:open, engine_result_decision:open\\]$",
-        "^decision types: expected \\[engine_output_review\\], observed \\[engine_output_review, engine_result_decision\\]$",
-        "^slot: expected ready/-, observed busy/working$",
-        "^re-review: expected pass, observed none$",
-        "^1 reviewers ran, expected 2$"
-      ],
-      "ledger": "F332"
     }
   ],
   "live": {

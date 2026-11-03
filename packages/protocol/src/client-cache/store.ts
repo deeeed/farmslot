@@ -107,6 +107,8 @@ export interface ResourceStore {
   getMetadata(): Promise<ResourceStoreMetadata | undefined>;
   setMetadata(metadata: ResourceStoreMetadata): Promise<void>;
   getQuery<T = unknown>(id: string): Promise<StoredResourceQuery<T> | undefined>;
+  /** Newest stored queries within the byte budget, in one platform read. */
+  getQueries?(maxBytes: number): Promise<StoredResourceQuery[]>;
   putQuery<T>(entry: StoredResourceQuery<T>): Promise<void>;
   deleteQuery(id: string): Promise<void>;
   /** Access recency never changes observation age. Optional for older custom stores. */
@@ -145,6 +147,35 @@ export interface ResourceStore {
 function copy<T>(value: T): T {
   // Registered query results are JSON replies, including on React Native without structuredClone.
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/** Startup keeps recent data first, skipping a query that would exceed the remaining budget. */
+export function storedQueryBatch(
+  rows: readonly StoredResourceQueryInfo[],
+  maxBytes: number,
+): StoredResourceQueryInfo[] {
+  const selected: StoredResourceQueryInfo[] = [];
+  let remaining = maxBytes;
+  for (const row of [...rows].sort(
+    (a, b) =>
+      (b.accessedAt ?? b.observedAt) - (a.accessedAt ?? a.observedAt) || a.id.localeCompare(b.id),
+  )) {
+    if (row.bytes > remaining) continue;
+    selected.push(row);
+    remaining -= row.bytes;
+  }
+  return selected;
+}
+
+/** Older custom stores can still hydrate through their existing query API. */
+export async function readStoredQueryBatch(
+  store: ResourceStore,
+  maxBytes: number,
+): Promise<StoredResourceQuery[]> {
+  if (store.getQueries) return store.getQueries(maxBytes);
+  const rows = storedQueryBatch(await store.listQueries(), maxBytes);
+  const values = await Promise.all(rows.map((row) => store.getQuery(row.id)));
+  return values.filter((value): value is StoredResourceQuery => value !== undefined);
 }
 
 export function resourceContentId(key: ContentKey): string {
@@ -218,6 +249,12 @@ export function createMemoryResourceStore(): ResourceStore {
       return available() && entries.has(id)
         ? copy(entries.get(id) as StoredResourceQuery<T>)
         : undefined;
+    },
+    async getQueries(maxBytes) {
+      if (!available()) return [];
+      return storedQueryBatch([...entries.values()], maxBytes).map((entry) =>
+        copy(entries.get(entry.id)!),
+      );
     },
     async putQuery(entry) {
       if (available()) entries.set(entry.id, copy(entry));

@@ -76,6 +76,9 @@ test('a retained invocation rereads progress and evidence and refuses replaced c
     openContent() {
       throw new Error('content is not opened in this invocation test');
     },
+    forgetContent() {
+      throw new Error('content is not removed in this invocation test');
+    },
     readContentByAlias() {
       throw new Error('content is not read in this invocation test');
     },

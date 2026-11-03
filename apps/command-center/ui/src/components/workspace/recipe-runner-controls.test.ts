@@ -32,6 +32,31 @@ mock.module('../../resource-cache.js', {
     },
   },
 });
+interface QueryState {
+  status: string;
+  data?: { machine: string; devices: unknown[] };
+  error?: { message: string };
+}
+/** Stands in for the shared cache binding; the controller's own tests cover owner changes. */
+class FakeQueryController {
+  state: QueryState = { status: 'loading' };
+  query?: { method: string; params: unknown };
+  retries = 0;
+  constructor() {
+    queries.push(this);
+  }
+  setQuery(query?: { method: string; params: unknown }) {
+    this.query = query;
+  }
+  async retry() {
+    this.retries++;
+    return this.state;
+  }
+}
+const queries: FakeQueryController[] = [];
+mock.module('../shared/resource-query-controller.js', {
+  namedExports: { ResourceQueryController: FakeQueryController },
+});
 // The wrapper calls this child through its public methods. No real browser is modified.
 mock.module('./recipe-output-panel.js', { namedExports: {} });
 const { RecipeRunnerControls } = await import('./recipe-runner-controls.js');
@@ -80,6 +105,7 @@ afterEach(() => {
     view.disconnectedCallback();
   }
   calls.length = 0;
+  queries.length = 0;
   listeners.clear();
   owner = 'owner-a';
   if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
@@ -165,21 +191,41 @@ test('a command reply from another owner never writes the clipboard or its feedb
   assert.doesNotMatch(litText(view.render()), /Copied|old-private-command/);
 });
 
-test('a late inventory from another principal cannot overwrite the current slot facts', async () => {
-  const view = makeControls({
-    running: false,
-    rerun: async () => undefined,
-    cancel: async () => undefined,
-  });
-  const first = calls.find((call) => call.method === Methods.RESOURCE_DEVICE_INVENTORY)!;
-  owner = 'owner-b';
-  for (const listener of listeners) listener();
-  const second = calls.filter((call) => call.method === Methods.RESOURCE_DEVICE_INVENTORY).at(-1)!;
-  assert.notEqual(second, first);
-  second.resolve({ machine: 'CURRENT_MACHINE', devices: [] });
-  await flush();
-  first.resolve({ machine: 'FORMER_MACHINE', devices: [] });
-  await flush();
-  assert.match(litText(view.render()), /CURRENT_MACHINE/);
-  assert.doesNotMatch(litText(view.render()), /FORMER_MACHINE/);
+const idleChild: Child = {
+  running: false,
+  rerun: async () => undefined,
+  cancel: async () => undefined,
+};
+
+test('the stored device list renders from the shared cache, never a direct gateway read', () => {
+  const view = makeControls(idleChild);
+  const [inventory] = queries;
+  assert.equal(inventory.query?.method, Methods.RESOURCE_DEVICE_INVENTORY);
+  assert.deepEqual(inventory.query?.params, { slotId: 'slot-a' });
+  // A read that has no live updates still renders its stored list, with no notice about it.
+  inventory.state = { status: 'unsupported', data: { machine: 'STORED_MACHINE', devices: [] } };
+  const text = litText(view.render());
+  assert.match(text, /STORED_MACHINE lists no simulator/);
+  assert.doesNotMatch(text, /unavailable|unsupported/i);
+  assert.equal(calls.filter((call) => call.method === Methods.RESOURCE_DEVICE_INVENTORY).length, 0);
+});
+
+test('a failed device read shows the typed fallback only when no list is stored', () => {
+  const view = makeControls(idleChild);
+  const [inventory] = queries;
+  inventory.state = { status: 'error', error: { message: 'ssh refused' } };
+  assert.match(litText(view.render()), /Device list unavailable \(ssh refused\)/);
+  inventory.state = {
+    status: 'stale',
+    data: { machine: 'STORED_MACHINE', devices: [] },
+    error: { message: 'ssh refused' },
+  };
+  assert.doesNotMatch(litText(view.render()), /Device list unavailable/);
+});
+
+test('the device query follows the slot', () => {
+  const view = makeControls(idleChild);
+  view.slotId = 'slot-b';
+  view.willUpdate(new Map([['slotId', 'slot-a']]));
+  assert.deepEqual(queries[0].query?.params, { slotId: 'slot-b' });
 });

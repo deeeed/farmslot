@@ -83,7 +83,8 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Accepted |
 | [071](071-gateway-change-notifications.md)               | Gateway change notifications and shared client cache                    | Accepted |
 
-ADR-071 has an Accepted [persistent client store amendment](071-gateway-change-notifications.md#amendment-1-2026-10-20-persistent-client-store).
+ADR-071 has an Accepted [persistent client store amendment](071-gateway-change-notifications.md#amendment-1-2026-10-20-persistent-client-store)
+and a Proposed [offline-first reads amendment](071-gateway-change-notifications.md#amendment-2-2026-11-02-offline-first-reads).
 Its specification gains an [Offline client store](../reference/gateway-change-notifications.md#offline-client-store)
 section, which describes offline data on Command Center, its desktop app and
 Companion end to end. ADR-009 has an Accepted

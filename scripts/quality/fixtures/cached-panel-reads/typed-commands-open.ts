@@ -13,7 +13,7 @@ class OpenSession {
 }
 
 const session = new OpenSession({ request: (method, params) => gateway.request(method, params) });
-const o1 = () => session.list(Methods.AUTH_SESSION_LIST);
+const o1 = () => session.list(Methods.RUN_CANCEL);
 const o2 = () => o1();
 const o3 = () => o2();
 const o4 = () => o3();

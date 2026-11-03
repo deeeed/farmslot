@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { runListVersion, trimRunForList } from '@farmslot/protocol';
+
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import {
@@ -179,4 +181,22 @@ test('selectActiveRunForSlot prefers currentRunId over ambiguous slot matches', 
     updatedAt: '2026-04-16T00:00:00.000Z',
   });
   assert.equal(selectActiveRunForSlot('slot-a', [older, newer], 'older')?.id, 'older');
+});
+
+test('ordinary details carry the stored list version before display enrichment', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    mode: 'interactive',
+    ticketOrPr: `LIST-VERSION-${Date.now()}`,
+    initialContext: 'Stored list identity',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const expected = runListVersion(trimRunForList(run));
+  const result = await runGet({ runId: run.id });
+  assert.equal(result.listVersion, expected);
+  assert.equal(result.run.id, run.id);
 });

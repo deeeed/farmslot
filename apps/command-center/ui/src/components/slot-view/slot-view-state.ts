@@ -10,6 +10,7 @@ import type {
   NodesListResult,
   PRReviewThread,
   RecipeRunArtifactGroup,
+  ResourceListResult,
   Run,
   SlotActionSummary,
   SlotResource,
@@ -162,6 +163,10 @@ export abstract class SlotViewState extends LitElement {
   @state() _bottomTab: 'terminal' | 'history' | 'problems' | 'comments' = 'terminal';
   @state() _workerHistoryEnabled = false;
   @state() _resources: SlotResource[] = [];
+  /** The stored resource list `_resources` was taken from. */
+  _resourcesSource?: ResourceListResult;
+  /** A slot load or an action asked the next resource list to open the resource panel. */
+  _resourcesMayOpenPanel = false;
   @state() _slotActions: SlotActionSummary[] = [];
   @state() _runningSlotActionIds: string[] = [];
   @state() _resourcePanelOpen = false;

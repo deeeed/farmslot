@@ -15,6 +15,11 @@ export const CI_PARITY_STEPS = [
   ['authorization', ['yarn', 'quality:authorization']],
   ['retired scripts', ['yarn', 'quality:retired-scripts']],
   ['import boundaries', ['yarn', 'quality:imports']],
+  ['offline-first reads', ['yarn', 'quality:cached-panel-reads']],
+  [
+    'offline-first read guard tests',
+    ['node', '--test', 'scripts/quality/check-cached-panel-reads.test.mjs'],
+  ],
   [
     'model transport module load',
     [

@@ -31,6 +31,7 @@ export type StoreWorkerRequest =
       handle: number;
     }
   | { id: number; operation: 'getQuery' | 'deleteQuery'; handle: number; key: string }
+  | { id: number; operation: 'getQueries'; handle: number; maxBytes: number }
   | {
       id: number;
       operation: 'touchQuery';

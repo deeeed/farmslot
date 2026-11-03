@@ -1,0 +1,1 @@
+- `CommandMethod` is now the closed `GATEWAY_COMMAND_METHODS` list, and `GATEWAY_READ_EXCEPTIONS` names the only reads a client sends outside the shared cache (ADR-071 Amendment 2: offline-first reads).

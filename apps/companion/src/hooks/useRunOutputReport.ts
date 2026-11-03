@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import { isHtmlArtifactPath } from '@farmslot/review-dispatch';
 
+import { readStoredArtifact } from '../lib/artifact-response';
 import type { GatewayHttpAuthHeaders } from '../lib/gateway-http-auth';
 import { readRunOutputReport } from '../lib/output-report';
 
@@ -70,6 +71,7 @@ export function useRunOutputReport({
         runId,
         authHeaders,
         signal: controller.signal,
+        readArtifact: readStoredArtifact,
       });
       if (!controller.signal.aborted && currentIdentity.current === identity)
         setDocument({

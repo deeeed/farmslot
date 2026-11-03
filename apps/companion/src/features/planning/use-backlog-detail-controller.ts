@@ -1,11 +1,11 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { type BacklogSpecGetResult, Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { useResourceQuery } from '../../hooks/useResourceQuery';
-import { currentFarmConnection } from '../../lib/connection-authority';
 import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import { getResourceCache } from '../../lib/resource-cache';
 import { readErrorMessage } from '../../lib/resource-read-status';
@@ -16,18 +16,9 @@ import { heldConnectionCurrent } from '../../store/held-connection';
 
 import { backlogPlanningQuery } from './planning-resources';
 
-interface SpecPreview {
-  itemId: string;
-  path: string;
-  authorityEpoch: number;
-  result: BacklogSpecGetResult | null;
-  error: string | null;
-}
-
 export function useBacklogDetailController(itemId: string | undefined) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const client = useConnectionStore((state) => state.client);
   const connected = useConnectionStore(
     (state) => state.status === 'connected' && state.workspaceAccess === 'farm',
   );
@@ -35,17 +26,19 @@ export function useBacklogDetailController(itemId: string | undefined) {
   const access = useWorkspaceRenderAccess();
   const observation = useResourceQuery(access === 'farm' ? backlogPlanningQuery : undefined);
   const item = observation.data?.items.find((candidate) => candidate.id === itemId) ?? null;
-  const [preview, setPreview] = useState<SpecPreview | null>(null);
   const [specOpen, setSpecOpen] = useState(false);
-  const [specRetry, setSpecRetry] = useState(0);
   const specPath = item?.specPath;
-  const matching =
-    preview !== null &&
-    preview.itemId === itemId &&
-    preview.path === specPath &&
-    preview.authorityEpoch === authorityEpoch;
-  const spec = matching ? preview.result : null;
-  const specError = matching ? preview.error : null;
+  const specQuery = useMemo(
+    () =>
+      itemId && specPath
+        ? resourceQuery<BacklogSpecGetResult>(Methods.BACKLOG_SPEC_GET, { itemId })
+        : undefined,
+    [itemId, specPath],
+  );
+  const specObservation = useResourceQuery(specQuery);
+  const spec =
+    specObservation.data && specObservation.data.itemId === itemId ? specObservation.data : null;
+  const specError = readErrorMessage(specObservation, heldConnectionCurrent());
   const retryBacklog = Boolean(
     observation.error || (itemId && observation.status === 'ready' && !item),
   );
@@ -57,41 +50,11 @@ export function useBacklogDetailController(itemId: string | undefined) {
   useEffect(() => {
     setSpecOpen(false);
   }, [itemId, authorityEpoch]);
-  useEffect(() => {
-    if (!client || !connected || !itemId || !specPath) return;
-    let active = true;
-    const current = currentFarmConnection(client, useConnectionStore.getState);
-    // Spec content remains an explicit nonpersisted preview until the content-cache slice.
-    void client.request<BacklogSpecGetResult>(Methods.BACKLOG_SPEC_GET, { itemId }).then(
-      (result) => {
-        if (active && current())
-          setPreview({ itemId, path: specPath, authorityEpoch, result, error: null });
-      },
-      (failure: unknown) => {
-        if (!active || !current()) return;
-        setPreview((previous) => ({
-          itemId,
-          path: specPath,
-          authorityEpoch,
-          result:
-            previous?.itemId === itemId &&
-            previous.path === specPath &&
-            previous.authorityEpoch === authorityEpoch
-              ? previous.result
-              : null,
-          error: failure instanceof Error ? failure.message : String(failure),
-        }));
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [client, connected, itemId, specPath, authorityEpoch, specRetry]);
   const refresh = useCallback(async () => {
-    if (!connected) return;
-    if (retryBacklog) await getResourceCache()?.retry(backlogPlanningQuery);
-    if (specError) setSpecRetry((value) => value + 1);
-  }, [connected, retryBacklog, specError]);
+    const cache = getResourceCache();
+    if (retryBacklog) await cache?.retry(backlogPlanningQuery);
+    if (specQuery) await cache?.retry(specQuery);
+  }, [retryBacklog, specQuery]);
   return {
     state: {
       bottomPadding: insets.bottom + spacing.xxxl,

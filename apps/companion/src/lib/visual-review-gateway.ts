@@ -19,7 +19,6 @@ import {
   artifactUrl,
 } from './artifact-url';
 import type { GatewayClient } from './gateway-client';
-import { gatewayFetch } from './gateway-http-auth';
 
 export interface VisualReviewArtifactRef {
   path: string;
@@ -51,6 +50,7 @@ export interface VisualReviewGateway {
 export interface VisualReviewResources {
   cache: Pick<GatewayResourceCache, 'read'>;
   sourceRunId: string;
+  readArtifact(url: string): Promise<Response>;
   /** The selected owner and exact connection must still own this port. */
   current(): boolean;
 }
@@ -108,19 +108,19 @@ export function createVisualReviewGateway(
     if (!resources.current() || visualReviewConnectionId(liveConnection()) !== connectionId)
       throw new Error('The gateway connection changed. Reopen the review to continue.');
   };
-  const readRun = (runId: string): Run => {
+  const readRun = (runId: string, currentOnly = false): Run => {
     assertCurrent();
     const state = resources.cache.read(resourceQuery<RunGetResult>(Methods.RUN_GET, { runId }));
-    if (state.status !== 'ready' || state.data?.run.id !== runId)
+    if ((currentOnly && state.status !== 'ready') || state.data?.run.id !== runId)
       throw new Error('Wait for the current visual review run before acting.');
     return state.data.run;
   };
-  const readRecipes = (runId: string): RunRecipeRunsForRunResult => {
+  const readRecipes = (runId: string, currentOnly = false): RunRecipeRunsForRunResult => {
     assertCurrent();
     const state = resources.cache.read(
       resourceQuery<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, { runId }),
     );
-    if (state.status !== 'ready' || !state.data)
+    if ((currentOnly && state.status !== 'ready') || !state.data)
       throw new Error('Wait for current visual review evidence before acting.');
     return state.data;
   };
@@ -142,7 +142,7 @@ export function createVisualReviewGateway(
     },
     async readArtifactText(runId, artifact) {
       assertCurrent();
-      const response = await gatewayFetch(urlFor(runId, artifact), authHeaders);
+      const response = await resources.readArtifact(urlFor(runId, artifact));
       assertCurrent();
       if (!response.ok) throw new Error(`${artifact.path}: HTTP ${response.status}`);
       const text = await response.text();
@@ -153,9 +153,9 @@ export function createVisualReviewGateway(
       return artifactSource(urlFor(runId, artifact), authHeaders);
     },
     async sendWorkerMessage(params, expectedRun) {
-      readRun(resources.sourceRunId);
-      readRecipes(resources.sourceRunId);
-      const run = readRun(expectedRun.id);
+      readRun(resources.sourceRunId, true);
+      readRecipes(resources.sourceRunId, true);
+      const run = readRun(expectedRun.id, true);
       if (run !== expectedRun || run.id !== params.runId || run.slotId !== params.slotId)
         throw new Error('The feedback target changed. Review it again before sending.');
       if (!run.slotId || isTerminalRunStatus(run.status))

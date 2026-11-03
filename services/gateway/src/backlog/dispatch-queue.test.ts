@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test, { after, beforeEach, type TestContext } from 'node:test';
 
 import type { QueueItem, ReviewSelection, SlotStatus } from '@farmslot/protocol';
 
@@ -40,6 +40,7 @@ import {
   removeQueueItemInternal,
   removeQueueItemInternalNow,
   reorderItems,
+  resetDispatchQueueForTests,
   selectPRQueueExecution,
   selectQueueDispatchSlot,
   setQueueDispatchPressureCaptureForTests,
@@ -87,6 +88,11 @@ function selectSlotAdmitted(
 // tryDispatchNext reaches selectQueueDispatchSlot internally. Stub the
 // capture globally so auto-dispatch tests never touch the live snapshot path.
 setQueueDispatchPressureCaptureForTests(admitAllPressure);
+
+// Local t.after hooks run after global afterEach. Drain at the next fixture's
+// entry instead, and once at file exit, so those hooks can still remove their rows.
+beforeEach(resetDispatchQueueForTests);
+after(resetDispatchQueueForTests);
 
 async function cleanupRun(runId: string): Promise<void> {
   if (!getRun(runId)) {
@@ -1516,134 +1522,140 @@ test('a dispatcher holding a revoked claim creates no Run', async () => {
   assert.equal(createdRuns, 0);
 });
 
-test('concurrent reclaim and dispatch against one row creates exactly one Run', async (t) => {
-  // Production-shaped path: tryDispatchNext → claim → pause → real createRun +
-  // persistRunNow + removeQueueItemInternalNow. Concurrent cancel during the pause
-  // must yield 0 or 1 actual Run records — never two.
-  setCachedFleetForTests(readyFleetSlot('real-race-slot') as any);
-  const _item = addItem(
-    {
-      flowType: 'fix-bug',
-      project: 'farmslot-farm',
-      ticketOrPr: 'PROJ-claim-concurrent',
-      allowedSlots: ['real-race-slot'],
+test(
+  'concurrent reclaim and dispatch against one row creates exactly one Run',
+  { timeout: 4000 },
+  async (t) => {
+    // Production-shaped path: tryDispatchNext → claim → pause → real createRun +
+    // persistRunNow + removeQueueItemInternalNow. Concurrent cancel during the pause
+    // must yield 0 or 1 actual Run records — never two.
+    setCachedFleetForTests(readyFleetSlot('real-race-slot') as any);
+    const _item = addItem(
+      {
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        ticketOrPr: 'PROJ-claim-concurrent',
+        allowedSlots: ['real-race-slot'],
+        workGraphId: 'wg_concurrent',
+        workNodeId: 'wn_concurrent',
+        autoDispatch: false,
+      },
+      { kind: 'system' },
+    );
+    void _item;
+    const createdRunIds: string[] = [];
+    let releaseGate: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let enteredCreate = false;
+    let signalEntered: () => void;
+    const entered = new Promise<void>((resolve) => {
+      signalEntered = resolve;
+    });
+
+    initDispatchQueue(
+      () => {},
+      async (qi, claim) => {
+        enteredCreate = true;
+        signalEntered();
+        // Pause after claim, before durable create — reclaim races here.
+        await gate;
+        assertQueueClaimHeld(claim, 'pre-durable-createRun');
+        const run = createRun({
+          flowType: qi.flowType,
+          project: qi.project,
+          ticketOrPr: qi.ticketOrPr,
+          workGraphId: qi.workGraphId,
+          workNodeId: qi.workNodeId,
+        });
+        await persistRunNow(run, 'test-claim-race');
+        createdRunIds.push(run.id);
+        qi.runId = run.id;
+        await removeQueueItemInternalNow(qi.id, 'dispatch-created');
+      },
+    );
+
+    t.after(async () => {
+      releaseGate!();
+      await dispatch;
+      for (const id of createdRunIds) {
+        await cleanupRun(id);
+      }
+    });
+
+    const dispatch = tryDispatchNext();
+    await entered;
+    assert.equal(enteredCreate, true, 'create callback must enter (fleet+claim path)');
+
+    // Concurrent reclaim while create is paused after claim.
+    const reclaimPromise = cancelGraphQueuedItem({
       workGraphId: 'wg_concurrent',
       workNodeId: 'wn_concurrent',
-      autoDispatch: false,
-    },
-    { kind: 'system' },
-  );
-  void _item;
-  const createdRunIds: string[] = [];
-  let releaseGate: () => void;
-  const gate = new Promise<void>((resolve) => {
-    releaseGate = resolve;
-  });
-  let enteredCreate = false;
-  let signalEntered: () => void;
-  const entered = new Promise<void>((resolve) => {
-    signalEntered = resolve;
-  });
+      reason: 'concurrent-reclaim',
+    });
+    releaseGate!();
+    await Promise.all([dispatch, reclaimPromise]);
 
-  initDispatchQueue(
-    () => {},
-    async (qi, claim) => {
-      enteredCreate = true;
-      signalEntered();
-      // Pause after claim, before durable create — reclaim races here.
-      await gate;
-      assertQueueClaimHeld(claim, 'pre-durable-createRun');
-      const run = createRun({
-        flowType: qi.flowType,
-        project: qi.project,
-        ticketOrPr: qi.ticketOrPr,
-        workGraphId: qi.workGraphId,
-        workNodeId: qi.workNodeId,
-      });
-      await persistRunNow(run, 'test-claim-race');
-      createdRunIds.push(run.id);
-      qi.runId = run.id;
-      await removeQueueItemInternalNow(qi.id, 'dispatch-created');
-    },
-  );
+    assert.ok(createdRunIds.length <= 1, `expected at most one Run, got ${createdRunIds.length}`);
+    // Reclaim during the pre-create gate: claim lost → 0 Runs.
+    assert.equal(createdRunIds.length, 0, 'reclaim before durable create yields no Run');
+    const liveForNode = getAllRuns().filter(
+      (run) =>
+        run.workNodeId === 'wn_concurrent' && !['done', 'cancelled', 'failed'].includes(run.status),
+    );
+    assert.equal(liveForNode.length, 0);
 
-  t.after(async () => {
-    for (const id of createdRunIds) {
-      await cleanupRun(id);
-    }
-  });
-
-  const dispatch = tryDispatchNext();
-  await Promise.race([entered, new Promise((r) => setTimeout(r, 1000))]);
-  assert.equal(enteredCreate, true, 'create callback must enter (fleet+claim path)');
-
-  // Concurrent reclaim while create is paused after claim.
-  const reclaimPromise = cancelGraphQueuedItem({
-    workGraphId: 'wg_concurrent',
-    workNodeId: 'wn_concurrent',
-    reason: 'concurrent-reclaim',
-  });
-  releaseGate!();
-  await Promise.all([dispatch, reclaimPromise]);
-
-  assert.ok(createdRunIds.length <= 1, `expected at most one Run, got ${createdRunIds.length}`);
-  // Reclaim during the pre-create gate: claim lost → 0 Runs.
-  assert.equal(createdRunIds.length, 0, 'reclaim before durable create yields no Run');
-  const liveForNode = getAllRuns().filter(
-    (run) =>
-      run.workNodeId === 'wn_concurrent' && !['done', 'cancelled', 'failed'].includes(run.status),
-  );
-  assert.equal(liveForNode.length, 0);
-
-  // Create-wins path: claim, create real Run, then reclaim finds nothing.
-  const _item2 = addItem(
-    {
-      flowType: 'fix-bug',
-      project: 'farmslot-farm',
-      ticketOrPr: 'PROJ-claim-create-wins',
-      allowedSlots: ['real-race-slot'],
+    // Create-wins path: claim, create real Run, then reclaim finds nothing.
+    const _item2 = addItem(
+      {
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        ticketOrPr: 'PROJ-claim-create-wins',
+        allowedSlots: ['real-race-slot'],
+        workGraphId: 'wg_create_wins',
+        workNodeId: 'wn_create_wins',
+        autoDispatch: false,
+      },
+      { kind: 'system' },
+    );
+    void _item2;
+    const createdWins: string[] = [];
+    initDispatchQueue(
+      () => {},
+      async (qi, claim) => {
+        assertQueueClaimHeld(claim, 'pre-durable-createRun');
+        const run = createRun({
+          flowType: qi.flowType,
+          project: qi.project,
+          ticketOrPr: qi.ticketOrPr,
+          workGraphId: qi.workGraphId,
+          workNodeId: qi.workNodeId,
+        });
+        await persistRunNow(run, 'test-create-wins');
+        createdWins.push(run.id);
+        qi.runId = run.id;
+        await removeQueueItemInternalNow(qi.id, 'dispatch-created');
+      },
+    );
+    t.after(async () => {
+      for (const id of createdWins) {
+        await cleanupRun(id);
+      }
+    });
+    await tryDispatchNext();
+    assert.equal(createdWins.length, 1, 'dispatch creates exactly one Run');
+    assert.ok(getRun(createdWins[0]));
+    // Reclaim after handoff finds no row.
+    const cancelledAfter = await cancelGraphQueuedItem({
       workGraphId: 'wg_create_wins',
       workNodeId: 'wn_create_wins',
-      autoDispatch: false,
-    },
-    { kind: 'system' },
-  );
-  void _item2;
-  const createdWins: string[] = [];
-  initDispatchQueue(
-    () => {},
-    async (qi, claim) => {
-      assertQueueClaimHeld(claim, 'pre-durable-createRun');
-      const run = createRun({
-        flowType: qi.flowType,
-        project: qi.project,
-        ticketOrPr: qi.ticketOrPr,
-        workGraphId: qi.workGraphId,
-        workNodeId: qi.workNodeId,
-      });
-      await persistRunNow(run, 'test-create-wins');
-      createdWins.push(run.id);
-      qi.runId = run.id;
-      await removeQueueItemInternalNow(qi.id, 'dispatch-created');
-    },
-  );
-  t.after(async () => {
-    for (const id of createdWins) {
-      await cleanupRun(id);
-    }
-  });
-  await tryDispatchNext();
-  assert.equal(createdWins.length, 1, 'dispatch creates exactly one Run');
-  assert.ok(getRun(createdWins[0]));
-  // Reclaim after handoff finds no row.
-  const cancelledAfter = await cancelGraphQueuedItem({
-    workGraphId: 'wg_create_wins',
-    workNodeId: 'wn_create_wins',
-    reason: 'after-create',
-  });
-  assert.equal(cancelledAfter, false);
-  assert.equal(createdWins.length, 1, 'still exactly one Run after late reclaim');
-});
+      reason: 'after-create',
+    });
+    assert.equal(cancelledAfter, false);
+    assert.equal(createdWins.length, 1, 'still exactly one Run after late reclaim');
+  },
+);
 
 test('assertQueueClaimHeld rejects after claim revoke/remove on the primitives', async () => {
   // Primitive-level guard: claim + remove + assert. Production tryDispatchNext
@@ -2001,8 +2013,7 @@ test('partial create after durable stamp drops the row instead of requeueing', a
   t.after(async () => {
     if (partialRunId && getRun(partialRunId)) await cleanupRun(partialRunId);
   });
-  // A call that joins a retry already in flight returns before that retry sees this row.
-  for (let attempt = 0; attempt < 3 && !partialRunId; attempt++) await tryDispatchNext();
+  await tryDispatchNext();
   assert.ok(partialRunId, 'callback must create a Run before failing');
   assert.ok(getRun(partialRunId));
   assert.ok(
@@ -2045,16 +2056,13 @@ test('memory-only create failure requeues and purges the orphan Run', async (t) 
   t.after(async () => {
     if (orphanId && getRun(orphanId)) await cleanupRun(orphanId);
   });
-  // A call that joins a retry already in flight returns before that retry sees this row.
-  for (let attempt = 0; attempt < 3 && !orphanId; attempt++) await tryDispatchNext();
+  await tryDispatchNext();
   assert.ok(orphanId);
   assert.equal(getRun(orphanId), undefined, 'memory-only orphan must be purged');
   const requeued = getQueueSnapshot().find((q) => q.id === item.id);
   assert.ok(requeued, 'row must be requeued for retry');
   assert.equal(requeued.status, 'queued');
   assert.equal(requeued.runId, undefined);
-  // The requeued row stays: the last test's own rows auto-dispatch through this test's callback
-  // unless an older queued row takes that dispatch first.
 });
 
 test('PR queue prepares cold allowed slots while respecting busy slots and model constraints', async () => {
@@ -2344,3 +2352,106 @@ test('a stored row with an invalid originator or delegation refuses only itself'
     for (const row of [invalid, delegated, valid]) removeItem(row.id);
   }
 });
+
+test(
+  'fixture reset waits for dispatch and cancels the retry its callback schedules',
+  { timeout: 4000 },
+  async (t) => {
+    const fleet = readyFleetSlot('isolation-slot');
+    setCachedFleetForTests({ ...fleet, slots: [...fleet.slots] });
+    addItem(
+      {
+        flowType: 'dev',
+        project: 'farmslot-farm',
+        ticketOrPr: 'Dispatch queue isolation',
+        allowedSlots: ['isolation-slot'],
+        autoDispatch: false,
+      },
+      { kind: 'system' },
+    );
+    let enter: () => void;
+    let release: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    t.after(() => release!());
+    const cancelImmediate = t.mock.method(globalThis, 'clearImmediate');
+    initDispatchQueue(
+      () => {},
+      async (_item, claim) => {
+        enter();
+        await gate;
+        assertQueueClaimHeld(claim, 'fixture-finishing');
+      },
+    );
+    const dispatch = tryDispatchNext();
+    await entered;
+    await persistQueueNow();
+    let drained = false;
+    const reset = resetDispatchQueueForTests().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    await persistQueueNow();
+    assert.equal(drained, false, 'reset must not return while the callback is running');
+    release!();
+    await Promise.all([dispatch, reset]);
+    assert.equal(cancelImmediate.mock.calls.length, 1, 'the finishing callback scheduled a retry');
+    assert.deepEqual(getQueueSnapshot(), []);
+    await loadQueue();
+    assert.deepEqual(getQueueSnapshot(), [], 'all older persistence writes finished before reset');
+  },
+);
+
+test(
+  'fixture reset cancels backed-off retries and retires its dispatch callback',
+  { timeout: 4000 },
+  async (t) => {
+    const fleet = readyFleetSlot('retry-isolation-slot');
+    setCachedFleetForTests({ ...fleet, slots: [...fleet.slots] });
+    const scheduled = t.mock.method(globalThis, 'setTimeout');
+    const cancelled = t.mock.method(globalThis, 'clearTimeout');
+    let calls = 0;
+    initDispatchQueue(
+      () => {},
+      async (item, claim) => {
+        calls++;
+        removeQueueItemInternal(item.id, 'fixture-revoke');
+        throw new QueueClaimLostError(claim, 'fixture-revoke');
+      },
+    );
+    for (let index = 0; index < 2; index++) {
+      addItem(
+        {
+          flowType: 'dev',
+          project: 'farmslot-farm',
+          ticketOrPr: 'Dispatch queue retry isolation',
+          allowedSlots: ['retry-isolation-slot'],
+          autoDispatch: false,
+        },
+        { kind: 'system' },
+      );
+      await tryDispatchNext();
+    }
+    assert.equal(calls, 2);
+    const retry = scheduled.mock.calls.find((call) => call.arguments[1] === 250);
+    assert.ok(retry, 'the second lost claim schedules a backed-off retry');
+    await resetDispatchQueueForTests();
+    assert.ok(cancelled.mock.calls.some((call) => call.arguments[0] === retry.result));
+    const next = addItem(
+      { flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'Next isolated queue fixture' },
+      { kind: 'system' },
+    );
+    await tryDispatchNext();
+    assert.equal(calls, 2, 'the old callback cannot run in the next fixture');
+    await persistQueueNow();
+    await loadQueue();
+    assert.deepEqual(
+      getQueueSnapshot().map((row) => row.id),
+      [next.id],
+    );
+  },
+);

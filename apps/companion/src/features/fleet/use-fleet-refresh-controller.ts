@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { Methods } from '@farmslot/protocol';
+import { type FleetStatusResult, Methods } from '@farmslot/protocol';
 import { canActOn } from '@farmslot/protocol/client-cache';
 import { FleetRefreshViewModel } from '@farmslot/review-dispatch';
 
@@ -47,26 +47,25 @@ export function useFleetRefreshController() {
   const profileId = useConnectionStore((state) => state.activeProfileId);
   const principalId = useConnectionStore((state) => state.client?.authenticatedPrincipal?.id ?? '');
   const [, render] = useState(0);
-  const model = useMemo(
-    () =>
-      client
-        ? new FleetRefreshViewModel(
-            {
-              contextKey: () =>
-                JSON.stringify([
-                  useConnectionStore.getState().activeProfileId,
-                  useConnectionStore.getState().gatewayUrl,
-                  client.connectionGeneration,
-                  client.authenticatedPrincipal?.id ?? '',
-                ]),
-              request: fleetRefreshRequest(client),
-              subscribe: (event, callback) => client.subscribe(event, callback),
-            },
-            () => `fleet-refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          )
-        : null,
-    [client, profileId, principalId],
-  );
+  const model = useMemo(() => {
+    if (!client) return null;
+    const request = fleetRefreshRequest(client);
+    return new FleetRefreshViewModel(
+      {
+        contextKey: () =>
+          JSON.stringify([
+            useConnectionStore.getState().activeProfileId,
+            useConnectionStore.getState().gatewayUrl,
+            client.connectionGeneration,
+            client.authenticatedPrincipal?.id ?? '',
+          ]),
+        readFleet: () => request<FleetStatusResult>(Methods.FLEET_STATUS),
+        request,
+        subscribe: (event, callback) => client.subscribe(event, callback),
+      },
+      () => `fleet-refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+  }, [client, profileId, principalId]);
   useEffect(() => {
     const unsubscribe = model?.subscribe(() => render((value) => value + 1));
     return () => {

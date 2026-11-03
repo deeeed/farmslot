@@ -84,7 +84,7 @@ export function evidenceMediaItems(
 
 /** Original recordings match their whole checked artifact identity, never a shared filename. */
 export function evidenceRecordingForPath(model: EvidenceReviewModel, path: string | undefined) {
-  return model.recordings.find((recording) => path === model.artifactPath(recording.videoPath));
+  return path ? model.recordingForPath(path) : undefined;
 }
 
 export function selectedEvidenceMediaItem(
@@ -147,4 +147,70 @@ export function evidenceClaimPlayback(
         ? null
         : { clip: cued?.clip ?? null, sourceChanged: false, pause: false, seekMs },
   };
+}
+
+/** Freeze the selected proof's files plus clearly marked same-attempt inspection screenshots. */
+export function evidenceViewerSessionItems(
+  items: MediaViewerItem[],
+  uri: string | null,
+  authHeaders?: ArtifactHttpHeaders,
+): MediaViewerItem[] {
+  const opening = items.find((item) => item.uri === uri);
+  const model = opening?.evidenceModel;
+  const proof = model?.selection;
+  if (!opening || !model || !proof) return items;
+  const screenshots = proof.claimId
+    ? model.claimMedia(proof.claimId, opening.path).screenshots
+    : [];
+  const inspectionLabels = new Map(
+    screenshots
+      .filter(({ inspection }) => inspection)
+      .map(({ artifact }) => [
+        artifact.artifactPath,
+        `Inspection context (not AC-bound) · ${artifact.name}`,
+      ]),
+  );
+  const paths = new Set([
+    ...proof.artifacts.map((file) => file.artifactPath),
+    ...screenshots.map(({ artifact }) => artifact.artifactPath),
+  ]);
+  const owner = opening.sharedArtifact
+    ? {
+        runId: opening.sharedArtifact.runId,
+        slotId: opening.sharedArtifact.slotId,
+        recipeRunId: opening.sharedArtifact.recipeRunId,
+      }
+    : undefined;
+  const context = opening.resolveArtifactUrl
+    ? evidenceMediaItems(
+        screenshots.map(({ artifact }) => ({
+          ...model.artifactInventory.find((file) => file.path === artifact.artifactPath),
+          path: artifact.artifactPath,
+          purpose: 'screenshot',
+          label: inspectionLabels.get(artifact.artifactPath) ?? artifact.name,
+        })),
+        (file) => opening.resolveArtifactUrl!(file.path),
+        opening.authHeaders ?? authHeaders ?? {},
+        model,
+        owner,
+      )
+    : [];
+  const unique = new Map<string, MediaViewerItem>();
+  for (const item of [...items, ...context]) {
+    if (!item.path || !paths.has(item.path) || unique.has(item.uri)) continue;
+    const title = inspectionLabels.get(item.path);
+    unique.set(
+      item.uri,
+      title
+        ? {
+            ...item,
+            title,
+            evidenceKey: null,
+            initialTraceIndex: undefined,
+            sharedArtifact: owner ? { ...owner, path: item.path } : undefined,
+          }
+        : item,
+    );
+  }
+  return [...unique.values()];
 }

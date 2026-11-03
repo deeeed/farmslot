@@ -7,7 +7,16 @@ import {
   type NativeSessionCatalogResult,
   type NativeSessionReadResult,
 } from '@farmslot/protocol';
+import {
+  createGatewayResourceCache,
+  createMemoryResourceStore,
+  type GatewayResourceCache,
+  nativeObservationQuery,
+} from '@farmslot/protocol/client-cache';
 import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+
+import { ResourceCacheConformanceTransport } from '../../../../../../packages/protocol/src/client-cache/conformance.js';
+import { litText } from '../../testing/lit-text.js';
 
 import type { NativeSessionFixture } from './native-session-view.js';
 import type { NativeSessionApi } from './native-workspace.js';
@@ -25,8 +34,70 @@ Object.assign(globalThis, {
 // The workspace pane pulls CSS and Monaco that node can't load; the gateway client opens sockets.
 mock.module('./native-workspace.js', { namedExports: {} });
 mock.module('../../gateway-client.js', { namedExports: { gateway: {} } });
+let offlineCache: GatewayResourceCache | undefined;
+mock.module('../../resource-cache.js', {
+  namedExports: {
+    getResourceCache: () => offlineCache,
+    getResourceWorkspaceAccess: () => 'farm',
+    getResourceNativeOwnerId: () => (offlineCache ? 'offline-native-owner' : undefined),
+    getResourceWorkspaceKey: () => (offlineCache ? 'offline-native-owner-scope' : undefined),
+    subscribeResourceCache: () => () => undefined,
+  },
+});
 
 const { NativeSessionView } = await import('./native-session-view.js');
+
+test('native route renders stored catalog while disconnected and keeps creation unavailable', async () => {
+  const scope = {
+    gatewayUrl: 'ws://offline-native.invalid',
+    principalId: 'offline-native-owner',
+    principalGeneration: 0,
+  };
+  const authority = { roles: [], workspaceAccess: 'farm' as const };
+  const store = createMemoryResourceStore();
+  await store.setMetadata({ scope, authority });
+  const catalog: NativeSessionCatalogResult = {
+    runners: [
+      {
+        runner: 'codex',
+        models: ['stored-model'],
+        defaultModel: 'stored-model',
+        modes: ['default'],
+      },
+    ],
+    contexts: [{ cwd: '/workspace/offline-fixture', label: 'Stored working directory' }],
+  };
+  for (const [method, data] of [
+    [Methods.NATIVE_SESSION_CATALOG, catalog],
+    [Methods.NATIVE_SESSION_LIST, { sessions: [] }],
+  ] as const) {
+    const query = nativeObservationQuery(method, {}, scope.principalId);
+    await store.putQuery({
+      id: query.id,
+      data,
+      bytes: JSON.stringify(data).length,
+      observedAt: 123,
+    });
+  }
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.connection.authority = authority;
+  offlineCache = createGatewayResourceCache({ transport, store });
+  const view = new NativeSessionView();
+  try {
+    await Reflect.get(view, 'refreshSessions').call(view);
+    for (let i = 0; i < 10; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(Reflect.get(view, 'catalog'), catalog);
+    assert.equal(Reflect.get(view, 'catalogCurrent'), false);
+    const rendered = litText(Reflect.get(view, 'render').call(view));
+    assert.match(rendered, /Stored working directory/);
+    assert.doesNotMatch(rendered, /Connect to the gateway to choose a runner/);
+    assert.equal(transport.requestCount, 0);
+  } finally {
+    for (const stop of Reflect.get(view, 'inventoryStops')) stop();
+    await offlineCache.dispose();
+    offlineCache = undefined;
+  }
+});
 
 test('native Default sends the selected node model after switching execution nodes', async () => {
   const catalog: NativeSessionCatalogResult = {

@@ -138,7 +138,7 @@ export default function FamilyWorkspaceScreen() {
     viewerUri,
     setViewerUri,
     documentViewer,
-    setDocumentViewer,
+    closeDocument,
     evidenceFilter,
     setEvidenceFilter,
     router,
@@ -1255,7 +1255,7 @@ export default function FamilyWorkspaceScreen() {
           sharedArtifact={documentViewer?.sharedArtifact}
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
-          onClose={() => setDocumentViewer(null)}
+          onClose={closeDocument}
         />
       </View>
     </>

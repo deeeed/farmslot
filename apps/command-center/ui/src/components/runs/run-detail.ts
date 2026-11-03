@@ -56,20 +56,18 @@ import '../shared/source-status-panel.js';
 import '../shared/slot-prepare-popover.js';
 import '../interactive/interactive-operator-packets.js';
 
+import { readStoredArtifact } from '../../artifact-response.js';
 import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
-import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { hashParams } from '../../utils/url-state.js';
 import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
 } from '../progress-tracker/acceptance-panel.js';
-import {
-  type EvidenceReviewerSelection,
-  evidenceReviewerSelection,
-} from '../shared/evidence-reviewer.js';
+import { type EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
+import { evidenceReviewerSelection } from '../shared/evidence-reviewer-recording.js';
 import {
   type EvidenceReviewerView,
   evidenceReviewerViewFromHash,
@@ -77,6 +75,7 @@ import {
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import { readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   refreshRunMirror,
@@ -670,21 +669,25 @@ export class RunDetail extends RunDetailState {
       this._postureStatus = { status: 'loading' };
     }
     try {
-      const result = await gateway.request<RuntimePostureStatusResult>(
-        Methods.RUNTIME_POSTURE_STATUS,
-        { runId },
-      );
-      if (!stillCurrent()) return;
-      this._postureStatus = {
-        status: 'ready',
-        slotId: result.slotId,
-        state: result.state,
+      const applyStored = (result: RuntimePostureStatusResult) => {
+        if (!stillCurrent()) return;
+        this._postureStatus = {
+          status: 'ready',
+          slotId: result.slotId,
+          state: result.state,
+        };
+        // The clear in `updated()` runs before this lands, so a rejection selected
+        // at a wait the run has since left would keep blocking until some other
+        // shared-state update happened to re-render. Re-check against the posture
+        // that just arrived.
+        this._maybeClearInapplicablePostureChoice();
       };
-      // The clear in `updated()` runs before this lands, so a rejection selected
-      // at a wait the run has since left would keep blocking until some other
-      // shared-state update happened to re-render. Re-check against the posture
-      // that just arrived.
-      this._maybeClearInapplicablePostureChoice();
+      applyStored(
+        await readStored<RuntimePostureStatusResult>(
+          resourceQuery<RuntimePostureStatusResult>(Methods.RUNTIME_POSTURE_STATUS, { runId }),
+          applyStored,
+        ),
+      );
     } catch (err) {
       if (!stillCurrent()) return;
       // Never fall back to "no posture": an unreadable status is its own state.
@@ -790,7 +793,11 @@ export class RunDetail extends RunDetailState {
     try {
       const res = await gateway.request<PRStatusResult>(
         Methods.PR_STATUS,
-        { pr: run.prNumber, project: run.project, force: true },
+        {
+          pr: run.prNumber,
+          project: run.project,
+          force: true,
+        },
         30_000,
       );
       if (!current() || requestSeq !== this._liveTimeoutRequestSeq || key !== this._liveTimeoutKey)
@@ -1382,7 +1389,7 @@ export class RunDetail extends RunDetailState {
     const resolveArtifactUrl = this._captureEvidenceResolver();
     try {
       const report = await readEvidenceReviewReport(model, async (path) => {
-        const response = await gatewayHttpFetch(
+        const response = await readStoredArtifact(
           runArtifactUrl(
             run.id,
             model.report?.artifactManifest.find((file) => file.path === path) ?? { path },

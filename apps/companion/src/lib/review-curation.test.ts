@@ -14,18 +14,17 @@ let state: ResourceQueryState<GitShowResult> = { status: 'loading' };
 let retried: ((value: ResourceQueryState<GitShowResult>) => void) | undefined;
 const queries: unknown[] = [];
 const cache = {
-  read(query: ResourceQuery<unknown>) {
+  retry(query: ResourceQuery<unknown>) {
+    assert.equal(query.method, Methods.GIT_SHOW);
     queries.push(query.params);
-    return state;
-  },
-  retry() {
+    if (state.status === 'ready') return Promise.resolve(state);
     return new Promise<ResourceQueryState<GitShowResult>>((resolve) => {
       retried = resolve;
     });
   },
 };
 mock.module('./resource-cache', {
-  namedExports: { getResourceCache: () => cache, getResourceWorkspaceKey: () => owner },
+  namedExports: { getResourceCache: () => (owner === 'owner-a' ? cache : undefined) },
 });
 // Companion compiles tests as CommonJS, so the mocked module loads inside each test.
 const curation = import('./review-curation');
@@ -60,60 +59,43 @@ test('review source retains exact numbered source and rejects a stale reply', as
   const { loadReviewFindingSource, reviewFindingSourceRequest } = await curation;
   let current = true;
   const params = reviewFindingSourceRequest('review-run', null, payload, 0)!;
-  const client = {
-    request: async (method: string, request: unknown) => {
-      assert.equal(method, Methods.GIT_SHOW);
-      assert.deepEqual(request, params);
-      return { content: 'before\nReviewed value\nafter\n' };
-    },
-  };
-  const context = await loadReviewFindingSource(client as never, params, 2, () => current);
+  state = { status: 'ready', data: { content: 'before\nReviewed value\nafter\n' } };
+  const context = await loadReviewFindingSource(params, 2, () => current);
+  assert.deepEqual(queries.at(-1), params);
   assert.deepEqual(
     context!.lines.find((line) => line.target),
     { number: 2, text: 'Reviewed value', target: true },
   );
-  const stale = loadReviewFindingSource(client as never, params, 2, () => current);
+  const stale = loadReviewFindingSource(params, 2, () => current);
   current = false;
   assert.equal(await stale, null);
 });
 
 test('slot findings read through the shared workspace cache and refuse a late owner', async () => {
   const { loadReviewFindingSource, reviewFindingSourceRequest } = await curation;
-  const client = {
-    request: async () => assert.fail('A slot source must not bypass the workspace cache'),
-  };
   const params = reviewFindingSourceRequest('run', 'slot', payload, 0)!;
   state = { status: 'ready', data: { content: 'before\nReviewed value\n' } };
-  const context = await loadReviewFindingSource(client as never, params, 2, () => true);
+  const context = await loadReviewFindingSource(params, 2, () => true);
   assert.equal(context?.lines.find((line) => line.target)?.text, 'Reviewed value');
   assert.deepEqual(queries.at(-1), { slotId: 'slot', ref: 'a'.repeat(40), path: 'src/example.ts' });
   state = { status: 'stale', data: { content: 'saved' } };
-  const late = loadReviewFindingSource(client as never, params, 2, () => true);
+  const late = loadReviewFindingSource(params, 2, () => true);
   owner = 'owner-b';
   retried?.({ status: 'ready', data: { content: 'other owner' } });
-  await assert.rejects(late, /Farm connection changed/);
+  await assert.rejects(late, /owner changed/);
   owner = 'owner-a';
 });
 
 test('missing reviewed files fail without a mutable-workspace fallback', async () => {
   const { loadReviewFindingSource, reviewFindingSourceRequest } = await curation;
-  let calls = 0;
-  const client = {
-    request: async () => {
-      calls++;
-      return { content: 'live workspace' };
-    },
-  };
   state = { status: 'loading' };
   const missing = loadReviewFindingSource(
-    client as never,
     reviewFindingSourceRequest('run', 'slot', payload, 0)!,
     2,
     () => true,
   );
   retried?.({ status: 'error', error: { code: 'READ_FAILED', message: 'Object unavailable' } });
   await assert.rejects(missing, /Object unavailable/);
-  assert.equal(calls, 0);
 });
 
 test('selecting a line 462 finding uses the shared exact source-line context', async () => {

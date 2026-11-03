@@ -1,0 +1,1 @@
+- Recording timelines accept equal adjacent presentation timestamps without dropping decoded frames; backwards, invalid and out-of-duration timestamps remain invalid.

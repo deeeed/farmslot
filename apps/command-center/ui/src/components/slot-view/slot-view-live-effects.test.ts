@@ -232,6 +232,7 @@ function editableView() {
     _fileChangedNotice: '',
     _newFilePrompt: true,
     _newFilePath: 'src/new.ts',
+    _fileIndexQuery: { retry: async () => undefined },
   });
   Object.assign(view, {
     _openFile: (path: string, type: 'file' | 'diff', pin: boolean) =>

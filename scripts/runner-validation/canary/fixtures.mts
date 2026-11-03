@@ -175,6 +175,14 @@ export const reviewRunParams = (slotId: string): Record<string, unknown> => ({
   reviewSequence: [{ ...REVIEWER, mode: 'cold' }],
 });
 
+/** The same reviewed run with a Claude-runner worker: the fixture's `claude` (fakeClaude), no model. */
+export const claudeReviewRunParams = (slotId: string): Record<string, unknown> => ({
+  ...reviewRunParams(slotId),
+  runner: 'claude',
+  model: 'haiku',
+  scripted: undefined,
+});
+
 /** A pack: what every project here shares, plus its own `project.json` fields and files. */
 function buildPack(
   name: string,
@@ -292,6 +300,8 @@ function reviewWorker(holds: string): string {
     'mkdir -p src',
     `cat > src/format-name.ts <<'EOF'\n${FORMAT_NAME}\nEOF`,
     `cat > src/debug-trace.ts <<'EOF'\n${LEFTOVER}\nEOF`,
+    // A fix past the gateway's 50-line limit, which only a reviewer can accept.
+    `[ ! -e '${holds}/large-leftover' ] || seq 1 60 | sed 's|^|// padding |' >> src/debug-trace.ts`,
     'git add src',
     'git commit -qm "feat: add formatName"',
     reports('Adds formatName in src/format-name.ts.'),
@@ -506,7 +516,11 @@ ${FAKE_WORKER_FINISH}
  * from its hooks, so nothing proves delivery; holds/claude-no-finish makes that attempt stay
  * mid-turn until /exit; holds/worker keeps it mid-turn. Then it finishes its task and waits at its
  * prompt until /exit. The two prompt holds are read when the prompt arrives, so lifting them only
- * affects the next launch.
+ * affects the next launch. holds/claude-no-session keeps it from reporting a session, so a fix
+ * round reaches it typed at its prompt. On a reviewed project it commits the work its reviewer
+ * flags, and otherwise a fix round reaches it as Claude's does: a resumed session with the prompt
+ * on argv. holds/fix keeps its fix mid-round. Any input mid-turn, submitted or not, goes to
+ * claude-input.log.
  */
 export const fakeClaude = (holds: string): string => `#!/usr/bin/env node
 'use strict';
@@ -527,7 +541,8 @@ const args = process.argv.slice(2);
 const settingsAt = args.indexOf('--settings');
 const settings = settingsAt < 0 ? {} : JSON.parse(fs.readFileSync(args[settingsAt + 1], 'utf8'));
 const cwd = process.cwd();
-const sessionId = randomUUID();
+const resumeAt = args.indexOf('--resume');
+const sessionId = resumeAt < 0 ? randomUUID() : args[resumeAt + 1];
 const transcriptPath = path.join(os.homedir(), '.claude/projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), sessionId + '.jsonl');
 const session = { session_id: sessionId, transcript_path: transcriptPath };
 const hook = (event, extra) => {
@@ -536,6 +551,8 @@ const hook = (event, extra) => {
       spawnSync('sh', ['-c', handler.command], { input: JSON.stringify({ hook_event_name: event, cwd, ...extra }) });
 };
 let typed = '';
+let settling;
+let midTurn = false;
 let onPrompt = () => {};
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.on('data', (chunk) => {
@@ -543,28 +560,38 @@ process.stdin.on('data', (chunk) => {
   if (text.includes('\\u0003')) process.exit(130);
   process.stdout.write(text);
   typed += text;
-  const end = typed.search(/[\\r\\n]/);
-  if (end < 0) return;
-  const line = typed.slice(0, end).trim();
-  typed = typed.slice(end + 1);
-  if (line === '/exit') process.exit(0);
-  if (line) onPrompt(line);
+  clearTimeout(settling);
+  settling = setTimeout(() => {
+    // A pasted prompt's lines arrive as returns: it is whole once a return ends a quiet input.
+    // Mid-turn nothing need be whole: a prompt left unsubmitted in the composer counts too.
+    if (!midTurn && !/[\\r\\n]\\s*$/.test(typed)) return;
+    const raw = typed;
+    const line = raw.replace(/\\r/g, '\\n').trim();
+    typed = '';
+    if (line === '/exit') process.exit(0);
+    if (midTurn) fs.appendFileSync(path.join(holds, 'claude-input.log'), JSON.stringify(raw) + '\\n');
+    else if (line) onPrompt(line);
+  }, 150);
 });
 setTimeout(() => process.exit(0), 15 * 60_000);
 (async () => {
   fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
-  fs.writeFileSync(transcriptPath, JSON.stringify({ type: 'system', sessionId, cwd }) + '\\n');
+  fs.appendFileSync(transcriptPath, JSON.stringify({ type: 'system', sessionId, cwd }) + '\\n');
   process.stdout.write('starting\\n');
   await whileHeld('claude-startup');
   const lateSession = held('claude-late-session');
-  if (!lateSession) hook('SessionStart', session);
+  const noSession = held('claude-no-session');
+  if (!lateSession && !noSession) hook('SessionStart', session);
   process.stdout.write('\\u276f\\n');
-  const prompt = await new Promise((resolve) => {
-    onPrompt = resolve;
-  });
-  onPrompt = () => {};
+  const nextPrompt = () =>
+    new Promise((resolve) => {
+      onPrompt = resolve;
+    });
+  let prompt = resumeAt < 0 ? await nextPrompt() : args.at(-1);
+  for (;;) {
+  midTurn = true;
   const noFinish = held('claude-no-finish');
-  if (!held('claude-no-hook')) hook('UserPromptSubmit', { prompt, ...(lateSession ? {} : session) });
+  if (!held('claude-no-hook')) hook('UserPromptSubmit', { prompt, ...(lateSession || noSession ? {} : session) });
   process.stdout.write('working\\n');
   try {
     fs.renameSync(path.join(holds, 'tmux.arm'), path.join(holds, 'tmux'));
@@ -575,13 +602,42 @@ setTimeout(() => process.exit(0), 15 * 60_000);
   if (noFinish) await new Promise(() => {});
   while (held('claude-late-session') && Date.now() < ceiling) await sleep(100);
   if (lateSession) hook('SessionStart', session);
-  const taskFile = path.resolve(cwd, prompt.match(/\\S*TASK\\.md/)[0]);
-  const taskDir = path.dirname(taskFile);
+  const git = (...gitArgs) => execFileSync('git', gitArgs, { cwd, stdio: 'inherit' });
+  const fixFile = prompt.match(/\\S*REVIEW-FIX\\.md/)?.[0];
+  if (fixFile) {
+    const fixTask = path.resolve(cwd, fixFile);
+    const mark = (...markArgs) => execFileSync(path.join(path.dirname(fixTask), 'mark'), ['--checklist', 'REVIEW-FIX.md', '--signal', 'REVIEW-FIX-SIGNAL.json', ...markArgs], { cwd, encoding: 'utf8', stdio: 'pipe' });
+    const steps = (fs.readFileSync(fixTask, 'utf8').match(/^- \\[ \\]/gm) ?? []).length;
+    fs.writeFileSync(path.join(path.dirname(fixTask), 'artifacts', 'report.md'), '# Review fix\\n\\nRemoved the leftover debug helper.\\n');
+    mark('start');
+    git('rm', '-q', 'src/debug-trace.ts');
+    git('commit', '-qm', 'fix: remove the leftover debug helper');
+    for (let step = 1; step < steps; step++) mark(String(step));
+    await whileHeld('fix');
+    mark('complete', '--mark-last');
+  } else {
+    const taskFile = path.resolve(cwd, prompt.match(/\\S*TASK\\.md/)[0]);
+    const taskDir = path.dirname(taskFile);
+    if (path.basename(cwd).startsWith(${JSON.stringify(REVIEW_PROJECT)})) {
+      fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, 'src/format-name.ts'), ${JSON.stringify(`${FORMAT_NAME}\n`)});
+      fs.writeFileSync(path.join(cwd, 'src/debug-trace.ts'), ${JSON.stringify(`${LEFTOVER}\n`)});
+      git('add', 'src');
+      git('commit', '-qm', 'feat: add formatName');
+    }
 ${FAKE_WORKER_FINISH}
-  hook('Stop', session);
+  }
+  // Done with what it was held for: a runner with no session at all reads as never idle.
+  if (noSession && fixFile) hook('SessionStart', session);
+  hook('Stop', noSession && !fixFile ? {} : session);
   process.stdout.write('\\u276f\\n');
+  midTurn = false;
+  prompt = await nextPrompt();
+  }
 })().catch((error) => {
   console.error(error);
+  // A crashed fixture reads as a worker gone: say why, or recovery looks at fault.
+  fs.appendFileSync(path.join(holds, 'claude-worker.err'), [error.stack, error.stdout, error.stderr].filter(Boolean).join('\\n') + '\\n');
   process.exit(1);
 });
 `;

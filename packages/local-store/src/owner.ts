@@ -183,11 +183,13 @@ export class ResourceCacheOwner {
       return;
     this.pendingBinding = undefined;
     if (this.owned) {
-      const foregroundChanged = this.owned.input.connection.foreground !== connection.foreground;
+      const policyChanged =
+        this.owned.input.connection.foreground !== connection.foreground ||
+        this.owned.input.connection.metered !== connection.metered;
       this.owned.input = input;
       if (identity !== undefined) this.owned.identity = identity;
       if (auth) this.owned.authentication = auth;
-      if (foregroundChanged) for (const listener of this.owned.inputChanges) listener();
+      if (policyChanged) for (const listener of this.owned.inputChanges) listener();
       return;
     }
     // Wait for the previous owner's cleanup, not its success: retire() already reported a failure,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { validateArtifactManifestDocument } from '../../src/recipe/artifact.js';
@@ -43,11 +44,50 @@ test('optional timelines preserve variable frames, nested nodes and uncertainty'
   );
 });
 
+test('real simctl presentation timestamps retain all 327 frames, including two duplicate times', () => {
+  const fixture: { durationSeconds: string; ptsAndBestEffortSeconds: [string, string][] } =
+    JSON.parse(
+      readFileSync(
+        new URL('../fixtures/simctl-duplicate-frame-timestamps.json', import.meta.url),
+        'utf8',
+      ),
+    );
+  const framesMs = fixture.ptsAndBestEffortSeconds.map(([pts]) => Number(pts) * 1000);
+  assert.equal(framesMs.length, 327);
+  assert.deepEqual(
+    framesMs.filter((time, index) => index > 0 && time === framesMs[index - 1]),
+    ['2.506667', '9.108333'].map((value) => Number(value) * 1000),
+  );
+  assert.equal(
+    validateRecipeRecordingTimelineDocument({
+      ...timeline,
+      framesMs,
+      durationMs: Number(fixture.durationSeconds) * 1000,
+    }).status,
+    'valid',
+  );
+});
+
+test('equal adjacent frame times remain valid at the beginning and end', () => {
+  for (const framesMs of [
+    [0, 0, 27],
+    [0, 27, 27],
+    [0, 0, 0],
+  ]) {
+    assert.equal(
+      validateRecipeRecordingTimelineDocument({ ...timeline, framesMs }).status,
+      'valid',
+    );
+  }
+});
+
 test('timelines reject unbound, ambiguous and malformed timing', () => {
   for (const patch of [
     { framesMs: [0, 803, 27] },
-    { framesMs: [0, 27, 27] },
     { framesMs: [0, Number.NaN] },
+    { framesMs: [0, Infinity] },
+    { framesMs: [0, -1] },
+    { framesMs: [0, 900] },
     { durationMs: 700 },
     { videoPath: '../run.mp4' },
     { videoDigest: 'unknown' },

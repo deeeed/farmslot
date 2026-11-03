@@ -1083,6 +1083,17 @@ test('baseReviewPolicy is static for new runs and keeps a recorded or pre-migrat
     'full-live',
     'a base review launched before depth was recorded ran the live contract',
   );
+  const replayed: Run = {
+    ...makeRun({ steps: [] }),
+    agentContexts: [
+      { id: 'reviewer-3', role: 'review', reviewValidationDepth: 'static-code' },
+    ] as Run['agentContexts'],
+  };
+  assert.equal(
+    baseReviewPolicy(replayed),
+    'static-code',
+    'a replay cleared the step record: the reviewer it launched still has the depth',
+  );
   const publicationOnly: Run = {
     ...makeRun({ steps: [] }),
     agentContexts: [

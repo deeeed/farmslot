@@ -152,6 +152,37 @@ async function withTimeout<T>(
   }
 }
 
+const BRANCH_SLUG_MAX = 30;
+// A marker, not a sentence: "Do not merge duplicate token balances" is an ordinary title.
+const DO_NOT_MERGE_MARKERS = [
+  // In capitals, with any separator: DO NOT MERGE, DO.NOT.MERGE, DO_NOT_MERGE_POC.
+  /(?<![A-Za-z0-9])DO[\s._-]*NOT[\s._-]*MERGE(?![A-Za-z0-9])/,
+  // Joined, in any case: do-not-merge, do_not_merge, DoNotMerge.
+  /(?<![a-z0-9])do[._-]*not[._-]*merge(?![a-z0-9])/i,
+  // Spaced, as its own clause: punctuation or a title edge on both sides. "Do Not Merge: banner",
+  // "temp PR, do not merge, flag", "[POC - do not merge]", "PoC banner - do not merge".
+  /(?:^\s*|[[(\])]\s*|[:;,.!|–—-]\s*)do\s+not\s+merge(?:\s*(?:$|[\]):;,.!|–—])|\s+-)/i,
+  // The short form, bracketed or in capitals: [dnm], DNM: chart order lines.
+  /[[(]\s*dnm\s*[\])]/i,
+  /(?<![A-Za-z0-9])DNM(?![A-Za-z0-9])/,
+];
+const DO_NOT_MERGE_SEGMENT = 'do-not-merge';
+
+/**
+ * A title marked DO NOT MERGE keeps the marker in its branch slug, as a leading
+ * `do-not-merge` segment that no truncation can drop. Run 9819c7bf's title said
+ * DO NOT MERGE and its generated slug did not (F327). A slug built from a title that only
+ * says the words loses them: a mergeable branch must not read as marked.
+ */
+function keepDoNotMergeMarker(slug: string, title: string): string {
+  if (!DO_NOT_MERGE_MARKERS.some((marker) => marker.test(title)))
+    return slug.replace(/(^|-)do-not-merge(?=-|$)/g, '').replace(/^-+|-+$/g, '') || slug;
+  const rest = slug.replace(/(^|-)(?:do-?not-?merge|dnm)(?=-|$)/g, '').replace(/^-+|-+$/g, '');
+  return `${DO_NOT_MERGE_SEGMENT}${rest ? `-${rest}` : ''}`
+    .slice(0, BRANCH_SLUG_MAX)
+    .replace(/-+$/, '');
+}
+
 export function slugify(text: string): string {
   const slug = text
     .toLowerCase()
@@ -159,7 +190,7 @@ export function slugify(text: string): string {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 30);
+    .slice(0, BRANCH_SLUG_MAX);
   return slug || 'untitled';
 }
 
@@ -172,7 +203,7 @@ export function sanitizeBranchSlug(slug: string): string {
     .replace(/\/+/g, '-')
     .replace(/^-|-$/g, '')
     .replace(/-+/g, '-')
-    .slice(0, 30);
+    .slice(0, BRANCH_SLUG_MAX);
   return clean || 'task';
 }
 
@@ -209,14 +240,17 @@ ${ticket.labels?.length ? `Labels: ${ticket.labels.join(', ')}` : ''}`;
     const parsed = JSON.parse(jsonMatch[0]);
     return {
       summary: taskTitleText(parsed.summary ?? ticket.title),
-      branchSlug: sanitizeBranchSlug(parsed.branchSlug ?? slugify(ticket.title)),
+      branchSlug: keepDoNotMergeMarker(
+        sanitizeBranchSlug(parsed.branchSlug ?? slugify(ticket.title)),
+        ticket.title,
+      ),
       usage: result.usage,
     };
   } catch (err) {
     console.warn(`[intelligence] summary generation failed (non-fatal): ${(err as Error).message}`);
     return {
       summary: taskTitleText(ticket.title),
-      branchSlug: slugify(ticket.title),
+      branchSlug: keepDoNotMergeMarker(slugify(ticket.title), ticket.title),
       usage: { provider: 'fallback', model: 'none', durationMs: 0 },
     };
   }
