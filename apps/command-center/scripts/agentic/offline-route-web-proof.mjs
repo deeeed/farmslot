@@ -108,6 +108,19 @@ try {
   } else subjects = JSON.parse(await fs.readFile(subjectFile, 'utf8'));
   for (const entry of cases.commandCenter) {
     try {
+      if (
+        entry.route === 'native' &&
+        process.env.FARMSLOT_OFFLINE_NATIVE_GAP === 'lead-after-deploy'
+      ) {
+        results.push({
+          route: entry.route,
+          kind: entry.kind,
+          result: 'DEFERRED LIVE PROOF',
+          reason:
+            'User accepted the seeded offline Native regression and deferred the live owner-session check to the lead after deploy. No authorized native assignment exists in this proof session.',
+        });
+        continue;
+      }
       if (['connection', 'development', 'stream'].includes(entry.kind)) {
         results.push({ route: entry.route, classification: entry.kind, result: 'NAMED EXCEPTION' });
         continue;
