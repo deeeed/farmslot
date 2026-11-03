@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import {
+  closeSync,
   cpSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -11,6 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   isRunBundleManifest,
@@ -20,6 +24,7 @@ import {
   type RunBundleImportRequest,
   type RunBundleImportResult,
   type RunBundleManifest,
+  type RunDecision,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import {
@@ -29,6 +34,11 @@ import {
 } from '@farmslot/protocol/runs/portable-bundle';
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
+import {
+  appendDecisionHistoryFile,
+  decisionHistoryFile,
+  mergeDecisionHistoryFile,
+} from './decision-history.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir } from './paths.js';
 import {
@@ -150,6 +160,61 @@ function persistRunRecord(runsDir: string, run: Run): void {
   const tmpPath = `${filePath}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
   writeFileSync(tmpPath, `${JSON.stringify(run, null, 2)}\n`, 'utf-8');
   renameSync(tmpPath, filePath);
+}
+
+function importRecordPath(runsDir: string, runId: string, mode: RunBundleImportMode): string {
+  const livePath = path.join(runsDir, `${runId}.json`);
+  const archivedPath = path.join(runsDir, 'archive', `${runId}.json`);
+  return mode === 'mirror' && !existsSync(livePath) && existsSync(archivedPath)
+    ? archivedPath
+    : livePath;
+}
+
+/** Re-read after artifact work and retain displaced rows without yielding before replacement. */
+function persistImportedRunRecord(
+  runsDir: string,
+  run: Run,
+  historySource: string,
+  mode: RunBundleImportMode,
+): void {
+  const record = importRecordPath(runsDir, run.id, mode);
+  let retired: RunDecision[] = [];
+  let displaced: Buffer | undefined;
+  if (mode === 'mirror' && existsSync(record)) {
+    const bytes = readFileSync(record);
+    let existing: Run | undefined;
+    try {
+      existing = JSON.parse(bytes.toString('utf8'));
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      // Disaster recovery must retain the damaged original before replacing it.
+      displaced = bytes;
+    }
+    const remaining = [...run.decisions];
+    retired = (existing?.decisions ?? []).filter((row) => {
+      const index = remaining.findIndex((incoming) => isDeepStrictEqual(incoming, row));
+      if (index < 0) return true;
+      remaining.splice(index, 1);
+      return false;
+    });
+  }
+  const history = decisionHistoryFile(record);
+  const count = mergeDecisionHistoryFile(historySource, history);
+  appendDecisionHistoryFile(history, retired);
+  run.decisionHistoryCount = count + retired.length;
+  if (displaced) {
+    writeFileSync(`${record}.displaced-${Date.now()}-${randomUUID().slice(0, 8)}`, displaced, {
+      flag: 'wx',
+      flush: true,
+    });
+    const directory = openSync(path.dirname(record), 'r');
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
+    }
+  }
+  persistRunRecord(path.dirname(record), stripRunnerSessionArchives(run));
 }
 
 function restoreTaskTree(input: {
@@ -285,10 +350,14 @@ export async function importBundle(
     const importedRunIds: string[] = [];
     const packagePaths: string[] = [];
     const stagedRuns: Run[] = [];
+    const historySources = new Map<string, string>();
 
     for (const entry of manifest.runs) {
       const bundled = loadBundledRun(bundleDir, entry.runPath, manifest);
-      const existingPath = path.join(runsDir, `${bundled.id}.json`);
+      if (request.mode === 'mirror') assertSafeRunId(bundled.id);
+      const livePath = path.join(runsDir, `${bundled.id}.json`);
+      const archivedPath = path.join(runsDir, 'archive', `${bundled.id}.json`);
+      const existingPath = existsSync(livePath) ? livePath : archivedPath;
       if (request.mode === 'mirror' && existsSync(existingPath) && !request.force) {
         throw new Error(
           `mirror import refused: run id ${bundled.id} already exists — pass --force to overwrite`,
@@ -296,6 +365,13 @@ export async function importBundle(
       }
 
       let next = applyImportMode(bundled, request.mode, manifest, idMap);
+      const historyPath = decisionHistoryFile(entry.runPath);
+      const historySource = resolvePathInsideRoot(path.resolve(bundleDir), historyPath);
+      if (existsSync(historySource) && !manifest.entries[historyPath])
+        throw new Error(`Bundle contains unlisted file: ${historyPath}`);
+      if (bundled.decisionHistoryCount && !manifest.entries[historyPath])
+        throw new Error(`Decision history missing for run ${bundled.id}`);
+      historySources.set(next.id, historySource);
       if (entry.taskKey) {
         const taskFile = restoreTaskTree({
           bundleDir,
@@ -318,6 +394,7 @@ export async function importBundle(
         remapImportedRunLineage(staged, idMap, request.mode),
         idMap,
       );
+      const historySource = historySources.get(next.id)!;
       if (next.taskFile) {
         for (const name of ['reference.result-package.json', 'candidate.result-package.json']) {
           const candidate = path.join(path.dirname(next.taskFile), 'artifacts', 'packages', name);
@@ -344,6 +421,11 @@ export async function importBundle(
               sizeBytes: meta.bytes,
             };
           });
+        // Artifact capture needs the incoming journal, but displaced rows must wait for commit.
+        next.decisionHistoryCount = mergeDecisionHistoryFile(
+          historySource,
+          decisionHistoryFile(importRecordPath(runsDir, next.id, request.mode)),
+        );
         const store =
           request.retentionStore ??
           (await openRunBundleStore({
@@ -384,7 +466,7 @@ export async function importBundle(
                   }
                 : {}),
             };
-            persistRunRecord(runsDir, stripRunnerSessionArchives(next));
+            persistImportedRunRecord(runsDir, next, historySource, request.mode);
             for (const artifact of artifacts) {
               if (isRunBundleMedia(artifact.path))
                 rmSync(path.join(path.dirname(next.taskFile!), artifact.path), { force: true });
@@ -395,7 +477,7 @@ export async function importBundle(
         // Imported missing data stays unavailable; it never points back into the source gateway.
         delete next.artifactBundle;
         if (next.output) delete next.output.artifactBundle;
-        persistRunRecord(runsDir, stripRunnerSessionArchives(next));
+        persistImportedRunRecord(runsDir, next, historySource, request.mode);
       }
       importedRunIds.push(next.id);
     }

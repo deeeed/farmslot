@@ -34,7 +34,14 @@ import {
   runDecisionWaitingStatus,
   type RunProgressObservation,
 } from '../runners/run-progress.js';
-import { getRun, getRunWithArchived, listRuns, updateRun, updateRunStep } from '../runs/store.js';
+import {
+  getRun,
+  getRunWithArchived,
+  listRuns,
+  readDecisionHistory,
+  updateRun,
+  updateRunStep,
+} from '../runs/store.js';
 import { samePrincipalOwner } from '../security/work-originator.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
@@ -47,6 +54,7 @@ import {
 import {
   hasValidPrNumber,
   isGateDecision,
+  supersededGateForSamePackage,
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
 import {
@@ -864,21 +872,45 @@ export async function createEngineDecision(
   const adoptedAfterRead = adoptedHumanGateAction(reason, current!);
   if (adoptedAfterRead) return adoptedAfterRead;
 
+  let presentedAgain =
+    reason === 'human_gate' ? supersededGateForSamePackage(current!.decisions, payload) : undefined;
+  if (
+    !presentedAgain &&
+    reason === 'human_gate' &&
+    payload?.kind === 'ready' &&
+    payload.prPackage?.headSha &&
+    payload.prPackage.reviewSubjectHash &&
+    current!.decisionHistoryCount
+  ) {
+    presentedAgain = supersededGateForSamePackage(
+      current!.decisions,
+      payload,
+      readDecisionHistory(runId),
+    );
+  }
   const decision: RunDecision = {
-    id: randomUUID(),
+    id: presentedAgain?.id ?? randomUUID(),
     type: `engine_${reason}`,
     title: `${run.ticketOrPr || `Run ${runId.slice(0, 8)}`} — ${reason.replace(/_/g, ' ')}`,
     description,
     actions,
     createdAt: new Date().toISOString(),
     ...(payload ? { payload } : {}),
-    ...(isPrerequisiteGatePayload(payload) ? { context: { gateActions: gateDefinitions } } : {}),
+    ...(isPrerequisiteGatePayload(payload)
+      ? {
+          context: {
+            gateActions: gateDefinitions,
+            ...(presentedAgain ? { gateReentry: true } : {}),
+          },
+        }
+      : {}),
   };
 
   // Exactly one live gate decision: a gate that opens a new one supersedes any predecessor
   // still open, e.g. one a second driver of the same gate left behind. Same tick as the append.
   if (isGateDecision(decision))
     supersedeStaleHumanGateDecisions(current!.decisions, decision.createdAt, decision.id);
+  if (presentedAgain) resolveEngineDecision(presentedAgain.id, 'superseded');
   updateRun(runId, {
     status: runDecisionWaitingStatus(
       current!,
@@ -886,7 +918,10 @@ export async function createEngineDecision(
       reason,
       isPrerequisiteGatePayload(payload) ? payload.gateReadiness : undefined,
     ),
-    decisions: [...current!.decisions, decision],
+    decisions: [
+      ...current!.decisions.filter((entry) => !presentedAgain || entry.id !== presentedAgain.id),
+      decision,
+    ],
   });
   if (current!.steps.some((step) => step.name === 'human-gate' && step.status === 'running'))
     updateRunStep(runId, 'human-gate', { detail: 'Waiting for operator decision' });
@@ -910,7 +945,12 @@ export async function createEngineDecision(
     }));
 
   const resolvedRun = getRun(runId);
-  if (runSupersededSince(resolvedRun, generation) || isTerminalRunStatus(resolvedRun!.status))
+  if (
+    runSupersededSince(resolvedRun, generation) ||
+    isTerminalRunStatus(resolvedRun!.status) ||
+    actionId === 'superseded' ||
+    decision.resolvedAction === 'superseded'
+  )
     return 'abort';
   decision.resolvedAt = new Date().toISOString();
   decision.resolvedAction = actionId;

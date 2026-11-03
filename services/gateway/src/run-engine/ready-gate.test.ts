@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 
 import {
   Events,
@@ -17,10 +17,20 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { admitReviewRound, settleReviewRoundNoVerdict } from '../review/review-round-budget.js';
 import { TerminalReviewArtifactError } from '../review/terminal-result.js';
 import type { RunProgressObservation } from '../runners/run-progress.js';
+import * as store from '../runs/store.js';
 import { createRun, getAllRuns, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
-import { resolveEngineDecision, setEngineDecisionRuntime } from './engine-decisions.js';
+import { hasHeldPublicationApproval, latestResolvedHumanGateDecision } from './decision-replay.js';
+import {
+  recordDecisionResolution,
+  resolveEngineDecision,
+  setEngineDecisionRuntime,
+} from './engine-decisions.js';
 import { BlockedRunError, OwnedWorkerBusyError } from './errors.js';
+import {
+  supersedeStaleHumanGateDecisions,
+  validatePackageApprovalSelection,
+} from './gate-policy.js';
 import {
   executePublishGateReviewPlan,
   executeReadyGate,
@@ -32,6 +42,11 @@ import {
 } from './ready-gate.js';
 import { reviewLineageOptionsForRun } from './review-plan.js';
 import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
+
+const prLinkage = await import('../integrations/pr-linkage.js');
+mock.module('../integrations/pr-linkage.js', {
+  namedExports: { ...prLinkage, findMergedPRNumber: async () => null },
+});
 
 test('localVideoProofWarning flags screenshot packages without local video proof', () => {
   assert.match(
@@ -818,7 +833,7 @@ function sourceGateFixture(t: TestContext) {
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'missing-source-proof',
+    project: 'example-source-proof',
     ticketOrPr: 'SOURCE-WAIT',
   });
   updateRun(run.id, {
@@ -837,9 +852,11 @@ function sourceGateFixture(t: TestContext) {
     });
   let announced = notice();
   const executions: Promise<string>[] = [];
+  const resolvedIds: unknown[] = [];
   setEngineDecisionRuntime({
-    broadcast: (event) => {
+    broadcast: (event, payload) => {
       if (event === Events.RUN_DECISION_NEW) notify();
+      if (event === Events.RUN_DECISION_RESOLVED) resolvedIds.push(payload);
     },
     stepToStatus: { 'human-gate': 'human-gating' },
   });
@@ -853,6 +870,7 @@ function sourceGateFixture(t: TestContext) {
   });
   return {
     run,
+    resolvedIds,
     next: async (execution: Promise<string>): Promise<RunDecision> => {
       executions.push(execution);
       await Promise.race([
@@ -1124,6 +1142,147 @@ test(
       'abort',
     );
     assert.equal(getRun(run.id)!.decisions.length, before, 'no gate decision was opened');
+  },
+);
+
+test(
+  'a re-entered ready gate keeps its id and the superseded row intact',
+  { timeout: 4000 },
+  async (t) => {
+    const { run, next } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    const held: RunDecision = {
+      id: 'older-held-approval',
+      type: 'engine_human_gate',
+      title: 'Publish',
+      description: '',
+      actions: [],
+      createdAt: '2026-11-03T00:00:00Z',
+      resolvedAt: '2026-11-03T00:01:00Z',
+      resolvedAction: 'approve-publish',
+      context: { approvalHeldAt: '2026-11-03T00:02:00Z' },
+    };
+    updateRun(run.id, { decisions: [held] });
+    const first = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    first.selectionData = {
+      packageId: prepared.id,
+      packageHash: prepared.packageHash,
+      packageHeadSha: prepared.headSha,
+    };
+    assert.equal(supersedeStaleHumanGateDecisions(getRun(run.id)!.decisions), 1);
+    const original = structuredClone(first);
+    updateRun(run.id, { decisions: [held] });
+    const generation = (getRun(run.id)!.engineState?.generation ?? 0) + 1;
+    updateRun(run.id, { engineState: { ...getRun(run.id)!.engineState, generation } });
+    assert.equal(resolveEngineDecision(first.id, 'abort'), true);
+    const successor = { ...prepared, id: 'pkg-successor', packageHash: 'successor-hash' };
+    const again = await next(
+      executeReadyGate(run.id, { ensurePackage: async () => successor, generation }),
+    );
+    assert.equal(again.id, first.id);
+    const after = getRun(run.id)!;
+    assert.deepEqual(
+      store.readDecisionHistory(run.id).at(-1),
+      JSON.parse(JSON.stringify(original)),
+    );
+    assert.equal(after.decisions.filter(({ id }) => id === first.id).length, 1);
+    assert.equal(
+      after.decisions.find(({ id }) => id === first.id),
+      again,
+    );
+    assert.equal(again.selectionData, undefined);
+    assert.equal(again.evidenceAttestation, undefined);
+    assert.equal(latestResolvedHumanGateDecision(after.decisions), undefined);
+    assert.equal(hasHeldPublicationApproval(after), true);
+    assert.throws(
+      () =>
+        validatePackageApprovalSelection(successor, {
+          ...again,
+          selectionData: first.selectionData,
+        }),
+      {
+        message:
+          'Package changed; refresh package before publishing (approved package pkg-1 but current package is pkg-successor)',
+      },
+    );
+    recordDecisionResolution(run.id, again.id, 'abort');
+    assert.equal(again.resolvedAction, 'abort');
+    assert.deepEqual(
+      store.readDecisionHistory(run.id).at(-1),
+      JSON.parse(JSON.stringify(original)),
+    );
+    assert.equal(resolveEngineDecision(again.id, 'abort'), true);
+  },
+);
+
+test('a changed ready gate package gets a new decision id', { timeout: 4000 }, async (t) => {
+  const { run, next } = sourceGateFixture(t);
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  for (const changed of [
+    { headSha: 'changed' },
+    { reviewSubjectHash: 'changed' },
+    { draftTitle: 'changed' },
+    { draftBody: 'changed' },
+    { reviewSubjectHash: undefined },
+  ]) {
+    const first = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    assert.equal(supersedeStaleHumanGateDecisions(getRun(run.id)!.decisions), 1);
+    assert.equal(resolveEngineDecision(first.id, 'abort'), true);
+    const unchanged = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    assert.equal(unchanged.id, first.id);
+    assert.equal(supersedeStaleHumanGateDecisions(getRun(run.id)!.decisions), 1);
+    const original = structuredClone(unchanged);
+    const generation = (getRun(run.id)!.engineState?.generation ?? 0) + 1;
+    updateRun(run.id, { engineState: { ...getRun(run.id)!.engineState, generation } });
+    assert.equal(resolveEngineDecision(unchanged.id, 'abort'), true);
+    const second = await next(
+      executeReadyGate(run.id, {
+        ensurePackage: async () => ({ ...prepared, ...changed }),
+        generation,
+      }),
+    );
+    assert.notEqual(second.id, first.id, JSON.stringify(changed));
+    assert.deepEqual(
+      getRun(run.id)!.decisions.find(({ id }) => id === first.id),
+      original,
+    );
+    recordDecisionResolution(run.id, second.id, 'abort');
+    assert.equal(resolveEngineDecision(second.id, 'abort'), true);
+  }
+});
+
+test(
+  're-entry archives repeated gate ids before exposing the new card',
+  { timeout: 4000 },
+  async (t) => {
+    const { run, next, resolvedIds } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    const first = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    updateRun(run.id, { decisions: [{ ...first }] });
+    assert.equal(supersedeStaleHumanGateDecisions(getRun(run.id)!.decisions), 1);
+    const superseded = getRun(run.id)!.decisions[0];
+    const duplicate = {
+      ...structuredClone(superseded),
+      description: 'older package refresh occurrence',
+    };
+    updateRun(run.id, { decisions: [duplicate, superseded, structuredClone(superseded)] });
+    const originals = structuredClone(getRun(run.id)!.decisions);
+    const again = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    if (again.id !== first.id) resolveEngineDecision(first.id, 'abort');
+    assert.equal(again.id, first.id);
+    assert.deepEqual(resolvedIds, [], 'the retired waiter cannot resolve the replacement card');
+    assert.deepEqual(store.readDecisionHistory(run.id), JSON.parse(JSON.stringify(originals)));
+    assert.deepEqual(getRun(run.id)!.decisions, [again]);
+    recordDecisionResolution(run.id, again.id, 'abort');
+    assert.equal(again.resolvedAction, 'abort');
+    assert.deepEqual(store.readDecisionHistory(run.id), JSON.parse(JSON.stringify(originals)));
+    assert.equal(resolveEngineDecision(again.id, 'abort'), true);
   },
 );
 
@@ -1446,3 +1605,36 @@ for (const mode of ['cold', 'warm', 'continue-review-fix'] as const) {
     assert.equal(await repeated, 'abort');
   });
 }
+
+test(
+  'ordinary gate entry and active-card re-entry do not read retired rows',
+  { timeout: 4000 },
+  async (t) => {
+    const { run, next } = sourceGateFixture(t);
+    const fs = (await import('node:fs')).default;
+    const read = fs.readFileSync;
+    t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof fs.readFileSync>) => {
+      assert.equal(String(args[0]).endsWith('.decisions.jsonl'), false, 'unneeded history read');
+      return read(...args);
+    });
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    const first = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    assert.equal(supersedeStaleHumanGateDecisions(getRun(run.id)!.decisions), 1);
+    assert.equal(resolveEngineDecision(first.id, 'abort'), true);
+    // Give the run real history while leaving the matching superseded gate active.
+    updateRun(run.id, {
+      decisions: [
+        ...getRun(run.id)!.decisions,
+        { ...first, id: 'unrelated', type: 'engine_review_failed' },
+      ],
+    });
+    updateRun(run.id, {
+      decisions: getRun(run.id)!.decisions.filter(({ id }) => id !== 'unrelated'),
+    });
+    const again = await next(executeReadyGate(run.id, { ensurePackage: async () => prepared }));
+    assert.equal(again.id, first.id);
+    assert.equal(resolveEngineDecision(again.id, 'abort'), true);
+  },
+);

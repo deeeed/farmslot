@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createWriteStream } from 'node:fs';
+import { constants, createWriteStream, existsSync } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -43,6 +43,7 @@ import {
 
 import { loadAllRunRecords } from './collect.js';
 import { shouldSkipBundleFilesystemEntry } from './copy-tree.js';
+import { captureDecisionHistoryPrefix, decisionHistoryFile } from './decision-history.js';
 import { sha256Text } from './hashing.js';
 import { parseManifest } from './import.js';
 import {
@@ -71,6 +72,8 @@ interface CaptureIntent {
   bundleId: string;
   exportedAt: string;
   runJson: string;
+  /** Journal prefix frozen with runJson; later appends belong to later captures. */
+  decisionHistoryBytes?: number;
   /** The Run generation that captured it; earlier generations' packages are superseded. */
   generation?: number;
   bundleDigest?: string;
@@ -899,6 +902,7 @@ async function copyHashed(
   source: string,
   dest: string | null,
   maxBytes: number,
+  prefix = false,
 ): Promise<RunBundlePayloadIdentity> {
   if (dest) await mkdir(path.dirname(dest), { recursive: true });
   const digest = createHash('sha256');
@@ -906,7 +910,7 @@ async function copyHashed(
   const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     await pipeline(
-      handle.createReadStream(),
+      handle.createReadStream(prefix ? { end: maxBytes - 1 } : undefined),
       new Transform({
         transform(chunk: Buffer, _encoding, callback) {
           bytes += chunk.length;
@@ -927,6 +931,7 @@ async function copyHashed(
   } finally {
     await handle.close();
   }
+  if (prefix && bytes !== maxBytes) throw new Error('Decision history prefix is incomplete.');
   if (dest) await chmod(dest, 0o400);
   return { sha256: digest.digest('hex'), bytes };
 }
@@ -1576,6 +1581,14 @@ export async function materializeRunBundle(
       await atomicJson(intentPath, original);
       prior = JSON.stringify(original);
     }
+    const liveHistory = decisionHistoryFile(path.join(store.runsDir, `${run.id}.json`));
+    const historyFile = existsSync(liveHistory)
+      ? liveHistory
+      : decisionHistoryFile(path.join(store.runsDir, 'archive', `${run.id}.json`));
+    if (!prior && run.decisionHistoryCount && !existsSync(historyFile))
+      throw new Error(`Decision history missing for run ${run.id}`);
+    const historyPrefix =
+      !prior && existsSync(historyFile) ? captureDecisionHistoryPrefix(historyFile) : undefined;
     const intent: CaptureIntent = prior
       ? JSON.parse(prior)
       : {
@@ -1583,7 +1596,17 @@ export async function materializeRunBundle(
           key: request.captureKey,
           bundleId: randomUUID(),
           exportedAt: new Date().toISOString(),
-          runJson: `${JSON.stringify(sanitizeRunForBundleExport(run, 'reference'), null, 2)}\n`,
+          runJson: `${JSON.stringify(
+            {
+              ...sanitizeRunForBundleExport(run, 'reference'),
+              ...(historyPrefix
+                ? { decisionHistoryCount: historyPrefix.toString('utf8').split('\n').length - 1 }
+                : {}),
+            },
+            null,
+            2,
+          )}\n`,
+          ...(historyPrefix ? { decisionHistoryBytes: historyPrefix.byteLength } : {}),
           ...(run.engineState?.generation !== undefined
             ? { generation: run.engineState.generation }
             : {}),
@@ -1651,9 +1674,10 @@ export async function materializeRunBundle(
       },
     };
     const missingData: string[] = [];
-    let bundleBytes = Buffer.byteLength(intent.runJson);
+    let bundleBytes = Buffer.byteLength(intent.runJson) + (intent.decisionHistoryBytes ?? 0);
     let stagedBytes = bundleBytes;
-    let storeBytes = await chargedCaptureBytes(request, acquisitionSize);
+    let storeBytes =
+      (await chargedCaptureBytes(request, acquisitionSize)) + (intent.decisionHistoryBytes ?? 0);
     const taskRoot = await realpath(request.taskDir);
     const gatewayRoot = request.gatewayFiles && (await realpath(request.gatewayFiles.taskDir));
     const gatewayPaths = new Set(request.gatewayFiles?.paths);
@@ -1665,6 +1689,21 @@ export async function materializeRunBundle(
     const manifestReserve =
       Buffer.byteLength(JSON.stringify(ordered)) + ordered.length * 300 + 4096;
     try {
+      if (intent.decisionHistoryBytes) {
+        if (
+          bundleBytes + manifestReserve > policy.maxBundleBytes ||
+          storeBytes + manifestReserve > policy.maxStoreBytes
+        )
+          throw new Error('Run bundle decision history exceeds reserved capacity.');
+        const key = decisionHistoryFile(runPath);
+        const copied = await copyHashed(
+          historyFile,
+          path.join(stage, key),
+          intent.decisionHistoryBytes,
+          true,
+        );
+        manifest.entries[key] = { path: key, ...copied };
+      }
       for (const artifact of ordered) {
         assertSafeBundleRelativePath(artifact.path);
         if (

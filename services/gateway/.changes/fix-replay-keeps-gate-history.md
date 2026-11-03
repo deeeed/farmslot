@@ -1,0 +1,2 @@
+- Replays preserve retired decision rows in a durable append-only journal beside each run record. Routine reads and events carry only the history count. Archive and bundle transport preserve complete journal rows, including forced restores over live or archived records.
+- A publication gate presented again after a replay or restart keeps its id when the work is unchanged. Changed work gets a new id, and approvals still apply only to the selected package.

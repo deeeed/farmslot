@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadAllRunRecords, loadRunRecord } from './collect.js';
+import { loadAllRunRecords, loadRunRecord, selectRunsForExport } from './collect.js';
 
 test('run records skip non-run JSON that shares the runs directory', (t) => {
   const runsDir = mkdtempSync(path.join(tmpdir(), 'farmrun-collect-'));
@@ -40,3 +40,19 @@ test('run records skip non-run JSON that shares the runs directory', (t) => {
   writeFileSync(path.join(runsDir, 'a1b2-copy.json'), JSON.stringify(capabilityStore));
   assert.equal(loadRunRecord(runsDir, 'a1b2')?.id, runId);
 });
+
+for (const archived of [false, true]) {
+  test(`explicit ${archived ? 'archived' : 'live'} ids skip unrelated records`, (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), 'farmrun-select-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const runsDir = path.join(root, '.runs');
+    const archiveDir = path.join(runsDir, 'archive');
+    mkdirSync(archiveDir, { recursive: true });
+    const id = 'a1b2c3d4-1111-4222-8333-444455556666';
+    const run = { id, status: 'done', steps: [], createdAt: '2026-11-03T00:00:00Z' };
+    writeFileSync(path.join(archived ? archiveDir : runsDir, `${id}.json`), JSON.stringify(run));
+    writeFileSync(path.join(runsDir, 'unrelated.json'), '{"id":');
+    writeFileSync(path.join(archiveDir, 'unrelated.json'), '{"id":');
+    assert.deepEqual(selectRunsForExport({ farmslotRoot: root, runIds: [id, id] }), [run]);
+  });
+}

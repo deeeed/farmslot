@@ -1,0 +1,1 @@
+- Preserve retired decision journals through live or archived run export and every import mode. Forced restores merge complete history and retain displaced active rows or damaged records. Export and import tolerate torn journal tails without changing the source.

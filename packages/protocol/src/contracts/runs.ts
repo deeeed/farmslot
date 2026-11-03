@@ -3027,6 +3027,8 @@ export interface Run {
   mergedAt?: string | null;
   steps: RunStep[];
   decisions: RunDecision[];
+  /** Number of retired rows in the append-only journal beside this run record. */
+  decisionHistoryCount?: number;
   reviewResult?: RunReviewResult;
   metrics: RunMetrics;
   createdAt: string;
