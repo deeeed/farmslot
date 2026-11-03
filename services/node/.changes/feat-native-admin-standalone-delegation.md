@@ -1,0 +1,1 @@
+- Report native target readiness and home metadata and carry server-derived standalone requester attribution to the native host.

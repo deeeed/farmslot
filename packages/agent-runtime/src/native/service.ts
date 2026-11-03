@@ -3,6 +3,7 @@ import {
   Methods,
   type NativeSessionCreateParams,
   type NativeSessionInfo,
+  type NativeSessionRequester,
   type NativeSessionResponse,
 } from '@farmslot/protocol';
 
@@ -11,6 +12,8 @@ import type { NativeSessionClient } from './client.js';
 import { NATIVE_PROFILE_METHODS, routeNativeProfile } from './profile-service.js';
 import { nativeWorkspaceChanges, nativeWorkspaceDiff, nativeWorkspaceList } from './workspace.js';
 import { readWorkspaceText } from './workspace-files.js';
+
+export { parseNativeSessionRequester } from './requester.js';
 
 export class NativeSessionMethodError extends Error {
   constructor(
@@ -74,10 +77,25 @@ export async function routeNativeSession(
   principal: string,
   method: string,
   value: unknown,
+  requester?: NativeSessionRequester,
 ): Promise<unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new NativeSessionMethodError('INVALID_PARAMS', 'Expected native session parameters');
   const p = value as Record<string, unknown>;
+  for (const key of [
+    'owner',
+    'ownerId',
+    'ownerPrincipalId',
+    'ownerGeneration',
+    'requester',
+    'requestedByPrincipalId',
+    'requestedByPrincipalGeneration',
+  ])
+    if (key in p)
+      throw new NativeSessionMethodError(
+        'INVALID_PARAMS',
+        'Native owner and requester are server-derived',
+      );
   if ('launch' in p)
     throw new NativeSessionMethodError(
       'INVALID_PARAMS',
@@ -89,6 +107,19 @@ export async function routeNativeSession(
       'Native session targets another execution node',
     );
   try {
+    if (
+      p.worker === undefined &&
+      typeof p.sessionId === 'string' &&
+      method !== Methods.NATIVE_SESSION_ENSURE &&
+      !NATIVE_PROFILE_METHODS.includes(method)
+    ) {
+      const inspected = await client.read(principal, p.sessionId, undefined, 1);
+      if (inspected.session.workerManaged)
+        throw new NativeSessionMethodError(
+          'INVALID_PARAMS',
+          'Worker session requires its run context and pinned worker controls',
+        );
+    }
     if (NATIVE_PROFILE_METHODS.includes(method))
       return await routeNativeProfile(client, principal, method, p);
     switch (method) {
@@ -142,6 +173,7 @@ export async function routeNativeSession(
           cwd: string(p, 'cwd'),
         };
         if (p.model !== undefined) params.model = string(p, 'model');
+        if (p.effort !== undefined) params.effort = string(p, 'effort');
         if (p.resultSchema !== undefined) {
           if (!isNativeResultSchema(p.resultSchema))
             throw new NativeSessionMethodError(
@@ -165,14 +197,18 @@ export async function routeNativeSession(
               'Reserved sessionId is not for resume',
             );
           return {
-            session: await client.ensure(principal, {
-              ...params,
-              sessionId: string(p, 'sessionId'),
-            }),
+            session: await client.ensure(
+              principal,
+              {
+                ...params,
+                sessionId: string(p, 'sessionId'),
+              },
+              requester,
+            ),
           };
         }
         if (p.resumeSessionId !== undefined) params.resumeSessionId = string(p, 'resumeSessionId');
-        return { session: await client.create(principal, params) };
+        return { session: await client.create(principal, params, requester) };
       }
       case Methods.NATIVE_SESSION_LIST:
         return { sessions: await client.list(principal) };

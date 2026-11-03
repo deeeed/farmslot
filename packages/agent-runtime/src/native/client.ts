@@ -10,6 +10,7 @@ import type {
   NativeSessionEnsureParams,
   NativeSessionInfo,
   NativeSessionReadResult,
+  NativeSessionRequester,
   NativeSessionResponse,
   NativeSessionSendResult,
 } from '@farmslot/protocol';
@@ -155,6 +156,8 @@ export class NativeSessionClient {
       !host.supportsStructuredResults
     )
       throw new Error('Native host upgrade required for schema-bound review results');
+    if ('requester' in request && request.requester && !host.supportsStandaloneDelegation)
+      throw new Error('Native host upgrade required for standalone requester attribution');
     const result = await requestHost<T>(host, request);
     if ('params' in request && request.params.profileId) {
       const session = result as NativeSessionInfo;
@@ -166,15 +169,15 @@ export class NativeSessionClient {
     }
     return result;
   }
-  create(owner: string, params: NativeSessionCreateParams) {
+  create(owner: string, params: NativeSessionCreateParams, requester?: NativeSessionRequester) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
       throw new Error('Native session targets another execution node');
-    return this.call<NativeSessionInfo>({ method: 'create', owner, params });
+    return this.call<NativeSessionInfo>({ method: 'create', owner, params, requester });
   }
-  ensure(owner: string, params: NativeSessionEnsureParams) {
+  ensure(owner: string, params: NativeSessionEnsureParams, requester?: NativeSessionRequester) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
       throw new Error('Native session targets another execution node');
-    return this.call<NativeSessionInfo>({ method: 'ensure', owner, params });
+    return this.call<NativeSessionInfo>({ method: 'ensure', owner, params, requester });
   }
   ensureWorker(owner: string, params: NativeSessionEnsureParams, launch: NativeWorkerLaunch) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)

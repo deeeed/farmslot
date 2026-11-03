@@ -16,7 +16,7 @@ import {
 import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { ResourceCacheConformanceTransport } from '../../../../../../packages/protocol/src/client-cache/conformance.js';
-import { litBinding, litText } from '../../testing/lit-text.js';
+import { litBinding, litBindings, litText } from '../../testing/lit-text.js';
 
 import type { NativeSessionFixture } from './native-session-view.js';
 import type { NativeSessionApi } from './native-workspace.js';
@@ -135,6 +135,116 @@ test('cold native collection refusals retain their code through the real cache a
     await offlineCache.dispose();
     offlineCache = undefined;
   }
+});
+
+for (const [executionNodeId, homeDirectory] of [
+  ['macwork', '/Users/native-person'],
+  ['mini', '/Volumes/Data/operator'],
+] as const) {
+  test(`custom directory stays on ${executionNodeId} and defaults to its reported home`, async () => {
+    const catalog: NativeSessionCatalogResult = {
+      runners: [
+        {
+          runner: 'codex',
+          models: ['gpt-6.1-sol'],
+          defaultModel: 'gpt-6.1-sol',
+          modes: ['default'],
+        },
+      ],
+      executionNodes: [{ executionNodeId, label: executionNodeId, homeDirectory }],
+      contexts: [{ executionNodeId, cwd: `${homeDirectory}/project`, label: 'Project' }],
+    };
+    let requested: unknown;
+    const view = new NativeSessionView();
+    Object.assign(view, {
+      connected: true,
+      creating: true,
+      catalog,
+      executionNodeId,
+      cwd: `${homeDirectory}/project`,
+      profileReady: true,
+      mode: 'default',
+      fixture: {
+        catalog: async () => catalog,
+        list: async () => ({ sessions: [] }),
+        read: async () => page(receipt(false)),
+      },
+      executionPicker: new ReviewDispatchViewModel({
+        context: { allowedActions: ['chat'] },
+        catalog: catalogForNativeRunners(catalog.runners, undefined, executionNodeId),
+        sequence: [{ runner: 'codex', model: 'gpt-6.1-sol', effort: null, mode: 'cold' }],
+      }),
+      api: {
+        request: async (method: string, params: unknown) => {
+          assert.equal(method, Methods.NATIVE_SESSION_CREATE);
+          requested = params;
+          throw new Error('Captured without starting');
+        },
+      },
+    });
+    // Header session selector is first; the working-directory selector is next.
+    const change = litBindings(Reflect.get(view, 'render').call(view), '@change=')[1];
+    assert(typeof change === 'function');
+    const event = new Event('change');
+    Object.defineProperty(event, 'target', { value: { value: '__custom__' } });
+    Reflect.apply(change, view, [event]);
+    assert.equal(Reflect.get(view, 'executionNodeId'), executionNodeId);
+    assert.equal(Reflect.get(view, 'cwd'), homeDirectory);
+    await Reflect.get(view, 'create').call(view);
+    assert.deepEqual(requested, {
+      executionNodeId,
+      cwd: homeDirectory,
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: undefined,
+      mode: 'default',
+    });
+  });
+}
+
+test('custom directory does not redirect an unavailable selected machine or create there', async () => {
+  let requests = 0;
+  const catalog: NativeSessionCatalogResult = {
+    runners: [],
+    contexts: [],
+    executionNodes: [
+      { executionNodeId: 'macpro', label: 'macpro', homeDirectory: '/Users/farm' },
+      {
+        executionNodeId: 'macwork',
+        label: 'macwork',
+        homeDirectory: '/Users/person',
+        unavailableReason: 'Refresh native host',
+      },
+    ],
+  };
+  const view = new NativeSessionView();
+  Object.assign(view, {
+    connected: true,
+    creating: true,
+    fixture: {
+      catalog: async () => catalog,
+      list: async () => ({ sessions: [] }),
+      read: async () => page(receipt(false)),
+    },
+    catalog,
+    executionNodeId: 'macwork',
+    cwd: '',
+    profileReady: true,
+    api: {
+      request: async () => {
+        requests++;
+      },
+    },
+  });
+  const change = litBindings(Reflect.get(view, 'render').call(view), '@change=')[1];
+  assert(typeof change === 'function');
+  const event = new Event('change');
+  Object.defineProperty(event, 'target', { value: { value: '__custom__' } });
+  Reflect.apply(change, view, [event]);
+  assert.equal(Reflect.get(view, 'executionNodeId'), 'macwork');
+  await Reflect.get(view, 'create').call(view);
+  assert.equal(Reflect.get(view, 'error'), 'Refresh native host');
+  assert.equal(requests, 0);
 });
 
 test('native Default sends the selected node model after switching execution nodes', async () => {

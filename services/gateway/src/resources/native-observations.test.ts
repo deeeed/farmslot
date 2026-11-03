@@ -32,7 +32,11 @@ const a: Principal = {
   roles: [{ role: 'admin', scope: { kind: 'global' } }],
 };
 const b: Principal = { ...a, id: 'producer-owner-b' };
-const admin: Principal = { ...a, id: 'producer-supervisor' };
+const admin: Principal = {
+  ...a,
+  id: 'producer-supervisor',
+  roles: [{ role: 'admin', scope: { kind: 'global' } }],
+};
 
 test('private reader keys reject A/B and node subjects before source access', async () => {
   const interest: NativeInterest = {
@@ -52,7 +56,7 @@ test('private reader keys reject A/B and node subjects before source access', as
   await assert.rejects(authorizeNativeObservation(admin, interest), { code: 'AUTH_FORBIDDEN' });
 });
 
-test('an observed collection preserves the reused-person native ownership refusal', async () => {
+test('a non-admin observed collection preserves the reused-person native ownership refusal', async () => {
   const home = mkdtempSync(join(tmpdir(), 'native-reused-person-read-'));
   const previous = process.env.FARMSLOT_HOME;
   process.env.FARMSLOT_HOME = home;
@@ -73,7 +77,7 @@ test('an observed collection preserves the reused-person native ownership refusa
     runtime.writer.retirePrincipals(['reused']);
     const person = runtime.writer.createPrincipal(
       { type: 'person', displayName: 'Replacement person' },
-      roles,
+      [],
       'reused',
       { reuseRetiredId: true },
     );
@@ -329,6 +333,7 @@ test('wire page keys keep real reader and pin while preserving cursor params unc
 });
 
 test('a healthy source revision during a held real-route read supersedes the late page', async () => {
+  const reader: Principal = { ...a, roles: [] };
   const machine = `producer-held-${randomUUID()}`;
   const socket = { readyState: WebSocket.OPEN } as WebSocket;
   const source = new GatewayNativeObservations(() => undefined);
@@ -350,7 +355,7 @@ test('a healthy source revision during a held real-route read supersedes the lat
     { ownerPrincipalId: a.id, ...{ supportsObservations: true } },
     { principalId: 'held-node', valid: () => true },
   );
-  source.attachClient(connection, () => a);
+  source.attachClient(connection, () => reader);
   source.acceptRemote(socket, receipt, () => true);
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
@@ -446,6 +451,7 @@ test('remote envelope revision races are retryable while replaced or failed sour
 });
 
 test('authorized collection recovery notifies an observer whose initial source read failed', async () => {
+  const reader: Principal = { ...a, roles: [] };
   const machine = `producer-recovery-${randomUUID()}`;
   const socket = { readyState: WebSocket.OPEN } as WebSocket;
   const published: import('./native-observations.js').NativeObservationKey[] = [];
@@ -470,7 +476,7 @@ test('authorized collection recovery notifies an observer whose initial source r
     { ownerPrincipalId: a.id, supportsObservations: true },
     { principalId: 'recovery-node', valid: () => true },
   );
-  source.attachClient(connection, () => a);
+  source.attachClient(connection, () => reader);
   source.acceptRemote(socket, receipt, () => true);
   let reads = 0;
   try {

@@ -35,7 +35,7 @@ const admin = [{ role: 'admin' as const, scope: { kind: 'global' as const } }];
 const farm = runtime.writer.createPrincipal({ type: 'service', displayName: 'Farm' }, admin);
 runtime.writer.issueCredential(farm.id, 'Fixture admin');
 const person = runtime.writer.createPrincipal({ type: 'person', displayName: 'Person' }, admin);
-const other = runtime.writer.createPrincipal({ type: 'person', displayName: 'Other' }, admin);
+const other = runtime.writer.createPrincipal({ type: 'person', displayName: 'Other' }, []);
 process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = farm.id;
 await mkdir(process.env.FARMSLOT_POOL_DIR, { recursive: true });
 for (const [machine, owner, host] of [
@@ -64,6 +64,8 @@ test('a same-host node owner can select its issued machine from the catalog and 
   let valid = true;
   let requests = 0;
   const session = {
+    requestedByPrincipalId: person.id,
+    requestedByPrincipalGeneration: 0,
     id: 'catalog-session',
     ownerPrincipalId: person.id,
     executionNodeId: 'macwork',
@@ -88,7 +90,12 @@ test('a same-host node owner can select its issued machine from the catalog and 
     socket,
     undefined,
     undefined,
-    { ownerPrincipalId: person.id, supportsEnsure: true, supportsProfiles: true },
+    {
+      ownerPrincipalId: person.id,
+      supportsEnsure: true,
+      supportsProfiles: true,
+      supportsStandaloneDelegation: true,
+    },
     { principalId: 'node-macwork', valid: () => valid },
   );
   registerNode(
@@ -135,7 +142,7 @@ test('a same-host node owner can select its issued machine from the catalog and 
       ),
       /unavailable for this owner/,
     );
-    assert.equal(requests, 1, 'Another admin cannot send a create to the owned node');
+    assert.equal(requests, 1, 'An unenrolled non-admin cannot send a create to the owned node');
     const farmContexts = (await nativeCatalog(farm.id)).contexts;
     assert.ok(
       farmContexts.some(

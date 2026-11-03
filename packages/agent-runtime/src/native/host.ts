@@ -61,10 +61,10 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             value = manager.readWorker(p.owner, p.id, p.leaseId, p.after, p.limit);
             break;
           case 'create':
-            value = await manager.create(p.owner, p.params);
+            value = await manager.create(p.owner, p.params, undefined, p.requester);
             break;
           case 'ensure':
-            value = await manager.ensure(p.owner, p.params);
+            value = await manager.ensure(p.owner, p.params, undefined, p.requester);
             break;
           case NATIVE_WORKER_ENSURE:
             value = await manager.ensure(p.owner, p.params, p.launch);

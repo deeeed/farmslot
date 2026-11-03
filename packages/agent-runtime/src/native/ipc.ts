@@ -6,9 +6,11 @@ import {
   isNativeResultSchema,
   type NativeSessionCreateParams,
   type NativeSessionEnsureParams,
+  type NativeSessionRequester,
   type NativeSessionResponse,
 } from '@farmslot/protocol';
 
+import { parseNativeSessionRequester } from './requester.js';
 import {
   decodeNativeWorkerLaunch,
   NATIVE_WORKER_CANCEL,
@@ -28,6 +30,7 @@ import {
 } from './worker-launch.js';
 
 export interface HostIdentity {
+  supportsStandaloneDelegation?: boolean;
   executionNodeId?: string;
   supportsEnsure?: boolean;
   supportsWorkers?: boolean;
@@ -49,8 +52,18 @@ export type HostRequest =
       after?: number;
       limit?: number;
     }
-  | { method: 'create'; owner: string; params: NativeSessionCreateParams }
-  | { method: 'ensure'; owner: string; params: NativeSessionEnsureParams }
+  | {
+      method: 'create';
+      owner: string;
+      params: NativeSessionCreateParams;
+      requester?: NativeSessionRequester;
+    }
+  | {
+      method: 'ensure';
+      owner: string;
+      params: NativeSessionEnsureParams;
+      requester?: NativeSessionRequester;
+    }
   | {
       method: typeof NATIVE_WORKER_ENSURE;
       owner: string;
@@ -167,6 +180,7 @@ export function decodeRequest(value: unknown): HostRequest {
       cwd: string(v, 'cwd'),
     };
     if (v.model !== undefined) params.model = string(v, 'model');
+    if (v.effort !== undefined) params.effort = string(v, 'effort');
     if (v.resultSchema !== undefined) {
       if (!isNativeResultSchema(v.resultSchema))
         throw new Error('Unsupported native result schema');
@@ -187,7 +201,12 @@ export function decodeRequest(value: unknown): HostRequest {
           params: { ...params, sessionId: string(v, 'sessionId') },
           launch: decodeNativeWorkerLaunch(p.launch),
         };
-      return { method, owner, params: { ...params, sessionId: string(v, 'sessionId') } };
+      return {
+        method,
+        owner,
+        params: { ...params, sessionId: string(v, 'sessionId') },
+        requester: parseNativeSessionRequester(p.requester),
+      };
     }
     if (v.resumeSessionId !== undefined) params.resumeSessionId = string(v, 'resumeSessionId');
     if (method === NATIVE_WORKER_RESUME)
@@ -206,7 +225,7 @@ export function decodeRequest(value: unknown): HostRequest {
         },
         launch: decodeNativeWorkerLaunch(p.launch),
       };
-    return { method, owner, params };
+    return { method, owner, params, requester: parseNativeSessionRequester(p.requester) };
   }
   const id = string(p, 'id');
   if (method === NATIVE_WORKER_CANCEL)

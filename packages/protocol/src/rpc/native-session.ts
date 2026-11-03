@@ -3,6 +3,12 @@ import type {
   NativeStructuredResult,
 } from '../recipe/pipeline-visual-judgments.js';
 
+/** Server-derived audit metadata; never accepted as public launch parameters. */
+export interface NativeSessionRequester {
+  principalId: string;
+  principalGeneration: number;
+}
+
 /** Native sessions are opt-in. Authentication and agent execution remain runner-owned. */
 export interface NativeSessionCapabilities {
   modes: Array<'default' | 'plan'>;
@@ -65,6 +71,8 @@ export interface NativeSessionEnsureParams extends Omit<
 
 /** Opt-in declaration made by an authenticated node, not a client-supplied account claim. */
 export interface NativeExecutionNodeDeclaration {
+  /** The runtime persists server-derived standalone requester attribution. */
+  supportsStandaloneDelegation?: boolean;
   /** Source-backed journal/account receipts on the authenticated node connection. */
   supportsObservations?: boolean;
   ownerPrincipalId: string;
@@ -163,6 +171,8 @@ export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
   runner: string;
   nativeSessionId: string;
   ownerPrincipalId: string;
+  requestedByPrincipalId?: string;
+  requestedByPrincipalGeneration?: number;
   executionNodeId: string;
   accountContextId: string;
   profileId?: string;
@@ -346,7 +356,16 @@ export function nativeRunnerDefaultModel(
   const listed = executionNodeId && option.nodeModels?.[executionNodeId];
   return listed && !listed.includes(option.defaultModel) ? (listed[0] ?? '') : option.defaultModel;
 }
+export interface NativeSessionExecutionNode {
+  executionNodeId: string;
+  label: string;
+  /** Current target home; unknown while unavailable, never a username-derived guess. */
+  homeDirectory?: string;
+  /** Present rows cannot launch, even when they retain a previous home value. */
+  unavailableReason?: string;
+}
 export interface NativeSessionCatalogResult {
+  executionNodes?: NativeSessionExecutionNode[];
   runners: NativeRunnerOption[];
   contexts: Array<{
     cwd: string;

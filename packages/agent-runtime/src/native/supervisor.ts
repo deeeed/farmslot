@@ -84,6 +84,7 @@ rmSync(join(root, 'ready.json'), { force: true });
 const socket = join(socketDirectory(root), 's');
 privateDirectory(socketDirectory(root));
 durableWrite(join(root, 'host.json'), {
+  supportsStandaloneDelegation: true,
   supportsEnsure: true,
   supportsWorkers: true,
   supportsWorkerResumeFence: true,

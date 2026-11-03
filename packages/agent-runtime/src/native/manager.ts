@@ -21,6 +21,7 @@ import {
   type NativeSessionEnsureParams,
   type NativeSessionEvent,
   type NativeSessionInfo,
+  type NativeSessionRequester,
   type NativeSessionResponse,
   type NativeSessionSendResult,
   nativeStructuredResult,
@@ -371,14 +372,16 @@ export class NativeSessionManager {
     owner: string,
     params: NativeSessionCreateParams,
     workerLaunch?: NativeWorkerLaunch,
+    requester?: NativeSessionRequester,
   ): Promise<NativeSessionInfo> {
-    return this.start(owner, params, undefined, workerLaunch);
+    return this.start(owner, params, undefined, workerLaunch, undefined, undefined, requester);
   }
 
   async ensure(
     owner: string,
     params: NativeSessionEnsureParams,
     workerLaunch?: NativeWorkerLaunch,
+    requester?: NativeSessionRequester,
   ): Promise<NativeSessionInfo> {
     if (
       typeof params.sessionId !== 'string' ||
@@ -387,7 +390,15 @@ export class NativeSessionManager {
       throw new Error('Reserved sessionId must be a lowercase UUID');
     if ('resumeSessionId' in params && params.resumeSessionId !== undefined)
       throw new Error('Reserved sessionId is for initial creation, not resume');
-    return this.start(owner, params, params.sessionId, workerLaunch);
+    return this.start(
+      owner,
+      params,
+      params.sessionId,
+      workerLaunch,
+      undefined,
+      undefined,
+      requester,
+    );
   }
 
   resumeWorker(
@@ -415,6 +426,7 @@ export class NativeSessionManager {
     workerLaunch?: NativeWorkerLaunch,
     assertResumeCurrent?: () => void,
     relocation?: NativeWorkerResumeParams['relocation'],
+    requester?: NativeSessionRequester,
   ): Promise<NativeSessionInfo> {
     assertResumeCurrent?.();
     const profile = params.profileId
@@ -454,6 +466,8 @@ export class NativeSessionManager {
         );
       if (!previous || previous.info.ownerPrincipalId !== ownerPrincipalId)
         throw new Error('Resume requires an owned native session');
+      if (previous.info.workerManaged && !workerLaunch)
+        throw new Error('Worker recovery requires pinned worker controls');
       this.reconcileMissingProcess(previous);
       const unavailable = transport.adapter.resumeUnavailableReason?.(previous.info.version);
       if (unavailable) throw new Error(unavailable);
@@ -595,9 +609,7 @@ export class NativeSessionManager {
       throw new Error('Native session already has an input owner');
     const effort = workerLaunch
       ? workerLaunch.effort
-      : previous
-        ? previous.info.effort
-        : transport.defaultEffort;
+      : (params.effort ?? previous?.info.effort ?? transport.defaultEffort);
     const info: NativeSessionInfo = {
       id: previous?.info.id ?? reservedId ?? randomUUID(),
       generation: randomUUID(),
@@ -605,6 +617,17 @@ export class NativeSessionManager {
       runner: params.runner,
       nativeSessionId: params.resumeSessionId ?? '',
       ownerPrincipalId,
+      ...(previous
+        ? {
+            requestedByPrincipalId: previous.info.requestedByPrincipalId,
+            requestedByPrincipalGeneration: previous.info.requestedByPrincipalGeneration,
+          }
+        : requester
+          ? {
+              requestedByPrincipalId: requester.principalId,
+              requestedByPrincipalGeneration: requester.principalGeneration,
+            }
+          : {}),
       executionNodeId: this.executionNodeId,
       accountContextId:
         profile?.accountContextId ??
@@ -749,6 +772,8 @@ export class NativeSessionManager {
       if (record.info[field] !== requested)
         throw new Error(`Reserved sessionId launch configuration differs: ${field}`);
     }
+    if (!workerLaunch && params.effort !== undefined && record.info.effort !== params.effort)
+      throw new Error('Reserved sessionId launch configuration differs: effort');
     if (
       record.context.workerLaunchDigest !==
       (workerLaunch ? nativeWorkerLaunchDigest(workerLaunch) : undefined)

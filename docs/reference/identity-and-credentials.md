@@ -187,3 +187,23 @@ The amendment is accepted; client cutover requires the implementation and
 rollout checks below. The
 [principal core spec](../plans/principal-core-implementation-spec.md#person-device-sessions)
 owns expiry, persistence, revocation and cutover requirements.
+
+## Standalone native sessions as a person admin
+
+Under ADR-051 Amendment 6, a current global-admin person can select an execution
+target without becoming its native execution owner. The target keeps its issued
+owner and configured runner account; new sessions record the requesting person's
+id and generation. Replacement-generation person identities can use this path.
+Client launch parameters never supply execution owner or requester attribution.
+
+Catalog execution targets carry real home directories and explicit unavailable
+reasons, including an offline node or a native host requiring refresh. Custom
+working directories stay on the selected target. Protocol, node and native-host
+updates must be deployed together before these targets become available.
+
+Standalone supervision excludes worker-managed sessions. Their existing pinned
+run controls remain required. Farm run, review and publication ownership and
+accounts do not change. Node owner reassignment and retirement of temporary
+person identities are separate operator actions, after active sessions and
+owner-scoped configuration have been preserved; no history is migrated by this
+feature.

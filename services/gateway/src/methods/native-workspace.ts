@@ -1,4 +1,9 @@
-import { isPickerCatalogModel, type NativeSessionCatalogResult } from '@farmslot/protocol';
+import {
+  isPickerCatalogModel,
+  type NativeSessionCatalogResult,
+  type NativeSessionExecutionNode,
+  type Principal,
+} from '@farmslot/protocol';
 
 import { loadSlotVars, poolDir } from '../core/config.js';
 import { farmslotRoot, isLocal } from '../core/index.js';
@@ -18,6 +23,8 @@ import { loadCredentialStore } from '../security/credential-store.js';
 import { nativeOwnerAssignedMachines } from '../security/native-node.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 
+import { standaloneCatalogTargets } from './native-catalog-targets.js';
+
 export {
   nativeWorkspaceChanges,
   nativeWorkspaceDiff,
@@ -27,43 +34,53 @@ export {
 export async function nativeCatalog(
   owner: string,
   allowWorkers = true,
+  delegatedReader?: Principal,
 ): Promise<NativeSessionCatalogResult> {
   const assigned = nativeOwnerAssignedMachines(loadCredentialStore().principals, owner);
-  const contexts: NativeSessionCatalogResult['contexts'] = [
+  let contexts: NativeSessionCatalogResult['contexts'] = [
     ...(ownsLocalNativeProfile(owner)
       ? [{ cwd: farmslotRoot, label: 'Farmslot checkout', supportsProfiles: true }]
       : []),
   ];
   /** Context node id ('local' or a machine) to the pool machine its node catalog is keyed by. */
-  const contextMachines = new Map<string, string>();
-  for (const pool of await loadPoolConfigs(poolDir)) {
-    for (const slot of pool.slots) {
-      if (!slot.repo) continue;
-      const executionNodeId =
-        isLocal(pool.host, pool.machine) && ownsLocalNativeProfile(owner) ? 'local' : pool.machine;
-      if (executionNodeId === 'local' && !ownsLocalNativeProfile(owner)) continue;
-      const node = executionNodeId === 'local' ? undefined : getNode(executionNodeId);
-      if (
-        executionNodeId !== 'local' &&
-        (!owner ||
-          !assigned.has(executionNodeId) ||
-          node?.nativeSessions?.ownerPrincipalId !== owner ||
-          !node.nativeAuthority?.valid())
-      )
-        continue;
-      const vars = await loadSlotVars(slot.id);
-      contextMachines.set(executionNodeId, pool.machine);
-      contexts.push({
-        executionNodeId,
-        cwd: vars.remoteRepo,
-        label: slot.id,
-        slotId: slot.id,
-        project: vars.projectName,
-        supportsProfiles:
-          executionNodeId === 'local' || node?.nativeSessions?.supportsProfiles === true,
-      });
+  let contextMachines = new Map<string, string>();
+  let executionNodes: NativeSessionExecutionNode[] | undefined;
+  if (delegatedReader) {
+    const targets = await standaloneCatalogTargets(delegatedReader);
+    contexts = targets.contexts;
+    contextMachines = targets.contextMachines;
+    executionNodes = targets.executionNodes;
+  } else
+    for (const pool of await loadPoolConfigs(poolDir)) {
+      for (const slot of pool.slots) {
+        if (!slot.repo) continue;
+        const executionNodeId =
+          isLocal(pool.host, pool.machine) && ownsLocalNativeProfile(owner)
+            ? 'local'
+            : pool.machine;
+        if (executionNodeId === 'local' && !ownsLocalNativeProfile(owner)) continue;
+        const node = executionNodeId === 'local' ? undefined : getNode(executionNodeId);
+        if (
+          executionNodeId !== 'local' &&
+          (!owner ||
+            !assigned.has(executionNodeId) ||
+            node?.nativeSessions?.ownerPrincipalId !== owner ||
+            !node.nativeAuthority?.valid())
+        )
+          continue;
+        const vars = await loadSlotVars(slot.id);
+        contextMachines.set(executionNodeId, pool.machine);
+        contexts.push({
+          executionNodeId,
+          cwd: vars.remoteRepo,
+          label: slot.id,
+          slotId: slot.id,
+          project: vars.projectName,
+          supportsProfiles:
+            executionNodeId === 'local' || node?.nativeSessions?.supportsProfiles === true,
+        });
+      }
     }
-  }
   return {
     runners: Object.values(KNOWN_RUNNERS)
       .sort(
@@ -89,6 +106,7 @@ export async function nativeCatalog(
         ];
       }),
     contexts,
+    ...(executionNodes ? { executionNodes } : {}),
   };
 }
 
