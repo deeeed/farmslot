@@ -482,8 +482,7 @@ async function refreshPublishPackageTransitionLocked(
     params.publicationTarget === 'draft' || params.publicationTarget === 'ready'
       ? params.publicationTarget
       : (oldPayload.publicationTarget ?? oldPayload.prPackage?.publicationTarget ?? 'ready');
-  // A refresh never lowers what the gate requires: a review the operator requested binds every
-  // later package, as a dispatch policy does, until a review at that package's head satisfies it.
+  // A refresh keeps the review policy the gate had, a requested review's as much as a dispatch one.
   const reviewPolicyForRefresh = oldPayload.reviewPolicy;
 
   // A refresh must describe the current HEAD, not the durable snapshot captured

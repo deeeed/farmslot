@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { mock, test, type TestContext } from 'node:test';
+import { afterEach, mock, test, type TestContext } from 'node:test';
 
 import {
   APPROVE_PUBLISH_ACTION,
@@ -16,6 +16,22 @@ import {
 } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
+const github = await import('../integrations/github-client.js');
+const githubCalls: string[][] = [];
+mock.module('../integrations/github-client.js', {
+  namedExports: {
+    ...github,
+    ghRequest: async (args: string[]) => {
+      githubCalls.push(args);
+      throw new Error('Unexpected GitHub call');
+    },
+  },
+});
+const linkage = await import('../integrations/pr-linkage.js');
+// The gate asks GitHub whether the branch already merged; the fixture's project names a real repo.
+mock.module('../integrations/pr-linkage.js', {
+  namedExports: { ...linkage, findMergedPRNumber: async () => null },
+});
 const { execLocal } = await import('../core/exec.js');
 const probes = await import('../core/read-probes.js');
 // The reviewed-inputs command itself, without a login shell around every read of it.
@@ -106,6 +122,8 @@ const { deleteTestRunIfPresent, makeReadyGatePackage, retainRunFixture } =
 
 const RESULT = 'artifacts/review-1/loop-1/review-result.json';
 
+afterEach(() => assert.deepEqual(githubCalls, [], 'no test reaches GitHub'));
+
 function packageAt(headSha: string, reviewPolicy: ReviewPolicy, id = 'pkg-reviewed') {
   const prepared = makeReadyGatePackage({ id, headSha, reviewPolicy, branch: 'main' });
   prepared.packageHash = computeReadyGatePackageHash(prepared);
@@ -131,6 +149,13 @@ async function gateFixture(
   const taskDir = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks/test', testId);
   const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
   const slotId = `${testId}-slot`;
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'GATE-REFRESH-POLICY',
+    runner: 'claude',
+  });
   t.after(async () => {
     await deleteTestRunIfPresent(run.id);
     await rm(taskDir, { recursive: true, force: true });
@@ -186,13 +211,6 @@ async function gateFixture(
       prPackage: shown,
     },
   };
-  const run = createRun({
-    flowType: 'dev',
-    mode: 'autonomous',
-    project: 'farmslot-farm',
-    ticketOrPr: 'GATE-REFRESH-POLICY',
-    runner: 'claude',
-  });
   updateRun(run.id, {
     status: 'human-gating',
     slotId,
@@ -335,7 +353,9 @@ test('a review at the new head satisfies the kept requirement, and a stale appro
   assert.ok(refreshed.actions.some(({ id }) => id === APPROVE_PUBLISH_ACTION));
   // The same id cannot carry an approval of the older package: it binds to the package itself.
   assert.equal((beforeRefresh.payload as ReadyGatePayload).prPackage?.headSha, oldHead);
-  await assert.rejects(resolveApproval(run.id, beforeRefresh), /Package changed|package/i);
+  await assert.rejects(resolveApproval(run.id, beforeRefresh), {
+    message: `Package changed; refresh package and re-review before publishing (approved package pkg-reviewed but current package is pkg-${newHead.slice(0, 8)})`,
+  });
   assert.equal(card(run.id, decision.id).resolvedAt, undefined);
 
   await resolveApproval(run.id, refreshed);
@@ -346,14 +366,11 @@ test('a review at the new head satisfies the kept requirement, and a stale appro
   );
 });
 
-test('a pass at the current head bound to an older package input waits for a re-review, which certifies it', async (t) => {
+/** A human/1 gate refreshed past a real pass: same head, but the evidence changed after it. */
+async function gateWithOlderPass(t: TestContext) {
   const policy = { minimumReviews: 1, requestedBy: 'human-gate' as const };
-  const { run, decision, newHead, refresh, workerArtifacts } = await gateFixture(
-    t,
-    policy,
-    'new',
-    'new',
-  );
+  const fixture = await gateFixture(t, policy, 'new', 'new');
+  const { run, decision, newHead, refresh, workerArtifacts } = fixture;
   const evidence = path.join(workerArtifacts, 'evidence-manifest.json');
   await mkdir(workerArtifacts, { recursive: true });
   await writeFile(evidence, '{"version":1,"summary":"reviewed evidence"}');
@@ -361,13 +378,13 @@ test('a pass at the current head bound to an older package input waits for a re-
   assert.ok(await readReviewedInputs(getRun(run.id)!), 'the slot must report its reviewed inputs');
   await noteReviewInputsAtLaunch(run.id);
   await recordReviewedInputs(run.id);
-  const gateState = () => getRun(run.id)!.engineState!.publishGate!;
+  const publishGate = getRun(run.id)!.engineState!.publishGate!;
   updateRun(run.id, {
     engineState: {
       ...getRun(run.id)!.engineState,
       publishGate: {
-        ...gateState(),
-        reviews: gateState().reviews!.map((review) => ({
+        ...publishGate,
+        reviews: publishGate.reviews!.map((review) => ({
           ...review,
           reviewedHeadSha: newHead,
           reviewedPackageInputHash: 'older-package-input',
@@ -376,11 +393,13 @@ test('a pass at the current head bound to an older package input waits for a re-
       },
     },
   });
-
-  // The evidence changes at the same head, so the package input moves past that pass.
   await writeFile(evidence, '{"version":1,"summary":"evidence recorded after the review"}');
   await refresh();
-  const refreshed = card(run.id, decision.id);
+  return { ...fixture, policy, refreshed: card(run.id, decision.id) };
+}
+
+test('a pass at the current head bound to an older package input leaves the refreshed gate not-ready', async (t) => {
+  const { newHead, policy, refreshed } = await gateWithOlderPass(t);
   const payload = refreshed.payload as ReadyGatePayload;
   assert.equal(payload.prPackage?.headSha, newHead);
   assert.deepEqual(payload.prPackage?.reviewPolicy, policy);
@@ -393,21 +412,23 @@ test('a pass at the current head bound to an older package input waits for a re-
     payload.gateReadiness?.reasons.map(({ code }) => code),
     ['review-inputs-awaiting-review'],
   );
+});
 
-  // A re-review of these inputs at this head: what a reviewer's launch and pass record.
+test('a re-review at the unchanged input certifies that gate', async (t) => {
+  const { run, refreshed } = await gateWithOlderPass(t);
+  const { prPackage } = refreshed.payload as ReadyGatePayload;
+  // What a reviewer's launch and pass record.
   await noteReviewInputsAtLaunch(run.id);
+  const publishGate = getRun(run.id)!.engineState!.publishGate!;
   updateRun(run.id, {
     engineState: {
       ...getRun(run.id)!.engineState,
       publishGate: {
-        ...gateState(),
+        ...publishGate,
         reviews: [
-          ...gateState().reviews!,
+          ...publishGate.reviews!,
           {
-            ...stampPublishGateReviewStatusForPackage(
-              certifyingReview(payload.prPackage!),
-              payload.prPackage!,
-            ),
+            ...stampPublishGateReviewStatusForPackage(certifyingReview(prPackage!), prPackage!),
             id: 'review-2',
             reviewerSessionId: 'session-2',
             loopNumber: 2,
@@ -437,7 +458,7 @@ test('a pass at the current head bound to an older package input waits for a re-
   );
   t.after(() => setEngineDecisionRuntime({ broadcast: () => {}, stepToStatus: {} }));
   const gate = executeReadyGate(run.id, {
-    ensurePackage: async () => payload.prPackage!,
+    ensurePackage: async () => prPackage!,
     readProgress: async () => ({ kind: 'idle' }),
   });
   await presented;
