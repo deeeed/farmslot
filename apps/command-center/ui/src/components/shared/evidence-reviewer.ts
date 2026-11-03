@@ -22,7 +22,7 @@ import {
 } from '../workspace/visual-claim-judgment.js';
 import { workspaceArtifactBasename } from '../workspace/workspace-artifacts.js';
 
-import { isForeignRecording, modelRecording } from './evidence-reviewer-recording.js';
+import { INSPECTION_CONTEXT_CAPTION } from './evidence-reviewer-recording.js';
 import type { EvidenceReviewerView } from './evidence-reviewer-url-state.js';
 import { gatewayMediaSrc } from './gateway-media-src.js';
 import type { MediaLightbox } from './media-lightbox.js';
@@ -55,42 +55,6 @@ export interface EvidenceReviewerJudgments extends Pick<
   'busy' | 'feedback' | 'reviewReason' | 'changeReviewReason' | 'recordReview'
 > {
   rows: readonly AcceptanceClaimRow[];
-}
-
-/**
- * The review for one criterion of a run: its recording (the opened one, else the
- * run's first) and the file the user chose. Every host opens the review through this.
- */
-export function evidenceReviewerSelection(input: {
-  model: EvidenceReviewModel;
-  claimId: string;
-  resolveUrl: (path: string) => string;
-  opened?: LightboxItem;
-}): EvidenceReviewerSelection {
-  const { model, resolveUrl } = input;
-  // A video from another recipe run would carry that run's trace markers: open the
-  // model's own recording. Hosts rebuild the selection as the model loads.
-  const opened =
-    input.opened &&
-    isVideoLightboxItem(input.opened) &&
-    isForeignRecording(model, input.opened.path)
-      ? undefined
-      : input.opened;
-  const timeline = model.recordings[0];
-  const path = timeline ? model.artifactPath(timeline.videoPath) : null;
-  const recording =
-    opened && isVideoLightboxItem(opened)
-      ? opened
-      : path
-        ? {
-            url: resolveUrl(path),
-            path,
-            purpose: 'recording',
-            evidenceModel: model,
-            resolveArtifactUrl: resolveUrl,
-          }
-        : null;
-  return { claimId: input.claimId, model, recording, resolveUrl, opened };
 }
 
 const NAV_WIDTH_KEY = 'farmslot:evidence-review-nav-width';
@@ -327,6 +291,19 @@ export class EvidenceReviewer extends LitElement {
       border-radius: 3px;
       cursor: pointer;
     }
+    .still.inspection {
+      width: 110px;
+      height: 88px;
+    }
+    .still.inspection img {
+      height: 54px;
+    }
+    .still.inspection span {
+      display: block;
+      font-size: 10px;
+      line-height: 13px;
+      padding: 2px;
+    }
     .still-video {
       display: flex;
       align-items: center;
@@ -386,7 +363,13 @@ export class EvidenceReviewer extends LitElement {
     const model = this.model;
     const recording = this.selection?.recording;
     if (!model || !recording) return undefined;
-    return (modelRecording(model, recording.path) ?? model.recordings[0])?.videoPath;
+    return model.recordingForPath(recording.path)?.videoPath;
+  }
+
+  private get hasTimeline(): boolean {
+    return this.selection?.recording
+      ? (this.model?.recordingForPath(this.selection.recording.path)?.hasTimeline ?? false)
+      : false;
   }
 
   /** Built once per model, recording and order: render and selection read it many times. */
@@ -425,13 +408,12 @@ export class EvidenceReviewer extends LitElement {
   private stills(claim: EvidenceReviewClaim): LightboxItem[] {
     const resolve = this.selection?.resolveUrl;
     if (!resolve) return [];
-    return claim.evidence
-      .filter((artifact) => artifact.mediaType === 'image')
-      .map((artifact) => ({
-        url: resolve(artifact.artifactPath),
-        path: artifact.artifactPath,
-        purpose: 'screenshot',
-      }));
+    return (this.model?.claimMedia(claim.id).screenshots ?? []).map(({ artifact, inspection }) => ({
+      url: resolve(artifact.artifactPath),
+      path: artifact.artifactPath,
+      purpose: 'screenshot',
+      ...(inspection ? { caption: INSPECTION_CONTEXT_CAPTION } : {}),
+    }));
   }
 
   /** Where the criterion's first recorded step starts, or null when none is in the recording. */
@@ -505,7 +487,11 @@ export class EvidenceReviewer extends LitElement {
     this.checkStep = linkedCheck ?? null;
     // Choosing a criterion shows its proof: the recording at its first step, or its
     // first screenshot when the recording does not cover it.
-    if (opened || !this.recording || (start === null && claim && this.stills(claim).length)) {
+    if (
+      opened ||
+      !this.recording ||
+      (start === null && this.hasTimeline && claim && this.stills(claim).length)
+    ) {
       this.still = opened ?? (claim ? (this.stills(claim)[0] ?? null) : null);
       this.pendingSeekMs = null;
     } else {
@@ -703,7 +689,11 @@ export class EvidenceReviewer extends LitElement {
             class="step"
             aria-current=${this.activeStep === step.traceIndex}
             ?disabled=${ms === null}
-            title=${ms === null ? 'Not in the recording' : ''}
+            title=${ms === null
+              ? this.recording && !this.hasTimeline
+                ? 'Untimed recording; no measured step position'
+                : 'Not in the recording'
+              : ''}
             @click=${() => ms !== null && this.chooseStep(step, ms)}
           >
             <span class="muted"
@@ -714,7 +704,7 @@ export class EvidenceReviewer extends LitElement {
           </button>
           <proof-step-details
             .step=${step}
-            heading=${`${claim.id} · step ${ms === null ? 'not in the recording' : formatEvidenceReviewVideoTime(ms / 1000, false)}`}
+            heading=${`${claim.id} · step ${ms === null ? (this.recording && !this.hasTimeline ? 'untimed' : 'not in the recording') : formatEvidenceReviewVideoTime(ms / 1000, false)}`}
             .open=${this.checkStep === step.traceIndex}
             @proof-step-details-toggle=${(event: CustomEvent<{ open: boolean }>) =>
               event.detail.open ? this.showCheck(step) : this.onCheckClosed()}
@@ -745,12 +735,13 @@ export class EvidenceReviewer extends LitElement {
       ${stills.map(
         (item) =>
           html`<button
-            class="still"
+            class=${item.caption ? 'still inspection' : 'still'}
             aria-pressed=${this.still?.path === item.path}
-            title=${item.path}
+            title=${item.caption ? `${item.caption}: ${item.path}` : item.path}
             @click=${() => this.showStill(item)}
           >
             <img src=${gatewayMediaSrc(item.url)} alt=${workspaceArtifactBasename(item.path)} />
+            ${item.caption ? html`<span class="muted">Inspection · not AC-bound</span>` : nothing}
           </button>`,
       )}
     </div>`;
@@ -762,7 +753,7 @@ export class EvidenceReviewer extends LitElement {
     const current = this.claim();
     const row = current ? this.row(current) : undefined;
     const items = this.playerItems().map((item) =>
-      row ? { ...item, caption: acceptanceClaimLabel(row) } : item,
+      row && !item.caption ? { ...item, caption: acceptanceClaimLabel(row) } : item,
     );
     return html`
       <header>
@@ -811,9 +802,11 @@ export class EvidenceReviewer extends LitElement {
                   : nothing}
                 <span class="muted"
                   >${start === null
-                    ? claim.status?.proofMode === 'review'
-                      ? 'Code review'
-                      : 'No recording'
+                    ? this.recording && !this.hasTimeline
+                      ? 'Untimed recording'
+                      : claim.status?.proofMode === 'review'
+                        ? 'Code review'
+                        : 'No recording'
                     : formatEvidenceReviewVideoTime(start / 1000, false)}</span
                 >
               </button>

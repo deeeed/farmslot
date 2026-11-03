@@ -1,0 +1,1 @@
+- Play criterion recordings that have no measured timeline and show same-attempt screenshots as explicitly unbound inspection context.

@@ -26,6 +26,8 @@ import {
   runEvidencePending,
 } from '../src/evidence.js';
 
+import { untimedRecordingFixture } from './untimed-fixture.js';
+
 const zero = Date.parse('2026-01-01T00:00:00Z');
 const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 const videoDigest = digest('original recording');
@@ -153,6 +155,11 @@ test('a measured proof stays primary while its supporting stills remain raw and 
   const claim = model.claims.find((row) => row.id === 'check-1');
   assert.ok(claim);
   const display = model.claimDisplay(claim.id);
+  assert.deepEqual(
+    model.claimMedia('case-1').screenshots.filter(({ inspection }) => inspection),
+    [],
+    'measured criteria without bound stills do not borrow manifest screenshots',
+  );
   assert.equal(display.clip, claim.clips[0]);
   assert.deepEqual(display.selected, []);
   assert.deepEqual(
@@ -509,6 +516,60 @@ test('video and trace digest mismatches remain visible and disable all seeking',
     assert.equal(model.markerSeekMs(source.timeline.videoPath, 0, 'end'), null);
     assert.equal(model.adjacentFrameMs(source.timeline.videoPath, 1_100, 1), null);
   }
+});
+
+test('F338 lists untimed originals and same-attempt inspection screenshots without changing claims', () => {
+  const input = untimedRecordingFixture(qaPackage(1));
+  assert.ok(input.claims);
+  const original = input.claims.recording.segments[0];
+  assert.ok(original);
+  const rotated = {
+    ...original,
+    videoPath: 'video-2.mp4',
+    videoDigest: digest('rotated original'),
+  };
+  input.claims.recording.segments.push(rotated);
+  for (const claim of input.claims.criteria) {
+    claim.evidence.push(rotated.videoPath);
+    claim.moments = claim.moments.flatMap((moment) => [
+      moment,
+      { ...moment, videoDigest: rotated.videoDigest },
+    ]);
+  }
+  assert.ok(input.artifactPaths);
+  input.artifactPaths = [...input.artifactPaths, rotated.videoPath];
+  input.artifactDigests = { ...input.artifactDigests, [rotated.videoPath]: rotated.videoDigest };
+  assert.ok(
+    input.manifest &&
+      typeof input.manifest === 'object' &&
+      'artifacts' in input.manifest &&
+      Array.isArray(input.manifest.artifacts),
+  );
+  input.manifest.artifacts.push({ path: rotated.videoPath, type: 'video' });
+  const model = createEvidenceReviewModel({
+    package: input,
+    artifactPrefix: 'artifacts/recipe-runs/transport-id/',
+    packagePath: 'artifacts/recipe-runs/transport-id/',
+  });
+  assert.deepEqual(model.errors, []);
+  const before = structuredClone(model.claims);
+  const media = model.claimMedia('check-1');
+  assert.equal(media.recording?.artifactPath, 'artifacts/recipe-runs/transport-id/video.mp4');
+  assert.deepEqual(
+    media.screenshots.map(({ artifact, inspection }) => [artifact.artifactPath, inspection]),
+    [['artifacts/recipe-runs/transport-id/stills/1.png', true]],
+  );
+  assert.equal(model.recordingForPath(media.recording!.artifactPath)?.hasTimeline, false);
+  assert.deepEqual(
+    model.claimMedia('check-1', 'artifacts/recipe-runs/transport-id/video-2.mp4').screenshots,
+    media.screenshots,
+    'every original from the selected attempt keeps its inspection context',
+  );
+  assert.equal(model.recordings.length, 0, 'availability never fabricates a measured timeline');
+  assert.equal(model.selectClaim('check-1')?.timing, 'untimed');
+  assert.deepEqual(model.selection?.clips, []);
+  assert.deepEqual(model.claims, before, 'inspection context never adds AC proof or verdicts');
+  assert.equal(model.recordingForPath('artifacts/recipe-baseline-run/video.mp4'), undefined);
 });
 
 test('outside footage is never trimmed into proof, and untimed files stay visible', () => {
@@ -1576,6 +1637,11 @@ test('comparison roles retain original executions, exact claim rows, independent
   const row = model.comparisons.find((row) => row.claim.id === 'check-1')!;
   assert.equal(row.sourceUrl, 'https://example.test/TAT-1');
   assert.equal(row.selectedBefore?.recipeRunId, 'baseline');
+  assert.deepEqual(
+    model.claimMedia('check-1', row.selectedBefore!.artifactPath).screenshots,
+    [],
+    'opening a baseline capture never borrows head inspection context',
+  );
   assert.equal(row.selectedAfter?.recipeRunId, 'head');
   assert.notEqual(row.selectedBefore?.identity, row.selectedAfter?.identity);
   assert.equal(row.selectedBefore?.clips[0]?.moment?.recipeRunId, 'baseline');
