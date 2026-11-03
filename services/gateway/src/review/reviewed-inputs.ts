@@ -104,10 +104,17 @@ export async function noteReviewInputsAtLaunch(runId: string): Promise<void> {
   await patchEngineState(runId, { reviewInputsAtLaunch: current?.fingerprint });
 }
 
-/** Called when a review passes: what it was given is now what was reviewed. */
-export async function recordReviewedInputs(runId: string): Promise<void> {
+/** A completed verdict records its launch inputs; issues retain the last passing baseline. */
+export async function recordReviewedInputs(
+  runId: string,
+  verdict: 'pass' | 'issues' = 'pass',
+): Promise<void> {
   const fingerprint = getRun(runId)?.engineState?.reviewInputsAtLaunch;
   if (!fingerprint) return;
+  if (verdict === 'issues') {
+    await markReviewedInputsRerun(runId, fingerprint);
+    return;
+  }
   await patchEngineState(runId, {
     reviewedInputs: { fingerprint, recordedAt: new Date().toISOString() },
   });
@@ -147,6 +154,6 @@ export async function reviewedInputsAwaitingReview(run: Run): Promise<string | n
 /** Marks `fingerprint` as re-reviewed, once a review given it settled, so the gate does not re-run it again. */
 export async function markReviewedInputsRerun(runId: string, fingerprint: string): Promise<void> {
   const recorded = getRun(runId)?.engineState?.reviewedInputs;
-  if (!recorded) return;
+  if (!recorded || recorded.rerunFor === fingerprint) return;
   await patchEngineState(runId, { reviewedInputs: { ...recorded, rerunFor: fingerprint } });
 }

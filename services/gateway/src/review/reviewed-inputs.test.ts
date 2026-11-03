@@ -6,12 +6,17 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import type { ReviewSelection, ReviewStatus } from '@farmslot/protocol';
+import {
+  gateActionsForReadiness,
+  type ReviewSelection,
+  type ReviewStatus,
+} from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
 import { shellQuote } from '../core/tmux.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
+import { collectRunGateReadiness } from '../run-engine/gate-prerequisites.js';
 import { rerunReviewIfReviewedInputsChanged } from '../run-engine/post-dispatch-steps.js';
 import { makeReadyGatePackage } from '../run-engine/test-fixtures.js';
 import { getRun, updateRun } from '../runs/store.js';
@@ -150,6 +155,91 @@ test('a pass records what the review was given, not the slot as it is when it pa
   await writeFile(path.join(artifacts, 'on-after.png'), '## Hidden behind a flag\n');
   await recordReviewedInputs(run.id);
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
+});
+
+test('an issues review marks its launch inputs reviewed without replacing the passing baseline', async (t) => {
+  const { run, artifacts } = await slotWithTask(t);
+  await reviewPasses(run.id);
+  const baseline = getRun(run.id)!.engineState!.reviewedInputs!;
+  await writeFile(path.join(artifacts, 'on-after.png'), 'new evidence for gate review');
+  assert.notEqual(await reviewedInputsAwaitingReview(getRun(run.id)!), null);
+  await noteReviewInputsAtLaunch(run.id);
+  const launched = getRun(run.id)!.engineState!.reviewInputsAtLaunch;
+  await recordReviewedInputs(run.id, 'issues');
+  const reviewed = getRun(run.id)!.engineState!.reviewedInputs!;
+  assert.equal(reviewed.fingerprint, baseline.fingerprint);
+  assert.equal(reviewed.recordedAt, baseline.recordedAt);
+  assert.equal(reviewed.rerunFor, launched);
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
+  assert.equal(await reviewedInputsAwaitingReview(getRun(run.id)!), null);
+  await writeFile(path.join(artifacts, 'on-after.png'), 'evidence changed after the issues review');
+  assert.notEqual(await reviewedInputsAwaitingReview(getRun(run.id)!), null);
+});
+
+test('an issues result never clears an edit made after its launch snapshot', async (t) => {
+  const { run, artifacts } = await slotWithTask(t);
+  await reviewPasses(run.id);
+  await writeFile(path.join(artifacts, 'on-after.png'), 'evidence offered to the reviewer');
+  await noteReviewInputsAtLaunch(run.id);
+  const launched = getRun(run.id)!.engineState!.reviewInputsAtLaunch;
+  await writeFile(path.join(artifacts, 'on-after.png'), 'evidence changed during the review');
+  await recordReviewedInputs(run.id, 'issues');
+  assert.equal(getRun(run.id)!.engineState!.reviewedInputs!.rerunFor, launched);
+  assert.notEqual(await reviewedInputsAwaitingReview(getRun(run.id)!), null);
+});
+
+test('accept-findings is available for reviewed issues at a spent budget, but not for later evidence', async (t) => {
+  const { run, artifacts } = await slotWithTask(t);
+  await reviewPasses(run.id);
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'human-gate' },
+  });
+  const issue = { file: 'src/example.ts', description: 'Remaining finding' };
+  const review: ReviewStatus = {
+    id: 'gate-issues',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues: [issue],
+    reviewerSessionId: 'gate-session',
+    reviewedHeadSha: prepared.headSha,
+    reviewSnapshot: prepared.reviewSnapshot,
+    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+    artifactPaths: ['artifacts/gate/review-result.json'],
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    reviewRoundAdmissions: ['one', 'two', 'three', 'four', 'five'],
+    engineState: {
+      ...getRun(run.id)!.engineState,
+      publishGate: { reviews: [review] },
+    },
+  });
+  await writeFile(path.join(artifacts, 'on-after.png'), 'changed inputs offered to gate reviewer');
+  const sources = {
+    deterministic: async () => {},
+    acceptance: async () => ({ criteria: [], ledger: null, issues: [] }),
+    progress: async () => ({ kind: 'idle' as const }),
+    selectedEvidence: async () => {},
+    reviewResult: async () =>
+      JSON.stringify({ schemaVersion: 1, verdict: 'issues', issues: [issue] }),
+  };
+  const actions = [{ id: 'approve-publish-unresolved' }, { id: 'hold' }];
+  const readiness = () => collectRunGateReadiness(getRun(run.id)!, prepared, sources);
+  const before = await readiness();
+  assert.ok(before.reasons.some((reason) => reason.code === 'review-inputs-awaiting-review'));
+  assert.deepEqual(gateActionsForReadiness(actions, before), [{ id: 'hold' }]);
+  await noteReviewInputsAtLaunch(run.id);
+  await recordReviewedInputs(run.id, 'issues');
+  const after = await readiness();
+  assert.ok(!after.reasons.some((reason) => reason.code === 'review-inputs-awaiting-review'));
+  assert.deepEqual(after.findings, [{ reviewId: review.id, ...issue }]);
+  assert.deepEqual(gateActionsForReadiness(actions, after), actions);
+  assert.equal(gateActionsForReadiness([{ id: 'approve-publish' }], after).length, 0);
+  await writeFile(path.join(artifacts, 'on-after.png'), 'unreviewed later inputs');
+  assert.deepEqual(gateActionsForReadiness(actions, await readiness()), [{ id: 'hold' }]);
 });
 
 test('the publication gate re-runs review once per change before it is presented', async (t) => {

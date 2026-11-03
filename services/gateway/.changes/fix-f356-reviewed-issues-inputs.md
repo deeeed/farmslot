@@ -1,0 +1,1 @@
+- A gate review with findings records which inputs it reviewed, so an operator can accept those findings without another passing review; later evidence edits still require review.

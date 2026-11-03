@@ -23,7 +23,10 @@ export async function git(repo: string, ...args: string[]) {
 }
 
 /** A local slot whose checkout holds a worker task dir with description and evidence. */
-export async function slotWithTask(t: import('node:test').TestContext) {
+export async function slotWithTask(
+  t: import('node:test').TestContext,
+  ticketOrPr = 'TAT-4031-LIKE',
+) {
   const id = `reviewed-inputs-${process.pid}-${Date.now()}`;
   const repo = await mkdtemp(path.join(os.tmpdir(), `${id}-`));
   const poolFile = path.join(farmslotRoot, 'pool', `${id}.json`);
@@ -33,7 +36,7 @@ export async function slotWithTask(t: import('node:test').TestContext) {
     flowType: 'dev',
     mode: 'autonomous',
     project: 'farmslot-farm',
-    ticketOrPr: 'TAT-4031-LIKE',
+    ticketOrPr,
     runner: 'claude',
   });
   updateRun(run.id, {
