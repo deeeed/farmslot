@@ -65,7 +65,7 @@ try {
     assert.ok(owned, 'Resolve only the dedicated recording proof window');
     windowId = String(owned.id);
   }
-  const actions = ['wait', 'call', 'end', 'ui.press', 'ui.screenshot'];
+  const actions = ['wait', 'call', 'end', 'ui.press', 'ui.screenshot', 'ui.wait_for'];
   const sourceManifest = JSON.parse(
     await readFile('docs/examples/recipes/example-browser-v1.action-manifest.json', 'utf8'),
   );
@@ -159,6 +159,13 @@ try {
           ref: 'color',
           params: { color: 'red', hold: 300 },
           intent: 'Return to red through the same parameterized child.',
+          next: 'final-assert',
+        },
+        'final-assert': {
+          action: 'ui.wait_for',
+          selector: 'h1',
+          text: 'Recording timeline validation',
+          intent: 'Assert the real page immediately before completion.',
           next: 'done',
         },
         done: { action: 'end', status: 'pass' },
@@ -166,6 +173,10 @@ try {
     },
   };
   const transport = createCdpWebUiTransport({ withPage: async (_input, use) => use(page!) });
+  const recorder = helper
+    ? createCaptureHelperVideoRecorder({ captureHelperPath: helper })
+    : createCdpVideoRecorder({ cdpPort, urlIncludes: url });
+  let stoppedAtUnixMs = 0;
   const runner = createRecipeRunner({
     actionManifest: manifest,
     hud: false,
@@ -175,9 +186,19 @@ try {
       ...createStandardUiAdapters({ transport, actions }),
     ],
     recording: {
-      videoRecorder: helper
-        ? createCaptureHelperVideoRecorder({ captureHelperPath: helper })
-        : createCdpVideoRecorder({ cdpPort, urlIncludes: url }),
+      videoRecorder: {
+        ...recorder,
+        async start(request) {
+          const active = await recorder.start(request);
+          return {
+            ...active,
+            stop() {
+              stoppedAtUnixMs = Date.now();
+              return active.stop();
+            },
+          };
+        },
+      },
       targetProvider: {
         async resolveRecordingTarget() {
           return { kind: 'window-id', windowId };
@@ -206,6 +227,16 @@ try {
   );
   const trace = JSON.parse(await readFile(path.join(root, 'artifacts/trace.json'), 'utf8'));
   assert.equal(timeline.traceDigest, digestRecipeDocument(trace));
+  const lastNode = trace.findLast((entry: { nodeId: string }) => entry.nodeId === 'done');
+  assert.ok(lastNode, 'Completion retains its real trace timestamp');
+  const tailMs = stoppedAtUnixMs - Date.parse(lastNode.endedAt);
+  assert.ok(tailMs >= 400, `Every recorder must retain its 400 ms tail, got ${tailMs} ms`);
+  const finalAssertion = timeline.markers.find((marker) => marker.nodeId === 'final-assert');
+  assert.ok(finalAssertion, 'The real final browser assertion must have a timeline marker');
+  assert.ok(
+    finalAssertion.startRangeMs[0] >= 0 && finalAssertion.endRangeMs[1] <= timeline.durationMs,
+    'The whole final assertion range must be inside the encoded recording',
+  );
   const videoPath = path.join(root, 'artifacts', video.path);
   // Sample a corner away from controls for every decoded frame, without re-timing it.
   const pixels = execFileSync('ffmpeg', [
@@ -282,6 +313,8 @@ try {
     frames: timeline.framesMs.length,
     durationMs: timeline.durationMs,
     alignmentWindowMs: timeline.clock.latestZeroUnixMs - timeline.clock.earliestZeroUnixMs,
+    tailMs,
+    finalAssertion,
     observations,
   };
   await writeFile(path.join(root, 'live-proof.json'), JSON.stringify(evidence, null, 2));

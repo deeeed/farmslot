@@ -722,6 +722,8 @@ class DefaultRecipeRunner implements RecipeRunner {
         const recordingToStop = runRecording;
         runRecording = undefined;
         try {
+          // Keep final assertion ranges inside the video despite the observed 388 ms clock bound.
+          if (!request.signal?.aborted) await delay(400);
           const { videos, interruption, releaseFailure } = await this.#stopRunVideoRecording(
             recordingToStop,
             traceWriter,
