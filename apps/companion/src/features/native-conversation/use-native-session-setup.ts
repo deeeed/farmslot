@@ -12,6 +12,7 @@ import {
   nativeLaunchChoices,
   nativeLaunchContextKey,
   nativeLaunchModel,
+  nativeLaunchModelSelection,
   ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
 
@@ -96,6 +97,10 @@ export function useNativeSessionSetup(enabled: boolean) {
       catalog ? catalogForNativeRunners(catalog.runners, undefined, executionNode) : undefined,
     [catalog, executionNode],
   );
+  const selectedModel = nativeLaunchModelSelection(
+    runnerCatalog?.runners.find((entry) => entry.id === runner?.runner),
+    modelId,
+  );
   const model = nativeLaunchModel(
     runnerCatalog?.runners.find((entry) => entry.id === runner?.runner),
     modelId,
@@ -109,14 +114,14 @@ export function useNativeSessionSetup(enabled: boolean) {
             sequence: [
               {
                 runner: runner?.runner ?? catalog.runners[0].runner,
-                model: model || null,
+                model: selectedModel,
                 effort,
                 mode: 'cold',
               },
             ],
           })
         : undefined,
-    [catalog, runnerCatalog, runner, model, effort],
+    [catalog, runnerCatalog, runner, selectedModel, effort],
   );
   const selectedNode = useRef('local');
   if (context) selectedNode.current = context.executionNodeId ?? 'local';
@@ -141,6 +146,22 @@ export function useNativeSessionSetup(enabled: boolean) {
   ]);
   const launchKeyRef = useRef(launchKey);
   launchKeyRef.current = launchKey;
+  const selectChoice = (key: string) => {
+    const next = choices.find((choice) => choice.key === key);
+    if (!next || next.unavailableReason) return;
+    if (next.executionNodeId !== executionNode) {
+      const nextRunner = catalogForNativeRunners(
+        catalog?.runners ?? [],
+        undefined,
+        next.executionNodeId,
+      ).runners.find((entry) => entry.id === runner?.runner);
+      setModelId(nativeLaunchModelSelection(nextRunner, modelId, true) ?? '');
+    }
+    launchKeyRef.current = '';
+    setError('');
+    setContextKey(key);
+    setCustomCwd(next.cwd);
+  };
   return {
     viewModel: {
       catalog,
@@ -183,14 +204,7 @@ export function useNativeSessionSetup(enabled: boolean) {
           profiles.actions.refresh();
         },
       },
-      selectChoice: (key: string) => {
-        const next = choices.find((choice) => choice.key === key);
-        if (!next || next.unavailableReason) return;
-        launchKeyRef.current = '';
-        setError('');
-        setContextKey(key);
-        setCustomCwd(next.cwd);
-      },
+      selectChoice,
       selectCustomCwd: (value: string) => {
         launchKeyRef.current = '';
         setError('');
@@ -202,12 +216,8 @@ export function useNativeSessionSetup(enabled: boolean) {
         setEffort(value);
       },
       selectContext: (index: number) => {
-        setError('');
         const next = catalog?.contexts[index];
-        if (next && nativeLaunchContextKey(next) !== contextKey) {
-          launchKeyRef.current = '';
-          setContextKey(nativeLaunchContextKey(next));
-        }
+        if (next) selectChoice(nativeLaunchContextKey(next));
       },
       selectRunner: (value: string) => {
         setError('');

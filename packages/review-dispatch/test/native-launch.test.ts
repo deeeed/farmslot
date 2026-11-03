@@ -3,7 +3,12 @@ import test from 'node:test';
 
 import type { NativeSessionCatalogResult } from '@farmslot/protocol';
 
-import { nativeLaunchChoices, nativeLaunchModel } from '../src/native-launch.js';
+import {
+  nativeLaunchChoices,
+  nativeLaunchModel,
+  nativeLaunchModelSelection,
+} from '../src/native-launch.js';
+import { ReviewDispatchViewModel } from '../src/view-model.js';
 
 const catalog: NativeSessionCatalogResult = {
   runners: [],
@@ -102,5 +107,51 @@ test('custom model selections follow the shared catalog permission', () => {
   assert.equal(
     nativeLaunchModel({ ...runner, allowCustomModels: false }, 'custom-provider-model'),
     'listed',
+  );
+});
+
+test('changing effort keeps the default sentinel and follows a refreshed runner default', () => {
+  const runner = {
+    id: 'codex',
+    models: [{ id: 'first' }, { id: 'second' }],
+    defaultModel: 'first',
+    efforts: ['high'],
+    defaultEffort: null,
+    allowCustomModels: true,
+  };
+  const picker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['chat'] },
+    catalog: { runners: [runner] },
+    sequence: [
+      {
+        runner: 'codex',
+        model: nativeLaunchModelSelection(runner, ''),
+        effort: null,
+        mode: 'cold',
+      },
+    ],
+  });
+  picker.setEffort(picker.rows[0].id, 'high');
+  assert.equal(picker.selection?.model, null);
+  assert.equal(
+    nativeLaunchModel({ ...runner, defaultModel: 'second' }, picker.selection?.model),
+    'second',
+  );
+});
+
+test('changing execution nodes drops unlisted models while current-node custom ids remain allowed', () => {
+  const target = {
+    id: 'pi',
+    models: [{ id: 'provider/b' }],
+    defaultModel: 'provider/b',
+    efforts: [],
+    defaultEffort: null,
+    allowCustomModels: true,
+  };
+  assert.equal(nativeLaunchModelSelection(target, 'provider/a', true), null);
+  assert.equal(nativeLaunchModelSelection(target, 'provider/b', true), 'provider/b');
+  assert.equal(
+    nativeLaunchModelSelection(target, 'custom-provider-model'),
+    'custom-provider-model',
   );
 });

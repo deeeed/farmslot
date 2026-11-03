@@ -86,14 +86,23 @@ export function nativeLaunchChoices(
   return choices;
 }
 
-/** Preserve custom models only where the shared runner catalog permits them. */
+/** A null selection follows the runner default without pinning its current value. */
+export function nativeLaunchModelSelection(
+  runner: ReviewDispatchRunnerOption | undefined,
+  model: string | null | undefined,
+  listedOnly = false,
+): string | null {
+  return model &&
+    runner &&
+    ((!listedOnly && runner.allowCustomModels !== false) ||
+      runner.models.some((entry) => entry.id === model))
+    ? model
+    : null;
+}
+
 export function nativeLaunchModel(
   runner: ReviewDispatchRunnerOption | undefined,
   model: string | null | undefined,
 ): string {
-  return model &&
-    runner &&
-    (runner.allowCustomModels !== false || runner.models.some((entry) => entry.id === model))
-    ? model
-    : (runner?.defaultModel ?? '');
+  return nativeLaunchModelSelection(runner, model) ?? runner?.defaultModel ?? '';
 }

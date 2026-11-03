@@ -69,6 +69,7 @@ import {
   nativeLaunchChoices,
   nativeLaunchContextKey,
   nativeLaunchModel,
+  nativeLaunchModelSelection,
   ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
 
@@ -439,7 +440,11 @@ export class NativeSessionView extends LitElement {
       if (
         changed.has('executionNodeId') &&
         row?.selection.model &&
-        this.executionPicker.modelPickerState(row.id).customModel
+        !nativeLaunchModelSelection(
+          this.executionPicker.catalog.runners.find((option) => option.id === row.selection.runner),
+          row.selection.model,
+          true,
+        )
       ) {
         const runner = this.executionPicker.catalog.runners.find(
           (option) => option.id === row.selection.runner,
