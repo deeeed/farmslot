@@ -288,16 +288,23 @@ export class RunPipeline extends LitElement {
   /** Run detail's order: canvas detail, step progress, the host's artifacts, criteria. */
   private renderPanels() {
     const checklist = runChecklistProgressView(this.run, this.taskProgress);
+    const activeProgress = this._activeTaskProgress();
+    const hasProgress = Boolean(checklist || activeProgress);
+    const progressSummary = checklist
+      ? `${checklist.counts} · ${checklist.label}`
+      : activeProgress
+        ? `${activeProgress.completedSteps}/${activeProgress.totalSteps} · ${activeProgress.currentStep ?? 'Checklist'}`
+        : '';
     const acceptance = this.renderAcceptancePanel();
     const inputs = acceptance === nothing ? null : acceptancePanelInputs(this);
     const progressOpen = runDetailPanelOpen('run-step-progress');
     const detachedInspector = Boolean(this.selectedStepName) && !progressOpen;
     return html`
-      ${checklist
+      ${hasProgress
         ? renderCollapsiblePanel({
             id: 'run-step-progress',
             label: 'Step progress',
-            summary: `${checklist.counts} · ${checklist.label}`,
+            summary: progressSummary,
             open: progressOpen,
             onToggle: () => this.togglePanel('run-step-progress'),
             body: () =>
@@ -305,7 +312,7 @@ export class RunPipeline extends LitElement {
                 >${this.renderProgressSection()}`,
           })
         : nothing}
-      ${detachedInspector || !checklist ? html`<slot name="canvas-detail"></slot>` : nothing}
+      ${detachedInspector || !hasProgress ? html`<slot name="canvas-detail"></slot>` : nothing}
       <slot name="artifacts"></slot>
       ${inputs || this.acceptanceRowHeld
         ? renderCollapsiblePanel({

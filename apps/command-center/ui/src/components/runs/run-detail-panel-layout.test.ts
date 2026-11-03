@@ -457,3 +457,22 @@ test('the task estimate names its purpose and recommended model', () => {
   assert.match(estimate, /Task difficulty and suggested model, estimated before execution/);
   assert.match(estimate, /Suggested model: sonnet/);
 });
+
+test('waiting for the operator preserves an existing monitor checklist', () => {
+  const element = pipeline();
+  element.run = {
+    ...run,
+    waitingForOperator: {
+      contextId: 'worker',
+      attemptId: 'attempt',
+      who: 'operator',
+      reason: 'Confirm the next step',
+      since: '2026-11-02T20:00:00Z',
+    },
+  };
+  const waiting = litText(element.render());
+  assert.match(waiting, /data-panel="run-step-progress"/);
+  assert.match(waiting, /1\/2/);
+  element.run = run;
+  assert.match(litText(element.render()), /data-panel="run-step-progress"/);
+});

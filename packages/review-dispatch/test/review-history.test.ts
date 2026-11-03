@@ -583,14 +583,14 @@ test('a retained warm startup failure cannot inherit the replacement cold pass a
   const current = run();
   const failed = {
     ...actor(3),
-    id: 'failed-warm',
+    id: 'z-failed-warm',
     status: 'failed' as const,
     startedAt: '2026-10-21T10:04:43Z',
     completedAt: '2026-10-21T10:05:27Z',
   };
   const replacement = {
     ...failed,
-    id: 'replacement',
+    id: 'a-replacement',
     status: 'complete' as const,
     completedAt: '2026-10-21T10:31:04Z',
     deliveryBaselineRef: 'new-head',
@@ -951,4 +951,39 @@ test('round labels run once across reviewers and keep each fix adjacent to its r
   assert.equal(fix.kind, 'fix');
   assert.equal(next.kind, 'review');
   if (fix.kind === 'fix' && next.kind === 'review') assert.equal(fix.roundKey, next.key);
+});
+
+test('fix grouping uses its frozen range before and after artifact metadata resolves', () => {
+  const current = run();
+  const reviewId = 'pipeline-review-history-run';
+  current.agentContexts = [
+    { ...actor(1), deliveryBaselineRef: 'aaaaaaa' },
+    {
+      ...actor(3),
+      startedAt: '2026-10-21T10:04:00Z',
+      completedAt: '2026-10-21T10:05:00Z',
+      deliveryBaselineRef: 'bbbbbbb',
+    },
+  ];
+  current.steps[0].outputs = {
+    reviewId,
+    attempts: [
+      {
+        loopNumber: 2,
+        completedAt: '2026-10-21T10:03:00Z',
+        verdict: 'pass',
+        fixDelta: { baseSha: 'aaaaaaa', headSha: 'bbbbbbb', diffPath: 'artifacts/loop-2-fix.diff' },
+      },
+    ],
+  };
+  const association = (artifacts: Parameters<typeof reviewHistoryView>[1]) =>
+    reviewHistoryView(current, artifacts)
+      .events.filter((event) => event.kind === 'fix')
+      .map((event) => [event.key, event.roundKey]);
+  assert.equal(
+    association({}).length,
+    1,
+    'the same code fix is not an extra card on the later review',
+  );
+  assert.deepEqual(association({ 'history:git': { content: 'enabled' } }), association({}));
 });

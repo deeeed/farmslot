@@ -28,9 +28,8 @@ export type ReviewHistoryEvent =
 /** A completed result without a start belongs at its completion, never before the first round. */
 export function compareReviewHistoryRounds(a: ReviewHistoryRound, b: ReviewHistoryRound): number {
   const time = (round: ReviewHistoryRound) => round.startedAt ?? round.completedAt ?? '\uffff';
-  return (
-    time(a).localeCompare(time(b)) || a.loopNumber - b.loopNumber || a.key.localeCompare(b.key)
-  );
+  // Recovery attempts can share their start and loop. Keep producer order for that tie.
+  return time(a).localeCompare(time(b)) || a.loopNumber - b.loopNumber;
 }
 
 /** A replay keeps its own event, even if the engine resets the charged loop number. */
@@ -43,7 +42,11 @@ export function reviewHistoryTimeline(
   const fixes: ReviewHistoryFix[] = [];
   for (const round of ordered) {
     if (round.hasFix) {
-      const key = round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`;
+      // Artifact hydration may replace a pathname with a Git alias for the same code fix.
+      const key =
+        round.fixBaseSha && round.fixHeadSha
+          ? `${round.reviewId}:fix:${round.fixBaseSha}:${round.fixHeadSha}`
+          : (round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`);
       let fix = fixes.find((entry) => entry.key === key);
       if (!fix) {
         fix = {

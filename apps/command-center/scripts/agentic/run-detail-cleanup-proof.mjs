@@ -51,9 +51,10 @@ try {
     () =>
       history.evaluate((view) => ({
         loading: view._historyLoading,
+        initialized: Boolean(view._historyIdentity),
         count: view.shadowRoot?.querySelectorAll('[data-round]').length ?? 0,
       })),
-    (value) => value.count > 0 && !value.loading,
+    (value) => value.count > 0 && value.initialized && !value.loading,
     'recorded review history',
   );
   const gradeToggle = run.locator('[data-testid="run-grade-toggle"]');
@@ -119,7 +120,25 @@ try {
           y: node.getBoundingClientRect().top,
           height: node.getBoundingClientRect().height,
         }));
-      return { before: positions(), positions };
+      const probe = {
+        before: positions(),
+        positions,
+        frames: 0,
+        shifts: [],
+        frame: 0,
+        stop() {
+          cancelAnimationFrame(this.frame);
+        },
+      };
+      const sample = () => {
+        probe.frames++;
+        const current = positions();
+        if (JSON.stringify(current) !== JSON.stringify(probe.before) && probe.shifts.length < 10)
+          probe.shifts.push(current);
+        probe.frame = requestAnimationFrame(sample);
+      };
+      probe.frame = requestAnimationFrame(sample);
+      return probe;
     });
     await refresh.click();
     await poll(
@@ -127,14 +146,26 @@ try {
       (loading) => !loading,
       'history refresh',
     );
-    const stability = await layout.evaluate((value) => ({
-      before: value.before,
-      after: value.positions(),
-    }));
+    await history.evaluate((view) => view.updateComplete);
+    const stability = await layout.evaluate((value) => {
+      value.stop();
+      return {
+        before: value.before,
+        after: value.positions(),
+        frames: value.frames,
+        shifts: value.shifts,
+      };
+    });
     await layout.dispose();
     await fs.writeFile(
       path.join(output, 'refresh-layout.json'),
       JSON.stringify(stability, null, 2),
+    );
+    assert(stability.frames > 0, 'The refresh must have observed real animation frames');
+    assert.deepEqual(
+      stability.shifts,
+      [],
+      'Recorded detail refresh must not shift any intermediate frame',
     );
     assert.deepEqual(
       stability.after,
