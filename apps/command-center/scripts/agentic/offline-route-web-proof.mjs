@@ -196,6 +196,7 @@ try {
               text: read(element).replace(/\s+/g, ' ').trim().slice(0, 1400),
               tag: element.tagName.toLowerCase(),
               queries,
+              resourceGroups: element.shadowRoot?.querySelectorAll('resource-overview').length ?? 0,
               hasData: Boolean(
                 globalData[route] ||
                 queries.some((query) => query.hasData) ||
@@ -206,7 +207,9 @@ try {
         (value) =>
           value.text.length > 0 &&
           !/^Loading(?:\s|\.)/.test(value.text) &&
-          (entry.kind !== 'cached' || value.hasData),
+          (entry.kind !== 'cached' || value.hasData) &&
+          (entry.route !== 'fleet-resources' ||
+            (value.resourceGroups > 0 && !value.text.includes('Resource details loading'))),
         `${entry.route} rendered stored body`,
       );
       const shot = `${String(results.length).padStart(2, '0')}-${entry.route}.png`;
