@@ -21,7 +21,7 @@ import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/vie
 import { observeNativeArtifactFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { acceptanceViewerRecipeRunId } from '../../lib/acceptance-evidence';
-import { readStoredArtifact } from '../../lib/artifact-response';
+import { closeArtifactDocument, readStoredArtifact } from '../../lib/artifact-response';
 import {
   type ArtifactStickyChromeLayout,
   artifactStickyChromeThreshold,
@@ -663,7 +663,7 @@ export function useArtifactViewerController() {
       openEvidence,
       openOccurrence,
       closeMedia: () => setViewerUri(null),
-      closeDocument: () => setDocumentViewer(null),
+      closeDocument: () => closeArtifactDocument(documentAbortRef, () => setDocumentViewer(null)),
       assertCurrentInputs,
       retry,
     },

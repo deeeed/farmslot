@@ -754,42 +754,65 @@ export class FleetCanvas extends LitElement {
       return;
     }
 
-    // Phase 1: fetch resource definitions (fast — reads project.json, no hooks)
-    // Renders table immediately with "unknown" status dots
+    const cache = getResourceCache();
+    const workspace = getResourceWorkspaceKey();
+    const current = () => cache === getResourceCache() && workspace === getResourceWorkspaceKey();
     const nextDefs = new Map<string, SlotResource[]>();
     const nextStatus = new Map<string, Map<string, ResourceStatus>>(this.slotResourceStatus);
+    const applyResources = (slotId: string, list: ResourceListResult) => {
+      if (!current()) return;
+      if (list.resources.length) {
+        nextDefs.set(slotId, list.resources);
+        nextStatus.set(
+          slotId,
+          new Map(list.resources.map((resource) => [resource.id, resource.status])),
+        );
+        this._resourceFetched = true;
+      } else {
+        nextDefs.delete(slotId);
+        nextStatus.delete(slotId);
+      }
+      this.slotResourceDefs = new Map(nextDefs);
+      this.slotResourceStatus = new Map(nextStatus);
+    };
+    // Hydrate every local slot before network batching, so a slow first batch cannot hide
+    // held groups in later batches. Explicit rereads below retain their four-request limit.
+    let heldLists = 0;
+    await Promise.all(
+      resourceSlots.map(async (slot) => {
+        const query = resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, {
+          slotId: slot.slot,
+        });
+        const held = await cache?.readStored?.(query, false);
+        if (held?.data && current()) {
+          heldLists++;
+          applyResources(slot.slot, held.data);
+        }
+      }),
+    );
+    if (!current()) return;
+    if (heldLists === resourceSlots.length) this._resourceFetched = true;
     for (let index = 0; index < resourceSlots.length; index += 4) {
       const batch = resourceSlots.slice(index, index + 4);
       await Promise.all(
-        batch.map(async (s) => {
+        batch.map(async (slot) => {
           try {
-            const applyStored = (listRes: ResourceListResult) => {
-              if (listRes.resources.length > 0) {
-                nextDefs.set(s.slot, listRes.resources);
-                nextStatus.set(
-                  s.slot,
-                  new Map(listRes.resources.map((resource) => [resource.id, resource.status])),
-                );
-              }
-              this.slotResourceDefs = new Map(nextDefs);
-              this.slotResourceStatus = new Map(nextStatus);
-            };
+            const applyStored = (list: ResourceListResult) => applyResources(slot.slot, list);
             applyStored(
               await readStored<ResourceListResult>(
-                resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, {
-                  slotId: s.slot,
-                }),
+                resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, { slotId: slot.slot }),
                 applyStored,
               ),
             );
           } catch (err) {
             console.warn(
-              `[fleet-canvas] resource list failed for ${s.slot}:`,
+              `[fleet-canvas] resource list failed for ${slot.slot}:`,
               err instanceof Error ? err.message : String(err),
             );
           }
         }),
       );
+      if (!current()) return;
     }
     this.slotResourceDefs = nextDefs;
     this.slotResourceStatus = nextStatus;

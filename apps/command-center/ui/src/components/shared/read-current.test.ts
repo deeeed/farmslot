@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { EvalSuiteCapGetResult } from '@farmslot/protocol';
-
 import {
   createGatewayResourceCache,
   createMemoryResourceStore,

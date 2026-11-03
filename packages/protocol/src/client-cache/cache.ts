@@ -1481,7 +1481,7 @@ export function createGatewayResourceCache(
       if (disposed) throw new Error('Resource cache is disposed');
       return entryFor(query).state as ResourceQueryState<T>;
     },
-    async readStored<T>(query: ResourceQuery<T>) {
+    async readStored<T>(query: ResourceQuery<T>, refresh = true) {
       if (disposed) throw new Error('Resource cache is disposed');
       const ownerVersion = hydrationOwnerVersion;
       await barrier;
@@ -1490,7 +1490,7 @@ export function createGatewayResourceCache(
       if (disposed || ownerVersion !== hydrationOwnerVersion)
         throw new Error('The offline store owner changed');
       // fetchEntry records network refusals in the query state and notifies its readers.
-      if (entry.state.data !== undefined) void fetchEntry(entry);
+      if (refresh && entry.state.data !== undefined) void fetchEntry(entry);
       return entry.state as ResourceQueryState<T>;
     },
     retry: retryQuery,

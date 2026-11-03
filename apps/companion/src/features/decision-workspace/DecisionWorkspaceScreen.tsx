@@ -61,7 +61,7 @@ import { useRunAcceptance } from '../../hooks/useRunAcceptance';
 import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
-import { readStoredArtifact } from '../../lib/artifact-response';
+import { closeArtifactDocument, readStoredArtifact } from '../../lib/artifact-response';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -2018,7 +2018,7 @@ export default function DecisionDetailScreen({
           sharedArtifact={documentViewer?.sharedArtifact}
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
-          onClose={() => setDocumentViewer(null)}
+          onClose={() => closeArtifactDocument(documentAbortRef, () => setDocumentViewer(null))}
         />
         <RunOutputReportViewer
           report={outputReport}

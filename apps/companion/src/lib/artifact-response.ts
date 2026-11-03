@@ -25,3 +25,13 @@ export function readStoredArtifact(
     onRefreshError: reportArtifactRefreshError,
   });
 }
+
+/** Closing a document retires both its held display and any pending fresh reply. */
+export function closeArtifactDocument(
+  pending: { current: AbortController | null },
+  dismiss: () => void,
+): void {
+  pending.current?.abort();
+  pending.current = null;
+  dismiss();
+}

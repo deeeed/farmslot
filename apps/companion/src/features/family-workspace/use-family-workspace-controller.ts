@@ -17,7 +17,7 @@ import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/vie
 import type { MediaViewerItem } from '../../components/MediaViewer';
 import { observeNativeFamilyFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQuery';
-import { readStoredArtifact } from '../../lib/artifact-response';
+import { closeArtifactDocument, readStoredArtifact } from '../../lib/artifact-response';
 import {
   artifactsForRecipeRun,
   artifactUrlForEntry,
@@ -751,7 +751,7 @@ export function useFamilyWorkspaceController() {
     viewerUri,
     setViewerUri,
     documentViewer,
-    setDocumentViewer,
+    closeDocument: () => closeArtifactDocument(documentAbortRef, () => setDocumentViewer(null)),
     evidenceFilter,
     setEvidenceFilter,
     router,

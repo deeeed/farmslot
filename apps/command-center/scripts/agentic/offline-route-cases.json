@@ -19,6 +19,12 @@
       "kind": "cached"
     },
     {
+      "route": "fleet-resources",
+      "href": "#fleet?group=resource",
+      "tag": "fleet-canvas",
+      "kind": "cached"
+    },
+    {
       "route": "terminal",
       "href": "#terminal?run={activeRunId}",
       "tag": "terminal-split-view",
