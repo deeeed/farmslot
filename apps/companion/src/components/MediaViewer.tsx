@@ -40,6 +40,7 @@ import {
 import {
   evidenceClaimPlayback,
   evidenceRecordingForPath,
+  evidenceViewerSessionItems,
   mediaShareView,
 } from '../lib/evidence-media-items';
 import { gatewayFetch } from '../lib/gateway-http-auth';
@@ -115,11 +116,7 @@ export function MediaViewer({
     : uri
       ? [{ uri, authHeaders }]
       : [];
-  const proof = suppliedItems.find((item) => item.uri === uri)?.evidenceModel?.selection;
-  const proofPaths = proof ? new Set(proof.artifacts.map((file) => file.artifactPath)) : null;
-  const openingItems = proofPaths
-    ? suppliedItems.filter((item) => item.path && proofPaths.has(item.path))
-    : suppliedItems;
+  const openingItems = evidenceViewerSessionItems(suppliedItems, uri, authHeaders);
   const session = useRef({ visible: false, uri, items: openingItems });
   // Background metadata refreshes cannot replace the package being reviewed.
   if (visible && (!session.current.visible || session.current.uri !== uri))
@@ -761,13 +758,13 @@ function FullscreenVideo({
       <View style={styles.controls}>
         {error ? <Text style={styles.detailText}>{error}</Text> : null}
         {/* With the criteria overlay its pill names the criterion; the header has its verdict. */}
-        {model?.selection?.caption && !(model && timeline && review) ? (
+        {model?.selection?.caption && !(model && videoPath && review) ? (
           <Text style={styles.detailText}>{model.selection.caption}</Text>
         ) : null}
         {model?.selection?.message ? (
           <Text style={styles.detailText}>{model.selection.message}</Text>
         ) : null}
-        {model && timeline && review ? (
+        {model && videoPath && review ? (
           <EvidenceAcOverlay
             model={model}
             videoPath={videoPath}

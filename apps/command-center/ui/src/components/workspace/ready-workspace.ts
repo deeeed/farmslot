@@ -46,8 +46,8 @@ import { renderAcceptancePanel } from '../progress-tracker/acceptance-panel.js';
 import {
   type EvidenceReviewerJudgments,
   type EvidenceReviewerSelection,
-  evidenceReviewerSelection,
 } from '../shared/evidence-reviewer.js';
+import { evidenceReviewerSelection } from '../shared/evidence-reviewer-recording.js';
 import {
   type EvidenceReviewerView,
   evidenceReviewerViewFromHash,

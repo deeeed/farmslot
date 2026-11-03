@@ -66,10 +66,8 @@ import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
 } from '../progress-tracker/acceptance-panel.js';
-import {
-  type EvidenceReviewerSelection,
-  evidenceReviewerSelection,
-} from '../shared/evidence-reviewer.js';
+import { type EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
+import { evidenceReviewerSelection } from '../shared/evidence-reviewer-recording.js';
 import {
   type EvidenceReviewerView,
   evidenceReviewerViewFromHash,

@@ -26,6 +26,8 @@ import {
   runEvidencePending,
 } from '../src/evidence.js';
 
+import { untimedRecordingFixture } from './untimed-fixture.js';
+
 const zero = Date.parse('2026-01-01T00:00:00Z');
 const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 const videoDigest = digest('original recording');
@@ -509,6 +511,29 @@ test('video and trace digest mismatches remain visible and disable all seeking',
     assert.equal(model.markerSeekMs(source.timeline.videoPath, 0, 'end'), null);
     assert.equal(model.adjacentFrameMs(source.timeline.videoPath, 1_100, 1), null);
   }
+});
+
+test('F338 lists untimed originals and same-attempt inspection screenshots without changing claims', () => {
+  const input = untimedRecordingFixture(qaPackage(1));
+  const model = createEvidenceReviewModel({
+    package: input,
+    artifactPrefix: 'artifacts/recipe-runs/transport-id/',
+    packagePath: 'artifacts/recipe-runs/transport-id/',
+  });
+  assert.deepEqual(model.errors, []);
+  const before = structuredClone(model.claims);
+  const media = model.claimMedia('check-1');
+  assert.equal(media.recording?.artifactPath, 'artifacts/recipe-runs/transport-id/video.mp4');
+  assert.deepEqual(
+    media.screenshots.map(({ artifact, inspection }) => [artifact.artifactPath, inspection]),
+    [['artifacts/recipe-runs/transport-id/stills/1.png', true]],
+  );
+  assert.equal(model.recordingForPath(media.recording!.artifactPath)?.hasTimeline, false);
+  assert.equal(model.recordings.length, 0, 'availability never fabricates a measured timeline');
+  assert.equal(model.selectClaim('check-1')?.timing, 'untimed');
+  assert.deepEqual(model.selection?.clips, []);
+  assert.deepEqual(model.claims, before, 'inspection context never adds AC proof or verdicts');
+  assert.equal(model.recordingForPath('artifacts/recipe-baseline-run/video.mp4'), undefined);
 });
 
 test('outside footage is never trimmed into proof, and untimed files stay visible', () => {

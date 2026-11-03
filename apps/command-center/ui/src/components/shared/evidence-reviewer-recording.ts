@@ -1,24 +1,42 @@
-/** What the review needs from an evidence model to match a recording to the files shown. */
-export interface ReviewRecordings<T extends { videoPath: string }> {
-  readonly recordings: readonly T[];
-  artifactPath(path: string): string;
-}
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 
-/** The model's recording shown under a file path, when the path is one of them. */
-export function modelRecording<T extends { videoPath: string }>(
-  model: ReviewRecordings<T>,
-  path: string,
-): T | undefined {
-  return model.recordings.find((entry) => model.artifactPath(entry.videoPath) === path);
-}
+import type { EvidenceReviewerSelection } from './evidence-reviewer.js';
+import { isVideoLightboxItem } from './media-lightbox-model.js';
+import type { LightboxItem } from './media-lightbox-types.js';
 
 /**
- * A video from another recipe run than the model's, whose trace markers would not
- * match. Unknown, so false, until the model has its recordings.
+ * The review for one criterion of a run: its recording (the opened one, else the
+ * run's first) and the file the user chose. Every host opens the review through this.
  */
-export function isForeignRecording<T extends { videoPath: string }>(
-  model: ReviewRecordings<T>,
-  path: string,
-): boolean {
-  return model.recordings.length > 0 && !modelRecording(model, path);
+export function evidenceReviewerSelection(input: {
+  model: EvidenceReviewModel;
+  claimId: string;
+  resolveUrl: (path: string) => string;
+  opened?: LightboxItem;
+}): EvidenceReviewerSelection {
+  const { model, resolveUrl } = input;
+  const original = model.claimMedia(input.claimId).recording;
+  // A video from another recipe run would carry that run's trace markers: open the
+  // model's own recording. Hosts rebuild the selection as the model loads.
+  const opened =
+    input.opened &&
+    isVideoLightboxItem(input.opened) &&
+    (original || model.recordings.length > 0) &&
+    !model.recordingForPath(input.opened.path)
+      ? undefined
+      : input.opened;
+  const path = original?.artifactPath ?? null;
+  const recording =
+    opened && isVideoLightboxItem(opened)
+      ? opened
+      : path
+        ? {
+            url: resolveUrl(path),
+            path,
+            purpose: 'recording',
+            evidenceModel: model,
+            resolveArtifactUrl: resolveUrl,
+          }
+        : null;
+  return { claimId: input.claimId, model, recording, resolveUrl, opened };
 }
