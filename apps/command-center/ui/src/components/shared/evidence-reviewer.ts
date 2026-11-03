@@ -22,6 +22,7 @@ import {
 } from '../workspace/visual-claim-judgment.js';
 import { workspaceArtifactBasename } from '../workspace/workspace-artifacts.js';
 
+import { INSPECTION_CONTEXT_CAPTION } from './evidence-reviewer-recording.js';
 import type { EvidenceReviewerView } from './evidence-reviewer-url-state.js';
 import { gatewayMediaSrc } from './gateway-media-src.js';
 import type { MediaLightbox } from './media-lightbox.js';
@@ -411,7 +412,7 @@ export class EvidenceReviewer extends LitElement {
       url: resolve(artifact.artifactPath),
       path: artifact.artifactPath,
       purpose: 'screenshot',
-      ...(inspection ? { caption: 'Same-attempt inspection context · not AC-bound' } : {}),
+      ...(inspection ? { caption: INSPECTION_CONTEXT_CAPTION } : {}),
     }));
   }
 

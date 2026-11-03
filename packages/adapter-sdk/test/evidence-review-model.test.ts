@@ -155,6 +155,11 @@ test('a measured proof stays primary while its supporting stills remain raw and 
   const claim = model.claims.find((row) => row.id === 'check-1');
   assert.ok(claim);
   const display = model.claimDisplay(claim.id);
+  assert.deepEqual(
+    model.claimMedia('case-1').screenshots.filter(({ inspection }) => inspection),
+    [],
+    'measured criteria without bound stills do not borrow manifest screenshots',
+  );
   assert.equal(display.clip, claim.clips[0]);
   assert.deepEqual(display.selected, []);
   assert.deepEqual(
@@ -1553,6 +1558,11 @@ test('comparison roles retain original executions, exact claim rows, independent
   const row = model.comparisons.find((row) => row.claim.id === 'check-1')!;
   assert.equal(row.sourceUrl, 'https://example.test/TAT-1');
   assert.equal(row.selectedBefore?.recipeRunId, 'baseline');
+  assert.deepEqual(
+    model.claimMedia('check-1', row.selectedBefore!.artifactPath).screenshots,
+    [],
+    'opening a baseline capture never borrows head inspection context',
+  );
   assert.equal(row.selectedAfter?.recipeRunId, 'head');
   assert.notEqual(row.selectedBefore?.identity, row.selectedAfter?.identity);
   assert.equal(row.selectedBefore?.clips[0]?.moment?.recipeRunId, 'baseline');

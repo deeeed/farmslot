@@ -277,7 +277,7 @@ export interface EvidenceReviewComparisonViewRow extends EvidenceReviewCompariso
 
 export interface EvidenceReviewModel {
   readonly artifactInventory: readonly ArtifactRef[];
-  claimMedia(claimId: string): EvidenceReviewClaimMedia;
+  claimMedia(claimId: string, openedPath?: string): EvidenceReviewClaimMedia;
   recordingForPath(artifactPath: string): EvidenceReviewMediaRecording | undefined;
   claimDisplay(claimId: string): EvidenceReviewClaimDisplay;
   judgmentRows(principal: SelfPrincipalSummary | null): readonly EvidenceReviewJudgmentRow[];
@@ -1136,7 +1136,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     recordingForPath(path) {
       return mediaRecordings.get(path);
     },
-    claimMedia(id) {
+    claimMedia(id, openedPath) {
       const claim = byClaim.get(id);
       if (!claim || input.evidencePending) return { recording: null, screenshots: [] };
       const retained = retainedSources.get(id);
@@ -1155,6 +1155,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       const bound = claim.evidence.filter((file) => file.mediaType === 'image');
       const boundPaths = new Set(bound.map((file) => file.artifactPath));
       const sameAttempt =
+        recording &&
+        mediaRecordings.get(recording.artifactPath)?.hasTimeline === false &&
         source &&
         !errors.length &&
         isRecord(source.manifest) &&
@@ -1169,15 +1171,20 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
                   : [],
               )
           : [];
-      return {
-        recording,
-        screenshots: [
-          ...bound.map((artifact) => ({ artifact, inspection: false })),
-          ...artifacts(sameAttempt, input.artifactPrefix)
-            .filter((file) => file.mediaType === 'image' && !boundPaths.has(file.artifactPath))
-            .map((artifact) => ({ artifact, inspection: true })),
-        ],
-      };
+      const screenshots = [
+        ...bound.map((artifact) => ({ artifact, inspection: false })),
+        ...artifacts(sameAttempt, input.artifactPrefix)
+          .filter((file) => file.mediaType === 'image' && !boundPaths.has(file.artifactPath))
+          .map((artifact) => ({ artifact, inspection: true })),
+      ];
+      // Comparison captures can share an AC ID while belonging to another execution.
+      if (
+        openedPath &&
+        recording?.artifactPath !== openedPath &&
+        !screenshots.some(({ artifact }) => artifact.artifactPath === openedPath)
+      )
+        return { recording: null, screenshots: [] };
+      return { recording, screenshots };
     },
     claimDisplay,
     claimHasDetails(id, { playable = false, overridable = false } = {}) {

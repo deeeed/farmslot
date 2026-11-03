@@ -159,7 +159,9 @@ export function evidenceViewerSessionItems(
   const model = opening?.evidenceModel;
   const proof = model?.selection;
   if (!opening || !model || !proof) return items;
-  const screenshots = proof.claimId ? model.claimMedia(proof.claimId).screenshots : [];
+  const screenshots = proof.claimId
+    ? model.claimMedia(proof.claimId, opening.path).screenshots
+    : [];
   const inspectionLabels = new Map(
     screenshots
       .filter(({ inspection }) => inspection)
