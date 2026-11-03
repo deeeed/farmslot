@@ -1077,7 +1077,7 @@ test('admin delegation never adopts a replacement generation as execution owner'
     socket,
     undefined,
     undefined,
-    { ownerPrincipalId: arthur.id, supportsStandaloneDelegation: true },
+    { ownerPrincipalId: arthur.id, supportsStandaloneDelegation: true, supportsObservations: true },
     { principalId: node.id, valid: () => true },
   );
   try {
@@ -1089,6 +1089,36 @@ test('admin delegation never adopts a replacement generation as execution owner'
       }),
       /replacement identity/,
     );
+    const observations = new GatewayNativeObservations(() => {});
+    const connection = {};
+    observations.attachClient(connection, () => arthur);
+    for (const machine of machines) {
+      observations.acceptRemote(sockets.get(machine)!, receipts.get(machine)!, () => true);
+      nativeObservations.acceptRemote(sockets.get(machine)!, receipts.get(machine)!, () => true);
+    }
+    try {
+      const page = await observations.read(
+        connection,
+        [
+          {
+            key: { family: 'native-session', scope: 'owner', ownerId: arthur.id },
+            method: Methods.NATIVE_SESSION_LIST,
+            params: {},
+          },
+        ],
+        () => call(Methods.NATIVE_SESSION_LIST, {}),
+        () => ({}),
+      );
+      assert(page.payload && typeof page.payload === 'object');
+      assert.equal(Reflect.get(page.payload, 'sessions').length, 3);
+      assert(
+        Reflect.get(page.payload, 'unavailableExecutionNodes').some(
+          (row: { executionNodeId: string }) => row.executionNodeId === 'replaced-owner-node',
+        ),
+      );
+    } finally {
+      observations.dispose();
+    }
   } finally {
     unregisterByWs(socket);
   }

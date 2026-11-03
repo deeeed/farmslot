@@ -22,7 +22,7 @@ import {
   visibleModelPreferenceChanges,
 } from '../runners/visible-models.js';
 import { loadCredentialStore } from '../security/credential-store.js';
-import { nativeOwnerAssignedMachines } from '../security/native-node.js';
+import { isGenerationZeroPrincipal, nativeOwnerAssignedMachines } from '../security/native-node.js';
 import {
   hasNativeWorkspaceAccess,
   nativeOwnerCanUseWorkers,
@@ -111,6 +111,8 @@ function collectionMetadata(
             connection: node?.ws,
             metadata: JSON.stringify({
               local: id === 'local' ? ownsLocalNativeProfile(owners?.[id] ?? ownerId) : undefined,
+              ownerGeneration:
+                store.principals.find((p) => p.id === (owners?.[id] ?? ownerId))?.generation ?? 0,
               declaration: node?.nativeSessions,
               principalId: node?.nativeAuthority?.principalId,
               valid: node?.nativeAuthority?.valid(),
@@ -476,6 +478,19 @@ export class GatewayNativeObservations {
         collectionOwners = authority.owners;
       }
       for (const node of authority.nodes) {
+        // An invalid backing owner disables only this admin target; caller authority still fails closed.
+        if (
+          partialList &&
+          authority.owners &&
+          !isGenerationZeroPrincipal(loadCredentialStore().principals, sourceOwner(authority, node))
+        ) {
+          skipped.add(node);
+          skippedReceipts.set(
+            node,
+            JSON.stringify(node === 'local' ? this.localReceipt : this.remote.get(node)?.receipt),
+          );
+          continue;
+        }
         if (partialList && node !== 'local') {
           const registered = getNode(node);
           if (
@@ -559,11 +574,18 @@ export class GatewayNativeObservations {
             throw new NativeSourceUnavailable();
           // Recovery during a held page changes its availability projection. Refetch it.
           const registered = node === 'local' ? undefined : getNode(node);
+          const validOwner =
+            !authority.owners ||
+            isGenerationZeroPrincipal(
+              loadCredentialStore().principals,
+              sourceOwner(authority, node),
+            );
           const supportsSource =
-            node === 'local' ||
-            (registered?.nativeSessions?.ownerPrincipalId === sourceOwner(authority, node) &&
-              (registered.nativeSessions as { supportsObservations?: boolean })
-                .supportsObservations === true);
+            validOwner &&
+            (node === 'local' ||
+              (registered?.nativeSessions?.ownerPrincipalId === sourceOwner(authority, node) &&
+                (registered.nativeSessions as { supportsObservations?: boolean })
+                  .supportsObservations === true));
           let recovered = false;
           try {
             if (supportsSource) {

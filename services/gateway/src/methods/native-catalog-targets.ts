@@ -101,24 +101,7 @@ export async function standaloneCatalogTargets(
   );
   const contexts: NativeSessionCatalogResult['contexts'] = [];
   const contextMachines = new Map<string, string>();
-  for (const { row, owner, node, supportsProfiles } of targets) {
-    if (owner !== undefined && !row.unavailableReason) {
-      try {
-        if (
-          standaloneOwner(reader, row.executionNodeId) !== owner ||
-          (node && resolveNativeExecutionNode(owner, row.executionNodeId) !== node)
-        )
-          throw new GatewayMethodError(
-            'NATIVE_SOURCE_UNAVAILABLE',
-            'Execution node changed while reading the catalog',
-          );
-      } catch (error) {
-        assertStandaloneAdmin(reader);
-        if (!(error instanceof GatewayMethodError) && !(error instanceof Error && 'code' in error))
-          throw error;
-        row.unavailableReason = error.message;
-      }
-    }
+  for (const { row, supportsProfiles } of targets) {
     const home = row.homeDirectory;
     if (row.unavailableReason || home === undefined) continue;
     const machine = row.executionNodeId;
@@ -154,6 +137,34 @@ export async function standaloneCatalogTargets(
       }
     }
   }
+  // Slot metadata also awaits filesystem reads. Fence all targets after the final await.
+  for (const { row, owner, node } of targets) {
+    if (owner !== undefined && !row.unavailableReason) {
+      try {
+        if (
+          standaloneOwner(reader, row.executionNodeId) !== owner ||
+          (node && resolveNativeExecutionNode(owner, row.executionNodeId) !== node)
+        )
+          throw new GatewayMethodError(
+            'NATIVE_SOURCE_UNAVAILABLE',
+            'Execution node changed while reading the catalog',
+          );
+      } catch (error) {
+        assertStandaloneAdmin(reader);
+        if (!(error instanceof GatewayMethodError) && !(error instanceof Error && 'code' in error))
+          throw error;
+        row.unavailableReason = error.message;
+      }
+    }
+    if (row.unavailableReason) contextMachines.delete(row.executionNodeId);
+  }
   assertStandaloneAdmin(reader);
-  return { executionNodes: targets.map(({ row }) => row), contexts, contextMachines };
+  const available = new Set(
+    targets.filter(({ row }) => !row.unavailableReason).map(({ row }) => row.executionNodeId),
+  );
+  return {
+    executionNodes: targets.map(({ row }) => row),
+    contexts: contexts.filter((context) => available.has(context.executionNodeId ?? 'local')),
+    contextMachines,
+  };
 }
