@@ -37,7 +37,7 @@ export interface ReviewHistoryFinding {
   severity: string;
   file: string;
   line: number | null;
-  status: 'new' | 'still-open' | 'resolved' | 'accepted';
+  status: 'new' | 'still-open' | 'resolved' | 'accepted' | 'unconfirmed';
   statusLabel: string;
   resolvedBy: string | null;
 }
@@ -484,7 +484,10 @@ export function reviewHistoryView(
         .at(-1);
       const previousHead =
         previousActor?.deliveryBaselineRef ?? previousActor?.pipelineVisualReviewInput?.headSha;
-      const headSha = text(snapshot?.headSha) ?? expectedHead ?? null;
+      const headSha =
+        text(snapshot?.headSha) ??
+        expectedHead ??
+        (attempt && attempt === attempts.at(-1) ? text(review?.reviewedHeadSha) : null);
       const reconstructedFix = !fix && previousHead && headSha && previousHead !== headSha;
       const fixBaseSha =
         text(fix?.fixBaseSha ?? fix?.baseSha) ?? (reconstructedFix ? previousHead : null);

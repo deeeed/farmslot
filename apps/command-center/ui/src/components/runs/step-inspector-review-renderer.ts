@@ -110,9 +110,9 @@ export function renderReviewAttempt(
             ${card.fixes.length
               ? card.fixes.map((fix) => renderReviewFix(fix, openArtifact))
               : html`<p class="review-loop-meta">No fix recorded after this round.</p>`}
-            ${card.openFindings.length
+            ${round.completedAt && round.unresolvedCount !== null
               ? html`<div class="review-loop-meta">
-                  ${card.openFindings.length} findings remain open or awaiting another review.
+                  ${round.unresolvedCount} unresolved at review completion.
                 </div>`
               : nothing}
           </section>`
@@ -171,7 +171,8 @@ export function renderReviewFix(
         ? html`<span class="chip">Saved head comparison · committed code</span>`
         : nothing}
       ${fix.resolved.length
-        ? html`<strong>Not raised again in the later review</strong>${fix.resolved.map(
+        ? html`<strong>Later report omits these entries; resolution not recorded</strong
+            >${fix.resolved.map(
               (finding) =>
                 html`<div class="resolved-finding">
                   <span class="chip severity">${finding.severity}</span> ${finding.title}
@@ -180,7 +181,7 @@ export function renderReviewFix(
         : html`<div class="review-loop-meta">
             ${fix.running
               ? 'Resolution awaits the next review.'
-              : 'No per-finding resolution confirmed yet.'}
+              : 'Changes are not linked to individual findings in this record.'}
           </div>`}
       ${fix.files.length
         ? html`<ul class="fix-files">

@@ -129,9 +129,8 @@ export function reviewHistoryTimeline(
         )
         .at(-1);
       if (!fix) continue;
-      finding.status = 'resolved';
-      finding.resolvedBy = fix.key;
-      finding.statusLabel = `Resolved after ${fix.label.toLowerCase()} · not raised in round ${later.roundNumber}`;
+      finding.status = 'unconfirmed';
+      finding.statusLabel = `No explicit resolution recorded · round ${later.roundNumber}`;
       if (!fix.resolved.some((entry) => entry.id === finding.id)) fix.resolved.push(finding);
     }
   }

@@ -46,7 +46,7 @@ export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set([
     'cmpSort cmpTab diffArtifact diffRun direction evidence evidencePreview family familyId flow flowType focus gate graph intent lane ' +
     'layout lightboxIndex lightboxRecipeRunId machines modal mode model node panel parentRunId pr prDraft prEditor prHistory prHost project projects ' +
     'prPane prScope prSection prSort prTab prTarget publicationReviews q refresh qaInputs qaProfileId repo reviewMachine ' +
-    'reviewValidationDepth run runner runsTab slot sort start_ref startRef state status step suggestion tab tag ticket tokens trajectory transport ' +
+    'reviewValidationDepth round run runner runsTab slot sort start_ref startRef state status step suggestion tab tag ticket tokens trajectory transport ' +
     'validationDepth variant view window worker group promote runnerPicker slotSelector spec workGraphProject wgSort wgDirection sharedView sessionId executionNodeId'
   ).split(' '),
   ...ARTIFACT_BROWSER_PARAMS,
@@ -194,6 +194,11 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
       if (location.machines !== undefined) params.set('machines', location.machines.join(','));
     }
     for (const [key, value] of Object.entries(values)) if (value) params.set(key, value);
+    if (name.startsWith('run/')) {
+      const selected = location.params.round;
+      for (const value of typeof selected === 'string' ? [selected] : (selected ?? []))
+        if (value) params.append('round', value);
+    }
     return `#${name}${params.toString() ? `?${params}` : ''}`;
   };
   const entity = (expression: RegExp, name: string, param: string): string | null => {
@@ -446,7 +451,7 @@ export function resolveSharedViewLink(
   const params = new URLSearchParams(query);
   const seen = new Set<string>();
   for (const [key] of params) {
-    if (privateSelectors.has(key) || seen.has(key))
+    if (privateSelectors.has(key) || (seen.has(key) && key !== 'round'))
       return unavailable('Web link unavailable: this selection cannot be shared.', 'invalid-view');
     seen.add(key);
   }

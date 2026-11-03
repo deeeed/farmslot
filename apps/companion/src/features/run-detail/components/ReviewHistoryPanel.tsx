@@ -132,9 +132,9 @@ function ReviewRoundCard({
           ) : (
             <Text style={styles.meta}>No fix recorded after this round.</Text>
           )}
-          {card.openFindings.length ? (
+          {round.completedAt && round.unresolvedCount !== null ? (
             <Text style={styles.meta}>
-              {card.openFindings.length} findings remain open or awaiting another review.
+              {round.unresolvedCount} unresolved at review completion.
             </Text>
           ) : null}
           {round.diffText !== null ? (
@@ -205,10 +205,10 @@ function ReviewFixCard({
           ) : null}
           <Text style={styles.meta}>
             {fix.resolved.length
-              ? 'Not raised again in the later review'
+              ? 'Later report omits these entries; resolution not recorded'
               : fix.running
                 ? 'Resolution awaits the next review.'
-                : 'No per-finding resolution confirmed yet.'}
+                : 'Changes are not linked to individual findings in this record.'}
           </Text>
           {fix.resolved.map((finding) => (
             <Text key={finding.id} style={styles.issue}>

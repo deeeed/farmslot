@@ -1135,6 +1135,13 @@ for (const scenario of [
     head: 'head-b',
     accepted: false,
   },
+  {
+    name: 'an actorless recorded head retains its accepted findings without a snapshot',
+    description: 'Keep the active session',
+    head: 'head-a',
+    accepted: true,
+    actorless: true,
+  },
 ])
   test(scenario.name, () => {
     const current = run();
@@ -1174,6 +1181,27 @@ for (const scenario of [
         },
       },
     ];
+    if (scenario.actorless) {
+      current.agentContexts = [];
+      current.engineState = {
+        publishGate: {
+          reviews: [
+            {
+              id: 'review-a',
+              source: 'human-gate',
+              runner: 'codex',
+              model: 'gpt-6.1-sol',
+              mode: 'cold',
+              loopNumber: 1,
+              verdict: 'issues',
+              unresolvedCount: 1,
+              reviewedHeadSha: 'head-a',
+              issues: [{ file: 'order.ts', line: 12, description }],
+            },
+          ],
+        },
+      };
+    }
     const history = reviewHistoryView(current, artifacts);
     assert.equal(history.cards[0].round.findings[0].status === 'accepted', scenario.accepted);
     assert.equal(history.cards[0].openFindings.length, scenario.accepted ? 0 : 1);
@@ -1212,4 +1240,48 @@ test('a passing review keeps advisory findings visible without counting them as 
   const history = reviewHistoryView(current);
   assert.equal(history.cards[0].round.findings.length, 1);
   assert.equal(history.cards[0].openFindings.length, 0);
+});
+
+test('omission after a fix does not invent a recorded resolution for a finding', () => {
+  const current = run();
+  current.agentContexts = [actor(1)];
+  const base = reviewHistoryView(current).checks[0].rounds[0];
+  const first = {
+    ...base,
+    key: 'first',
+    roundNumber: 1,
+    verdict: 'issues',
+    resultRecorded: true,
+    startedAt: '2026-10-21T10:00:00Z',
+    completedAt: '2026-10-21T10:01:00Z',
+    findings: [
+      {
+        id: 'issue-a',
+        title: 'Preserve the active order',
+        details: '',
+        severity: 'major',
+        file: 'order.ts',
+        line: 12,
+        status: 'new' as const,
+        statusLabel: 'New',
+        resolvedBy: null,
+      },
+    ],
+  };
+  const later = {
+    ...base,
+    key: 'later',
+    roundNumber: 2,
+    verdict: 'pass',
+    resultRecorded: true,
+    findings: [],
+    startedAt: '2026-10-21T10:03:00Z',
+    completedAt: '2026-10-21T10:04:00Z',
+    hasFix: true,
+    fixStartedAt: '2026-10-21T10:01:30Z',
+    fixCompletedAt: '2026-10-21T10:02:00Z',
+  };
+  reviewHistoryTimeline(current, [first, later]);
+  assert.equal(first.findings[0].status, 'unconfirmed');
+  assert.equal(first.findings[0].resolvedBy, null);
 });
