@@ -247,6 +247,47 @@ for (const shell of SHELLS) {
     assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 3);
   });
 
+  test(`${name}: a renamed run branch reads as off-branch instead of failing rev-list`, async (t) => {
+    // F327: a worker ran `git branch -m` to put DO NOT MERGE in the name; comparing the
+    // missing refs/heads/feature against origin/feature failed with exit 128.
+    const repo = repository(t);
+    repo.git('update-ref', 'refs/remotes/origin/feature', repo.commit('feat: pushed'));
+    repo.commit('feat: one');
+    repo.git('branch', '-m', 'feature', 'do-not-merge-feature');
+
+    for (const mode of ['push', 'commit'] as const) {
+      const { state } = await inspect(repo.dir, mode);
+      assert.deepEqual(state.offBranch, { runBranchExists: false, head: 'do-not-merge-feature' });
+      assert.equal(stateSatisfiesMode(state, mode), false);
+    }
+  });
+
+  test(`${name}: HEAD on another branch or detached reads as off-branch`, async (t) => {
+    const repo = repository(t);
+    repo.git('update-ref', 'refs/remotes/origin/feature', repo.commit('feat: pushed'));
+    repo.git('checkout', '-q', '-b', 'other');
+    repo.commit('feat: on the wrong branch');
+    let { state } = await inspect(repo.dir, 'push');
+    assert.deepEqual(state.offBranch, { runBranchExists: true, head: 'other' });
+    assert.equal(stateSatisfiesMode(state, 'push'), false);
+
+    repo.git('checkout', '-q', '--detach');
+    ({ state } = await inspect(repo.dir, 'push'));
+    assert.deepEqual(state.offBranch, { runBranchExists: true, head: null });
+  });
+
+  test(`${name}: a renamed run branch the remote still has is reported before the remote comparison`, async (t) => {
+    const repo = mainOnlyClone(t);
+    repo.commit('feat: one');
+    repo.git('push', '-q', 'origin', 'feature');
+    repo.git('branch', '-m', 'feature', 'do-not-merge-feature');
+
+    const { state } = await inspect(repo.dir, 'push');
+
+    assert.deepEqual(state.offBranch, { runBranchExists: false, head: 'do-not-merge-feature' });
+    assert.equal(state.remoteChecked, undefined);
+  });
+
   test(`${name}: new branch inspection keeps publication blocked when no comparison ref exists`, async (t) => {
     const repo = repository(t);
     repo.commit('feat: one');
