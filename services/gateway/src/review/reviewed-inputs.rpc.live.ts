@@ -60,7 +60,7 @@ test('a gate issues result durably settles only its launch fingerprint over isol
   );
   await import('../runtime/mock-pty.test-support.js');
   const { slotWithTask } = await import('./reviewed-inputs.test-support.js');
-  const { getRun, persistRunNow, updateRun, runsDirectory } = await import('../runs/store.js');
+  const { getRun, persistRunNow, runsDirectory } = await import('../runs/store.js');
   const { noteReviewInputsAtLaunch, recordReviewedInputs, reviewedInputsAwaitingReview } =
     await import('./reviewed-inputs.js');
   const { executePublishGateReviewPlan } = await import('../run-engine/ready-gate.js');
