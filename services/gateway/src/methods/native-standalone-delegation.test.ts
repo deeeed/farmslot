@@ -977,6 +977,11 @@ test(
           assert.deepEqual(initial, { home: homes.macwork, node: 'macwork' });
           const custom = `${homes.macwork}/ui-custom`;
           await page.setInput('[data-testid="native-cwd"]', custom);
+          await page.click('[data-testid="review-dispatch-other-model"]');
+          await page.setInput(
+            '[data-testid="review-dispatch-custom-model"]',
+            'custom-provider-model',
+          );
           await page.setInput(
             '[data-testid="native-prompt"]',
             'Read this workspace without changing files.',
@@ -991,15 +996,21 @@ test(
           assert.equal(launchParams.get('executionNodeId'), 'macwork');
           assert.equal(launchParams.get('custom'), 'true');
           const previousDocument = await page.evaluate<number>('performance.timeOrigin');
-          await page.session.call('Page.reload');
+          await page.navigate(`${url.split('#')[0]}?proofRestore=launch${launchUrl}`, 30_000);
           await page.waitForExpression(
             `(() => {const v=document.querySelector('native-session-view');return performance.timeOrigin !== ${previousDocument} && v?.catalogCurrent && v.shadowRoot.querySelector('[data-testid=native-prompt]')?.value==='Read this workspace without changing files.';})()`,
             { timeoutMs: 30_000 },
           );
           const restored = await page.evaluate(
-            `(() => {const v=document.querySelector('native-session-view');return {cwd:v.cwd,node:v.executionNodeId,custom:v.customCwd,selects:v.shadowRoot.querySelectorAll('select').length};})()`,
+            `(() => {const v=document.querySelector('native-session-view');return {cwd:v.cwd,node:v.executionNodeId,custom:v.customCwd,model:v.model,selects:v.shadowRoot.querySelectorAll('select').length};})()`,
           );
-          assert.deepEqual(restored, { cwd: custom, node: 'macwork', custom: true, selects: 0 });
+          assert.deepEqual(restored, {
+            cwd: custom,
+            node: 'macwork',
+            custom: true,
+            model: 'custom-provider-model',
+            selects: 0,
+          });
           if (debugDirectory) {
             const image = await page.session.call<{ data: string }>('Page.captureScreenshot', {
               format: 'png',
@@ -1052,11 +1063,35 @@ test(
               path.join(output, 'conversation.png'),
               Buffer.from(screenshot.data, 'base64'),
             );
+          }
+          await page.click('[data-testid="native-new"]');
+          const newUrl = await page.evaluate<string>('location.hash');
+          assert.equal(new URLSearchParams(newUrl.split('?')[1]).get('executionNodeId'), 'macwork');
+          await page.navigate(`${url.split('#')[0]}?proofRestore=new${newUrl}`, 30_000);
+          await page.waitForExpression(
+            `(() => {const v=document.querySelector('native-session-view');return v?.catalogCurrent && !!v.shadowRoot.querySelector('[data-testid=native-prompt]');})()`,
+            { timeoutMs: 30_000 },
+          );
+          const newSelection = await page.evaluate(
+            `(() => {const v=document.querySelector('native-session-view');return {node:v.executionNodeId,cwd:v.cwd,model:v.model};})()`,
+          );
+          assert.deepEqual(newSelection, {
+            node: 'macwork',
+            cwd: custom,
+            model: 'custom-provider-model',
+          });
+          assert.equal(
+            sentPrompts.length,
+            sentBefore + 1,
+            'returning to New never repeats the first message',
+          );
+          if (output) {
             await writeFile(
               path.join(output, 'proof.json'),
               JSON.stringify(
                 {
                   pass: true,
+                  newTargetRestored: true,
                   initial,
                   session: current,
                   restored,
