@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.29 - 2026-11-03
+
+- Align published dependency pins with the coordinated protocol, recorded-evidence and duplicate-timestamp timeline fixes.
+
 ## 0.39.28 - 2026-11-02
 
 - Publishes against `@farmslot/protocol` 0.74.10.

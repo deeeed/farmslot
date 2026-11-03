@@ -1,1 +1,0 @@
-- Fleet release rows say when an ownerless slot's unpushed commits will be parked before the update, and a finished release shows where they were parked.

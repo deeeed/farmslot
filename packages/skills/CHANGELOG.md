@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.2 - 2026-11-03
+
+- Align published dependency pins with the coordinated protocol, recorded-evidence and duplicate-timestamp timeline fixes.
+
 ## 0.13.1 - 2026-10-21
 
 - Align with `@farmslot/agent-runtime` 0.37.0.

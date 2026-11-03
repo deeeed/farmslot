@@ -2,12 +2,17 @@
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
 ## 0.22.0 - 2026-11-03
 
 - `acceptanceClaimRows` takes the evidence model's `recording`: each row names its recording (a retained row keeps "Earlier proof"), and a row from a replaced recording reads "Evidence replaced" with nothing left to judge, instead of a pass or "Not proven". `acceptancePanelPresentation` reads "N criteria · evidence replaced" instead of tallying a replaced recording.
 - `nativeWorkerTargetLive` says whether a worker conversation still takes input (not history, closed, released or recovering); `selectedNativeWorkerTarget` uses it.
+- `FleetRefreshClient` gains `readFleet()`: fleet inspection reads the client's cached fleet instead of sending `fleet.status` through `request`, which now carries only release and cancel commands.
 - `fleetSlotBranch`, `fleetBehindDefault` and `fleetBehindDefaultIfBehind` give fleet cards, the fleet table and the release review one branch pick and one behind-main label. The label is null when the distance is unknown, and the fleet variant is also null for a slot level with its default branch. `FleetRefreshViewModel.released` stays true once a release was sent, so a later inspection cannot hide it.
 - Retained report videos become links to each client's authenticated player, replacing unusable embedded controls. Unavailable videos have an explicit label.
+- Fleet release rows say when an ownerless slot's unpushed commits will be parked before the update, and a finished release shows where they were parked.
+- Number recorded review rounds once in chronological order, including completed results with no start time, and keep each fix associated with its review.
 - Model options carry an optional provider `group` and the `nodes` that list them. A runner with no saved visible set and no seed (Pi, OpenCode) shows its node catalog instead of only its default. `catalogForNativeRunners` takes the session's execution node and lists that node's models, grouped by provider.
 
 ## 0.21.2 - 2026-10-29
