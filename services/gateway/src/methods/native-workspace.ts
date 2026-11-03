@@ -39,7 +39,8 @@ export async function nativeCatalog(
   for (const pool of await loadPoolConfigs(poolDir)) {
     for (const slot of pool.slots) {
       if (!slot.repo) continue;
-      const executionNodeId = isLocal(pool.host, pool.machine) ? 'local' : pool.machine;
+      const executionNodeId =
+        isLocal(pool.host, pool.machine) && ownsLocalNativeProfile(owner) ? 'local' : pool.machine;
       if (executionNodeId === 'local' && !ownsLocalNativeProfile(owner)) continue;
       const node = executionNodeId === 'local' ? undefined : getNode(executionNodeId);
       if (
@@ -99,7 +100,10 @@ export async function nativeModelNodeBlocker(
 ): Promise<string | null> {
   if (!model) return null;
   for (const pool of await loadPoolConfigs(poolDir))
-    if ((isLocal(pool.host, pool.machine) ? 'local' : pool.machine) === executionNodeId)
+    if (
+      pool.machine === executionNodeId ||
+      (executionNodeId === 'local' && isLocal(pool.host, pool.machine))
+    )
       return runnerModelNodeBlocker(runner, model, pool.machine);
   return null;
 }
