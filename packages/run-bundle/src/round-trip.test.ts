@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {
+import fs, {
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -333,6 +334,7 @@ interface HistoryFixtureOptions {
   legacy?: boolean;
   torn?: boolean;
   resolved?: boolean;
+  task?: boolean;
 }
 
 async function historyBundleFixture(
@@ -359,7 +361,9 @@ async function historyBundleFixture(
     ticketOrPr: 'PROJ-351',
     slotId: null,
     branch: null,
-    taskFile: null,
+    taskFile: options.task
+      ? path.join(source, 'projects/example-history/tasks/dev/history/TASK.md')
+      : null,
     steps: [],
     decisions: [],
     decisionHistoryCount: 2,
@@ -393,11 +397,13 @@ async function historyBundleFixture(
   const sourceDir = path.join(source, '.runs', ...(archived ? ['archive'] : []));
   mkdirSync(sourceDir, { recursive: true });
   writeFileSync(path.join(sourceDir, `${id}.json`), JSON.stringify(run));
+  if (options.task) writeFixtureRun(source, run);
   if (!options.legacy)
     writeFileSync(
       path.join(sourceDir, `${id}.decisions.jsonl`),
       bytes + (options.torn ? '{"id":' : ''),
     );
+  if (options.task) await retainFixtureTask(source, run);
   const bundlePath = path.join(source, 'history.farmrun');
   const exported = await exportRunsToBundle({
     farmslotRoot: source,
@@ -407,6 +413,76 @@ async function historyBundleFixture(
   });
   return { source, target, id, run, row, bytes, bundlePath, exported };
 }
+
+for (const archived of [false, true]) {
+  test(
+    `forced mirror retains decisions changed during materialization in ${archived ? 'an archived' : 'a live'} target`,
+    { timeout: 4000 },
+    async (t) => {
+      const { target, id, run, row, bytes, bundlePath } = await historyBundleFixture(t, false, {
+        task: true,
+      });
+      const directory = path.join(target, '.runs', ...(archived ? ['archive'] : []));
+      mkdirSync(directory, { recursive: true });
+      const record = path.join(directory, `${id}.json`);
+      writeFileSync(record, JSON.stringify({ ...run, decisions: [row] }));
+      const retentionStore = await fixtureBundleStore(target);
+      const importing = importBundle({
+        farmslotRoot: target,
+        bundlePath,
+        mode: 'mirror',
+        force: true,
+        retentionStore,
+      });
+      // Import has yielded inside materialization; neither record commit has run yet.
+      const resolved = { ...row, resolvedAt: run.updatedAt, resolvedAction: 'hold' };
+      const added = { ...row, id: 'added-during-materialization' };
+      writeFileSync(record, JSON.stringify({ ...run, decisions: [resolved, added] }));
+      await importing;
+      assert.equal(
+        readFileSync(path.join(directory, `${id}.decisions.jsonl`), 'utf8'),
+        bytes + JSON.stringify(resolved) + '\n' + JSON.stringify(added) + '\n',
+      );
+      const restored = JSON.parse(readFileSync(record, 'utf8')) as Run;
+      assert.deepEqual(restored.decisions, []);
+      assert.equal(restored.decisionHistoryCount, 4);
+    },
+  );
+}
+
+test('forced mirror flushes the displaced backup directory before replacement', async (t) => {
+  const { target, id, bundlePath } = await historyBundleFixture(t);
+  const directory = path.join(target, '.runs');
+  mkdirSync(directory, { recursive: true });
+  const record = path.join(directory, `${id}.json`);
+  writeFileSync(record, '{"id":');
+  const directoryStat = fs.statSync(directory);
+  let directoryFlushed = false;
+  let flushedBeforeReplacement = false;
+  const sync = fs.fsyncSync;
+  const rename = fs.renameSync;
+  t.mock.method(fs, 'fsyncSync', (fd: number) => {
+    sync(fd);
+    const stat = fs.fstatSync(fd);
+    if (
+      stat.dev === directoryStat.dev &&
+      stat.ino === directoryStat.ino &&
+      readdirSync(directory).some((name) => name.startsWith(`${id}.json.displaced-`))
+    )
+      directoryFlushed = true;
+  });
+  t.mock.method(fs, 'renameSync', (...args: Parameters<typeof fs.renameSync>) => {
+    if (args[1] === record) flushedBeforeReplacement = directoryFlushed;
+    rename(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  await importBundle({ farmslotRoot: target, bundlePath, mode: 'mirror', force: true });
+  assert.equal(flushedBeforeReplacement, true);
+});
 
 for (const mode of ['seed', 'reference-only', 'mirror'] as const) {
   for (const archived of [false, true]) {

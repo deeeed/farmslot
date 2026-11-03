@@ -25,6 +25,20 @@ test('history merge keeps target bytes and compares incoming rows by exact line'
   assert.equal(readFileSync(source, 'utf8'), incoming);
 });
 
+test('history merge appends surplus occurrences and is unchanged on a second merge', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'history-occurrences-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source');
+  const target = path.join(root, 'target');
+  const line = '{"id":"same"}\n';
+  writeFileSync(source, line + line);
+  writeFileSync(target, line);
+  assert.equal(mergeDecisionHistoryFile(source, target), 2);
+  assert.equal(readFileSync(target, 'utf8'), line + line);
+  assert.equal(mergeDecisionHistoryFile(source, target), 2);
+  assert.equal(readFileSync(target, 'utf8'), line + line);
+});
+
 for (const side of ['source', 'target', 'both'] as const) {
   test(`history merge uses complete lines with a torn ${side} tail`, (t) => {
     const root = mkdtempSync(path.join(tmpdir(), 'history-torn-'));

@@ -70,7 +70,7 @@ export function captureDecisionHistoryPrefix(file: string): Buffer {
   return bytes.subarray(0, bytes.lastIndexOf(10) + 1);
 }
 
-/** Keep target rows in place and append incoming lines absent from the target. */
+/** Keep target rows in place and append surplus incoming occurrences. */
 export function mergeDecisionHistoryFile(
   source: string,
   target: string,
@@ -83,12 +83,17 @@ export function mergeDecisionHistoryFile(
     ? captureDecisionHistoryPrefix(target).toString('utf8')
     : '';
   const existingLines = existing.split('\n').slice(0, -1);
-  const known = new Set(existingLines);
-  // Compare against the target only, preserving repeated incoming occurrences when absent.
+  const remaining = new Map<string, number>();
+  for (const line of existingLines) remaining.set(line, (remaining.get(line) ?? 0) + 1);
   const missing = incoming
     .split('\n')
     .slice(0, -1)
-    .filter((line) => !known.has(line));
+    .filter((line) => {
+      const count = remaining.get(line) ?? 0;
+      if (!count) return true;
+      remaining.set(line, count - 1);
+      return false;
+    });
   if (!options.dryRun)
     appendDecisionHistoryBytes(target, missing.map((line) => `${line}\n`).join(''));
   return existingLines.length + missing.length;
