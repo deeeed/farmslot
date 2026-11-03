@@ -1,0 +1,1 @@
+- Managed reviews resolve a machine only from pools that explicitly configure review capacity, so execution-only canary and runtime pools do not create false configuration ambiguity; multiple review authorities still refuse admission.

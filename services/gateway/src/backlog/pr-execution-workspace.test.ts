@@ -131,6 +131,36 @@ test('workspace admission requires machine opt-in and valid explicit runner/mode
   await assert.rejects(inspectReviewWorkspaceTarget(admissionInput, 'review-owner'), /exactly one/);
 });
 
+for (const project of ['farmslot-canary', 'review']) {
+  test(`execution-only ${project} pools never become review-machine authorities`, async (t) => {
+    const file = path.join(root, 'pool', 'execution-only.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        machine: 'review-node',
+        project,
+        host: 'localhost',
+        platform: 'cli',
+        slots: [
+          { id: 'canary-slot', repo: path.join(root, 'canary-repo'), session: 'canary-slot' },
+        ],
+      }),
+    );
+    t.after(() => rmSync(file));
+    const selected = await inspectReviewWorkspaceTarget(admissionInput, 'review-owner');
+    assert.equal(selected.pool.project, 'review');
+    assert.equal(selected.limit, 2);
+    const resolved = await resolvePRExecution('review', 'owner/repo', [execution], {
+      ownerId: 'review-owner',
+    });
+    assert.equal(resolved.errors.length, 0);
+    assert.deepEqual(
+      resolved.choices.map((choice) => choice.machine),
+      ['review-node'],
+    );
+  });
+}
+
 test('remote workspace admission requires current node ownership and worker capabilities', async (t) => {
   const file = path.join(root, 'pool/remote.json');
   writeFileSync(

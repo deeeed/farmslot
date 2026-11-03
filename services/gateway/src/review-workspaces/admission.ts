@@ -80,6 +80,10 @@ export function assertReviewWorkspaceCapacity(
   }
 }
 
+type ReviewEnabledPool = PoolConfig & {
+  reviewWorkspaces: NonNullable<PoolConfig['reviewWorkspaces']>;
+};
+
 /** No device/slot reads: eligibility comes from machine opt-in, project, owner and runner. */
 export async function inspectReviewWorkspaceTarget(
   input: ReviewWorkspaceAdmissionInput,
@@ -87,7 +91,16 @@ export async function inspectReviewWorkspaceTarget(
   excludingRunId?: string,
 ): Promise<ReviewWorkspaceAdmission> {
   const [pools, project] = await Promise.all([loadPoolConfigs(), loadProjectConfig(input.project)]);
-  const matches = pools.filter((pool) => pool.machine === input.machine);
+  const matches = pools.filter(
+    (pool): pool is ReviewEnabledPool =>
+      pool.machine === input.machine && Boolean(pool.reviewWorkspaces),
+  );
+  if (matches.length === 0) {
+    throw new GatewayMethodError(
+      'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
+      `Machine ${input.machine} has no pool with review workspace capacity configured`,
+    );
+  }
   if (matches.length !== 1) {
     throw new GatewayMethodError(
       'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
@@ -95,12 +108,6 @@ export async function inspectReviewWorkspaceTarget(
     );
   }
   const pool = matches[0];
-  if (!pool.reviewWorkspaces) {
-    throw new GatewayMethodError(
-      'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
-      `Machine ${pool.machine} has no review workspace capacity configured`,
-    );
-  }
   if (!project?.repoUrl || !project.staticReview?.templateId || !project.executionTemplates) {
     throw new GatewayMethodError(
       'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
