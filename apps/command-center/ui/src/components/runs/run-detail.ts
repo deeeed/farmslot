@@ -66,6 +66,11 @@ import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
 } from '../progress-tracker/acceptance-panel.js';
+import {
+  type ArtifactBrowserView,
+  type ArtifactBrowserViewChange,
+  hasArtifactBrowserView,
+} from '../shared/artifact-browser-model.js';
 import { type EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import { evidenceReviewerSelection } from '../shared/evidence-reviewer-recording.js';
 import {
@@ -164,9 +169,11 @@ import {
 import { RunDetailState } from './run-detail-state.js';
 import { runDetailStyles } from './run-detail-styles.js';
 import {
+  artifactBrowserViewFromRunDetailHash,
   artifactSelectionFromRunDetailHash,
   GALLERY_ARTIFACT_VIEW,
   isRunDetailHashForRun,
+  runDetailArtifactBrowserHash,
   runDetailEvidenceArtifactHash,
   runDetailStepHash,
   runInventoryHashFromDetail,
@@ -241,6 +248,7 @@ export class RunDetail extends RunDetailState {
   private _evidenceGroupId: string | null = null;
   private _evidenceTaskRelative = true;
   private _sharedPanelFocusKey = '';
+  private _artifactBrowserFocusedRun = '';
   private _acceptanceRowRunId: string | null = null;
 
   protected override willUpdate(changed: Map<string, unknown>): void {
@@ -322,13 +330,40 @@ export class RunDetail extends RunDetailState {
     },
   });
 
+  private _artifactBrowserCache?: { hash: string; view: ArtifactBrowserView };
+
+  private _artifactBrowserRouteView(): ArtifactBrowserView {
+    const hash = location.hash;
+    if (this._artifactBrowserCache?.hash !== hash)
+      this._artifactBrowserCache = { hash, view: artifactBrowserViewFromRunDetailHash(hash) };
+    return this._artifactBrowserCache.view;
+  }
+
+  private _artifactPanelOpen(): boolean {
+    return (
+      hasArtifactBrowserView(this._artifactBrowserRouteView()) ||
+      runDetailPanelOpen('run-artifacts')
+    );
+  }
+
+  private _changeArtifactBrowserView({ view, replace }: ArtifactBrowserViewChange): void {
+    // A direct interaction is already in the panel; keep the search field's focus.
+    this._artifactBrowserFocusedRun = this.runId;
+    const hash = runDetailArtifactBrowserHash(this.runId, view);
+    if (hash === location.hash) return;
+    if (replace) {
+      history.replaceState(history.state, '', hash);
+      this._onHashChange();
+    } else location.hash = hash;
+  }
+
   /** Sync the open explorer's mirror while the run works; never while it is collapsed. */
   private _syncLiveArtifacts(): void {
     const run = this.run?.id === this.runId ? this.run : null;
     this._liveArtifacts.update({
       runId: this.runId,
       active: liveArtifactRefreshActive(run),
-      open: runDetailPanelOpen('run-artifacts'),
+      open: this._artifactPanelOpen(),
       unavailable:
         this.mockData ||
         !run ||
@@ -382,6 +417,15 @@ export class RunDetail extends RunDetailState {
 
   private _focusSharedPanel() {
     if (!this.run || !isRunDetailHashForRun(this.run.id)) return;
+    if (hasArtifactBrowserView(this._artifactBrowserRouteView())) {
+      if (this._artifactBrowserFocusedRun === this.run.id) return;
+      const target = this.renderRoot.querySelector('[data-panel="run-artifacts"]');
+      if (!(target instanceof HTMLElement) || !target.getBoundingClientRect().height) return;
+      this._artifactBrowserFocusedRun = this.run.id;
+      target.scrollIntoView({ block: 'start' });
+      return;
+    }
+    this._artifactBrowserFocusedRun = '';
     const panel = hashParams().get('panel');
     if (panel !== 'timeline' && panel !== 'evidence') return;
     const key = `${this.run.id}:${panel}`;
@@ -1853,9 +1897,20 @@ export class RunDetail extends RunDetailState {
           artifactUrl: this._artifactUrl,
           onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
           syncError: this._artifactSyncError,
+          artifactView: this._artifactBrowserRouteView(),
+          onArtifactViewChange: (change) => this._changeArtifactBrowserView(change),
         }),
-      panelOpen: runDetailPanelOpen,
+      panelOpen: (id) =>
+        id === 'run-artifacts' ? this._artifactPanelOpen() : runDetailPanelOpen(id),
       togglePanel: (id) => {
+        if (id === 'run-artifacts' && hasArtifactBrowserView(this._artifactBrowserRouteView())) {
+          if (runDetailPanelOpen(id)) toggleRunDetailPanel(id);
+          this._changeArtifactBrowserView({
+            view: { query: '', types: new Set(), path: null, preview: false },
+            replace: false,
+          });
+          return;
+        }
         toggleRunDetailPanel(id);
         this.requestUpdate();
       },

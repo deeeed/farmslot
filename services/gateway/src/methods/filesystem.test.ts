@@ -1,6 +1,8 @@
 // @farmslot:serial — writes slot fixtures into the shared repo `pool/` directory.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -403,6 +405,52 @@ test('serveRunArtifact prefers a recipe package when an omitted recipeRunId poin
     assert.equal(res.headers['Content-Length'], 12);
     assert.equal(res.headers['Accept-Ranges'], 'bytes');
     assert.equal(res.body, 'cached-video');
+  });
+});
+
+test('serveRunArtifact keeps a declared task report distinct from the selected recipe report', async (t) => {
+  await withRemoteRun(t, async ({ runId, taskDir, liveRunDir, liveGroupId }) => {
+    const report = '# Task report\n';
+    const recipeReport = '# Recipe report\n';
+    const sha256 = createHash('sha256').update(report).digest('hex');
+    await writeFile(path.join(taskDir, 'artifacts/report.md'), report);
+    await writeFile(path.join(taskDir, 'artifacts/pr-description.md'), '# Publication copy\n');
+    await writeFile(path.join(liveRunDir, 'report.md'), recipeReport);
+    updateRun(runId, {
+      output: {
+        capturedAt: new Date().toISOString(),
+        workerFinished: true,
+        artifactManifest: [{ path: 'artifacts/report.md', purpose: 'report', sha256 }],
+        manifestDigest: sha256,
+        reportPath: 'artifacts/pr-description.md',
+      },
+    });
+    const server = createServer(async (req, res) => {
+      await serveRetainedFixture(req, res);
+    });
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        }),
+    );
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const url = new URL(`http://127.0.0.1:${address.port}/api/run-artifact`);
+    url.searchParams.set('runId', runId);
+    url.searchParams.set('path', 'artifacts/report.md');
+    for (const version of [sha256, null]) {
+      if (version) url.searchParams.set('v', version);
+      else url.searchParams.delete('v');
+      const response = await fetch(url);
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.equal(await response.text(), report);
+    }
+    url.searchParams.set('recipeRunId', liveGroupId);
+    const recipeResponse = await fetch(url);
+    assert.equal(recipeResponse.status, 200);
+    assert.equal(await recipeResponse.text(), recipeReport);
   });
 });
 

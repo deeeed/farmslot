@@ -11,6 +11,8 @@ import './artifact-browser.js';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
 
+import type { ArtifactBrowserView } from './artifact-browser-model.js';
+
 /**
  * Shared expandable step row used by family-observability and step-inspector.
  *
@@ -29,6 +31,7 @@ export class StepArtifacts extends LitElement {
   @property({ attribute: false }) missingData: string[] = [];
   @property({ attribute: false }) artifactUrl?: (a: FamilyObservabilityArtifact) => string;
   @property({ type: Boolean, attribute: 'default-open' }) defaultOpen = false;
+  @property({ attribute: false }) artifactView?: ArtifactBrowserView;
 
   static styles = css`
     :host {
@@ -146,6 +149,7 @@ export class StepArtifacts extends LitElement {
           ${this.artifacts.length
             ? html`<artifact-browser
                 .artifacts=${this.artifacts}
+                .viewState=${this.artifactView}
                 .artifactHref=${(index: number) => {
                   const artifact = this.artifacts[index];
                   return url && artifact ? url(artifact) : '#';
