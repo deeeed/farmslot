@@ -1,5 +1,6 @@
 import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 
 import {
   type FamilyObservabilityArtifact,
@@ -202,25 +203,43 @@ export class ReviewHistoryPanel extends LitElement {
         </div>
         <button @click=${() => this._loadHistory(true)}>Refresh</button>
       </div>
-      ${this._historyLoading
-        ? html`<div class="review-loop-meta">Loading recorded round details…</div>`
-        : nothing}
+      <div class="review-loop-meta history-load-state" aria-live="polite">
+        ${this._historyLoading ? 'Loading recorded round details…' : nothing}
+      </div>
       ${this._historyError
         ? html`<div class="history-warning" role="alert">${this._historyError}</div>`
         : nothing}
       <div class="timeline">
         ${history.events.map((event) =>
           event.kind === 'review'
-            ? renderReviewAttempt(
-                event.round,
-                this._historyLoading,
-                openArtifact,
-                (finding) => void this._openSource(event.round, finding),
-                (finding) => this._renderSource(event.round, finding),
+            ? keyed(
+                event.key,
+                html`<article
+                  class="history-round-group"
+                  data-round-group=${event.round.roundNumber}
+                >
+                  ${history.events.flatMap((entry) =>
+                    entry.kind === 'fix' && entry.roundKey === event.key && !entry.fix.running
+                      ? [renderReviewFix(entry.fix, openArtifact)]
+                      : [],
+                  )}
+                  ${renderReviewAttempt(
+                    event.round,
+                    this._historyLoading,
+                    openArtifact,
+                    (finding) => void this._openSource(event.round, finding),
+                    (finding) => this._renderSource(event.round, finding),
+                  )}
+                  ${history.events.flatMap((entry) =>
+                    entry.kind === 'fix' && entry.roundKey === event.key && entry.fix.running
+                      ? [renderReviewFix(entry.fix, openArtifact)]
+                      : [],
+                  )}
+                </article>`,
               )
-            : event.kind === 'fix'
-              ? renderReviewFix(event.fix, openArtifact)
-              : html`<div class="history-gate">${event.label}</div>`,
+            : event.kind === 'gate'
+              ? html`<div class="history-gate">${event.label}</div>`
+              : nothing,
         )}
       </div>
       <diff-viewer-modal

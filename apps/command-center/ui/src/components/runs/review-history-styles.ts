@@ -38,6 +38,16 @@ export const reviewHistoryStyles = css`
     color: ${unsafeCSS(colors.textMuted)};
     font-size: 12px;
   }
+  .history-load-state {
+    min-height: 18px;
+  }
+  .history-round-group {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+    border-radius: 8px;
+  }
   .timeline {
     border-left: 2px solid ${unsafeCSS(colors.bgCardHover)};
     margin-left: 6px;
@@ -163,6 +173,16 @@ export const reviewHistoryStyles = css`
   @media (max-width: 600px) {
     section {
       padding: 10px;
+    }
+    .history-load-state {
+      min-height: 18px;
+    }
+    .history-round-group {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      border-radius: 8px;
     }
     .timeline {
       padding-left: 13px;

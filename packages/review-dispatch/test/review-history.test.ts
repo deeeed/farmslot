@@ -316,7 +316,7 @@ test('a same-round infrastructure retry keeps the failure and presents the curre
   assert.equal(row.unresolvedCount, null);
   assert.equal(row.findingsLabel, 'Review is running. Findings appear when it finishes.');
   assert.equal(row.loopNumber, 5);
-  assert.equal(row.roundNumber, 6);
+  assert.equal(row.roundNumber, 2);
 });
 
 test('recorded priority prefixes provide severity and exact sentence titles without protocol fields', () => {
@@ -843,4 +843,112 @@ test('the shared round keeps recorded attempt usage when replacing the old gate 
     reviewHistoryView(current).checks[0].rounds[0].usageLabel,
     '3 turns · 1,234 tokens · $0.1250',
   );
+});
+
+test('actorless completed attempts keep chronological 1..N labels with loop replays and gaps', () => {
+  const current = run();
+  current.agentContexts = [
+    { ...actor(1), deliveryBaselineRef: '1111111' },
+    {
+      ...actor(6),
+      startedAt: '2026-10-21T10:04:00Z',
+      completedAt: '2026-10-21T10:05:00Z',
+      deliveryBaselineRef: '25c7be99',
+    },
+  ];
+  current.engineState = {
+    publishGate: {
+      reviews: [
+        {
+          id: 'pipeline-review-history-run',
+          runner: 'codex',
+          model: 'gpt-6.1-sol',
+          loopNumber: 6,
+          mode: 'warm',
+          verdict: 'pass',
+          unresolvedCount: 0,
+          source: 'pipeline',
+          attempts: [
+            {
+              loopNumber: 1,
+              mode: 'cold',
+              startedAt: '2026-10-21T10:00:00Z',
+              completedAt: '2026-10-21T10:01:00Z',
+              verdict: 'issues',
+              unresolvedCount: 1,
+            },
+            {
+              loopNumber: 5,
+              mode: 'warm',
+              completedAt: '2026-10-21T10:03:00Z',
+              verdict: 'pass',
+              unresolvedCount: 0,
+              reviewSnapshot: {
+                source: 'local-git',
+                headSha: '25c7be99',
+                capturedAt: '2026-10-21T10:03:00Z',
+              },
+            },
+            {
+              loopNumber: 6,
+              mode: 'warm',
+              startedAt: '2026-10-21T10:04:00Z',
+              completedAt: '2026-10-21T10:05:00Z',
+              verdict: 'pass',
+              unresolvedCount: 0,
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const history = reviewHistoryView(current);
+  const rounds = history.events
+    .filter((event) => event.kind === 'review')
+    .map((event) => event.round);
+  assert.deepEqual(
+    rounds.map((round) => [round.roundNumber, round.loopNumber]),
+    [
+      [1, 1],
+      [2, 5],
+      [3, 6],
+    ],
+  );
+  assert.equal(rounds.at(-1)?.headSha, '25c7be99');
+  assert.equal(history.roundCount, 3, 'a recorded actorless result remains visible');
+});
+
+test('round labels run once across reviewers and keep each fix adjacent to its review', () => {
+  const current = run();
+  current.agentContexts = [
+    { ...actor(1), reviewId: 'review-a' },
+    {
+      ...actor(3),
+      reviewId: 'review-b',
+      startedAt: '2026-10-21T10:03:00Z',
+      completedAt: '2026-10-21T10:04:00Z',
+    },
+  ];
+  const history = reviewHistoryView(current, {
+    'artifacts/pipeline-review-loop-3/fix-delta-stat.json': {
+      content: JSON.stringify({
+        baseSha: 'aaaaaaa',
+        headSha: 'bbbbbbb',
+        diffPath: 'artifacts/fix.diff',
+        capturedAt: '2026-10-21T10:02:00Z',
+      }),
+    },
+  });
+  const rounds = history.events.filter((event) => event.kind === 'review');
+  assert.deepEqual(
+    rounds.map((event) => event.round.roundNumber),
+    [1, 2],
+  );
+  const fixIndex = history.events.findIndex((event) => event.kind === 'fix');
+  assert(fixIndex >= 0);
+  const fix = history.events[fixIndex];
+  const next = history.events[fixIndex + 1];
+  assert.equal(fix.kind, 'fix');
+  assert.equal(next.kind, 'review');
+  if (fix.kind === 'fix' && next.kind === 'review') assert.equal(fix.roundKey, next.key);
 });

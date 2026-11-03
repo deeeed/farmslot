@@ -7,6 +7,7 @@ import type {
   AcceptanceStatusLedger,
   AgentContext,
   ArtifactRef,
+  FileTransferProgress,
   Run,
   RunDecision,
   RunStep,
@@ -14,9 +15,20 @@ import type {
 
 import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 
+let transferProgressListener: ((value: FileTransferProgress) => void) | undefined;
 // The renderers reach the browser gateway client at import time.
 mock.module('../../gateway-client.js', {
-  namedExports: { gateway: { request: async () => ({}), subscribe: () => () => {} } },
+  namedExports: {
+    gateway: {
+      request: async () => ({}),
+      subscribe: (_event: string, listener: (value: FileTransferProgress) => void) => {
+        transferProgressListener = listener;
+        return () => {
+          transferProgressListener = undefined;
+        };
+      },
+    },
+  },
 });
 // The browser-only review history panel is not under test.
 mock.module('./review-history-panel.js', { namedExports: {} });
@@ -43,7 +55,7 @@ after(() => {
   }
 });
 
-const { renderRunArtifactExplorer, renderRunDetailView } =
+const { renderRunArtifactExplorer, renderRunDetailView, renderRunGrade } =
   await import('./run-detail-renderers.js');
 const { RunPipeline } = await import('./run-pipeline.js');
 const { runDetailPanelOpen, toggleRunDetailPanel } = await import('./run-detail-panels.js');
@@ -198,6 +210,14 @@ function pipeline(): InstanceType<typeof RunPipeline> {
   element.collapsiblePanels = true;
   element.acceptanceStatus = ledger;
   element.acceptanceRowHeld = false;
+  element.taskProgress = {
+    schema: { flowType: 'dev', title: 'Task', totalSteps: 2, phases: [] },
+    phases: [],
+    totalSteps: 2,
+    completedSteps: 1,
+    currentPhase: null,
+    currentStep: 'Inspect',
+  };
   return element;
 }
 
@@ -266,7 +286,7 @@ test('a collapsed panel names what it holds on one line', () => {
   assert.match(view, />Artifacts<\/span[\s\S]*?>\(12\)<\/span/);
   assert.match(view, />Runner sessions<\/span[\s\S]*?>\(2\)<\/span/);
   assert.match(view, />Resource posture<\/span[\s\S]*?>\(Active\)<\/span/);
-  assert.match(view, />Grade<\/span[\s\S]*?>\(low · sonnet\)<\/span/);
+  assert.match(view, />Task estimate<\/span[\s\S]*?>\(low · sonnet\)<\/span/);
   const inner = litText(pipeline().render());
   assert.match(inner, />Acceptance criteria<\/span[\s\S]*?>\(5\/5 assessed · 3 proven\)<\/span/);
 });
@@ -378,7 +398,7 @@ test('a selected canvas or hash-linked step stays visible while progress is coll
   rememberCollapsiblePanel('run-step-progress', true);
 });
 
-test('background transfer activity never inserts a row above the live panels', () => {
+test('background transfer activity never inserts a row above the live panels', async () => {
   const element = pipeline();
   const afterCanvas = () => {
     const text = litText(element.render());
@@ -399,10 +419,41 @@ test('background transfer activity never inserts a row above the live panels', (
   assert.equal(afterCanvas(), idle);
   element.collapsiblePanels = false;
   assert.match(litText(element.render()), /class="pipeline-transfer-strip"/);
-  const view = litText(renderRunDetailView({ ...context(), panelOpen: () => true }));
-  inOrder(view, [
-    'data-panel="run-grade"',
-    'data-panel="run-transfers"',
-    '<file-transfer-progress-banner',
-  ]);
+  const store = await import('../shared/file-transfer-progress-store.js');
+  const release = store.retainFileTransferStore();
+  try {
+    const deadline = Date.now() + 1000;
+    while (!transferProgressListener) {
+      assert(Date.now() < deadline);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    transferProgressListener(transfer);
+    const view = litText(renderRunDetailView({ ...context(), panelOpen: () => true }));
+    inOrder(view, [
+      'data-panel="run-grade"',
+      'data-panel="run-transfers"',
+      '<file-transfer-progress-banner',
+    ]);
+  } finally {
+    store._resetFileTransferStoreForTests();
+    release();
+  }
+});
+
+test('empty progress and transfer panels stay absent, while a selected step still has its inspector', () => {
+  const element = pipeline();
+  element.taskProgress = undefined;
+  const initial = litText(element.render());
+  assert.doesNotMatch(initial, /data-panel="run-step-progress"/);
+  assert.doesNotMatch(litText(renderRunDetailView(context())), /data-panel="run-transfers"/);
+  element.selectedStepName = 'monitor';
+  assert.match(litText(element.render()), /name="canvas-detail"/);
+});
+
+test('the task estimate names its purpose and recommended model', () => {
+  const text = litText(renderRunDetailView(context()));
+  assert.match(text, /Task estimate/);
+  const estimate = litText(renderRunGrade(run.grade!));
+  assert.match(estimate, /Task difficulty and suggested model, estimated before execution/);
+  assert.match(estimate, /Suggested model: sonnet/);
 });

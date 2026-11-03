@@ -293,17 +293,19 @@ export class RunPipeline extends LitElement {
     const progressOpen = runDetailPanelOpen('run-step-progress');
     const detachedInspector = Boolean(this.selectedStepName) && !progressOpen;
     return html`
-      ${renderCollapsiblePanel({
-        id: 'run-step-progress',
-        label: 'Step progress',
-        summary: checklist ? `${checklist.counts} · ${checklist.label}` : 'no checklist',
-        open: progressOpen,
-        onToggle: () => this.togglePanel('run-step-progress'),
-        body: () =>
-          html`${this.renderChecklist()}<slot name="canvas-detail"></slot
-            >${this.renderProgressSection()}`,
-      })}
-      ${detachedInspector ? html`<slot name="canvas-detail"></slot>` : nothing}
+      ${checklist
+        ? renderCollapsiblePanel({
+            id: 'run-step-progress',
+            label: 'Step progress',
+            summary: `${checklist.counts} · ${checklist.label}`,
+            open: progressOpen,
+            onToggle: () => this.togglePanel('run-step-progress'),
+            body: () =>
+              html`${this.renderChecklist()}<slot name="canvas-detail"></slot
+                >${this.renderProgressSection()}`,
+          })
+        : nothing}
+      ${detachedInspector || !checklist ? html`<slot name="canvas-detail"></slot>` : nothing}
       <slot name="artifacts"></slot>
       ${inputs || this.acceptanceRowHeld
         ? renderCollapsiblePanel({
