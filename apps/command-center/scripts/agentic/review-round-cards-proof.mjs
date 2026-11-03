@@ -30,6 +30,7 @@ const until = async (read, valid, label) => {
 };
 await fs.mkdir(output, { recursive: true });
 try {
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`${origin}/#run/${runId}`, { waitUntil: 'domcontentloaded' });
   const announcement = page
     .locator('whats-new-modal')
@@ -104,7 +105,22 @@ try {
     Boolean,
     'Round toggle URL state',
   );
+  const fixDetails = withFix.locator('[data-fix]').first();
+  if (!(await fixDetails.getAttribute('open')))
+    await fixDetails.locator(':scope > summary').click();
+  await fixDetails.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'round-with-following-fix.png') });
+  const openDiff = fixDetails.getByRole('button', { name: 'Changed files and diff', exact: true });
+  await openDiff.click();
+  await until(
+    () =>
+      panel
+        .locator('diff-viewer-modal')
+        .evaluate((view) => ({ open: view.open, bytes: view.diffText?.length ?? 0 })),
+    (value) => value.open && value.bytes > 0,
+    'Following fix diff',
+  );
+  await panel.locator('diff-viewer-modal').locator('.dvm-close').click();
   await page.reload({ waitUntil: 'domcontentloaded' });
   await until(
     () =>
@@ -183,6 +199,11 @@ try {
   }));
   assert.equal(acceptance.outer, 1);
   assert.equal(acceptance.inner, 0);
+  await run
+    .locator('run-pipeline')
+    .locator('[data-panel="run-acceptance"]')
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'single-acceptance-panel.png') });
   const result = {
     status: 'PASS',
     ...snapshot,

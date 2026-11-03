@@ -12,8 +12,8 @@ import {
   reviewHistoryView,
 } from '../src/review-history.js';
 import {
-  reviewHistoryTimeline,
   reviewHistorySourceRequest,
+  reviewHistoryTimeline,
 } from '../src/review-history-timeline.js';
 
 function run(): Run {
@@ -1120,4 +1120,96 @@ test('a later reviewer issues result triggers the next fix even when a different
     (event) => event.kind === 'fix',
   );
   assert.equal(fix?.roundKey, 'later-issues');
+});
+
+for (const scenario of [
+  {
+    name: 'accepted prefixed prose keeps its original identity',
+    description: '[P1] Keep the active session. Do not reuse a retired receipt.',
+    head: 'head-a',
+    accepted: true,
+  },
+  {
+    name: 'an approval cannot accept the same finding at another head',
+    description: 'Keep the active session',
+    head: 'head-b',
+    accepted: false,
+  },
+])
+  test(scenario.name, () => {
+    const current = run();
+    current.agentContexts = [
+      { ...actor(1), reviewId: 'review-a', deliveryBaselineRef: scenario.head },
+    ];
+    const { description } = scenario;
+    const artifacts = {
+      'artifacts/review-result-1.json': {
+        content: JSON.stringify({
+          verdict: 'issues',
+          issues: [{ file: 'order.ts', line: 12, description }],
+        }),
+      },
+    };
+    current.decisions = [
+      {
+        id: 'accepted-gate',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: '',
+        actions: [],
+        createdAt: current.createdAt,
+        publicationApproval: {
+          principalId: 'operator',
+          displayName: 'Operator',
+          subjectKind: 'person',
+          packageHash: 'package-a',
+          visualJudgmentReceiptIds: [],
+          claimOverrideReceiptIds: [],
+          approvedAt: current.updatedAt,
+          headSha: 'head-a',
+          acceptedFindings: {
+            digest: 'accepted',
+            findings: [{ reviewId: 'review-a', file: 'order.ts', line: 12, description }],
+          },
+        },
+      },
+    ];
+    const history = reviewHistoryView(current, artifacts);
+    assert.equal(history.cards[0].round.findings[0].status === 'accepted', scenario.accepted);
+    assert.equal(history.cards[0].openFindings.length, scenario.accepted ? 0 : 1);
+  });
+
+test('a passing review keeps advisory findings visible without counting them as open', () => {
+  const current = run();
+  current.agentContexts = [actor(1)];
+  current.engineState = {
+    publishGate: {
+      reviews: [
+        {
+          id: 'pipeline-review-history-run',
+          source: 'pipeline',
+          runner: 'codex',
+          model: 'gpt-6.1-sol',
+          loopNumber: 1,
+          mode: 'cold',
+          verdict: 'pass',
+          unresolvedCount: 0,
+          attempts: [
+            {
+              loopNumber: 1,
+              mode: 'cold',
+              verdict: 'pass',
+              unresolvedCount: 0,
+              startedAt: current.agentContexts[0].startedAt,
+              completedAt: current.agentContexts[0].completedAt,
+              issues: [{ file: 'order.ts', description: 'Optional wording', severity: 'nit' }],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const history = reviewHistoryView(current);
+  assert.equal(history.cards[0].round.findings.length, 1);
+  assert.equal(history.cards[0].openFindings.length, 0);
 });

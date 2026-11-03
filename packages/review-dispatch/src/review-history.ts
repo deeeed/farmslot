@@ -7,9 +7,11 @@ import {
   type GitDiffParams,
   isTerminalRunStatus,
   observedReviewSessionContinuity,
+  openReviewFindingCount,
   type ReviewAttempt,
   type ReviewChainEntry,
   reviewChainForRun,
+  reviewFindingId,
   type ReviewMode,
   reviewResultForRun,
   type ReviewStatus,
@@ -28,6 +30,8 @@ import { reviewAttemptFailureReason } from './run-review-failures.js';
 
 export interface ReviewHistoryFinding {
   id: string;
+  /** Keep the structured approval identity independent from its display formatting. */
+  recordedDescription?: string;
   title: string;
   details: string;
   severity: string;
@@ -209,6 +213,7 @@ function findings(value: unknown): ReviewHistoryFinding[] {
     return [
       {
         id: text(issue.id) ?? digestRecipeDocument({ file: issue.file ?? issue.path, title }),
+        recordedDescription: description,
         title,
         details: body.startsWith(title) ? body.slice(title.length).trim() : body,
         severity: text(issue.severity) ?? priority?.[1] ?? 'Severity not recorded',
@@ -566,8 +571,9 @@ export function reviewHistoryView(
             (actor ? reviewAttemptFailureReason(run, actor) : null))
           : null;
       const unresolved =
-        attempt?.unresolvedCount ??
+        (review && attempt ? openReviewFindingCount(review, attempt) : attempt?.unresolvedCount) ??
         number(raw?.unresolvedCount) ??
+        number(saved?.unresolvedCount) ??
         (recorded ? issueRows.length : null);
       return {
         key: actor?.id ?? `${id}:${loop}`,
@@ -728,16 +734,22 @@ export function reviewHistoryView(
   });
   const events = reviewHistoryTimeline(run, orderedRounds);
   for (const round of orderedRounds) {
+    const head = round.headSha;
+    if (!head) continue;
     for (const finding of round.findings) {
-      const accepted = run.decisions.some((decision) =>
-        decision.publicationApproval?.acceptedFindings?.findings.some(
-          (entry) =>
-            entry.reviewId === round.reviewId &&
-            entry.file === finding.file &&
-            (!entry.line || entry.line === finding.line) &&
-            (entry.description === finding.title ||
-              entry.description === [finding.title, finding.details].filter(Boolean).join('\n')),
-        ),
+      const accepted = run.decisions.some(
+        (decision) =>
+          decision.publicationApproval?.headSha === head &&
+          decision.publicationApproval?.acceptedFindings?.findings.some(
+            (entry) =>
+              entry.reviewId === round.reviewId &&
+              reviewFindingId(entry.reviewId, head, entry) ===
+                reviewFindingId(round.reviewId, head, {
+                  file: finding.file,
+                  line: finding.line ?? undefined,
+                  description: finding.recordedDescription ?? finding.title,
+                }),
+          ),
       );
       if (accepted) {
         finding.status = 'accepted';

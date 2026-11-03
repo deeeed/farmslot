@@ -3,11 +3,7 @@ import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import { type ReviewChainEntry, reviewChainForRun, type Run } from '@farmslot/protocol';
-import {
-  type ReviewHistoryFix,
-  type ReviewHistoryRound,
-  type ReviewHistoryRoundCard,
-} from '@farmslot/review-dispatch';
+import { type ReviewHistoryFix, type ReviewHistoryRoundCard } from '@farmslot/review-dispatch';
 
 import { MobileDiffViewer } from '../../../components/MobileDiffViewer';
 import { formatPreciseDuration } from '../../workspace-shared/format';

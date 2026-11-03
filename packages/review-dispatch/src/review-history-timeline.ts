@@ -216,9 +216,12 @@ export function reviewHistoryRoundCards(events: ReviewHistoryEvent[]): ReviewHis
           event.round.durationMs === null || fixes.some((fix) => fix.durationMs === null)
             ? null
             : event.round.durationMs + fixes.reduce((sum, fix) => sum + (fix.durationMs ?? 0), 0),
-        openFindings: event.round.findings.filter(
-          (finding) => finding.status !== 'resolved' && finding.status !== 'accepted',
-        ),
+        openFindings:
+          event.round.unresolvedCount === 0
+            ? []
+            : event.round.findings.filter(
+                (finding) => finding.status !== 'resolved' && finding.status !== 'accepted',
+              ),
       },
     ];
   });
