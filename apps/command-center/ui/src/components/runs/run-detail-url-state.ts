@@ -1,5 +1,9 @@
+import { ARTIFACT_BROWSER_PARAMS } from '@farmslot/protocol/surfaces/view-links';
+
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import type { ArtifactBrowserView } from '../shared/artifact-browser-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import { ARTIFACT_TYPES } from '../workspace/workspace-artifacts.js';
 
 export interface RunDetailArtifactSelection {
   artifactRun: string | null;
@@ -11,6 +15,40 @@ export interface RunDetailArtifactSelection {
 }
 
 const STEP_PARAM = 'step';
+const [BROWSER_QUERY, BROWSER_TYPES, BROWSER_FILE, BROWSER_PREVIEW] = ARTIFACT_BROWSER_PARAMS;
+
+export function artifactBrowserViewFromRunDetailHash(
+  hash: string = location.hash,
+): ArtifactBrowserView {
+  const { params } = parseHashRoute(hash);
+  const path = params.get(BROWSER_FILE) || null;
+  const requestedTypes = new Set((params.get(BROWSER_TYPES) ?? '').split(','));
+  return {
+    query: params.get(BROWSER_QUERY) ?? '',
+    types: new Set(ARTIFACT_TYPES.filter((type) => requestedTypes.has(type))),
+    path,
+    preview: Boolean(path) && params.get(BROWSER_PREVIEW) !== 'closed',
+  };
+}
+
+export function runDetailArtifactBrowserHash(
+  runId: string,
+  view: ArtifactBrowserView,
+  hash: string = location.hash,
+): string {
+  const { route, params } = parseHashRoute(hash);
+  if (view.query) params.set(BROWSER_QUERY, view.query);
+  else params.delete(BROWSER_QUERY);
+  const types = ARTIFACT_TYPES.filter((type) => view.types.has(type));
+  if (types.length) params.set(BROWSER_TYPES, types.join(','));
+  else params.delete(BROWSER_TYPES);
+  if (view.path) params.set(BROWSER_FILE, view.path);
+  else params.delete(BROWSER_FILE);
+  if (view.path && !view.preview) params.set(BROWSER_PREVIEW, 'closed');
+  else params.delete(BROWSER_PREVIEW);
+  if (!route.startsWith('runs')) params.delete('run');
+  return buildHash(route.startsWith('runs') ? route : runDetailRoute(runId), params);
+}
 export const ARTIFACT_RUN_PARAM = 'artifactRun';
 export const ARTIFACT_PARAM = 'artifact';
 export const ARTIFACT_AC_PARAM = 'artifactAc';
@@ -130,6 +168,7 @@ export function runInventoryHashFromDetail(hash: string = location.hash): string
     ARTIFACT_VIEW_PARAM,
     'artifactTrace',
     'artifactPhase',
+    ...ARTIFACT_BROWSER_PARAMS,
   ]) {
     params.delete(key);
   }

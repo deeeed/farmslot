@@ -844,6 +844,8 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
+const taskArtifactPaths = new WeakMap<readonly ArtifactRef[], ReadonlySet<string>>();
+
 // Serve a file relative to a run's task artifact directory.
 // URL: /api/run-artifact?runId=X&path=Y[&recipeRunId=Z]  (path is relative to task dir or selected recipe-run artifact root)
 export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -888,9 +890,19 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
       url.searchParams.get('bundleDigest') ?? undefined,
     );
     let artifactPath = requested;
+    const manifest = recipeRunId ? undefined : run.output?.artifactManifest;
+    let declaredPaths = manifest && taskArtifactPaths.get(manifest);
+    if (manifest && !declaredPaths) {
+      // Captures replace the manifest; repeated file reads reuse its task-path index.
+      declaredPaths = new Set(manifest.map((artifact) => artifact.path));
+      taskArtifactPaths.set(manifest, declaredPaths);
+    }
     if (
       (recipeRunId && !['current-artifacts', 'decision-evidence'].includes(recipeRunId)) ||
-      (!recipeRunId && requested !== run.output?.reportPath && requested.startsWith('artifacts/'))
+      (!recipeRunId &&
+        !declaredPaths?.has(requested) &&
+        requested !== run.output?.reportPath &&
+        requested.startsWith('artifacts/'))
     ) {
       if (!requested.startsWith('artifacts/'))
         throw new Error('Recipe artifact paths must start with artifacts/.');

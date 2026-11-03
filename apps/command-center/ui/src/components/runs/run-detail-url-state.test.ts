@@ -2,14 +2,67 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  type ArtifactBrowserView,
+  emptyArtifactBrowserView,
+} from '../shared/artifact-browser-model.js';
+
+import {
+  artifactBrowserViewFromRunDetailHash,
   artifactSelectionFromRunDetailHash,
   isRunDetailHashForRun,
+  runDetailArtifactBrowserHash,
   runDetailEvidenceArtifactHash,
   runDetailStepHash,
   runInventoryHashFromDetail,
   selectedStepNameFromRunDetailHash,
   standaloneRunDetailHash,
 } from './run-detail-url-state.js';
+
+test('artifact browser choices round-trip without replacing the evidence viewer link', () => {
+  const view: ArtifactBrowserView = {
+    query: 'close sheet report',
+    types: new Set(['log', 'markdown']),
+    path: 'artifacts/checks/close sheet & report.md',
+    preview: true,
+  };
+  const initial = '#runs?project=demo&run=run-1&tab=evidence&artifactRun=run-1&artifact=other.png';
+  const hash = runDetailArtifactBrowserHash('run-1', view, initial);
+  assert.deepEqual(artifactBrowserViewFromRunDetailHash(hash), view);
+  assert.deepEqual(
+    artifactSelectionFromRunDetailHash(hash),
+    artifactSelectionFromRunDetailHash(initial),
+  );
+  const params = new URLSearchParams(hash.split('?')[1]);
+  assert.equal(params.get('project'), 'demo');
+  assert.equal(params.get('tab'), 'evidence');
+});
+
+test('closing the narrow artifact preview retains its selection and clearing removes only browser state', () => {
+  const view: ArtifactBrowserView = {
+    query: 'report',
+    types: new Set(['markdown']),
+    path: 'artifacts/report.md',
+    preview: false,
+  };
+  const initial = '#run/run-1?step=prepare&review=claim-1';
+  const hash = runDetailArtifactBrowserHash('run-1', view, initial);
+  assert.deepEqual(artifactBrowserViewFromRunDetailHash(hash), view);
+  assert.equal(runDetailArtifactBrowserHash('run-1', emptyArtifactBrowserView(), hash), initial);
+});
+
+test('returning to inventory drops artifact browser state', () => {
+  const hash = runDetailArtifactBrowserHash(
+    'run-1',
+    {
+      query: 'report',
+      types: new Set(['markdown']),
+      path: 'artifacts/report.md',
+      preview: true,
+    },
+    '#runs?project=demo&run=run-1&tab=evidence',
+  );
+  assert.equal(runInventoryHashFromDetail(hash), '#runs?project=demo');
+});
 
 test('run detail helpers read selected step and artifact modal state', () => {
   const hash =

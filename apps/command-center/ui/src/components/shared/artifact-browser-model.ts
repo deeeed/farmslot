@@ -45,6 +45,26 @@ export interface ArtifactBrowserFilter {
   types: ReadonlySet<ArtifactType>;
 }
 
+export interface ArtifactBrowserView extends ArtifactBrowserFilter {
+  /** Stable across manifest refreshes and reordering. */
+  path: string | null;
+  /** Narrow layouts can close the preview while retaining the selected row. */
+  preview: boolean;
+}
+
+export interface ArtifactBrowserViewChange {
+  view: ArtifactBrowserView;
+  replace: boolean;
+}
+
+export function emptyArtifactBrowserView(): ArtifactBrowserView {
+  return { query: '', types: new Set(), path: null, preview: false };
+}
+
+export function hasArtifactBrowserView(view: ArtifactBrowserView): boolean {
+  return Boolean(view.query || view.types.size || view.path);
+}
+
 const ATTEMPT_NAME = /^(.+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(\.[^/]+)$/i;
 
 export function artifactBrowserQueryTerms(query: string): string[] {

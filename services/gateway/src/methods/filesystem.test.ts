@@ -1,6 +1,8 @@
 // @farmslot:serial — writes slot fixtures into the shared repo `pool/` directory.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -386,7 +388,7 @@ test('serveRunArtifact falls back to the latest recipe package when recipeRunId 
   });
 });
 
-test('serveRunArtifact prefers a recipe package when an omitted recipeRunId points at stale root media', async (t) => {
+test('serveRunArtifact prefers a recipe package for undeclared stale root media', async (t) => {
   await withRemoteRun(t, async ({ runId, liveRunDir, taskDir }) => {
     const videoPath = path.join(liveRunDir, 'video.mp4');
     await writeFile(videoPath, 'cached-video', 'utf-8');
@@ -403,6 +405,68 @@ test('serveRunArtifact prefers a recipe package when an omitted recipeRunId poin
     assert.equal(res.headers['Content-Length'], 12);
     assert.equal(res.headers['Accept-Ranges'], 'bytes');
     assert.equal(res.body, 'cached-video');
+  });
+});
+
+test('serveRunArtifact keeps declared task files distinct from selected recipe files', async (t) => {
+  await withRemoteRun(t, async ({ runId, taskDir, liveRunDir, liveGroupId }) => {
+    const files = [
+      {
+        name: 'report.md',
+        task: '# Task report\n',
+        recipe: '# Recipe report\n',
+        purpose: 'report',
+      },
+      { name: 'video.mp4', task: 'declared root video', recipe: 'recipe video', purpose: 'video' },
+    ] as const;
+    for (const file of files) {
+      await writeFile(path.join(taskDir, 'artifacts', file.name), file.task);
+      await writeFile(path.join(liveRunDir, file.name), file.recipe);
+    }
+    await writeFile(path.join(taskDir, 'artifacts/pr-description.md'), '# Publication copy\n');
+    const artifactManifest = files.map((file) => ({
+      path: `artifacts/${file.name}`,
+      purpose: file.purpose,
+      sha256: createHash('sha256').update(file.task).digest('hex'),
+    }));
+    updateRun(runId, {
+      output: {
+        capturedAt: new Date().toISOString(),
+        workerFinished: true,
+        artifactManifest,
+        manifestDigest: createHash('sha256').update(JSON.stringify(artifactManifest)).digest('hex'),
+        reportPath: 'artifacts/pr-description.md',
+      },
+    });
+    const server = createServer(async (req, res) => {
+      await serveRetainedFixture(req, res);
+    });
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        }),
+    );
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    for (const file of files) {
+      const url = new URL(`http://127.0.0.1:${address.port}/api/run-artifact`);
+      url.searchParams.set('runId', runId);
+      url.searchParams.set('path', `artifacts/${file.name}`);
+      const sha256 = createHash('sha256').update(file.task).digest('hex');
+      for (const version of [sha256, null]) {
+        if (version) url.searchParams.set('v', version);
+        else url.searchParams.delete('v');
+        const response = await fetch(url);
+        assert.equal(response.status, 200, await response.clone().text());
+        assert.equal(await response.text(), file.task);
+      }
+      url.searchParams.set('recipeRunId', liveGroupId);
+      const recipeResponse = await fetch(url);
+      assert.equal(recipeResponse.status, 200);
+      assert.equal(await recipeResponse.text(), file.recipe);
+    }
   });
 });
 

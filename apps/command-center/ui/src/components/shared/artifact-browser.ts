@@ -22,6 +22,8 @@ import {
   type ArtifactBrowserRow,
   artifactBrowserRows,
   artifactBrowserTree,
+  type ArtifactBrowserView,
+  emptyArtifactBrowserView,
 } from './artifact-browser-model.js';
 import { gatewayMediaSrc } from './gateway-media-src.js';
 import type { LightboxItem } from './media-lightbox-types.js';
@@ -41,22 +43,73 @@ export class ArtifactBrowser extends LitElement {
   @property({ attribute: false }) artifacts: readonly ArtifactBrowserItem[] = [];
   /** URL of the artifact at this index in `artifacts`. */
   @property({ attribute: false }) artifactHref?: (index: number) => string;
-  @state() private query = '';
-  @state() private types = new Set<ArtifactType>();
+  /** Hosts may bind the same view to their route; other browsers keep local state. */
+  @property({ attribute: false }) viewState?: ArtifactBrowserView;
+  @state() private localView = emptyArtifactBrowserView();
+  /** Uncontrolled hosts may list the same path from several runs. */
+  @state() private localSelected: number | null = null;
   /** Folders and attempt groups the user opened or closed, by node key. */
   @state() private toggled = new Map<string, boolean>();
   @state() private wide = false;
-  /** Too narrow for a side pane: the chosen file previews in a panel over the list. */
-  @state() private overlay = false;
-  /** Index of the file shown in the side preview; defaults to the first key file. */
-  @state() private selected: number | null = null;
+  @state() private sizeKnown = false;
   /** Node key of the tree row that holds keyboard focus. */
   @state() private focusedKey: string | null = null;
   private readonly resizeObserver = new ResizeObserver(([entry]) => {
-    if (entry) this.wide = entry.contentRect.width >= SPLIT_MIN_WIDTH;
+    if (!entry) return;
+    this.wide = entry.contentRect.width >= SPLIT_MIN_WIDTH;
+    this.sizeKnown = true;
+    if (!this.viewState && this.wide && this.localView.preview)
+      this.localView = { ...this.localView, preview: false };
   });
   private previewItems: { source: readonly ArtifactBrowserItem[]; items: LightboxItem[] } | null =
     null;
+  private selectionCache?: {
+    source: readonly ArtifactBrowserItem[];
+    path: string;
+    index: number | null;
+  };
+  private overlayWasOpen = false;
+
+  private get view(): ArtifactBrowserView {
+    return this.viewState ?? this.localView;
+  }
+
+  private get query(): string {
+    return this.view.query;
+  }
+  private get types(): ReadonlySet<ArtifactType> {
+    return this.view.types;
+  }
+  private get overlay(): boolean {
+    return this.sizeKnown && this.view.preview && !this.wide;
+  }
+  private get selected(): number | null {
+    if (!this.viewState) return this.localSelected;
+    const path = this.view.path;
+    if (!path) return null;
+    if (this.selectionCache?.source !== this.artifacts || this.selectionCache.path !== path) {
+      const index = this.artifacts.findIndex((artifact) => artifact.path === path);
+      this.selectionCache = { source: this.artifacts, path, index: index < 0 ? null : index };
+    }
+    return this.selectionCache.index;
+  }
+
+  private updateView(patch: Partial<ArtifactBrowserView>, replace = false): void {
+    const view = { ...this.view, ...patch };
+    if (!this.viewState) this.localView = view;
+    this.dispatchEvent(
+      new CustomEvent('artifact-browser-change', {
+        detail: { view, replace },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private selectFile(index: number, preview = this.view.preview, replace = false): void {
+    if (!this.viewState) this.localSelected = index;
+    this.updateView({ path: this.artifacts[index]?.path ?? null, preview }, replace);
+  }
 
   static styles = css`
     :host {
@@ -277,18 +330,17 @@ export class ArtifactBrowser extends LitElement {
   private toggleType(type: ArtifactType) {
     const types = new Set(this.types);
     if (!types.delete(type)) types.add(type);
-    this.types = types;
+    this.updateView({ types });
   }
 
   private open(index: number, event?: Event) {
     event?.preventDefault();
-    this.selected = index;
-    if (!this.wide) this.overlay = true;
+    this.selectFile(index, this.viewState ? true : !this.wide);
   }
 
   /** Closing hands focus back to the file it previewed. */
   private async closeOverlay() {
-    this.overlay = false;
+    this.updateView({ preview: false });
     await this.updateComplete;
     this.renderRoot.querySelector<HTMLElement>('.row[tabindex="0"]')?.focus();
   }
@@ -298,13 +350,16 @@ export class ArtifactBrowser extends LitElement {
     this.renderRoot.querySelector<HTMLElement>('.overlay')?.focus();
   }
 
-  protected updated(changed: Map<string, unknown>): void {
-    if (changed.has('overlay') && this.overlay) void this.showOverlay();
-    // Widening past the side-pane threshold hands the open file to the side pane.
-    if (changed.has('wide') && this.wide) this.overlay = false;
+  protected updated(): void {
+    if (this.overlay && !this.overlayWasOpen) void this.showOverlay();
+    this.overlayWasOpen = this.overlay;
   }
 
   private renderPreview(selected: number) {
+    if (this.viewState?.path && this.selected === null)
+      return html`<div class="preview empty" role="status">
+        File unavailable: ${this.viewState.path}
+      </div>`;
     return html`<media-lightbox
       class="preview"
       embedded
@@ -313,13 +368,13 @@ export class ArtifactBrowser extends LitElement {
       .selectedIndex=${selected}
       @lightbox-expand=${() => this.openInHost(selected)}
       @lightbox-navigate=${(event: CustomEvent<{ index: number }>) =>
-        (this.selected = event.detail.index)}
+        this.selectFile(event.detail.index)}
     ></media-lightbox>`;
   }
 
   private openInHost(index: number) {
     // The host's viewer sits under this panel otherwise.
-    this.overlay = false;
+    this.updateView({ preview: false }, true);
     this.dispatchEvent(
       new CustomEvent('artifact-open', {
         detail: { index },
@@ -377,7 +432,7 @@ export class ArtifactBrowser extends LitElement {
   }
 
   private currentSelection(): number {
-    return this.selected ?? this.keyFiles()[0]?.index ?? 0;
+    return this.selected ?? (this.viewState?.path ? -1 : (this.keyFiles()[0]?.index ?? 0));
   }
 
   private highlight(name: string) {
@@ -402,7 +457,8 @@ export class ArtifactBrowser extends LitElement {
         placeholder="Filter files"
         aria-label="Filter files"
         .value=${this.query}
-        @input=${(event: Event) => (this.query = (event.target as HTMLInputElement).value)}
+        @input=${(event: Event) =>
+          this.updateView({ query: (event.target as HTMLInputElement).value }, true)}
         @keydown=${(event: KeyboardEvent) => this.onSearchKey(event)}
       />
       <div class="chips" role="group" aria-label="File types">
@@ -436,7 +492,7 @@ export class ArtifactBrowser extends LitElement {
       else this.open(node.index);
     } else if (action.kind === 'focus') {
       void this.focusRow(node);
-      if (this.wide && node.kind === 'file') this.selected = node.index;
+      if (this.wide && node.kind === 'file') this.selectFile(node.index, this.view.preview, true);
     }
   }
 
@@ -464,7 +520,7 @@ export class ArtifactBrowser extends LitElement {
   private onSearchKey(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
     event.preventDefault();
-    this.query = '';
+    this.updateView({ query: '' }, true);
     this.renderRoot.querySelector<HTMLElement>('.row[tabindex="0"]')?.focus();
   }
 
