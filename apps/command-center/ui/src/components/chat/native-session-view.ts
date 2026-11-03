@@ -68,6 +68,7 @@ import {
   defaultModelForRunner,
   nativeLaunchChoices,
   nativeLaunchContextKey,
+  nativeLaunchModel,
   ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
 
@@ -214,7 +215,8 @@ export class NativeSessionView extends LitElement {
     this.syncLaunchUrl();
   }
   private syncLaunchUrl() {
-    if (this.worker || this.selectedId || this.fixture) return;
+    if (this.worker || this.selectedId || this.fixture || parseHashRoute().route !== 'native')
+      return;
     const params = hashParams();
     params.set('cwd', this.cwd);
     params.set('executionNodeId', this.executionNodeId);
@@ -380,6 +382,7 @@ export class NativeSessionView extends LitElement {
     this.renderedRevision = this.revision;
     if (
       !this.fixture &&
+      parseHashRoute().route === 'native' &&
       !this.worker &&
       !this.selectedId &&
       this.catalog &&
@@ -392,8 +395,7 @@ export class NativeSessionView extends LitElement {
         this.runner = requestedRunner;
       const requestedModel = params.get('model');
       const runner = this.executionPicker.catalog.runners.find((entry) => entry.id === this.runner);
-      if (requestedModel && runner?.models.some((entry) => entry.id === requestedModel))
-        this.model = requestedModel;
+      if (requestedModel) this.model = nativeLaunchModel(runner, requestedModel);
       this.mode = params.get('mode') === 'plan' ? 'plan' : 'default';
       const effort = params.get('effort');
       const row = this.executionPicker.rows[0];
@@ -1242,7 +1244,7 @@ ${JSON.stringify(
       params.set('executionNodeId', executionNodeId);
     } else {
       params.delete('sessionId');
-      params.delete('executionNodeId');
+      params.set('executionNodeId', this.executionNodeId);
     }
     history.replaceState(null, '', buildHash('native', params));
   }

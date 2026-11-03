@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { NativeSessionCatalogResult } from '@farmslot/protocol';
 
-import { nativeLaunchChoices } from '../src/native-launch.js';
+import { nativeLaunchChoices, nativeLaunchModel } from '../src/native-launch.js';
 
 const catalog: NativeSessionCatalogResult = {
   runners: [],
@@ -75,4 +75,32 @@ test('known machines with missing metadata remain visible and disabled without g
   assert.equal(choices[0].key, 'custom:mini');
   assert.equal(choices[0].cwd, '');
   assert.match(choices[0].unavailableReason ?? '', /metadata unavailable/);
+});
+
+test('workspace contexts remain launchable when optional custom-target metadata is absent', () => {
+  const choices = nativeLaunchChoices(
+    { runners: [], contexts: [{ label: 'Workspace', cwd: '/workspace', executionNodeId: 'mini' }] },
+    { projects: [], machines: [] },
+  );
+  assert.equal(choices.find((choice) => choice.kind === 'workspace')?.unavailableReason, null);
+  assert.match(
+    choices.find((choice) => choice.kind === 'custom')?.unavailableReason ?? '',
+    /metadata unavailable/,
+  );
+});
+
+test('custom model selections follow the shared catalog permission', () => {
+  const runner = {
+    id: 'codex',
+    models: [{ id: 'listed' }],
+    defaultModel: 'listed',
+    efforts: [],
+    defaultEffort: null,
+    allowCustomModels: true,
+  };
+  assert.equal(nativeLaunchModel(runner, 'custom-provider-model'), 'custom-provider-model');
+  assert.equal(
+    nativeLaunchModel({ ...runner, allowCustomModels: false }, 'custom-provider-model'),
+    'listed',
+  );
 });

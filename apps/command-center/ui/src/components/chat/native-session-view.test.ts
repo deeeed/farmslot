@@ -636,3 +636,69 @@ test('prompt-first creation sends the first message once and keeps its delivery 
     'creating and first delivery release the same transition',
   );
 });
+
+test('embedded launch controls keep the current route and New restores the target', () => {
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const previousHistory = Object.getOwnPropertyDescriptor(globalThis, 'history');
+  const location = { hash: '#runs?projects=terminal' };
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      replaceState(_state: unknown, _unused: string, url: string) {
+        location.hash = url;
+      },
+    },
+  });
+  try {
+    const view = new NativeSessionView();
+    Object.assign(view, {
+      cwd: '/workspace/custom',
+      executionNodeId: 'mini',
+      customCwd: true,
+      requestUpdate: () => undefined,
+      schedule: () => undefined,
+    });
+    Reflect.get(view, 'syncLaunchUrl').call(view);
+    assert.equal(location.hash, '#runs?projects=terminal');
+    location.hash = '#native?cwd=%2Fworkspace%2Fcustom&custom=true&executionNodeId=mini';
+    Reflect.get(view, 'selectRouted').call(view, 'existing', 'mini');
+    Reflect.get(view, 'selectRouted').call(view, '');
+    assert.equal(new URLSearchParams(location.hash.split('?')[1]).get('executionNodeId'), 'mini');
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+    else Reflect.deleteProperty(globalThis, 'location');
+    if (previousHistory) Object.defineProperty(globalThis, 'history', previousHistory);
+    else Reflect.deleteProperty(globalThis, 'history');
+  }
+});
+
+test('launcher URL restores a permitted custom model', () => {
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { hash: '#native?runner=codex&model=custom-provider-model' },
+  });
+  try {
+    const catalog: NativeSessionCatalogResult = {
+      runners: [
+        { runner: 'codex', models: ['listed'], defaultModel: 'listed', modes: ['default'] },
+      ],
+      contexts: [],
+    };
+    const view = new NativeSessionView();
+    Object.assign(view, {
+      catalog,
+      requestUpdate: () => undefined,
+      executionPicker: new ReviewDispatchViewModel({
+        context: { allowedActions: ['chat'] },
+        catalog: catalogForNativeRunners(catalog.runners),
+      }),
+    });
+    Reflect.get(view, 'updated').call(view, new Map());
+    assert.equal(Reflect.get(view, 'model'), 'custom-provider-model');
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+    else Reflect.deleteProperty(globalThis, 'location');
+  }
+});

@@ -1,4 +1,5 @@
 import type { NativeSessionCatalogResult, SlotStatus } from '@farmslot/protocol';
+import type { ReviewDispatchRunnerOption } from './types.js';
 
 export interface NativeLaunchChoice {
   key: string;
@@ -48,7 +49,8 @@ export function nativeLaunchChoices(
         slotId: context.slotId ?? null,
         kind: 'workspace',
         supportsProfiles: context.supportsProfiles === true,
-        unavailableReason: reason(node),
+        unavailableReason:
+          nodes.find((target) => target.executionNodeId === node)?.unavailableReason ?? null,
       },
     ];
   });
@@ -81,4 +83,16 @@ export function nativeLaunchChoices(
     });
   }
   return choices;
+}
+
+/** Preserve custom models only where the shared runner catalog permits them. */
+export function nativeLaunchModel(
+  runner: ReviewDispatchRunnerOption | undefined,
+  model: string | null | undefined,
+): string {
+  return model &&
+    runner &&
+    (runner.allowCustomModels !== false || runner.models.some((entry) => entry.id === model))
+    ? model
+    : (runner?.defaultModel ?? '');
 }

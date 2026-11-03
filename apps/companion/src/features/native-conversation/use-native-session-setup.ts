@@ -3,8 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Methods,
   nativeProfileSessionParams,
-  nativeRunnerDefaultModel,
-  nativeRunnerModels,
   type NativeSessionCatalogResult,
   type NativeSessionInfo,
 } from '@farmslot/protocol';
@@ -13,6 +11,7 @@ import {
   catalogForNativeRunners,
   nativeLaunchChoices,
   nativeLaunchContextKey,
+  nativeLaunchModel,
   ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
 
@@ -92,32 +91,32 @@ export function useNativeSessionSetup(enabled: boolean) {
     catalog?.contexts.findIndex((item) => nativeLaunchContextKey(item) === contextKey) ?? -1;
   // Pi and OpenCode list the models of the node the session will run on.
   const executionNode = context?.executionNodeId ?? 'local';
-  const model =
-    runner && nativeRunnerModels(runner, executionNode).includes(modelId)
-      ? modelId
-      : runner
-        ? nativeRunnerDefaultModel(runner, executionNode)
-        : '';
+  const runnerCatalog = useMemo(
+    () =>
+      catalog ? catalogForNativeRunners(catalog.runners, undefined, executionNode) : undefined,
+    [catalog, executionNode],
+  );
+  const model = nativeLaunchModel(
+    runnerCatalog?.runners.find((entry) => entry.id === runner?.runner),
+    modelId,
+  );
   const executionPicker = useMemo(
     () =>
-      catalog?.runners.length
+      catalog?.runners.length && runnerCatalog
         ? new ReviewDispatchViewModel({
             context: { allowedActions: ['chat'] },
-            catalog: catalogForNativeRunners(catalog.runners, undefined, executionNode),
+            catalog: runnerCatalog,
             sequence: [
               {
                 runner: runner?.runner ?? catalog.runners[0].runner,
-                model:
-                  runner && nativeRunnerModels(runner, executionNode).includes(modelId)
-                    ? modelId
-                    : null,
+                model: model || null,
                 effort,
                 mode: 'cold',
               },
             ],
           })
         : undefined,
-    [catalog, runner, modelId, executionNode, effort],
+    [catalog, runnerCatalog, runner, model, effort],
   );
   const selectedNode = useRef('local');
   if (context) selectedNode.current = context.executionNodeId ?? 'local';
