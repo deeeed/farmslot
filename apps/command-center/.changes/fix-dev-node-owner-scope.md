@@ -1,0 +1,1 @@
+- Let the co-launched dev node use a separate native owner while preserving the gateway owner and inherited node credentials and native-state base.
