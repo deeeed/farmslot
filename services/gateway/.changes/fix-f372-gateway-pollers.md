@@ -1,0 +1,1 @@
+- Stop background fleet health monitoring from launching viewer-only workspace Git inspections while retaining held observations and stale machine refreshes.

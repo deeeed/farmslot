@@ -76,7 +76,7 @@ export { fleetStaleThresholdMs, isFleetCheckedAtStale };
 
 interface FleetWorkspaceObservations {
   read(fleet: FleetStatus): FleetStatus;
-  refresh(fleet: FleetStatus): Promise<FleetStatus>;
+  refresh?(fleet: FleetStatus): Promise<FleetStatus>;
 }
 
 export interface FleetStatusDeps {
@@ -110,8 +110,8 @@ function refreshWorkspaceObservations(
   deps: FleetStatusDeps,
   publish?: FleetWorkspacePublisher,
 ): void {
-  if (workspaceRefreshInFlight || !deps.workspaces) return;
   const workspaces = deps.workspaces;
+  if (workspaceRefreshInFlight || !workspaces?.refresh) return;
   const previous = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
   workspaceRefreshInFlight = workspaces
     .refresh(fleet)
@@ -158,7 +158,7 @@ export async function fleetStatus(
   // Ghost marking happens inside loadFleetStatus, so both branches are honest.
   const loaded = params?.forceRefresh ? (await deps.refresh()).fleet : await deps.load();
   const fleet = params?.forceRefresh
-    ? ((await deps.workspaces?.refresh(loaded)) ?? loaded)
+    ? ((await deps.workspaces?.refresh?.(loaded)) ?? loaded)
     : (deps.workspaces?.read(loaded) ?? loaded);
   if (!params?.forceRefresh) refreshWorkspaceObservations(fleet, deps, publish);
   if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
@@ -173,6 +173,17 @@ export async function fleetStatus(
     });
   }
   return fleetStatusResult(fleet);
+}
+
+/** Health/violation monitoring consumes held workspace observations; viewers own their probes. */
+export function fleetMonitorStatus(
+  deps: FleetStatusDeps = defaultFleetStatusDeps,
+): Promise<FleetStatusResult> {
+  const workspaces = deps.workspaces;
+  return fleetStatus(undefined, {
+    ...deps,
+    workspaces: workspaces ? { read: (fleet) => workspaces.read(fleet) } : undefined,
+  });
 }
 
 // ─── fleetRefresh — native TS port of farm-status.sh collect mode ───

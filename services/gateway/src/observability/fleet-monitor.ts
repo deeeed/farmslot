@@ -15,7 +15,7 @@ import type {
 
 import { projectTaskRoots } from '../core/config.js';
 import { farmslotRoot } from '../fleet/state.js';
-import { fleetStatus } from '../methods/fleet.js';
+import { fleetMonitorStatus } from '../methods/fleet.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
 const MONITOR_STATE_FILE = path.join(farmslotRoot, '.monitor_state.json');
@@ -104,7 +104,7 @@ export function startMonitor(eventHandler: MonitorEventHandler): void {
     if (fleetPollInFlight) return;
     fleetPollInFlight = true;
     try {
-      const { fleet } = await fleetStatus();
+      const { fleet } = await fleetMonitorStatus();
       handler?.onFleetUpdated(fleet);
       checkForViolations(fleet);
     } catch {
