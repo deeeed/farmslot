@@ -990,7 +990,8 @@ async function slotReleaseImpl(
   // A named discard performs Close after release. Retain its final result before that source
   // disappears, just as the result-decision action does before settling the run.
   const resultOwner =
-    params.expectedRunId && params.expectedRunId === releasedOwner
+    params.expectedRunId &&
+    ownsRunSlotCleanup(await readSlotRow(params.slotId), params.expectedRunId)
       ? getRun(params.expectedRunId)
       : undefined;
   if (!preserveAgents && params.forceReset && resultOwner && isHeldForResultDecision(resultOwner)) {
@@ -1222,7 +1223,11 @@ async function slotReleaseImpl(
       step('runs', `Detached ${detachedRunIds.length} run(s) from released slot`);
     }
   }
-  if (params.forceReset && params.expectedRunId && params.expectedRunId === releasedOwner) {
+  if (
+    params.forceReset &&
+    params.expectedRunId &&
+    (params.expectedRunId === releasedOwner || params.expectedRunId === resultOwner?.id)
+  ) {
     await markCompletionFailureDiscarded(params.expectedRunId);
     // The named discard of a held run performs Close (ADR-065 Amendment 7).
     const { closeDiscardedResult } = await import('../../run-completion/result-decision.js');

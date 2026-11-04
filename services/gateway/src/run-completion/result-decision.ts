@@ -438,6 +438,14 @@ export async function resolveResultDecision(
           const after = await readSlotRow(run.slotId);
           if (!ownsRunSlotCleanup(after, run.id) || after?.slot_epoch !== before?.slot_epoch)
             throw new Error('Slot ownership changed while retaining the final result.');
+          // An earlier queued mirror capture can supersede the judged output while this waits.
+          const current = getRun(run.id);
+          if (
+            !current ||
+            pendingResultDecision(current)?.id !== decision.id ||
+            pendingOutputReview(current)?.id !== payload.outputReviewDecisionId
+          )
+            throw new StaleResultDecisionError();
         }
       }
       const now = new Date().toISOString();

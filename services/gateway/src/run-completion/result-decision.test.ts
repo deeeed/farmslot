@@ -451,6 +451,31 @@ test('failed final retention leaves the result pending and never releases its so
   assert.equal(run.resultDecisionReceipt, undefined);
 });
 
+test('Close refuses an output review superseded while final retention waits', async () => {
+  await heldQa();
+  const original = structuredClone(run.output);
+  afterFinalRetention = () => {
+    const payload = pending().payload;
+    const outputReviewId =
+      payload?.kind === 'result-decision' ? payload.outputReviewDecisionId : undefined;
+    run.decisions = run.decisions.map((decision) =>
+      decision.id === outputReviewId
+        ? { ...decision, resolvedAt: new Date().toISOString(), resolvedAction: 'superseded' }
+        : decision,
+    );
+    assert.ok(run.output);
+    run.output = { ...run.output, manifestDigest: 'refreshed-output' };
+  };
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'close-result' }),
+    /The output changed/,
+  );
+  assert.equal(run.status, 'needs-decision');
+  assert.equal(run.resultDecisionReceipt, undefined);
+  assert.deepEqual(releases, []);
+  assert.notEqual(run.output?.manifestDigest, original?.manifestDigest);
+});
+
 test('closing an old result never acquires artifacts from a foreign slot owner', async () => {
   await heldQa();
   slotOwner = 'another-run';

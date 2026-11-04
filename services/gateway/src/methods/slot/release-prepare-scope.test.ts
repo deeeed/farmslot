@@ -357,6 +357,20 @@ test('named discard retains a held result before removing its task and performs 
   assert.equal(run.resultDecisionReceipt?.action, 'close-result');
 });
 
+test('named discard retains a cleanup-only held owner before task deletion', async () => {
+  const run = await heldResultForDiscard();
+  slotRow.current_run_id = null;
+  slotRow.cleanup_run_id = run.id;
+  const result = await slotRelease(
+    { slotId: SLOT_ID, forceReset: true, expectedRunId: run.id },
+    emit,
+  );
+  assert.equal(result.released, true);
+  assert(events.indexOf('retain-final-result') >= 0);
+  assert(events.indexOf('retain-final-result') < events.indexOf('task-clean'));
+  assert.equal(run.resultDecisionReceipt?.action, 'close-result');
+});
+
 test('failed named-discard retention holds the source instead of deleting learning data', async () => {
   const run = await heldResultForDiscard();
   finalRetentionError = new Error('Final artifacts unavailable');
