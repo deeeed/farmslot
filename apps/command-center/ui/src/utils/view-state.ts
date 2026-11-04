@@ -151,14 +151,20 @@ class ViewDetails extends AsyncDirective {
   private element?: HTMLDetailsElement;
   private field = viewToggleField('panels', '', false);
   private unsubscribe?: () => void;
-  render(_id: string, _defaultOpen = false) {
+  render(_id: string | import('@farmslot/protocol').ViewStateField<boolean>, _defaultOpen = false) {
     return nothing;
   }
-  update(part: Part, [id, defaultOpen = false]: [string, boolean?]) {
+  update(
+    part: Part,
+    [id, defaultOpen = false]: [
+      string | import('@farmslot/protocol').ViewStateField<boolean>,
+      boolean?,
+    ],
+  ) {
     if (part.type !== PartType.ELEMENT || !(part.element instanceof HTMLDetailsElement))
       return nothing;
     this.element = part.element;
-    this.field = viewToggleField('panels', id, defaultOpen);
+    this.field = typeof id === 'string' ? viewToggleField('panels', id, defaultOpen) : id;
     this.attach();
     this.restore();
     return nothing;

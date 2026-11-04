@@ -58,6 +58,8 @@ export interface FsDeleteParams extends FsConditionalParams {
 
 /** Error codes of the conditional file methods. */
 export const FsErrorCodes = {
+  /** The selected file is absent, locally or on its node. */
+  notFound: 'FS_NOT_FOUND',
   /** The precondition failed; the error's details are `FsConflictDetails`. */
   conflict: 'FS_CONFLICT',
   /** A conditional write to a node that does not advertise `conditionalWrites`. */

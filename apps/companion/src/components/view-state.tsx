@@ -24,7 +24,7 @@ import { Platform } from 'react-native';
 
 import {
   createViewStateContext,
-  selectedViewStateParams,
+  mergeViewStateParams,
   type ViewStateContext,
   type ViewStateField,
   type ViewStateHistory,
@@ -136,6 +136,6 @@ export function viewStateHref(
   params: Readonly<Record<string, string | readonly string[] | undefined>>,
 ): Href {
   return typeof href === 'object'
-    ? { ...href, params: { ...selectedViewStateParams(params), ...href.params } }
+    ? { ...href, params: mergeViewStateParams(params, href.params ?? {}) }
     : href;
 }

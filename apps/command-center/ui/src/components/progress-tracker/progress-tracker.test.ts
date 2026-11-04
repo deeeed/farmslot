@@ -1,5 +1,13 @@
 import { strict as assert } from 'node:assert';
-import { test } from 'node:test';
+import { afterEach, beforeEach, test } from 'node:test';
+
+import { installFakeViewState } from '../../testing/fake-view-state.js';
+
+let restoreView = () => {};
+beforeEach(() => {
+  restoreView = installFakeViewState();
+});
+afterEach(() => restoreView());
 
 import type { TaskStepProgress, TaskStepSubtaskProgress } from '@farmslot/protocol';
 

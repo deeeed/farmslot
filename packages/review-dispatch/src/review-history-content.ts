@@ -11,10 +11,13 @@ import {
   type ContentPrefetchWrite,
   createSha256,
   type GatewayResourceCache,
+  resourceQuery,
+  type ResourceReadMethod,
 } from '@farmslot/protocol/client-cache';
 
 import {
   loadReviewHistoryArtifacts,
+  mergeReviewHistoryArtifacts,
   type ReviewHistoryArtifact,
   reviewHistoryArtifactPaths,
   type ReviewHistoryArtifacts,
@@ -122,10 +125,10 @@ function hasHistory(run: Run): boolean {
     ),
   );
 }
-type ReviewPrefetchOptions = Pick<ContentPrefetchOptions, 'request' | 'readArtifact'> & {
+type ReviewPrefetchOptions = Pick<ContentPrefetchOptions, 'readArtifact'> & {
   cache: Pick<
     GatewayResourceCache,
-    'storeContent' | 'readContentByAlias' | 'openContentByAlias' | 'peekContentByAlias'
+    'retry' | 'storeContent' | 'readContentByAlias' | 'openContentByAlias' | 'peekContentByAlias'
   >;
 };
 
@@ -140,9 +143,25 @@ export function createReviewHistoryPrefetch(
       if (!hasHistory(run)) return;
       const held = await readReviewHistoryContent(cache, run);
       let refusal: unknown;
-      const read = async <T>(method: string, params: unknown): Promise<T> => {
+      const read = async <T>(method: ResourceReadMethod, params: unknown): Promise<T> => {
         try {
-          return await options.request<T>(method, params, write.signal);
+          const since = Date.now();
+          const result = await cache.retry(
+            resourceQuery<T>(method, params),
+            { origin: 'prefetch', cohort: write.cohort },
+            write.signal,
+          );
+          if (
+            write.signal.aborted ||
+            result.data === undefined ||
+            result.error ||
+            (result.observedAt ?? -Infinity) < since
+          )
+            throw Object.assign(
+              new Error(result.error?.message ?? 'Review content read did not complete'),
+              { code: result.error?.code },
+            );
+          return result.data;
         } catch (error) {
           if (
             error &&
@@ -213,4 +232,19 @@ export function createReviewHistoryPrefetch(
       await store(root, encoder.encode(JSON.stringify(entries)), 'artifact');
     },
   };
+}
+
+export interface ReviewHistoryLoadedContent {
+  identity: string;
+  artifacts: ReviewHistoryArtifacts;
+}
+/** Resident metadata is a preview until the complete same-identity read has hydrated. */
+export function reviewHistoryDisplayArtifacts(
+  identity: string,
+  loaded: ReviewHistoryLoadedContent | undefined,
+  preview: ReviewHistoryArtifacts | undefined,
+): ReviewHistoryArtifacts {
+  return loaded?.identity === identity
+    ? mergeReviewHistoryArtifacts(preview ?? {}, loaded.artifacts)
+    : (preview ?? loaded?.artifacts ?? {});
 }

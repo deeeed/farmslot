@@ -221,7 +221,7 @@ export function viewToggleOverrideField(
 
 /** Display parameters carried across sibling workspace tabs; no action or authority inputs. */
 export const VIEW_STATE_PARAMETERS: ReadonlySet<string> = new Set(
-  'panels round step flow lane sort q tag workers treeOpen branchFilesView branchFilesClosed changesView changesClosed problemSource commentFilter commentAuthor commentThread logFilter compareStep workerSession expandedSlot messages turnFiles rawClaims prReviews prMonitors folds terminalView reviewReport stage delivery diffMode devicePanes deviceLayout sidebarWidth diffFilter diffQuery diffPath mobileDiffMode claims evidenceFilter compareIndex mediaIndex prFilter subtasks mediaGroups familyCompareIndex assessmentConsumer finetuneProject flowNode nativeFilesTab nativeDirectory nativeFile nativeFileView projects machines'.split(
+  'panels round step flow lane sort q tag workers treeOpen branchFilesView branchFilesClosed changesView changesClosed problemSource commentFilter commentAuthor commentThread logFilter compareStep workerSession expandedSlot messages turnFiles rawClaims prReviews prMonitors folds terminalView reviewReport stage delivery diffMode devicePanes deviceLayout sidebarWidth diffFilter diffQuery diffPath mobileDiffMode claims evidenceFilter compareIndex mediaIndex mediaSource prFilter subtasks mediaGroups familyCompareIndex assessmentConsumer finetuneProject flowNode nativeFilesTab nativeDirectory nativeFile nativeFileView projects machines'.split(
     ' ',
   ),
 );
@@ -236,4 +236,31 @@ export function selectedViewStateParams(
         : [],
     ),
   );
+}
+
+/** An explicit new selection has its own index; reloading the same selection keeps it. */
+export function viewScopedIntegerField(
+  key: string,
+  scopeKey: string,
+  scope: string,
+  defaultValue = 0,
+): ViewStateField<number> {
+  const index = viewIntegerField(key, defaultValue);
+  const owner = viewTextField(scopeKey);
+  return {
+    key,
+    read: (params) => (owner.read(params) === scope ? index.read(params) : defaultValue),
+    write: (params, value) => {
+      index.write(params, value);
+      owner.write(params, value === defaultValue ? '' : scope);
+    },
+  };
+}
+
+/** Explicit destination selectors win; current display options survive narrowed selections. */
+export function mergeViewStateParams<T extends object>(
+  params: Readonly<Record<string, string | readonly string[] | undefined>>,
+  destination: T,
+) {
+  return { ...selectedViewStateParams(params), ...destination };
 }

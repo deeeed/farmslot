@@ -1,0 +1,1 @@
+- Add a reusable read-only probe for shared view restoration and cached review history.

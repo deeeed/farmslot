@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
+import { acceptanceClaimField } from '@farmslot/protocol';
 import {
   acceptanceClaimLabel,
   type AcceptanceClaimRow,
@@ -53,7 +54,7 @@ export function renderAcceptanceClaimList(
         data-ac-verdict=${verdict}
       >
         <strong class="ac-id">${claim.id}</strong>
-        <details class="gate-claim-text" ${viewDetails(`claim:${claim.id}`)}>
+        <details class="gate-claim-text" ${viewDetails(acceptanceClaimField(claim.id))}>
           <summary class="ac-text" title=${claim.text}>${claim.text}</summary>
           ${claim.detail ? html`<p>${claim.detail}</p>` : nothing}
           ${claim.origin

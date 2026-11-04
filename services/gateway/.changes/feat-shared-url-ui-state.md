@@ -1,0 +1,1 @@
+- Return a typed missing-file result for local and remote file reads so uncaptured review artifacts remain distinct from read failures.

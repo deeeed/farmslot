@@ -11,6 +11,7 @@ import {
   type AcceptanceEvidenceLink,
   type AcceptanceRegistration,
   type AcceptanceStatusLedger,
+  RUN_DETAIL_PANEL_DEFAULTS,
   viewListField,
 } from '@farmslot/protocol';
 import {
@@ -142,7 +143,7 @@ function TaskAcceptanceContent({
   const packageStatus = evidenceModel?.packageStatus;
   const [expanded, setExpanded] = useViewToggle(
     'run-acceptance',
-    initiallyExpanded || view.defaultOpen || Boolean(error),
+    initiallyExpanded ?? RUN_DETAIL_PANEL_DEFAULTS['run-acceptance'],
   );
   if (
     view.rows.length === 0 &&

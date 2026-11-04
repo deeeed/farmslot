@@ -88,13 +88,13 @@ export class RunCompare extends LitElement {
     (state) => {
       this.familySnapshot = state.data?.snapshot ?? null;
       this.familySnapshotError = state.error?.message ?? '';
-      if (!this.selectedStepName) this.selectedStepName = this.defaultStepName();
+      this.displayChoices.restore();
     },
   );
 
   private readonly displayChoices = new ViewStateBindings(this, [
     viewBinding(
-      viewTextField('compareStep'),
+      () => viewTextField('compareStep', this.defaultStepName()),
       () => this.selectedStepName,
       (value) => {
         this.selectedStepName = value;
@@ -139,7 +139,7 @@ export class RunCompare extends LitElement {
     this.familyQuery.setQuery(
       familyId ? resourceQuery(Methods.FAMILY_OBSERVABILITY_GET, { familyId }) : undefined,
     );
-    if (!this.runA || !this.runB) this.selectedStepName = '';
+    this.displayChoices.restore();
   }
 
   private syncStatus(): void {

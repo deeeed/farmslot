@@ -284,3 +284,12 @@ test('a conditional write to a node without conditionalWrites is refused before 
   await fsWrite({ slotId, path: 'a.txt', content: 'two' });
   assert.equal(await readFile(path.join(repoDir, 'a.txt'), 'utf8'), 'two');
 });
+
+test('missing local and remote fs.read files have the same typed public absence', async (t) => {
+  const { GatewayMethodError } = await import('../core/method-error.js');
+  for (const slot of [await localSlot(t), await remoteSlot(t, true)])
+    await assert.rejects(
+      fsRead({ slotId: slot.slotId, path: 'missing-review.json' }),
+      (error: unknown) => error instanceof GatewayMethodError && error.code === 'FS_NOT_FOUND',
+    );
+});

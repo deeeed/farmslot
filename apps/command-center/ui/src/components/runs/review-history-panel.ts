@@ -21,6 +21,7 @@ import {
   readReviewHistoryContent,
   type ReviewHistoryArtifacts,
   reviewHistoryCacheScope,
+  reviewHistoryDisplayArtifacts,
   type ReviewHistoryFinding,
   reviewHistoryIdentity,
   type ReviewHistoryRound,
@@ -88,6 +89,7 @@ export class ReviewHistoryPanel extends LitElement {
   }
   @state() private _historyArtifacts: ReviewHistoryArtifacts = {};
   private _historyIdentity = '';
+  private _historyLoadedIdentity = '';
   private _historyArtifactScope = '';
   private _historyPrincipal: string | null = null;
   private _artifactScope(run: Run) {
@@ -161,8 +163,10 @@ export class ReviewHistoryPanel extends LitElement {
             ).diff;
           },
         ));
-      if (current())
+      if (current()) {
         this._historyArtifacts = mergeReviewHistoryArtifacts(this._historyArtifacts, artifacts);
+        this._historyLoadedIdentity = identity;
+      }
     } catch (error) {
       if (current()) this._historyError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -176,10 +180,13 @@ export class ReviewHistoryPanel extends LitElement {
     const held = cache ? peekReviewHistoryContent(cache, this.run) : undefined;
     const history = reviewHistoryView(
       this.run,
-      held ??
-        (this._historyArtifactScope === this._artifactScope(this.run)
-          ? this._historyArtifacts
-          : {}),
+      reviewHistoryDisplayArtifacts(
+        this._historyIdentity,
+        this._historyArtifactScope === this._artifactScope(this.run)
+          ? { identity: this._historyLoadedIdentity, artifacts: this._historyArtifacts }
+          : undefined,
+        held,
+      ),
     );
     if (!history.roundCount && !history.segments.length && !history.chain.length) return nothing;
     const openArtifact = (path: string) => {

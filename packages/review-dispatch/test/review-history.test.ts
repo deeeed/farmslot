@@ -5,6 +5,7 @@ import type { AgentContext, ReviewAttempt, Run } from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
   createMemoryResourceStore,
+  resourceQuery,
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceCacheConformanceTransport } from '../../protocol/src/client-cache/conformance.js';
@@ -20,6 +21,7 @@ import {
   createReviewHistoryPrefetch,
   peekReviewHistoryContent,
   readReviewHistoryContent,
+  reviewHistoryDisplayArtifacts,
 } from '../src/review-history-content.js';
 import {
   reviewHistorySourceRequest,
@@ -1329,7 +1331,43 @@ test('background prefetch warms round reports and frozen diffs for immediate fir
     principalId: 'owner',
     principalGeneration: 0,
   });
-  transport.setConnection({ connected: true, id: 1 });
+  const capabilities = transport.connection.capabilities;
+  assert.ok(capabilities);
+  transport.setConnection({
+    connected: true,
+    id: 1,
+    capabilities: {
+      ...capabilities,
+      resourceChanges: {
+        version: 1,
+        epoch: 'conformance-epoch',
+        versionLists: false,
+        observedReads: 1,
+        workspaceReads: 1,
+      },
+    },
+  });
+  transport.request = async <T>(method: string, params: unknown) => {
+    // Real typed test transport keeps the request boundary generic.
+    const data =
+      method === 'git.diff'
+        ? {
+            diff: 'diff --git a/order.ts b/order.ts\n--- a/order.ts\n+++ b/order.ts\n@@ -1 +1 @@\n-old\n+new\n',
+          }
+        : { content: '', language: 'markdown' };
+    if ('diff' in data) data.diff += ' '.repeat(1024 * 1024);
+    if (method !== 'fs.read' && method !== 'git.diff') throw new Error(`Unexpected read ${method}`);
+    return {
+      data: structuredClone(data) as T,
+      resourceState: {
+        epoch: 'conformance-epoch',
+        dependencies: resourceQuery(method, params).dependencies.map((key) => ({
+          key,
+          revision: 0,
+        })),
+      },
+    };
+  };
   const store = createMemoryResourceStore();
   const cache = createGatewayResourceCache({ transport, store, contentBudgetBytes: 20_000_000 });
   let reads = 0;
@@ -1354,17 +1392,6 @@ test('background prefetch warms round reports and frozen diffs for immediate fir
           }),
         );
       throw Object.assign(new Error('Not captured'), { code: 'ARTIFACT_NOT_CAPTURED' });
-    },
-    async request<T>(method: string): Promise<T> {
-      // Real typed test transport keeps the request boundary generic.
-      const data =
-        method === 'git.diff'
-          ? {
-              diff: 'diff --git a/order.ts b/order.ts\n--- a/order.ts\n+++ b/order.ts\n@@ -1 +1 @@\n-old\n+new\n',
-            }
-          : { content: '' };
-      if ('diff' in data) data.diff += ' '.repeat(1024 * 1024);
-      return structuredClone(data) as T;
     },
   });
   try {
@@ -1411,4 +1438,49 @@ test('background prefetch warms round reports and frozen diffs for immediate fir
   } finally {
     await cache.dispose();
   }
+});
+
+test('complete current history restores diff controls beyond the resident working set', () => {
+  const complete = {
+    'history:git:round': { content: 'diff --git a/order.ts b/order.ts' },
+    report: { content: 'current' },
+  };
+  const preview = { report: { content: 'current' } };
+  assert.deepEqual(
+    reviewHistoryDisplayArtifacts('current', { identity: 'current', artifacts: complete }, preview),
+    complete,
+  );
+  const failedRefresh = { identity: 'current', artifacts: complete, error: 'Offline' };
+  assert.deepEqual(reviewHistoryDisplayArtifacts('current', failedRefresh, preview), complete);
+  assert.deepEqual(
+    reviewHistoryDisplayArtifacts(
+      'new',
+      { identity: 'old', artifacts: complete },
+      { report: { content: 'new' } },
+    ),
+    { report: { content: 'new' } },
+  );
+});
+
+test('failed-start live absence is not a read failure while a real failure remains visible', async () => {
+  const current = run();
+  current.agentContexts = [{ ...actor(1), status: 'failed' }];
+  const absent = await loadReviewHistoryArtifacts(
+    current,
+    async () => null,
+    async () => {
+      throw Object.assign(new Error('File not found'), { code: 'FS_NOT_FOUND' });
+    },
+    async () => '',
+  );
+  assert.ok(Object.values(absent).some((value) => value.notCaptured));
+  assert.ok(!Object.values(absent).some((value) => value.error));
+  const failed = await loadReviewHistoryArtifacts(
+    current,
+    async () => null,
+    async () => {
+      throw Object.assign(new Error('Read refused'), { code: 'AUTH_FORBIDDEN' });
+    },
+  );
+  assert.ok(Object.values(failed).some((value) => value.error));
 });

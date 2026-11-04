@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Modal, Platform, Pressable, Share, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { mergeViewStateParams } from '@farmslot/protocol';
 import {
   type CompanionViewLocation,
   resolveSharedViewLink,
@@ -69,8 +70,14 @@ export function FloatingQuickActions({
     selection?.pathname === '/unmapped-overlay' ? currentView : source,
   );
   const selected = useMemo(
-    () => ({ ...source, projects: filters.projects, machines: filters.machines, runFilters }),
-    [source, filters, runFilters],
+    () => ({
+      ...source,
+      params: mergeViewStateParams(params, source.params),
+      projects: filters.projects,
+      machines: filters.machines,
+      runFilters,
+    }),
+    [source, params, filters, runFilters],
   );
   const link = useMemo(
     () => resolveSharedViewLink({ companion: selected }, base, appScheme),

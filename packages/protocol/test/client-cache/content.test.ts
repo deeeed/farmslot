@@ -755,3 +755,35 @@ test('synchronous content previews follow the same eviction and owner fences as 
     await f.cache.dispose();
   }
 });
+
+test('an alias read sampled before forget cannot restore forgotten bytes', async () => {
+  const f = fixture();
+  try {
+    await f.put('forgotten', 20, 'prefetch', 'run', 'forgotten-round');
+    const original = f.store.getContentByAlias.bind(f.store);
+    let started!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.store.getContentByAlias = async (alias) => {
+      const row = await original(alias);
+      started();
+      await gate;
+      return row;
+    };
+    const pending = f.cache.readContentByAlias('forgotten-round');
+    await entered;
+    const saved = await original('forgotten-round');
+    assert.ok(saved);
+    await f.cache.forgetContent(saved);
+    release();
+    assert.equal(await pending, undefined);
+    assert.equal(f.cache.peekContentByAlias?.('forgotten-round'), undefined);
+  } finally {
+    await f.cache.dispose();
+  }
+});

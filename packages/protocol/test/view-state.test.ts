@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { acceptanceClaimField, runDetailPanelField } from '../src/surfaces/run-view-state.js';
 import {
   createViewStateContext,
   viewChoiceField,
   viewListField,
+  viewScopedIntegerField,
   type ViewStateHistory,
   viewStateRoutePatch,
   viewStateSearchParams,
@@ -130,4 +132,32 @@ test('panel IDs containing commas and explicit status-derived choices round-trip
   f.state.set(viewToggleOverrideField('subtasks', 'run:unit', true), false);
   assert.equal(f.state.get(viewToggleOverrideField('subtasks', 'run:unit', false)), false);
   assert.equal(f.state.get(viewToggleOverrideField('subtasks', 'run:unit', true)), false);
+});
+
+test('a gallery restores its index on reload but an explicit new item wins', () => {
+  const f = fixture('');
+  const first = viewScopedIntegerField('mediaIndex', 'mediaSource', 'artifact-a', 0);
+  f.state.set(first, 2);
+  assert.equal(
+    f.state.get(viewScopedIntegerField('mediaIndex', 'mediaSource', 'artifact-a', 0)),
+    2,
+  );
+  assert.equal(
+    f.state.get(viewScopedIntegerField('mediaIndex', 'mediaSource', 'artifact-b', 1)),
+    1,
+  );
+  f.state.set(first, 0);
+  assert.equal(new URLSearchParams(f.state.snapshot()).has('mediaIndex'), false);
+  assert.equal(new URLSearchParams(f.state.snapshot()).has('mediaSource'), false);
+});
+
+test('matching run acceptance and claim disclosures share defaults and URL encoding', () => {
+  const f = fixture('');
+  assert.equal(f.state.get(runDetailPanelField('run-acceptance')), true);
+  f.state.set(runDetailPanelField('run-acceptance'), false);
+  f.state.set(acceptanceClaimField('AC-1'), true);
+  assert.equal(new URLSearchParams(f.state.snapshot()).get('panels'), '!run-acceptance,claim:AC-1');
+  const linked = fixture(f.state.snapshot());
+  assert.equal(linked.state.get(runDetailPanelField('run-acceptance')), false);
+  assert.equal(linked.state.get(acceptanceClaimField('AC-1')), true);
 });

@@ -229,9 +229,16 @@ export function createGatewayResourceCache(
     options.contentBudgetBytes ?? defaultContentBudgetBytes,
     8 * 1024 * 1024,
   );
+  let residentVersion = 0;
   function forgetResident(key: ContentKey): void {
+    residentVersion++;
     for (const [alias, value] of residentContent)
       if (value.key.kind === key.kind && value.key.id === key.id) residentContent.delete(alias);
+  }
+  async function removeStoredContent(target: ResourceStore, key: ContentKey): Promise<void> {
+    forgetResident(key);
+    await target.deleteContent(key);
+    forgetResident(key);
   }
   function rememberResident(alias: string, key: ContentKey, data: Uint8Array): void {
     residentContent.delete(alias);
@@ -1232,8 +1239,7 @@ export function createGatewayResourceCache(
                 if (!current()) return;
               }
               for (const key of victims.content) {
-                forgetResident(key);
-                await writingStore.deleteContent(key);
+                await removeStoredContent(writingStore, key);
                 if (!current()) return;
               }
             } else if (retention) {
@@ -1412,12 +1418,22 @@ export function createGatewayResourceCache(
   }
 
   async function readAliasedContent(alias: string, open: boolean): Promise<Uint8Array | undefined> {
+    const version = residentVersion;
+    const owner = hydrationOwnerVersion;
+    const incarnation = storeVersion;
     const saved = await readStoredContent(
       (target) => target.getContentByAlias(alias),
       open
         ? (target, { kind, id }) => target.touchContent({ kind, id }, Date.now(), 'opened')
         : undefined,
     );
+    if (
+      version !== residentVersion ||
+      owner !== hydrationOwnerVersion ||
+      incarnation !== storeVersion ||
+      disposed
+    )
+      return undefined;
     if (saved) rememberResident(alias, saved, saved.data);
     return saved?.data;
   }
@@ -1488,8 +1504,7 @@ export function createGatewayResourceCache(
           if (!current()) return false;
         }
         for (const victim of victims.content) {
-          forgetResident(victim);
-          await target.deleteContent(victim);
+          await removeStoredContent(target, victim);
           if (!current()) return false;
         }
         await target.putContent({
@@ -1669,7 +1684,7 @@ export function createGatewayResourceCache(
       await updateStore(
         target,
         () => target === store && !target.deleted && ownerVersion === hydrationOwnerVersion,
-        () => target.deleteContent(contentKey(key)),
+        () => removeStoredContent(target, contentKey(key)),
       );
     },
     peekContentByAlias: (alias) => residentContent.get(alias)?.data.slice(),

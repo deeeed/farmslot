@@ -17,6 +17,7 @@ import {
   reviewHistoryArtifactPaths,
   type ReviewHistoryArtifacts,
   reviewHistoryCacheScope,
+  reviewHistoryDisplayArtifacts,
   type ReviewHistoryFinding,
   reviewHistoryIdentity,
   type ReviewHistoryRound,
@@ -50,6 +51,7 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
     scope: string;
     artifacts: ReviewHistoryArtifacts;
     error?: string;
+    errorIdentity?: string;
   }>();
   const currentCache = getResourceCache();
   const held = currentCache ? peekReviewHistoryContent(currentCache, run) : undefined;
@@ -105,7 +107,8 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
       .catch((error: unknown) => {
         if (!disposed && current())
           setSaved((previous) => ({
-            identity,
+            identity: previous?.scope === artifactScope ? previous.identity : '',
+            errorIdentity: identity,
             scope: artifactScope,
             artifacts: previous?.scope === artifactScope ? previous.artifacts : {},
             error: error instanceof Error ? error.message : String(error),
@@ -151,14 +154,19 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
       void inspect(round, finding),
     ...reviewHistoryView(
       run,
-      held ?? (saved?.scope === artifactScope ? saved.artifacts : {}),
+      reviewHistoryDisplayArtifacts(
+        identity,
+        saved?.scope === artifactScope ? saved : undefined,
+        held,
+      ),
       chain,
     ),
-    error: saved?.identity === identity ? saved.error : undefined,
+    error: (saved?.errorIdentity ?? saved?.identity) === identity ? saved?.error : undefined,
     loading:
       status === 'connected' &&
       !held &&
       saved?.identity !== identity &&
+      saved?.errorIdentity !== identity &&
       reviewHistoryArtifactPaths(run).length > 0,
     refresh: () => setRevision((value) => value + 1),
   };

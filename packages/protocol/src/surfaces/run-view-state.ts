@@ -26,3 +26,7 @@ export function runDetailPanelField(id: RunDetailPanelId) {
 
 /** Evidence at the decision's recorded scope, without selecting a later recipe run. */
 export const DECISION_EVIDENCE_RECIPE_RUN_PARAM = 'decision-evidence';
+
+export function acceptanceClaimField(id: string) {
+  return viewToggleField(RUN_VIEW_FIELDS.panels.key, `claim:${id}`, false);
+}

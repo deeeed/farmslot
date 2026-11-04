@@ -7,6 +7,7 @@ import {
   resolveSharedViewLink,
   viewLinkFromRoute,
 } from '../src/surfaces/view-links.js';
+import { mergeViewStateParams } from '../src/surfaces/view-state.js';
 
 const base = 'https://cc.example.org/operations/';
 
@@ -473,4 +474,66 @@ test('native artifact links open the actual evidence route with the selected own
   assert.equal(url.searchParams.get('evidence'), 'artifacts/proof.png');
   assert.equal(url.searchParams.get('ac'), 'AC-1');
   assert.equal(url.searchParams.get('recipeRun'), 'decision-evidence');
+});
+
+test('native-only workspace and family selections share without relaxing web mappings', () => {
+  for (const location of [
+    {
+      pathname: '/workspace/run/run-1/files',
+      params: { artifact: 'artifacts/result.md', round: ['one', 'two'] },
+    },
+    { pathname: '/workspace/run/run-1/diff', params: { path: 'order.ts' } },
+    {
+      pathname: '/family/family-1',
+      params: { section: 'changes' },
+      unavailableMessage: 'Web view unavailable',
+    },
+  ]) {
+    const native = resolveSharedViewLink(
+      { companion: location },
+      undefined,
+      'farmslot-development://',
+    );
+    assert.equal(native.status, 'available');
+    if (native.status === 'available') {
+      assert.equal(new URL(native.url).pathname, location.pathname);
+      if ('path' in location.params)
+        assert.equal(new URL(native.url).searchParams.get('path'), 'order.ts');
+      if ('section' in location.params)
+        assert.equal(new URL(native.url).searchParams.get('section'), 'changes');
+    }
+    assert.equal(resolveSharedViewLink({ companion: location }, base).status, 'unavailable');
+  }
+  assert.equal(
+    resolveSharedViewLink(
+      { companion: { pathname: '/connection', params: { token: 'private' } } },
+      undefined,
+      'farmslot-development://',
+    ).status,
+    'unavailable',
+  );
+});
+
+test('a registered conversation selection keeps allowed current display parameters', () => {
+  const link = resolveSharedViewLink(
+    {
+      companion: {
+        pathname: '/native',
+        params: mergeViewStateParams(
+          { folds: '7,!9', terminalView: 'history', familyCompareIndex: '2', token: 'private' },
+          { sessionId: 'session', executionNodeId: 'macpro', sessionObserved: '1' },
+        ),
+      },
+    },
+    undefined,
+    'farmslot-development://',
+  );
+  assert.equal(link.status, 'available');
+  if (link.status === 'available') {
+    const target = new URL(link.url);
+    assert.equal(target.searchParams.get('folds'), '7,!9');
+    assert.equal(target.searchParams.get('terminalView'), 'history');
+    assert.equal(target.searchParams.get('familyCompareIndex'), '2');
+    assert.equal(target.searchParams.has('token'), false);
+  }
 });

@@ -817,3 +817,39 @@ test('an unavailable node is quiet beside its choices, without a page-level raw 
     /Session inventory is incomplete|socket disconnected|native-target-unavailable/,
   );
 });
+
+test('the addressed session keeps URL message and file disclosures during initialization', (t) => {
+  const original = new Map(
+    ['location', 'history'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  const location = {
+    hash: '#native?sessionId=worker-session&executionNodeId=macpro&messages=command-a&turnFiles=1%3Aa.ts&folds=7,!9',
+  };
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      pushState(_data: unknown, _title: string, url: string) {
+        location.hash = url;
+      },
+    },
+  });
+  const view = new NativeSessionView();
+  Object.defineProperty(view, 'schedule', { value: () => undefined });
+  const bindings = Reflect.get(view, 'displayChoices');
+  bindings.hostConnected();
+  t.after(() => {
+    bindings.hostDisconnected();
+    for (const [key, descriptor] of original) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+  Reflect.get(view, 'select').call(view, 'worker-session', 'macpro');
+  bindings.hostUpdate();
+  assert.deepEqual([...Reflect.get(view, 'expandedMessages')], ['command-a']);
+  assert.deepEqual([...Reflect.get(view, 'openTurnFiles')], ['1:a.ts']);
+  assert.match(location.hash, /messages=command-a/);
+  assert.equal(Reflect.get(view, 'foldOpen').get(7), true);
+  assert.equal(Reflect.get(view, 'foldOpen').get(9), false);
+});

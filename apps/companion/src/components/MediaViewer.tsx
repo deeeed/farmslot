@@ -27,7 +27,8 @@ import {
   formatEvidenceReviewVideoTime,
   loadRecordingEvidenceReview,
 } from '@farmslot/adapter-sdk/evidence';
-import { viewIntegerField, viewToggleMapField } from '@farmslot/protocol';
+import { viewScopedIntegerField, viewToggleMapField } from '@farmslot/protocol';
+import { createSha256 } from '@farmslot/protocol/client-cache';
 import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
 import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
@@ -130,10 +131,32 @@ export function MediaViewer({
     0,
     Math.min(requestedIndex >= 0 ? requestedIndex : initialIndex, viewerItems.length - 1),
   );
+  const mediaSource = useMemo(() => {
+    const artifact = viewerItems[clampedInitialIndex]?.sharedArtifact;
+    let identity: string;
+    if (artifact) identity = JSON.stringify([artifact.runId, artifact.recipeRunId, artifact.path]);
+    else {
+      const source = new URL(
+        viewerItems[clampedInitialIndex]?.uri ?? uri ?? '',
+        'https://media.invalid',
+      );
+      source.username = '';
+      source.password = '';
+      for (const key of ['token', 'password', 'code']) source.searchParams.delete(key);
+      identity = source.href;
+    }
+    const hash = createSha256();
+    hash.update(new TextEncoder().encode(identity));
+    return hash.hex();
+  }, [uri, clampedInitialIndex, viewerItems]);
   const [selectedIndex, setCurrentIndex] = useViewChoice(
-    viewIntegerField('mediaIndex', clampedInitialIndex),
+    viewScopedIntegerField('mediaIndex', 'mediaSource', mediaSource, clampedInitialIndex),
   );
   const currentIndex = Math.max(0, Math.min(selectedIndex, viewerItems.length - 1));
+  const closeViewer = () => {
+    setCurrentIndex(clampedInitialIndex);
+    onClose();
+  };
   const [zoomedUri, setZoomedUri] = useState<string | null>(null);
   const [changedVideoItems, setChangedVideoItems] = useState<ReadonlySet<string>>(() => new Set());
   const markVideoSelectionChanged = useCallback((uri: string) => {
@@ -168,7 +191,7 @@ export function MediaViewer({
       visible={visible}
       transparent
       animationType="fade"
-      onRequestClose={onClose}
+      onRequestClose={closeViewer}
       sharedView={mediaShareView(
         current?.sharedArtifact,
         Boolean(current && changedVideoItems.has(current.uri)),
@@ -252,7 +275,7 @@ export function MediaViewer({
           )}
           <Pressable
             style={[styles.closeButton, { top: topInset + 12 }]}
-            onPress={onClose}
+            onPress={closeViewer}
             testID={testID ? `${testID}-close` : undefined}
           >
             <Text style={styles.closeText}>Close</Text>
