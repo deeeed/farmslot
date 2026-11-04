@@ -159,8 +159,17 @@ export async function createBrowserSqliteResourceStore(
 ): Promise<ResourceStore> {
   try {
     const acquired = await acquireOwner();
-    if (acquired)
-      return await acquired.client.open(options.scope, options.databaseName, options.schemaVersion);
+    if (acquired) {
+      const store = await acquired.client.open(
+        options.scope,
+        options.databaseName,
+        options.schemaVersion,
+      );
+      const writeLock = `farmslot-resource-store-write-v1:${resourceStoreScopeId(options.scope)}`;
+      store.withWriteLock = async <T>(write: () => Promise<T>): Promise<T> =>
+        await navigator.locks.request(writeLock, write);
+      return store;
+    }
   } catch (error) {
     fallbackReason = error instanceof Error ? error.message : String(error);
     owner?.close();

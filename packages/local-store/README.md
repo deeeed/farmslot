@@ -4,6 +4,7 @@ Private SQLite adapters for the ADR-071 client cache. Command Center and its
 desktop app use a dedicated SQLite WebAssembly worker per tab on `opfs-sahpool`.
 The workers share one durable database through a Web Lock held per operation;
 SQLite connections close and the VFS releases its access handles between requests.
+A scoped write lock covers each complete cache admission/eviction unit across tabs.
 Companion uses `expo-sqlite` in its platform cache directory. Protocol owns the
 portable contract and never imports this package.
 

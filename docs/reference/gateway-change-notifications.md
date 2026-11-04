@@ -283,7 +283,8 @@ waiting. Streams are never stored, and commands never pass through the store.
 3. Browser tabs share one durable database. Each worker holds the same Web Lock
    for one store operation, closes its SQLite connections, and pauses the VFS to
    release OPFS handles before another tab proceeds. A tab closing does not
-   change another tab's storage. Stored results never replace newer `ready` data.
+   change another tab's storage. A scoped write lock spans cache budget checks,
+   eviction and insertion across requests. Stored results never replace newer `ready` data.
 4. The store key is the gateway connection profile id where the client has one,
    the normalized gateway URL, the principal id and the principal generation.
    Command Center in a browser has no profile id and uses the URL. With

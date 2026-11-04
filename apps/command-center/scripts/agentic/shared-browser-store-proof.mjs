@@ -32,7 +32,7 @@ async function tab(principal = scope.principalId) {
         scope,
         onNotice: (notice) => notices.push(notice),
       });
-      return { api, store, notices };
+      return { api, store, notices, scope };
     },
     { moduleUrl, scope: { ...scope, principalId: principal } },
   );
@@ -106,6 +106,73 @@ try {
   const parallelMs = Date.now() - started;
   assert.equal((await second.handle.evaluate(({ store }) => store.listQueries())).length, 14);
 
+  const budgetAdmissions = [];
+  const cacheModule = `/@fs${fileURLToPath(new URL('../../../../packages/protocol/src/client-cache/index.ts', import.meta.url))}`;
+  const transportModule = `/@fs${fileURLToPath(new URL('../../../../packages/protocol/src/client-cache/conformance.ts', import.meta.url))}`;
+  for (const origin of ['opened', 'prefetch']) {
+    const principal = `${scope.principalId}-budget-${origin}`;
+    const firstBudget = await tab(principal);
+    const secondBudget = await tab(principal);
+    const createCache = async ({ handle }) =>
+      handle.evaluate(
+        async (fixture, { cacheModule, transportModule }) => {
+          const { createGatewayResourceCache, gitBlobHash } = await import(cacheModule);
+          const { ResourceCacheConformanceTransport } = await import(transportModule);
+          const transport = new ResourceCacheConformanceTransport(fixture.scope);
+          transport.setConnection({ connected: true, id: 1 });
+          fixture.cache = createGatewayResourceCache({
+            transport,
+            store: fixture.store,
+            contentBudgetBytes: 1000,
+          });
+          fixture.put = (label, size, origin) => {
+            const data = new TextEncoder().encode(label.padEnd(size, '.'));
+            return fixture.cache.storeContent({
+              key: { kind: 'blob', id: gitBlobHash(data) },
+              data,
+              origin,
+              cohort: 'gate',
+            });
+          };
+        },
+        { cacheModule, transportModule },
+      );
+    await createCache(firstBudget);
+    await createCache(secondBudget);
+    const bytes = origin === 'opened' ? 600 : 300;
+    assert(
+      await firstBudget.handle.evaluate(
+        (fixture, { bytes, origin }) => fixture.put('seed', bytes, origin),
+        { bytes, origin },
+      ),
+    );
+    const start = Date.now() + 100;
+    const admissions = await Promise.all(
+      [firstBudget, secondBudget].map(({ handle }, index) =>
+        handle.evaluate(
+          async (fixture, { start, index, bytes, origin }) => {
+            while (Date.now() < start) await new Promise((resolve) => setTimeout(resolve, 1));
+            return fixture.put(`tab-${index}`, bytes, origin);
+          },
+          { start, index, bytes, origin },
+        ),
+      ),
+    );
+    assert(admissions.every(Boolean));
+    const totals = await firstBudget.handle.evaluate(({ store }) => store.byteTotals());
+    const cap = origin === 'opened' ? 1000 : 500;
+    assert(
+      totals.content <= cap,
+      `Concurrent ${origin} admission exceeded ${cap}: ${totals.content}`,
+    );
+    budgetAdmissions.push({ origin, cap, storedBytes: totals.content });
+    await firstBudget.handle.evaluate(async ({ cache, store }) => {
+      await store.deleteAll();
+      await cache.dispose();
+    });
+    await secondBudget.handle.evaluate(({ cache }) => cache.dispose());
+  }
+
   const other = await tab(`${scope.principalId}-other`);
   assert.equal(await other.handle.evaluate(({ store }) => store.getQuery('from-first')), undefined);
   await other.handle.evaluate(({ store }, entry) => store.putQuery(entry), query('other-scope', 3));
@@ -120,7 +187,7 @@ try {
         scope,
         onNotice: (notice) => notices.push(notice),
       });
-      return { api, store, notices };
+      return { api, store, notices, scope };
     },
     { moduleUrl, scope },
   );
@@ -221,10 +288,9 @@ try {
       let observation;
       let ready = false;
       do {
-        const connected = await page.evaluate(
-          async () =>
-            (await import('/src/gateway-client.ts')).gateway.connectionState === 'connected',
-        );
+        const connected = await page
+          .locator('fleet-summary-bar')
+          .evaluate((view) => view.connection === 'connected');
         observation = await notice.evaluate(async (view) => ({
           diagnostics: await view.resourceStoreDiagnostics(),
           queries: (await view.resourceStoreQueryMetadata()).length,
@@ -243,6 +309,7 @@ try {
   }
   const result = {
     status: 'PASS',
+    budgetAdmissions,
     applicationTabs,
     sharedReadsAndWrites: true,
     binaryContent: blob.bytes,

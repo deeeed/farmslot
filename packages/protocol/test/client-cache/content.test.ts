@@ -704,3 +704,33 @@ test('a run blob promoted to the gate survives later run prefetch', async (t) =>
     await cache.dispose();
   }
 });
+
+for (const origin of ['opened', 'prefetch'] as const) {
+  test(`shared-store admission keeps the ${origin} budget across independent caches`, async () => {
+    let tail = Promise.resolve();
+    const store = Object.assign(createMemoryResourceStore(), {
+      withWriteLock<T>(write: () => Promise<T>): Promise<T> {
+        const result = tail.then(write);
+        tail = result.then(
+          () => undefined,
+          () => undefined,
+        );
+        return result;
+      },
+    });
+    const first = fixture(1000, store);
+    const second = fixture(1000, store);
+    const bytes = origin === 'opened' ? 600 : 300;
+    try {
+      assert(await first.put('initial', bytes, origin, 'gate'));
+      const accepted = await Promise.all([
+        first.put('first-tab', bytes, origin, 'gate'),
+        second.put('second-tab', bytes, origin, 'gate'),
+      ]);
+      assert(accepted.every(Boolean));
+      assert((await store.byteTotals()).content <= (origin === 'opened' ? 1000 : 500));
+    } finally {
+      await Promise.all([first.cache.dispose(), second.cache.dispose()]);
+    }
+  });
+}
