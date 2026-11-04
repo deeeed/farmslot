@@ -8,6 +8,8 @@ Preparation installs website dependencies and the isolated recipe dependency, th
 
 The bundled `smoke` follows the website's actual Home and Projects navigation. A smoke pass establishes website readiness, not acceptance of every future change. Author task recipes for changed behavior.
 
+Code checks run only through the checklist's frozen `ci.local_check` mark and receipt. The fixture lints changed, existing JS/TS files, including untracked files, and excludes the prepared `.agent` runtime. Full builds and global checks stay in CI. Reviewers read the diff, recorded CI results, receipts and evidence without running tests, builds, recipes, installs or probes; this pack has no review template override.
+
 For development validation before the runtime release, `SITEED_WEB_ADAPTER_TARBALL` selects an explicit local packed candidate during prepare. Normal workers never set it. Record the candidate digest and source head with evidence; an unpublished candidate is not a registry release.
 
 ## Add another web project

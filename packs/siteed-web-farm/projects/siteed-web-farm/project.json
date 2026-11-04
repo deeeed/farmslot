@@ -27,7 +27,7 @@
     }
   },
   "ci": {
-    "local_check": "corepack yarn lint && corepack yarn build"
+    "local_check": "node .agent/ci-local.mjs"
   },
   "command_env": {
     "unset": ["VERCEL_TOKEN", "VERCEL_ORG_ID", "VERCEL_PROJECT_ID"],
@@ -65,7 +65,7 @@
     "profiles": [
       {
         "id": "build",
-        "title": "Lint + production build",
+        "title": "Changed-file CI + website proof",
         "template_id": "qa/site-build"
       }
     ]
@@ -87,6 +87,10 @@
   },
   "fixtures": {
     "templates": [
+      {
+        "src": "ci-local.mjs",
+        "dst": ".agent/ci-local.mjs"
+      },
       {
         "src": "recipe-tools",
         "dst": ".agent/recipe-tools"
