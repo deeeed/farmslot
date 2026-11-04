@@ -176,9 +176,11 @@ async function descriptionCheckSection(
 
 ## Before-evidence provenance
 
+These gateway-owned source-identity rules take precedence over project-pack git_ref and branch checks, including retained checklists. Project requirements for behavior and acceptance evidence still apply.
+
 Recorded baseline: ${baseline.baseSha ?? 'unavailable'}. Full publication merge base: ${baseline.comparison?.baseSha ?? 'unavailable'}, selected head: ${baseline.comparison?.headSha ?? 'unavailable'}.
 
-Before-only captures may use either base with clean provenance on the run branch or detached. A warm delta is not a baseline. After and standalone captures require the clean selected head; captured inventory and manifest checks still apply.
+Before-only captures require clean provenance on the run branch or detached, with git_ref equal to either captured base. A warm delta is not a baseline. After and standalone captures require the clean selected head; captured inventory and manifest checks still apply.
 `;
 }
 

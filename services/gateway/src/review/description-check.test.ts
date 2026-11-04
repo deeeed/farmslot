@@ -232,7 +232,8 @@ test('the rendered review runs the pre-check on the slot checkout', async (t) =>
   assert.doesNotMatch(section, /Not run/);
   assert.ok(section.includes(`Recorded baseline: ${'d'.repeat(40)}`));
   assert.ok(section.includes(`Full publication merge base: ${baseSha}, selected head: ${headSha}`));
-  assert.match(section, /Before-only captures may use either base/);
+  assert.match(section, /take precedence over project-pack git_ref and branch checks/);
+  assert.match(section, /Project requirements for behavior and acceptance evidence still apply/);
 });
 
 test('a pre-check whose diff fails says Not run, never None found', async (t) => {

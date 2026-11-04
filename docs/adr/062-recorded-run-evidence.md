@@ -1197,7 +1197,7 @@ identity, never a moving branch or the checkout's later HEAD.
 Clean provenance, branch ownership, captured inventory and immutable closure
 checks still apply. After and standalone captures still require the clean
 selected head. Unrelated ancestors require the existing operator attestation.
-Review guidance must accept the same baseline identities as publication.
+Review guidance must accept the same baseline identities as publication. The gateway owns source-identity validation, including when a retained pack checklist has an older baseline rule.
 
 ### Rationale and consequences
 

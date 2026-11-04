@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   allocateReviewerContext,
+  DEFAULT_BRANCH,
   isTerminalRunStatus,
   type ReviewDiffSnapshot,
   type ReviewMode,
@@ -12,7 +13,7 @@ import { reviewArtifactDir } from '@farmslot/review-dispatch';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
-import { loadProjectVars, loadSlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { readEvalReviewContribution, recordEvalJudgeResult } from '../evals/judge.js';
@@ -112,6 +113,7 @@ import {
   captureReviewDeltaSnapshot,
   captureReviewSnapshot,
   durationBetween,
+  preferredRemoteReviewBaseRef,
   readPersistedReviewSnapshot,
   removeSlotFiles,
 } from './snapshots.js';
@@ -516,21 +518,25 @@ async function runNativeReviewAttempt(
           input.mode === 'warm' || delta
             ? { source: 'unavailable', capturedAt: snapshot.snapshot.capturedAt }
             : snapshot.snapshot;
-        if (
-          (input.mode === 'warm' || delta) &&
-          snapshot.snapshot.baseRef &&
-          snapshot.snapshot.headSha
-        ) {
+        if ((input.mode === 'warm' || delta) && snapshot.snapshot.headSha) {
+          const configuredBase =
+            baseRef ??
+            (getProjectField(
+              (await loadProjectVars(original.project)).projectJson,
+              'default_branch',
+            ) ||
+              DEFAULT_BRANCH);
+          const publicationBaseRef = preferredRemoteReviewBaseRef(configuredBase) ?? configuredBase;
           const base = await execOnSlot(
             vars,
-            `git merge-base ${shellQuote(snapshot.snapshot.baseRef)} ${shellQuote(snapshot.snapshot.headSha)}`,
+            `git merge-base ${shellQuote(publicationBaseRef)} ${shellQuote(snapshot.snapshot.headSha)}`,
             { timeout: 10_000 },
           );
           publicationComparison =
             base.exitCode === 0 && /^[a-f0-9]{40}$/iu.test(base.stdout.trim())
               ? {
                   source: 'local-git',
-                  baseRef: snapshot.snapshot.baseRef,
+                  baseRef: publicationBaseRef,
                   baseSha: base.stdout.trim(),
                   headSha: snapshot.snapshot.headSha,
                   capturedAt: publicationComparison.capturedAt,
