@@ -1,0 +1,1 @@
+- Accept clean before evidence at the frozen publication merge base after merging the base branch, and give reviewers the same provenance rules.

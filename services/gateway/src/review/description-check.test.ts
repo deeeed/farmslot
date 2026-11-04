@@ -200,6 +200,9 @@ test('the rendered review runs the pre-check on the slot checkout', async (t) =>
     JSON.stringify({ before_after_pairs: [BOTH_STATES.before_after_pairs[1]] }),
   );
 
+  const baseSha = await git(repo, 'merge-base', 'origin/main', 'HEAD');
+  const headSha = await git(repo, 'rev-parse', 'HEAD');
+  updateRun(run.id, { worktreeHeadAtDispatch: 'd'.repeat(40) });
   const rendered = await expandReviewTemplate(
     {
       slotId: 'description-check',
@@ -214,11 +217,23 @@ test('the rendered review runs the pre-check on the slot checkout', async (t) =>
     taskDir,
     run.id,
     'static-code',
+    undefined,
+    {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha,
+      headSha,
+      capturedAt: new Date().toISOString(),
+    },
   );
   const section = rendered.slice(rendered.indexOf('## Description and evidence check'));
   assert.match(section, /- `DESCRIPTION_CLAIM_NOT_IN_DIFF`: The description claims a removal/);
   assert.match(section, /- `FLAG_STATE_EVIDENCE_MISSING`: .*"flag off"/);
   assert.doesNotMatch(section, /Not run/);
+  assert.ok(section.includes(`Recorded baseline: ${'d'.repeat(40)}`));
+  assert.ok(section.includes(`Full publication merge base: ${baseSha}, selected head: ${headSha}`));
+  assert.match(section, /take precedence over project-pack git_ref and branch checks/);
+  assert.match(section, /Project requirements for behavior and acceptance evidence still apply/);
 });
 
 test('a pre-check whose diff fails says Not run, never None found', async (t) => {

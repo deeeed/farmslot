@@ -25,6 +25,8 @@ test(
     const output = process.env.FARMSLOT_MULTI_ATTEMPT_PROOF_OUT;
     assert.ok(output);
     const root = await mkdtemp('/tmp/multi-attempt-rpc-');
+    const statusFile = path.join(root, 'proof-status.json');
+    process.env.FARMSLOT_TEST_STATUS_FILE = statusFile;
     const project = 'baseline-proof';
     const slotId = 'proof-slot';
     const repo = path.join(root, 'slot');
@@ -55,9 +57,29 @@ test(
     await writeFile(path.join(repo, '.gitignore'), '.task/\n');
     git('add', '.gitignore');
     git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'Fixture source');
-    const headSha = git('rev-parse', 'HEAD');
+    const dispatchSha = git('rev-parse', 'HEAD');
+    let headSha = dispatchSha;
+    let mergeBaseSha = dispatchSha;
+    const mergedBase = process.env.FARMSLOT_MULTI_ATTEMPT_MERGED_BASE === '1';
     git('update-ref', 'refs/remotes/origin/main', headSha);
     git('switch', '-qc', 'feature');
+    if (mergedBase) {
+      await writeFile(path.join(repo, 'feature.txt'), 'Feature change\n');
+      git('add', 'feature.txt');
+      git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'Feature change');
+      git('switch', '-q', 'main');
+      await writeFile(path.join(repo, 'upstream.txt'), 'Upstream change\n');
+      git('add', 'upstream.txt');
+      git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'Upstream change');
+      mergeBaseSha = git('rev-parse', 'HEAD');
+      git('update-ref', 'refs/remotes/origin/main', mergeBaseSha);
+      git('switch', '-q', 'feature');
+      git('-c', 'commit.gpgsign=false', 'merge', '--no-ff', '--no-edit', 'origin/main');
+      headSha = git('rev-parse', 'HEAD');
+      assert.equal(git('merge-base', 'origin/main', headSha), mergeBaseSha);
+      assert.notEqual(mergeBaseSha, dispatchSha);
+    }
+
     await writeFile(
       path.join(root, 'projects', project, 'project.json'),
       JSON.stringify({ name: project, default_branch: 'main', hooks: {} }),
@@ -75,7 +97,7 @@ test(
       }),
     );
     await writeFile(
-      path.join(root, '.farm-status.json'),
+      statusFile,
       JSON.stringify({
         slots: [
           {
@@ -116,6 +138,17 @@ test(
         }),
       );
     }
+    if (mergedBase) {
+      const provenanceFile = path.join(
+        f.taskDir,
+        'artifacts',
+        f.baselineRoot,
+        'product-provenance.json',
+      );
+      const provenance: unknown = JSON.parse(await readFile(provenanceFile, 'utf8'));
+      assert.ok(typeof provenance === 'object' && provenance !== null);
+      await writeFile(provenanceFile, JSON.stringify({ ...provenance, git_ref: mergeBaseSha }));
+    }
     await cp(f.taskDir, workerTask, { recursive: true });
     await mkdir(taskDir, { recursive: true });
     await writeFile(path.join(taskDir, 'TASK.md'), '# Disposable publication proof\n');
@@ -124,10 +157,23 @@ test(
       path.join(workerTask, 'artifacts/pr-description.md'),
       '## Summary\nA second network proof at the same source revision.\n',
     );
-    const declaration = {
-      version: 1,
-      standalone: [{ label: 'Second network and restart', file: `${f.baselineRoot}/proof.png` }],
-    };
+    const declaration = mergedBase
+      ? {
+          version: 1,
+          before_after_pairs: [
+            {
+              label: 'Merged baseline',
+              before: `${f.baselineRoot}/proof.png`,
+              after: `${f.headRoot}/proof.png`,
+            },
+          ],
+        }
+      : {
+          version: 1,
+          standalone: [
+            { label: 'Second network and restart', file: `${f.baselineRoot}/proof.png` },
+          ],
+        };
     await writeFile(
       path.join(workerTask, 'artifacts/evidence-manifest.json'),
       JSON.stringify(declaration),
@@ -157,7 +203,7 @@ test(
       taskFile: path.join(taskDir, 'TASK.md'),
       branch: 'feature',
       status: 'needs-decision',
-      worktreeHeadAtDispatch: headSha,
+      worktreeHeadAtDispatch: dispatchSha,
       recordedEvidenceContractVersion: 1,
       decisions: [
         {
@@ -200,6 +246,11 @@ test(
     assert.ok(ready?.kind === 'ready' && ready.prPackage);
     const prepared = ready.prPackage;
     assert.equal(prepared.headSha, headSha);
+    if (mergedBase) {
+      assert.equal(prepared.reviewSnapshot?.baseSha, mergeBaseSha);
+      assert.equal(prepared.reviewSnapshot?.headSha, headSha);
+      assert.equal(refreshed.run.worktreeHeadAtDispatch, dispatchSha);
+    }
     assert.ok(
       prepared.evidenceManifest?.some(
         (entry) => entry.path === `artifacts/${f.baselineRoot}/trace.json`,
@@ -222,6 +273,7 @@ test(
       prepared.selectedEvidenceKeys ?? [],
       prepared.artifactBundle,
       headSha,
+      prepared.reviewSnapshot,
     );
     const reread = await fixture.client.call<{ run: Run }>(Methods.RUN_GET, { runId: run.id });
     assert.deepEqual(
@@ -255,6 +307,9 @@ test(
       JSON.stringify(
         {
           status: 'PASS',
+          mergedBase,
+          dispatchSha,
+          mergeBaseSha,
           runId: run.id,
           headSha,
           authenticatedRefresh: true,

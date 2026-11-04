@@ -18,6 +18,7 @@ import {
   type PublicationTarget,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  type ReviewDiffSnapshot,
   type ReviewPolicy,
   type ReviewStatus,
   type Run,
@@ -418,9 +419,9 @@ export async function buildPreparedDraftPrBody(
   report: Awaited<ReturnType<typeof readWorkerReport>>,
   artifacts: ArtifactRef[],
   baseBranch: string,
-  options: { tolerateMissingSlot?: boolean } = {},
+  options: { tolerateMissingSlot?: boolean; publicationComparison?: ReviewDiffSnapshot } = {},
 ): Promise<string> {
-  const draftBody = await buildDraftPrBody(run, report, artifacts);
+  const draftBody = await buildDraftPrBody(run, report, artifacts, options.publicationComparison);
   // A detached completion (a historical package re-checked after its slot was
   // released) has no slot to read the template from; its body stands as-is.
   if (options.tolerateMissingSlot && !run.slotId) return draftBody;
@@ -479,7 +480,10 @@ export async function renderCurrentDescription(
         artifact.path.startsWith('artifacts/'),
       ),
     await assertPreparedPublicationBaseCurrent(current, preparedPackage, baseBranch),
-    { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
+    {
+      tolerateMissingSlot: Boolean(preparedPackage.headSha),
+      publicationComparison: preparedPackage.reviewSnapshot,
+    },
   );
   const body = await appendVisualJudgmentProvenance(current, draftBody, preparedPackage);
   return { draftTitle: buildDraftPrTitle(current, body), draftBody: body };
@@ -495,6 +499,7 @@ async function appendVisualJudgmentProvenance(
     | 'visualJudgmentReceiptIds'
     | 'artifactBundle'
     | 'headSha'
+    | 'reviewSnapshot'
   >,
 ): Promise<string> {
   if (!prepared.visualJudgmentReceiptIds?.length) return body;
@@ -504,6 +509,7 @@ async function appendVisualJudgmentProvenance(
     prepared.selectedEvidenceKeys,
     prepared.artifactBundle,
     prepared.headSha,
+    prepared.reviewSnapshot,
   );
   const policy = await readVisualReviewPolicy(run);
   const sections = sources
@@ -553,7 +559,10 @@ export async function assertReadyGatePackageInputsCurrent(
   preparedPackage: ReadyGatePrPackage,
 ): Promise<ReadyGatePrPackage> {
   if (!current.taskFile) throw new Error('Approved package requires a task directory');
-  const { artifacts, inventory: currentManifest } = await readCurrentPackageEvidence(current);
+  const { artifacts, inventory: currentManifest } = await readCurrentPackageEvidence(
+    current,
+    preparedPackage.reviewSnapshot,
+  );
   const validation = await readValidationSummary(current);
   const mismatches: string[] = [];
 
@@ -792,12 +801,42 @@ export async function prepareCompletionPackageTransitionLocked(
     throw packageChangedError(runId, 'HEAD changed before package preparation');
 
   const deterministicChecks = await currentDeterministicChecks(before);
+  const projectVars = await loadProjectVars(before.project);
+  const baseBranch = await publicationBaseForRun(
+    before,
+    getProjectField(projectVars.projectJson, 'default_branch'),
+  );
+  let reviewSnapshot = unavailableReviewSnapshot('missing-slot');
+  let retainedDiff: ArtifactRef | undefined;
+  if (before.slotId) {
+    let vars: Awaited<ReturnType<typeof loadSlotVars>> | null = null;
+    try {
+      vars = await loadSlotVars(before.slotId);
+    } catch (error) {
+      if (!(error instanceof SlotConfigError) || error.code !== 'SLOT_NOT_FOUND') throw error;
+      // A removed slot must not make the package impossible to inspect.
+      reviewSnapshot = unavailableReviewSnapshot('slot-load-error', (error as Error).message);
+    }
+    if (vars) {
+      const captured = await captureCurrentReviewSnapshot(vars, { baseRef: baseBranch });
+      reviewSnapshot = captured.snapshot;
+      if (before.taskFile && captured.diffText !== undefined) {
+        retainedDiff = await retainPackageDiff(path.dirname(before.taskFile), captured.diffText);
+        reviewSnapshot = { ...reviewSnapshot, diffPath: retainedDiff.path };
+      }
+    }
+  }
+  // The target is captured even when Git cannot supply a diff. This does not
+  // make the unavailable snapshot a passing review or bypass its explicit override.
+  if (reviewSnapshot.source === 'unavailable')
+    reviewSnapshot = { ...reviewSnapshot, baseRef: `origin/${baseBranch}` };
 
   const completion = await runCompletionPipeline(runId, {
     skipRetrospective: true,
     suppressPrMutation: true,
     forPublication: !isArtifactOnlyRun(before),
     requireArtifactMirror: options?.requireArtifactMirror,
+    publicationComparison: reviewSnapshot,
   });
   const run = getRun(runId)!;
   const reportArtifact = await readWorkerReportArtifact(run);
@@ -805,21 +844,19 @@ export async function prepareCompletionPackageTransitionLocked(
   const report = reportArtifact?.text ?? null;
   const artifacts = completion.artifacts;
   const taskDir = run.taskFile ? path.dirname(run.taskFile) : null;
-  const runEvidenceManifest = await readEvidenceManifest(run);
+  const runEvidenceManifest = await readEvidenceManifest(run, reviewSnapshot);
   const evidenceManifest = await buildPackageEvidenceManifest(
     run.taskFile ? await retainedRunTaskDirectory(run) : null,
     artifacts,
     runEvidenceManifest,
     run.recordedEvidenceContractVersion ?? 0,
-    { ...publicationBaselineContext(run), headSha: headBefore ?? options?.headSha },
+    {
+      ...publicationBaselineContext(run, undefined, reviewSnapshot),
+      headSha: headBefore ?? options?.headSha,
+    },
     'retained',
   );
   const validation = await readValidationSummary(run);
-  const projectVars = await loadProjectVars(run.project);
-  const baseBranch = await publicationBaseForRun(
-    run,
-    getProjectField(projectVars.projectJson, 'default_branch'),
-  );
   const reviewPolicy = publicationReviewPolicyForRun(
     run,
     projectVars.projectJson,
@@ -861,30 +898,6 @@ export async function prepareCompletionPackageTransitionLocked(
   if (!headSha) {
     throw new Error('Cannot prepare publishable PR package without a workspace HEAD SHA');
   }
-  let reviewSnapshot = unavailableReviewSnapshot('missing-slot');
-  let retainedDiff: ArtifactRef | undefined;
-  if (run.slotId) {
-    let vars: Awaited<ReturnType<typeof loadSlotVars>> | null = null;
-    try {
-      vars = await loadSlotVars(run.slotId);
-    } catch (error) {
-      if (!(error instanceof SlotConfigError) || error.code !== 'SLOT_NOT_FOUND') throw error;
-      // A removed slot must not make the package impossible to inspect.
-      reviewSnapshot = unavailableReviewSnapshot('slot-load-error', (error as Error).message);
-    }
-    if (vars) {
-      const captured = await captureCurrentReviewSnapshot(vars, { baseRef: baseBranch });
-      reviewSnapshot = captured.snapshot;
-      if (taskDir && captured.diffText !== undefined) {
-        retainedDiff = await retainPackageDiff(taskDir, captured.diffText);
-        reviewSnapshot = { ...reviewSnapshot, diffPath: retainedDiff.path };
-      }
-    }
-  }
-  // The target is captured even when Git cannot supply a diff. This does not
-  // make the unavailable snapshot a passing review or bypass its explicit override.
-  if (reviewSnapshot.source === 'unavailable')
-    reviewSnapshot = { ...reviewSnapshot, baseRef: `origin/${baseBranch}` };
   const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
   const artifactPath = `artifacts/publication-packages/${packageId}.json`;
   const validSelectedEvidenceKeys = preserveSelectedEvidenceKeys(
@@ -898,6 +911,7 @@ export async function prepareCompletionPackageTransitionLocked(
     : mergeEvidenceManifestArtifactRefs(artifacts, runEvidenceManifest);
   const draftBody = await buildPreparedDraftPrBody(run, report, draftBodyArtifacts, baseBranch, {
     tolerateMissingSlot: Boolean(options?.headSha),
+    publicationComparison: reviewSnapshot,
   });
   const retentionInventory = [
     ...new Map(
@@ -974,6 +988,7 @@ export async function prepareCompletionPackageTransitionLocked(
       basePackage.selectedEvidenceKeys,
       retained.ref,
       headSha,
+      reviewSnapshot,
     );
     const { stampPipelineVisualReviews } = await import('../review/pipeline-visual-review.js');
     await stampPipelineVisualReviews(run, sources, headSha);
@@ -1129,6 +1144,7 @@ export async function runCompletionPipeline(
     skipRetrospective?: boolean;
     suppressPrMutation?: boolean;
     forPublication?: boolean;
+    publicationComparison?: ReviewDiffSnapshot;
     requireArtifactMirror?: boolean;
     inheritedAcceptance?: InheritedAcceptanceProvenance;
   },
@@ -1171,6 +1187,7 @@ export async function runCompletionPipeline(
       await captureRunOutput(runId, true, true, {
         requireSourceArtifacts: options?.requireArtifactMirror,
         forPublication: options?.forPublication,
+        publicationComparison: options?.publicationComparison,
       });
       flags.artifactsCopied = true;
     } catch (err) {
@@ -1615,6 +1632,7 @@ export async function publishCompletionPackage(
       selectedEvidenceKeys,
       approvedPackage.artifactBundle,
       approvedPackage.headSha,
+      approvedPackage.reviewSnapshot,
     );
 
     emit('substep', { name: 'resolve-pr-number', detail: `Resolving PR number against ${ciRepo}` });
@@ -1674,6 +1692,7 @@ export async function publishCompletionPackage(
       },
       approvedPackage.artifactBundle,
       approvedPackage.headSha,
+      approvedPackage.reviewSnapshot,
     );
     const artifactUrls = publishedEvidence.artifactUrls;
     selectedEvidenceKeys = publishedEvidence.selectedEvidenceKeys;
@@ -1703,6 +1722,7 @@ export async function publishCompletionPackage(
             selectedEvidenceKeys,
             approvedPackage.artifactBundle,
             approvedPackage.headSha,
+            approvedPackage.reviewSnapshot,
           );
           if (prTemplate) reportTemplateDrift(body, 'published body');
         },

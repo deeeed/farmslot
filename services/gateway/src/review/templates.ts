@@ -12,6 +12,7 @@ import {
   type EvidenceManifest,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   registeredAcceptanceCriteria,
+  type ReviewDiffSnapshot,
   type ReviewIssue,
   type ReviewMode,
   type ReviewValidationDepth,
@@ -133,6 +134,7 @@ async function descriptionCheckSection(
   taskDir: string,
   run: NonNullable<ReturnType<typeof getRun>>,
   projectJson: Awaited<ReturnType<typeof loadProjectVars>>['projectJson'] | undefined,
+  comparison?: ReviewDiffSnapshot,
 ): Promise<string> {
   const baseBranch = await publicationBaseForRun(
     run,
@@ -150,13 +152,13 @@ async function descriptionCheckSection(
       },
       undefined,
       run.recordedEvidenceContractVersion ?? 0,
-      publicationBaselineContext(run),
+      publicationBaselineContext(run, undefined, comparison),
     );
   } catch (error) {
     // An unavailable pre-check still produces the review document with an explicit diagnostic.
     selectionError = error instanceof Error ? error.message : String(error);
   }
-  return buildDescriptionCheckSection({
+  const check = buildDescriptionCheckSection({
     repo: vars.remoteRepo,
     taskDir,
     baseBranch,
@@ -169,6 +171,17 @@ async function descriptionCheckSection(
       ? { unavailable: selectionError }
       : await runDescriptionPreCheck(vars, taskDir, baseBranch, publication?.manifest ?? null),
   });
+  const baseline = publicationBaselineContext(run, undefined, comparison);
+  return `${check}
+
+## Before-evidence provenance
+
+These gateway-owned source-identity rules take precedence over project-pack git_ref and branch checks, including retained checklists. Project requirements for behavior and acceptance evidence still apply.
+
+Recorded baseline: ${baseline.baseSha ?? 'unavailable'}. Full publication merge base: ${baseline.comparison?.baseSha ?? 'unavailable'}, selected head: ${baseline.comparison?.headSha ?? 'unavailable'}.
+
+Before-only captures require clean provenance on the run branch or detached, with git_ref equal to either captured base. A warm delta is not a baseline. After and standalone captures require the clean selected head; captured inventory and manifest checks still apply.
+`;
 }
 
 /**
@@ -306,6 +319,7 @@ export async function expandReviewTemplate(
     signal: 'REVIEW-SIGNAL.json',
     feedback: 'artifacts/review-feedback.md',
   },
+  comparison?: ReviewDiffSnapshot,
 ): Promise<string> {
   // Read template from project
   const run = getRun(runId);
@@ -469,7 +483,7 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   // derivation: a prerequisite that moved since dispatch must be detectable.
   const planningBrief = await buildReviewPlanningBrief(run?.taskFile ?? null, taskDir);
   const [check, scope, criteria, taskActions] = await Promise.all([
-    descriptionCheckSection(vars, taskDir, run, pv?.projectJson),
+    descriptionCheckSection(vars, taskDir, run, pv?.projectJson, comparison),
     diffScopeSection(vars, run, pv ? getProjectField(pv.projectJson, 'default_branch') : undefined),
     reviewCriteriaSection(vars, taskDir, run),
     taskActionsSection(vars, taskDir),

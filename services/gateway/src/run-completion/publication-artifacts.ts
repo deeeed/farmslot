@@ -11,6 +11,7 @@ import {
   isRunArtifactMediaPath,
   type ReadyGatePrPackage,
   RecordedEvidenceReadError,
+  type ReviewDiffSnapshot,
   type Run,
   type RunArtifactBundleRef,
   validateArtifactManifestDocument,
@@ -46,6 +47,7 @@ import {
   type PublicationEvidenceSelection,
 } from './publication-evidence-policy.js';
 import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
+import { retainedReadyGatePackage } from './ready-gate-package.js';
 import { verifyFrozenPublicationEvidence } from './recorded-publication-evidence.js';
 import { retainedRunArtifactManifest, retainedRunTaskDirectory } from './retained-artifacts.js';
 
@@ -466,6 +468,7 @@ export async function publishSelectedEvidence(
   selection: PublicationEvidenceSelection,
   artifactBundle?: RunArtifactBundleRef,
   headSha?: string,
+  comparison?: ReviewDiffSnapshot,
 ): Promise<PublishedEvidence> {
   const selectedEvidenceKeys = expandPublicationEvidenceSelection(selection);
   assertPublicationTextSafe(JSON.stringify(selection.trustedEvidenceManifest ?? null));
@@ -475,6 +478,7 @@ export async function publishSelectedEvidence(
     selectedEvidenceKeys,
     artifactBundle,
     headSha,
+    comparison,
   );
   const artifactUrls = await uploadArtifacts(run, prNumber, selectedEvidenceKeys, {
     failOnError: true,
@@ -823,6 +827,8 @@ export interface ResolvedPublicationManifest {
 /** Existing run capture authority, separate from the selected head's claims. */
 export interface PublicationBaselineContext {
   baseSha?: string;
+  /** Full comparison captured for this publication, never a warm review delta. */
+  comparison?: ReviewDiffSnapshot;
   /** Undefined permits capture admission; null records an unavailable publication head. */
   headSha?: string | null;
   branch?: string | null;
@@ -869,6 +875,7 @@ export function capturedBeforeAttemptAttestations(
 export function publicationBaselineContext(
   run: Run,
   inventory: readonly ArtifactRef[] | null = run.output?.artifactManifest ?? [],
+  comparison = retainedReadyGatePackage(run)?.reviewSnapshot,
 ): PublicationBaselineContext {
   const review = run.steps.find((step) => step.name === 'review')?.outputs;
   const snapshot = review?.reviewSnapshot;
@@ -884,6 +891,7 @@ export function publicationBaselineContext(
       : undefined;
   return {
     baseSha: fullReviewBase ?? run.worktreeHeadAtDispatch ?? undefined,
+    comparison,
     branch: run.branch,
     inventory,
     attestations: { id: run.id, beforeAttemptAttestations: run.beforeAttemptAttestations },
@@ -1010,7 +1018,18 @@ export async function assertPublicationManifestOwnership(
               );
             const beforeOnly = before.has(file) && !other.has(file);
             let headSha = baseline?.headSha;
-            if (!beforeOnly) {
+            const comparison = baseline?.comparison;
+            const mergedBefore =
+              beforeOnly &&
+              provenance.git_ref !== baseline?.baseSha &&
+              comparison?.source === 'local-git' &&
+              comparison.baseRef?.startsWith('origin/') &&
+              typeof comparison.baseSha === 'string' &&
+              /^[a-f0-9]{40}$/iu.test(comparison.baseSha) &&
+              typeof comparison.headSha === 'string' &&
+              /^[a-f0-9]{40}$/iu.test(comparison.headSha) &&
+              provenance.git_ref === comparison.baseSha;
+            if (!beforeOnly || mergedBefore) {
               if (headSha === null)
                 throw new RecordedEvidenceReadError(
                   'evidence-selection-invalid',
@@ -1053,7 +1072,11 @@ export async function assertPublicationManifestOwnership(
                 );
               headSha = selected.git_ref;
             }
-            const expectedSha = beforeOnly ? baseline?.baseSha : headSha;
+            const expectedSha = beforeOnly
+              ? mergedBefore && comparison?.headSha === headSha
+                ? comparison.baseSha
+                : baseline?.baseSha
+              : headSha;
             // An attestation of this exact attempt manifest waives only the baseline match.
             const attested =
               beforeOnly &&
@@ -1315,7 +1338,10 @@ export async function resolvePublicationManifest(
   return null;
 }
 
-export async function readEvidenceManifest(run: Run): Promise<EvidenceManifest | null> {
+export async function readEvidenceManifest(
+  run: Run,
+  comparison?: ReviewDiffSnapshot,
+): Promise<EvidenceManifest | null> {
   return run.taskFile
     ? ((
         await resolvePublicationManifest(
@@ -1323,7 +1349,7 @@ export async function readEvidenceManifest(run: Run): Promise<EvidenceManifest |
           undefined,
           undefined,
           run.recordedEvidenceContractVersion ?? 0,
-          publicationBaselineContext(run),
+          publicationBaselineContext(run, undefined, comparison),
         )
       )?.manifest ?? null)
     : null;

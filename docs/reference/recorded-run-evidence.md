@@ -359,6 +359,20 @@ at the frozen full-review base, falling back to the dispatch baseline when no fu
 review snapshot is available. A warm review delta MUST NOT supply that base. Captures keep their original attempt
 paths; no copies are relabelled as another execution.
 
+Under ADR-062 Amendment 22, before-only media MAY also use the merge base of the
+exact selected head and its publication base, including a configured stacked
+parent. Before admission, the gateway MUST establish and freeze this full
+comparison in the existing publication review snapshot. A warm delta MUST NOT
+supply it. Frozen readers MUST use that captured base/head identity, without
+consulting a later checkout or moving branch. Clean provenance, branch ownership,
+captured digests and complete closures remain required. An unrelated ancestor
+MUST NOT qualify through ancestry alone. After and standalone media still require
+the clean selected head. Reviewer guidance MUST admit the same baseline identities;
+operator attestation remains the exception when neither baseline can be recorded.
+The gateway source-identity policy MUST take precedence over pack git_ref and
+branch checks, including retained checklists; project behavior and evidence
+requirements still apply.
+
 Under ADR-062 Amendment 21, when a before side cannot be recorded clean at that
 base, a credential-backed person MAY attest one attempt captured by the same
 run, `artifacts/recipe-runs/<recipeRunId>/`, as before-only evidence at an

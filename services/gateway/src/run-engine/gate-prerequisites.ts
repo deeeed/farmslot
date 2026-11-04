@@ -463,6 +463,7 @@ async function scanPackageForPublicationSecrets(
     expandEvidenceSelectionForManifest(manifest, selected) ?? selected,
     preparedPackage.artifactBundle,
     preparedPackage.headSha,
+    preparedPackage.reviewSnapshot,
   );
 }
 

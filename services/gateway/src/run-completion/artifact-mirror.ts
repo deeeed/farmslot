@@ -8,6 +8,7 @@ import {
   isInternalRunArtifactPath,
   isRunArtifactMediaPath,
   RecordedEvidenceReadError,
+  type ReviewDiffSnapshot,
   type Run,
   SUBTASKS_DIR,
 } from '@farmslot/protocol';
@@ -352,6 +353,7 @@ export interface ArtifactMirrorOptions {
   requireSourceArtifacts?: boolean;
   /** Publication callers validate the same selected attempt before any copy. */
   forPublication?: boolean;
+  publicationComparison?: ReviewDiffSnapshot;
 }
 
 /** Inspect local inventory changes without rereading image or recording bytes. */
@@ -423,7 +425,7 @@ export async function refreshArtifactMirror(
       workerArtifactsDir,
       run.recordedEvidenceContractVersion ?? 0,
       // Newly declared attempts are not in any earlier capture yet.
-      publicationBaselineContext(run, null),
+      publicationBaselineContext(run, null, options.publicationComparison),
     );
   }
   const workerPointerPath = path.join(workerArtifactsDir, 'latest-valid-recipe-run.json');

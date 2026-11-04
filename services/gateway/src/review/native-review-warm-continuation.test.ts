@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test, type TestContext } from 'node:test';
 
-import type { AgentContext, Principal } from '@farmslot/protocol';
+import type { AgentContext, Principal, ReviewDiffSnapshot } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
@@ -39,6 +39,7 @@ const resumed: string[] = [];
 let expectedFixCheck: Error | undefined;
 const dispatches: Array<{ contextId: string; retainedFrom?: { contextId: string } }> = [];
 const deltaCaptures: string[] = [];
+const publicationComparisons: Array<ReviewDiffSnapshot | undefined> = [];
 
 mock.module('../core/config.js', {
   namedExports: {
@@ -54,7 +55,11 @@ mock.module('../core/exec.js', {
       exitCode: command.startsWith('git merge-base --is-ancestor') ? ancestorExitCode : 0,
       stdout: command.startsWith('git rev-parse HEAD && git status')
         ? `${currentHead}\n${worktreeStatus}`
-        : '',
+        : command.startsWith('git merge-base ') && !command.includes('--is-ancestor')
+          ? command.includes("'origin/main'")
+            ? 'b'.repeat(40)
+            : head
+          : '',
       stderr: '',
     }),
   },
@@ -274,6 +279,7 @@ mock.module('./snapshots.js', {
       return {
         snapshot: {
           source: 'local-git',
+          baseRef: range.lastReviewedHeadSha,
           baseSha: range.lastReviewedHeadSha,
           headSha: head,
           diffPath: 'artifacts/review.diff',
@@ -288,7 +294,17 @@ mock.module('./snapshots.js', {
 });
 mock.module('./templates.js', {
   namedExports: {
-    expandReviewTemplate: async () => '# Review\n',
+    expandReviewTemplate: async (
+      _vars: unknown,
+      _task: string,
+      _run: string,
+      _depth: unknown,
+      _paths: unknown,
+      comparison?: ReviewDiffSnapshot,
+    ) => {
+      publicationComparisons.push(comparison);
+      return '# Review\n';
+    },
     expandReviewFixTemplate: async () =>
       assert.fail('the completed worker fix must not be repeated'),
     getReviewConfig: async () => ({
@@ -323,6 +339,7 @@ async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   resumeFailure = null;
   dispatches.length = 0;
   deltaCaptures.length = 0;
+  publicationComparisons.length = 0;
   const run = runWithSessionOriginator(owner, () =>
     createRun({
       flowType: 'dev',
@@ -512,6 +529,9 @@ test('an automatic re-review with no retained session runs a delta-scoped COLD a
     comparedRanges: [`${head}..${head}`],
   });
   assert.deepEqual(deltaCaptures, [head]);
+  assert.equal(publicationComparisons[0]?.baseRef, 'origin/main');
+  assert.equal(publicationComparisons[0]?.baseSha, 'b'.repeat(40));
+  assert.equal(result.reviewSnapshot?.baseSha, head, 'the correctness review stays on its delta');
   assert.equal(dispatches[0]?.retainedFrom, undefined);
   const task = reviewerTask(run.id, dispatches[0]!.contextId);
   assert.match(task, /## Delta-scoped review in a fresh session/);

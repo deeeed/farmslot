@@ -7,6 +7,7 @@ import {
   type ArtifactRef,
   isInternalRunArtifactPath,
   isPublishEvidenceArtifact,
+  type ReviewDiffSnapshot,
   type Run,
 } from '@farmslot/protocol';
 
@@ -113,14 +114,17 @@ export interface CurrentPackageEvidence {
   inventory: ArtifactRef[];
 }
 
-export async function readCurrentPackageEvidence(run: Run): Promise<CurrentPackageEvidence> {
+export async function readCurrentPackageEvidence(
+  run: Run,
+  comparison?: ReviewDiffSnapshot,
+): Promise<CurrentPackageEvidence> {
   if (!run.taskFile) throw new Error('Publication evidence requires a task directory');
   const taskDir = await retainedRunTaskDirectory(run);
   const { readEvidenceManifest } = await import('./publication-artifacts.js');
   const artifacts = (await retainedRunArtifactManifest(run)).filter((artifact) =>
     artifact.path.startsWith('artifacts/'),
   );
-  const manifest = await readEvidenceManifest(run);
+  const manifest = await readEvidenceManifest(run, comparison);
   return {
     artifacts,
     manifest,
@@ -129,7 +133,7 @@ export async function readCurrentPackageEvidence(run: Run): Promise<CurrentPacka
       artifacts,
       manifest,
       run.recordedEvidenceContractVersion ?? 0,
-      publicationBaselineContext(run),
+      publicationBaselineContext(run, undefined, comparison),
       'retained',
     ),
   };
