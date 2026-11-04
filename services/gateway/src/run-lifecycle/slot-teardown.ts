@@ -37,6 +37,7 @@ import {
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import { NativeSlotOwnershipError } from '../runners/native/worker-error.js';
 import {
+  cleanupSlotRunnerRuntimes,
   exitClosedRunUnrecordedWorker,
   quiescentHistoricalWorkerPanes,
   stopRunOwnedTmuxWorkers,
@@ -418,6 +419,7 @@ export async function stopRunOwnedTmuxAndWatches(
   // does, and only while this run still owns the slot at the same epoch.
   let prepareBlocker: string | null = null;
   let browserBlocker: string | null = null;
+  let runnerBlocker: string | null = null;
   if (
     (!slot?.handoff_run_id || slot.handoff_run_id === run.id) &&
     !findOtherActiveRunOnSlot(run, slot)
@@ -438,6 +440,7 @@ export async function stopRunOwnedTmuxAndWatches(
       const row = await readSlotRow(slotId);
       return ownsRunSlotCleanup(row, run.id) && row?.slot_epoch === slot?.slot_epoch;
     };
+    if (!blocker) runnerBlocker = await cleanupSlotRunnerRuntimes(vars, { stillOwned });
     try {
       await reapSlotPrepareScope(vars, { stillOwned });
     } catch (error) {
@@ -451,7 +454,9 @@ export async function stopRunOwnedTmuxAndWatches(
     }
   }
   await archiveRunnerSessionsForSlotRelease({ vars, runId: run.id });
-  return [blocker, prepareBlocker, browserBlocker].filter(Boolean).join('; ') || null;
+  return (
+    [blocker, runnerBlocker, prepareBlocker, browserBlocker].filter(Boolean).join('; ') || null
+  );
 }
 
 // A hook still running past this holds its slot, not every slot's runtime controls (F330).

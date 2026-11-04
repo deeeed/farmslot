@@ -8,9 +8,9 @@ import {
   parseProcessCensus,
   type ProcessCensusRow,
 } from './process-census.js';
+import { reapIdentifiedSlotProcesses } from './process-reap.js';
 
 const CENSUS_MARKER = 'farmslot-browser-session-census';
-const REAP_MARKER = 'farmslot-browser-session-reap';
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -93,59 +93,18 @@ export async function reapSlotBrowserSession(
         (String(frame.pid) === row.pid && frame.identity === row.identity) ||
         frame.group === row.group,
     );
-  const targets = new Map(
-    candidates.filter((row) => !exempt(row)).map((row) => [row.pid, row] as const),
-  );
-  if (targets.size === 0) return null;
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const row of rows)
-      if (!targets.has(row.pid) && targets.has(row.parent) && !exempt(row)) {
-        targets.set(row.pid, row);
-        grew = true;
-      }
-  }
-  if (opts.stillOwned && !(await opts.stillOwned())) return null;
-  // A leader's group is signalled only when every member is ours.
-  const wholeGroup = (row: ProcessCensusRow) =>
-    row.group === Number(row.pid) &&
-    rows.every((member) => member.group !== row.group || targets.has(member.pid));
-  const lines = [...targets.values()]
-    .map((row) => `${row.pid}|${wholeGroup(row) ? 1 : 0}|${row.identity}`)
-    .join('\n');
-  const reap = await execOnSlot(
-    vars,
-    [
-      `: ${REAP_MARKER}`,
-      `targets='${lines}'`,
-      `expected=$(printf '%s\\n' "$targets" | cut -d'|' -f1,3)`,
-      `groups=" $(printf '%s\\n' "$targets" | awk -F'|' '$2 == 1 { print $1 }' | tr '\\n' ' ')"`,
-      `pids=$(printf '%s\\n' "$targets" | cut -d'|' -f1 | paste -sd, -)`,
-      // One ps per check. Only a pid whose start time still matches the census
-      // is live, so a reused pid is never signalled.
-      `live() { ps -o pid=,lstart= -p "$pids" 2>/dev/null | awk '{ pid = $1; $1 = ""; sub(/^ +/, ""); print pid "|" $0 }' | grep -Fx -- "$expected" | cut -d'|' -f1; }`,
-      `sig() { for pid in $(live); do case "$groups" in *" $pid "*) kill -"$1" -- "-$pid" 2>/dev/null || kill -"$1" "$pid" 2>/dev/null ;; *) kill -"$1" "$pid" 2>/dev/null ;; esac; done; return 0; }`,
-      'wait_gone() { end=$((SECONDS + $1)); while [ "$SECONDS" -lt "$end" ] && [ -n "$(live)" ]; do sleep 0.2; done; }',
-      'sig TERM',
-      'wait_gone 8',
-      'sig KILL',
-      'wait_gone 3',
-      `live | sed 's/^/survivor /'`,
-    ].join('\n'),
-    { cwd: '/', timeout: 30_000 },
-  );
-  if (reap.exitCode !== 0)
-    return `Browser session cleanup failed: ${reap.stderr.trim() || `exit ${reap.exitCode}`}`;
-  const survivors = reap.stdout
-    .split('\n')
-    .flatMap((line) => (line.startsWith('survivor ') ? [line.slice(9).trim()] : []));
+  const result = await reapIdentifiedSlotProcesses(vars, rows, candidates, {
+    ...opts,
+    exclude: exempt,
+  });
+  if (!result) return null;
+  const { survivors, total } = result;
   console.log(
-    `[browser-session] ${vars.slotId}: stopped ${targets.size - survivors.length} browser session process(es) on CDP port ${cdpPort}`,
+    `[browser-session] ${vars.slotId}: stopped ${total - survivors.length} browser session process(es) on CDP port ${cdpPort}`,
   );
   if (survivors.length === 0) return null;
   return survivors
-    .map((pid) => {
-      const args = targets.get(pid)?.command ?? '';
+    .map(({ pid, command: args }) => {
       return `Browser session process ${pid} (${args.length > 120 ? `${args.slice(0, 117)}...` : args}) on CDP port ${cdpPort} did not stop`;
     })
     .join('; ');

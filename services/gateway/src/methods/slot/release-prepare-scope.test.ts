@@ -75,6 +75,8 @@ const execForTest = async (_vars: unknown, cmd: string) => {
   // An editor with the checkout open (macwork-mmt-1, Cursor 44809, 10-19).
   if (cmd.startsWith('lsof -a -d cwd')) return ok('p44809\nn/slot\n');
   if (cmd.includes('git rev-parse HEAD 2>/dev/null')) return ok('5d0c1a7e\n2\n');
+  if (cmd.startsWith(': farmslot-runner-daemon-census'))
+    return ok('--records--\n{"home":"/slot-runtime","records":[]}');
   if (cmd.startsWith(': farmslot-browser-session-census')) {
     const pids = [...browserSession.keys()];
     return ok(
@@ -86,7 +88,7 @@ const execForTest = async (_vars: unknown, cmd: string) => {
       ].join('\n'),
     );
   }
-  if (cmd.startsWith(': farmslot-browser-session-reap')) {
+  if (cmd.startsWith(': farmslot-owned-process-reap')) {
     events.push('browser-session-reap');
     for (const [pid, survives] of browserSession) if (!survives) browserSession.delete(pid);
     return ok([...browserSession.keys()].map((pid) => `survivor ${pid}\n`).join(''));
