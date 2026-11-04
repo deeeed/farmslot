@@ -168,7 +168,14 @@
           }
         },
         "additionalProperties": false,
-        "required": ["selector"]
+        "anyOf": [
+          {
+            "required": ["selector"]
+          },
+          {
+            "required": ["text"]
+          }
+        ]
       },
       "examples": [
         {

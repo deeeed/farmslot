@@ -25,7 +25,6 @@
       },
       "home-ready": {
         "action": "ui.wait_for",
-        "selector": "main h1",
         "timeout_ms": 15000,
         "intent": "Read the website home page",
         "proves": ["home"],
@@ -46,7 +45,6 @@
       },
       "projects-ready": {
         "action": "ui.wait_for",
-        "selector": "main h1",
         "timeout_ms": 15000,
         "intent": "Read the Projects page",
         "next": "projects-status",
