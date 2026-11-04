@@ -584,7 +584,7 @@ async function runNativeReviewAttempt(
           taskMdPath,
           prependReviewerExecutionContract(
             template,
-            `${mark}\n\n${reviewerScratchRule(contextId)}`,
+            `${mark}\n\n${reviewerScratchRule(contextId, validationDepth)}`,
           ) + (visualInput ? pipelineVisualReviewPrompt(visualInput, taskDir) : ''),
         );
       }
@@ -659,7 +659,7 @@ async function runNativeReviewAttempt(
                     feedbackRelPath,
                     resultRelPath,
                   ) +
-                  '\nContinue this reviewer attempt and preserve completed work. Read its reviewer-specific execution contract. Do NOT run /review.' +
+                  `\n${reviewerScratchRule(contextId, validationDepth)}\nContinue this reviewer attempt and preserve completed work. Read its reviewer-specific execution contract. Do NOT run /review.` +
                   REFUSED_APPROVALS,
             });
         }
@@ -689,7 +689,7 @@ async function runNativeReviewAttempt(
           domain: resolveEffectiveDomain(run.domain, vars.domain),
           initialPrompt:
             reviewChecklistMarkPrompt(taskDir, taskMdPath, target, feedbackRelPath, resultRelPath) +
-            '\nRead the reviewer-specific execution contract. Do NOT run /review.' +
+            `\n${reviewerScratchRule(contextId, validationDepth)}\nRead the reviewer-specific execution contract. Do NOT run /review.` +
             REFUSED_APPROVALS,
           beforeInput: async () => {
             const current = admit();

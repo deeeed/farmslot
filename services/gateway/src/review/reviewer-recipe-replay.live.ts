@@ -57,7 +57,7 @@ if (taskDir) await writeFile(path.join(taskDir, 'artifacts/latest-valid-recipe-r
 console.log(JSON.stringify({ taskDir, artifactsDir }));
 `,
   );
-  const rule = reviewerScratchRule(run.id);
+  const rule = reviewerScratchRule(run.id, 'full-live');
   const wrapper = /```sh\n([\s\S]*?)\n```/.exec(rule)?.[1];
   // Before the fix the contract supplies no wrapper, so the copied worker command binds the task.
   const command = [process.execPath, '--import', import.meta.resolve('tsx'), driver, repo]

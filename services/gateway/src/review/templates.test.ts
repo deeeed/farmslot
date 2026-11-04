@@ -189,10 +189,23 @@ test('a project without a review template refuses the review launch instead of f
 });
 
 test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
+  const project = `.review-farm-root-${process.pid}`;
+  const root = path.join(farmslotRoot, 'projects', project);
+  await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+  await writeFile(path.join(root, 'project.json'), JSON.stringify({ name: project }));
+  await writeFile(
+    path.join(root, 'templates/worker/review.md'),
+    'Inspect {{farmslot_dir}}/recorded-evidence.json and {{FARMSLOT_DIR}}/recorded-evidence.json.',
+  );
+  invalidateProjectVarsCache(project);
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+    invalidateProjectVarsCache(project);
+  });
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'farmslot-farm',
+    project,
     ticketOrPr: 'TEST-FARMSLOT-DIR',
     runner: 'claude',
   });
@@ -204,7 +217,7 @@ test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
   const rendered = await expandReviewTemplate(
     {
       slotId: 'slot-1',
-      projectName: 'farmslot-farm',
+      projectName: project,
       host: 'localhost',
       machine: 'test-machine',
       remoteRepo: '/tmp/farmslot',
@@ -221,9 +234,7 @@ test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
   assert.equal(rendered.includes('{{FARMSLOT_DIR}}'), false);
   assert.match(
     rendered,
-    new RegExp(
-      `${farmslotRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/scripts/quality/check-task-artifact-contract\\.mjs`,
-    ),
+    new RegExp(`${farmslotRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/recorded-evidence\\.json`),
   );
 
   const remoteRoot = '/relocated-node/development';
@@ -245,7 +256,7 @@ test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
   const remoteRendered = await expandReviewTemplate(
     {
       slotId: 'slot-remote',
-      projectName: 'farmslot-farm',
+      projectName: project,
       host: 'remote-node.local',
       machine: 'remote-node',
       remoteRepo: '/tmp/farmslot',
@@ -258,10 +269,7 @@ test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
     'full-live',
   );
 
-  assert.match(
-    remoteRendered,
-    /\/relocated-node\/development\/scripts\/quality\/check-task-artifact-contract\.mjs/,
-  );
+  assert.match(remoteRendered, /\/relocated-node\/development\/recorded-evidence\.json/);
 });
 
 test('review-fix templates resolve nested helpers in the active node and preserve authored issues', async (t) => {

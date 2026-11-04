@@ -290,16 +290,29 @@ test('Pi account state reads its RPC model list', async (t) => {
 
 test('a Pi prompt waits past 30 s for its reply while other requests stay bounded', async (t) => {
   const f = setup();
-  t.after(f.cleanup);
-  const session = await piNativeAdapter.start(f, () => undefined);
-  t.after(() => session.close());
-  const rpc = new PiRpc(
+  let session: Awaited<ReturnType<typeof piNativeAdapter.start>> | undefined;
+  let rpc: PiRpc | undefined;
+  let rpcStopped = false;
+  t.after(async () => {
+    t.mock.timers.reset();
+    await Promise.all([rpc?.close(), session?.close()]);
+    if (rpc)
+      assert.equal(
+        rpcStopped,
+        true,
+        'the fixture writer must stop before its directory is removed',
+      );
+    f.cleanup();
+  });
+  session = await piNativeAdapter.start(f, () => undefined);
+  rpc = new PiRpc(
     f,
     ['--mode', 'rpc'],
     () => undefined,
-    () => undefined,
+    (_error, stopped) => {
+      rpcStopped = stopped;
+    },
   );
-  t.after(() => rpc.close());
   // Pi replies to a prompt only after its pre-run work, such as a compaction, which can run long.
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let settled = false;
@@ -314,4 +327,5 @@ test('a Pi prompt waits past 30 s for its reply while other requests stay bounde
   t.mock.timers.reset();
   await session.close();
   await sending;
+  assert.equal(rpcStopped, false, 'the separate fixture remains live until teardown closes it');
 });

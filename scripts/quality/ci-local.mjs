@@ -66,14 +66,69 @@ export function ciParitySteps(files, cwd) {
         ...formatFiles.map((file) => path.join(cwd, file)),
       ]
     : CI_PARITY_STEPS[0][1];
-  return [['format', format], ...CI_PARITY_STEPS.slice(1)];
+  const affected = (prefixes) =>
+    !files || files.some((file) => prefixes.some((prefix) => file.startsWith(prefix)));
+  const reviewPolicy = affected([
+    'services/gateway/src/review/',
+    'services/gateway/src/review-workspaces/',
+    'projects/farmslot-farm/templates/worker/',
+    'templates/worker/',
+  ])
+    ? [
+        [
+          'static review execution guard',
+          [
+            'node',
+            'scripts/quality/run-tsx-tests.mjs',
+            '--cwd',
+            'services/gateway',
+            '--tsconfig',
+            'tsconfig.json',
+            'src/review/static-review-execution.test.ts',
+          ],
+        ],
+      ]
+    : [];
+  const deterministic = affected([
+    'packages/agent-runtime/scripts/worker-terminal-contract.cjs',
+    'packages/agent-runtime/test/deterministic-checks.test.cjs',
+    'services/gateway/src/tasks/worker-terminal-contract',
+    'services/gateway/src/tasks/deterministic-checks',
+    'services/gateway/src/tasks/acceptance-terminal-contract',
+    'services/gateway/src/tasks/writer',
+  ])
+    ? [
+        [
+          'deterministic receipt guard',
+          ['node', '--test', 'packages/agent-runtime/test/deterministic-checks.test.cjs'],
+        ],
+      ]
+    : [];
+  const formatSteps = !files || formatFiles.length ? [['format', format]] : [];
+  const offlineReadsChanged = affected([
+    'apps/command-center/',
+    'apps/companion/',
+    'packages/protocol/src/',
+    'packages/review-dispatch/src/',
+    'scripts/quality/check-cached-panel-reads',
+    'scripts/quality/offline-reads-baseline.json',
+    'package.json',
+    'yarn.lock',
+    '.yarnrc.yml',
+  ]);
+  const guards = CI_PARITY_STEPS.slice(1).filter(
+    ([name]) =>
+      offlineReadsChanged ||
+      (name !== 'offline-first reads' && name !== 'offline-first read guard tests'),
+  );
+  return [...formatSteps, ...reviewPolicy, ...deterministic, ...guards];
 }
 
 function changedFiles(cwd) {
   const eventFile = process.env.GITHUB_EVENT_PATH;
   const event =
     eventFile && existsSync(eventFile) ? JSON.parse(readFileSync(eventFile, 'utf8')) : null;
-  const base = event?.pull_request?.base?.sha ?? 'origin/main';
+  const base = process.env.FARMSLOT_CI_BASE_REF ?? event?.pull_request?.base?.sha ?? 'origin/main';
   const diff = spawnSync('git', ['diff', '--name-only', '-z', base], { cwd, encoding: 'utf8' });
   if (diff.status !== 0) return null; // Shallow/standalone checkouts get the full format guard.
   const untracked = spawnSync('git', ['ls-files', '-z', '--others', '--exclude-standard'], {

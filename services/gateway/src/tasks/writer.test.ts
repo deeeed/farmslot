@@ -1086,6 +1086,8 @@ test('interactive checklist is an execution plan, never the acceptance criteria'
   assert.ok(checklist.length > 0);
   assert.match(checklist.join('\n'), /approach\.md/);
   assert.match(checklist.join('\n'), /HUMAN GATE/);
+  assert.match(checklist.join('\n'), /\[DETERMINISTIC: ci\.local_check\]/);
+  assert.doesNotMatch(checklist.join('\n'), /targeted tests, lint/);
 });
 
 test('lightweight interactive dev keeps the sidecar plan as CHECKLIST.md and the template in TASK.md', async (t) => {

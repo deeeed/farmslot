@@ -35,7 +35,6 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
     --cdp-port {{CDP_PORT}} \
     --gateway-port {{WATCHER_PORT}} \
     --slot-id {{SLOT}} || true
-  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
   ```
 - [ ] **5. Locate the root cause** — identify the exact file(s) and line(s) causing the issue.
 - [ ] **6. Resolve task branch** — reuse the prepared task branch, or create it from the default branch:
@@ -53,21 +52,8 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
   fi
   ```
 - [ ] **7. Implement the fix** — make the minimal change needed. No refactoring, no cleanup beyond the fix.
-- [ ] **8. Validate the fix** — recipe must exit 0 whenever step 4 produced one; then typecheck/tests:
-  ```bash
-  cd {{REPO}}
-  bash {{recipe_validate_wrapper}} \
-    --recipe {{TASK_DIR}}/artifacts/recipe.json \
-    --artifacts-dir {{TASK_DIR}}/artifacts/recipe-run \
-    --runtime-dir {{RUNTIME_DIR}} \
-    --platform {{PLATFORM}} \
-    --cdp-port {{CDP_PORT}} \
-    --gateway-port {{WATCHER_PORT}} \
-    --slot-id {{SLOT}}
-  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
-  # Replace the example path with the affected gateway test files.
-  cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
-  ```
+- [ ] **8. Changed-file CI** [DETERMINISTIC: ci.local_check] - call `{{TASK_DIR}}/mark 8`. The engine runs the frozen command and records its receipt. Read the retained failure log and fix failures, then repeat this mark. Do not select or launch tests, builds, lint or validation scripts yourself.
+  Run the step 4 recipe separately when one was authored; retain its result.
 - [ ] **9. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only: skip and state why.
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}

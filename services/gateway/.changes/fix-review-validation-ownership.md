@@ -1,0 +1,1 @@
+- Keep static reviews on source and recorded CI evidence; enforce frozen local-check receipts before publication.

@@ -218,7 +218,14 @@ test('role cleanup preserves the entire frozen parent contract byte for byte', a
   assert.equal(role.claimReviewGate, true);
   assert.equal(role.recordedEvidenceContractVersion, 1);
   assert.equal(role.flowType, 'dev');
-  assert.equal(role.deterministicChecks, undefined);
+  assert.deepEqual(role.deterministicChecks, [
+    {
+      checklist: 'REVIEW-FIX.md',
+      stepNumber: 1,
+      reference: 'ci.local_check',
+      command: `export FARMSLOT_CI_BASE_REF='${'a'.repeat(40)}'\nyarn ci:local`,
+    },
+  ]);
   assert.equal(await readFile(contractFile, 'utf8'), initialized);
 });
 
@@ -356,10 +363,10 @@ test('a removed slot preserves legacy refresh but refuses retained deterministic
   assert.match(result.stdout, /declared checks fail closed/);
 });
 
-test('retained local parity declarations do not block publication without a checkout or receipt', async (t) => {
+test('retained local_check declarations refuse publication without a checkout or receipt', async (t) => {
   const { root, run } = await task(t);
   await writeFile(path.join(root, 'CHECKLIST.md'), '- [x] CI [DETERMINISTIC: ci.local_check]\n');
-  assert.deepEqual(await validateDeterministicChecksForRun(run), []);
+  await assert.rejects(validateDeterministicChecksForRun(run), /no frozen task contract/);
   await writeFile(
     path.join(root, 'inputs/worker-terminal-contract.json'),
     JSON.stringify({
@@ -373,5 +380,5 @@ test('retained local parity declarations do not block publication without a chec
       ],
     }),
   );
-  assert.deepEqual(await validateDeterministicChecksForRun(run), []);
+  await assert.rejects(validateDeterministicChecksForRun(run), /slot is missing/);
 });

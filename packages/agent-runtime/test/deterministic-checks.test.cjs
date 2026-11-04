@@ -251,50 +251,63 @@ test('committing the checked content preserves a pass, including file deletion',
 });
 
 for (const frozen of [false, true]) {
-  test(`local parity requires no receipt${frozen ? ' in a retained contract' : ''}`, (t) => {
-    const { root, dir } = fixture(t);
-    const checklist = '- [x] CI parity [DETERMINISTIC: ci.local_check]\n';
+  test(`local_check requires a passing receipt${frozen ? ' in a retained contract' : ''}`, (t) => {
+    const { dir } = fixture(t);
+    const checklist = '- [x] CI [DETERMINISTIC: ci.local_check]\n';
     fs.writeFileSync(path.join(dir, 'CHECKLIST.md'), checklist);
-    const contract = {
-      schemaVersion: 1,
-      flowType: 'review',
-      commands: { complete: { report: 'artifacts/report.md', artifacts: [] } },
-      whenPresent: [],
-      ...(frozen
-        ? {
-            deterministicChecks: [
-              {
-                checklist: 'CHECKLIST.md',
-                stepNumber: 1,
-                reference: 'ci.local_check',
-                command: 'exit 91',
-              },
-            ],
-          }
-        : {}),
-    };
-    const contractFile = path.join(dir, 'inputs/worker-terminal-contract.json');
-    fs.writeFileSync(contractFile, JSON.stringify(contract));
-    fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'artifacts/report.md'), 'Smoke complete\n');
-    assert.deepEqual(deterministicChecks.declarations(checklist, 'CHECKLIST.md'), []);
+    const contract = deterministicChecks.freeze(
+      resolveWorkerTerminalContract(null, 'dev'),
+      checklist,
+      'CHECKLIST.md',
+      { 'ci.local_check': 'exit 91' },
+    );
+    if (!frozen) delete contract.deterministicChecks;
+    fs.writeFileSync(
+      path.join(dir, 'inputs/worker-terminal-contract.json'),
+      JSON.stringify(contract),
+    );
     assert.equal(
-      deterministicChecks.freeze({}, checklist, 'CHECKLIST.md', {}).deterministicChecks,
-      undefined,
+      deterministicChecks.declarations(checklist, 'CHECKLIST.md')[0].reference,
+      'ci.local_check',
     );
-    assert.deepEqual(deterministicChecks.evaluate(dir, 'CHECKLIST.md'), { checks: [], issues: [] });
-    const result = spawnSync(
-      process.execPath,
-      [mark, dir, 'complete', '--mark-last', '--report', 'artifacts/report.md'],
-      { cwd: root, encoding: 'utf8' },
+    assert.throws(
+      () => deterministicChecks.freeze({}, checklist, 'CHECKLIST.md', {}),
+      /requires a configured command/,
     );
-    assert.equal(result.status, 0, result.stderr + result.stdout);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'SIGNAL.json'))).status, 'complete');
-    assert.equal(fs.existsSync(path.join(dir, 'artifacts/deterministic-checks')), false);
+    assert.equal(deterministicChecks.evaluate(dir, 'CHECKLIST.md').checks.length, 1);
+    assert.match(
+      deterministicChecks.issues(dir)[0],
+      frozen ? /receipt is missing/ : /missing from the frozen task contract/,
+    );
+    assert.throws(
+      () => deterministicChecks.execute(dir, 'CHECKLIST.md', 1),
+      frozen ? /exit 91/ : /frozen command/,
+    );
   });
 }
 
-test('retained local parity cannot hide another required deterministic check', (t) => {
+test('local_check executes once and its receipt becomes stale after source changes', (t) => {
+  const { root, dir } = fixture(t);
+  const checklist = '- [ ] CI [DETERMINISTIC: ci.local_check]\n';
+  fs.writeFileSync(path.join(dir, 'CHECKLIST.md'), checklist);
+  const contract = deterministicChecks.freeze(
+    resolveWorkerTerminalContract(null, 'dev'),
+    checklist,
+    'CHECKLIST.md',
+    { 'ci.local_check': 'printf run >> .task/proof/check-count' },
+  );
+  fs.writeFileSync(
+    path.join(dir, 'inputs/worker-terminal-contract.json'),
+    JSON.stringify(contract),
+  );
+  assert.equal(deterministicChecks.execute(dir, 'CHECKLIST.md', 1), true);
+  assert.equal(deterministicChecks.execute(dir, 'CHECKLIST.md', 1), true);
+  assert.equal(fs.readFileSync(path.join(dir, 'check-count'), 'utf8'), 'run');
+  fs.appendFileSync(path.join(root, 'app.js'), '// changed\n');
+  assert.equal(deterministicChecks.read(dir)[0].status, 'stale');
+});
+
+test('local_check cannot hide another required deterministic check', (t) => {
   const { dir } = fixture(t);
   const input = path.join(dir, 'inputs/worker-terminal-contract.json');
   const contract = JSON.parse(fs.readFileSync(input));
@@ -306,7 +319,10 @@ test('retained local parity cannot hide another required deterministic check', (
   });
   fs.writeFileSync(input, JSON.stringify(contract));
   const result = deterministicChecks.evaluate(dir, 'CHECKLIST.md');
-  assert.equal(result.checks.length, 1);
-  assert.equal(result.checks[0].reference, 'checks.unit');
-  assert.match(result.issues[0], /receipt is missing/);
+  assert.equal(result.checks.length, 2);
+  assert.deepEqual(
+    result.checks.map((check) => check.reference),
+    ['checks.unit', 'ci.local_check'],
+  );
+  assert.ok(result.issues.every((issue) => /receipt is missing/.test(issue)));
 });

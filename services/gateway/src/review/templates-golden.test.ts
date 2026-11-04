@@ -1,6 +1,5 @@
-// Byte-for-byte goldens of the farmslot-farm review document, captured
-// before the description and evidence check existed. The rendered document must
-// equal its golden followed by the shared scope packet and description check.
+// Byte-for-byte goldens of the base Farmslot review document. Shared scope
+// and description checks append after this inspected template contract.
 // Regenerate only on purpose: FARMSLOT_UPDATE_REVIEW_GOLDENS=1.
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -57,7 +56,7 @@ for (const depth of ['static-code', 'full-live'] as const) {
     const at = rendered.indexOf(SECTION_HEADING);
     assert.ok(at > 0, 'the shared scope check is rendered');
     if (UPDATE) {
-      // The golden is the document before the check, as captured on main.
+      // The golden covers only the base document before appended shared checks.
       await mkdir(GOLDEN_DIR, { recursive: true });
       await writeFile(goldenPath, `${rendered.slice(0, at).trimEnd()}\n`, 'utf-8');
       return;

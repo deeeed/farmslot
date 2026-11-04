@@ -437,7 +437,7 @@ const INTERACTIVE_DEV_CHECKLIST = [
   'Write artifacts/approach.md — affected files, implementation plan, validation plan',
   'HUMAN GATE — present the approach and wait for the operator',
   'Implement the approved change',
-  'Validate — targeted tests, lint and typecheck, or record why validation was skipped',
+  'Changed-file CI [DETERMINISTIC: ci.local_check] — call ./mark 5; the engine runs its frozen command. Read failures and fix them; do not launch validation yourself',
   'HUMAN GATE — present the diff and validation for review',
   'Write artifacts/report.md and artifacts/learnings.md',
   'After explicit publication approval, create/push the PR and hand off with mark complete; otherwise wait for the operator completion action',
