@@ -35,3 +35,29 @@ export function buildHash(route: string, params: URLSearchParams = new URLSearch
   const query = params.toString();
   return `#${route}${query ? `?${query}` : ''}`;
 }
+
+/** Context owns the route, parameter and omitted default for a persistent view choice. */
+export interface ViewChoiceContext {
+  route: string;
+  param: string;
+  defaultValue: string;
+}
+
+export function readViewChoice(context: ViewChoiceContext, hash = location.hash): string {
+  const { route, params } = parseHashRoute(hash);
+  return route === context.route
+    ? (params.get(context.param) ?? context.defaultValue)
+    : context.defaultValue;
+}
+
+export function viewChoiceHash(
+  context: ViewChoiceContext,
+  value: string,
+  hash = location.hash,
+): string {
+  const { route, params } = parseHashRoute(hash);
+  if (route !== context.route) return hash;
+  if (value === context.defaultValue) params.delete(context.param);
+  else params.set(context.param, value);
+  return buildHash(route, params);
+}

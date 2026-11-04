@@ -130,6 +130,7 @@ import { initRuntimePosture } from './methods/runtime-posture.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
+import { servePerformanceMetrics } from './observability/performance-http.js';
 import { resourceRevisions } from './resources/revisions.js';
 import { upstreamObservers } from './resources/upstream-observers.js';
 import { initReview } from './review/orchestrator.js';
@@ -804,6 +805,10 @@ async function main(): Promise<void> {
           ...(listen ? { listen } : {}),
         }),
       );
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/metrics') {
+      servePerformanceMetrics(req, res, gatewayAuthRuntime);
       return;
     }
     // Serve raw files: /api/file?slotId=X&path=Y

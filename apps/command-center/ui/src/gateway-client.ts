@@ -1,5 +1,4 @@
 // WebSocket client for Farmslot gateway — request/response + event subscription
-
 import type {
   EventFrame,
   Frame,
@@ -27,6 +26,15 @@ import {
   type ResourceReadResult,
   resourceReadTimeout,
 } from '@farmslot/protocol/client-cache';
+import {
+  isPerformanceMethod,
+  measureClientRequest,
+  type PerformanceActionClass,
+  performanceActionClass,
+  PerformanceRecorder,
+  PerformanceReporter,
+  utf8ByteLength,
+} from '@farmslot/protocol/performance';
 
 import {
   getDesktopConnection,
@@ -80,6 +88,7 @@ interface BrowserGatewayConnection {
 }
 
 interface PendingRequest {
+  received?: (bytes: number) => void;
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
   includeResourceState?: boolean;
@@ -217,6 +226,15 @@ function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: str
 }
 
 export class GatewayClient {
+  readonly performance = new PerformanceRecorder('command-center');
+  private readonly performanceReporter = new PerformanceReporter(
+    this.performance,
+    () =>
+      this.lastAuthentication?.capabilities.performanceDiagnostics === 1 &&
+      this.ws?.readyState === WebSocket.OPEN,
+    (report) => this.request(Methods.GATEWAY_PERFORMANCE_REPORT, report),
+  );
+
   private resourceReason?: ResourceConnectionReason;
   private resourceSocketId = 0;
   get resourceConnectionId(): number {
@@ -566,7 +584,7 @@ export class GatewayClient {
         try {
           const frame: Frame = JSON.parse(ev.data as string);
           if (frame.type === 'res') {
-            this.handleResponse(frame as ResponseFrame);
+            this.handleResponse(frame as ResponseFrame, utf8ByteLength(ev.data as string));
           } else if (frame.type === 'event') {
             this.handleEvent(frame as EventFrame);
           }
@@ -715,6 +733,7 @@ export class GatewayClient {
 
   disconnect(): void {
     this.disposed = true;
+    this.performanceReporter.dispose();
     void this.person.dispose();
     clearGatewayMemoryAuth();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -745,10 +764,12 @@ export class GatewayClient {
     method: ResourceReadMethod,
     params: unknown,
     signal?: AbortSignal,
+    performanceClass?: PerformanceActionClass,
   ): Promise<ResourceReadResult<T>> {
     return requestResourceRead<T>(method, params, <Reply>(observed: boolean) =>
       this.request<Reply>(method, params, {
         timeout: resourceReadTimeout(method) ?? DEFAULT_TIMEOUT,
+        performanceClass,
         includeResourceState: observed,
         signal,
       }),
@@ -766,6 +787,27 @@ export class GatewayClient {
     method: string,
     params?: unknown,
     timeoutOrOptions: number | GatewayRequestOptions = DEFAULT_TIMEOUT,
+  ): Promise<T> {
+    const options = normalizeGatewayRequestOptions(timeoutOrOptions, DEFAULT_TIMEOUT);
+    if (isPerformanceMethod(method))
+      return this.rawRequestUnmeasured<T>(method, params, timeoutOrOptions);
+    try {
+      return await measureClientRequest(
+        this.performance,
+        method,
+        options.performanceClass ?? performanceActionClass(method),
+        (received) => this.rawRequestUnmeasured<T>(method, params, timeoutOrOptions, received),
+      );
+    } finally {
+      this.performanceReporter.schedule();
+    }
+  }
+
+  private async rawRequestUnmeasured<T = unknown>(
+    method: string,
+    params?: unknown,
+    timeoutOrOptions: number | GatewayRequestOptions = DEFAULT_TIMEOUT,
+    received?: (bytes: number) => void,
   ): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('Not connected');
@@ -815,6 +857,7 @@ export class GatewayClient {
       });
 
       this.pending.set(id, {
+        received,
         includeResourceState: options.includeResourceState,
         resolve: (v: unknown) => {
           finish(() => {
@@ -869,9 +912,10 @@ export class GatewayClient {
     };
   }
 
-  private handleResponse(frame: ResponseFrame): void {
+  private handleResponse(frame: ResponseFrame, bytes: number): void {
     const req = this.pending.get(frame.id);
     if (!req) return;
+    req.received?.(bytes);
 
     if (frame.ok) {
       req.resolve(

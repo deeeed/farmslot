@@ -24,6 +24,15 @@ import {
   type ResourceReadResult,
   resourceReadTimeout,
 } from '@farmslot/protocol/client-cache';
+import {
+  isPerformanceMethod,
+  measureClientRequest,
+  type PerformanceActionClass,
+  performanceActionClass,
+  PerformanceRecorder,
+  PerformanceReporter,
+  utf8ByteLength,
+} from '@farmslot/protocol/performance';
 
 import { gatewaySupportsPing } from './gateway-connection-test';
 import { connectionWaitTerminalError } from './gateway-connection-wait';
@@ -57,6 +66,7 @@ type EventCallback = (payload: unknown) => void;
 type ConnectionCallback = (state: ConnectionState) => void;
 
 interface PendingRequest {
+  received?: (bytes: number) => void;
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
@@ -77,6 +87,15 @@ export interface GatewayRequestOptions extends ResourceReadOptions {
 const DEFAULT_TIMEOUT = 15_000;
 const MAX_BACKOFF = 30_000;
 export class GatewayClient {
+  readonly performance = new PerformanceRecorder('companion');
+  private readonly performanceReporter = new PerformanceReporter(
+    this.performance,
+    () =>
+      this.lastAuthentication?.capabilities.performanceDiagnostics === 1 &&
+      this.ws?.readyState === WebSocket.OPEN,
+    (report) => this.request(Methods.GATEWAY_PERFORMANCE_REPORT, report),
+  );
+
   private resourceReason?: ResourceConnectionReason;
   get resourceConnectionReason() {
     return this.resourceReason;
@@ -316,7 +335,7 @@ export class GatewayClient {
         if (frame.type === 'res' || frame.type === 'event')
           this.offlineBaseline?.received(ev.data as string, frame);
         if (frame.type === 'res') {
-          this.handleResponse(frame as ResponseFrame);
+          this.handleResponse(frame as ResponseFrame, utf8ByteLength(ev.data as string));
         } else if (frame.type === 'event') {
           this.handleEvent(frame as EventFrame);
         }
@@ -417,6 +436,7 @@ export class GatewayClient {
       false,
       this.resourceReason === 'sign-out' ? 'sign-out' : 'network',
     );
+    this.performanceReporter.dispose();
     this.appStateSubscription?.remove();
     this.appStateSubscription = null;
   }
@@ -450,6 +470,7 @@ export class GatewayClient {
     method: ResourceReadMethod,
     params: unknown,
     signal?: AbortSignal,
+    performanceClass?: PerformanceActionClass,
   ): Promise<ResourceReadResult<T>> {
     return requestResourceRead<T>(method, params, <Reply>(observed: boolean) =>
       this.request<Reply>(
@@ -459,6 +480,7 @@ export class GatewayClient {
           resourceReadTimeout(method) ??
           DEFAULT_TIMEOUT,
         {
+          performanceClass,
           includeResourceState: observed,
           signal,
         },
@@ -478,6 +500,27 @@ export class GatewayClient {
     params?: unknown,
     timeout: number | null = DEFAULT_TIMEOUT,
     options?: GatewayRequestOptions,
+  ): Promise<T> {
+    if (isPerformanceMethod(method))
+      return this.requestRawUnmeasured<T>(method, params, timeout, options);
+    try {
+      return await measureClientRequest(
+        this.performance,
+        method,
+        options?.performanceClass ?? performanceActionClass(method),
+        (received) => this.requestRawUnmeasured<T>(method, params, timeout, options, received),
+      );
+    } finally {
+      this.performanceReporter.schedule();
+    }
+  }
+
+  private async requestRawUnmeasured<T = unknown>(
+    method: string,
+    params?: unknown,
+    timeout: number | null = DEFAULT_TIMEOUT,
+    options?: GatewayRequestOptions,
+    received?: (bytes: number) => void,
   ): Promise<T> {
     if (options?.signal?.aborted) throw new Error('Resource read aborted');
     const generation = this.generation;
@@ -523,6 +566,7 @@ export class GatewayClient {
             }, timeout);
 
       this.pending.set(id, {
+        received,
         resolve: resolve as (v: unknown) => void,
         reject,
         timer,
@@ -609,9 +653,10 @@ export class GatewayClient {
     });
   }
 
-  private handleResponse(frame: ResponseFrame): void {
+  private handleResponse(frame: ResponseFrame, bytes: number): void {
     const req = this.pending.get(frame.id);
     if (!req) return;
+    req.received?.(bytes);
     this.pending.delete(frame.id);
     clearTimeout(req.timer);
     req.cleanup?.();

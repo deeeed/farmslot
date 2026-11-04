@@ -44,7 +44,7 @@ export function authorizeGatewayHttp(
   return authorizeGatewayIngress(runtime, session, { kind: 'http', resource });
 }
 
-export type GatewayHttpResource = 'file' | 'run-artifact';
+export type GatewayHttpResource = 'file' | 'run-artifact' | 'metrics';
 
 type GatewayIngressRequest =
   | { kind: 'method'; method: string }
@@ -95,6 +95,8 @@ function authorizeGatewayIngress(
     throw noActiveAdminDenial(session, runtime, principal);
   }
   const classification = classificationFor(method);
+  // A client may submit only bounded aggregates; the route binds them to this principal.
+  if (classification?.classification === 'authenticated-client') return principal;
   if (
     classification?.classification === 'native-owner' &&
     hasNativeWorkspaceAccess(principal, runtime.store.snapshot().principals)
@@ -271,15 +273,29 @@ function denial(
   );
 }
 
-function classificationFor(
-  method: string,
-):
-  | { classification: 'admin' | 'operator' | 'node-subject' | 'native-owner'; reason?: string }
+function classificationFor(method: string):
+  | {
+      classification:
+        | 'admin'
+        | 'operator'
+        | 'node-subject'
+        | 'native-owner'
+        | 'authenticated-client';
+      reason?: string;
+    }
   | undefined {
   return (
     AUTHORIZATION_METHOD_CLASSIFICATION as Record<
       string,
-      { classification: 'admin' | 'operator' | 'node-subject' | 'native-owner'; reason?: string }
+      {
+        classification:
+          | 'admin'
+          | 'operator'
+          | 'node-subject'
+          | 'native-owner'
+          | 'authenticated-client';
+        reason?: string;
+      }
     >
   )[method];
 }

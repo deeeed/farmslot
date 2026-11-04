@@ -4,6 +4,8 @@ export const Methods = {
   GATEWAY_PING: 'gateway.ping',
   GATEWAY_STATUS: 'gateway.status',
   GATEWAY_UPDATE: 'gateway.update',
+  GATEWAY_PERFORMANCE_GET: 'gateway.performance.get',
+  GATEWAY_PERFORMANCE_REPORT: 'gateway.performance.report',
   GATEWAY_DOCTOR: 'gateway.doctor',
 
   // Connection-bound shared collector observers

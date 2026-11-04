@@ -238,6 +238,7 @@ import {
   type WorkspaceMetroSubscribeParams,
   type WorkspaceMetroUnsubscribeParams,
 } from '@farmslot/protocol';
+import { isClientPerformanceReport } from '@farmslot/protocol/performance';
 
 import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
 import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js';
@@ -571,6 +572,7 @@ import {
   workerSessionHistorySubscriptionKey,
 } from '../methods/worker-session-history.js';
 import { metroSubscribe, metroUnsubscribe } from '../methods/workspace.js';
+import { gatewayPerformance } from '../observability/performance.js';
 import { getAllThumbnails, subscribeThumbnails } from '../observability/thumbnail-cache.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import { nativeObservations } from '../resources/native-observations.js';
@@ -809,6 +811,15 @@ async function routeAuthorizedMethod(
         legacyClientId: state.id,
         legacyInterest: !upstreamObservers.manages(state, Methods.GATEWAY_STATUS),
       });
+    case Methods.GATEWAY_PERFORMANCE_GET:
+      return gatewayPerformance.snapshot();
+    case Methods.GATEWAY_PERFORMANCE_REPORT:
+      if (!isClientPerformanceReport(params))
+        throw new GatewayMethodError('INVALID_PARAMS', 'Invalid performance report');
+      return gatewayPerformance.mergeReport(
+        authorizeGatewayMethod(authRuntime, state, method).id,
+        params,
+      );
     case Methods.GATEWAY_DOCTOR:
       return gatewayDoctor(p as GatewayDoctorParams, authRuntime);
     case Methods.RUNNER_MODEL_CATALOG:

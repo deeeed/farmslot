@@ -37,6 +37,7 @@ export function workspaceAllowsMethod(
     access === 'farm' ||
     method === Methods.AUTH_CONNECT ||
     method === Methods.GATEWAY_PING ||
+    method === Methods.GATEWAY_PERFORMANCE_REPORT ||
     method === Methods.AUTH_SESSION_EXCHANGE ||
     method === Methods.AUTH_SESSION_REFRESH ||
     method === Methods.AUTH_SESSION_LIST ||

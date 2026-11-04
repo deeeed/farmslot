@@ -11,6 +11,7 @@ import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slo
 
 import { getNode } from '../fleet/machine-registry.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
+import { executionKind, measureManagedOperation } from '../observability/performance.js';
 
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
@@ -96,6 +97,16 @@ async function execSpawn(
       stderr: 'Command cancelled before execution.',
       exitCode: 130,
     });
+  return measureManagedOperation('exec', executionKind(executable, argv), () =>
+    spawnLocalProcess(executable, argv, opts),
+  );
+}
+
+function spawnLocalProcess(
+  executable: string,
+  argv: string[],
+  opts?: ExecOptions,
+): Promise<ExecResult> {
   return trackCleanupCommand(
     new Promise((resolve) => {
       const useProcessGroup = opts?.signal != null || opts?.timeout != null;

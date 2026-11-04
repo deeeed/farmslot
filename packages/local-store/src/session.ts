@@ -60,7 +60,9 @@ export function createStoredResourceCache(
       get resourceConnectionReason() {
         return client.resourceConnectionReason;
       },
-      requestResource: (method, params, signal) => client.requestResource(method, params, signal),
+      performance: client.performance,
+      requestResource: (method, params, signal, actionClass) =>
+        client.requestResource(method, params, signal, actionClass),
       ...(client.replaceResourceObservers
         ? { replaceResourceObservers: client.replaceResourceObservers.bind(client) }
         : {}),

@@ -1,5 +1,4 @@
 // node-rpc.ts — send RPC requests to connected nodes and await responses
-
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { WebSocket } from 'ws';
@@ -12,6 +11,7 @@ import {
 } from '@farmslot/protocol';
 
 import { isLocal, loadSlotVars } from '../core/index.js';
+import { executionKind, measureManagedOperation } from '../observability/performance.js';
 
 import { type ConnectedNode, getNode } from './machine-registry.js';
 
@@ -204,6 +204,17 @@ export function sendNodeRequest(
   params: unknown,
   opts?: { timeout?: number; onRequestId?: (id: string) => void; requireSameConnection?: boolean },
 ): Promise<unknown> {
+  return measureManagedOperation('node', 'node', () =>
+    sendNodeRequestUnmeasured(node, method, params, opts),
+  );
+}
+
+function sendNodeRequestUnmeasured(
+  node: ConnectedNode,
+  method: string,
+  params: unknown,
+  opts?: { timeout?: number; onRequestId?: (id: string) => void; requireSameConnection?: boolean },
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (node.ws.readyState !== WebSocket.OPEN) {
       return reject(
@@ -266,6 +277,17 @@ interface StreamingRequestOptions {
 }
 
 function sendNodeRequestStreaming(
+  node: ConnectedNode,
+  method: string,
+  params: unknown,
+  opts?: StreamingRequestOptions,
+): Promise<unknown> {
+  return measureManagedOperation('node', 'node', () =>
+    sendNodeRequestStreamingUnmeasured(node, method, params, opts),
+  );
+}
+
+function sendNodeRequestStreamingUnmeasured(
   node: ConnectedNode,
   method: string,
   params: unknown,
@@ -424,6 +446,16 @@ export async function waitForNode(
   timeoutMs = 15_000,
   signal?: AbortSignal,
 ): Promise<ConnectedNode> {
+  return measureManagedOperation('wait', 'node', () =>
+    waitForNodeUnmeasured(machine, timeoutMs, signal),
+  );
+}
+
+async function waitForNodeUnmeasured(
+  machine: string,
+  timeoutMs = 15_000,
+  signal?: AbortSignal,
+): Promise<ConnectedNode> {
   const scope = reconnectWait.getStore();
   const check = () => {
     scope?.assertCurrent();
@@ -512,34 +544,42 @@ async function nodeExecRequest(
       throw new Error(`Node ${machine} needs an update before it can run cancellable commands.`);
     }
     try {
-      return (await sendNodeRequestStreaming(
-        node,
+      return (await measureManagedOperation(
         'exec',
-        {
-          ...request,
-          ...(opts?.signal
-            ? {
-                requestScoped: true,
-                closeoutTimeoutMs: opts.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS,
-              }
-            : {}),
-          ...(opts?.timeout != null ? { timeout: opts.timeout } : {}),
-          ...(opts?.maxBuffer != null ? { maxBuffer: opts.maxBuffer } : {}),
-        },
-        {
-          // Deliberately NOT the command budget: see NODE_EXEC_TRANSPORT_GRACE_MS.
-          ...(opts?.timeout != null
-            ? {
-                timeout:
-                  opts.timeout +
-                  NODE_EXEC_TRANSPORT_GRACE_MS +
-                  (opts.signal ? (opts.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS) : 0),
-              }
-            : {}),
-          onOutput: opts?.onOutput,
-          signal: opts?.signal,
-          closeoutTimeoutMs: opts?.closeoutTimeoutMs,
-        },
+        executionKind(
+          request.argv?.[0] ?? 'bash',
+          request.argv?.slice(1) ?? ['-c', request.cmd ?? ''],
+        ),
+        () =>
+          sendNodeRequestStreaming(
+            node,
+            'exec',
+            {
+              ...request,
+              ...(opts?.signal
+                ? {
+                    requestScoped: true,
+                    closeoutTimeoutMs: opts.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS,
+                  }
+                : {}),
+              ...(opts?.timeout != null ? { timeout: opts.timeout } : {}),
+              ...(opts?.maxBuffer != null ? { maxBuffer: opts.maxBuffer } : {}),
+            },
+            {
+              // Deliberately NOT the command budget: see NODE_EXEC_TRANSPORT_GRACE_MS.
+              ...(opts?.timeout != null
+                ? {
+                    timeout:
+                      opts.timeout +
+                      NODE_EXEC_TRANSPORT_GRACE_MS +
+                      (opts.signal ? (opts.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS) : 0),
+                  }
+                : {}),
+              onOutput: opts?.onOutput,
+              signal: opts?.signal,
+              closeoutTimeoutMs: opts?.closeoutTimeoutMs,
+            },
+          ),
       )) as ExecResult;
     } catch (err) {
       const msg = (err as Error).message;

@@ -64,6 +64,11 @@ import { parseTerminalKey } from './methods/terminal.js';
 import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
 import { tmuxWorkerObservedList } from './methods/tmux-workers.js';
 import { metroUnsubscribeAll } from './methods/workspace.js';
+import {
+  measureGatewayRequest,
+  recordGatewayResponse,
+  startPerformanceSampling,
+} from './observability/performance.js';
 import { initThumbnailCache, unsubscribeThumbnails } from './observability/thumbnail-cache.js';
 import { canReadResourceKey, canReadVisibleModelPreferenceKey } from './resources/authorization.js';
 import { nativeCatalogChanges } from './resources/native-catalog-changes.js';
@@ -180,6 +185,8 @@ export function createWebSocketServer(
   authRuntime: GatewayAuthRuntime,
   options?: CreateWebSocketServerOptions,
 ): WebSocketServer {
+  const stopPerformance = startPerformanceSampling();
+  httpServer.once('close', stopPerformance);
   activeAuthRuntime = authRuntime;
   installCredentialSessionInvalidation(authRuntime);
   const maxPayload = options?.maxPayload ?? DEFAULT_WS_MAX_PAYLOAD_BYTES;
@@ -650,7 +657,15 @@ async function handleMessage(
   }
 
   if (frame.type !== 'req') return;
+  return measureGatewayRequest(frame.method, () => dispatchMessage(state, frame, authRuntime, req));
+}
 
+async function dispatchMessage(
+  state: ClientState,
+  frame: RequestFrame,
+  authRuntime: GatewayAuthRuntime,
+  req: IncomingMessage,
+): Promise<void> {
   if (personSessionMethods.has(frame.method)) {
     try {
       const result = routePersonSessionMethod(
@@ -781,6 +796,7 @@ async function handleMessage(
         personSessions: true,
         voiceInstructionFormatting: true,
         gatewayPing,
+        performanceDiagnostics: 1,
         resourceChanges: {
           version: 1,
           epoch: resourceRevisions.epoch,
@@ -1054,7 +1070,9 @@ function sendResponse(
     frame.payload = payload;
     if (resourceState) frame.resourceState = resourceState;
   } else frame.error = error;
-  ws.send(JSON.stringify(frame));
+  const serialized = JSON.stringify(frame);
+  recordGatewayResponse(Buffer.byteLength(serialized), ok);
+  ws.send(serialized);
 }
 
 function sendEvent(ws: WebSocket, event: string, payload: unknown): void {

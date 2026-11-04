@@ -168,6 +168,8 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `fs.reveal`                             | fs               | bounded-write | —      | —      | Fs Reveal gateway method.                             |
 | `fs.write`                              | fs               | bounded-write | —      | —      | Fs Write gateway method.                              |
 | `gateway.doctor`                        | gateway          | read-only     | —      | —      | Gateway Doctor gateway method.                        |
+| `gateway.performance.get`               | gateway          | read-only     | —      | —      | Gateway Performance Get gateway method.               |
+| `gateway.performance.report`            | gateway          | bounded-write | —      | —      | Gateway Performance Report gateway method.            |
 | `gateway.ping`                          | gateway          | read-only     | —      | —      | Gateway Ping gateway method.                          |
 | `gateway.status`                        | gateway          | read-only     | —      | —      | Gateway Status gateway method.                        |
 | `gateway.update`                        | gateway          | bounded-write | —      | —      | Gateway Update gateway method.                        |

@@ -1,3 +1,4 @@
+import { afterForegroundPaint } from '../performance/paint.js';
 import type { NativeSessionReadResult, NativeSessionTargetParams } from '../rpc/native-session.js';
 import { Methods } from '../rpc/registry.js';
 import type { RunGetResult, RunListParams, RunListResult } from '../rpc/run.js';
@@ -24,7 +25,7 @@ import {
   readNativeHistory,
   storedNativeHistoryMatches,
 } from './native-history.js';
-import { type ResourceQuery, resourceQuery } from './registry.js';
+import { type ResourceQuery, resourceQuery, type ResourceReadMethod } from './registry.js';
 import { createRunDetailSync, type RunDetailTarget, runDetailTarget } from './run-details.js';
 import {
   isRunListCollectionRead,
@@ -78,6 +79,7 @@ interface QueryEntry {
   /** Canonical ids of `query.dependencies`, which every change notification is matched against. */
   dependencyIds: ReadonlySet<string>;
   state: ResourceQueryState;
+  metricSource?: 'memory' | 'stored' | 'network';
   listeners: Set<(state: ResourceQueryState) => void>;
   hydration: Promise<void>;
   hydrated: boolean;
@@ -167,6 +169,48 @@ export function createGatewayResourceCache(
   options: GatewayResourceCacheOptions,
 ): GatewayResourceCache {
   const transport = options.transport;
+  const metrics = options.performance ?? transport.performance;
+  const readContexts = new WeakMap<AbortSignal, { identity: object; blocking: boolean }>();
+  const collectionIdentities = new Map<ResourceReadMethod, object>();
+  function request<T>(
+    method: ResourceReadMethod,
+    params: unknown,
+    signal: AbortSignal,
+  ): Promise<ResourceReadResult<T>> {
+    const context = readContexts.get(signal);
+    let identity = context?.identity ?? collectionIdentities.get(method);
+    if (!identity) {
+      identity = {};
+      collectionIdentities.set(method, identity);
+    }
+    metrics?.reread(method, identity);
+    return transport.request<T>(
+      method,
+      params,
+      signal,
+      context?.blocking ? 'interactive-read' : 'background-refresh',
+    );
+  }
+  function recordRead(
+    entry: QueryEntry,
+    source: 'memory' | 'stored' | 'network' | 'unknown',
+    blocking: boolean,
+  ): void {
+    if (!metrics) return;
+    const labels = { method: entry.query.method, cache_source: source };
+    metrics.increment('farmslot_client_cache_reads_total', labels);
+    if (entry.state.status === 'stale')
+      metrics.increment('farmslot_client_stale_reads_total', labels);
+    if (blocking) metrics.increment('farmslot_client_blocking_reads_total', labels);
+    const age =
+      entry.state.observedAt === undefined
+        ? undefined
+        : (Date.now() - entry.state.observedAt) / 1000;
+    if (age !== undefined && Number.isFinite(age) && age >= 0)
+      metrics.observe('farmslot_client_cache_age_seconds', labels, age);
+    else metrics.increment('farmslot_client_unknown_age_total', labels);
+  }
+
   let store = options.store ?? createMemoryResourceStore();
   let metadata: ResourceStoreMetadata | undefined;
   let startupStore: ResourceStore | undefined;
@@ -192,7 +236,7 @@ export function createGatewayResourceCache(
   let unsubscribeStore = store.onDeleted(storeDeleted);
   // Version lists: one shared run collection answers every run.list view.
   const runList = new RunListCollection({
-    request: (params, signal) => transport.request<RunListResult>(Methods.RUN_LIST, params, signal),
+    request: (params, signal) => request<RunListResult>(Methods.RUN_LIST, params, signal),
     persist: (merge) => {
       const writingStore = store;
       const incarnation = storeVersion;
@@ -518,6 +562,7 @@ export function createGatewayResourceCache(
     // Stored facts belong to an owner, not a socket attempt. Fence a revoked
     // owner's pending I/O synchronously, before queued deletion can run.
     if (revoke || scopeChanged || authorityChanged) {
+      metrics?.resetScope();
       hydrationOwnerVersion++;
       forgetRunList();
     }
@@ -708,7 +753,7 @@ export function createGatewayResourceCache(
     };
     entries.set(query.id, entry);
     const saved = isRunListView(query) ? heldRunListView(query) : takeStartupQuery(query);
-    if (applyStoredQuery(entry, saved)) {
+    if (applyStoredQuery(entry, saved, 'memory')) {
       entry.hydrated = true;
       queueMicrotask(prune);
     } else hydrateEntry(entry);
@@ -723,7 +768,11 @@ export function createGatewayResourceCache(
     return saved;
   }
 
-  function applyStoredQuery(entry: QueryEntry, saved: StoredResourceQuery | undefined): boolean {
+  function applyStoredQuery(
+    entry: QueryEntry,
+    saved: StoredResourceQuery | undefined,
+    origin: 'memory' | 'stored' = 'stored',
+  ): boolean {
     const query = entry.query;
     if (
       !saved ||
@@ -733,6 +782,7 @@ export function createGatewayResourceCache(
         !storedNativeHistoryMatches(query.params as NativeSessionTargetParams, saved.data))
     )
       return false;
+    entry.metricSource = origin;
     const sourceObservation = query.sourceObservation?.(saved.data);
     entry.state = {
       status: 'stale',
@@ -854,7 +904,7 @@ export function createGatewayResourceCache(
         observedAt: runList.observedAt,
       };
     // A view whose summaries the version reply cannot answer keeps its own full read.
-    return transport.request<RunListResult>(Methods.RUN_LIST, params, signal);
+    return request<RunListResult>(Methods.RUN_LIST, params, signal);
   }
 
   function stampCovers(entry: QueryEntry, stamp: ResourceReadStamp | undefined): boolean {
@@ -975,6 +1025,9 @@ export function createGatewayResourceCache(
       prefetch,
     };
     entry.pending = pending;
+    const refreshStarted = metrics?.clock();
+    const blocking = entry.state.data === undefined;
+    readContexts.set(pending.controller.signal, { identity: entry, blocking });
     entry.dirty = false;
     entry.rereadFloor = undefined;
     const unknownGeneration = entry.unknownGeneration;
@@ -1004,18 +1057,10 @@ export function createGatewayResourceCache(
                 entry.query.params as NativeSessionTargetParams,
                 entry.state.data as NativeSessionReadResult | undefined,
                 (params, signal) =>
-                  transport.request<NativeSessionReadResult>(
-                    Methods.NATIVE_SESSION_READ,
-                    params,
-                    signal,
-                  ),
+                  request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params, signal),
                 pending.controller.signal,
               )
-            : await transport.request(
-                entry.query.method,
-                entry.query.params,
-                pending.controller.signal,
-              );
+            : await request(entry.query.method, entry.query.params, pending.controller.signal);
         if (
           disposed ||
           store.deleted ||
@@ -1055,6 +1100,7 @@ export function createGatewayResourceCache(
               code: sourceObservation.error?.code ?? 'UPSTREAM_UNOBSERVED',
             },
           );
+        entry.metricSource = 'network';
         entry.state = {
           status: covered
             ? sourceObservation && sourceObservation.status !== 'ready'
@@ -1266,6 +1312,17 @@ export function createGatewayResourceCache(
           };
         notify(entry);
       } finally {
+        if (metrics && refreshStarted !== undefined)
+          metrics.observe(
+            blocking
+              ? 'farmslot_client_blocking_refresh_seconds'
+              : 'farmslot_client_background_refresh_seconds',
+            {
+              method: entry.query.method,
+              action_class: blocking ? 'interactive-read' : 'background-refresh',
+            },
+            metrics.clock() - refreshStarted,
+          );
         if (entry.pending === pending) {
           entry.pending = undefined;
           if (entry.dirty && entry.listeners.size && usable) schedule(entry);
@@ -1438,8 +1495,40 @@ export function createGatewayResourceCache(
     },
     observe<T>(query: ResourceQuery<T>, listener: (state: ResourceQueryState<T>) => void) {
       if (disposed) throw new Error('Resource cache is disposed');
+      const started = metrics?.clock();
+      const epoch = metrics?.epoch;
+      const alreadyHeld = entries.get(query.id)?.state.data !== undefined;
       const entry = entryFor(query);
-      const receive = (state: ResourceQueryState) => listener(state as ResourceQueryState<T>);
+      const blocking = entry.state.data === undefined;
+      let first = true,
+        active = true;
+      let cancelPaint: (() => void) | undefined;
+      const receive = (state: ResourceQueryState) => {
+        listener(state as ResourceQueryState<T>);
+        if (state.data === undefined) return;
+        const source = alreadyHeld ? 'memory' : (entry.metricSource ?? 'unknown');
+        recordRead(entry, source, blocking && first);
+        if (!first || !metrics || started === undefined) return;
+        first = false;
+        if (connection.foreground === false) return;
+        cancelPaint = (options.afterPaint ?? afterForegroundPaint)(() => {
+          if (!active || disposed || metrics.epoch !== epoch || connection.foreground === false)
+            return;
+          metrics.observe(
+            source === 'network'
+              ? 'farmslot_client_visible_read_seconds'
+              : 'farmslot_client_cached_paint_seconds',
+            {
+              method: query.method,
+              action_class: source === 'network' ? 'interactive-read' : 'cached-paint',
+              cache_source: source,
+            },
+            metrics.clock() - started,
+          );
+        });
+        if (!cancelPaint)
+          metrics.increment('farmslot_client_unmeasured_paints_total', { method: query.method });
+      };
       entry.listeners.add(receive);
       updateCollectors();
       if (query.retention?.cohort === 'workspace') {
@@ -1483,6 +1572,8 @@ export function createGatewayResourceCache(
       deliver(entry, receive);
       if (entry.state.status !== 'ready' || entry.dirty) schedule(entry);
       return () => {
+        active = false;
+        cancelPaint?.();
         entry.listeners.delete(receive);
         updateCollectors();
         if (!entry.listeners.size) {
@@ -1495,7 +1586,9 @@ export function createGatewayResourceCache(
     },
     read<T>(query: ResourceQuery<T>) {
       if (disposed) throw new Error('Resource cache is disposed');
-      return entryFor(query).state as ResourceQueryState<T>;
+      const entry = entryFor(query);
+      recordRead(entry, 'memory', entry.state.data === undefined);
+      return entry.state as ResourceQueryState<T>;
     },
     async readStored<T>(query: ResourceQuery<T>, refresh = true) {
       if (disposed) throw new Error('Resource cache is disposed');
@@ -1540,6 +1633,8 @@ export function createGatewayResourceCache(
     retainContent,
     contentWriteToken,
     async dispose(reason?: ResourceConnectionReason) {
+      if (reason && reason !== 'network' && reason !== 'background' && reason !== 'token-refresh')
+        metrics?.resetScope();
       if (disposed) return;
       const withdrawing = collectors.close();
       disposed = true;

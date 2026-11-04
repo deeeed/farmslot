@@ -8,23 +8,13 @@
 // replays) behind "Run refresh failed". The list now drops any decision payload
 // value above RUN_LIST_PAYLOAD_VALUE_LIMIT bytes and removes context.checkSnapshot, naming omitted values in
 // `payloadTrimmed`; run.get, run.forSlot and run events stay complete.
-
 import type { Run, RunDecision, RunDecisionPayload } from '../contracts/runs.js';
+import { utf8ByteLength } from '../utf8-byte-length.js';
 
 import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
 
 /** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
 export const RUN_LIST_PAYLOAD_VALUE_LIMIT = 2048;
-
-/** UTF-8 size of `text`; what the wire carries, not the UTF-16 length. */
-function utf8ByteLength(text: string): number {
-  let bytes = 0;
-  for (const char of text) {
-    const codePoint = char.codePointAt(0) ?? 0;
-    bytes += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
-  }
-  return bytes;
-}
 
 export function trimDecisionForList(decision: RunDecision): RunDecision {
   const trimmed: string[] = [];

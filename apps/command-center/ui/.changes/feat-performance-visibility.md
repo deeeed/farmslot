@@ -1,0 +1,1 @@
+- Measure shared RPC and offline cache performance, with authenticated diagnostics and action budgets.
