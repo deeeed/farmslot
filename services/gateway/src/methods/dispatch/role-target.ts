@@ -2,8 +2,6 @@
 
 import type { AgentContextTarget } from '@farmslot/protocol';
 
-import { exactTmuxWindowTarget } from '../../core/tmux.js';
-
 export { buildDispatchRoleShellCommand } from '../../core/tmux.js';
 
 export function parseCapturedAgentPaneTarget(session: string, raw: string): AgentContextTarget {
@@ -42,7 +40,7 @@ export function canonicalAgentContextTarget(target: AgentContextTarget): string 
   const session = target.session?.trim();
   const window = target.window?.trim();
   if (session && window && !/^\d+$/.test(window)) {
-    return exactTmuxWindowTarget(session, window);
+    return `${session}:${window}`;
   }
   return target.target;
 }

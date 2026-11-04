@@ -96,6 +96,7 @@ for (const [role, name] of [
 ] satisfies [AgentRole, string][]) {
   test(`missing ${role} window gets its own target beside devserver-log`, async () => {
     const target = await ensureWorkerRoleTarget(vars, 'fixture', 'scripted', role);
+    assert.equal(target, `fixture:${name}`, 'persisted target format stays unchanged');
     assert.equal(resolveWindow(target), name);
     assert.ok(windows.has(name), 'a role window was created instead of borrowing a prefix match');
     assert.deepEqual(windows.get('devserver-log'), { index: 1, dead: false });

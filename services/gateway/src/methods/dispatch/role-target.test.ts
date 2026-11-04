@@ -21,7 +21,7 @@ test('an exact pane id wins over the role window when routing input', () => {
 test('without a pane id the role window still beats a numeric target', () => {
   assert.equal(
     canonicalAgentContextTarget({ session: 'ff-1', window: 'dev', pane: null, target: 'ff-1:3' }),
-    '=ff-1:=dev',
+    'ff-1:dev',
   );
   assert.equal(
     canonicalAgentContextTarget({ session: 'ff-1', window: '3', pane: null, target: 'ff-1:3' }),
@@ -38,6 +38,6 @@ test('a malformed pane id is ignored rather than routed to', () => {
       paneId: 'not-a-pane',
       target: 'ff-1:dev',
     }),
-    '=ff-1:=dev',
+    'ff-1:dev',
   );
 });
