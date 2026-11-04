@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { Run, TaskProgressResult } from '@farmslot/protocol';
+import type { Run, SlotLifecycle, TaskProgressResult } from '@farmslot/protocol';
 // See replay-step-nested-checklist.test.ts: mock.module replaces a module
 // wholesale, so the real namespaces are spread in and only the fixtures these
 // tests need are overridden. Both the watcher and methods/task.ts reach the same
@@ -41,6 +41,7 @@ function useIds(suffix: string): void {
 
 let repoRoot = '';
 let resourceContext = false;
+let slotLifecycle: SlotLifecycle = 'busy';
 
 function slotVars() {
   return {
@@ -110,8 +111,9 @@ mock.module('../fleet/state.js', {
           machine: 'local',
           taskFile: TASK_REL,
           currentRunId: RUN_ID,
-          lifecycle: 'busy',
-          phase: 'working',
+          lifecycle: slotLifecycle,
+          phase: slotLifecycle === 'busy' ? 'working' : null,
+          agent: 'working',
         },
       ],
     }),
@@ -131,7 +133,14 @@ mock.module('../core/state.js', {
   namedExports: { ...realState, updateSlotStatus: async () => {} },
 });
 
-const { onTaskProgress, unwatchSlot, watchSlot } = await import('./watcher.js');
+const {
+  assertLiveSlotProgressObservationAdmitted,
+  onTaskProgress,
+  startWatchingActiveSlots,
+  unwatchSlot,
+  watchSlot,
+} = await import('./watcher.js');
+const { taskProgress } = await import('../methods/task.js');
 
 const PARENT_MARKDOWN = [
   '# Worker',
@@ -603,6 +612,38 @@ test('actual slot checklist write publishes exact run/context progress and slot 
     assert.deepEqual(changedKeyIds(keys), changedKeyIds(expectedWatchKeys()));
   });
 });
+
+for (const lifecycle of ['busy', 'manual'] as const)
+  test(`startup restores verified progress for a live worker in a ${lifecycle} slot`, async () => {
+    await withResourceWatch(`restart-progress-${lifecycle}`, async () => {
+      const params = { slotId: SLOT_ID, runId: RUN_ID, contextId: 'worker' };
+      await unwatchSlot(SLOT_ID);
+      assert.throws(() => assertLiveSlotProgressObservationAdmitted(params), {
+        code: 'RESOURCE_OBSERVATION_UNSUPPORTED',
+      });
+      slotLifecycle = lifecycle;
+      try {
+        await startWatchingActiveSlots();
+      } finally {
+        slotLifecycle = 'busy';
+      }
+      await publicationTurn();
+      assertLiveSlotProgressObservationAdmitted(params)();
+      const initial = await taskProgress(params, { observed: true });
+      assert.equal(initial.structured?.completedSteps, 1);
+      writeFileSync(
+        path.join(taskDirAbs(), 'CHECKLIST.md'),
+        PARENT_MARKDOWN.replace('- [ ]', '- [x]'),
+      );
+      await waitFor(
+        'progress after restart',
+        (entry) => entry.progress.structured?.completedSteps === 2,
+        3000,
+      );
+      const updated = await taskProgress(params, { observed: true });
+      assert.equal(updated.structured?.completedSteps, 2);
+    });
+  });
 
 test('actual slot signal-only timing mark publishes exact progress and slot keys', async () => {
   await withResourceWatch('resource-signal', async (keys) => {
