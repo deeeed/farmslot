@@ -8,6 +8,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { resolveMachinePoolConfig } from '../fleet/machine-pool.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
@@ -28,7 +29,7 @@ export async function tmuxWorkerCreateSession(
   )
     throw new GatewayMethodError('INVALID_PARAMS', 'Choose a terminal machine');
   const pools = await loadPoolConfigs();
-  const pool = pools.find((entry) => entry.machine === params.nodeId);
+  const pool = resolveMachinePoolConfig(pools, params.nodeId);
   const node = getNode(params.nodeId);
   if (!pool || !node)
     throw new GatewayMethodError('NODE_UNAVAILABLE', 'Terminal machine is not connected');

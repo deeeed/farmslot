@@ -131,7 +131,16 @@ async function fixture() {
     getRun: () => run,
     loadProjectVars: async () => project,
     loadPoolConfigs: async () => [
-      { machine: 'local', host: 'localhost', sshUser: 'fixture' } as PoolConfig,
+      {
+        machine: 'local',
+        host: 'localhost',
+        sshUser: 'fixture',
+        project: 'fixture',
+        platform: 'cli',
+        os: 'linux',
+        slots: [],
+        reviewWorkspaces: { maxConcurrent: 2 },
+      } satisfies PoolConfig,
     ],
     snapshotRoot: () => path.join(root, 'gateway-snapshots'),
   };

@@ -66,6 +66,7 @@ import {
 } from '../resources/slot-run-bindings.js';
 import { publishWorkerResources } from '../resources/worker-changes.js';
 
+import { rememberPoolFile, resolveMachinePoolConfig } from './machine-pool.js';
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
 
@@ -984,7 +985,7 @@ export async function loadPoolConfigs(directory = poolDir): Promise<PoolConfig[]
           raw.review_workspaces,
           path.join(directory, file),
         );
-        pools.push({
+        const pool: PoolConfig = {
           machine: raw.machine,
           project: raw.project,
           platform: raw.platform,
@@ -1003,7 +1004,9 @@ export async function loadPoolConfigs(directory = poolDir): Promise<PoolConfig[]
             ...(typeof s.app === 'string' && s.app ? { app: s.app } : {}),
             resources: s.resources,
           })),
-        });
+        };
+        rememberPoolFile(pool, file);
+        pools.push(pool);
       } catch (error) {
         // Reject this pool so malformed capacity cannot authorize reviewer admission.
         // Other machine configs remain available, and the operator sees the failure.
@@ -1038,7 +1041,7 @@ export async function loadPoolConfigs(directory = poolDir): Promise<PoolConfig[]
 
 export async function loadPoolConfig(machine: string): Promise<PoolConfig | null> {
   const pools = await loadPoolConfigs();
-  return pools.find((p) => p.machine === machine) ?? null;
+  return resolveMachinePoolConfig(pools, machine);
 }
 
 // ─── Project configs ───

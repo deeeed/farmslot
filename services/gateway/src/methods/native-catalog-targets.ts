@@ -9,6 +9,7 @@ import type {
 import { loadSlotVars, poolDir } from '../core/config.js';
 import { isLocal } from '../core/index.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { nativeSessionManager } from '../runners/native/manager.js';
@@ -109,7 +110,10 @@ export async function standaloneCatalogTargets(
     const targetPools = pools.filter((pool) =>
       machine === 'local' ? isLocal(pool.host, pool.machine) : pool.machine === machine,
     );
-    const modelMachine = machine === 'local' ? targetPools[0]?.machine : machine;
+    const modelMachine =
+      machine === 'local'
+        ? resolveMachinePoolConfigs(targetPools).values().next().value?.machine
+        : machine;
     if (modelMachine) contextMachines.set(machine, modelMachine);
     contexts.push({
       executionNodeId: machine,

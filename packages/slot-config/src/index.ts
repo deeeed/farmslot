@@ -2,6 +2,7 @@ export * from './config.js';
 export * from './error.js';
 export * from './fixtures.js';
 export * from './hooks.js';
+export { resolveMachinePool } from './machine-pool.js';
 export {
   farmslotRoot,
   readWorkspaceState,

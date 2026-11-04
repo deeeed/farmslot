@@ -7,9 +7,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import type { PoolConfig, ReviewWorkspaceSubject, Run } from '@farmslot/protocol';
+import type { ReviewWorkspaceSubject, Run } from '@farmslot/protocol';
 
 import type { ProjectVars } from '../core/config.js';
+import { loadPoolConfigs } from '../fleet/state.js';
 import { makeRun } from '../methods/run/test-fixtures.js';
 import { resolveConfiguredExecutionTemplate } from '../tasks/execution-template-catalog.js';
 
@@ -103,12 +104,28 @@ async function fixture() {
       validationDepth: 'static-code',
     },
   };
+  const poolDir = path.join(root, 'pool');
+  await mkdir(poolDir);
+  const machine = {
+    machine: 'local',
+    host: 'localhost',
+    ssh_user: 'fixture',
+    platform: 'cli',
+    os: 'linux',
+    slots: [],
+  };
+  await writeFile(
+    path.join(poolDir, 'local.json'),
+    JSON.stringify({ ...machine, project: 'fixture', review_workspaces: { max_concurrent: 2 } }),
+  );
+  await writeFile(
+    path.join(poolDir, 'canary-local.json'),
+    JSON.stringify({ ...machine, project: 'canary' }),
+  );
   const deps = {
     getRun: () => run,
     loadProjectVars: async () => project,
-    loadPoolConfigs: async () => [
-      { machine: 'local', host: 'localhost', sshUser: 'fixture' } as PoolConfig,
-    ],
+    loadPoolConfigs: () => loadPoolConfigs(poolDir),
     snapshotRoot: () => path.join(root, 'gateway-snapshots'),
     readCommentDiff: async () => '@@ -1 +1 @@\n unchanged\n',
   };
@@ -128,7 +145,7 @@ async function withFixture(work: (f: Awaited<ReturnType<typeof fixture>>) => Pro
   }
 }
 
-test('materialization preserves canonical checklist, freezes offline guidance/prior findings and retries from its snapshot', async () => {
+test('materialization ignores an execution-only pool and preserves frozen guidance and snapshot retries', async () => {
   await withFixture(async (f) => {
     f.run.reviewWorkspace!.support = {
       path: path.join(f.root, 'support'),

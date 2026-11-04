@@ -14,6 +14,7 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
+import { resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { nativeCatalogChanges } from '../resources/native-catalog-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
@@ -45,8 +46,8 @@ async function selectRunnerModelCatalogSource(
 ): Promise<RunnerModelCatalogSource | undefined> {
   let source = getRunnerDefinition(runner).modelCatalog;
   if (source && 'command' in source && source.poolPathKey) {
-    const pools = await loadPoolConfigs();
-    for (const pool of pools.filter((entry) => isLocal(entry.host, entry.machine))) {
+    const localPools = (await loadPoolConfigs()).filter((pool) => isLocal(pool.host, pool.machine));
+    for (const pool of resolveMachinePoolConfigs(localPools).values()) {
       const configured = (await loadMachinePool(pool.machine))[source.poolPathKey]?.trim();
       if (configured) {
         source = {
@@ -65,7 +66,7 @@ const NODE_MODEL_LIST_TIMEOUT_MS = 20_000;
 const NODE_MODEL_CATALOG_STARTUP_DELAY_MS = 15_000;
 
 /** Every pool machine, local or remote, lists through one of its slots' exec path. */
-async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
+export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
   const slots = new Map<string, string>();
   for (const pool of await loadPoolConfigs())
     if (pool.machine && pool.slots[0] && !slots.has(pool.machine))

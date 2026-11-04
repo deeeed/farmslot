@@ -24,6 +24,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { resolveMachinePoolConfig } from '../fleet/machine-pool.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
@@ -586,11 +587,10 @@ async function listNodeWorkers(params: {
   connected: boolean;
   observedAt: number;
   sessionCorrelation: Map<string, SlotCorrelation> | undefined;
-  tmuxWorkerConfig: TmuxWorkerFilterConfig | undefined;
+  resolveConfig: () => TmuxWorkerFilterConfig | undefined;
   requestPanes: (nodeId: string) => Promise<NodeTmuxPane[]>;
 }): Promise<TmuxWorkerNodeResult> {
-  const { nodeId, connected, observedAt, sessionCorrelation, tmuxWorkerConfig, requestPanes } =
-    params;
+  const { nodeId, connected, observedAt, sessionCorrelation, resolveConfig, requestPanes } = params;
   if (!connected) {
     return {
       nodeId,
@@ -604,6 +604,7 @@ async function listNodeWorkers(params: {
   }
 
   try {
+    const tmuxWorkerConfig = resolveConfig();
     const panes = await requestPanes(nodeId);
     const allWorkers = panes.map((pane) =>
       tmuxWorkerFromNodePane({
@@ -659,9 +660,12 @@ export async function buildTmuxWorkerListFromSources(params: {
 }): Promise<TmuxWorkerListResult> {
   const includeDisconnected = params.includeDisconnected ?? true;
   const sessionCorrelation = buildSessionCorrelation(params.pools, params.fleet, params.activeRuns);
-  const tmuxWorkerConfigByNode = new Map(
-    params.pools.map((pool) => [pool.machine, pool.tmuxWorkers] as const),
-  );
+  const poolsByMachine = new Map<string, PoolConfig[]>();
+  for (const pool of params.pools) {
+    const group = poolsByMachine.get(pool.machine) ?? [];
+    group.push(pool);
+    poolsByMachine.set(pool.machine, group);
+  }
   const nodes = await Promise.all(
     Array.from(new Set(params.nodeIds))
       .sort()
@@ -672,7 +676,8 @@ export async function buildTmuxWorkerListFromSources(params: {
           connected: params.connectedNodeIds.has(nodeId),
           observedAt: params.observedAt,
           sessionCorrelation: sessionCorrelation.get(nodeId),
-          tmuxWorkerConfig: tmuxWorkerConfigByNode.get(nodeId),
+          resolveConfig: () =>
+            resolveMachinePoolConfig(poolsByMachine.get(nodeId) ?? [], nodeId)?.tmuxWorkers,
           requestPanes: params.requestPanes,
         }),
       ),
@@ -696,7 +701,7 @@ export async function assertTmuxWorkerControlAllowed(worker: {
   const observedAt = Date.now();
   const [pools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus()]);
   const activeRuns = correlationRuns();
-  const pool = pools.find((candidate) => candidate.machine === worker.nodeId);
+  const pool = resolveMachinePoolConfig(pools, worker.nodeId);
   if (!pool?.tmuxWorkers) return;
 
   const node = getNode(worker.nodeId);
@@ -878,7 +883,7 @@ export async function tmuxWorkerEndSession(params: TmuxWorkerEndSessionParams): 
     )
   )
     throw new Error('Session changed; refresh before ending it');
-  const config = pools.find((pool) => pool.machine === worker.nodeId)?.tmuxWorkers;
+  const config = resolveMachinePoolConfig(pools, worker.nodeId)?.tmuxWorkers;
   if (
     config &&
     panes

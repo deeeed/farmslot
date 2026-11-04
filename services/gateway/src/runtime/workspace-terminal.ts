@@ -4,6 +4,7 @@ import { execFileArgv, isLocal } from '../core/exec.js';
 import { withSlotCommandExecutor } from '../core/exec-scope.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { resolveReviewWorkspacePool } from '../review-workspaces/pool.js';
 import { execNativeNodeArgv } from '../runners/native/node.js';
 import { sendRunnerPrompt } from '../runners/registry.js';
 import { reviewWorkspaceRunnerVars } from '../runners/review-startup.js';
@@ -38,8 +39,7 @@ export async function resolveWorkspaceTerminal(params: SlotAgentTargetParams) {
     throw new Error('The review worktree is no longer available');
   assertNativeRunOwner(run);
   const pools = await loadPoolConfigs();
-  const pool = pools.find((entry) => entry.machine === run.reviewWorkspace!.machine);
-  if (!pool) throw new Error('Review worktree machine is unavailable');
+  const pool = resolveReviewWorkspacePool(pools, run.reviewWorkspace.machine);
   const local = isLocal(pool.host, pool.machine);
   if ((local ? 'local' : pool.machine) !== run.reviewWorkspace.executionNodeId)
     throw new Error('Review worktree execution node changed');
