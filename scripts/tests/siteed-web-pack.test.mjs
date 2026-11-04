@@ -1,0 +1,158 @@
+import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+const pack = new URL('../../packs/siteed-web-farm/projects/siteed-web-farm/', import.meta.url);
+const require = createRequire(import.meta.url);
+const {
+  deterministicChecks,
+  lintWorkerTemplateAgainstContract,
+  lintWorkerTemplateStructure,
+  resolveWorkerTerminalContract,
+} = require('../../packages/agent-runtime/scripts/worker-terminal-contract.cjs');
+
+test('both Siteed checklists freeze the configured CI command instead of launching validation', () => {
+  const config = JSON.parse(readFileSync(new URL('project.json', pack), 'utf8'));
+  for (const [file, flow] of [
+    ['dev.md', 'dev'],
+    ['qa.site-build.md', 'qa'],
+  ]) {
+    const markdown = readFileSync(new URL(`templates/worker/${file}`, pack), 'utf8');
+    const contract = deterministicChecks.freeze(
+      resolveWorkerTerminalContract(config.worker_terminal, flow),
+      markdown,
+      'CHECKLIST.md',
+      { 'ci.local_check': config.ci.local_check },
+    );
+    assert.equal(contract.deterministicChecks?.length, 1, file);
+    assert.equal(contract.deterministicChecks[0].stepNumber, 6);
+    assert.equal(contract.deterministicChecks[0].command, 'node .agent/ci-local.mjs');
+    assert.deepEqual(lintWorkerTemplateAgainstContract(markdown, contract), [], file);
+    assert.deepEqual(lintWorkerTemplateStructure(markdown), [], file);
+    assert.doesNotMatch(markdown, /corepack yarn (?:lint|build)/);
+  }
+  assert.ok(
+    config.fixtures.templates.some(
+      ({ src, dst }) => src === 'ci-local.mjs' && dst === '.agent/ci-local.mjs',
+    ),
+  );
+});
+
+function fixture(t) {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'siteed-ci-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+  const write = (file, content = 'export {};\n') => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), content);
+  };
+  const commit = () => {
+    git('add', 'src', 'package.json');
+    git(
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.test',
+      'commit',
+      '-qm',
+      'fixture',
+    );
+  };
+  git('init', '-q', '-b', 'main');
+  write('src/page.tsx');
+  write('src/gone.ts');
+  write('package.json', '{}\n');
+  commit();
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  write('.agent/ci-local.mjs', readFileSync(new URL('fixtures/ci-local.mjs', pack), 'utf8'));
+  write(
+    '.agent/bin/corepack',
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.appendFileSync(process.env.SITEED_CI_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n');
+process.exit(Number(process.env.SITEED_CI_EXIT || 0));
+`,
+  );
+  chmodSync(path.join(root, '.agent/bin/corepack'), 0o755);
+  const callsFile = path.join(root, '.agent/calls.jsonl');
+  writeFileSync(callsFile, '');
+  return {
+    root,
+    write,
+    commit,
+    run: (env = {}) =>
+      spawnSync(process.execPath, ['.agent/ci-local.mjs'], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          FARMSLOT_CI_BASE_REF: '',
+          PATH: `${root}/.agent/bin:${process.env.PATH}`,
+          SITEED_CI_CALLS: callsFile,
+          ...env,
+        },
+      }),
+    calls: () =>
+      readFileSync(callsFile, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)),
+  };
+}
+
+test('Siteed lint selects committed, dirty and untracked source, retaining filenames with spaces', (t) => {
+  const f = fixture(t);
+  f.write('src/committed.ts');
+  f.commit();
+  f.write('src/page.tsx', 'export const changed = true;\n');
+  f.write('src/space name.tsx');
+  f.write('.agent/recipe-provider/provider.mjs');
+  rmSync(path.join(f.root, 'src/gone.ts'));
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(f.calls(), [
+    [
+      'yarn',
+      'lint',
+      '--file',
+      'src/committed.ts',
+      '--file',
+      'src/page.tsx',
+      '--file',
+      'src/space name.tsx',
+    ],
+  ]);
+});
+
+test('docs, global inputs and deleted files do not fall back to a full lint or build', (t) => {
+  const f = fixture(t);
+  f.write('README.md', 'documentation\n');
+  f.write('package.json', '{"private":true}\n');
+  rmSync(path.join(f.root, 'src/gone.ts'));
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(f.calls(), []);
+  assert.match(result.stdout, /full builds.*CI/);
+});
+
+test('a selected lint failure fails the local check', (t) => {
+  const f = fixture(t);
+  f.write('src/page.tsx', 'invalid syntax\n');
+  assert.equal(f.run({ SITEED_CI_EXIT: '7' }).status, 7);
+});
+
+test('an unavailable frozen base refuses validation instead of guessing a file set', (t) => {
+  const f = fixture(t);
+  f.write('src/page.tsx', 'export const changed = true;\n');
+  for (const base of ['missing-ref', 'package.json']) {
+    assert.notEqual(f.run({ FARMSLOT_CI_BASE_REF: base }).status, 0, base);
+  }
+  assert.deepEqual(f.calls(), []);
+});
