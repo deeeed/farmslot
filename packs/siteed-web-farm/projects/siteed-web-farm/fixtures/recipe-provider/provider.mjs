@@ -8,8 +8,18 @@ const { createPlainWebAdapter } = await import(
 );
 
 export function createProvider(context) {
-  const cdp = context?.ports?.cdp?.value ?? context?.slot?.ports?.metro_port;
-  const application = context?.ports?.watcher?.value ?? context?.slot?.ports?.port;
+  const cdp =
+    context?.options?.cdpPort ??
+    context?.ports?.cdp?.value ??
+    process.env.RECIPE_CDP_PORT ??
+    process.env.CDP_PORT ??
+    context?.slot?.ports?.metro_port;
+  const application =
+    context?.options?.watcherPort ??
+    context?.ports?.watcher?.value ??
+    process.env.RECIPE_WATCHER_PORT ??
+    process.env.WATCHER_PORT ??
+    context?.slot?.ports?.port;
   if (cdp !== undefined) process.env.RECIPE_CDP_PORT = String(cdp);
   if (application !== undefined) process.env.RECIPE_WATCHER_PORT = String(application);
   return {

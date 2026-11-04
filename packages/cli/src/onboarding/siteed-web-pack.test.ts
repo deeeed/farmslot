@@ -154,6 +154,18 @@ test('prepared slot ports reach lifecycle commands without manual environment se
     });
     assert.equal(process.env.RECIPE_WATCHER_PORT, '19315');
     assert.equal(process.env.RECIPE_CDP_PORT, '19316');
+    provider.createProvider({
+      options: { watcherPort: 29315, cdpPort: 29316 },
+      slot: { ports: { port: 9315, metro_port: 9316 } },
+    });
+    assert.equal(process.env.RECIPE_WATCHER_PORT, '29315');
+    assert.equal(process.env.RECIPE_CDP_PORT, '29316');
+    provider.createProvider({ options: { watcherPort: 39315, cdpPort: 39316 } });
+    assert.equal(process.env.RECIPE_WATCHER_PORT, '39315');
+    assert.equal(process.env.RECIPE_CDP_PORT, '39316');
+    provider.createProvider({ slot: { ports: { port: 9315, metro_port: 9316 } } });
+    assert.equal(process.env.RECIPE_WATCHER_PORT, '39315');
+    assert.equal(process.env.RECIPE_CDP_PORT, '39316');
   } finally {
     if (before.cdp === undefined) delete process.env.RECIPE_CDP_PORT;
     else process.env.RECIPE_CDP_PORT = before.cdp;
