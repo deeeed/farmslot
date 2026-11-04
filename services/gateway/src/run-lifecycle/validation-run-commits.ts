@@ -1,4 +1,5 @@
 import {
+  isRecord,
   isTerminalRunStatus,
   type ParkedRunCommits,
   type Run,
@@ -11,33 +12,37 @@ import type { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
 /**
- * An artifact-only dev or fix-bug run never pushes or publishes: its branch commits are output
- * COMPLETE already retained, not anyone's unpublished work. Left on the slot they block the next
- * dispatch (the picker and prepare refuse unpushed commits), so a release parks them instead.
+ * A final run's branch commits must survive cleanup, whether or not it published.
+ * Artifact-only code work can also park at COMPLETE; replay holds keep their checkout.
  */
 export function parksBranchCommits(run: Run | undefined): run is Run {
   return (
-    ownsArtifactOnlyBranch(run) &&
-    // Only once its output is retained: COMPLETE has run, or the run has ended.
+    ownsRunBranch(run) &&
     (isTerminalRunStatus(run.status) ||
-      run.steps.some(
-        (step) => step.name === 'complete' && (step.status === 'running' || step.status === 'done'),
-      ))
+      (ownsArtifactOnlyBranch(run) &&
+        run.steps.some(
+          (step) =>
+            step.name === 'complete' && (step.status === 'running' || step.status === 'done'),
+        )))
   );
 }
 
-/**
- * The run's branch holds only its own unpublished output. A blind trial is excluded: its
- * release restores the candidate's isolated Git and keeps that branch for comparison.
- */
-export function ownsArtifactOnlyBranch(run: Run | undefined): run is Run {
+/** Only a recorded branch and dispatch baseline can attribute commits to a run. */
+export function ownsRunBranch(run: Run | undefined): run is Run {
   return (
     !!run &&
-    run.completionPolicy === 'artifact-only' &&
-    ['dev', 'fix-bug'].includes(run.flowType) &&
     !!run.branch &&
     !!(run.startRef?.resolvedSha ?? run.worktreeHeadAtDispatch) &&
     !run.engineState?.evalExperiment?.blind
+  );
+}
+
+/** Artifact-only code work may release its checkout before its final terminal state. */
+export function ownsArtifactOnlyBranch(run: Run | undefined): run is Run {
+  return (
+    ownsRunBranch(run) &&
+    run.completionPolicy === 'artifact-only' &&
+    ['dev', 'fix-bug'].includes(run.flowType)
   );
 }
 
@@ -64,6 +69,8 @@ async function parkHead(
     key: string;
     /** A local branch to park instead of HEAD. */
     localBranch?: string;
+    /** Data-only retention may name a recorded head after its branch disappears. */
+    sourceHeadSha?: string;
     /** The checkout must be on this branch. */
     branch?: string;
     /** No staged, unstaged or untracked change. */
@@ -83,7 +90,8 @@ async function parkHead(
   const script = [
     ...(checks.localBranch
       ? [
-          `head=$(${git} rev-parse --verify --quiet ${shellQuote(`refs/heads/${checks.localBranch}^{commit}`)}) || exit 3`,
+          `head=$(${git} rev-parse --verify --quiet ${shellQuote(`${checks.sourceHeadSha ?? `refs/heads/${checks.localBranch}`}^{commit}`)}) || exit 3`,
+          `${git} cat-file -e "$head^{commit}" || exit 3`,
           `branch=${shellQuote(checks.localBranch)}`,
         ]
       : [
@@ -130,42 +138,83 @@ export async function parkRunBranchCommits(
   run: Run,
   vars: SlotVars,
   exec: typeof execOnSlot,
-  checks: { defaultBranch: string; headSha?: string; discard?: boolean },
+  checks: {
+    defaultBranch: string;
+    headSha?: string;
+    discard?: boolean;
+    dataOnly?: boolean;
+    ownedCheckout?: boolean;
+  },
 ): Promise<ParkedRunCommits | null> {
   if (
-    !(checks.discard ? ownsArtifactOnlyBranch(run) : parksBranchCommits(run)) ||
+    !(checks.discard ? ownsRunBranch(run) : parksBranchCommits(run)) ||
     run.branch === checks.defaultBranch
   )
     return null;
   const baseSha = (run.startRef?.resolvedSha ?? run.worktreeHeadAtDispatch)!;
   const branch = run.branch!;
-  const parked = await parkHead(vars, exec, {
-    key: run.id,
-    branch,
-    clean: true,
-    // An ownerless return names the head the run left: anything committed on top since is not its.
-    headSha: checks.headSha,
-    baseSha,
-    notRevs: [baseSha, '--remotes'],
-  });
-  if (!parked) return null;
-  const record: ParkedRunCommits = {
-    slotId: vars.slotId,
-    ref: parked.ref,
-    branch,
-    baseSha,
-    headSha: parked.headSha,
-    commits: parked.commits,
-    parkedAt: new Date().toISOString(),
-  };
-  // The reset discards the checkout only once the run, live or archived, durably names what it
-  // parked; a failed write throws before any reset.
-  const { recordParkedRunCommits } = await import('../runs/store.js');
-  await recordParkedRunCommits(run.id, record);
-  console.log(
-    `[slot.release] ${vars.slotId}: parked run ${run.id.slice(0, 8)}'s ${record.commits.length} unpushed commit(s) on ${branch} at ${record.ref}`,
-  );
-  return record;
+  const checkpoint = run.releasedCheckout;
+  const review = run.steps.find((step) => step.name === 'review')?.outputs?.reviewSnapshot;
+  const previous = run.parkedCommits
+    ?.filter((entry) => entry.slotId === vars.slotId && entry.branch === branch)
+    .at(-1);
+  const recorded = [
+    {
+      head:
+        checkpoint?.slotId === vars.slotId && checkpoint.branch === branch
+          ? checkpoint.headSha
+          : undefined,
+      at: checkpoint?.at,
+    },
+    { head: previous?.headSha, at: previous?.parkedAt },
+    {
+      head: isRecord(review) && typeof review.headSha === 'string' ? review.headSha : undefined,
+      at: isRecord(review) && typeof review.capturedAt === 'string' ? review.capturedAt : undefined,
+    },
+  ]
+    .filter((entry) => entry.head && /^[a-f0-9]{40}$/i.test(entry.head))
+    .sort((a, b) => (Date.parse(b.at ?? '') || 0) - (Date.parse(a.at ?? '') || 0));
+  // A run may record divergent review and release heads. Keep each history; its branch
+  // may already be gone or reused. Metadata-only retention never changes that checkout.
+  const sources = checks.dataOnly
+    ? [
+        ...new Set(recorded.reverse().map((entry) => entry.head)),
+        ...(checks.ownedCheckout ? [undefined] : []),
+      ]
+    : [undefined];
+  let retained: ParkedRunCommits | null = null;
+  for (const sourceHeadSha of sources) {
+    const parked = await parkHead(vars, exec, {
+      key: run.id,
+      ...(checks.dataOnly ? { localBranch: branch, sourceHeadSha } : { branch, clean: true }),
+      // An ownerless return names the head the run left: anything committed on top since is not its.
+      headSha: checks.headSha,
+      baseSha,
+      notRevs: [baseSha, '--remotes'],
+    });
+    if (!parked) continue;
+    const record: ParkedRunCommits = {
+      slotId: vars.slotId,
+      ref: parked.ref,
+      branch,
+      baseSha,
+      headSha: parked.headSha,
+      commits: parked.commits,
+      parkedAt: new Date().toISOString(),
+    };
+    // A failed durable write throws before any caller may reset.
+    const { recordParkedRunCommits } = await import('../runs/store.js');
+    await recordParkedRunCommits(
+      run.id,
+      record,
+      checks.dataOnly && sourceHeadSha ? previous?.ref : undefined,
+    );
+    console.log(
+      `[slot.release] ${vars.slotId}: parked run ${run.id.slice(0, 8)}'s ${record.commits.length} unpushed commit(s) on ${branch} at ${record.ref}`,
+    );
+    retained = record;
+  }
+  return retained;
 }
 
 /** A ref component from a slot id: anything but letters, digits, `_` and `-` becomes `-`. */
@@ -282,7 +331,7 @@ export async function recordReleasedCheckout(
   vars: SlotVars,
   exec: typeof execOnSlot,
 ): Promise<void> {
-  if (!ownsArtifactOnlyBranch(run)) return;
+  if (!ownsRunBranch(run)) return;
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const read = await exec(
     vars,
@@ -290,11 +339,11 @@ export async function recordReleasedCheckout(
   );
   const [branch, headSha] = read.stdout.trim().split('\n');
   if (read.exitCode !== 0 || branch !== run.branch || !headSha) return;
-  const { persistRunNow, updateRun } = await import('../runs/store.js');
-  await persistRunNow(
-    updateRun(run.id, {
-      releasedCheckout: { slotId: vars.slotId, branch, headSha, at: new Date().toISOString() },
-    }),
-    'artifact-only checkout released',
-  );
+  const { recordRunReleasedCheckout } = await import('../runs/store.js');
+  await recordRunReleasedCheckout(run.id, {
+    slotId: vars.slotId,
+    branch,
+    headSha,
+    at: new Date().toISOString(),
+  });
 }

@@ -148,21 +148,36 @@ export async function reuseSafeIdleSlot(
     // A finished artifact-only run's own commits are retained output: the release parks them
     // (durable ref, SHAs on the run) and refuses if they turn out not to be the run's own.
     let parkRunId: string | undefined;
+    let parkHeadSha: string | undefined;
     // Automatic reuse never parks an ownerless checkout's commits: that is an operator release.
     const localWork = eligibility.confirmationRequired || workspace.publication === 'unpushed';
     if (localWork && !expected?.retainedCandidate) {
-      const { getRun } = await import('../runs/store.js');
-      const owner = expected?.recordRunId ? getRun(expected.recordRunId) : undefined;
+      const { getRunWithArchived } = await import('../runs/store.js');
+      const owner = expected?.recordRunId
+        ? await getRunWithArchived(expected.recordRunId)
+        : undefined;
+      const recordedHead =
+        expected?.parkHeadSha ??
+        (owner?.releasedCheckout?.slotId === slotId &&
+        owner.releasedCheckout.branch === workspace.branch
+          ? owner.releasedCheckout.headSha
+          : undefined) ??
+        owner?.parkedCommits
+          ?.filter((entry) => entry.slotId === slotId && entry.branch === workspace.branch)
+          .at(-1)?.headSha;
       if (
         parksBranchCommits(owner) &&
+        // An old branch name is not ownership: ownerless reuse needs its recorded head.
+        (workspace.currentRunId === owner.id || recordedHead === workspace.headSha) &&
         !workspace.dirtyCount &&
         workspace.publication === 'unpushed' &&
         workspace.branch === owner.branch &&
         workspace.branch !== workspace.defaultBranch &&
         (!expected?.parkHeadSha || workspace.headSha === expected.parkHeadSha)
-      )
+      ) {
         parkRunId = owner.id;
-      else
+        parkHeadSha = workspace.headSha;
+      } else
         return {
           kind: 'local-work',
           reason: workspace.dirtyCount ? 'dirty files' : 'unpushed commits',
@@ -182,7 +197,7 @@ export async function reuseSafeIdleSlot(
       undefined,
       {
         skipRecycle: true,
-        ...(parkRunId ? { parkRunId, parkHeadSha: expected?.parkHeadSha } : {}),
+        ...(parkRunId ? { parkRunId, parkHeadSha } : {}),
       },
     );
     if (result.refreshed) emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });

@@ -12,7 +12,7 @@ import {
   createEvidenceReviewModel,
   readEvidenceReviewReport,
 } from '@farmslot/adapter-sdk/evidence';
-import { validateArtifactManifestDocument } from '@farmslot/protocol';
+import { type ArtifactRef, validateArtifactManifestDocument } from '@farmslot/protocol';
 import { openRunBundleStore } from '@farmslot/run-bundle';
 
 import '../runtime/mock-pty.test-support.js';
@@ -27,8 +27,15 @@ await openRunBundleStore({
 });
 after(() => rm(root, { recursive: true, force: true }));
 
-const { createRun, getRun, persistRunNow, updateRun, withTaskAdmission } =
-  await import('../runs/store.js');
+const {
+  archiveRun,
+  createRun,
+  getRun,
+  getRunWithArchived,
+  persistRunNow,
+  updateRun,
+  withTaskAdmission,
+} = await import('../runs/store.js');
 const { captureRunOutput, acknowledgeRunOutput, retainFinalRunArtifacts } =
   await import('./output.js');
 const { acquisitionTaskDirToken, retainRunArtifacts, readRetainedRunText, withTaskDirWrite } =
@@ -543,4 +550,39 @@ test('final retention refuses incomplete media while preserving the judged outpu
   } finally {
     await rm(policy, { force: true });
   }
+});
+
+test('explicit retention backfills archived output without changing its captured inventory', async () => {
+  const f = await fixture();
+  const current = getRun(f.runId)!;
+  const capturedAt = '2026-10-30T00:00:00.000Z';
+  const manifest: ArtifactRef[] = [
+    {
+      path: 'artifacts/report.html',
+      purpose: 'report',
+      sizeBytes: Buffer.byteLength(f.body),
+      sha256: createHash('sha256').update(f.body).digest('hex'),
+    },
+  ];
+  updateRun(f.runId, {
+    status: 'done',
+    completionPolicy: 'default',
+    output: {
+      capturedAt,
+      workerFinished: true,
+      artifactManifest: manifest,
+      manifestDigest: createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    },
+  });
+  const before = structuredClone(current.output);
+  assert.equal(await archiveRun(f.runId), true);
+  assert.equal(getRun(f.runId), undefined);
+  const retained = await retainRunArtifacts(f.runId);
+  const archived = await getRunWithArchived(f.runId);
+  assert.ok(archived);
+  assert.equal(archived.status, 'done');
+  assert.equal(archived?.output?.capturedAt, capturedAt);
+  assert.deepEqual(archived?.output?.artifactManifest, before?.artifactManifest);
+  assert.deepEqual(archived?.output?.artifactBundle, retained.ref);
+  assert.equal(await readRetainedRunText(archived, 'artifacts/report.html', retained.ref), f.body);
 });

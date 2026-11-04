@@ -41,6 +41,7 @@ let refusal: string | undefined;
 let skipped: string | undefined;
 let duringProbe: (() => void) | undefined;
 const releases: Array<{ params: SlotReleaseParams; epoch?: number }> = [];
+const idleReturns: Array<{ epoch: number; runId: string | null; recordRunId?: string }> = [];
 const incoming = { id: 'new-run', project: 'finished-proof', branch: '' };
 const core = await import('../core/index.js');
 mock.module('../core/index.js', {
@@ -86,6 +87,23 @@ mock.module('../methods/slot/release.js', {
     },
   },
 });
+const safeIdle = await import('./safe-idle-slot.js');
+mock.module('./safe-idle-slot.js', {
+  namedExports: {
+    ...safeIdle,
+    reuseSafeIdleSlot: async (
+      _slot: string,
+      _emit: unknown,
+      expected: { epoch: number; runId: string | null; recordRunId?: string },
+    ) => {
+      if (expected.epoch !== row.slot_epoch || expected.runId !== row.current_run_id)
+        return { kind: 'unavailable', reason: 'owner changed' };
+      idleReturns.push(expected);
+      branch = 'main';
+      return { kind: 'ready' };
+    },
+  },
+});
 const { reclaimFinishedSlot } = await import('./finished-slot-reclaim.js');
 beforeEach(() => {
   row = { slot: 'finished-slot', current_run_id: 'old-run', slot_epoch: 7 };
@@ -101,6 +119,7 @@ beforeEach(() => {
   branch = 'fix/previous';
   reads = 0;
   releases.length = 0;
+  idleReturns.length = 0;
   refusal = skipped = undefined;
   duringProbe = undefined;
 });
@@ -118,7 +137,8 @@ test('a finished branch releases through the owner-bound supported path before r
 test('an unowned archived branch binds release to the sampled slot epoch', async () => {
   row.current_run_id = null;
   await reclaimFinishedSlot('finished-slot', incoming, () => {});
-  assert.deepEqual(releases, [{ params: { slotId: 'finished-slot' }, epoch: 7 }]);
+  assert.deepEqual(releases, []);
+  assert.deepEqual(idleReturns, [{ epoch: 7, runId: null, recordRunId: 'old-run' }]);
 });
 
 test('same-target branches, idle branches and unrelated history are preserved', async () => {
@@ -255,4 +275,27 @@ test('an unclaimed pending request does not block releasing the finished checkou
   await reclaimFinishedSlot('finished-slot', incoming, () => {});
   assert.equal(releases.length, 1);
   assert.deepEqual(pending, before);
+});
+
+test('an archived cancelled checkout reuses the same attributed idle-return path', async () => {
+  row.current_run_id = null;
+  history[0]!.status = 'cancelled';
+  history[0]!.archivedAt = '2026-10-30T00:00:00.000Z';
+  await reclaimFinishedSlot('finished-slot', incoming, () => {});
+  assert.deepEqual(idleReturns, [{ epoch: 7, runId: null, recordRunId: 'old-run' }]);
+  assert.equal(branch, 'main');
+});
+
+test('ownerless reclaim carries the released head so later commits remain protected', async () => {
+  row.current_run_id = null;
+  history[0]!.releasedCheckout = {
+    slotId: 'finished-slot',
+    branch,
+    headSha: 'a'.repeat(40),
+    at: '2026-10-30T00:00:00.000Z',
+  };
+  await reclaimFinishedSlot('finished-slot', incoming, () => {});
+  assert.deepEqual(idleReturns, [
+    { epoch: 7, runId: null, recordRunId: 'old-run', parkHeadSha: 'a'.repeat(40) },
+  ]);
 });

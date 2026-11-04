@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   cancelledRunHoldReason,
+  DEFAULT_BRANCH,
   Events,
   isCompletionPrerequisiteFailure,
   isTerminalRunStatus,
@@ -10,6 +11,7 @@ import {
 
 import {
   execOnSlot,
+  loadProjectVars,
   loadSlotVars,
   markSlotStatusIf,
   ownsRunSlotCleanup,
@@ -585,8 +587,20 @@ export async function releaseRunSlotOwnership(
     const { killSlotScreenSessions } = await import('../runtime/screen-session.js');
     await assertOwned();
     killSlotScreenSessions(run.slotId, run.id);
-    if (keepForReplay)
-      // The checkout and the run's ownership stay, so run.replayStep can reclaim the slot.
+    const { ownsRunBranch, parksBranchCommits, parkRunBranchCommits, recordReleasedCheckout } =
+      await import('./validation-run-commits.js');
+    const checkoutVars = ownsRunBranch(run) ? await loadSlotVars(run.slotId) : undefined;
+    if (checkoutVars && parksBranchCommits(run)) {
+      const project = await loadProjectVars(run.project);
+      await parkRunBranchCommits(run, checkoutVars, execOnSlot, {
+        defaultBranch: project.projectJson.default_branch ?? DEFAULT_BRANCH,
+        dataOnly: true,
+        ownedCheckout: true,
+      });
+      await assertOwned();
+    }
+    if (keepForReplay) {
+      // Keep replay's checkout/ownership while its commits also have a durable checkpoint.
       return updateSlotStatusIf(run.slotId, current, {
         lifecycle: 'held',
         phase: 'occupied',
@@ -596,6 +610,11 @@ export async function releaseRunSlotOwnership(
         agent: 'idle',
         ...(before?.handoff_run_id === run.id ? { handoff_run_id: null } : {}),
       });
+    }
+    if (checkoutVars) {
+      await recordReleasedCheckout(run, checkoutVars, execOnSlot);
+      await assertOwned();
+    }
     return resetSlotIf(run.slotId, current, true);
   }
   await updateSlotStatusIf(run.slotId, current, {

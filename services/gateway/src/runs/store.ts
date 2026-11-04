@@ -45,6 +45,7 @@ import {
   prNumberFromRunInput,
   RECORDED_EVIDENCE_RUN_CONTRACT_VERSION,
   type Run,
+  type RunArtifactBundleRef,
   type RunCreateParams,
   type RunDecision,
   type RunLane,
@@ -1821,18 +1822,77 @@ export async function recordRunStorageArchive(id: string, manifest: string): Pro
 }
 
 /**
- * A release parked an artifact-only run's own branch commits. Written durably on the live or
+ * A release parked a run's own branch commits. Written durably on the live or
  * archived run, every attempt, before the slot resets.
  */
-export async function recordParkedRunCommits(id: string, record: ParkedRunCommits): Promise<void> {
+export async function recordParkedRunCommits(
+  id: string,
+  record: ParkedRunCommits,
+  beforeRef?: string,
+): Promise<void> {
   await commitRetainedRunMutation(
     id,
-    (run) =>
-      run.parkedCommits?.some((entry) => entry.ref === record.ref)
-        ? run
-        : { ...run, parkedCommits: [...(run.parkedCommits ?? []), record] },
+    (run) => {
+      if (run.parkedCommits?.some((entry) => entry.ref === record.ref)) return run;
+      const records = [...(run.parkedCommits ?? [])];
+      // Historical backfill must not replace the already authoritative replay head.
+      const before = beforeRef ? records.findIndex((entry) => entry.ref === beforeRef) : -1;
+      records.splice(before < 0 ? records.length : before, 0, record);
+      return { ...run, parkedCommits: records };
+    },
     // A parking receipt grants no lifecycle authority; the release claim checks ownership.
     () => undefined,
+  );
+}
+
+/** Ownership release records its checkout without rewriting archived execution. */
+export async function recordRunReleasedCheckout(
+  id: string,
+  checkout: NonNullable<Run['releasedCheckout']>,
+): Promise<void> {
+  await commitRetainedRunMutation(
+    id,
+    (run) => ({ ...run, releasedCheckout: checkout }),
+    () => undefined,
+  );
+}
+
+interface RetainedArtifactBackfill {
+  taskFile: string;
+  generation: number | undefined;
+  manifestDigest: string;
+  ref: RunArtifactBundleRef;
+  missingData: string[];
+}
+
+/** Backfill retained bytes without rewriting live or archived execution history. */
+export async function recordRetainedArtifactBackfill(
+  id: string,
+  input: RetainedArtifactBackfill,
+): Promise<void> {
+  await commitRetainedRunMutation(
+    id,
+    (run) => {
+      if (!run.output)
+        throw new Error('Run output changed during retention. Retry the current snapshot.');
+      return {
+        ...run,
+        artifactBundle: input.ref,
+        output: {
+          ...run.output,
+          artifactBundle: input.ref,
+          retentionMissingData: input.missingData,
+        },
+      };
+    },
+    (run) => {
+      if (
+        run.taskFile !== input.taskFile ||
+        run.engineState?.generation !== input.generation ||
+        run.output?.manifestDigest !== input.manifestDigest
+      )
+        throw new Error('Run output changed during retention. Retry the current snapshot.');
+    },
   );
 }
 

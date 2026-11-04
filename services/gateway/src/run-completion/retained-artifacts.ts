@@ -9,6 +9,7 @@ import {
 import {
   type ArtifactRef,
   decisionArtifactBundleRef,
+  DEFAULT_BRANCH,
   INHERITED_ACCEPTANCE_INPUT,
   isRecord,
   isTerminalRunStatus,
@@ -44,7 +45,7 @@ import {
 } from '@farmslot/run-bundle';
 
 import { reportGatewayWarning } from '../chat/copilot-observer.js';
-import { EVAL_TASK_FLOW } from '../core/config.js';
+import { EVAL_TASK_FLOW, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { sha256File } from '../core/file-hash.js';
 import { assertConfiguredRootPresent, assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import { inferArtifactPurpose } from '../core/index.js';
@@ -65,11 +66,11 @@ import {
   getRunWithArchived,
   isTaskDirectoryAdmitting,
   persistRunNow,
+  recordRetainedArtifactBackfill,
   recordRunStorageArchive,
   runsDirectory,
   runTaskDirectories,
   shouldUseIsolatedRunsDir,
-  updateRun,
 } from '../runs/store.js';
 
 export interface RunArtifactAcquisition {
@@ -652,10 +653,30 @@ export async function retainCapturedRunArtifacts(input: {
 
 /** Explicit backfill preserves the captured inventory and every historical decision/verdict. */
 export async function retainRunArtifacts(runId: string): Promise<RunBundleRetainResult> {
-  const run = getRun(runId);
+  const run = await getRunWithArchived(runId);
   if (!run?.taskFile || !run.output)
     throw new Error('Run has no captured output inventory to retain.');
+  const commitSlotId = run.slotId ?? run.releasedCheckout?.slotId;
+  if (isTerminalRunStatus(run.status) && commitSlotId) {
+    const { parksBranchCommits, parkRunBranchCommits } =
+      await import('../run-lifecycle/validation-run-commits.js');
+    if (parksBranchCommits(run)) {
+      const vars = await loadSlotVars(commitSlotId);
+      if (vars.projectName !== run.project)
+        throw new Error('Recorded slot now belongs to another project; commit retention refused.');
+      const project = await loadProjectVars(run.project);
+      await parkRunBranchCommits(run, vars, (await import('../core/exec.js')).execOnSlot, {
+        defaultBranch: project.projectJson.default_branch ?? DEFAULT_BRANCH,
+        dataOnly: true,
+      });
+    }
+  }
   const output = run.output;
+  const backfill = {
+    taskFile: run.taskFile,
+    generation: run.engineState?.generation,
+    manifestDigest: output.manifestDigest,
+  };
   if (output.artifactBundle) {
     const bundle = await readRetainedRunBundle(
       await runBundleStore(),
@@ -707,21 +728,8 @@ export async function retainRunArtifacts(runId: string): Promise<RunBundleRetain
       allowChanged: true,
       existingRef: output.artifactBundle,
       releaseStagingMedia: true,
-      commit: async (ref, missingData) => {
-        const current = getRun(runId);
-        if (
-          !current ||
-          current.taskFile !== run.taskFile ||
-          current.engineState?.generation !== run.engineState?.generation ||
-          current.output?.manifestDigest !== output.manifestDigest
-        )
-          throw new Error('Run output changed during retention. Retry the current snapshot.');
-        const updated = updateRun(runId, {
-          artifactBundle: ref,
-          output: { ...current.output, artifactBundle: ref, retentionMissingData: missingData },
-        });
-        await persistRunNow(updated, 'retained artifact backfill');
-      },
+      commit: (ref, missingData) =>
+        recordRetainedArtifactBackfill(runId, { ...backfill, ref, missingData }),
     });
     return { ref: result.ref, missingData: result.missingData };
   });

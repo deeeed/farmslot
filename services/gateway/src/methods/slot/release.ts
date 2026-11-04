@@ -71,9 +71,10 @@ import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
 import {
   dropParkedBranch,
-  ownsArtifactOnlyBranch,
+  ownsRunBranch,
   parkRunBranchCommits,
   parksBranchCommits,
+  recordReleasedCheckout,
 } from '../../run-lifecycle/validation-run-commits.js';
 import {
   assertNativeSlotReplacementOwner,
@@ -950,13 +951,18 @@ async function slotReleaseImpl(
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
   await assertReleaseClaim();
   if (options?.workspaceRecovery) await options.workspaceRecovery.verifyWork();
-  // An artifact-only run's own commits are parked under a durable ref (SHAs on the run) before
+  // An ended run's own commits are parked under a durable ref (SHAs on the run) before
   // any reset, so they neither block the next dispatch nor vanish with the reset.
   const parkOwnerId = options?.workspaceRecovery?.parkRunId ?? params.expectedRunId ?? boundOwner;
-  const parkOwner = !keepWork && parkOwnerId ? await getRunWithArchived(parkOwnerId) : undefined;
+  const parkOwner = parkOwnerId ? await getRunWithArchived(parkOwnerId) : undefined;
   // A named discard parks the run's commits whatever its phase (a run held at a refused COMPLETE).
   const namedDiscard = forceReset && !!parkOwnerId && parkOwnerId === params.expectedRunId;
-  const parkable = namedDiscard ? ownsArtifactOnlyBranch(parkOwner) : parksBranchCommits(parkOwner);
+  const parkable =
+    !keepWork && (namedDiscard ? ownsRunBranch(parkOwner) : parksBranchCommits(parkOwner));
+  if (keepWork && parkOwner) {
+    await recordReleasedCheckout(parkOwner, vars, execOnSlot);
+    await assertReleaseClaim();
+  }
   // The park reads the checkout as clean the way the workspace probe does: scaffolding ignored.
   if (parkable) await excludeSlotScaffolding(vars, projectJson);
   const parked = parkable

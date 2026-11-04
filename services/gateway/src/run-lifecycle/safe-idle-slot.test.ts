@@ -63,6 +63,7 @@ mock.module('../methods/slot/recover-workspace.js', {
     ) => {
       modes.push(params.mode);
       parkRunIds.push(options?.parkRunId);
+      parkHeads.push(options?.parkHeadSha);
       assert.equal(options?.skipRecycle, true, 'automatic recovery explicitly keeps runtime cold');
       assert.ok(params.expectedWorkspace);
       recovered.push(workspace);
@@ -76,11 +77,13 @@ mock.module('../core/state.js', {
   namedExports: { ...state, readSlotRow: async () => slotRow },
 });
 let parkRunIds: (string | undefined)[];
+let parkHeads: (string | undefined)[];
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
     getAllRuns: () => runs,
     getRun: (id: string) => runs.find((run) => run.id === id),
+    getRunWithArchived: async (id: string) => runs.find((run) => run.id === id),
     persistRunNow: async () => {},
     updateRunStep: (id: string, name: string, patch: Partial<Run['steps'][number]>) => {
       const run = runs.find((run) => run.id === id)!;
@@ -118,6 +121,7 @@ beforeEach(() => {
   modes = [];
   failure = undefined;
   parkRunIds = [];
+  parkHeads = [];
   slotRow = null;
   inspectGate = undefined;
   inspectOptions.length = 0;
@@ -184,8 +188,8 @@ for (const kind of ['dirty', 'unpushed'] as const) {
 }
 // F291 (c9562e49 on mini-mmt-3): a finished artifact-only run's own commits kept the next dispatch
 // off its slot. Its idle return now asks the release to park them (the release owns the git).
-const validationRun = (overrides: Partial<Run> = {}) =>
-  makeRun({
+const validationRun = (overrides: Partial<Run> = {}) => ({
+  ...makeRun({
     id: 'validation',
     slotId: 'proof',
     flowType: 'dev',
@@ -195,24 +199,44 @@ const validationRun = (overrides: Partial<Run> = {}) =>
     worktreeHeadAtDispatch: 'd'.repeat(40),
     steps: [{ name: 'prepare', status: 'done' }],
     ...overrides,
-  });
+  }),
+  releasedCheckout:
+    'releasedCheckout' in overrides
+      ? overrides.releasedCheckout
+      : {
+          slotId: 'proof',
+          branch: 'TAT-4146-feat-farm-validation',
+          headSha: 'a'.repeat(40),
+          at: '2026-10-30T00:00:00.000Z',
+        },
+});
 const releaseFor = (runId: string) =>
   reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null, recordRunId: runId });
 
-test("a finished artifact-only run's own unpushed checkout returns to idle through a parking release", async () => {
-  const run = validationRun();
+for (const completionPolicy of ['artifact-only', 'default'] as const) {
+  test(`a finished ${completionPolicy} run's own unpushed checkout returns to idle through a parking release`, async () => {
+    const run = validationRun({ completionPolicy });
+    runs = [run];
+    workspace.branch = run.branch!;
+    workspace.publication = 'unpushed';
+    assert.deepEqual(await releaseFor(run.id), { kind: 'ready' });
+    assert.deepEqual(modes, ['force']);
+    assert.deepEqual(parkRunIds, ['validation']);
+  });
+}
+
+test('ownerless history without a recorded head cannot reclaim reused-branch commits', async () => {
+  const run = validationRun({ releasedCheckout: undefined });
   runs = [run];
   workspace.branch = run.branch!;
   workspace.publication = 'unpushed';
-  assert.deepEqual(await releaseFor(run.id), { kind: 'ready' });
-  assert.deepEqual(modes, ['force']);
-  assert.deepEqual(parkRunIds, ['validation']);
+  assert.equal((await releaseFor(run.id)).kind, 'local-work');
+  assert.deepEqual(recovered, []);
 });
 
-test("work that isn't a finished artifact-only run's own is still kept", async () => {
+test("work that isn't a finished run's own is still kept", async () => {
   workspace.publication = 'unpushed';
   for (const [label, run, setup] of [
-    ['a publishing run', validationRun({ completionPolicy: 'default' }), () => {}],
     ['a run still working', validationRun({ status: 'monitoring' }), () => {}],
     ['another branch', validationRun(), () => (workspace.branch = 'someone-else')],
     ['dirty files', validationRun(), () => (workspace.dirtyCount = 1)],
@@ -457,4 +481,22 @@ test('a successor settlement cannot replace the predecessor checkout receipt', a
     workspace.headSha,
     'the named run can record its own later settlement',
   );
+});
+
+test('an owning replay may park its newly inspected head beyond an earlier checkpoint', async () => {
+  const run = validationRun();
+  runs = [run];
+  workspace.currentRunId = run.id;
+  workspace.branch = run.branch!;
+  workspace.publication = 'unpushed';
+  workspace.headSha = 'b'.repeat(40);
+  assert.deepEqual(
+    await reuseSafeIdleSlot('proof', () => {}, {
+      epoch: 7,
+      runId: run.id,
+      recordRunId: run.id,
+    }),
+    { kind: 'ready' },
+  );
+  assert.deepEqual(parkHeads, [workspace.headSha]);
 });

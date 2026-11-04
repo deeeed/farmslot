@@ -1,0 +1,1 @@
+- Park attributed commits and retain their run records consistently when completed or cancelled work is reclaimed, archived or dropped; explicit retention also backfills ended history without resetting its checkout.
