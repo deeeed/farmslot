@@ -176,7 +176,7 @@ export async function reuseSafeIdleSlot(
         (!expected?.parkHeadSha || workspace.headSha === expected.parkHeadSha)
       ) {
         parkRunId = owner.id;
-        parkHeadSha = recordedHead;
+        parkHeadSha = workspace.headSha;
       } else
         return {
           kind: 'local-work',

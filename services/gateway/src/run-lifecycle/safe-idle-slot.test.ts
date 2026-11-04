@@ -63,6 +63,7 @@ mock.module('../methods/slot/recover-workspace.js', {
     ) => {
       modes.push(params.mode);
       parkRunIds.push(options?.parkRunId);
+      parkHeads.push(options?.parkHeadSha);
       assert.equal(options?.skipRecycle, true, 'automatic recovery explicitly keeps runtime cold');
       assert.ok(params.expectedWorkspace);
       recovered.push(workspace);
@@ -76,6 +77,7 @@ mock.module('../core/state.js', {
   namedExports: { ...state, readSlotRow: async () => slotRow },
 });
 let parkRunIds: (string | undefined)[];
+let parkHeads: (string | undefined)[];
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
@@ -119,6 +121,7 @@ beforeEach(() => {
   modes = [];
   failure = undefined;
   parkRunIds = [];
+  parkHeads = [];
   slotRow = null;
   inspectGate = undefined;
   inspectOptions.length = 0;
@@ -478,4 +481,22 @@ test('a successor settlement cannot replace the predecessor checkout receipt', a
     workspace.headSha,
     'the named run can record its own later settlement',
   );
+});
+
+test('an owning replay may park its newly inspected head beyond an earlier checkpoint', async () => {
+  const run = validationRun();
+  runs = [run];
+  workspace.currentRunId = run.id;
+  workspace.branch = run.branch!;
+  workspace.publication = 'unpushed';
+  workspace.headSha = 'b'.repeat(40);
+  assert.deepEqual(
+    await reuseSafeIdleSlot('proof', () => {}, {
+      epoch: 7,
+      runId: run.id,
+      recordRunId: run.id,
+    }),
+    { kind: 'ready' },
+  );
+  assert.deepEqual(parkHeads, [workspace.headSha]);
 });
