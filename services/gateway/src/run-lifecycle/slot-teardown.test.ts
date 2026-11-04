@@ -1170,7 +1170,7 @@ test('runner cleanup names a daemon that survives signals and keeps its slot hel
   leftManagedRunnerDaemons();
   slotProcesses[0].survives = true;
   assert.match(
-    (await stopRunOwnedTmuxAndWatches({ ...run, status: 'done' })) ?? '',
+    (await slotTeardownBlocker({ ...run, status: 'done' })) ?? '',
     /Managed runner daemon process\(es\) 55354 did not stop/,
   );
   assert.deepEqual(alivePids(), [55354]);
@@ -1181,12 +1181,22 @@ test('runner cleanup leaves the daemon when its slot owner changes during the ce
   onDaemonCensus = () => {
     slotRow = { ...slotRow, current_run_id: 'another-run', cleanup_run_id: null };
   };
-  await stopRunOwnedTmuxAndWatches({ ...run, status: 'done' });
+  await slotTeardownBlocker({ ...run, status: 'done' });
   assert.deepEqual(alivePids(), [55354, 55559]);
   assert.equal(
     commands.some((cmd) => cmd.startsWith(': farmslot-owned-process-reap')),
     false,
   );
+});
+
+test('done cleanup preserves an unrecorded worker for another task and its managed daemons', async () => {
+  run.status = 'done';
+  leftManagedRunnerDaemons();
+  closedRunUnrecordedWorker('.task/dev/manual-000164-1102-090112');
+  const result = await releaseCompletedRunSlot(run);
+  assert.equal(result.released, false);
+  assert.match(result.skipped ?? '', /Unrecorded pane %3.*not quiescent/);
+  assert.deepEqual(alivePids(), [55354, 55559]);
 });
 
 test('a dev server the gateway does not watch still holds the slot', async () => {

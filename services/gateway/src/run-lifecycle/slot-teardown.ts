@@ -167,8 +167,10 @@ export async function slotOwnershipBlocker(run: Run): Promise<string | null> {
 /** Run transitions may never turn a shared workspace release into a global teardown. */
 export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   if (!run.slotId) return null;
+  const slotId = run.slotId;
   const ownership = await slotOwnershipBlocker(run);
   if (ownership) return ownership;
+  const ownerAtInspection = await readSlotRow(run.slotId);
   const vars = await loadSlotVars(run.slotId);
   const listed = await execOnSlot(
     vars,
@@ -241,12 +243,6 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   }
   const { getRuntimeCapabilityRegistry } = await import('../methods/runtime-capabilities.js');
   const status = await getRuntimeCapabilityRegistry().settledStatus(run.slotId);
-  const census = await execOnSlot(vars, `lsof -a -d cwd -Fpn 2>/dev/null`, {
-    cwd: '/',
-    timeout: 15000,
-  });
-  if (census.exitCode !== 0 && census.exitCode !== 1)
-    return 'Workspace process census is unavailable; slot teardown was skipped';
   const processes = await execOnSlot(vars, 'ps -axo pid=,ppid=,pgid=,lstart=,comm=', {
     cwd: '/',
     timeout: 15000,
@@ -260,6 +256,26 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
     if (!isShellProcessCommand(root.command) || censusRows.some((row) => row.parent === panePid))
       return `Recorded worker pane process ${panePid} is still occupied; cleanup deferred`;
   }
+  // Pane ownership and shell quiescence must be proven before stopping a
+  // managed daemon: an unrecorded worker for another task may share this home.
+  if (isTerminalRunStatus(run.status)) {
+    const blocker = await cleanupSlotRunnerRuntimes(vars, {
+      stillOwned: async () => {
+        const row = await readSlotRow(slotId);
+        return (
+          row?.slot_epoch === ownerAtInspection?.slot_epoch &&
+          (await slotOwnershipBlocker(run)) === null
+        );
+      },
+    });
+    if (blocker) return blocker;
+  }
+  const census = await execOnSlot(vars, `lsof -a -d cwd -Fpn 2>/dev/null`, {
+    cwd: '/',
+    timeout: 15000,
+  });
+  if (census.exitCode !== 0 && census.exitCode !== 1)
+    return 'Workspace process census is unavailable; slot teardown was skipped';
   const passive = new Set(
     censusRows.filter((row) => isTmuxProcess(row.command)).map((row) => row.pid),
   );
@@ -419,7 +435,6 @@ export async function stopRunOwnedTmuxAndWatches(
   // does, and only while this run still owns the slot at the same epoch.
   let prepareBlocker: string | null = null;
   let browserBlocker: string | null = null;
-  let runnerBlocker: string | null = null;
   if (
     (!slot?.handoff_run_id || slot.handoff_run_id === run.id) &&
     !findOtherActiveRunOnSlot(run, slot)
@@ -440,7 +455,6 @@ export async function stopRunOwnedTmuxAndWatches(
       const row = await readSlotRow(slotId);
       return ownsRunSlotCleanup(row, run.id) && row?.slot_epoch === slot?.slot_epoch;
     };
-    if (!blocker) runnerBlocker = await cleanupSlotRunnerRuntimes(vars, { stillOwned });
     try {
       await reapSlotPrepareScope(vars, { stillOwned });
     } catch (error) {
@@ -454,9 +468,7 @@ export async function stopRunOwnedTmuxAndWatches(
     }
   }
   await archiveRunnerSessionsForSlotRelease({ vars, runId: run.id });
-  return (
-    [blocker, runnerBlocker, prepareBlocker, browserBlocker].filter(Boolean).join('; ') || null
-  );
+  return [blocker, prepareBlocker, browserBlocker].filter(Boolean).join('; ') || null;
 }
 
 // A hook still running past this holds its slot, not every slot's runtime controls (F330).

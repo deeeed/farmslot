@@ -41,6 +41,8 @@ const applies = (
   return true;
 };
 const execForTest = async (_vars: unknown, cmd: string) => {
+  if (cmd.startsWith(': farmslot-runner-daemon-census'))
+    return ok('--records--\n{"home":"/slot-runtime","records":[]}');
   if (/\btmux\b/.test(cmd)) return { stdout: '', stderr: 'no server running', exitCode: 1 };
   // Only the fixture repository's Git commands run; prepare and process probes find nothing.
   if (!cmd.includes(repo) || cmd.startsWith('identityfile=')) return ok();
