@@ -108,6 +108,12 @@ const binding = createWalletRequestBinding({
 });
 ```
 
+## Plain websites
+
+`@farmslot/adapter-web/plain-web` exports `createPlainWebAdapter({ manifestPath, url, serverLabel })`. The project supplies its action catalog and a URL function using its selected ports. The runtime owns an isolated browser and reuses shared CDP actions, screenshots and whole-run recording. The project owns its application server.
+
+Browser stop is scoped to the selected checkout's profile and retains the application server. This path needs no extension, signer or wallet policy and makes no assumptions about the application framework or page selectors.
+
 ## Web-dapp adapter
 
 `@farmslot/adapter-web/web-dapp` (ESM) is the lifecycle of a web app under test whose dev server the slot owns. `createWebDappAdapter({ id, signerModule, cli, hooks })` returns an `@farmslot/adapter-sdk` `ProjectRuntime`: launch, stop, runtime status, doctor checks, logs and the wallet request-log findings. It runs one slot browser per slot, and a wallet host attached to it over CDP that records the wallet requests (and, with `signer=injected`, answers them with the strict wallet from `dapp`).

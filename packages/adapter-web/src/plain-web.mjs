@@ -7,12 +7,14 @@ import { CdpWebPage, listCdpTargets } from '@farmslot/recipe-runner/runtime/cdp'
 
 import { assertSameOwner, cdpOwner } from './browser-cdp.cjs';
 import { resolveBrowser } from './browser-resolver.cjs';
+import { removeRuntimeIdentity } from './chrome-args.cjs';
 import { launchBrowser } from './launch-browser.cjs';
+import { stopProfileProcessesSync } from './validation-process-ownership.cjs';
 
 /** @typedef {{
  * manifestPath: string,
  * url: (target: string) => string,
- * devServer: import('@farmslot/adapter-sdk').AdapterDevServer
+ * serverLabel?: string
  * }} PlainWebAdapterConfig
  */
 
@@ -78,7 +80,7 @@ export function createPlainWebAdapter(config) {
         return {
           decision: 'ready',
           reasons: [],
-          devServer: { label: config.devServer.label, status: 'up' },
+          devServer: { label: config.serverLabel ?? 'website', status: 'up' },
         };
       } catch (error) {
         return {
@@ -89,10 +91,15 @@ export function createPlainWebAdapter(config) {
       }
     },
     devServer: {
-      ...config.devServer,
+      label: 'browser',
+      describe: () => 'The owned website browser; the application server belongs to the project',
       stop(target) {
         stopPlainWebBrowser(target);
-        return config.devServer.stop(target);
+        return {
+          kind: 'stopped',
+          status: 0,
+          summary: 'Website browser stopped; application server retained.',
+        };
       },
     },
     logSources: (target) => [
@@ -126,7 +133,7 @@ export function createPlainWebAdapter(config) {
         return { kind: 'pid', pid: owner.pid };
       },
     },
-    async launch({ target }) {
+    async launch({ target, jsonOutput }) {
       const url = config.url(target);
       const parsed = new URL(url);
       if (!['http:', 'https:'].includes(parsed.protocol))
@@ -171,6 +178,18 @@ export function createPlainWebAdapter(config) {
         stopPlainWebBrowser(target);
         throw error;
       }
+      if (jsonOutput)
+        console.log(
+          JSON.stringify({
+            schemaVersion: 1,
+            command: 'launch',
+            status: 'pass',
+            adapter: 'web',
+            target,
+            url,
+            cdpPort: options.cdpPort,
+          }),
+        );
       return 0;
     },
     actions: {
@@ -190,5 +209,11 @@ export function createPlainWebAdapter(config) {
 
 /** Releases only the selected checkout's owned profile. The application server is retained. */
 export function stopPlainWebBrowser(target) {
-  return launchBrowser({ ...browserOptions(target), chromeBin: process.execPath, stopOnly: true });
+  const runtimeDir = plainWebRuntimeDir(target);
+  // Stop also works without active port options, including a repeated closeout.
+  stopProfileProcessesSync(path.join(runtimeDir, 'profile'));
+  removeRuntimeIdentity(runtimeDir);
+  fs.rmSync(path.join(runtimeDir, 'browser.pid'), { force: true });
+  fs.rmSync(path.join(runtimeDir, 'page.json'), { force: true });
+  return { stopped: true };
 }

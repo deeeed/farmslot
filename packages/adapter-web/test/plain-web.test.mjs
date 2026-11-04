@@ -4,7 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
-import { createPlainWebAdapter, plainWebRuntimeDir } from '../src/plain-web.mjs';
+import {
+  createPlainWebAdapter,
+  plainWebRuntimeDir,
+  stopPlainWebBrowser,
+} from '../src/plain-web.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plain-web-'));
 const originalPort = process.env.RECIPE_CDP_PORT;
@@ -16,11 +20,7 @@ after(() => {
 const adapter = createPlainWebAdapter({
   manifestPath: '/project/actions.json',
   url: () => 'http://127.0.0.1:9315/',
-  devServer: {
-    label: 'Website',
-    describe: () => 'Prepared server',
-    stop: () => ({ kind: 'stopped', status: 0, summary: 'retained' }),
-  },
+  serverLabel: 'Website',
 });
 
 test('the public runtime retains shared UI and recording support without another server owner', () => {
@@ -64,4 +64,10 @@ test('built-in verification reports blocked readiness instead of claiming a prep
   });
   assert.equal(code, 1);
   assert.match(messages.join(' '), /assigned --cdp-port/);
+});
+
+test('browser stop is idempotent without ambient CDP port options', () => {
+  process.env.RECIPE_CDP_PORT = '0';
+  assert.deepEqual(stopPlainWebBrowser(root), { stopped: true });
+  assert.deepEqual(stopPlainWebBrowser(root), { stopped: true });
 });

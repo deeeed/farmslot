@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -6,7 +7,11 @@ const { createPlainWebAdapter } = await import(
   pathToFileURL(require.resolve('@farmslot/adapter-web/plain-web')).href
 );
 
-export function createProvider() {
+export function createProvider(context) {
+  const cdp = context?.ports?.cdp?.value ?? context?.slot?.ports?.metro_port;
+  const application = context?.ports?.watcher?.value ?? context?.slot?.ports?.port;
+  if (cdp !== undefined) process.env.RECIPE_CDP_PORT = String(cdp);
+  if (application !== undefined) process.env.RECIPE_WATCHER_PORT = String(application);
   return {
     runtime: createPlainWebAdapter({
       manifestPath: fileURLToPath(new URL('./web.action-manifest.json', import.meta.url)),
@@ -16,15 +21,8 @@ export function createProvider() {
           throw new Error('Use the assigned website --watcher-port.');
         return `http://127.0.0.1:${port}/`;
       },
-      devServer: {
-        label: 'Next.js',
-        describe: () => 'The prepared siteed-web sandbox',
-        stop: () => ({
-          kind: 'headless',
-          message: 'The slot owns the sandbox server.',
-          userAction: 'Use slot teardown to stop it.',
-        }),
-      },
+      serverLabel: JSON.parse(readFileSync(new URL('./web-project.json', import.meta.url), 'utf8'))
+        .serverLabel,
     }),
   };
 }
