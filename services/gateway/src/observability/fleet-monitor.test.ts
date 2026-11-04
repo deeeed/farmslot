@@ -8,21 +8,26 @@ mock.module('node:fs/promises', { namedExports: { ...realFiles, writeFile: async
 const realFleet = await import('../methods/fleet.js');
 let cachedFleet: FleetStatus;
 let refreshes = 0;
+let workspaceRefreshes = 0;
 mock.module('../methods/fleet.js', {
   namedExports: {
     ...realFleet,
-    fleetStatus: () =>
-      realFleet.fleetStatus(
-        {},
-        {
-          load: async () => cachedFleet,
-          refresh: async () => {
-            refreshes++;
-            cachedFleet = { ...cachedFleet, checkedAt: new Date().toISOString(), stale: false };
-            return { fleet: cachedFleet };
+    fleetMonitorStatus: () =>
+      realFleet.fleetMonitorStatus({
+        load: async () => cachedFleet,
+        workspaces: {
+          read: (value) => value,
+          refresh: async (value) => {
+            workspaceRefreshes++;
+            return value;
           },
         },
-      ),
+        refresh: async () => {
+          refreshes++;
+          cachedFleet = { ...cachedFleet, checkedAt: new Date().toISOString(), stale: false };
+          return { fleet: cachedFleet };
+        },
+      }),
   },
 });
 const { detectFleetMonitorViolations, startMonitor, stopMonitor } =
@@ -238,4 +243,21 @@ test('the periodic monitor refreshes stale machine probes and publishes the fres
   assert.equal(refreshes, 1, 'fresh snapshots do not repeat expensive probes');
   assert.equal(published.at(-1)?.stale, false);
   assert.equal(published.at(-1)?.slots[0].dispatchable, true);
+});
+
+test('the periodic monitor does not inspect workspaces when nobody requests them', async (t) => {
+  cachedFleet = { ...fleet([slot({ lifecycle: 'ready' })]), checkedAt: new Date().toISOString() };
+  workspaceRefreshes = 0;
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  startMonitor({ onFleetUpdated() {}, onDecisionNew() {}, onViolation() {} });
+  t.after(stopMonitor);
+  for (let interval = 0; interval < 3; interval++) {
+    t.mock.timers.tick(30000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(
+    workspaceRefreshes,
+    0,
+    'Background health monitoring launched viewer-only Git inspection',
+  );
 });

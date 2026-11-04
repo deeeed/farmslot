@@ -76,7 +76,7 @@ export { fleetStaleThresholdMs, isFleetCheckedAtStale };
 
 interface FleetWorkspaceObservations {
   read(fleet: FleetStatus): FleetStatus;
-  refresh(fleet: FleetStatus): Promise<FleetStatus>;
+  refresh?(fleet: FleetStatus): Promise<FleetStatus>;
 }
 
 export interface FleetStatusDeps {
@@ -92,6 +92,13 @@ const defaultFleetStatusDeps: FleetStatusDeps = {
   refresh: () => fleetRefresh(),
   join: () => joinFleetRefresh(),
   workspaces: { read: observedFleetWorkspaces, refresh: enrichFleetWorkspaces },
+};
+
+const monitorFleetStatusDeps: FleetStatusDeps = {
+  ...defaultFleetStatusDeps,
+  refresh: () => fleetHealthRefresh(),
+  join: () => machineHealthRefreshes.join(),
+  workspaces: { read: observedFleetWorkspaces },
 };
 
 function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
@@ -110,8 +117,8 @@ function refreshWorkspaceObservations(
   deps: FleetStatusDeps,
   publish?: FleetWorkspacePublisher,
 ): void {
-  if (workspaceRefreshInFlight || !deps.workspaces) return;
   const workspaces = deps.workspaces;
+  if (workspaceRefreshInFlight || !workspaces?.refresh) return;
   const previous = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
   workspaceRefreshInFlight = workspaces
     .refresh(fleet)
@@ -158,7 +165,7 @@ export async function fleetStatus(
   // Ghost marking happens inside loadFleetStatus, so both branches are honest.
   const loaded = params?.forceRefresh ? (await deps.refresh()).fleet : await deps.load();
   const fleet = params?.forceRefresh
-    ? ((await deps.workspaces?.refresh(loaded)) ?? loaded)
+    ? ((await deps.workspaces?.refresh?.(loaded)) ?? loaded)
     : (deps.workspaces?.read(loaded) ?? loaded);
   if (!params?.forceRefresh) refreshWorkspaceObservations(fleet, deps, publish);
   if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
@@ -173,6 +180,17 @@ export async function fleetStatus(
     });
   }
   return fleetStatusResult(fleet);
+}
+
+/** Health/violation monitoring consumes held workspace observations; viewers own their probes. */
+export function fleetMonitorStatus(
+  deps: FleetStatusDeps = monitorFleetStatusDeps,
+): Promise<FleetStatusResult> {
+  const workspaces = deps.workspaces;
+  return fleetStatus(undefined, {
+    ...deps,
+    workspaces: workspaces ? { read: (fleet) => workspaces.read(fleet) } : undefined,
+  });
 }
 
 // ─── fleetRefresh — native TS port of farm-status.sh collect mode ───
@@ -474,7 +492,16 @@ export function withFollowUpRefresh<T>(run: () => Promise<T>): {
   };
 }
 
-const fleetRefreshes = withFollowUpRefresh(runFleetRefresh);
+const machineHealthRefreshes = withFollowUpRefresh(runFleetHealthRefresh);
+const fleetRefreshes = withFollowUpRefresh(async () => {
+  const { fleet } = await machineHealthRefreshes.refresh();
+  return { fleet: await enrichFleetWorkspaces(fleet) };
+});
+
+/** Background callers need current machine health without viewer-only workspace inspection. */
+export function fleetHealthRefresh(): Promise<FleetStatusResult> {
+  return machineHealthRefreshes.refresh();
+}
 
 /** Re-probe the fleet; a call made while a refresh runs gets one more run after it. */
 export function fleetRefresh(): Promise<FleetStatusResult> {
@@ -486,7 +513,7 @@ export function joinFleetRefresh(): Promise<FleetStatusResult> {
   return fleetRefreshes.join();
 }
 
-async function runFleetRefresh(): Promise<FleetStatusResult> {
+async function runFleetHealthRefresh(): Promise<FleetStatusResult> {
   // 1. Load all pool JSONs
   const { pools, unread } = await loadAllPools();
   if (pools.length === 0 && unread.errors.length === 0) {
@@ -524,8 +551,7 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
     ),
   );
 
-  const fleet = await enrichFleetWorkspaces(await loadFleetStatus(true));
-  return { fleet };
+  return { fleet: await loadFleetStatus(true) };
 }
 
 export function buildFleetRefreshSnapshot(
