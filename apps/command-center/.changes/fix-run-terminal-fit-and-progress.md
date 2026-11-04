@@ -1,0 +1,1 @@
+- Fit run terminals to their panels, refit on resize and load xterm’s complete styles so measurement glyphs stay hidden. Progress notices are quiet without a source and use one short failure line with a shared styled Retry.

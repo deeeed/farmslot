@@ -11,6 +11,36 @@ import {
   updateNoticeKey,
 } from './notification-tray.js';
 
+test('progress without a watch has no duplicate tray notice', () => {
+  notificationTray.setOwner('progress-absence');
+  try {
+    publishReadNotice(
+      {},
+      'progress-absence',
+      resourceQuery('task.progress', { slotId: 'idle' }),
+      {
+        status: 'unsupported',
+        error: { code: 'RESOURCE_OBSERVATION_UNSUPPORTED', message: 'No active verified watch.' },
+      },
+      '#runs',
+      { connected: true },
+    );
+    assert.equal(notificationTray.items.length, 0);
+    publishReadNotice(
+      {},
+      'progress-absence',
+      resourceQuery('task.progress', { slotId: 'live' }),
+      { status: 'error', error: { code: 'RESOURCE_OBSERVATION_FAILED', message: 'Bad checklist' } },
+      '#runs',
+      { connected: true },
+    );
+    assert.equal(notificationTray.items[0]?.title, 'Could not read progress');
+    assert.equal(notificationTray.items[0]?.body, 'Bad checklist');
+  } finally {
+    notificationTray.setOwner(undefined);
+  }
+});
+
 test('a snapshot read has no missing-live-updates notice but retains actual failures', () => {
   notificationTray.setOwner('snapshot-read');
   const source = {};
@@ -152,7 +182,7 @@ test('completed update guidance remains reachable until its existing dismissal i
   notificationTray.setOwner(undefined);
 });
 
-test('missing runs stay absent and unsupported progress is one quiet gateway condition', () => {
+test('missing runs and unsupported progress stay absent', () => {
   notificationTray.setOwner('reads');
   publishReadNotice(
     {},
@@ -179,7 +209,6 @@ test('missing runs stay absent and unsupported progress is one quiet gateway con
     '#run/two',
     { connected: true },
   );
-  assert.equal(notificationTray.items.length, 1);
-  assert.equal(notificationTray.items[0]?.needsYou, false);
+  assert.equal(notificationTray.items.length, 0);
   notificationTray.setOwner(undefined);
 });
