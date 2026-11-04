@@ -185,8 +185,8 @@ for (const kind of ['dirty', 'unpushed'] as const) {
 }
 // F291 (c9562e49 on mini-mmt-3): a finished artifact-only run's own commits kept the next dispatch
 // off its slot. Its idle return now asks the release to park them (the release owns the git).
-const validationRun = (overrides: Partial<Run> = {}) =>
-  makeRun({
+const validationRun = (overrides: Partial<Run> = {}) => ({
+  ...makeRun({
     id: 'validation',
     slotId: 'proof',
     flowType: 'dev',
@@ -196,7 +196,17 @@ const validationRun = (overrides: Partial<Run> = {}) =>
     worktreeHeadAtDispatch: 'd'.repeat(40),
     steps: [{ name: 'prepare', status: 'done' }],
     ...overrides,
-  });
+  }),
+  releasedCheckout:
+    'releasedCheckout' in overrides
+      ? overrides.releasedCheckout
+      : {
+          slotId: 'proof',
+          branch: 'TAT-4146-feat-farm-validation',
+          headSha: 'a'.repeat(40),
+          at: '2026-10-30T00:00:00.000Z',
+        },
+});
 const releaseFor = (runId: string) =>
   reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null, recordRunId: runId });
 
@@ -211,6 +221,15 @@ for (const completionPolicy of ['artifact-only', 'default'] as const) {
     assert.deepEqual(parkRunIds, ['validation']);
   });
 }
+
+test('ownerless history without a recorded head cannot reclaim reused-branch commits', async () => {
+  const run = validationRun({ releasedCheckout: undefined });
+  runs = [run];
+  workspace.branch = run.branch!;
+  workspace.publication = 'unpushed';
+  assert.equal((await releaseFor(run.id)).kind, 'local-work');
+  assert.deepEqual(recovered, []);
+});
 
 test("work that isn't a finished run's own is still kept", async () => {
   workspace.publication = 'unpushed';
