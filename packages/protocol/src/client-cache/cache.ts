@@ -361,16 +361,26 @@ export function createGatewayResourceCache(
     for (const entry of entries.values()) notify(entry);
   }
 
+  function withStoreWriteLock<T>(target: ResourceStore, write: () => Promise<T>): Promise<T> {
+    return target.withWriteLock ? target.withWriteLock(write) : write();
+  }
+
   /** Retention, writes and lifecycle changes share one ordered store boundary. */
   function updateStore(
     target: ResourceStore,
     current: () => boolean,
     update: () => Promise<void>,
+    lockWrites = true,
   ): Promise<void> {
     const updating = barrier.then(async () => {
       if (!current()) return;
       try {
-        await update();
+        const write = async () => {
+          // A queued cross-tab write must recheck the owner after acquiring its lock.
+          if (current()) await update();
+        };
+        if (lockWrites) await withStoreWriteLock(target, write);
+        else await write();
       } catch (error) {
         await recoverStore(error, target);
       }
@@ -594,9 +604,11 @@ export function createGatewayResourceCache(
         if (store.persistent && retentionSweptStore !== store) {
           const target = store;
           try {
-            for (const id of upstreamRetentionEvictions(await target.listQueries()))
-              await target.deleteQuery(id);
-            retentionSweptStore = target;
+            await withStoreWriteLock(target, async () => {
+              for (const id of upstreamRetentionEvictions(await target.listQueries()))
+                await target.deleteQuery(id);
+              retentionSweptStore = target;
+            });
           } catch (error) {
             await recoverStore(error, target);
           }
@@ -826,6 +838,8 @@ export function createGatewayResourceCache(
           evictingStore,
           () => evictingStore === store && !evictingStore.deleted,
           () => evictingStore.deleteQuery(RUN_LIST_COLLECTION_ID),
+          // Queue one-statement refusal evictions before their callers settle.
+          false,
         );
       }
       throw error;
@@ -1224,6 +1238,8 @@ export function createGatewayResourceCache(
               evictingIncarnation === storeVersion &&
               !evictingStore.deleted,
             () => evictingStore.deleteQuery(nativeHistoryStorageId(entry.query)),
+            // Refusals must not wait for another tab's admission lock before enqueueing deletion.
+            false,
           );
           notify(entry);
           // An authorization refusal settles its callers in the reply's own task, so a prefetch

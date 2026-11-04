@@ -9,15 +9,15 @@ import { storedRun } from '../../../../packages/protocol/test/fixtures/run.js';
 
 import { installFakeGateway } from './testing/fake-gateway.js';
 
-// The browser picks one owner tab through `navigator.locks`; other tabs get a memory store.
-let ownerTab = false;
+// Unavailable persistent storage falls back to memory without prefetching.
+let persistentStore = false;
 mock.module('@farmslot/local-store/browser', {
   namedExports: {
     async createBrowserSqliteResourceStore(): Promise<ResourceStore> {
       const memory = createMemoryResourceStore();
       return {
         ...memory,
-        persistent: ownerTab,
+        persistent: persistentStore,
         get deleted() {
           return memory.deleted;
         },
@@ -27,7 +27,7 @@ mock.module('@farmslot/local-store/browser', {
   },
 });
 
-test('the owner tab prefetches pending gates and active runs from the shared observations', async (t) => {
+test('a durable store prefetches pending gates and active runs from the shared observations', async (t) => {
   const fakeGateway = installFakeGateway(t, 'operator');
   fakeGateway.resourceEpoch = 'prefetch-epoch';
   const authPayload = (batchedContent: boolean) => ({
@@ -111,7 +111,7 @@ test('the owner tab prefetches pending gates and active runs from the shared obs
       .filter(({ method }) => method === 'run.get')
       .map(({ params }) => Reflect.get(params as object, 'runId'));
 
-  // A second tab holds a memory store: it never prefetches, even with the capability.
+  // A memory fallback never prefetches, even with the capability.
   fakeGateway.authPayload = authPayload(true);
   initState();
   await gateway.setAuthCredentials({ token: 'operator-secret' });
@@ -124,7 +124,7 @@ test('the owner tab prefetches pending gates and active runs from the shared obs
 
   // Detail sync is independent of batched content; media prefetch still needs that capability.
   await disposeResourceCache();
-  ownerTab = true;
+  persistentStore = true;
   fakeGateway.authPayload = authPayload(false);
   initializeResourceCache();
   gateway.reconnect();

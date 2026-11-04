@@ -1,0 +1,1 @@
+- Serialize cache admission and eviction across browser tabs sharing a durable store so their combined data stays within the configured budgets.

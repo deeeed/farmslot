@@ -104,6 +104,8 @@ export interface ResourceStore {
   readonly persistent: boolean;
   readonly deleted: boolean;
   onDeleted(listener: () => void): () => void;
+  /** Serialize a complete cache write/retention unit when multiple clients share this scope. */
+  withWriteLock?<T>(write: () => Promise<T>): Promise<T>;
   getMetadata(): Promise<ResourceStoreMetadata | undefined>;
   setMetadata(metadata: ResourceStoreMetadata): Promise<void>;
   getQuery<T = unknown>(id: string): Promise<StoredResourceQuery<T> | undefined>;

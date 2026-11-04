@@ -280,9 +280,11 @@ waiting. Streams are never stored, and commands never pass through the store.
 2. If the persistent store cannot open, including on pages without a secure
    context, the cache uses `createMemoryResourceStore()` and shows a one-line
    notice that data will not survive a restart.
-3. In a browser, one tab owns the database and does all prefetching. Other
-   tabs use the memory store. A tab that takes over never loads a stored result
-   over newer `ready` data.
+3. Browser tabs share one durable database. Each worker holds the same Web Lock
+   for one store operation, closes its SQLite connections, and pauses the VFS to
+   release OPFS handles before another tab proceeds. A tab closing does not
+   change another tab's storage. A scoped write lock spans cache budget checks,
+   eviction and insertion across requests. Stored results never replace newer `ready` data.
 4. The store key is the gateway connection profile id where the client has one,
    the normalized gateway URL, the principal id and the principal generation.
    Command Center in a browser has no profile id and uses the URL. With
@@ -492,8 +494,9 @@ one gateway, alongside Migration acceptance above:
   prefetched, and `.env` is never listed, read or stored.
 - A base branch that moved after the branch point: base files at the merge-base
   are read without refusal.
-- A second browser tab works on the memory store. The owner's database passes
-  `PRAGMA integrity_check`, and the second tab never opens it.
+- Browser tabs share durable queries and content without a fallback notice.
+  Reloading either tab or closing the first preserves the data. Concurrent writes
+  serialize, scoped deletion seals other handles, and `PRAGMA integrity_check` passes.
 - Command Center over plain HTTP from another machine runs on the memory store
   and says so. The desktop app loads the WebAssembly module under its policy.
 - A schema version change rebuilds the store and keeps drafts.

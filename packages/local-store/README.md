@@ -1,7 +1,10 @@
 # Local resource store
 
 Private SQLite adapters for the ADR-071 client cache. Command Center and its
-desktop app use a dedicated SQLite WebAssembly worker on `opfs-sahpool`.
+desktop app use a dedicated SQLite WebAssembly worker per tab on `opfs-sahpool`.
+The workers share one durable database through a Web Lock held per operation;
+SQLite connections close and the VFS releases its access handles between requests.
+A scoped write lock covers each complete cache admission/eviction unit across tabs.
 Companion uses `expo-sqlite` in its platform cache directory. Protocol owns the
 portable contract and never imports this package.
 
@@ -10,7 +13,7 @@ portable contract and never imports this package.
 - `src/sqlite-store.ts` owns scoped query rows, content blobs by identity, atomic
   replacement, schema resets, deletion fencing and the five-store limit.
 - `src/native.ts` adapts Expo SQLite.
-- `src/browser.ts` owns the worker, tab ownership and deletion coordination.
+- `src/browser.ts` owns the tab worker and scoped deletion coordination.
 - `src/browser-worker.ts` opens the browser database and serves store operations.
 - `test/` runs the exported portable conformance contract and SQLite regressions.
 

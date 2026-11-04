@@ -27,7 +27,7 @@ import { retireDraftScope } from './draft-scopes.js';
 import { gateway } from './gateway-client.js';
 
 let notice: string | undefined;
-/** The owned cache whose store is persistent; only this tab's owner store prefetches. */
+/** Only caches backed by durable storage prefetch; transient fallbacks do not. */
 let persistentCache: GatewayResourceCache | undefined;
 let defaultBranch: ((run: Run) => string | undefined) | undefined;
 let stopConnection: (() => void) | undefined;
