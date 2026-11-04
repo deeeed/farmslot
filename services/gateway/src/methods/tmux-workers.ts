@@ -24,7 +24,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
-import { resolveMachinePoolConfig, resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
+import { resolveMachinePoolConfig } from '../fleet/machine-pool.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
@@ -587,11 +587,10 @@ async function listNodeWorkers(params: {
   connected: boolean;
   observedAt: number;
   sessionCorrelation: Map<string, SlotCorrelation> | undefined;
-  tmuxWorkerConfig: TmuxWorkerFilterConfig | undefined;
+  resolveConfig: () => TmuxWorkerFilterConfig | undefined;
   requestPanes: (nodeId: string) => Promise<NodeTmuxPane[]>;
 }): Promise<TmuxWorkerNodeResult> {
-  const { nodeId, connected, observedAt, sessionCorrelation, tmuxWorkerConfig, requestPanes } =
-    params;
+  const { nodeId, connected, observedAt, sessionCorrelation, resolveConfig, requestPanes } = params;
   if (!connected) {
     return {
       nodeId,
@@ -605,6 +604,7 @@ async function listNodeWorkers(params: {
   }
 
   try {
+    const tmuxWorkerConfig = resolveConfig();
     const panes = await requestPanes(nodeId);
     const allWorkers = panes.map((pane) =>
       tmuxWorkerFromNodePane({
@@ -660,7 +660,12 @@ export async function buildTmuxWorkerListFromSources(params: {
 }): Promise<TmuxWorkerListResult> {
   const includeDisconnected = params.includeDisconnected ?? true;
   const sessionCorrelation = buildSessionCorrelation(params.pools, params.fleet, params.activeRuns);
-  const machinePools = resolveMachinePoolConfigs(params.pools);
+  const poolsByMachine = new Map<string, PoolConfig[]>();
+  for (const pool of params.pools) {
+    const group = poolsByMachine.get(pool.machine) ?? [];
+    group.push(pool);
+    poolsByMachine.set(pool.machine, group);
+  }
   const nodes = await Promise.all(
     Array.from(new Set(params.nodeIds))
       .sort()
@@ -671,7 +676,8 @@ export async function buildTmuxWorkerListFromSources(params: {
           connected: params.connectedNodeIds.has(nodeId),
           observedAt: params.observedAt,
           sessionCorrelation: sessionCorrelation.get(nodeId),
-          tmuxWorkerConfig: machinePools.get(nodeId)?.tmuxWorkers,
+          resolveConfig: () =>
+            resolveMachinePoolConfig(poolsByMachine.get(nodeId) ?? [], nodeId)?.tmuxWorkers,
           requestPanes: params.requestPanes,
         }),
       ),

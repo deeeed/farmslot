@@ -46,8 +46,8 @@ async function selectRunnerModelCatalogSource(
 ): Promise<RunnerModelCatalogSource | undefined> {
   let source = getRunnerDefinition(runner).modelCatalog;
   if (source && 'command' in source && source.poolPathKey) {
-    const pools = [...resolveMachinePoolConfigs(await loadPoolConfigs()).values()];
-    for (const pool of pools.filter((entry) => isLocal(entry.host, entry.machine))) {
+    const localPools = (await loadPoolConfigs()).filter((pool) => isLocal(pool.host, pool.machine));
+    for (const pool of resolveMachinePoolConfigs(localPools).values()) {
       const configured = (await loadMachinePool(pool.machine))[source.poolPathKey]?.trim();
       if (configured) {
         source = {

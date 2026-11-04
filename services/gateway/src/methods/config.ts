@@ -40,9 +40,8 @@ import {
 
 import {
   invalidateProjectVarsCache,
-  isIgnoredPoolFile,
+  loadMachinePoolFile,
   loadProjectVars,
-  poolDir,
   projectsDir,
   resolveSlot,
   validateAutoRecoveryConfig,
@@ -247,21 +246,7 @@ export async function configProject(params: ConfigProjectParams): Promise<Config
 // ─── Raw pool JSON for editor ───
 
 export async function configPoolRaw(params: ConfigPoolParams): Promise<ConfigPoolRawResult> {
-  const files = await readdir(poolDir);
-  for (const file of files) {
-    if (isIgnoredPoolFile(file)) continue;
-    const filePath = path.join(poolDir, file);
-    try {
-      const content = await readFile(filePath, 'utf-8');
-      const parsed = JSON.parse(content);
-      if (parsed.machine === params.machine) {
-        return { raw: content };
-      }
-    } catch {
-      /* skip */
-    }
-  }
-  throw new GatewayMethodError('NOT_FOUND', `Pool file not found for machine: ${params.machine}`);
+  return { raw: await readFile(await loadMachinePoolFile(params.machine), 'utf-8') };
 }
 
 // ─── Template viewer (Phase 1) ───
@@ -456,22 +441,7 @@ export async function configPoolUpdate(
     }
   }
 
-  // Find pool file
-  const files = await readdir(poolDir);
-  let poolFilePath: string | null = null;
-  for (const file of files) {
-    if (isIgnoredPoolFile(file)) continue;
-    try {
-      const existing = JSON.parse(await readFile(path.join(poolDir, file), 'utf-8'));
-      if (existing.machine === machine) {
-        poolFilePath = path.join(poolDir, file);
-        break;
-      }
-    } catch {
-      /* skip */
-    }
-  }
-  if (!poolFilePath) throw new Error(`Pool file not found for machine: ${machine}`);
+  const poolFilePath = await loadMachinePoolFile(machine);
 
   // Backup + write
   const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);

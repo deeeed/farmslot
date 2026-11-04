@@ -42,6 +42,14 @@ process.env.FARMSLOT_ROOT = root;
 process.env.FARMSLOT_HOME = path.join(root, 'home');
 process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
 process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
+const originalPath = process.env.PATH;
+const fakeBin = path.join(root, 'fake-bin');
+mkdirSync(fakeBin);
+writeFileSync(path.join(fakeBin, 'tmux'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+process.env.PATH = `${fakeBin}:${originalPath}`;
+after(() => {
+  process.env.PATH = originalPath;
+});
 after(() => rmSync(root, { recursive: true, force: true }));
 const { loadPoolConfig, loadPoolConfigs } = await import('./state.js');
 const { buildTmuxWorkerListFromSources } = await import('../methods/tmux-workers.js');
@@ -150,4 +158,67 @@ test('unrelated non-object JSON does not break machine slot discovery', async (t
       'primary-1',
     ]);
   }
+});
+
+test('pool editor reads and saves the canonical file without overwriting its canary', async () => {
+  const { configPoolRaw, configPoolUpdate } = await import('../methods/config.js');
+  const primary = path.join(root, 'pool/review-node.json');
+  const canary = path.join(root, 'pool/canary-review-node.json');
+  const original = readFileSync(primary, 'utf8');
+  const canaryOriginal = readFileSync(canary, 'utf8');
+  try {
+    assert.equal((await configPoolRaw({ machine: 'review-node' })).raw, original);
+    const content = JSON.stringify({ ...JSON.parse(original), codex_path: '/edited/codex' });
+    const result = await configPoolUpdate({ machine: 'review-node', content });
+    assert.equal(result.ok, true);
+    assert.equal(JSON.parse(readFileSync(primary, 'utf8')).codex_path, '/edited/codex');
+    assert.equal(readFileSync(canary, 'utf8'), canaryOriginal);
+  } finally {
+    writeFileSync(primary, original);
+    writeFileSync(canary, canaryOriginal);
+  }
+});
+
+test('ambiguous machine settings fail only that terminal node', async (t) => {
+  const files = ['legacy-broken.json', 'canary-broken.json'].map((name) =>
+    path.join(root, 'pool', name),
+  );
+  t.after(() => {
+    for (const file of files) rmSync(file, { force: true });
+  });
+  for (const file of files)
+    writeFileSync(
+      file,
+      JSON.stringify({ ...base, machine: 'broken', host: 'broken.example', slots: [] }),
+    );
+  const requested: string[] = [];
+  const result = await buildTmuxWorkerListFromSources({
+    pools: await loadPoolConfigs(),
+    fleet: {
+      checkedAt: new Date().toISOString(),
+      slots: [],
+      summary: {
+        total: 0,
+        ready: 0,
+        busy: 0,
+        held: 0,
+        manual: 0,
+        disabled: 0,
+        blocked: 0,
+        warmCount: 0,
+      },
+    },
+    nodeIds: ['review-node', 'broken'],
+    connectedNodeIds: new Set(['review-node', 'broken']),
+    observedAt: 1,
+    requestPanes: async (node) => {
+      requested.push(node);
+      return [];
+    },
+  });
+  assert.equal(result.nodes.find((node) => node.nodeId === 'review-node')?.ok, true);
+  const broken = result.nodes.find((node) => node.nodeId === 'broken');
+  assert.equal(broken?.ok, false);
+  assert.match(broken?.error ?? '', /ambiguous pool settings/);
+  assert.deepEqual(requested, ['review-node']);
 });

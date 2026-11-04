@@ -56,7 +56,7 @@ import {
 
 import { SlotConfigError } from './error.js';
 import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
-import { machinePoolFileName, resolveMachinePool } from './machine-pool.js';
+import { machinePoolFileName, resolveMachinePoolEntry } from './machine-pool.js';
 import { farmslotRoot } from './repo-root.js';
 import {
   type ProjectSourceContext,
@@ -601,13 +601,22 @@ export async function loadMachineSlots(machine: string): Promise<RawPoolSlot[]> 
 
 /** Read machine launch settings from the same pool source as slot dispatch. */
 export async function loadMachinePool(machine: string): Promise<RawPoolJson> {
+  return (await loadMachinePoolEntry(machine)).pool;
+}
+
+/** Source file for the machine configuration editor, using the same authority as launch settings. */
+export async function loadMachinePoolFile(machine: string): Promise<string> {
+  return path.join(poolDir, (await loadMachinePoolEntry(machine)).file);
+}
+
+async function loadMachinePoolEntry(machine: string): Promise<PoolFileEntry<RawPoolJson>> {
   const files = await readMachinePoolNames();
   const canonical = files.find((file) => file === machinePoolFileName(machine));
   if (canonical) {
-    const pool = resolveMachinePool(await readMachinePoolFiles([canonical]), machine);
+    const pool = resolveMachinePoolEntry(await readMachinePoolFiles([canonical]), machine);
     if (pool) return pool;
   }
-  const pool = resolveMachinePool(
+  const pool = resolveMachinePoolEntry(
     await readMachinePoolFiles(files.filter((file) => file !== canonical)),
     machine,
   );
