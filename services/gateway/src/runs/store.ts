@@ -45,8 +45,8 @@ import {
   prNumberFromRunInput,
   RECORDED_EVIDENCE_RUN_CONTRACT_VERSION,
   type Run,
-  type RunCreateParams,
   type RunArtifactBundleRef,
+  type RunCreateParams,
   type RunDecision,
   type RunLane,
   runListPage,
@@ -1825,13 +1825,21 @@ export async function recordRunStorageArchive(id: string, manifest: string): Pro
  * A release parked a run's own branch commits. Written durably on the live or
  * archived run, every attempt, before the slot resets.
  */
-export async function recordParkedRunCommits(id: string, record: ParkedRunCommits): Promise<void> {
+export async function recordParkedRunCommits(
+  id: string,
+  record: ParkedRunCommits,
+  beforeRef?: string,
+): Promise<void> {
   await commitRetainedRunMutation(
     id,
-    (run) =>
-      run.parkedCommits?.some((entry) => entry.ref === record.ref)
-        ? run
-        : { ...run, parkedCommits: [...(run.parkedCommits ?? []), record] },
+    (run) => {
+      if (run.parkedCommits?.some((entry) => entry.ref === record.ref)) return run;
+      const records = [...(run.parkedCommits ?? [])];
+      // Historical backfill must not replace the already authoritative replay head.
+      const before = beforeRef ? records.findIndex((entry) => entry.ref === beforeRef) : -1;
+      records.splice(before < 0 ? records.length : before, 0, record);
+      return { ...run, parkedCommits: records };
+    },
     // A parking receipt grants no lifecycle authority; the release claim checks ownership.
     () => undefined,
   );

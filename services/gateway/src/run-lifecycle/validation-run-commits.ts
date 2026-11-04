@@ -138,7 +138,13 @@ export async function parkRunBranchCommits(
   run: Run,
   vars: SlotVars,
   exec: typeof execOnSlot,
-  checks: { defaultBranch: string; headSha?: string; discard?: boolean; dataOnly?: boolean },
+  checks: {
+    defaultBranch: string;
+    headSha?: string;
+    discard?: boolean;
+    dataOnly?: boolean;
+    ownedCheckout?: boolean;
+  },
 ): Promise<ParkedRunCommits | null> {
   if (
     !(checks.discard ? ownsRunBranch(run) : parksBranchCommits(run)) ||
@@ -171,7 +177,10 @@ export async function parkRunBranchCommits(
   // A run may record divergent review and release heads. Keep each history; its branch
   // may already be gone or reused. Metadata-only retention never changes that checkout.
   const sources = checks.dataOnly
-    ? [...new Set(recorded.reverse().map((entry) => entry.head)), undefined]
+    ? [
+        ...new Set(recorded.reverse().map((entry) => entry.head)),
+        ...(checks.ownedCheckout ? [undefined] : []),
+      ]
     : [undefined];
   let retained: ParkedRunCommits | null = null;
   for (const sourceHeadSha of sources) {
@@ -195,7 +204,11 @@ export async function parkRunBranchCommits(
     };
     // A failed durable write throws before any caller may reset.
     const { recordParkedRunCommits } = await import('../runs/store.js');
-    await recordParkedRunCommits(run.id, record);
+    await recordParkedRunCommits(
+      run.id,
+      record,
+      checks.dataOnly && sourceHeadSha ? previous?.ref : undefined,
+    );
     console.log(
       `[slot.release] ${vars.slotId}: parked run ${run.id.slice(0, 8)}'s ${record.commits.length} unpushed commit(s) on ${branch} at ${record.ref}`,
     );

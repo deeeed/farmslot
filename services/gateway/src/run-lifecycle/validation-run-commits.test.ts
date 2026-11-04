@@ -411,3 +411,41 @@ test('data-only backfill preserves divergent review and release histories', asyn
   assert.equal(git('rev-parse', 'HEAD'), before);
   assert.equal(git('branch', '--show-current'), 'other-work');
 });
+
+test('historical backfill cannot replace the already parked replay head', async (t) => {
+  const { git, vars, base, head, validation } = await fixture(t);
+  await parkRunBranchCommits(validation, vars, localExec, checks);
+  const ended = updateRun(validation.id, {
+    steps: [{ name: 'review', status: 'done', outputs: { reviewSnapshot: { headSha: base } } }],
+  });
+  git('checkout', '-q', 'main');
+  git('branch', '-q', '-D', ended.branch!);
+  await parkRunBranchCommits(ended, vars, localExec, { ...checks, dataOnly: true });
+  const retained = getRun(ended.id)!;
+  assert.equal(retained.parkedCommits?.length, 2);
+  assert.equal(
+    (await restoreParkedBranch(retained, vars, ended.branch!, localExec))?.headSha,
+    head,
+  );
+});
+
+test('historical retention never attributes an unrecorded reused branch to the old run', async (t) => {
+  const { git, vars, head, validation } = await fixture(t);
+  const ended = updateRun(validation.id, {
+    steps: [{ name: 'review', status: 'done', outputs: { reviewSnapshot: { headSha: head } } }],
+  });
+  git('commit', '-q', '--allow-empty', '-m', 'new owner work on reused branch');
+  const foreign = git('rev-parse', 'HEAD');
+  await parkRunBranchCommits(ended, vars, localExec, { ...checks, dataOnly: true });
+  assert.deepEqual(
+    getRun(ended.id)?.parkedCommits?.map((entry) => entry.headSha),
+    [head],
+  );
+  assert.equal(git('rev-parse', 'HEAD'), foreign);
+  git('checkout', '-q', 'main');
+  git('branch', '-q', '-D', ended.branch!);
+  assert.equal(
+    (await restoreParkedBranch(getRun(ended.id), vars, ended.branch!, localExec))?.headSha,
+    head,
+  );
+});

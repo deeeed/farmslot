@@ -73,8 +73,8 @@ import {
   dropParkedBranch,
   ownsRunBranch,
   parkRunBranchCommits,
-  recordReleasedCheckout,
   parksBranchCommits,
+  recordReleasedCheckout,
 } from '../../run-lifecycle/validation-run-commits.js';
 import {
   assertNativeSlotReplacementOwner,

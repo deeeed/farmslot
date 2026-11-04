@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import {
-  DEFAULT_BRANCH,
   cancelledRunHoldReason,
+  DEFAULT_BRANCH,
   Events,
   isCompletionPrerequisiteFailure,
   isTerminalRunStatus,
@@ -595,6 +595,7 @@ export async function releaseRunSlotOwnership(
       await parkRunBranchCommits(run, checkoutVars, execOnSlot, {
         defaultBranch: project.projectJson.default_branch ?? DEFAULT_BRANCH,
         dataOnly: true,
+        ownedCheckout: true,
       });
       await assertOwned();
     }

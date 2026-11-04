@@ -8,8 +8,8 @@ import {
 } from '@farmslot/adapter-sdk';
 import {
   type ArtifactRef,
-  DEFAULT_BRANCH,
   decisionArtifactBundleRef,
+  DEFAULT_BRANCH,
   INHERITED_ACCEPTANCE_INPUT,
   isRecord,
   isTerminalRunStatus,
@@ -66,12 +66,11 @@ import {
   getRunWithArchived,
   isTaskDirectoryAdmitting,
   persistRunNow,
-  recordRunStorageArchive,
   recordRetainedArtifactBackfill,
+  recordRunStorageArchive,
   runsDirectory,
   runTaskDirectories,
   shouldUseIsolatedRunsDir,
-  updateRun,
 } from '../runs/store.js';
 
 export interface RunArtifactAcquisition {
