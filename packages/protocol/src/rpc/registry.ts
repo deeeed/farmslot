@@ -229,6 +229,7 @@ export const Methods = {
   TMUX_SELECT_WINDOW: 'tmux.selectWindow',
   TMUX_LIST: 'tmux.list',
   TMUX_WORKER_LIST: 'tmux.worker.list',
+  TMUX_WORKER_CREATE_SESSION: 'tmux.worker.createSession',
   TMUX_WORKER_RESTORE: 'tmux.worker.restore',
   TMUX_WORKER_END_SESSION: 'tmux.worker.endSession',
   TMUX_RENAME_WINDOW: 'tmux.renameWindow',

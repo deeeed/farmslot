@@ -136,6 +136,7 @@ export class NativeSessionView extends LitElement {
   @property({ attribute: false }) fixture?: NativeSessionFixture;
   @property({ attribute: false }) worker?: NativeWorkerViewTarget;
   @property() initialSessionId = '';
+  @property() navigationRoute: 'native' | 'terminal' = 'native';
   @property() initialExecutionNodeId = '';
   private catalogCurrent = false;
   @state() private catalog?: NativeSessionCatalogResult;
@@ -187,6 +188,13 @@ export class NativeSessionView extends LitElement {
       : nativeLaunchContextKey({ cwd: this.cwd, executionNodeId: this.executionNodeId });
     return this.launchChoices.some((choice) => choice.key === key) ? key : '';
   }
+  private get defaultLaunchChoice() {
+    return this.launchChoices.find(
+      (choice) =>
+        !choice.unavailableReason &&
+        (!this.initialExecutionNodeId || choice.executionNodeId === this.initialExecutionNodeId),
+    );
+  }
   private get launchReady() {
     return (
       !!this.cwd.trim() &&
@@ -216,7 +224,12 @@ export class NativeSessionView extends LitElement {
     this.syncLaunchUrl();
   }
   private syncLaunchUrl() {
-    if (this.worker || this.selectedId || this.fixture || parseHashRoute().route !== 'native')
+    if (
+      this.worker ||
+      this.selectedId ||
+      this.fixture ||
+      parseHashRoute().route !== this.navigationRoute
+    )
       return;
     const params = hashParams();
     params.set('cwd', this.cwd);
@@ -228,7 +241,7 @@ export class NativeSessionView extends LitElement {
     const effort = this.executionPicker.toSelection().effort;
     if (effort) params.set('effort', effort);
     else params.delete('effort');
-    history.replaceState(null, '', buildHash('native', params));
+    history.replaceState(null, '', buildHash(this.navigationRoute, params));
   }
   @state() private transcript: NativeTranscript = { events: [], cursor: 0 };
   @state() private historyScope?: NativeWorkerHistoryScope;
@@ -383,7 +396,7 @@ export class NativeSessionView extends LitElement {
     this.renderedRevision = this.revision;
     if (
       !this.fixture &&
-      parseHashRoute().route === 'native' &&
+      parseHashRoute().route === this.navigationRoute &&
       !this.worker &&
       !this.selectedId &&
       this.catalog &&
@@ -867,6 +880,7 @@ ${JSON.stringify(
     super.connectedCallback();
     this.globalStop = subscribe(() => this.requestUpdate());
     const params = hashParams();
+    if (this.initialExecutionNodeId) this.executionNodeId = this.initialExecutionNodeId;
     if (params.has('cwd')) {
       this.cwd = params.get('cwd') ?? '';
       this.executionNodeId = params.get('executionNodeId') ?? 'local';
@@ -1072,7 +1086,7 @@ ${JSON.stringify(
                 catalogForNativeRunners(this.catalog.runners, undefined, this.executionNodeId),
               );
             if (!this.cwd && !this.customCwd && this.catalog) {
-              const choice = this.launchChoices.find((choice) => !choice.unavailableReason);
+              const choice = this.defaultLaunchChoice;
               if (choice) this.chooseLaunch(choice.key);
             }
           },
@@ -1128,7 +1142,7 @@ ${JSON.stringify(
         this.model = catalog.runners[0]?.defaultModel ?? '';
       }
       if (!this.cwd && !this.customCwd) {
-        const choice = this.launchChoices.find((choice) => !choice.unavailableReason);
+        const choice = this.defaultLaunchChoice;
         if (choice) this.chooseLaunch(choice.key);
       }
       if (!this.selectedId) this.creating = true;
@@ -1240,9 +1254,9 @@ ${JSON.stringify(
   /** Selects a session and keeps it in the page address, so a refresh reopens it. */
   private selectRouted(id: string, executionNodeId = 'local') {
     this.select(id, executionNodeId);
-    if (this.worker || this.fixture || parseHashRoute().route !== 'native') return;
+    if (this.worker || this.fixture || parseHashRoute().route !== this.navigationRoute) return;
     this.initialSessionId = id;
-    this.initialExecutionNodeId = executionNodeId;
+    this.initialExecutionNodeId = id ? executionNodeId : this.executionNodeId;
     const params = hashParams();
     if (id) {
       params.set('sessionId', id);
@@ -1251,7 +1265,7 @@ ${JSON.stringify(
       params.delete('sessionId');
       params.set('executionNodeId', this.executionNodeId);
     }
-    history.replaceState(null, '', buildHash('native', params));
+    history.replaceState(null, '', buildHash(this.navigationRoute, params));
   }
 
   private select(id: string, executionNodeId = 'local') {

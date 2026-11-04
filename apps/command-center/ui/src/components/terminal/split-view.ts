@@ -1127,6 +1127,9 @@ export class TerminalSplitView extends LitElement {
     return html`
       <div class="toolbar">
         <span class="toolbar-label">Terminals</span>
+        <a class="layout-btn" data-testid="terminal-new" href="#terminal?view=new&transport=native"
+          >New session</a
+        >
         ${repeat(
           slotsToShow.map((_, i) => i),
           (i) => i,

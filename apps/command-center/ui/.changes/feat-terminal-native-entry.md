@@ -1,0 +1,1 @@
+- Start regular terminals or native sessions from Terminals with URLs that reopen the selection, and default Co-Pilot to native while keeping tmux selectable.

@@ -702,3 +702,61 @@ test('launcher URL restores a permitted custom model', () => {
     else Reflect.deleteProperty(globalThis, 'location');
   }
 });
+
+test('Terminals embeds the shared native launcher without losing its type, machine or session URL', () => {
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const previousHistory = Object.getOwnPropertyDescriptor(globalThis, 'history');
+  const location = { hash: '#terminal?view=new&transport=native' };
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      replaceState(_state: unknown, _unused: string, url: string) {
+        location.hash = url;
+      },
+    },
+  });
+  try {
+    const view = new NativeSessionView();
+    Object.assign(view, {
+      navigationRoute: 'terminal',
+      cwd: '/Users/operator/project',
+      executionNodeId: 'mini',
+      customCwd: true,
+      requestUpdate: () => undefined,
+      schedule: () => undefined,
+    });
+    Reflect.get(view, 'syncLaunchUrl').call(view);
+    assert.match(location.hash, /^#terminal\?/);
+    let params = new URLSearchParams(location.hash.split('?')[1]);
+    assert.equal(params.get('view'), 'new');
+    assert.equal(params.get('transport'), 'native');
+    assert.equal(params.get('executionNodeId'), 'mini');
+    assert.equal(params.get('cwd'), '/Users/operator/project');
+    Reflect.get(view, 'selectRouted').call(view, 'created-session', 'mini');
+    params = new URLSearchParams(location.hash.split('?')[1]);
+    assert.match(location.hash, /^#terminal\?/);
+    assert.equal(params.get('sessionId'), 'created-session');
+    assert.equal(params.get('executionNodeId'), 'mini');
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+    else Reflect.deleteProperty(globalThis, 'location');
+    if (previousHistory) Object.defineProperty(globalThis, 'history', previousHistory);
+    else Reflect.deleteProperty(globalThis, 'history');
+  }
+});
+
+test('the shared launcher prefills the requested machine rather than the first catalog choice', () => {
+  const view = new NativeSessionView();
+  const catalog: NativeSessionCatalogResult = {
+    runners: [],
+    contexts: [
+      { cwd: '/Users/first', executionNodeId: 'macpro', label: 'Home' },
+      { cwd: '/Users/chosen', executionNodeId: 'mini', label: 'Home' },
+    ],
+  };
+  Object.assign(view, { catalog, initialExecutionNodeId: 'mini' });
+  assert.equal(Reflect.get(view, 'defaultLaunchChoice').executionNodeId, 'mini');
+  Object.assign(view, { initialExecutionNodeId: 'offline' });
+  assert.equal(Reflect.get(view, 'defaultLaunchChoice'), undefined);
+});

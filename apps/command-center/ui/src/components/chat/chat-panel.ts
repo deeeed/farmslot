@@ -83,7 +83,7 @@ export class ChatPanel extends ChatPanelState {
     },
   );
 
-  @state() private agentWorkspace = safeLsGet('farmslot-copilot-view') === 'workspace';
+  @state() private agentWorkspace = safeLsGet('farmslot-copilot-view') !== 'terminal';
 
   private selectExperience(workspace: boolean) {
     this.agentWorkspace = workspace;
@@ -98,14 +98,14 @@ export class ChatPanel extends ChatPanelState {
         data-testid="copilot-terminal-mode"
         @click=${() => this.selectExperience(false)}
       >
-        Terminal</button
+        Terminal (tmux)</button
       ><button
         class="cp-new-btn"
         aria-pressed=${this.agentWorkspace}
         data-testid="copilot-workspace-mode"
         @click=${() => this.selectExperience(true)}
       >
-        Agent workspace
+        Native session
       </button>
     </div>`;
   }
