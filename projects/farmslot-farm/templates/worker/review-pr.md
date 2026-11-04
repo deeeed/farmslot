@@ -25,21 +25,12 @@ After fixture sync, read:
 
 Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/fs-recipe-quality/SKILL.md`).
 
-## Tier reference
+## Review scope
 
-| Step group | light | standard | full |
-|------------|-------|----------|------|
-| Parse PR + read files | yes | yes | yes |
-| Doctor + CDP | skip | check | full gate |
-| Evidence audit (read PNGs) | PR embeds only | yes | yes; missing proof is unverified |
-| Recipe coverage matrix | skip | if recipe present | required |
-| Typecheck + gateway tests | yes | yes | yes |
-| Live recipe re-validation | skip | UI PRs w/ CDP up | required for UI PRs |
-| Domain antipatterns | light | yes | full checklist |
-
-`RECIPE_STRATEGY` when set: `full-qa` = proof per visual AC; `smoke` = typecheck/tests only; `targeted` = tests + screenshots for touched UI only.
-
----
+Every tier inspects source and recorded evidence only. Read supplied runtime health,
+recipe traces, media, CI results and receipts without collecting replacement proof.
+`RECIPE_STRATEGY` describes the author's expected evidence scope. Evaluate recorded
+proof only. Missing evidence is a finding or marked unverified.
 
 ## Checklist
 

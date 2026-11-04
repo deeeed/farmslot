@@ -68,7 +68,7 @@ test('configured and unconfigured legacy CI parts render empty', () => {
   assert.equal(rendered, '');
 });
 
-test('bundled PR checklists omit the local parity step', () => {
+test('bundled implementation checklists retain explicit local checks while the legacy token stays retired', () => {
   const templates = [
     ...['dev', 'dev-interactive', 'fix-bug', 'pr-complete', 'review-fix', 'update-branch'].map(
       (name) => `projects/farmslot-farm/templates/worker/${name}.md`,
@@ -82,7 +82,9 @@ test('bundled PR checklists omit the local parity step', () => {
     );
     vars['ci.local_check'] = 'true';
     const rendered = renderTemplatePlaceholders(source, vars);
-    assert.doesNotMatch(rendered, /CI_PARITY_STEP|DETERMINISTIC: ci\.local_check/, file);
+    assert.doesNotMatch(rendered, /CI_PARITY_STEP/, file);
+    if (!file.endsWith('dev-interactive.md'))
+      assert.match(rendered, /DETERMINISTIC: ci\.local_check/, file);
     assert.doesNotMatch(rendered, /learnings[^\n]+ - \[ \]/, file);
   }
 });

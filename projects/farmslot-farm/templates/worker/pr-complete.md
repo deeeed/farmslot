@@ -10,14 +10,7 @@
 - [ ] **4. Checkout PR branch** — `git checkout {{PR_BRANCH}}`
 - [ ] **5. Read inherited context** — review `{{TASK_DIR}}/inputs/inherited/` and any materialized family artifacts before making changes.
 - [ ] **6. Fix the reported PR follow-up issue** — keep changes minimal and scoped to the current follow-up.
-- [ ] **7. Validate** — run typecheck and focused tests:
-
-  ```bash
-  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
-  # Replace the example path with the affected gateway test files.
-  cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
-  ```
-
+- [ ] **7. Changed-file CI** [DETERMINISTIC: ci.local_check]. Call `{{TASK_DIR}}/mark 7`; the engine runs its frozen command and retains a receipt. Read the failure log, fix failures and repeat the mark. Do not choose or launch tests, builds, lint or validation scripts.
 - [ ] **8. Commit and push — REQUIRED before marking complete:**
   ```bash
   git status --porcelain   # must be empty after committing

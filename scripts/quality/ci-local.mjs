@@ -71,7 +71,8 @@ export function ciParitySteps(files, cwd) {
   const reviewPolicy = affected([
     'services/gateway/src/review/',
     'services/gateway/src/review-workspaces/',
-    'projects/farmslot-farm/templates/worker/review',
+    'projects/farmslot-farm/templates/worker/',
+    'templates/worker/',
   ])
     ? [
         [
@@ -86,7 +87,6 @@ export function ciParitySteps(files, cwd) {
             'src/review/static-review-execution.test.ts',
             'src/review/native-review-settlement.test.ts',
             'src/review/reviewed-inputs.test.ts',
-            'src/review-workspaces/task.test.ts',
           ],
         ],
       ]

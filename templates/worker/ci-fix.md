@@ -47,27 +47,8 @@ STATUS: pending
 
 ### Verify (steps 5-6)
 
-- [ ] **5. Auto-fix + CI parity gate:**
-
-  ```bash
-  cd {{REPO}}
-  # Auto-fix (best-effort, NOT a gate):
-  yarn lint:fix || npm run lint:fix --if-present || true
-
-  # CI PARITY CHECK (strict — must all pass before pushing):
-  # Replace with your repo's canonical lint/typecheck command if different.
-  yarn lint 2>&1 | tail -30 || npm run lint --if-present 2>&1 | tail -30
-  yarn lint:tsc 2>&1 | tail -30 || npm run typecheck --if-present 2>&1 | tail -30
-  ```
-
-  STOP if any command exits non-zero. Fix the errors before proceeding.
-
-- [ ] **6. Run affected tests** (if any test files changed):
-  ```bash
-  yarn test --passWithNoTests 2>&1 | tail -20 || npm test --if-present 2>&1 | tail -20
-  ```
-
-### Commit & Reply (steps 7-8)
+- [ ] **5. Changed-file CI** [DETERMINISTIC: ci.local_check]. Call `{{TASK_DIR}}/mark --checklist CI-FIX.md 5`; the engine executes its frozen command and retains a receipt. Read failures, fix them and repeat the mark. Do not choose or launch validation commands.
+- [ ] **6. Inspect the receipt**. Read the selected checks and results. Repeat the step 5 mark after source changes; do not launch tests yourself.
 
 - [ ] **7. Commit and push:**
   ```bash
