@@ -150,6 +150,9 @@ test('a selected lint failure fails the local check', (t) => {
 
 test('an unavailable frozen base refuses validation instead of guessing a file set', (t) => {
   const f = fixture(t);
-  assert.notEqual(f.run({ FARMSLOT_CI_BASE_REF: 'missing-ref' }).status, 0);
+  f.write('src/page.tsx', 'export const changed = true;\n');
+  for (const base of ['missing-ref', 'package.json']) {
+    assert.notEqual(f.run({ FARMSLOT_CI_BASE_REF: base }).status, 0, base);
+  }
   assert.deepEqual(f.calls(), []);
 });

@@ -7,7 +7,7 @@ const base =
   process.env.FARMSLOT_CI_BASE_REF || git(['merge-base', 'origin/main', 'HEAD']).trim();
 const files = [
   ...new Set([
-    ...git(['diff', '--name-only', '--no-renames', '-z', base]).split('\0'),
+    ...git(['diff', '--name-only', '--no-renames', '-z', base, '--']).split('\0'),
     ...git(['ls-files', '--others', '--exclude-standard', '-z']).split('\0'),
   ]),
 ].filter(
