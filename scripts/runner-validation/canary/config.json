@@ -13,15 +13,7 @@
     "release": 120,
     "native-check": 10
   },
-  "knownFailures": [
-    {
-      "case": "review",
-      "variant": "node-away",
-      "signature": "No node connected for machine \\S+ after 120000ms",
-      "differences": ["^REVIEW did not keep its reviewer: failed \\("],
-      "ledger": "F336"
-    }
-  ],
+  "knownFailures": [],
   "live": {
     "profileHome": "~/.farmslot-automation",
     "profile": "farm-automation",
