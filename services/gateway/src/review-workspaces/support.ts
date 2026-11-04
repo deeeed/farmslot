@@ -36,6 +36,7 @@ import { execNativeNodeArgv, requestNativeNode } from '../runners/native/node.js
 import { getRun, persistRunNow, runsDirectory, updateRun } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
+import { resolveReviewWorkspacePool } from './pool.js';
 import { REVIEW_SKILL_INSTALL_SCRIPT } from './skill-install.js';
 import {
   collectReviewWorkspaceSupport,
@@ -539,11 +540,10 @@ export async function ensureReviewWorkspaceSupport(
       await mkdir(path.dirname(admissionPath), { recursive: true });
       durableWrite(admissionPath, admission);
     }
-    const pools = (await deps.loadPoolConfigs()).filter(
-      (pool) => pool.machine === initial.reviewWorkspace!.machine,
+    const pool = resolveReviewWorkspacePool(
+      await deps.loadPoolConfigs(),
+      initial.reviewWorkspace!.machine,
     );
-    if (pools.length !== 1) throw new Error('Review support machine configuration is unavailable');
-    const pool = pools[0];
     if (
       initial.reviewWorkspace.executionNodeId !==
       (isLocal(pool.host, pool.machine) ? 'local' : pool.machine)

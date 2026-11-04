@@ -25,6 +25,20 @@ import {
   type ReviewWorkspaceSupportDependencies,
 } from './support.js';
 
+function reviewPool(overrides: Partial<PoolConfig> = {}): PoolConfig {
+  return {
+    machine: 'local',
+    host: 'localhost',
+    sshUser: 'fixture',
+    project: 'fixture',
+    platform: 'cli',
+    os: 'linux',
+    reviewWorkspaces: { maxConcurrent: 2 },
+    slots: [],
+    ...overrides,
+  };
+}
+
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'support-cache-'));
   const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
@@ -70,13 +84,13 @@ async function fixture(t: test.TestContext) {
     },
     loadProjectVars: async () => project,
     loadPoolConfigs: async () => [
-      {
+      reviewPool({
         machine: 'local',
         host: 'localhost',
         sshUser: 'fixture',
         project: 'fixture',
         slots: [],
-      } as unknown as PoolConfig,
+      }),
     ],
     collect: async (...args) => {
       counts.collect++;
@@ -140,6 +154,33 @@ async function fixture(t: test.TestContext) {
     },
   };
 }
+
+for (const project of ['canary', 'fixture']) {
+  test(`support ignores an execution-only ${project} pool on the review machine`, async (t) => {
+    const f = await fixture(t);
+    f.deps.loadPoolConfigs = async () => [
+      reviewPool({ project, reviewWorkspaces: undefined }),
+      reviewPool(),
+    ];
+    const run = await f.addRun(`review-with-${project}`);
+    const binding = await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps);
+    assert.ok(binding);
+    assert.equal(await readFile(binding.skills[0].path, 'utf8'), '# Canonical review\n');
+    assert.equal(f.counts.publish, 1);
+  });
+}
+
+test('support refuses two review-enabled pools for the same machine', async (t) => {
+  const f = await fixture(t);
+  f.deps.loadPoolConfigs = async () => [reviewPool(), reviewPool()];
+  const run = await f.addRun('review-ambiguous-authority');
+  await assert.rejects(
+    ensureReviewWorkspaceSupport(run.id, () => {}, f.deps),
+    { code: 'REVIEW_WORKSPACE_NEEDS_CONFIGURATION' },
+  );
+  assert.equal(f.counts.publish, 0);
+  assert.equal(f.counts.writes, 0);
+});
 
 test('concurrent reviews publish once, and warm/restarted runs reuse verified cache without collecting or copying', async (t) => {
   const f = await fixture(t);
@@ -433,16 +474,30 @@ test('reference checkouts resolve beside a project slot on the execution machine
   const head = (await execFileArgv(['git', '-C', mobile, 'rev-parse', 'HEAD'])).stdout.trim();
   await writeFile(path.join(mobile, 'local-change.txt'), 'uncommitted\n');
   f.deps.loadPoolConfigs = async () => [
-    {
+    reviewPool({
       machine: 'local',
       host: 'localhost',
       sshUser: 'fixture',
       project: 'fixture',
       slots: [
-        { id: 'other-1', project: 'other', repo: path.join(f.root, 'elsewhere/other-1') },
-        { id: 'fixture-1', project: 'fixture', repo: path.join(slots, 'fixture-1') },
+        {
+          id: 'other-1',
+          project: 'other',
+          repo: path.join(f.root, 'elsewhere/other-1'),
+          session: 'other-1',
+          enabled: true,
+          mode: 'dispatch',
+        },
+        {
+          id: 'fixture-1',
+          project: 'fixture',
+          repo: path.join(slots, 'fixture-1'),
+          session: 'fixture-1',
+          enabled: true,
+          mode: 'dispatch',
+        },
       ],
-    } as unknown as PoolConfig,
+    }),
   ];
   const run = await f.addRun('review-references');
   const binding = (await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps))!;
@@ -458,13 +513,13 @@ test('reference checkouts resolve beside a project slot on the execution machine
   assert.deepEqual(await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps), binding);
 
   f.deps.loadPoolConfigs = async () => [
-    {
+    reviewPool({
       machine: 'local',
       host: 'localhost',
       sshUser: 'fixture',
       project: 'other',
       slots: [],
-    } as unknown as PoolConfig,
+    }),
   ];
   const unplaced = await f.addRun('review-without-slot');
   assert.deepEqual(
@@ -487,13 +542,22 @@ test('a remote execution node probes the reference through the run owner and mac
   const f = await fixture(t);
   useReferences(f);
   f.deps.loadPoolConfigs = async () => [
-    {
+    reviewPool({
       machine: 'remote-node',
       host: 'remote-node.invalid',
       sshUser: 'fixture',
       project: 'fixture',
-      slots: [{ id: 'fixture-1', project: 'fixture', repo: '/remote/dev/fixture-1' }],
-    } as unknown as PoolConfig,
+      slots: [
+        {
+          id: 'fixture-1',
+          project: 'fixture',
+          repo: '/remote/dev/fixture-1',
+          session: 'fixture-1',
+          enabled: true,
+          mode: 'dispatch',
+        },
+      ],
+    }),
   ];
   // Publication bytes stay on this host; only the reference probe is under test.
   f.deps.writeFiles = (_io, dir, files) => slotWriteFiles(ORCHESTRATOR_LOCALITY, dir, files);
@@ -545,13 +609,22 @@ test('a reference probe that fails with stderr stops support instead of recordin
   const f = await fixture(t);
   useReferences(f);
   f.deps.loadPoolConfigs = async () => [
-    {
+    reviewPool({
       machine: 'local',
       host: 'localhost',
       sshUser: 'fixture',
       project: 'fixture',
-      slots: [{ id: 'fixture-1', project: 'fixture', repo: path.join(f.root, 'slots/fixture-1') }],
-    } as unknown as PoolConfig,
+      slots: [
+        {
+          id: 'fixture-1',
+          project: 'fixture',
+          repo: path.join(f.root, 'slots/fixture-1'),
+          session: 'fixture-1',
+          enabled: true,
+          mode: 'dispatch',
+        },
+      ],
+    }),
   ];
   f.deps.probe = async () => ({ exitCode: 1, stdout: '', stderr: 'spawn error: ENOENT' });
   const run = await f.addRun('review-probe-failure');
