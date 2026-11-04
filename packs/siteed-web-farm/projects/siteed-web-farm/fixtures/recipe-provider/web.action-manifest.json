@@ -167,15 +167,7 @@
             "type": "string"
           }
         },
-        "additionalProperties": false,
-        "anyOf": [
-          {
-            "required": ["selector"]
-          },
-          {
-            "required": ["text"]
-          }
-        ]
+        "additionalProperties": false
       },
       "examples": [
         {
