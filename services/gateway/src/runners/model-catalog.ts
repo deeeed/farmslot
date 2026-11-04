@@ -267,7 +267,7 @@ interface NodeModelListing {
   observedAt?: number;
 }
 
-/** Last good listing per runner and execution node. Failures retain display data only. */
+/** Last good listing per runner and execution node. Stale data guides placement only. */
 export class NodeModelCatalogs {
   private readonly listings = new Map<string, Map<string, NodeModelListing>>();
 

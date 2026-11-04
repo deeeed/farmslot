@@ -55,7 +55,7 @@ test('creation records the caller pin separately from later placement', () => {
       slotId,
     };
     const created = store.buildRunRecord(request);
-    assert.equal(created.requestedSlotId, slotId ?? null);
+    assert.equal(created.requestedSlotId, null, 'a chained run has no caller request');
     const placed = store.buildRunRecord(
       { ...request, slotId: 'engine-placement' },
       { dispatchRequest: request },
@@ -67,7 +67,7 @@ test('creation records the caller pin separately from later placement', () => {
 for (const flowType of ['dev', 'fix-bug'] as const) {
   for (const placement of ['explicit', 'scored'] as const) {
     test(
-      `${flowType} replay preserves ${placement} placement intent`,
+      `${placement === 'scored' ? 'control: ' : ''}${flowType} replay preserves ${placement} placement intent`,
       { timeout: 2000 },
       async () => {
         run = makeRun({
@@ -88,6 +88,7 @@ for (const flowType of ['dev', 'fix-bug'] as const) {
             : {}),
         }));
         const expected = placement === 'explicit' ? 'mini-example-3' : null;
+        if (placement === 'explicit') run.requestedSlotId = expected;
         for (let attempt = 0; attempt < 2; attempt++) {
           let started = false;
           await runReplayStep({ runId: run.id, stepName: 'find-slot' }, () => {}, {
@@ -112,7 +113,7 @@ for (const flowType of ['dev', 'fix-bug'] as const) {
   }
 }
 
-test('restart cleanup retains a detached legacy pin for replay', { timeout: 2000 }, async () => {
+test('restart cleanup retains a detached stored pin for replay', { timeout: 2000 }, async () => {
   run = makeRun({
     id: 'replay-pin',
     project: 'example-terminal',
@@ -127,6 +128,7 @@ test('restart cleanup retains a detached legacy pin for replay', { timeout: 2000
       { name: 'monitor', status: 'done' },
     ],
   });
+  run.requestedSlotId = 'mini-example-3';
   const stale = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 1).toISOString();
   const unexpected = (): never => {
     throw new Error('Unexpected recovery action');
@@ -163,3 +165,33 @@ test('restart cleanup retains a detached legacy pin for replay', { timeout: 2000
   });
   assert.equal(run.slotId, 'mini-example-3');
 });
+
+for (const legacyField of ['find-slot input', 'dispatch request'] as const) {
+  test(`legacy ${legacyField} placement does not become a replay pin`, async () => {
+    run = makeRun({
+      id: 'legacy-queue-placement',
+      flowType: 'dev',
+      status: 'failed',
+      slotId: 'scheduler-placement',
+      prNumber: undefined,
+      branch: '',
+    });
+    if (legacyField === 'dispatch request')
+      run.dispatchRequest = {
+        flowType: run.flowType,
+        project: run.project,
+        ticketOrPr: run.ticketOrPr,
+        slotId: 'scheduler-placement',
+      };
+    run.steps = pipelineStepsForRun(run)!.map((name) => ({
+      name,
+      status: name === 'find-slot' ? 'failed' : 'pending',
+      ...(name === 'find-slot' ? { inputs: { requestedSlotId: run.slotId } } : {}),
+    }));
+    await runReplayStep({ runId: run.id, stepName: 'find-slot' }, () => {}, {
+      startEngine: async () => {},
+    });
+    assert.equal(run.slotId, null);
+    assert.equal(run.requestedSlotId, null);
+  });
+}

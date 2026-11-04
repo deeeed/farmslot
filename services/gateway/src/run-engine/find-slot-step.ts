@@ -66,6 +66,7 @@ import {
   AutomaticSlotLoadWaitError,
   companionResourceBlocker,
   compareSlotLoads,
+  compareSlotModelAvailability,
   findBestSlot,
   isCdpLive,
   isFreeSlot,
@@ -103,7 +104,11 @@ import {
   inspectNativeWorkerProfile,
   nativeProfileAllowedSlots,
 } from '../runners/native/worker-profile.js';
-import { runnerDefaultSafetyTier, runnerModelNodeBlocker } from '../runners/registry.js';
+import {
+  runnerDefaultSafetyTier,
+  runnerModelNodeBlocker,
+  runnerModelNodePreference,
+} from '../runners/registry.js';
 import { requestedRunSlotId } from '../runs/slot-pin.js';
 import {
   getAllRuns,
@@ -906,7 +911,7 @@ export async function executeFindSlotStep(
     run = updateRun(runId, { requestedSlotId: requestedRunSlotId(run) });
   // An operator's pick stays the pick after Continue, whichever attempt resumes the step.
   const pick = run.slotId ? undefined : continuedOperatorPick(run);
-  if (pick) run = updateRun(runId, { slotId: pick });
+  if (pick) run = updateRun(runId, { slotId: pick, requestedSlotId: pick });
   let automaticLoadPinned = isPinnedSlotSelection(run);
   // The queue's own pick within a wider allowlist is not the caller's pin: a lost claim there
   // selects again within the allowlist instead of waiting for the winner's whole run.
@@ -925,7 +930,7 @@ export async function executeFindSlotStep(
         // that slot or fails on it and scoring never swaps in another. An unpinned restart
         // may land on another machine, so its preview is admitted afresh.
         if (error.operatorPick) {
-          updateRun(runId, { slotId: error.slotId });
+          updateRun(runId, { slotId: error.slotId, requestedSlotId: error.slotId });
           automaticLoadPinned = true;
         } else if (!getRun(runId)!.slotId) {
           updateRun(runId, { pressureAdmissionRef: undefined });
@@ -1165,10 +1170,11 @@ async function findSlotAttempt(
       })
     : undefined;
   const capabilitySelection = { requiredCapabilities, capabilityCatalogs };
-  // A Pi or OpenCode model the run names runs only on a node whose own catalog lists it.
+  // Fresh node listings can refuse a model; last successful listings guide placement.
   const modelNodeSelection = {
     ...runExplicitRunnerModel(run),
     modelNodeBlocker: runnerModelNodeBlocker,
+    modelNodePreference: runnerModelNodePreference,
   };
   const releasableBranchHolderIds = await inspectReleasableBranchHolders(
     branchFleet.slots,
@@ -1467,7 +1473,9 @@ async function findSlotAttempt(
     if (
       affinitySlot &&
       !eligibleFreeSlots.some(
-        (slot) => compareSlotLoads(slot, affinitySlot, selectionOptions) < 0,
+        (slot) =>
+          (compareSlotModelAvailability(slot, affinitySlot, selectionOptions) ||
+            compareSlotLoads(slot, affinitySlot, selectionOptions)) < 0,
       ) &&
       !validateSlotForDispatch(affinitySlot, fleet.slots, optionsFor(affinitySlot))
     ) {
@@ -1722,6 +1730,7 @@ async function findSlotAttempt(
               );
             }
             assertAllowedSlotSelection(run, pickedSlotId);
+            run = updateRun(runId, { requestedSlotId: pickedSlotId });
             await confirmAppBinding(run, pickedSlotId, createEngineDecision, true);
             if (run.sourcePlan)
               await refreshRunSourcePlan(runId, {
@@ -1941,6 +1950,7 @@ async function findSlotAttempt(
         );
       }
       assertAllowedSlotSelection(run, pickedSlotId);
+      run = updateRun(runId, { requestedSlotId: pickedSlotId });
       await confirmAppBinding(run, pickedSlotId, createEngineDecision, true);
       if (run.sourcePlan)
         await refreshRunSourcePlan(runId, {

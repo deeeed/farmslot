@@ -46,6 +46,7 @@ import {
   normalizeRunner,
   runnerDefaultModel,
   runnerModelNodeBlocker,
+  runnerModelNodePreference,
   runnerSupportsNativeTaskReuse,
   runnerSupportsTmuxNudges,
   runnerSupportsTmuxNudgesForLaunch,
@@ -86,6 +87,7 @@ import {
   AutomaticSlotLoadWaitError,
   companionResourceBlocker,
   compareSlotLoads,
+  compareSlotModelAvailability,
   findBestSlot,
   isCdpLive,
   isDispatchStaleBranch,
@@ -199,7 +201,9 @@ export function findAffinitySlot(
   ticketOrPr: string,
   options?: SlotSelectionOptions,
 ): SlotStatus | null {
-  const ranked = [...slots].sort((a, b) => compareSlotLoads(a, b, options));
+  const ranked = [...slots].sort(
+    (a, b) => compareSlotModelAvailability(a, b, options) || compareSlotLoads(a, b, options),
+  );
   return (
     ranked.find((s) => {
       const selected = slotSelectionOptionsFor(s, options);
@@ -1405,6 +1409,7 @@ export function resolveDispatchPreviewFromFleet(
   const selectionOptions: SlotSelectionOptions = {
     ...params,
     modelNodeBlocker: runnerModelNodeBlocker,
+    modelNodePreference: runnerModelNodePreference,
     requiredCapabilities: options?.requiredCapabilities,
     capabilityCatalogs: options?.capabilityCatalogs,
     requiredPrepareProfile,
@@ -1477,7 +1482,9 @@ export function resolveDispatchPreviewFromFleet(
       if (
         affinitySlot &&
         !pressureRejectedMachines.has(affinitySlot.machine) &&
-        (!best || compareSlotLoads(affinitySlot, best, selectionOptions) <= 0) &&
+        (!best ||
+          (compareSlotModelAvailability(affinitySlot, best, selectionOptions) ||
+            compareSlotLoads(affinitySlot, best, selectionOptions)) <= 0) &&
         !validateSlotForDispatch(
           affinitySlot,
           slots,

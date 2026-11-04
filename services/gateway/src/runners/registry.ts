@@ -902,8 +902,8 @@ export function runnerSupportsModel(
 
 /**
  * Why a slot on `machine` cannot run `model`: a per-node catalog lists the model
- * on other nodes but not this one. Null when it does, or when the catalog has no
- * listing for this node or none for the model.
+ * on other nodes but a fresh listing excludes it here. Stale or missing listings
+ * cannot refuse execution.
  */
 export function runnerModelNodeBlocker(
   runnerId: string,
@@ -914,6 +914,22 @@ export function runnerModelNodeBlocker(
   const source = definition.modelCatalog;
   if (!source || !('nodeCommand' in source) || !model.trim() || model === 'unknown') return null;
   return nodeModelCatalogs.blocker(definition.id, source.resolveModel?.(model) ?? model, machine);
+}
+
+/** Placement hint from the last successful listing, including stale listings. */
+export function runnerModelNodePreference(
+  runnerId: string,
+  model: string,
+  machine: string,
+): boolean {
+  const definition = getRunnerDefinition(runnerId);
+  const source = definition.modelCatalog;
+  if (!source || !('nodeCommand' in source) || !model.trim() || model === 'unknown') return false;
+  return (
+    nodeModelCatalogs
+      .listing(definition.id, machine)
+      ?.includes(source.resolveModel?.(model) ?? model) ?? false
+  );
 }
 
 export function runnerSupportsEffort(runnerId: string, model: string, effort?: string): boolean {

@@ -1,2 +1,2 @@
-- Replaying slot selection keeps the slot explicitly requested for the run, including after restart cleanup.
-- Model listings use the slot's worker shell and project environment. Stale or failed listings no longer reject a model on a node; fresh listings still reject models absent from that node.
+- Replaying slot selection retains stored caller and operator picks, including after Continue or restart cleanup. Queue retries keep their original slot intent; legacy placement records do not become pins.
+- Scheduling prefers nodes whose last successful model listing includes the model, even after expiry or a failed refresh, with a fallback when none qualifies. Only fresh listings can refuse execution; model collection uses the machine environment.

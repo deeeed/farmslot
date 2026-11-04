@@ -10,6 +10,7 @@ import { farmslotRoot, setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
 import { dispatchQueueAdd } from '../methods/dispatch/queue.js';
 import {
+  buildRunRecord,
   createRun,
   deleteRun,
   getAllRuns,
@@ -2064,6 +2065,59 @@ test('memory-only create failure requeues and purges the orphan Run', async (t) 
   assert.equal(requeued.status, 'queued');
   assert.equal(requeued.runId, undefined);
 });
+
+for (const previousSlot of ['free', 'busy'] as const) {
+  test(`automatic queue placement stays unpinned after a failed create and persisted retry with the previous slot ${previousSlot}`, async () => {
+    const firstFleet = readyFleetSlot('retry-a');
+    setCachedFleetForTests({ ...firstFleet, slots: [...firstFleet.slots] });
+    const item = addItem(
+      {
+        flowType: 'dev',
+        project: 'farmslot-farm',
+        ticketOrPr: 'PROJ-383-queue-retry',
+        autoDispatch: false,
+      },
+      { kind: 'system' },
+    );
+    const attempts: Array<{
+      slotId: string | undefined;
+      requestedSlotId: string | null | undefined;
+    }> = [];
+    initDispatchQueue(
+      () => {},
+      async (queued, claim, callerRequest) => {
+        assertQueueClaimHeld(claim, 'queue-retry');
+        assert.ok(callerRequest);
+        const run = buildRunRecord(
+          { ...callerRequest, slotId: queued.slotId },
+          { dispatchRequest: callerRequest },
+        );
+        attempts.push({ slotId: queued.slotId, requestedSlotId: run.requestedSlotId });
+        if (attempts.length === 1) throw new Error('simulated pre-create failure');
+      },
+    );
+    await tryDispatchNext();
+    await persistQueueNow();
+    await loadQueue();
+    const nextFleet = readyFleetSlot('retry-b');
+    setCachedFleetForTests({
+      ...nextFleet,
+      slots: [
+        { ...firstFleet.slots[0], agent: previousSlot === 'busy' ? 'working' : 'idle' },
+        ...nextFleet.slots,
+      ],
+    });
+    await tryDispatchNext();
+    assert.deepEqual(attempts, [
+      { slotId: 'retry-a', requestedSlotId: null },
+      { slotId: previousSlot === 'busy' ? 'retry-b' : 'retry-a', requestedSlotId: null },
+    ]);
+    assert.equal(
+      getQueueSnapshot().some((queued) => queued.id === item.id),
+      false,
+    );
+  });
+}
 
 test('PR queue prepares cold allowed slots while respecting busy slots and model constraints', async () => {
   setQueueDispatchPressureCaptureForTests(admitAllPressure);

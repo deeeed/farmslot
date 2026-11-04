@@ -397,9 +397,11 @@ export interface SlotSelectionOptions {
   model?: string | null;
   /** Per-node runner catalog check (`runnerModelNodeBlocker`); absent skips it. */
   modelNodeBlocker?: (runner: string, model: string, machine: string) => string | null;
+  /** Prefer a node that last listed the model; never refuses a candidate. */
+  modelNodePreference?: (runner: string, model: string, machine: string) => boolean;
 }
 
-/** A requested model runs only on nodes whose own runner catalog lists it. */
+/** Fresh catalog evidence may refuse a model on a node. */
 export function slotModelNodeBlocker(
   slot: Pick<SlotStatus, 'machine' | 'runner'>,
   options?: Pick<SlotSelectionOptions, 'runner' | 'model' | 'modelNodeBlocker'>,
@@ -552,17 +554,41 @@ export function findBestSlot(
       const before = slotSelectionOptionsFor(a, options)!;
       const after = slotSelectionOptionsFor(b, options)!;
       return (
+        compareSlotModelAvailability(a, b, options) ||
         compareSlotLoads(a, b, options) ||
         slotScore(a, before.targetBranch ?? undefined, before) -
           slotScore(b, after.targetBranch ?? undefined, after)
       );
     });
   if (candidates.length === 0) return null;
-  // CDP preference must not move work back onto a more loaded machine.
+  // Prefer live CDP only when model availability and node load match.
   const cdpCandidates = candidates.filter(
-    (s) => compareSlotLoads(s, candidates[0], options) === 0 && isCdpLive(s.health.cdp),
+    (s) =>
+      compareSlotModelAvailability(s, candidates[0], options) === 0 &&
+      compareSlotLoads(s, candidates[0], options) === 0 &&
+      isCdpLive(s.health.cdp),
   );
   return cdpCandidates.length > 0 ? cdpCandidates[0] : candidates[0];
+}
+
+/** Rank listed nodes first among eligible candidates, falling back when none lists the model. */
+export function compareSlotModelAvailability(
+  a: SlotStatus,
+  b: SlotStatus,
+  options?: SlotSelectionOptions,
+): number {
+  const listed = (slot: SlotStatus): boolean => {
+    const selected = slotSelectionOptionsFor(slot, options);
+    return Boolean(
+      selected?.model &&
+      selected.modelNodePreference?.(
+        selected.runner || slot.runner || '',
+        selected.model,
+        slot.machine,
+      ),
+    );
+  };
+  return Number(listed(b)) - Number(listed(a));
 }
 
 export function slotBranchCheckoutBlocker(

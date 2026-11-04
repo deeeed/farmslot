@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import type { SlotStatus } from '@farmslot/protocol';
+
+import '../runtime/mock-pty.test-support.js';
+
 import {
   NodeModelCatalogs,
+  nodeModelCatalogs,
   parsePiModelList,
   queryNodeModelCatalog,
   type RunnerModelCatalogNodeSource,
 } from './model-catalog.js';
+
+const { resolveDispatchPreviewFromFleet } = await import('../methods/dispatch/preview.js');
 
 const missing = 'pi model litellm/kimi-k3 is not listed on macpro; only on mini';
 const source: RunnerModelCatalogNodeSource = {
@@ -103,3 +110,96 @@ test(
     assert.deepEqual(store.listing('pi', 'macpro'), ['litellm/kimi-k3']);
   },
 );
+
+function slot(slotId: string, machine: string): SlotStatus {
+  return {
+    slot: slotId,
+    machine,
+    project: 'catalog-placement',
+    platform: 'web',
+    branch: 'main',
+    lifecycle: 'ready',
+    phase: null,
+    agent: 'idle',
+    enabled: true,
+    dispatchable: true,
+    warm: true,
+    health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: 'OFF', fixtures: '-' },
+    taskId: null,
+    taskFile: null,
+    dispatchedAt: null,
+    completedAt: null,
+    runner: 'pi',
+    model: null,
+    deviceName: null,
+    taskPhase: null,
+    taskStepProgress: null,
+  };
+}
+
+for (const unavailable of ['expired', 'failed-refresh'] as const) {
+  test(`a ${unavailable} listing steers placement to a node that lists the model`, (t) => {
+    let now = 0;
+    const clock = mock.method(Date, 'now', () => now);
+    t.after(() => clock.mock.restore());
+    const absent = slot('absent', 'placement-absent');
+    const listed = slot('listed', 'placement-listed');
+    absent.health.cdp = 'Wallet';
+    nodeModelCatalogs.record('pi', absent.machine, ['xai/grok-4.7']);
+    nodeModelCatalogs.record('pi', listed.machine, ['litellm/kimi-k3']);
+    if (unavailable === 'expired') now = 5 * 60_000;
+    else {
+      nodeModelCatalogs.unavailable('pi', absent.machine);
+      nodeModelCatalogs.unavailable('pi', listed.machine);
+    }
+    const params = {
+      project: absent.project,
+      flowType: 'dev' as const,
+      ticketOrPr: 'PROJ-383',
+      runner: 'pi',
+      model: 'litellm/kimi-k3',
+    };
+    assert.equal(nodeModelCatalogs.blocker('pi', params.model, absent.machine), null);
+    assert.equal(
+      resolveDispatchPreviewFromFleet(params, [absent, listed]).preview.slotId,
+      listed.slot,
+    );
+    assert.equal(
+      resolveDispatchPreviewFromFleet({ ...params, flowType: 'pr-complete' }, [
+        { ...absent, lifecycle: 'held', branch: 'proj-383' },
+        listed,
+      ]).preview.slotId,
+      listed.slot,
+    );
+  });
+}
+
+test('control: a stale listing refuses neither the only candidate nor a pinned slot', (t) => {
+  let now = 0;
+  const clock = mock.method(Date, 'now', () => now);
+  t.after(() => clock.mock.restore());
+  const absent = slot('only', 'only-absent');
+  const listed = slot('other', 'other-listed');
+  nodeModelCatalogs.record('pi', absent.machine, ['xai/grok-4.7']);
+  nodeModelCatalogs.record('pi', listed.machine, ['litellm/kimi-k3']);
+  now = 5 * 60_000;
+  const params = {
+    project: absent.project,
+    flowType: 'dev' as const,
+    ticketOrPr: 'PROJ-383',
+    runner: 'pi',
+    model: 'litellm/kimi-k3',
+  };
+  for (const candidates of [[absent], [absent, { ...listed, lifecycle: 'disabled' as const }]])
+    assert.equal(resolveDispatchPreviewFromFleet(params, candidates).preview.slotId, absent.slot);
+  assert.equal(
+    resolveDispatchPreviewFromFleet({ ...params, slotId: absent.slot }, [absent, listed]).preview
+      .slotId,
+    absent.slot,
+  );
+  assert.equal(
+    resolveDispatchPreviewFromFleet({ ...params, allowedSlots: [absent.slot] }, [absent, listed])
+      .preview.slotId,
+    absent.slot,
+  );
+});
