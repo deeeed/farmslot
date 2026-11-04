@@ -1,0 +1,1 @@
+- Share durable offline storage across Command Center tabs, including reloads and closing the first tab, without a memory-fallback notice.

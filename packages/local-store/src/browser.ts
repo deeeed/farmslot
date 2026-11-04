@@ -111,76 +111,49 @@ async function acquireOwner(): Promise<Owner | undefined> {
   }
   await afterFirstPaint();
   if (opening) return opening;
-  // The granted lock remains held until the worker closes; a second tab never opens OPFS.
-  opening = new Promise<Owner | undefined>((resolve, reject) => {
-    let granted: Owner | undefined;
-    void navigator.locks
-      .request('farmslot-resource-store-owner-v1', { ifAvailable: true }, (lock) => {
-        if (!lock) {
-          fallbackReason = 'Another tab owns persistent offline storage.';
-          resolve(undefined);
-          return;
-        }
-        let release!: () => void;
-        const held = new Promise<void>((done) => {
-          release = done;
-        });
-        performance.mark('farmslot-resource-worker-start');
-        const worker = new Worker(new URL('./browser-worker.ts', import.meta.url), {
-          type: 'module',
-          name: 'farmslot-resource-store',
-        });
-        let stopped = false;
-        const stop = () => {
-          if (stopped) return;
-          stopped = true;
-          worker.terminate();
-          release();
-          if (owner === granted) owner = undefined;
-          opening = undefined;
-        };
-        const port: StoreWorkerPort = {
-          postMessage: (request) => worker.postMessage(request),
-          onMessage(listener) {
-            const receive = (event: MessageEvent<StoreWorkerResponse>) => listener(event.data);
-            worker.addEventListener('message', receive);
-            return () => worker.removeEventListener('message', receive);
-          },
-          onError(listener) {
-            const fail = (event: ErrorEvent) =>
-              listener(event.error instanceof Error ? event.error : new Error(event.message));
-            worker.addEventListener('error', fail);
-            return () => worker.removeEventListener('error', fail);
-          },
-          terminate: stop,
-        };
-        const client = new ResourceStoreWorkerClient(port, broadcastDeletion);
-        granted = {
-          client,
-          close: () => {
-            client.close();
-            stop();
-          },
-        };
-        owner = granted;
-        deletionChannel();
-        resolve(granted);
-        return held;
-      })
-      .catch((error: unknown) => {
-        if (granted) {
-          granted.close();
-          surfaceError(error);
-        } else {
-          opening = undefined;
-          reject(error);
-        }
-      });
+  // Workers cooperate on the same durable database under a lock held only per request.
+  opening = Promise.resolve().then(() => {
+    performance.mark('farmslot-resource-worker-start');
+    const worker = new Worker(new URL('./browser-worker.ts', import.meta.url), {
+      type: 'module',
+      name: 'farmslot-resource-store',
+    });
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      worker.terminate();
+      if (owner === acquired) owner = undefined;
+      opening = undefined;
+    };
+    const port: StoreWorkerPort = {
+      postMessage: (request) => worker.postMessage(request),
+      onMessage(listener) {
+        const receive = (event: MessageEvent<StoreWorkerResponse>) => listener(event.data);
+        worker.addEventListener('message', receive);
+        return () => worker.removeEventListener('message', receive);
+      },
+      onError(listener) {
+        const fail = (event: ErrorEvent) =>
+          listener(event.error instanceof Error ? event.error : new Error(event.message));
+        worker.addEventListener('error', fail);
+        return () => worker.removeEventListener('error', fail);
+      },
+      terminate: stop,
+    };
+    const client = new ResourceStoreWorkerClient(port, broadcastDeletion);
+    const acquired: Owner = {
+      client,
+      close: () => client.close(),
+    };
+    owner = acquired;
+    deletionChannel();
+    return acquired;
   });
   return opening;
 }
 
-/** One owner tab uses the worker; all fallback stores still participate in scoped deletion. */
+/** Tabs share one durable database; genuine storage failures still use the scoped fallback. */
 export async function createBrowserSqliteResourceStore(
   options: BrowserResourceStoreOptions,
 ): Promise<ResourceStore> {
