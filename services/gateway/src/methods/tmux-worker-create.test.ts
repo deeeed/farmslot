@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import type { NodeTmuxPane, TmuxWorkerSummary } from '@farmslot/protocol';
+
 let connected = true;
 let allowed = true;
+let requireMetadata = false;
 const requests: Array<{ method: string; params: { argv: string[] } }> = [];
 const node = {};
 mock.module('../fleet/machine-registry.js', {
@@ -29,6 +32,9 @@ mock.module('../fleet/node-rpc.js', {
           paneId: '%77',
           pid: 12345,
           cwd: '/Users/real-user',
+          command: 'zsh',
+          title: 'User shell',
+          windowName: 'shell',
         }),
         stderr: '',
       };
@@ -40,14 +46,17 @@ mock.module('../resources/worker-changes.js', {
 });
 mock.module('./tmux-workers.js', {
   namedExports: {
-    tmuxWorkerAllowedByConfig: () => allowed,
-    tmuxWorkerFromNodePane: ({
-      nodeId,
-      pane,
-    }: {
-      nodeId: string;
-      pane: { session: string; target: string; paneId: string; window: string; pane: string };
-    }) => ({ ref: { nodeId, ...pane } }),
+    tmuxWorkerAllowedByConfig: (_config: unknown, worker: TmuxWorkerSummary) =>
+      allowed &&
+      (!requireMetadata ||
+        (worker.command === 'zsh' &&
+          worker.title === 'User shell' &&
+          worker.ref.windowName === 'shell')),
+    tmuxWorkerFromNodePane: ({ nodeId, pane }: { nodeId: string; pane: NodeTmuxPane }) => ({
+      ref: { nodeId, ...pane },
+      command: pane.command,
+      title: pane.title,
+    }),
   },
 });
 const { tmuxWorkerCreateSession } = await import('./tmux-worker-create.js');
@@ -91,4 +100,16 @@ test('a filtered new session is cleaned up through exact pane identity without t
   const cleanup = JSON.parse(requests[1].params.argv.at(-1)!);
   assert.equal(cleanup.worker.paneId, '%77');
   assert.equal(cleanup.expectedPid, 12345);
+});
+
+test('machine policy sees actual command, title and window metadata before allowing the new pane', async () => {
+  requests.length = 0;
+  requireMetadata = true;
+  try {
+    const created = await tmuxWorkerCreateSession({ nodeId: 'mini' });
+    assert.equal(created.worker.windowName, 'shell');
+    assert.equal(requests.length, 1);
+  } finally {
+    requireMetadata = false;
+  }
 });

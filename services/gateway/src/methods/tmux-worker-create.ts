@@ -58,7 +58,13 @@ export async function tmuxWorkerCreateSession(
     !('pane' in value) ||
     typeof value.pane !== 'string' ||
     !('cwd' in value) ||
-    typeof value.cwd !== 'string'
+    typeof value.cwd !== 'string' ||
+    !('windowName' in value) ||
+    typeof value.windowName !== 'string' ||
+    !('title' in value) ||
+    typeof value.title !== 'string' ||
+    !('command' in value) ||
+    typeof value.command !== 'string'
   )
     throw new Error(
       'Terminal creation returned an invalid identity; check the session list before retrying',
@@ -71,6 +77,9 @@ export async function tmuxWorkerCreateSession(
     target: value.paneId,
     pid: value.pid,
     cwd: value.cwd,
+    windowName: value.windowName,
+    title: value.title,
+    command: value.command,
   };
   const summary = tmuxWorkerFromNodePane({ nodeId: params.nodeId, pane, observedAt: Date.now() });
   if (!tmuxWorkerAllowedByConfig(pool.tmuxWorkers, summary)) {

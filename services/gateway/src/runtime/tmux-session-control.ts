@@ -36,7 +36,12 @@ const r=cp.spawnSync('tmux',args,{encoding:'utf8'});
 if(r.error)throw r.error;
 if(r.status!==0)throw Error(r.stderr||'Could not create terminal');
 const [window,pane,paneId,pid]=r.stdout.trim().split('\t');
-process.stdout.write(JSON.stringify({session,window,pane,paneId,target:paneId,pid:Number(pid),cwd}));
+const separator='<<FARMSLOT_TMUX_FIELD>>';
+const metadata=cp.spawnSync('tmux',['display-message','-p','-t',paneId,['#{window_name}','#{pane_title}','#{pane_current_command}','#{pane_current_path}'].join(separator)],{encoding:'utf8'});
+if(metadata.error)throw metadata.error;
+if(metadata.status!==0)throw Error(metadata.stderr||'Could not inspect created terminal');
+const [windowName,title,command,actualCwd]=metadata.stdout.trimEnd().split(separator);
+process.stdout.write(JSON.stringify({session,window,pane,paneId,target:paneId,pid:Number(pid),cwd:actualCwd||cwd,windowName,title,command}));
 `;
   return ['node', '-e', script, session];
 }

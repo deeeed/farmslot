@@ -7,6 +7,8 @@ import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { litBindings, litText } from '../../testing/lit-text.js';
 
 const filters = { projects: [] as string[], machines: [] as string[] };
+let workspace = 'workspace-a';
+let respond = async () => ({ worker, pid: 123 });
 const calls: Array<{ method: string; params: unknown }> = [];
 const worker: TmuxWorkerRef = {
   nodeId: 'mini',
@@ -39,12 +41,16 @@ mock.module('../shared/choice-picker.js', { namedExports: {} });
 mock.module('../../state.js', {
   namedExports: { getState: () => ({ globalFilters: filters }), subscribe: () => () => {} },
 });
+mock.module('../../resource-cache.js', {
+  namedExports: { getResourceWorkspaceKey: () => workspace },
+});
 mock.module('../../gateway-client.js', {
   namedExports: {
     gateway: {
+      resourceConnectionId: 1,
       request: async (method: string, params: unknown) => {
         calls.push({ method, params });
-        return { worker, pid: 123 };
+        return respond();
       },
     },
   },
@@ -65,6 +71,7 @@ test('a regular launch sends only its chosen machine then opens the existing ter
   calls.length = 0;
   filters.machines = [];
   const view = new TerminalLaunchView();
+  Object.defineProperty(view, 'isConnected', { configurable: true, value: true });
   view.selection = 'view=new&transport=tmux&executionNodeId=mini';
   await Reflect.get(view, 'createTerminal').call(view);
   assert.deepEqual(calls, [
@@ -107,3 +114,31 @@ test('switching launch type retains the machine selected by the nested native la
   assert.equal(params.has('cwd'), false);
   assert.equal(params.has('custom'), false);
 });
+
+for (const change of ['disconnect', 'workspace', 'route'] as const)
+  test(`a late terminal response cannot navigate after ${change}`, async () => {
+    const view = new TerminalLaunchView();
+    view.selection = 'view=new&transport=tmux&executionNodeId=mini';
+    Object.defineProperty(view, 'isConnected', { configurable: true, value: true });
+    let release!: (value: { worker: TmuxWorkerRef; pid: number }) => void;
+    const held = new Promise<{ worker: TmuxWorkerRef; pid: number }>((resolve) => {
+      release = resolve;
+    });
+    respond = () => held;
+    workspace = 'workspace-a';
+    location.hash = '#terminal?view=new&transport=tmux';
+    const pending = Reflect.get(view, 'createTerminal').call(view);
+    if (change === 'disconnect')
+      Object.defineProperty(view, 'isConnected', { configurable: true, value: false });
+    else if (change === 'workspace') workspace = 'workspace-b';
+    if (change === 'route') location.hash = '#fleet';
+    const expected = location.hash;
+    release({ worker, pid: 123 });
+    try {
+      await pending;
+      assert.equal(location.hash, expected);
+    } finally {
+      respond = async () => ({ worker, pid: 123 });
+      workspace = 'workspace-a';
+    }
+  });

@@ -12,6 +12,7 @@ import '../chat/native-session-view.js';
 import '../shared/choice-picker.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { getState, subscribe } from '../../state.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
 import { buildHash, hashParams } from '../../utils/url-state.js';
@@ -150,6 +151,9 @@ export class TerminalLaunchView extends LitElement {
       !this.machines.some((node) => node.machine === this.machine)
     )
       return;
+    const selection = location.hash;
+    const workspace = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
     this.busy = true;
     this.error = '';
     try {
@@ -157,6 +161,13 @@ export class TerminalLaunchView extends LitElement {
         Methods.TMUX_WORKER_CREATE_SESSION,
         { nodeId: this.machine },
       );
+      if (
+        !this.isConnected ||
+        location.hash !== selection ||
+        workspace !== getResourceWorkspaceKey() ||
+        connection !== gateway.resourceConnectionId
+      )
+        return;
       location.hash = buildHash(
         'terminal',
         new URLSearchParams({ worker: encodeWorkerRouteParam(worker) }),

@@ -418,6 +418,7 @@ test('every direct node exec sender is reviewed for farm script references', asy
     'methods/slot-actions.ts': 1,
   };
   const gatewayBuiltOnly = [
+    'methods/tmux-worker-create.ts', // UUID shell creation and exact-pane cleanup; no farm script references
     'methods/tmux-workers.ts',
     'run-engine/remote-probes.ts',
     'runners/native/node.ts', // argv only
