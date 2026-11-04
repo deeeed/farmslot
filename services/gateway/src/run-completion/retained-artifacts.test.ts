@@ -29,7 +29,8 @@ after(() => rm(root, { recursive: true, force: true }));
 
 const { createRun, getRun, persistRunNow, updateRun, withTaskAdmission } =
   await import('../runs/store.js');
-const { captureRunOutput, acknowledgeRunOutput } = await import('./output.js');
+const { captureRunOutput, acknowledgeRunOutput, retainFinalRunArtifacts } =
+  await import('./output.js');
 const { acquisitionTaskDirToken, retainRunArtifacts, readRetainedRunText, withTaskDirWrite } =
   await import('./retained-artifacts.js');
 const { runRecipeRunsForRun } = await import('../methods/run/context.js');
@@ -481,4 +482,65 @@ test('a dir stays live while the gateway writes it, and eval experiment roots ar
   );
   const evalRoot = path.join(root, 'projects/example/tasks/evals/case-abc-0123456789ab');
   assert.equal((await acquisitionTaskDirToken())(evalRoot), undefined);
+});
+
+test('final retention keeps new proof, review loops and learnings without rewriting the judged snapshot', async () => {
+  const f = await fixture();
+  await writeFile(path.join(f.taskDir, 'artifacts/learnings.md'), '# Earlier learning\n');
+  await captureRunOutput(f.runId, false, true);
+  const before = getRun(f.runId);
+  assert.ok(before?.output?.artifactBundle);
+  const judged = structuredClone(before.output);
+  const decisions = structuredClone(before.decisions);
+  const judgedRef = before.output.artifactBundle;
+  const proof = 'artifacts/recipe-runs/proof-3/after.png';
+  const review = 'artifacts/pipeline-review-loop-3/review.md';
+  for (const file of [proof, review])
+    await mkdir(path.dirname(path.join(f.taskDir, file)), { recursive: true });
+  await writeFile(path.join(f.taskDir, proof), 'final media payload');
+  await writeFile(path.join(f.taskDir, review), '# Final review findings\n');
+  await writeFile(path.join(f.taskDir, 'artifacts/learnings.md'), '# Final learning\n');
+  await retainFinalRunArtifacts(f.runId);
+  const current = getRun(f.runId);
+  assert.ok(current?.artifactBundle);
+  assert.notEqual(current.artifactBundle.bundleDigest, judgedRef.bundleDigest);
+  assert.deepEqual(current.output, judged);
+  assert.deepEqual(current.decisions, decisions);
+  await rm(f.taskDir, { recursive: true });
+  assert.equal(await readRetainedRunText(current, proof), 'final media payload');
+  assert.equal(await readRetainedRunText(current, review), '# Final review findings\n');
+  assert.equal(await readRetainedRunText(current, 'artifacts/learnings.md'), '# Final learning\n');
+  assert.equal(
+    await readRetainedRunText(current, 'artifacts/learnings.md', judgedRef),
+    '# Earlier learning\n',
+  );
+});
+
+test('final retention refuses incomplete media while preserving the judged output and source bytes', async () => {
+  const f = await fixture();
+  await captureRunOutput(f.runId, false, true);
+  const judged = structuredClone(getRun(f.runId)?.output);
+  const file = path.join(f.taskDir, 'artifacts/final.png');
+  await writeFile(file, Buffer.alloc(1024 * 1024, 1));
+  const policy = path.join(root, 'home/run-bundle-retention.json');
+  await writeFile(
+    policy,
+    JSON.stringify({
+      runBundleRetention: {
+        maxBundleBytes: 512 * 1024,
+        maxStoreBytes: 100 * 1024 * 1024,
+        metadataReserveBytes: 1024 * 1024,
+      },
+    }),
+  );
+  try {
+    await assert.rejects(
+      retainFinalRunArtifacts(f.runId),
+      /Final result artifacts were not retained.*media-capacity/,
+    );
+    assert.deepEqual(getRun(f.runId)?.output, judged);
+    assert.equal((await readFile(file)).length, 1024 * 1024);
+  } finally {
+    await rm(policy, { force: true });
+  }
 });

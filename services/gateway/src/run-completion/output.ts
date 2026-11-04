@@ -15,6 +15,7 @@ import {
   runOutputReviewEnabled,
   type RunStatus,
 } from '@farmslot/protocol';
+import { parseRunBundleMissingData } from '@farmslot/run-bundle';
 
 import { GATEWAY_OWNED_DIFF_ARTIFACTS } from '../core/artifact-copy-policy.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
@@ -221,10 +222,34 @@ export function captureRunOutput(
   workerFinished = false,
   options: ArtifactMirrorOptions = {},
 ): Promise<number> {
+  return queueOutputCapture(runId, mirror, workerFinished, options, 'snapshot');
+}
+
+/** Keep final raw artifacts without rewriting the report snapshot the person judged. */
+export function retainFinalRunArtifacts(runId: string): Promise<number> {
+  return queueOutputCapture(
+    runId,
+    Boolean(getRun(runId)?.slotId),
+    false,
+    { requireSourceArtifacts: true },
+    'final-result',
+  );
+}
+
+type CapturePurpose = 'snapshot' | 'final-result';
+
+function queueOutputCapture(
+  runId: string,
+  mirror: boolean,
+  workerFinished: boolean,
+  options: ArtifactMirrorOptions,
+  purpose: CapturePurpose,
+): Promise<number> {
   const run = getRun(runId);
   if (!run?.taskFile) return Promise.resolve(0);
   const attempt = { taskFile: run.taskFile, generation: run.engineState?.generation };
-  const capture = () => captureRunOutputNow(runId, mirror, workerFinished, options, attempt);
+  const capture = () =>
+    captureRunOutputNow(runId, mirror, workerFinished, options, attempt, purpose);
   const previous = capturesInFlight.get(runId);
   const next = previous ? previous.then(capture) : capture();
   const settled = next.catch(() => undefined);
@@ -241,6 +266,7 @@ async function captureRunOutputNow(
   workerFinished: boolean,
   options: ArtifactMirrorOptions,
   attempt: CaptureAttempt,
+  purpose: CapturePurpose,
 ): Promise<number> {
   const run = getRun(runId);
   if (!run?.taskFile) return 0;
@@ -344,6 +370,13 @@ async function captureRunOutputNow(
       const latest = getRun(runId);
       if (!latest || latest.taskFile !== taskFile || latest.engineState?.generation !== generation)
         throw new Error('Run attempt changed while retaining output; refresh the current attempt');
+      if (purpose === 'final-result') {
+        await persistRunNow(
+          updateRun(runId, { artifactBundle: ref }),
+          'retained final result artifacts',
+        );
+        return;
+      }
       const retainedOutput: RunOutput = {
         ...output,
         artifactBundle: ref,
@@ -360,6 +393,13 @@ async function captureRunOutputNow(
       await persistRunNow(updated, 'retained run output');
     },
   });
+  if (purpose === 'final-result') {
+    const missing = retained.missingData.filter(
+      (entry) => parseRunBundleMissingData(entry).reason !== 'excluded',
+    );
+    if (missing.length)
+      throw new Error(`Final result artifacts were not retained: ${missing.join(', ')}`);
+  }
   console.info(
     `[output] ${runId} acquisition scan: files=${retained.acquisitionScan.fileCount} settledDirs=${retained.acquisitionScan.settledDirs} durationMs=${retained.acquisitionScan.durationMs.toFixed(1)}`,
   );

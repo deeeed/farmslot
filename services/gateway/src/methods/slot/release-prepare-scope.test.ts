@@ -29,6 +29,7 @@ let recycleStartsRuntime = false;
 let recycledRuntime: ChildProcess | undefined;
 let events: string[];
 let reapFails: boolean;
+let finalRetentionError: Error | null = null;
 let emitted: Array<{ event: string; payload: Record<string, unknown> }>;
 let claimBeforeMark = false;
 let markerWrites = 0;
@@ -268,6 +269,18 @@ mock.module('../../runners/native/worker.js', {
 
 const realRuns = await import('../../runs/store.js');
 
+const realOutput = await import('../../run-completion/output.js');
+mock.module('../../run-completion/output.js', {
+  namedExports: {
+    ...realOutput,
+    retainFinalRunArtifacts: async () => {
+      events.push('retain-final-result');
+      if (finalRetentionError) throw finalRetentionError;
+      return 1;
+    },
+  },
+});
+
 const { slotRelease, slotReleasePreflight } = await import('./release.js');
 const { runArchive, runCleanup, runDelete } = await import('../run/admin.js');
 const { activePrepareAborts } = await import('./shared.js');
@@ -282,6 +295,7 @@ beforeEach(async () => {
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 1 };
   events = [];
   reapFails = false;
+  finalRetentionError = null;
   emitted = [];
   claimBeforeMark = false;
   markerWrites = 0;
@@ -310,6 +324,63 @@ beforeEach(async () => {
   }
   await realRuns.loadAllRuns();
   activePrepareAborts.clear();
+});
+
+async function heldResultForDiscard() {
+  const run = realRuns.getRun('blocked');
+  assert.ok(run);
+  run.status = 'needs-decision';
+  run.slotId = SLOT_ID;
+  run.output = {
+    workerFinished: true,
+    capturedAt: '2026-11-04T00:00:00Z',
+    artifactManifest: [],
+    manifestDigest: 'delivered',
+    reportPath: 'artifacts/report.md',
+  };
+  const { buildResultDecision } = await import('../../run-completion/result-decision.js');
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  slotRow.current_run_id = run.id;
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  return run;
+}
+
+test('named discard retains a held result before removing its task and performs Close', async () => {
+  const run = await heldResultForDiscard();
+  const result = await slotRelease(
+    { slotId: SLOT_ID, forceReset: true, expectedRunId: run.id },
+    emit,
+  );
+  assert.equal(result.released, true);
+  assert(events.indexOf('retain-final-result') >= 0);
+  assert(events.indexOf('retain-final-result') < events.indexOf('task-clean'));
+  assert.equal(run.resultDecisionReceipt?.action, 'close-result');
+});
+
+test('named discard retains a cleanup-only held owner before task deletion', async () => {
+  const run = await heldResultForDiscard();
+  slotRow.current_run_id = null;
+  slotRow.cleanup_run_id = run.id;
+  const result = await slotRelease(
+    { slotId: SLOT_ID, forceReset: true, expectedRunId: run.id },
+    emit,
+  );
+  assert.equal(result.released, true);
+  assert(events.indexOf('retain-final-result') >= 0);
+  assert(events.indexOf('retain-final-result') < events.indexOf('task-clean'));
+  assert.equal(run.resultDecisionReceipt?.action, 'close-result');
+});
+
+test('failed named-discard retention holds the source instead of deleting learning data', async () => {
+  const run = await heldResultForDiscard();
+  finalRetentionError = new Error('Final artifacts unavailable');
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, forceReset: true, expectedRunId: run.id }, emit),
+    /Final result retention failed/,
+  );
+  assert.equal(run.status, 'needs-decision');
+  assert.equal(slotRow.lifecycle, 'held');
+  assert.equal(events.includes('task-clean'), false);
 });
 
 test('ordinary and unnamed force release refuse a non-terminal owner before teardown', async () => {
