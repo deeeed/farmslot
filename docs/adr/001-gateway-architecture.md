@@ -169,3 +169,48 @@ These become TypeScript modules with the same logic, better tests, and type safe
 - OpenClaw frame protocol: `/Users/deeeed/dev/openclaw/src/gateway/protocol/schema/frames.ts`
 - Farmslot shared helpers: `/Users/deeeed/dev/farmslot/scripts/lib/slot-common.sh`
 - Farmslot fleet status: `/Users/deeeed/dev/farmslot/scripts/farm-status.sh`
+
+## Amendment 1 (2026-11-04): Shared performance diagnostics
+
+**Status:** Accepted. Direction and routing approved on 2026-11-04; design text reviewed before implementation.
+**Specification:** [Performance diagnostics](../reference/performance-diagnostics.md).
+
+### Decision
+
+Measure RPCs once at the gateway dispatch boundary, client requests once in the
+shared request wrapper, and cache delivery/refresh once in the shared resource
+cache. Measure managed process launches and node calls in their shared helpers.
+Handlers and individual screens add no timing code. New methods inherit coverage.
+
+Keep bounded histograms and counters in memory. Use Prometheus names, cumulative
+buckets, counts and sums, exposed at one authenticated text endpoint. Doctor
+reads the same collector. Client reports are bounded, batched and asynchronous;
+No measurement or report may delay a cached read, action or background refresh.
+Record foreground demand through cached data paint, including lookup and
+hydration, separately from network refresh, including cache
+source, age, stale/blocking reads and reread rate. Store no arguments, payloads,
+credentials or command text.
+
+The single operational process is [performance.md](../operations/performance.md):
+shared budgets, investigation, comparable before/after evidence and daily
+snapshots from the existing nightly canary. Regression checks report violations;
+they do not change production request behavior.
+
+### Rationale and consequences
+
+Large payloads, repeated process launches and node waits can hide behind an
+apparently fast cached screen. Shared instrumentation exposes both experiences
+without per-handler maintenance. Bounded aggregation keeps collection cheap;
+formatting and ranking happen only when diagnostics are read. Process counters
+cover managed launches, not an inferred descendant process tree.
+
+### Public surface
+
+`@farmslot/protocol` owns performance snapshots, client reports, histogram shape
+and action-class budgets. Command Center and Companion consume the shared
+client recorder/cache hooks. `gateway.performance.get` and `gateway.performance.report` use the normal
+typed registry and authorization path. Version-1 snapshots/reports and the
+negotiated reporting capability keep older clients and gateways compatible. Authenticated `GET /metrics` serves
+Prometheus text from the same gateway collector. Doctor consumes the snapshot;
+the nightly canary stores daily snapshots and compares budgets. Existing client
+and node operations retain their contracts. No metrics server is deployed.

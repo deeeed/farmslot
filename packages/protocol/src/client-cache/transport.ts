@@ -1,3 +1,4 @@
+import type { PerformanceActionClass, PerformanceRecorder } from '../performance/index.js';
 import { type GatewayAuthConnectResult, workspaceAccessFromAuth } from '../rpc/auth.js';
 import type {
   ResourceObserversReplaceParams,
@@ -15,11 +16,13 @@ import type {
 } from './types.js';
 
 export interface ResourceClientConnection {
+  readonly performance?: PerformanceRecorder;
   readonly resourceConnectionReason?: ResourceConnectionReason;
   requestResource<T>(
     method: ResourceReadMethod,
     params: unknown,
     signal?: AbortSignal,
+    performanceClass?: PerformanceActionClass,
   ): Promise<ResourceReadResult<T>>;
   replaceResourceObservers?(
     params: ResourceObserversReplaceParams,
@@ -104,6 +107,7 @@ export function createResourceCacheTransport(
   }
   return {
     getConnection,
+    performance: client.performance,
     onConnectionChange: (listener) =>
       client.onConnectionChange(() =>
         listener(getConnection(), snapshot().reason ?? client.resourceConnectionReason),
@@ -112,7 +116,8 @@ export function createResourceCacheTransport(
       client.subscribe(Events.RESOURCE_CHANGED, (payload) =>
         listener(payload as import('../transport/events.js').ResourceChangedPayload),
       ),
-    request: (method, params, signal) => client.requestResource(method, params, signal),
+    request: (method, params, signal, actionClass) =>
+      client.requestResource(method, params, signal, actionClass),
     ...(client.replaceResourceObservers
       ? {
           replaceObservers: (params: ResourceObserversReplaceParams, signal: AbortSignal) =>

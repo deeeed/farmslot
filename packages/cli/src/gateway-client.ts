@@ -8,6 +8,11 @@ import {
   PersonSessionClient,
   type ResponseFrame,
 } from '@farmslot/protocol';
+import {
+  measureClientRequest,
+  performanceActionClass,
+  PerformanceRecorder,
+} from '@farmslot/protocol/performance';
 
 export interface GatewayClientOpts {
   url: string;
@@ -116,6 +121,7 @@ export async function forgetRejectedPersonCredential(
 }
 
 export class GatewayClient {
+  readonly performance = new PerformanceRecorder('cli');
   private url: string;
   private timeout: number;
   private credential: GatewayCredential | null;
@@ -212,7 +218,11 @@ export class GatewayClient {
     let socketOpened = false;
     const pending = new Map<
       string,
-      { resolve: (v: unknown) => void; reject: (e: Error) => void }
+      {
+        resolve: (v: unknown) => void;
+        reject: (e: Error) => void;
+        received?: (bytes: number) => void;
+      }
     >();
     const eventHandlers = new Set<(event: EventFrame) => void>();
     const closeHandlers = new Set<() => void>();
@@ -256,6 +266,7 @@ export class GatewayClient {
       if (frame.type !== 'res') return;
       const entry = pending.get(frame.id);
       if (!entry) return;
+      entry.received?.(Buffer.byteLength(String(evt.data)));
       pending.delete(frame.id);
       if (frame.ok) entry.resolve(frame.payload);
       else entry.reject(rpcFailure(frame.error));
@@ -325,34 +336,38 @@ export class GatewayClient {
     }
 
     const timeout = this.timeout;
+    const metrics = this.performance;
     const connection: GatewayConnection = {
       call<T = unknown>(
         method: string,
         params: unknown = {},
         options?: { timeoutMs?: number },
       ): Promise<T> {
-        if (closed) {
-          return Promise.reject(new GatewayConnectionError('Connection is closed'));
-        }
-        const id = `tui-${++seq}`;
-        const callTimeout = options?.timeoutMs ?? timeout;
-        return new Promise<T>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            if (pending.delete(id)) {
-              reject(new GatewayConnectionError(`Timeout — no response for ${callTimeout}ms`));
-            }
-          }, callTimeout);
-          pending.set(id, {
-            resolve: (value) => {
-              clearTimeout(timer);
-              resolve(value as T);
-            },
-            reject: (err) => {
-              clearTimeout(timer);
-              reject(err);
-            },
+        return measureClientRequest(metrics, method, performanceActionClass(method), (received) => {
+          if (closed) {
+            return Promise.reject(new GatewayConnectionError('Connection is closed'));
+          }
+          const id = `tui-${++seq}`;
+          const callTimeout = options?.timeoutMs ?? timeout;
+          return new Promise<T>((resolve, reject) => {
+            const timer = setTimeout(() => {
+              if (pending.delete(id)) {
+                reject(new GatewayConnectionError(`Timeout — no response for ${callTimeout}ms`));
+              }
+            }, callTimeout);
+            pending.set(id, {
+              received,
+              resolve: (value) => {
+                clearTimeout(timer);
+                resolve(value as T);
+              },
+              reject: (err) => {
+                clearTimeout(timer);
+                reject(err);
+              },
+            });
+            ws.send(JSON.stringify({ type: 'req', id, method, params }));
           });
-          ws.send(JSON.stringify({ type: 'req', id, method, params }));
         });
       },
       onEvent(handler: (event: EventFrame) => void): () => void {
@@ -411,7 +426,15 @@ export class GatewayClient {
     onEvent: ((event: EventFrame) => void) | undefined,
     credential: { token?: string; password?: string } | null,
   ): Promise<T> {
-    return this.untilReconnected(() => this.callOnce<T>(method, params, onEvent, credential));
+    return measureClientRequest(
+      this.performance,
+      method,
+      performanceActionClass(method),
+      (received) =>
+        this.untilReconnected(() =>
+          this.callOnce<T>(method, params, onEvent, credential, received),
+        ),
+    );
   }
 
   private callOnce<T>(
@@ -419,6 +442,7 @@ export class GatewayClient {
     params: unknown,
     onEvent: ((event: EventFrame) => void) | undefined,
     credential: { token?: string; password?: string } | null,
+    received?: (bytes: number) => void,
   ): Promise<T> {
     const reqId = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -512,6 +536,7 @@ export class GatewayClient {
         }
 
         if (frame.id !== reqId) return;
+        received?.(Buffer.byteLength(String(evt.data)));
 
         if (frame.ok) {
           finish(() => resolve(frame.payload as T));

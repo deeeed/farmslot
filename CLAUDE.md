@@ -15,6 +15,10 @@ farmslot/
   tasks/             # Task files dispatched to agents (gitignored)
 ```
 
+## Performance
+
+Follow [the performance process](docs/operations/performance.md) for budgets, measurements and before/after proof. Use the shared wrappers; add no endpoint timers.
+
 ## Key Rules
 
 ### Prefer Named Types

@@ -1588,6 +1588,14 @@
       "surface": "rpc-only",
       "command": "farmslot rpc tmux.worker.createSession",
       "note": "Creates an isolated terminal on an explicitly selected connected machine; Command Center reuses the existing terminal viewer."
+    },
+    "gateway.performance.get": {
+      "surface": "rpc-only",
+      "note": "Performance diagnostics via the shared client, Doctor and farmslot rpc."
+    },
+    "gateway.performance.report": {
+      "surface": "rpc-only",
+      "note": "Performance diagnostics via the shared client, Doctor and farmslot rpc."
     }
   }
 }

@@ -8,13 +8,24 @@ import type {
   GatewayDoctorSectionReport,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { type PerformanceSnapshot, slowestActions } from '@farmslot/protocol/performance';
 
 import { gateway, gatewayStatusMessage } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { readViewChoice, viewChoiceHash } from '../../utils/url-state.js';
+
+const performanceView = { route: 'doctor', param: 'slowest', defaultValue: 'closed' };
 
 @customElement('gateway-doctor')
 export class GatewayDoctor extends LitElement {
   @state() private sections: GatewayDoctorSectionReport[] = [];
+  @state() private performanceSnapshot?: PerformanceSnapshot;
+  @state() private performanceError = '';
+  @state() private performanceLoading = false;
+  @state() private performanceOpen = readViewChoice(performanceView) === 'open';
+  private readonly restoreView = () => {
+    this.performanceOpen = readViewChoice(performanceView) === 'open';
+  };
   @state() private loading = false;
   @state() private error = '';
   private unsubscribeConnection: (() => void) | null = null;
@@ -54,6 +65,7 @@ export class GatewayDoctor extends LitElement {
       padding: 9px 12px;
       font: inherit;
       cursor: pointer;
+      min-height: 44px;
     }
     button.secondary {
       border-color: ${unsafeCSS(colors.bgCardHover)};
@@ -159,6 +171,37 @@ export class GatewayDoctor extends LitElement {
       white-space: pre-line;
       line-height: 1.5;
     }
+    .performance-table {
+      width: 100%;
+      border-spacing: 12px;
+      text-align: left;
+    }
+    .performance-table td {
+      vertical-align: top;
+    }
+    @media (max-width: 600px) {
+      .performance-table,
+      .performance-table tbody,
+      .performance-table tr,
+      .performance-table td {
+        display: block;
+      }
+      .performance-table thead {
+        display: none;
+      }
+      .performance-table tr {
+        padding: 12px 0;
+        border-top: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      }
+      .performance-table td {
+        padding: 4px 0;
+        overflow-wrap: anywhere;
+      }
+      .performance-table td[data-label]::before {
+        content: attr(data-label) ': ';
+        color: ${unsafeCSS(colors.textSecondary)};
+      }
+    }
     .section-placeholder {
       padding: ${unsafeCSS(spacing.md)};
       color: ${unsafeCSS(colors.textMuted)};
@@ -168,6 +211,9 @@ export class GatewayDoctor extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.restoreView();
+    window.addEventListener('hashchange', this.restoreView);
+    window.addEventListener('popstate', this.restoreView);
     this.unsubscribeConnection = gateway.onConnectionChange((state) => {
       if (state === 'connected' && !this.hasCompletedSection())
         void this.loadCatalogAndRefreshAll();
@@ -178,6 +224,8 @@ export class GatewayDoctor extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    window.removeEventListener('hashchange', this.restoreView);
+    window.removeEventListener('popstate', this.restoreView);
     this.unsubscribeConnection?.();
     this.unsubscribeConnection = null;
   }
@@ -277,8 +325,24 @@ export class GatewayDoctor extends LitElement {
     );
   }
 
+  private async refreshPerformance(): Promise<void> {
+    this.performanceLoading = true;
+    this.performanceError = '';
+    try {
+      this.performanceSnapshot = await gateway.request<PerformanceSnapshot>(
+        Methods.GATEWAY_PERFORMANCE_GET,
+        {},
+      );
+    } catch (error) {
+      this.performanceError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.performanceLoading = false;
+    }
+  }
+
   render() {
     const summary = doctorSummary(this.sections);
+    const actions = this.performanceSnapshot ? slowestActions(this.performanceSnapshot) : [];
     return html`
       <div class="header">
         <div>
@@ -295,6 +359,96 @@ export class GatewayDoctor extends LitElement {
         </button>
       </div>
       ${this.error ? html`<div class="error">${this.error}</div>` : nothing}
+      <details
+        class="section"
+        ?open=${this.performanceOpen}
+        @toggle=${(event: Event) => {
+          const open = (event.target as HTMLDetailsElement).open;
+          this.performanceOpen = open;
+          const next = viewChoiceHash(performanceView, open ? 'open' : 'closed');
+          if (location.hash !== next) history.pushState(null, '', next);
+          if (open && !this.performanceSnapshot && !this.performanceLoading)
+            void this.refreshPerformance();
+        }}
+      >
+        <summary style="padding:12px;min-height:44px;box-sizing:border-box">
+          Slowest actions
+        </summary>
+        <div style="padding:12px;overflow:auto">
+          <button @click=${() => this.refreshPerformance()} ?disabled=${this.performanceLoading}>
+            ${this.performanceLoading ? 'Reading…' : 'Refresh measurements'}
+          </button>
+          ${this.performanceError ? html`<p class="fail">${this.performanceError}</p>` : nothing}
+          ${this.performanceSnapshot
+            ? html`
+                <p class="meta">
+                  Since ${new Date(this.performanceSnapshot.startedAtMs).toLocaleString()} ·
+                  ${this.performanceSnapshot.dropped} dropped samples. Percentiles use histogram
+                  buckets.
+                </p>
+                ${actions.length
+                  ? html`<table class="performance-table">
+                      <thead>
+                        <tr>
+                          <th>Action</th>
+                          <th>Count</th>
+                          <th>p50 / p95 / max</th>
+                          <th>p95 budget</th>
+                          <th>Bytes</th>
+                          <th>Processes / node calls</th>
+                          <th>Observed cause</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${actions.slice(0, 20).map(
+                          (row) =>
+                            html`<tr>
+                              <td>
+                                ${row.method}
+                                <div class="meta">
+                                  ${row.side} ·
+                                  ${row.phase}${row.cacheSource
+                                    ? html` · ${row.cacheSource}`
+                                    : nothing}
+                                  · ${row.actionClass ?? 'gateway'}
+                                </div>
+                              </td>
+                              <td data-label="Count">${row.count}</td>
+                              <td data-label="p50 / p95 / max">
+                                ${(row.p50 * 1000).toFixed(0)} / ${(row.p95 * 1000).toFixed(0)} /
+                                ${(row.max * 1000).toFixed(0)} ms
+                              </td>
+                              <td data-label="p95 budget">
+                                ${row.budgetStatus ?? 'unmeasured'}${row.budgetSeconds !== undefined
+                                  ? html`<div class="meta">${row.budgetSeconds * 1000} ms</div>`
+                                  : nothing}
+                              </td>
+                              <td data-label="Bytes">
+                                ${row.bytesMeasured
+                                  ? html`${Math.round(row.bytes / row.count)} / call`
+                                  : html`Unmeasured`}
+                              </td>
+                              <td data-label="Processes / node calls">
+                                ${row.processesMeasured
+                                  ? html`${row.execCount} / ${row.nodeCount}
+                                      <div class="meta">
+                                        process ${row.execSeconds.toFixed(2)} s · node
+                                        ${row.nodeSeconds.toFixed(2)} s · reconnect
+                                        ${row.nodeWaitSeconds.toFixed(2)} s · loop max
+                                        ${row.loopLagSeconds.toFixed(3)} s
+                                      </div>`
+                                  : html`Unmeasured`}
+                              </td>
+                              <td data-label="Observed cause">${row.causes.join(', ')}</td>
+                            </tr>`,
+                        )}
+                      </tbody>
+                    </table>`
+                  : html`<p class="meta">No requests measured yet.</p>`}
+              `
+            : nothing}
+        </div>
+      </details>
       <div class="summary">
         <span class="pill ok">${summary.ok} passing</span>
         <span class="pill warn">${summary.warn} warnings</span>

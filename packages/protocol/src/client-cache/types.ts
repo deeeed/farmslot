@@ -1,4 +1,5 @@
 import type { ReviewDiffSnapshot } from '../contracts/runs.js';
+import type { PerformanceActionClass, PerformanceRecorder } from '../performance/index.js';
 import type { GatewayAuthConnectResult, GatewayAuthMode } from '../rpc/auth.js';
 import type {
   ResourceObserversReplaceParams,
@@ -43,6 +44,7 @@ export interface ResourceReadResult<T> {
 export interface ResourceReadOptions {
   signal?: AbortSignal;
   includeResourceState?: boolean;
+  performanceClass?: PerformanceActionClass;
 }
 export interface ResourceCacheConnection {
   /** Transport connection identity, not the gateway epoch. Token refresh retains it. */
@@ -69,6 +71,7 @@ export type ResourceConnectionReason =
   | 'profile-change';
 
 export interface ResourceCacheTransport {
+  readonly performance?: PerformanceRecorder;
   getConnection(): ResourceCacheConnection;
   onConnectionChange(
     listener: (connection: ResourceCacheConnection, reason?: ResourceConnectionReason) => void,
@@ -78,6 +81,7 @@ export interface ResourceCacheTransport {
     method: ResourceReadMethod,
     params: unknown,
     signal: AbortSignal,
+    performanceClass?: PerformanceActionClass,
   ): Promise<ResourceReadResult<T>>;
   replaceObservers?(
     params: ResourceObserversReplaceParams,
@@ -89,6 +93,8 @@ export interface ResourceCacheTransport {
 
 export interface GatewayResourceCacheOptions {
   onStorageNotice?: (notice: string | undefined) => void;
+  performance?: PerformanceRecorder;
+  afterPaint?: (callback: () => void) => (() => void) | undefined;
   transport: ResourceCacheTransport;
   store?: ResourceStore;
   /** Reopens a fresh scoped incarnation after authority deletion or a profile switch. */

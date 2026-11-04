@@ -138,6 +138,8 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'fs.reveal': { classification: 'admin' },
   'fs.write': { classification: 'admin' },
   'gateway.doctor': { classification: 'admin' },
+  'gateway.performance.get': { classification: 'admin' },
+  'gateway.performance.report': { classification: 'authenticated-client' },
   'gateway.ping': { classification: 'native-owner' },
   'gateway.status': { classification: 'admin', reason: 'runs git fetch against the gateway clone' },
   'gateway.update': {

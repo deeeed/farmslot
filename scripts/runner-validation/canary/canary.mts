@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { runPerformanceCanary } from './performance.mjs';
 // Farmslot canary: one tool, two profiles.
 //
 //   canary   after every dev gateway update; zero inference, a few minutes. Against the deployed
@@ -98,6 +99,7 @@ for (const entry of args('budget')) {
 
 // ---------------------------------------------------------------- the cases this run makes
 const CASES = [
+  'performance',
   'lifecycle',
   'f324',
   'native-check',
@@ -112,7 +114,13 @@ for (const name of only ?? [])
 const available: readonly string[] =
   profile === 'canary'
     ? ['lifecycle', 'f324', 'native-check', 'monitor']
-    : [...RESTART_STEPS, 'review-past-wait', 'worker-survives', ...(withReview ? ['review'] : [])];
+    : [
+        'performance',
+        ...RESTART_STEPS,
+        'review-past-wait',
+        'worker-survives',
+        ...(withReview ? ['review'] : []),
+      ];
 for (const name of only ?? [])
   if (!available.includes(name)) throw new Error(`Case ${name} does not run in profile ${profile}`);
 const wants = (name: (typeof CASES)[number]) => !only || only.includes(name);
@@ -219,6 +227,17 @@ try {
   const onCheck = (check: CheckResult) => {
     checks.push(check);
   };
+  if (profile === 'nightly' && wants('performance'))
+    onCheck(
+      await runPerformanceCanary({
+        root,
+        evidence,
+        reaper,
+        onCleanup: (stop) => {
+          stopStack = stop;
+        },
+      }),
+    );
   if (plan.live)
     await runLive({
       profileHome: expand(config.live.profileHome),

@@ -20,6 +20,7 @@ export * from './machine-pause.js';
 export * from './native-profile.js';
 export * from './native-session.js';
 export * from './nodes.js';
+export * from './performance.js';
 export * from './pr.js';
 export * from './pr-push.js';
 export * from './pr-rules.js';

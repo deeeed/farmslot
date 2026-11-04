@@ -46,6 +46,7 @@ export interface GatewayAuthConnectResult {
     voiceInstructionFormatting: boolean;
     /** Absent on gateways predating the lightweight liveness method. */
     gatewayPing?: boolean;
+    performanceDiagnostics?: 1;
     personSessions?: boolean;
     /** Client shell selection; every RPC still checks current server authority. */
     workspaceAccess?: GatewayWorkspaceAccess;

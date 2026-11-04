@@ -391,6 +391,11 @@
     "./review-approval-policy.cjs": {
       "types": "./scripts/review-approval-policy.d.cts",
       "default": "./scripts/review-approval-policy.cjs"
+    },
+    "./performance": {
+      "types": "./dist/performance/index.d.ts",
+      "import": "./dist/performance/index.js",
+      "default": "./dist/performance/index.js"
     }
   },
   "scripts": {

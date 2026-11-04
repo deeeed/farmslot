@@ -204,13 +204,15 @@ for (const method of nativeOwnerMethods) {
 const classifications = allMethods.map((method) => ({
   method,
   classification:
-    method === 'node.connect'
-      ? 'node-subject'
-      : nativeOwnerMethods.has(method)
-        ? 'native-owner'
-        : seen.has(method)
-          ? 'operator'
-          : 'admin',
+    method === 'gateway.performance.report'
+      ? 'authenticated-client'
+      : method === 'node.connect'
+        ? 'node-subject'
+        : nativeOwnerMethods.has(method)
+          ? 'native-owner'
+          : seen.has(method)
+            ? 'operator'
+            : 'admin',
   ...(privilegedReasons[method] ? { reason: privilegedReasons[method] } : {}),
 }));
 const prettier = await import('prettier');
