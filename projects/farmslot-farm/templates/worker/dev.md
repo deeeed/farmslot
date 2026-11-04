@@ -20,23 +20,18 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
   - `gateway-cli` — backend/gateway only. **Still needs a recipe** via CLI/RPC/logs (Phase 2).
   - `command-center` — Command Center browser UI (CDP / Vite)
   - `companion-device` — Companion app UX on the slot sim/device (install + launch; Metro alone is not enough)
-    Recipe proof is the default for every mode; surface list decides what (if anything) to boot in step 4 and which evidence Phase 5 needs.
+    Recipe proof is the default for every mode; surface list decides which prepared resources step 4 verifies and which evidence Phase 5 needs.
 - [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
 - [ ] **3. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
-- [ ] **4. Confirm required surfaces only** — boot or install **only** what step 1 listed. Do **not** start Companion, Command Center UI, CDP Chrome, or device installs when the ticket does not need them. Record skips in this TASK file.
-  - Control-plane capability acquisition requires operator credentials. If the slot has none and receives `AUTH_FAILED token_missing`, do not copy an admin token into the worker environment or retry unauthenticated. Request an operator-provided receipt naming acquired capability IDs, lease IDs, slot, owner run/family, and healthy status. Once the operator confirms the leases belong to this run, check the local surfaces with the doctor/device checks below and continue; otherwise mark blocked. Never boot or install outside the capability lease.
+- [ ] **4. Confirm required prepared surfaces only** — verify only what step 1 listed. Prepare provides the declared resources; the gateway owns capability leases. Do not call `runtime.capability.*`, guess control-plane URLs, request credentials, or start/install resources from the worker. If a required surface is missing or unhealthy, run `{{TASK_DIR}}/mark blocked --reason "<resource and failed check>"` and stop.
   - **`command-center` only when listed:**
     ```bash
     cd {{REPO}}
-    node apps/command-center/scripts/cdp.mjs gateway runtime.capability.acquire \
-      '{"slotId":"{{SLOT}}","capabilityId":"sandbox-gateway-ui","ownerRunId":"{{RUN_ID}}","ownerFamilyId":"{{FAMILY_ID}}","queueOnPressure":true,"proofRequirement":{"capabilityId":"sandbox-gateway-ui","reason":"Command Center proof requires the slot Gateway and UI","mode":"visual"}}'
-    node apps/command-center/scripts/cdp.mjs gateway runtime.capability.acquire \
-      '{"slotId":"{{SLOT}}","capabilityId":"browser-cdp","ownerRunId":"{{RUN_ID}}","ownerFamilyId":"{{FAMILY_ID}}","queueOnPressure":true,"proofRequirement":{"capabilityId":"browser-cdp","reason":"Command Center proof requires a browser and CDP","mode":"visual"}}'
     node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
     ```
-    Require both acquire responses to report `ok: true`; a queued/failed response is not a booted surface. For a queued `host-pressure` conflict, retry the same acquire request after `retryAfterMs` for at most two minutes, preserving the same owner id so admission remains idempotent. If that bounded retry, any non-pressure acquisition, or the doctor fails, release the owner's queued leases, run `{{TASK_DIR}}/mark blocked --reason "<failing check>"`, and stop. Do not launch the sandbox or Chrome directly.
-  - **`companion-device` only when listed:** Companion must be **installed and launchable** on the slot sim/device (`ios-sim` / adb). Prepare “healthy” / Metro listening ≠ app installed. Discover the catalog, then acquire the declared native-client provider through `runtime.capability.acquire` (for the configured iOS simulator, `companion-native-client-ios`; its dependencies acquire the simulator and Metro). Require `ok: true`, then verify with `simctl listapps` / `adb` that the Companion bundle is present. If the platform has no declared install provider or acquisition/install fails, run `{{TASK_DIR}}/mark blocked --reason "<why>"` and stop; do not invoke `companion-prepare.sh` or install scripts directly.
-  - **`gateway-cli` only:** skip this step’s boots/installs entirely.
+    If the doctor fails, mark blocked with its failure. Do not launch the sandbox or Chrome directly.
+  - **`companion-device` only when listed:** verify the Companion bundle is installed and launchable on the assigned sim/device with `simctl listapps` / `adb`. A healthy prepare or listening Metro alone does not prove installation. If the app is missing or unhealthy, mark blocked; do not invoke prepare or install scripts directly.
+  - **`gateway-cli` only:** skip UI/device checks.
 - [ ] **5. Resolve task branch** — reuse the prepared task branch, or create it from the default branch:
   ```bash
   cd "{{REPO}}"
