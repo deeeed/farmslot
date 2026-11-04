@@ -50,14 +50,7 @@ import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
-import {
-  type AppState,
-  fleetQuery,
-  getState,
-  isFleetCurrent,
-  isHydrating,
-  subscribe,
-} from '../../state.js';
+import { type AppState, fleetQuery, getState, isHydrating, subscribe } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { readStored } from '../shared/read-current.js';
@@ -1542,12 +1535,7 @@ export class FleetCanvas extends LitElement {
   /** Selection only counts while the table that shows it is on screen. */
   private get releaseScope() {
     const tableShown = this.viewMode === 'list' && this.groupBy !== 'resource';
-    return fleetReleaseScope(
-      this.filteredSlots,
-      this.selectedSlotIds,
-      tableShown,
-      isFleetCurrent(),
-    );
+    return fleetReleaseScope(this.filteredSlots, this.selectedSlotIds, tableShown);
   }
 
   private renderFleetRefreshTrigger() {

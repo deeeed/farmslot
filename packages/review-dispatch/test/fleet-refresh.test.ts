@@ -365,6 +365,33 @@ test('cached recovery rows appear before inspection, scoped and without release 
   model.dispose();
 });
 
+test('release review replaces shown eligibility with the current inspection before any command', async () => {
+  const shown = [slot('shown')];
+  const current = [...shown];
+  const { model, calls, holdNextRead } = setup(current);
+  const reply = holdNextRead();
+  const loading = model.load(['shown'], shown);
+  assert.equal(model.bulkCount, 1);
+  await model.releaseIdle();
+  current[0] = {
+    ...current[0],
+    lifecycle: 'busy',
+    agent: 'working',
+    currentRunId: 'new-worker',
+  };
+  reply();
+  await loading;
+  assert.equal(model.bulkCount, 0);
+  assert.equal(model.rows[0].eligibility.allowed, false);
+  await model.release('shown');
+  await model.releaseIdle();
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    [Methods.FLEET_STATUS],
+  );
+  model.dispose();
+});
+
 test('a failed background inspection keeps saved rows and the original error until explicit retry', async () => {
   const saved = [slot('shown')];
   const { model, calls, failNextRead } = setup(saved);
