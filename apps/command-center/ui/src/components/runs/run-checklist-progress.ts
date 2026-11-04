@@ -5,14 +5,16 @@ import type { Run, TaskProgressStructured } from '@farmslot/protocol';
 import { runChecklistProgressView } from '@farmslot/review-dispatch';
 import { publicationGateCssVariables } from '@farmslot/theme';
 
+import '../shared/progress-read-status.js';
+
 /** The same checklist strip beneath the list pipeline and the detail canvas. */
 @customElement('run-checklist-progress')
 export class RunChecklistProgress extends LitElement {
   @property({ attribute: false }) run?: Run;
   @property({ attribute: false }) progress?: TaskProgressStructured | null;
   @property() error?: string;
+  @property({ attribute: false }) retry?: () => void;
   @property({ type: Boolean }) stale = false;
-  @property() age = '';
 
   static styles = css`
     :host {
@@ -69,19 +71,17 @@ export class RunChecklistProgress extends LitElement {
 
   render() {
     const view = this.run && runChecklistProgressView(this.run, this.progress);
-    if (!view)
-      return this.error
-        ? html`<div class="label" role="status" title=${this.error}>
-            Checklist unavailable: ${this.error}
-          </div>`
-        : nothing;
+    if (this.error)
+      return html`<progress-read-status
+        .notice=${{ kind: 'error', text: this.error }}
+        .retry=${this.retry}
+      ></progress-read-status>`;
+    if (!view) return nothing;
     return html`
-      <div class="strip" title=${this.error || view.accessibleLabel}>
+      <div class="strip" title=${view.accessibleLabel}>
         <div class="label">
           <span class="counts">${view.counts}</span>
-          <span class="item" role=${this.error && !this.stale ? 'status' : nothing}>
-            ${this.stale ? `Saved checklist, ${this.age}` : this.error || view.label}
-          </span>
+          <span class="item"> ${this.stale ? 'Saved progress' : view.label} </span>
         </div>
         <div
           class="track"

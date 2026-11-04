@@ -53,6 +53,7 @@ let revision = 0;
 let mode = 'empty';
 const refetchProof = process.env.FARMSLOT_LAYOUT_REFETCH === '1';
 const nativePanelProof = process.env.FARMSLOT_LAYOUT_NATIVE_PANEL === '1';
+const terminalLayoutProof = process.env.FARMSLOT_LAYOUT_TERMINAL === '1';
 const acPanelProof = process.env.FARMSLOT_LAYOUT_AC_PANEL === '1';
 const acCase = acPanelProof ? acPanelCase() : undefined;
 const legacyProof = process.env.FARMSLOT_LAYOUT_BEFORE === '1';
@@ -158,7 +159,7 @@ const values = {
         }),
       }
     : {}),
-  ...(nativePanelProof
+  ...(nativePanelProof || terminalLayoutProof
     ? {
         'native.session.read': nativeFixture.page,
         'family.observability.get': () => ({ snapshot: familySnapshot }),
@@ -172,7 +173,9 @@ const values = {
         }),
       }
     : {}),
-  'run.list': () => ({ runs: [refetchProof ? gateRun : fixtureRun] }),
+  'run.list': () => ({
+    runs: [terminalLayoutProof ? terminalRun : refetchProof ? gateRun : fixtureRun],
+  }),
   'run.get': (params) => ({
     run:
       params?.runId === 'terminal-run'
@@ -253,6 +256,14 @@ wss.on('connection', (socket) =>
     };
     frames.push(frame);
     const reply = { type: 'res', id: request.id, ok: true };
+    if (terminalLayoutProof && request.method === 'terminal.subscribe')
+      socket.send(
+        JSON.stringify({
+          type: 'event',
+          event: 'terminal.mode',
+          payload: { ...request.params, mode: 'poll' },
+        }),
+      );
     if (request.method === 'auth.connect')
       reply.payload = {
         ok: true,
@@ -583,6 +594,21 @@ try {
       shift,
       samples,
     });
+  } else if (terminalLayoutProof) {
+    await execute(
+      process.execPath,
+      [path.join(source, 'apps/command-center/scripts/agentic/run-terminal-layout-proof.mjs')],
+      {
+        env: {
+          ...process.env,
+          FARMSLOT_PROOF_OUT: path.join(output, 'terminal'),
+          FARMSLOT_PROOF_UI_ORIGIN: `http://127.0.0.1:${uiPort}`,
+          FARMSLOT_CDP_ENDPOINT: `http://127.0.0.1:${process.env.FARMSLOT_CDP_PORT}`,
+          FARMSLOT_PROOF_RUN_ID: 'terminal-run',
+          FARMSLOT_PROOF_EXPECT_TEXT: 'Read-only terminal presentation fixture',
+        },
+      },
+    );
   } else if (acPanelProof) {
     await proveAcPanel({
       cdp,
@@ -777,11 +803,13 @@ if (failure || cleanupFailures.length)
 console.log(
   JSON.stringify({
     result: 'PASS',
-    widths: acPanelProof
-      ? [acCase.width]
-      : refetchProof && process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1'
-        ? [1280]
-        : [1280, 414],
+    widths: terminalLayoutProof
+      ? [1440, 1000]
+      : acPanelProof
+        ? [acCase.width]
+        : refetchProof && process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1'
+          ? [1280]
+          : [1280, 414],
     observationRequests: frames.length,
     scope: 'isolated protocol fixture presentation',
   }),

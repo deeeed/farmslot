@@ -534,12 +534,18 @@ export const runDetailStyles = css`
   }
   .terminal-section {
     flex: 1;
+    display: flex;
+    height: min(60vh, 500px);
     min-height: 300px;
     max-height: 500px;
     margin-bottom: ${unsafeCSS(spacing.md)};
     border: 1px solid ${unsafeCSS(colors.bgCard)};
     border-radius: ${unsafeCSS(radii.md)};
     overflow: hidden;
+  }
+  .terminal-section > terminal-view {
+    flex: 1;
+    min-height: 0;
   }
   .rehydrating-banner {
     color: ${unsafeCSS(colors.statusWarn)};

@@ -1,4 +1,4 @@
-import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
+import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import type {
@@ -36,9 +36,10 @@ import type {
   TaskProgressStructured,
 } from '@farmslot/protocol';
 import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
-import type { ResourceQueryError, ResourceQueryState } from '@farmslot/protocol/client-cache';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import '../shared/progress-read-status.js';
 import './machine-group.js';
 import './machine-pause-dialog.js';
 import './machine-pressure-overview.js';
@@ -53,13 +54,9 @@ import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.
 import { type AppState, fleetQuery, getState, isHydrating, subscribe } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { progressReadNotice } from '../../utils/progress-read-status.js';
 import { readStored } from '../shared/read-current.js';
-import {
-  heldDataIsSaved,
-  isSupersededRead,
-  readKeepsFailing,
-  ResourceQueryController,
-} from '../shared/resource-query-controller.js';
+import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   buildSlotPendingWork,
   type SlotPendingWork,
@@ -100,7 +97,6 @@ export interface ResourceEntry {
 }
 
 /** A busy node can miss a read or two; a slot's own alert waits for this many in a row. */
-const PROGRESS_FAILURES_BEFORE_ALERT = 3;
 
 export interface ResourceGroup {
   key: string;
@@ -127,13 +123,7 @@ export class FleetCanvas extends LitElement {
   @state() private gatewayProtocolVersion = '';
   @state() private slotProgress: Map<string, TaskProgressStructured> = new Map();
   @state() private progressObservations = new Map<string, ResourceQueryState<TaskProgressResult>>();
-  private progressAgeTimer?: ReturnType<typeof setInterval>;
   private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
-  /** Consecutive failed reads per slot. Each failed read carries a new error object. */
-  private readonly progressFailures = new Map<
-    string,
-    { error: ResourceQueryError; count: number }
-  >();
   @state() private slotRuns: Map<string, Run> = new Map();
   @state() private machineHealthMap: Map<string, MachineHealth> = new Map();
   @state() private slotResourceStatus: Map<string, Map<string, ResourceStatus>> = new Map();
@@ -493,9 +483,6 @@ export class FleetCanvas extends LitElement {
     this.progressQueries.clear();
     this.slotProgress = new Map();
     this.progressObservations = new Map();
-    this.progressFailures.clear();
-    clearInterval(this.progressAgeTimer);
-    this.progressAgeTimer = undefined;
     this._unsubNodeHealth?.();
     this._unsubResourceStatus?.();
     this._unsubThumbnails?.();
@@ -610,7 +597,6 @@ export class FleetCanvas extends LitElement {
       this.progressQueries.delete(slotId);
       this.slotProgress.delete(slotId);
       this.progressObservations.delete(slotId);
-      this.progressFailures.delete(slotId);
     }
     for (const [slotId, slot] of targets) {
       let query = this.progressQueries.get(slotId);
@@ -621,16 +607,7 @@ export class FleetCanvas extends LitElement {
           if (state.data?.structured) progress.set(slotId, state.data.structured);
           else progress.delete(slotId);
           this.slotProgress = progress;
-          const failure = this.progressFailures.get(slotId);
-          if (state.status === 'ready') this.progressFailures.delete(slotId);
-          // A superseded read is not a failure: the write that superseded it scheduled the next read.
-          else if (state.error && state.error !== failure?.error && !isSupersededRead(state.error))
-            this.progressFailures.set(slotId, {
-              error: state.error,
-              count: (failure?.count ?? 0) + 1,
-            });
           this.progressObservations = new Map(this.progressObservations).set(slotId, state);
-          this.syncProgressAgeClock();
         });
         this.progressQueries.set(slotId, query);
       }
@@ -641,91 +618,31 @@ export class FleetCanvas extends LitElement {
         }),
       );
     }
-    this.syncProgressAgeClock();
   }
 
-  private syncProgressAgeClock(): void {
-    const saved = [...this.progressObservations.values()].some(
-      (state) => state.data && state.status !== 'ready',
-    );
-    if (saved && !this.progressAgeTimer)
-      this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
-    else if (!saved) {
-      clearInterval(this.progressAgeTimer);
-      this.progressAgeTimer = undefined;
-    }
-  }
-
-  /**
-   * Slow or failing reads on a busy node share one line: the saved age, then an alert for slots
-   * whose reads keep failing. A loaded node never adds a line per card; each keeps its progress.
-   */
   private renderProgressReadStatus() {
-    const quiet: Array<[string, ResourceQueryState<TaskProgressResult>]> = [];
-    const failing: Array<[string, ResourceQueryError]> = [];
-    const lines = [...this.progressObservations].map(([slotId, state]) => {
-      const query = this.progressQueries.get(slotId);
-      if (!query?.belongsToWorkspace) return nothing;
-      if (state.status === 'unsupported')
-        return html`<span
-          class="rehydrating-banner"
-          data-fleet-progress-slot=${slotId}
-          data-progress-state=${state.status}
-        >
-          ${slotId}:
-          ${state.data ? html`Saved progress, ${sourceObservationAge(state.observedAt)}.` : nothing}
-          Progress updates are unavailable on this gateway.
-        </span>`;
-      const failed = state.error !== undefined && !isSupersededRead(state.error);
-      if (
-        failed &&
-        (this.progressFailures.get(slotId)?.count ?? 0) >= PROGRESS_FAILURES_BEFORE_ALERT
-      )
-        failing.push([slotId, state.error!]);
-      else if (
-        heldDataIsSaved(state) ||
-        (state.data === undefined && (failed || readKeepsFailing(query)))
-      )
-        quiet.push([slotId, state]);
-      return nothing;
+    const notices = [...this.progressObservations].flatMap(([slotId, state]) => {
+      if (!this.progressQueries.get(slotId)?.belongsToWorkspace) return [];
+      const notice = progressReadNotice(state, gateway.connectionState === 'connected');
+      return notice ? [{ slotId, notice }] : [];
     });
-    if (!quiet.length && !failing.length) return lines;
-    const saved = quiet.flatMap(([, state]) => (state.data ? [state.observedAt ?? 0] : []));
-    const quietText = !quiet.length
-      ? ''
-      : saved.length
-        ? `Saved progress for ${saved.length} slot${saved.length === 1 ? '' : 's'}, oldest ${sourceObservationAge(Math.min(...saved))}.`
-        : `Progress not read yet for ${quiet.length} slot${quiet.length === 1 ? '' : 's'}.`;
-    const failingText = failing.length
-      ? `Progress reads keep failing for ${failing.map(([slotId]) => slotId).join(', ')}: ${failing[0][1].message}`
-      : '';
-    const retryIds = [
-      ...quiet.filter(([, state]) => state.error || !state.data).map(([slotId]) => slotId),
-      ...failing.map(([slotId]) => slotId),
-    ];
-    // One line that never wraps, so slots joining or leaving cannot move the cards.
-    return [
-      html`<span
-        class="rehydrating-banner"
-        data-fleet-progress-quiet=${quiet.length}
-        data-fleet-progress-failing=${failing.length}
-        title=${[quietText, failingText].filter(Boolean).join(' ')}
-      >
-        ${quietText} ${failingText ? html`<span role="alert">${failingText}</span>` : nothing}
-      </span>`,
-      retryIds.length
-        ? html`<button
-            class="progress-read-retry"
-            ?disabled=${gateway.connectionState !== 'connected'}
-            @click=${() => {
-              for (const slotId of retryIds) void this.progressQueries.get(slotId)?.retry();
-            }}
-          >
-            Retry progress reads
-          </button>`
-        : nothing,
-      ...lines,
-    ];
+    const failures = notices.filter(({ notice }) => notice.kind === 'error');
+    const shown = failures[0] ?? notices[0];
+    const notice =
+      shown && failures.length
+        ? {
+            ...shown.notice,
+            detail: `${failures.map(({ slotId }) => slotId).join(', ')}: ${shown.notice.detail ?? ''}`,
+          }
+        : shown?.notice;
+    return html`<progress-read-status
+      style="width:270px;flex:0 1 270px"
+      .notice=${notice}
+      .retry=${() => {
+        for (const { slotId } of failures) void this.progressQueries.get(slotId)?.retry();
+      }}
+      .connected=${gateway.connectionState === 'connected'}
+    ></progress-read-status>`;
   }
 
   private async fetchResourceData() {

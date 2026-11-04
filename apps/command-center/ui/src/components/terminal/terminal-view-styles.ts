@@ -1,3 +1,4 @@
+import xtermCss from '@xterm/xterm/css/xterm.css?inline';
 import { css, unsafeCSS } from 'lit';
 
 import { colors, fonts, radii, runnerColor, spacing } from '../../styles/theme-tokens.js';
@@ -14,6 +15,7 @@ export function syncTerminalRunnerAccent(host: HTMLElement, runner: string) {
 }
 
 export const terminalViewStyles = css`
+  ${unsafeCSS(xtermCss)}
   :host {
     display: flex;
     flex-direction: column;
@@ -298,8 +300,8 @@ export const terminalViewStyles = css`
   }
 
   .terminal-container {
-    height: 100%;
-    padding: ${unsafeCSS(spacing.sm)};
+    position: absolute;
+    inset: 0;
     min-height: 0;
   }
 
@@ -453,53 +455,13 @@ export const terminalViewStyles = css`
     }
   }
 
-  /* Essential xterm styles for shadow DOM */
   .xterm {
-    cursor: text;
-    position: relative;
-    user-select: none;
-  }
-  .xterm.focus,
-  .xterm:focus {
-    outline: none;
-  }
-  .xterm .xterm-helpers {
-    position: absolute;
-    top: 0;
-    z-index: 5;
-  }
-  .xterm .xterm-helper-textarea {
-    padding: 0;
-    border: 0;
-    margin: 0;
-    position: absolute;
-    opacity: 0;
-    left: -9999em;
-    top: 0;
-    width: 0;
-    height: 0;
-    z-index: -5;
-    white-space: nowrap;
-    overflow: hidden;
-    resize: none;
-  }
-  .xterm .xterm-screen {
-    position: relative;
-  }
-  .xterm .xterm-screen canvas {
-    position: absolute;
-    left: 0;
-    top: 0;
+    height: 100%;
+    padding: 4px;
+    box-sizing: border-box;
   }
   .xterm .xterm-viewport {
     background-color: transparent;
-    overflow-y: scroll;
-    cursor: default;
-    position: absolute;
-    right: 0;
-    left: 0;
-    top: 0;
-    bottom: 0;
   }
   .xterm .xterm-viewport::-webkit-scrollbar {
     width: 6px;
