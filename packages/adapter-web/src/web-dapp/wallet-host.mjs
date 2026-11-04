@@ -605,12 +605,12 @@ while (
 if (!isExactAppUrl(sessionCommittedUrls.get(appSession), appOrigin))
   fail(`the app tab did not commit ${startUrl}: ${await commitStallDetail(navigation)}`);
 
-const evaluate = (expression, timeoutMs = 5000) =>
+const evaluate = (expression, timeoutMs = 5000, sessionId = appSession) =>
   bounded(
     client.send(
       'Runtime.evaluate',
       { expression, returnByValue: true, awaitPromise: true },
-      appSession,
+      sessionId,
     ),
     'app evaluation',
     timeoutMs,
@@ -648,10 +648,32 @@ if (network === 'testnet') {
     `fetch(${httpUrl}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: ${JSON.stringify(probe.httpBody)} }).then(() => 'reached', () => 'blocked')`,
     20000,
   );
-  const resolverProbe = await evaluate(
-    `fetch(${resolverUrl}, { method: 'POST' }).then(() => 'reached', () => 'blocked')`,
-    20000,
+  // A resolver-only probe must reach DNS without the application's CSP masking it.
+  // The HTTP and WebSocket probes still run in the application document.
+  const { targetId: resolverTargetId } = await bounded(
+    client.send('Target.createTarget', { url: 'about:blank', background: true }),
+    'resolver probe target',
+    15000,
   );
+  let resolverProbe;
+  try {
+    const deadline = Date.now() + 15000;
+    while (!hookedTargets.has(resolverTargetId) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    const target = hookedTargets.get(resolverTargetId);
+    if (!target) throw new Error('Resolver probe tab was not attached.');
+    const resolverSession = await bounded(target.ready, 'resolver probe hooks', 15000);
+    resolverProbe = await evaluate(
+      `fetch(${resolverUrl}, { method: 'POST' }).then(() => 'reached', () => 'blocked')`,
+      20000,
+      resolverSession,
+    );
+  } finally {
+    await bounded(
+      client.send('Target.closeTarget', { targetId: resolverTargetId }),
+      'close resolver probe',
+    );
+  }
   const wsProbe = await evaluate(
     `new Promise((resolve) => { const socket = new WebSocket(${wsUrl}); const done = (value) => { try { socket.close(); } catch {} resolve(value); }; socket.onopen = () => done('reached'); socket.onerror = () => done('blocked'); setTimeout(() => done('timeout'), 10000); })`,
     20000,

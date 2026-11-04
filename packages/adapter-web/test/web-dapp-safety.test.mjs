@@ -1017,6 +1017,28 @@ describe('round 4: enforcement identity, venue endpoints, probes and attribution
     );
   });
 
+  it('keeps the resolver probe outside a strict app CSP and closes its owned blank tab', async () => {
+    const { s, args, log, launched } = await probeLaunch('strict-csp');
+    const state = await launched;
+    trackPids(s.runtime);
+    assert.equal(state.networkEnforcement.mode, 'enforced');
+    const probes = stubLog(log).filter((entry) => entry.probeTarget);
+    assert.deepEqual(
+      probes.map((entry) => entry.probeTarget),
+      ['APP', 'RESOLVER', 'APP'],
+    );
+    assert.ok(
+      stubLog(log).some(
+        (entry) => entry.method === 'Target.closeTarget' && entry.targetId === 'RESOLVER',
+      ),
+    );
+    assert.match(
+      requestLog(s.runtime).find((entry) => entry.kind === 'network-enforcement').probes.resolver,
+      /ERR_NAME_NOT_RESOLVED/,
+    );
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
   it('fails the launch when the resolver probe does not fail at name resolution', async () => {
     const { s, launched } = await probeLaunch('no-resolver');
     await assert.rejects(launched, /wallet host/);
