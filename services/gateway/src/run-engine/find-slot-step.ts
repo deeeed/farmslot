@@ -26,6 +26,7 @@ import {
   readSlotRow,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
+  slotOwnershipReleaseFields,
   transitionSlotStatus,
   updateSlotStatus,
 } from '../core/index.js';
@@ -536,6 +537,44 @@ export async function commitSlotClaim(
     listSlotRuns = getAllRunsWithArchived,
   } = deps;
   const reservation = Boolean(opts?.takeoverLiveOwner || opts?.reserveOnly);
+  const releaseRecoveryClaim = async (
+    observed: Readonly<Record<string, unknown>>,
+    claimEpoch?: number,
+  ) => {
+    const epoch = claimEpoch ?? (Number(observed.slot_epoch) || 0);
+    const recovery = JSON.stringify(observed.workspace_recovery);
+    return transition(slotId, (slot) => {
+      const claimant = runLookup(runId);
+      if (
+        reservation ||
+        !observed.workspace_recovery ||
+        (claimEpoch === undefined &&
+          (claimant?.status !== 'slot-finding' || runSupersededSince(claimant, generation))) ||
+        (Number(slot.slot_epoch) || 0) !== epoch ||
+        slot.current_run_id !== runId ||
+        slot.phase === SLOT_PHASE_RELEASING ||
+        slot.cleanup_run_id ||
+        slot.handoff_run_id ||
+        JSON.stringify(slot.workspace_recovery) !== recovery
+      )
+        return null;
+      // Release this failed claim's lease, not the protected checkout or its recovery progress.
+      return {
+        fields: {
+          ...slotOwnershipReleaseFields(),
+          lifecycle: 'held',
+          phase: 'occupied',
+          agent: 'idle',
+          warm: Boolean(slot.warm),
+          held_reason:
+            typeof slot.held_reason === 'string'
+              ? slot.held_reason
+              : 'Workspace recovery is pending',
+        },
+        endsOwnership: true,
+      };
+    });
+  };
   // Ownership binds in the SAME claim write — EXCEPT for the nudge
   // takeover, which must leave current_run_id with the prior run:
   // nudgeDispatch's handoff re-reads the owner to terminalize it only
@@ -566,8 +605,12 @@ export async function commitSlotClaim(
     fields,
   );
   if (!claim.claimed) {
-    if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
-    const row = await readRow(slotId);
+    let row = await readRow(slotId);
+    if (row?.workspace_recovery && row.current_run_id === runId) {
+      const released = await releaseRecoveryClaim(row);
+      if (released.applied) row = await readRow(slotId);
+    }
+    if (slotClaimAttemptEnded(runLookup(runId), generation)) throw runChangedError(runId, slotId);
     const blocker = row ? slotClaimBlocker(row, runId, runLookup) : null;
     throw slotClaimRefusedError(
       slotId,
@@ -595,7 +638,7 @@ export async function commitSlotClaim(
   //   `agent` is restored only if it still holds the claimed value, so an
   //   owner's newer write (ci-watch, an agent-only completion) is kept.
   //   `warm` and `current_run_id` were never touched.
-  if (runSupersededSince(runLookup(runId), generation)) {
+  if (slotClaimAttemptEnded(runLookup(runId), generation)) {
     if (reservation) {
       await transition(slotId, (slot) => {
         if (slot.slot_epoch !== claim.epoch) return null;
@@ -613,14 +656,17 @@ export async function commitSlotClaim(
         return Object.keys(undo).length > 0 ? { fields: undo } : null;
       });
     } else {
-      await resetIf(
-        slotId,
-        (slot) =>
-          slot.slot_epoch === claim.epoch &&
-          slot.current_run_id === runId &&
-          slot.phase !== SLOT_PHASE_RELEASING,
-        Boolean((await readRow(slotId))?.warm),
-      );
+      const row = await readRow(slotId);
+      if (row?.workspace_recovery) await releaseRecoveryClaim(row, claim.epoch ?? -1);
+      else
+        await resetIf(
+          slotId,
+          (slot) =>
+            slot.slot_epoch === claim.epoch &&
+            slot.current_run_id === runId &&
+            slot.phase !== SLOT_PHASE_RELEASING,
+          Boolean(row?.warm),
+        );
     }
     throw runChangedError(runId, slotId);
   }
@@ -679,9 +725,16 @@ export function slotClaimAllowed(
   runLookup: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined,
   takeoverLiveOwner: boolean,
 ): boolean {
-  if (runSupersededSince(runLookup(runId), generation)) return false;
+  if (slotClaimAttemptEnded(runLookup(runId), generation)) return false;
   const blocker = slotClaimBlocker(slot, runId, runLookup);
   return blocker === null || (takeoverLiveOwner && blocker.kind === 'live-owner');
+}
+
+function slotClaimAttemptEnded(
+  run: Pick<Run, 'status' | 'engineState'> | undefined,
+  generation: number,
+): boolean {
+  return runSupersededSince(run, generation) || Boolean(run && isTerminalRunStatus(run.status));
 }
 
 type SlotHistoryRun = Pick<

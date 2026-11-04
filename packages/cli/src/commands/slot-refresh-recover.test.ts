@@ -89,7 +89,7 @@ async function runRecover(
         '3000',
         'slot',
         'refresh',
-        'macpro-mm-1',
+        'example-slot',
         '--recover',
         ...extraArgs,
       ],
@@ -105,25 +105,26 @@ async function runRecover(
 test('slot refresh --recover sends release and the fleet workspace identity', async () => {
   const { refreshParams, run } = await runRecover([
     {
-      slot: 'macpro-mm-1',
+      slot: 'example-slot',
       workspace: { ...IDENTITY, observedAt: 'now', dirtyCount: 0, extra: 'dropped' },
     },
   ]);
   assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
   assert.deepEqual(refreshParams, [
-    { slotId: 'macpro-mm-1', mode: 'safe', release: true, expectedWorkspace: IDENTITY },
+    { slotId: 'example-slot', mode: 'safe', release: true, expectedWorkspace: IDENTITY },
   ]);
 });
 
-test('slot refresh --recover refuses a slot with no workspace identity', async () => {
-  const { refreshParams, run } = await runRecover([{ slot: 'macpro-mm-1' }]);
-  assert.equal(run.status, 1, `${run.stdout}${run.stderr}`);
-  assert.match(run.stdout, /has no workspace identity/);
-  assert.deepEqual(refreshParams, []);
+test('slot refresh --recover requests server inspection with no observed identity', async () => {
+  const { refreshParams, run } = await runRecover([{ slot: 'example-slot' }]);
+  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+  assert.deepEqual(refreshParams, [
+    { slotId: 'example-slot', mode: 'safe', release: true, recover: true },
+  ]);
 });
 
 test('a refused slot refresh --recover shows the refusal detail, not --force', async () => {
-  const { run } = await runRecover([{ slot: 'macpro-mm-1', workspace: IDENTITY }], {
+  const { run } = await runRecover([{ slot: 'example-slot', workspace: IDENTITY }], {
     refreshed: false,
     reason: 'failed-phase',
     detail: 'Checkout, free ownership or fixtures did not verify',
@@ -138,7 +139,7 @@ test('a refused slot refresh --recover shows the refusal detail, not --force', a
 
 test('slot refresh --recover --force sends force and a dirty refusal offers the discard', async () => {
   const { refreshParams, run } = await runRecover(
-    [{ slot: 'macpro-mm-1', workspace: IDENTITY }],
+    [{ slot: 'example-slot', workspace: IDENTITY }],
     {
       refreshed: false,
       reason: 'dirty',
@@ -151,7 +152,7 @@ test('slot refresh --recover --force sends force and a dirty refusal offers the 
   const printed = `${run.stdout}${run.stderr}`;
   assert.equal(run.status, 1, printed);
   assert.deepEqual(refreshParams, [
-    { slotId: 'macpro-mm-1', mode: 'force', release: true, expectedWorkspace: IDENTITY },
+    { slotId: 'example-slot', mode: 'force', release: true, expectedWorkspace: IDENTITY },
   ]);
   assert.match(printed, /--recover --force` to discard it/);
 });

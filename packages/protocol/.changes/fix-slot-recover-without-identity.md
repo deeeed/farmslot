@@ -1,0 +1,1 @@
+- Resume interrupted recovery without an identity from the client. Keep live owners and local work protected, and park unpublished commits retained by a terminal owner.

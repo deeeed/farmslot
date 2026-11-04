@@ -173,7 +173,8 @@ export async function inspectSlotWorkspace(
       `${git} fetch --no-tags origin ${shellQuote(`+refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
       { timeout: 120_000, noRetry: true },
     );
-    if (fetched.exitCode !== 0) throw new Error('Cannot fetch the default branch');
+    if (fetched.exitCode !== 0)
+      throw new Error(`Cannot fetch the default branch (exit ${fetched.exitCode})`);
   }
   const [probe, row] = await Promise.all([
     probeWorkspace(vars, project, branch, timeoutMs),
@@ -210,10 +211,10 @@ export async function inspectSlotWorkspace(
     work.cleanupRunId ||
     work.handoffRunId ||
     row.lifecycle === 'manual' ||
-    row.agent === 'working' ||
+    (row.agent === 'working' && !(row.workspace_recovery && work.terminalOwner)) ||
     (row.lifecycle === 'busy' && !work.terminalOwner && !options.fetch) ||
     (row.phase === 'releasing' && !options.fetch) ||
-    (row.lifecycle === 'held' && row.phase === 'occupied' && !work.recovery);
+    (row.lifecycle === 'held' && row.phase === 'occupied' && !row.workspace_recovery);
   if (protectedWorkspace) return work;
   if (options.network === false) return work;
   if (options.baselineOnly && (probe.branch !== branch || probe.dirtyCount)) return work;

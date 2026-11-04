@@ -196,6 +196,8 @@ export interface SlotRefreshParams {
   slotId: string;
   /** Opt-in, fenced release + idle reset + fixture verification. */
   release?: boolean;
+  /** With release:true, inspect an unowned pending recovery when no client identity is available. */
+  recover?: boolean;
   expectedWorkspace?: SlotWorkspaceIdentity;
   /** safe (default) aborts on dirty tree or stale branch; force hard-resets through dirt. */
   mode?: 'safe' | 'force';

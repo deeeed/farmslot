@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_BRANCH,
+  isTerminalRunStatus,
   parksSlotCommits,
   sameSlotWorkspace,
   type SlotParkedCommits,
@@ -37,6 +38,7 @@ import {
   endTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
 import { parkSlotBranch, parkSlotCommits } from '../../run-lifecycle/validation-run-commits.js';
+import { getRun, getRunWithArchived } from '../../runs/store.js';
 import { checkFixtures } from '../fleet.js';
 
 import { slotFixtureRefresh } from './fixtures.js';
@@ -79,7 +81,7 @@ interface SlotRecoveryOptions {
   parkRunId?: string;
   /** The exact head an ownerless return to idle may park. */
   parkHeadSha?: string;
-  /** An operator release parks an ownerless checkout's unpushed commits instead of refusing. */
+  /** An operator release parks unpushed commits when no live run owns the checkout. */
   parkOwnerlessCommits?: boolean;
 }
 
@@ -120,7 +122,7 @@ export async function recoverSlotWorkspace(
       advanced: false,
       ...(parked.length ? { parked } : {}),
     });
-  if (!params.expectedWorkspace)
+  if (!params.expectedWorkspace && !params.recover)
     return refuse('identity-changed', 'Inspect the workspace before releasing');
   if (activePrepareSlots.has(params.slotId))
     return refuse('protected', 'Slot is preparing or refreshing');
@@ -129,17 +131,36 @@ export async function recoverSlotWorkspace(
   beginTerminalTeardown(params.slotId);
   let recovery: SlotRecovery | undefined;
   let claimed = false;
-  let authorized: SlotWorkspaceIdentity = params.expectedWorkspace;
   try {
     const vars = await loadSlotVars(params.slotId);
     await assertSlotNotOperatorRoot(vars, 'refresh');
     const project = await loadProjectVars(vars.projectName);
     const defaultBranch = getProjectField(project.projectJson, 'default_branch') || DEFAULT_BRANCH;
+    const entryRow = await readSlotRow(params.slotId);
+    const pendingRecovery = entryRow?.workspace_recovery;
+    if (params.recover) {
+      if (!entryRow || !pendingRecovery)
+        return refuse('protected', 'Slot has no pending workspace recovery');
+      if (owner(entryRow, 'cleanup_run_id') || owner(entryRow, 'handoff_run_id'))
+        return refuse('protected', 'Slot has a cleanup or handoff owner');
+      const protectedReason = await workspaceProtectedReason(params.slotId, entryRow);
+      if (protectedReason) return refuse('protected', protectedReason);
+    }
     let workspace = await inspectSlotWorkspace(params.slotId, {
       timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
     });
+    let authorized = slotWorkspaceIdentity(workspace);
+    const initialHeadSha = workspace.headSha;
+    // Invalid persisted progress cannot authorize skipped phases. Re-inspect and start over.
+    if (pendingRecovery && !workspace.recovery)
+      workspace.recovery = {
+        id: randomUUID(),
+        identity: authorized,
+        completed: [],
+        phase: 'inspect',
+      };
     parked = workspace.recovery?.parked?.slice() ?? [];
-    if (!sameSlotWorkspace(workspace, params.expectedWorkspace))
+    if (params.expectedWorkspace && !sameSlotWorkspace(workspace, params.expectedWorkspace))
       return refuse(
         'identity-changed',
         'Workspace changed; inspect and confirm again',
@@ -155,7 +176,7 @@ export async function recoverSlotWorkspace(
         eligibility.detail ?? 'Slot is protected',
         workspace.branch,
       );
-    if (eligibility.confirmationRequired && params.mode !== 'force')
+    if (eligibility.confirmationRequired && (params.mode !== 'force' || !params.expectedWorkspace))
       return refuse(
         eligibility.reason ?? 'dirty',
         'Confirm discarding the current local work',
@@ -176,16 +197,27 @@ export async function recoverSlotWorkspace(
     };
     const marker = recovery;
     const entryEpoch = workspace.epoch;
+    const entryRun = workspace.currentRunId
+      ? await getRunWithArchived(workspace.currentRunId)
+      : undefined;
     let guardRefusal: string | undefined;
     const mark = await markSlotStatusIf(
       params.slotId,
       (row) => {
+        const ownerRun = workspace.currentRunId
+          ? (getRun(workspace.currentRunId) ?? entryRun)
+          : undefined;
         if (
           !identityOwnsRow(row, workspace) ||
           row.phase === 'releasing' ||
           row.lifecycle === 'manual' ||
           row.lifecycle === 'disabled' ||
-          row.agent === 'working'
+          (row.agent === 'working' && !(pendingRecovery && workspace.terminalOwner)) ||
+          (pendingRecovery &&
+            (JSON.stringify(row.workspace_recovery) !== JSON.stringify(pendingRecovery) ||
+              owner(row, 'cleanup_run_id') ||
+              owner(row, 'handoff_run_id') ||
+              (workspace.currentRunId && (!ownerRun || !isTerminalRunStatus(ownerRun.status)))))
         )
           return false;
         // A guard refusal is a typed no-op; no fence or teardown was acquired.
@@ -279,7 +311,7 @@ export async function recoverSlotWorkspace(
       marker.completed = marker.completed.filter(
         (phase) => phase === 'cleanup' || phase === 'inspect',
       );
-    // A run's own commits are parked by the release below; an ownerless checkout's are parked here.
+    // Preserve unpublished work before teardown when no live run owns the recovery.
     const parkOwnerless =
       !!options?.parkOwnerlessCommits && !options.parkRunId && parksSlotCommits(workspace);
     if (
@@ -320,7 +352,7 @@ export async function recoverSlotWorkspace(
     }
     if (
       options?.parkOwnerlessCommits &&
-      !workspace.currentRunId &&
+      (!workspace.currentRunId || workspace.terminalOwner) &&
       targetBranch !== workspace.branch &&
       expect.branches?.[targetBranch]
     )
@@ -406,11 +438,11 @@ export async function recoverSlotWorkspace(
     await advanceIdentity();
     await save('verify', 'fixtures');
     await assertFence();
-    const verified = await inspectSlotWorkspace(params.slotId, {
+    let verified = await inspectSlotWorkspace(params.slotId, {
       fetch: true,
       timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
     });
-    const fixtures = await checkFixtures(vars, project, project.projectJson);
+    let fixtures = await checkFixtures(vars, project, project.projectJson);
     const linked = await detectLinkedWorktree(vars);
     const tracking = resolveSlotTrackingBranchFromProject(
       project.projectJson,
@@ -418,16 +450,45 @@ export async function recoverSlotWorkspace(
       project,
       linked,
     );
-    if (
-      verified.headSha !== verified.remoteDefaultSha ||
-      !isSlotIdleBranch(verified.branch, tracking, defaultBranch, linked) ||
-      verified.dirtyCount ||
-      verified.currentRunId !== authorized.currentRunId ||
-      verified.cleanupRunId ||
-      verified.handoffRunId ||
-      !['OK', 'not-required'].includes(fixtures)
-    )
-      throw new Error('Checkout, free ownership or fixtures did not verify');
+    for (let attempt = 0; ; attempt++) {
+      const failures: string[] = [];
+      const headMoved = verified.headSha !== verified.remoteDefaultSha;
+      if (headMoved)
+        failures.push(`headSha=${verified.headSha}, remoteDefaultSha=${verified.remoteDefaultSha}`);
+      if (!isSlotIdleBranch(verified.branch, tracking, defaultBranch, linked))
+        failures.push(`branch=${verified.branch}, expected=${targetBranch}`);
+      if (verified.dirtyCount) failures.push(`dirtyCount=${verified.dirtyCount}`);
+      if (verified.currentRunId !== authorized.currentRunId)
+        failures.push(`currentRunId=${verified.currentRunId}, expected=${authorized.currentRunId}`);
+      if (verified.cleanupRunId) failures.push(`cleanupRunId=${verified.cleanupRunId}`);
+      if (verified.handoffRunId) failures.push(`handoffRunId=${verified.handoffRunId}`);
+      if (!['OK', 'not-required'].includes(fixtures)) failures.push(`fixtures=${fixtures}`);
+      if (!failures.length) break;
+      if (
+        !headMoved ||
+        failures.length !== 1 ||
+        attempt >= 2 ||
+        !sameSlotWorkspace(verified, authorized) ||
+        verified.publication !== 'merged'
+      )
+        throw new Error(`Recovery verification failed: ${failures.join('; ')}`);
+      // Only an unchanged, clean idle checkout already contained in the new default may retry.
+      await resetSlotRepoToIdle(vars, project.projectJson, project, defaultBranch, {
+        expect: { headSha: verified.headSha, branches: { [targetBranch]: verified.headSha } },
+        verifyWork,
+      });
+      await advanceIdentity();
+      await save('fixtures', 'reset');
+      await slotFixtureRefresh({ slotId: params.slotId, requestId }, emit);
+      await advanceIdentity();
+      await save('verify', 'fixtures');
+      await assertFence();
+      verified = await inspectSlotWorkspace(params.slotId, {
+        fetch: true,
+        timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+      });
+      fixtures = await checkFixtures(vars, project, project.projectJson);
+    }
     await save('verify', 'verify');
     if (
       !(await updateSlotStatusIf(params.slotId, ownsFence, {
@@ -449,7 +510,7 @@ export async function recoverSlotWorkspace(
       requestId,
       refreshed: true,
       branch: verified.branch,
-      advanced: params.expectedWorkspace.headSha !== verified.headSha,
+      advanced: initialHeadSha !== verified.headSha,
       ...(parked.length ? { parked } : {}),
     });
   } catch (error) {
@@ -459,7 +520,7 @@ export async function recoverSlotWorkspace(
       await updateSlotStatusIf(
         params.slotId,
         (row) =>
-          (Number(row.slot_epoch) || 0) === authorized.epoch &&
+          (Number(row.slot_epoch) || 0) === failed.identity.epoch &&
           recoveryFromRow(row)?.id === failed.id,
         {
           lifecycle: 'held',
@@ -472,7 +533,11 @@ export async function recoverSlotWorkspace(
         },
       );
     }
-    return refuse('failed-phase', detail, authorized.branch);
+    return refuse(
+      'failed-phase',
+      detail,
+      recovery?.identity.branch ?? params.expectedWorkspace?.branch ?? '',
+    );
   } finally {
     invalidateSlotWorkspaceObservations(params.slotId);
     activePrepareSlots.delete(params.slotId);
