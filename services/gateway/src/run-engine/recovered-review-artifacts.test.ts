@@ -226,6 +226,33 @@ async function fixture(t: TestContext, scenario = 'matching') {
   };
 }
 
+test('gate acquisition retains the final role checklist alongside the worker checklist', async (t) => {
+  const f = await fixture(t);
+  const slotRepo = path.resolve(f.taskDir, '../../..');
+  const workerDir = path.join(slotRepo, '.task', path.basename(f.taskDir));
+  await mkdir(path.join(workerDir, 'artifacts'), { recursive: true });
+  const final =
+    '# Review fix\n' +
+    Array.from({ length: 6 }, (_, i) => `- [x] **${i + 1}. Fix ${i + 1}**\n`).join('');
+  await writeFile(path.join(workerDir, 'REVIEW-FIX.md'), final);
+  await mkdir(path.join(workerDir, 'subtasks'), { recursive: true });
+  await writeFile(path.join(workerDir, 'subtasks/index.json'), '{"schemaVersion":1,"units":[]}');
+
+  const signal = JSON.stringify({ status: 'complete', timestamp: '2026-11-04T11:33:36.963Z' });
+  await writeFile(path.join(workerDir, 'REVIEW-FIX-SIGNAL.json'), signal);
+  await copyWorkerArtifacts(f.run.id);
+  assert.equal(await readFile(path.join(f.gatewayDir, 'REVIEW-FIX.md.worker'), 'utf8'), final);
+  assert.equal(
+    await readFile(path.join(f.gatewayDir, 'subtasks/index.json.worker'), 'utf8'),
+    '{"schemaVersion":1,"units":[]}',
+  );
+
+  assert.equal(
+    await readFile(path.join(f.gatewayDir, 'REVIEW-FIX-SIGNAL.json.worker'), 'utf8'),
+    signal,
+  );
+});
+
 test('a repeated worker artifact copy keeps unchanged mirror files and refreshes changed ones', async (t) => {
   const f = await fixture(t);
   // With no project file the copy reads the worker's default `.task` dir in the slot repo.

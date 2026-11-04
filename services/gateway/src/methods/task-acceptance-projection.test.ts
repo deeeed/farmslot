@@ -351,6 +351,170 @@ test('a finished run still attached to a held slot reads retained progress witho
   }
 });
 
+test('a busy review gate serves the final fix mirror without its stopped producer', async () => {
+  const fixture = writeReleasedRun({ workerMirror: true });
+  const run = runs.get('run-released')!;
+  const file = '.task/dev/demo/REVIEW-FIX.md';
+  const final =
+    '# Review fix\n' +
+    Array.from({ length: 6 }, (_, i) => `- [x] **${i + 1}. Fix ${i + 1}**\n`).join('');
+  writeFileSync(path.join(fixture.root, file), '# Stale worker file\n- [ ] **1. stale**\n');
+  writeFileSync(path.join(fixture.root, `${file}.worker`), final);
+  const context = {
+    id: 'review-fix',
+    signalAttemptId: 'final-fix-attempt',
+    role: 'review-fix' as const,
+    label: 'Review fix',
+    status: 'complete' as const,
+    slotId: 'slot-acceptance',
+    runId: run.id,
+    taskFile: file,
+    signalFile: null,
+    target: null,
+    runner: null,
+    model: null,
+    nudgeCount: 0,
+    updatedAt: run.updatedAt,
+    attemptStartedAt: '2026-11-04T11:26:18.756Z',
+    completedAt: '2026-11-04T11:33:36.963Z',
+  };
+  const childDir = path.join(fixture.root, '.task/dev/demo/subtasks');
+  mkdirSync(childDir, { recursive: true });
+  writeFileSync(
+    path.join(childDir, 'index.json.worker'),
+    JSON.stringify({
+      schemaVersion: 1,
+      units: [
+        {
+          id: 'proof',
+          parent: { checklist: 'REVIEW-FIX.md', stepNumber: 1 },
+          checklist: 'subtasks/proof.md',
+          signal: 'subtasks/proof-SIGNAL.json',
+          source: { kind: 'inline', sha256: 'a', renderedSha256: 'b' },
+          registeredAt: context.attemptStartedAt,
+        },
+      ],
+    }),
+  );
+  writeFileSync(path.join(childDir, 'proof.md.worker'), '# Child\n- [x] **1. Verify**\n');
+  writeFileSync(
+    path.join(childDir, 'proof-SIGNAL.json.worker'),
+    JSON.stringify({ status: 'complete', timestamp: context.completedAt }),
+  );
+  const gate: Run = {
+    ...run,
+    status: 'blocked',
+    activeTaskFile: file,
+    agentContexts: [context],
+    steps: [
+      { name: 'review', status: 'done' },
+      { name: 'human-gate', status: 'running' },
+    ],
+  };
+  const signal = path.join(fixture.root, '.task/dev/demo/REVIEW-FIX-SIGNAL.json.worker');
+  writeFileSync(
+    signal,
+    JSON.stringify({
+      status: 'complete',
+      contextId: context.id,
+      attemptId: context.signalAttemptId,
+    }),
+  );
+  runs.set(run.id, gate);
+  currentRunId = run.id;
+  currentTaskFile = 'dev/demo';
+  lifecycle = 'busy';
+  try {
+    writeFileSync(signal, '{');
+    assert.equal(
+      (await taskProgress({ slotId: 'slot-acceptance', runId: run.id })).structured?.totalSteps,
+      1,
+      'an incomplete optional mirror cannot break the ordinary live read',
+    );
+    await assert.rejects(observedProgress({ slotId: 'slot-acceptance', runId: run.id }), {
+      code: 'RESOURCE_OBSERVATION_UNSUPPORTED',
+    });
+    writeFileSync(
+      signal,
+      JSON.stringify({ status: 'complete', contextId: context.id, attemptId: 'previous-attempt' }),
+    );
+    await assert.rejects(observedProgress({ slotId: 'slot-acceptance', runId: run.id }), {
+      code: 'RESOURCE_OBSERVATION_UNSUPPORTED',
+    });
+    assert.equal(
+      (await taskProgress({ slotId: 'slot-acceptance', runId: run.id })).structured?.totalSteps,
+      1,
+      'an uncaptured completed role preserves the ordinary live read',
+    );
+    writeFileSync(
+      signal,
+      JSON.stringify({
+        status: 'complete',
+        contextId: context.id,
+        attemptId: context.signalAttemptId,
+      }),
+    );
+    for (const selector of [{}, { contextId: context.id }]) {
+      const result = await observedProgress({
+        slotId: 'slot-acceptance',
+        runId: run.id,
+        ...selector,
+      });
+      assert.equal(result.structured?.completedSteps, 6);
+      assert.equal(result.structured?.totalSteps, 6);
+      assert.equal(result.contextId, context.id);
+      assert.equal(result.role, 'review-fix');
+      assert.equal(result.structured?.phases[0].steps[0].subtask?.id, 'proof');
+      assert.equal(result.structured?.phases[0].steps[0].subtask?.status, 'complete');
+      assert.equal(result.structured?.timing?.finishedAt, context.completedAt);
+    }
+    writeFileSync(
+      path.join(fixture.root, `${file}.worker`),
+      final.replace('- [x] **6.', '- [ ] **6.'),
+    );
+    assert.equal(
+      (await observedProgress({ slotId: 'slot-acceptance', runId: run.id })).structured
+        ?.completedSteps,
+      6,
+      'completed context reconciles only the last unmarked step, as live progress does',
+    );
+    writeFileSync(
+      path.join(fixture.root, `${file}.worker`),
+      final.replace('- [x] **5.', '- [ ] **5.').replace('- [x] **6.', '- [ ] **6.'),
+    );
+    assert.equal(
+      (await observedProgress({ slotId: 'slot-acceptance', runId: run.id })).structured
+        ?.completedSteps,
+      4,
+      'completion does not invent earlier checklist marks',
+    );
+    beforeRead = () =>
+      runs.set(run.id, {
+        ...gate,
+        agentContexts: [
+          {
+            ...context,
+            status: 'working',
+            completedAt: undefined,
+            attemptStartedAt: '2026-11-04T12:00:00Z',
+          },
+        ],
+      });
+    await assert.rejects(observedProgress({ slotId: 'slot-acceptance', runId: run.id }), {
+      code: 'PROGRESS_OWNER_CHANGED',
+    });
+    await assert.rejects(observedProgress({ slotId: 'slot-acceptance', runId: run.id }), {
+      code: 'RESOURCE_OBSERVATION_UNSUPPORTED',
+    });
+  } finally {
+    beforeRead = undefined;
+    currentRunId = null;
+    currentTaskFile = null;
+    runs.delete(run.id);
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('the production observed RPC serves idle absence and retained completion without a watch', async (t) => {
   const fixture = writeReleasedRun({ workerMirror: true });
   const { createGatewayAuthRuntime } = await import('../security/auth.js');

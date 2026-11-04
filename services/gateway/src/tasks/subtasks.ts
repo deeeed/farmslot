@@ -188,8 +188,9 @@ export function parseSubtaskIndex(text: string, source = SUBTASK_INDEX_REL_PATH)
 export async function readSubtaskIndex(
   ctx: SlotLocality,
   taskDir: string,
+  suffix = '',
 ): Promise<SubtaskIndex | null> {
-  const indexPath = subtaskIndexPathFor(taskDir);
+  const indexPath = `${subtaskIndexPathFor(taskDir)}${suffix}`;
   if (!(await slotFileExists(ctx, indexPath))) return null;
   let text: string;
   try {
@@ -249,8 +250,9 @@ async function readChildSignal(
   ctx: SlotLocality,
   taskDir: string,
   unit: SubtaskIndexUnit,
+  suffix = '',
 ): Promise<SubtaskSignalRead | null> {
-  const signalPath = path.join(taskDir, unit.signal);
+  const signalPath = path.join(taskDir, `${unit.signal}${suffix}`);
   if (!(await slotFileExists(ctx, signalPath))) return null;
   const text = await slotReadFile(ctx, signalPath);
   try {
@@ -358,10 +360,11 @@ export async function readSubtaskUnits(
   ctx: SlotLocality,
   taskDir: string,
   units: readonly SubtaskIndexUnit[],
+  suffix = '',
 ): Promise<SubtaskUnitRead[]> {
   const reads: SubtaskUnitRead[] = [];
   for (const unit of units) {
-    const checklistPath = path.join(taskDir, unit.checklist);
+    const checklistPath = path.join(taskDir, `${unit.checklist}${suffix}`);
     if (!(await slotFileExists(ctx, checklistPath))) {
       console.warn(`[subtasks] registered unit ${unit.id} has no checklist at ${unit.checklist}`);
       continue;
@@ -369,7 +372,7 @@ export async function readSubtaskUnits(
     reads.push({
       unit,
       markdown: await slotReadFile(ctx, checklistPath),
-      signal: await readChildSignal(ctx, taskDir, unit),
+      signal: await readChildSignal(ctx, taskDir, unit, suffix),
     });
   }
   return reads;

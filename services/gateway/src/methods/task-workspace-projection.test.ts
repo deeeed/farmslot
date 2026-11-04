@@ -225,6 +225,37 @@ test('workspace progress projects the child unit under its parent step', async (
   });
 });
 
+test('a completed slot-free reviewer keeps reading its confined workspace checklist', async () => {
+  await withWorkspace(async (root) => {
+    workspaceRun = {
+      ...workspaceRun!,
+      status: 'blocked',
+      taskFile: path.join(root, 'task', 'TASK.md'),
+      agentContexts: [
+        {
+          id: 'review',
+          role: 'review',
+          label: 'Review',
+          status: 'complete',
+          runId: 'workspace-projection',
+          slotId: null,
+          taskFile: path.join(root, 'task', 'CHECKLIST.md'),
+          signalFile: null,
+          target: null,
+          runner: null,
+          model: null,
+          nudgeCount: 0,
+          completedAt: '2026-11-04T11:33:36.963Z',
+          updatedAt: '2026-11-04T11:33:36.963Z',
+        },
+      ],
+    };
+    const progress = await taskProgress({ slotId: '', runId: workspaceRun.id });
+    assert.equal(progress.markdown, PARENT);
+    assert.equal(progress.structured?.totalSteps, 3);
+  });
+});
+
 test('workspace progress carries the acceptance ledger and its criteria', async () => {
   await withWorkspace(async () => {
     const progress = await taskProgress({ slotId: '', runId: 'workspace-projection' });
