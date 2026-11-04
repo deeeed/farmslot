@@ -132,6 +132,8 @@ function main() {
         'CI_ISSUE_TYPE=lint',
         '--var',
         'CI_ISSUES=- lint failed on one file',
+        '--var',
+        'ci.local_check=printf e2e-ci-pass',
         `--var`,
         `REPO=${root}`,
       ],
