@@ -88,6 +88,13 @@ Respect the selected validation depth. A static review reads retained source, te
 - Contradicted by separate implementations of one shared decision, controls reading a different flag than the test, or a banner/skeleton changing surrounding layout on each refresh. Static source inspection does not establish a measured visual result.
 - Failure: F342's misleading panels/rounds were fixed in [#1793](https://github.com/deeeed/farmslot/pull/1793) and [#1806](https://github.com/deeeed/farmslot/pull/1806); [#1819](https://github.com/deeeed/farmslot/pull/1819) corrected terminal layout and irrelevant progress notices.
 
+### FSR-11. Restore persistent view choices through the URL
+
+- Applies to a person's persistent view choices: filters, sorting, selected entity, tabs, expanded panels and review rounds.
+- Inspect round-trip through the shared context-configured URL mechanism. Omit defaults; reload and Back/Forward restore the chosen view before paint. Keep ephemeral interaction state and private or unsaved form content out of the URL.
+- Contradicted by a persistent choice missing from the URL, a duplicate per-view mechanism, encoded defaults, restoration after paint, or private/unsaved form content in the URL.
+- Failure: F386's run-detail panels did not update the URL and sharing could not carry the selected options. F341's missing artifact URL state was corrected in [#1794](https://github.com/deeeed/farmslot/pull/1794).
+
 ## Maintaining the rules
 
 Use `.agents/skills/fs-retro-bulk/SKILL.md` Pass 2. After a review miss or incident, verify the claim against the actual run, diff, tests, review or gate outcome. Add or sharpen a rule only for a confirmed real failure likely to recur and only when the new wording changes a future diff review. Link the F-entry or PR, retain the four fields above and update an existing rule before adding another. A code fix that removes the entire class replaces the instruction; keep a broader check only when its remaining scope is demonstrated.
