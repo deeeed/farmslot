@@ -43,6 +43,9 @@ const censusTimeoutMs = 5_000;
 // machine is not lost ownership, so observers fail only past this deadline
 // (ADR-057 Amendment 3).
 const observerCensusDeadlineMs = 30_000;
+// Launch and stop take their own synchronous snapshots. Background observers
+// share one census per second instead of spawning a full ps every 100 ms.
+const observerCensusIntervalMs = 1_000;
 function parseProcesses(output: string): Map<number, ProcessIdentity> {
   const result = new Map<number, ProcessIdentity>();
   for (const line of output.split('\n')) {
@@ -154,7 +157,7 @@ function scheduleCensus(): void {
       for (const observer of [...observers.values()]) observer.failed(stalledCensus);
     }, observerCensusDeadlineMs);
     deadline.unref();
-  }, 100);
+  }, observerCensusIntervalMs);
   censusTimer.unref();
 }
 function signal(identity: ProcessIdentity, kind: NodeJS.Signals): void {
