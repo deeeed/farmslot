@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { SourceMaterialization } from '@farmslot/protocol';
+import { isRecord, type SourceMaterialization } from '@farmslot/protocol';
 
 import type { ProjectVars } from '../core/config.js';
 
@@ -15,6 +15,11 @@ import {
   resolveConfiguredExecutionTemplate,
   resolveConfiguredExecutionTemplateForSlot,
 } from './execution-template-catalog.js';
+import {
+  lintWorkerTemplateAgainstContract,
+  readWorkerTerminalProjectConfig,
+  resolveWorkerTerminalContract,
+} from './worker-terminal-contract.js';
 
 function withProject(fn: (projectVars: ProjectVars) => void): void {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-gateway-catalog-'));
@@ -423,6 +428,8 @@ test('Farmslot static review selects the adapter and freezes the canonical revie
   const projectJson: ProjectVars['projectJson'] = JSON.parse(
     readFileSync(path.join(projectRoot, 'project.json'), 'utf8'),
   );
+  const contractInput: unknown = projectJson;
+  assert.ok(isRecord(contractInput));
   assert.equal(projectJson.repo_url, `https://github.com/${projectJson.ci?.repo}.git`);
   assert.ok(projectJson.static_review?.template_id);
   assert.deepEqual(projectJson.static_review.instruction_files, ['runtime/review-quality.md']);
@@ -445,6 +452,11 @@ test('Farmslot static review selects the adapter and freezes the canonical revie
   );
   assert.equal(selected.reference.id, 'review-pr/static');
   assert.match(selected.markdown, /canonical review guidance/);
-  assert.match(selected.markdown, /absolute task-root marker path/);
+  const contract = resolveWorkerTerminalContract(
+    readWorkerTerminalProjectConfig(contractInput),
+    'review-pr',
+  );
+  assert.deepEqual(lintWorkerTemplateAgainstContract(selected.markdown, contract), []);
+  assert.match(selected.markdown, /From the task directory[^\n]+\.\/mark complete --mark-last/);
   assert.equal(projectJson.workflow_defaults?.['review-pr']?.review?.publishReview, false);
 });
