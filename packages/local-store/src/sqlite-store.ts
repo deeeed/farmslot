@@ -1,4 +1,5 @@
 import {
+  type ContentKey,
   type ResourceContentCohort,
   type ResourceContentOrigin,
   type ResourceStore,
@@ -65,6 +66,9 @@ function storedQuery<T>({ data, ...info }: QueryRow): StoredResourceQuery<T> {
     data: JSON.parse(data) as T,
     accessedAt: info.accessedAt || info.observedAt,
   };
+}
+interface ContentAliasInfo extends ContentKey {
+  alias: string;
 }
 interface ContentRow extends StoredResourceContentInfo {
   // A native driver may bind an empty array as NULL.
@@ -619,15 +623,26 @@ export async function createSqliteResourceStore(
       ]);
     },
     listContent() {
-      return read(
-        () =>
-          db.all<StoredResourceContentInfo>(
-            `SELECT kind, id, bytes, origin, cohort, accessed_at AS accessedAt
-        FROM resource_content WHERE store_id = ?`,
-            [row.id],
-          ),
-        [],
-      );
+      return read(async () => {
+        const content = await db.all<StoredResourceContentInfo>(
+          `SELECT kind, id, bytes, origin, cohort, accessed_at AS accessedAt
+            FROM resource_content WHERE store_id = ?`,
+          [row.id],
+        );
+        const names = await db.all<ContentAliasInfo>(
+          'SELECT kind, id, alias FROM resource_content_aliases WHERE store_id = ?',
+          [row.id],
+        );
+        const byId = new Map<string, string[]>();
+        for (const { kind, id, alias } of names) {
+          const key = `${kind}:${id}`;
+          byId.set(key, [...(byId.get(key) ?? []), alias]);
+        }
+        return content.map((info) => {
+          const aliases = byId.get(`${info.kind}:${info.id}`);
+          return { ...info, ...(aliases?.length ? { aliases } : {}) };
+        });
+      }, []);
     },
     byteTotals() {
       return read(

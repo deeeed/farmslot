@@ -542,6 +542,22 @@ export function createGatewayResourceCache(
         remaining -= saved.bytes;
         if (saved.id !== RUN_LIST_COLLECTION_ID) startupQueries.set(saved.id, saved);
       }
+      // Restore small aliased report bodies before exposing their cached run. Network
+      // prefetch can be queued behind other gates, even when these bytes are already held.
+      let contentRemaining = residentLimit;
+      const content = (await readingStore.listContent())
+        .filter((entry) => entry.kind === 'artifact' && entry.aliases?.length)
+        .sort((a, b) => b.accessedAt - a.accessedAt);
+      if (!current()) return;
+      for (const info of content) {
+        const aliasCount = info.aliases?.length ?? 0;
+        if (info.bytes * aliasCount > contentRemaining) continue;
+        const saved = await readingStore.getContent(info);
+        if (!current()) return;
+        if (!saved || saved.data.byteLength * aliasCount > contentRemaining) continue;
+        contentRemaining -= saved.data.byteLength * aliasCount;
+        for (const name of info.aliases ?? []) rememberResident(name, saved, saved.data);
+      }
       if (rows) runList.hydrate(rows);
       startupStore = readingStore;
       startupOwnerVersion = ownerVersion;
