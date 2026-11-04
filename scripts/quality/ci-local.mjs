@@ -109,6 +109,7 @@ export function ciParitySteps(files, cwd) {
     'apps/command-center/',
     'apps/companion/',
     'packages/protocol/src/',
+    'packages/review-dispatch/src/',
     'scripts/quality/check-cached-panel-reads',
     'scripts/quality/offline-reads-baseline.json',
     'package.json',

@@ -103,6 +103,7 @@ test('offline read analysis follows its client, protocol and tooling inputs', ()
     'apps/command-center/ui/src/view.ts',
     'apps/companion/src/view.ts',
     'packages/protocol/src/rpc/pr.ts',
+    'packages/review-dispatch/src/native-worker-target.ts',
     'scripts/quality/check-cached-panel-reads.mjs',
     'scripts/quality/offline-reads-baseline.json',
     'yarn.lock',
