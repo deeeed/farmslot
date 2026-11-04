@@ -70,6 +70,9 @@ test(
     const result = spawnSync(
       process.execPath,
       [
+        '--import',
+        'tsx',
+        '--conditions=development',
         join(pack, 'projects/siteed-web-farm/scripts/project.mjs'),
         'stop',
         root,
