@@ -2420,10 +2420,20 @@ test('unknown foreground state reports the process failure without sending input
   assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 0);
 });
 
-test('farm steer cannot report sent from a successful write without exact prompt acceptance', async () => {
+test('farm steer cannot report sent from a successful write without exact prompt acceptance', async (t) => {
   const priorReading = promptAcceptedReading;
   const priorActivity = activityReading;
   const priorPane = paneText;
+  const observer = getRunnerObservability('codex');
+  assert.ok(observer);
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  t.mock.method(observer, 'promptAccepted', async () => {
+    callOrder.push('obs:promptAccepted');
+    // Preflight time is irrelevant here. Expire receipt observation only after typing.
+    if (callOrder.includes('tmux:send-literal')) clock += deliveryBudgetMs;
+    return promptAcceptedReading;
+  });
   try {
     foregroundCommand = 'codex';
     acknowledgePromptInput = false;
