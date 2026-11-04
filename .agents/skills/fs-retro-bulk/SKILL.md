@@ -47,6 +47,13 @@ Format mirrors existing entries — H2 per run or per template-change, bullets f
 
 Hard rule from `farmslot/CLAUDE.md`: **never auto-append to LEARNINGS.md**. Clean runs (0 nudges, no REAL items) get no entry. Curate, don't dump: keep a lesson only if the run's record confirms a failure that cost something and is likely to recur and it changes what a worker, reviewer or the engine does; write it as one line where that reader acts (no worker prompt loads LEARNINGS.md); unverified worker claims are dropped (ADR-026 Amendment 1).
 
+For Farmslot review misses, the canonical destination is
+`projects/farmslot-farm/fixtures/runtime/review-quality.md`. Follow its maintaining
+note: verify the real failure, update the applicable rule before adding one, name
+its scope and contradicting evidence, and prune obsolete or unused rules. Record
+the rule ID and evidence as the curated destination. No change is valid when the
+incident adds no recurring check. Do not append another copy to LEARNINGS.md.
+
 If a learning maps to a concrete template change (worker/self-review/pr-complete/dev/fix-bug), apply it now — surgical edits, not template rewrites. Reference the run IDs that motivated each change in the LEARNINGS entry. Keep template diffs minimum-change: prefer adding one bullet to an existing checklist over restructuring a section.
 
 ## Pass 3 — Resolve

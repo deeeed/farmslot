@@ -1,170 +1,104 @@
-# Farmslot review quality — PR reviewers
+# Farmslot review rules
 
-Read this **before** writing `{{TASK_DIR}}/artifacts/review.md`. Pair with `{{recipe_quality_path}}` when the PR ships recipe proof.
+This is the canonical Farmslot rule set and reviewer execution template, maintained for F382. Static reviews retain it through `static_review.instruction_files`; lane reviews read the same file from the reviewed checkout. Change this source, never a frozen task copy.
 
-Load the critique skill when judging recipe/evidence quality: `.agents/skills/fs-recipe-quality/SKILL.md` (or run `/fs-recipe-quality`).
+## Execute the review
 
-## Review scope
+1. Freeze the publication base, head and reviewed range. Inventory every changed path against the approved request, using the shared `review-diff-scope.cjs` packet when available. Warm reviews retain the whole-contribution scope inventory and inspect their saved correctness delta.
+2. Read each rule below and decide applicability from the diff and affected callers. Open applicable source, producer contracts and tests. A family heading or a claim that a file was read is not an outcome.
+3. Put a criteria ledger in the requested review artifact, normally `artifacts/review.md`. Include one row per rule, including exclusions:
 
-Farmslot reviews cover:
+   `Rule ID | Applies and why | Outcome | Frozen source/test evidence or gap`
 
-| Surface | Proof bar |
-|---------|-----------|
-| Command Center UI | Recipe v1 + CDP; screenshots/video; **read pixels** — never trust filenames alone |
-| Gateway / protocol | `yarn typecheck`, `node:test`, behavior traceable in code |
-| CLI / terminal TUI | `node:test`, forced-TTY/mock-timer checks, live `--json` envelope probes; no Recipe/CDP requirement when no browser surface exists |
-| Mobile Companion | iOS/Android recipe when PR touches `apps/companion`; real Metro flag flips — no store injection |
-| Companion UI jank | A PR touching `apps/companion/src/**` needs a passing Companion jank report (`yarn recipe:run:jank:android`, `performance/report.md` verdict pass) run at its head SHA |
-| Publication evidence | `evidence-manifest.json`, hosted `raw.githubusercontent.com` URLs, `artifacts_repo` upload |
+   Outcomes are `PASS`, `FINDING`, `NOT_APPLICABLE` and `NOT_CHECKED`. `PASS` needs cited evidence; `NOT_APPLICABLE` needs a concrete scope reason. Missing source or runtime proof is `NOT_CHECKED`, never an assumed pass. Report an incomplete review explicitly.
+4. A `FINDING` needs a concrete failure, its applicable rule, and a changed line or affected changed caller. Every confirmed violation of an applicable rule blocks and requires `REQUEST_CHANGES`. Other findings follow the shared approval policy. A coverage gap alone is not an invented behavior defect. Put pre-existing, unrelated issues outside the diff findings.
+5. State the frozen head, completeness and evidence limits before the verdict. Use the existing report/signal contract; this file adds no new verdict or protocol field.
 
-## Secondary regression scan (required on every review)
+Respect the selected validation depth. A static review reads retained source, tests and supplied evidence; it does not acquire a device, start services, dispatch a run or publish. Record missing runtime evidence without claiming it was obtained. For an authorized live review, use the existing recipe-quality guidance and assert the observable result through the real client or gateway. Pixels prove rendering; retained bytes and state readbacks prove data changes. Never inject UI/store values as proof.
 
-Independent review must look **beyond the stated ACs** for regressions introduced by the change.
-Before writing your verdict, check each category:
+## Rules
 
-| Category | What to look for |
-|----------|------------------|
-| Resource bounds | Unbounded reads introduced where limits existed before (e.g. whole-file hash buffering instead of streaming) |
-| Error semantics | HTTP status mapping changes (404/410, 413/400); swallowed or remapped application-level errors |
-| Silent exits | Subprocess / git / shell calls that can exit non-zero without surfacing the failure to the caller |
-| Adapter weakening | Root-detection adapters (`.git` locators, path-confinement guards) narrowed or made best-effort without documentation |
-| Sibling call sites | Fix applied to one call site while sibling callers share the same defect class — enumerate the blast radius |
-| RPC collapse side effects | Multiple RPCs collapsed into one handle-backed operation: verify both resource bounds and original error semantics are preserved |
-| Metadata-probe semantics | Probe-before-read patterns changed such that TOCTOU window widens or probe result is no longer authoritative |
+### FSR-01. Fix the demonstrated failure at its shared owner
 
-Flag any regression as `must_fix` even when it falls outside the original ticket scope. Do not assume
-the author audited the class — enumerate it explicitly in **Code Quality** and **Fix Quality** sections.
+- Applies to fixes, migrations and new abstractions.
+- Inspect the approved trigger and the changed producer, sibling callers and replacement path. Prefer removing the failing work. Carry every required capability to its single owner; remove the replaced path instead of adding a shim, alias or parallel implementation.
+- Contradicted by a speculative fix with no approved scope or reproduction, a timeout increase that leaves the demonstrated redundant work, or a second implementation serving the same contract. Explicitly approved planned work is a valid trigger.
+- Failure: F310/F313 led to removing release copies in [#1747](https://github.com/deeeed/farmslot/pull/1747); F318 needed one worker/preflight environment in [#1758](https://github.com/deeeed/farmslot/pull/1758). F382 carries the standing no-shims and real-bugs-only requirements.
 
-## Evidence audit (mandatory for UI PRs)
+### FSR-02. Use current authoritative facts, not inferred state
 
-A green recipe status does **not** prove visible UI. Before marking an AC PROVEN:
+- Applies to state classification, identity discovery, publication verification and configuration selection.
+- Inspect where each fact comes from and when it remains authoritative. Use explicit dispatch/API records, native receipts and the actual remote or producer. Never derive tickets, ownership, acceptance or completion from free prose, TUI appearance or a regex over incidental text. Parsing a documented wire format or identifying a process from argv is distinct from inferring its turn state.
+- Contradicted by a local tracking ref treated as proof of the actual remote branch, an unrecognized producer status treated as absence, or business state guessed from display text. Missing facts remain unknown or explicitly refused.
+- Failure: F301 lost a valid session status, fixed by [#1720](https://github.com/deeeed/farmslot/pull/1720); F326 rejected an already pushed branch from a stale ref, fixed by [#1767](https://github.com/deeeed/farmslot/pull/1767). F382 also carries the standing no-prose-inference requirement.
 
-1. **Read every evidence PNG** via the Read tool (PR-hosted URLs or `{{TASK_DIR}}/artifacts/*.png`).
-2. Confirm the claimed text/component is **visible in the viewport** — not off-screen, wrong route, or generic shell.
-3. For before/after pairs, confirm the **delta** matches the AC — not two identical frames.
-4. If the PR embeds `raw.githubusercontent.com` URLs, **verify they return HTTP 200** (private `artifacts_repo` = 404 in PR bodies).
-5. For video claims, confirm `after.mp4` exists with a `moov` atom when the author claims full-run proof.
-6. **Reject UI state injection** — proof must come from real recipe/CDP/user flow, not mid-run store/DOM writes.
+### FSR-03. Prove ownership and quiescence before destructive cleanup
 
-Verdict per AC: `PROVEN` | `WEAK` | `UNTESTABLE` | `MISSING`.  
-`WEAK` or `MISSING` without reclassification → `REQUEST_CHANGES` or explicit human escalation.
+- Applies to stop, release, cancel, archive, reset and replacement.
+- Inspect all recorded and unrecorded workers, resource owners, handoffs and process identities before acting. Recheck the claim/epoch after asynchronous inspection. Only the owner's confirmed processes may stop; unreadable identity and a protected worker preserve the hold.
+- Contradicted by killing before an unrecorded-worker check, treating a missing node as proof of exit, or resetting a checkout after its owner changed. A safe hold is not evidence that cleanup should bypass its guard.
+- Failure: F315's unrecorded idle worker required guarded ownership in [#1755](https://github.com/deeeed/farmslot/pull/1755). F375 and the preservation finding in [#1824](https://github.com/deeeed/farmslot/pull/1824) require daemon cleanup after worker checks.
 
-## Reading review artifacts
+### FSR-04. Persist handoffs and preserve history across interruption
 
-Persisted review artifact arrays can lead with a **diff** file, not the review narrative. When inspecting
-review output, prefer named files in this order:
+- Applies to asynchronous delivery, replay, restart, recovery and replacement of durable records.
+- Inspect the durable marker before the effect, exact acceptance binding, generation checks and recovery branches. Reattach to an acknowledged turn; uncertain delivery preserves the worker. Append or retain decision history before replacing an active list.
+- Contradicted by re-sending an acknowledged prompt after restart, rebuilding ownership from a display flag, a late result acting on a newer generation, or dropping resolved records without durable preservation.
+- Failure: F331/F332 were fixed by [#1782](https://github.com/deeeed/farmslot/pull/1782) and [#1788](https://github.com/deeeed/farmslot/pull/1788); F347/F351 required stable gate IDs and durable history in [#1797](https://github.com/deeeed/farmslot/pull/1797).
 
-1. `review-feedback.md` — structured reviewer feedback
-2. `review.md` — worker review
-3. `review.md` — full review report
+### FSR-05. Refresh must preserve requested gate authority
 
-Do **not** blindly read the first element of an artifact array — it may be a raw diff with no AC verdicts.
+- Applies to package refresh, readiness, action projection, approval and final publication.
+- Trace the operator's requested policy and the exact reviewed head/inputs through every reader and mutation-time check. Refresh may invalidate stale proof; it may not silently weaken the requested policy. Available actions and final enforcement must agree.
+- Contradicted by replacing a requested review requirement with a weaker project default, offering publication despite a known conflict, or accepting an approval against another package or head.
+- Failure: F302's unmergeable publication action was fixed by [#1728](https://github.com/deeeed/farmslot/pull/1728); F346's refresh lowered a required review, fixed by [#1792](https://github.com/deeeed/farmslot/pull/1792).
 
-## Recipe scope
+### FSR-06. Bound work at the correct owner and keep idle reads cheap
 
-Recipes prove a **protocol action** through a **real client endpoint** (Command Center, CLI, gateway
-RPC, `watch_logs`, Companion) — not UI only. Ask: which protocol actions changed, is each driven end
-to end? Reject:
+- Applies to polling, file acquisition, retention, locks, resource hooks and interactive reads.
+- Enumerate the work added per poll, slot and run, including subprocesses and bytes. Reuse retained results, batch host work and keep heavy acquisition off unviewed/interactive paths. Locks cover the owning run/resource, and timed-out effects cannot retain a farm-wide queue indefinitely.
+- Contradicted by recopying evidence during release, full per-slot inspection without a viewer, or unrelated runs waiting behind one unbounded hook. A larger deadline does not remove unnecessary work.
+- Failure: F313 removed duplicate acquisition in [#1747](https://github.com/deeeed/farmslot/pull/1747); F330 split the farm-wide queue in [#1778](https://github.com/deeeed/farmslot/pull/1778); F372 removed background workspace probes in [#1823](https://github.com/deeeed/farmslot/pull/1823).
 
-| Pattern | Verdict |
-|---------|---------|
-| "Gateway-only, no recipe possible" | **must_fix** — CLI/RPC/logs reach it |
-| `#dev/*` fixture used to prove gateway *derivation* | **must_fix** — read back from the gateway |
-| Review fixes landed with no new/updated recipe node | **must_fix** — the fix is unproven; extend and re-run |
-| Fix applied to one call site while siblings share the defect | **must_fix** — enumerate the blast radius, fix the class |
-| Only mocked unit tests defend the change | **must_fix** — proves the function, not the system |
-| Asserts the call returned; claim is a side effect on another store | **must_fix** — assert that store |
-| Screenshot for a state claim, or a log for a rendering claim | suggestion — wrong level |
+### FSR-07. Bind evidence and caches to their actual retained identity
 
-Log and RPC assertions are first-class; do not demand a screenshot for a non-visual claim.
+- Applies to output acquisition, digests, caches, reports, review findings and publication evidence.
+- Trace producer through retention, selected attempt/head, consumer and displayed claim. Serialize competing writes at their owner. Keep task paths and recipe paths distinct. Exclude only paths explicitly omitted by the retained bundle, and preserve all other missing/changed refusals.
+- Contradicted by a stale-head cache used for a current package, overlapping captures that overwrite each other, an alias opening another artifact, or a pass derived from evidence belonging to another attempt. Missing or untimed evidence stays honestly labeled.
+- Failure: F304/F305 required exact exclusions and per-run acquisition in [#1722](https://github.com/deeeed/farmslot/pull/1722) and [#1731](https://github.com/deeeed/farmslot/pull/1731); F341/F343 corrected artifact and head identity in [#1794](https://github.com/deeeed/farmslot/pull/1794) and [#1795](https://github.com/deeeed/farmslot/pull/1795).
 
-## Recipe quality gates
+### FSR-08. Validate real contracts and make tests contradict the bug
 
-When the PR includes `recipe.json` or a **Validation Recipe** section:
+- Applies to boundary decoding, type changes, fixtures and regression tests.
+- Read the producer and every required field. Narrow unknown input or construct a typed fixture; never double-assert through `unknown`, `any` or an equivalent intermediate type. An invalid-input test names its expected type error. Verify the test reaches the changed behavior and fails when that behavior is removed, rather than asserting an unused field or rebuilding the implementation's answer.
+- Contradicted by a forced value presented as valid domain data, a fixture that passes only because its runner skips typechecking, or a purported behavior assertion that has no consumer-visible effect.
+- Failure: review of [#1698](https://github.com/deeeed/farmslot/pull/1698) found incomplete claim fixtures that passed execution but failed the contract typecheck, and a tested field unused by judgment controls. F382 retains the standing ban on double assertions.
 
-- Apply `fs-recipe-quality` (recipe-only or recipe+evidence mode).
-- Write `{{TASK_DIR}}/artifacts/recipe-coverage.md` with a per-AC matrix (gateway computes recipe-quality).
-- **Forbidden:** silent AC skips, DOM-only proof for visible claims, fabricated `?sha=` URLs, CDP fallback claimed as native capture-helper without doctor note.
+### FSR-09. Test time through a controllable clock
 
-If the author omitted a recipe for a UI change, flag it — do not invent proof.
+- Applies to tests of sleeps, polling, retry, timeout and cleanup timing.
+- Inspect the clock and scheduler the code actually reads. Drive elapsed time with fake timers or injected time, restore them on every exit, and wait for observable completion rather than a guessed delay. Live proof of external processes uses bounded condition checks in its authorized scope and does not substitute for a timer regression test.
+- Contradicted by waiting out a production delay in a unit/CI test, a fixed sleep presented as proof that an effect finished, or fake timers that leave an asynchronous completion path untested.
+- Failure: review of [#1708](https://github.com/deeeed/farmslot/pull/1708) caught a fixed-sleep proof; F382 imports the standing real-timer prohibition after repeated slow and flaky tests.
 
-## Farmslot code antipatterns (check every diff)
+### FSR-10. Share UI state and keep asynchronous layout stable
 
-| Pattern | Severity | Action |
-|---------|----------|--------|
-| Inline protocol types instead of `@farmslot/protocol` | suggestion | cite import path |
-| Empty `catch {}` or log-and-continue | **must_fix** | root cause or explicit recovery |
-| Test fixture hand-built in the consumer's expected shape | **must_fix** | build it from the producer function or a live isolated gateway |
-| UI/store/DOM injection for “validation” | **must_fix** | require real user flow |
-| Typecheck-only claim for UI change | **must_fix** | require CDP/recipe proof |
-| `tsc -b` / emitting `.js` into source trees | **must_fix** | use `yarn typecheck` |
-| Hardcoded project logic in `scripts/` | suggestion | should be `project.json` hook |
-| Gateway breaks existing bash scripts | **must_fix** | coexistence rule |
-| Slot helper exec hidden in `@farmslot/slot-config` / `farmslot internal` when it needs `execOnSlot` or `execLocal` | **must_fix** | implement as gateway method routed through `route-method.ts` |
-| Script port changes slot-vs-orchestrator locality or swallows missing project config | **must_fix** | match original `run_on`/local split and preserve hard-fail behavior |
-| Slow read-heavy gateway method only validated through 5s `cdp.mjs gateway` client | suggestion | confirm with real `farmslot --url` CLI before calling it hung |
-| CLI-local verb (`internal`, `bug`) added to method-matrix/method-map without a real gateway RPC | **must_fix** | keep in-process CLI verbs out of gateway guards |
-| New `@farmslot/protocol` export live-tested with stale `dist/` | suggestion | run `yarn workspace @farmslot/protocol build` before `yarn farmslot` validation |
-| Human CLI output judged through a pipe/capture | suggestion | piped stdout is machine mode; use a real TTY for human-mode proof |
-| CLI progress/spinners gated only on `output.json`, or writing human progress to stdout in machine mode | **must_fix** | use the shared machine-mode predicate; human progress goes to stderr only; verify `--json` envelope purity |
-| Missing `artifacts_repo` / broken publication upload | suggestion | config + SSH host + public repo |
-| capture-helper TCC denied in tmux without CDP fallback note | suggestion | `capture-helper-tmux-check.sh` |
-| CDP/HUD abort before `command` node runs, presented as fail-closed pre-fix proof | **must_fix** | harness failure ≠ behavioral proof; require `command` node execution + assertion failure in `trace.json` |
-| Backlog soft-link resolves by `backlogItemId` instead of `(project, sourceRef)`, or links graph-linked / launch-plan / queued / already-run-linked items without refusing | **must_fix** | link via sourceRef only; soft-link must warn and refuse those states to avoid stealing handoff ownership |
-| CI warm handoff implemented via `nudgeReuse` | **must_fix** | `nudgeReuse` requires `agent=working` and rejects `lifecycle=held`; use `warmSessionReuse` which probes liveness on held/ci-watch slots |
-| FIND_SLOT warm takeover rebinds `current_run_id` | **must_fix** | reserve `handoff_run_id` only (mirrors nudge pattern); rebinding `current_run_id` prevents DISPATCH from terminalizing the parent after handoff |
+- Applies to Command Center and Companion views, shared models, loading, warnings and errors.
+- Trace the common view model and every affected client. Keep useful prior data during background reads. Reserve the final layout space or use an overlay for transient content; inspect poll/load/error transitions and the actual rendered or accessible state when evidence is supplied.
+- Contradicted by separate implementations of one shared decision, controls reading a different flag than the test, or a banner/skeleton changing surrounding layout on each refresh. Static source inspection does not establish a measured visual result.
+- Failure: F342's misleading panels/rounds were fixed in [#1793](https://github.com/deeeed/farmslot/pull/1793) and [#1806](https://github.com/deeeed/farmslot/pull/1806); [#1819](https://github.com/deeeed/farmslot/pull/1819) corrected terminal layout and irrelevant progress notices.
 
-## CDP / capture-helper
+### FSR-11. Restore persistent view choices through the URL
 
-Before live UI validation:
+- Applies to a person's persistent view choices: filters, sorting, selected entity, tabs, expanded panels and review rounds.
+- Inspect round-trip through the shared context-configured URL mechanism. Omit defaults; reload and Back/Forward restore the chosen view before paint. Keep ephemeral interaction state and private or unsaved form content out of the URL.
+- Contradicted by a persistent choice missing from the URL, a duplicate per-view mechanism, encoded defaults, restoration after paint, or private/unsaved form content in the URL.
+- Failure: F386's run-detail panels did not update the URL and sharing could not carry the selected options. F341's missing artifact URL state was corrected in [#1794](https://github.com/deeeed/farmslot/pull/1794).
 
-```bash
-cd {{REPO}}
-node apps/command-center/scripts/agentic/recipe-doctor.mjs \
-  --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
-bash apps/command-center/scripts/debug-chrome.sh
-```
+## Maintaining the rules
 
-From the **same tmux pane** that runs recipes:
+Use `.agents/skills/fs-retro-bulk/SKILL.md` Pass 2. After a review miss or incident, verify the claim against the actual run, diff, tests, review or gate outcome. Add or sharpen a rule only for a confirmed real failure likely to recur and only when the new wording changes a future diff review. Link the F-entry or PR, retain the four fields above and update an existing rule before adding another. A code fix that removes the entire class replaces the instruction; keep a broader check only when its remaining scope is demonstrated.
 
-```bash
-bash projects/farmslot-farm/setup/capture-helper-tmux-check.sh
-```
+For each curation, record the destination rule ID, evidence and net instruction lines added. Remove rules that are obsolete, duplicate another owner or repeatedly never apply to their declared scope; preserve useful failure provenance in the linked PR rather than adding run histories here. "No rule change" is a valid result. Do not auto-append rules or create a service, scheduled generator or another rule catalog.
 
-Doctor must pass native capture-helper when video proof is claimed.
-
-## Publication / PR evidence
-
-Hosted screenshots live in `deeeed/farmslot-artifacts` at `features/<PR_NUMBER>/` (dev), `fixes/<PR_NUMBER>/` (fix), `reviews/<PR_NUMBER>/` (review).
-
-Re-upload or fix when:
-
-- URLs 404 (private repo, wrong SSH host, never uploaded)
-- `?sha=` digest does not match file bytes
-- `## **Screenshots/Recordings**` still has local paths (`.sandbox/`, `/Users/`, `artifacts/recipe-run/`)
-
-Use the gateway's retained publication package. Refresh it through the public CLI:
-
-```bash
-farmslot rpc run.refreshPublishedEvidence '{"runId":"<run-id>"}'
-```
-
-## Review report contract
-
-`{{TASK_DIR}}/artifacts/review.md` must include:
-
-1. **Summary** — what the PR does; aligned with stated goal?
-2. **Recipe Coverage** — matrix from `recipe-coverage.md` or explicit skip rationale
-3. **Evidence Audit** — per-AC visual verdicts; which PNGs you read
-4. **Acceptance Criteria Validation** — table with PASS/FAIL/UNTESTABLE + evidence pointer
-5. **Code Quality** — farmslot antipatterns from this doc
-6. **Fix Quality** — best approach vs pragmatic; would-not-ship items
-7. **Secondary Regression Scan** — results of the blast-radius table above; CLEAN or flagged items with severity
-8. **Live Validation** — doctor, typecheck, tests, optional recipe re-run
-9. **Recommended Action** — APPROVE | REQUEST_CHANGES | COMMENT
-
-Also write `{{TASK_DIR}}/artifacts/line-comments.json` with `must_fix` | `suggestion` | `nitpick` severities.
-
-## Cross-review
-
-Independent review is required before merge (see repo `CLAUDE.md`). Reviewers use this doc + `fs-recipe-quality`; workers fix **all** blocking findings including nits when cross-review is active. During closeout, diff the reviewed SHA against HEAD and verify each finding is actually addressed before marking it resolved.
+When curated feedback has landed, use fs-retro-bulk's existing canonical-rule consumption ledger with the merged commit and rule destination. Only real provider feedback candidates enter that ledger; never invent a comment identity for an incident. Resolve only the audited decisions through its existing guarded closeout. Do not resolve live retros as part of a documentation or proof run.
