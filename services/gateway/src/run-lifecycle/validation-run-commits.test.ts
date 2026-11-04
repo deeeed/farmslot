@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -183,7 +183,7 @@ test('a named discard parks the commits of a run held at a refused COMPLETE', as
   assert.equal(git('rev-parse', parked!.ref), head);
 });
 
-test('only a finished artifact-only dev or fix-bug run parks its branch commits', () => {
+test('ended runs park attributed commits; only artifact-only code work parks before its end', () => {
   const run = (patch: Partial<Run> = {}) =>
     makeRun({
       completionPolicy: 'artifact-only',
@@ -194,8 +194,8 @@ test('only a finished artifact-only dev or fix-bug run parks its branch commits'
       ...patch,
     });
   assert.equal(parksBranchCommits(run()), true);
-  assert.equal(parksBranchCommits(run({ completionPolicy: 'default' })), false);
-  assert.equal(parksBranchCommits(run({ flowType: 'update-branch' })), false);
+  assert.equal(parksBranchCommits(run({ completionPolicy: 'default' })), true);
+  assert.equal(parksBranchCommits(run({ flowType: 'update-branch' })), true);
   // A blind trial's release restores its isolated Git and keeps the candidate branch.
   const blind: Run = {
     ...run(),
@@ -320,4 +320,94 @@ test('a local idle branch with work absent from the current branch is parked too
   });
   assert.equal(git('rev-parse', 'HEAD'), base);
   assert.equal(git('rev-parse', parked!.ref), main);
+});
+
+test('cancelled publishing runs use the same immutable parking receipt', async (t) => {
+  const { git, vars, head, validation } = await fixture(t);
+  const cancelled = updateRun(validation.id, { status: 'cancelled', completionPolicy: 'default' });
+  const parked = await parkRunBranchCommits(cancelled, vars, localExec, checks);
+  assert.ok(parked, 'a cancelled publishing run must not leave its commits unparked');
+  assert.equal(git('rev-parse', parked.ref), head);
+  assert.equal(parked.commits.length, 2);
+  assert.deepEqual(getRun(cancelled.id)?.parkedCommits, [parked]);
+  await recordReleasedCheckout(cancelled, vars, localExec);
+  assert.equal(getRun(cancelled.id)?.releasedCheckout?.headSha, head);
+});
+
+test('explicit retention recovers a deleted branch from its recorded review head without changing live work', async (t) => {
+  const { git, vars, head, validation } = await fixture(t);
+  const ended = updateRun(validation.id, {
+    status: 'done',
+    completionPolicy: 'default',
+    steps: [{ name: 'review', status: 'done', outputs: { reviewSnapshot: { headSha: head } } }],
+  });
+  git('checkout', '-q', 'main');
+  git('branch', '-q', '-D', ended.branch!);
+  const note = path.join(vars.remoteRepo, 'unrelated-work.txt');
+  await writeFile(note, 'preserve this work\n');
+  const before = git('status', '--porcelain');
+  const parked = await parkRunBranchCommits(ended, vars, localExec, { ...checks, dataOnly: true });
+  assert.ok(parked, 'the recorded old head must remain recoverable after its branch disappears');
+  assert.equal(git('rev-parse', parked.ref), head);
+  assert.equal(git('branch', '--show-current'), 'main');
+  assert.equal(git('status', '--porcelain'), before);
+  assert.equal(await readFile(note, 'utf8'), 'preserve this work\n');
+  assert.deepEqual(getRun(ended.id)?.parkedCommits, [parked]);
+});
+
+test('a later recorded review wins over an older release checkpoint during data-only recovery', async (t) => {
+  const { git, vars, base, head, validation } = await fixture(t);
+  const ended = updateRun(validation.id, {
+    status: 'done',
+    completionPolicy: 'default',
+    releasedCheckout: {
+      slotId: vars.slotId,
+      branch: validation.branch!,
+      headSha: base,
+      at: '2026-10-29T00:00:00.000Z',
+    },
+    steps: [
+      {
+        name: 'review',
+        status: 'done',
+        outputs: { reviewSnapshot: { headSha: head, capturedAt: '2026-10-30T00:00:00.000Z' } },
+      },
+    ],
+  });
+  git('checkout', '-q', 'main');
+  git('branch', '-q', '-D', ended.branch!);
+  const parked = await parkRunBranchCommits(ended, vars, localExec, { ...checks, dataOnly: true });
+  assert.equal(parked?.headSha, head);
+});
+
+test('data-only backfill preserves divergent review and release histories', async (t) => {
+  const { git, vars, base, head, validation } = await fixture(t);
+  git('checkout', '-q', '-b', 'other-work', base);
+  git('commit', '-q', '--allow-empty', '-m', 'separate checkout lineage');
+  const releasedHead = git('rev-parse', 'HEAD');
+  const ended = updateRun(validation.id, {
+    status: 'done',
+    completionPolicy: 'default',
+    releasedCheckout: {
+      slotId: vars.slotId,
+      branch: validation.branch!,
+      headSha: releasedHead,
+      at: '2026-10-31T00:00:00.000Z',
+    },
+    steps: [
+      {
+        name: 'review',
+        status: 'done',
+        outputs: { reviewSnapshot: { headSha: head, capturedAt: '2026-10-30T00:00:00.000Z' } },
+      },
+    ],
+  });
+  git('branch', '-q', '-D', ended.branch!);
+  const before = git('rev-parse', 'HEAD');
+  await parkRunBranchCommits(ended, vars, localExec, { ...checks, dataOnly: true });
+  const records = getRun(ended.id)?.parkedCommits ?? [];
+  assert.deepEqual(new Set(records.map((entry) => entry.headSha)), new Set([head, releasedHead]));
+  for (const record of records) assert.equal(git('rev-parse', record.ref), record.headSha);
+  assert.equal(git('rev-parse', 'HEAD'), before);
+  assert.equal(git('branch', '--show-current'), 'other-work');
 });

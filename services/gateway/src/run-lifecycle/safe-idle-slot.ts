@@ -151,8 +151,10 @@ export async function reuseSafeIdleSlot(
     // Automatic reuse never parks an ownerless checkout's commits: that is an operator release.
     const localWork = eligibility.confirmationRequired || workspace.publication === 'unpushed';
     if (localWork && !expected?.retainedCandidate) {
-      const { getRun } = await import('../runs/store.js');
-      const owner = expected?.recordRunId ? getRun(expected.recordRunId) : undefined;
+      const { getRunWithArchived } = await import('../runs/store.js');
+      const owner = expected?.recordRunId
+        ? await getRunWithArchived(expected.recordRunId)
+        : undefined;
       if (
         parksBranchCommits(owner) &&
         !workspace.dirtyCount &&

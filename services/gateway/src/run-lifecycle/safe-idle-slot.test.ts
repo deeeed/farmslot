@@ -81,6 +81,7 @@ mock.module('../runs/store.js', {
     ...store,
     getAllRuns: () => runs,
     getRun: (id: string) => runs.find((run) => run.id === id),
+    getRunWithArchived: async (id: string) => runs.find((run) => run.id === id),
     persistRunNow: async () => {},
     updateRunStep: (id: string, name: string, patch: Partial<Run['steps'][number]>) => {
       const run = runs.find((run) => run.id === id)!;
@@ -199,20 +200,21 @@ const validationRun = (overrides: Partial<Run> = {}) =>
 const releaseFor = (runId: string) =>
   reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null, recordRunId: runId });
 
-test("a finished artifact-only run's own unpushed checkout returns to idle through a parking release", async () => {
-  const run = validationRun();
-  runs = [run];
-  workspace.branch = run.branch!;
-  workspace.publication = 'unpushed';
-  assert.deepEqual(await releaseFor(run.id), { kind: 'ready' });
-  assert.deepEqual(modes, ['force']);
-  assert.deepEqual(parkRunIds, ['validation']);
-});
+for (const completionPolicy of ['artifact-only', 'default'] as const) {
+  test(`a finished ${completionPolicy} run's own unpushed checkout returns to idle through a parking release`, async () => {
+    const run = validationRun({ completionPolicy });
+    runs = [run];
+    workspace.branch = run.branch!;
+    workspace.publication = 'unpushed';
+    assert.deepEqual(await releaseFor(run.id), { kind: 'ready' });
+    assert.deepEqual(modes, ['force']);
+    assert.deepEqual(parkRunIds, ['validation']);
+  });
+}
 
-test("work that isn't a finished artifact-only run's own is still kept", async () => {
+test("work that isn't a finished run's own is still kept", async () => {
   workspace.publication = 'unpushed';
   for (const [label, run, setup] of [
-    ['a publishing run', validationRun({ completionPolicy: 'default' }), () => {}],
     ['a run still working', validationRun({ status: 'monitoring' }), () => {}],
     ['another branch', validationRun(), () => (workspace.branch = 'someone-else')],
     ['dirty files', validationRun(), () => (workspace.dirtyCount = 1)],

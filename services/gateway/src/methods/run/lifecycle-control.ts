@@ -41,11 +41,7 @@ import {
   routeRunTransition,
   type RunTransitionEffectOutcome,
 } from '../../run-lifecycle/transition-router.js';
-import {
-  ownsArtifactOnlyBranch,
-  parksBranchCommits,
-  recordReleasedCheckout,
-} from '../../run-lifecycle/validation-run-commits.js';
+import { parksBranchCommits } from '../../run-lifecycle/validation-run-commits.js';
 import {
   isRunnerPaneRetired,
   normalizeRunner,
@@ -464,12 +460,6 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
         if ((await readSlotRow(slotId))?.workspace_recovery)
           return { released: false, skipped: result.reason };
       }
-    }
-    // A release that keeps an artifact-only run's checkout (COMPLETE, an interactive done-no-pr,
-    // a failed run) names the head it leaves while the run still owns the slot.
-    if (!blocker && !returnsToIdle && ownsArtifactOnlyBranch(run)) {
-      const { loadSlotVars } = await import('../../core/config.js');
-      await recordReleasedCheckout(run, await loadSlotVars(slotId), execOnSlot);
     }
     fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');

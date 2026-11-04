@@ -40,7 +40,7 @@ export async function reclaimFinishedSlot(
       run.project === incoming.project &&
       (!owner || run.id === owner) &&
       isTerminalRunStatus(run.status) &&
-      run.status !== 'cancelled' &&
+      (run.status !== 'cancelled' || (!owner && !!run.archivedAt)) &&
       !isCompletionPrerequisiteFailure(run) &&
       !isHeldForResultDecision(run),
   );
@@ -80,6 +80,22 @@ export async function reclaimFinishedSlot(
   // Owner-bound release retains completion/park/native guards. An ownerless
   // historical checkout instead fences the epoch sampled before the Git reads.
   const { slotRelease } = await import('../methods/slot/release.js');
+  if (!owner) {
+    const recorded = finished.find((run) => run.branch === branch)!;
+    const { reuseSafeIdleSlot } = await import('./safe-idle-slot.js');
+    const result = await reuseSafeIdleSlot(slotId, emit, {
+      epoch: Number(row.slot_epoch) || 0,
+      runId: null,
+      recordRunId: recorded.id,
+      ...(recorded.releasedCheckout?.slotId === slotId &&
+      recorded.releasedCheckout.branch === branch
+        ? { parkHeadSha: recorded.releasedCheckout.headSha }
+        : {}),
+    });
+    if (result.kind !== 'ready')
+      throw new Error(`Finished slot ${slotId} cleanup refused: ${result.reason}`);
+    return;
+  }
   const result = await slotRelease(
     { slotId, ...(owner ? { expectedRunId: owner } : {}) },
     emit,
