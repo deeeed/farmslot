@@ -94,6 +94,13 @@ const defaultFleetStatusDeps: FleetStatusDeps = {
   workspaces: { read: observedFleetWorkspaces, refresh: enrichFleetWorkspaces },
 };
 
+const monitorFleetStatusDeps: FleetStatusDeps = {
+  ...defaultFleetStatusDeps,
+  refresh: () => fleetHealthRefresh(),
+  join: () => machineHealthRefreshes.join(),
+  workspaces: { read: observedFleetWorkspaces },
+};
+
 function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
   if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
   return {
@@ -177,7 +184,7 @@ export async function fleetStatus(
 
 /** Health/violation monitoring consumes held workspace observations; viewers own their probes. */
 export function fleetMonitorStatus(
-  deps: FleetStatusDeps = defaultFleetStatusDeps,
+  deps: FleetStatusDeps = monitorFleetStatusDeps,
 ): Promise<FleetStatusResult> {
   const workspaces = deps.workspaces;
   return fleetStatus(undefined, {
@@ -485,7 +492,16 @@ export function withFollowUpRefresh<T>(run: () => Promise<T>): {
   };
 }
 
-const fleetRefreshes = withFollowUpRefresh(runFleetRefresh);
+const machineHealthRefreshes = withFollowUpRefresh(runFleetHealthRefresh);
+const fleetRefreshes = withFollowUpRefresh(async () => {
+  const { fleet } = await machineHealthRefreshes.refresh();
+  return { fleet: await enrichFleetWorkspaces(fleet) };
+});
+
+/** Background callers need current machine health without viewer-only workspace inspection. */
+export function fleetHealthRefresh(): Promise<FleetStatusResult> {
+  return machineHealthRefreshes.refresh();
+}
 
 /** Re-probe the fleet; a call made while a refresh runs gets one more run after it. */
 export function fleetRefresh(): Promise<FleetStatusResult> {
@@ -497,7 +513,7 @@ export function joinFleetRefresh(): Promise<FleetStatusResult> {
   return fleetRefreshes.join();
 }
 
-async function runFleetRefresh(): Promise<FleetStatusResult> {
+async function runFleetHealthRefresh(): Promise<FleetStatusResult> {
   // 1. Load all pool JSONs
   const { pools, unread } = await loadAllPools();
   if (pools.length === 0 && unread.errors.length === 0) {
@@ -535,8 +551,7 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
     ),
   );
 
-  const fleet = await enrichFleetWorkspaces(await loadFleetStatus(true));
-  return { fleet };
+  return { fleet: await loadFleetStatus(true) };
 }
 
 export function buildFleetRefreshSnapshot(

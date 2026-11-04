@@ -93,7 +93,7 @@ import { assertPressureAdmissionConfigValid } from './methods/dispatch/pressure-
 import { assertDispatchPressureAdmissionEnvValid } from './methods/dispatch/pressure-admission-control.js';
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
-import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
+import { fleetHealthRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
 import {
   startGatewayUpdateObservation,
   wakeGatewayUpdateObservation,
@@ -1060,7 +1060,7 @@ async function main(): Promise<void> {
         ? 'cached fleet is stale'
         : 'cached fleet is empty';
     console.log(`[startup] ${reason} — running initial fleet refresh`);
-    fleetRefresh()
+    fleetHealthRefresh()
       .then(({ fleet }) => {
         broadcastEvent(Events.FLEET_UPDATED, { fleet });
       })

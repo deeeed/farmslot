@@ -824,8 +824,8 @@ export function startFileWatcher() {
         // inventory's import graph.
         const { clearDeviceInventoryCache } = await import('./device-inventory.js');
         clearDeviceInventoryCache();
-        const { fleetRefresh } = await import('../methods/fleet.js');
-        await fleetRefresh();
+        const { fleetHealthRefresh } = await import('../methods/fleet.js');
+        await fleetHealthRefresh();
       } catch (err) {
         console.error('[state] pool refresh failed:', (err as Error).message);
       }
