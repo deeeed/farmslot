@@ -1,0 +1,1 @@
+- Restore progress watches for running workers in manual slots. Idle and finished slots show retained progress or no progress instead of an unsupported-watch error.

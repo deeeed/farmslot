@@ -1602,10 +1602,13 @@ export function subtaskUnitFilePaths(
  * (resumeBlockedRunWhoseWorkerContinued).
  */
 export function slotHasActiveWorkerTask(
-  slot: Pick<SlotStatus, 'lifecycle' | 'phase' | 'currentRunId'>,
+  slot: Pick<SlotStatus, 'lifecycle' | 'phase' | 'currentRunId'> &
+    Partial<Pick<SlotStatus, 'agent'>>,
   blockedRunIds: ReadonlySet<string>,
 ): boolean {
   return (
+    // Manual admission does not stop a worker already running in the slot.
+    slot.agent === 'working' ||
     slot.lifecycle === 'busy' ||
     (slot.lifecycle === 'held' && slot.phase === 'ci-watch') ||
     Boolean(slot.currentRunId && blockedRunIds.has(slot.currentRunId))

@@ -9,6 +9,7 @@ import {
   type AgentContext,
   DEFAULT_TASK_DIR,
   enumerateChecklistCheckboxes,
+  isTerminalRunStatus,
   type Run,
   type SlotStatus,
   type TaskPhaseProgress,
@@ -76,29 +77,55 @@ export async function taskProgress(
   const requested = params.runId ? getRun(params.runId) : undefined;
   if (params.runId && !requested)
     throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
-  const runIdentity = requested ? progressRunIdentity(requested, params) : undefined;
   const slot = params.slotId
     ? (await loadFleetStatus(false, true)).slots.find((row) => row.slot === params.slotId)
     : undefined;
-  const slotIdentity = JSON.stringify([slot?.currentRunId, slot?.taskFile]);
+  const boundRun = requested ?? (slot?.currentRunId ? getRun(slot.currentRunId) : undefined);
+  const runIdentity = boundRun ? progressRunIdentity(boundRun, params) : undefined;
   const live =
     !requested ||
     !params.slotId ||
     (requested.slotId === params.slotId && slot?.currentRunId === requested.id);
-  const checkSource = options.observed
-    ? await admitProgressSource(params, requested, slot, live)
-    : undefined;
-  const result = live
-    ? await readTaskProgress(params, slot, requested)
-    : await recordedRunProgress(params, requested);
+  const { slotHasActiveWorkerTask } = await import('../tasks/watcher.js');
+  const inactive = Boolean(
+    live &&
+    slot &&
+    ((boundRun && isTerminalRunStatus(boundRun.status)) ||
+      (['ready', 'held', 'manual', 'disabled'].includes(slot.lifecycle) &&
+        !slotHasActiveWorkerTask(
+          slot,
+          new Set(boundRun?.status === 'blocked' ? [boundRun.id] : []),
+        ))),
+  );
+  const slotIdentity = JSON.stringify([
+    slot?.currentRunId,
+    slot?.taskFile,
+    slot?.lifecycle,
+    slot?.phase,
+    slot?.agent,
+  ]);
+  const checkSource =
+    options.observed && !inactive
+      ? await admitProgressSource(params, requested, slot, live)
+      : undefined;
+  // An inactive slot's old working tree is not a live producer. Serve only its
+  // gateway-owned retained run, or nothing; a Retry cannot create a worker watch.
+  const result = inactive
+    ? ((boundRun ? await recordedRunProgress(params, boundRun) : null) ?? {
+        slotId: params.slotId,
+        markdown: '',
+      })
+    : live
+      ? await readTaskProgress(params, slot, requested)
+      : await recordedRunProgress(params, requested);
   if (!result)
     throw new GatewayMethodError(
       'PROGRESS_OWNER_CHANGED',
       `Run ${params.runId} no longer owns slot ${params.slotId}, and its recorded progress is unavailable.`,
     );
-  if (requested) {
-    const current = getRun(requested.id);
-    if (!current) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${requested.id}`);
+  if (boundRun) {
+    const current = getRun(boundRun.id);
+    if (!current) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${boundRun.id}`);
     if (progressRunIdentity(current, params) !== runIdentity)
       throw new GatewayMethodError(
         'PROGRESS_OWNER_CHANGED',
@@ -109,7 +136,15 @@ export async function taskProgress(
     const current = (await loadFleetStatus(false, true)).slots.find(
       (row) => row.slot === params.slotId,
     );
-    if (JSON.stringify([current?.currentRunId, current?.taskFile]) !== slotIdentity)
+    if (
+      JSON.stringify([
+        current?.currentRunId,
+        current?.taskFile,
+        current?.lifecycle,
+        current?.phase,
+        current?.agent,
+      ]) !== slotIdentity
+    )
       throw new GatewayMethodError(
         'PROGRESS_OWNER_CHANGED',
         'The slot binding changed during the progress read.',
@@ -199,6 +234,7 @@ function progressRunIdentity(run: Run, params: TaskProgressParams): string {
     throw new GatewayMethodError('NOT_FOUND', 'The requested progress context no longer exists.');
   return JSON.stringify([
     run.slotId,
+    run.status,
     run.flowType,
     run.taskFile,
     run.activeTaskFile,

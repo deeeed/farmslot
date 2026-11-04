@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { WebSocket } from 'ws';
+
+import type { ResponseFrame, Run, SlotLifecycle } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
@@ -23,6 +26,7 @@ import { makeRun } from './run/test-fixtures.js';
 let repoRoot = '';
 let currentRunId: string | null = null;
 let currentTaskFile: string | null = null;
+let lifecycle: SlotLifecycle = 'busy';
 let beforeRead: (() => void) | undefined;
 
 mock.module('../core/config.js', {
@@ -62,7 +66,7 @@ mock.module('../fleet/state.js', {
   namedExports: {
     ...realFleetState,
     loadFleetStatus: async () => ({
-      slots: [{ slot: 'slot-acceptance', taskFile: currentTaskFile, currentRunId }],
+      slots: [{ slot: 'slot-acceptance', taskFile: currentTaskFile, currentRunId, lifecycle }],
     }),
   },
 });
@@ -155,6 +159,36 @@ function writeFixture(ledgerBody: string | null): { root: string; taskFileRel: s
 async function progressFor(fixture: { taskFileRel: string }) {
   return taskProgress({ slotId: 'slot-acceptance', taskFile: fixture.taskFileRel });
 }
+
+test('idle slots with an old task directory have no live progress and need no watch', async () => {
+  const fixture = writeFixture(null);
+  currentRunId = null;
+  currentTaskFile = 'dev/demo';
+  lifecycle = 'ready';
+  try {
+    const result = await observedProgress({ slotId: 'slot-acceptance' });
+    assert.equal(result.markdown, '');
+    assert.equal(result.structured, undefined);
+  } finally {
+    lifecycle = 'busy';
+    currentTaskFile = null;
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a live slot still refuses progress until a verified watch has armed', async () => {
+  const fixture = writeFixture(null);
+  currentTaskFile = 'dev/demo';
+  lifecycle = 'busy';
+  try {
+    await assert.rejects(observedProgress({ slotId: 'slot-acceptance' }), {
+      code: 'RESOURCE_OBSERVATION_UNSUPPORTED',
+    });
+  } finally {
+    currentTaskFile = null;
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
 
 test('task.progress preserves imported historical links without a verdict or timeline', async () => {
   const fixture = writeFixture(null);
@@ -299,6 +333,114 @@ function writeReleasedRun(options: { workerMirror: boolean }) {
   );
   return fixture;
 }
+
+test('a finished run still attached to a held slot reads retained progress without a live watch', async () => {
+  const fixture = writeReleasedRun({ workerMirror: true });
+  lifecycle = 'held';
+  currentTaskFile = 'dev/demo';
+  currentRunId = 'run-released';
+  try {
+    const result = await observedProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
+    assert.equal(result.structured?.completedSteps, 2);
+  } finally {
+    lifecycle = 'busy';
+    currentTaskFile = null;
+    currentRunId = null;
+    runs.delete('run-released');
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('the production observed RPC serves idle absence and retained completion without a watch', async (t) => {
+  const fixture = writeReleasedRun({ workerMirror: true });
+  const { createGatewayAuthRuntime } = await import('../security/auth.js');
+  const { createWebSocketServer } = await import('../server.js');
+  const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: path.join(fixture.root, 'proof-home') });
+  const principal = auth.writer.createPrincipal(
+    { type: 'service', displayName: 'Progress proof' },
+    [{ role: 'admin', scope: { kind: 'global' } }],
+  );
+  const credential = auth.writer.issueCredential(principal.id, 'Disposable progress proof');
+  const server = createServer();
+  const wss = createWebSocketServer(server, auth);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws`);
+  t.after(async () => {
+    socket.terminate();
+    for (const client of wss.clients) client.terminate();
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    lifecycle = 'busy';
+    currentTaskFile = null;
+    currentRunId = null;
+    runs.delete('run-released');
+    rmSync(fixture.root, { recursive: true, force: true });
+  });
+  const request = (id: string, method: string, params: object, observed = false) =>
+    new Promise<ResponseFrame>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        socket.off('message', receive);
+        reject(new Error(`Progress proof request ${method} timed out`));
+      }, 5000);
+      const receive = (data: Buffer) => {
+        const frame: ResponseFrame = JSON.parse(data.toString());
+        if (frame.id !== id) return;
+        clearTimeout(timeout);
+        socket.off('message', receive);
+        resolve(frame);
+      };
+      socket.on('message', receive);
+      socket.send(
+        JSON.stringify({
+          type: 'req',
+          id,
+          method,
+          params,
+          ...(observed ? { resourceRead: { version: 1 } } : {}),
+        }),
+      );
+    });
+  await new Promise<void>((resolve, reject) => {
+    socket.once('open', resolve);
+    socket.once('error', reject);
+  });
+  const authenticated = await request('auth', 'auth.connect', {
+    clientKind: 'ui',
+    token: credential.secret,
+  });
+  assert.equal(authenticated.ok, true);
+  lifecycle = 'ready';
+  currentTaskFile = 'dev/demo';
+  currentRunId = null;
+  const idle = await request('idle', 'task.progress', { slotId: 'slot-acceptance' }, true);
+  assert.equal(idle.ok, true);
+  assert.deepEqual(idle.payload, { slotId: 'slot-acceptance', markdown: '' });
+  assert(idle.resourceState);
+  lifecycle = 'held';
+  currentRunId = 'run-released';
+  const finished = await request(
+    'finished',
+    'task.progress',
+    { slotId: 'slot-acceptance', runId: 'run-released' },
+    true,
+  );
+  assert.equal(finished.ok, true);
+  assert(
+    finished.payload && typeof finished.payload === 'object' && 'structured' in finished.payload,
+  );
+  const structured = finished.payload.structured;
+  assert(structured && typeof structured === 'object' && 'completedSteps' in structured);
+  assert.equal(structured.completedSteps, 2);
+  if (process.env.FARMSLOT_PROGRESS_PROOF_DIR) {
+    mkdirSync(process.env.FARMSLOT_PROGRESS_PROOF_DIR, { recursive: true });
+    writeFileSync(
+      path.join(process.env.FARMSLOT_PROGRESS_PROOF_DIR, 'rpc.json'),
+      JSON.stringify({ idle, finished }, null, 2),
+    );
+  }
+});
 
 test('a finished run whose slot no longer holds its task reads its recorded task directory', async () => {
   const fixture = writeReleasedRun({ workerMirror: true });
