@@ -66,7 +66,7 @@ export function buildDevServerLogTailWindowCommand(
   return [
     buildPrepareKillWindowsByNameCommand(session, windowName),
     tmuxShellSnippet(
-      `"$TMUX_BIN" new-window -d -t ${shellQuote(`${session}:`)} ` +
+      `new-window -d -t ${shellQuote(`${session}:`)} ` +
         `-n ${shellQuote(windowName)} -c ${shellQuote(cwd)} ${shellQuote(tailCmd)}`,
     ),
   ].join('\n');
