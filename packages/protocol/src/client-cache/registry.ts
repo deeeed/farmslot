@@ -1103,6 +1103,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     persisted: true,
     maxBytes: 20 * mb,
     retention: keptUpTo(RUN_DETAIL_STORE_BYTES),
+    // Ordinary reads inspect the live publication source and retained evidence.
+    // Match their bounded verification window instead of the generic 15-second RPC limit.
+    timeoutMs: 120_000,
     live: true,
     dependencies: (params: unknown) => [
       { family: 'run', runId: requiredId(params, 'runId') },

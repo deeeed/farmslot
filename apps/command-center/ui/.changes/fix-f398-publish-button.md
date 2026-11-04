@@ -1,0 +1,1 @@
+- Keep slow current-run reads pending through the shared budget instead of pausing publication actions after the generic 15-second deadline.

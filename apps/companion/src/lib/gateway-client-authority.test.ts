@@ -146,7 +146,11 @@ test(
   { timeout: 4000 },
   async (t) => {
     const original = globalThis.WebSocket;
-    globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+    Object.defineProperty(globalThis, 'WebSocket', {
+      configurable: true,
+      writable: true,
+      value: Socket,
+    });
     const { GatewayClient } = await import('./gateway-client');
     const client = new GatewayClient('ws://localhost:19777', { token: 'admin' });
     try {
@@ -162,7 +166,7 @@ test(
       );
       const sourcesId = socket.sent.at(-1)!.id;
       const runs = assert.rejects(
-        client.requestResource('run.get', { runId: 'ordinary' }),
+        client.requestResource('task.progress', { slotId: 'ordinary' }),
         /timed out/,
       );
       t.mock.timers.tick(31_000);
@@ -173,6 +177,55 @@ test(
     } finally {
       client.disconnect();
       globalThis.WebSocket = original;
+    }
+  },
+);
+
+test(
+  'native current-run reads use the shared bounded gate-inspection budget',
+  { timeout: 4000 },
+  async (t) => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+    Object.defineProperty(globalThis, 'WebSocket', {
+      configurable: true,
+      writable: true,
+      value: Socket,
+    });
+    const { GatewayClient } = await import('./gateway-client');
+    const client = new GatewayClient('ws://localhost:19777', { token: 'fixture' });
+    try {
+      client.connect();
+      const socket = Socket.sockets.at(-1)!;
+      socket.open();
+      socket.response(socket.sent[0].id, auth('fixture', 'farm'));
+      await settle();
+      t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+      let settled = false;
+      const reading = client.requestResource('run.get', { runId: 'slow-gate' }).then(
+        (value) => {
+          settled = true;
+          return { value };
+        },
+        (error: Error) => {
+          settled = true;
+          return { error };
+        },
+      );
+      t.mock.timers.tick(81_332);
+      await settle();
+      assert.equal(
+        settled,
+        false,
+        'the native client must not reject the measured slow inspection',
+      );
+      t.mock.timers.tick(38_669);
+      const outcome = await reading;
+      assert.ok('error' in outcome);
+      assert.match(outcome.error.message, /Request run.get timed out after 120000ms/);
+    } finally {
+      client.disconnect();
+      if (original) Object.defineProperty(globalThis, 'WebSocket', original);
+      else Reflect.deleteProperty(globalThis, 'WebSocket');
     }
   },
 );
