@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import type { Run, TaskProgressStructured, TaskProgressUpdatedPayload } from '@farmslot/protocol';
 
+import { checklistProgressIsLive, checklistProgressView } from '../src/checklist-progress.js';
 import {
   acceptsRunChecklistProgress,
   runChecklistProgressTarget,
@@ -165,4 +166,113 @@ test('a worker event cannot replace a native reviewer checklist with an attempt-
     acceptsRunChecklistProgress(source, { ...update, role: 'dev', contextId: 'dev' }),
     false,
   );
+});
+
+test('a held review-fix observation stops its clock at the completed owner, including on reload', () => {
+  const input = progress();
+  input.timing = {
+    schemaVersion: 1,
+    source: 'REVIEW-FIX.md',
+    startedAt: '2026-11-04T11:26:18.756Z',
+    events: [],
+  };
+  const gate = run({
+    status: 'blocked',
+    activeTaskFile: 'tasks/test/REVIEW-FIX.md',
+    steps: [
+      { name: 'review', status: 'done' },
+      { name: 'human-gate', status: 'running' },
+    ],
+    agentContexts: [
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Review fix',
+        status: 'complete',
+        slotId: 'slot-1',
+        runId: 'run-1',
+        taskFile: 'tasks/test/REVIEW-FIX.md',
+        signalFile: null,
+        target: null,
+        runner: null,
+        model: null,
+        nudgeCount: 0,
+        updatedAt: '2026-11-04T11:33:36.963Z',
+        attemptStartedAt: '2026-11-04T11:26:18.756Z',
+        completedAt: '2026-11-04T11:33:36.963Z',
+      },
+    ],
+  });
+  const rowsAt = (value: Run, now: string) =>
+    checklistProgressView(input, { run: value, nowMs: Date.parse(now) })!.phases[0].rows;
+  assert.equal(checklistProgressIsLive(input, gate), false);
+  const held = rowsAt(gate, '2026-11-04T12:39:00Z');
+  assert.equal(held.find((row) => row.step.status === 'running')?.duration, '7m 18s');
+  assert.equal(held.find((row) => row.step.status === 'running')?.live, false);
+  assert.deepEqual(rowsAt(structuredClone(gate), '2026-11-04T13:39:00Z'), held);
+  const child = progress();
+  child.timing = { ...input.timing, source: 'subtasks/fix-proof.md' };
+  input.phases[0].steps[1].subtask = {
+    id: 'fix-proof',
+    status: 'running',
+    source: { kind: 'skill', ref: 'review', sha256: 'a', renderedSha256: 'b' },
+    progress: child,
+    lastEventAt: gate.updatedAt,
+  };
+  const nextReviewer = run({
+    status: 'reviewing',
+    activeTaskFile: 'tasks/test/REVIEW.md',
+    agentContexts: gate.agentContexts,
+  });
+  assert.equal(
+    checklistProgressIsLive(input, nextReviewer),
+    false,
+    'the finished fix owns its child clock while another reviewer works',
+  );
+
+  input.phases[0].steps[1].subtask = undefined;
+  input.timing.source = 'CHECKLIST.md';
+  const finishedWorker = run({
+    agentContexts: gate.agentContexts?.map((context) => ({
+      ...context,
+      id: 'dev',
+      role: 'dev',
+      taskFile: 'tasks/test/TASK.md',
+    })),
+  });
+  assert.equal(
+    checklistProgressIsLive(input, finishedWorker),
+    false,
+    'TASK and CHECKLIST belong to the same worker',
+  );
+  assert.equal(
+    checklistProgressView(input, {
+      run: finishedWorker,
+      nowMs: Date.parse('2026-11-04T13:39:00Z'),
+    })!.phases[0].rows.find((row) => row.step.status === 'running')?.duration,
+    '7m 18s',
+  );
+  assert.equal(
+    input.timing.finishedAt,
+    undefined,
+    'presentation does not mutate the cached observation',
+  );
+});
+
+test('an idle gate without a recorded end never invents an elapsed time for stale running rows', () => {
+  const input = progress();
+  input.timing = {
+    schemaVersion: 1,
+    source: 'REVIEW-FIX.md',
+    startedAt: '2026-11-04T11:26:18.756Z',
+    events: [],
+  };
+  const gate = run({ status: 'blocked', steps: [{ name: 'human-gate', status: 'running' }] });
+  assert.equal(checklistProgressIsLive(input, gate), false);
+  const row = checklistProgressView(input, {
+    run: gate,
+    nowMs: Date.parse('2026-11-04T12:39:00Z'),
+  })!.phases[0].rows.find((entry) => entry.step.status === 'running');
+  assert.equal(row?.duration, null);
+  assert.equal(row?.live, false);
 });

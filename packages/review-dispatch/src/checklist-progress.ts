@@ -11,6 +11,8 @@ import {
   type PipelineProgressStep,
 } from '@farmslot/protocol/checklist-target';
 
+import { runActivityView } from './run-activity.js';
+
 export interface ChecklistProgressStep {
   text: string;
   checked: boolean;
@@ -51,6 +53,8 @@ export interface ChecklistProgressView {
 }
 
 export interface ChecklistProgressOptions {
+  run?: Run | null;
+  execution?: ChecklistProgressExecution;
   nowMs?: number;
   activeStep?: PipelineProgressStep;
   activeTaskBasename?: string | null;
@@ -59,10 +63,45 @@ export interface ChecklistProgressOptions {
   fallback?: ChecklistProgressFallback | null;
 }
 
+export interface ChecklistProgressExecution {
+  active: boolean;
+  finishedAt?: string;
+}
+
+/** A held observation cannot keep its owner's clock running after that work has ended. */
+export function checklistProgressExecution(
+  progress: TaskProgressStructured | null | undefined,
+  run?: Run | null,
+): ChecklistProgressExecution | undefined {
+  if (!run) return undefined;
+  const file = progress?.timing?.source ?? run.activeTaskFile ?? run.taskFile;
+  const checklistName = (file: string | null | undefined) => {
+    const name = file?.split('/').pop();
+    return name === 'TASK.md' ? 'CHECKLIST.md' : name;
+  };
+  const name = checklistName(file);
+  const context = [...(run.agentContexts ?? [])]
+    .filter((entry) => name && checklistName(entry.taskFile) === name)
+    .sort((a, b) =>
+      (b.attemptStartedAt ?? b.startedAt ?? '').localeCompare(
+        a.attemptStartedAt ?? a.startedAt ?? '',
+      ),
+    )[0];
+  const activity = runActivityView(run);
+  const active = Boolean(
+    activity && (activity.ownerStepName !== 'human-gate' || activity.kind !== 'step'),
+  );
+  return {
+    active: active && (!context || ['working', 'launching'].includes(context.status)),
+    finishedAt: context?.completedAt ?? run.completedAt ?? undefined,
+  };
+}
+
 export function checklistProgressRow(
   step: TaskStepProgress,
   timing?: TaskChecklistTiming,
   nowMs = Date.now(),
+  execution?: ChecklistProgressExecution,
 ): ChecklistRowView {
   const marks = [...(timing?.events ?? [])].sort((a, b) => a.checkedAt.localeCompare(b.checkedAt));
   const completed = deriveChecklistStepDurations(timing, timing?.startedAt).find(
@@ -70,8 +109,17 @@ export function checklistProgressRow(
   );
   const start = marks.at(-1)?.checkedAt ?? timing?.startedAt;
   const startMs = start ? Date.parse(start) : Number.NaN;
-  const endMs = timing?.finishedAt ? Date.parse(timing.finishedAt) : nowMs;
-  const live = step.status === 'running' && Number.isFinite(startMs) && !timing?.finishedAt;
+  const finishedAt = timing?.finishedAt ?? execution?.finishedAt;
+  const endMs = finishedAt
+    ? Date.parse(finishedAt)
+    : execution?.active === false
+      ? Number.NaN
+      : nowMs;
+  const live =
+    step.status === 'running' &&
+    Number.isFinite(startMs) &&
+    !finishedAt &&
+    execution?.active !== false;
   const durationMs =
     step.status === 'done' &&
     completed &&
@@ -109,12 +157,15 @@ function checklistDurationLabel(ms: number): string {
 /** Both renderers tick only while a checklist or one of its children has live elapsed time. */
 export function checklistProgressIsLive(
   progress: TaskProgressStructured | null | undefined,
+  run?: Run | null,
+  inheritedExecution?: ChecklistProgressExecution,
 ): boolean {
+  const execution = inheritedExecution ?? checklistProgressExecution(progress, run);
   return !!progress?.phases.some((phase) =>
     phase.steps.some(
       (step) =>
-        checklistProgressRow(step, progress.timing).live ||
-        checklistProgressIsLive(step.subtask?.progress),
+        checklistProgressRow(step, progress.timing, undefined, execution).live ||
+        checklistProgressIsLive(step.subtask?.progress, run, execution),
     ),
   );
 }
@@ -180,7 +231,14 @@ export function checklistProgressView(
       counts: `${phase.completedSteps}/${phase.totalSteps}`,
       complete: phase.completedSteps === phase.totalSteps,
       running: phase.steps.some((step) => step.status === 'running'),
-      rows: phase.steps.map((step) => checklistProgressRow(step, progress?.timing, options.nowMs)),
+      rows: phase.steps.map((step) =>
+        checklistProgressRow(
+          step,
+          progress?.timing,
+          options.nowMs,
+          options.execution ?? checklistProgressExecution(progress, options.run),
+        ),
+      ),
     })),
     waiting: total === 0,
     message: total ? null : (options.fallback?.meta ?? null),

@@ -470,6 +470,7 @@ export class RunPipeline extends LitElement {
       .activeStep=${this._activeTaskProgressStepId()}
       .activeTaskBasename=${this.run.activeTaskFile?.split('/').pop()}
       .runId=${this.run.id}
+      .run=${this.run}
       .runActive=${isRunWorking(this.run)}
       closable
       @progress-close=${() => {

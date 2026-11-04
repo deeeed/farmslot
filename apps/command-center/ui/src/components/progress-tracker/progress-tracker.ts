@@ -2,12 +2,15 @@ import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from '
 import { customElement, property } from 'lit/decorators.js';
 
 import type {
+  Run,
   TaskChecklistTiming,
   TaskProgressStructured,
   TaskStepProgress,
 } from '@farmslot/protocol';
 import type { PipelineProgressStep } from '@farmslot/protocol/checklist-target';
 import {
+  type ChecklistProgressExecution,
+  checklistProgressExecution,
   type ChecklistProgressFallback,
   checklistProgressIsLive,
   type ChecklistProgressOptions,
@@ -40,8 +43,9 @@ export function renderTrackerStepRow(
   nested = false,
   timing?: TaskChecklistTiming,
   nowMs?: number,
+  execution?: ChecklistProgressExecution,
 ): TemplateResult {
-  const row = checklistProgressRow(step, timing, nowMs);
+  const row = checklistProgressRow(step, timing, nowMs, execution);
   return html`
     <div class="substep ${step.status}">
       <span class="substep-icon">${row.icon}</span>
@@ -54,7 +58,14 @@ export function renderTrackerStepRow(
       ? renderSubtaskBlock(
           step.subtask,
           (childStep) =>
-            renderTrackerStepRow(childStep, openScope, true, step.subtask?.progress.timing, nowMs),
+            renderTrackerStepRow(
+              childStep,
+              openScope,
+              true,
+              step.subtask?.progress.timing,
+              nowMs,
+              execution,
+            ),
           openScope,
         )
       : nothing}
@@ -118,6 +129,7 @@ export function renderChecklistProgress(
                   false,
                   progress?.timing,
                   options.nowMs,
+                  checklistProgressExecution(progress, options.run),
                 ),
               )}
             </div>`,
@@ -130,7 +142,7 @@ export class ProgressTracker extends LitElement {
   private readonly _operationClock = new OperationClock(
     this,
     () => this.structured,
-    () => checklistProgressIsLive(this.structured),
+    () => checklistProgressIsLive(this.structured, this.run),
   );
   private readonly subtaskOpen = new SubtaskOpenState();
   @property({ attribute: false }) openScope?: SubtaskOpenScope;
@@ -142,6 +154,7 @@ export class ProgressTracker extends LitElement {
   @property({ attribute: false }) activeStep: PipelineProgressStep = null;
   @property() activeTaskBasename?: string;
   @property() runId?: string;
+  @property({ attribute: false }) run?: Run;
   @property({ type: Boolean }) runActive = false;
   @property({ type: Boolean }) closable = false;
 
@@ -256,6 +269,7 @@ export class ProgressTracker extends LitElement {
       activeStep: this.activeStep,
       activeTaskBasename: this.activeTaskBasename,
       runId: this.runId,
+      run: this.run,
       runActive: this.runActive,
       compact: this.compact,
       closable: this.closable,

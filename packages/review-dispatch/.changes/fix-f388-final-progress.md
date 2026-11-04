@@ -1,0 +1,1 @@
+- Stop checklist elapsed timers when their owning work ends, including held progress at a review gate.

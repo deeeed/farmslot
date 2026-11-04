@@ -18,7 +18,7 @@ import {
   WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
 } from '../core/artifact-copy-policy.js';
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
-import { slotCopyDir, slotCopyFile, slotFileExists, slotListDir } from '../core/slot-io.js';
+import { slotCopyDir, slotFileExists, slotListDir } from '../core/slot-io.js';
 import {
   loadReviewApprovalPolicy,
   normalizeReviewRecommendation,
@@ -26,6 +26,7 @@ import {
 } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { appendReviewFindingBodies } from '../review-publication/validate-comments.js';
+import { mirrorWorkerSubtasks } from '../run-completion/artifact-mirror.js';
 import {
   createRunArtifactAcquisition,
   readOptionalRetainedRunText,
@@ -33,6 +34,7 @@ import {
 } from '../run-completion/retained-artifacts.js';
 import { getRun } from '../runs/store.js';
 import { buildPlanningContextSection, PLANNING_CONTEXT_INPUT } from '../tasks/planning-context.js';
+import { mirrorWorkerProgress } from '../tasks/progress-mirror.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';
 
@@ -164,16 +166,16 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
         skipUnchanged: true,
       });
 
-      for (const document of ['TASK.md', 'CHECKLIST.md']) {
-        const workerDocument = path.join(workerTaskDir, document);
-        if (!(await slotFileExists(vars, workerDocument))) continue;
-        await slotCopyFile(vars, workerDocument, path.join(taskDir, `${document}.worker`), {
-          phase: 'mirror',
-          runId,
-          slotId: run.slotId ?? vars.slotId,
-          label: `${document}.worker`,
-        });
-      }
+      await mirrorWorkerSubtasks(vars, workerTaskDir, taskDir, {
+        transfer: { runId, slotId: run.slotId ?? vars.slotId },
+      });
+      await mirrorWorkerProgress(vars, workerTaskDir, taskDir, run, {
+        phase: 'mirror',
+        runId,
+        slotId: run.slotId ?? vars.slotId,
+        beforeCopy: acquisition.beforeCopy(vars),
+        skipUnchanged: true,
+      });
       console.log(`[run-engine] copied worker artifacts for ${runId.slice(0, 8)}`);
     }
   }

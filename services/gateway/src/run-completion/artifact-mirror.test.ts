@@ -56,6 +56,7 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
   await writeFile(taskFile, '# mirror test\n');
   await writeFile(path.join(workerTaskDir, 'TASK.md'), '# mirror test\n');
+  await writeFile(path.join(workerTaskDir, 'REVIEW-FIX.md'), '# Final fix\n- [x] **1. done**\n');
   await mkdir(path.join(workerTaskDir, 'task-actions/actions'), { recursive: true });
   await writeFile(path.join(workerTaskDir, 'task-actions/actions/probe.cjs'), 'worker action\n');
   await writeFile(path.join(workerTaskDir, 'artifacts/report.md'), 'worker report\n');
@@ -128,6 +129,10 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
         },
       ],
     }),
+  );
+  assert.equal(
+    await readFile(path.join(taskDir, 'REVIEW-FIX.md.worker'), 'utf8'),
+    '# Final fix\n- [x] **1. done**\n',
   );
   assert.equal(await readFile(path.join(taskDir, pipelineResult), 'utf8'), result);
 

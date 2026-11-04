@@ -1,0 +1,1 @@
+- Refresh final review-fix progress at the gate and stop elapsed timers for completed checklist work.

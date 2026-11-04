@@ -1,0 +1,1 @@
+- Retain final review-fix and role checklists with their timing signals, and serve settled progress from the retained run after its live watcher stops.

@@ -4,6 +4,8 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { Run, TaskProgressStructured } from '@farmslot/protocol';
 import {
   type ChecklistPhaseView,
+  type ChecklistProgressExecution,
+  checklistProgressExecution,
   type ChecklistProgressFallback,
   checklistProgressIsLive,
   checklistProgressView,
@@ -20,6 +22,8 @@ function renderPhases(
   runId?: string,
   nested = false,
   nowMs?: number,
+  run?: Run | null,
+  execution?: ChecklistProgressExecution,
 ) {
   return phases.map((phase) => (
     <View key={phase.name} style={styles.phase}>
@@ -69,10 +73,12 @@ function renderPhases(
               subtask={step.subtask}
               renderProgress={(progress) =>
                 renderPhases(
-                  checklistProgressView(progress, { nowMs })?.phases ?? [],
+                  checklistProgressView(progress, { nowMs, run, execution })?.phases ?? [],
                   undefined,
                   true,
                   nowMs,
+                  run,
+                  execution,
                 )
               }
             />
@@ -98,7 +104,7 @@ export function TaskProgressPanel({
   compact?: boolean;
 }) {
   const [nowMs, setNowMs] = React.useState(Date.now);
-  const live = checklistProgressIsLive(progress);
+  const live = checklistProgressIsLive(progress, run);
   React.useEffect(() => {
     if (!live) return;
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
@@ -106,6 +112,7 @@ export function TaskProgressPanel({
   }, [live]);
   const view = checklistProgressView(progress, {
     nowMs,
+    run,
     activeStep: activeTaskProgressStepId(run, progress),
     activeTaskBasename: run?.activeTaskFile?.split('/').pop(),
     fallback: summary,
@@ -121,7 +128,14 @@ export function TaskProgressPanel({
           {'\n'}Waiting for the worker checklist.
         </Text>
       ) : null}
-      {renderPhases(view.phases, run?.id, false, nowMs)}
+      {renderPhases(
+        view.phases,
+        run?.id,
+        false,
+        nowMs,
+        run,
+        checklistProgressExecution(progress, run),
+      )}
     </View>
   );
 }

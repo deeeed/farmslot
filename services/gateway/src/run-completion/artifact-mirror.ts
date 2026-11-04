@@ -50,6 +50,7 @@ import {
 import { parseQaResult } from '../qa/completion.js';
 import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
 import { readAcceptanceStatusLedger } from '../tasks/acceptance-status.js';
+import { mirrorWorkerProgress } from '../tasks/progress-mirror.js';
 import { WORKER_MIRROR_SUFFIX } from '../tasks/sidecars.js';
 
 import {
@@ -683,18 +684,13 @@ export async function refreshArtifactMirror(
       }
     }
 
-    // Copy TASK.md and CHECKLIST.md back (worker may have updated status or checkboxes)
-    for (const document of ['TASK.md', 'CHECKLIST.md']) {
-      const workerDocument = path.join(workerTaskDir, document);
-      if (!(await slotFileExists(vars, workerDocument))) continue;
-      await slotCopyFile(vars, workerDocument, path.join(taskDir, `${document}.worker`), {
-        skipUnchanged: true,
-        phase: 'mirror',
-        ...transferMeta,
-        label: `${document}.worker`,
-      });
-    }
     await mirrorWorkerSubtasks(vars, workerTaskDir, taskDir, { transfer: transferMeta });
+    await mirrorWorkerProgress(vars, workerTaskDir, taskDir, run, {
+      skipUnchanged: true,
+      phase: 'mirror',
+      ...transferMeta,
+      beforeCopy,
+    });
     return copied;
   };
   let copied = 0;

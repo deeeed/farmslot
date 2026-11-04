@@ -26,13 +26,14 @@ export async function attachChecklistTiming(
   progress: TaskProgressStructured,
   run?: Run,
   selected?: AgentContext | null,
+  signalSuffix = '',
 ): Promise<void> {
   const context = checklistTimingContext(run, checklist, selected);
   const startedAt = context?.attemptStartedAt ?? context?.startedAt;
   const primary = checklistName(checklist) === 'CHECKLIST.md';
   const signalPath = path.join(
     path.dirname(checklist),
-    signalFileForChecklist(path.basename(checklist)),
+    `${signalFileForChecklist(path.basename(checklist))}${signalSuffix}`,
   );
   let raw: unknown;
   if (await slotFileExists(io, signalPath)) {

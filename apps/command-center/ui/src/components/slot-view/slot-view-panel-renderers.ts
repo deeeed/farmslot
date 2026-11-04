@@ -147,6 +147,7 @@ export function renderSlotViewSidebarTask(view: SlotView) {
     .structured=${view._structuredProgress}
     .steps=${view._taskSteps}
     .runId=${view._linkedRun?.id}
+    .run=${view._linkedRun ?? undefined}
     .runActive=${view._linkedRun ? isRunWorking(view._linkedRun) : false}
     .activeTaskBasename=${view._linkedRun?.activeTaskFile?.split('/').pop()}
   ></progress-tracker>`;

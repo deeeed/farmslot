@@ -10,6 +10,7 @@ import {
   DEFAULT_TASK_DIR,
   enumerateChecklistCheckboxes,
   isTerminalRunStatus,
+  isTerminalWorkerSignalStatus,
   type Run,
   type SlotStatus,
   type TaskPhaseProgress,
@@ -20,8 +21,9 @@ import {
   type TaskStepProgress,
   type TaskStepStatus,
 } from '@farmslot/protocol';
+import { signalFileForChecklist } from '@farmslot/protocol/checklist-target';
 
-import { selectAgentContext } from '../agents/contexts.js';
+import { selectAgentContext, TERMINAL_AGENT_STATUSES } from '../agents/contexts.js';
 import {
   getOrchestratorTaskRoot,
   loadSlotVars,
@@ -49,6 +51,7 @@ import {
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
+import { checklistTimingContext, isRecord } from '../tasks/checklist-timing.js';
 import { attachChecklistTiming } from '../tasks/checklist-timing-read.js';
 import { attachOperations } from '../tasks/operations.js';
 import {
@@ -87,16 +90,23 @@ export async function taskProgress(
     !params.slotId ||
     (requested.slotId === params.slotId && slot?.currentRunId === requested.id);
   const { slotHasActiveWorkerTask } = await import('../tasks/watcher.js');
-  const inactive = Boolean(
-    live &&
-    slot &&
-    ((boundRun && isTerminalRunStatus(boundRun.status)) ||
-      (['ready', 'held', 'manual', 'disabled'].includes(slot.lifecycle) &&
-        !slotHasActiveWorkerTask(
-          slot,
-          new Set(boundRun?.status === 'blocked' ? [boundRun.id] : []),
-        ))),
-  );
+  const context = boundRun ? progressContext(boundRun, params) : undefined;
+  const settledPath =
+    params.slotId && boundRun && context?.completedAt && TERMINAL_AGENT_STATUSES.has(context.status)
+      ? await settledProgressPath(params, boundRun, context)
+      : null;
+  const inactive =
+    settledPath !== null ||
+    Boolean(
+      live &&
+      slot &&
+      ((boundRun && isTerminalRunStatus(boundRun.status)) ||
+        (['ready', 'held', 'manual', 'disabled'].includes(slot.lifecycle) &&
+          !slotHasActiveWorkerTask(
+            slot,
+            new Set(boundRun?.status === 'blocked' ? [boundRun.id] : []),
+          ))),
+    );
   const slotIdentity = JSON.stringify([
     slot?.currentRunId,
     slot?.taskFile,
@@ -111,7 +121,9 @@ export async function taskProgress(
   // An inactive slot's old working tree is not a live producer. Serve only its
   // gateway-owned retained run, or nothing; a Retry cannot create a worker watch.
   const result = inactive
-    ? ((boundRun ? await recordedRunProgress(params, boundRun) : null) ?? {
+    ? ((boundRun
+        ? await recordedRunProgress(params, boundRun, settledPath ?? undefined)
+        : null) ?? {
         slotId: params.slotId,
         markdown: '',
       })
@@ -181,7 +193,7 @@ async function admitProgressSource(
     }
     return assertProgressOwnerAdmitted(run.id, 'review');
   }
-  const context = run ? selectAgentContext(run, params) : undefined;
+  const context = run ? progressContext(run, params) : undefined;
   if (params.taskFile && run) {
     const vars = await loadSlotVars(params.slotId);
     const selected = run.steps.some((step) => {
@@ -228,8 +240,16 @@ async function admitProgressSource(
   };
 }
 
+/** The active checklist's owner also owns its admission, identity and returned role. */
+function progressContext(run: Run, params: TaskProgressParams): AgentContext | null {
+  const explicit = params.contextId || params.role || params.target;
+  if (explicit) return selectAgentContext(run, params);
+  const file = params.taskFile ?? run.activeTaskFile;
+  return (file ? checklistTimingContext(run, file) : undefined) ?? selectAgentContext(run, params);
+}
+
 function progressRunIdentity(run: Run, params: TaskProgressParams): string {
-  const context = selectAgentContext(run, params);
+  const context = progressContext(run, params);
   if ((params.contextId || params.role || params.target) && !context)
     throw new GatewayMethodError('NOT_FOUND', 'The requested progress context no longer exists.');
   return JSON.stringify([
@@ -247,6 +267,7 @@ function progressRunIdentity(run: Run, params: TaskProgressParams): string {
     context?.taskFile,
     context?.attemptStartedAt,
     context?.status,
+    context?.completedAt,
     params.taskFile ? declaredProgressFiles(run) : undefined,
   ]);
 }
@@ -328,7 +349,7 @@ async function readTaskProgress(
       markdown,
       result,
       run,
-      run ? selectAgentContext(run, params) : null,
+      run ? progressContext(run, params) : null,
     );
     return result;
   }
@@ -348,7 +369,7 @@ async function readTaskProgress(
       : listRuns({ active: true }).runs.find((r) => r.slotId === params.slotId);
   let effectiveMdPath = taskMdPath;
   const hasExplicitContext = !!(params.contextId || params.role || params.target);
-  const context = activeRun ? selectAgentContext(activeRun, params) : null;
+  const context = activeRun ? progressContext(activeRun, params) : null;
   if (
     !hasExplicitContext &&
     activeRun?.activeTaskFile &&
@@ -407,14 +428,28 @@ async function progressFromChecklist(
   result: TaskProgressResult,
   run?: Run,
   context?: AgentContext | null,
+  retained = false,
 ): Promise<void> {
   if (markdown !== null) {
     const schema = generateTaskSchema(markdown, flowType);
     if (schema.phases.length > 0) {
       result.structured = joinSchemaWithMarkdown(schema, markdown);
-      await attachSubtaskProgress(io, mdPath, flowType, result.structured);
+      await attachSubtaskProgress(
+        io,
+        mdPath,
+        flowType,
+        result.structured,
+        retained ? WORKER_MIRROR_SUFFIX : '',
+      );
       await attachOperations(io, mdPath, result.structured);
-      await attachChecklistTiming(io, mdPath, result.structured, run, context);
+      await attachChecklistTiming(
+        io,
+        mdPath,
+        result.structured,
+        run,
+        context,
+        retained ? WORKER_MIRROR_SUFFIX : '',
+      );
     }
   }
   await attachAcceptanceStatus(io, mdPath, result, run);
@@ -430,10 +465,7 @@ async function progressFromChecklist(
  * beside it as `<checklist>.worker` at completion; without that mirror only the
  * acceptance data is reported, never the template's unchecked steps.
  */
-async function recordedRunProgress(
-  params: TaskProgressParams,
-  run: Run,
-): Promise<TaskProgressResult | null> {
+async function recordedProgressPath(params: TaskProgressParams, run: Run): Promise<string | null> {
   if (!run.taskFile) return null;
   const projectVars = await loadProjectVarsOrNull(run.project, 'recorded task progress', run.id);
   const taskRoot = getOrchestratorTaskRoot(run.project, projectVars?.projectJson ?? null);
@@ -441,7 +473,7 @@ async function recordedRunProgress(
   if (relativeTaskDir === null) return null;
   const io = ORCHESTRATOR_LOCALITY;
   if (!(await slotFileExists(io, run.taskFile))) return null;
-  const context = selectAgentContext(run, params);
+  const context = progressContext(run, params);
   const candidate =
     params.taskFile ??
     (params.contextId || params.role || params.target ? context?.taskFile : run.activeTaskFile) ??
@@ -470,7 +502,51 @@ async function recordedRunProgress(
     if (!relative || path.isAbsolute(relative) || relative.split('/').includes('..')) return null;
     recorded = path.join(directory, relative);
   }
-  const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(io, recorded);
+  return resolveTaskProgressMarkdownPathForSlot(io, recorded);
+}
+
+/** The terminal signal binds a captured checklist to this exact worker attempt. */
+async function settledProgressPath(
+  params: TaskProgressParams,
+  run: Run,
+  context: AgentContext,
+): Promise<string | null> {
+  if (!context.signalAttemptId) return null;
+  const file = await recordedProgressPath(params, run);
+  if (!file || !(await slotFileExists(ORCHESTRATOR_LOCALITY, `${file}${WORKER_MIRROR_SUFFIX}`)))
+    return null;
+  const signal = path.join(
+    path.dirname(file),
+    `${signalFileForChecklist(path.basename(file))}${WORKER_MIRROR_SUFFIX}`,
+  );
+  if (!(await slotFileExists(ORCHESTRATOR_LOCALITY, signal))) return null;
+  const text = await slotReadFile(ORCHESTRATOR_LOCALITY, signal);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    // An incomplete optional mirror cannot admit a settled source. Preserve
+    // the existing live path until capture publishes a complete terminal signal.
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+  return isRecord(raw) &&
+    raw.attemptId === context.signalAttemptId &&
+    (!raw.contextId || raw.contextId === context.id) &&
+    isTerminalWorkerSignalStatus(typeof raw.status === 'string' ? raw.status : null)
+    ? file
+    : null;
+}
+
+async function recordedRunProgress(
+  params: TaskProgressParams,
+  run: Run,
+  capturedPath?: string,
+): Promise<TaskProgressResult | null> {
+  const effectiveMdPath = capturedPath ?? (await recordedProgressPath(params, run));
+  if (!effectiveMdPath) return null;
+  const io = ORCHESTRATOR_LOCALITY;
+  const context = progressContext(run, params);
   const workerCopy = `${effectiveMdPath}${WORKER_MIRROR_SUFFIX}`;
   const immutableArtifact =
     params.taskFile &&
@@ -486,7 +562,18 @@ async function recordedRunProgress(
     contextId: context?.id,
     markdown: markdown ?? '',
   };
-  await progressFromChecklist(io, effectiveMdPath, run.flowType, markdown, result, run, context);
+  await progressFromChecklist(
+    io,
+    effectiveMdPath,
+    run.flowType,
+    markdown,
+    result,
+    run,
+    context,
+    true,
+  );
+  if (!params.taskFile && context?.status === 'complete' && result.structured)
+    reconcileFinalStepFromSignal(result.structured);
   return result;
 }
 
@@ -579,16 +666,17 @@ async function attachSubtaskProgress(
   effectiveMdPath: string,
   flowType: string,
   structured: TaskProgressStructured,
+  suffix = '',
 ): Promise<void> {
   const taskDir = path.dirname(effectiveMdPath);
   const parentChecklist = path.basename(effectiveMdPath);
   const units = subtaskUnitsForParentChecklist(
-    await readSubtaskIndex(vars, taskDir),
+    await readSubtaskIndex(vars, taskDir, suffix),
     parentChecklist,
   );
   if (units.length === 0) return;
   const nowMs = Date.now();
-  for (const read of await readSubtaskUnits(vars, taskDir, units)) {
+  for (const read of await readSubtaskUnits(vars, taskDir, units, suffix)) {
     const childSchema = generateTaskSchema(read.markdown, flowType);
     const childProgress = joinSchemaWithMarkdown(childSchema, read.markdown);
     const entry = buildSubtaskEntry(read.unit, childProgress, read.signal, nowMs);
