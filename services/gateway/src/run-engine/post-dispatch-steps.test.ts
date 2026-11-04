@@ -2931,3 +2931,33 @@ test('an explicit replay reviewer overrides the original dispatch row and projec
   assert.deepEqual(io.inputs?.reviewSelection, selection);
   assert.equal(getRun(run.id)?.metrics.runner, 'grok');
 });
+
+test('a failed reviewer leaves its selected row available to engine failure recording', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REPLAY-REVIEW-FAILURE',
+    slotId: 'remote-mobile-2',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const selection: ReviewSelection = {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: null,
+    mode: 'cold',
+  };
+  updateRunStep(run.id, 'review', { inputs: { reviewSelection: selection } });
+  const context = {
+    ...restartReplayContext(),
+    executeReviewForRun: async () => {
+      throw new Error('Seeded missing reviewer feedback');
+    },
+  };
+  await assert.rejects(executeReviewStep(run.id, context), /Seeded missing reviewer feedback/);
+  assert.deepEqual(
+    context.stepPartialIO.get(run.id)?.inputs?.reviewSelection,
+    selection,
+    'generic engine failure recording must keep the reviewer selection for the next retry',
+  );
+});

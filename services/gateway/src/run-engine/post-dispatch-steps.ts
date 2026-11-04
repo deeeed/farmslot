@@ -893,6 +893,8 @@ export async function executeReviewStep(
   updateRunStep(runId, S.REVIEW, {
     inputs: { ...reviewStep?.inputs, validationDepth },
   });
+  // The engine records partial I/O on failure; keep the selected reviewer for its next retry.
+  stepPartialIO.set(runId, { inputs });
   const executeReviewForRun = context.executeReviewForRun ?? executeReview;
   const execution = reviewSelection ? executionModelFromSelection(reviewSelection) : null;
   // Without a sequence the project's review configuration selects the reviewer.
@@ -933,6 +935,7 @@ export async function executeReviewStep(
       throw new Error(
         `Eval judge did not complete: ${result.reason ?? result.verdict ?? 'unknown'}`,
       );
+    stepPartialIO.delete(runId);
     return { inputs, outputs: { ...result, cliCommand } };
   }
   let interactiveRetry = false;
@@ -968,11 +971,13 @@ export async function executeReviewStep(
     });
   };
   result = await interactiveFeedback(result);
-  if (interactiveRetry)
+  if (interactiveRetry) {
+    stepPartialIO.delete(runId);
     return {
       inputs: { ...inputs, enabled: true },
       outputs: { ...result, cliCommand, interactiveRetry: true },
     };
+  }
 
   if (current.mode !== 'interactive') {
     if (result.fixDeliveryFailure)
@@ -1033,6 +1038,7 @@ export async function executeReviewStep(
     }
   }
 
+  stepPartialIO.delete(runId);
   return {
     inputs: { ...inputs, enabled: !result.skipped },
     outputs: { ...result, cliCommand, ...(interactiveRetry ? { interactiveRetry: true } : {}) },
