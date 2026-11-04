@@ -12,6 +12,7 @@ import {
   loadProjectVars,
   type SlotVars,
 } from '../../core/index.js';
+import { PREPARE_PREFLIGHT_TIMEOUT_MS } from '../../core/project-timeouts.js';
 import { ORCHESTRATOR_LOCALITY, slotWriteFiles } from '../../core/slot-io.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { withoutNodeReconnectWait } from '../../fleet/node-rpc.js';
@@ -34,7 +35,7 @@ const PREPARE_TAIL_POLL_INTERVAL_MS = 1500;
  */
 const PREPARE_GROUP_ALIVE_FN = `group_alive() { ps -A -o pgid= -o stat= 2>/dev/null | awk -v g="$1" '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'; }`;
 export const PREPARE_DEPS_TIMEOUT_MS = 90 * 60_000;
-export const PREPARE_PREFLIGHT_TIMEOUT_MS = 15 * 60_000;
+export { PREPARE_PREFLIGHT_TIMEOUT_MS } from '../../core/project-timeouts.js';
 
 interface PreparePollWarningState {
   consecutiveErrors: number;

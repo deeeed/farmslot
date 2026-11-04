@@ -17,6 +17,9 @@ import type { ResourceDefinition, SlotStatus } from '@farmslot/protocol';
 
 // Exercise the real shutdown front door without starting processes or a server.
 const cleanupCommands: string[] = [];
+const controlTimeouts: Array<number | undefined> = [];
+let prepareSeconds: number | undefined = 600;
+let compileSeconds: number | undefined;
 const realConfig = await import('../core/config.js');
 mock.module('../core/config.js', {
   namedExports: {
@@ -38,10 +41,15 @@ mock.module('../core/config.js', {
     }),
     loadProjectVars: async () => ({
       projectJson: {
+        timeouts: { prepare_preflight_s: prepareSeconds, build_compile_s: compileSeconds },
         resources: {
           server: {
             type: 'dev-server',
-            hooks: { health: 'probe-stopped', shutdown: 'stop-owned-helper' },
+            hooks: {
+              health: 'probe-stopped',
+              boot: 'install-and-start',
+              shutdown: 'stop-owned-helper',
+            },
           },
           browser: {
             type: 'browser',
@@ -60,8 +68,9 @@ const realExec = await import('../core/exec.js');
 mock.module('../core/exec.js', {
   namedExports: {
     ...realExec,
-    execLocal: async (cmd: string) => {
+    execLocal: async (cmd: string, options?: { timeout?: number }) => {
       cleanupCommands.push(cmd);
+      if (cmd.endsWith('install-and-start')) controlTimeouts.push(options?.timeout);
       return { stdout: '', stderr: '', exitCode: cmd.endsWith('probe-stopped') ? 1 : 0 };
     },
   },
@@ -114,6 +123,31 @@ test('resource control allows cold device boots without extending other hooks', 
   assert.equal(resourceControlTimeoutMs('device', 'boot', 3_600_000), 3_600_000);
   assert.equal(resourceControlTimeoutMs('browser', 'shutdown', 600_000), 30_000);
   assert.equal(resourceControlTimeoutMs('browser', 'boot', Number.NaN), 30_000);
+});
+
+test('resource.control gives dev-server boots the project preparation budget', async () => {
+  const { resourceControl } = await import('../methods/resource.js');
+  controlTimeouts.length = 0;
+  try {
+    for (const [prepare, compile] of [
+      [600, undefined],
+      [undefined, 480],
+      [undefined, undefined],
+    ]) {
+      prepareSeconds = prepare;
+      compileSeconds = compile;
+      const result = await resourceControl({
+        slotId: 'cleanup-slot',
+        resourceId: 'server',
+        action: 'boot',
+      });
+      assert.equal(result.ok, true, result.detail);
+    }
+    assert.deepEqual(controlTimeouts, [600_000, 480_000, 900_000]);
+  } finally {
+    prepareSeconds = 600;
+    compileSeconds = undefined;
+  }
 });
 
 const iosSimResource = {

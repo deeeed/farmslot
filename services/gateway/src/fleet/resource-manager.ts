@@ -29,6 +29,7 @@ import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from 
 import { execLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { withProjectMachineEnv } from '../core/project-env.js';
+import { runtimeBootTimeoutMs } from '../core/project-timeouts.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
@@ -1414,7 +1415,14 @@ async function executeResourceControlWithSources(
   }
 
   const expanded = expandTemplate(hookCmd, slotVars, projectVars, extraVars);
-  const timeoutMs = resourceControlTimeoutMs(resourceDef.type, action, options?.bootTimeoutMs);
+  const timeoutMs = resourceControlTimeoutMs(
+    resourceDef.type,
+    action,
+    options?.bootTimeoutMs ??
+      (resourceDef.type === 'dev-server' && action === 'boot'
+        ? runtimeBootTimeoutMs(projectJson)
+        : undefined),
+  );
 
   // Check for unresolved required variables after expansion
   if (hasUnresolvedPlaceholders(expanded)) {
