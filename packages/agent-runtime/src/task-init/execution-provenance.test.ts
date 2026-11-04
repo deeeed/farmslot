@@ -389,3 +389,22 @@ test('a relocated receipt refuses with the original bytes preserved', (t) => {
     before,
   );
 });
+
+test('verification reads overlapping retained tooling content once per call', (t) => {
+  const { taskDir, input } = fixture(t);
+  fs.writeFileSync(path.join(input.packageRoot, 'shared.dat'), 'unchanged retained bytes');
+  const receipt = retainTaskExecution(taskDir, input);
+  const sharedFile = path.join(receipt.source.packageRoot, 'shared.dat');
+  const original = fs.readFileSync;
+  let reads = 0;
+  t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof original>) => {
+    if (String(args[0]) === sharedFile) reads++;
+    return Reflect.apply(original, fs, args);
+  });
+  assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
+  assert.equal(reads, 1, 'Distribution and package verification reread the same bytes');
+  fs.writeFileSync(sharedFile, 'changed retained bytes');
+  assert.throws(() => verifyTaskExecutionProvenance(taskDir, null), {
+    code: 'TASK_INPUT_CHANGED',
+  });
+});

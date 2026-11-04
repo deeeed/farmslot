@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { retainTaskInput, taskInputDigest } from './pin.js';
+import { retainTaskInput, taskInputDigest, taskInputDigests } from './pin.js';
 
 export type TaskRecipeBindingIdentity = Pick<
   RecipeConformanceIdentity,
@@ -313,7 +313,13 @@ export function verifyTaskExecutionProvenance(
         'TASK_PROVENANCE_INVALID',
         'A retained task input escapes its task directory.',
       );
-    if (taskInputDigest(input.path) !== input.sha256) {
+  }
+  const digests = taskInputDigests([
+    ...value.retainedInputs.map((input) => input.path),
+    value.source.packageRoot,
+  ]);
+  for (const [index, input] of value.retainedInputs.entries()) {
+    if (digests[index] !== input.sha256) {
       throw new TaskProvenanceError(
         'TASK_INPUT_CHANGED',
         `Retained task input changed: ${input.path}`,
@@ -328,7 +334,7 @@ export function verifyTaskExecutionProvenance(
     manifest.name !== value.package.name ||
     manifest.version !== value.package.version ||
     sha256(value.resolvedExecutable) !== value.entrySha256 ||
-    taskInputDigest(value.source.packageRoot) !== value.packageTreeSha256
+    digests[value.retainedInputs.length] !== value.packageTreeSha256
   ) {
     throw new TaskProvenanceError(
       'TASK_EXECUTABLE_CHANGED',

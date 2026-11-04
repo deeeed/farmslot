@@ -1,0 +1,1 @@
+- Verify overlapping retained tooling trees in one traversal, preserving byte, mode and link integrity checks without repeated file reads.

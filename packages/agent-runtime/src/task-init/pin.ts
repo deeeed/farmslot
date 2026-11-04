@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, type Hash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,26 +24,56 @@ interface InputRetentionOptions {
   onDependency?: (input: TaskRetainedInput) => void;
 }
 
-/** Content and executable modes, including installed dependencies and link targets. */
-export function taskInputDigest(root: string): string {
-  const hash = createHash('sha256');
-  const walk = (file: string, relative: string): void => {
+interface InputDigestState {
+  root: string;
+  hash: Hash;
+}
+
+/** Verify overlapping retained trees with one read per file, preserving each root's digest. */
+export function taskInputDigests(roots: readonly string[]): string[] {
+  const states = new Map<string, InputDigestState>();
+  for (const root of roots) {
+    const absolute = path.resolve(root);
+    if (!states.has(absolute)) states.set(absolute, { root: absolute, hash: createHash('sha256') });
+  }
+  const visited = new Set<string>();
+  const walk = (file: string, parents: readonly InputDigestState[]): void => {
+    const state = states.get(file);
+    const active = state ? [...parents, state] : parents;
+    if (state) visited.add(file);
     const stat = fs.lstatSync(file);
     if (stat.isDirectory()) {
-      hash.update(`d\0${relative}\0`);
+      for (const entry of active) entry.hash.update(`d\0${path.relative(entry.root, file)}\0`);
       for (const name of fs.readdirSync(file).sort()) {
-        if (!ignored.has(name)) walk(path.join(file, name), path.join(relative, name));
+        if (!ignored.has(name)) walk(path.join(file, name), active);
       }
     } else if (stat.isSymbolicLink()) {
-      hash.update(`l\0${relative}\0${fs.readlinkSync(file)}\0`);
+      const target = fs.readlinkSync(file);
+      for (const entry of active)
+        entry.hash.update(`l\0${path.relative(entry.root, file)}\0${target}\0`);
     } else if (stat.isFile()) {
-      hash.update(`f\0${relative}\0${stat.mode & 0o111}\0${stat.size}\0`);
-      hash.update(fs.readFileSync(file));
-      hash.update('\0');
+      const content = fs.readFileSync(file);
+      for (const entry of active) {
+        entry.hash.update(
+          `f\0${path.relative(entry.root, file)}\0${stat.mode & 0o111}\0${stat.size}\0`,
+        );
+        entry.hash.update(content);
+        entry.hash.update('\0');
+      }
     } else throw new Error(`Unsupported task input: ${file}`);
   };
-  walk(root, '');
-  return hash.digest('hex');
+  // Ancestors first. Explicit roots under an ignored directory or a symlink
+  // are still visited separately, as they were by independent verification.
+  for (const root of [...states.keys()].sort((a, b) => a.length - b.length)) {
+    if (!visited.has(root)) walk(root, []);
+  }
+  const digests = new Map([...states].map(([root, state]) => [root, state.hash.digest('hex')]));
+  return roots.map((root) => digests.get(path.resolve(root))!);
+}
+
+/** Content and executable modes, including installed dependencies and link targets. */
+export function taskInputDigest(root: string): string {
+  return taskInputDigests([root])[0]!;
 }
 
 /** Generalized task-local pinning; never installs packages or changes a global pointer. */
