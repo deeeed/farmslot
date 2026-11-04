@@ -1420,6 +1420,8 @@ export function createGatewayResourceCache(
   async function readAliasedContent(alias: string, open: boolean): Promise<Uint8Array | undefined> {
     const version = residentVersion;
     const owner = hydrationOwnerVersion;
+    await barrier;
+    if (owner !== hydrationOwnerVersion || disposed) return undefined;
     const incarnation = storeVersion;
     const saved = await readStoredContent(
       (target) => target.getContentByAlias(alias),

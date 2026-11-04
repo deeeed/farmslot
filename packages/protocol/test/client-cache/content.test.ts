@@ -787,3 +787,35 @@ test('an alias read sampled before forget cannot restore forgotten bytes', async
     await f.cache.dispose();
   }
 });
+
+test('an alias read waits for startup store hydration without rejecting its incarnation', async () => {
+  const f = fixture();
+  await f.put('startup', 20, 'prefetch', 'run', 'startup-alias');
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  let opened!: () => void;
+  let release!: (store: ResourceStore) => void;
+  const entered = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  const pendingStore = new Promise<ResourceStore>((resolve) => {
+    release = resolve;
+  });
+  const cold = createGatewayResourceCache({
+    transport,
+    openStore: async () => {
+      opened();
+      return pendingStore;
+    },
+  });
+  try {
+    const read = cold.readContentByAlias('startup-alias');
+    await entered;
+    release(f.store);
+    assert.equal(new TextDecoder().decode(await read), 'startup.............');
+    assert.ok(cold.peekContentByAlias?.('startup-alias'));
+  } finally {
+    await cold.dispose();
+    await f.cache.dispose();
+  }
+});

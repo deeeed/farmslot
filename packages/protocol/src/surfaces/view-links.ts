@@ -460,7 +460,7 @@ function nativeViewUrl(
     return encodeURIComponent(value);
   });
   const supported =
-    /^\/(?:fleet|runs|inbox|roadmap|backlog|work-graphs|dispatch-queue|prs|pr-automation|native|copilot|(?:run|evidence|artifacts|visual-review|family|decision|roadmap|backlog|run-terminal|terminal|diff)\/[^/]+|diff\/slot\/[^/]+|workspace\/(?:run|slot)\/[^/]+\/(?:timeline|evidence|files|diff|gate|slot|terminal))$/.test(
+    /^\/(?:fleet|runs|inbox|roadmap|backlog|work-graphs|dispatch-queue|prs|pr-automation|native|copilot|gate-review\/[^/]+|backlog\/edit\/[^/]+|(?:run|evidence|artifacts|visual-review|family|decision|roadmap|backlog|run-terminal|terminal|diff)\/[^/]+|diff\/slot\/[^/]+|workspace\/(?:run|slot)\/[^/]+\/(?:timeline|evidence|files|diff|gate|slot|terminal))$/.test(
       pathname,
     );
   return complete &&

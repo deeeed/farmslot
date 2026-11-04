@@ -537,3 +537,30 @@ test('a registered conversation selection keeps allowed current display paramete
     assert.equal(target.searchParams.has('token'), false);
   }
 });
+
+test('native sharing retains gate review and backlog editor routes', () => {
+  for (const pathname of ['/gate-review/decision-1', '/backlog/edit/item-1']) {
+    const link = resolveSharedViewLink(
+      { companion: { pathname, params: {} } },
+      undefined,
+      'farmslot-development://',
+    );
+    assert.equal(link.status, 'available');
+    if (link.status === 'available') assert.equal(new URL(link.url).pathname, pathname);
+  }
+});
+
+test('registered family views preserve the displayed section', () => {
+  const params = mergeViewStateParams(
+    { section: 'changes', familyCompareIndex: '2' },
+    { runId: 'run-1', evidence: 'all' },
+  );
+  const link = resolveSharedViewLink(
+    { companion: { pathname: '/family/family-1', params } },
+    undefined,
+    'farmslot-development://',
+  );
+  assert.equal(link.status, 'available');
+  if (link.status === 'available')
+    assert.equal(new URL(link.url).searchParams.get('section'), 'changes');
+});
