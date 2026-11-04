@@ -393,6 +393,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'tmux.sendKeys': { classification: 'admin' },
   'tmux.split': { classification: 'admin' },
   'tmux.synchronizePanes': { classification: 'admin' },
+  'tmux.worker.createSession': { classification: 'admin' },
   'tmux.worker.endSession': { classification: 'admin' },
   'tmux.worker.list': { classification: 'admin' },
   'tmux.worker.restore': { classification: 'admin' },

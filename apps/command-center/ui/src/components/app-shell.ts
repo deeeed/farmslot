@@ -53,6 +53,7 @@ import './shared/whats-new-modal.js';
 import './shared/file-transfer-progress-banner.js';
 import './fleet-map/fleet-canvas.js';
 import './terminal/split-view.js';
+import './terminal/terminal-launch-view.js';
 import './dispatch/dispatch-wizard.js';
 import './backlog/backlog-panel.js';
 import './roadmap/roadmap-panel.js';
@@ -274,6 +275,7 @@ export class FarmApp extends LitElement {
   @state() private violationCount = 0;
   @state() private runs: Run[] = [];
   @state() private terminalRunParam = '';
+  @state() private terminalLaunchParam = '';
   @state() private decisionGateParam = '';
   @state() private nativeSessionParam = '';
   @state() private nativeNodeParam = '';
@@ -830,7 +832,9 @@ export class FarmApp extends LitElement {
     }
     const raw = location.hash.replace('#', '') || this.defaultRouteForEmptyHash();
     const hash = raw.split('?')[0];
-    this.terminalRunParam = hash === 'terminal' ? (hashParams().get('run') ?? '') : '';
+    this.terminalRunParam = hash === 'terminal' ? (selection.get('run') ?? '') : '';
+    this.terminalLaunchParam =
+      hash === 'terminal' && selection.get('view') === 'new' ? selection.toString() : '';
     this.devCaptureMode = this.isDevCaptureHash(raw);
     // Deep links to a hidden alpha route (including its 'violations' alias)
     // bounce to fleet instead — hiding the nav entry alone isn't enough.
@@ -1978,8 +1982,12 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       case 'fleet':
         return html`<fleet-canvas></fleet-canvas>`;
       case 'terminal':
+        if (this.terminalLaunchParam)
+          return html`<terminal-launch-view
+            .selection=${this.terminalLaunchParam}
+          ></terminal-launch-view>`;
         return html`<terminal-split-view
-          .initialSlot=${this.slotParam}
+          .initialSlot=${this.terminalRunParam || hashParams().has('worker') ? '' : this.slotParam}
           .initialRun=${this.terminalRunParam}
         ></terminal-split-view>`;
       case 'devices':

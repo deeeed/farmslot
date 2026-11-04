@@ -100,6 +100,15 @@ export interface TmuxWorkerListParams {
   machines?: string[];
 }
 
+/** Creates an independent user shell, separate from run and slot sessions. */
+export interface TmuxWorkerCreateSessionParams {
+  nodeId: string;
+}
+export interface TmuxWorkerCreateSessionResult {
+  worker: TmuxWorkerRef;
+  pid: number;
+}
+
 export interface TmuxWorkerEndSessionParams {
   worker: TmuxWorkerRef;
   /** Pane process shown when the operator confirmed the action. */
