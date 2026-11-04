@@ -3,6 +3,8 @@ import type { Run, SlotAgentTargetParams } from '@farmslot/protocol';
 import { execFileArgv, isLocal } from '../core/exec.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { execNativeNodeArgv } from '../runners/native/node.js';
+import { sendRunnerPrompt } from '../runners/registry.js';
+import { reviewWorkspaceRunnerVars } from '../runners/review-startup.js';
 import { reviewTmuxOperation, reviewTmuxSession } from '../runners/review-tmux.js';
 import { getRun } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
@@ -105,12 +107,13 @@ export async function workspaceTerminalOperation(
   }
   if (run.transport === 'tmux' && action === 'stop') return [];
   const workspace = run.reviewWorkspace!;
+  const semanticSend = run.transport === 'tmux' && action === 'send' && input.enter !== false;
   const argv = [
     'node',
     '-e',
     script,
     JSON.stringify({
-      action,
+      action: semanticSend ? 'inspect' : action,
       session: run.transport === 'tmux' ? reviewTmuxSession(run) : reviewWorkspaceShellSession(run),
       workspaceId: workspace.workspaceId,
       cwd: workspace.checkoutPath,
@@ -122,6 +125,18 @@ export async function workspaceTerminalOperation(
       ? await execFileArgv([process.execPath, ...argv.slice(1)], { timeout: 10000 })
       : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, workspace.machine, argv, 10000);
   if (result.exitCode !== 0) throw new Error(result.stderr || 'Review shell operation failed');
+  if (semanticSend) {
+    const vars = await reviewWorkspaceRunnerVars(run);
+    const context = run.agentContexts?.find((entry) => entry.id === 'review');
+    const runner = context?.runner;
+    if (!vars || !runner || vars.session !== reviewTmuxSession(run))
+      throw new Error('The owning reviewer runner context is unavailable; no input was sent');
+    const retainedSession =
+      context?.runnerSessionId && context.runnerSessionPath
+        ? { sessionId: context.runnerSessionId, sessionPath: context.runnerSessionPath }
+        : undefined;
+    await sendRunnerPrompt(vars, vars.session, runner, input.text ?? '', { retainedSession });
+  }
   if (action !== 'stop') {
     const current = getRun(run.id);
     if (

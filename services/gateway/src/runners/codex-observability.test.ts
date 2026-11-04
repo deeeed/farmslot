@@ -266,3 +266,41 @@ test('Codex native binding probe honors fresh pane identity and rejects mismatch
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('native submission comparison tolerates trailing line breaks but preserves other text', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'codex-submission-text-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const session = path.join(root, 'session.jsonl');
+  const at = '2026-11-04T01:00:00.000Z';
+  const canonical = 'Continue the retained review.\n  Keep this indentation.\nReply only ACK.';
+  await writeFile(
+    session,
+    [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'submission-session' } }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: at,
+        payload: { type: 'task_started', turn_id: 'submission-turn' },
+      }),
+      record(at, canonical),
+    ].join('\n'),
+  );
+  for (const [submitted, expected] of [
+    [canonical + '\n', 'matched'],
+    [canonical + '\r\n', 'matched'],
+    ['  ' + canonical + '\n', 'not-found'],
+    [canonical.replace('  Keep', 'Keep'), 'not-found'],
+    [canonical + '\nAnother instruction.', 'not-found'],
+  ]) {
+    const result = spawnSync(
+      'bash',
+      [
+        '-c',
+        buildCodexPromptProbeCommand('submission-session', session, submitted, Date.parse(at) - 1),
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(parseCodexPromptProbe(result.stdout).status, expected);
+  }
+});

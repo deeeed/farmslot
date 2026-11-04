@@ -1,0 +1,1 @@
+- Confirm semantic terminal sends and farm instructions from exact runner receipts, and report unconfirmed submission without silently retyping pasted text.

@@ -77,7 +77,7 @@ import {
   buildObservabilityDegradedRecovery,
   logObservabilityDegradedRecovery,
 } from './observability-degraded.js';
-import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
+import { runnerActivityIsBusy } from './observability-files.js';
 import {
   instructionNeedle,
   normalizeInstructionText,
@@ -2526,32 +2526,6 @@ async function captureTmuxPane(
   ).stdout;
 }
 
-async function warnIfObservabilityDegraded(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  runner: string,
-  sentAtMs: number,
-  logPrefix: string,
-): Promise<void> {
-  const heartbeatMs = getRunnerDefinition(runner).observabilityHeartbeatMs;
-  if (heartbeatMs == null) return;
-  const obsDir = shellQuote(await runnerObservabilityDirForSlot(vars));
-  const hooksPath = `${obsDir}/hooks.jsonl`;
-  const deadline = Date.now() + heartbeatMs;
-  while (Date.now() < deadline) {
-    const stat = await execOnSlot(
-      vars,
-      `stat -f %m ${hooksPath} 2>/dev/null || stat -c %Y ${hooksPath} 2>/dev/null || echo 0`,
-    );
-    const mtimeSec = Number.parseInt(stat.stdout.trim(), 10);
-    const mtimeMs = Number.isFinite(mtimeSec) ? mtimeSec * 1000 : 0;
-    if (mtimeMs >= sentAtMs) return;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  console.warn(
-    `[${logPrefix}] [observability] degraded — hooks.jsonl did not advance within ${heartbeatMs}ms after send-keys; pane fallback engaged`,
-  );
-}
-
 type SubmitInstructionOutcome = 'ok' | 'not-buffered' | 'stuck';
 
 /**
@@ -2659,103 +2633,157 @@ export function execRunnerKeys(
   );
 }
 
+/** Guarded paste shared by post-launch prompts, farm steers and terminal sends. */
+async function pasteRunnerPromptInput(
+  vars: SlotVars,
+  target: string,
+  runner: string,
+  message: string,
+  observation: { beforeInput?: () => Promise<void>; afterSubmit?: () => Promise<void> } = {},
+): Promise<ExecResult> {
+  let inputStarted = false;
+  let pasteCompleted = false;
+  let refused: ExecResult | undefined;
+  try {
+    await pasteTmuxText(vars, target, message, {
+      submitKey: runnerPromptSubmitKey(runner),
+      executeInput: async (paneId, command) => {
+        const submitting = pasteCompleted || !message;
+        const result = await execRunnerInput(vars, paneId, runner, async () => {
+          if (!inputStarted) {
+            await observation.beforeInput?.();
+            await promptMutationStore.getStore()?.started();
+          }
+          inputStarted = true;
+          return command;
+        });
+        if (result.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE && !pasteCompleted) {
+          inputStarted = false;
+          refused = result;
+        }
+        if (result.exitCode === 0) {
+          pasteCompleted = true;
+          const touch = composerTouchStore.getStore();
+          if (touch && message) touch.touched = true;
+          if (submitting) await observation.afterSubmit?.();
+        }
+        return result;
+      },
+    });
+    return { exitCode: 0, stdout: '', stderr: '' };
+  } catch (error) {
+    // The host guard proves no paste occurred. A cleanup failure still needs reporting.
+    if (refused && !(error instanceof AggregateError)) return refused;
+    if (inputStarted) {
+      const touch = composerTouchStore.getStore();
+      if (touch && message) touch.touched = true;
+      throw new PromptDeliveryUncertainError(
+        `Prompt paste to ${target} is uncertain: ${(error as Error).message}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+/** A transport write is not submission. Never retype after an unconfirmed paste. */
+export async function submitRunnerPrompt(
+  vars: SlotVars,
+  target: string,
+  runner: string,
+  message: string,
+  options: {
+    submitOnly?: boolean;
+    timeoutMs?: number;
+    retainedSession?: { sessionId: string; sessionPath: string };
+  } = {},
+): Promise<RunnerInstructionOutcome> {
+  const observability = getRunnerObservability(runner);
+  if (!observability) return 'held-untouched';
+  let retainedSession = options.retainedSession;
+  let confirmed = false;
+  let boundaryUnavailable = false;
+  let sinceMs: number;
+  try {
+    const written = await pasteRunnerPromptInput(
+      vars,
+      target,
+      runner,
+      options.submitOnly ? '' : message,
+      {
+        // These callbacks run inside the resolved pane's existing paste queue. Another send
+        // must not take its clock boundary or type while this receipt is still pending.
+        beforeInput: async () => {
+          retainedSession ??= (await observability.getSessionBinding?.(vars, target)) ?? undefined;
+          const captured = await captureRunnerPromptAcceptanceBaseline(vars, target, runner);
+          if (captured === null) {
+            boundaryUnavailable = true;
+            throw new Error('Runner prompt clock boundary is unavailable');
+          }
+          sinceMs = captured;
+        },
+        afterSubmit: async () => {
+          // A bare Enter can submit an existing draft, but its text is unknown here.
+          if (!message.trim()) return;
+          confirmed = await sendRunnerInstructionSafely(
+            vars,
+            target,
+            runner,
+            message,
+            'runner-submission',
+            options.timeoutMs ?? 2000,
+            { observeOnly: true, acceptanceSinceMs: sinceMs, retainedSession },
+          );
+        },
+      },
+    );
+    if (written.exitCode !== 0) {
+      await promptMutationStore.getStore()?.confirmedUntouched?.();
+      return 'held-untouched';
+    }
+  } catch (error) {
+    if (boundaryUnavailable && !(error instanceof AggregateError)) return 'held-untouched';
+    if (error instanceof PromptDeliveryUncertainError) return 'typed-unconfirmed';
+    throw error;
+  }
+  return confirmed ? 'sent' : 'typed-unconfirmed';
+}
+
+/** Semantic terminal sends may return success only after the runner accepts the prompt. */
+export async function sendRunnerPrompt(
+  ...args: Parameters<typeof submitRunnerPrompt>
+): Promise<void> {
+  const outcome = await submitRunnerPrompt(...args);
+  if (outcome !== 'sent')
+    throw new Error(
+      outcome === 'held-untouched'
+        ? 'Runner submission was not confirmed; no input was sent.'
+        : 'Runner submission was not confirmed; text may be buffered. Do not paste it again.',
+    );
+}
+
 async function submitRunnerInstruction(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  vars: SlotVars,
   target: string,
   runner: string,
   message: string,
   logPrefix: string,
   mode: 'send' | 'submit-existing',
 ): Promise<SubmitInstructionOutcome> {
-  let sentAtMs: number | null = null;
-  if (mode === 'send') {
+  if (mode === 'submit-existing') {
+    const pane = await captureTmuxPane(vars, target);
+    if (!runnerPaneHasBufferedInstruction(pane, message, runner)) return 'not-buffered';
+  } else {
     try {
-      const sentinel = await writeRunnerPromptSentinel(vars, message);
-      sentAtMs = sentinel.sentAt;
+      await writeRunnerPromptSentinel(vars, message);
     } catch (error) {
       console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
     }
-    const write = await execRunnerInput(vars, target, runner, async (paneId) => {
-      await promptMutationStore.getStore()?.started();
-      return tmuxSendTextCommand(paneId, message, {
-        enter: true,
-        submitKey: getRunnerDefinition(runner).promptSubmitKey,
-        ...(promptMutationStore.getStore()
-          ? { typeFailureExitCode: PROMPT_TYPE_FAILURE_EXIT_CODE }
-          : {}),
-      });
-    });
-    // Only once the write actually succeeded. `execOnSlot` resolves on a non-zero exit
-    // rather than throwing, so awaiting it proves nothing on its own: send-keys against
-    // a dead tmux server or a vanished window comes back here having typed nothing. A
-    // caller bounding its retries would spend them on deliveries the worker never saw.
-    if (write.exitCode === 0) {
-      const touchRecord = composerTouchStore.getStore();
-      if (touchRecord) touchRecord.touched = true;
-    } else {
-      if (write.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE) {
-        await promptMutationStore.getStore()?.confirmedUntouched?.();
-      }
-      console.warn(
-        `[${logPrefix}] send-keys to ${target} exited ${write.exitCode}; nothing reached the composer`,
-      );
-      return write.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE ? 'not-buffered' : 'stuck';
-    }
-  } else {
-    const pane = await captureTmuxPane(vars, target);
-    if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
-      // Nothing is buffered: pressing a submit key would no-op, and the
-      // absence-of-buffer verification below would then report success for an
-      // instruction that was never delivered. Refuse so callers fall back to a
-      // real send.
-      console.log(
-        `[${logPrefix}] submit-existing requested but no buffered instruction in ${target}`,
-      );
-      return 'not-buffered';
-    }
-    const submitKey = runnerPromptSubmitKey(runner);
-    const submit = await execRunnerKeys(vars, target, runner, submitKey, execOnSlot, () =>
-      promptMutationStore.getStore()?.started(),
-    );
-    if (submit.exitCode !== 0) {
-      await promptMutationStore.getStore()?.confirmedUntouched?.();
-      return 'stuck';
-    }
   }
-
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const pane = await captureTmuxPane(vars, target);
-    if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
-      if (mode === 'send' && sentAtMs != null) {
-        // Intentionally fire-and-forget: degraded heartbeat must not block send confirmation.
-        void warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix).catch((error) => {
-          console.warn(
-            `[${logPrefix}] [observability] degraded check failed: ${(error as Error).message}`,
-          );
-        });
-      }
-      return 'ok';
-    }
-    if (attempt < 5) {
-      const submitKey = runnerPromptSubmitKey(runner);
-      console.warn(`[${logPrefix}] instruction appears buffered in ${target}; sending submit key`);
-      await execRunnerKeys(vars, target, runner, submitKey);
-    }
-  }
-
-  console.warn(
-    `[${logPrefix}] instruction still appears pending in ${target} after submit verification`,
-  );
-  if (mode === 'send' && sentAtMs != null) {
-    // Intentionally fire-and-forget: degraded heartbeat must not block send confirmation.
-    void warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix).catch((error) => {
-      console.warn(
-        `[${logPrefix}] [observability] degraded check failed: ${(error as Error).message}`,
-      );
-    });
-  }
-  return 'stuck';
+  const outcome = await submitRunnerPrompt(vars, target, runner, message, {
+    submitOnly: mode === 'submit-existing',
+  });
+  return outcome === 'sent' ? 'ok' : outcome === 'held-untouched' ? 'not-buffered' : 'stuck';
 }
 
 type ClassifierActionRecovery =
@@ -3049,18 +3077,30 @@ export async function sendRunnerInstructionSafely(
     const observability = getRunnerObservability(runner);
     if (!observability) return false;
     do {
-      const reading = await observability.promptAccepted(
-        vars,
-        target,
-        runnerPromptDigest(message),
-        opts.acceptanceSinceMs!,
-        true,
-        message,
-      );
+      const reading =
+        opts.retainedSession && observability.promptAcceptedInSession
+          ? await observability.promptAcceptedInSession(
+              vars,
+              target,
+              opts.retainedSession.sessionId,
+              opts.retainedSession.sessionPath,
+              message,
+              opts.acceptanceSinceMs!,
+            )
+          : await observability.promptAccepted(
+              vars,
+              target,
+              runnerPromptDigest(message),
+              opts.acceptanceSinceMs!,
+              true,
+              message,
+            );
       if (
         reading?.value === true &&
+        (reading.source === 'hook' || reading.source === 'signal') &&
         reading.confidence === 'high' &&
-        reading.exactPromptMatch === true
+        reading.exactPromptMatch === true &&
+        reading.observedAt >= opts.acceptanceSinceMs!
       )
         return true;
       const remaining = loopStartMs + effectiveTimeoutMs - Date.now();
@@ -3373,7 +3413,9 @@ export async function sendRunnerPostLaunchPrompt(
     opts.promptAcceptanceBaselineMs !== undefined
       ? opts.promptAcceptanceBaselineMs
       : await captureRunnerPromptAcceptanceBaseline(vars, target, runner, handoffAckSinceMs);
-  const requirePromptDigest = opts.requirePromptDigest === true;
+  const requirePromptDigest =
+    opts.requirePromptDigest === true ||
+    getRunnerObservability(runner)?.promptAcceptanceMode !== undefined;
   const launchAckBaseline =
     opts.launchAckBaseline !== undefined
       ? opts.launchAckBaseline
@@ -3988,36 +4030,8 @@ export async function sendRunnerPostLaunchPrompt(
       !shouldSubmitOnly &&
       getRunnerDefinition(runner).postLaunchPromptTransport === 'bracketed-paste'
     ) {
-      let inputStarted = false;
-      let pasteCompleted = false;
-      try {
-        console.log(`[${logPrefix}] using bracketed paste for post-launch prompt in ${target}`);
-        await pasteTmuxText(vars, target, message, {
-          submitKey: runnerPromptSubmitKey(runner),
-          executeInput: async (paneId, command) => {
-            const result = await execRunnerInput(vars, paneId, runner, async () => {
-              if (!inputStarted) await promptMutationStore.getStore()?.started();
-              inputStarted = true;
-              return command;
-            });
-            if (result.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE && !pasteCompleted) {
-              inputStarted = false;
-              await promptMutationStore.getStore()?.confirmedUntouched?.();
-            }
-            if (result.exitCode === 0) pasteCompleted = true;
-            return result;
-          },
-        });
-        promptResult = { exitCode: 0, stdout: '', stderr: '' };
-      } catch (error) {
-        if (inputStarted) {
-          throw new PromptDeliveryUncertainError(
-            `Prompt paste to ${target} is uncertain: ${(error as Error).message}`,
-            { cause: error },
-          );
-        }
-        throw error;
-      }
+      console.log(`[${logPrefix}] using bracketed paste for post-launch prompt in ${target}`);
+      promptResult = await pasteRunnerPromptInput(vars, target, runner, message);
     } else {
       promptResult = await execRunnerInput(vars, target, runner, async (paneId) => {
         await promptMutationStore.getStore()?.started();

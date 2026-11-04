@@ -5,7 +5,7 @@ import type { TerminalData } from '@farmslot/protocol';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot, type ExecOptions } from '../core/exec.js';
 import { pasteTmuxText, shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
-import { runnerPromptSubmitKey } from '../runners/registry.js';
+import { sendRunnerPrompt } from '../runners/registry.js';
 
 export type TerminalDataHandler = (data: TerminalData) => void;
 
@@ -141,9 +141,11 @@ export async function sendKeys(
 ): Promise<void> {
   const vars = await loadSlotVars(slotId);
   if (runner) {
-    await pasteTmuxText(vars, session, text, {
-      submitKey: enter ? runnerPromptSubmitKey(runner) : undefined,
-    });
+    if (enter) {
+      await sendRunnerPrompt(vars, session, runner, text);
+    } else {
+      await pasteTmuxText(vars, session, text);
+    }
     return;
   }
   const result = await execOnSlot(vars, buildSendKeysCommand(session, text, enter), {
