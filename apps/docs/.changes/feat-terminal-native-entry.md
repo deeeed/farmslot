@@ -1,0 +1,1 @@
+- Document machine-scoped creation of isolated terminals in the gateway API reference.
