@@ -441,7 +441,7 @@ export function isNodeConnected(machine: string): boolean {
   return getNode(machine)?.ws.readyState === WebSocket.OPEN;
 }
 
-export async function waitForNode(
+export function waitForNode(
   machine: string,
   timeoutMs = 15_000,
   signal?: AbortSignal,

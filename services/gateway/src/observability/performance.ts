@@ -113,24 +113,22 @@ export function executionKind(executable: string, argv: readonly string[] = []):
   }
   return 'other';
 }
-export async function measureManagedOperation<T>(
+export function measureManagedOperation<T>(
   type: 'exec' | 'node' | 'wait',
   kind: ExecutionKind,
   operation: () => Promise<T>,
 ): Promise<T> {
   const cost = current.getStore();
   const metrics = cost?.metrics ?? gatewayPerformance;
-  const labels = { method: cost?.active ? cost.method : '_background', kind };
   const start = performance.now();
-  if (type !== 'wait')
-    metrics.increment(
-      type === 'exec' ? 'farmslot_exec_calls_total' : 'farmslot_node_calls_total',
-      labels,
-    );
-  try {
-    return await operation();
-  } finally {
+  const finish = () => {
+    const labels = { method: cost?.active ? cost.method : '_background', kind };
     const elapsed = (performance.now() - start) / 1000;
+    if (type !== 'wait')
+      metrics.increment(
+        type === 'exec' ? 'farmslot_exec_calls_total' : 'farmslot_node_calls_total',
+        labels,
+      );
     metrics.increment(
       type === 'exec'
         ? 'farmslot_exec_seconds_total'
@@ -141,5 +139,14 @@ export async function measureManagedOperation<T>(
       elapsed,
     );
     if (cost?.active) cost[type === 'exec' ? 'exec' : type === 'node' ? 'node' : 'wait'] += elapsed;
+  };
+  try {
+    const request = operation();
+    // Observe both settlements; the original Promise retains its rejection and scheduling.
+    void request.then(finish, finish);
+    return request;
+  } catch (error) {
+    finish();
+    throw error;
   }
 }

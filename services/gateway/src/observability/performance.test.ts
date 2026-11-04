@@ -64,3 +64,31 @@ test('dispatch preserves failures and isolates concurrent methods', async () => 
     'one',
   );
 });
+
+test('detached execution and node wait remain outside a completed request costs', async () => {
+  const metrics = new PerformanceRecorder('gateway', { methods: new Set(['foreground']) });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const detached: Promise<void>[] = [];
+  await measureGatewayRequest(
+    'foreground',
+    async () => {
+      detached.push(measureManagedOperation('exec', 'git', () => gate));
+      detached.push(measureManagedOperation('wait', 'node', () => gate));
+    },
+    metrics,
+  );
+  release();
+  await Promise.all(detached);
+  const rows = metrics.snapshot().counters;
+  assert.equal(
+    rows.find((row) => row.name === 'farmslot_exec_seconds_total')?.labels.method,
+    '_background',
+  );
+  assert.equal(
+    rows.find((row) => row.name === 'farmslot_node_wait_seconds_total')?.labels.method,
+    '_background',
+  );
+});

@@ -1026,6 +1026,7 @@ export function createGatewayResourceCache(
     };
     entry.pending = pending;
     const refreshStarted = metrics?.clock();
+    const refreshEpoch = metrics?.epoch;
     const blocking = entry.state.data === undefined;
     readContexts.set(pending.controller.signal, { identity: entry, blocking });
     entry.dirty = false;
@@ -1312,7 +1313,7 @@ export function createGatewayResourceCache(
           };
         notify(entry);
       } finally {
-        if (metrics && refreshStarted !== undefined)
+        if (metrics && refreshStarted !== undefined && metrics.epoch === refreshEpoch)
           metrics.observe(
             blocking
               ? 'farmslot_client_blocking_refresh_seconds'

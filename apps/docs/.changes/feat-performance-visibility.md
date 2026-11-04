@@ -1,0 +1,1 @@
+- Document the shared performance diagnostics RPC methods.

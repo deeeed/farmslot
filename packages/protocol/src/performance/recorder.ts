@@ -255,8 +255,11 @@ export class PerformanceRecorder {
     if (this.report?.sequence === sequence) this.report = undefined;
   }
   expireReportSource(): void {
-    if (this.report)
-      this.all.dropped += this.report.histograms.reduce((sum, row) => sum + row.count, 0);
+    if (this.report) {
+      const discarded = this.report.histograms.reduce((sum, row) => sum + row.count, 0);
+      this.all.dropped += discarded;
+      this.delta.dropped += discarded + this.report.dropped;
+    }
     this.report = undefined;
     this.sourceId = id();
     this.sequence = 0;

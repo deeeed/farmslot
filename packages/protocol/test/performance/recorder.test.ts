@@ -226,3 +226,39 @@ test('reported observation windows use opaque source ids and preserve client tim
   assert.match(output, /farmslot_client_window_observed_seconds/);
   assert.doesNotMatch(output, /private-principal/);
 });
+
+test('expired report sources carry discarded coverage to the gateway budget verdict', () => {
+  const client = new PerformanceRecorder('companion');
+  const gateway = new PerformanceRecorder('gateway');
+  const labels = { method: 'run.get', action_class: 'cached-paint' as const };
+  for (let i = 0; i < 20; i++) client.observe('farmslot_client_cached_paint_seconds', labels, 0.2);
+  assert.ok(client.beginReport());
+  client.expireReportSource();
+  for (let i = 0; i < 20; i++) client.observe('farmslot_client_cached_paint_seconds', labels, 0.01);
+  const report = client.beginReport();
+  assert.ok(report);
+  assert.equal(report.dropped, 20);
+  assert.equal(gateway.mergeReport('client', report).accepted, true);
+  assert.equal(gateway.snapshot().dropped, 20);
+  assert.equal(performanceBudgetVerdicts(gateway.snapshot())[0]?.status, 'unmeasured');
+});
+
+test('Doctor keeps foreground and background response bytes with their own duration rows', async () => {
+  const { slowestActions } = await import('../../src/performance/index.js');
+  const metrics = new PerformanceRecorder('command-center');
+  const foreground = { method: 'run.get', action_class: 'interactive-read' as const };
+  const background = { method: 'run.get', action_class: 'background-refresh' as const };
+  metrics.observe('farmslot_rpc_duration_seconds', foreground, 0.1);
+  metrics.observe('farmslot_rpc_response_bytes', foreground, 100);
+  for (let i = 0; i < 20; i++) {
+    metrics.observe('farmslot_rpc_duration_seconds', background, 0.01);
+    metrics.observe('farmslot_rpc_response_bytes', background, 10240);
+  }
+  const rows = slowestActions(metrics.snapshot());
+  const visible = rows.find((row) => row.actionClass === 'interactive-read');
+  const refreshed = rows.find((row) => row.actionClass === 'background-refresh');
+  assert.ok(visible && refreshed);
+  assert.equal(visible.bytes / visible.count, 100);
+  assert.equal(refreshed.bytes / refreshed.count, 10240);
+  assert.equal(visible.causes.includes('payload'), false);
+});

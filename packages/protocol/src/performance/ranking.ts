@@ -30,8 +30,11 @@ export interface SlowAction {
 }
 export function slowestActions(snapshot: PerformanceSnapshot): SlowAction[] {
   const costs = new Map<string, Map<string, number>>();
+  const responseBytes = new Map<string, number>();
   const identity = (labels: PerformanceLabels) =>
     `${labels.side ?? 'gateway'}|${labels.method ?? '_unknown'}`;
+  const responseIdentity = (labels: PerformanceLabels) =>
+    `${identity(labels)}|${labels.action_class ?? ''}`;
   const add = (labels: PerformanceLabels, name: string, value: number, max = false) => {
     const key = identity(labels);
     let values = costs.get(key);
@@ -47,7 +50,10 @@ export function slowestActions(snapshot: PerformanceSnapshot): SlowAction[] {
   for (const counter of snapshot.counters) add(counter.labels, counter.name, counter.value);
   for (const histogram of snapshot.histograms) {
     if (histogram.name === 'farmslot_rpc_response_bytes')
-      add(histogram.labels, 'bytes', histogram.sum);
+      responseBytes.set(
+        responseIdentity(histogram.labels),
+        (responseBytes.get(responseIdentity(histogram.labels)) ?? 0) + histogram.sum,
+      );
     if (histogram.name === 'farmslot_event_loop_lag_seconds')
       add(histogram.labels, 'lag', histogram.max, true);
   }
@@ -76,12 +82,14 @@ export function slowestActions(snapshot: PerformanceSnapshot): SlowAction[] {
     .filter((r) => Object.hasOwn(phases, r.name))
     .map((row) => {
       const phase = phases[row.name as keyof typeof phases];
-      const bytesMeasured = row.name === 'farmslot_rpc_duration_seconds';
+      const bytesMeasured =
+        row.name === 'farmslot_rpc_duration_seconds' &&
+        responseBytes.has(responseIdentity(row.labels));
       const verdict = verdicts.get(verdictKey(row.name, row.labels));
       const { method = '_unknown', side = 'gateway', action_class } = row.labels;
       const values = costs.get(identity(row.labels));
       const value = (name: string) => values?.get(name) ?? 0;
-      const bytes = bytesMeasured ? value('bytes') : 0,
+      const bytes = bytesMeasured ? (responseBytes.get(responseIdentity(row.labels)) ?? 0) : 0,
         execCount = value('farmslot_exec_calls_total'),
         execSeconds = value('farmslot_exec_seconds_total');
       const nodeCount = value('farmslot_node_calls_total'),

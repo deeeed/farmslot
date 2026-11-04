@@ -101,3 +101,33 @@ test(
     }
   },
 );
+
+test('a prior principal refresh cannot enter the next principal performance window', async () => {
+  const scope = {
+    gatewayUrl: 'ws://performance.invalid/',
+    principalId: 'a',
+    principalGeneration: 0,
+  };
+  let clock = 0;
+  const metrics = new PerformanceRecorder('command-center', { clock: () => clock });
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport, performance: metrics });
+  try {
+    const query = resourceQuery<{ value: string }>('sources.status');
+    const pending = cache.retry(query);
+    const read = await transport.nextRead();
+    const epoch = metrics.epoch;
+    transport.setConnection({ id: 2, scope: { ...scope, principalId: 'b' } });
+    assert.ok(metrics.epoch > epoch);
+    clock = 2;
+    read.resolve({ value: 'old principal data' });
+    await pending;
+    assert.equal(
+      metrics.snapshot().histograms.some((row) => row.name.endsWith('_refresh_seconds')),
+      false,
+    );
+  } finally {
+    await cache.dispose();
+  }
+});
