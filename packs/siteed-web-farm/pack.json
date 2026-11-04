@@ -1,0 +1,14 @@
+{
+  "name": "siteed-web-farm",
+  "description": "Arthur's personal website (siteed.net): Next.js 14 + MDX. One slot; PRs only, Arthur validates locally and deploys himself.",
+  "projects": [
+    {
+      "dir": "projects/siteed-web-farm",
+      "platform": "cli",
+      "slots": 3,
+      "short": "siteed",
+      "repo_url": "https://github.com/deeeed/siteed-web.git"
+    }
+  ],
+  "action_sheet": "siteed-web-farm registered with one slot. Work lands as a branch + PR; never run `vercel --prod` / `yarn deploy` from a slot. Arthur validates locally from his own checkout and deploys himself."
+}

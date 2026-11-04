@@ -97,6 +97,43 @@ after(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+it('launches and releases a plain website without an extension or extension flags', async (t) => {
+  const dir = runtime('plain-web');
+  const port = await freePort();
+  t.after(() => stopProfileProcessesSync(path.join(dir, 'profile')));
+  const result = launchBrowser(
+    options(dir, port, {
+      extensionDir: undefined,
+      startUrl: 'http://127.0.0.1:9315/',
+    }),
+  );
+  assert.equal(result.stopped, false);
+  const argv = fs
+    .readFileSync(path.join(root, 'argv.log'), 'utf8')
+    .split('\n')
+    .find((line) => line.includes(`--user-data-dir=${path.join(dir, 'profile')}`));
+  assert.ok(argv?.includes('http://127.0.0.1:9315/'));
+  assert.doesNotMatch(
+    argv,
+    /load-extension|unsafe-extension-debugging|ExtensionContentVerification/,
+  );
+  assert.deepEqual(cdpListenerPids(port), [result.pid]);
+  launchBrowser(options(dir, port, { extensionDir: undefined, stopOnly: true }));
+  assert.deepEqual(cdpListenerPids(port), []);
+});
+
+it('requires an explicit web URL when launching without an extension', async () => {
+  assert.throws(
+    () =>
+      launchBrowser(
+        options(runtime('plain-no-url'), 19301, {
+          extensionDir: undefined,
+        }),
+      ),
+    /start-url/,
+  );
+});
+
 describe('homeTabsToClose', () => {
   const extensionId = 'abcdefghijklmnopabcdefghijklmnop';
   const home = (id, title) => ({

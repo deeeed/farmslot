@@ -67,7 +67,7 @@ const BROWSER_RESOLVER_CLI = require.resolve('./browser-resolver.cjs');
  * @property {number} cdpPort
  * @property {string} chromeBin
  * @property {string} profile
- * @property {string} extensionDir Unpacked extension to load.
+ * @property {string} [extensionDir] Unpacked extension to load; omitted for a plain web page.
  * @property {string} runtimeDir Holds browser-resolution.json and the runtime identity.
  * @property {string} chromeLog
  * @property {string} chromePid
@@ -114,13 +114,16 @@ function normalizeOptions(options) {
   const flags = {
     chromeBin: 'chrome-bin',
     profile: 'profile',
-    extensionDir: 'extension-dir',
     runtimeDir: 'runtime-dir',
     chromeLog: 'chrome-log',
     chromePid: 'chrome-pid',
   };
   for (const [key, flag] of Object.entries(flags)) {
     if (!opts[key]) throw new Error(`Missing --${flag}`);
+  }
+  if (!opts.extensionDir && !opts.stopOnly) {
+    if (!opts.startUrl || !/^https?:$/u.test(new URL(opts.startUrl).protocol))
+      throw new Error('Plain web launch requires an explicit HTTP(S) --start-url');
   }
   opts.log = opts.log ?? ((line) => process.stderr.write(`${line}\n`));
   opts.progress = opts.progress ?? (() => {});
@@ -135,7 +138,7 @@ function runLaunch(opts, acquireLock) {
   if (!opts.stopOnly) {
     if (!fs.existsSync(opts.chromeBin))
       throw new Error(`Chrome binary not found: ${opts.chromeBin}`);
-    if (!fs.existsSync(path.join(extensionDir, 'manifest.json'))) {
+    if (extensionDir && !fs.existsSync(path.join(extensionDir, 'manifest.json'))) {
       throw new Error(
         `Extension dist manifest not found: ${path.join(extensionDir, 'manifest.json')}`,
       );
@@ -189,7 +192,7 @@ function runLaunch(opts, acquireLock) {
   // run's Chrome would hold the lock and the write fails.
   if (opts.stopOnly) return { stopped: true };
   try {
-    removeExtensionWorkerRegistrations(profile);
+    if (extensionDir) removeExtensionWorkerRegistrations(profile);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -221,7 +224,7 @@ function runLaunch(opts, acquireLock) {
   const initialUrl =
     opts.startUrl || extensionPageUrl(extensionDir, opts.homePage) || 'chrome://extensions/';
   const browser = launchBrowserResolution(opts.browserResolution, opts.chromeBin);
-  const loadsOverCdp = browser.extensionLoading === CDP_LOAD_UNPACKED;
+  const loadsOverCdp = Boolean(extensionDir) && browser.extensionLoading === CDP_LOAD_UNPACKED;
   let cdpLoad = null;
   let owner = null;
   const runtimeNonce = createRuntimeIdentityNonce();
@@ -238,10 +241,14 @@ function runLaunch(opts, acquireLock) {
     ...isolatedProfileArgs(),
     '--disable-default-apps',
     '--disable-popup-blocking',
-    '--disable-extensions-file-access-check',
-    '--disable-extensions-content-verification',
-    '--disable-features=ExtensionContentVerification,DisableLoadExtensionCommandLineSwitch',
-    ...extensionLaunchArgs(extensionDir, browser.extensionLoading),
+    ...(extensionDir
+      ? [
+          '--disable-extensions-file-access-check',
+          '--disable-extensions-content-verification',
+          '--disable-features=ExtensionContentVerification,DisableLoadExtensionCommandLineSwitch',
+          ...extensionLaunchArgs(extensionDir, browser.extensionLoading),
+        ]
+      : []),
   ]);
   // Initial tab: the caller's URL when provided, else the extension home. The
   // extension home avoids leaving disposable chrome://newtab/ or extensions
@@ -333,7 +340,7 @@ function runLaunch(opts, acquireLock) {
         cdpLoad = loadExtensionOverCdp(opts, browserPid, initialUrl, clearLaunchMarkers);
       else if (application) openBackgroundWindow(opts, browserPid, initialUrl, clearLaunchMarkers);
       owner = cdpLoad?.owner ?? ownerIdentity(cdpPort, profile, browserPid, log);
-      for (const problem of pruneExtraHomeTabs(cdpPort, extensionDir, opts)) {
+      for (const problem of extensionDir ? pruneExtraHomeTabs(cdpPort, extensionDir, opts) : []) {
         log(`[launch] home-tab pruning: ${problem}`);
       }
     } finally {
@@ -658,7 +665,8 @@ function processIsOwnedBrowser(pid, profile, extensionDir, extensionOwnerRoot) {
   const command = processCommand(pid);
   if (!command) return false;
   if (command.includes(`--user-data-dir=${profile}`)) return true;
-  const ownerRoot = extensionOwnerRoot ? extensionOwnerRoot(path.resolve(extensionDir)) : null;
+  const ownerRoot =
+    extensionDir && extensionOwnerRoot ? extensionOwnerRoot(path.resolve(extensionDir)) : null;
   return Boolean(ownerRoot && command.includes(`--load-extension=${ownerRoot}`));
 }
 

@@ -267,3 +267,16 @@ export async function dappCalls(
     short: origin.shortUrl('x'),
   };
 }
+
+async function plainWebConsumer(target: string) {
+  const { createPlainWebAdapter, stopPlainWebBrowser } =
+    await import('@farmslot/adapter-web/plain-web');
+  const runtime = createPlainWebAdapter({
+    manifestPath: '/project/actions.json',
+    url: () => 'http://127.0.0.1:9315/',
+    serverLabel: 'Website',
+  });
+  await runtime.runtimeStatus(target);
+  stopPlainWebBrowser(target);
+}
+void plainWebConsumer;
