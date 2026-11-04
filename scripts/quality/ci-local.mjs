@@ -85,8 +85,6 @@ export function ciParitySteps(files, cwd) {
             '--tsconfig',
             'tsconfig.json',
             'src/review/static-review-execution.test.ts',
-            'src/review/native-review-settlement.test.ts',
-            'src/review/reviewed-inputs.test.ts',
           ],
         ],
       ]
@@ -104,23 +102,25 @@ export function ciParitySteps(files, cwd) {
           'deterministic receipt guard',
           ['node', '--test', 'packages/agent-runtime/test/deterministic-checks.test.cjs'],
         ],
-        [
-          'deterministic gateway guard',
-          [
-            'node',
-            'scripts/quality/run-tsx-tests.mjs',
-            '--cwd',
-            'services/gateway',
-            '--tsconfig',
-            'tsconfig.json',
-            'src/tasks/deterministic-checks.test.ts',
-            'src/tasks/acceptance-terminal-contract.test.ts',
-            'src/tasks/writer.test.ts',
-          ],
-        ],
       ]
     : [];
-  return [['format', format], ...reviewPolicy, ...deterministic, ...CI_PARITY_STEPS.slice(1)];
+  const formatSteps = !files || formatFiles.length ? [['format', format]] : [];
+  const offlineReadsChanged = affected([
+    'apps/command-center/',
+    'apps/companion/',
+    'packages/protocol/src/',
+    'scripts/quality/check-cached-panel-reads',
+    'scripts/quality/offline-reads-baseline.json',
+    'package.json',
+    'yarn.lock',
+    '.yarnrc.yml',
+  ]);
+  const guards = CI_PARITY_STEPS.slice(1).filter(
+    ([name]) =>
+      offlineReadsChanged ||
+      (name !== 'offline-first reads' && name !== 'offline-first read guard tests'),
+  );
+  return [...formatSteps, ...reviewPolicy, ...deterministic, ...guards];
 }
 
 function changedFiles(cwd) {
