@@ -24,6 +24,7 @@
 // probe-cors: the HTTP probe fails, but by CORS rather than the request block.
 // probe-other-blocker: it fails as blocked by client, but not by the host.
 // no-resolver: the resolver probe fails, but not at name resolution.
+// strict-csp: the app CSP denies the resolver port; a blank document reaches DNS.
 // notification: once the app is open, MetaMask opens a notification window.
 // double-commit: the blank tab's commit is reported by both Page.frameNavigated
 // and Page.getFrameTree (same loaderId), then the app document logs before
@@ -146,7 +147,16 @@ function serveCdp(socket) {
   const record = (entry) => {
     if (process.env.STUB_LOG) appendFileSync(process.env.STUB_LOG, `${JSON.stringify(entry)}\n`);
   };
-  const sessionTarget = { S1: 'APP', S2: 'APP', SOLD: 'OLD', SPOP: 'POPUP', S3: 'APP2' };
+  let createdTargets = 0;
+  const sessionTarget = {
+    SRESOLVER: 'RESOLVER',
+    S1: 'APP',
+    S2: 'APP',
+    SOLD: 'OLD',
+    SPOP: 'POPUP',
+    S3: 'APP2',
+  };
+  committed.set('RESOLVER', 'about:blank');
   // A binding call reaches every session that registered the binding, as in
   // Chrome when two sessions hook the same page.
   const callBinding = (targetId, name, contextId, payload) => {
@@ -173,6 +183,10 @@ function serveCdp(socket) {
       background: params.background ?? null,
       newWindow: params.newWindow ?? null,
       source: method === 'Page.addScriptToEvaluateOnNewDocument' ? (params.source ?? null) : null,
+      probeTarget:
+        method === 'Runtime.evaluate' && /mm-harness-probe=1/u.test(params.expression ?? '')
+          ? sessionTarget[sessionId]
+          : null,
     });
     if (mode === 'reject-preload' && method === 'Page.addScriptToEvaluateOnNewDocument') {
       send({
@@ -215,7 +229,7 @@ function serveCdp(socket) {
           mode === 'restored' ? [{ targetId: 'OLD', type: 'page', url: `${appOrigin}/` }] : [],
       };
     } else if (method === 'Target.createTarget') {
-      result = { targetId: 'APP' };
+      result = { targetId: createdTargets++ === 0 ? 'APP' : 'RESOLVER' };
     } else if (method === 'Page.getFrameTree') {
       result = {
         frameTree: {
@@ -269,7 +283,11 @@ function serveCdp(socket) {
           {
             requestId: 'PROBE-RESOLVER',
             errorText:
-              mode === 'no-resolver' ? 'net::ERR_CONNECTION_REFUSED' : 'net::ERR_NAME_NOT_RESOLVED',
+              mode === 'no-resolver'
+                ? 'net::ERR_CONNECTION_REFUSED'
+                : mode === 'strict-csp' && sessionTarget[sessionId] === 'APP'
+                  ? 'net::ERR_BLOCKED_BY_CSP'
+                  : 'net::ERR_NAME_NOT_RESOLVED',
           },
           sessionId,
         );
@@ -315,6 +333,9 @@ function serveCdp(socket) {
     }
     send({ id, result, ...(sessionId ? { sessionId } : {}) });
 
+    if (method === 'Target.closeTarget' && params.targetId === 'RESOLVER') {
+      emit('Target.detachedFromTarget', { sessionId: 'SRESOLVER', targetId: 'RESOLVER' });
+    }
     if (method === 'Page.navigate' && mode === 'notification') {
       setTimeout(
         () =>
@@ -337,16 +358,16 @@ function serveCdp(socket) {
     }
     if (method === 'Target.createTarget') {
       emit('Target.attachedToTarget', {
-        sessionId: 'S1',
-        targetInfo: { targetId: 'APP', type: 'page', url: 'about:blank' },
+        sessionId: result.targetId === 'APP' ? 'S1' : 'SRESOLVER',
+        targetInfo: { targetId: result.targetId, type: 'page', url: 'about:blank' },
         waitingForDebugger: true,
       });
-      if (mode === 'restored') {
+      if (mode === 'restored' && result.targetId === 'APP') {
         setTimeout(
           () =>
             emit('Target.attachedToTarget', {
               sessionId: 'S2',
-              targetInfo: { targetId: 'APP', type: 'page', url: 'about:blank' },
+              targetInfo: { targetId: result.targetId, type: 'page', url: 'about:blank' },
               waitingForDebugger: false,
             }),
           20,
