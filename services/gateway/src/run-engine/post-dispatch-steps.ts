@@ -49,6 +49,7 @@ import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { readPRCompletionHead } from '../review/acceptance-coverage.js';
 import {
   executeReview,
+  pipelineReviewSelection,
   reReviewMode,
   type ReviewOptions,
   type ReviewResult,
@@ -779,12 +780,7 @@ export async function executeReviewStep(
   // reviewer, while the stored sequence is still the dispatch's own plan (a gate,
   // request or recovery that rewrites it stamps requestedAt). Recorded on the step,
   // so its rechecks use it after the gate consumes the row.
-  const publishGate = current.engineState?.publishGate;
-  const reviewSelection =
-    !publishGate?.reviewSequenceRequestedAt &&
-    publishGate?.reviewPolicy?.requestedBy !== 'human-gate'
-      ? publishGate?.reviewSequence?.[0]
-      : undefined;
+  const reviewSelection = pipelineReviewSelection(current);
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
     enabled: true,
@@ -897,13 +893,15 @@ export async function executeReviewStep(
   updateRunStep(runId, S.REVIEW, {
     inputs: { ...reviewStep?.inputs, validationDepth },
   });
+  // The engine records partial I/O on failure; keep the selected reviewer for its next retry.
+  stepPartialIO.set(runId, { inputs });
   const executeReviewForRun = context.executeReviewForRun ?? executeReview;
   const execution = reviewSelection ? executionModelFromSelection(reviewSelection) : null;
   // Without a sequence the project's review configuration selects the reviewer.
   const reviewer = execution
     ? { reviewRunner: execution.runner, model: execution.model, effort: execution.effort }
     : {};
-  const mode = current.reviewMode;
+  const mode = reviewSelection?.mode ?? current.reviewMode;
   const primaryContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;
   const reviewId =
     mode === 'warm'
@@ -937,6 +935,7 @@ export async function executeReviewStep(
       throw new Error(
         `Eval judge did not complete: ${result.reason ?? result.verdict ?? 'unknown'}`,
       );
+    stepPartialIO.delete(runId);
     return { inputs, outputs: { ...result, cliCommand } };
   }
   let interactiveRetry = false;
@@ -972,11 +971,13 @@ export async function executeReviewStep(
     });
   };
   result = await interactiveFeedback(result);
-  if (interactiveRetry)
+  if (interactiveRetry) {
+    stepPartialIO.delete(runId);
     return {
       inputs: { ...inputs, enabled: true },
       outputs: { ...result, cliCommand, interactiveRetry: true },
     };
+  }
 
   if (current.mode !== 'interactive') {
     if (result.fixDeliveryFailure)
@@ -1037,6 +1038,7 @@ export async function executeReviewStep(
     }
   }
 
+  stepPartialIO.delete(runId);
   return {
     inputs: { ...inputs, enabled: !result.skipped },
     outputs: { ...result, cliCommand, ...(interactiveRetry ? { interactiveRetry: true } : {}) },
