@@ -1,0 +1,2 @@
+- Replaying slot selection keeps the slot explicitly requested for the run, including after restart cleanup.
+- Model listings use the slot's worker shell and project environment. Stale or failed listings no longer reject a model on a node; fresh listings still reject models absent from that node.

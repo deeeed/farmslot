@@ -1111,6 +1111,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
     effort: params.effort,
     scripted: params.scripted,
     slotId: params.slotId ?? null,
+    requestedSlotId: (options?.dispatchRequest ?? params).slotId ?? null,
     reviewWorkspaceTarget: params.reviewWorkspaceTarget
       ? structuredClone(params.reviewWorkspaceTarget)
       : undefined,

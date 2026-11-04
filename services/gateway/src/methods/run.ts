@@ -875,9 +875,7 @@ async function runCreateWithSources(
   options: RunCreateInternalOptions,
   preparedPlan?: RunCreationPlan,
 ): Promise<RunCreateResult> {
-  const dispatchRequest = currentProjectSources()
-    ? captureRunCreationRequest(options.sourceCallerRequest ?? params)
-    : undefined;
+  const dispatchRequest = captureRunCreationRequest(options.sourceCallerRequest ?? params);
   const expectedQa = options.expectedQa ? structuredClone(options.expectedQa) : undefined;
   const plan = preparedPlan ?? (await planRunCreation(params, options));
   params = { ...plan.params, ...(preparedPlan ? { slotId: params.slotId } : {}) };

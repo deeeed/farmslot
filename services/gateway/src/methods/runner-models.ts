@@ -8,7 +8,7 @@ import {
   type RunnerVisibleModelsSetResult,
 } from '@farmslot/protocol';
 
-import { loadMachinePool, loadSlotVars } from '../core/config.js';
+import { loadMachinePool, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot, isDisconnectedRemote, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { withMachineEnv } from '../core/project-env.js';
@@ -18,6 +18,7 @@ import { resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { nativeCatalogChanges } from '../resources/native-catalog-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
+import { wrapWorkerShellCommand } from '../runners/launch-command.js';
 import type { ModelCatalogNode, RunnerModelCatalogSource } from '../runners/model-catalog.js';
 import {
   RUNNER_MODEL_CATALOG_TICK_MS,
@@ -76,10 +77,17 @@ export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
     list: async (source) => {
       const vars = await loadSlotVars(slot);
       if (isDisconnectedRemote(vars)) throw new Error('node is not connected');
+      const projectVars = vars.projectName ? await loadProjectVars(vars.projectName) : undefined;
       const binary = vars[source.slotPathKey]?.trim() || source.nodeCommand;
       const command = `${shellExpressionForRemotePath(binary)} ${source.args.map(shellQuote).join(' ')} </dev/null`;
-      const result = await execOnSlot(vars, withMachineEnv(command, vars), {
-        cwd: '/',
+      const workerCommand = wrapWorkerShellCommand(withMachineEnv(command, vars), {
+        vars,
+        projectVars,
+        projectJson: projectVars?.projectJson ?? {},
+      });
+      // Terminal workers enter bash -lc in this repo before applying the same environment.
+      const result = await execOnSlot(vars, `bash -lc ${shellQuote(workerCommand)}`, {
+        cwd: vars.remoteRepo,
         timeout: NODE_MODEL_LIST_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
       });

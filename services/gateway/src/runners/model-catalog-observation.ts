@@ -17,10 +17,11 @@ import {
   queryNodeModelCatalog,
   queryRunnerModelCatalog,
   readRunnerModelCatalog,
+  RUNNER_MODEL_CATALOG_TTL_MS,
   type RunnerModelCatalogSource,
 } from './model-catalog.js';
 
-export const RUNNER_MODEL_CATALOG_TTL_MS = 5 * 60_000;
+export { RUNNER_MODEL_CATALOG_TTL_MS } from './model-catalog.js';
 export const RUNNER_MODEL_CATALOG_TICK_MS = 60_000;
 
 export interface RunnerModelCatalogReadInterest {

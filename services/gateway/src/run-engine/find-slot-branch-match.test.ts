@@ -468,6 +468,34 @@ const context: Parameters<typeof executeFindSlotStep>[3] = {
     return 'pick';
   },
 };
+
+for (const unavailable of ['gone', 'busy'] as const) {
+  test(
+    `find-slot visibly refuses a ${unavailable} pin without choosing another slot`,
+    { timeout: 2000 },
+    async () => {
+      reset('dev', 'PROJ-383');
+      freshPreview = true;
+      expectedTarget = undefined;
+      run.slotId = unavailable === 'gone' ? 'missing-example-3' : slots[0]!.slot;
+      if (unavailable === 'busy') {
+        slots[0]!.lifecycle = 'busy';
+        slots[0]!.phase = 'preparing';
+      }
+      const pinned = run.slotId;
+      await assert.rejects(executeFindSlotStep(run.id, run, 0, context), {
+        message:
+          unavailable === 'gone'
+            ? 'Slot missing-example-3 not found'
+            : `Slot ${pinned}: Slot is busy (preparing)`,
+      });
+      assert.equal(run.slotId, pinned);
+      assert.deepEqual(claims, []);
+      assert.equal(pickerPayload, undefined);
+    },
+  );
+}
+
 for (const [flow, ticket] of [
   ['pr-complete', 'example-org/terminal#210'],
   ['fix-bug', 'TAT-4137'],

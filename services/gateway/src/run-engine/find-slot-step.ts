@@ -104,6 +104,7 @@ import {
   nativeProfileAllowedSlots,
 } from '../runners/native/worker-profile.js';
 import { runnerDefaultSafetyTier, runnerModelNodeBlocker } from '../runners/registry.js';
+import { requestedRunSlotId } from '../runs/slot-pin.js';
 import {
   getAllRuns,
   getAllRunsWithArchived,
@@ -901,6 +902,8 @@ export async function executeFindSlotStep(
   generation: number,
   context: FindSlotStepContext,
 ): Promise<StepIO> {
+  if (run.requestedSlotId === undefined)
+    run = updateRun(runId, { requestedSlotId: requestedRunSlotId(run) });
   // An operator's pick stays the pick after Continue, whichever attempt resumes the step.
   const pick = run.slotId ? undefined : continuedOperatorPick(run);
   if (pick) run = updateRun(runId, { slotId: pick });
