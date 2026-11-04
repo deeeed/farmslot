@@ -80,6 +80,7 @@ import {
   readPersistedReviewSnapshot,
   waitForSessionTranscriptToSettle,
 } from './snapshots.js';
+import { STATIC_REVIEW_EXECUTION_RULE } from './static-review-execution.js';
 import { reviewerFeedbackRelPath } from './template-paths.js';
 export { reviewerChecklistBasename, reviewerFeedbackRelPath } from './template-paths.js';
 import {
@@ -145,10 +146,13 @@ export function reviewChecklistMarkPrompt(
 }
 
 /**
- * Where a slot reviewer puts probe tests and other scratch: the node's temporary directory,
- * which a sandboxed reviewer can write, never the checkout (ADR-032 Amendment 1).
+ * Static reviewers inspect recorded evidence only. Explicit live review keeps its scratch policy.
  */
-export function reviewerScratchRule(contextId: string): string {
+export function reviewerScratchRule(
+  contextId: string,
+  validationDepth: ReviewValidationDepth = 'static-code',
+): string {
+  if (validationDepth === 'static-code') return STATIC_REVIEW_EXECUTION_RULE;
   return (
     `Apart from the review files named above and the evidence your checklist asks for, write ` +
     `nothing in the checkout. Put probe tests and ` +

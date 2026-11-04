@@ -61,5 +61,54 @@ test('local format excludes farm templates and frozen evidence, just like the CI
   const scoped = ciParitySteps([...outside, changed], root)[0][1];
   assert.ok(scoped.includes(path.join(root, changed)));
   for (const file of outside) assert.ok(!scoped.includes(path.join(root, file)));
-  assert.deepEqual(ciParitySteps(outside, root)[0][1], ['yarn', 'format:check']);
+  assert.ok(!ciParitySteps(outside, root).some(([name]) => name === 'format'));
+  assert.deepEqual(ciParitySteps(null, root)[0], ['format', ['yarn', 'format:check']]);
+});
+
+test('review and receipt guards run only for their changed scope', () => {
+  const names = (files) => ciParitySteps(files, process.cwd()).map(([name]) => name);
+  assert.ok(
+    names(['services/gateway/src/review/review-agent.ts']).includes(
+      'static review execution guard',
+    ),
+  );
+  assert.ok(!names(['docs/readme.md']).includes('static review execution guard'));
+  assert.ok(
+    names(['packages/agent-runtime/scripts/worker-terminal-contract.cjs']).includes(
+      'deterministic receipt guard',
+    ),
+  );
+  assert.ok(!names(['docs/readme.md']).includes('deterministic receipt guard'));
+});
+
+test('local guards leave integration suites in their owning package jobs', () => {
+  const commands = ciParitySteps(null, process.cwd()).flatMap(([, command]) => command);
+  assert.ok(commands.includes('src/review/static-review-execution.test.ts'));
+  for (const file of [
+    'src/review/native-review-settlement.test.ts',
+    'src/review/reviewed-inputs.test.ts',
+    'src/tasks/deterministic-checks.test.ts',
+    'src/tasks/acceptance-terminal-contract.test.ts',
+    'src/tasks/writer.test.ts',
+  ]) {
+    assert.ok(!commands.includes(file), file);
+  }
+});
+
+test('offline read analysis follows its client, protocol and tooling inputs', () => {
+  const selected = (files) =>
+    ciParitySteps(files, process.cwd()).some(([name]) => name === 'offline-first reads');
+  assert.equal(selected(['services/gateway/src/runners/registry-safe-send.test.ts']), false);
+  for (const file of [
+    'apps/command-center/ui/src/view.ts',
+    'apps/companion/src/view.ts',
+    'packages/protocol/src/rpc/pr.ts',
+    'packages/review-dispatch/src/native-worker-target.ts',
+    'scripts/quality/check-cached-panel-reads.mjs',
+    'scripts/quality/offline-reads-baseline.json',
+    'yarn.lock',
+  ]) {
+    assert.equal(selected([file]), true, file);
+  }
+  assert.equal(selected(null), true);
 });

@@ -232,7 +232,14 @@ for (const [stepName, retainedFix] of [
           'utf8',
         ),
       );
-      assert.equal(contract.deterministicChecks, undefined);
+      assert.deepEqual(contract.deterministicChecks, [
+        {
+          checklist: 'REVIEW-FIX.md',
+          stepNumber: 1,
+          reference: 'ci.local_check',
+          command: `export FARMSLOT_CI_BASE_REF='${'a'.repeat(40)}'\nyarn ci:local`,
+        },
+      ]);
     }
     if (stepName === PS.HUMAN_GATE || retainedFix) {
       assert.equal(await readFile(path.join(taskDirOnSlot, fix.checklist), 'utf8'), fixChecklist);

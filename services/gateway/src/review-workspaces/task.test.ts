@@ -177,6 +177,14 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
         `Reference unplaced: no ${f.run.project} slot on ${f.run.reviewWorkspace!.machine}`,
       ),
     );
+    assert.match(task, /Tests and code validation belong to CI/);
+    assert.match(
+      task,
+      /Do not run tests, builds, recipes, installs, probes or ad hoc validation scripts/,
+    );
+    assert.match(task, /CI results and CI receipts/);
+    assert.match(task, /unverified/);
+    assert.doesNotMatch(task, /Put probe tests|reviewer_recipe_replay\(/);
     assert(task.includes('minor requires COMMENT'));
     assert(task.includes('more than 3 nits requires COMMENT'));
     assert(task.includes('out-of-diff notes in the review body'));

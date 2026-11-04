@@ -43,6 +43,8 @@ try {
 // exits; without, the exit handler's SIGKILL is the group's first.
 const zombieLeaf = (ignoreTerm: boolean): string => `
 ${ignoreTerm ? "$SIG{TERM} = 'IGNORE';" : ''}
+# Model a slow start beyond the driver's 200 ms timeout.
+select(undef, undef, undef, 0.3);
 if (fork() == 0) {
   exit 0 if fork() == 0;
   setpgrp(0, 0);
@@ -58,7 +60,21 @@ sleep 600;
 // exit handler signals the group again at that point. A throw there ends the driver.
 const TIMEOUT_DRIVER = `
 import childProcess from 'node:child_process';
+import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
+import { mock } from 'node:test';
+const realSetTimeout = globalThis.setTimeout;
+// Wait for the zombie fixture before delivering its timeout. Keep SIGKILL
+// escalation and every other timer real so both TERM paths remain covered.
+mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+  if (delay !== 200) return realSetTimeout(callback, delay, ...args);
+  return realSetTimeout(async () => {
+    while (!fs.existsSync(process.env.M_PID) || !fs.readFileSync(process.env.M_PID, 'utf8').trim()) {
+      await new Promise((resolve) => realSetTimeout(resolve, 10));
+    }
+    callback(...args);
+  }, delay);
+});
 let leaf = 0;
 const realSpawn = childProcess.spawn;
 childProcess.spawn = (...args) => {

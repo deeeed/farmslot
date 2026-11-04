@@ -47,7 +47,9 @@ for (const [shell, flags] of [
   test(`reviewer replay ${shell} allocates fresh output, preserves arguments and returns failures`, async (t) => {
     const scratch = await mkdtemp(path.join(os.tmpdir(), 'review recipe shell-'));
     t.after(() => rm(scratch, { recursive: true, force: true }));
-    const wrapper = /```sh\n([\s\S]*?)\n```/.exec(reviewerScratchRule('reviewer'))?.[1];
+    const wrapper = /```sh\n([\s\S]*?)\n```/.exec(
+      reviewerScratchRule('reviewer', 'full-live'),
+    )?.[1];
     assert.ok(wrapper);
     const command = [
       process.execPath,

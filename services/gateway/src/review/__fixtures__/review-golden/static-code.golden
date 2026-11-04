@@ -6,6 +6,8 @@
 > Checklist marker: run `temp/tasks/golden/review/mark --checklist REVIEW.md --signal REVIEW-SIGNAL.json start` once, then `temp/tasks/golden/review/mark --checklist REVIEW.md --signal REVIEW-SIGNAL.json N`
 > after each checklist item. Finish with `temp/tasks/golden/review/mark --checklist REVIEW.md --signal REVIEW-SIGNAL.json complete --mark-last`.
 
+Static review reads source, the diff, recorded evidence, existing CI results and deterministic receipts only. Tests and code validation belong to CI. Do not run tests, builds, recipes, installs, probes or ad hoc validation scripts. A claim without evidence is a finding or marked unverified.
+
 ## Task
 
 ```
@@ -37,17 +39,8 @@ VALIDATION_DEPTH: static-code
   cat temp/tasks/golden/review/artifacts/recipe-coverage.md 2>/dev/null || true
   cat temp/tasks/golden/review/artifacts/recipe-quality.json 2>/dev/null || true
   ```
-- [ ] **4. Run focused validation** - prefer the worker-recorded commands. For command-center changes, run:
-  ```bash
-  cd /nonexistent/golden-repo/apps/command-center && yarn typecheck
-  ```
-  Then run changed tests listed in the worker report or visible in the diff.
-- [ ] **5. Audit evidence**:
-  ```bash
-  cd /nonexistent/golden-repo
-  node <FARMSLOT_ROOT>/scripts/quality/check-task-artifact-contract.mjs temp/tasks/golden/review --require-recipe-coverage-if-recipe
-  ```
-  If screenshots are present, inspect whether the claimed UI state is actually visible.
+- [ ] **4. Inspect recorded validation** - read existing CI results and `artifacts/deterministic-checks/` receipts and logs. Do not execute validation. Missing evidence is a finding or marked unverified.
+- [ ] **5. Audit recorded evidence** - read supplied artifact-contract results and inspect supplied screenshots for the claimed UI. Mark missing proof unverified; do not run artifact checkers or recipes.
 - [ ] **6. Judge the change** - check correctness, minimality, test coverage, recipe quality, evidence quality, and whether any introduced issue should block publishing.
 - [ ] **7. Write `temp/tasks/golden/review/artifacts/review-feedback.md`**:
   ```markdown
@@ -59,7 +52,7 @@ VALIDATION_DEPTH: static-code
   <brief summary of what changed and whether it is correct>
 
   ## Validation
-  - <commands run and result>
+  - <recorded CI results, receipts and evidence limits>
 
   ## Evidence
   - <artifact/evidence assessment>

@@ -10,7 +10,12 @@ import test from 'node:test';
 import { WebSocket } from 'ws';
 
 import { buildBranchUpdateInstructions } from '@farmslot/agent-runtime';
-import { isRecord, type RequestFrame, type Run } from '@farmslot/protocol';
+import {
+  isRecord,
+  type RequestFrame,
+  type Run,
+  type WorkerTerminalContractDocument,
+} from '@farmslot/protocol';
 
 import { farmslotRoot, type ProjectVars } from '../core/config.js';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
@@ -23,6 +28,7 @@ import type {
 } from '../runners/observability-types.js';
 import { makeVars } from '../runners/test-fixtures.js';
 import { renderRoleTemplate } from '../tasks/agent-runtime-script.js';
+import { resolveWorkerTerminalContract } from '../tasks/worker-terminal-contract.js';
 
 import {
   advanceInlineFixProgress,
@@ -376,7 +382,26 @@ test('default CI fix template uses explicit CI-FIX marker targeting', async () =
 test('default CI fix template completion marker writes CI-FIX signal', async () => {
   const templatePath = path.join(farmslotRoot, 'templates', 'worker', 'ci-fix.md');
   const template = await readFile(templatePath, 'utf-8');
-  const taskDir = await mkdtemp(path.join(tmpdir(), 'farmslot-ci-fix-mark-'));
+  const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'farmslot-ci-fix-mark-'));
+  const taskDir = path.join(fixtureRoot, '.task');
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: fixtureRoot }).status, 0);
+  await writeFile(path.join(fixtureRoot, 'source.txt'), 'Fixture source\n');
+  await mkdir(path.join(taskDir, 'inputs'), { recursive: true });
+  const contract: WorkerTerminalContractDocument = {
+    ...resolveWorkerTerminalContract(null, 'ci-fix'),
+    deterministicChecks: [
+      {
+        checklist: 'CI-FIX.md',
+        stepNumber: 5,
+        reference: 'ci.local_check',
+        command: 'printf "CI fixture passed\\n"',
+      },
+    ],
+  };
+  await writeFile(
+    path.join(taskDir, 'inputs/worker-terminal-contract.CI-FIX.json'),
+    JSON.stringify(contract),
+  );
   const marker = path.join(
     farmslotRoot,
     'packages',
@@ -400,6 +425,7 @@ test('default CI fix template completion marker writes CI-FIX signal', async () 
         process.execPath,
         [marker, taskDir, '--checklist', 'CI-FIX.md', ...args],
         {
+          cwd: fixtureRoot,
           encoding: 'utf-8',
         },
       );
@@ -419,7 +445,7 @@ test('default CI fix template completion marker writes CI-FIX signal', async () 
     assert.equal(signal.outcome, 'success');
     assert.equal(signal.checklistTiming.source, 'CI-FIX.md');
   } finally {
-    await rm(taskDir, { recursive: true, force: true });
+    await rm(fixtureRoot, { recursive: true, force: true });
   }
 });
 
