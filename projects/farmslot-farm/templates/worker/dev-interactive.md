@@ -96,7 +96,6 @@ When the operator says the interactive session is complete:
    ```bash
    cd {{REPO}}
    node scripts/quality/check-conventional-commits.mjs --subject "$(git log --format=%s -1)"
-   yarn --cwd apps/command-center typecheck
    ```
    Fix any failures before pushing. Then create/push the PR and run `{{TASK_DIR}}/mark complete --mark-last`. Farmslot holds that signal and presents the operator-owned completion actions.
 6. If the operator chose a no-PR, blocked, failed, or abort outcome in Farmslot, do not manufacture a worker terminal signal; report what you did and **stop**.

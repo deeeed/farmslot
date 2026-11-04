@@ -54,17 +54,7 @@ TICKET: {{TICKET}}
 
 ### Verify (steps 4-5)
 
-- [ ] **4. Run focused validation** — per touched workspace, from `{{REPO}}`:
-
-  ```bash
-  # For each workspace you changed (packages/*, services/*, apps/command-center):
-  yarn --cwd <workspace> format > /dev/null 2>&1 && yarn --cwd <workspace> quality
-  ```
-
-  Every touched workspace's `quality` must exit 0. Do NOT run repo-wide `tsc -b`
-  (some packages emit into source paths); use each workspace's own scripts.
-  If you touched `scripts/*.sh`, run `bash -n` on each edited script and
-  `yarn test:project-hooks` from the repo root.
+- [ ] **4. Changed-file CI** [DETERMINISTIC: ci.local_check] - call `{{TASK_DIR}}/mark --checklist REVIEW-FIX.md --signal REVIEW-FIX-SIGNAL.json 4`. The engine runs the frozen command and records its receipt. Read the retained failure log and fix failures, then repeat this mark. Do not select or launch tests, builds, lint or validation scripts yourself.
 - [ ] **5. Artifact contract gate:**
   ```bash
   cd {{REPO}}

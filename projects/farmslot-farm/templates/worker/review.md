@@ -6,6 +6,8 @@
 > Checklist marker: run `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} start` once, then `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} N`
 > after each checklist item. Finish with `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} complete --mark-last`.
 
+Static review reads source, the diff, recorded evidence, existing CI results and deterministic receipts only. Tests and code validation belong to CI. Do not run tests, builds, recipes, installs, probes or ad hoc validation scripts. A claim without evidence is a finding or marked unverified.
+
 ## Task
 
 ```
@@ -37,17 +39,8 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
   cat {{TASK_DIR}}/artifacts/recipe-coverage.md 2>/dev/null || true
   cat {{TASK_DIR}}/artifacts/recipe-quality.json 2>/dev/null || true
   ```
-- [ ] **4. Run focused validation** - prefer the worker-recorded commands. For command-center changes, run:
-  ```bash
-  cd {{REPO}}/apps/command-center && yarn typecheck
-  ```
-  Then run changed tests listed in the worker report or visible in the diff.
-- [ ] **5. Audit evidence**:
-  ```bash
-  cd {{REPO}}
-  node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe
-  ```
-  If screenshots are present, inspect whether the claimed UI state is actually visible.
+- [ ] **4. Inspect recorded validation** - read existing CI results and `artifacts/deterministic-checks/` receipts and logs. Do not execute validation. Missing evidence is a finding or marked unverified.
+- [ ] **5. Audit recorded evidence** - read supplied artifact-contract results and inspect supplied screenshots for the claimed UI. Mark missing proof unverified; do not run artifact checkers or recipes.
 - [ ] **6. Judge the change** - check correctness, minimality, test coverage, recipe quality, evidence quality, and whether any introduced issue should block publishing.
 - [ ] **7. Write `{{TASK_DIR}}/{{REVIEW_FEEDBACK}}`**:
   ```markdown
@@ -59,7 +52,7 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
   <brief summary of what changed and whether it is correct>
 
   ## Validation
-  - <commands run and result>
+  - <recorded CI results, receipts and evidence limits>
 
   ## Evidence
   - <artifact/evidence assessment>

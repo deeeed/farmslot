@@ -221,7 +221,7 @@ test('without the opt-in the current checker owns unreadable handoff refusal', a
   }
 });
 
-test('terminal artifact success needs no local parity projection for a retained contract', async () => {
+test('terminal artifact success cannot waive a retained local_check receipt', async () => {
   for (const projection of ['', '\nTASK_DETERMINISTIC_CHECKS []']) {
     const root = writeTaskDir({ require: false });
     writeFileSync(
@@ -239,7 +239,7 @@ test('terminal artifact success needs no local parity projection for a retained 
     );
     checkerStdout = `TASK_ARTIFACT_CONTRACT_PASS${projection}`;
     try {
-      assert.equal((await validate()).ok, true);
+      assert.equal((await validate()).ok, false);
     } finally {
       checkerStdout = 'TASK_ARTIFACT_CONTRACT_PASS';
       rmSync(root, { recursive: true, force: true });

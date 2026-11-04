@@ -85,12 +85,7 @@ the limitation and replacement validation here.
 
 ### Phase 4: Validate
 
-- [ ] **10. Typecheck + gateway tests**:
-  ```bash
-  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
-  cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
-  ```
-  Replace the example test path with explicit affected suites. Confirm every requested suite ran; do not invoke a glob as a single tsx script.
+- [ ] **10. Changed-file CI** [DETERMINISTIC: ci.local_check] - call `{{TASK_DIR}}/mark 10`. The engine runs the frozen command and records its receipt. Read the retained failure log and fix failures, then repeat this mark. Do not select or launch tests, builds, lint or validation scripts yourself.
 - [ ] **11. Recipe regression (fast)** — must exit 0 after the fix (no video):
   ```bash
   cd {{REPO}}

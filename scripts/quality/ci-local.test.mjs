@@ -63,3 +63,19 @@ test('local format excludes farm templates and frozen evidence, just like the CI
   for (const file of outside) assert.ok(!scoped.includes(path.join(root, file)));
   assert.deepEqual(ciParitySteps(outside, root)[0][1], ['yarn', 'format:check']);
 });
+
+test('review and receipt guards run only for their changed scope', () => {
+  const names = (files) => ciParitySteps(files, process.cwd()).map(([name]) => name);
+  assert.ok(
+    names(['services/gateway/src/review/review-agent.ts']).includes(
+      'static review execution guard',
+    ),
+  );
+  assert.ok(!names(['docs/readme.md']).includes('static review execution guard'));
+  assert.ok(
+    names(['packages/agent-runtime/scripts/worker-terminal-contract.cjs']).includes(
+      'deterministic receipt guard',
+    ),
+  );
+  assert.ok(!names(['docs/readme.md']).includes('deterministic receipt guard'));
+});

@@ -478,9 +478,7 @@ export function deterministicChecklistTaskFileForPublication(
 function requiredDeterministicChecks(
   contract: WorkerTerminalContractDocument | null,
 ): NonNullable<WorkerTerminalContractDocument['deterministicChecks']> {
-  return (
-    contract?.deterministicChecks?.filter((check) => check.reference !== 'ci.local_check') ?? []
-  );
+  return contract?.deterministicChecks ?? [];
 }
 
 /** Revalidate task-owned receipts on the selected checkout before publication. */

@@ -462,9 +462,7 @@ function deterministicDeclarations(markdown, checklist) {
     if (!match && item.rawLabel.includes('[DETERMINISTIC')) {
       throw new Error(`Invalid deterministic declaration in ${checklist} step ${item.stepNumber}`);
     }
-    return match && match[1] !== 'ci.local_check'
-      ? [{ checklist, stepNumber: item.stepNumber, reference: match[1] }]
-      : [];
+    return match ? [{ checklist, stepNumber: item.stepNumber, reference: match[1] }] : [];
   });
 }
 
@@ -500,7 +498,7 @@ function deterministicContract(taskDir, checklist) {
 function recordedDeterministicSteps(taskDir, checklist) {
   const contract = deterministicContract(taskDir, checklist);
   const frozen = (contract.deterministicChecks ?? []).filter(
-    (step) => step.checklist === checklist && step.reference !== 'ci.local_check',
+    (step) => step.checklist === checklist,
   );
   const file = path.join(taskDir, checklist);
   const actual = fs.existsSync(file)

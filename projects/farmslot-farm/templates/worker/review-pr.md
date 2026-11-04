@@ -13,6 +13,8 @@ If TASK.md's `## Acceptance Criteria` is `_Not specified_`, **do not invent ACs*
 
 ---
 
+Static review reads source, the diff, recorded evidence, existing CI results and deterministic receipts only. Tests and code validation belong to CI. Do not run tests, builds, recipes, installs, probes or ad hoc validation scripts. A claim without evidence is a finding or marked unverified.
+
 ## Quality contracts (read before checklist)
 
 After fixture sync, read:
@@ -29,7 +31,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 |------------|-------|----------|------|
 | Parse PR + read files | yes | yes | yes |
 | Doctor + CDP | skip | check | full gate |
-| Evidence audit (read PNGs) | PR embeds only | yes | yes + re-run recipe if weak |
+| Evidence audit (read PNGs) | PR embeds only | yes | yes; missing proof is unverified |
 | Recipe coverage matrix | skip | if recipe present | required |
 | Typecheck + gateway tests | yes | yes | yes |
 | Live recipe re-validation | skip | UI PRs w/ CDP up | required for UI PRs |
@@ -48,15 +50,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 - [ ] **1. Read quality docs** — `{{recipe_quality_path}}`, `{{review_quality_path}}`, both CLAUDE files.
 - [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Print tier** — `Review tier: {{REVIEW_TIER}}`.
-- [ ] **4. Doctor + CDP** [standard+full]:
-  ```bash
-  cd {{REPO}}
-  node apps/command-center/scripts/agentic/recipe-doctor.mjs \
-    --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
-  bash apps/command-center/scripts/debug-chrome.sh
-  bash projects/farmslot-farm/setup/capture-helper-tmux-check.sh || true
-  ```
-  **full:** doctor fail → `{{TASK_DIR}}/mark blocked --reason "doctor failed"`, stop. **standard:** CDP down → note `code review only`, continue.
+- [ ] **4. Read recorded runtime health** - inspect supplied doctor and runtime evidence. Do not start services or run probes. Missing evidence stays unverified.
 - [ ] **5. Fetch PR metadata + diff:**
   ```bash
   gh pr diff {{PR_NUMBER}} --repo {{GH_REPO}} > /tmp/pr-{{PR_NUMBER}}.diff
@@ -84,34 +78,15 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 ### Live validation (13–16) [standard+full]
 
 - [ ] **13. Confirm branch** — `git branch --show-current` matches `{{PR_BRANCH}}`.
-- [ ] **14. Typecheck + gateway tests:**
-  ```bash
-  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
-  cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
-  ```
-  Replace the example test path with explicit affected suites. Confirm every requested suite ran; do not invoke a glob as a single tsx script.
-- [ ] **15. Re-run author recipe** [full + UI PR + CDP up] — when PR includes validation recipe or `artifacts/recipe.json` in inherited context:
-  ```bash
-  cd {{REPO}}
-  bash {{recipe_validate_wrapper}} \
-    --recipe <path-to-recipe.json> \
-    --artifacts-dir {{TASK_DIR}}/artifacts/review-recipe-run \
-    --runtime-dir {{RUNTIME_DIR}} \
-    --platform {{PLATFORM}} \
-    --cdp-port {{CDP_PORT}} \
-    --gateway-port {{WATCHER_PORT}} \
-    --slot-id {{SLOT}} \
-    --slow 2000 \
-    --record-video=full-run
-  ```
-  Re-read review-run screenshots; update coverage matrix.
+- [ ] **14. Inspect recorded validation** - read existing CI results and `artifacts/deterministic-checks/` receipts and logs. Do not execute validation. Missing evidence is a finding or marked unverified.
+- [ ] **15. Inspect author recipe evidence** - read the retained recipe, trace, assertions, screenshots and recording. Assess AC coverage without executing or replaying the recipe.
 - [ ] **16. Companion PRs** — when diff touches `apps/companion`, note platform (ios/android) and whether device proof is present or UNTESTABLE.
 
 ### Static + domain review (17–20)
 
 - [ ] **17. Farmslot antipatterns** — scan diff against `{{review_quality_path}}` table (swallowed exceptions, UI injection, protocol duplication, script hardcoding).
 - [ ] **18. Fix quality** [standard+full] — minimal correct fix? tests assert right behavior? brittle mocks/import-time constants?
-- [ ] **19. Validate concerns before flagging** [standard+full] — trace code paths; use CDP/gateway when claim is runtime-visible. No speculative noise.
+- [ ] **19. Validate concerns before flagging** [standard+full] — trace source paths and recorded evidence; mark runtime claims without proof unverified. No speculative noise.
 - [ ] **20. Publication hygiene** — broken screenshot URLs, local paths in PR body, missing `evidence-manifest.json` when visual ACs claimed.
 
 ### Report (21–22)
@@ -128,5 +103,5 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 
 - Never mention AI/LLM in review content.
 - Never inject UI state to “verify” author claims.
-- Prefer `yarn typecheck` — no emitting builds into source trees.
+- Read recorded CI results and deterministic receipts; never launch validation.
 - Independent review required before merge per repo policy.

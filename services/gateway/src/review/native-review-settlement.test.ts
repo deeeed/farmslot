@@ -912,7 +912,7 @@ test('a reviewer that leaves no feedback file settles no-verdict; a verdict coun
   assert.deepEqual([budget.used, budget.noVerdict], [1, 0]);
 });
 
-test('a slot reviewer is told to keep probe tests and scratch out of the checkout', async (t) => {
+test('a static slot reviewer reads recorded evidence without launching validation', async (t) => {
   // A gate reviewer's probe tests in the task's artifacts broke the product's unit run.
   ending = 'verdict';
   const run = await nativeRun(t);
@@ -920,11 +920,10 @@ test('a slot reviewer is told to keep probe tests and scratch out of the checkou
   const reviewer = getRun(run.id)!.agentContexts!.find((context) => context.role === 'review')!;
   const contract = slotFiles.get(reviewer.taskFile!) ?? '';
   assert.match(contract, /^## Reviewer-specific execution contract/);
-  assert.ok(contract.includes(`\${TMPDIR:-/tmp}/farmslot-review/${reviewer.id}`));
-  assert.match(contract, /write nothing in the checkout/);
-  assert.match(contract, /delete it before you write your result/);
-  assert.match(contract, /reviewer_recipe_replay\(\)/);
-  assert.match(contract, /env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR/);
+  assert.match(contract, /Tests and code validation belong to CI/);
+  assert.match(contract, /CI results and CI receipts/);
+  assert.match(contract, /unverified/);
+  assert.doesNotMatch(contract, /Put probe tests|reviewer_recipe_replay\(\)|mkdir -p/);
 });
 
 for (const [end, uncertainty] of [
