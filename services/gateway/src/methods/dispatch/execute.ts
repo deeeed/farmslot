@@ -49,6 +49,7 @@ import {
 import { slotFileExists } from '../../core/slot-io.js';
 import { SSH_CONNECT_SHELL_OPTIONS } from '../../core/ssh-options.js';
 import {
+  exactTmuxWindowTarget,
   firstWindowTarget,
   resolveTmuxPaneId,
   resolveTmuxSession,
@@ -250,7 +251,7 @@ async function renameDefaultWorkerWindow(
       `Failed to rename tmux window ${target} to ${workerWindowName}: ${renamed.stderr || renamed.stdout || `exit ${renamed.exitCode}`}`,
     );
   }
-  await applyRoleWindowOptions(vars, `${session}:${workerWindowName}`);
+  await applyRoleWindowOptions(vars, exactTmuxWindowTarget(session, workerWindowName));
 }
 
 async function tmuxWindowExists(
@@ -586,7 +587,7 @@ export async function ensureWorkerRoleTarget(
       );
     }
     if (!windowName) return await firstWindowTarget(vars, session);
-    const target = `${session}:${windowName}`;
+    const target = exactTmuxWindowTarget(session, windowName);
     await applyRoleWindowOptions(vars, target);
     return target;
   }
@@ -613,7 +614,7 @@ export async function ensureWorkerRoleTarget(
       );
     }
     if (!windowName) return await firstWindowTarget(vars, session);
-    const target = `${session}:${windowName}`;
+    const target = exactTmuxWindowTarget(session, windowName);
     await applyRoleWindowOptions(vars, target);
     return target;
   }
@@ -623,7 +624,7 @@ export async function ensureWorkerRoleTarget(
   // primary orchestration dispatches use the canonical `worker` anchor above.
   if (!windowName) return await firstWindowTarget(vars, session);
 
-  const roleTarget = `${session}:${windowName}`;
+  const roleTarget = exactTmuxWindowTarget(session, windowName);
   if (await tmuxWindowExists(vars, roleTarget)) {
     if (await isRoleWindowDead(vars, roleTarget)) {
       // Pane sat on its postmortem (remain-on-exit) view — revive with a fresh shell so the
@@ -1741,7 +1742,7 @@ export async function dispatchExecute(
     if (stillHasSession) {
       const existingRoleWindow = agentDispatchWindow(workerRole);
       const exitTarget = existingRoleWindow
-        ? `${session}:${existingRoleWindow}`
+        ? exactTmuxWindowTarget(session, existingRoleWindow)
         : await optionalFirstWindowTarget(vars, session);
       if (exitTarget && (await tmuxTargetHasPane(vars, exitTarget))) {
         await waitForRunnerProcessExit(vars, exitTarget, runner);

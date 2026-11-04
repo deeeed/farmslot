@@ -44,6 +44,7 @@ import {
   updateSlotStatusIf,
 } from '../../core/index.js';
 import {
+  exactTmuxWindowTarget,
   firstWindowTarget,
   resolveTmuxSession,
   shellQuote,
@@ -1290,7 +1291,7 @@ export async function killAgentInSession(
   // / waitForRunnerProcessExit so a runner alive in `${session}:1` actually
   // gets interrupted instead of orphaned through a no-op cleanup.
   const preferredTarget = roleWindow
-    ? `${session}:${roleWindow}`
+    ? exactTmuxWindowTarget(session, roleWindow)
     : await firstWindowTarget(vars, session);
   const listed = await execOnSlot(
     vars,
