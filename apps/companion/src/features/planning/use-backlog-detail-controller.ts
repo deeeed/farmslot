@@ -1,10 +1,11 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { type BacklogSpecGetResult, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { useViewToggle } from '../../components/view-state';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import { getResourceCache } from '../../lib/resource-cache';
@@ -22,11 +23,10 @@ export function useBacklogDetailController(itemId: string | undefined) {
   const connected = useConnectionStore(
     (state) => state.status === 'connected' && state.workspaceAccess === 'farm',
   );
-  const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
   const access = useWorkspaceRenderAccess();
   const observation = useResourceQuery(access === 'farm' ? backlogPlanningQuery : undefined);
   const item = observation.data?.items.find((candidate) => candidate.id === itemId) ?? null;
-  const [specOpen, setSpecOpen] = useState(false);
+  const [specOpen, setSpecOpen] = useViewToggle('backlog-spec');
   const specPath = item?.specPath;
   const specQuery = useMemo(
     () =>
@@ -47,9 +47,6 @@ export function useBacklogDetailController(itemId: string | undefined) {
     : (readErrorMessage(observation, heldConnectionCurrent()) ??
       specError ??
       (observation.status === 'ready' && !item ? `Backlog item ${itemId} was not found.` : null));
-  useEffect(() => {
-    setSpecOpen(false);
-  }, [itemId, authorityEpoch]);
   const refresh = useCallback(async () => {
     const cache = getResourceCache();
     if (retryBacklog) await cache?.retry(backlogPlanningQuery);

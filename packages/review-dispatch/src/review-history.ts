@@ -42,6 +42,8 @@ export interface ReviewHistoryFinding {
   resolvedBy: string | null;
 }
 export interface ReviewHistoryArtifact {
+  /** The round is known, but this retained artifact has not been captured yet. */
+  notCaptured?: true;
   content?: string;
   error?: string;
 }
@@ -833,6 +835,8 @@ export function reviewHistoryIdentity(run: Run): string {
   return JSON.stringify([
     run.id,
     run.reviewResult,
+    run.artifactBundle?.bundleDigest,
+    run.output?.artifactBundle?.bundleDigest,
     run.reviewMode,
     run.reviewRoundSettlements,
     readyReviews(run).map((review) => [
@@ -903,8 +907,7 @@ export async function loadReviewHistoryArtifacts(
                     ))),
             )
           : undefined;
-        if (!readLive || !actor?.slotId || !actor.taskFile)
-          throw new Error('Not recorded in the retained run');
+        if (!readLive || !actor?.slotId || !actor.taskFile) return null;
         const taskDir = actor.taskFile.slice(0, actor.taskFile.lastIndexOf('/'));
         if (!taskDir || taskDir.split('/').includes('..') || path.split('/').includes('..'))
           throw new Error('Recorded review task is unavailable');
@@ -917,7 +920,9 @@ export async function loadReviewHistoryArtifacts(
         return [
           path,
           value.status === 'fulfilled'
-            ? { content: value.value }
+            ? value.value === null
+              ? { notCaptured: true as const }
+              : { content: value.value }
             : {
                 error: `${path}: ${value.reason instanceof Error ? value.reason.message : String(value.reason)}`,
               },

@@ -1,15 +1,17 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
-import type {
-  ConfigGitHubAccountsResult,
-  PRListResult,
-  PRRulePreview,
-  PRRuleSubject,
-  PRStatus,
-  PRStatusResult,
+import { viewTextField } from '@farmslot/protocol';
+import {
+  type ConfigGitHubAccountsResult,
+  Methods,
+  type PRListResult,
+  type PRRulePreview,
+  type PRRuleSubject,
+  type PRStatus,
+  type PRStatusResult,
+  sourceObservationAge,
 } from '@farmslot/protocol';
-import { Methods, sourceObservationAge } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import './pr-card.js';
@@ -27,7 +29,6 @@ import {
   subscribe,
 } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { safeLsGet, safeLsSet } from '../../utils/storage.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
@@ -76,8 +77,6 @@ import {
 import { prWorkspaceStyles } from './pr-workspace-styles.js';
 
 type PRSortMode = 'group' | 'date';
-const PR_LAYOUT_KEY = 'farmslot:pr-layout';
-const PR_SORT_KEY = 'farmslot:pr-list-sort';
 
 function latestActivityTs(pr: PRStatus): number {
   if (pr.botComments?.length) {
@@ -220,8 +219,8 @@ export class PRBoard extends LitElement {
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _hydrating = false;
   @state() private _lastRefreshError: string | null = null;
-  @state() private _layout: PRLayout = safeLsGet(PR_LAYOUT_KEY) === 'board' ? 'board' : 'list';
-  @state() private _sortMode: PRSortMode = safeLsGet(PR_SORT_KEY) === 'date' ? 'date' : 'group';
+  @state() private _layout: PRLayout = 'list';
+  @state() private _sortMode: PRSortMode = 'group';
   // Keyed by repo+pr because PR numbers are per-repo — a multi-repo dashboard
   // can show #123 from two different repos at once. Keying on number alone
   // would misroute selection/modal state after a reload or filter change.
@@ -626,11 +625,8 @@ export class PRBoard extends LitElement {
     this._pane = navigation.pane;
     this._showHistory = navigation.history;
     const sort = parseHashRoute().params.get('prSort');
-    if (sort === 'date' || sort === 'group') this._sortMode = sort;
-    if (next.layout && this._layout !== next.layout) {
-      this._layout = next.layout;
-      safeLsSet(PR_LAYOUT_KEY, next.layout);
-    }
+    this._sortMode = sort === 'date' ? 'date' : 'group';
+    this._layout = next.layout ?? 'list';
     if (!prKeyEqual(this._selectedPr, next.selectedPr)) this._selectedPr = next.selectedPr;
     if (!prKeyEqual(this._modalPr, next.modalPr)) this._modalPr = next.modalPr;
   }
@@ -653,11 +649,11 @@ export class PRBoard extends LitElement {
     });
     if (!next) return;
     const { params } = parseHashRoute(next);
-    params.set('prSection', this._section);
-    params.set('prScope', this._scope);
-    params.set('prPane', this._pane);
-    params.set('prSort', this._sortMode);
-    params.set('layout', this._layout);
+    viewTextField('prSection', 'prs').write(params, this._section);
+    viewTextField('prScope', 'mine').write(params, this._scope);
+    viewTextField('prPane', 'overview').write(params, this._pane);
+    viewTextField('prSort', 'group').write(params, this._sortMode);
+    viewTextField('layout', 'list').write(params, this._layout);
     if (this._showHistory) params.set('prHistory', '1');
     else params.delete('prHistory');
     if (closeEditor) for (const key of ['prEditor', 'prTarget', 'prDraft']) params.delete(key);
@@ -818,13 +814,11 @@ export class PRBoard extends LitElement {
 
   private _setLayout(layout: PRLayout) {
     this._layout = layout;
-    safeLsSet(PR_LAYOUT_KEY, layout);
     this._writeUrl();
   }
 
   private _setSortMode(mode: PRSortMode) {
     this._sortMode = mode;
-    safeLsSet(PR_SORT_KEY, mode);
   }
 
   private get _entries(): PRWorkspaceEntry[] {

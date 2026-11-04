@@ -222,6 +222,8 @@ files over a size cap, and binary content, load when opened.
 first, the client downloads in the background:
 
 - the run's details;
+- recorded review-round reports, snapshots and each round's review/fix diff, through
+  the shared review-history loader. An uncaptured artifact is absent, not a read failure;
 - for a gate, the package's retained diff and its evidence images under a size
   cap. For an active run, its working-tree diff, including untracked files, as
   a stale snapshot;
@@ -236,7 +238,11 @@ its head commit changes, for a gate when its package changes, and for an active
 run when it is opened, not on every file write. Base files are read
 with a batched `git.show` that sends the object ids the device already holds, so
 cached base files are reused across runs and iterations. Prefetch uses at most a
-fixed share of the budget and never evicts content a user opened.
+fixed share of the budget and never evicts content a user opened. Review history
+is rechecked on recorded round or retained-bundle changes, even when the head is
+unchanged. A bounded resident working set of the same store rows supports first
+paint without a loading placeholder. Row eviction, store replacement and owner
+changes invalidate resident bytes too.
 
 **Commands.** Unchanged. Commands run outside the cache and the store. They are
 never queued or replayed, and are disabled while disconnected. An action needs

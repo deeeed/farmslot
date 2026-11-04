@@ -13,6 +13,7 @@ import {
   createContentPrefetcher,
   type GatewayResourceCache,
 } from '@farmslot/protocol/client-cache';
+import { createReviewHistoryPrefetch } from '@farmslot/review-dispatch';
 
 import { gatewayHttpFetch } from './utils/gateway-origin.js';
 
@@ -73,6 +74,8 @@ export async function fetchRunArtifactBytes(
     throw Object.assign(new Error(`Run artifact refused (${response.status})`), {
       code: 'AUTH_FORBIDDEN',
     });
+  if (response.status === 404)
+    throw Object.assign(new Error('Artifact not captured yet'), { code: 'ARTIFACT_NOT_CAPTURED' });
   if (!response.ok) throw new Error(`Run artifact unavailable (${response.status})`);
   return new Uint8Array(await response.arrayBuffer());
 }
@@ -99,7 +102,11 @@ export function createOwnerContentPrefetch(
       current?.prefetcher.dispose();
       current = undefined;
       if (!next) return;
-      const prefetcher = createContentPrefetcher({ ...options, cache: next });
+      const prefetcher = createContentPrefetcher({
+        ...options,
+        cache: next,
+        reviewHistory: createReviewHistoryPrefetch({ ...options, cache: next }),
+      });
       current = { cache: next, prefetcher };
       prefetcher.setTargets(targets);
     },

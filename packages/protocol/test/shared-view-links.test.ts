@@ -369,10 +369,7 @@ test('unfiltered collections explicitly replace saved browser filters and preser
     { companion: { pathname: '/runs', params: {}, projects: [], machines: [], runsTab: 'all' } },
     base,
   );
-  assert.equal(
-    result.status === 'available' ? result.route : null,
-    '#runs?projects=&machines=&runsTab=all',
-  );
+  assert.equal(result.status === 'available' ? result.route : null, '#runs?runsTab=all');
 });
 
 test('a run terminal without an observed worktree never promises a missing web pane', () => {
@@ -407,4 +404,73 @@ test('expanded review rounds survive shared desktop and Companion run links', ()
       'review-a',
       'review-b',
     ]);
+});
+
+test('shared run views preserve panel overrides and selected review rounds', () => {
+  const link = resolveSharedViewLink(
+    { route: '#run/run-1?panels=run-review-history%2C!run-acceptance&round=review-2' },
+    base,
+  );
+  assert.equal(link.status, 'available');
+  assert.equal(
+    link.status === 'available' ? new URL(link.url).hash.includes('panels=') : false,
+    true,
+  );
+});
+
+test('a Companion run shares through its configured native scheme when no web URL exists', () => {
+  const link = resolveSharedViewLink(
+    {
+      companion: {
+        pathname: '/run/run-1',
+        params: {
+          round: ['review-1', 'review-3'],
+          panels: 'run-review-history',
+          draft: 'private instruction',
+          token: 'private token',
+          leaseId: 'lease',
+        },
+      },
+    },
+    undefined,
+    'farmslot-development://',
+  );
+  assert(link.status === 'available');
+  const url = new URL(link.url);
+  assert.equal(url.protocol, 'farmslot-development:');
+  assert.equal(url.pathname, '/run/run-1');
+  assert.deepEqual(url.searchParams.getAll('round'), ['review-1', 'review-3']);
+  assert.equal(url.searchParams.get('panels'), 'run-review-history');
+  for (const key of ['draft', 'token', 'leaseId', 'sharedView'])
+    assert.equal(url.searchParams.has(key), false, key);
+});
+
+test('a configured web URL remains preferred over the native fallback', () => {
+  const link = resolveSharedViewLink(
+    { companion: { pathname: '/run/run-1', params: {} } },
+    base,
+    'farmslot-development',
+  );
+  assert(link.status === 'available');
+  assert.equal(new URL(link.url).protocol, 'https:');
+});
+
+test('native artifact links open the actual evidence route with the selected owner and path', () => {
+  const link = resolveSharedViewLink(
+    {
+      companion: {
+        pathname: '/artifacts',
+        params: {},
+        artifactSelection: { runId: 'run-1', path: 'artifacts/proof.png', criterionId: 'AC-1' },
+      },
+    },
+    undefined,
+    'farmslot-preview',
+  );
+  assert(link.status === 'available');
+  const url = new URL(link.url);
+  assert.equal(url.pathname, '/evidence/run-1');
+  assert.equal(url.searchParams.get('evidence'), 'artifacts/proof.png');
+  assert.equal(url.searchParams.get('ac'), 'AC-1');
+  assert.equal(url.searchParams.get('recipeRun'), 'decision-evidence');
 });

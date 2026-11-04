@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { type ReactNode, useState } from 'react';
+import React, { type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { useViewToggle } from '../../components/view-state';
 import { colors, fonts, radii, spacing } from '../../lib/theme';
 
 export function PlanningSection({
@@ -17,7 +18,7 @@ export function PlanningSection({
   testID?: string;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(initiallyOpen);
+  const [open, setOpen] = useViewToggle(`planning:${testID ?? title}`, initiallyOpen);
   return (
     <View style={styles.section}>
       <Pressable

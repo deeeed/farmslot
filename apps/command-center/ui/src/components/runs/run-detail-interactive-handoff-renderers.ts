@@ -14,6 +14,7 @@ import {
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
+import { viewDetails } from '../../utils/view-state.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 import {
@@ -128,7 +129,7 @@ export function renderInteractiveHandoffGate(
       </div>
       ${run.transport === 'native'
         ? nothing
-        : html`<details class="ih-help">
+        : html`<details class="ih-help" ${viewDetails('interactive-help')}>
             <summary>SIGNAL.json help</summary>
             <div>
               ${signalFile

@@ -27,6 +27,7 @@ import {
   formatEvidenceReviewVideoTime,
   loadRecordingEvidenceReview,
 } from '@farmslot/adapter-sdk/evidence';
+import { viewIntegerField, viewToggleMapField } from '@farmslot/protocol';
 import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
 import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
@@ -55,6 +56,7 @@ import { videoSourceLoadDurationMs } from '../lib/video-source-load';
 
 import { ArtifactImage } from './ArtifactImage';
 import { type EvidenceAcceptanceReview, EvidenceAcOverlay } from './EvidenceAcOverlay';
+import { useViewChoice } from './view-state';
 
 /** Room for the player's native controls (time, progress, settings) at the video's foot. */
 const NATIVE_CONTROLS_CLEARANCE = 84;
@@ -128,7 +130,10 @@ export function MediaViewer({
     0,
     Math.min(requestedIndex >= 0 ? requestedIndex : initialIndex, viewerItems.length - 1),
   );
-  const [currentIndex, setCurrentIndex] = useState(clampedInitialIndex);
+  const [selectedIndex, setCurrentIndex] = useViewChoice(
+    viewIntegerField('mediaIndex', clampedInitialIndex),
+  );
+  const currentIndex = Math.max(0, Math.min(selectedIndex, viewerItems.length - 1));
   const [zoomedUri, setZoomedUri] = useState<string | null>(null);
   const [changedVideoItems, setChangedVideoItems] = useState<ReadonlySet<string>>(() => new Set());
   const markVideoSelectionChanged = useCallback((uri: string) => {
@@ -140,10 +145,9 @@ export function MediaViewer({
 
   useEffect(() => {
     if (!visible || viewerItems.length === 0) return;
-    setCurrentIndex(clampedInitialIndex);
     setZoomedUri(null);
     requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ x: clampedInitialIndex * width, animated: false });
+      scrollRef.current?.scrollTo({ x: currentIndex * width, animated: false });
     });
   }, [clampedInitialIndex, visible, viewerItems.length, width]);
 
@@ -459,7 +463,7 @@ function FullscreenVideo({
   acceptance?: EvidenceAcceptanceReview;
 }) {
   const [model, setModel] = useState<EvidenceReviewModel | null>(item.evidenceModel ?? null);
-  const [openGroups, setOpenGroups] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const [openGroups, setOpenGroups] = useViewChoice(viewToggleMapField('mediaGroups'));
   const groupScrolls = useRef(new Map<string, ScrollViewInstance>());
   const focusedFailures = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
@@ -638,7 +642,7 @@ function FullscreenVideo({
       contentContainerStyle={{ gap: 8, alignItems: 'flex-start' }}
     >
       {groups.map((group) => {
-        const expanded = openGroups.get(group.id) ?? group.defaultOpen;
+        const expanded = openGroups[`${videoPath}:${group.id}`] ?? group.defaultOpen;
         return (
           <View key={group.id} style={styles.timelineGroup}>
             <View style={styles.groupRow}>
@@ -668,7 +672,10 @@ function FullscreenVideo({
                 hitSlop={8}
                 style={styles.groupToggle}
                 onPress={() =>
-                  setOpenGroups((previous) => new Map(previous).set(group.id, !expanded))
+                  setOpenGroups((previous) => ({
+                    ...previous,
+                    [`${videoPath}:${group.id}`]: !expanded,
+                  }))
                 }
               >
                 <Text style={styles.detailText}>{expanded ? '▴' : '▾'}</Text>

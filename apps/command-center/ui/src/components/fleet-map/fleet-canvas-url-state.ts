@@ -1,3 +1,5 @@
+import { viewChoiceField, viewTextField } from '@farmslot/protocol';
+
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 
 export type FleetCanvasGroupBy = 'machine' | 'project' | 'resource';
@@ -9,68 +11,18 @@ export interface FleetCanvasUrlState {
   fleetRefreshOpen: boolean;
 }
 
-export interface FleetCanvasUrlFallbacks {
-  groupBy?: string | null;
-  viewMode?: string | null;
-}
+const fields = {
+  groupBy: viewChoiceField('group', 'machine', ['machine', 'project', 'resource']),
+  viewMode: viewChoiceField('view', 'list', ['card', 'list']),
+  refresh: viewChoiceField('refresh', '', ['', '1', 'open', 'true', 'yes', 'on']),
+};
 
-const GROUP_PARAM = 'group';
-const VIEW_PARAM = 'view';
-const REFRESH_PARAM = 'refresh';
-
-export const FLEET_GROUP_STORAGE_KEY = 'farmslot:fleet-groupBy';
-/** Versioned when the table became the default, so a choice saved under the card default lapses once. */
-export const FLEET_VIEW_STORAGE_KEY = 'farmslot:fleet-viewMode:v2';
-
-export function fleetCanvasStoredFallbacks(
-  storage: Pick<Storage, 'getItem'>,
-): FleetCanvasUrlFallbacks {
-  return {
-    groupBy: storage.getItem(FLEET_GROUP_STORAGE_KEY),
-    viewMode: storage.getItem(FLEET_VIEW_STORAGE_KEY),
-  };
-}
-
-function isFleetCanvasGroupBy(value: string | null): value is FleetCanvasGroupBy {
-  return value === 'machine' || value === 'project' || value === 'resource';
-}
-
-function isFleetCanvasViewMode(value: string | null): value is FleetCanvasViewMode {
-  return value === 'card' || value === 'list';
-}
-
-function isTruthyUrlFlag(value: string | null): boolean {
-  const normalized = value?.toLowerCase();
-  return (
-    normalized === '1' ||
-    normalized === 'open' ||
-    normalized === 'true' ||
-    normalized === 'yes' ||
-    normalized === 'on'
-  );
-}
-
-export function fleetCanvasUrlStateFromHash(
-  hash: string = location.hash,
-  fallbacks: FleetCanvasUrlFallbacks = {},
-): FleetCanvasUrlState {
+export function fleetCanvasUrlStateFromHash(hash: string = location.hash): FleetCanvasUrlState {
   const { params } = parseHashRoute(hash);
-  const group = params.get(GROUP_PARAM);
-  const view = params.get(VIEW_PARAM);
-  const fallbackGroup = fallbacks.groupBy ?? null;
-  const fallbackView = fallbacks.viewMode ?? null;
   return {
-    groupBy: isFleetCanvasGroupBy(group)
-      ? group
-      : isFleetCanvasGroupBy(fallbackGroup)
-        ? fallbackGroup
-        : 'machine',
-    viewMode: isFleetCanvasViewMode(view)
-      ? view
-      : isFleetCanvasViewMode(fallbackView)
-        ? fallbackView
-        : 'list',
-    fleetRefreshOpen: isTruthyUrlFlag(params.get(REFRESH_PARAM)),
+    groupBy: fields.groupBy.read(params),
+    viewMode: fields.viewMode.read(params),
+    fleetRefreshOpen: fields.refresh.read(params) !== '',
   };
 }
 
@@ -80,9 +32,8 @@ export function fleetCanvasUrlStateHash(
 ): string | null {
   const { route, params } = parseHashRoute(hash);
   if (!route.startsWith('fleet')) return null;
-  params.set(GROUP_PARAM, state.groupBy);
-  params.set(VIEW_PARAM, state.viewMode);
-  if (state.fleetRefreshOpen) params.set(REFRESH_PARAM, '1');
-  else params.delete(REFRESH_PARAM);
+  fields.groupBy.write(params, state.groupBy);
+  fields.viewMode.write(params, state.viewMode);
+  viewTextField('refresh').write(params, state.fleetRefreshOpen ? '1' : '');
   return buildHash(route, params);
 }

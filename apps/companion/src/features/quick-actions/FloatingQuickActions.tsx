@@ -10,6 +10,7 @@ import {
   resolveSharedViewLink,
 } from '@farmslot/protocol/surfaces/view-links';
 
+import { getCompanionEnvironment } from '../../lib/app-environment';
 import { quickVoiceLocation } from '../../lib/quick-actions';
 import { colors } from '../../lib/theme';
 import { buildWorkspaceCopilotDraftForRoute } from '../../lib/workspace-copilot';
@@ -44,6 +45,7 @@ export function FloatingQuickActions({
   const filters = useFilterStore((state) => state.filters);
   const runFilters = useRunFilterStore((state) => state.filters);
   const base = profiles.find((profile) => profile.id === profileId)?.commandCenterUrl;
+  const appScheme = getCompanionEnvironment().appScheme;
   const [open, setOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
   const longPressed = useRef(false);
@@ -71,8 +73,8 @@ export function FloatingQuickActions({
     [source, filters, runFilters],
   );
   const link = useMemo(
-    () => resolveSharedViewLink({ companion: selected }, base),
-    [selected, base],
+    () => resolveSharedViewLink({ companion: selected }, base, appScheme),
+    [selected, base, appScheme],
   );
   useEffect(() => {
     setOpen(false);

@@ -46,6 +46,8 @@ export async function fetchArtifactBytes(
   const response = await gatewayFetch(uri, headers, { signal });
   if (response.status === 401 || response.status === 403)
     throw Object.assign(new Error(`HTTP ${response.status}`), { code: 'AUTH_FORBIDDEN' });
+  if (response.status === 404)
+    throw Object.assign(new Error('Artifact not captured yet'), { code: 'ARTIFACT_NOT_CAPTURED' });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return new Uint8Array(await response.arrayBuffer());
 }

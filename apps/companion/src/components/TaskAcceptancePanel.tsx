@@ -6,11 +6,12 @@ import type {
   EvidenceReviewJudgmentRow,
   EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
-import type {
-  AcceptanceCriterionRef,
-  AcceptanceEvidenceLink,
-  AcceptanceRegistration,
-  AcceptanceStatusLedger,
+import {
+  type AcceptanceCriterionRef,
+  type AcceptanceEvidenceLink,
+  type AcceptanceRegistration,
+  type AcceptanceStatusLedger,
+  viewListField,
 } from '@farmslot/protocol';
 import {
   acceptanceClaimRows,
@@ -24,6 +25,7 @@ import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
 import { AcceptanceClaimList } from './AcceptanceClaimList';
 import { ReasonSheet } from './ReasonSheet';
 import { Skeleton, SkeletonError } from './Skeleton';
+import { useViewChoice, useViewToggle } from './view-state';
 
 interface TaskAcceptancePanelProps {
   acceptanceRegistration?: AcceptanceRegistration;
@@ -104,13 +106,15 @@ function TaskAcceptanceContent({
     evidenceModel ?? undefined,
     acceptanceRegistration,
   );
-  const [showDetails, setShowDetails] = React.useState(false);
-  const [showExclusions, setShowExclusions] = React.useState(false);
-  const [showWarnings, setShowWarnings] = React.useState(false);
+  const [showDetails, setShowDetails] = useViewToggle('acceptance-details');
+  const [showExclusions, setShowExclusions] = useViewToggle('acceptance-exclusions');
+  const [showWarnings, setShowWarnings] = useViewToggle('acceptance-warnings');
   const [overrideClaim, setOverrideClaim] = React.useState<string | null>(null);
   const [overrideReason, setOverrideReason] = React.useState('');
-  const [rawClaims, setRawClaims] = React.useState<ReadonlySet<string>>(() => new Set());
-  React.useEffect(() => setRawClaims(new Set()), [evidenceModel]);
+  const [rawSelection, setRawSelection] = useViewChoice(viewListField('rawClaims'));
+  const rawClaims = new Set(rawSelection);
+  const setRawClaims = (update: (previous: ReadonlySet<string>) => Set<string>) =>
+    setRawSelection((previous) => [...update(new Set(previous))]);
   const renderFiles = (id: string, files: readonly EvidenceReviewArtifact[]) => (
     <View style={styles.evidenceList}>
       {files.map((entry) =>
@@ -135,26 +139,11 @@ function TaskAcceptanceContent({
       )}
     </View>
   );
-  React.useEffect(() => {
-    setShowDetails(false);
-    setShowWarnings(false);
-  }, [evidenceModel]);
   const packageStatus = evidenceModel?.packageStatus;
-  const [expanded, setExpanded] = React.useState(
+  const [expanded, setExpanded] = useViewToggle(
+    'run-acceptance',
     initiallyExpanded || view.defaultOpen || Boolean(error),
   );
-  React.useEffect(() => {
-    if (
-      error ||
-      evidenceModel?.errors.length ||
-      evidenceModel?.claims.some((claim) => claim.kind === 'qa-case')
-    )
-      setExpanded(true);
-  }, [error, evidenceModel]);
-  // Opens once when the first criterion is assessed; a later refresh keeps the user's choice.
-  React.useEffect(() => {
-    if (view.defaultOpen) setExpanded(true);
-  }, [view.defaultOpen]);
   if (
     view.rows.length === 0 &&
     !acceptanceRegistration &&

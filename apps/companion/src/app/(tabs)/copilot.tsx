@@ -1,10 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
+import { withViewState } from '../../components/view-state';
 import { CopilotScreen } from '../../features/copilot/CopilotScreen';
 import { useCopilotController } from '../../features/copilot/use-copilot-controller';
 import { firstRouteParam, tmuxWorkerRouteParamsFromRef } from '../../lib/tmux-workers';
 
-export default function CopilotRoute() {
+function CopilotRoute() {
   const router = useRouter();
   const { draft } = useLocalSearchParams<{ draft?: string | string[] }>();
   const pendingDraft = firstRouteParam(draft)?.trim();
@@ -29,3 +30,5 @@ export default function CopilotRoute() {
     />
   );
 }
+
+export default withViewState(CopilotRoute);

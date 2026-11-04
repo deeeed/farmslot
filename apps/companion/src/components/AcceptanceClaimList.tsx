@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 
+import { viewListField } from '@farmslot/protocol';
 import {
   acceptanceClaimLabel,
   type AcceptanceClaimRow,
@@ -21,6 +22,7 @@ import { publicationGateColors } from '@farmslot/theme';
 
 import { fonts } from '../lib/theme';
 
+import { useViewChoice } from './view-state';
 import { VisualClaimJudgment } from './VisualClaimJudgment';
 
 function ClaimState({
@@ -97,7 +99,10 @@ export function AcceptanceClaimList({
   const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
   const [busy, setBusy] = useState(false);
   const submitting = Boolean(drafts?.model.submissionActionId);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [selectedClaims, setSelectedClaims] = useViewChoice(viewListField('claims'));
+  const expanded = new Set(selectedClaims);
+  const setExpanded = (update: (previous: ReadonlySet<string>) => Set<string>) =>
+    setSelectedClaims((previous) => [...update(new Set(previous))]);
   const button = {
     minHeight: 44,
     minWidth: 44,

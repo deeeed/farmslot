@@ -1,3 +1,5 @@
+import { viewStateParams, viewTextField } from '@farmslot/protocol';
+
 export interface HashRouteState {
   route: string;
   params: URLSearchParams;
@@ -46,7 +48,7 @@ export interface ViewChoiceContext {
 export function readViewChoice(context: ViewChoiceContext, hash = location.hash): string {
   const { route, params } = parseHashRoute(hash);
   return route === context.route
-    ? (params.get(context.param) ?? context.defaultValue)
+    ? viewTextField(context.param, context.defaultValue).read(params)
     : context.defaultValue;
 }
 
@@ -57,7 +59,10 @@ export function viewChoiceHash(
 ): string {
   const { route, params } = parseHashRoute(hash);
   if (route !== context.route) return hash;
-  if (value === context.defaultValue) params.delete(context.param);
-  else params.set(context.param, value);
-  return buildHash(route, params);
+  return buildHash(
+    route,
+    viewStateParams(params, (state) =>
+      state.set(viewTextField(context.param, context.defaultValue), value),
+    ),
+  );
 }

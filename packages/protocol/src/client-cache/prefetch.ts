@@ -76,6 +76,11 @@ export interface ContentPrefetchOptions {
   defaultBranch?(run: Run): string | undefined;
   /** Large gate evidence (videos, images over the row cap); without it, they load when opened. */
   media?: ContentPrefetchMedia;
+  /** Domain-owned review metadata and round diffs share the same cohort and byte budget. */
+  reviewHistory?: {
+    identity(run: Run): string;
+    prefetch(run: Run, write: ContentPrefetchWrite): Promise<void>;
+  };
 }
 
 export interface ContentPrefetcher {
@@ -113,6 +118,7 @@ interface PrefetchRunState {
   slotId?: string;
   packageId?: string;
   head?: string;
+  historyId?: string;
   check: {
     controller?: AbortController;
     again: boolean;
@@ -123,13 +129,13 @@ interface PrefetchRunState {
 }
 
 /** One run's writes, under the cache write token taken before its first read. */
-interface PrefetchWrite {
+export interface ContentPrefetchWrite {
   cohort: ResourceContentCohort;
   signal: AbortSignal;
   token: ResourceContentWriteToken;
 }
 
-interface PrefetchFiles extends PrefetchWrite {
+interface PrefetchFiles extends ContentPrefetchWrite {
   text: string;
   base: string;
   head?: string;
@@ -323,14 +329,16 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
    */
   function check(state: PrefetchRunState): void {
     const pending = state.check;
-    if (!enabled || refused || disposed || (state.plan !== 'gate' && state.plan !== 'slot')) return;
-    if (state.plan === 'slot' && !(state.slotId && viewed(state.slotId))) return;
+    if (!enabled || refused || disposed || !state.plan) return;
+    if (!options.reviewHistory && state.plan !== 'gate' && state.plan !== 'slot') return;
+    if (!options.reviewHistory && state.plan === 'slot' && !(state.slotId && viewed(state.slotId)))
+      return;
     if (pending.controller) {
       pending.again = true;
       return;
     }
     if (pending.timer !== undefined) return;
-    const interval = state.plan === 'slot' ? SLOT_HEAD_CHECK_INTERVAL_MS : 0;
+    const interval = state.plan === 'gate' ? 0 : SLOT_HEAD_CHECK_INTERVAL_MS;
     const wait = pending.lastAt + interval - Date.now();
     if (wait > 0) {
       pending.timer = setTimeout(() => {
@@ -358,10 +366,16 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
   }
 
   async function checkRun(state: PrefetchRunState, signal: AbortSignal): Promise<void> {
-    if (state.plan === 'gate') {
+    if (state.plan === 'gate' || options.reviewHistory) {
       const run = await readRun(state.target.runId, signal);
-      if (run.engineState?.publishGate?.packageId !== state.packageId) refetch(state, run);
-      return;
+      if (
+        (state.plan === 'gate' && run.engineState?.publishGate?.packageId !== state.packageId) ||
+        (options.reviewHistory && options.reviewHistory.identity(run) !== state.historyId)
+      ) {
+        refetch(state, run);
+        return;
+      }
+      if (state.plan !== 'slot' || !(state.slotId && viewed(state.slotId))) return;
     }
     const log = await options.request<GitLogResult>(
       Methods.GIT_LOG,
@@ -385,7 +399,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
   async function store(
     key: ContentKey,
     data: Uint8Array,
-    { cohort, signal, token }: PrefetchWrite,
+    { cohort, signal, token }: ContentPrefetchWrite,
     { untrackedFiles, alias }: Pick<ResourceContentInput, 'untrackedFiles' | 'alias'> = {},
   ): Promise<boolean> {
     if (signal.aborted) throw aborted();
@@ -402,7 +416,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
   }
 
   /** Held content is reused, never transferred again; reuse by a gate promotes it to that cohort. */
-  function retain(key: ContentKey, { cohort, token }: PrefetchWrite): Promise<boolean> {
+  function retain(key: ContentKey, { cohort, token }: ContentPrefetchWrite): Promise<boolean> {
     return cache.retainContent(key, { origin: 'prefetch', cohort, token });
   }
 
@@ -516,7 +530,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
   async function prefetchGate(
     run: Run,
     prPackage: ReadyGatePrPackage,
-    write: PrefetchWrite,
+    write: ContentPrefetchWrite,
     gateAt: number,
   ): Promise<void> {
     const { signal } = write;
@@ -590,7 +604,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     state: PrefetchRunState,
     run: Run,
     slotId: string,
-    write: PrefetchWrite,
+    write: ContentPrefetchWrite,
   ): Promise<void> {
     const since = Date.now();
     const query = activeRunDiffQuery({
@@ -617,7 +631,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
   async function prefetchFrozen(
     run: Run,
     subject: ReviewWorkspaceSubject,
-    write: PrefetchWrite,
+    write: ContentPrefetchWrite,
   ): Promise<void> {
     const scope = { slotId: '', runId: run.id };
     const diff = await options.request<GitDiffResult>(
@@ -649,6 +663,15 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     const token = cache.contentWriteToken();
     const run = prefetched ?? (await readRun(state.target.runId, signal));
     const prPackage = pendingPackage(run);
+    if (options.reviewHistory) {
+      await options.reviewHistory.prefetch(run, {
+        cohort: prPackage ? 'gate' : 'run',
+        signal,
+        token,
+      });
+      if (signal.aborted) throw aborted();
+      state.historyId = options.reviewHistory.identity(run);
+    }
     state.slotId = run.slotId ?? undefined;
     if (prPackage) {
       state.plan = 'gate';
@@ -660,7 +683,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
         updatedAt(state.target),
       );
     }
-    const write: PrefetchWrite = { cohort: 'run', signal, token };
+    const write: ContentPrefetchWrite = { cohort: 'run', signal, token };
     if (run.reviewWorkspace && run.reviewWorkspaceSubject) {
       state.plan = 'frozen';
       return prefetchFrozen(run, run.reviewWorkspaceSubject, write);
@@ -701,7 +724,10 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     if (!enabled || refused || disposed) return;
     const changed = new Set<PrefetchRunState>();
     for (const { key } of payload.changes) {
-      if (key.family === 'package') {
+      if (options.reviewHistory && key.family === 'run') {
+        const state = runs.get(key.runId);
+        if (state) changed.add(state);
+      } else if (key.family === 'package') {
         // Every run write changes its package key; only a gate plan reads the package.
         const state = runs.get(key.runId);
         if (state?.plan === 'gate') changed.add(state);
@@ -744,8 +770,10 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
           continue;
         }
         const promoted = state.target.gate !== target.gate;
+        const updated = updatedAt(state.target) !== updatedAt(target);
         state.target = target;
         if (promoted) refetch(state);
+        else if (updated && options.reviewHistory) check(state);
       }
       pump();
     },

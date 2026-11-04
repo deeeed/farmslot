@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { reviewRoundBudgetLabel } from '@farmslot/protocol';
+import { reviewRoundBudgetLabel, viewChoiceField } from '@farmslot/protocol';
 import {
   criterionDraftsAvailable,
   PUBLICATION_GATE_TABS,
@@ -25,6 +25,7 @@ import {
   acceptancePanelViewportHeight,
   TaskAcceptancePanel,
 } from '../../components/TaskAcceptancePanel';
+import { useViewChoice } from '../../components/view-state';
 import { baseStyles } from '../../lib/theme';
 
 import { GateActions, GateReviewVerdicts, GateSummaryCard } from './components/gate-review-panels';
@@ -43,7 +44,9 @@ export function GateReviewScreen({
   state: GateReviewScreenState;
   actions: GateReviewActions;
 }) {
-  const [tab, setTab] = useState<string>('evidence');
+  const [tab, setTab] = useViewChoice(
+    viewChoiceField<string>('tab', 'evidence', ['evidence', 'pr-preview', 'quality', 'criteria']),
+  );
   const [judging, setJudging] = useState(false);
   const [acceptingDecisionId, setAcceptingDecisionId] = useState<string | null>(null);
   const appearance = useColorScheme();

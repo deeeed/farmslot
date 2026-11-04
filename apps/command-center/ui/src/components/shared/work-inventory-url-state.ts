@@ -1,3 +1,5 @@
+import { viewChoiceField } from '@farmslot/protocol';
+
 import type {
   WorkInventorySortDirection,
   WorkInventorySortState,
@@ -25,16 +27,16 @@ export function parseWorkInventorySort<TSortKey extends string>(
   params: URLSearchParams,
   options: WorkInventoryUrlSortOptions<TSortKey>,
 ): WorkInventorySortState<TSortKey> {
-  const rawKey = params.get(sortParamName(options));
-  const key =
-    rawKey && (options.validKeys as readonly string[]).includes(rawKey)
-      ? (rawKey as TSortKey)
-      : options.defaultKey;
-  const rawDirection = params.get(directionParamName(options));
-  const defaultDirection = options.defaultDirection ?? 'desc';
-  const direction: WorkInventorySortDirection =
-    rawDirection === 'asc' || rawDirection === 'desc' ? rawDirection : defaultDirection;
-  return { key, direction };
+  return {
+    key: viewChoiceField(sortParamName(options), options.defaultKey, options.validKeys).read(
+      params,
+    ),
+    direction: viewChoiceField<WorkInventorySortDirection>(
+      directionParamName(options),
+      options.defaultDirection ?? 'desc',
+      ['asc', 'desc'],
+    ).read(params),
+  };
 }
 
 /**
@@ -46,15 +48,14 @@ export function applyWorkInventorySort<TSortKey extends string>(
   state: WorkInventorySortState<TSortKey>,
   options: WorkInventoryUrlSortOptions<TSortKey>,
 ): URLSearchParams {
-  const sortParam = sortParamName(options);
-  const directionParam = directionParamName(options);
-  const defaultDirection = options.defaultDirection ?? 'desc';
-
-  if (state.key === options.defaultKey) params.delete(sortParam);
-  else params.set(sortParam, state.key);
-
-  if (state.direction === defaultDirection) params.delete(directionParam);
-  else params.set(directionParam, state.direction);
-
+  viewChoiceField(sortParamName(options), options.defaultKey, options.validKeys).write(
+    params,
+    state.key,
+  );
+  viewChoiceField<WorkInventorySortDirection>(
+    directionParamName(options),
+    options.defaultDirection ?? 'desc',
+    ['asc', 'desc'],
+  ).write(params, state.direction);
   return params;
 }

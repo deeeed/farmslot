@@ -1,38 +1,29 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
-import { safeLsGet, safeLsSet } from '../../utils/storage.js';
+import { viewToggleField } from '@farmslot/protocol';
+
+import { browserViewState, viewStateUpdates } from '../../utils/view-state.js';
 
 import { renderCollapsibleSectionHeader } from './collapsible-section-header.js';
 
 /** Every panel header is this tall, open or closed, so a toggle never moves what is above it. */
 export const COLLAPSIBLE_PANEL_HEADER_HEIGHT = '44px';
 
-const choices = new Map<string, boolean>();
-
-function preferenceKey(panelId: string): string {
-  return `cc:panel-open:${panelId}`;
-}
-
-/**
- * The viewer's open or closed choice for a panel, by panel id. It is a local display
- * preference, not run data: the same panel opens the same way on every run.
- */
 export function collapsiblePanelOpen(panelId: string, defaultOpen: boolean): boolean {
-  const remembered = choices.get(panelId);
-  if (remembered !== undefined) return remembered;
-  const stored = safeLsGet(preferenceKey(panelId));
-  return stored === '1' ? true : stored === '0' ? false : defaultOpen;
+  return browserViewState.get(viewToggleField('panels', panelId, defaultOpen));
 }
 
-export function rememberCollapsiblePanel(panelId: string, open: boolean): void {
-  // The toggle still works when storage is blocked; only the reload memory is lost.
-  choices.set(panelId, open);
-  safeLsSet(preferenceKey(panelId), open ? '1' : '0');
+export function rememberCollapsiblePanel(
+  panelId: string,
+  open: boolean,
+  defaultOpen: boolean,
+): void {
+  browserViewState.set(viewToggleField('panels', panelId, defaultOpen), open);
 }
 
 export function toggleCollapsiblePanel(panelId: string, defaultOpen: boolean): boolean {
   const open = !collapsiblePanelOpen(panelId, defaultOpen);
-  rememberCollapsiblePanel(panelId, open);
+  rememberCollapsiblePanel(panelId, open, defaultOpen);
   return open;
 }
 
@@ -55,19 +46,20 @@ export interface CollapsiblePanelOptions {
 
 /** A panel with a fixed-height header that shows or hides its body. */
 export function renderCollapsiblePanel(options: CollapsiblePanelOptions): TemplateResult {
-  return html`<section
-    data-panel="${options.id}"
-    data-open="${options.open ? 'true' : 'false'}"
-    style="display:block; min-width:0;"
-  >
-    ${renderCollapsibleSectionHeader(options.label, !options.open, options.onToggle, {
-      testId: options.testId ?? `${options.id}-toggle`,
-      className: options.className,
-      disabled: options.disabled,
-      title: options.title,
-      summary: options.summary,
-      height: COLLAPSIBLE_PANEL_HEADER_HEIGHT,
-    })}
-    ${options.open ? options.body() : nothing}
-  </section>`;
+  return html`${viewStateUpdates()}
+    <section
+      data-panel="${options.id}"
+      data-open="${options.open ? 'true' : 'false'}"
+      style="display:block; min-width:0;"
+    >
+      ${renderCollapsibleSectionHeader(options.label, !options.open, options.onToggle, {
+        testId: options.testId ?? `${options.id}-toggle`,
+        className: options.className,
+        disabled: options.disabled,
+        title: options.title,
+        summary: options.summary,
+        height: COLLAPSIBLE_PANEL_HEADER_HEIGHT,
+      })}
+      ${options.open ? options.body() : nothing}
+    </section>`;
 }

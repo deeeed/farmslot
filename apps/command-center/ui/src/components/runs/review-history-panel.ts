@@ -11,11 +11,14 @@ import {
   Methods,
   reviewedFindingContext,
   type Run,
+  RUN_VIEW_FIELDS,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceReadMethod } from '@farmslot/protocol/client-cache';
 import {
   loadReviewHistoryArtifacts,
   mergeReviewHistoryArtifacts,
+  peekReviewHistoryContent,
+  readReviewHistoryContent,
   type ReviewHistoryArtifacts,
   reviewHistoryCacheScope,
   type ReviewHistoryFinding,
@@ -32,7 +35,7 @@ import { readStoredArtifact } from '../../artifact-response.js';
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { currentRecoveryEpoch } from '../../utils/reconnect.js';
-import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
+import { useViewState } from '../../utils/view-state.js';
 import { readStored } from '../shared/read-current.js';
 import { runArtifactApiPath } from '../workspace/workspace-artifacts.js';
 
@@ -58,23 +61,17 @@ async function readReviewSource(params: GitShowParams): Promise<GitShowResult> {
 export class ReviewHistoryPanel extends LitElement {
   @property({ attribute: false }) run?: Run;
   static styles = reviewHistoryStyles;
-  private hashChanged = () => this.requestUpdate();
+  private readonly viewState = useViewState(this);
   private _toggleRound(key: string, open: boolean) {
-    const params = hashParams();
-    const selected = new Set(params.getAll('round'));
+    const selected = new Set(this.viewState.get(RUN_VIEW_FIELDS.rounds));
     if (open) selected.add(key);
     else selected.delete(key);
-    params.delete('round');
-    for (const value of selected) params.append('round', value);
-    const route = parseHashRoute().route;
-    history.replaceState(null, '', buildHash(route, params));
-    this.requestUpdate();
+    this.viewState.set(RUN_VIEW_FIELDS.rounds, [...selected]);
   }
   private clock?: ReturnType<typeof setInterval>;
   private unsubscribeConnection?: () => void;
   connectedCallback() {
     super.connectedCallback();
-    window.addEventListener('hashchange', this.hashChanged);
     this.clock = setInterval(() => this.requestUpdate(), 30000);
     this.unsubscribeConnection = gateway.onConnectionChange((state) => {
       if (state === 'connected') void this._loadHistory(true);
@@ -82,7 +79,6 @@ export class ReviewHistoryPanel extends LitElement {
     });
   }
   disconnectedCallback() {
-    window.removeEventListener('hashchange', this.hashChanged);
     this.unsubscribeConnection?.();
     clearInterval(this.clock);
     super.disconnectedCallback();
@@ -122,7 +118,9 @@ export class ReviewHistoryPanel extends LitElement {
     const scope = this._artifactScope(run);
     if (this._historyArtifactScope !== scope) this._historyArtifacts = {};
     this._historyArtifactScope = scope;
-    this._historyLoading = true;
+    const held = peekReviewHistoryContent(cache, run);
+    if (held) this._historyArtifacts = held;
+    this._historyLoading = !held;
     const current = () =>
       this.isConnected &&
       cache === getResourceCache() &&
@@ -130,36 +128,39 @@ export class ReviewHistoryPanel extends LitElement {
       this._historyIdentity === identity;
     this._historyError = '';
     try {
-      const artifacts = await loadReviewHistoryArtifacts(
-        run,
-        async (path) => {
-          const response = await readStoredArtifact(runArtifactApiPath(run.id, { path }));
-          if (response.status === 404) return null;
-          if (!response.ok) throw new Error(`Artifact HTTP ${response.status}`);
-          return response.text();
-        },
-        async (params) => {
-          if (!current()) throw new Error('Farm connection changed');
-          return (await readReviewWorkspace<FsReadResult>(Methods.FS_READ, params)).content;
-        },
-        async (params) => {
-          if (!current()) throw new Error('Farm connection changed');
-          if (params.slotId)
-            return (await readReviewWorkspace<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
-          const { runId = '', base = '', head = '' } = params;
-          if (!runId || !base || !head) throw new Error('Review range is unavailable');
-          return (
-            await readStored<GitDiffResult>(
-              resourceQuery<GitDiffResult>(Methods.GIT_DIFF, {
-                slotId: '',
-                runId,
-                base,
-                head,
-              }),
-            )
-          ).diff;
-        },
-      );
+      const saved = !force ? await readReviewHistoryContent(cache, run, true) : undefined;
+      const artifacts =
+        saved ??
+        (await loadReviewHistoryArtifacts(
+          run,
+          async (path) => {
+            const response = await readStoredArtifact(runArtifactApiPath(run.id, { path }));
+            if (response.status === 404) return null;
+            if (!response.ok) throw new Error(`Artifact HTTP ${response.status}`);
+            return response.text();
+          },
+          async (params) => {
+            if (!current()) throw new Error('Farm connection changed');
+            return (await readReviewWorkspace<FsReadResult>(Methods.FS_READ, params)).content;
+          },
+          async (params) => {
+            if (!current()) throw new Error('Farm connection changed');
+            if (params.slotId)
+              return (await readReviewWorkspace<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
+            const { runId = '', base = '', head = '' } = params;
+            if (!runId || !base || !head) throw new Error('Review range is unavailable');
+            return (
+              await readStored<GitDiffResult>(
+                resourceQuery<GitDiffResult>(Methods.GIT_DIFF, {
+                  slotId: '',
+                  runId,
+                  base,
+                  head,
+                }),
+              )
+            ).diff;
+          },
+        ));
       if (current())
         this._historyArtifacts = mergeReviewHistoryArtifacts(this._historyArtifacts, artifacts);
     } catch (error) {
@@ -171,9 +172,14 @@ export class ReviewHistoryPanel extends LitElement {
 
   render() {
     if (!this.run) return nothing;
+    const cache = getResourceCache();
+    const held = cache ? peekReviewHistoryContent(cache, this.run) : undefined;
     const history = reviewHistoryView(
       this.run,
-      this._historyArtifactScope === this._artifactScope(this.run) ? this._historyArtifacts : {},
+      held ??
+        (this._historyArtifactScope === this._artifactScope(this.run)
+          ? this._historyArtifacts
+          : {}),
     );
     if (!history.roundCount && !history.segments.length && !history.chain.length) return nothing;
     const openArtifact = (path: string) => {
@@ -236,7 +242,7 @@ export class ReviewHistoryPanel extends LitElement {
               (finding) => this._renderSource(card.round, finding),
               {
                 ...card,
-                open: hashParams().getAll('round').includes(card.round.key),
+                open: this.viewState.get(RUN_VIEW_FIELDS.rounds).includes(card.round.key),
                 toggle: (open) => this._toggleRound(card.round.key, open),
               },
             ),

@@ -1,0 +1,1 @@
+- Restore shared display choices from links, support sharing through the configured app scheme without a web URL, and preload recorded review rounds.

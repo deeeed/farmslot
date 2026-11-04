@@ -15,6 +15,7 @@ import {
   type GatewayResourceCache,
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
+import { createReviewHistoryPrefetch } from '@farmslot/review-dispatch';
 
 import { decisionRunId } from './decision-run-context';
 import type { EvidenceMediaHolder } from './evidence-media';
@@ -104,6 +105,7 @@ export function startContentPrefetch(
   const projects = () => (farm ? cache.read(configurationProjectsQuery) : undefined);
   const prefetcher = createContentPrefetcher({
     ...options,
+    reviewHistory: createReviewHistoryPrefetch(options),
     // The same base companionRunDiffBase gives the diff screens.
     defaultBranch: (run) => projectDefaultBranch(projects()?.data)(run),
   });

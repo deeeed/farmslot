@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { after, test } from 'node:test';
+import { after, beforeEach, test } from 'node:test';
 
 import { html } from 'lit';
 
@@ -12,7 +12,24 @@ import {
   toggleCollapsiblePanel,
 } from './collapsible-panel.js';
 
-const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+const original = new Map(
+  ['localStorage', 'location', 'history'].map((key) => [
+    key,
+    Object.getOwnPropertyDescriptor(globalThis, key),
+  ]),
+);
+const location = { hash: '#runs' };
+const history = {
+  state: null,
+  pushState: (_data: unknown, _unused: string, url: string) => {
+    location.hash = url;
+  },
+  replaceState: (_data: unknown, _unused: string, url: string) => {
+    location.hash = url;
+  },
+};
+Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+Object.defineProperty(globalThis, 'history', { configurable: true, value: history });
 const values = new Map<string, string>();
 let storageThrows = false;
 const storage = {
@@ -29,9 +46,16 @@ const storage = {
   },
 };
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+beforeEach(() => {
+  location.hash = '#runs';
+  values.clear();
+  storageThrows = false;
+});
 after(() => {
-  if (original) Object.defineProperty(globalThis, 'localStorage', original);
-  else Reflect.deleteProperty(globalThis, 'localStorage');
+  for (const [key, descriptor] of original) {
+    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+    else Reflect.deleteProperty(globalThis, key);
+  }
 });
 
 test('a panel opens as its default until the viewer chooses', () => {
@@ -39,7 +63,8 @@ test('a panel opens as its default until the viewer chooses', () => {
   assert.equal(collapsiblePanelOpen('default-closed', false), false);
 });
 
-test('a stored choice wins over the default, keyed by panel id', () => {
+test('a URL choice wins over the configured default, keyed by panel id', () => {
+  location.hash = '#runs?panels=stored-open,!stored-closed';
   values.set('cc:panel-open:stored-open', '1');
   values.set('cc:panel-open:stored-closed', '0');
   assert.equal(collapsiblePanelOpen('stored-open', false), true);
@@ -48,9 +73,9 @@ test('a stored choice wins over the default, keyed by panel id', () => {
 
 test('a toggle persists for the next page load', () => {
   assert.equal(toggleCollapsiblePanel('persisted', false), true);
-  assert.equal(values.get('cc:panel-open:persisted'), '1');
+  assert.equal(new URLSearchParams(location.hash.split('?')[1]).get('panels'), 'persisted');
   assert.equal(toggleCollapsiblePanel('persisted', false), false);
-  assert.equal(values.get('cc:panel-open:persisted'), '0');
+  assert.equal(new URLSearchParams(location.hash.split('?')[1]).has('panels'), false);
 });
 
 test('blocked storage falls back to the default and still toggles', () => {
@@ -108,4 +133,21 @@ test('the header is the same fixed height open and closed', () => {
       new RegExp(`height:${COLLAPSIBLE_PANEL_HEADER_HEIGHT}; box-sizing:border-box;`),
     );
   }
+});
+
+test('the URL owns panel choices and a default choice stays out of the link', () => {
+  location.hash = '#runs?run=run-1&round=review-2';
+  values.set('cc:panel-open:run-review-history', '1');
+  assert.equal(
+    collapsiblePanelOpen('run-review-history', false),
+    false,
+    'an absent URL choice is the configured default',
+  );
+  assert.equal(toggleCollapsiblePanel('run-review-history', false), true);
+  const params = new URLSearchParams(location.hash.split('?')[1]);
+  assert.equal(params.get('panels'), 'run-review-history');
+  assert.equal(params.get('run'), 'run-1');
+  assert.equal(params.get('round'), 'review-2');
+  assert.equal(toggleCollapsiblePanel('run-review-history', false), false);
+  assert.equal(new URLSearchParams(location.hash.split('?')[1]).has('panels'), false);
 });

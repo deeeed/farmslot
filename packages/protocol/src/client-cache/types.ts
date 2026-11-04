@@ -174,6 +174,8 @@ export interface GatewayResourceCache {
   openContent(key: ContentKey): Promise<Uint8Array | undefined>;
   /** An explicit refusal removes held bytes and their aliases. */
   forgetContent(key: ContentKey): Promise<void>;
+  /** Bounded resident bytes for first paint. Never performs I/O or opens content. */
+  peekContentByAlias?(alias: string): Uint8Array | undefined;
   readContentByAlias(alias: string): Promise<Uint8Array | undefined>;
   openContentByAlias(alias: string): Promise<Uint8Array | undefined>;
   /** Verifies, applies the caps and the shared budget, and returns false when refused. */

@@ -21,6 +21,7 @@ import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-statu
 import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
 import { AppUpdateStatusCard } from '../../components/AppUpdateStatusCard';
 import { AppVersionBanner } from '../../components/AppVersionBanner';
+import { withViewState } from '../../components/view-state';
 import { CommandCenterUrlEditor } from '../../features/settings/components/CommandCenterUrlEditor';
 import { GatewayPairingScanner } from '../../features/settings/components/GatewayPairingScanner';
 import { useGatewayPairingController } from '../../features/settings/use-gateway-pairing-controller';
@@ -98,7 +99,7 @@ async function smokeTestVoiceModel(modelId: string): Promise<string> {
   return formatVoiceAsrSmokeTestResult(result);
 }
 
-export default function SettingsScreen() {
+function SettingsScreen() {
   useShownMarker('companion-screen-settings');
   const insets = useSafeAreaInsets();
   const {
@@ -1822,3 +1823,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
 });
+
+export default withViewState(SettingsScreen);

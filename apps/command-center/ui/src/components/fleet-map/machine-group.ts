@@ -1,16 +1,18 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type {
-  MachineHealth,
-  MachineProviderAccountsSnapshot,
-  NodeInfo,
-  ProviderRunnerAccountStatus,
-  Run,
-  SlotStatus,
-  TaskProgressStructured,
+import {
+  cancelledRunSlotHold,
+  isTerminalRunStatus,
+  type MachineHealth,
+  type MachineProviderAccountsSnapshot,
+  type NodeInfo,
+  type ProviderRunnerAccountStatus,
+  type Run,
+  type SlotStatus,
+  type TaskProgressStructured,
+  viewTextField,
 } from '@farmslot/protocol';
-import { cancelledRunSlotHold, isTerminalRunStatus } from '@farmslot/protocol';
 import { fleetBehindDefaultIfBehind, fleetSlotBranch } from '@farmslot/review-dispatch';
 
 import './slot-card.js';
@@ -27,6 +29,7 @@ import {
   shadows,
   spacing,
 } from '../../styles/theme-tokens.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { flowColor, flowLabel, formatElapsed, runStatusColor } from '../runs/run-utils.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import { renderRunnerAccountInventory } from '../shared/runner-account-inventory.js';
@@ -64,6 +67,16 @@ export class MachineGroup extends LitElement {
   @state() private expandedSlotId: string | null = null;
   /** Accounts panel open (subscription matrix lives under a button, not header clutter). */
   @state() private accountsOpen = false;
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewTextField('expandedSlot'),
+      () => this.expandedSlotId ?? '',
+      (value) => {
+        this.expandedSlotId = value || null;
+      },
+    ),
+  ]);
 
   static styles = css`
     :host {

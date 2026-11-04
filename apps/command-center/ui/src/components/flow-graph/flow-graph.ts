@@ -1,16 +1,16 @@
 // flow-graph.ts — SVG flow graph visualization component.
 // Renders a DAG of steps, decisions, terminals, and chains per flow type + mode.
-
 import { html, LitElement, nothing, svg } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type {
-  ConfigProjectsResult,
-  ConfigTemplatesResult,
-  FlowType,
-  TemplatePreview,
+import {
+  type ConfigProjectsResult,
+  type ConfigTemplatesResult,
+  type FlowType,
+  Methods,
+  type TemplatePreview,
+  viewTextField,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../config/template-schema.js';
@@ -18,10 +18,18 @@ import '../config/template-schema.js';
 import { gateway } from '../../gateway-client.js';
 import { getState, subscribe } from '../../state.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
-import type { FlowGraph, FlowGraphNode, FlowMode, NodeKind } from './flow-graph-data.js';
-import { ALL_FLOW_TYPES, ALL_MODES, buildFlowGraph } from './flow-graph-data.js';
+import {
+  ALL_FLOW_TYPES,
+  ALL_MODES,
+  buildFlowGraph,
+  type FlowGraph,
+  type FlowGraphNode,
+  type FlowMode,
+  type NodeKind,
+} from './flow-graph-data.js';
 import {
   computeGraphLayout,
   DECISION_SIZE,
@@ -170,6 +178,16 @@ export class FlowGraphComponent extends LitElement {
     // Default: the flow's main worker template
     return this._templateCache.get(`${this._project}:${this.flowType}`);
   }
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewTextField('flowNode'),
+      () => this._selectedNodeId ?? '',
+      (value) => {
+        this._selectedNodeId = value || null;
+      },
+    ),
+  ]);
 
   static styles = flowGraphStyles;
 

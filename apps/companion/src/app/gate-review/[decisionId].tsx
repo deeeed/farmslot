@@ -1,12 +1,13 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef } from 'react';
 
+import { withViewState } from '../../components/view-state';
 import { type GateReviewFrame, observeD12GateReview } from '../../farmslot/d12-native-proof';
 import { GateReviewScreen } from '../../features/gate-review/GateReviewScreen';
 import { useGateReviewController } from '../../features/gate-review/use-gate-review-controller';
 import { routeParamString } from '../../features/workspace-shared/route-params';
 
-export default function GateReviewRoute() {
+function GateReviewRoute() {
   const { decisionId, runId, ac } = useLocalSearchParams<{
     ac?: string | string[];
     decisionId: string | string[];
@@ -29,3 +30,5 @@ export default function GateReviewRoute() {
   }, []);
   return <GateReviewScreen {...screen} initialClaimId={routeParamString(ac)} />;
 }
+
+export default withViewState(GateReviewRoute);

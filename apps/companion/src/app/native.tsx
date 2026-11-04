@@ -1,5 +1,6 @@
 import { Redirect, useLocalSearchParams } from 'expo-router';
 
+import { withViewState } from '../components/view-state';
 import { NativeConversation } from '../features/native-conversation/NativeConversation';
 import { type NativeConversationParams } from '../features/native-conversation/use-native-conversation-controller';
 import { routeParamString } from '../features/workspace-shared/route-params';
@@ -7,7 +8,7 @@ import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
 import { canOpenNativeConversation, workspaceHome } from '../lib/workspace-access';
 import { useConnectionStore } from '../store/connection';
 
-export default function NativeConversationRoute() {
+export function NativeConversationRoute() {
   const route = useLocalSearchParams();
   const profile = useConnectionStore((state) => state.activeProfileId);
   const access = useWorkspaceRenderAccess();
@@ -54,3 +55,5 @@ export default function NativeConversationRoute() {
     />
   );
 }
+
+export default withViewState(NativeConversationRoute);

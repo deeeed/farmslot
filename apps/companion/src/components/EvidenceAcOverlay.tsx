@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -12,6 +12,7 @@ import { acceptanceClaimLabel, type AcceptanceClaimRow } from '@farmslot/review-
 import { colors, fonts } from '../lib/theme';
 
 import { AcceptanceClaimList } from './AcceptanceClaimList';
+import { useViewToggle } from './view-state';
 
 /** The run's criteria a recording's viewer can move between and judge. */
 export interface EvidenceAcceptanceReview {
@@ -49,7 +50,7 @@ export function EvidenceAcOverlay({
   /** The rest of the row: the recording's step groups. */
   children?: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useViewToggle('evidence-criteria');
   const toc = useMemo(
     () => evidenceReviewToc(model, videoPath, { mediaDurationMs: durationMs || undefined }),
     [model, videoPath, durationMs],

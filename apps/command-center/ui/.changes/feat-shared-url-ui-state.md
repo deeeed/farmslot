@@ -1,0 +1,1 @@
+- Restore selectable display choices from shared URL state and preload review-round reports and diffs without warnings for uncaptured artifacts.

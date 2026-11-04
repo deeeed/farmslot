@@ -4,6 +4,8 @@ import { parseGitHubRef, reviewResultForRun, type Run } from '@farmslot/protocol
 
 import '../progress-tracker/progress-tracker.js';
 
+import { viewDetails } from '../../utils/view-state.js';
+
 import { isRunWorking } from './run-detail-model.js';
 import type { RunEvidenceRenderContext } from './run-detail-renderers.js';
 
@@ -29,7 +31,11 @@ export function renderReviewProcess(run: Run, ctx: RunEvidenceRenderContext) {
     'human-gate': 'Wait for the publication decision',
     complete: 'Save the result and clean up',
   };
-  return html`<details class="evidence-card" data-testid="review-process">
+  return html`<details
+    class="evidence-card"
+    data-testid="review-process"
+    ${viewDetails('review-process')}
+  >
     <summary>
       Review process ·
       ${current

@@ -9,6 +9,7 @@ import { cancelledRunSlotHold, type Run, type SlotStatus } from '@farmslot/proto
 import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunTitle } from '../../components/RunTitle';
+import { withViewState } from '../../components/view-state';
 import { FleetRecoveryControl } from '../../features/fleet/FleetRecoveryControl';
 import { NodeSourceStatusDisclosure } from '../../features/sources/SourceStatusSection';
 import { CancelledRunSlotRelease } from '../../features/workspace-shared/CancelledRunSlotRelease';
@@ -142,7 +143,7 @@ function runTimestamp(run: Run): number {
   return Date.parse(run.updatedAt || run.completedAt || run.createdAt || '') || 0;
 }
 
-export default function FleetScreen() {
+function FleetScreen() {
   const insets = useSafeAreaInsets();
   const fleet = useFleetStore((s) => s.fleet);
   const observation = useFleetStore((s) => s.observation);
@@ -385,3 +386,5 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
 });
+
+export default withViewState(FleetScreen);

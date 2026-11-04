@@ -7,6 +7,8 @@ import type {
   ReviewHistoryRoundCard,
 } from '@farmslot/review-dispatch';
 
+import { viewDetails } from '../../utils/view-state.js';
+
 import { formatDuration } from './run-utils.js';
 
 export function renderReviewAttempt(
@@ -126,7 +128,7 @@ export function renderReviewAttempt(
           </button>`
         : nothing}
       ${round.timing.length
-        ? html`<details>
+        ? html`<details ${viewDetails(`review-timing:${round.key}`)}>
             <summary>Checklist timing · ${round.timing.length} steps</summary>
             ${round.timing.map(
               (step) =>
@@ -137,7 +139,7 @@ export function renderReviewAttempt(
           </details>`
         : nothing}
       ${!loading && round.unavailable.length
-        ? html`<details class="history-warning">
+        ? html`<details class="history-warning" ${viewDetails(`review-errors:${round.key}`)}>
             <summary>Some artifacts could not be loaded</summary>
             ${round.unavailable.map((message) => html`<div>${message}</div>`)}
           </details>`
@@ -153,7 +155,11 @@ export function renderReviewFix(
   const duration =
     fix.durationMs ??
     (fix.running && fix.startedAt ? Date.now() - Date.parse(fix.startedAt) : null);
-  return html`<details class="review-history-fix" data-fix=${fix.key}>
+  return html`<details
+    class="review-history-fix"
+    data-fix=${fix.key}
+    ${viewDetails(`review-fix:${fix.key}`)}
+  >
     <summary>
       <span class="round-heading"
         ><strong>${fix.label}</strong

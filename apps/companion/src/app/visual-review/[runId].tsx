@@ -1,9 +1,10 @@
 import { useLocalSearchParams } from 'expo-router';
 
+import { withViewState } from '../../components/view-state';
 import { VisualReviewScreen } from '../../features/visual-review/VisualReviewScreen';
 import { routeParamString } from '../../features/workspace-shared/route-params';
 
-export default function VisualReviewRoute() {
+function VisualReviewRoute() {
   const { runId, source, recipeRun } = useLocalSearchParams<{
     runId: string | string[];
     source?: string | string[];
@@ -19,3 +20,5 @@ export default function VisualReviewRoute() {
     />
   );
 }
+
+export default withViewState(VisualReviewRoute);

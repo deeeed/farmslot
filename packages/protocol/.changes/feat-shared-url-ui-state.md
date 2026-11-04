@@ -1,0 +1,1 @@
+- Share context-configured display state across clients and expose bounded resident content previews for cached first paint.

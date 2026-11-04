@@ -1,11 +1,12 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Methods, type RoadmapGetResult } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { useViewToggle } from '../../components/view-state';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { getResourceCache } from '../../lib/resource-cache';
 import { spacing } from '../../lib/theme';
@@ -29,7 +30,7 @@ export function useRoadmapDetailController(itemId: string | undefined) {
   const savedItem = collection.data?.items.find((item) => item.id === itemId);
   const result = detail.data ?? (savedItem ? { item: savedItem } : null);
   const observation = detail.data ? detail : collection;
-  const [documentOpen, setDocumentOpen] = useState(false);
+  const [documentOpen, setDocumentOpen] = useViewToggle('roadmap-document');
   const refresh = useCallback(
     () => (query ? getResourceCache()?.retry(query) : undefined),
     [query],

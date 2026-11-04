@@ -2,23 +2,16 @@ import { html, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
-import type {
-  AcceptanceCriterionRef,
-  AcceptanceEvidenceLink,
-  AcceptanceStatusLedger,
-  CancelledRunSlotChoices,
-  CiCheckUpdatedPayload,
-  DevInteractiveCompletionAction,
-  FamilyObservabilityArtifact,
-  PRStatus,
-  Run,
-  RunDecision,
-  RunGrade,
-  TaskProgressStructured,
-} from '@farmslot/protocol';
 import {
+  type AcceptanceCriterionRef,
+  type AcceptanceEvidenceLink,
+  type AcceptanceStatusLedger,
   canActivateRunOnSlot,
+  type CancelledRunSlotChoices,
+  type CiCheckUpdatedPayload,
   deriveRunLifecycleView,
+  type DevInteractiveCompletionAction,
+  type FamilyObservabilityArtifact,
   isHeldForResultDecision,
   isSettledBlockedRun,
   isSlotFreedByPark,
@@ -28,11 +21,16 @@ import {
   modelsMatch,
   normalizeRunTags,
   observedReviewSessionContinuity,
+  type PRStatus,
   resolveRunSlotId,
   reviewChainForRun,
   reviewPublicationPolicyForRun,
+  type Run,
+  type RunDecision,
+  type RunGrade,
   runOutputCloseUnavailableReason,
   runRecoveryHints,
+  type TaskProgressStructured,
 } from '@farmslot/protocol';
 import {
   reviewHistoryView,
@@ -50,6 +48,7 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { viewDetails } from '../../utils/view-state.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import type {
   ArtifactBrowserView,
@@ -411,7 +410,7 @@ function renderRunEvidenceContent(run: Run, ctx: RunEvidenceRenderContext): unkn
         : nothing}
       ${artifacts.length
         ? html`
-            <details data-testid="run-output-files">
+            <details data-testid="run-output-files" ${viewDetails('run-output-files')}>
               <summary class="output-file-summary">Browse files (${artifacts.length})</summary>
               <step-artifacts
                 stepName="Output files"

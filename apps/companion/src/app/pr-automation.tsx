@@ -1,10 +1,11 @@
 import { useLocalSearchParams } from 'expo-router';
 import React from 'react';
 
+import { withViewState } from '../components/view-state';
 import { PRAutomationScreen } from '../features/pr-automation/PRAutomationScreen';
 import { usePRAutomationController } from '../features/pr-automation/use-pr-automation-controller';
 
-export default function PRAutomationRoute() {
+function PRAutomationRoute() {
   const params = useLocalSearchParams<{
     monitorId?: string | string[];
     attentionId?: string | string[];
@@ -17,3 +18,5 @@ export default function PRAutomationRoute() {
   });
   return <PRAutomationScreen {...screen} />;
 }
+
+export default withViewState(PRAutomationRoute);

@@ -222,6 +222,31 @@ export function createGatewayResourceCache(
   let version = 0;
   let storeVersion = 0;
   let hydrationOwnerVersion = 0;
+  // A bounded working set of the store's aliased bytes, for synchronous cached paint.
+  // Eviction and authority changes invalidate it with the durable rows.
+  const residentContent = new Map<string, { key: ContentKey; data: Uint8Array }>();
+  const residentLimit = Math.min(
+    options.contentBudgetBytes ?? defaultContentBudgetBytes,
+    8 * 1024 * 1024,
+  );
+  function forgetResident(key: ContentKey): void {
+    for (const [alias, value] of residentContent)
+      if (value.key.kind === key.kind && value.key.id === key.id) residentContent.delete(alias);
+  }
+  function rememberResident(alias: string, key: ContentKey, data: Uint8Array): void {
+    residentContent.delete(alias);
+    if (data.byteLength > residentLimit) return;
+    residentContent.set(alias, { key, data: data.slice() });
+    let bytes = [...residentContent.values()].reduce(
+      (sum, value) => sum + value.data.byteLength,
+      0,
+    );
+    for (const [old, value] of residentContent) {
+      if (bytes <= residentLimit) break;
+      residentContent.delete(old);
+      bytes -= value.data.byteLength;
+    }
+  }
   let lastUsed = 0;
   let storageNotice: string | undefined;
   let needsStore = options.store === undefined && options.openStore !== undefined;
@@ -315,6 +340,7 @@ export function createGatewayResourceCache(
     if (disposed || retiringStore) return;
     usable = false;
     updateCollectors();
+    residentContent.clear();
     hydrationOwnerVersion++;
     version++;
     forgetRunList();
@@ -324,6 +350,7 @@ export function createGatewayResourceCache(
 
   function replaceStore(next: typeof store): void {
     unsubscribeStore();
+    residentContent.clear();
     store = next;
     storeVersion++;
     startupStore = undefined;
@@ -563,6 +590,7 @@ export function createGatewayResourceCache(
     // owner's pending I/O synchronously, before queued deletion can run.
     if (revoke || scopeChanged || authorityChanged) {
       metrics?.resetScope();
+      residentContent.clear();
       hydrationOwnerVersion++;
       forgetRunList();
     }
@@ -610,6 +638,7 @@ export function createGatewayResourceCache(
           ((next.connected || next.authority !== undefined) &&
             (storedScopeChanged || storedAuthorityChanged))
         ) {
+          residentContent.clear();
           storeVersion++;
           forgetRunList();
           for (const entry of entries.values()) invalidate(entry, true);
@@ -1203,6 +1232,7 @@ export function createGatewayResourceCache(
                 if (!current()) return;
               }
               for (const key of victims.content) {
+                forgetResident(key);
                 await writingStore.deleteContent(key);
                 if (!current()) return;
               }
@@ -1381,6 +1411,17 @@ export function createGatewayResourceCache(
     return saved?.data;
   }
 
+  async function readAliasedContent(alias: string, open: boolean): Promise<Uint8Array | undefined> {
+    const saved = await readStoredContent(
+      (target) => target.getContentByAlias(alias),
+      open
+        ? (target, { kind, id }) => target.touchContent({ kind, id }, Date.now(), 'opened')
+        : undefined,
+    );
+    if (saved) rememberResident(alias, saved, saved.data);
+    return saved?.data;
+  }
+
   /** Content writes accept only the current connection's owner, from the token's fetch onward. */
   async function writeContent(
     token: ResourceContentWriteToken | undefined,
@@ -1447,6 +1488,7 @@ export function createGatewayResourceCache(
           if (!current()) return false;
         }
         for (const victim of victims.content) {
+          forgetResident(victim);
           await target.deleteContent(victim);
           if (!current()) return false;
         }
@@ -1459,7 +1501,10 @@ export function createGatewayResourceCache(
           accessedAt,
         });
       }
-      if (input.alias !== undefined && current()) await target.putContentAlias(input.alias, key);
+      if (input.alias !== undefined && current()) {
+        await target.putContentAlias(input.alias, key);
+        if (current()) rememberResident(input.alias, key, data);
+      }
       return true;
     });
   }
@@ -1618,6 +1663,7 @@ export function createGatewayResourceCache(
     runListProjections: () => runList.projections(),
     openContent: (key) => readContentBytes((target) => target.getContent(contentKey(key)), true),
     async forgetContent(key) {
+      forgetResident(key);
       const target = store;
       const ownerVersion = hydrationOwnerVersion;
       await updateStore(
@@ -1626,10 +1672,9 @@ export function createGatewayResourceCache(
         () => target.deleteContent(contentKey(key)),
       );
     },
-    readContentByAlias: (alias) =>
-      readContentBytes((target) => target.getContentByAlias(alias), false),
-    openContentByAlias: (alias) =>
-      readContentBytes((target) => target.getContentByAlias(alias), true),
+    peekContentByAlias: (alias) => residentContent.get(alias)?.data.slice(),
+    readContentByAlias: (alias) => readAliasedContent(alias, false),
+    openContentByAlias: (alias) => readAliasedContent(alias, true),
     storeContent,
     retainContent,
     contentWriteToken,
@@ -1639,6 +1684,7 @@ export function createGatewayResourceCache(
       if (disposed) return;
       const withdrawing = collectors.close();
       disposed = true;
+      residentContent.clear();
       detailSync.reset();
       version++;
       unsubscribeChanges();

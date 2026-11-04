@@ -1,1 +1,3 @@
-export { SkeletonStoryScreen as default } from '../../features/gate-review/SkeletonStoryScreen';
+import { withViewState } from '../../components/view-state';
+import { SkeletonStoryScreen } from '../../features/gate-review/SkeletonStoryScreen';
+export default withViewState(SkeletonStoryScreen);

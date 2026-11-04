@@ -11,6 +11,7 @@ import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunTitle } from '../../components/RunTitle';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
+import { withViewState } from '../../components/view-state';
 import {
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
   groupVisualArtifactPairs,
@@ -159,7 +160,7 @@ function DecisionCard({ decision }: { decision: PendingDecision }) {
   );
 }
 
-export default function InboxScreen() {
+function InboxScreen() {
   const insets = useSafeAreaInsets();
   const decisions = useDecisionStore((s) => s.decisions);
   const observation = useDecisionStore((s) => s.observation);
@@ -353,3 +354,5 @@ const TONE_COLORS = {
   fail: colors.statusFail,
   info: colors.accent,
 } as const;
+
+export default withViewState(InboxScreen);

@@ -11,6 +11,7 @@ import {
   type SourceStatusViewContext,
 } from '@farmslot/protocol';
 
+import { useViewToggle } from '../../components/view-state';
 import { baseStyles } from '../../lib/theme';
 
 import { sourceStyles as styles } from './styles/source-status.styles';
@@ -115,13 +116,14 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
     props.onSelectionsChange,
     props.onSelectionStateChange,
   );
-  const [details, setDetails] = useState(false);
+  const [details, setDetails] = useViewToggle(
+    `source-details:${props.context.target?.scope ?? 'farm'}:${props.context.target?.targetId ?? ''}`,
+  );
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
   const view = snapshot.view;
   useEffect(() => {
     setOpen(false);
-    setDetails(false);
   }, [controller, viewKey, props.context.target?.scope, props.context.target?.targetId]);
   useEffect(() => {
     if (!visible || snapshot.hidden) setOpen(false);
@@ -289,7 +291,7 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
 }
 
 export function NodeSourceStatusDisclosure({ nodeId }: { nodeId: string }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useViewToggle(`node-sources:${nodeId}`);
   return (
     <View>
       <Pressable testID={`node-${nodeId}-sources`} onPress={() => setExpanded(!expanded)}>

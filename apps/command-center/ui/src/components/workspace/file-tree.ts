@@ -1,8 +1,11 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { viewListField } from '@farmslot/protocol';
+
 import { gitStatusColor as sharedGitStatusColor } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 
 export interface FileEntry {
   name: string;
@@ -26,6 +29,16 @@ export class FileTree extends LitElement {
   @property() selectedPath = '';
   @property({ type: Boolean }) actionsDisabled = false;
   @state() private _ctxMenu: { x: number; y: number; entry: FileEntry } | null = null;
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewListField('treeOpen'),
+      () => [...this.expandedPaths],
+      (value) => {
+        this.expandedPaths = new Set(value);
+      },
+    ),
+  ]);
 
   static styles = css`
     .ctx-item[aria-disabled='true'] {

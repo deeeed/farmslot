@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { test } from 'node:test';
+import { after, beforeEach, test } from 'node:test';
 
 import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/protocol';
 
@@ -11,6 +11,29 @@ import {
   SubtaskOpenState,
   subtaskPresentation,
 } from './subtask-block.js';
+
+const original = new Map(
+  ['location', 'history'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+);
+const location = { hash: '#runs' };
+Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+Object.defineProperty(globalThis, 'history', {
+  configurable: true,
+  value: {
+    pushState(_data: unknown, _title: string, url: string) {
+      location.hash = url;
+    },
+  },
+});
+beforeEach(() => {
+  location.hash = '#runs';
+});
+after(() => {
+  for (const [key, descriptor] of original) {
+    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+    else Reflect.deleteProperty(globalThis, key);
+  }
+});
 
 function childProgress(completed: number, total: number): TaskProgressStructured {
   const steps = Array.from({ length: total }, (_, index) => ({
@@ -119,7 +142,9 @@ function toggleListener(
 
 /** A `toggle` event as `<details>` fires it, carrying the new open state. */
 function fireToggle(listener: (event: Event) => void, open: boolean): void {
-  listener({ target: { open } } as unknown as Event);
+  const event = new Event('toggle');
+  Object.defineProperty(event, 'target', { value: { open } });
+  listener(event);
 }
 
 test('the block binds the open state it is given, not the status default', () => {
@@ -244,7 +269,11 @@ test('only the three most recent runs are remembered', () => {
   // run-4 is the fourth distinct run; the least recently scoped one falls off.
   // Scoping run-1 above made run-2 the oldest.
   openBinding(unit(), state.scope('run-4'));
-  assert.equal(openBinding(unit(), state.scope('run-2')), true, 'the oldest run was forgotten');
+  assert.equal(
+    openBinding(unit(), state.scope('run-2')),
+    false,
+    'the URL keeps the explicit choice after the host forgets its automatic default',
+  );
   assert.equal(openBinding(unit(), state.scope('run-1')), false, 'a recent run is untouched');
 });
 
@@ -256,5 +285,17 @@ test('re-scoping a run keeps it from being pruned', () => {
   state.scope('run-a'); // the viewer came back before the fourth run
   openBinding(unit(), state.scope('run-d'));
   assert.equal(openBinding(unit(), state.scope('run-a')), false, 'run A survived as recent');
-  assert.equal(openBinding(unit(), state.scope('run-b')), true, 'run B aged out instead');
+  assert.equal(
+    openBinding(unit(), state.scope('run-b')),
+    true,
+    'run B has no explicit URL choice, so its automatic default can age out',
+  );
+});
+
+test('a rendered automatic child default does not add a URL choice', () => {
+  const state = new SubtaskOpenState().scope('run-default');
+  const child = unitFixture({ status: 'running' });
+  assert.equal(openBinding(child, state), true);
+  fireToggle(toggleListener(child, state), true);
+  assert.equal(location.hash, '#runs');
 });

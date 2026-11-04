@@ -1,4 +1,4 @@
-import { type Href, useNavigation, useRouter } from 'expo-router';
+import { type Href, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import {
   defaultTabsSlotRender,
   TabList,
@@ -12,6 +12,7 @@ import { type HostInstance, Pressable, ScrollView, StyleSheet, Text, View } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HeaderBackButton } from '../../components/FallbackHeaderBack';
+import { viewStateHref } from '../../components/view-state';
 import { colors, floatingCopilotGutter, fonts, spacing } from '../../lib/theme';
 
 export interface WorkspaceTabDefinition {
@@ -73,6 +74,7 @@ export function WorkspaceTabsLayout({
   tabs: WorkspaceTabDefinition[];
   title: string;
 }) {
+  const viewParams = useLocalSearchParams();
   const navigation = useNavigation();
   const router = useRouter();
 
@@ -97,7 +99,12 @@ export function WorkspaceTabsLayout({
       <Tabs options={{ backBehavior: 'none' }} style={styles.tabs}>
         <TabList accessibilityRole="tablist" style={styles.tabList}>
           {tabs.map((tab) => (
-            <TabTrigger key={tab.name} asChild href={tab.href} name={tab.name}>
+            <TabTrigger
+              key={tab.name}
+              asChild
+              href={viewStateHref(tab.href, viewParams)}
+              name={tab.name}
+            >
               <WorkspaceTab accessibilityLabel={`${title}: ${tab.label} tab`} testID={tab.testID}>
                 {tab.label}
               </WorkspaceTab>

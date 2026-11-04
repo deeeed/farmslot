@@ -20,6 +20,7 @@ import {
   type NativeSessionTool,
   type NativeSessionTurnDiffResult,
   type NativeWorkerHistoryScope,
+  viewListField,
 } from '@farmslot/protocol';
 import {
   appendNativePage,
@@ -90,6 +91,7 @@ import { getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { readStored } from '../shared/read-current.js';
 import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-controller.js';
@@ -357,6 +359,23 @@ export class NativeSessionView extends LitElement {
     }
     return this.workState;
   }
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewListField('messages'),
+      () => [...this.expandedMessages],
+      (value) => {
+        this.expandedMessages = new Set(value);
+      },
+    ),
+    viewBinding(
+      viewListField('turnFiles'),
+      () => [...this.openTurnFiles],
+      (value) => {
+        this.openTurnFiles = new Set(value);
+      },
+    ),
+  ]);
 
   static styles = nativeSessionStyles;
 

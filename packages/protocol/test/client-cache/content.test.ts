@@ -734,3 +734,24 @@ for (const origin of ['opened', 'prefetch'] as const) {
     }
   });
 }
+
+test('synchronous content previews follow the same eviction and owner fences as stored bytes', async () => {
+  const f = fixture(80);
+  try {
+    await f.put('first', 20, 'prefetch', 'run', 'round:first');
+    assert.equal(
+      new TextDecoder().decode(f.cache.peekContentByAlias?.('round:first')),
+      'first...............',
+    );
+    await f.put('second', 30, 'prefetch', 'run', 'round:second');
+    assert.equal(f.cache.peekContentByAlias?.('round:first'), undefined);
+    assert.ok(f.cache.peekContentByAlias?.('round:second'));
+    f.transport.setConnection({
+      ...f.transport.connection,
+      scope: { ...scope, principalId: 'other' },
+    });
+    assert.equal(f.cache.peekContentByAlias?.('round:second'), undefined);
+  } finally {
+    await f.cache.dispose();
+  }
+});

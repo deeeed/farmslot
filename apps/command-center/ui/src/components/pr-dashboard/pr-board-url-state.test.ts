@@ -45,7 +45,7 @@ test('PR board hash updates preserve unrelated params and invalid routes are ign
       { selectedPr: { repo: 'org/app', pr: 7 }, modalPr: null, layout: 'list' },
       '#prs?projects=web&machines=m1&repo=old&pr=1',
     ),
-    '#prs?projects=web&machines=m1&repo=org%2Fapp&pr=7&view=detail&layout=list',
+    '#prs?projects=web&machines=m1&repo=org%2Fapp&pr=7&view=detail',
   );
   assert.equal(
     prBoardUrlStateHash({ selectedPr: null, modalPr: null, layout: 'board' }, '#fleet?pr=7'),

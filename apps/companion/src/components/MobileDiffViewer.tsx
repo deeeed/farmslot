@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { ReviewedFindingContext } from '@farmslot/protocol';
+import { type ReviewedFindingContext, viewChoiceField, viewTextField } from '@farmslot/protocol';
 
 import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
 import { readStoredArtifact } from '../lib/artifact-response';
@@ -25,6 +25,8 @@ import {
   parseUnifiedDiff,
 } from '../lib/diff';
 import { colors, fonts, radii, spacing } from '../lib/theme';
+
+import { useViewChoice, useViewToggle } from './view-state';
 
 interface MobileDiffViewerProps {
   reviewedSource?: ReviewedFindingContext;
@@ -65,11 +67,23 @@ export function MobileDiffViewer({
   const [loadedText, setLoadedText] = useState(diffText ?? '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<DiffFileFilter>('all');
-  const [query, setQuery] = useState('');
-  const [selectedPath, setSelectedPath] = useState('');
-  const [viewMode, setViewMode] = useState<'unified' | 'compact'>('unified');
-  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [filter, setFilter] = useViewChoice(
+    viewChoiceField<DiffFileFilter>('diffFilter', 'all', [
+      'all',
+      'source',
+      'tests',
+      'docs',
+      'config',
+    ]),
+  );
+  const [query, setQuery] = useViewChoice(viewTextField('diffQuery'), 'replace');
+  const [selectedPath, setSelectedPath] = useViewChoice(
+    viewTextField('diffPath', initialPath?.trim() ?? ''),
+  );
+  const [viewMode, setViewMode] = useViewChoice(
+    viewChoiceField<'unified' | 'compact'>('mobileDiffMode', 'unified', ['unified', 'compact']),
+  );
+  const [fullscreenOpen, setFullscreenOpen] = useViewToggle('diff-fullscreen');
   const appliedInitialPathRef = useRef('');
   const topInset = Math.max(
     insets.top,
@@ -133,7 +147,7 @@ export function MobileDiffViewer({
     const match = findDiffFilePath(files, normalizedInitialPath);
     if (!match) return;
     appliedInitialPathRef.current = normalizedInitialPath;
-    setSelectedPath(match);
+    if (!selectedPath) setSelectedPath(match);
   }, [files, normalizedInitialPath]);
 
   const selected =

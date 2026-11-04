@@ -1,43 +1,44 @@
 import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
-import type {
-  FleetStatusResult,
-  FleetThumbnailsUpdatedPayload,
-  MachineHealth,
-  MachinePauseExecuteParams,
-  MachinePauseExecuteResult,
-  MachinePauseMode,
-  MachinePausePreviewResult,
-  MachinePauseRestoreParams,
-  MachinePauseRestoreResult,
-  MachinePauseSelector,
-  MachinePauseStatusResult,
-  MachinePauseUpdatedPayload,
-  NodeInfo,
-  NodesListResult,
-  PressureAdmissionControlState,
-  PressureAdmissionGetResult,
-  PressureAdmissionSetEnabledResult,
-  ProviderAccountsSnapshotResult,
-  ResourceCleanupResult,
-  ResourceListResult,
-  ResourcePressureCleanupCandidate,
-  ResourcePressureHistoryResult,
-  ResourcePressureSnapshotParams,
-  ResourcePressureSnapshotResult,
-  ResourceStatus,
-  ResourceStatusUpdatedPayload,
-  ResourceWatchSetEnabledResult,
-  Run,
-  SlotResource,
-  SlotStatus,
-  TaskProgressResult,
-  TaskProgressStructured,
+import {
+  Events,
+  type FleetStatusResult,
+  type FleetThumbnailsUpdatedPayload,
+  type MachineHealth,
+  type MachinePauseExecuteParams,
+  type MachinePauseExecuteResult,
+  type MachinePauseMode,
+  type MachinePausePreviewResult,
+  type MachinePauseRestoreParams,
+  type MachinePauseRestoreResult,
+  type MachinePauseSelector,
+  type MachinePauseStatusResult,
+  type MachinePauseUpdatedPayload,
+  Methods,
+  type NodeInfo,
+  type NodesListResult,
+  type PressureAdmissionControlState,
+  type PressureAdmissionGetResult,
+  type PressureAdmissionSetEnabledResult,
+  type ProviderAccountsSnapshotResult,
+  type ResourceCleanupResult,
+  type ResourceListResult,
+  type ResourcePressureCleanupCandidate,
+  type ResourcePressureHistoryResult,
+  type ResourcePressureSnapshotParams,
+  type ResourcePressureSnapshotResult,
+  type ResourceStatus,
+  type ResourceStatusUpdatedPayload,
+  type ResourceWatchSetEnabledResult,
+  type Run,
+  type SlotResource,
+  type SlotStatus,
+  sourceObservationAge,
+  type TaskProgressResult,
+  type TaskProgressStructured,
 } from '@farmslot/protocol';
-import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
-import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import '../shared/progress-read-status.js';
 import './machine-group.js';
@@ -51,8 +52,14 @@ import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
-import { type AppState, fleetQuery, getState, isHydrating, subscribe } from '../../state.js';
-import { getRunForSlot } from '../../state.js';
+import {
+  type AppState,
+  fleetQuery,
+  getRunForSlot,
+  getState,
+  isHydrating,
+  subscribe,
+} from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { progressReadNotice } from '../../utils/progress-read-status.js';
 import { readStored } from '../shared/read-current.js';
@@ -63,10 +70,7 @@ import {
 } from '../work-graph/work-graph-execution-overlay.js';
 
 import {
-  FLEET_GROUP_STORAGE_KEY,
-  FLEET_VIEW_STORAGE_KEY,
   type FleetCanvasGroupBy,
-  fleetCanvasStoredFallbacks,
   fleetCanvasUrlStateFromHash,
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
@@ -422,16 +426,13 @@ export class FleetCanvas extends LitElement {
         console.warn(`[fleet-canvas] thumbnail fetch failed:`, (err as Error).message);
       });
 
-    // Restore view params from URL, fall back to localStorage for migration
+    // The URL owns display choices, including their omitted defaults.
     this._readUrlParams();
     window.addEventListener('hashchange', this._onHashChange);
   }
 
   private _readUrlParams() {
-    const next = fleetCanvasUrlStateFromHash(
-      location.hash,
-      fleetCanvasStoredFallbacks(localStorage),
-    );
+    const next = fleetCanvasUrlStateFromHash(location.hash);
     if (this.groupBy !== next.groupBy) {
       this.groupBy = next.groupBy;
       if (next.groupBy === 'resource') this.fetchResourceData();
@@ -450,7 +451,7 @@ export class FleetCanvas extends LitElement {
       fleetRefreshOpen: this.fleetRefreshOpen,
     });
     if (next && location.hash !== next) {
-      history.replaceState(null, '', next);
+      history.pushState(null, '', next);
     }
   }
 
@@ -1092,7 +1093,6 @@ export class FleetCanvas extends LitElement {
 
   private setGroupBy(mode: FleetCanvasGroupBy) {
     this.groupBy = mode;
-    localStorage.setItem(FLEET_GROUP_STORAGE_KEY, mode);
     this._writeUrlParams();
     if (mode === 'resource' && !this._resourceFetched) {
       this.fetchResourceData();
@@ -1101,7 +1101,6 @@ export class FleetCanvas extends LitElement {
 
   private setViewMode(mode: FleetCanvasViewMode) {
     this.viewMode = mode;
-    localStorage.setItem(FLEET_VIEW_STORAGE_KEY, mode);
     this._writeUrlParams();
   }
 

@@ -3,10 +3,10 @@ import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { marked } from 'marked';
 
-import type { PRReviewThread } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, type PRReviewThread, viewChoiceField, viewTextField } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 import { prCommentsPanelStyles } from './pr-comments-panel-styles.js';
@@ -83,6 +83,35 @@ export class PRCommentsPanel extends LitElement {
       });
     }) as EventListener);
   }
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewChoiceField<FilterMode>('commentFilter', 'unresolved', [
+        'unresolved',
+        'all',
+        'resolved',
+        'outdated',
+      ]),
+      () => this._filter,
+      (value) => {
+        this._filter = value;
+      },
+    ),
+    viewBinding(
+      viewChoiceField<AuthorFilter>('commentAuthor', 'all', ['all', 'human', 'bugbot', 'cursor']),
+      () => this._authorFilter,
+      (value) => {
+        this._authorFilter = value;
+      },
+    ),
+    viewBinding(
+      viewTextField('commentThread'),
+      () => this._expandedThread ?? '',
+      (value) => {
+        this._expandedThread = value || null;
+      },
+    ),
+  ]);
 
   static styles = prCommentsPanelStyles;
 

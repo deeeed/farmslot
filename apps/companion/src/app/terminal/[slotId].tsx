@@ -1,8 +1,9 @@
 import { Redirect, useLocalSearchParams } from 'expo-router';
 
+import { withViewState } from '../../components/view-state';
 import { routeParamString } from '../../features/workspace-shared/route-params';
 
-export default function LegacyTerminalRoute() {
+function LegacyTerminalRoute() {
   const { slotId, ...params } = useLocalSearchParams();
 
   return (
@@ -14,3 +15,5 @@ export default function LegacyTerminalRoute() {
     />
   );
 }
+
+export default withViewState(LegacyTerminalRoute);

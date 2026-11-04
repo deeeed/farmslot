@@ -14,6 +14,7 @@ import '../workspace/ready-workspace.js';
 import './run-pipeline.js';
 import './step-inspector.js';
 
+import { viewDetails } from '../../utils/view-state.js';
 import { readyReviewRequestProgress } from '../workspace/ready-workspace-review-request-model.js';
 
 import { familyArtifactUrl } from './family-observability-artifact-model.js';
@@ -134,7 +135,7 @@ function renderFamilyRunFiles(options: FamilySelectedRunDetailRenderOptions) {
           Read retrospective
         </button>`
       : nothing}
-    <details data-testid="family-browse-files">
+    <details data-testid="family-browse-files" ${viewDetails('family-files')}>
       <summary>Browse files (${artifacts.length})</summary>
       <step-artifacts
         stepName="Output files"

@@ -70,6 +70,7 @@ function renderPhases(
           {step.subtask && !nested ? (
             <TaskSubtaskBlock
               key={subtaskBlockKey(runId, step.subtask.id)}
+              runId={runId}
               subtask={step.subtask}
               renderProgress={(progress) =>
                 renderPhases(

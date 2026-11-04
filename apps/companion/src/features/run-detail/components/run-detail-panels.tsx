@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
@@ -15,6 +14,7 @@ import { runTerminalView } from '@farmslot/review-dispatch';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import { RunTitle } from '../../../components/RunTitle';
+import { useViewToggle } from '../../../components/view-state';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
@@ -1112,7 +1112,7 @@ export function StructuredDataBlock({
   title: string;
   value: Record<string, unknown>;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useViewToggle(`structured:${title}`);
   const allFields = flattenStructuredFields(value);
   const fields = expanded ? allFields : allFields.slice(0, 32);
   const hiddenFieldCount = allFields.length - fields.length;

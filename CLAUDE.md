@@ -21,6 +21,10 @@ Follow [the performance process](docs/operations/performance.md) for budgets, me
 
 ## Key Rules
 
+### Persistent view state
+
+Persistent display choices belong in the URL through the shared context-configured view-state model. Omit defaults; restore choices before paint on reload and Back/Forward. Keep hover, busy/error flags, credentials and private or unsaved form contents out.
+
 ### Prefer Named Types
 
 Reuse existing domain types before defining new ones. Prefer named interfaces or type aliases for domain object shapes, function parameters, and nontrivial unions or intersections instead of inlining them. Keep small one-off annotations when naming them would add noise, and apply this rule to touched code without refactoring unrelated files.

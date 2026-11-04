@@ -10,11 +10,13 @@ import {
   type RunGetResult,
   type RunRecipeRunsForRunResult,
   type TaskProgressResult,
+  viewChoiceField,
 } from '@farmslot/protocol';
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
 import type { MediaViewerItem } from '../../components/MediaViewer';
+import { useViewChoice } from '../../components/view-state';
 import { observeNativeFamilyFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQuery';
 import { closeArtifactDocument, readStoredArtifact } from '../../lib/artifact-response';
@@ -33,7 +35,6 @@ import {
   type FamilyEvidenceFilter,
   filterFamilyEvidenceGroups,
   isFamilyVideoArtifact,
-  normalizeFamilyEvidenceFilterParam,
 } from '../../lib/family-evidence';
 import { collectFamilyRetrospectives } from '../../lib/family-retrospectives';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
@@ -82,27 +83,18 @@ import {
 } from './family-workspace-model';
 
 export function useFamilyWorkspaceController() {
-  const {
-    familyId,
-    project,
-    runId,
-    section,
-    recipeRun,
-    artifact,
-    workspace,
-    decisionKind,
-    evidence,
-  } = useLocalSearchParams<{
-    familyId: string;
-    project?: string;
-    runId?: string;
-    section?: string;
-    recipeRun?: string | string[];
-    artifact?: string | string[];
-    workspace?: string | string[];
-    decisionKind?: string | string[];
-    evidence?: string | string[];
-  }>();
+  const { familyId, project, runId, section, recipeRun, artifact, workspace, decisionKind } =
+    useLocalSearchParams<{
+      familyId: string;
+      project?: string;
+      runId?: string;
+      section?: string;
+      recipeRun?: string | string[];
+      artifact?: string | string[];
+      workspace?: string | string[];
+      decisionKind?: string | string[];
+      evidence?: string | string[];
+    }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const focused = useIsFocused();
@@ -128,12 +120,22 @@ export function useFamilyWorkspaceController() {
     body: string;
     sharedArtifact: SharedRunArtifactSelection;
   } | null>(null);
-  const [evidenceFilter, setEvidenceFilter] = useState<FamilyEvidenceFilter>('all');
+  const [evidenceFilter, setEvidenceFilter] = useViewChoice(
+    viewChoiceField<FamilyEvidenceFilter>('evidence', 'all', [
+      'all',
+      'before',
+      'after',
+      'review',
+      'diffs',
+      'recipes',
+      'setup',
+      'videos',
+    ]),
+  );
   const documentAbortRef = useRef<AbortController | null>(null);
   const requestedRecipeRunId = routeParamString(recipeRun).trim();
   const requestedArtifactPath = routeParamString(artifact).trim();
   const requestedSection = normalizeFamilySectionParam(section);
-  const requestedEvidenceFilter = normalizeFamilyEvidenceFilterParam(evidence);
   const workspaceRouteContext = useMemo(
     () =>
       workspaceRouteContextParams(
@@ -149,14 +151,6 @@ export function useFamilyWorkspaceController() {
       documentAbortRef.current?.abort();
     };
   }, []);
-
-  useEffect(() => {
-    if (requestedEvidenceFilter) {
-      setEvidenceFilter(requestedEvidenceFilter);
-    } else if (requestedSection === 'evidence') {
-      setEvidenceFilter('all');
-    }
-  }, [requestedEvidenceFilter, requestedSection]);
 
   const selectedRun =
     snapshot?.runs.find((run) => run.runId === runId) ??
