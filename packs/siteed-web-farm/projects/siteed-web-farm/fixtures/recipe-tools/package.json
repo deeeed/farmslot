@@ -1,0 +1,8 @@
+{
+  "name": "siteed-web-recipe-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@farmslot/adapter-web": "^0.18.0"
+  }
+}

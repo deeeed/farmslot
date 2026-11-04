@@ -25,6 +25,16 @@ describe('package exports', () => {
     }
   });
 
+  it('ships the plain-web runtime independently of wallet and dapp modules', async () => {
+    const manifest = require('../package.json');
+    const entry = manifest.exports['./plain-web'];
+    assert.ok(entry, 'plain-web export is required');
+    const code = fs.readFileSync(path.resolve(packageRoot, entry.default), 'utf8');
+    assert.doesNotMatch(code, /web-dapp|signer|wallet/);
+    const loaded = await import(pathToFileURL(path.resolve(packageRoot, entry.default)).href);
+    assert.equal(typeof loaded.createPlainWebAdapter, 'function');
+  });
+
   it('give ESM importers every name require() returns, for every library subpath', () => {
     const result = spawnSync(process.execPath, [checker, packageRoot], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr || result.stdout);

@@ -1,0 +1,273 @@
+{
+  "$schema": "../../schemas/project.schema.json",
+  "name": "siteed-web-farm",
+  "type": "standalone",
+  "repo_url": "https://github.com/deeeed/siteed-web.git",
+  "default_branch": "main",
+  "paths": {
+    "runtime_dir": ".agent",
+    "artifact_dir": ".agent/artifacts"
+  },
+  "hooks": {
+    "post_merge_install": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" prepare \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\"",
+    "health_check": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" health \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\"",
+    "teardown": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" stop \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\"",
+    "preflight": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" start \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\"",
+    "dev_server_check": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" health \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\""
+  },
+  "health": {
+    "ready_indicator": "ready",
+    "parse_health": "tail -1",
+    "dev_server_name": "Next.js",
+    "dev_server_log": ".agent/siteed-server.log"
+  },
+  "platforms": {
+    "cli": {
+      "device_check": "true"
+    }
+  },
+  "ci": {
+    "local_check": "corepack yarn lint && corepack yarn build"
+  },
+  "command_env": {
+    "unset": ["VERCEL_TOKEN", "VERCEL_ORG_ID", "VERCEL_PROJECT_ID"],
+    "set": {
+      "SITEED_NPM_TOKEN": ""
+    }
+  },
+  "node_support": {
+    "paths": [
+      "projects/siteed-web-farm/setup",
+      "projects/siteed-web-farm/templates",
+      "projects/siteed-web-farm/fixtures",
+      "projects/siteed-web-farm/scripts"
+    ]
+  },
+  "execution_templates": {
+    "sources": [],
+    "defaults": [
+      {
+        "when": {
+          "flow": "dev"
+        },
+        "templateId": "dev/default"
+      },
+      {
+        "when": {
+          "flow": "qa"
+        },
+        "templateId": "qa/site-build"
+      }
+    ]
+  },
+  "qa": {
+    "default_profile": "build",
+    "profiles": [
+      {
+        "id": "build",
+        "title": "Lint + production build",
+        "template_id": "qa/site-build"
+      }
+    ]
+  },
+  "recipe": {
+    "provider": {
+      "module": "./provider.mjs",
+      "root": {
+        "projectPath": ".agent/recipe-provider"
+      }
+    },
+    "adapter": "web",
+    "domain": "siteed-web",
+    "checks": [
+      {
+        "recipe": "smoke"
+      }
+    ]
+  },
+  "fixtures": {
+    "templates": [
+      {
+        "src": "recipe-tools",
+        "dst": ".agent/recipe-tools"
+      },
+      {
+        "src": "recipe-provider",
+        "dst": ".agent/recipe-provider"
+      }
+    ]
+  },
+  "prepare": {
+    "core": {
+      "label": "Checkout, recipe runtime and dependencies",
+      "phases": ["git", "fixtures", "deps"]
+    },
+    "default": "sandbox",
+    "profiles": {
+      "sandbox": {
+        "label": "Local website sandbox",
+        "phases": ["git", "fixtures", "deps", "preflight", "health"]
+      },
+      "attach": {
+        "label": "Reuse the prepared sandbox",
+        "phases": ["health"],
+        "requires": ["health_ok"],
+        "fallback": "sandbox"
+      }
+    }
+  },
+  "resources": {
+    "dev-server": {
+      "type": "dev-server",
+      "label": "Website",
+      "streamable": false,
+      "controllable": true,
+      "watch": {
+        "type": "port-listen",
+        "port": "{{port}}"
+      },
+      "hooks": {
+        "boot": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" start \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\"",
+        "health": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" health \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\"",
+        "shutdown": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" stop \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\""
+      }
+    },
+    "browser": {
+      "type": "browser",
+      "label": "Website browser",
+      "streamable": true,
+      "controllable": true,
+      "watch": {
+        "type": "port-listen",
+        "port": "{{metro_port}}"
+      },
+      "hooks": {
+        "boot": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" browser \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\"",
+        "health": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" browser-health \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\"",
+        "shutdown": "node \"{{farmslot_dir}}/projects/siteed-web-farm/scripts/project.mjs\" browser-stop \"{{repo}}\" \"{{port}}\" \"{{metro_port}}\""
+      }
+    }
+  },
+  "runtime_capabilities": {
+    "providers": {
+      "web-server": {
+        "label": "Website sandbox",
+        "version": "1",
+        "share_policy": "shared",
+        "cost": {
+          "class": "medium",
+          "resources": [
+            {
+              "id": "dev-server",
+              "access": "shared",
+              "kind": "process"
+            }
+          ]
+        },
+        "actions": {
+          "acquire": {
+            "kind": "resource",
+            "resource_id": "dev-server",
+            "action": "boot"
+          },
+          "health": {
+            "kind": "resource",
+            "resource_id": "dev-server",
+            "action": "health"
+          },
+          "release": {
+            "kind": "slot-action",
+            "action_id": "retain-sandbox"
+          }
+        },
+        "affected_resources": [
+          {
+            "resource_id": "dev-server",
+            "ownership": "slot-lifecycle",
+            "release_effect": "retain"
+          }
+        ],
+        "release_effects": ["The sandbox server is retained until slot teardown."],
+        "retention": {
+          "operator-wait": "retain",
+          "terminal": "stop"
+        }
+      },
+      "web-browser": {
+        "label": "Website browser",
+        "version": "1",
+        "share_policy": "exclusive",
+        "dependencies": ["web-server"],
+        "cost": {
+          "class": "medium",
+          "resources": [
+            {
+              "id": "browser",
+              "access": "exclusive",
+              "kind": "process"
+            }
+          ]
+        },
+        "actions": {
+          "acquire": {
+            "kind": "resource",
+            "resource_id": "browser",
+            "action": "boot"
+          },
+          "health": {
+            "kind": "resource",
+            "resource_id": "browser",
+            "action": "health"
+          },
+          "release": {
+            "kind": "resource",
+            "resource_id": "browser",
+            "action": "shutdown"
+          }
+        },
+        "affected_resources": [
+          {
+            "resource_id": "browser",
+            "ownership": "capability",
+            "release_effect": "stop"
+          }
+        ],
+        "release_effects": ["The slot-owned browser is stopped."],
+        "retention": {
+          "operator-wait": "stop",
+          "terminal": "stop"
+        }
+      }
+    }
+  },
+  "slot_actions": {
+    "retain-sandbox": {
+      "label": "Keep local sandbox",
+      "command": "true"
+    }
+  },
+  "worker_terminal": {
+    "flows": {
+      "dev": {
+        "complete": {
+          "report": "artifacts/report.md",
+          "artifacts": [
+            "artifacts/report.md",
+            "artifacts/recipe.json",
+            "artifacts/recipe-coverage.md"
+          ]
+        }
+      },
+      "qa": {
+        "complete": {
+          "report": "artifacts/report.md",
+          "artifacts": [
+            "artifacts/report.md",
+            "artifacts/recipe.json",
+            "artifacts/recipe-coverage.md"
+          ]
+        }
+      }
+    }
+  }
+}

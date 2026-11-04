@@ -1,0 +1,84 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Siteed website smoke",
+  "description": "Open the prepared website, verify its home page, follow the Projects link and retain screenshots.",
+  "proofTargets": [
+    {
+      "id": "home",
+      "claim": "The prepared website renders its home page.",
+      "proofMode": "visual"
+    },
+    {
+      "id": "projects",
+      "claim": "The Projects navigation opens rendered project content.",
+      "proofMode": "visual"
+    }
+  ],
+  "workflow": {
+    "entry": "home-open",
+    "nodes": {
+      "home-open": {
+        "action": "ui.press",
+        "selector": "nav a[href=\"/\"]",
+        "intent": "Open Home through the prepared website navigation",
+        "next": "home-ready"
+      },
+      "home-ready": {
+        "action": "ui.wait_for",
+        "selector": "main h1",
+        "timeout_ms": 15000,
+        "intent": "Read the website home page",
+        "proves": ["home"],
+        "next": "home-capture",
+        "text": "Arthur Breton"
+      },
+      "home-capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/home.png",
+        "intent": "Record the rendered home page",
+        "next": "projects-open"
+      },
+      "projects-open": {
+        "action": "ui.press",
+        "selector": "nav a[href=\"/projects\"]",
+        "intent": "Follow the real Projects navigation",
+        "next": "projects-ready"
+      },
+      "projects-ready": {
+        "action": "ui.wait_for",
+        "selector": "main h1",
+        "timeout_ms": 15000,
+        "intent": "Read the Projects page",
+        "next": "projects-status",
+        "text": "Recent Projects"
+      },
+      "projects-status": {
+        "action": "app.status",
+        "intent": "Read the resulting application URL",
+        "next": "projects-check"
+      },
+      "projects-check": {
+        "action": "assert_output",
+        "source": "projects-status",
+        "assert": {
+          "path": "$.url",
+          "operator": "contains",
+          "value": "/projects"
+        },
+        "intent": "Verify navigation reached Projects",
+        "proves": ["projects"],
+        "next": "projects-capture"
+      },
+      "projects-capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/projects.png",
+        "intent": "Record the rendered Projects page",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

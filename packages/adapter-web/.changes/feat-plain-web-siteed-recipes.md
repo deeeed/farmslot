@@ -1,0 +1,1 @@
+- Run ordinary websites in an owned extension-free browser with shared CDP actions, screenshots and whole-run recording. Existing extension launches retain their lifecycle.

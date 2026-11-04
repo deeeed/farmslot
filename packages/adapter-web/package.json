@@ -68,6 +68,10 @@
     "./web-dapp": {
       "types": "./dist/web-dapp/index.d.mts",
       "default": "./src/web-dapp/index.mjs"
+    },
+    "./plain-web": {
+      "types": "./dist/plain-web.d.mts",
+      "default": "./src/plain-web.mjs"
     }
   },
   "scripts": {
