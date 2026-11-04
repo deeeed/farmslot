@@ -89,10 +89,12 @@ test('a filter that hides the selection disables the action instead of widening 
   assert.equal(scope.reason, 'Selection hidden by filters');
 });
 
-test('a saved fleet waits for a current read even with rows selected', () => {
-  const scope = fleetReleaseScope([idle], new Set(['idle-1']), true, false);
-  assert.equal(scope.disabled, true);
-  assert.equal(scope.reason, 'Waiting for a current fleet read');
+test('expired workspace evidence can open inspection without granting bulk release', () => {
+  const saved = { ...idle, workspace: undefined };
+  const scope = fleetReleaseScope([saved], new Set(['idle-1']));
+  assert.equal(scope.disabled, false);
+  assert.equal(scope.eligible, false);
+  assert.equal(scope.reason, '');
 });
 
 test('cards and the resource view have no rows to select', () => {

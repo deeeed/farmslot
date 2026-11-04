@@ -46,6 +46,40 @@ mock.module('../../state.js', {
 });
 const { FleetCanvas } = await import('./fleet-canvas.js');
 
+test('selected idle rows open release review while the fleet read is stale', () => {
+  const shown: SlotStatus = {
+    slot: 'shown-1',
+    machine: 'mini',
+    project: 'proof',
+    platform: 'browser',
+    health: { ssh: 'LOCAL', device: '-', devserver: '-', cdp: '-', fixtures: '-' },
+    branch: 'main',
+    agent: 'idle',
+    enabled: true,
+    dispatchable: true,
+    lifecycle: 'ready',
+    phase: null,
+    warm: false,
+    taskId: null,
+    taskFile: null,
+    dispatchedAt: null,
+    completedAt: null,
+    runner: null,
+    model: null,
+    deviceName: null,
+    taskPhase: null,
+    taskStepProgress: null,
+  };
+  const view = new FleetCanvas();
+  Reflect.set(view, 'slots', [shown, { ...shown, slot: 'shown-2' }]);
+  Reflect.set(view, 'selectedSlotIds', new Set(['shown-1', 'shown-2']));
+  const scope = Reflect.get(view, 'releaseScope');
+  assert.deepEqual(scope.slotIds, ['shown-1', 'shown-2']);
+  assert.equal(scope.label, 'Release and update to main (2 selected)');
+  assert.equal(scope.disabled, false, 'opening the read-only inspection needs only the shown rows');
+  assert.equal(scope.reason, '');
+});
+
 test('resource groups from every stored slot render before the first four fresh replies', async () => {
   const scope = { gatewayUrl: 'ws://localhost:1234', principalId: 'owner', principalGeneration: 0 };
   const authority = { roles: [], workspaceAccess: 'farm' as const };

@@ -10,7 +10,7 @@ export interface FleetReleaseScope {
   title: string;
   /** Why the action is disabled, short enough to show beside it; empty when enabled. */
   reason: string;
-  /** Some slot in scope can be released in bulk right now. */
+  /** Some shown slot is a candidate for bulk release after inspection. */
   eligible: boolean;
   disabled: boolean;
 }
@@ -18,21 +18,18 @@ export interface FleetReleaseScope {
 /**
  * The fleet's one bulk action covers only the selected table rows that are still visible. It
  * never widens to unselected slots: no selection, or a selection the filters hide, disables it.
+ * Opening review is read-only. The review obtains current release authority separately.
  */
 export function fleetReleaseScope(
   visible: readonly SlotStatus[],
   selected: ReadonlySet<string>,
   selectable = true,
-  /** A saved or stale fleet waits for a current read before any release. */
-  current = true,
 ): FleetReleaseScope {
   const chosen = visible.filter((slot) => selected.has(slot.slot));
   const { count, canInspect } = fleetRecoverySummary(chosen);
   const [reason, title] = !selectable
     ? ['Switch to the table to select', 'Switch to the table to select slots to release']
-    : !current
-      ? ['Waiting for a current fleet read', 'Actions wait for a current fleet read']
-      : !selected.size
+    : !selected.size
         ? ['Select slots to release', 'Select slots to release']
         : !chosen.length
           ? ['Selection hidden by filters', 'The selected slots are hidden by the current filters']

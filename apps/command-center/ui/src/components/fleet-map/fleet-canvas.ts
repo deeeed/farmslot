@@ -54,7 +54,6 @@ import {
   type AppState,
   fleetQuery,
   getState,
-  isFleetCurrent,
   isHydrating,
   subscribe,
 } from '../../state.js';
@@ -1542,12 +1541,7 @@ export class FleetCanvas extends LitElement {
   /** Selection only counts while the table that shows it is on screen. */
   private get releaseScope() {
     const tableShown = this.viewMode === 'list' && this.groupBy !== 'resource';
-    return fleetReleaseScope(
-      this.filteredSlots,
-      this.selectedSlotIds,
-      tableShown,
-      isFleetCurrent(),
-    );
+    return fleetReleaseScope(this.filteredSlots, this.selectedSlotIds, tableShown);
   }
 
   private renderFleetRefreshTrigger() {
