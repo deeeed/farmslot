@@ -1,0 +1,1 @@
+- Match worker window names exactly during launch selection and cleanup so a missing dev window cannot select devserver-log.

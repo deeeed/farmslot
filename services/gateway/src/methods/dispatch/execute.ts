@@ -49,6 +49,7 @@ import {
 import { slotFileExists } from '../../core/slot-io.js';
 import { SSH_CONNECT_SHELL_OPTIONS } from '../../core/ssh-options.js';
 import {
+  exactTmuxWindowTarget,
   firstWindowTarget,
   resolveTmuxPaneId,
   resolveTmuxSession,
@@ -250,17 +251,18 @@ async function renameDefaultWorkerWindow(
       `Failed to rename tmux window ${target} to ${workerWindowName}: ${renamed.stderr || renamed.stdout || `exit ${renamed.exitCode}`}`,
     );
   }
-  await applyRoleWindowOptions(vars, `${session}:${workerWindowName}`);
+  await applyRoleWindowOptions(vars, exactTmuxWindowTarget(session, workerWindowName));
 }
 
 async function tmuxWindowExists(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  target: string,
+  session: string,
+  windowName: string,
 ): Promise<boolean> {
   const result = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `list-panes -t ${shellQuote(target)} -F '#{pane_index}' 2>/dev/null | head -1`,
+      `list-panes -t ${shellQuote(exactTmuxWindowTarget(session, windowName))} -F '#{pane_index}' 2>/dev/null | head -1`,
     ),
   );
   return result.exitCode === 0 && result.stdout.trim().length > 0;
@@ -624,7 +626,7 @@ export async function ensureWorkerRoleTarget(
   if (!windowName) return await firstWindowTarget(vars, session);
 
   const roleTarget = `${session}:${windowName}`;
-  if (await tmuxWindowExists(vars, roleTarget)) {
+  if (await tmuxWindowExists(vars, session, windowName)) {
     if (await isRoleWindowDead(vars, roleTarget)) {
       // Pane sat on its postmortem (remain-on-exit) view — revive with a fresh shell so the
       // upcoming dispatch can send-keys the runner launch line into a live process. No stderr

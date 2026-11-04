@@ -101,6 +101,11 @@ export function tmuxShellSnippet(snippet: string): string {
   ].join('\n');
 }
 
+/** Names must match exactly: dev must never resolve to devserver-log. */
+export function exactTmuxWindowTarget(session: string, window: string): string {
+  return `=${session}:=${window}`;
+}
+
 export function buildDispatchRoleShellCommand(remoteRepo: string): string {
   return [
     `cd ${shellQuote(remoteRepo)}`,
