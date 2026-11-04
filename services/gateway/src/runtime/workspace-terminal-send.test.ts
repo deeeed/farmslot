@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 
+import { WebSocket } from 'ws';
+
 import type { Run } from '@farmslot/protocol';
 
 import { makeVars } from '../runners/test-fixtures.js';
 
+const actualExec = await import('../core/exec.js');
+const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
+const { handleNodeResponse } = await import('../fleet/node-rpc.js');
 const session = 'review-submission-proof';
 const vars = makeVars({ session });
 const run: Run = {
@@ -49,6 +54,12 @@ const run: Run = {
 const operations: string[] = [];
 let confirmed = true;
 let ownerAvailable = true;
+let currentRun = run;
+let runnerVars = vars;
+let authority = true;
+let revokeAfterInspection = false;
+const nativeCommands: string[] = [];
+let rawCommands = 0;
 const submit = mock.fn(async (..._args: unknown[]) => {
   if (!confirmed) throw new Error('Runner submission was not confirmed');
 });
@@ -57,12 +68,18 @@ mock.module('../security/native-worker-owner.js', {
 });
 mock.module('../fleet/state.js', { namedExports: { loadPoolConfigs: async () => [] } });
 mock.module('../runs/store.js', {
-  namedExports: { getRun: () => (ownerAvailable ? run : undefined) },
+  namedExports: { getRun: () => (ownerAvailable ? currentRun : undefined) },
 });
 mock.module('../runners/native/node.js', {
   namedExports: {
-    execNativeNodeArgv: () => {
-      throw new Error('Unexpected remote execution');
+    execNativeNodeArgv: async (_owner: string, _machine: string, argv: string[]) => {
+      if (!authority) throw new Error('Native authority changed');
+      if (argv[0] === 'node') {
+        const input = JSON.parse(argv[3]!);
+        operations.push(input.action);
+        if (revokeAfterInspection) authority = false;
+      } else nativeCommands.push(argv.join(' '));
+      return { exitCode: 0, stdout: '[]', stderr: '' };
     },
   },
 });
@@ -73,21 +90,12 @@ mock.module('../runners/review-tmux.js', {
   },
 });
 mock.module('../runners/review-startup.js', {
-  namedExports: { reviewWorkspaceRunnerVars: async () => vars },
+  namedExports: { reviewWorkspaceRunnerVars: async () => runnerVars },
 });
 mock.module('../runners/registry.js', { namedExports: { sendRunnerPrompt: submit } });
 mock.module('../core/exec.js', {
   namedExports: {
-    isLocal: () => true,
-    execArgvOnSlot: async () => {
-      throw new Error('Unexpected slot argv execution');
-    },
-    execLocal: async () => {
-      throw new Error('Unexpected local execution');
-    },
-    execOnSlot: async () => {
-      throw new Error('Unexpected slot execution');
-    },
+    ...actualExec,
     execFileArgv: async (argv: string[]) => {
       const input = JSON.parse(argv[3]!);
       operations.push(input.action);
@@ -101,6 +109,12 @@ beforeEach(() => {
   submit.mock.resetCalls();
   confirmed = true;
   ownerAvailable = true;
+  currentRun = run;
+  runnerVars = vars;
+  authority = true;
+  revokeAfterInspection = false;
+  nativeCommands.length = 0;
+  rawCommands = 0;
 });
 
 test('workspace semantic send verifies ownership then uses the shared runner submitter', async () => {
@@ -140,3 +154,63 @@ test('workspace cannot confirm delivery after its owner closes', async () => {
     /closed/,
   );
 });
+
+for (const phase of ['inspection', 'paste'] as const) {
+  test(`remote submission retains owner authority after ${phase}`, async () => {
+    const machine = 'remote-submission-proof';
+    currentRun = {
+      ...run,
+      nativeOwnerPrincipalId: 'profile-owner',
+      reviewWorkspace: { ...run.reviewWorkspace!, machine, executionNodeId: machine },
+    };
+    runnerVars = makeVars({ session, machine, host: 'remote.invalid' });
+    // The ordinary slot broker can still have a connected socket after native authority revocation.
+    const ws = {
+      readyState: WebSocket.OPEN,
+      send(raw: string) {
+        rawCommands++;
+        const frame = JSON.parse(raw);
+        handleNodeResponse(
+          frame.id,
+          true,
+          { exitCode: 0, stdout: '', stderr: '' },
+          undefined,
+          undefined,
+          ws,
+        );
+      },
+    } as WebSocket;
+    registerNode(
+      machine,
+      1,
+      ws,
+      undefined,
+      undefined,
+      { ownerPrincipalId: 'profile-owner', supportsWorkers: true, supportsEnsure: true },
+      { principalId: 'node-proof', valid: () => authority },
+    );
+    revokeAfterInspection = phase === 'inspection';
+    submit.mock.mockImplementationOnce(async () => {
+      await actualExec.execOnSlot(runnerVars, 'printf paste-step');
+      authority = false;
+      await actualExec.execOnSlot(runnerVars, 'printf enter-step');
+    });
+    try {
+      await assert.rejects(
+        workspaceTerminalOperation(currentRun, 'send', {
+          text: 'Long review steer.\n'.repeat(100),
+          enter: true,
+        }),
+        /authority changed/i,
+      );
+      assert.equal(
+        rawCommands,
+        0,
+        'No submission command may fall back to the unfenced slot broker',
+      );
+      assert.equal(nativeCommands.length, phase === 'paste' ? 1 : 0);
+    } finally {
+      unregisterByWs(ws);
+    }
+  });
+}

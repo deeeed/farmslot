@@ -14,6 +14,7 @@ import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
+import { currentSlotCommandExecutor } from './exec-scope.js';
 
 export type { ExecResult };
 
@@ -245,6 +246,18 @@ export async function execOnSlot(
   assertCleanupCurrent();
   const opts: ExecOnSlotOptions =
     typeof optsOrCwd === 'string' ? { cwd: optsOrCwd } : (optsOrCwd ?? {});
+  const scoped = currentSlotCommandExecutor();
+  if (scoped) {
+    // The workspace owner supplies the complete execution contract, including authority
+    // rechecks. Never route any nested receipt or input through the ordinary slot broker.
+    return trackCleanupCommand(
+      scoped(slotVars, cmd, {
+        ...opts,
+        cwd: opts.cwd ?? slotVars.remoteRepo,
+        signal: cleanupSignal(opts.signal),
+      }),
+    );
+  }
   const cwd = opts.cwd ?? slotVars.remoteRepo;
   const signal = cleanupSignal(opts.signal);
   const sources = currentProjectSources();

@@ -1,6 +1,8 @@
 import type { Run, SlotAgentTargetParams } from '@farmslot/protocol';
 
 import { execFileArgv, isLocal } from '../core/exec.js';
+import { withSlotCommandExecutor } from '../core/exec-scope.js';
+import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { execNativeNodeArgv } from '../runners/native/node.js';
 import { sendRunnerPrompt } from '../runners/registry.js';
@@ -107,6 +109,8 @@ export async function workspaceTerminalOperation(
   }
   if (run.transport === 'tmux' && action === 'stop') return [];
   const workspace = run.reviewWorkspace!;
+  const { workspaceId, machine, executionNodeId } = workspace;
+  const owner = run.nativeOwnerPrincipalId;
   const semanticSend = run.transport === 'tmux' && action === 'send' && input.enter !== false;
   const argv = [
     'node',
@@ -135,7 +139,26 @@ export async function workspaceTerminalOperation(
       context?.runnerSessionId && context.runnerSessionPath
         ? { sessionId: context.runnerSessionId, sessionPath: context.runnerSessionPath }
         : undefined;
-    await sendRunnerPrompt(vars, vars.session, runner, input.text ?? '', { retainedSession });
+    await withSlotCommandExecutor(
+      async (target, command, options) => {
+        const current = getRun(run.id);
+        if (
+          !current?.reviewWorkspace ||
+          current.reviewWorkspace.cleanedAt ||
+          current.reviewWorkspace.workspaceId !== workspaceId ||
+          current.reviewWorkspace.machine !== machine ||
+          current.reviewWorkspace.executionNodeId !== executionNodeId ||
+          current.nativeOwnerPrincipalId !== owner ||
+          target.machine !== machine
+        )
+          throw new Error('Review workspace authority changed before runner input');
+        assertNativeRunOwner(current);
+        if (executionNodeId === 'local') return execFileArgv(['bash', '-c', command], options);
+        const body = `cd ${shellQuote(options.cwd ?? target.remoteRepo)} && ${command}`;
+        return execNativeNodeArgv(owner!, machine, ['bash', '-c', body], options.timeout ?? 10000);
+      },
+      () => sendRunnerPrompt(vars, vars.session, runner, input.text ?? '', { retainedSession }),
+    );
   }
   if (action !== 'stop') {
     const current = getRun(run.id);
