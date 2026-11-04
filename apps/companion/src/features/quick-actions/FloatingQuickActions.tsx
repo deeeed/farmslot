@@ -5,11 +5,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Modal, Platform, Pressable, Share, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { mergeViewStateParams } from '@farmslot/protocol';
 import {
   type CompanionViewLocation,
   resolveSharedViewLink,
 } from '@farmslot/protocol/surfaces/view-links';
 
+import { getCompanionEnvironment } from '../../lib/app-environment';
 import { quickVoiceLocation } from '../../lib/quick-actions';
 import { colors } from '../../lib/theme';
 import { buildWorkspaceCopilotDraftForRoute } from '../../lib/workspace-copilot';
@@ -44,6 +46,7 @@ export function FloatingQuickActions({
   const filters = useFilterStore((state) => state.filters);
   const runFilters = useRunFilterStore((state) => state.filters);
   const base = profiles.find((profile) => profile.id === profileId)?.commandCenterUrl;
+  const appScheme = getCompanionEnvironment().appScheme;
   const [open, setOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
   const longPressed = useRef(false);
@@ -67,12 +70,18 @@ export function FloatingQuickActions({
     selection?.pathname === '/unmapped-overlay' ? currentView : source,
   );
   const selected = useMemo(
-    () => ({ ...source, projects: filters.projects, machines: filters.machines, runFilters }),
-    [source, filters, runFilters],
+    () => ({
+      ...source,
+      params: mergeViewStateParams(params, source.params),
+      projects: filters.projects,
+      machines: filters.machines,
+      runFilters,
+    }),
+    [source, params, filters, runFilters],
   );
   const link = useMemo(
-    () => resolveSharedViewLink({ companion: selected }, base),
-    [selected, base],
+    () => resolveSharedViewLink({ companion: selected }, base, appScheme),
+    [selected, base, appScheme],
   );
   useEffect(() => {
     setOpen(false);

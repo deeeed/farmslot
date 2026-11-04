@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Text, View } from 'react-native';
 
+import { viewToggleMapField } from '@farmslot/protocol';
+
+import { useViewChoice } from '../../../components/view-state';
 import { prExecutionText, prMonitorFreshness } from '../../../lib/pr-automation';
 import { styles } from '../styles/pr-automation-styles';
 import type { PRAutomationController } from '../use-pr-automation-controller';
@@ -8,7 +11,7 @@ import type { PRAutomationController } from '../use-pr-automation-controller';
 import { PRButton, PRDisclosure } from './PRControls';
 
 export function PRMonitorCards({ viewModel: vm, actions }: PRAutomationController) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useViewChoice(viewToggleMapField('prMonitors'));
   const monitors = vm.watches.monitors
     .filter(
       (monitor) =>

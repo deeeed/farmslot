@@ -2,40 +2,40 @@ import { html, LitElement, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import QRCode from 'qrcode';
 
-import type {
-  ChatClientContext,
-  ChatSendIntent,
-  CredentialListResult,
-  FleetSummary,
-  GatewayListenInfo,
-  GatewayStatusResult,
-  GatewayUpdateStatus,
-  GitHubRateLimitPayload,
-  NodeInfo,
-  NodesListResult,
-  PairingAuthority,
-  PairingCandidate,
-  PairingCandidatesResult,
-  PairingCreateResult,
-  PersonDeviceSession,
-  PrincipalListResult,
-  Run,
-  SlotStatus,
-  TmuxWorkerListResult,
-  TmuxWorkerSummary,
-} from '@farmslot/protocol';
 import {
   ACCOUNT_SESSION_CONTROL,
   buildGatewayPairingLink,
   buildGatewayPairingQrPayload,
+  type ChatClientContext,
+  type ChatSendIntent,
   COMPANION_APP_SCHEMES,
   type CompanionAppScheme,
+  type CredentialListResult,
+  type FleetSummary,
+  type GatewayListenInfo,
   type GatewayPairingQrPayload,
+  type GatewayStatusResult,
+  type GatewayUpdateStatus,
+  type GitHubRateLimitPayload,
   hasUnsettledRunExecution,
   isTerminalRunStatus,
   Methods,
+  type NodeInfo,
+  type NodesListResult,
+  type PairingAuthority,
+  type PairingCandidate,
+  type PairingCandidatesResult,
+  type PairingCreateResult,
+  type PersonDeviceSession,
   personSessionCaption,
+  type PrincipalListResult,
+  type Run,
+  type SlotStatus,
   sourceObservationAge,
+  type TmuxWorkerListResult,
+  type TmuxWorkerSummary,
+  viewIntegerField,
+  viewToggleField,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import {
@@ -82,8 +82,7 @@ import {
 } from '../build-info.js';
 import { getDesktopConnection, isDesktopClient } from '../desktop-connection.js';
 import { retireDraftScope } from '../draft-scopes.js';
-import type { ConnectionState } from '../gateway-client.js';
-import { gateway } from '../gateway-client.js';
+import { type ConnectionState, gateway } from '../gateway-client.js';
 import {
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_SOURCE_STORAGE_KEY,
@@ -121,6 +120,7 @@ import {
   unpinWorkspace,
 } from '../utils/pinned-slots.js';
 import { hashParams } from '../utils/url-state.js';
+import { viewBinding, ViewStateBindings } from '../utils/view-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
 import { runStatusColor } from './runs/run-utils.js';
@@ -130,8 +130,6 @@ import {
   activeSidebarRuns,
   clampSidebarWidth,
   DEFAULT_SIDEBAR_WIDTH,
-  parseStoredSidebarWidth,
-  SIDEBAR_WIDTH_PREF_KEY,
 } from './app-shell-nav-model.js';
 import {
   pairingAuthorityFromSelection,
@@ -211,7 +209,6 @@ const ALPHA_ROUTES = new Set<Route>(
   NAV_ITEMS.filter((item) => item.maturity === 'alpha').map((item) => item.route),
 );
 
-const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
 // Remembers which remote SHA the operator dismissed, so a newer update re-shows.
 const UPDATE_DISMISS_KEY = 'farmslot:update-banner-dismissed-sha';
 const WHATS_NEW_SEEN_VERSION_KEY = 'farmslot:whats-new-seen-version';
@@ -366,10 +363,25 @@ export class FarmApp extends LitElement {
     return this;
   }
 
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewToggleField('panels', 'sidebar', false),
+      () => this._sidebarExpanded,
+      (value) => {
+        this._sidebarExpanded = value;
+      },
+    ),
+    viewBinding(
+      viewIntegerField('sidebarWidth', DEFAULT_SIDEBAR_WIDTH),
+      () => this._sidebarWidth,
+      (value) => {
+        this._sidebarWidth = clampSidebarWidth(value);
+      },
+    ),
+  ]);
+
   connectedCallback() {
     super.connectedCallback();
-    this._sidebarExpanded = localStorage.getItem(SIDEBAR_PREF_KEY) === 'true';
-    this._sidebarWidth = parseStoredSidebarWidth(localStorage.getItem(SIDEBAR_WIDTH_PREF_KEY));
     this.route = this.getRouteFromHash();
     window.addEventListener('hashchange', this.onHashChange);
     window.addEventListener('keydown', this.onGlobalKeyDown);
@@ -782,7 +794,6 @@ export class FarmApp extends LitElement {
 
   private toggleSidebar() {
     this._sidebarExpanded = !this._sidebarExpanded;
-    localStorage.setItem(SIDEBAR_PREF_KEY, String(this._sidebarExpanded));
   }
 
   private onSidebarResizeStart = (e: PointerEvent) => {
@@ -800,7 +811,6 @@ export class FarmApp extends LitElement {
     );
     if (next === this._sidebarWidth) return;
     this._sidebarWidth = next;
-    localStorage.setItem(SIDEBAR_WIDTH_PREF_KEY, String(next));
   };
 
   private onSidebarResizeEnd = () => {

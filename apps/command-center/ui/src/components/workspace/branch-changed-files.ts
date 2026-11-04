@@ -1,9 +1,12 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { viewChoiceField, viewListField } from '@farmslot/protocol';
+
 import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { realPath } from '../slot-view/slot-view-model.js';
 
@@ -171,6 +174,23 @@ export class BranchChangedFiles extends LitElement {
     source: WorktreeChangeEntry[];
     map: Map<string, WorktreeChangeEntry[]>;
   } | null = null;
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewChoiceField<FileListViewMode>('branchFilesView', 'tree', ['tree', 'list']),
+      () => this._viewMode,
+      (value) => {
+        this._viewMode = value;
+      },
+    ),
+    viewBinding(
+      () => viewListField('branchFilesClosed', this._defaultCollapsedPaths()),
+      () => [...this._collapsed],
+      (value) => {
+        this._collapsed = new Set(value);
+      },
+    ),
+  ]);
 
   static styles = [
     stateChipStyles,
@@ -530,14 +550,16 @@ export class BranchChangedFiles extends LitElement {
   }
 
   /** Collapse every directory once 30+ files are listed. */
-  private _autoCollapse() {
+  private _defaultCollapsedPaths(): string[] {
     const visible = this._testFilter.split(this.files, this.selectedPath).visible;
-    if (visible.length >= 30) {
-      const tree = buildTree(visible, this.commentCounts);
-      this._collapsed = new Set(tree.filter((n) => n.type === 'dir').map((n) => n.path));
-    } else {
-      this._collapsed = new Set();
-    }
+    return visible.length >= 30
+      ? buildTree(visible, this.commentCounts)
+          .filter((node) => node.type === 'dir')
+          .map((node) => node.path)
+      : [];
+  }
+  private _autoCollapse() {
+    this.displayChoices.restore();
   }
 
   /** Expand all ancestor directories so the given path is visible */

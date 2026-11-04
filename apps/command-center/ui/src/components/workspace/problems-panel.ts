@@ -1,9 +1,10 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { Diagnostic } from '@farmslot/protocol';
+import { type Diagnostic, viewTextField } from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 
 @customElement('problems-panel')
 export class ProblemsPanel extends LitElement {
@@ -12,6 +13,16 @@ export class ProblemsPanel extends LitElement {
   @property({ type: Boolean }) truncated = false;
 
   @state() private _sourceFilter: string | null = null; // null = all
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewTextField('problemSource'),
+      () => this._sourceFilter ?? '',
+      (value) => {
+        this._sourceFilter = value || null;
+      },
+    ),
+  ]);
 
   static styles = css`
     :host {

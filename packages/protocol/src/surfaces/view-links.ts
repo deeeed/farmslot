@@ -1,6 +1,9 @@
 import { BACKLOG_STATUSES } from '../contracts/backlog.js';
 import type { TmuxWorkerRef } from '../rpc/tmux.js';
 
+import { DECISION_EVIDENCE_RECIPE_RUN_PARAM, RUN_VIEW_FIELDS } from './run-view-state.js';
+import { VIEW_STATE_PARAMETERS, viewListField, viewStateSearchParams } from './view-state.js';
+
 // Full-view links preserve navigation state without exposing the app's private
 // loopback origin or accepting connection credentials from an external link.
 const routes = new Set([
@@ -50,6 +53,8 @@ export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set([
     'validationDepth variant view window worker group promote runnerPicker slotSelector spec workGraphProject wgSort wgDirection sharedView sessionId executionNodeId'
   ).split(' '),
   ...ARTIFACT_BROWSER_PARAMS,
+  RUN_VIEW_FIELDS.panels.key,
+  ...VIEW_STATE_PARAMETERS,
 ]);
 
 export function validViewRoute(route: unknown): route is string {
@@ -189,15 +194,37 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
   };
   const route = (name: string, values: Readonly<Record<string, string>> = {}): string => {
     const params = new URLSearchParams();
+    const selected = viewStateSearchParams(location.params);
     if (name !== 'native') {
-      if (location.projects !== undefined) params.set('projects', location.projects.join(','));
-      if (location.machines !== undefined) params.set('machines', location.machines.join(','));
+      const projects = viewListField('projects', [], 'csv');
+      const machines = viewListField('machines', [], 'csv');
+      projects.write(params, location.projects ?? projects.read(selected));
+      machines.write(params, location.machines ?? machines.read(selected));
     }
     for (const [key, value] of Object.entries(values)) if (value) params.set(key, value);
-    if (name.startsWith('run/')) {
-      const selected = location.params.round;
-      for (const value of typeof selected === 'string' ? [selected] : (selected ?? []))
-        if (value) params.append('round', value);
+    for (const [key] of selected) {
+      if (
+        !VIEW_QUERY_PARAMETERS.has(key) ||
+        params.has(key) ||
+        [
+          'projects',
+          'machines',
+          'draft',
+          'draftMode',
+          'cwd',
+          'custom',
+          'runner',
+          'model',
+          'effort',
+          'mode',
+          'runId',
+          'sessionId',
+          'executionNodeId',
+          'contextId',
+        ].includes(key)
+      )
+        continue;
+      for (const value of selected.getAll(key)) params.append(key, value);
     }
     return `#${name}${params.toString() ? `?${params}` : ''}`;
   };
@@ -368,28 +395,131 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
   return collections[path] ? route(collections[path]) : null;
 }
 
+function configuredNativeScheme(value: string | undefined): string | null {
+  const scheme = value?.trim().replace(/:\/\/$/, '');
+  return scheme &&
+    /^[a-z][a-z0-9+.-]*$/i.test(scheme) &&
+    !/^(unknown|https?|wss?|javascript|data|file|blob|about)$/i.test(scheme)
+    ? scheme
+    : null;
+}
+
+/** Native links use existing Expo paths; virtual artifact selections open their real viewer. */
+function nativeViewUrl(
+  location: CompanionViewLocation,
+  selection: URLSearchParams,
+  scheme: string,
+): string | null {
+  const source = viewStateSearchParams(location.params);
+  const params = new URLSearchParams(selection);
+  const nativeSelectors = new Set([
+    'ac',
+    'evidenceDecision',
+    'evidenceExecution',
+    'path',
+    'filter',
+    'section',
+  ]);
+  for (const [key] of source)
+    if (
+      !params.has(key) &&
+      !privateSelectors.has(key) &&
+      (VIEW_QUERY_PARAMETERS.has(key) || nativeSelectors.has(key))
+    )
+      for (const entry of source.getAll(key)) params.append(key, entry);
+  params.delete('sharedView');
+  let pathname = location.pathname.replace(/^\/\(tabs\)/, '') || '/';
+  if (location.artifactSelection) {
+    const artifact = location.artifactSelection;
+    if (
+      !viewId.test(artifact.runId) ||
+      !artifact.path ||
+      artifact.path.startsWith('/') ||
+      /[\\\u0000-\u001f]/.test(artifact.path) ||
+      /^[a-z][a-z0-9+.-]*:/i.test(artifact.path) ||
+      artifact.path.split('/').includes('..') ||
+      (artifact.traceIndex !== undefined &&
+        (!Number.isSafeInteger(artifact.traceIndex) || artifact.traceIndex < 0))
+    )
+      return null;
+    pathname = `/evidence/${artifact.runId}`;
+    params.set('evidence', artifact.path);
+    if (artifact.criterionId) params.set('ac', artifact.criterionId);
+    params.set('recipeRun', artifact.recipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM);
+  }
+  const worker = params.get('worker');
+  if (location.workerSelection && worker) params.set('workerRef', encodeURIComponent(worker));
+  let complete = true;
+  pathname = pathname.replace(/\[([^\]]+)\]/g, (segment, key: string) => {
+    const value = source.get(key);
+    if (!value || !viewId.test(value)) {
+      complete = false;
+      return segment;
+    }
+    params.delete(key);
+    return encodeURIComponent(value);
+  });
+  const supported =
+    /^\/(?:fleet|runs|inbox|roadmap|backlog|work-graphs|dispatch-queue|prs|pr-automation|native|copilot|gate-review\/[^/]+|backlog\/edit\/[^/]+|(?:run|evidence|artifacts|visual-review|family|decision|roadmap|backlog|run-terminal|terminal|diff)\/[^/]+|diff\/slot\/[^/]+|workspace\/(?:run|slot)\/[^/]+\/(?:timeline|evidence|files|diff|gate|slot|terminal))$/.test(
+      pathname,
+    );
+  return complete &&
+    supported &&
+    pathname
+      .split('/')
+      .filter(Boolean)
+      .every((part) => viewId.test(part))
+    ? `${scheme}://${pathname}${params.size ? `?${params}` : ''}`
+    : null;
+}
+
 /** One mapping for Companion generation and Command Center receipt. */
 export function resolveSharedViewLink(
   location: SharedViewLocation,
   commandCenterUrl?: string,
+  appScheme?: string,
 ): SharedViewLink {
-  if (!commandCenterUrl?.trim()) return unavailable(noWebUrl, 'web-url-unset');
-  const error = commandCenterUrlError(commandCenterUrl.trim());
+  const webUrl = commandCenterUrl?.trim();
+  const nativeScheme =
+    !webUrl && 'companion' in location ? configuredNativeScheme(appScheme) : null;
+  if (!webUrl && !nativeScheme) return unavailable(noWebUrl, 'web-url-unset');
+  const error = webUrl ? commandCenterUrlError(webUrl) : null;
   if (error) return unavailable(`Web link unavailable: ${error}`, 'invalid-web-url');
-  const base = new URL(commandCenterUrl.trim());
+  const base = webUrl ? new URL(webUrl) : null;
   let candidate: string | null;
   if ('companion' in location) {
-    if (location.companion.unavailableMessage)
+    if (location.companion.unavailableMessage && !nativeScheme)
       return unavailable(location.companion.unavailableMessage);
-    if (location.companion.pathname === '/native') {
+    const companionPath = location.companion.pathname.replace(/^\/\(tabs\)/, '') || '/';
+    if (companionPath === '/native') {
       if (location.companion.params.workerManaged === '1')
         return unavailable('Web link unavailable: task conversations have no exact web route yet.');
       if (location.companion.params.sessionObserved !== '1')
         return unavailable('Web link unavailable: select a loaded conversation.');
     }
     candidate = companionViewRoute(location.companion);
+    if (nativeScheme) {
+      const native = location.companion;
+      if ((companionPath === '/native' || companionPath === '/terminal/worker') && !candidate)
+        return unavailable('This selection cannot be shared.', 'invalid-view');
+      const params =
+        candidate && validViewRoute(candidate)
+          ? new URLSearchParams(candidate.split('?')[1] ?? '')
+          : new URLSearchParams();
+      const url = nativeViewUrl(native, params, nativeScheme);
+      if (!url) return unavailable('This view cannot be shared.', 'invalid-view');
+      const target = new URL(url);
+      return {
+        status: 'available',
+        route: candidate
+          ? withoutSharedViewMarker(candidate)
+          : `${target.pathname}${target.search}`,
+        url,
+      };
+    }
   } else if ('route' in location) candidate = location.route;
   else {
+    if (!base) return unavailable(noWebUrl, 'web-url-unset');
     try {
       const incoming = new URL(location.url);
       if (
@@ -451,11 +581,26 @@ export function resolveSharedViewLink(
   const params = new URLSearchParams(query);
   const seen = new Set<string>();
   for (const [key] of params) {
-    if (privateSelectors.has(key) || (seen.has(key) && key !== 'round'))
+    if (
+      privateSelectors.has(key) ||
+      (seen.has(key) &&
+        ![
+          'round',
+          'treeOpen',
+          'branchFilesClosed',
+          'changesClosed',
+          'messages',
+          'turnFiles',
+          'rawClaims',
+          'devicePanes',
+          'claims',
+        ].includes(key))
+    )
       return unavailable('Web link unavailable: this selection cannot be shared.', 'invalid-view');
     seen.add(key);
   }
   const route = withoutSharedViewMarker(candidate);
+  if (!base) return unavailable(noWebUrl, 'web-url-unset');
   params.set('sharedView', '1');
   base.hash = `${path}${params.toString() ? `?${params}` : ''}`;
   return { status: 'available', route, url: base.href };

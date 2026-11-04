@@ -719,3 +719,30 @@ test('deleting a scope from a connection that never opened a store removes its r
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('content metadata exposes all held aliases without loading their bodies', async () => {
+  const { sqlite, adapter } = database();
+  const store = await createSqliteResourceStore({ database: adapter, scope: scope('aliases') });
+  try {
+    await store.putContent({
+      kind: 'artifact',
+      id: 'report',
+      data: new Uint8Array([65]),
+      bytes: 1,
+      origin: 'prefetch',
+      cohort: 'gate',
+      accessedAt: 123,
+    });
+    await store.putContentAlias('round:report', { kind: 'artifact', id: 'report' });
+    await store.putContentAlias('round:copy', { kind: 'artifact', id: 'report' });
+    const rows = await store.listContent();
+    assert.deepEqual(rows[0].aliases?.sort(), ['round:copy', 'round:report']);
+    assert.equal('data' in rows[0], false);
+    assert.equal(rows[0].accessedAt, 123);
+    await store.deleteContent({ kind: 'artifact', id: 'report' });
+    assert.deepEqual(await store.listContent(), []);
+  } finally {
+    await store.close();
+    sqlite.close();
+  }
+});

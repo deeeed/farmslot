@@ -1,11 +1,17 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import { useRouter } from 'expo-router';
+import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 
-import { type ReviewChainEntry, reviewChainForRun, type Run } from '@farmslot/protocol';
+import {
+  type ReviewChainEntry,
+  reviewChainForRun,
+  type Run,
+  RUN_VIEW_FIELDS,
+} from '@farmslot/protocol';
 import { type ReviewHistoryFix, type ReviewHistoryRoundCard } from '@farmslot/review-dispatch';
 
 import { MobileDiffViewer } from '../../../components/MobileDiffViewer';
+import { useViewState, useViewToggle } from '../../../components/view-state';
 import { formatPreciseDuration } from '../../workspace-shared/format';
 import { styles } from '../styles/review-history.styles';
 import { useReviewHistory } from '../use-review-history';
@@ -22,16 +28,13 @@ function ReviewRoundCard({
   onOpenArtifact: (path: string) => void;
 }) {
   const round = card.round;
-  const router = useRouter();
-  const params = useLocalSearchParams<{ round?: string | string[] }>();
-  const selected = new Set(
-    Array.isArray(params.round) ? params.round : params.round ? [params.round] : [],
-  );
-  const expanded = selected.has(round.key);
+  const viewState = useViewState();
+  const expanded = viewState.get(RUN_VIEW_FIELDS.rounds).includes(round.key);
   const setExpanded = (value: boolean) => {
+    const selected = new Set(viewState.get(RUN_VIEW_FIELDS.rounds));
     if (value) selected.add(round.key);
     else selected.delete(round.key);
-    router.setParams({ round: [...selected] });
+    viewState.set(RUN_VIEW_FIELDS.rounds, [...selected]);
   };
   const running = round.verdict === 'pending';
   const duration =
@@ -174,7 +177,7 @@ function ReviewFixCard({
   fix: ReviewHistoryFix;
   onOpenArtifact: (path: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useViewToggle(`review-fix:${fix.key}`);
   const duration =
     fix.durationMs ??
     (fix.running && fix.startedAt ? Date.now() - Date.parse(fix.startedAt) : null);

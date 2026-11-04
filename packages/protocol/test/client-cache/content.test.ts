@@ -734,3 +734,88 @@ for (const origin of ['opened', 'prefetch'] as const) {
     }
   });
 }
+
+test('synchronous content previews follow the same eviction and owner fences as stored bytes', async () => {
+  const f = fixture(80);
+  try {
+    await f.put('first', 20, 'prefetch', 'run', 'round:first');
+    assert.equal(
+      new TextDecoder().decode(f.cache.peekContentByAlias?.('round:first')),
+      'first...............',
+    );
+    await f.put('second', 30, 'prefetch', 'run', 'round:second');
+    assert.equal(f.cache.peekContentByAlias?.('round:first'), undefined);
+    assert.ok(f.cache.peekContentByAlias?.('round:second'));
+    f.transport.setConnection({
+      ...f.transport.connection,
+      scope: { ...scope, principalId: 'other' },
+    });
+    assert.equal(f.cache.peekContentByAlias?.('round:second'), undefined);
+  } finally {
+    await f.cache.dispose();
+  }
+});
+
+test('an alias read sampled before forget cannot restore forgotten bytes', async () => {
+  const f = fixture();
+  try {
+    await f.put('forgotten', 20, 'prefetch', 'run', 'forgotten-round');
+    const original = f.store.getContentByAlias.bind(f.store);
+    let started!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.store.getContentByAlias = async (alias) => {
+      const row = await original(alias);
+      started();
+      await gate;
+      return row;
+    };
+    const pending = f.cache.readContentByAlias('forgotten-round');
+    await entered;
+    const saved = await original('forgotten-round');
+    assert.ok(saved);
+    await f.cache.forgetContent(saved);
+    release();
+    assert.equal(await pending, undefined);
+    assert.equal(f.cache.peekContentByAlias?.('forgotten-round'), undefined);
+  } finally {
+    await f.cache.dispose();
+  }
+});
+
+test('an alias read waits for startup store hydration without rejecting its incarnation', async () => {
+  const f = fixture();
+  await f.put('startup', 20, 'prefetch', 'run', 'startup-alias');
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  let opened!: () => void;
+  let release!: (store: ResourceStore) => void;
+  const entered = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  const pendingStore = new Promise<ResourceStore>((resolve) => {
+    release = resolve;
+  });
+  const cold = createGatewayResourceCache({
+    transport,
+    openStore: async () => {
+      opened();
+      return pendingStore;
+    },
+  });
+  try {
+    const read = cold.readContentByAlias('startup-alias');
+    await entered;
+    release(f.store);
+    assert.equal(new TextDecoder().decode(await read), 'startup.............');
+    assert.ok(cold.peekContentByAlias?.('startup-alias'));
+  } finally {
+    await cold.dispose();
+    await f.cache.dispose();
+  }
+});

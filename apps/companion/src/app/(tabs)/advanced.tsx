@@ -5,6 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GestureProofSurface } from '../../components/GestureProofSurface';
+import { withViewState } from '../../components/view-state';
 import { useShownMarker } from '../../hooks/useShownMarker';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
 
@@ -47,7 +48,7 @@ const ADVANCED_ROUTES: AdvancedRoute[] = [
   },
 ];
 
-export default function AdvancedScreen() {
+function AdvancedScreen() {
   useShownMarker('companion-screen-advanced');
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -208,3 +209,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 });
+
+export default withViewState(AdvancedScreen);

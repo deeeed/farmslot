@@ -15,6 +15,7 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { FormattedDocument } from '../../../components/FormattedDocument';
+import { useViewToggle } from '../../../components/view-state';
 import { formatDocument } from '../../../lib/document-format';
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
@@ -38,8 +39,11 @@ export function NativeTimelineCard({
   /** Implement is starting its session. */
   implementing?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(entry.kind === 'plan' && planOpen);
-  const [raw, setRaw] = useState(false);
+  const [expanded, setExpanded] = useViewToggle(
+    `native-entry:${entry.key}`,
+    entry.kind === 'plan' && planOpen,
+  );
+  const [raw, setRaw] = useViewToggle(`native-raw:${entry.key}`);
   const toggle = () => {
     onDisclosure();
     setExpanded(!expanded);
@@ -66,6 +70,7 @@ export function NativeTimelineCard({
       </Text>
       {plan ? (
         <NativePlanBody
+          choiceId={String(entry.key)}
           plan={plan}
           text={entry.text}
           preview={preview}
@@ -115,6 +120,7 @@ export function NativeTimelineCard({
         </>
       ) : (
         <NativeMessageText
+          choiceId={String(entry.key)}
           text={entry.text}
           preview={preview}
           muted={entry.kind === 'status'}
@@ -127,6 +133,7 @@ export function NativeTimelineCard({
 
 /** A checklist's progress and steps, or a proposed plan with copy and implement actions. */
 function NativePlanBody({
+  choiceId,
   plan,
   text,
   preview,
@@ -136,6 +143,7 @@ function NativePlanBody({
   onImplement,
   implementing,
 }: {
+  choiceId: string;
   plan: NativeSessionPlan;
   text: string;
   preview?: NativeMessagePreview;
@@ -149,7 +157,13 @@ function NativePlanBody({
   if (plan.kind === 'proposal')
     return (
       <>
-        <NativeMessageText text={text} preview={preview} markdown onDisclosure={onDisclosure} />
+        <NativeMessageText
+          choiceId={choiceId}
+          text={text}
+          preview={preview}
+          markdown
+          onDisclosure={onDisclosure}
+        />
         <Pressable
           testID="companion-native-plan-copy"
           accessibilityRole="button"
@@ -246,12 +260,14 @@ export function NativePendingMessageCard({
 }
 
 function NativeMessageText({
+  choiceId = 'pending',
   text,
   preview,
   muted = false,
   markdown = false,
   onDisclosure,
 }: {
+  choiceId?: string;
   text: string;
   preview?: NativeMessagePreview;
   muted?: boolean;
@@ -259,7 +275,7 @@ function NativeMessageText({
   markdown?: boolean;
   onDisclosure: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useViewToggle(`native-text:${choiceId}`);
   const whole = !preview || expanded;
   return (
     <>

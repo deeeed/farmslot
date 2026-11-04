@@ -7,6 +7,7 @@ import {
   resolveSharedViewLink,
   viewLinkFromRoute,
 } from '../src/surfaces/view-links.js';
+import { mergeViewStateParams } from '../src/surfaces/view-state.js';
 
 const base = 'https://cc.example.org/operations/';
 
@@ -369,10 +370,7 @@ test('unfiltered collections explicitly replace saved browser filters and preser
     { companion: { pathname: '/runs', params: {}, projects: [], machines: [], runsTab: 'all' } },
     base,
   );
-  assert.equal(
-    result.status === 'available' ? result.route : null,
-    '#runs?projects=&machines=&runsTab=all',
-  );
+  assert.equal(result.status === 'available' ? result.route : null, '#runs?runsTab=all');
 });
 
 test('a run terminal without an observed worktree never promises a missing web pane', () => {
@@ -407,4 +405,162 @@ test('expanded review rounds survive shared desktop and Companion run links', ()
       'review-a',
       'review-b',
     ]);
+});
+
+test('shared run views preserve panel overrides and selected review rounds', () => {
+  const link = resolveSharedViewLink(
+    { route: '#run/run-1?panels=run-review-history%2C!run-acceptance&round=review-2' },
+    base,
+  );
+  assert.equal(link.status, 'available');
+  assert.equal(
+    link.status === 'available' ? new URL(link.url).hash.includes('panels=') : false,
+    true,
+  );
+});
+
+test('a Companion run shares through its configured native scheme when no web URL exists', () => {
+  const link = resolveSharedViewLink(
+    {
+      companion: {
+        pathname: '/run/run-1',
+        params: {
+          round: ['review-1', 'review-3'],
+          panels: 'run-review-history',
+          draft: 'private instruction',
+          token: 'private token',
+          leaseId: 'lease',
+        },
+      },
+    },
+    undefined,
+    'farmslot-development://',
+  );
+  assert(link.status === 'available');
+  const url = new URL(link.url);
+  assert.equal(url.protocol, 'farmslot-development:');
+  assert.equal(url.pathname, '/run/run-1');
+  assert.deepEqual(url.searchParams.getAll('round'), ['review-1', 'review-3']);
+  assert.equal(url.searchParams.get('panels'), 'run-review-history');
+  for (const key of ['draft', 'token', 'leaseId', 'sharedView'])
+    assert.equal(url.searchParams.has(key), false, key);
+});
+
+test('a configured web URL remains preferred over the native fallback', () => {
+  const link = resolveSharedViewLink(
+    { companion: { pathname: '/run/run-1', params: {} } },
+    base,
+    'farmslot-development',
+  );
+  assert(link.status === 'available');
+  assert.equal(new URL(link.url).protocol, 'https:');
+});
+
+test('native artifact links open the actual evidence route with the selected owner and path', () => {
+  const link = resolveSharedViewLink(
+    {
+      companion: {
+        pathname: '/artifacts',
+        params: {},
+        artifactSelection: { runId: 'run-1', path: 'artifacts/proof.png', criterionId: 'AC-1' },
+      },
+    },
+    undefined,
+    'farmslot-preview',
+  );
+  assert(link.status === 'available');
+  const url = new URL(link.url);
+  assert.equal(url.pathname, '/evidence/run-1');
+  assert.equal(url.searchParams.get('evidence'), 'artifacts/proof.png');
+  assert.equal(url.searchParams.get('ac'), 'AC-1');
+  assert.equal(url.searchParams.get('recipeRun'), 'decision-evidence');
+});
+
+test('native-only workspace and family selections share without relaxing web mappings', () => {
+  for (const location of [
+    {
+      pathname: '/workspace/run/run-1/files',
+      params: { artifact: 'artifacts/result.md', round: ['one', 'two'] },
+    },
+    { pathname: '/workspace/run/run-1/diff', params: { path: 'order.ts' } },
+    {
+      pathname: '/family/family-1',
+      params: { section: 'changes' },
+      unavailableMessage: 'Web view unavailable',
+    },
+  ]) {
+    const native = resolveSharedViewLink(
+      { companion: location },
+      undefined,
+      'farmslot-development://',
+    );
+    assert.equal(native.status, 'available');
+    if (native.status === 'available') {
+      assert.equal(new URL(native.url).pathname, location.pathname);
+      if ('path' in location.params)
+        assert.equal(new URL(native.url).searchParams.get('path'), 'order.ts');
+      if ('section' in location.params)
+        assert.equal(new URL(native.url).searchParams.get('section'), 'changes');
+    }
+    assert.equal(resolveSharedViewLink({ companion: location }, base).status, 'unavailable');
+  }
+  assert.equal(
+    resolveSharedViewLink(
+      { companion: { pathname: '/connection', params: { token: 'private' } } },
+      undefined,
+      'farmslot-development://',
+    ).status,
+    'unavailable',
+  );
+});
+
+test('a registered conversation selection keeps allowed current display parameters', () => {
+  const link = resolveSharedViewLink(
+    {
+      companion: {
+        pathname: '/native',
+        params: mergeViewStateParams(
+          { folds: '7,!9', terminalView: 'history', familyCompareIndex: '2', token: 'private' },
+          { sessionId: 'session', executionNodeId: 'macpro', sessionObserved: '1' },
+        ),
+      },
+    },
+    undefined,
+    'farmslot-development://',
+  );
+  assert.equal(link.status, 'available');
+  if (link.status === 'available') {
+    const target = new URL(link.url);
+    assert.equal(target.searchParams.get('folds'), '7,!9');
+    assert.equal(target.searchParams.get('terminalView'), 'history');
+    assert.equal(target.searchParams.get('familyCompareIndex'), '2');
+    assert.equal(target.searchParams.has('token'), false);
+  }
+});
+
+test('native sharing retains gate review and backlog editor routes', () => {
+  for (const pathname of ['/gate-review/decision-1', '/backlog/edit/item-1']) {
+    const link = resolveSharedViewLink(
+      { companion: { pathname, params: {} } },
+      undefined,
+      'farmslot-development://',
+    );
+    assert.equal(link.status, 'available');
+    if (link.status === 'available') assert.equal(new URL(link.url).pathname, pathname);
+  }
+});
+
+test('registered family views preserve the displayed section', () => {
+  const params = mergeViewStateParams(
+    { section: 'changes', familyCompareIndex: '2' },
+    { runId: 'run-1', evidence: 'all' },
+  );
+  const link = resolveSharedViewLink(
+    { companion: { pathname: '/family/family-1', params } },
+    undefined,
+    'farmslot-development://',
+  );
+  assert.equal(link.status, 'available');
+  if (link.status === 'available')
+    assert.equal(new URL(link.url).searchParams.get('section'), 'changes');
 });

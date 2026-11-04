@@ -12,6 +12,7 @@ import {
   failureTriageCause,
   Methods,
   type RunGetResult,
+  viewChoiceField,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
@@ -21,6 +22,7 @@ import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { getHashParam } from '../../utils/url-state.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { readAssessment } from './assessment-resources.js';
@@ -78,6 +80,24 @@ export class AssessmentPanel extends LitElement {
   private readonly expandedOutcomeIds = new Set<string>();
   @state() private selectedId = getHashParam('assessment');
   @state() private cursor?: string;
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewChoiceField<typeof this.historyFilter>('assessmentConsumer', 'all', [
+        'all',
+        'decision-advice',
+        'acceptance-evidence',
+        'failure-triage',
+        'static-review-checklist',
+        'copilot-context',
+        'review-routing',
+      ]),
+      () => this.historyFilter,
+      (value) => {
+        this.historyFilter = value;
+      },
+    ),
+  ]);
+
   static styles = css`
     :host {
       display: block;

@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { afterEach, beforeEach } from 'node:test';
+
+import { installFakeViewState } from '../../testing/fake-view-state.js';
+
+let restoreView = () => {};
+beforeEach(() => {
+  restoreView = installFakeViewState();
+});
+afterEach(() => restoreView());
 
 import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { litText } from '../../testing/lit-text.js';

@@ -230,6 +230,7 @@ function harness(
   capabilities: ResourceCacheConnection['capabilities'] = BATCHED,
   defaultBranch?: ContentPrefetchOptions['defaultBranch'],
   media?: ContentPrefetchOptions['media'],
+  reviewHistory?: ContentPrefetchOptions['reviewHistory'],
 ) {
   let connection: ResourceCacheConnection = {
     id: 1,
@@ -300,6 +301,7 @@ function harness(
     readArtifact,
     defaultBranch,
     media,
+    reviewHistory,
   });
   return {
     world,
@@ -1367,4 +1369,38 @@ test('an active run without a stack base is compared with its project default br
     calls('git.diff').map((call) => call.params),
     [activeRunDiffQuery({ slotId: 'slot-s', runId: 's1', base: 'trunk' }).params],
   );
+});
+
+test('new review rounds at an unchanged gate package are prefetched without an open panel', async () => {
+  const world = createWorld();
+  gateRun(world, 'g1', 'package', '');
+  const current = world.runs.get('g1')!;
+  let identity = 'round-1';
+  const prefetched: string[] = [];
+  const { prefetcher, change } = harness(world, BATCHED, undefined, undefined, {
+    identity: () => identity,
+    async prefetch(run, write) {
+      assert.equal(run.id, current.id);
+      assert.equal(write.cohort, 'gate');
+      prefetched.push(identity);
+    },
+  });
+  try {
+    prefetcher.setTargets([target('g1', true)]);
+    await flush();
+    assert.deepEqual(prefetched, ['round-1']);
+    identity = 'round-2';
+    change({ family: 'run', runId: 'g1' });
+    await flush();
+    assert.deepEqual(prefetched, ['round-1', 'round-2']);
+    change({ family: 'run', runId: 'g1' });
+    await flush();
+    assert.deepEqual(
+      prefetched,
+      ['round-1', 'round-2'],
+      'unrelated updates reuse the same round plan',
+    );
+  } finally {
+    prefetcher.dispose();
+  }
 });

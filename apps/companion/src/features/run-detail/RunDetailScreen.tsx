@@ -17,6 +17,7 @@ import {
   runHasTrimmedDetail,
   type RunStep,
   type TaskProgressResult,
+  viewTextField,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
@@ -34,6 +35,7 @@ import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useViewChoice } from '../../components/view-state';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
@@ -198,7 +200,7 @@ export default function RunDetailScreen() {
     readErrorMessage(recipeObservation, heldConnectionCurrent()) ??
     progressReadError ??
     null;
-  const [expandedStep, setExpandedStep] = useState<string | null>(null);
+  const [expandedStep, setExpandedStep] = useViewChoice(viewTextField('step'));
   const [replayingStepName, setReplayingStepName] = useState<string | null>(null);
   const requestedArtifactPath = Array.isArray(artifact) ? (artifact[0] ?? '') : (artifact ?? '');
   const workspaceRouteContext = useMemo(
@@ -278,7 +280,6 @@ export default function RunDetailScreen() {
 
   useEffect(() => {
     setError(null);
-    setExpandedStep(null);
     setReplayingStepName(null);
   }, [resolvedRunId, profileId, authorityEpoch]);
 
@@ -305,7 +306,6 @@ export default function RunDetailScreen() {
           ...(skipPrepare ? { skipPrepare: true } : {}),
         });
         if (!isCurrent()) return;
-        setExpandedStep(null);
       } catch (err) {
         if (isCurrent()) setError(`Failed to retry from ${stepName}: ${(err as Error).message}`);
       } finally {
@@ -1096,8 +1096,8 @@ export default function RunDetailScreen() {
                 taskProgress={activeTaskProgress}
                 onStepPress={(_name, i) =>
                   setExpandedStep((current) => {
-                    const key = `${run.steps[i].name}-${i}`;
-                    return current === key ? null : key;
+                    const key = run.steps[i].name;
+                    return current === key ? '' : key;
                   })
                 }
               />
@@ -1108,7 +1108,7 @@ export default function RunDetailScreen() {
                 run={run}
                 step={step}
                 index={i}
-                expanded={expandedStep === `${step.name}-${i}`}
+                expanded={expandedStep === step.name}
                 allowReplay={replayAllowed && !replayingStepName}
                 replaying={replayingStepName === step.name}
                 onReplayStep={(skipPrepare) => confirmReplayStep(step.name, skipPrepare)}
@@ -1146,9 +1146,7 @@ export default function RunDetailScreen() {
                   });
                 }}
                 onToggle={() =>
-                  setExpandedStep((current) =>
-                    current === `${step.name}-${i}` ? null : `${step.name}-${i}`,
-                  )
+                  setExpandedStep((current) => (current === step.name ? '' : step.name))
                 }
               />
             ))}

@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import { LegacyScrollView } from 'react-native-gesture-handler';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
+import { useViewToggle } from '../../components/view-state';
 import { colors } from '../../lib/theme';
 import { visualReviewSurfaceLinks } from '../../lib/visual-review';
 
@@ -82,7 +83,7 @@ function ReadyVisualReview({
   observations: React.ReactNode;
 }) {
   const scrollRef = useRef<LegacyScrollView>(null);
-  const [fullWidth, setFullWidth] = useState(false);
+  const [fullWidth, setFullWidth] = useViewToggle('visual-full-width');
   const { source, draft, surfaceId, captureId } = state;
   const links = useMemo(() => visualReviewSurfaceLinks(source, surfaceId), [source, surfaceId]);
   const feedbackCounts = useMemo(() => {

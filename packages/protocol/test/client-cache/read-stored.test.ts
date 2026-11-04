@@ -100,3 +100,21 @@ test('one-shot displays paint the saved value and then receive the completed rer
     await cache.dispose();
   }
 });
+
+test('display reads preserve typed missing-file and genuine refusal codes', async () => {
+  const query = resourceQuery('fs.read', { slotId: 'slot', path: 'artifacts/result.json' });
+  for (const code of ['FS_NOT_FOUND', 'AUTH_FORBIDDEN']) {
+    const cache = {
+      async retry() {
+        return { status: 'error' as const, error: { code, message: 'Read unavailable' } };
+      },
+      async readStored() {
+        return undefined;
+      },
+    };
+    await assert.rejects(
+      readStoredResource(() => cache, query),
+      { code },
+    );
+  }
+});

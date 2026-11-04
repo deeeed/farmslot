@@ -32,6 +32,7 @@ import {
   type TmuxWorkerListResult,
   type TmuxWorkerRef,
   type TmuxWorkerSummary,
+  viewChoiceField,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { type OperatorMessageInput, operatorMessageInput } from '@farmslot/review-dispatch';
@@ -42,6 +43,7 @@ import {
   type TerminalInputLineHandle,
 } from '../../components/TerminalInputLine';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
+import { useViewChoice, useViewToggle } from '../../components/view-state';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { usePersistentFlag } from '../../lib/held-connection';
@@ -199,9 +201,11 @@ export function TerminalPane({
   const [isFormattingVoice, setIsFormattingVoice] = useState(false);
   const [voiceComposerOpen, setVoiceComposerOpen] = useState(Boolean(draftParam));
   const [voicePanelWidth, setVoicePanelWidth] = useState(0);
-  const [terminalFullscreen, setTerminalFullscreen] = useState(false);
-  const [showTmuxShortcuts, setShowTmuxShortcuts] = useState(false);
-  const [terminalViewMode, setTerminalViewMode] = useState<TerminalViewMode>('tmux');
+  const [terminalFullscreen, setTerminalFullscreen] = useViewToggle('terminal-fullscreen');
+  const [showTmuxShortcuts, setShowTmuxShortcuts] = useViewToggle('tmux-shortcuts');
+  const [terminalViewMode, setTerminalViewMode] = useViewChoice(
+    viewChoiceField<TerminalViewMode>('terminalView', 'tmux', ['tmux', 'history']),
+  );
   const [windowPickerOpen, setWindowPickerOpen] = useState(false);
   const [windowPickerPanes, setWindowPickerPanes] = useState<TmuxWorkerSummary[]>([]);
   const [windowPickerError, setWindowPickerError] = useState<string | null>(null);

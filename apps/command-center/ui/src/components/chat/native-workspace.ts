@@ -8,6 +8,8 @@ import {
   type NativeWorkspaceDiffResult,
   type NativeWorkspaceListResult,
   type NativeWorkspaceReadResult,
+  viewChoiceField,
+  viewTextField,
 } from '@farmslot/protocol';
 
 import '../diff-viewer/code-viewer.js';
@@ -16,6 +18,7 @@ import '../diff-viewer/diff-review.js';
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { WorkspaceReads } from '../workspace/workspace-reads.js';
 
@@ -68,6 +71,43 @@ export class NativeWorkspace extends LitElement {
   private readonly testFilter = new DiffTestFilterController(this, {
     onChange: () => this.leaveHiddenFile(),
   });
+
+  private readonly displayChoices = new ViewStateBindings(
+    this,
+    [
+      viewBinding(
+        viewChoiceField<'files' | 'changes'>('nativeFilesTab', 'changes', ['files', 'changes']),
+        () => this.tab,
+        (value) => {
+          this.tab = value;
+        },
+      ),
+      viewBinding(
+        viewTextField('nativeDirectory', '.'),
+        () => this.directory,
+        (value) => {
+          this.directory = value;
+        },
+      ),
+      viewBinding(
+        viewTextField('nativeFile'),
+        () => this.selected,
+        (value) => {
+          this.selected = value;
+        },
+      ),
+      viewBinding(
+        viewChoiceField<'source' | 'diff'>('nativeFileView', 'diff', ['source', 'diff']),
+        () => this.display,
+        (value) => {
+          this.display = value;
+        },
+      ),
+    ],
+    () => {
+      if (this.hasUpdated && this.sessionId) void this.refresh();
+    },
+  );
 
   static styles = css`
     :host {
@@ -167,8 +207,7 @@ export class NativeWorkspace extends LitElement {
     ) {
       this.revision++;
       this.reads.clear();
-      this.directory = '.';
-      this.selected = '';
+      this.displayChoices.restore();
       this.source = undefined;
       this.diff = undefined;
       this.listing = undefined;

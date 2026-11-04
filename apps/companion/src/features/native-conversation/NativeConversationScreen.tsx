@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { NativeSessionInfo } from '@farmslot/protocol';
+import { type NativeSessionInfo, viewToggleMapField } from '@farmslot/protocol';
 import {
   NATIVE_FOLLOW_LATEST,
   nativeDeliveryLabel,
@@ -24,6 +24,7 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
+import { useViewChoice } from '../../components/view-state';
 
 import { NativeProfilePicker } from './components/NativeProfilePicker';
 import { NativeRequestCard } from './components/NativeRequestCard';
@@ -57,12 +58,11 @@ export function NativeConversationScreen({
   };
   const watchedTools = useRef(new Set<number>());
   /** Folds the reader opened or closed, by the key of the entry that ended the turn. */
-  const [foldOpen, setFoldOpen] = useState(new Map<number, boolean>());
+  const [foldOpen, setFoldOpen] = useViewChoice(viewToggleMapField('folds'));
   const entryCount = useRef(vm.entries.length);
   useEffect(() => {
     entryCount.current = vm.entries.length;
     watchedTools.current = new Set();
-    setFoldOpen(new Map());
     setFollow(NATIVE_FOLLOW_LATEST);
   }, [vm.session?.id]);
   const live = vm.historyObservation.status === 'ready';
@@ -74,7 +74,7 @@ export function NativeConversationScreen({
   );
   const foldIsOpen = (key: number) => {
     const fold = folds.get(key);
-    return foldOpen.get(key) ?? (fold ? nativeFoldWatched(fold, watchedTools.current) : true);
+    return foldOpen[String(key)] ?? (fold ? nativeFoldWatched(fold, watchedTools.current) : true);
   };
   useEffect(() => {
     const added = vm.entries.length - entryCount.current;
@@ -273,7 +273,7 @@ export function NativeConversationScreen({
                     open={foldIsOpen(row.key)}
                     onToggle={() => {
                       disclose();
-                      setFoldOpen(new Map(foldOpen).set(row.key, !foldIsOpen(row.key)));
+                      setFoldOpen((current) => ({ ...current, [row.key]: !foldIsOpen(row.key) }));
                     }}
                   />
                 ) : (

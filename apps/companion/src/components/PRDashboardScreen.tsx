@@ -12,6 +12,7 @@ import {
   type RunCreateResult,
   sourceObservationAge,
   type SourceSelection,
+  viewChoiceField,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
@@ -44,6 +45,7 @@ import { useFilterStore } from '../store/filters';
 import { usePRStore } from '../store/prs';
 
 import { ResourceReadStatus } from './ResourceReadStatus';
+import { useViewChoice } from './view-state';
 
 type PRFilter = 'attention' | 'active' | 'ready' | 'all';
 
@@ -350,8 +352,12 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
   const prs = observation.data?.prs ?? EMPTY_PRS;
   const loading = observation.status === 'loading';
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
-  const [filter, setFilter] = useState<PRFilter>('all');
-  const [sortMode, setSortMode] = useState<PRDashboardSortMode>('group');
+  const [filter, setFilter] = useViewChoice(
+    viewChoiceField<PRFilter>('prFilter', 'all', ['attention', 'active', 'ready', 'all']),
+  );
+  const [sortMode, setSortMode] = useViewChoice(
+    viewChoiceField<PRDashboardSortMode>('prSort', 'group', ['group', 'date']),
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
   const checking = useRef<symbol | null>(null);

@@ -14,6 +14,7 @@ import {
 
 import { colors } from '../../styles/theme-tokens.js';
 import { MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
+import { viewDetails } from '../../utils/view-state.js';
 import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
@@ -119,7 +120,7 @@ export function renderFamilyEvidence(
           </div>
         `
       : nothing}
-    <details class="evidence-raw-details">
+    <details class="evidence-raw-details" ${viewDetails('family-evidence-raw')}>
       <summary>Show raw artifact groups</summary>
       <div class="evidence-groups">
         ${groups.length === 0

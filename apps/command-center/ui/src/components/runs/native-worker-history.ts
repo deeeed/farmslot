@@ -2,10 +2,11 @@ import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
-import type { AgentContext } from '@farmslot/protocol';
+import { type AgentContext, viewTextField } from '@farmslot/protocol';
 
 import '../chat/native-session-view.js';
 
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import {
   nativeWorkerAttemptKey,
   nativeWorkerTargets,
@@ -17,6 +18,16 @@ export class NativeWorkerHistory extends LitElement {
   @property({ attribute: false }) contexts: AgentContext[] = [];
   @property({ type: Boolean }) expanded = true;
   @state() private selected = '';
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewTextField('workerSession'),
+      () => this.selected,
+      (value) => {
+        this.selected = value;
+      },
+    ),
+  ]);
 
   static styles = css`
     :host {

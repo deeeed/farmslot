@@ -4,10 +4,13 @@ import { html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
+import { viewChoiceField } from '@farmslot/protocol';
+
 import 'diff2html/bundles/css/diff2html.min.css';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { adoptDocumentCss } from '../../utils/shadow-css.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 
 type ViewMode = 'side-by-side' | 'line-by-line';
 
@@ -16,6 +19,15 @@ export class DiffReview extends LitElement {
   @property() diff = '';
   @property() filename = '';
   @state() private _viewMode: ViewMode = 'side-by-side';
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewChoiceField<ViewMode>('diffMode', 'side-by-side', ['side-by-side', 'line-by-line']),
+      () => this._viewMode,
+      (value) => {
+        this._viewMode = value;
+      },
+    ),
+  ]);
 
   protected override createRenderRoot() {
     return this;

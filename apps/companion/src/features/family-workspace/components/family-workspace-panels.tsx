@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
@@ -12,6 +12,7 @@ import {
   Run,
   RunDecision,
   TaskProgressStructured,
+  viewIntegerField,
 } from '@farmslot/protocol';
 import { taskProgressPercent } from '@farmslot/review-dispatch';
 
@@ -20,6 +21,7 @@ import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import { PairNavigation } from '../../../components/EvidenceReviewWorkspace';
 import { RunTitle } from '../../../components/RunTitle';
 import { TaskProgressPanel } from '../../../components/TaskProgressPanel';
+import { useViewChoice } from '../../../components/view-state';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -586,12 +588,7 @@ export function FamilyComparePanel({
   onOpenArtifactWorkspace: (artifact: FamilyCompareArtifact) => void;
   onOpenArtifacts: () => void;
 }) {
-  const pairIdentity = useMemo(
-    () => pairs.map((pair) => `${pair.before.path}:${pair.after.path}`).join('|'),
-    [pairs],
-  );
-  const [pairIndex, setPairIndex] = useState(0);
-  useEffect(() => setPairIndex(0), [pairIdentity]);
+  const [pairIndex, setPairIndex] = useViewChoice(viewIntegerField('familyCompareIndex'));
   if (pairs.length === 0) return null;
   const pair = pairs[Math.min(pairIndex, pairs.length - 1)] ?? pairs[0];
   return (

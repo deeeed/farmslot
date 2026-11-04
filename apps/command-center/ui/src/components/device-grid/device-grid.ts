@@ -3,17 +3,20 @@ import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
-import type {
-  ResourceControlAction,
-  ResourceListResult,
-  ResourceStatus,
-  ResourceStatusUpdatedPayload,
-  ResourceStreamStatus,
-  SlotResource,
-  SlotStatus,
+import {
+  Events,
+  Methods,
+  type ResourceControlAction,
+  type ResourceListResult,
+  type ResourceStatus,
+  type ResourceStatusUpdatedPayload,
+  type ResourceStreamStatus,
+  type SlotResource,
+  type SlotStatus,
+  taskTitleText,
+  viewChoiceField,
+  viewListField,
 } from '@farmslot/protocol';
-import { taskTitleText } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../stream-feed/stream-feed.js';
@@ -23,6 +26,7 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getRunForSlot, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { RESOURCE_CONTROL_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { readStored } from '../shared/read-current.js';
 
 import {
@@ -52,9 +56,6 @@ interface AvailableResource {
   hasRelaunch: boolean;
 }
 
-const PANES_KEY = 'farmslot:device-grid:panes';
-const LAYOUT_KEY = 'farmslot:device-grid:layout';
-
 @customElement('device-grid')
 export class DeviceGrid extends LitElement {
   @state() private _panes: DevicePane[] = [];
@@ -75,6 +76,35 @@ export class DeviceGrid extends LitElement {
       this._pickerOpen = false;
     }
   };
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewChoiceField<LayoutMode>('deviceLayout', 'auto', [
+        'auto',
+        '1x1',
+        '2x1',
+        '2x2',
+        '3x2',
+        '4x2',
+      ]),
+      () => this._layout,
+      (value) => {
+        this._layout = value;
+      },
+    ),
+    viewBinding(
+      viewListField('devicePanes'),
+      () => this._panes.map((pane) => `${pane.slotId}:${pane.resourceId}`),
+      (values) => {
+        this._panes = values.flatMap((value) => {
+          const at = value.indexOf(':');
+          return at > 0 && at < value.length - 1
+            ? [{ slotId: value.slice(0, at), resourceId: value.slice(at + 1) }]
+            : [];
+        });
+      },
+    ),
+  ]);
 
   static styles = css`
     :host {
@@ -368,7 +398,6 @@ export class DeviceGrid extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this._loadSaved();
     const initial = getState();
     this._globalFilters = initial.globalFilters;
     this._hydrating = isHydrating(initial, 'fleet');
@@ -414,28 +443,6 @@ export class DeviceGrid extends LitElement {
     document.removeEventListener('click', this._onDocClick);
     this._unsubResource?.();
     this._unsubState?.();
-  }
-
-  private _loadSaved() {
-    try {
-      const saved = localStorage.getItem(PANES_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) this._panes = parsed;
-      }
-      const layout = localStorage.getItem(LAYOUT_KEY);
-      const valid: LayoutMode[] = ['auto', '1x1', '2x1', '2x2', '3x2', '4x2'];
-      if (valid.includes(layout as LayoutMode)) {
-        this._layout = layout as LayoutMode;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  private _save() {
-    localStorage.setItem(PANES_KEY, JSON.stringify(this._panes));
-    localStorage.setItem(LAYOUT_KEY, this._layout);
   }
 
   private _applyFilters(slots: SlotStatus[]): SlotStatus[] {
@@ -523,14 +530,12 @@ export class DeviceGrid extends LitElement {
     if (this._panes.some((p) => p.slotId === slotId && p.resourceId === resourceId)) return;
     this._panes = [...this._panes, { slotId, resourceId }];
     this._pickerOpen = false;
-    this._save();
   }
 
   private _removePane(index: number) {
     const updated = [...this._panes];
     updated.splice(index, 1);
     this._panes = updated;
-    this._save();
   }
 
   private async _showAllRunning() {
@@ -540,7 +545,6 @@ export class DeviceGrid extends LitElement {
       .map((r) => ({ slotId: r.slotId, resourceId: r.resourceId }));
     this._panes = running.slice(0, 8);
     this._layout = 'auto';
-    this._save();
   }
 
   private async _handleControl(slotId: string, resourceId: string, action: ResourceControlAction) {
@@ -656,7 +660,6 @@ export class DeviceGrid extends LitElement {
                 class="toolbar-btn ${this._layout === l ? 'active' : ''}"
                 @click=${() => {
                   this._layout = l;
-                  this._save();
                 }}
               >
                 ${l}
@@ -790,7 +793,7 @@ export class DeviceGrid extends LitElement {
     const max = this._maxSlots();
     const panesToShow = this._panes.slice(0, max);
     // Only show the placeholder when there is nothing to render at all.
-    // Preselected panes (from localStorage) can keep streaming their feeds
+    // URL-selected panes can keep streaming their feeds
     // through `stream-feed` even before the fleet resource list arrives.
     const hydrating =
       this._hydrating && this._availableResources.length === 0 && this._panes.length === 0;

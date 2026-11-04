@@ -27,8 +27,21 @@ function primitive(tag: string) {
   };
 }
 
+mock.module('@react-native-async-storage/async-storage', {
+  defaultExport: { getItem: async () => null, setItem: async () => undefined },
+});
+mock.module('expo-router', {
+  namedExports: {
+    useNavigation: () => ({ setParams() {} }),
+    useIsFocused: () => true,
+    useLocalSearchParams: () => ({}),
+    useSegments: () => ['workspace', 'run', '[runId]', 'evidence'],
+    useRouter: () => ({ setParams() {}, push() {} }),
+  },
+});
 mock.module('react-native', {
   namedExports: {
+    Platform: { OS: 'android' },
     View: primitive('div'),
     Text: primitive('span'),
     Pressable: primitive('button'),
@@ -57,7 +70,12 @@ let harness: {
 before(async () => {
   const server = await import('react-dom/server');
   const { TaskAcceptancePanel } = await import('./TaskAcceptancePanel');
-  harness = { renderToStaticMarkup: server.renderToStaticMarkup, TaskAcceptancePanel };
+  const { ViewStateProvider } = await import('./view-state');
+  harness = {
+    renderToStaticMarkup: (element) =>
+      server.renderToStaticMarkup(React.createElement(ViewStateProvider, null, element)),
+    TaskAcceptancePanel,
+  };
 });
 
 test('each Companion AC row names the recording its verdict comes from', () => {

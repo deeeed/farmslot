@@ -12,7 +12,7 @@ import {
 import type { EvidenceMediaLookup } from './evidence-media';
 import { type GatewayHttpAuthHeaders, gatewayResourceSource } from './gateway-http-auth';
 
-export const DECISION_EVIDENCE_RECIPE_RUN_PARAM = 'decision-evidence';
+export { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '@farmslot/protocol';
 export const CURRENT_ARTIFACTS_RECIPE_RUN_PARAM = 'current-artifacts';
 
 export type ArtifactHttpHeaders = GatewayHttpAuthHeaders;

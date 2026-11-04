@@ -1,13 +1,14 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import {} from 'react';
 import { Text, View } from 'react-native';
 
-import { REVIEW_POST_RECOMMENDATIONS, type Run } from '@farmslot/protocol';
+import { REVIEW_POST_RECOMMENDATIONS, type Run, viewNullableTextField } from '@farmslot/protocol';
 import { runReviewerView } from '@farmslot/review-dispatch';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { MobileDiffViewer } from '../../components/MobileDiffViewer';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
+import { useViewChoice } from '../../components/view-state';
 import { PRButton, PRToggle } from '../pr-automation/components/PRControls';
 import { styles } from '../pr-automation/styles/pr-automation-styles';
 
@@ -38,7 +39,7 @@ export function ReviewPublicationPanel({
   context,
   viewIdentity,
 }: ReturnType<typeof useReviewPublication>) {
-  const [reportOpen, setReportOpen] = useState<string | null>(null);
+  const [reportOpen, setReportOpen] = useViewChoice(viewNullableTextField('reviewReport'));
   if (!vm && !curation && !saved && !savedLoading && !savedError) return null;
   return (
     <View

@@ -7,33 +7,31 @@ import {
   readEvidenceReviewReport,
   runEvidencePending,
 } from '@farmslot/adapter-sdk/evidence';
-import type {
-  DevInteractiveCompletionAction,
-  FamilyObservabilityArtifact,
-  PRStatus,
-  PRStatusResult,
-  ResourcePostureGateChoice,
-  Run,
-  RunDecision,
-  RunGetResult,
-  RunListResult,
-  RunRecipeRunsForRunParams,
-  RunRecipeRunsForRunResult,
-  RunRereviewLatestHeadResult,
-  RunResolveDecisionResult,
-  RunSessionCommandResult,
-  RuntimePosturePreviewResult,
-  RuntimePostureStatusResult,
-  SlotStatus,
-  TaskProgressResult,
-} from '@farmslot/protocol';
-import { validVisualJudgmentReason } from '@farmslot/protocol';
 import {
   buildRunResolveDecisionParams,
   cancelledRunSlotChoices,
+  type DevInteractiveCompletionAction,
+  type FamilyObservabilityArtifact,
   liveGateParkView,
   Methods,
+  type PRStatus,
+  type PRStatusResult,
+  type ResourcePostureGateChoice,
+  type Run,
+  type RunDecision,
+  type RunGetResult,
+  type RunListResult,
+  type RunRecipeRunsForRunParams,
+  type RunRecipeRunsForRunResult,
+  type RunRereviewLatestHeadResult,
+  type RunResolveDecisionResult,
+  type RunSessionCommandResult,
+  type RuntimePosturePreviewResult,
+  type RuntimePostureStatusResult,
+  type SlotStatus,
   sortRunsForFamilyView,
+  type TaskProgressResult,
+  validVisualJudgmentReason,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { pendingOutputReview, type VisualJudgmentFeedback } from '@farmslot/review-dispatch';
@@ -1032,6 +1030,12 @@ export class RunDetail extends RunDetailState {
 
   private _onHashChange = () => {
     if (isRunDetailHashForRun(this.runId)) {
+      this._showTerminal = runWorkerPanelOpen(getResourceWorkspaceKey(), this.runId, 'terminal');
+      this._showNativeHistory = runWorkerPanelOpen(
+        getResourceWorkspaceKey(),
+        this.runId,
+        'conversation',
+      );
       this._applySelectedStepFromHash();
       this._applyEvidenceArtifactFromHash();
       this._sharedPanelFocusKey = '';

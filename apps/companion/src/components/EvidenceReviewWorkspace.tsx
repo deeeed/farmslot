@@ -14,7 +14,7 @@ import type {
   EvidenceReviewComparisonFilter,
   EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
-import { type SelfPrincipalSummary } from '@farmslot/protocol';
+import { type SelfPrincipalSummary, viewChoiceField, viewIntegerField } from '@farmslot/protocol';
 import { acceptanceClaimLabel, acceptanceClaimRows } from '@farmslot/review-dispatch';
 
 import {
@@ -39,6 +39,7 @@ import { ArtifactImage } from './ArtifactImage';
 import { BeforeAfterPreview, CompareMedia } from './BeforeAfterPreview';
 import { EvidenceReviewSkeleton } from './EvidenceReviewSkeleton';
 import { SkeletonError } from './Skeleton';
+import { useViewChoice, useViewToggle } from './view-state';
 import { VisualClaimJudgment } from './VisualClaimJudgment';
 
 interface EvidenceReviewWorkspaceProps {
@@ -124,9 +125,14 @@ export function EvidenceReviewWorkspace({
     workspaceScroll.current?.scrollTo({ y: offset, animated: true });
     onFocusClaim?.(layouts.current.workspace);
   };
-  const [evidenceFilter, setEvidenceFilter] = useState<ArtifactWorkspaceFilter>('all');
-  const [showRawArtifacts, setShowRawArtifacts] = useState(false);
-  useEffect(() => setShowRawArtifacts(false), [runId]);
+  const [evidenceFilter, setEvidenceFilter] = useViewChoice(
+    viewChoiceField<ArtifactWorkspaceFilter>(
+      'evidenceFilter',
+      'all',
+      EVIDENCE_FILTERS.map((filter) => filter.id),
+    ),
+  );
+  const [showRawArtifacts, setShowRawArtifacts] = useViewToggle('evidence-raw');
   const artifactCounts = useMemo(() => buildArtifactWorkspaceCounts(artifacts), [artifacts]);
   const filteredArtifacts = useMemo(
     () => filterArtifactWorkspace(artifacts, evidenceFilter, '', evidenceModel),
@@ -156,15 +162,7 @@ export function EvidenceReviewWorkspace({
       setEvidenceFilter('all');
     }
   }, [artifactCounts, evidenceFilter]);
-  const compareIdentity = useMemo(
-    () => pairs.map((pair) => `${pair.before.url}:${pair.after.url}`).join('|'),
-    [pairs],
-  );
-  const [compareIndex, setCompareIndex] = useState(0);
-
-  useEffect(() => {
-    setCompareIndex(0);
-  }, [compareIdentity]);
+  const [compareIndex, setCompareIndex] = useViewChoice(viewIntegerField('compareIndex'));
 
   useEffect(() => {
     if (!focusClaim || !evidenceModel) return;

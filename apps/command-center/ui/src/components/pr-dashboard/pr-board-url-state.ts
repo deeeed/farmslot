@@ -1,4 +1,5 @@
 import type { PRStatus } from '@farmslot/protocol';
+import { viewChoiceField } from '@farmslot/protocol';
 
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 
@@ -84,11 +85,7 @@ export function prBoardUrlStateHash(
     params.delete('prHost');
     params.delete('view');
   }
-  if (state.layout === 'list') {
-    params.set('layout', 'list');
-  } else {
-    params.delete('layout');
-  }
+  viewChoiceField<PRLayout>('layout', 'list', ['board', 'list']).write(params, state.layout);
   return buildHash('prs', params);
 }
 

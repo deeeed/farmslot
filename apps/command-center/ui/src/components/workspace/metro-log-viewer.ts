@@ -1,7 +1,10 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { viewTextField } from '@farmslot/protocol';
+
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 
 const MAX_VISIBLE_LINES = 1000;
 
@@ -14,6 +17,16 @@ export class MetroLogViewer extends LitElement {
 
   private _scrollContainer: HTMLElement | null = null;
   private _userScrolled = false;
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewTextField('logFilter'),
+      () => this.filter,
+      (value) => {
+        this.filter = value;
+      },
+    ),
+  ]);
 
   static styles = css`
     :host {

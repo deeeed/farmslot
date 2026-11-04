@@ -1,10 +1,16 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/protocol';
+import {
+  type TaskProgressStructured,
+  type TaskStepSubtaskProgress,
+  viewToggleOverrideField,
+} from '@farmslot/protocol';
 
 import { subtaskProgressView } from '../lib/task-progress-view';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
+
+import { useViewChoice } from './view-state';
 
 /**
  * A child checklist unit under its parent step (ADR-060), read-only. The header
@@ -17,21 +23,23 @@ import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
  * operator is usually checking state, not reading every child step. Either way
  * the default applies once and the viewer's own choice wins afterwards.
  *
- * The expand state lives in this component's own state, so the panel keys the
- * block by run and unit id: a run change remounts it and the next run starts
- * from the default, the way Command Center's run-scoped map behaves.
+ * The route context stores the chosen child disclosure by its recorded unit id.
  *
  * One level only: child steps render as plain rows and never draw another block,
  * even though the projection nests recursively.
  */
 function TaskSubtaskBlockView({
+  runId,
   subtask,
   renderProgress,
 }: {
+  runId?: string;
   subtask: TaskStepSubtaskProgress;
   renderProgress: (progress: TaskProgressStructured) => React.ReactNode;
 }) {
-  const [expanded, setExpanded] = React.useState(false);
+  const [expanded, setExpanded] = useViewChoice(
+    viewToggleOverrideField('subtasks', `${runId?.trim() || 'no-run'}:${subtask.id}`, false),
+  );
   const view = subtaskProgressView(subtask);
   return (
     <View

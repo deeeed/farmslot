@@ -6,6 +6,7 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import { viewDetails } from '../../utils/view-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { supportsDecisionAdvice } from './decision-advice-model.js';
@@ -184,7 +185,7 @@ export class DecisionAdvicePanel extends LitElement {
         ? (answer.confidence ?? answer.probabilities?.[view?.recommendedActionId ?? 'abstain'])
         : undefined;
     const usage = view?.assessment?.usage;
-    return html`<details open data-decision-advice>
+    return html`<details open data-decision-advice ${viewDetails('decision-advice', true)}>
       <summary>Optional decision recommendation</summary>
       ${this.error ? html`<p role="alert" class="warning">${this.error}</p>` : nothing}
       <p>

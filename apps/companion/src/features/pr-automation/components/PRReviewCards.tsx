@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Text, View } from 'react-native';
 
+import { viewToggleMapField } from '@farmslot/protocol';
+
+import { useViewChoice } from '../../../components/view-state';
 import { prExecutionText, prReviewText } from '../../../lib/pr-automation';
 import { ReviewPublication } from '../../workspace-shared/ReviewPublication';
 import { styles } from '../styles/pr-automation-styles';
@@ -9,7 +12,7 @@ import type { PRAutomationController } from '../use-pr-automation-controller';
 import { PRButton } from './PRControls';
 
 export function PRReviewCards({ viewModel: vm, actions }: PRAutomationController) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useViewChoice(viewToggleMapField('prReviews'));
   const requests = (vm.reviews.submissions ?? []).filter(
     (request) =>
       (!vm.teamId || request.request.teamId === vm.teamId) && (vm.history || !request.cancelledAt),

@@ -20,6 +20,8 @@ import {
   type NativeSessionTool,
   type NativeSessionTurnDiffResult,
   type NativeWorkerHistoryScope,
+  viewListField,
+  viewToggleMapField,
 } from '@farmslot/protocol';
 import {
   appendNativePage,
@@ -90,6 +92,7 @@ import { getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
+import { browserViewState, viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { readStored } from '../shared/read-current.js';
 import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-controller.js';
@@ -127,6 +130,20 @@ export interface NativeSessionFixture {
 
 function timelineDistance(timeline: Element) {
   return timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+}
+
+const disclosureFields = {
+  messages: viewListField('messages'),
+  files: viewListField('turnFiles'),
+  folds: viewToggleMapField('folds'),
+};
+function restoredFolds(values: Readonly<Record<string, boolean>>) {
+  return new Map(
+    Object.entries(values).flatMap(([key, open]) => {
+      const value = Number(key);
+      return Number.isSafeInteger(value) && value >= 0 ? [[value, open] as const] : [];
+    }),
+  );
 }
 
 @customElement('native-session-view')
@@ -357,6 +374,30 @@ export class NativeSessionView extends LitElement {
     }
     return this.workState;
   }
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      disclosureFields.folds,
+      () => Object.fromEntries(this.foldOpen),
+      (values) => {
+        this.foldOpen = restoredFolds(values);
+      },
+    ),
+    viewBinding(
+      disclosureFields.messages,
+      () => [...this.expandedMessages],
+      (value) => {
+        this.expandedMessages = new Set(value);
+      },
+    ),
+    viewBinding(
+      disclosureFields.files,
+      () => [...this.openTurnFiles],
+      (value) => {
+        this.openTurnFiles = new Set(value);
+      },
+    ),
+  ]);
 
   static styles = nativeSessionStyles;
 
@@ -1270,12 +1311,21 @@ ${JSON.stringify(
 
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
-    this.expandedMessages = new Set();
+    const params = typeof location === 'undefined' ? new URLSearchParams() : hashParams();
+    const addressed =
+      Boolean(this.worker) ||
+      (params.get('sessionId') === id &&
+        (params.get('executionNodeId') || 'local') === executionNodeId);
+    this.expandedMessages = new Set(
+      addressed ? browserViewState.get(disclosureFields.messages) : [],
+    );
     this.planCopy = undefined;
     this.turnDiffs = new Map();
-    this.openTurnFiles = new Set();
+    this.openTurnFiles = new Set(addressed ? browserViewState.get(disclosureFields.files) : []);
     this.watchedTools = new Set();
-    this.foldOpen = new Map();
+    this.foldOpen = addressed
+      ? restoredFolds(browserViewState.get(disclosureFields.folds))
+      : new Map();
     this.follow = NATIVE_FOLLOW_LATEST;
     this.selectedId = id;
     this.selectedNodeId = executionNodeId;

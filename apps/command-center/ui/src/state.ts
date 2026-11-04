@@ -1,36 +1,34 @@
 // Reactive view state. Shared cache observations own gateway collection facts.
 
-import type {
-  BacklogItem,
-  BacklogListResult,
-  ConfigProjectsResult,
-  DecisionListResult,
-  DispatchQueueListResult,
-  FleetStatus,
-  FleetStatusResult,
-  GitHubRateLimitPayload,
-  MonitorViolation,
-  MonitorViolationPayload,
-  PendingDecision,
-  PRListResult,
-  PRStatus,
-  QueueItem,
-  Run,
-  RunFamilyReadinessSummary,
-  RunListResult,
-  RunListSummaryMeta,
-  RunProjectAnalyticsSummary,
-  WorkGraphListResult,
-  WorkGraphProjection,
-} from '@farmslot/protocol';
 import {
+  type BacklogItem,
+  type BacklogListResult,
   buildRunFamilyReadinessSummaries,
   buildRunProjectAnalyticsSummaries,
+  type ConfigProjectsResult,
+  type DecisionListResult,
   DEFAULT_BRANCH,
+  type DispatchQueueListResult,
   Events,
+  type FleetStatus,
+  type FleetStatusResult,
+  type GitHubRateLimitPayload,
   isTerminalRunStatus,
   mergeRunListObservations,
   Methods,
+  type MonitorViolation,
+  type MonitorViolationPayload,
+  type PendingDecision,
+  type PRListResult,
+  type PRStatus,
+  type QueueItem,
+  type Run,
+  type RunFamilyReadinessSummary,
+  type RunListResult,
+  type RunListSummaryMeta,
+  type RunProjectAnalyticsSummary,
+  type WorkGraphListResult,
+  type WorkGraphProjection,
 } from '@farmslot/protocol';
 import {
   type GatewayResourceCache,
@@ -40,7 +38,6 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { notificationTray, publishReadNotice } from './utils/notification-tray.js';
-import { safeLsGet, safeLsRemove } from './utils/storage.js';
 import { contentPrefetchTargets } from './content-prefetch.js';
 import { type ConnectionState, gateway } from './gateway-client.js';
 import {
@@ -51,12 +48,7 @@ import {
   setContentPrefetchTargets,
   subscribeResourceCache,
 } from './resource-cache.js';
-import {
-  filtersHash,
-  type GlobalFilters,
-  parseFiltersFromHash,
-  writeFiltersToHash,
-} from './state-url-state.js';
+import { type GlobalFilters, parseFiltersFromHash, writeFiltersToHash } from './state-url-state.js';
 export {
   type GlobalFilters,
   parseRunsHashState,
@@ -131,8 +123,6 @@ export interface AppState {
 
 type Listener = (state: AppState) => void;
 
-const GLOBAL_FILTERS_KEY = 'farmslot:global-filters';
-
 export type AppStateSliceSnapshot = Pick<
   AppState,
   | 'fleet'
@@ -159,19 +149,7 @@ function loadGlobalFilters(): GlobalFilters {
   if (fromHash) {
     return { ...fromHash, projects: normalizeStoredProjectFilters(fromHash.projects) };
   }
-  const raw = safeLsGet(GLOBAL_FILTERS_KEY);
-  if (!raw) return { projects: [], machines: [] };
-  try {
-    const parsed = JSON.parse(raw);
-    return {
-      projects: normalizeStoredProjectFilters(parsed.projects ?? []),
-      machines: parsed.machines ?? [],
-    };
-  } catch (err) {
-    console.warn('[state] corrupted global-filters in localStorage, clearing:', err);
-    safeLsRemove(GLOBAL_FILTERS_KEY);
-    return { projects: [], machines: [] };
-  }
+  return { projects: [], machines: [] };
 }
 
 function filtersEqual(a: GlobalFilters, b: GlobalFilters): boolean {
@@ -786,18 +764,8 @@ export function recordMonitorViolation(violation: MonitorViolation): void {
 
 export function updateGlobalFilters(filters: GlobalFilters): void {
   state.globalFilters = filters;
-  persistFilters(filters);
   writeFiltersToHash(filters);
   notify();
-}
-
-function persistFilters(filters: GlobalFilters): void {
-  try {
-    localStorage.setItem(GLOBAL_FILTERS_KEY, JSON.stringify(filters));
-  } catch (err) {
-    // Private browsing or quota exceeded — filters still live in state + URL.
-    console.warn('[state] failed to persist global filters to localStorage:', err);
-  }
 }
 
 export function getRunForSlot(slotId: string, preferredRunId?: string | null): Run | null {
@@ -856,22 +824,10 @@ export function initState(): void {
       // direct address-bar edit). All in-app filter writes use replaceState,
       // which does not fire hashchange — so reaching this handler always means
       // we should re-sync state from the URL.
-      const fromHash = parseFiltersFromHash();
-      if (fromHash && !filtersEqual(fromHash, state.globalFilters)) {
+      const fromHash = parseFiltersFromHash() ?? { projects: [], machines: [] };
+      if (!filtersEqual(fromHash, state.globalFilters)) {
         state.globalFilters = fromHash;
-        persistFilters(fromHash);
         notify();
-      } else if (
-        !fromHash &&
-        (state.globalFilters.projects.length > 0 || state.globalFilters.machines.length > 0)
-      ) {
-        // Route navigation stripped the query — restore filters from state.
-        // Use history.replaceState so we rewrite the current entry in place
-        // instead of pushing a new one. Assigning location.hash here would
-        // create a second history entry per navigation, and pressing Back
-        // would land on the filterless intermediate URL and get rewritten
-        // forward again, effectively breaking Back while filters are active.
-        history.replaceState(null, '', filtersHash(state.globalFilters));
       }
     });
   }

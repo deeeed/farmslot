@@ -64,7 +64,26 @@ test('splitDiffFilesByKind keeps the open file visible and honours a custom matc
   );
 });
 
-test('hide-tests preference notifies subscribers once per change', () => {
+test('hide-tests URL choice notifies subscribers once per change', (t) => {
+  const descriptors = new Map(
+    ['location', 'history'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  const location = { hash: '#runs' };
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      pushState(_data: unknown, _title: string, url: string) {
+        location.hash = url;
+      },
+    },
+  });
+  t.after(() => {
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
   const seen: boolean[] = [];
   const unsubscribe = subscribeHideTestsPref((hide) => seen.push(hide));
   const initial = readHideTestsPref();

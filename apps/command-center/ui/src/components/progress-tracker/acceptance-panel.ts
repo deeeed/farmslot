@@ -11,14 +11,13 @@
  * says and never recomputes a verdict from evidence. A run with no ledger may get
  * manifest links instead; those render as "evidence linked", never as a verdict.
  */
-
 import { css, html, nothing, type TemplateResult, unsafeCSS } from 'lit';
 
-import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import {
   createEvidenceReviewModel,
   type EvidenceReviewClaim,
   type EvidenceReviewClaimOffers,
+  type EvidenceReviewJudgmentRow,
   type EvidenceReviewModel,
   proofStepGroups,
 } from '@farmslot/adapter-sdk/evidence';
@@ -40,6 +39,7 @@ import {
 import '../shared/proof-step-details.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { viewDetails } from '../../utils/view-state.js';
 import { reasonSheetStyles, renderReasonSheet } from '../shared/reason-sheet.js';
 
 import {
@@ -746,7 +746,11 @@ export function renderAcceptancePanel(
           </div>`
         : nothing}
       ${model.displayWarnings.length
-        ? html`<details class="ac-note ac-warning-details" data-testid="acceptance-warning-details">
+        ? html`<details
+            class="ac-note ac-warning-details"
+            data-testid="acceptance-warning-details"
+            ${viewDetails('acceptance-warnings')}
+          >
             <summary>Evidence details (${model.displayWarnings.length})</summary>
             ${model.displayWarnings.map((warning) => html`<p>${warning}</p>`)}
           </details>`
@@ -755,7 +759,11 @@ export function renderAcceptancePanel(
         ? html`<div class="ac-step-groups" data-testid="recipe-proof-steps">
             ${proofStepGroups(model.currentOccurrences).map(
               (group) =>
-                html`<details class="ac-step-group" ?open=${group.failed > 0}>
+                html`<details
+                  class="ac-step-group"
+                  ?open=${group.failed > 0}
+                  ${viewDetails(`proof-group:${group.label}`, group.failed > 0)}
+                >
                   <summary>
                     <span class="ac-step-group-label">${group.label}</span>
                     <span class="ac-step-group-count">${group.steps.length} steps</span>
@@ -789,16 +797,20 @@ export function renderAcceptancePanel(
     </div>
   `;
   if (options.embedded) return html`<div data-testid="acceptance-panel">${body}</div>`;
+  const defaultOpen = Boolean(
+    options.expanded ||
+    view.defaultOpen ||
+    options.error ||
+    model?.errors.length ||
+    model?.claims.some((claim) => claim.kind === 'qa-case'),
+  );
   return html`
     <details
       class="ac-panel"
       data-testid="acceptance-panel"
       ?data-proof-steps=${Boolean(options.showOccurrences)}
-      ?open=${options.expanded ||
-      view.defaultOpen ||
-      Boolean(options.error) ||
-      Boolean(model?.errors.length) ||
-      Boolean(model?.claims.some((claim) => claim.kind === 'qa-case'))}
+      ?open=${defaultOpen}
+      ${viewDetails('run-acceptance', defaultOpen)}
     >
       <summary class="ac-summary">
         <span class="ac-caret"></span>

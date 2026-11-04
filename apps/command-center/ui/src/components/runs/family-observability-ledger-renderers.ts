@@ -1,14 +1,15 @@
 import { html, nothing } from 'lit';
 
-import type {
-  FamilyChangeLedgerEntry,
-  FamilyObservabilityArtifact,
-  FamilyObservabilityRunSummary,
-  FamilyObservabilitySnapshot,
+import {
+  type FamilyChangeLedgerEntry,
+  type FamilyObservabilityArtifact,
+  type FamilyObservabilityRunSummary,
+  type FamilyObservabilitySnapshot,
+  unavailableContributionLabel,
 } from '@farmslot/protocol';
-import { unavailableContributionLabel } from '@farmslot/protocol';
 
 import { formatBytes } from '../../utils/format.js';
+import { viewDetails } from '../../utils/view-state.js';
 
 import { familyBucketSummary } from './family-observability-artifact-model.js';
 import { familyLedgerEntry, ledgerDiffScopeLabel } from './family-observability-diff-model.js';
@@ -171,7 +172,7 @@ export function renderFamilyChangeLedger(
         </div>
         <div><span class="muted">Missing data</span><strong>${missing.length}</strong></div>
       </div>
-      <details class="raw-ledger-details">
+      <details class="raw-ledger-details" ${viewDetails('family-ledger')}>
         <summary>Show raw ledger rows and artifact buckets</summary>
         <div class="ledger-metrics">
           <div>

@@ -2,21 +2,20 @@ import { html, LitElement, nothing, type PropertyValues, svg } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
-import type {
-  AcceptanceCriterionRef,
-  AcceptanceEvidenceLink,
-  AcceptanceStatusLedger,
-  Run,
-  RunCancelResult,
-  RunStep,
-  RunStepDisplayStatus,
-  TaskProgressStructured,
-} from '@farmslot/protocol';
 import {
+  type AcceptanceCriterionRef,
+  type AcceptanceEvidenceLink,
+  type AcceptanceStatusLedger,
   deriveRunLifecycleView,
   failedRunCancelEffects,
   isTerminalRunStatus,
   Methods,
+  type Run,
+  type RunCancelResult,
+  type RunStep,
+  type RunStepDisplayStatus,
+  type TaskProgressStructured,
+  viewToggleField,
 } from '@farmslot/protocol';
 import {
   acceptancePanelPresentation,
@@ -31,6 +30,7 @@ import './run-checklist-progress.js';
 import './run-ci-watch-status.js';
 
 import { gateway } from '../../gateway-client.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import {
   type AcceptanceEvidenceOpen,
   acceptancePanelInputs,
@@ -136,6 +136,16 @@ export class RunPipeline extends LitElement {
   private elapsedTimer: ReturnType<typeof setInterval> | null = null;
   private _unsubTransfer: (() => void) | null = null;
   private _releaseTransfer: (() => void) | null = null;
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewToggleField('panels', 'monitor-details', false),
+      () => this.monitorExpanded,
+      (value) => {
+        this.monitorExpanded = value;
+      },
+    ),
+  ]);
 
   static styles = [runPipelineStyles, acceptancePanelStyles];
 

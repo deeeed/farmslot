@@ -11,6 +11,7 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import { viewDetails } from '../../utils/view-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 const checks: Record<string, string> = {
@@ -273,7 +274,7 @@ export class FailureTriagePanel extends LitElement {
               : [],
           )
         : [];
-    return html`<details>
+    return html`<details ${viewDetails('failure-triage')}>
       <summary id="failure-triage-summary">Experimental failure advice</summary>
       ${this.error ? html`<p role="alert" class="warning">${this.error}</p>` : nothing}
       <p data-triage-state>${displayState}</p>

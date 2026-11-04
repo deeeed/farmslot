@@ -9,34 +9,20 @@ import {
   type DiffKindSummary,
   summarizeDiffKinds,
   type TestFileMatcher,
+  viewToggleField,
 } from '@farmslot/protocol';
 
-import { safeLsGet, safeLsSet } from './storage.js';
+import { browserViewState } from './view-state.js';
 
-export const HIDE_TESTS_PREF_KEY = 'farmslot.diffView.hideTests';
-
-// One in-memory value for the page, so every mounted list flips together;
-// localStorage only carries it across reloads.
-let hideTests = safeLsGet(HIDE_TESTS_PREF_KEY) === '1';
-const listeners = new Set<(hide: boolean) => void>();
-
+const hideTestsField = viewToggleField('panels', 'hide-tests', false);
 export function readHideTestsPref(): boolean {
-  return hideTests;
+  return browserViewState.get(hideTestsField);
 }
-
 export function writeHideTestsPref(hide: boolean): void {
-  if (hide === hideTests) return;
-  hideTests = hide;
-  safeLsSet(HIDE_TESTS_PREF_KEY, hide ? '1' : '0');
-  for (const listener of listeners) listener(hide);
+  browserViewState.set(hideTestsField, hide);
 }
-
-/** Subscribe to preference changes; returns the unsubscribe function. */
 export function subscribeHideTestsPref(listener: (hide: boolean) => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
+  return browserViewState.subscribe(() => listener(readHideTestsPref()));
 }
 
 export interface DiffKindSplit<T> {

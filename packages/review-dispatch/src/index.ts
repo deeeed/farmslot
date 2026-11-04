@@ -15,6 +15,7 @@ export * from './result-decision.js';
 export * from './review-attempt-receipt.js';
 export * from './review-gate-refresh.js';
 export * from './review-history.js';
+export * from './review-history-content.js';
 export * from './review-history-timeline.js';
 export * from './run-activity.js';
 export * from './run-checklist-progress.js';

@@ -42,6 +42,21 @@ test('the actual Expo URL implementation preserves the shared route and refuses 
       route: '#run/retained-run?panel=timeline',
       url: 'https://cc.example.org/operations/#run/retained-run?panel=timeline&sharedView=1',
     });
+    const native = resolveSharedViewLink(
+      {
+        companion: {
+          pathname: '/run/retained-run',
+          params: { panels: 'run-review-history', round: ['review-1', 'review-2'] },
+        },
+      },
+      undefined,
+      'farmslot-development://',
+    );
+    assert.equal(native.status, 'available');
+    const nativeUrl = new URL(native.url);
+    assert.equal(nativeUrl.pathname, '/run/retained-run');
+    assert.deepEqual(nativeUrl.searchParams.getAll('round'), ['review-1', 'review-2']);
+    assert.equal(nativeUrl.searchParams.get('panels'), 'run-review-history');
     for (const value of [
       'https://127.1',
       'https://2130706433',

@@ -1,7 +1,10 @@
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { viewNullableTextField } from '@farmslot/protocol';
+
+import { useViewChoice } from '../../components/view-state';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { getResourceCache } from '../../lib/resource-cache';
 import { spacing } from '../../lib/theme';
@@ -18,7 +21,7 @@ export function useWorkGraphsController() {
   const connected = useConnectionStore((state) => state.status === 'connected');
   const projects = useFilterStore((state) => state.filters.projects);
   const observation = useResourceQuery(access === 'farm' ? workGraphsPlanningQuery : undefined);
-  const [selectedGraphId, setSelectedGraphId] = useState<string | null>(null);
+  const [selectedGraphId, setSelectedGraphId] = useViewChoice(viewNullableTextField('graph'));
   const graphs = useMemo(
     () =>
       (observation.data?.graphs ?? []).filter(

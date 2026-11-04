@@ -1,5 +1,5 @@
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   type ImageStyle,
   type LayoutChangeEvent,
@@ -32,6 +32,7 @@ import {
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 import { ArtifactImage } from './ArtifactImage';
+import { useViewToggle } from './view-state';
 
 type CompareSide = 'before' | 'after';
 
@@ -78,17 +79,20 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
   const fullscreenBottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const [, refreshTransform] = useState(0);
-  const [side, setSide] = useState<CompareSide>(initialSide);
+  const [after, setAfter] = useViewToggle(
+    `compare-after:${pair.before.path}:${pair.after.path}`,
+    initialSide === 'after',
+  );
+  const side: CompareSide = after ? 'after' : 'before';
+  const setSide = (value: CompareSide) => setAfter(value === 'after');
   const [viewportWidth, setViewportWidth] = useState(0);
-  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [fullscreenOpen, setFullscreenOpen] = useViewToggle(
+    `compare-fullscreen:${pair.before.path}:${pair.after.path}`,
+  );
   const comparisonLabel = formatVisualArtifactPairLabel(pair);
   const pairIdentity = `${pair.before.path}:${pair.after.path}`;
   const resolvedTestIdPrefix =
     testIdPrefix ?? `companion-before-after-${stableTestIdSuffix(pairIdentity)}`;
-
-  useEffect(() => {
-    setSide(initialSide);
-  }, [initialSide, pairIdentity]);
 
   const selectSide = (nextSide: CompareSide) => {
     setSide(nextSide);
@@ -255,7 +259,7 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
                 horizontal
                 pagingEnabled
                 nestedScrollEnabled
-                contentOffset={{ x: initialSide === 'after' ? viewportWidth : 0, y: 0 }}
+                contentOffset={{ x: side === 'after' ? viewportWidth : 0, y: 0 }}
                 showsHorizontalScrollIndicator={false}
                 onMomentumScrollEnd={handleScrollEnd}
                 onScrollEndDrag={handleScrollEnd}

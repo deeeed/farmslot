@@ -1,20 +1,25 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   isUnscopedGlobalRoadmapItem,
   Methods,
+  ROADMAP_DELIVERY_FILTERS,
+  ROADMAP_ITEM_STAGES,
   type RoadmapDeliveryFilter,
   type RoadmapDeliverySummary,
   roadmapDeliveryView,
   type RoadmapGetResult,
   type RoadmapItem,
   type RoadmapItemStage,
+  viewChoiceField,
+  viewTextField,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { useViewChoice, useViewToggle } from '../../components/view-state';
 import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQuery';
 import { getResourceCache } from '../../lib/resource-cache';
 import { readErrorMessage } from '../../lib/resource-read-status';
@@ -41,10 +46,14 @@ export function useRoadmapController() {
   const selectedProjects = useFilterStore((state) => state.filters.projects);
   const items = observation.data?.items ?? EMPTY_ITEMS;
   const delivery = observation.data?.delivery ?? EMPTY_DELIVERY;
-  const [stage, setStage] = useState<StageFilter>('all');
-  const [deliveryFilter, setDeliveryFilter] = useState<RoadmapDeliveryFilter>('all');
-  const [deliveredExpanded, setDeliveredExpanded] = useState(false);
-  const [search, setSearch] = useState('');
+  const [stage, setStage] = useViewChoice(
+    viewChoiceField<StageFilter>('stage', 'all', ['all', ...ROADMAP_ITEM_STAGES]),
+  );
+  const [deliveryFilter, setDeliveryFilter] = useViewChoice(
+    viewChoiceField<RoadmapDeliveryFilter>('delivery', 'all', ROADMAP_DELIVERY_FILTERS),
+  );
+  const [deliveredExpanded, setDeliveredExpanded] = useViewToggle('roadmap-delivered');
+  const [search, setSearch] = useViewChoice(viewTextField('q'), 'replace');
   const refresh = useCallback(() => {
     if (connected && observation.error) return getResourceCache()?.retry(roadmapPlanningQuery);
   }, [connected, observation.error]);

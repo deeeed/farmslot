@@ -21,6 +21,7 @@ import {
   type PRWatchListResult,
   type Run,
   type SlotStatus,
+  viewChoiceField,
 } from '@farmslot/protocol';
 import {
   type CommandMethod,
@@ -29,6 +30,7 @@ import {
 } from '@farmslot/protocol/client-cache';
 import { type ReviewDispatchViewModel, reviewLineagesForPR } from '@farmslot/review-dispatch';
 
+import { useViewChoice, useViewToggle } from '../../components/view-state';
 import { useConfigurationProjects } from '../../hooks/useConfigurationProjects';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { readConfiguration } from '../../lib/configuration-resources';
@@ -122,11 +124,15 @@ export function usePRAutomationController(
   const [actionError, setActionError] = useState('');
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<Tab>(
-    params.attentionId ? 'attention' : params.notificationId ? 'rules' : 'monitors',
+  const [tab, setTab] = useViewChoice(
+    viewChoiceField<Tab>(
+      'prTab',
+      params.attentionId ? 'attention' : params.notificationId ? 'rules' : 'monitors',
+      ['monitors', 'reviews', 'rules', 'policies', 'attention'],
+    ),
   );
   const [teamId, setTeamId] = useState('');
-  const [history, setHistory] = useState(false);
+  const [history, setHistory] = useViewToggle('pr-history');
   const [editor, setEditor] = useState<Editor>();
   const [executionPicker, attachExecutionPicker] = useState<ReviewDispatchViewModel>();
   const [, refreshExecutionPicker] = useState(0);

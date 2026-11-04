@@ -58,6 +58,8 @@ export interface ContentKey {
 }
 
 export interface StoredResourceContentInfo extends ContentKey {
+  /** Alias metadata from listContent, without loading body bytes. */
+  aliases?: string[];
   bytes: number;
   origin: ResourceContentOrigin;
   cohort: ResourceContentCohort;
@@ -348,7 +350,13 @@ export function createMemoryResourceStore(): ResourceStore {
       for (const [alias, target] of aliases) if (target === id) aliases.delete(alias);
     },
     async listContent() {
-      return available() ? [...contents.values()].map(contentInfo) : [];
+      if (!available()) return [];
+      const byId = new Map<string, string[]>();
+      for (const [alias, id] of aliases) byId.set(id, [...(byId.get(id) ?? []), alias]);
+      return [...contents.values()].map((entry) => {
+        const names = byId.get(resourceContentId(entry));
+        return { ...contentInfo(entry), ...(names?.length ? { aliases: names } : {}) };
+      });
     },
     async byteTotals() {
       const sum = (values: Iterable<{ bytes: number }>) =>

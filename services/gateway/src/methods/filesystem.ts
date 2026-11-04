@@ -576,41 +576,47 @@ export async function fsRead(params: FsReadParams): Promise<FsReadResult> {
   const repoPath = await resolveRepoPath(params.slotId);
   const { isLocal, machine } = await getSlotLocality(params.slotId);
 
-  let content: string;
-  let hash: string | undefined;
-  if (isLocal) {
-    const targetPath = resolveLocalRepoTargetPath(repoPath, params.path);
-    await assertLocalRepoTargetResolvesWithinRepo(targetPath, repoPath);
-    const handle = await openLocalReadHandle(targetPath, params.path);
-    try {
-      // Hash the raw bytes before decoding, as the node's fs.hash does.
-      const bytes = await handle.readFile();
-      content = bytes.toString('utf-8');
-      hash = sha256(bytes);
-    } finally {
-      await handle.close();
+  try {
+    let content: string;
+    let hash: string | undefined;
+    if (isLocal) {
+      const targetPath = resolveLocalRepoTargetPath(repoPath, params.path);
+      await assertLocalRepoTargetResolvesWithinRepo(targetPath, repoPath);
+      const handle = await openLocalReadHandle(targetPath, params.path);
+      try {
+        // Hash the raw bytes before decoding, as the node's fs.hash does.
+        const bytes = await handle.readFile();
+        content = bytes.toString('utf-8');
+        hash = sha256(bytes);
+      } finally {
+        await handle.close();
+      }
+    } else {
+      // Use node's fs.read. Nodes with conditional writes also return the hash.
+      const node = getNode(machine);
+      if (!node) throw new Error(`No node connected for machine ${machine}`);
+      const result = (await sendNodeRequest(node, 'fs.read', {
+        root: repoPath,
+        relPath: params.path,
+      })) as { content: string; hash?: unknown };
+      content = result.content;
+      if (typeof result.hash === 'string') hash = result.hash;
     }
-  } else {
-    // Use node's fs.read. Nodes with conditional writes also return the hash.
-    const node = getNode(machine);
-    if (!node) throw new Error(`No node connected for machine ${machine}`);
-    const result = (await sendNodeRequest(node, 'fs.read', {
-      root: repoPath,
-      relPath: params.path,
-    })) as { content: string; hash?: unknown };
-    content = result.content;
-    if (typeof result.hash === 'string') hash = result.hash;
+
+    const ext = path.extname(params.path).toLowerCase();
+    const base = path.basename(params.path).toLowerCase();
+
+    let language = EXT_LANGUAGE[ext] || 'plaintext';
+    if (base === 'dockerfile') language = 'dockerfile';
+    else if (base === 'makefile') language = 'makefile';
+    else if (base === '.gitignore' || base === '.gitattributes') language = 'gitignore';
+
+    return { content, language, ...(hash ? { hash } : {}) };
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+      throw new GatewayMethodError(FsErrorCodes.notFound, 'File not found');
+    throw error;
   }
-
-  const ext = path.extname(params.path).toLowerCase();
-  const base = path.basename(params.path).toLowerCase();
-
-  let language = EXT_LANGUAGE[ext] || 'plaintext';
-  if (base === 'dockerfile') language = 'dockerfile';
-  else if (base === 'makefile') language = 'makefile';
-  else if (base === '.gitignore' || base === '.gitattributes') language = 'gitignore';
-
-  return { content, language, ...(hash ? { hash } : {}) };
 }
 
 export async function fsWrite(params: FsWriteParams): Promise<FsWriteResult> {

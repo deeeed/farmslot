@@ -1,10 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React from 'react';
 
+import { withViewState } from '../../../components/view-state';
 import { BacklogEditScreen } from '../../../features/planning/BacklogEditScreen';
 import { useBacklogEditController } from '../../../features/planning/use-backlog-edit-controller';
 
-export default function BacklogEditRoute() {
+function BacklogEditRoute() {
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const itemId = Array.isArray(id) ? id[0] : id;
   const router = useRouter();
@@ -18,3 +19,5 @@ export default function BacklogEditRoute() {
     />
   );
 }
+
+export default withViewState(BacklogEditRoute);

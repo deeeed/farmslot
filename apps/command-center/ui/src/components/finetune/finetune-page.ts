@@ -1,16 +1,18 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
-import type {
-  FinetuneExportDPOResult,
-  FinetuneExportSFTResult,
-  FinetuneIndexResult,
+import {
+  type FinetuneExportDPOResult,
+  type FinetuneExportSFTResult,
+  type FinetuneIndexResult,
+  Methods,
+  viewTextField,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { readStored } from '../shared/read-current.js';
 
 type Tab = 'index' | 'sft' | 'dpo';
@@ -41,6 +43,16 @@ export class FinetunePage extends LitElement {
   @state() private loading = false;
   @state() private projectFilter = '';
   @state() private minGrade = '';
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewTextField('finetuneProject'),
+      () => this.projectFilter,
+      (value) => {
+        this.projectFilter = value;
+      },
+    ),
+  ]);
 
   static styles = css`
     :host {

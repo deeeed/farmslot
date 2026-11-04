@@ -17,7 +17,7 @@ test('global filters parse and update existing hash params without dropping view
 
   assert.equal(
     filtersHash({ projects: ['gateway'], machines: [] }, '#runs?family=fam-1&machines=old'),
-    '#runs?family=fam-1&machines=&projects=gateway',
+    '#runs?family=fam-1&projects=gateway',
   );
 });
 
@@ -63,10 +63,10 @@ test('explicit empty shared filters override a browser’s previously saved sele
   });
 });
 
-test('rewriting shared empty filters retains their explicit meaning through reload', () => {
+test('default filters stay out of the URL and restore empty on reload', () => {
   const hash = filtersHash({ projects: [], machines: [] }, '#runs?projects=&machines=&runsTab=all');
-  assert.equal(hash, '#runs?projects=&machines=&runsTab=all');
-  assert.deepEqual(parseFiltersFromHash(hash), { projects: [], machines: [] });
+  assert.equal(hash, '#runs?runsTab=all');
+  assert.equal(parseFiltersFromHash(hash), null);
   assert.equal(filtersHash({ projects: [], machines: [] }, '#fleet'), '#fleet');
 });
 

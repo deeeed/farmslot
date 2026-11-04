@@ -12,9 +12,12 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   loadReviewHistoryArtifacts,
   mergeReviewHistoryArtifacts,
+  peekReviewHistoryContent,
+  readReviewHistoryContent,
   reviewHistoryArtifactPaths,
   type ReviewHistoryArtifacts,
   reviewHistoryCacheScope,
+  reviewHistoryDisplayArtifacts,
   type ReviewHistoryFinding,
   reviewHistoryIdentity,
   type ReviewHistoryRound,
@@ -48,38 +51,48 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
     scope: string;
     artifacts: ReviewHistoryArtifacts;
     error?: string;
+    errorIdentity?: string;
   }>();
+  const currentCache = getResourceCache();
+  const held = currentCache ? peekReviewHistoryContent(currentCache, run) : undefined;
   useEffect(() => {
     const cache = getResourceCache();
     if (!cache) return;
     let disposed = false;
     const owner = getResourceWorkspaceKey();
     const current = () => cache === getResourceCache() && owner === getResourceWorkspaceKey();
-    void loadReviewHistoryArtifacts(
-      run,
-      async (path) => {
-        const response = await readStoredArtifact(artifactUrl(url, run.id, path), headers);
-        if (response.status === 404) return null;
-        if (!response.ok) throw new Error(`Artifact HTTP ${response.status}`);
-        return response.text();
-      },
-      async (params) => {
-        if (!current()) throw new Error('Farm connection changed');
-        return (await readReviewWorkspace<FsReadResult>(Methods.FS_READ, params)).content;
-      },
-      async (params) => {
-        if (!current()) throw new Error('Farm connection changed');
-        if (params.slotId)
-          return (await readReviewWorkspace<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
-        const { runId = '', base = '', head = '' } = params;
-        if (!runId || !base || !head) throw new Error('Review range is unavailable');
-        return (
-          await readStored<GitDiffResult>(
-            resourceQuery<GitDiffResult>(Methods.GIT_DIFF, { slotId: '', runId, base, head }),
-          )
-        ).diff;
-      },
-    )
+    const load = async () => {
+      const cached = !revision ? await readReviewHistoryContent(cache, run, true) : undefined;
+      return (
+        cached ??
+        loadReviewHistoryArtifacts(
+          run,
+          async (path) => {
+            const response = await readStoredArtifact(artifactUrl(url, run.id, path), headers);
+            if (response.status === 404) return null;
+            if (!response.ok) throw new Error(`Artifact HTTP ${response.status}`);
+            return response.text();
+          },
+          async (params) => {
+            if (!current()) throw new Error('Farm connection changed');
+            return (await readReviewWorkspace<FsReadResult>(Methods.FS_READ, params)).content;
+          },
+          async (params) => {
+            if (!current()) throw new Error('Farm connection changed');
+            if (params.slotId)
+              return (await readReviewWorkspace<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
+            const { runId = '', base = '', head = '' } = params;
+            if (!runId || !base || !head) throw new Error('Review range is unavailable');
+            return (
+              await readStored<GitDiffResult>(
+                resourceQuery<GitDiffResult>(Methods.GIT_DIFF, { slotId: '', runId, base, head }),
+              )
+            ).diff;
+          },
+        )
+      );
+    };
+    void load()
       .then((artifacts) => {
         if (!disposed && current())
           setSaved((previous) => ({
@@ -94,7 +107,8 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
       .catch((error: unknown) => {
         if (!disposed && current())
           setSaved((previous) => ({
-            identity,
+            identity: previous?.scope === artifactScope ? previous.identity : '',
+            errorIdentity: identity,
             scope: artifactScope,
             artifacts: previous?.scope === artifactScope ? previous.artifacts : {},
             error: error instanceof Error ? error.message : String(error),
@@ -138,11 +152,21 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
     source: source?.identity === identity ? source : undefined,
     inspect: (round: ReviewHistoryRound, finding: ReviewHistoryFinding) =>
       void inspect(round, finding),
-    ...reviewHistoryView(run, saved?.scope === artifactScope ? saved.artifacts : {}, chain),
-    error: saved?.identity === identity ? saved.error : undefined,
+    ...reviewHistoryView(
+      run,
+      reviewHistoryDisplayArtifacts(
+        identity,
+        saved?.scope === artifactScope ? saved : undefined,
+        held,
+      ),
+      chain,
+    ),
+    error: (saved?.errorIdentity ?? saved?.identity) === identity ? saved?.error : undefined,
     loading:
       status === 'connected' &&
+      !held &&
       saved?.identity !== identity &&
+      saved?.errorIdentity !== identity &&
       reviewHistoryArtifactPaths(run).length > 0,
     refresh: () => setRevision((value) => value + 1),
   };

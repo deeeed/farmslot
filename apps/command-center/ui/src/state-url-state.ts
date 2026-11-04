@@ -1,3 +1,4 @@
+import { viewListField } from '@farmslot/protocol';
 import { ARTIFACT_BROWSER_PARAMS } from '@farmslot/protocol/surfaces/view-links';
 
 import { EVIDENCE_REVIEWER_PARAMS } from './components/shared/evidence-reviewer-url-state.js';
@@ -33,6 +34,9 @@ const RUNS_HASH_KEYS: Exclude<keyof RunsHashState, 'tab'>[] = [
 const RUNS_TAB_PARAM = 'runsTab';
 const RUN_DETAIL_PARAMS = [
   'tab',
+  'panels',
+  'round',
+  'workers',
   'file',
   'modal',
   'diffArtifact',
@@ -48,30 +52,26 @@ const RUN_DETAIL_PARAMS = [
   ...EVIDENCE_REVIEWER_PARAMS,
 ] as const;
 
-function splitCsv(raw: string | null): string[] {
-  if (!raw) return [];
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+const filterFields = {
+  projects: viewListField('projects', [], 'csv'),
+  machines: viewListField('machines', [], 'csv'),
+};
 
 export function parseFiltersFromHash(hash: string = location.hash): GlobalFilters | null {
   const { params } = parseHashRoute(hash);
   const pStr = params.get('projects');
   const mStr = params.get('machines');
   if (pStr === null && mStr === null) return null;
-  return { projects: splitCsv(pStr), machines: splitCsv(mStr) };
+  return {
+    projects: [...filterFields.projects.read(params)],
+    machines: [...filterFields.machines.read(params)],
+  };
 }
 
 export function filtersHash(filters: GlobalFilters, hash: string = location.hash): string {
   const { route, params } = parseHashRoute(hash);
-  if (filters.projects.length > 0 || params.has('projects'))
-    params.set('projects', filters.projects.join(','));
-  else params.delete('projects');
-  if (filters.machines.length > 0 || params.has('machines'))
-    params.set('machines', filters.machines.join(','));
-  else params.delete('machines');
+  filterFields.projects.write(params, filters.projects);
+  filterFields.machines.write(params, filters.machines);
   return buildHash(route, params);
 }
 

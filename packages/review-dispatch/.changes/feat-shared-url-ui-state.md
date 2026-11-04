@@ -1,0 +1,1 @@
+- Prefetch review reports and per-round diffs in the shared content budget, and distinguish uncaptured artifacts from read failures.

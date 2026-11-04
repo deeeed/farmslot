@@ -3,6 +3,7 @@ import {
   deriveChecklistStepDurations,
   digestRecipeDocument,
   extractRunArtifactManifest,
+  FsErrorCodes,
   type FsReadParams,
   type GitDiffParams,
   isTerminalRunStatus,
@@ -42,6 +43,8 @@ export interface ReviewHistoryFinding {
   resolvedBy: string | null;
 }
 export interface ReviewHistoryArtifact {
+  /** The round is known, but this retained artifact has not been captured yet. */
+  notCaptured?: true;
   content?: string;
   error?: string;
 }
@@ -833,6 +836,8 @@ export function reviewHistoryIdentity(run: Run): string {
   return JSON.stringify([
     run.id,
     run.reviewResult,
+    run.artifactBundle?.bundleDigest,
+    run.output?.artifactBundle?.bundleDigest,
     run.reviewMode,
     run.reviewRoundSettlements,
     readyReviews(run).map((review) => [
@@ -883,6 +888,20 @@ export async function loadReviewHistoryArtifacts(
   readLive?: (params: FsReadParams) => Promise<string>,
   readDiff?: (params: GitDiffParams) => Promise<string>,
 ): Promise<Record<string, ReviewHistoryArtifact>> {
+  const readLiveFileIfPresent = async (params: FsReadParams): Promise<string | null> => {
+    if (!readLive) return null;
+    try {
+      return await readLive(params);
+    } catch (error) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        Reflect.get(error, 'code') === FsErrorCodes.notFound
+      )
+        return null;
+      throw error;
+    }
+  };
   const readPaths = async (paths: string[]) => {
     const settled = await Promise.allSettled(
       paths.map(async (path) => {
@@ -903,12 +922,11 @@ export async function loadReviewHistoryArtifacts(
                     ))),
             )
           : undefined;
-        if (!readLive || !actor?.slotId || !actor.taskFile)
-          throw new Error('Not recorded in the retained run');
+        if (!readLive || !actor?.slotId || !actor.taskFile) return null;
         const taskDir = actor.taskFile.slice(0, actor.taskFile.lastIndexOf('/'));
         if (!taskDir || taskDir.split('/').includes('..') || path.split('/').includes('..'))
           throw new Error('Recorded review task is unavailable');
-        return readLive({ slotId: actor.slotId, path: `${taskDir}/${path}` });
+        return readLiveFileIfPresent({ slotId: actor.slotId, path: `${taskDir}/${path}` });
       }),
     );
     return Object.fromEntries(
@@ -917,7 +935,9 @@ export async function loadReviewHistoryArtifacts(
         return [
           path,
           value.status === 'fulfilled'
-            ? { content: value.value }
+            ? value.value === null
+              ? { notCaptured: true as const }
+              : { content: value.value }
             : {
                 error: `${path}: ${value.reason instanceof Error ? value.reason.message : String(value.reason)}`,
               },
@@ -942,7 +962,8 @@ export async function loadReviewHistoryArtifacts(
             !['working', 'launching'].includes(context.status),
         );
         if (!actor?.slotId || !actor.taskFile) return;
-        const task = await readLive({ slotId: actor.slotId, path: actor.taskFile });
+        const task = await readLiveFileIfPresent({ slotId: actor.slotId, path: actor.taskFile });
+        if (task === null) return;
         // These are engine-written frozen input headers, not reviewer transcript/output.
         const match =
           /## COLD review range\s+Review the complete PR diff ([a-f0-9]{40})\.\.([a-f0-9]{40}) in /.exec(

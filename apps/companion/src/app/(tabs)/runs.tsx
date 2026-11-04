@@ -28,6 +28,7 @@ import {
   RunPipelineMini,
 } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
+import { withViewState } from '../../components/view-state';
 import { useSharedViewSelection } from '../../features/quick-actions/QuickActionsProvider';
 import { useShownMarker } from '../../hooks/useShownMarker';
 import {
@@ -670,7 +671,7 @@ function RunsReadStatus() {
   return <ResourceReadStatus observation={observation} label="runs" />;
 }
 
-export default function RunsScreen() {
+function RunsScreen() {
   useShownMarker('companion-screen-review');
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -1342,3 +1343,5 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 });
+
+export default withViewState(RunsScreen);

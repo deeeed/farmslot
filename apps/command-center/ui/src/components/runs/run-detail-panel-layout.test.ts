@@ -33,7 +33,7 @@ mock.module('../../gateway-client.js', {
 // The browser-only review history panel is not under test.
 mock.module('./review-history-panel.js', { namedExports: {} });
 const original = new Map(
-  ['location', 'localStorage'].map((key) => [
+  ['location', 'localStorage', 'history'].map((key) => [
     key,
     Object.getOwnPropertyDescriptor(globalThis, key),
   ]),
@@ -41,6 +41,15 @@ const original = new Map(
 const memory = new Map<string, string>();
 for (const [key, value] of Object.entries({
   location: new URL('http://localhost/#run/ce1c5583'),
+  history: {
+    state: null,
+    pushState: (_data: unknown, _unused: string, url: string) => {
+      globalThis.location.hash = url;
+    },
+    replaceState: (_data: unknown, _unused: string, url: string) => {
+      globalThis.location.hash = url;
+    },
+  },
   localStorage: {
     getItem: (key: string) => memory.get(key) ?? null,
     setItem: (key: string, value: string) => memory.set(key, value),
@@ -291,20 +300,20 @@ test('a collapsed panel names what it holds on one line', () => {
   assert.match(inner, />Acceptance criteria<\/span[\s\S]*?>\(5\/5 assessed · 3 proven\)<\/span/);
 });
 
-test("the viewer's stored choice wins and persists across runs", () => {
-  memory.set('cc:panel-open:run-grade', '1');
+test("the viewer's URL choice restores across reloads", () => {
+  location.hash = '#run/ce1c5583?panels=run-grade';
   assert.match(
     litText(renderRunDetailView(context())),
     /data-marker="grade"/,
-    'a stored open grade shows on load',
+    'a URL-selected grade shows on load',
   );
   toggleRunDetailPanel('run-artifacts');
-  assert.equal(memory.get('cc:panel-open:run-artifacts'), '1');
+  assert.match(location.hash, /run-artifacts/);
   const otherRun = litText(renderRunDetailView({ ...context(), run: { ...run, id: 'other-run' } }));
   assert.match(otherRun, /data-panel="run-artifacts"\s+data-open="true"/);
   assert.match(otherRun, /data-marker="explorer"/);
   toggleRunDetailPanel('run-step-progress');
-  assert.equal(memory.get('cc:panel-open:run-step-progress'), '0');
+  assert.match(decodeURIComponent(location.hash), /!run-step-progress/);
   assert.match(litText(pipeline().render()), /data-panel="run-step-progress"\s+data-open="false"/);
 });
 
@@ -383,7 +392,7 @@ test('review and interactive actions remain available below the canvas', () => {
 });
 
 test('a selected canvas or hash-linked step stays visible while progress is collapsed', () => {
-  rememberCollapsiblePanel('run-step-progress', false);
+  rememberCollapsiblePanel('run-step-progress', false, true);
   for (const selected of ['monitor', 'pre-gate-publication-review-active']) {
     const element = pipeline();
     element.selectedStepName = selected;
@@ -395,7 +404,7 @@ test('a selected canvas or hash-linked step stays visible while progress is coll
     assert.match(text, /data-panel="run-step-progress"\s+data-open="false"/);
   }
   assert.doesNotMatch(litText(pipeline().render()), /name="canvas-detail"/);
-  rememberCollapsiblePanel('run-step-progress', true);
+  rememberCollapsiblePanel('run-step-progress', true, true);
 });
 
 test('background transfer activity never inserts a row above the live panels', async () => {

@@ -16,6 +16,9 @@ export async function readStoredResource<T>(
   if (onStored && held?.data !== undefined) await onStored(held.data);
   const state = onStored || held?.data === undefined ? await cache.retry(query) : held;
   if (cache !== current()) throw new Error('The offline store owner changed');
-  if (state.data === undefined) throw new Error(state.error?.message ?? 'Nothing stored yet');
+  if (state.data === undefined)
+    throw Object.assign(new Error(state.error?.message ?? 'Nothing stored yet'), {
+      code: state.error?.code,
+    });
   return state.data;
 }

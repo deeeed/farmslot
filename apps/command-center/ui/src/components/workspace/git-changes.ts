@@ -1,10 +1,11 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { summarizeDiffKinds } from '@farmslot/protocol';
+import { summarizeDiffKinds, viewChoiceField, viewListField } from '@farmslot/protocol';
 
 import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 // Local types (protocol types not imported in isolated phase)
@@ -187,6 +188,23 @@ export class GitChanges extends LitElement {
     return this._wtByPathCache.map;
   }
   private _wtByPathCache: { source: GitChange[]; map: Map<string, GitChange[]> } | null = null;
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      viewChoiceField<FileListViewMode>('changesView', 'tree', ['tree', 'list']),
+      () => this._viewMode,
+      (value) => {
+        this._viewMode = value;
+      },
+    ),
+    viewBinding(
+      viewListField('changesClosed'),
+      () => [...this._collapsedTreePaths],
+      (value) => {
+        this._collapsedTreePaths = new Set(value);
+      },
+    ),
+  ]);
 
   static styles = [
     stateChipStyles,

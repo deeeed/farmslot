@@ -1,0 +1,1 @@
+- Restore bounded cached review report content before the first run view after a client restart.

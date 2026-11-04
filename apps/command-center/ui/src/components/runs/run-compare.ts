@@ -1,24 +1,28 @@
 import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type {
-  FamilyObservabilityArtifact,
-  FamilyObservabilityGetResult,
-  FamilyObservabilityRunSummary,
-  FamilyObservabilitySnapshot,
-  FamilyObservabilityStep,
-  Run,
-  RunGetResult,
-  RunListResult,
-  RunStep,
+import {
+  type FamilyObservabilityArtifact,
+  type FamilyObservabilityGetResult,
+  type FamilyObservabilityRunSummary,
+  type FamilyObservabilitySnapshot,
+  type FamilyObservabilityStep,
+  Methods,
+  type Run,
+  type RunGetResult,
+  type RunListResult,
+  type RunStep,
+  sortRunsForFamilyView,
+  sourceObservationAge,
+  viewTextField,
 } from '@farmslot/protocol';
-import { Methods, sortRunsForFamilyView, sourceObservationAge } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../shared/hydrating-placeholder.js';
 import '../shared/step-artifacts.js';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { openMediaLightbox } from '../shared/media-lightbox.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
@@ -84,9 +88,19 @@ export class RunCompare extends LitElement {
     (state) => {
       this.familySnapshot = state.data?.snapshot ?? null;
       this.familySnapshotError = state.error?.message ?? '';
-      if (!this.selectedStepName) this.selectedStepName = this.defaultStepName();
+      this.displayChoices.restore();
     },
   );
+
+  private readonly displayChoices = new ViewStateBindings(this, [
+    viewBinding(
+      () => viewTextField('compareStep', this.defaultStepName()),
+      () => this.selectedStepName,
+      (value) => {
+        this.selectedStepName = value;
+      },
+    ),
+  ]);
 
   static styles = runCompareStyles;
 
@@ -125,7 +139,7 @@ export class RunCompare extends LitElement {
     this.familyQuery.setQuery(
       familyId ? resourceQuery(Methods.FAMILY_OBSERVABILITY_GET, { familyId }) : undefined,
     );
-    if (!this.runA || !this.runB) this.selectedStepName = '';
+    this.displayChoices.restore();
   }
 
   private syncStatus(): void {

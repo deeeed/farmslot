@@ -14,10 +14,15 @@
 
 import { css, html, nothing, type TemplateResult, unsafeCSS } from 'lit';
 
-import type { TaskStepProgress, TaskStepSubtaskProgress } from '@farmslot/protocol';
-import { isSettledSubtaskStatus } from '@farmslot/protocol';
+import {
+  isSettledSubtaskStatus,
+  type TaskStepProgress,
+  type TaskStepSubtaskProgress,
+  viewToggleOverrideField,
+} from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { browserViewState, viewStateUpdates } from '../../utils/view-state.js';
 
 /** Status pill text. Unknown statuses print raw rather than being swallowed. */
 const SUBTASK_STATUS_LABELS: Record<string, string> = {
@@ -69,7 +74,7 @@ export interface SubtaskOpenScope {
 }
 
 /**
- * Per-host memory of which child units the viewer has opened.
+ * Bounded automatic defaults, with explicit child-unit choices in the shared URL context.
  *
  * The status-derived default (open while the unit is not settled) applies only
  * the first time a unit id is seen in a run. After that the viewer's own
@@ -96,8 +101,7 @@ export class SubtaskOpenState {
    * The scope for a run. Hosts call this every render with their current run
    * id; a run change hands back a scope whose units start from the default
    * again, while re-renders inside one run keep what the viewer chose. Only the
-   * last {@link MAX_RUNS} runs are remembered — an older run's entries are
-   * dropped, so returning to it starts from the default.
+   * last {@link MAX_RUNS} automatic defaults are remembered. Explicit URL choices survive.
    */
   scope(runId: string | null | undefined): SubtaskOpenScope {
     const run = runId?.trim() || 'no-run';
@@ -108,13 +112,12 @@ export class SubtaskOpenState {
       openFor: (subtask) => {
         const key = `${run}:${subtask.id}`;
         const remembered = this.open.get(key);
-        if (remembered !== undefined) return remembered;
-        const initial = !isSettledSubtaskStatus(subtask.status);
+        const initial = remembered ?? !isSettledSubtaskStatus(subtask.status);
         this.open.set(key, initial);
-        return initial;
+        return browserViewState.get(viewToggleOverrideField('subtasks', key, initial));
       },
       set: (id, open) => {
-        this.open.set(`${run}:${id}`, open);
+        browserViewState.set(viewToggleOverrideField('subtasks', `${run}:${id}`, false), open);
       },
     };
     this.scopes.set(run, scope);
@@ -286,15 +289,18 @@ export function renderSubtaskBlock(
   openScope: SubtaskOpenScope,
 ): TemplateResult {
   const view = subtaskPresentation(subtask);
-  return html`
+  return html`${viewStateUpdates()}
     <details
       class="st-unit st-${subtask.status}"
       data-testid="subtask-unit"
       data-subtask-id=${subtask.id}
       data-subtask-status=${subtask.status}
       ?open=${openScope.openFor(subtask)}
-      @toggle=${(event: Event) =>
-        openScope.set(subtask.id, (event.target as HTMLDetailsElement).open)}
+      @toggle=${(event: Event) => {
+        const open = Reflect.get(event.target ?? {}, 'open');
+        if (typeof open === 'boolean' && open !== openScope.openFor(subtask))
+          openScope.set(subtask.id, open);
+      }}
     >
       <summary class="st-summary">
         <span class="st-caret"></span>
@@ -316,6 +322,5 @@ export function renderSubtaskBlock(
           `,
         )}
       </div>
-    </details>
-  `;
+    </details> `;
 }

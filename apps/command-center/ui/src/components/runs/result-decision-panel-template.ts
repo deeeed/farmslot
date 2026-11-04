@@ -6,6 +6,8 @@ import {
   type ResultDecisionView,
 } from '@farmslot/review-dispatch';
 
+import { viewDetails } from '../../utils/view-state.js';
+
 export interface ResultDecisionPanelInput {
   view: ResultDecisionView;
   /** The written reason typed so far. */
@@ -58,7 +60,7 @@ export function renderResultDecisionPanel(input: ResultDecisionPanelInput) {
       ${delivered.label} <code>${delivered.value}</code>
     </p>
     ${detail
-      ? html`<details open data-testid="result-detail">
+      ? html`<details open data-testid="result-detail" ${viewDetails('result-detail', true)}>
           <summary>${detail.title}</summary>
           <ul>
             ${detail.items.map(

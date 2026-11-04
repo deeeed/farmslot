@@ -21,6 +21,7 @@ import {
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
+import { withViewState } from '../../components/view-state';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { useShownMarker } from '../../hooks/useShownMarker';
 import { getResourceCache } from '../../lib/resource-cache';
@@ -90,7 +91,7 @@ function watchEntryMatchesFilter(entry: TmuxWorkerWatchEntry, filter: WorkerPane
   return filter === 'farmslot' ? farmslot : !farmslot;
 }
 
-export default function WorkersScreen() {
+function WorkersScreen() {
   useShownMarker('companion-screen-terminals');
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -763,3 +764,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
 });
+
+export default withViewState(WorkersScreen);

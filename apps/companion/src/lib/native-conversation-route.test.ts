@@ -82,9 +82,13 @@ const loading = { status: 'loading' };
 mock.module('@react-native-async-storage/async-storage', {
   defaultExport: { getItem: async () => null, setItem: async () => undefined },
 });
+mock.module('react-native', { namedExports: { Platform: { OS: 'android' } } });
 mock.module('expo-router', {
   namedExports: {
+    useNavigation: () => ({ setParams() {} }),
     useLocalSearchParams: () => params,
+    useSegments: () => ['native'],
+    useRouter: () => ({ setParams() {}, push() {} }),
     useIsFocused: () => true,
     Redirect: ({ href }: { href: string }) => React.createElement('span', null, `redirect:${href}`),
   },
@@ -165,7 +169,7 @@ async function load() {
   readConversation = controller.useNativeConversationController;
   const route = await import('../app/native');
   function ObserveRouteIdentity() {
-    const element = route.default();
+    const element = route.NativeConversationRoute();
     renderedConversationKey = element.key;
     return element;
   }
