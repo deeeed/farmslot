@@ -30,6 +30,7 @@ import {
   WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerSignal,
 } from '@farmslot/protocol';
+import { parseReviewSelection } from '@farmslot/review-dispatch';
 
 import { selectAgentContext } from '../../agents/contexts.js';
 import {
@@ -46,6 +47,8 @@ import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
+import { pipelineReviewSelection, resolveReviewRunnerModel } from '../../review/orchestrator.js';
+import { getReviewConfig } from '../../review/templates.js';
 import { captureRunOutput } from '../../run-completion/output.js';
 import { markPreparedPackageStale } from '../../run-completion/prepared-package-stale.js';
 import { retainedMaintenanceStepOutputs } from '../../run-engine/branch-maintenance.js';
@@ -1076,9 +1079,11 @@ async function replayRunStep(
     });
   const initialNativeStatus = existing.transport === 'native' ? existing.status : undefined;
   const hasRunnerOverride = params.runner !== undefined || params.model !== undefined;
-  if (existing.transport === 'native' && hasRunnerOverride && params.stepName !== PS.DISPATCH)
+  const hasReviewerOverride = hasRunnerOverride && params.stepName === PS.REVIEW;
+  const hasWorkerRunnerOverride = hasRunnerOverride && !hasReviewerOverride;
+  if (existing.transport === 'native' && hasWorkerRunnerOverride && params.stepName !== PS.DISPATCH)
     throw new Error('Change a native worker runner/model through dispatch replay');
-  if (existing.transport === 'native' && params.runner !== undefined)
+  if (existing.transport === 'native' && hasWorkerRunnerOverride && params.runner !== undefined)
     assertNativeRunner(normalizeRunner(params.runner));
   if (
     hasRunnerOverride &&
@@ -1091,16 +1096,33 @@ async function replayRunStep(
     );
   }
   assertSupportedRunnerSpelling(params.runner);
+  const priorReviewSelection =
+    params.stepName === PS.REVIEW ? pipelineReviewSelection(existing) : undefined;
+  const reviewOverride = hasReviewerOverride
+    ? resolveReviewRunnerModel(await getReviewConfig(existing.project), {
+        reviewRunner: params.runner ?? priorReviewSelection?.runner,
+        model:
+          params.model ?? (params.runner ? undefined : (priorReviewSelection?.model ?? undefined)),
+      })
+    : undefined;
   const replayRunner = params.runner
     ? normalizeRunner(params.runner)
     : normalizeRunner(existing.metrics.runner);
   const replayModel =
     params.model ?? (params.runner ? runnerDefaultModel(replayRunner) : existing.metrics.model);
-  if (hasRunnerOverride && replayModel && !runnerSupportsModel(replayRunner, replayModel)) {
+  if (hasWorkerRunnerOverride && replayModel && !runnerSupportsModel(replayRunner, replayModel)) {
     throw new Error(
       `runner '${replayRunner}' does not support model '${replayModel}' — pick a compatible replay override`,
     );
   }
+  const replayReviewSelection = reviewOverride
+    ? parseReviewSelection({
+        runner: reviewOverride.reviewRunner,
+        model: reviewOverride.model,
+        effort: null,
+        mode: 'cold',
+      })
+    : priorReviewSelection;
   const startedFromDone = existing.status === 'done';
   if (existing.output?.closedAt)
     throw new Error(
@@ -1181,7 +1203,7 @@ async function replayRunStep(
     replayStepName === PS.DISPATCH
       ? await readAdoptableTaskSignal(existing, {
           freshDispatch: Boolean(
-            params.freshDispatch || (existing.transport === 'native' && hasRunnerOverride),
+            params.freshDispatch || (existing.transport === 'native' && hasWorkerRunnerOverride),
           ),
         })
       : null;
@@ -1295,7 +1317,7 @@ async function replayRunStep(
     existing.transport === 'native' &&
     targetIdx >= 0 &&
     (params.freshDispatch === true ||
-      hasRunnerOverride ||
+      hasWorkerRunnerOverride ||
       targetIdx < dispatchIdx ||
       (prepareIdx >= 0 && targetIdx <= prepareIdx));
   if (
@@ -2219,7 +2241,10 @@ async function replayRunStep(
         startedAt: undefined,
         completedAt: undefined,
         durationMs: undefined,
-        inputs: undefined,
+        inputs:
+          existing.steps[i].name === PS.REVIEW && replayReviewSelection
+            ? { reviewSelection: replayReviewSelection }
+            : undefined,
         outputs: retainedMaintenanceStepOutputs(existing.steps[i].name, existing.steps[i].outputs),
         detail: undefined,
       });
@@ -2282,7 +2307,7 @@ async function replayRunStep(
     } = existing.metrics;
     const resetTerminalOutcome = targetIdx >= 0 && monitorIdx >= 0 && targetIdx <= monitorIdx;
     const runnerChanged =
-      hasRunnerOverride && replayRunner !== normalizeRunner(existing.metrics.runner);
+      hasWorkerRunnerOverride && replayRunner !== normalizeRunner(existing.metrics.runner);
     const replayMetrics =
       replaysWorkerLaunch || runnerChanged
         ? {
@@ -2300,7 +2325,7 @@ async function replayRunStep(
           ...(_disposition !== undefined ? { disposition: _disposition } : {}),
           ...(_terminalEvidence !== undefined ? { terminalEvidence: _terminalEvidence } : {}),
         };
-    const resetMetrics = hasRunnerOverride
+    const resetMetrics = hasWorkerRunnerOverride
       ? {
           ...resetOutcomeMetrics,
           runner: replayRunner,
@@ -2308,7 +2333,7 @@ async function replayRunStep(
         }
       : resetOutcomeMetrics;
     const latestAgentContexts = getRun(params.runId)?.agentContexts ?? existing.agentContexts;
-    const resetAgentContextsBase = hasRunnerOverride
+    const resetAgentContextsBase = hasWorkerRunnerOverride
       ? latestAgentContexts?.map((context) =>
           context.role === primaryRoleForFlow(existing.flowType)
             ? {

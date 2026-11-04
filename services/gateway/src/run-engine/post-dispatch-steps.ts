@@ -49,6 +49,7 @@ import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { readPRCompletionHead } from '../review/acceptance-coverage.js';
 import {
   executeReview,
+  pipelineReviewSelection,
   reReviewMode,
   type ReviewOptions,
   type ReviewResult,
@@ -779,12 +780,7 @@ export async function executeReviewStep(
   // reviewer, while the stored sequence is still the dispatch's own plan (a gate,
   // request or recovery that rewrites it stamps requestedAt). Recorded on the step,
   // so its rechecks use it after the gate consumes the row.
-  const publishGate = current.engineState?.publishGate;
-  const reviewSelection =
-    !publishGate?.reviewSequenceRequestedAt &&
-    publishGate?.reviewPolicy?.requestedBy !== 'human-gate'
-      ? publishGate?.reviewSequence?.[0]
-      : undefined;
+  const reviewSelection = pipelineReviewSelection(current);
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
     enabled: true,
@@ -903,7 +899,7 @@ export async function executeReviewStep(
   const reviewer = execution
     ? { reviewRunner: execution.runner, model: execution.model, effort: execution.effort }
     : {};
-  const mode = current.reviewMode;
+  const mode = reviewSelection?.mode ?? current.reviewMode;
   const primaryContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;
   const reviewId =
     mode === 'warm'

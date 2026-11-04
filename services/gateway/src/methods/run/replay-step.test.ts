@@ -1975,7 +1975,7 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
   assert.equal(emittedStatuses[0], 'reviewing');
 });
 
-test('runReplayStep can replace an exhausted runner before review', async (t) => {
+test('runReplayStep selects the retry reviewer without replacing the worker', async (t) => {
   const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
   const taskFile = '/tmp/farmslot-runner-replacement/TASK.md';
@@ -2037,8 +2037,8 @@ test('runReplayStep can replace an exhausted runner before review', async (t) =>
     {
       runId: run.id,
       stepName: 'review',
-      runner: 'claude',
-      model: 'opus',
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
       triggeredBy: 'operator',
     },
     () => {},
@@ -2046,17 +2046,34 @@ test('runReplayStep can replace an exhausted runner before review', async (t) =>
 
   const replayed = getRun(run.id);
   assert.ok(replayed);
-  assert.equal(replayed.metrics.runner, 'claude');
-  assert.equal(replayed.metrics.model, 'opus');
-  assert.equal(replayed.metrics.runnerSessionId, null);
-  assert.equal(replayed.metrics.runnerSessionPath, null);
+  assert.equal(replayed.metrics.runner, 'grok');
+  assert.equal(replayed.metrics.model, 'grok-4.6');
+  assert.equal(replayed.metrics.runnerSessionId, 'old-grok-session');
+  assert.equal(replayed.metrics.runnerSessionPath, '/tmp/old-grok-session');
   const workerContext = replayed.agentContexts?.find((context) => context.role === 'fix-bug');
-  assert.equal(workerContext?.runner, 'claude');
-  assert.equal(workerContext?.model, 'opus');
-  assert.equal(workerContext?.runnerSessionId, null);
-  assert.equal(workerContext?.runnerSessionPath, null);
+  assert.equal(workerContext?.runner, 'grok');
+  assert.equal(workerContext?.model, 'grok-4.6');
+  assert.equal(workerContext?.runnerSessionId, 'old-grok-session');
+  assert.equal(workerContext?.runnerSessionPath, '/tmp/old-grok-session');
+  assert.deepEqual(replayed.steps.find((step) => step.name === 'review')?.inputs?.reviewSelection, {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: null,
+    mode: 'cold',
+  });
   assert.equal(replayed.status, 'reviewing');
   assert.equal(replayed.steps.find((step) => step.name === 'review')?.status, 'pending');
+  await runReplayStep({ runId: run.id, stepName: 'review', model: 'gpt-6-astra' }, () => {});
+  assert.deepEqual(
+    getRun(run.id)?.steps.find((step) => step.name === 'review')?.inputs?.reviewSelection,
+    { runner: 'codex', model: 'gpt-6-astra', effort: null, mode: 'cold' },
+  );
+  await runReplayStep({ runId: run.id, stepName: 'review' }, () => {});
+  assert.deepEqual(
+    getRun(run.id)?.steps.find((step) => step.name === 'review')?.inputs?.reviewSelection,
+    { runner: 'codex', model: 'gpt-6-astra', effort: null, mode: 'cold' },
+  );
+  assert.equal(getRun(run.id)?.metrics.runner, 'grok');
 });
 
 test('runReplayStep rejects an incompatible runner/model override before mutation', async (t) => {

@@ -18,6 +18,7 @@ import {
   type ReviewIssue,
   type ReviewLoopTimelineSegment,
   type ReviewMode,
+  type ReviewSelection,
   type ReviewSessionTrace,
   type ReviewValidationDepth,
   type Run,
@@ -25,7 +26,11 @@ import {
   type RunStatus,
   type WorkerSignal,
 } from '@farmslot/protocol';
-import { executionModelFromSelection, resolveReviewMode } from '@farmslot/review-dispatch';
+import {
+  executionModelFromSelection,
+  parseReviewSelection,
+  resolveReviewMode,
+} from '@farmslot/review-dispatch';
 
 import {
   fixContextStatusForSignal,
@@ -277,6 +282,17 @@ export function resolveReviewMaxRetries(opts: {
     : Math.max(0, Math.min(5, hasRequested ? requested : projectCap));
   if (!opts.resume || opts.publicationReview) return base;
   return Math.max((opts.priorRetryCount ?? 0) + 1, base);
+}
+
+/** A replay's recorded row takes precedence over the original dispatch plan. */
+export function pipelineReviewSelection(run: Run): ReviewSelection | undefined {
+  const stored = run.steps.find((step) => step.name === PipelineSteps.REVIEW)?.inputs
+    ?.reviewSelection;
+  if (stored) return parseReviewSelection(stored);
+  const gate = run.engineState?.publishGate;
+  return !gate?.reviewSequenceRequestedAt && gate?.reviewPolicy?.requestedBy !== 'human-gate'
+    ? gate?.reviewSequence?.[0]
+    : undefined;
 }
 
 export function resolveReviewRunnerModel(
