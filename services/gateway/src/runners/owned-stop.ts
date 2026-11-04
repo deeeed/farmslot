@@ -11,7 +11,13 @@ import {
 } from '../core/tmux.js';
 import { getRunWithArchived } from '../runs/store.js';
 
-import { getRunnerDefinition, isKnownRunner, runnerPromptSubmitKey } from './registry.js';
+import {
+  getRunnerDefinition,
+  isKnownRunner,
+  KNOWN_RUNNERS,
+  runnerPromptSubmitKey,
+  type RunnerSlotRuntimeCleanupOptions,
+} from './registry.js';
 import {
   RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS,
   RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
@@ -332,6 +338,20 @@ export async function stopRunOwnedTmuxWorkers(
     });
     if (!result.ok)
       return `Worker ${context.id} stop was not confirmed: ${result.error}. ${recoveryAction}`;
+  }
+  return null;
+}
+
+/** Clean slot-owned runtime leftovers even when the slot's latest run used another runner. */
+export async function cleanupSlotRunnerRuntimes(
+  vars: SlotVars,
+  options: RunnerSlotRuntimeCleanupOptions,
+): Promise<string | null> {
+  for (const runner of Object.values(KNOWN_RUNNERS)) {
+    if (!runner.cleanupSlotRuntime) continue;
+    if (!(await options.stillOwned())) return 'Slot ownership changed before runner cleanup';
+    const blocker = await runner.cleanupSlotRuntime(vars, options);
+    if (blocker) return blocker;
   }
   return null;
 }

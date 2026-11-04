@@ -189,7 +189,17 @@ export interface RunnerGracefulExitCapability {
   submitDelayMs?: number;
 }
 
+export interface RunnerSlotRuntimeCleanupOptions {
+  stillOwned: () => Promise<boolean>;
+}
+
 export interface RunnerDefinition {
+  /** Stop only structured, slot-isolated managed processes after the workers are stopped. */
+  cleanupSlotRuntime?: (
+    vars: SlotVars,
+    options: RunnerSlotRuntimeCleanupOptions,
+  ) => Promise<string | null>;
+
   /** Structured provider authentication check before a worker process is launched. */
   authCheck?: (vars: SlotVars, model?: string | null) => string;
   /** Structured execution receipts for finite project-owned tasks. */
@@ -396,6 +406,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   codex: {
     id: 'codex',
+    cleanupSlotRuntime: async (vars, options) =>
+      (await import('./codex-daemon.js')).cleanupCodexSlotRuntime(vars, options),
     nativeTransport: 'codex-app-server',
     supportsNativeTaskReuse: true,
     nativeChoices: { models: [...RUNNER_PICKER_MODELS.codex], modes: ['default', 'plan'] },

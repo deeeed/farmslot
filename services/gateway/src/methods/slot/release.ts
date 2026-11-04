@@ -79,6 +79,7 @@ import {
   cancelNativeRunWorkers,
   retireNativeWorkersForSlot,
 } from '../../runners/native/worker.js';
+import { cleanupSlotRunnerRuntimes } from '../../runners/owned-stop.js';
 import { runnerPromptSubmitKey } from '../../runners/registry.js';
 import { archiveRunnerSessionsForSlotRelease } from '../../runners/session-archive.js';
 import {
@@ -876,7 +877,13 @@ async function slotReleaseImpl(
     if (!holdReason) {
       await assertReleaseClaim();
       try {
-        holdReason = await reapSlotBrowserSession(vars);
+        holdReason = await cleanupSlotRunnerRuntimes(vars, {
+          stillOwned: async () => {
+            await assertReleaseClaim();
+            return true;
+          },
+        });
+        if (!holdReason) holdReason = await reapSlotBrowserSession(vars);
       } catch (error) {
         holdReason = error instanceof Error ? error.message : String(error);
       }

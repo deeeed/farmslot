@@ -67,6 +67,8 @@ interface SlotProcess {
 }
 const STARTED = 'Sun Oct 18 08:48:13 2026';
 let slotProcesses: SlotProcess[] = [];
+let daemonRecords: Array<{ pid: number; start: string; updater: boolean }> = [];
+let onDaemonCensus: (() => void) | null = null;
 let leases: Array<Record<string, unknown>> = [];
 /** The gateway's watched resource processes on the slot (resourceId -> pid). */
 let activeResources = new Map<string, { pid: number }>();
@@ -168,9 +170,26 @@ mock.module('../core/index.js', {
     },
     execOnSlot: async (_vars: unknown, cmd: string) => {
       commands.push(cmd);
+      if (cmd.startsWith(': farmslot-runner-daemon-census')) {
+        onDaemonCensus?.();
+        return {
+          stdout:
+            slotProcesses
+              .filter((proc) => proc.alive)
+              .map((proc) => `${proc.pid} ${proc.ppid} ${proc.pgid} ${STARTED} ${proc.args}\n`)
+              .join('') +
+            '--records--\n' +
+            JSON.stringify({
+              home: '/.farmslot-runtime/slot/.agent/codex-home',
+              records: daemonRecords,
+            }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
       if (cmd.startsWith(': farmslot-browser-session-census'))
         return { stdout: browserSessionCensus(), stderr: '', exitCode: 0 };
-      if (cmd.startsWith(': farmslot-browser-session-reap'))
+      if (cmd.startsWith(': farmslot-owned-process-reap'))
         return { stdout: reapBrowserSession(cmd), stderr: '', exitCode: 0 };
       if (cmd.includes('list-panes -a')) return { stdout: tmuxInventory, stderr: '', exitCode: 0 };
       if (cmd.startsWith('ps -ww -o command= -p'))
@@ -471,6 +490,8 @@ beforeEach(() => {
   run.taskFile = null;
   runnerProbe = { state: 'absent' };
   slotProcesses = [];
+  daemonRecords = [];
+  onDaemonCensus = null;
   leases = [];
   activeResources = new Map();
   runUpdates = [];
@@ -1079,6 +1100,103 @@ test("cancel stops the browser session its run left on the slot's CDP port", asy
     null,
     'the dev server is a resident, not an occupant',
   );
+});
+
+function leftManagedRunnerDaemons() {
+  slotProcesses = [
+    {
+      pid: 55354,
+      ppid: 1,
+      pgid: 55354,
+      cwd: '/slot',
+      args: '/.farmslot-runtime/slot/.agent/codex-home/packages/app-server-daemon/releases/0.166.0/bin/codex app-server --listen unix:///slot-runtime/control.sock --managed-daemon',
+      alive: true,
+    },
+    {
+      pid: 55559,
+      ppid: 1,
+      pgid: 55559,
+      cwd: '/slot',
+      args: '/.farmslot-runtime/slot/.agent/codex-home/packages/app-server-daemon/releases/0.166.0/bin/codex app-server daemon pid-update-loop',
+      alive: true,
+    },
+  ];
+  daemonRecords = [
+    { pid: 55354, start: STARTED, updater: false },
+    { pid: 55559, start: STARTED, updater: true },
+  ];
+}
+
+test('done cleanup stops the slot-isolated managed runner daemon and updater', async () => {
+  leftManagedRunnerDaemons();
+  slotProcesses.push({
+    pid: 55355,
+    ppid: 55354,
+    pgid: 55354,
+    cwd: '/slot',
+    args: 'node helper.mjs',
+    alive: true,
+  });
+  assert.equal(await stopRunOwnedTmuxAndWatches({ ...run, status: 'done' }), null);
+  assert.equal(await slotTeardownBlocker(run), null);
+  assert.deepEqual(alivePids(), []);
+});
+
+for (const foreign of [
+  'missing record',
+  'changed start',
+  'other home',
+  'attached process',
+] as const) {
+  test(`runner daemon cleanup preserves a ${foreign}`, async () => {
+    leftManagedRunnerDaemons();
+    slotProcesses = slotProcesses.slice(0, 1);
+    daemonRecords = daemonRecords.slice(0, 1);
+    if (foreign === 'missing record') daemonRecords = [];
+    if (foreign === 'changed start') daemonRecords[0].start = 'Sun Oct 18 08:48:14 2026';
+    if (foreign === 'other home')
+      slotProcesses[0].args = slotProcesses[0].args.replace(
+        '/.farmslot-runtime/slot/',
+        '/.farmslot-runtime/other/',
+      );
+    if (foreign === 'attached process') slotProcesses[0].ppid = 5000;
+    assert.equal(await stopRunOwnedTmuxAndWatches({ ...run, status: 'done' }), null);
+    assert.deepEqual(alivePids(), [55354]);
+    assert.match((await slotTeardownBlocker(run)) ?? '', /Process 55354 still uses/);
+  });
+}
+
+test('runner cleanup names a daemon that survives signals and keeps its slot held', async () => {
+  leftManagedRunnerDaemons();
+  slotProcesses[0].survives = true;
+  assert.match(
+    (await slotTeardownBlocker({ ...run, status: 'done' })) ?? '',
+    /Managed runner daemon process\(es\) 55354 did not stop/,
+  );
+  assert.deepEqual(alivePids(), [55354]);
+});
+
+test('runner cleanup leaves the daemon when its slot owner changes during the census', async () => {
+  leftManagedRunnerDaemons();
+  onDaemonCensus = () => {
+    slotRow = { ...slotRow, current_run_id: 'another-run', cleanup_run_id: null };
+  };
+  await slotTeardownBlocker({ ...run, status: 'done' });
+  assert.deepEqual(alivePids(), [55354, 55559]);
+  assert.equal(
+    commands.some((cmd) => cmd.startsWith(': farmslot-owned-process-reap')),
+    false,
+  );
+});
+
+test('done cleanup preserves an unrecorded worker for another task and its managed daemons', async () => {
+  run.status = 'done';
+  leftManagedRunnerDaemons();
+  closedRunUnrecordedWorker('.task/dev/manual-000164-1102-090112');
+  const result = await releaseCompletedRunSlot(run);
+  assert.equal(result.released, false);
+  assert.match(result.skipped ?? '', /Unrecorded pane %3.*not quiescent/);
+  assert.deepEqual(alivePids(), [55354, 55559]);
 });
 
 test('a dev server the gateway does not watch still holds the slot', async () => {

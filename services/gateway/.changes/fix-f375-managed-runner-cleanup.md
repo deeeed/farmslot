@@ -1,0 +1,1 @@
+- Stop slot-isolated managed runner daemons and their updaters during completed-run cleanup and explicit release. Keep the slot held for unknown occupants, stale process identities or changed ownership.
