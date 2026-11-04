@@ -31,7 +31,8 @@ export async function standaloneCatalogTargets(
 ): Promise<StandaloneCatalogTargets> {
   const assigned = standaloneOwners(reader);
   const pools = await loadPoolConfigs(poolDir);
-  const machines = new Set([...assigned.keys(), ...pools.map((pool) => pool.machine)]);
+  // Pools describe fleet workspaces; only issued native targets belong in this catalog.
+  const machines = new Set(assigned.keys());
   // Independent target probes run together so one slow node cannot serialize the whole catalog.
   const targets = await Promise.all(
     [...machines].map(async (machine) => {

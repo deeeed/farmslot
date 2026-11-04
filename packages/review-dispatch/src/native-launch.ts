@@ -63,7 +63,6 @@ export function nativeLaunchChoices(
   const ids = new Set([
     ...nodes.map((node) => node.executionNodeId),
     ...catalog.contexts.map((context) => context.executionNodeId ?? 'local'),
-    ...slots.map((slot) => slot.machine),
   ]);
   for (const id of [...ids].sort()) {
     if (filters.machines.length && !filters.machines.includes(id)) continue;

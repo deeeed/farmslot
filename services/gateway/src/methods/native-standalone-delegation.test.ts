@@ -78,6 +78,9 @@ const mutations: string[] = [];
 const sentPrompts: Array<{ machine: string; commandId: string; text: string }> = [];
 let worker = false;
 let hostSupportsDelegation = true;
+let failBrowserCreate = false;
+let failBrowserList = false;
+let failBrowserRead = false;
 const sockets = new Map<string, WebSocket>();
 let holdMetadataReply: ((machine: string, reply: () => void) => void) | undefined;
 let holdListReply: ((machine: string, reply: () => void) => void) | undefined;
@@ -146,6 +149,23 @@ for (const machine of machines) {
       assert.equal(frame.params.owner, owners[machine]);
       const params = frame.params.params;
       let result: unknown;
+      if (
+        (failBrowserCreate && frame.params.method === Methods.NATIVE_SESSION_CREATE) ||
+        (failBrowserList &&
+          machine === 'mini' &&
+          frame.params.method === Methods.NATIVE_SESSION_LIST) ||
+        (failBrowserRead && frame.params.method === Methods.NATIVE_SESSION_READ)
+      ) {
+        handleNodeResponse(
+          frame.id,
+          false,
+          undefined,
+          `Request ${frame.params.method} timed out after 15000ms`,
+          'TIMEOUT',
+          socket,
+        );
+        return;
+      }
       if (frame.params.method === Methods.NATIVE_PROFILE_LIST) {
         result = { profiles: [] };
       } else if (frame.params.method === Methods.NATIVE_SESSION_CREATE) {
@@ -726,6 +746,33 @@ test('observed history and inventory keep reader keys while fencing all configur
   }
 });
 
+test('pool-only machines without a native owner are absent from the native catalog', async () => {
+  const file = path.join(root, 'pool', 'unsupported.json');
+  await writeFile(
+    file,
+    JSON.stringify({
+      machine: 'unsupported',
+      host: 'unsupported.invalid',
+      ssh_user: 'fixture',
+      os: 'macos',
+      project: 'fixture',
+      slots: [],
+    }),
+  );
+  try {
+    const result = await call(Methods.NATIVE_SESSION_CATALOG, {});
+    assert(result && typeof result === 'object');
+    assert.equal(
+      Reflect.get(result, 'executionNodes').some(
+        (node: { executionNodeId: string }) => node.executionNodeId === 'unsupported',
+      ),
+      false,
+    );
+  } finally {
+    await rm(file);
+  }
+});
+
 test('an old native host stays visible with its real home and an explicit refresh reason', async () => {
   hostSupportsDelegation = false;
   try {
@@ -827,6 +874,10 @@ test(
         });
       }
       if (process.env.FARMSLOT_NATIVE_LAUNCH_BROWSER_PROOF === '1') {
+        failBrowserList = true;
+        t.after(() => {
+          failBrowserList = false;
+        });
         await writeFile(
           path.join(root, 'pool/offline-proof.json'),
           JSON.stringify({
@@ -913,7 +964,7 @@ test(
           if (releaseDialog) await page.clickText('Got it');
           await page.waitForSelector('[data-testid="native-context"]', { timeoutMs: 10_000 });
           await page.waitForExpression(
-            `(() => { const rows=document.querySelector('native-session-view')?.shadowRoot?.querySelectorAll('[data-testid=native-target-unavailable]'); return [...(rows??[])].some(row=>row.textContent.includes('offline-proof')&&row.textContent.includes('Target has no configured native owner')); })()`,
+            `(() => { const v=document.querySelector('native-session-view'); return v?.catalogCurrent && !v.shadowRoot.textContent.includes('offline-proof') && !v.catalog.executionNodes.some(n=>n.executionNodeId==='offline-proof'); })()`,
             { timeoutMs: 10_000 },
           );
           await page.click('[data-testid="review-dispatch-runner-codex"]');
@@ -1020,11 +1071,17 @@ test(
               Buffer.from(image.data, 'base64'),
             );
           }
+          // Real interactions against the private gateway; only its execution sockets are synthetic.
+          const { proveNativeLauncherLayout } =
+            await import('./native-launcher-ui.test-support.js');
+          await proveNativeLauncherLayout(page, debugDirectory, (value) => {
+            failBrowserCreate = value;
+          });
           const sentBefore = sentPrompts.length;
           await page.click('[data-testid="native-prompt"]');
           await page.keyPress('Enter');
           await page.waitForExpression(
-            `(() => { const v=document.querySelector('native-session-view'); return v?.session?.cwd===${JSON.stringify(custom)}; })()`,
+            `(() => { const v=document.querySelector('native-session-view'); return v?.caughtUp && !v.busy && v.session?.cwd===${JSON.stringify(custom)}; })()`,
             { timeoutMs: 15_000 },
           );
           const current = await page.evaluate<{
@@ -1109,6 +1166,19 @@ test(
             executionNodeId: 'macwork',
             sessionId: current.id,
           });
+          const { proveNativeLauncherRetry } = await import('./native-launcher-ui.test-support.js');
+          failBrowserRead = true;
+          try {
+            await page.navigate(
+              `${url.split('#')[0]}?proofRestore=retry#native?sessionId=${current.id}&executionNodeId=macwork`,
+              30_000,
+            );
+            await proveNativeLauncherRetry(page, output, () => {
+              failBrowserRead = false;
+            });
+          } finally {
+            failBrowserRead = false;
+          }
         } catch (error) {
           const output = process.env.FARMSLOT_NATIVE_LAUNCH_PROOF_DIR;
           if (output && path.resolve(output).startsWith('/tmp/cx-native-launch-')) {

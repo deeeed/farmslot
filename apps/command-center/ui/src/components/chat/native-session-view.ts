@@ -1383,9 +1383,9 @@ ${JSON.stringify(
         await this.deliver(command);
       }
       await this.refreshSessions();
-    } catch (error) {
+    } catch {
       if (revision === this.revision)
-        this.error = `${(error as Error).message}. Check Sessions before creating another session.`;
+        this.error = 'Session start was not confirmed. Check Sessions before trying again.';
     } finally {
       if (revision === this.revision) this.busy = false;
     }
@@ -1694,12 +1694,6 @@ ${JSON.stringify(
               : 'Input unavailable for this task. Use its task controls for recovery, or select the current worker.'}
           </p>`
         : nothing}
-      ${this.unavailableNodes.map(
-        (node) =>
-          html`<p class="error" role="status">
-            ${node.executionNodeId}: ${node.message}. Session inventory is incomplete.
-          </p>`,
-      )}
       ${this.creating
         ? html`<section class="new-session">
             <label class="launch-prompt"
@@ -1721,14 +1715,6 @@ ${JSON.stringify(
                 }}
               ></textarea>
             </label>
-            ${this.launchChoices
-              .filter((choice) => choice.kind === 'custom' && choice.unavailableReason)
-              .map(
-                (choice) =>
-                  html`<p class="error" role="status" data-testid="native-target-unavailable">
-                    ${choice.label}: ${choice.unavailableReason}
-                  </p>`,
-              )}
             <div class="launch-controls">
               <label
                 >Where to run<choice-picker
@@ -1758,8 +1744,11 @@ ${JSON.stringify(
                           ?disabled=${Boolean(context.unavailableReason)}
                         >
                           ${context.label} ·
-                          ${context.cwd}${context.unavailableReason
-                            ? ` · ${context.unavailableReason}`
+                          ${context.cwd}${context.unavailableReason ||
+                          this.unavailableNodes.some(
+                            (node) => node.executionNodeId === context.executionNodeId,
+                          )
+                            ? ' · Unavailable'
                             : ''}
                         </option>`,
                   )}
@@ -1791,61 +1780,65 @@ ${JSON.stringify(
               ></review-dispatch-picker>
             </div>
 
-            ${this.catalog?.contexts.some(
-              (context) =>
-                (context.executionNodeId ?? 'local') === this.executionNodeId &&
-                context.supportsProfiles,
-            )
-              ? keyed(
-                  this.revision,
-                  html`<native-profiles
-                    .api=${this.api}
-                    .executionNodeId=${this.executionNodeId}
-                    .runner=${this.runner}
-                    .disabled=${this.busy || !this.connected}
-                    @native-profile-change=${(event: CustomEvent<NativeProfileSelection>) => {
-                      const selected = event.detail;
-                      if (selected.executionNodeId !== this.executionNodeId) return;
-                      this.error = '';
-                      this.profile = selected.profile;
-                      this.profileReady = selected.ready;
-                      this.profileNodeId = selected.executionNodeId;
-                      if (selected.profile && selected.profile.runner !== this.runner) {
-                        this.runner = selected.profile.runner;
-                        this.model =
-                          this.catalog?.runners.find((option) => option.runner === this.runner)
-                            ?.defaultModel ?? '';
-                        this.mode = 'default';
-                      }
-                    }}
-                  ></native-profiles>`,
-                )
-              : nothing}
-            <label
-              >Interaction mode<choice-picker
-                overlay
-                data-testid="native-mode"
-                .value=${this.mode}
-                ?disabled=${this.busy}
-                @change=${(e: Event) => {
-                  this.mode =
-                    (e.target as HTMLElement & { value: string }).value === 'plan'
-                      ? 'plan'
-                      : 'default';
-                  this.error = '';
-                  this.syncLaunchUrl();
-                }}
+            <details class="launch-advanced" data-testid="native-advanced">
+              <summary>Advanced</summary>
+              ${this.catalog?.contexts.some(
+                (context) =>
+                  (context.executionNodeId ?? 'local') === this.executionNodeId &&
+                  context.supportsProfiles,
+              )
+                ? keyed(
+                    this.revision,
+                    html`<native-profiles
+                      .api=${this.api}
+                      .executionNodeId=${this.executionNodeId}
+                      .runner=${this.runner}
+                      .disabled=${this.busy || !this.connected}
+                      @native-profile-change=${(event: CustomEvent<NativeProfileSelection>) => {
+                        const selected = event.detail;
+                        if (selected.executionNodeId !== this.executionNodeId) return;
+                        this.error = '';
+                        this.profile = selected.profile;
+                        this.profileReady = selected.ready;
+                        this.profileNodeId = selected.executionNodeId;
+                        if (selected.profile && selected.profile.runner !== this.runner) {
+                          this.runner = selected.profile.runner;
+                          this.model =
+                            this.catalog?.runners.find((option) => option.runner === this.runner)
+                              ?.defaultModel ?? '';
+                          this.mode = 'default';
+                        }
+                      }}
+                    ></native-profiles>`,
+                  )
+                : nothing}
+              <label
+                >Interaction mode<choice-picker
+                  overlay
+                  data-testid="native-mode"
+                  .value=${this.mode}
+                  ?disabled=${this.busy}
+                  @change=${(e: Event) => {
+                    this.mode =
+                      (e.target as HTMLElement & { value: string }).value === 'plan'
+                        ? 'plan'
+                        : 'default';
+                    this.error = '';
+                    this.syncLaunchUrl();
+                  }}
+                >
+                  ${(
+                    this.catalog?.runners.find((option) => option.runner === this.runner)?.modes ??
+                    []
+                  ).map(
+                    (mode) =>
+                      html`<option value=${mode} .selected=${mode === this.mode}>
+                        ${mode === 'plan' ? 'Plan' : 'Default'}
+                      </option>`,
+                  )}
+                </choice-picker></label
               >
-                ${(
-                  this.catalog?.runners.find((option) => option.runner === this.runner)?.modes ?? []
-                ).map(
-                  (mode) =>
-                    html`<option value=${mode} .selected=${mode === this.mode}>
-                      ${mode === 'plan' ? 'Plan' : 'Default'}
-                    </option>`,
-                )}
-              </choice-picker></label
-            >
+            </details>
             <div>
               <button
                 class="primary"

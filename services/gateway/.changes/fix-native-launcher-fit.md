@@ -1,0 +1,1 @@
+- Only list configured native execution targets in the standalone launcher.

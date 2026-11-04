@@ -89,6 +89,7 @@ export const nativeSessionStyles = css`
     display: flex;
     flex-direction: column;
     min-width: 0;
+    flex: 1;
   }
   .native-read-status-text > span {
     white-space: nowrap;
@@ -140,6 +141,7 @@ export const nativeSessionStyles = css`
     overflow-wrap: anywhere;
   }
   .new-session {
+    min-width: 0;
     padding: 12px;
     overflow: auto;
     display: grid;
@@ -150,6 +152,8 @@ export const nativeSessionStyles = css`
     gap: 5px;
   }
   .inline {
+    min-width: 0;
+    max-width: 100%;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -387,12 +391,23 @@ export const nativeSessionStyles = css`
   .launch-controls {
     align-items: start;
     display: grid;
-    grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
   }
   .launch-controls label {
     align-content: start;
     min-width: 0;
+  }
+  .launch-advanced summary {
+    cursor: pointer;
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  .launch-advanced > label {
+    margin-top: 12px;
+  }
+  choice-picker {
+    min-width: 0;
+    max-width: 100%;
   }
   @media (max-width: 760px) {
     .launch-controls {
@@ -401,7 +416,9 @@ export const nativeSessionStyles = css`
     }
   }
   .launch-error {
-    min-height: 24px;
+    height: 56px;
+    flex-shrink: 0;
+    overflow: auto;
     box-sizing: border-box;
   }
 `;
