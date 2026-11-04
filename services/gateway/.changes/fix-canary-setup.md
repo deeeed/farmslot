@@ -1,1 +1,0 @@
-- Canary setup preserves node configuration and ships its templates through the deployment layout; its dependency-free slots prepare without an install, and nightly installation works from linked worktrees.

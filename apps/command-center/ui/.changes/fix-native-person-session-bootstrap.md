@@ -1,1 +1,0 @@
-- Native Chat shows native ownership denials immediately with their cause, instead of presenting an authorized-connection refusal as Reconnecting.

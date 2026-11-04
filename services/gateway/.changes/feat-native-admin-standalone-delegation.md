@@ -1,1 +1,0 @@
-- Let a global-admin person launch and supervise standalone native sessions across configured execution owners, with target availability and home directories.

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.6 - 2026-11-04
+
+- Keep a short recording tail after recipe completion so final assertions remain inside the video across recorder backends.
+
 ## 0.46.5 - 2026-11-03
 
 - Consumer harness 0.94.8 sends Extension background market orders' `usdAmount` as the notional (margin × leverage), so orders above 1x fill the requested size instead of failing the fill-size check.

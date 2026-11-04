@@ -1,1 +1,0 @@
-- Group each review with its following fix and remove the duplicate acceptance-criteria collapse.

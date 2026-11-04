@@ -1,1 +1,0 @@
-- Preserve expanded review-round selections in shared run links across Command Center and Companion.

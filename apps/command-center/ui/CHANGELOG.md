@@ -6,6 +6,16 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.32.0 - 2026-11-04
+
+- Keep custom native working directories on the selected execution target and default them to its reported home.
+- Start native conversations from a prompt, a filtered workspace or custom directory on a catalogued machine, and shared harness/model/effort controls.
+- Start regular terminals or native sessions from Terminals with URLs that reopen the selection, and default Co-Pilot to native while keeping tmux selectable.
+- Keep run artifact filters and file previews in the URL so reopened links restore the chosen view.
+- Native Chat shows native ownership denials immediately with their cause, instead of presenting an authorized-connection refusal as Reconnecting.
+- Group each review with its following fix and remove the duplicate acceptance-criteria collapse.
+- Share durable offline storage across Command Center tabs, including reloads and closing the first tab, without a memory-fallback notice.
+
 ## 0.31.0 - 2026-11-03
 
 - A run's results card button that re-pulls the run's files from its slot (`run.refreshMirror`) is now called Sync artifacts, as in the slot view (was Refresh output). Both carry the tooltip "Pull this run's latest files from its slot". A slot release no longer copies files back (F313), so this is how to pick up files that changed after completion. When the slot no longer holds the run's task, the results-card button is disabled with "Slot released; files were synced at <time>". Both buttons share one request, which stays open while the copy reports progress. Before, the results card gave up after 120 s, while a changed 882 MB package needs about 7 minutes at 2 MB/s. The pipeline's finalize node no longer shows release artifact copies.

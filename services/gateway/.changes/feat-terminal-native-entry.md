@@ -1,1 +1,0 @@
-- Create isolated user terminals on connected machines without reusing run or slot sessions.

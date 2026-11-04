@@ -1,1 +1,0 @@
-- Observed native catalog and inventory reads preserve the same replacement-identity refusal reason as direct native RPCs.
