@@ -77,6 +77,31 @@ test('pipeline offline wait expires at two minutes without sending', async (t) =
   await rejected;
 });
 
+test('a retained review waits past two minutes for its node without resending work', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const machine = 'retained-review-reconnect';
+  const socket = Object.assign(new EventEmitter(), { readyState: WebSocket.OPEN });
+  const ws = socket as WebSocket;
+  t.after(() => unregisterByWs(ws));
+  let failure: unknown;
+  const pending = withNodeReconnectWait(
+    () => waitForNode(machine),
+    () => {},
+    Number.POSITIVE_INFINITY,
+  );
+  const settled = pending.catch((error: unknown) => {
+    failure = error;
+  });
+  t.mock.timers.tick(135_000);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(failure, undefined, 'a disconnected review keeps its existing reviewer');
+  registerNode(machine, 1, ws);
+  t.mock.timers.tick(100);
+  await settled;
+  assert.equal((await pending).ws, ws);
+});
+
 for (const change of ['cancel', 'generation'] as const) {
   test(`${change} during pipeline reconnect refuses the pending command`, async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
@@ -87,6 +112,7 @@ for (const change of ['cancel', 'generation'] as const) {
       () => {
         current();
       },
+      Number.POSITIVE_INFINITY,
     );
     const rejected = assert.rejects(pending, /Run ownership changed/);
     if (change === 'cancel') run.status = 'cancelled';

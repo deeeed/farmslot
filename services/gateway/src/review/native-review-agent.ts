@@ -243,6 +243,9 @@ async function runNativeReviewAttempt(
   const ownerPrincipalId = await withNodeReconnectWait(
     async () => resolveAfterNodeReconnect(vars.machine, () => nativeReviewerOwner(original, vars)),
     admit,
+    // An absent node cannot prove that its retained reviewer stopped. Keep the
+    // same reviewer until reconnect or an operator action supersedes this run.
+    Number.POSITIVE_INFINITY,
   );
   admit();
   const allocated = allocateReviewerContext({ runId, runner, model });

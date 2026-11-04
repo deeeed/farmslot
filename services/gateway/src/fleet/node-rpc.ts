@@ -377,7 +377,11 @@ function sendNodeRequestStreaming(
   });
 }
 
-const reconnectWait = new AsyncLocalStorage<{ assertCurrent: () => void; deadline?: number }>();
+const reconnectWait = new AsyncLocalStorage<{
+  assertCurrent: () => void;
+  timeoutMs: number;
+  deadline?: number;
+}>();
 
 export function assertNodeReconnectCurrent(): void {
   reconnectWait.getStore()?.assertCurrent();
@@ -387,8 +391,9 @@ export function assertNodeReconnectCurrent(): void {
 export function withNodeReconnectWait<T>(
   operation: () => Promise<T>,
   assertCurrent: () => void,
+  timeoutMs = 120_000,
 ): Promise<T> {
-  return reconnectWait.run({ assertCurrent }, operation);
+  return reconnectWait.run({ assertCurrent, timeoutMs }, operation);
 }
 
 /** Owned teardown must still run after forward execution was cancelled. */
@@ -430,7 +435,7 @@ export async function waitForNode(
     if (scope) scope.deadline = undefined;
     return connected;
   }
-  if (scope) timeoutMs = 120_000;
+  if (scope) timeoutMs = scope.timeoutMs;
   const deadline = scope ? (scope.deadline ??= Date.now() + timeoutMs) : Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     check();
