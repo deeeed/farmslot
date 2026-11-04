@@ -50,13 +50,7 @@ import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
-import {
-  type AppState,
-  fleetQuery,
-  getState,
-  isHydrating,
-  subscribe,
-} from '../../state.js';
+import { type AppState, fleetQuery, getState, isHydrating, subscribe } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { readStored } from '../shared/read-current.js';

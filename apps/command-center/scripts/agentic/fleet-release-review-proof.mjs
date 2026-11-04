@@ -114,20 +114,25 @@ try {
   assert.deepEqual(pending.rows, slots);
   assert.deepEqual(commands, []);
   await page.screenshot({ path: path.join(output, 'inspection-pending.png') });
-  await until(() => held.length, (count) => count > 0, 'Real inspection reply');
+  await until(
+    () => held.length,
+    (count) => count > 0,
+    'Real inspection reply',
+  );
   holdFleet = false;
   held.splice(0).forEach((send) => send());
   const current = await until(
-    () => modal.evaluate((view) => ({
-      inspecting: view.model.inspecting,
-      canRelease: view.model.canRelease,
-      error: view.model.error,
-      rows: view.model.rows.map((row) => ({
-        slotId: row.slotId,
-        allowed: row.eligibility.allowed,
-        reason: row.eligibility.reason,
+    () =>
+      modal.evaluate((view) => ({
+        inspecting: view.model.inspecting,
+        canRelease: view.model.canRelease,
+        error: view.model.error,
+        rows: view.model.rows.map((row) => ({
+          slotId: row.slotId,
+          allowed: row.eligibility.allowed,
+          reason: row.eligibility.reason,
+        })),
       })),
-    })),
     (value) => !value.inspecting,
     'Inspection settles from the real gateway reply',
   );

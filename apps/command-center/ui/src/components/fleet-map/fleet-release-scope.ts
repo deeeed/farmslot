@@ -30,18 +30,18 @@ export function fleetReleaseScope(
   const [reason, title] = !selectable
     ? ['Switch to the table to select', 'Switch to the table to select slots to release']
     : !selected.size
-        ? ['Select slots to release', 'Select slots to release']
-        : !chosen.length
-          ? ['Selection hidden by filters', 'The selected slots are hidden by the current filters']
-          : !canInspect
-            ? [
-                'Selected slots can’t be released',
-                'No selected slot can be released — each is busy, held, or disabled',
-              ]
-            : [
-                '',
-                `Review the ${chosen.length} selected slot${chosen.length === 1 ? '' : 's'} before releasing`,
-              ];
+      ? ['Select slots to release', 'Select slots to release']
+      : !chosen.length
+        ? ['Selection hidden by filters', 'The selected slots are hidden by the current filters']
+        : !canInspect
+          ? [
+              'Selected slots can’t be released',
+              'No selected slot can be released — each is busy, held, or disabled',
+            ]
+          : [
+              '',
+              `Review the ${chosen.length} selected slot${chosen.length === 1 ? '' : 's'} before releasing`,
+            ];
   return {
     slotIds: chosen.map((slot) => slot.slot),
     label: chosen.length

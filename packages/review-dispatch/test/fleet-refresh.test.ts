@@ -385,7 +385,10 @@ test('release review replaces shown eligibility with the current inspection befo
   assert.equal(model.rows[0].eligibility.allowed, false);
   await model.release('shown');
   await model.releaseIdle();
-  assert.deepEqual(calls.map((call) => call.method), [Methods.FLEET_STATUS]);
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    [Methods.FLEET_STATUS],
+  );
   model.dispose();
 });
 
