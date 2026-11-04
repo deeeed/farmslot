@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
   allocateReviewerContext,
   isTerminalRunStatus,
+  type ReviewDiffSnapshot,
   type ReviewMode,
   type ReviewSessionFallback,
   type ReviewValidationDepth,
@@ -510,11 +511,44 @@ async function runNativeReviewAttempt(
           feedbackRelPath,
           resultRelPath,
         );
+        // Reuse a full comparison; a warm/delta review needs only its full merge-base identity.
+        let publicationComparison: ReviewDiffSnapshot =
+          input.mode === 'warm' || delta
+            ? { source: 'unavailable', capturedAt: snapshot.snapshot.capturedAt }
+            : snapshot.snapshot;
+        if (
+          (input.mode === 'warm' || delta) &&
+          snapshot.snapshot.baseRef &&
+          snapshot.snapshot.headSha
+        ) {
+          const base = await execOnSlot(
+            vars,
+            `git merge-base ${shellQuote(snapshot.snapshot.baseRef)} ${shellQuote(snapshot.snapshot.headSha)}`,
+            { timeout: 10_000 },
+          );
+          publicationComparison =
+            base.exitCode === 0 && /^[a-f0-9]{40}$/iu.test(base.stdout.trim())
+              ? {
+                  source: 'local-git',
+                  baseRef: snapshot.snapshot.baseRef,
+                  baseSha: base.stdout.trim(),
+                  headSha: snapshot.snapshot.headSha,
+                  capturedAt: publicationComparison.capturedAt,
+                }
+              : { source: 'unavailable', capturedAt: publicationComparison.capturedAt };
+        }
         let template = scopeReviewFeedbackPath(
-          await expandReviewTemplate(vars, taskDir, runId, validationDepth, {
-            ...target,
-            feedback: feedbackRelPath,
-          }),
+          await expandReviewTemplate(
+            vars,
+            taskDir,
+            runId,
+            validationDepth,
+            {
+              ...target,
+              feedback: feedbackRelPath,
+            },
+            publicationComparison,
+          ),
           feedbackRelPath,
           resultRelPath,
         );

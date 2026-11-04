@@ -197,6 +197,7 @@ export async function readGateRecordedEvidenceSources(
     preparedPackage.selectedEvidenceKeys ?? [],
     preparedPackage.artifactBundle,
     preparedPackage.headSha ?? null,
+    preparedPackage.reviewSnapshot,
   );
   if (!sources.length) throw new Error('The gate package has no retained recipe evidence closure.');
   assertRecordedEvidenceRevision(sources, preparedPackage.reviewSnapshot);
@@ -210,6 +211,7 @@ export async function readFrozenPublicationRecipeSources(
   selectedKeys: readonly string[] = [],
   bundleRef?: RunArtifactBundleRef,
   headSha?: string | null,
+  comparison?: ReviewDiffSnapshot,
 ): Promise<RecordedEvidenceSource[]> {
   const contractVersion = run.recordedEvidenceContractVersion ?? 0;
   if (contractVersion !== 0 && contractVersion !== 1)
@@ -264,7 +266,7 @@ export async function readFrozenPublicationRecipeSources(
         pointer.relativeArtifactRoot,
         path.join(await retainedRunTaskDirectory(run, bundleRef), 'artifacts'),
         undefined,
-        { ...publicationBaselineContext(run, [...inventory]), headSha },
+        { ...publicationBaselineContext(run, [...inventory], comparison), headSha },
       );
       if (
         external.some(

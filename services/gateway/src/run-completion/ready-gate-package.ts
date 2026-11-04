@@ -226,11 +226,8 @@ export function verifyReadyGatePackageHash(prPackage: ReadyGatePrPackage): void 
   }
 }
 
-export async function readReadyGatePreparedPackage(
-  current: Run,
-): Promise<ReadyGatePrPackage | undefined> {
-  const artifactRel =
-    current.engineState?.publishGate?.packageArtifactPath ?? 'artifacts/pr-package.json';
+/** The existing ready decision carries the gateway's captured package identity. */
+export function retainedReadyGatePackage(current: Run): ReadyGatePrPackage | undefined {
   const retained = current.decisions
     .slice()
     .reverse()
@@ -242,6 +239,16 @@ export async function readReadyGatePreparedPackage(
     );
   if (retained?.payload?.kind === 'ready' && retained.payload.prPackage)
     return retained.payload.prPackage;
+  return undefined;
+}
+
+export async function readReadyGatePreparedPackage(
+  current: Run,
+): Promise<ReadyGatePrPackage | undefined> {
+  const artifactRel =
+    current.engineState?.publishGate?.packageArtifactPath ?? 'artifacts/pr-package.json';
+  const retained = retainedReadyGatePackage(current);
+  if (retained) return retained;
   if (!current.taskFile) return undefined;
   // This gateway control record is written after capture to carry the payload's
   // digest. It cannot be part of its own content-addressed payload. No slot I/O.

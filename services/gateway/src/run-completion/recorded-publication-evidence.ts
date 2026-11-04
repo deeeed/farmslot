@@ -5,7 +5,12 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
-import type { ArtifactRef, Run, RunArtifactBundleRef } from '@farmslot/protocol';
+import type {
+  ArtifactRef,
+  ReviewDiffSnapshot,
+  Run,
+  RunArtifactBundleRef,
+} from '@farmslot/protocol';
 
 import {
   isGatewayOwnedArtifactPath,
@@ -241,6 +246,7 @@ async function frozenPublicationTextClosure(
   selected: readonly ArtifactRef[],
   bundleRef?: RunArtifactBundleRef,
   headSha?: string | null,
+  comparison?: ReviewDiffSnapshot,
 ): Promise<FrozenPublicationTextClosure> {
   const media = selected
     .filter((artifact) => isUploadableMediaPath(artifact.path))
@@ -255,6 +261,7 @@ async function frozenPublicationTextClosure(
     selectedRecordedMedia,
     bundleRef,
     headSha ?? null,
+    comparison,
   );
   // This inventory is the frozen publication closure, not the task's historical
   // artifacts. Media pixels retain their existing visual-review requirements.
@@ -300,6 +307,7 @@ export async function scanFrozenPublicationEvidence(
   selectedEvidenceKeys: readonly string[],
   bundleRef?: RunArtifactBundleRef,
   headSha?: string,
+  comparison?: ReviewDiffSnapshot,
 ): Promise<void> {
   if (!inventory.length && !selectedEvidenceKeys.length) return;
   const selected = scannedFrozenSelection(inventory, selectedEvidenceKeys);
@@ -309,6 +317,7 @@ export async function scanFrozenPublicationEvidence(
     selected,
     bundleRef,
     headSha,
+    comparison,
   );
   await scanFrozenPublicationText(run, textEntries, bundleRef);
 }
@@ -320,6 +329,7 @@ export async function verifyFrozenPublicationEvidence(
   selectedEvidenceKeys: readonly string[],
   bundleRef?: RunArtifactBundleRef,
   headSha?: string,
+  comparison?: ReviewDiffSnapshot,
 ): Promise<void> {
   if (!inventory.length && !selectedEvidenceKeys.length) return;
   const selected = scannedFrozenSelection(inventory, selectedEvidenceKeys);
@@ -335,6 +345,7 @@ export async function verifyFrozenPublicationEvidence(
     selected,
     bundleRef,
     headSha,
+    comparison,
   );
   for (const source of sources) {
     const issues = validateRecordedEvidencePackage(source.input).findings.filter(

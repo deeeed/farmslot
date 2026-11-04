@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { mock, type TestContext } from 'node:test';
 
-import type { ArtifactRef, Run } from '@farmslot/protocol';
+import type { ArtifactRef, ReviewDiffSnapshot, Run } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
@@ -754,6 +754,52 @@ test('before evidence keeps its full-review base after dispatch replay advances 
     publicationBaselineContext(f.run),
   );
   assert.ok(inventory.some((entry) => entry.path === `artifacts/${f.baselineRoot}/proof.png`));
+});
+
+test('before evidence admits the frozen publication merge base after main is merged', async (t) => {
+  const f = await sameHeadFixture(t);
+  f.run.worktreeHeadAtDispatch = 'd'.repeat(40);
+  const bytes = JSON.stringify(f.provenance);
+  const file = `artifacts/${f.baselineRoot}/product-provenance.json`;
+  await writeFile(path.join(f.taskDir, file), bytes);
+  f.inventory.find((entry) => entry.path === file)!.sha256 = digest(Buffer.from(bytes));
+  const comparison: ReviewDiffSnapshot = {
+    source: 'local-git',
+    baseRef: 'origin/main',
+    baseSha: f.provenance.git_ref,
+    headSha: f.headSha,
+    capturedAt: '2026-11-04T02:00:00.000Z',
+  };
+  await retainRunFixture(f.run);
+  const effective = await readEvidenceManifest(f.run, comparison);
+  assert.equal(effective?.before_after_pairs?.[0]?.before, `${f.baselineRoot}/proof.png`);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    effective,
+    1,
+    publicationBaselineContext(f.run, f.inventory, comparison),
+  );
+  await retainRunFixture(f.run);
+  const prepared = makeReadyGatePackage({
+    headSha: f.headSha,
+    reviewSnapshot: comparison,
+    evidenceManifest: inventory,
+    selectedEvidenceKeys: [
+      `artifacts/${f.baselineRoot}/proof.png`,
+      `artifacts/${f.headRoot}/proof.png`,
+    ],
+  });
+  prepared.packageHash = computeReadyGatePackageHash(prepared);
+  const sources = await readGateRecordedEvidenceSources(f.run, prepared);
+  assert.equal(sources.length, 1, 'the before attempt supplies no head verdicts');
+  assert.equal(f.run.worktreeHeadAtDispatch, 'd'.repeat(40));
+  for (const invalid of [
+    { ...comparison, headSha: 'e'.repeat(40) },
+    { ...comparison, baseRef: null },
+    { ...comparison, source: 'unavailable' as const },
+  ])
+    await assert.rejects(readEvidenceManifest(f.run, invalid), /git_ref|unchanged base/);
 });
 
 test('a warm review delta cannot replace the before-evidence baseline', async (t) => {

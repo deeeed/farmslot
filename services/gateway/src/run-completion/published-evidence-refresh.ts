@@ -181,6 +181,7 @@ async function refreshPublishedEvidenceLocked(
     selectedEvidenceKeys,
     prepared.artifactBundle,
     prepared.headSha,
+    prepared.reviewSnapshot,
   );
   const { artifactUrls, selectedEvidenceKeys: expanded } = await publishSelectedEvidence(
     run,
@@ -188,6 +189,7 @@ async function refreshPublishedEvidenceLocked(
     selection,
     prepared.artifactBundle,
     prepared.headSha,
+    prepared.reviewSnapshot,
   );
   if (!expanded.length) throw new Error('No local visual evidence is available to refresh');
   assertCurrent();
@@ -213,6 +215,7 @@ async function refreshPublishedEvidenceLocked(
         expanded,
         prepared.artifactBundle,
         prepared.headSha,
+        prepared.reviewSnapshot,
       );
       const current = await readPr();
       assertAdoptedTarget(current);

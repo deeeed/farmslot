@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 
-import { type ArtifactRef, type Run } from '@farmslot/protocol';
+import { type ArtifactRef, type ReviewDiffSnapshot, type Run } from '@farmslot/protocol';
 
 import { getProjectField, inferArtifactPurpose } from '../core/index.js';
 import { contributionStack } from '../run-engine/diff-artifacts.js';
@@ -195,8 +195,9 @@ async function applyLocalEvidencePreview(
   run: Run,
   body: string,
   artifacts: ArtifactRef[],
+  comparison?: ReviewDiffSnapshot,
 ): Promise<string> {
-  const manifestFromFile = await readEvidenceManifest(run);
+  const manifestFromFile = await readEvidenceManifest(run, comparison);
   const previewArtifacts = mergeEvidenceManifestArtifactRefs(artifacts, manifestFromFile);
   const { manifestUrls, detectionUrls } = buildLocalArtifactUrlMaps(previewArtifacts);
   const manifest = manifestFromFile ?? autoDetectEvidenceManifest(detectionUrls);
@@ -263,6 +264,7 @@ export async function buildDraftPrBody(
   run: Run,
   report: string | null,
   artifacts: ArtifactRef[],
+  comparison?: ReviewDiffSnapshot,
 ): Promise<string> {
   // The pack's renderer (when declared) turns the authored prose plus the
   // recipe and run artifacts into the body that is published; the render is
@@ -282,6 +284,7 @@ export async function buildDraftPrBody(
       run,
       await withStackParentLink(run, stripExecutionPreamble(existing)),
       artifacts,
+      comparison,
     );
   }
   const publishableArtifacts = artifacts.filter(
@@ -300,5 +303,10 @@ export async function buildDraftPrBody(
     '',
     '<!-- Published by Farmslot after human approval. -->',
   ].join('\n');
-  return applyLocalEvidencePreview(run, await withStackParentLink(run, body), artifacts);
+  return applyLocalEvidencePreview(
+    run,
+    await withStackParentLink(run, body),
+    artifacts,
+    comparison,
+  );
 }

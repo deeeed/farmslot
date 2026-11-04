@@ -267,7 +267,11 @@ async function captureRunOutputNow(
         undefined,
         undefined,
         run.recordedEvidenceContractVersion ?? 0,
-        publicationBaselineContext(run, [...artifactsByPath.values()]),
+        publicationBaselineContext(
+          run,
+          [...artifactsByPath.values()],
+          options.publicationComparison,
+        ),
       );
     } catch (error) {
       if (!(error instanceof RecordedEvidenceReadError)) throw error;

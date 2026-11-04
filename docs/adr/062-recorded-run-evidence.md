@@ -1180,3 +1180,35 @@ the run's checkout.
 `Run.beforeAttemptAttestations` in `@farmslot/protocol`. The shared gate action
 `attest-before-attempt` routes to it, and `farmslot run gate <runId> --action
 attest-before-attempt --recipe-run <id> --reason <text>` is the CLI surface.
+
+## Amendment 22 (2026-11-04): Before evidence after merging the base
+
+**Status:** Accepted. Lead approved on 2026-11-04; implementation pending.
+**Specification:** [Consumers and publication](../reference/recorded-run-evidence.md#consumers-and-publication).
+
+### Decision
+
+Before-only captures may also use the merge base of the exact selected head and
+its publication base, including the configured parent of a stacked change. The
+gateway must establish and freeze that comparison before admitting the evidence.
+A warm review delta is not that comparison. Frozen readers use its captured
+identity, never a moving branch or the checkout's later HEAD.
+
+Clean provenance, branch ownership, captured inventory and immutable closure
+checks still apply. After and standalone captures still require the clean
+selected head. Unrelated ancestors require the existing operator attestation.
+Review guidance must accept the same baseline identities as publication.
+
+### Rationale and consequences
+
+Merging the base can move the comparison beyond the run's original baseline.
+Requiring new before evidence while refusing that comparison strands the run.
+The frozen comparison permits it without rewriting the original dispatch base,
+relabelling captures or weakening publication approval.
+
+### Public surface
+
+No new CLI command, flag, RPC or SDK export. The existing publication review
+snapshot binds the comparison's base and head. Review templates consume that
+same identity; project harnesses, including mm-harness, inherit admission without
+a project-specific exception. Existing package formats and stability remain.
