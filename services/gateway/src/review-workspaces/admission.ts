@@ -7,6 +7,7 @@ import {
   type WorkerTransport,
 } from '@farmslot/protocol';
 
+import { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
@@ -80,6 +81,15 @@ export function assertReviewWorkspaceCapacity(
       `Review capacity is full on ${machine}`,
     );
   }
+}
+
+/** A mixed-project pool's default platform need not describe the reviewed project. */
+export async function resolveReviewWorkspacePlatform(
+  pool: PoolConfig,
+  project: string,
+): Promise<string> {
+  const member = pool.slots.find((slot) => slot.project === project);
+  return member ? (await loadSlotVars(member.id)).platform : pool.platform;
 }
 
 /** No device/slot reads: eligibility comes from machine opt-in, project, owner and runner. */

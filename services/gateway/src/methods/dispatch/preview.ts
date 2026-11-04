@@ -33,6 +33,7 @@ import { loadFleetStatus, loadProjectConfig, loadProjectConfigs } from '../../fl
 import {
   assertReviewWorkspacePlacement,
   inspectReviewWorkspaceTarget,
+  resolveReviewWorkspacePlatform,
 } from '../../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../../review-workspaces/direct-defaults.js';
 import { detectProfileFit, FARMSLOT_PROJECT } from '../../run-engine/profile-fit-gate.js';
@@ -1116,7 +1117,7 @@ async function previewDispatch(
       const projectVars = await loadProjectVars(params.project);
       const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
         flow: 'review-pr',
-        platform: admission.pool.platform,
+        platform: await resolveReviewWorkspacePlatform(admission.pool, params.project),
         runMode: params.mode ?? 'autonomous',
         explicitDomain: params.domain,
         explicitId: admission.project.staticReview!.templateId,

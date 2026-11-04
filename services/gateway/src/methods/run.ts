@@ -106,6 +106,7 @@ import {
   assertReviewWorkspaceAdmitted,
   assertReviewWorkspacePlacement,
   inspectReviewWorkspaceTarget,
+  resolveReviewWorkspacePlatform,
   type ReviewWorkspaceAdmission,
 } from '../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../review-workspaces/direct-defaults.js';
@@ -614,7 +615,7 @@ export async function planRunCreation(
     const projectVars = await loadProjectVars(params.project);
     executionTemplateSnapshot = resolveConfiguredExecutionTemplateForSlot(projectVars, {
       flow: 'review-pr',
-      platform: workspaceAdmission.pool.platform,
+      platform: await resolveReviewWorkspacePlatform(workspaceAdmission.pool, params.project),
       runMode: params.mode ?? 'autonomous',
       explicitDomain: params.domain,
       explicitId: params.executionTemplateId,

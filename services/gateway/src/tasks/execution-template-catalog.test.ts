@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { SourceMaterialization } from '@farmslot/protocol';
+import { isRecord, type SourceMaterialization } from '@farmslot/protocol';
 
 import type { ProjectVars } from '../core/config.js';
 
@@ -15,6 +15,11 @@ import {
   resolveConfiguredExecutionTemplate,
   resolveConfiguredExecutionTemplateForSlot,
 } from './execution-template-catalog.js';
+import {
+  lintWorkerTemplateAgainstContract,
+  readWorkerTerminalProjectConfig,
+  resolveWorkerTerminalContract,
+} from './worker-terminal-contract.js';
 
 function withProject(fn: (projectVars: ProjectVars) => void): void {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-gateway-catalog-'));
@@ -416,4 +421,42 @@ test('catalog read uses verified project vars without an async source context', 
     assert.ok(options.options.some((entry) => entry.id === 'fix-bug/perps-mobile'));
     assert.ok(!options.unavailableSources.some((entry) => entry.id === 'team:perps'));
   });
+});
+
+test('Farmslot static review selects the adapter and freezes the canonical review guidance', () => {
+  const projectRoot = path.resolve(import.meta.dirname, '../../../../projects/farmslot-farm');
+  const projectJson: ProjectVars['projectJson'] = JSON.parse(
+    readFileSync(path.join(projectRoot, 'project.json'), 'utf8'),
+  );
+  const contractInput: unknown = projectJson;
+  assert.ok(isRecord(contractInput));
+  assert.equal(projectJson.repo_url, `https://github.com/${projectJson.ci?.repo}.git`);
+  assert.ok(projectJson.static_review?.template_id);
+  assert.deepEqual(projectJson.static_review.instruction_files, ['runtime/review-quality.md']);
+  const selected = resolveConfiguredExecutionTemplateForSlot(
+    {
+      projectName: 'farmslot-farm',
+      projectConfig: path.join(projectRoot, 'project.json'),
+      projectFixturesDir: path.join(projectRoot, 'fixtures'),
+      projectTemplatesDir: path.join(projectRoot, 'templates'),
+      projectJson,
+      runtimeDir: '.agent',
+      artifactDir: '.task',
+    },
+    {
+      flow: 'review-pr',
+      platform: 'cli',
+      runMode: 'autonomous',
+      explicitId: projectJson.static_review.template_id,
+    },
+  );
+  assert.equal(selected.reference.id, 'review-pr/static');
+  assert.match(selected.markdown, /canonical review guidance/);
+  const contract = resolveWorkerTerminalContract(
+    readWorkerTerminalProjectConfig(contractInput),
+    'review-pr',
+  );
+  assert.deepEqual(lintWorkerTemplateAgainstContract(selected.markdown, contract), []);
+  assert.match(selected.markdown, /From the task directory[^\n]+\.\/mark complete --mark-last/);
+  assert.equal(projectJson.workflow_defaults?.['review-pr']?.review?.publishReview, false);
 });

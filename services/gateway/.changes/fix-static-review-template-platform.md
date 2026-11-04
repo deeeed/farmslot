@@ -1,0 +1,1 @@
+- Select slot-free review templates using the reviewed project's configured platform in mixed-project pools, so web and CLI reviews work on hosts whose default project is mobile.
