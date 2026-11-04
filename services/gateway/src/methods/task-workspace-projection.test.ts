@@ -53,7 +53,12 @@ mock.module('../fleet/state.js', {
         machine: workspaceRun?.reviewWorkspace?.machine ?? 'local',
         host: workspaceHost,
         sshUser: 'fixture',
-      } as PoolConfig,
+        project: 'fixture',
+        platform: 'cli',
+        os: 'linux',
+        slots: [],
+        reviewWorkspaces: { maxConcurrent: 2 },
+      } satisfies PoolConfig,
     ],
   },
 });
