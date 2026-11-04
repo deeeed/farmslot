@@ -1,0 +1,1 @@
+- Restore the dev-server log tail window after slot preparation.

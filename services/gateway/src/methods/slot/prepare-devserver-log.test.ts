@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../../core/index.js';
@@ -92,6 +96,45 @@ test('buildDevServerLogTailWindowCommand replaces any prior window then opens a 
   // command is shell-quoted as the new-window argument, so it is nested-quoted.
   assert.match(command, /tail -F /);
   assert.match(command, /\/home\/dev\/mm\/temp\/recipe\/runtime\/metro\.log/);
+});
+
+test('the generated tail-window command passes the subcommand directly to tmux', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'devserver-log-command-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const argsFile = path.join(root, 'args');
+  writeFileSync(
+    path.join(root, 'tmux'),
+    `#!/bin/sh
+case "$1" in
+  list-windows) exit 0 ;;
+  new-window) printf '%s\\n' "$@" > "$TEST_TMUX_ARGS" ;;
+  *) echo "unexpected tmux subcommand: $1" >&2; exit 64 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  const command = buildDevServerLogTailWindowCommand(
+    'slot-1',
+    '/tmp/slot repo/dev.log',
+    '/tmp/slot repo',
+  );
+  const result = spawnSync('bash', ['-c', command], {
+    env: { ...process.env, PATH: `${root}:${process.env.PATH}`, TEST_TMUX_ARGS: argsFile },
+    encoding: 'utf8',
+    timeout: 2_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readFileSync(argsFile, 'utf8').trim().split('\n'), [
+    'new-window',
+    '-d',
+    '-t',
+    'slot-1:',
+    '-n',
+    'devserver-log',
+    '-c',
+    '/tmp/slot repo',
+    "tail -F '/tmp/slot repo/dev.log'",
+  ]);
 });
 
 test('buildDevServerLogTailWindowCommand honours a custom window name', () => {
