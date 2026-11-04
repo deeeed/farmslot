@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { RunGetResult } from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
   createMemoryResourceStore,
@@ -71,6 +72,94 @@ test(
     assert.deepEqual(await sources, { value: { data: { configured: true }, resourceState } });
   },
 );
+
+test('current run reads survive the measured 81-second gate inspection and remain bounded', async (t) => {
+  const fake = installFakeGateway(t);
+  const { GatewayClient, gateway } = await import('./gateway-client.js');
+  const client = new GatewayClient('ws://localhost:1234/ws', { token: 'fixture' });
+  t.after(() => {
+    client.disconnect();
+    gateway.disconnect();
+  });
+  client.connect();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const socket = fake.sockets.at(-1)!;
+  const at = '2026-11-05T00:00:00.000Z';
+  const reply: RunGetResult = {
+    run: {
+      id: 'gate-run',
+      familyId: 'gate-run',
+      lane: 'production',
+      flowType: 'dev',
+      status: 'human-gating',
+      project: 'fixture',
+      ticketOrPr: 'fixture',
+      slotId: 'slot-1',
+      branch: 'fixture',
+      taskFile: 'tasks/fixture/TASK.md',
+      createdAt: at,
+      updatedAt: at,
+      metrics: { nudgeCount: 0, runner: null, model: null },
+      steps: [{ name: 'human-gate', status: 'running' }],
+      engineState: { generation: 4 },
+      decisions: [
+        {
+          id: 'gate-4',
+          type: 'engine_human_gate',
+          title: 'Ready',
+          description: '',
+          actions: [{ id: 'ready', label: 'Mark ready', style: 'primary' }],
+          createdAt: at,
+          payload: {
+            kind: 'ready',
+            prNumber: null,
+            repo: null,
+            branch: 'fixture',
+            diffStat: { files: 1, additions: 1, deletions: 0 },
+            workerReport: 'Complete',
+            gateReadiness: {
+              state: 'ready',
+              identity: { runId: 'gate-run', generation: 4 },
+              reasons: [],
+            },
+          },
+        },
+      ],
+    },
+  };
+  const resourceState = {
+    epoch: 'test',
+    dependencies: [
+      { key: { family: 'run', runId: 'gate-run' }, revision: 4 },
+      { key: { family: 'runs', scope: 'farm' }, revision: 4 },
+    ],
+  };
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let settled = false;
+  const reading = client.requestResource<RunGetResult>('run.get', { runId: 'gate-run' }).then(
+    (value) => {
+      settled = true;
+      return { value };
+    },
+    (error: Error) => {
+      settled = true;
+      return { error };
+    },
+  );
+  const id = socket.sent.at(-1)!.id;
+  // Actual production run.get completed in 81.331 seconds, after the UI's 15-second refusal.
+  t.mock.timers.tick(81_332);
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  assert.equal(settled, false, 'the current gate read must still be waiting for its server answer');
+  socket.response(id, reply, resourceState);
+  assert.deepEqual(await reading, { value: { data: reply, resourceState } });
+  const unanswered = assert.rejects(
+    client.requestResource('run.get', { runId: 'unanswered' }),
+    /timed out after 120000ms/,
+  );
+  t.mock.timers.tick(120_001);
+  await unanswered;
+});
 
 test(
   'shared run evidence reads keep their existing 60-second deadline',
