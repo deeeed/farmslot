@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
@@ -11,6 +11,8 @@ import type {
   ReviewSequence,
 } from '@farmslot/protocol';
 import { executionModelFromSelection } from '@farmslot/review-dispatch';
+
+import '../runtime/mock-pty.test-support.js';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
@@ -685,3 +687,50 @@ test('automatic native review skips unhealthy machines across run, queue and mon
     'explicit direct placement permits a verified operator retry',
   );
 });
+
+for (const platform of ['web', 'cli']) {
+  for (const operation of ['preview', 'create']) {
+    test(`static ${platform} review ${operation} ignores the host device platform`, async (t) => {
+      const poolPath = path.join(root, 'pool/one.json');
+      const templatePath = path.join(root, 'projects/farm/shared/review-pr/default.md');
+      const poolBefore = readFileSync(poolPath, 'utf8');
+      const templateBefore = readFileSync(templatePath, 'utf8');
+      t.after(() => {
+        writeFileSync(poolPath, poolBefore);
+        writeFileSync(templatePath, templateBefore);
+      });
+      writeFileSync(
+        poolPath,
+        JSON.stringify({
+          ...JSON.parse(poolBefore),
+          platform: 'ios',
+          slots: [
+            {
+              id: `project-metadata-${platform}`,
+              project: 'farm',
+              platform,
+              enabled: false,
+              repo: path.join(root, 'repo'),
+              session: 'unused-review-metadata',
+            },
+          ],
+        }),
+      );
+      writeFileSync(templatePath, `---\nplatforms: [${platform}]\n---\n\n- [ ] Inspect source.\n`);
+      const input = { ...request, reviewWorkspaceTarget: { machine: 'one' } };
+      if (operation === 'preview') {
+        const result = await asOwner(() => dispatchPreview(input));
+        assert.equal(result.preview.slotId, null);
+        assert.equal(result.preview.executionTemplate?.id, 'review-pr/default');
+      } else {
+        const { run } = await asOwner(() => runCreate(input, () => {}, { awaitPersist: true }));
+        t.after(async () => {
+          run.status = 'cancelled';
+          await deleteRun(run.id);
+        });
+        assert.equal(run.slotId, null);
+        assert.equal(run.executionTemplate?.id, 'review-pr/default');
+      }
+    });
+  }
+}
