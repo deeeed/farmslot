@@ -987,6 +987,26 @@ async function slotReleaseImpl(
     await logDiscardedWork(vars, params.slotId, boundOwner, options?.workspaceRecovery?.parked);
   }
 
+  // A named discard performs Close after release. Retain its final result before that source
+  // disappears, just as the result-decision action does before settling the run.
+  const resultOwner =
+    params.expectedRunId && params.expectedRunId === releasedOwner
+      ? getRun(params.expectedRunId)
+      : undefined;
+  if (!preserveAgents && params.forceReset && resultOwner && isHeldForResultDecision(resultOwner)) {
+    await assertReleaseClaim();
+    try {
+      const { retainFinalRunArtifacts } = await import('../../run-completion/output.js');
+      await retainFinalRunArtifacts(resultOwner.id);
+      await assertReleaseClaim();
+    } catch (error) {
+      const reclaimed = await holdAfterCleanupFailure(
+        `Final result retention failed; cleanup stopped: ${(error as Error).message}`,
+      );
+      if (reclaimed) return reclaimed;
+    }
+  }
+
   // 3. Clean task files + git reset. Evidence was pulled into the artifact mirror when the run
   // completed (run.refreshMirror pulls it again), so the release copies none of it (F313).
   const taskDirName = resolveProjectTaskDirName(projectJson);

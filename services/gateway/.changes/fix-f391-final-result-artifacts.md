@@ -1,0 +1,1 @@
+- Retain final proof, review and learning artifacts before closing or discarding a held result; keep the judged snapshot unchanged and stop cleanup if retention fails.

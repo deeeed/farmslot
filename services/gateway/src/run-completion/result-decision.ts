@@ -24,6 +24,7 @@ import {
 } from '@farmslot/protocol';
 
 import { findingsDigest } from '../core/findings-digest.js';
+import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
 import type { ReviewResult } from '../review/orchestrator.js';
 import { completionVerificationMode } from '../run-engine/push-verification.js';
 import { captureEpisodeAfterRelease } from '../run-lifecycle/episode-capture-effect.js';
@@ -38,6 +39,8 @@ import {
 } from '../run-lifecycle/transition-router.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionPrincipal } from '../security/work-originator.js';
+
+import { retainFinalRunArtifacts } from './output.js';
 
 export type ResultDecisionStop = ResultDecisionPayload['stoppedAt'];
 
@@ -427,6 +430,16 @@ export async function resolveResultDecision(
       }
       if (actionId === 'accept-result' && !reason)
         throw new Error('Accepting a result needs a written reason.');
+      if (actionId !== 'send-back' && options.releaseSlot !== false && run.slotId) {
+        const before = await readSlotRow(run.slotId);
+        // An already released source may now belong to someone else. Never acquire from it.
+        if (ownsRunSlotCleanup(before, run.id)) {
+          await retainFinalRunArtifacts(run.id);
+          const after = await readSlotRow(run.slotId);
+          if (!ownsRunSlotCleanup(after, run.id) || after?.slot_epoch !== before?.slot_epoch)
+            throw new Error('Slot ownership changed while retaining the final result.');
+        }
+      }
       const now = new Date().toISOString();
       const receipt = {
         action: actionId,

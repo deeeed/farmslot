@@ -25,6 +25,11 @@ import '../runtime/mock-pty.test-support.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
 let run: Run;
+let finalRetentions: string[] = [];
+let finalRetentionError: Error | null = null;
+let afterFinalRetention: (() => void) | null = null;
+let slotEpoch = 7;
+let settlementEvents: string[] = [];
 let replays: RunReplayStepParams[] = [];
 let releases: SlotReleaseParams[] = [];
 /** COMPLETE may already have released the slot, so the named discard finds nothing to release. */
@@ -70,10 +75,27 @@ mock.module('../runs/store.js', {
     },
   },
 });
+const output = await import('./output.js');
+mock.module('./output.js', {
+  namedExports: {
+    ...output,
+    retainFinalRunArtifacts: async (runId: string) => {
+      settlementEvents.push('retain');
+      finalRetentions.push(runId);
+      if (finalRetentionError) throw finalRetentionError;
+      afterFinalRetention?.();
+      return 1;
+    },
+  },
+});
 mock.module('../server.js', { namedExports: { broadcastEvent: () => {} } });
 const state = await import('../core/state.js');
 mock.module('../core/state.js', {
-  namedExports: { ...state, readSlotField: async () => slotOwner ?? run.id },
+  namedExports: {
+    ...state,
+    readSlotField: async () => slotOwner ?? run.id,
+    readSlotRow: async () => ({ current_run_id: slotOwner ?? run.id, slot_epoch: slotEpoch }),
+  },
 });
 const instructions = await import('../runners/operator-instruction.js');
 mock.module('../runners/operator-instruction.js', {
@@ -143,6 +165,7 @@ mock.module('../methods/slot/release.js', {
   namedExports: {
     ...release,
     slotRelease: async (params: SlotReleaseParams) => {
+      settlementEvents.push('release');
       releases.push(params);
       return { released: slotStillOwned };
     },
@@ -186,6 +209,11 @@ const { restartDisposition, representResultDecisions } = await import('../run-en
 const { runCancelTransitionLocked } = await import('../methods/run/lifecycle-control.js');
 
 beforeEach(() => {
+  finalRetentions = [];
+  finalRetentionError = null;
+  afterFinalRetention = null;
+  slotEpoch = 7;
+  settlementEvents = [];
   failPersist = null;
   replayError = null;
   onReplay = null;
@@ -392,6 +420,65 @@ test('Close of a refused completion is the named discard and is not a success', 
   ]);
   assert.deepEqual(idleReturns, [], 'the release itself returned the slot');
 });
+
+test('Close retains final result artifacts before discarding the refused workspace', async () => {
+  await heldQa();
+  const delivered = structuredClone(pending().payload);
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: pending().id,
+    actionId: 'close-result',
+  });
+  assert.deepEqual(settlementEvents, ['retain', 'release']);
+  assert.deepEqual(finalRetentions, [run.id]);
+  const receiptDelivered = run.resultDecisionReceipt?.delivered;
+  assert.ok(receiptDelivered && 'manifestDigest' in receiptDelivered);
+  assert.ok(delivered?.kind === 'result-decision' && 'manifestDigest' in delivered.delivered);
+  assert.equal(receiptDelivered.manifestDigest, delivered.delivered.manifestDigest);
+});
+
+test('failed final retention leaves the result pending and never releases its source', async () => {
+  await heldQa();
+  const id = pending().id;
+  finalRetentionError = new Error('Final proof could not be retained');
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: id, actionId: 'close-result' }),
+    /Final proof could not be retained/,
+  );
+  assert.equal(run.status, 'needs-decision');
+  assert.equal(pending().id, id);
+  assert.deepEqual(releases, []);
+  assert.equal(run.resultDecisionReceipt, undefined);
+});
+
+test('closing an old result never acquires artifacts from a foreign slot owner', async () => {
+  await heldQa();
+  slotOwner = 'another-run';
+  slotStillOwned = false;
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: pending().id,
+    actionId: 'close-result',
+  });
+  assert.deepEqual(finalRetentions, []);
+});
+
+for (const changed of ['owner', 'epoch'] as const) {
+  test(`a ${changed} change during final acquisition refuses settlement before cleanup`, async () => {
+    await heldQa();
+    afterFinalRetention = () => {
+      if (changed === 'owner') slotOwner = 'another-run';
+      else slotEpoch++;
+    };
+    await assert.rejects(
+      resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'close-result' }),
+      /Slot ownership changed/,
+    );
+    assert.equal(run.status, 'needs-decision');
+    assert.equal(run.resultDecisionReceipt, undefined);
+    assert.deepEqual(releases, []);
+  });
+}
 
 test('Close of a refused completion whose slot COMPLETE already released returns that checkout', async () => {
   await heldQa();
