@@ -61,7 +61,7 @@ test('a stalled census fails observation before child closure and cannot start o
   const stop = tree.observe((error) => errors.push(error));
   let stopNext: (() => void) | undefined;
   try {
-    t.mock.timers.tick(100);
+    t.mock.timers.tick(1000);
     assert.equal(scans, 1);
     assert.equal(mock.mock.calls[0]?.arguments[2]?.timeout, 30_000);
     // A census slower than 5 s on a loaded machine still owns its observers (ADR-057 Amendment 3).
@@ -238,5 +238,51 @@ test('retains stopped root observation without retaining live signal ownership',
     ps.mock.restore();
     kill.mock.restore();
     syncBuiltinESMExports();
+  }
+});
+
+test('shared background observers run at most one full census per second', async (t) => {
+  const first = new NativeProcessTree(process.pid);
+  const second = new NativeProcessTree(process.pid);
+  const snapshot = first
+    .snapshot()
+    .map((entry) => `${entry.pid} ${entry.parent} ${entry.group} ${entry.identity}`)
+    .join('\n');
+  let scans = 0;
+  const mock = t.mock.method(
+    childProcess,
+    'execFile',
+    (...args: Parameters<typeof childProcess.execFile>) => {
+      scans++;
+      const callback = args.at(-1);
+      if (typeof callback !== 'function') throw new Error('Census callback missing');
+      queueMicrotask(() => callback(null, snapshot, ''));
+      return new childProcess.ChildProcess();
+    },
+  );
+  syncBuiltinESMExports();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fail = (error: Error) => {
+    throw error;
+  };
+  const stopFirst = first.observe(fail);
+  const stopSecond = second.observe(fail);
+  try {
+    t.mock.timers.tick(999);
+    assert.equal(scans, 0, 'Idle census started before its one-second interval');
+    t.mock.timers.tick(1);
+    await Promise.resolve();
+    assert.equal(scans, 1, 'Observers must share the same census');
+    for (let interval = 0; interval < 9; interval++) {
+      t.mock.timers.tick(1000);
+      await Promise.resolve();
+    }
+    assert.equal(scans, 10);
+  } finally {
+    stopFirst();
+    stopSecond();
+    mock.mock.restore();
+    syncBuiltinESMExports();
+    t.mock.timers.reset();
   }
 });
