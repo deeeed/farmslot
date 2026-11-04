@@ -13,9 +13,10 @@ import type {
   SlotStatus,
   TaskProgressResult,
 } from '@farmslot/protocol';
-import { Methods, sourceObservationAge } from '@farmslot/protocol';
+import { Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import '../shared/progress-read-status.js';
 import '../workspace/file-tree.js';
 import '../progress-tracker/progress-tracker.js';
 import '../workspace/git-changes.js';
@@ -47,18 +48,14 @@ import { gateway } from '../../gateway-client.js';
 import { getEditorDrafts, subscribeResourceCache } from '../../resource-cache.js';
 import { colors, lifecycleColor } from '../../styles/theme-tokens.js';
 import { setPinnedSlotLabel } from '../../utils/pinned-slots.js';
+import { progressReadNotice } from '../../utils/progress-read-status.js';
 import {
   currentRecoveryEpoch,
   isRecoveryEpochCurrent,
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
-import {
-  heldDataIsSaved,
-  isSupersededRead,
-  readKeepsFailing,
-  ResourceQueryController,
-} from '../shared/resource-query-controller.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 
@@ -236,15 +233,9 @@ export class SlotView extends SlotViewRecipePresenter {
   private readonly gatewayStatusQuery = new ResourceQueryController<GatewayStatusResult>(this, () =>
     this._applyWorkerHistoryCapability(),
   );
-  private progressAgeTimer?: ReturnType<typeof setInterval>;
   readonly _progressQuery = new ResourceQueryController<TaskProgressResult>(this, (state) => {
     this._progressObservation = state;
-    if (state.data && state.status !== 'ready' && !this.progressAgeTimer)
-      this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
-    else if (!state.data || state.status === 'ready') {
-      clearInterval(this.progressAgeTimer);
-      this.progressAgeTimer = undefined;
-    }
+
     applySlotViewTaskProgress(this);
   });
   readonly _resourcesQuery = new ResourceQueryController<ResourceListResult>(this, () =>
@@ -330,8 +321,6 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   disconnectedCallback() {
-    clearInterval(this.progressAgeTimer);
-    this.progressAgeTimer = undefined;
     clearTimeout(this._autosaveTimer);
     this._unsubDrafts?.();
     super.disconnectedCallback();
@@ -951,40 +940,14 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   private _renderProgressStatus() {
-    const observation = this._progressObservation;
-    const failure =
-      observation.error && !isSupersededRead(observation.error) ? observation.error : undefined;
-    const notRead = readKeepsFailing(this._progressQuery);
-    if (
-      !this._progressQuery.belongsToWorkspace ||
-      !this._slot?.taskFile ||
-      (observation.status !== 'unsupported' &&
-        !failure &&
-        !notRead &&
-        !heldDataIsSaved(observation))
-    )
-      return nothing;
-    return html`<div role="status" data-slot-view-progress=${observation.status}>
-      ${observation.data
-        ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`
-        : notRead
-          ? 'Progress not read yet.'
-          : nothing}
-      ${observation.status === 'unsupported'
-        ? 'Progress updates are unavailable on this gateway.'
-        : nothing}
-      ${failure
-        ? html`<span role="alert">Progress read failed: ${failure.message}</span>`
-        : nothing}
-      ${observation.error || notRead
-        ? html`<button
-            ?disabled=${gateway.connectionState !== 'connected'}
-            @click=${() => this._progressQuery.retry()}
-          >
-            Retry reading progress
-          </button>`
-        : nothing}
-    </div>`;
+    const active = this._progressQuery.belongsToWorkspace && Boolean(this._slot?.taskFile);
+    return html`<progress-read-status
+      .notice=${active
+        ? progressReadNotice(this._progressObservation, gateway.connectionState === 'connected')
+        : undefined}
+      .retry=${() => void this._progressQuery.retry()}
+      .connected=${gateway.connectionState === 'connected'}
+    ></progress-read-status>`;
   }
 
   override render() {

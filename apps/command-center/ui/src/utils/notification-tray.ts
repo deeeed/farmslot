@@ -3,6 +3,7 @@ import type { ResourceQuery, ResourceQueryState } from '@farmslot/protocol/clien
 
 import { NotificationTrayModel, type TrayItem } from './notification-tray-model.js';
 import { notify } from './notifications.js';
+import { progressReadNotice } from './progress-read-status.js';
 import { heldDataIsSaved, isSupersededRead } from './resource-read-status.js';
 
 export const notificationTray = new NotificationTrayModel((item) =>
@@ -55,6 +56,28 @@ export function publishReadNotice(
   context: ReadNoticeContext,
 ): void {
   const retry = context.retry;
+  if (query.method === 'task.progress') {
+    const notice = progressReadNotice(state, context.connected);
+    notificationTray.set(
+      source,
+      owner,
+      notice
+        ? [
+            {
+              id: `read:${query.id}`,
+              title: notice.text,
+              body: notice.detail ?? '',
+              route: readRoute(query, route),
+              needsYou: false,
+              current: false,
+              retry: notice.kind === 'error' ? retry : undefined,
+              observedAt: state.sourceObservation?.observedAt ?? state.observedAt,
+            },
+          ]
+        : [],
+    );
+    return;
+  }
   const label = labels[query.method] ?? 'This view';
   const error = isSupersededRead(state.error) ? undefined : state.error;
   const stale = heldDataIsSaved(state, context.connected);

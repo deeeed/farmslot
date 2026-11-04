@@ -10,9 +10,10 @@ import type {
   TaskProgressResult,
   TaskProgressStructured,
 } from '@farmslot/protocol';
-import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
+import { Events, Methods } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
+import '../shared/progress-read-status.js';
 import '../terminal/terminal-view.js';
 import '../progress-tracker/progress-tracker.js';
 import '../workspace/slot-workspace.js';
@@ -28,14 +29,10 @@ import {
   subscribe,
 } from '../../state.js';
 import { colors, lifecycleColor } from '../../styles/theme-tokens.js';
+import { progressReadNotice } from '../../utils/progress-read-status.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
-import {
-  heldDataIsSaved,
-  isSupersededRead,
-  readKeepsFailing,
-  ResourceQueryController,
-} from '../shared/resource-query-controller.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { slotDetailStyles } from './slot-detail-styles.js';
 
@@ -81,17 +78,11 @@ export class SlotDetail extends LitElement {
   @state() private progressObservation: ResourceQueryState<TaskProgressResult> = {
     status: 'loading',
   };
-  private progressAgeTimer?: ReturnType<typeof setInterval>;
   private readonly progressQuery = new ResourceQueryController<TaskProgressResult>(
     this,
     (state) => {
       this.progressObservation = state;
-      if (state.data && state.status !== 'ready' && !this.progressAgeTimer)
-        this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
-      else if (!state.data || state.status === 'ready') {
-        clearInterval(this.progressAgeTimer);
-        this.progressAgeTimer = undefined;
-      }
+
       this._structuredProgress = state.data?.structured;
     },
   );
@@ -148,8 +139,6 @@ export class SlotDetail extends LitElement {
   disconnectedCallback() {
     this._scopeVersion++;
     this._actionRequestId = '';
-    clearInterval(this.progressAgeTimer);
-    this.progressAgeTimer = undefined;
     super.disconnectedCallback();
     this._unsubOutput?.();
     this._unsubComplete?.();
@@ -373,39 +362,14 @@ export class SlotDetail extends LitElement {
   }
 
   private _renderProgressStatus() {
-    const observation = this.progressObservation;
-    if (!(this.progressQuery.belongsToWorkspace && Boolean(this._slot?.taskFile))) return nothing;
-    const failure =
-      observation.error && !isSupersededRead(observation.error) ? observation.error : undefined;
-    const notRead = readKeepsFailing(this.progressQuery);
-    if (
-      observation.status !== 'unsupported' &&
-      !failure &&
-      !notRead &&
-      !heldDataIsSaved(observation)
-    )
-      return nothing;
-    return html`<div class="progress-strip" data-slot-detail-progress=${observation.status}>
-      ${observation.data
-        ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`
-        : notRead
-          ? 'Progress not read yet.'
-          : nothing}
-      ${observation.status === 'unsupported'
-        ? 'Progress updates are unavailable on this gateway.'
-        : nothing}
-      ${failure
-        ? html`<span role="alert">Progress read failed: ${failure.message}</span>`
-        : nothing}
-      ${observation.error || notRead
-        ? html`<button
-            ?disabled=${gateway.connectionState !== 'connected'}
-            @click=${() => this.progressQuery.retry()}
-          >
-            Retry reading progress
-          </button>`
-        : nothing}
-    </div>`;
+    const active = this.progressQuery.belongsToWorkspace && Boolean(this._slot?.taskFile);
+    return html`<progress-read-status
+      .notice=${active
+        ? progressReadNotice(this.progressObservation, gateway.connectionState === 'connected')
+        : undefined}
+      .retry=${() => void this.progressQuery.retry()}
+      .connected=${gateway.connectionState === 'connected'}
+    ></progress-read-status>`;
   }
 
   private _renderDetail() {

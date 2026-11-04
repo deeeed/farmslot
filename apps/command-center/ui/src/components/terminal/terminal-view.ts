@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit';
+import { html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
@@ -9,7 +9,7 @@ import type {
   TerminalModePayload,
   TmuxListResult,
 } from '@farmslot/protocol';
-import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
+import { Events, Methods } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import {
   listSlotTmuxWindows,
@@ -19,18 +19,15 @@ import {
   slotTmuxWindowTarget,
 } from '@farmslot/review-dispatch';
 
+import '../shared/progress-read-status.js';
 import '../progress-tracker/progress-tracker.js';
 import '../chat/native-session-view.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, subscribe } from '../../state.js';
+import { progressReadNotice } from '../../utils/progress-read-status.js';
 import { queueNativeChatContext, terminalChatContext } from '../chat/native-chat-context.js';
-import {
-  heldDataIsSaved,
-  isSupersededRead,
-  readKeepsFailing,
-  ResourceQueryController,
-} from '../shared/resource-query-controller.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   dropCarriesFiles,
@@ -86,17 +83,11 @@ export class TerminalView extends TerminalViewState {
   @state() private progressObservation: ResourceQueryState<TaskProgressResult> = {
     status: 'loading',
   };
-  private progressAgeTimer?: ReturnType<typeof setInterval>;
   private readonly progressQuery = new ResourceQueryController<TaskProgressResult>(
     this,
     (state) => {
       this.progressObservation = state;
-      if (state.data && state.status !== 'ready' && !this.progressAgeTimer)
-        this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
-      else if (!state.data || state.status === 'ready') {
-        clearInterval(this.progressAgeTimer);
-        this.progressAgeTimer = undefined;
-      }
+
       this._taskMarkdown = state.data?.markdown ?? '';
     },
   );
@@ -134,48 +125,19 @@ export class TerminalView extends TerminalViewState {
   }
 
   private _renderProgressStatus() {
-    const observation = this.progressObservation;
-    if (
-      !(
-        this.progressQuery.belongsToWorkspace &&
-        !this.nativeWorker &&
-        !this._workerRef() &&
-        !this.bareSession &&
-        !this._postmortem
-      )
-    )
-      return nothing;
-    const failure =
-      observation.error && !isSupersededRead(observation.error) ? observation.error : undefined;
-    const notRead = readKeepsFailing(this.progressQuery);
-    if (
-      observation.status !== 'unsupported' &&
-      !failure &&
-      !notRead &&
-      !heldDataIsSaved(observation)
-    )
-      return nothing;
-    return html`<div class="progress-strip" data-terminal-progress=${observation.status}>
-      ${observation.data
-        ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`
-        : notRead
-          ? 'Progress not read yet.'
-          : nothing}
-      ${observation.status === 'unsupported'
-        ? 'Progress updates are unavailable on this gateway.'
-        : nothing}
-      ${failure
-        ? html`<span role="alert">Progress read failed: ${failure.message}</span>`
-        : nothing}
-      ${observation.error || notRead
-        ? html`<button
-            ?disabled=${gateway.connectionState !== 'connected'}
-            @click=${() => this.progressQuery.retry()}
-          >
-            Retry reading progress
-          </button>`
-        : nothing}
-    </div>`;
+    const active =
+      this.progressQuery.belongsToWorkspace &&
+      !this.nativeWorker &&
+      !this._workerRef() &&
+      !this.bareSession &&
+      !this._postmortem;
+    return html`<progress-read-status
+      .notice=${active
+        ? progressReadNotice(this.progressObservation, gateway.connectionState === 'connected')
+        : undefined}
+      .retry=${() => void this.progressQuery.retry()}
+      .connected=${gateway.connectionState === 'connected'}
+    ></progress-read-status>`;
   }
 
   connectedCallback() {
@@ -193,8 +155,6 @@ export class TerminalView extends TerminalViewState {
   }
 
   disconnectedCallback() {
-    clearInterval(this.progressAgeTimer);
-    this.progressAgeTimer = undefined;
     super.disconnectedCallback();
     this._log('disconnectedCallback');
     // Paired with connectedCallback's bind. Deliberately not in _dispose(): the HMR recovery

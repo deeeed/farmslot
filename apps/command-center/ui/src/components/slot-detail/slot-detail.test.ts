@@ -3,6 +3,8 @@ import { afterEach, mock, test } from 'node:test';
 
 import { Events, Methods, type SlotStatus } from '@farmslot/protocol';
 
+import { litText } from '../../testing/lit-text.js';
+
 interface PendingCall {
   method: string;
   params: unknown;
@@ -68,6 +70,19 @@ mock.module('../terminal/terminal-view.js', { namedExports: {} });
 mock.module('../progress-tracker/progress-tracker.js', { namedExports: {} });
 mock.module('../workspace/slot-workspace.js', { namedExports: {} });
 const { SlotDetail } = await import('./slot-detail.js');
+
+test('a progress source with no watch renders no failure or Retry', () => {
+  const panel = new SlotDetail();
+  Reflect.set(panel, '_slot', slot('slot-a'));
+  const query = Reflect.get(panel, 'progressQuery');
+  query.belongsToWorkspace = true;
+  Reflect.set(panel, 'progressObservation', {
+    status: 'unsupported',
+    error: { code: 'RESOURCE_OBSERVATION_UNSUPPORTED', message: 'No active verified watch.' },
+  });
+  const rendered = litText(Reflect.get(panel, '_renderProgressStatus').call(panel));
+  assert.doesNotMatch(rendered, /Progress updates|Progress read failed|Retry reading progress/);
+});
 
 interface TestSlotDetail {
   slotId: string;

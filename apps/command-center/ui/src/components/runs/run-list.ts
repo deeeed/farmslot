@@ -24,7 +24,6 @@ import {
   type RunFamilyGroup,
   runWorkerEffort,
   slotMachineMap,
-  sourceObservationAge,
   summarizeRunEvidence,
 } from '@farmslot/protocol';
 import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
@@ -51,12 +50,7 @@ import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import { readCurrent } from '../shared/read-current.js';
-import {
-  canActOn,
-  heldDataIsSaved,
-  readFailureText,
-  ResourceQueryController,
-} from '../shared/resource-query-controller.js';
+import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import {
   focusWorkInventoryRow,
@@ -288,8 +282,8 @@ export class RunList extends RunListState {
         else progress.delete(key);
         this.taskProgressByRun = progress;
         const errors = new Map(this.taskProgressErrorsByRun);
-        const failure = readFailureText(query);
-        if (failure) errors.set(key, failure);
+        const notice = progressReadNotice(state, gateway.connectionState === 'connected');
+        if (notice?.kind === 'error') errors.set(key, notice.text);
         else errors.delete(key);
         this.taskProgressErrorsByRun = errors;
       });
@@ -952,14 +946,14 @@ export class RunList extends RunListState {
             runChecklistProgressTarget(run)?.key ?? '',
           )}
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
-          .taskProgressStale=${heldDataIsSaved(
+          .retryProgress=${() =>
+            void this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.retry()}
+          .taskProgressStale=${progressReadNotice(
             this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state ?? {
               status: 'loading',
             },
-          )}
-          .taskProgressAge=${sourceObservationAge(
-            this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state.observedAt,
-          )}
+            gateway.connectionState === 'connected',
+          )?.kind === 'saved'}
         ></run-pipeline-mini>
         <span class="pipeline-label" data-testid="runs-timing" title=${pipelineLabel}
           >${timing.label}</span
@@ -1257,3 +1251,4 @@ declare global {
     'run-list': RunList;
   }
 }
+import { progressReadNotice } from '../../utils/progress-read-status.js';
