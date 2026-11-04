@@ -1,0 +1,1 @@
+- Allow static review support on machines with execution-only pools while preserving a single review-enabled pool authority.
