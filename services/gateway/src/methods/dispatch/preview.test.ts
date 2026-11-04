@@ -28,7 +28,7 @@ import {
   resetPressureAdmissionControlCacheForTest,
   setPressureAdmissionEnabled,
 } from './pressure-admission-control.js';
-import { resolveDispatchPreviewFromFleet } from './preview.js';
+import { findAffinitySlot, resolveDispatchPreviewFromFleet } from './preview.js';
 import {
   AutomaticSlotLoadWaitError,
   findBestSlot,
@@ -111,6 +111,38 @@ test('scoped affinity skips an incompatible node and still prefers a valid held 
   assert.equal(
     resolveDispatchPreviewFromFleet(params, [a, b], undefined, { plans }).preview.slotId,
     'b',
+  );
+});
+
+test('unscoped affinity skips a model-preferred held slot whose repository cannot prepare', () => {
+  const blocked = slot({
+    slot: 'blocked',
+    machine: 'preferred-node',
+    lifecycle: 'held',
+    branch: 'owner-repo-42',
+    repoBlocker: 'repository is missing',
+  });
+  const valid = slot({
+    slot: 'valid',
+    machine: 'other-node',
+    lifecycle: 'held',
+    branch: 'owner-repo-42',
+  });
+  const candidates = [valid, blocked];
+  assert.equal(
+    findAffinitySlot(candidates, 'demo-farm', 'owner/repo#42', {
+      runner: 'codex',
+      model: 'preferred-model',
+      modelNodePreference: (_runner, _model, machine) => machine === 'preferred-node',
+    })?.slot,
+    'valid',
+  );
+  assert.equal(
+    resolveDispatchPreviewFromFleet(
+      { project: 'demo-farm', flowType: 'pr-complete', ticketOrPr: 'owner/repo#42' },
+      [blocked, valid],
+    ).preview.slotId,
+    'valid',
   );
 });
 

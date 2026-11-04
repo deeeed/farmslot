@@ -1523,7 +1523,7 @@ function isNonRetryableEvalQueueError(err: unknown): boolean {
   );
 }
 
-function liveQueuedItem(itemId: string): QueueItem | null {
+function liveQueuedItem(itemId: string): QueueRecord | null {
   const item = queue.find((candidate) => candidate.id === itemId);
   return item?.status === 'queued' ? item : null;
 }
@@ -1695,7 +1695,7 @@ async function tryDispatchNextOnce(): Promise<void> {
     if (!claim) continue;
 
     const { queuedSourceCreationRequest } = await import('../sources/runtime.js');
-    if (item.requestedSlotId === undefined) item.requestedSlotId = item.slotId ?? null;
+    if (item.requestedSlotId === undefined) item.requestedSlotId = null;
     // A failed create leaves the last placement on the item. Retry from caller intent.
     item.slotId = item.requestedSlotId ?? undefined;
     const callerRequest = queuedSourceCreationRequest(item);

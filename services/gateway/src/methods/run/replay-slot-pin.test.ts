@@ -1,9 +1,19 @@
 import assert from 'node:assert/strict';
+import { writeFile } from 'node:fs/promises';
 import { mock, test } from 'node:test';
 
-import { pipelineStepsForRun, type Run, type RunCreateParams } from '@farmslot/protocol';
+import {
+  pipelineStepsForRun,
+  type Run,
+  type RunCreateParams,
+  type SourceLock,
+} from '@farmslot/protocol';
+import { withProjectSources } from '@farmslot/slot-config';
+import { SourceMaterializer } from '@farmslot/slot-config/sources';
 
 import '../../runtime/mock-pty.test-support.js';
+
+import { isolatedTestPath } from '../../core/isolated-test-path.js';
 
 const core = await import('../../core/index.js');
 const orchestrator = await import('../../run-engine/orchestrator.js');
@@ -42,6 +52,18 @@ mock.module('../../run-engine/orchestrator.js', {
 mock.module('../../run-engine/slot-capability-requirements.js', {
   namedExports: { ...capabilities, replaySlotCapabilityRequirements: async () => undefined },
 });
+const methods = await import('../run.js');
+mock.module('../run.js', {
+  namedExports: {
+    ...methods,
+    planRunCreation: async (params: RunCreateParams) => ({ params }),
+  },
+});
+const { initializeSources, replanSourceRun, stopSourceReconciliation } =
+  await import('../../sources/runtime.js');
+const { SourceAuthority } = await import('../../sources/authority.js');
+const { sourceTestLock, sourceTestMaterialization, sourceTestPlan } =
+  await import('../../sources/source.test-support.js');
 const { runReplayStep } = await import('./replay-step.js');
 const { reconcileOrphanedSlots, STALE_RELEASE_RECLAIM_MS } =
   await import('../../run-engine/recovery.js');
@@ -195,3 +217,67 @@ for (const legacyField of ['find-slot input', 'dispatch request'] as const) {
     assert.equal(run.requestedSlotId, null);
   });
 }
+
+test('source revalidation retains a newer human pin through find-slot replay', async (t) => {
+  const configFile = isolatedTestPath('f383-replay-sources', '.json');
+  await writeFile(
+    configFile,
+    JSON.stringify({ packs: { demo: { sourceId: 'pack', entry: '.' } } }),
+  );
+  const previousConfig = process.env.FARMSLOT_SOURCES_CONFIG;
+  process.env.FARMSLOT_SOURCES_CONFIG = configFile;
+  t.after(() => {
+    stopSourceReconciliation();
+    if (previousConfig === undefined) delete process.env.FARMSLOT_SOURCES_CONFIG;
+    else process.env.FARMSLOT_SOURCES_CONFIG = previousConfig;
+  });
+  t.mock.method(SourceAuthority, 'open', async () => ({
+    recoverRunCreations: async () => {},
+    startReconciliation: () => () => {},
+    observe: () => () => {},
+    activatedAt: () => '2020-01-01T00:00:00Z',
+  }));
+  t.mock.method(SourceMaterializer.prototype, 'materialize', async (lock: SourceLock) =>
+    sourceTestMaterialization(lock, 'gateway'),
+  );
+  await initializeSources();
+  for (const originalSlot of [undefined, 'original-pin']) {
+    run = makeRun({
+      id: 'source-human-pin',
+      flowType: 'dev',
+      project: 'demo',
+      status: 'failed',
+      slotId: 'human-pick',
+      prNumber: undefined,
+      branch: '',
+    });
+    run.requestedSlotId = 'human-pick';
+    run.dispatchRequest = {
+      project: 'demo',
+      flowType: 'dev',
+      ticketOrPr: 'PROJ-383',
+      slotId: originalSlot,
+    };
+    run.sourcePlan = sourceTestPlan();
+    run.steps = pipelineStepsForRun(run)!.map((name) => ({
+      name,
+      status: name === 'find-slot' ? 'failed' : 'pending',
+    }));
+    const lock = sourceTestLock('node-1');
+    run = await withProjectSources(
+      {
+        project: 'demo',
+        pack: lock.packBindings.demo,
+        materialization: sourceTestMaterialization(lock, 'gateway'),
+        packs: lock.packBindings,
+      },
+      () => replanSourceRun(run, { nodeId: 'node-1', slotId: 'human-pick' }),
+    );
+    await runReplayStep({ runId: run.id, stepName: 'find-slot' }, () => {}, {
+      startEngine: async () => {},
+    });
+    assert.equal(run.slotId, 'human-pick');
+    assert.equal(run.requestedSlotId, 'human-pick');
+    assert.equal(run.dispatchRequest?.slotId, originalSlot);
+  }
+});

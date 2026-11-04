@@ -2482,7 +2482,7 @@ test('orphan reconcile reclaims a stale release fence a settled blocked run was 
   assert.deepEqual(reclaimed, ['macwork-ff-2']);
   assert.deepEqual(
     updates,
-    [{ runId: 'blocked-archive', fields: { slotId: null, requestedSlotId: blocked.slotId } }],
+    [{ runId: 'blocked-archive', fields: { slotId: null, requestedSlotId: null } }],
     'the run is detached and keeps its blocked outcome',
   );
 });

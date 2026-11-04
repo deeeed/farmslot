@@ -5,6 +5,7 @@ import test, { after, beforeEach, type TestContext } from 'node:test';
 
 import type { QueueItem, ReviewSelection, SlotStatus } from '@farmslot/protocol';
 
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
 import { farmslotRoot, setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
@@ -2064,6 +2065,44 @@ test('memory-only create failure requeues and purges the orphan Run', async (t) 
   assert.ok(requeued, 'row must be requeued for retry');
   assert.equal(requeued.status, 'queued');
   assert.equal(requeued.runId, undefined);
+});
+
+test('an upgraded queue row does not turn a failed scheduler placement into a pin', async () => {
+  const first = readyFleetSlot('upgrade-a');
+  const next = readyFleetSlot('upgrade-b');
+  setCachedFleetForTests({
+    ...next,
+    slots: [{ ...first.slots[0], agent: 'working' }, ...next.slots],
+  });
+  const legacy: QueueItem = {
+    id: 'legacy-failed-placement',
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-383-upgrade',
+    slotId: 'upgrade-a',
+    priority: 1,
+    createdAt: new Date().toISOString(),
+    status: 'queued',
+  };
+  await writeFile(
+    isolatedTestPath('farmslot-test-dispatch-queue', '.json'),
+    JSON.stringify([{ ...legacy, originator: { kind: 'system' } }]),
+  );
+  await loadQueue();
+  const attempts: Array<{ slotId?: string; requestedSlotId?: string | null }> = [];
+  initDispatchQueue(
+    () => {},
+    async (queued, _claim, callerRequest) => {
+      assert.ok(callerRequest);
+      const run = buildRunRecord(
+        { ...callerRequest, slotId: queued.slotId },
+        { dispatchRequest: callerRequest },
+      );
+      attempts.push({ slotId: queued.slotId, requestedSlotId: run.requestedSlotId });
+    },
+  );
+  await tryDispatchNext();
+  assert.deepEqual(attempts, [{ slotId: 'upgrade-b', requestedSlotId: null }]);
 });
 
 for (const previousSlot of ['free', 'busy'] as const) {

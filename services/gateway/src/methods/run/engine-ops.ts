@@ -212,6 +212,7 @@ export async function runActivateOnSlot(
 
   const priorRunId = slot.currentRunId ?? null;
   const priorSlotId = run.slotId;
+  const priorRequestedSlotId = run.requestedSlotId;
   console.log(
     `[run] activate-on-slot slot=${targetSlot} reassigning current_run_id ${
       priorRunId ? priorRunId.slice(0, 8) : '-'
@@ -229,7 +230,7 @@ export async function runActivateOnSlot(
       { code: SLOT_CLAIM_REFUSED_CODE },
     );
   }
-  updateRun(params.runId, { slotId: targetSlot });
+  updateRun(params.runId, { slotId: targetSlot, requestedSlotId: targetSlot });
 
   // Re-drive PREPARE→DISPATCH for the existing run with the cheapest warm profile.
   // runReplayStep persists prepareProfile, re-claims the slot, resets PREPARE-onward,
@@ -258,7 +259,7 @@ export async function runActivateOnSlot(
         slot.current_run_id === run.id && (Number(slot.slot_epoch) || 0) === (rebind.epoch ?? -1),
       { current_run_id: priorRunId },
     );
-    updateRun(params.runId, { slotId: priorSlotId });
+    updateRun(params.runId, { slotId: priorSlotId, requestedSlotId: priorRequestedSlotId });
     throw err;
   }
 }

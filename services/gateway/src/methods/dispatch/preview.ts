@@ -201,46 +201,48 @@ export function findAffinitySlot(
   ticketOrPr: string,
   options?: SlotSelectionOptions,
 ): SlotStatus | null {
-  const ranked = [...slots].sort(
-    (a, b) => compareSlotModelAvailability(a, b, options) || compareSlotLoads(a, b, options),
-  );
   return (
-    ranked.find((s) => {
-      const selected = slotSelectionOptionsFor(s, options);
-      if (!selected || automaticSlotLoadBlocker(s, selected)) return false;
-      if (
-        options?.plans &&
-        (selected.pressureRejectedMachines?.has(s.machine) ||
-          validateSlotForDispatch(s, slots, selected))
-      )
-        return false;
-      const plan = options?.plans?.get(s.slot);
-      const ticket = plan && 'params' in plan ? plan.params.ticketOrPr : ticketOrPr;
-      const ticketSlug = ticket.replace(/[#/]/g, '-').toLowerCase();
-      const prMatch = ticket.match(/#(\d+)$/);
-      const prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
-      const strictComparison = selected.lane === 'comparison';
-      const allow = selected.allowedSlots?.length ? new Set(selected.allowedSlots) : null;
-      return (
-        s.project === project &&
-        !s.missingFromPool &&
-        (!allow || allow.has(s.slot)) &&
-        s.lifecycle === 'held' &&
-        s.agent !== 'working' &&
-        (strictComparison
-          ? s.currentFamilyId === selected.familyId &&
-            s.currentLane === selected.lane &&
-            (s.currentVariant ?? null) === (selected.variant ?? null)
-          : !selected.familyId || !s.currentFamilyId || s.currentFamilyId === selected.familyId) &&
-        (strictComparison
-          ? true
-          : !selected.lane || !s.currentLane || s.currentLane === selected.lane) &&
-        (strictComparison
-          ? true
-          : !selected.variant || !s.currentVariant || s.currentVariant === selected.variant) &&
-        (s.branch.includes(ticketSlug) || (prNumber != null && s.prHealth?.pr === prNumber))
-      );
-    }) ?? null
+    slots
+      .filter((s) => {
+        const selected = slotSelectionOptionsFor(s, options);
+        if (!selected || automaticSlotLoadBlocker(s, selected)) return false;
+        if (
+          selected.pressureRejectedMachines?.has(s.machine) ||
+          validateSlotForDispatch(s, slots, selected)
+        )
+          return false;
+        const plan = options?.plans?.get(s.slot);
+        const ticket = plan && 'params' in plan ? plan.params.ticketOrPr : ticketOrPr;
+        const ticketSlug = ticket.replace(/[#/]/g, '-').toLowerCase();
+        const prMatch = ticket.match(/#(\d+)$/);
+        const prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
+        const strictComparison = selected.lane === 'comparison';
+        const allow = selected.allowedSlots?.length ? new Set(selected.allowedSlots) : null;
+        return (
+          s.project === project &&
+          !s.missingFromPool &&
+          (!allow || allow.has(s.slot)) &&
+          s.lifecycle === 'held' &&
+          s.agent !== 'working' &&
+          (strictComparison
+            ? s.currentFamilyId === selected.familyId &&
+              s.currentLane === selected.lane &&
+              (s.currentVariant ?? null) === (selected.variant ?? null)
+            : !selected.familyId ||
+              !s.currentFamilyId ||
+              s.currentFamilyId === selected.familyId) &&
+          (strictComparison
+            ? true
+            : !selected.lane || !s.currentLane || s.currentLane === selected.lane) &&
+          (strictComparison
+            ? true
+            : !selected.variant || !s.currentVariant || s.currentVariant === selected.variant) &&
+          (s.branch.includes(ticketSlug) || (prNumber != null && s.prHealth?.pr === prNumber))
+        );
+      })
+      .sort(
+        (a, b) => compareSlotModelAvailability(a, b, options) || compareSlotLoads(a, b, options),
+      )[0] ?? null
   );
 }
 
