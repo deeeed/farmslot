@@ -6,6 +6,26 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.32.0 - 2026-11-04
+
+- Let a global-admin person launch and supervise standalone native sessions across configured execution owners, with target availability and home directories.
+- Validate the prompt-first native launcher through real browser controls and persisted first-message delivery.
+- Create isolated user terminals on connected machines without reusing run or slot sessions.
+- Canary setup preserves node configuration and ships its templates through the deployment layout; its dependency-free slots prepare without an install, and nightly installation works from linked worktrees.
+- Serve declared task artifacts without confusing them with files of the same name in the selected recipe attempt.
+- A gate review with findings records which inputs it reviewed, so an operator can accept those findings without another passing review; later evidence edits still require review.
+- The publication gate card states the diff at its package's HEAD. A package prepared after a review of a fix, a recovered review or the complete step reused the durable diff capture from the previous head, so the card and the package's `diffStat` lagged a commit behind its review snapshot (+270 at a +312 head on run 4c0038bd). These three paths now recapture first, as a package refresh already did.
+- A run diff capture whose fetch of the default branch fails now measures against the local remote-tracking ref instead of reporting no diff. Only a missing ref still reports none.
+- Native session catalogs include an owned execution node on the gateway machine, allowing its owner to select that node without changing gateway-local ownership.
+- Observed native catalog and inventory reads preserve the same replacement-identity refusal reason as direct native RPCs.
+- Replays preserve retired decision rows in a durable append-only journal beside each run record. Routine reads and events carry only the history count. Archive and bundle transport preserve complete journal rows, including forced restores over live or archived records.
+- A publication gate presented again after a replay or restart keeps its id when the work is unchanged. Changed work gets a new id, and approvals still apply only to the selected package.
+- Let resource-control dev-server boots finish cold setup within the project preparation budget.
+- Verify re-entered gates prevent stale approval replay and retired approval evidence survives record archival.
+- Preserve a retained review while its execution node reconnects after a long outage.
+- Managed reviews resolve a machine only from pools that explicitly configure review capacity, so execution-only canary and runtime pools do not create false configuration ambiguity; multiple review authorities still refuse admission.
+- Avoid ingesting an older saved reviewer result again after a later review loop.
+
 ## 0.31.0 - 2026-11-03
 
 - A slot release copies no evidence back. The completion mirror pulled it when the run finished, and `run.refreshMirror` pulls it again (Command Center's Sync artifacts, on a run's results card or in the slot view). The release's artifact copyback and its teardown budget extension (#1736) are removed. The scaffolding archive keeps only small text: `.md`, `.txt`, `.json`, `.jsonl`, `.log`, `.yaml` and `.yml` files up to 16 MiB, which covers task notes, inputs, signals, reports and runner observations. Binaries and everything else in the task are deleted with it; nested checkouts are still moved aside. Evidence must be in the run's bundle when it completes, so a run that builds a binary after its evidence capture must capture it again or publish it itself; the autonomous run contract now says so. Before, the copyback sent files the mirror never indexed inside the 300 s teardown: 851 MB of APKs on audiolab-4 (F298, F313). `slot.release` no longer takes `skipArtifacts`.

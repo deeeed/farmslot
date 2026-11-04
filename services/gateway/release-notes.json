@@ -1,11 +1,8 @@
 {
-  "version": "0.31.0",
-  "date": "2026-11-03",
+  "version": "0.32.0",
+  "date": "2026-11-04",
   "items": [
-    "A restart during dispatch adopts a surviving worker only after proving the task was delivered.",
-    "Review-budget extensions work after a failed run releases its slot, without automatically replaying.",
-    "Autonomous workers disable their model question tool while retaining operator steering.",
-    "Duplicate video presentation timestamps retain the recording timeline; backwards and invalid timestamps still refuse timing.",
-    "Refreshing a publication package preserves the reviews the operator requested."
+    "Supervise standalone native sessions under each target's configured account, with requester attribution.",
+    "Keep reviews and resource boot operations reliable through long outages and preparation."
   ]
 }

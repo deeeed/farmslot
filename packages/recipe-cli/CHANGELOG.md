@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.32.7 - 2026-11-04
+
+- Align published dependencies with the native delegation and recording-tail release cohort.
+
 ## 0.32.6 - 2026-11-03
 
 - Align published dependency pins with the coordinated protocol, recorded-evidence and duplicate-timestamp timeline fixes.

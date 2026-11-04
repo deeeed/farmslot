@@ -1,1 +1,0 @@
-- Keep a short recording tail after recipe completion so final assertions remain inside the video across recorder backends.

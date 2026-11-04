@@ -1,1 +1,0 @@
-- Avoid ingesting an older saved reviewer result again after a later review loop.

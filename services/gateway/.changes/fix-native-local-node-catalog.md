@@ -1,1 +1,0 @@
-- Native session catalogs include an owned execution node on the gateway machine, allowing its owner to select that node without changing gateway-local ownership.

@@ -1,1 +1,0 @@
-- Keep custom native working directories on the selected execution target and default them to its reported home.

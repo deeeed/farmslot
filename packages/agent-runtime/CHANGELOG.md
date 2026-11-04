@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.40.0 - 2026-11-04
+
+- Persist standalone session requester attribution without changing execution ownership, and keep worker sessions behind their pinned controls.
+
 ## 0.39.29 - 2026-11-03
 
 - Align published dependency pins with the coordinated protocol, recorded-evidence and duplicate-timestamp timeline fixes.

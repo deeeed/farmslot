@@ -1,1 +1,0 @@
-- A re-review with remaining findings replaces earlier findings from the same review at the same head, so publication gates and accepted-findings digests contain only the current result.

@@ -4,6 +4,12 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.23.0 - 2026-11-04
+
+- Start native conversations from a prompt, a filtered workspace or custom directory on a catalogued machine, and shared harness/model/effort controls.
+- A re-review with remaining findings replaces earlier findings from the same review at the same head, so publication gates and accepted-findings digests contain only the current result.
+- Keep recovered copies of one saved result out of review rounds and group each review with its following fix.
+
 ## 0.22.0 - 2026-11-03
 
 - `acceptanceClaimRows` takes the evidence model's `recording`: each row names its recording (a retained row keeps "Earlier proof"), and a row from a replaced recording reads "Evidence replaced" with nothing left to judge, instead of a pass or "Not proven". `acceptancePanelPresentation` reads "N criteria · evidence replaced" instead of tallying a replaced recording.

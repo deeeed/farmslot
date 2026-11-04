@@ -1,1 +1,0 @@
-- Keep run artifact filters and file previews in the URL so reopened links restore the chosen view.

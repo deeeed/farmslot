@@ -6,6 +6,16 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.76.0 - 2026-11-04
+
+- Define admin-person standalone session requester attribution, execution-target availability and real home metadata.
+- Start native conversations from a prompt, a filtered workspace or custom directory on a catalogued machine, and shared harness/model/effort controls.
+- Add machine-scoped creation of isolated terminal sessions.
+- Preserve run artifact browser filters and file selection in shared desktop view links.
+- Run records expose decisionHistoryCount for retired decision rows stored separately from routine run reads and events.
+- Preserve expanded review-round selections in shared run links across Command Center and Companion.
+- Serialize cache admission and eviction across browser tabs sharing a durable store so their combined data stays within the configured budgets.
+
 ## 0.75.0 - 2026-11-03
 
 - `SlotReleaseParams.skipArtifacts` is removed: a slot release no longer copies artifacts, so there is nothing to skip (F313).

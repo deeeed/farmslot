@@ -1,11 +1,9 @@
 {
-  "version": "0.31.0",
-  "date": "2026-11-03",
+  "version": "0.32.0",
+  "date": "2026-11-04",
   "items": [
-    "Run detail opens with the pipeline canvas and keeps artifacts and results in collapsible panels.",
-    "Untimed recordings play with same-attempt screenshots marked as inspection context.",
-    "Model pickers list the models available on each selected node.",
-    "Fleet release parks an ownerless slot’s unpushed commits and reports where they were saved.",
-    "Changed-file diffs open from the local store and refresh in the background."
+    "Start a native conversation from a prompt, workspace or custom directory on any available machine.",
+    "Start regular terminals or native sessions from Terminals; Co-Pilot defaults to native and keeps tmux selectable.",
+    "Keep offline views synchronized across tabs and preserve artifact selections in links."
   ]
 }

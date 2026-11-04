@@ -6,6 +6,13 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.17.0 - 2026-11-04
+
+- Start native conversations from a prompt, a filtered workspace or custom directory on a catalogued machine, and shared harness/model/effort controls.
+- Let the co-launched dev node use a separate native owner while preserving the gateway owner and inherited node credentials and native-state base.
+- Validate review-round grouping and the single acceptance-criteria collapse against real recorded run data.
+- Share durable offline storage across Command Center tabs, including reloads and closing the first tab, without a memory-fallback notice.
+
 ## 0.16.0 - 2026-11-03
 
 - The offline run-detail probe finds the results card's Sync artifacts button by its new label (F313).

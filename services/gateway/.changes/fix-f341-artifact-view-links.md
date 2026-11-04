@@ -1,1 +1,0 @@
-- Serve declared task artifacts without confusing them with files of the same name in the selected recipe attempt.
