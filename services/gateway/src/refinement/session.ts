@@ -9,6 +9,7 @@ import type { SafetyTier, TmuxWorkerRef } from '@farmslot/protocol';
 
 import { isLocal } from '../core/exec.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';
+import { resolveMachinePoolConfig } from '../fleet/machine-pool.js';
 import { farmslotRoot, loadPoolConfigs } from '../fleet/state.js';
 import { buildInteractiveRefinementRunnerCommand } from '../runners/launch-command.js';
 import { runnerFlagsForTier } from '../runners/registry.js';
@@ -32,10 +33,15 @@ export async function tmuxSessionExists(session: string): Promise<boolean> {
 async function localTmuxWorkerNodeId(): Promise<string> {
   const pools = await loadPoolConfigs();
   const hostname = os.hostname().replace(/\.local$/, '');
-  const localPool =
-    pools.find((pool) => pool.machine === hostname) ??
-    pools.find((pool) => isLocal(pool.host, pool.machine));
-  return localPool?.machine ?? hostname;
+  const configured = resolveMachinePoolConfig(pools, hostname);
+  if (configured) return configured.machine;
+  const localMachines = new Set(
+    pools.filter((pool) => isLocal(pool.host, pool.machine)).map((pool) => pool.machine),
+  );
+  if (localMachines.size > 1)
+    throw new Error('Local refinement machine configuration is ambiguous');
+  const machine = localMachines.values().next().value;
+  return machine ? (resolveMachinePoolConfig(pools, machine)?.machine ?? hostname) : hostname;
 }
 
 export async function resolveTmuxSessionWorker(session: string): Promise<TmuxWorkerRef> {

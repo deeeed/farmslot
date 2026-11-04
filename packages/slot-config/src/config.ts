@@ -1,6 +1,5 @@
 // core/config.ts — Slot/pool/project config loading
 // TypeScript port of lib/slot-common.sh: resolve_slot, load_slot_vars, load_project_config, get_project_field
-
 import { readdir, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -47,6 +46,7 @@ import {
 import {
   findSlotByRepo,
   isIgnoredPoolFile,
+  type PoolFileEntry,
   readPoolFiles,
 } from '@farmslot/protocol/node/slot-by-repo';
 import {
@@ -56,6 +56,7 @@ import {
 
 import { SlotConfigError } from './error.js';
 import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
+import { machinePoolFileName, resolveMachinePool } from './machine-pool.js';
 import { farmslotRoot } from './repo-root.js';
 import {
   type ProjectSourceContext,
@@ -587,40 +588,66 @@ export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
 }
 
 /**
- * All slots a machine's pool declares, from the SAME pool directory every
+ * All slots a machine's pools declare, from the SAME pool directory every
  * other slot-config lookup uses (honors FARMSLOT_POOL_DIR). Fails closed: a
  * machine that just resolved a slot must have a pool file — its absence means
  * the callers are reading inconsistent state.
  */
 export async function loadMachineSlots(machine: string): Promise<RawPoolSlot[]> {
-  return (await loadMachinePool(machine)).slots;
+  const entries = (await readMachinePoolFiles()).filter((entry) => entry.pool.machine === machine);
+  if (entries.length === 0) throw missingMachinePool(machine);
+  return entries.flatMap((entry) => entry.pool.slots);
 }
 
 /** Read machine launch settings from the same pool source as slot dispatch. */
 export async function loadMachinePool(machine: string): Promise<RawPoolJson> {
-  let files: string[];
+  const files = await readMachinePoolNames();
+  const canonical = files.find((file) => file === machinePoolFileName(machine));
+  if (canonical) {
+    const pool = resolveMachinePool(await readMachinePoolFiles([canonical]), machine);
+    if (pool) return pool;
+  }
+  const pool = resolveMachinePool(
+    await readMachinePoolFiles(files.filter((file) => file !== canonical)),
+    machine,
+  );
+  if (pool) return pool;
+  throw missingMachinePool(machine);
+}
+
+function missingMachinePool(machine: string): SlotConfigError {
+  return new SlotConfigError(
+    'SLOT_NOT_FOUND',
+    `No pool JSON declares machine '${machine}' under ${poolDir}/`,
+    { userAction: 'Run `farmslot fleet refresh` and diagnose with `farmslot doctor`.' },
+  );
+}
+
+async function readMachinePoolNames(): Promise<string[]> {
   try {
-    files = await readdir(poolDir);
+    return await readdir(poolDir);
   } catch {
     throw new SlotConfigError('POOL_DIR_NOT_FOUND', `Pool directory not found: ${poolDir}`, {
       userAction: 'No pools are configured. Diagnose with `farmslot doctor`.',
     });
   }
-  for (const file of files) {
+}
+
+async function readMachinePoolFiles(files?: string[]): Promise<PoolFileEntry<RawPoolJson>[]> {
+  const names = files ?? (await readMachinePoolNames());
+  const entries: PoolFileEntry<RawPoolJson>[] = [];
+  for (const file of names) {
     if (isIgnoredPoolFile(file)) continue;
     try {
       const content = await readFile(path.join(poolDir, file), 'utf-8');
       const pool: RawPoolJson = JSON.parse(content);
-      if (pool.machine === machine) return pool;
+      if (!pool || typeof pool !== 'object' || Array.isArray(pool)) continue;
+      entries.push({ file, pool });
     } catch {
       /* skip invalid files — same tolerance as resolveSlot */
     }
   }
-  throw new SlotConfigError(
-    'SLOT_NOT_FOUND',
-    `No pool JSON declares machine '${machine}' under ${poolDir}/`,
-    { userAction: 'Run `farmslot fleet refresh` and diagnose with `farmslot doctor`.' },
-  );
+  return entries;
 }
 
 // ─── resolveSlotByRepo ───

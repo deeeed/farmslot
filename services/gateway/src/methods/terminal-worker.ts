@@ -10,6 +10,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { isLocal } from '../core/exec.js';
+import { resolveMachinePoolConfig } from '../fleet/machine-pool.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import {
@@ -45,7 +46,7 @@ export function terminalWorkerSubscriptionKey(params: {
 
 async function resolveWorkerPtyOptions(worker: TmuxWorkerRef): Promise<{ sshTarget?: string }> {
   const pools = await loadPoolConfigs();
-  const pool = pools.find((candidate) => candidate.machine === worker.nodeId);
+  const pool = resolveMachinePoolConfig(pools, worker.nodeId);
   if (!pool) throw new Error(`pool config for tmux worker node ${worker.nodeId} was not found`);
   if (isLocal(pool.host, pool.machine)) return {};
   return { sshTarget: `${pool.sshUser}@${pool.host}` };

@@ -83,6 +83,8 @@ import {
   resolveWorkerTerminalContract,
 } from '../tasks/worker-terminal-contract.js';
 
+import { resolveReviewWorkspacePool } from './pool.js';
+
 const exec = promisify(execFile);
 const SUBJECT = 'inputs/review-subject.json';
 const RESULT = 'artifacts/review-result.json';
@@ -184,11 +186,10 @@ function within(root: string, candidate: string) {
   return !relative.startsWith('../') && relative !== '..' && !path.posix.isAbsolute(relative);
 }
 async function locality(run: Run, deps: Dependencies): Promise<SlotLocality> {
-  const matches = (await deps.loadPoolConfigs()).filter(
-    (pool) => pool.machine === run.reviewWorkspace!.machine,
+  const pool = resolveReviewWorkspacePool(
+    await deps.loadPoolConfigs(),
+    run.reviewWorkspace!.machine,
   );
-  if (matches.length !== 1) throw new Error('Static review machine configuration is unavailable');
-  const pool = matches[0];
   if (
     run.reviewWorkspace!.executionNodeId !==
     (isLocal(pool.host, pool.machine) ? 'local' : pool.machine)

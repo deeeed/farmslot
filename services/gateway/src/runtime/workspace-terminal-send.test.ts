@@ -3,7 +3,7 @@ import { beforeEach, mock, test } from 'node:test';
 
 import { WebSocket } from 'ws';
 
-import type { Run } from '@farmslot/protocol';
+import type { PoolConfig, Run } from '@farmslot/protocol';
 
 import { makeVars } from '../runners/test-fixtures.js';
 
@@ -55,6 +55,7 @@ const operations: string[] = [];
 let confirmed = true;
 let ownerAvailable = true;
 let currentRun = run;
+let pools: PoolConfig[] = [];
 let runnerVars = vars;
 let authority = true;
 let revokeAfterInspection = false;
@@ -66,7 +67,7 @@ const submit = mock.fn(async (..._args: unknown[]) => {
 mock.module('../security/native-worker-owner.js', {
   namedExports: { assertNativeRunOwner: () => {} },
 });
-mock.module('../fleet/state.js', { namedExports: { loadPoolConfigs: async () => [] } });
+mock.module('../fleet/state.js', { namedExports: { loadPoolConfigs: async () => pools } });
 mock.module('../runs/store.js', {
   namedExports: { getRun: () => (ownerAvailable ? currentRun : undefined) },
 });
@@ -103,8 +104,10 @@ mock.module('../core/exec.js', {
     },
   },
 });
-const { workspaceTerminalOperation } = await import('./workspace-terminal.js');
+const { workspaceTerminalOperation, resolveWorkspaceTerminal } =
+  await import('./workspace-terminal.js');
 beforeEach(() => {
+  pools = [];
   operations.length = 0;
   submit.mock.resetCalls();
   confirmed = true;
@@ -214,3 +217,27 @@ for (const phase of ['inspection', 'paste'] as const) {
     }
   });
 }
+
+const reviewPool: PoolConfig = {
+  machine: 'local',
+  host: 'localhost',
+  sshUser: 'fixture',
+  project: 'proof',
+  platform: 'cli',
+  os: 'linux',
+  slots: [],
+  reviewWorkspaces: { maxConcurrent: 2 },
+};
+test('review terminal ignores an execution-only sibling pool', async () => {
+  pools = [{ ...reviewPool, project: 'canary', reviewWorkspaces: undefined }, reviewPool];
+  const target = await resolveWorkspaceTerminal({ slotId: '', runId: run.id });
+  assert.equal(target.run.id, run.id);
+  assert.equal(target.session, session);
+  assert.equal(target.sshTarget, undefined);
+});
+test('review terminal refuses duplicate review authorities', async () => {
+  pools = [reviewPool, { ...reviewPool }];
+  await assert.rejects(resolveWorkspaceTerminal({ slotId: '', runId: run.id }), {
+    code: 'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
+  });
+});

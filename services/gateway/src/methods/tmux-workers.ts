@@ -24,6 +24,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { resolveMachinePoolConfig, resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
@@ -659,9 +660,7 @@ export async function buildTmuxWorkerListFromSources(params: {
 }): Promise<TmuxWorkerListResult> {
   const includeDisconnected = params.includeDisconnected ?? true;
   const sessionCorrelation = buildSessionCorrelation(params.pools, params.fleet, params.activeRuns);
-  const tmuxWorkerConfigByNode = new Map(
-    params.pools.map((pool) => [pool.machine, pool.tmuxWorkers] as const),
-  );
+  const machinePools = resolveMachinePoolConfigs(params.pools);
   const nodes = await Promise.all(
     Array.from(new Set(params.nodeIds))
       .sort()
@@ -672,7 +671,7 @@ export async function buildTmuxWorkerListFromSources(params: {
           connected: params.connectedNodeIds.has(nodeId),
           observedAt: params.observedAt,
           sessionCorrelation: sessionCorrelation.get(nodeId),
-          tmuxWorkerConfig: tmuxWorkerConfigByNode.get(nodeId),
+          tmuxWorkerConfig: machinePools.get(nodeId)?.tmuxWorkers,
           requestPanes: params.requestPanes,
         }),
       ),
@@ -696,7 +695,7 @@ export async function assertTmuxWorkerControlAllowed(worker: {
   const observedAt = Date.now();
   const [pools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus()]);
   const activeRuns = correlationRuns();
-  const pool = pools.find((candidate) => candidate.machine === worker.nodeId);
+  const pool = resolveMachinePoolConfig(pools, worker.nodeId);
   if (!pool?.tmuxWorkers) return;
 
   const node = getNode(worker.nodeId);
@@ -878,7 +877,7 @@ export async function tmuxWorkerEndSession(params: TmuxWorkerEndSessionParams): 
     )
   )
     throw new Error('Session changed; refresh before ending it');
-  const config = pools.find((pool) => pool.machine === worker.nodeId)?.tmuxWorkers;
+  const config = resolveMachinePoolConfig(pools, worker.nodeId)?.tmuxWorkers;
   if (
     config &&
     panes
