@@ -87,6 +87,7 @@ import {
   runnerSupportsModel,
 } from '../../runners/registry.js';
 import { clearedRunnerSessionContextPatch } from '../../runners/session-record.js';
+import { requestedRunSlotId } from '../../runs/slot-pin.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { runWithSystemOriginator } from '../../security/work-originator.js';
@@ -1319,9 +1320,9 @@ async function replayRunStep(
       getAllRuns(),
     );
 
-  // A replay from find-slot or earlier clears the run's slot binding, so the
-  // claim its slot row still holds must be settled before re-selection.
+  // A replay from find-slot or earlier settles the prior claim before selecting again.
   const reselectsSlot = targetIdx >= 0 && targetIdx <= findSlotIdx;
+  const requestedSlotId = requestedRunSlotId(existing);
   const priorSlotId = reselectsSlot ? existing.slotId : null;
   const priorSlotRow = priorSlotId ? await readSlotRow(priorSlotId) : null;
   // The release that settles it runs after the engine is cancelled, so its
@@ -1605,7 +1606,7 @@ async function replayRunStep(
               current?.current_run_id !== params.runId &&
               getRun(params.runId)?.slotId === reclaimedSlotId
             ) {
-              const run = updateRun(params.runId, { slotId: null });
+              const run = updateRun(params.runId, { slotId: null, requestedSlotId });
               await persistRunNow(run, 'replay-rollback-slot');
               emit(Events.RUN_UPDATED, { run });
             }
@@ -1777,12 +1778,13 @@ async function replayRunStep(
       }
     }
 
-    // If replaying from find-slot or earlier, clear slot so it picks fresh
+    // Re-select engine placement while retaining the caller's explicit pin.
     if (reselectsSlot) {
       replayTaskFile = null;
-      effectiveSlotId = null;
+      effectiveSlotId = requestedSlotId;
       updateRun(params.runId, {
-        slotId: null,
+        slotId: requestedSlotId,
+        requestedSlotId,
         taskFile: null,
         ...(slotCapabilities
           ? {
@@ -1794,7 +1796,7 @@ async function replayRunStep(
           : {}),
       });
       console.log(
-        `[run] replay from ${replayStepName} — cleared slotId + taskFile for re-selection`,
+        `[run] replay from ${replayStepName} — reset placement + taskFile for re-selection`,
       );
     } else {
       const replaySlotId = recoverReplaySlotId(replaySnapshot, targetIdx, findSlotIdx, prepareIdx);

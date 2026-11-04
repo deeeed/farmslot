@@ -12,6 +12,8 @@ import {
 
 export class ModelCatalogFormatError extends Error {}
 
+export const RUNNER_MODEL_CATALOG_TTL_MS = 5 * 60_000;
+
 /** A runner that can read a structured model catalog. Absent means the capability is unsupported. */
 export interface RunnerModelCatalogFileSource {
   /** Catalog files relative to the operator's home directory, merged in order. */
@@ -260,19 +262,29 @@ export function parseOpenCodeModelList(output: string): string[] {
   return [...new Set(ids)];
 }
 
-/** Last good listing per runner and execution node. A node that fails keeps its previous one. */
+interface NodeModelListing {
+  ids: readonly string[];
+  observedAt?: number;
+}
+
+/** Last good listing per runner and execution node. Stale data guides placement only. */
 export class NodeModelCatalogs {
-  private readonly listings = new Map<string, Map<string, readonly string[]>>();
+  private readonly listings = new Map<string, Map<string, NodeModelListing>>();
 
   record(runner: string, machine: string, ids: readonly string[]): void {
     let byNode = this.listings.get(runner);
     if (!byNode) this.listings.set(runner, (byNode = new Map()));
-    byNode.set(machine, [...ids]);
+    byNode.set(machine, { ids: [...ids], observedAt: Date.now() });
+  }
+
+  unavailable(runner: string, machine: string): void {
+    const listing = this.listings.get(runner)?.get(machine);
+    if (listing) listing.observedAt = undefined;
   }
 
   /** One node's full last good listing; undefined until it has listed. */
   listing(runner: string, machine: string): readonly string[] | undefined {
-    return this.listings.get(runner)?.get(machine);
+    return this.listings.get(runner)?.get(machine)?.ids;
   }
 
   /** Picker models only, each naming its nodes when some node lacks it. */
@@ -287,7 +299,7 @@ export class NodeModelCatalogs {
         models: [],
       };
     const listedOn = new Map<string, string[]>();
-    for (const [machine, ids] of nodes)
+    for (const [machine, { ids }] of nodes)
       for (const id of ids)
         if (isPickerCatalogModel(id)) listedOn.set(id, [...(listedOn.get(id) ?? []), machine]);
     return {
@@ -303,12 +315,19 @@ export class NodeModelCatalogs {
     };
   }
 
-  /** Why `machine` cannot run `model`, or null when it lists the model, never answered, or no node lists it. */
+  /** Only a fresh successful listing can refuse a model on this node. */
   blocker(runner: string, model: string, machine: string): string | null {
     const byNode = this.listings.get(runner);
-    if (!byNode?.get(machine) || byNode.get(machine)!.includes(model)) return null;
+    const listing = byNode?.get(machine);
+    if (
+      !byNode ||
+      listing?.observedAt === undefined ||
+      Date.now() - listing.observedAt >= RUNNER_MODEL_CATALOG_TTL_MS ||
+      listing.ids.includes(model)
+    )
+      return null;
     const listedOn = [...byNode]
-      .filter(([, ids]) => ids.includes(model))
+      .filter(([, { ids }]) => ids.includes(model))
       .map(([node]) => node)
       .sort();
     return listedOn.length
@@ -336,6 +355,7 @@ export async function queryNodeModelCatalog(
       try {
         store.record(runner, node.machine, source.parse(await node.list(source)));
       } catch (error) {
+        store.unavailable(runner, node.machine);
         console.warn(
           `[runner-models] ${runner} model list on ${node.machine} failed; keeping its last listing: ${error instanceof Error ? error.message : String(error)}`,
         );

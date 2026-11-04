@@ -360,6 +360,9 @@ test('per-node listings merge into picker models that name the nodes having them
   // A failing node keeps its last good listing; an empty store is unavailable.
   outputs.mini = new Error('exit code 1');
   assert.deepEqual(await queryNodeModelCatalog('pi', source, nodes, store), first);
+  assert.equal(store.blocker('pi', 'litellm/glm-5p3', 'mini'), null);
+  outputs.mini = 'provider model\nxai grok-4.7\nlitellm kimi-k3\n';
+  await queryNodeModelCatalog('pi', source, nodes, store);
   assert.equal(new NodeModelCatalogs().result('pi').status, 'unavailable');
 
   // Restriction data is the full listing, including models the picker hides.

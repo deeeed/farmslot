@@ -1111,6 +1111,8 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
     effort: params.effort,
     scripted: params.scripted,
     slotId: params.slotId ?? null,
+    // Only a caller's request pins. A chained run's slot is the engine's own placement.
+    requestedSlotId: options?.dispatchRequest?.slotId ?? null,
     reviewWorkspaceTarget: params.reviewWorkspaceTarget
       ? structuredClone(params.reviewWorkspaceTarget)
       : undefined,

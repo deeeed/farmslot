@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import * as promiseTimers from 'node:timers/promises';
 
-import type {
-  AppBindingMismatchPayload,
-  PoolConfig,
-  PressureAdmissionDecision,
-  ProjectSlotSelectionConfig,
-  Run,
-  RunDecision,
-  SlotStatus,
+import {
+  type AppBindingMismatchPayload,
+  pipelineStepsForRun,
+  type PoolConfig,
+  type PressureAdmissionDecision,
+  type ProjectSlotSelectionConfig,
+  type Run,
+  type RunDecision,
+  type SlotStatus,
 } from '@farmslot/protocol';
 import { sourceLockDigest } from '@farmslot/slot-config/sources';
 
@@ -390,6 +391,39 @@ mock.module('../run-lifecycle/safe-idle-slot.js', {
 const { resolveDispatchPreviewFromFleet } = await import('../methods/dispatch/preview.js');
 const { nodeModelCatalogs } = await import('../runners/model-catalog.js');
 const { executeFindSlotStep } = await import('./find-slot-step.js');
+const orchestrator = await import('./orchestrator.js');
+mock.module('./orchestrator.js', {
+  namedExports: {
+    ...orchestrator,
+    cancelRunEngine: () => {},
+    isRunEngineDriven: () => false,
+    bumpRunGeneration: () => {
+      run.engineState = { ...run.engineState, generation: 1 };
+      return 1;
+    },
+  },
+});
+const capabilities = await import('./slot-capability-requirements.js');
+mock.module('./slot-capability-requirements.js', {
+  namedExports: { ...capabilities, replaySlotCapabilityRequirements: async () => undefined },
+});
+const { runReplayStep } = await import('../methods/run/replay-step.js');
+
+async function assertPickedSlotReplays(slotId: string): Promise<void> {
+  // Round-trip the stored record before replay clears the resolved decisions.
+  run = structuredClone(run);
+  run.status = 'failed';
+  run.steps = pipelineStepsForRun(run)!.map((name) => ({
+    name,
+    status: name === 'find-slot' ? 'failed' : 'pending',
+  }));
+  liveRows.clear();
+  await runReplayStep({ runId: run.id, stepName: 'find-slot' }, () => {}, {
+    startEngine: async () => {},
+  });
+  assert.equal(run.slotId, slotId);
+  assert.equal(run.requestedSlotId, slotId);
+}
 
 function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   slots.splice(0, slots.length, ...structuredClone(originalSlots));
@@ -468,6 +502,34 @@ const context: Parameters<typeof executeFindSlotStep>[3] = {
     return 'pick';
   },
 };
+
+for (const unavailable of ['gone', 'busy'] as const) {
+  test(
+    `control: find-slot visibly refuses a ${unavailable} pin without choosing another slot`,
+    { timeout: 2000 },
+    async () => {
+      reset('dev', 'PROJ-383');
+      freshPreview = true;
+      expectedTarget = undefined;
+      run.slotId = unavailable === 'gone' ? 'missing-example-3' : slots[0]!.slot;
+      if (unavailable === 'busy') {
+        slots[0]!.lifecycle = 'busy';
+        slots[0]!.phase = 'preparing';
+      }
+      const pinned = run.slotId;
+      await assert.rejects(executeFindSlotStep(run.id, run, 0, context), {
+        message:
+          unavailable === 'gone'
+            ? 'Slot missing-example-3 not found'
+            : `Slot ${pinned}: Slot is busy (preparing)`,
+      });
+      assert.equal(run.slotId, pinned);
+      assert.deepEqual(claims, []);
+      assert.equal(pickerPayload, undefined);
+    },
+  );
+}
+
 for (const [flow, ticket] of [
   ['pr-complete', 'example-org/terminal#210'],
   ['fix-bug', 'TAT-4137'],
@@ -823,6 +885,40 @@ test('an operator affinity-card pick retains explicit pressure policy on an over
   assert.equal(result.outputs?.selectionMethod, 'human-override');
   assert.deepEqual(claims, [hot.slot]);
 });
+
+for (const card of ['affinity', 'slot-picker'] as const) {
+  test(`an operator ${card} pick persists the same slot through find-slot replay`, async () => {
+    reset(card === 'affinity' ? 'pr-complete' : 'dev', 'example-org/terminal#210');
+    run.requestedSlotId = null;
+    expectedTarget = card === 'affinity' ? branch : undefined;
+    pressureDecisions.set('macpro', loadDecision('macpro', 0.2));
+    const selected = candidate('picked', 'macpro', 'fix/old');
+    slots.splice(0, slots.length, selected);
+    if (card === 'affinity') {
+      const warm = { ...candidate('warm', 'mini', 'fix/old'), lifecycle: 'busy' as const };
+      slots.push(warm);
+      nudgeCandidates = [
+        {
+          slot: warm,
+          uncommittedCount: 0,
+          uncommittedFiles: [],
+          nudgeCount: 0,
+          ctxPct: null,
+          prMatchKind: 'branch-slug',
+          riskFlags: [],
+          canNudge: false,
+        },
+      ];
+    } else {
+      defaultReuseOutcome = { kind: 'local-work', reason: 'dirty files' };
+    }
+    pickedSlot = expectedSlot = selected.slot;
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+    assert.equal(result.outputs?.selectionMethod, 'human-override');
+    assert.equal(result.outputs?.selectedSlot, selected.slot);
+    await assertPickedSlotReplays(selected.slot);
+  });
+}
 
 test('the stale-slot picker offers only eligible slots and waits for a human pick', async () => {
   reset('dev', 'TAT-9000');
@@ -1283,6 +1379,35 @@ test('the clean-slot pick skips a better-ranked slot whose node lacks the run mo
   assert.deepEqual(claims, [listing.slot]);
 });
 
+for (const placement of ['clean', 'affinity'] as const) {
+  test(`a stale model listing steers ${placement} find-slot placement`, async (t) => {
+    reset(placement === 'affinity' ? 'pr-complete' : 'dev', 'example-org/terminal#210');
+    expectedTarget = placement === 'affinity' ? branch : undefined;
+    let now = 0;
+    const clock = mock.method(Date, 'now', () => now);
+    t.after(() => clock.mock.restore());
+    const lacking = candidate('stale-b', 'stale-node-b', branch);
+    const listing = candidate('stale-a', 'stale-node-a', 'main');
+    pressureDecisions.set(lacking.machine, loadDecision(lacking.machine, 0.2));
+    pressureDecisions.set(listing.machine, loadDecision(listing.machine, 0.2));
+    if (placement === 'affinity') {
+      lacking.lifecycle = 'held';
+      affinitySlot = lacking;
+    } else lacking.health.cdp = 'Wallet';
+    slots.splice(0, slots.length, lacking, listing);
+    nodeModelCatalogs.record('pi', lacking.machine, ['xai/grok-4.7']);
+    nodeModelCatalogs.record('pi', listing.machine, ['litellm/kimi-k3']);
+    run.metrics = { ...run.metrics, runner: 'pi', model: 'litellm/kimi-k3' };
+    now = 5 * 60_000;
+    cleanSlots.add(lacking.slot);
+    cleanSlots.add(listing.slot);
+    expectedSlot = listing.slot;
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+    assert.equal(result.outputs?.selectedSlot, listing.slot);
+    assert.deepEqual(claims, [listing.slot]);
+  });
+}
+
 // F306: a slot's task binding and runtime follow its pool app, never run.app.
 type DecideOptions = Parameters<(typeof context)['createEngineDecision']>[5];
 interface AppBindingAsk {
@@ -1606,6 +1731,7 @@ const appAnswer = (payload: AppBindingMismatchPayload, action: string): RunDecis
 
 test('continue after a picker pick claims that pick even when another slot frees up', async () => {
   reset('dev', 'TAT-9100');
+  run.requestedSlotId = null;
   expectedTarget = undefined;
   // `cold` is the automatic choice but has local work; `hot` is only pickable by hand.
   const cold = candidate('cold', 'mini', 'fix/cold');
@@ -1657,6 +1783,7 @@ test('continue after a picker pick claims that pick even when another slot frees
   assert.equal(appCards[0]!.operatorPick, true, 'the card records the pick for a later restart');
   assert.equal(result.outputs?.selectedSlot, hot.slot);
   assert.deepEqual(claims, [hot.slot]);
+  await assertPickedSlotReplays(hot.slot);
 });
 
 test('the recorded binding is the claimed slot one, not the latest answer for another slot', async () => {
@@ -1787,6 +1914,7 @@ for (const pinned of [false, true]) {
 
 test('a Continue on a picked slot answered after a gateway restart still claims that pick', async () => {
   reset('dev', 'TAT-9101');
+  run.requestedSlotId = null;
   expectedTarget = undefined;
   const cold = candidate('cold', 'mini', 'fix/cold');
   const hot = candidate('hot', 'macpro', 'fix/hot');
@@ -1842,6 +1970,7 @@ test('a Continue on a picked slot answered after a gateway restart still claims 
   assert.equal(result.outputs?.selectedSlot, hot.slot);
   assert.deepEqual(claims, [hot.slot]);
   assert.deepEqual(reuseCalls, [], 'the reusable automatic choice is never considered');
+  await assertPickedSlotReplays(hot.slot);
 });
 
 test('fresh reuse refuses an active owner whose node lacks the requested model before touching it', async () => {

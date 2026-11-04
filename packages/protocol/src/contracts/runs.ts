@@ -2958,6 +2958,8 @@ export interface Run {
   /** Worker scripted-runner config when metrics.runner='scripted'. */
   scripted?: ScriptedRunnerConfig;
   slotId: string | null;
+  /** Caller pin, independent of the engine's current placement. Absent on older runs. */
+  requestedSlotId?: string | null;
   /** A cancelled replay hold was released on demand for another run, preserving its record. */
   slotReclaimed?: { slotId: string; byRunId: string; at: string };
   /**

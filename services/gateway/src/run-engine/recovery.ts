@@ -35,6 +35,7 @@ import {
 } from '../runners/registry.js';
 import { runDecisionWaitingStatus, type RunProgressObservation } from '../runners/run-progress.js';
 import { runnerSessionContextPatch } from '../runners/session-record.js';
+import { requestedRunSlotId } from '../runs/slot-pin.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 import { withSourcePlanning } from '../sources/runtime.js';
 
@@ -1618,7 +1619,10 @@ export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators):
       if (reclaimed && blockedOwner) {
         // Finish what the release would have: detach the run, keeping its
         // blocked outcome, so a fleet refresh does not re-hold the slot for it.
-        deps.updateRun(blockedOwner.id, { slotId: null });
+        deps.updateRun(blockedOwner.id, {
+          slotId: null,
+          requestedSlotId: requestedRunSlotId(blockedOwner),
+        });
         deps.broadcast(Events.RUN_UPDATED, { run: deps.getRun(blockedOwner.id) });
       }
       continue;

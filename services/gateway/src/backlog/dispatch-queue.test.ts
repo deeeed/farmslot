@@ -5,11 +5,13 @@ import test, { after, beforeEach, type TestContext } from 'node:test';
 
 import type { QueueItem, ReviewSelection, SlotStatus } from '@farmslot/protocol';
 
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
 import { farmslotRoot, setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
 import { dispatchQueueAdd } from '../methods/dispatch/queue.js';
 import {
+  buildRunRecord,
   createRun,
   deleteRun,
   getAllRuns,
@@ -2064,6 +2066,97 @@ test('memory-only create failure requeues and purges the orphan Run', async (t) 
   assert.equal(requeued.status, 'queued');
   assert.equal(requeued.runId, undefined);
 });
+
+test('an upgraded queue row does not turn a failed scheduler placement into a pin', async () => {
+  const first = readyFleetSlot('upgrade-a');
+  const next = readyFleetSlot('upgrade-b');
+  setCachedFleetForTests({
+    ...next,
+    slots: [{ ...first.slots[0], agent: 'working' }, ...next.slots],
+  });
+  const legacy: QueueItem = {
+    id: 'legacy-failed-placement',
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-383-upgrade',
+    slotId: 'upgrade-a',
+    priority: 1,
+    createdAt: new Date().toISOString(),
+    status: 'queued',
+  };
+  await writeFile(
+    isolatedTestPath('farmslot-test-dispatch-queue', '.json'),
+    JSON.stringify([{ ...legacy, originator: { kind: 'system' } }]),
+  );
+  await loadQueue();
+  const attempts: Array<{ slotId?: string; requestedSlotId?: string | null }> = [];
+  initDispatchQueue(
+    () => {},
+    async (queued, _claim, callerRequest) => {
+      assert.ok(callerRequest);
+      const run = buildRunRecord(
+        { ...callerRequest, slotId: queued.slotId },
+        { dispatchRequest: callerRequest },
+      );
+      attempts.push({ slotId: queued.slotId, requestedSlotId: run.requestedSlotId });
+    },
+  );
+  await tryDispatchNext();
+  assert.deepEqual(attempts, [{ slotId: 'upgrade-b', requestedSlotId: null }]);
+});
+
+for (const previousSlot of ['free', 'busy'] as const) {
+  test(`automatic queue placement stays unpinned after a failed create and persisted retry with the previous slot ${previousSlot}`, async () => {
+    const firstFleet = readyFleetSlot('retry-a');
+    setCachedFleetForTests({ ...firstFleet, slots: [...firstFleet.slots] });
+    const item = addItem(
+      {
+        flowType: 'dev',
+        project: 'farmslot-farm',
+        ticketOrPr: 'PROJ-383-queue-retry',
+        autoDispatch: false,
+      },
+      { kind: 'system' },
+    );
+    const attempts: Array<{
+      slotId: string | undefined;
+      requestedSlotId: string | null | undefined;
+    }> = [];
+    initDispatchQueue(
+      () => {},
+      async (queued, claim, callerRequest) => {
+        assertQueueClaimHeld(claim, 'queue-retry');
+        assert.ok(callerRequest);
+        const run = buildRunRecord(
+          { ...callerRequest, slotId: queued.slotId },
+          { dispatchRequest: callerRequest },
+        );
+        attempts.push({ slotId: queued.slotId, requestedSlotId: run.requestedSlotId });
+        if (attempts.length === 1) throw new Error('simulated pre-create failure');
+      },
+    );
+    await tryDispatchNext();
+    await persistQueueNow();
+    await loadQueue();
+    const nextFleet = readyFleetSlot('retry-b');
+    setCachedFleetForTests({
+      ...nextFleet,
+      slots: [
+        { ...firstFleet.slots[0], agent: previousSlot === 'busy' ? 'working' : 'idle' },
+        ...nextFleet.slots,
+      ],
+    });
+    await tryDispatchNext();
+    assert.deepEqual(attempts, [
+      { slotId: 'retry-a', requestedSlotId: null },
+      { slotId: previousSlot === 'busy' ? 'retry-b' : 'retry-a', requestedSlotId: null },
+    ]);
+    assert.equal(
+      getQueueSnapshot().some((queued) => queued.id === item.id),
+      false,
+    );
+  });
+}
 
 test('PR queue prepares cold allowed slots while respecting busy slots and model constraints', async () => {
   setQueueDispatchPressureCaptureForTests(admitAllPressure);

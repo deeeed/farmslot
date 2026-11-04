@@ -37,6 +37,7 @@ import { assertNodeReconnectCurrent, sendNodeRequest, waitForNode } from '../fle
 import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
 import type { RunCreateInternalOptions, RunCreationPlan } from '../methods/run.js';
 import { RunTransitionCoordinator } from '../run-lifecycle/transition-coordinator.js';
+import { requestedRunSlotId } from '../runs/slot-pin.js';
 import { buildRunRecord, getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionOriginator, runWithPrincipalOwner } from '../security/work-originator.js';
 
@@ -261,6 +262,7 @@ export async function replanSourceRun(run: Run, target: SourceAdmissionTarget): 
     ...run,
     ...next,
     slotId: target.requestedSlotId ?? run.slotId,
+    requestedSlotId: requestedRunSlotId(run),
     status: run.status,
     createdAt: run.createdAt,
     startedAt: run.startedAt,

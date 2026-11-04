@@ -87,7 +87,11 @@ import {
 import { isPinnedPRExecution, preparePRQueueAdmission } from './pr-admission.js';
 import { migrateQueuedReviewQa } from './review-qa-migration.js';
 
-export type QueueRecord = QueueItem & { originator?: WorkOriginator };
+export type QueueRecord = QueueItem & {
+  originator?: WorkOriginator;
+  /** Caller intent before the scheduler writes its placement to slotId. */
+  requestedSlotId?: string | null;
+};
 
 function setQueueOriginator(record: QueueRecord, originator: WorkOriginator): void {
   Object.defineProperty(record, 'originator', {
@@ -612,6 +616,7 @@ export function addItem(
     ticketData: params.ticketData,
     devChecklist: params.devChecklist,
     slotId: params.slotId,
+    requestedSlotId: params.slotId ?? null,
     reviewWorkspaceTarget: params.reviewWorkspaceTarget
       ? structuredClone(params.reviewWorkspaceTarget)
       : undefined,
@@ -970,7 +975,10 @@ export function updateItem(
   if (params.sourceSelections !== undefined)
     item.sourceSelections = structuredClone(params.sourceSelections);
   if (params.label !== undefined) item.label = params.label;
-  if (params.slotId !== undefined) item.slotId = params.slotId ?? undefined;
+  if (params.slotId !== undefined) {
+    item.slotId = params.slotId ?? undefined;
+    item.requestedSlotId = params.slotId;
+  }
   if (params.allowedSlots !== undefined) {
     assertAllowedSlots(params.allowedSlots, 'update queue dispatch');
     item.allowedSlots = normalizeAllowedSlots(params.allowedSlots);
@@ -1515,7 +1523,7 @@ function isNonRetryableEvalQueueError(err: unknown): boolean {
   );
 }
 
-function liveQueuedItem(itemId: string): QueueItem | null {
+function liveQueuedItem(itemId: string): QueueRecord | null {
   const item = queue.find((candidate) => candidate.id === itemId);
   return item?.status === 'queued' ? item : null;
 }
@@ -1687,6 +1695,9 @@ async function tryDispatchNextOnce(): Promise<void> {
     if (!claim) continue;
 
     const { queuedSourceCreationRequest } = await import('../sources/runtime.js');
+    if (item.requestedSlotId === undefined) item.requestedSlotId = null;
+    // A failed create leaves the last placement on the item. Retry from caller intent.
+    item.slotId = item.requestedSlotId ?? undefined;
     const callerRequest = queuedSourceCreationRequest(item);
     if (stopIfClaimLost(claim, 'source-caller-capture')) return;
     let slot: SlotStatus | undefined;
