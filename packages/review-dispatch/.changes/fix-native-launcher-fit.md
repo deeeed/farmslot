@@ -1,0 +1,1 @@
+- Offer custom native directories only for targets in the native catalog.

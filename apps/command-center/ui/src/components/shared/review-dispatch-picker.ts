@@ -74,6 +74,8 @@ export class ReviewDispatchPicker extends LitElement {
     ${planningChoiceStyles}
     :host {
       display: block;
+      min-width: 0;
+      max-width: 100%;
       font: inherit;
       color: inherit;
     }
@@ -101,6 +103,8 @@ export class ReviewDispatchPicker extends LitElement {
       align-items: start;
       gap: 10px;
       flex: 2 1 320px;
+      min-width: 0;
+      max-width: 100%;
     }
     input,
     button {

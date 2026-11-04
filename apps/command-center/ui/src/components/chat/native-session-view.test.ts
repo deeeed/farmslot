@@ -243,7 +243,7 @@ test('custom directory does not redirect an unavailable selected machine or crea
       },
     },
   });
-  assert.match(litText(Reflect.get(view, 'render').call(view)), /macwork.*Refresh native host/s);
+  assert.match(litText(Reflect.get(view, 'render').call(view)), /macwork.*Unavailable/s);
   const change = litBindings(Reflect.get(view, 'render').call(view), '@change=')[1];
   assert(typeof change === 'function');
   const event = new Event('change');
@@ -759,4 +759,61 @@ test('the shared launcher prefills the requested machine rather than the first c
   assert.equal(Reflect.get(view, 'defaultLaunchChoice').executionNodeId, 'mini');
   Object.assign(view, { initialExecutionNodeId: 'offline' });
   assert.equal(Reflect.get(view, 'defaultLaunchChoice'), undefined);
+});
+
+test('a create timeout keeps the prompt and gives one short next step', async () => {
+  const view = new NativeSessionView();
+  Object.defineProperty(view, 'isConnected', { value: true });
+  Object.assign(view, {
+    connected: true,
+    creating: true,
+    profileReady: true,
+    prompt: 'Keep this prompt',
+    cwd: '/workspace',
+    executionNodeId: 'local',
+    catalog: { runners: [], contexts: [{ label: 'Workspace', cwd: '/workspace' }] },
+    fixture: {},
+    api: {
+      request: async () => {
+        throw new Error('Request native.session.create timed out after 15000ms');
+      },
+    },
+  });
+  await Reflect.get(view, 'create').call(view);
+  assert.equal(Reflect.get(view, 'prompt'), 'Keep this prompt');
+  assert.equal(
+    Reflect.get(view, 'error'),
+    'Session start was not confirmed. Check Sessions before trying again.',
+  );
+});
+
+test('an unavailable node is quiet beside its choices, without a page-level raw error', () => {
+  const view = new NativeSessionView();
+  Object.assign(view, {
+    connected: true,
+    creating: true,
+    catalog: {
+      runners: [],
+      contexts: [],
+      executionNodes: [
+        {
+          executionNodeId: 'mini',
+          label: 'mini',
+          unavailableReason: 'Native observation source unavailable: socket disconnected',
+        },
+      ],
+    },
+    unavailableNodes: [
+      {
+        executionNodeId: 'mini',
+        message: 'Native observation source unavailable: socket disconnected',
+      },
+    ],
+  });
+  const output = litText(Reflect.get(view, 'render').call(view));
+  assert.match(output, /mini.*Unavailable/s);
+  assert.doesNotMatch(
+    output,
+    /Session inventory is incomplete|socket disconnected|native-target-unavailable/,
+  );
 });

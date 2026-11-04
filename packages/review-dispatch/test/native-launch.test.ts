@@ -70,16 +70,13 @@ test('custom directories use actual target homes and retain unavailable reasons'
   assert.equal(choices.find((choice) => choice.key === 'custom:macwork')?.unavailableReason, null);
 });
 
-test('known machines with missing metadata remain visible and disabled without guessed homes', () => {
+test('fleet machines without native catalog metadata are not offered as launch targets', () => {
   const choices = nativeLaunchChoices(
     { runners: [], contexts: [] },
     { projects: [], machines: [] },
-    [{ slot: 'slot', machine: 'mini', project: 'mobile' }],
+    [{ slot: 'slot', machine: 'farmslot-demo', project: 'mobile' }],
   );
-  assert.equal(choices.length, 1);
-  assert.equal(choices[0].key, 'custom:mini');
-  assert.equal(choices[0].cwd, '');
-  assert.match(choices[0].unavailableReason ?? '', /metadata unavailable/);
+  assert.deepEqual(choices, []);
 });
 
 test('workspace contexts remain launchable when optional custom-target metadata is absent', () => {
