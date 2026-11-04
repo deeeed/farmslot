@@ -165,10 +165,16 @@ export async function claimSlotStatusIf(
       slots.push(slot);
     }
     if (slot.workspace_recovery || !predicate(slot)) return;
+    // A predecessor loses cleanup authority when this claim adopts a successor.
+    // Keep active/uncertain teardown fences, and respect explicit cleanup writes.
+    const clearCleanup =
+      !('cleanup_run_id' in fields) &&
+      hasSupersededSlotCleanup({ ...slot, current_run_id: fields.current_run_id });
     const nextEpoch = (Number(slot.slot_epoch) || 0) + 1;
     for (const [key, value] of Object.entries(fields)) {
       slot[key] = value;
     }
+    if (clearCleanup) slot.cleanup_run_id = null;
     slot.slot_epoch = nextEpoch;
     await atomicWriteStatus(data);
     triggerSlotUpdateHook();
@@ -402,6 +408,22 @@ export function ownsRunSlotCleanup(
 ): boolean {
   return Boolean(
     row && (row.current_run_id === runId || (!row.current_run_id && row.cleanup_run_id === runId)),
+  );
+}
+
+/** A newer owner supersedes inactive cleanup bookkeeping, never an active teardown. */
+export function hasSupersededSlotCleanup(row: Readonly<Record<string, unknown>> | null): boolean {
+  return Boolean(
+    row &&
+    typeof row.current_run_id === 'string' &&
+    row.current_run_id &&
+    typeof row.cleanup_run_id === 'string' &&
+    row.cleanup_run_id &&
+    row.cleanup_run_id !== row.current_run_id &&
+    !row.cleanup_release_token &&
+    !row[SLOT_CLEANUP_STOP_UNCONFIRMED] &&
+    !row[SLOT_RELEASING_SINCE] &&
+    row.phase !== SLOT_PHASE_RELEASING,
   );
 }
 

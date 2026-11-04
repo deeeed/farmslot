@@ -88,7 +88,11 @@ export function slotRecoveryEligibility(
   if (!slot.enabled || slot.lifecycle === 'disabled') return blocked('Slot is disabled');
   if (slot.health.ssh === 'FAIL') return blocked('Node is offline');
   if (slot.lifecycle === 'manual') return blocked('Slot is in manual mode');
-  if (slot.agent === 'working') return blocked('Slot is working');
+  if (
+    slot.agent === 'working' &&
+    !(slot.workspace?.recovery && slot.workspace.terminalOwner && !slot.workspace.protectedReason)
+  )
+    return blocked('Slot is working');
   if (slot.cleanupRunId || slot.handoffRunId) return blocked('Slot has a cleanup or handoff owner');
   bulkInspectable = slot.lifecycle === 'ready' && !slot.currentRunId;
   const work = slot.workspace;
@@ -129,11 +133,14 @@ export function slotRecoveryEligibility(
   };
 }
 
-/** An ownerless checkout's unpushed commits are parked, not discarded, by an operator release. */
+/** Unowned work, including a terminal owner's interrupted recovery, is parked before reset. */
 export function parksSlotCommits(
-  work: Pick<SlotWorkspace, 'currentRunId' | 'publication'>,
+  work: Pick<SlotWorkspace, 'currentRunId' | 'publication' | 'terminalOwner' | 'recovery'>,
 ): boolean {
-  return work.publication === 'unpushed' && !work.currentRunId;
+  return (
+    work.publication === 'unpushed' &&
+    (!work.currentRunId || Boolean(work.terminalOwner && work.recovery))
+  );
 }
 
 /** Unpushed commits a release kept reachable at `ref` before resetting the slot. */

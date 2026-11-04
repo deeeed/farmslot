@@ -263,15 +263,12 @@ export function registerSlotCommand(program: Command): void {
         if (opts.recover) {
           const { fleet } = await client.call<FleetStatusResult>('fleet.status');
           const workspace = fleet.slots.find((slot) => slot.slot === slotId)?.workspace;
-          if (!workspace) {
-            throw new Error(
-              `Slot ${slotId} has no workspace identity to recover; check \`farmslot fleet status\`.`,
-            );
-          }
           params = {
             ...params,
             release: true,
-            expectedWorkspace: slotWorkspaceIdentity(workspace),
+            ...(workspace
+              ? { expectedWorkspace: slotWorkspaceIdentity(workspace) }
+              : { recover: true }),
           };
         }
         if (emit.machine) {

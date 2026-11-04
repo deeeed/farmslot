@@ -13,6 +13,8 @@ let controlOk = true;
 let refusal: string | undefined;
 let afterProbe: (() => void) | undefined;
 let locked = false;
+let beforeCleanupWrite: (() => void) | undefined;
+let cleanupWrites = 0;
 /** An earlier runtime action is still running on the slot when the next control starts. */
 let earlierControl = false;
 const details: (string | undefined)[] = [];
@@ -25,7 +27,24 @@ const bootTimeouts: number[] = [];
 mock.module('../methods/slot/prepare-command.js', {
   namedExports: { PREPARE_PREFLIGHT_TIMEOUT_MS: 900_000 },
 });
-mock.module('../core/state.js', { namedExports: { readSlotRow: async () => ({ ...row }) } });
+const realState = await import('../core/state.js');
+mock.module('../core/state.js', {
+  namedExports: {
+    ...realState,
+    readSlotRow: async () => ({ ...row }),
+    updateSlotStatusIf: async (
+      _slot: string,
+      predicate: (value: Readonly<Record<string, unknown>>) => boolean,
+      fields: Record<string, unknown>,
+    ) => {
+      beforeCleanupWrite?.();
+      if (!predicate(row)) return false;
+      Object.assign(row, fields);
+      cleanupWrites++;
+      return true;
+    },
+  },
+});
 mock.module('../core/config.js', {
   namedExports: {
     ...realConfig,
@@ -143,6 +162,8 @@ beforeEach(() => {
   calls.length = 0;
   earlierControl = false;
   details.length = 0;
+  beforeCleanupWrite = undefined;
+  cleanupWrites = 0;
 });
 const ready = (
   gate: () => Promise<void> = async () => {
@@ -258,7 +279,7 @@ test('pressure refusal and foreign device/runtime ownership stop boot', async ()
   assert.ok(!calls.some((call) => call.startsWith('boot:')));
 });
 test('cleanup, handoff and recovery fences refuse before health', async () => {
-  for (const field of ['cleanup_run_id', 'handoff_run_id', 'workspace_recovery']) {
+  for (const field of ['handoff_run_id', 'workspace_recovery']) {
     row = { current_run_id: 'run', slot_epoch: 1, [field]: 'foreign' };
     await assert.rejects(ready(), /ownership changed/);
   }
@@ -293,3 +314,58 @@ test('a boot and its wait are named on the active step, which gets its detail ba
   ]);
   assert.equal(run.steps[0]?.detail, 'Launching worker');
 });
+
+test('a current launch reconciles only a superseded inactive cleanup pointer', async () => {
+  row.cleanup_run_id = 'cancelled-predecessor';
+  row.cleanup_release_token = null;
+  row.cleanup_stop_unconfirmed = null;
+  row.releasing_since = null;
+  await ready();
+  assert.equal(row.cleanup_run_id, null);
+  assert.equal(row.current_run_id, 'run');
+  assert.equal(row.slot_epoch, 1);
+  assert.equal(cleanupWrites, 1);
+  assert.ok(calls.includes('boot:server'));
+});
+
+for (const fence of [
+  { cleanup_run_id: 'run' },
+  { cleanup_release_token: 'active-release' },
+  { cleanup_stop_unconfirmed: 'uncertain-stop' },
+  { phase: 'releasing' },
+  { releasing_since: '2026-11-04T16:54:30Z' },
+  { handoff_run_id: 'successor' },
+  { workspace_recovery: { id: 'recovery' } },
+])
+  test(`readiness preserves cleanup fence ${JSON.stringify(fence)}`, async () => {
+    Object.assign(row, { cleanup_run_id: 'predecessor', ...fence });
+    await assert.rejects(ready(), /ownership changed/);
+    assert.equal(cleanupWrites, 0);
+    assert.deepEqual(calls, []);
+  });
+
+for (const change of [
+  () => {
+    row.current_run_id = 'successor';
+  },
+  () => {
+    row.slot_epoch = 2;
+  },
+  () => {
+    row.cleanup_run_id = 'new-cleanup';
+    row.cleanup_release_token = 'active';
+  },
+  () => {
+    run.status = 'blocked';
+  },
+  () => {
+    run.status = 'cancelled';
+  },
+])
+  test(`cleanup reconciliation refuses a concurrent change ${change.toString()}`, async () => {
+    row.cleanup_run_id = 'predecessor';
+    beforeCleanupWrite = change;
+    await assert.rejects(ready(), /ownership changed/);
+    assert.equal(cleanupWrites, 0);
+    assert.deepEqual(calls, []);
+  });

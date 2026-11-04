@@ -250,3 +250,45 @@ test('markRunSlotHeld holds only a slot its run still owns', async (t) => {
   const held = await readSlotFixture(slotId);
   assert.deepEqual([held.lifecycle, held.phase, held.agent], ['held', 'ci-watch', 'idle']);
 });
+
+test('new ownership clears a superseded inactive cleanup pointer in the claim write', async (t) => {
+  const slotId = await withStatusFixture(t, {
+    slot: 'cleanup-adoption',
+    slot_epoch: 18,
+    current_run_id: null,
+    cleanup_run_id: 'cancelled-predecessor',
+    cleanup_release_token: null,
+    cleanup_stop_unconfirmed: null,
+    releasing_since: null,
+    phase: 'pr-watch',
+  });
+  const claim = await claimSlotStatusIf(slotId, () => true, {
+    current_run_id: 'successor',
+    lifecycle: 'busy',
+    phase: 'preparing',
+  });
+  assert.deepEqual(claim, { claimed: true, epoch: 19 });
+  const after = await readSlotFixture(slotId);
+  assert.equal(after.current_run_id, 'successor');
+  assert.equal(after.cleanup_run_id, null);
+});
+
+for (const fence of [
+  { cleanup_run_id: 'successor' },
+  { cleanup_release_token: 'active-release' },
+  { cleanup_stop_unconfirmed: 'stop still uncertain' },
+  { phase: 'releasing' },
+  { releasing_since: '2026-11-04T16:54:30Z' },
+])
+  test(`ownership adoption preserves cleanup fence ${JSON.stringify(fence)}`, async (t) => {
+    const slotId = await withStatusFixture(t, {
+      slot: 'cleanup-adoption-fence',
+      slot_epoch: 18,
+      current_run_id: null,
+      cleanup_run_id: 'predecessor',
+      ...fence,
+    });
+    await claimSlotStatusIf(slotId, () => true, { current_run_id: 'successor' });
+    const after = await readSlotFixture(slotId);
+    assert.equal(after.cleanup_run_id, fence.cleanup_run_id ?? 'predecessor');
+  });

@@ -1,0 +1,1 @@
+- Let `slot refresh --recover` request a fresh server inspection when the fleet has no workspace identity.

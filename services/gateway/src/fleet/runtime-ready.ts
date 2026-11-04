@@ -4,7 +4,7 @@ import { isTerminalRunStatus } from '@farmslot/protocol';
 
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { runtimeBootTimeoutMs } from '../core/project-timeouts.js';
-import { readSlotRow } from '../core/state.js';
+import { hasSupersededSlotCleanup, readSlotRow, updateSlotStatusIf } from '../core/state.js';
 import { getRuntimeCapabilityRegistry } from '../methods/runtime-capabilities.js';
 import { getRun, updateRunStep } from '../runs/store.js';
 import { withSlotSources } from '../sources/runtime.js';
@@ -29,23 +29,39 @@ export async function ensureRunRuntimeReady(
 ): Promise<void> {
   return withSlotSources(slotId, async () => {
     const initial = await readSlotRow(slotId);
+    const ownsLaunch = (row: Readonly<Record<string, unknown>> | null) => {
+      const run = getRun(runId);
+      return Boolean(
+        run &&
+        !isTerminalRunStatus(run.status) &&
+        run.status !== 'blocked' &&
+        run.slotId === slotId &&
+        row &&
+        row.current_run_id === runId &&
+        row.slot_epoch === initial?.slot_epoch &&
+        (!row.handoff_run_id || row.handoff_run_id === runId) &&
+        !row.workspace_recovery &&
+        row.phase !== 'releasing',
+      );
+    };
     const assertOwner = async () => {
       assertCurrent?.();
-      const run = getRun(runId);
-      const row = await readSlotRow(slotId);
-      if (
-        !run ||
-        isTerminalRunStatus(run.status) ||
-        run.status === 'blocked' ||
-        run.slotId !== slotId ||
-        !row ||
-        row.current_run_id !== runId ||
-        row.slot_epoch !== initial?.slot_epoch ||
-        row.cleanup_run_id ||
-        (row.handoff_run_id && row.handoff_run_id !== runId) ||
-        row.workspace_recovery ||
-        row.phase === 'releasing'
-      )
+      let row = await readSlotRow(slotId);
+      if (ownsLaunch(row) && hasSupersededSlotCleanup(row)) {
+        const cleanupRunId = row?.cleanup_run_id;
+        // Old claims could leave a predecessor's inactive pointer behind. Clear
+        // only that exact pointer under the current launch's owner/epoch fence.
+        await updateSlotStatusIf(
+          slotId,
+          (current) =>
+            ownsLaunch(current) &&
+            current.cleanup_run_id === cleanupRunId &&
+            hasSupersededSlotCleanup(current),
+          { cleanup_run_id: null },
+        );
+        row = await readSlotRow(slotId);
+      }
+      if (!ownsLaunch(row) || row?.cleanup_run_id)
         throw new Error(`Runtime readiness refused for ${slotId}: run or slot ownership changed`);
       assertCurrent?.();
     };

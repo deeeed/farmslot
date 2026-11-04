@@ -9,7 +9,11 @@ import { mock, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import type { FleetStatusResult, SlotRefreshResult } from '@farmslot/protocol';
+import {
+  type FleetStatusResult,
+  type SlotRefreshResult,
+  slotWorkspaceIdentity,
+} from '@farmslot/protocol';
 
 import { createNativeProofFixture } from '../../runtime/native-proof-fixture.live-support.js';
 
@@ -472,7 +476,9 @@ touch "$FARMSLOT_ROOT/recycle-entered"
     assert.equal(git(repo, 'branch', '--show-current'), 'previous');
     git(repo, 'remote', 'set-url', 'origin', remote);
     const before = await call<FleetStatusResult>('fleet.status');
-    const work = before.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.workspace;
+    const work = uiProof
+      ? before.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.workspace
+      : await inspectSlotWorkspace('proof-slot');
     assert.ok(work);
     failPostReleaseProbe = true;
     const postReleaseFailure = await call<SlotRefreshResult>('slot.refresh', {
@@ -518,7 +524,10 @@ touch "$FARMSLOT_ROOT/recycle-entered"
       );
     assert.equal(immediate?.branch, 'main');
     assert.equal(immediate?.lifecycle, 'ready');
-    assert.equal(immediate?.workspace?.publication, 'baseline', JSON.stringify(immediate));
+    const readyWorkspace = uiProof
+      ? immediate?.workspace
+      : await inspectSlotWorkspace('proof-slot');
+    assert.equal(readyWorkspace?.publication, 'baseline', JSON.stringify(immediate));
     assert.equal(git(repo, 'branch', '--show-current'), 'main');
     assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
     assert.equal(await readFile(path.join(repo, 'fixture.txt'), 'utf8'), 'synced fixture\n');
@@ -708,18 +717,35 @@ touch "$FARMSLOT_ROOT/recycle-entered"
     const restartedRow = await core.readSlotRow('proof-slot');
     assert.equal(restartedRow?.lifecycle, 'held');
     assert.equal(restartedRow?.phase, 'occupied');
-    assert.deepEqual(restartedRow?.workspace_recovery, held.workspace_recovery);
+    assert.ok(restartedRow?.workspace_recovery);
+    const restartedRecovery = restartedRow.workspace_recovery;
+    assert.ok(
+      typeof restartedRecovery === 'object' &&
+        restartedRecovery !== null &&
+        'id' in restartedRecovery &&
+        'identity' in restartedRecovery &&
+        'completed' in restartedRecovery &&
+        'parked' in restartedRecovery,
+    );
+    assert.equal(restartedRecovery.id, held.workspace_recovery.id);
+    assert.deepEqual(restartedRecovery.completed, held.workspace_recovery.completed);
+    assert.deepEqual(restartedRecovery.parked, held.workspace_recovery.parked);
+    // Startup retries the same recovery. A clean main may advance while the
+    // missing fixture keeps the slot held, but ownership and dirty state stay fenced.
+    assert.deepEqual(restartedRecovery.identity, {
+      ...held.workspace_recovery.identity,
+      headSha: advancedMain,
+    });
     const reset = await core.resetSlotIf('proof-slot', () => true);
     assert.equal(reset, false);
     const claim = await core.claimSlotStatusIf('proof-slot', () => true, { lifecycle: 'busy' });
     assert.equal(claim.claimed, false);
     await rename(template + '.held', template);
-    const retryWork = await inspectSlotWorkspace('proof-slot');
     const retried = await call<SlotRefreshResult>('slot.refresh', {
       slotId: 'proof-slot',
       release: true,
+      recover: true,
       mode: 'safe',
-      expectedWorkspace: retryWork,
     });
     assert.equal(retried.refreshed, true, retried.detail);
     assert.equal(git(repo, 'rev-parse', 'HEAD'), advancedMain);
@@ -775,6 +801,74 @@ touch "$FARMSLOT_ROOT/recycle-entered"
     assert.equal(ownedRelease.refreshed, true, ownedRelease.detail);
     assert.equal((await core.readSlotRow('proof-slot'))?.current_run_id, null);
     assert.equal((await core.readSlotRow('proof-slot'))?.warm, false);
+    git(repo, 'checkout', '-qb', 'terminal-unpublished');
+    const terminalCommits: string[] = [];
+    for (let index = 0; index < 3; index++) {
+      const file = `terminal-work-${index}.txt`;
+      await writeFile(path.join(repo, file), `retained work ${index}\n`);
+      git(repo, 'add', file);
+      git(repo, 'commit', '-qm', `test: terminal work ${index}`);
+      terminalCommits.push(git(repo, 'rev-parse', 'HEAD'));
+    }
+    git(repo, 'checkout', '-q', 'main');
+    await writeFile(path.join(repo, 'hidden-main.txt'), 'unpublished work on the reset target\n');
+    git(repo, 'add', 'hidden-main.txt');
+    git(repo, 'commit', '-qm', 'test: preserve reset target work');
+    const hiddenMainHead = git(repo, 'rev-parse', 'HEAD');
+    git(repo, 'checkout', '-q', 'terminal-unpublished');
+    const terminalOwner = store.createRun(
+      {
+        project: 'proof',
+        flowType: 'dev',
+        ticketOrPr: 'PROOF-TERMINAL-COMMITS',
+        mode: 'validation',
+        slotId: 'proof-slot',
+        runner: 'scripted',
+        scripted: { mode: 'command', commandRef: 'proof' },
+      },
+      { nativeOwnerPrincipalId: fixture.person.id },
+    );
+    store.updateRun(terminalOwner.id, { status: 'done', completedAt: new Date().toISOString() });
+    await core.updateSlotStatus('proof-slot', {
+      current_run_id: terminalOwner.id,
+      lifecycle: 'held',
+      phase: 'pr-watch',
+      agent: 'idle',
+    });
+    const terminalWorkspace = await inspectSlotWorkspace('proof-slot');
+    await core.updateSlotStatus('proof-slot', {
+      phase: 'occupied',
+      held_reason: 'Recovery interrupted',
+      workspace_recovery: {
+        id: 'proof-terminal-recovery',
+        identity: {
+          ...slotWorkspaceIdentity(terminalWorkspace),
+          recoveryId: 'proof-terminal-recovery',
+        },
+        completed: [],
+        phase: 'inspect',
+      },
+    });
+    const terminalRelease = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      recover: true,
+      mode: 'safe',
+    });
+    assert.equal(terminalRelease.refreshed, true, terminalRelease.detail);
+    const terminalPark = terminalRelease.parked?.find(
+      (entry) => entry.branch === 'terminal-unpublished',
+    );
+    assert.ok(terminalPark);
+    assert.equal(terminalPark.commits, 3);
+    assert.equal(git(repo, 'rev-parse', terminalPark.ref), terminalCommits[2]);
+    const targetPark = terminalRelease.parked?.find((entry) => entry.branch === 'main');
+    assert.ok(targetPark);
+    assert.equal(git(repo, 'rev-parse', targetPark.ref), hiddenMainHead);
+    for (const commit of terminalCommits) git(repo, 'cat-file', '-e', `${commit}^{commit}`);
+    assert.equal(git(repo, 'branch', '--show-current'), 'main');
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
+    assert.equal((await core.readSlotRow('proof-slot'))?.current_run_id, null);
     const linkedWork = await inspectSlotWorkspace('proof-linked');
     const linkedRelease = await call<SlotRefreshResult>('slot.refresh', {
       slotId: 'proof-linked',
@@ -829,6 +923,9 @@ touch "$FARMSLOT_ROOT/recycle-entered"
       retried,
       baselineRefresh,
       ownedRelease,
+      terminalRelease,
+      terminalCommits,
+      hiddenMainHead,
       successorRefused,
       protectedCases,
       unknownRefused,
