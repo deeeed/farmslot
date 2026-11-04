@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync, readdirSync, readFileSync } from 'node:fs';
 import {
   appendFile,
+  copyFile,
   cp,
   lstat,
   mkdir,
@@ -364,17 +365,13 @@ export async function startRemoteNodeStack(
   let gateway: ChildProcess | undefined;
   let node: ChildProcess | undefined;
   let connection: GatewayConnection | undefined;
-  const nativeHostPids = () =>
+  const nativeHostDirectories = () =>
     [nodeNativeRoot, gatewayNativeRoot].flatMap((rootDir) => {
-      const files = [path.join(rootDir, 'host.json')];
       const nodes = path.join(rootDir, 'nodes');
-      if (existsSync(nodes))
-        for (const entry of readdirSync(nodes)) files.push(path.join(nodes, entry, 'host.json'));
-      return files.flatMap((file) => {
-        if (!existsSync(file)) return [];
-        const pid = (JSON.parse(readFileSync(file, 'utf8')) as { pid?: unknown }).pid;
-        return typeof pid === 'number' ? [pid] : [];
-      });
+      return [
+        rootDir,
+        ...(existsSync(nodes) ? readdirSync(nodes).map((entry) => path.join(nodes, entry)) : []),
+      ];
     });
   /** Stops everything the stack started and removes the fixture; returns what went wrong. */
   const stopAll = async (): Promise<string[]> => {
@@ -389,7 +386,12 @@ export async function startRemoteNodeStack(
     connection?.close();
     connection = undefined;
     await attempt('node', () => stopProcess(node));
-    for (const pid of nativeHostPids())
+    const nativeDirectories = nativeHostDirectories();
+    for (const directory of nativeDirectories) {
+      const file = path.join(directory, 'host.json');
+      if (!existsSync(file)) continue;
+      const pid = (JSON.parse(readFileSync(file, 'utf8')) as { pid?: unknown }).pid;
+      if (typeof pid !== 'number') continue;
       await attempt(`native host ${pid}`, async () => {
         process.kill(pid, 'SIGTERM');
         await poll(
@@ -398,7 +400,22 @@ export async function startRemoteNodeStack(
           15_000,
         );
       });
+    }
     await attempt('gateway', () => stopProcess(gateway));
+    // A failed cold start may have only host.log. Keep it after the host stops,
+    // before deleting the fixture, without copying credential-bearing host.json.
+    for (const directory of nativeDirectories)
+      await attempt('native host diagnostics', async () => {
+        const file = path.join(directory, 'host.log');
+        if (existsSync(file))
+          await copyFile(
+            file,
+            path.join(
+              evidence,
+              `native-${path.relative(fixture, directory).split(path.sep).join('-')}.log`,
+            ),
+          );
+      });
     await attempt('tmux', async () => {
       if (existsSync(tmuxSocket))
         execFileSync('tmux', ['-S', tmuxSocket, 'kill-server'], { stdio: 'ignore' });

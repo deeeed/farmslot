@@ -1453,7 +1453,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
 
   /** One scenario as a check; an unverifiable one (a hold that never caught) is `unverified`. */
   async function check(
-    base: Pick<CheckResult, 'case' | 'variant' | 'model'> & { hold?: string },
+    base: Pick<CheckResult, 'case' | 'variant' | 'model' | 'hold' | 'evidence'>,
     scenario: () => Promise<ScenarioResult>,
     judge: (
       result: ScenarioResult,
@@ -1488,6 +1488,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         differences: [],
         observations: [],
         error: error.message,
+        runId: error.runId,
       };
     }
     await log(`${base.case} ${base.variant}: ${result.status.toUpperCase()}`, {
@@ -1541,15 +1542,30 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
   const baselineOf = async (shapeName: 'pipe' | 'scripted-review') => {
     if (!baselines[shapeName]) {
       try {
-        const baseline = await runScenario(`baseline-${shapeName}`, shapeName, []);
-        await retireRun(baseline.runId);
-        await log(`baseline ${shapeName}`, {
-          outcome: baseline.outcome,
-          durationS: baseline.durationS,
-        });
-        const unhealthy = outcomeDifferences(baselineExpected[shapeName], baseline.outcome);
-        if (unhealthy.length)
-          throw new Inconclusive(`the baseline itself ended wrong: ${unhealthy.join('; ')}`);
+        let baseline: ScenarioResult | undefined;
+        const result = await check(
+          {
+            case: 'baseline',
+            variant: shapeName,
+            model: 'scripted',
+            evidence: path.join(evidence, `baseline-${shapeName}`),
+          },
+          async () => (baseline = await runScenario(`baseline-${shapeName}`, shapeName, [])),
+          (scenario) => {
+            const differences = outcomeDifferences(baselineExpected[shapeName], scenario.outcome);
+            return {
+              status: differences.length ? 'fail' : 'pass',
+              differences,
+              observations: [],
+              expected: { ...baselineExpected[shapeName], superseded: [], reviews: [] },
+            };
+          },
+        );
+        onCheck(result);
+        if (!baseline || result.status !== 'pass')
+          throw new Inconclusive(
+            `the baseline itself ended wrong: ${result.differences.join('; ')}${result.failureText ? `; ${result.failureText}` : result.error ? `; ${result.error}` : ''}`,
+          );
         baselines[shapeName] = baseline;
       } catch (error) {
         if (!(error instanceof Inconclusive)) throw error;
