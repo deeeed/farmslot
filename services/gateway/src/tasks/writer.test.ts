@@ -152,7 +152,7 @@ import {
   writeStaticReviewInstructionInputs,
 } from './writer.js';
 
-test('runtime proof planning precedes acquisition guidance and retains related planning context', () => {
+test('configured-provider workers plan proof with prepared resources and retain planning context', () => {
   const providers = normalizeRawRuntimeCapabilities({
     providers: {
       'browser-cdp': {
@@ -197,10 +197,24 @@ test('runtime proof planning precedes acquisition guidance and retains related p
   );
 
   assert(task.indexOf('Runtime capability proof plan') < task.indexOf('Related planning context'));
-  assert.match(task, /Before the first\s+`runtime\.capability\.acquire` call/);
+  assert.match(task, /Gateway owns runtime capability lifecycle/);
+  assert.match(task, /prepared resources/);
+  assert.doesNotMatch(task, /runtime\.capability\.(list|acquire|status|release)/);
   assert.match(task, /`browser-cdp` — Browser \/ CDP; high cost; exclusive/);
   assert.match(task, /MANUAL-000072.*Roadmap delivery\/planning lineage/);
   assert.match(task, /inputs\/runtime-capability-catalog\.json/);
+});
+
+test('worker proof guides use prepared resources without control-plane lease calls', async () => {
+  for (const file of [
+    'projects/farmslot-farm/templates/worker/dev.md',
+    'projects/farmslot-farm/fixtures/runtime/recipe-quality.md',
+  ]) {
+    const guide = await readFile(path.join(farmslotRoot, file), 'utf8');
+    assert.doesNotMatch(guide, /runtime\.capability\.(list|acquire|status|release)/, file);
+    assert.match(guide, /prepared/i, file);
+    assert.match(guide, /blocked/i, file);
+  }
 });
 
 test('a project without capability providers is told the prepared runtime is the proof resource', () => {
@@ -893,7 +907,7 @@ test('writeTaskFile renders selected template variant and leaves source template
   const sourcePath = path.join(workerDir, 'dev.md');
   const variantPath = path.join(workerDir, 'dev-template-test.md');
   const source = await readFile(sourcePath, 'utf-8');
-  const variantSource = `${source}\n\nTemplate version marker: {{TICKET}}\n`;
+  const variantSource = `${source}\n\nTemplate version marker: {{TICKET}}\nTemplate family marker: {{FAMILY_ID}}\n`;
   await writeFile(variantPath, variantSource, 'utf-8');
   let taskPath = '';
   t.after(async () => {
@@ -915,7 +929,7 @@ test('writeTaskFile renders selected template variant and leaves source template
   };
   // The template renders into CHECKLIST.md; TASK.md is the generated task document.
   assert.match(checklist, /Template version marker: PROJ-/);
-  assert.match(checklist, new RegExp(`"ownerFamilyId":"${run.familyId}"`));
+  assert.match(checklist, new RegExp(`Template family marker: ${run.familyId}`));
   assert.match(rendered, new RegExp(`FAMILY_ID: ${run.familyId}`));
   assert.doesNotMatch(rendered, /Template version marker/);
   assert.equal(await readFile(variantPath, 'utf-8'), variantSource);

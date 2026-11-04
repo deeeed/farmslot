@@ -150,16 +150,18 @@ frozen dispatch-time catalog is at \`${taskDir}/${RUNTIME_CAPABILITY_CATALOG_INP
   return `
 ## Runtime capability proof plan
 
-Preparation has completed. Runtime capability providers, when configured, are not implicitly
-granted as proof resources. **Before the first
-\`runtime.capability.acquire\` call**, map each executable acceptance criterion to \`state\`,
-\`visual\`, or \`mixed\` proof and write a version-1 proof plan listing each required capability id,
-reason, mode, and typed parameters. A state-only plan may request none.
+Preparation has completed. Before the first proof step, map each executable acceptance criterion
+to \`state\`, \`visual\`, or \`mixed\` proof. Use only the prepared resources required by that proof,
+through the project harness's documented commands.
 
-Discover current availability and action metadata with \`runtime.capability.list\`; use only
-\`runtime.capability.acquire|status|release\` for lifecycle changes. Do not grep project scripts or
-invent long-lived shell launch commands. Review and QA runs use the same lease contract. The frozen
-dispatch-time catalog is at \`${taskDir}/${RUNTIME_CAPABILITY_CATALOG_INPUT}\`.
+Gateway owns runtime capability lifecycle. Workers do not call \`runtime.capability.*\`, guess
+control-plane URLs, or request credentials. The frozen dispatch-time catalog at
+\`${taskDir}/${RUNTIME_CAPABILITY_CATALOG_INPUT}\` describes configured providers; a catalog entry
+alone does not authorize starting or installing a resource.
+
+If a required prepared resource is missing or unhealthy, report the resource and failed check
+through the task's blocked signal. Do not launch, install, or repair long-lived resources yourself.
+Review and QA runs use the same boundary.
 
 ### Configured capability ids
 

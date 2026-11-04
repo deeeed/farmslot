@@ -7,8 +7,8 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
 - Graph envelope: canonical `$schema`, required `description`, `workflow.entry`, `workflow.nodes`, and `intent` on every non-terminal executable node.
 - Runner: `{{recipe_validate_wrapper}}` with `{{recipe_manifest_path}}`.
 - Discovery: before authoring, inspect action names in `{{recipe_manifest_path}}`, then read only the relevant metadata/examples and existing recipes under `{{farmslot_dir}}/docs/examples/recipes/farmslot/`; reuse declared capabilities instead of guessing action names.
-- Capability prerequisite: before a Command Center doctor or recipe run, use the control-plane Gateway's `runtime.capability.list` and `runtime.capability.acquire` RPCs to lease `sandbox-gateway-ui` and `browser-cdp` for the current slot/run and declared visual proof requirements. Send the task's explicit `ownerRunId` and `ownerFamilyId`; never infer family ownership from a run id. Require both acquire responses to report `ok: true`; do not launch `sandbox-dev.sh` or `debug-chrome.sh` directly.
-- Doctor after capability acquisition: `cd {{REPO}} && node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --json`
+- Prepared-resource prerequisite: use only the resources preparation assigned to this run. The gateway owns capability discovery and leases; workers do not call `runtime.capability.*`, guess control-plane URLs, or request credentials. A catalog entry alone is not a prepared resource. If a required surface is missing or unhealthy, mark the task blocked with the resource and failed check; do not launch or install it yourself.
+- Verify prepared Command Center resources before proof: `cd {{REPO}} && node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --json`
 
 > **Worktree proof — set FARMSLOT_SLOT_REPO:** When validating a branch in a slot worktree,
 > `validate-recipe.sh` resolves `REPO_ROOT` as `FARMSLOT_SLOT_REPO → REPO → primary_repo`.
@@ -26,10 +26,10 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
 > runs with the HUD auto-disabled and needs no browser page. Whenever either condition holds
 > (any UI node, or video evidence), a CDP-enabled Chrome instance **must** be listening on
 > `--cdp-port` before the run. If a run fails with an `app.hud` error before the first
-> `command` node, Chrome is not listening (or video was requested unintentionally). Inspect the
-> `browser-cdp` lease with `runtime.capability.status`, then acquire or retry it through
-> `runtime.capability.acquire`; never bypass lease ownership with a direct Chrome launch. Confirm
-> with doctor before retrying the recipe.
+> `command` node, Chrome is not listening (or video was requested unintentionally). Check the
+> assigned browser with the doctor. If it is missing or unhealthy, mark the task blocked; do not
+> call lifecycle RPCs or launch Chrome directly.
+
 
 - Fast validation run (no video):
   ```bash
@@ -46,7 +46,7 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
 - **PR-grade proof run** (slow + full-run MP4 — required for Command Center UI changes):
   ```bash
   cd {{REPO}}
-  # First acquire sandbox-gateway-ui and browser-cdp through runtime.capability.acquire as above.
+  # First verify the prepared surfaces with the doctor above.
   bash {{recipe_validate_wrapper}} \
     --recipe {{TASK_DIR}}/artifacts/recipe.json \
     --artifacts-dir {{TASK_DIR}}/artifacts/recipe-run \

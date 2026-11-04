@@ -1,0 +1,1 @@
+- Direct workers to prepared proof resources instead of unreachable control-plane capability lease calls.
