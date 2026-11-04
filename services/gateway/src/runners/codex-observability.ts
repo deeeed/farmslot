@@ -130,7 +130,9 @@ try:
                 if (
                     parts
                     and all(isinstance(part, str) for part in parts)
-                    and '\\n'.join(parts) == expected_prompt
+                    # The TUI removes trailing line breaks before persisting the submitted prompt.
+                    # Preserve leading whitespace and every interior character.
+                    and '\\n'.join(parts).rstrip('\\r\\n') == expected_prompt.rstrip('\\r\\n')
                     and observed_at is not None
                     and observed_at >= since_ms
                 ):

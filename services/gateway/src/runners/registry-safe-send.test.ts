@@ -45,9 +45,12 @@ let acceptDigestHandoffAfterCall = Number.POSITIVE_INFINITY;
 let handoffProbeCalls = 0;
 let launchAckSnapshotReads = 0;
 let grokPromptAcceptedCalls = 0;
+let grokAcceptAfterInputProbes: number | undefined;
+let grokPromptProbesAtInput = 0;
 let grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
 let grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
 let grokPromptAcceptanceBaselineMs = Date.now();
+let grokBaselineFailure = false;
 let grokActivityReads = 0;
 let grokActivitySequence: RunnerActivity[] = ['idle'];
 let failedPromptSends = 0;
@@ -76,6 +79,9 @@ beforeEach(() => {
   mutationRetryOptions.length = 0;
   promptInputCommands.length = 0;
   acknowledgePromptInput = false;
+  grokAcceptAfterInputProbes = undefined;
+  grokPromptProbesAtInput = 0;
+  grokBaselineFailure = false;
 });
 
 mock.module('./claude-observability.js', {
@@ -165,6 +171,7 @@ mock.module('./grok-observability.js', {
       },
       async capturePromptAcceptanceBaseline() {
         callOrder.push('grok:baseline');
+        if (grokBaselineFailure) throw new Error('Native clock unavailable');
         return grokPromptAcceptanceBaselineMs;
       },
       async promptAccepted(
@@ -175,7 +182,10 @@ mock.module('./grok-observability.js', {
       ) {
         grokPromptAcceptedCalls += 1;
         const accepted =
-          grokPromptAcceptedCalls >= grokPromptAcceptedAfterCall &&
+          (grokAcceptAfterInputProbes === undefined
+            ? grokPromptAcceptedCalls >= grokPromptAcceptedAfterCall
+            : promptInputCommands.length > 0 &&
+              grokPromptAcceptedCalls - grokPromptProbesAtInput >= grokAcceptAfterInputProbes) &&
           grokPromptAcceptedAtMs >= sinceMs;
         return {
           value: accepted,
@@ -213,20 +223,24 @@ mock.module('../core/exec.js', {
           failedPromptSends -= 1;
           return { exitCode: failedPromptSendExitCode, stdout: '', stderr: 'target missing' };
         }
+        if (acknowledgePromptInput) {
+          grokPromptAcceptedAfterCall = grokPromptAcceptedCalls + 1;
+          grokPromptAcceptedAtMs = Math.max(Date.now(), grokPromptAcceptanceBaselineMs + 1);
+          promptAcceptedReading = {
+            value: true,
+            source: 'hook',
+            confidence: 'high',
+            observedAt: Date.now(),
+            exactPromptMatch: true,
+          };
+        }
         // Literal typing or bracketed paste carries text; a bare send is a
         // key like Enter. The distinction is what separates fresh-send from
         // submit-existing in assertions.
         if (cmd.includes(' -l ') || cmd.includes('paste-buffer')) {
+          if (grokAcceptAfterInputProbes !== undefined)
+            grokPromptProbesAtInput = grokPromptAcceptedCalls;
           callOrder.push('tmux:send-literal');
-          if (acknowledgePromptInput) {
-            promptAcceptedReading = {
-              value: true,
-              source: 'hook',
-              confidence: 'high',
-              observedAt: Date.now(),
-              exactPromptMatch: true,
-            };
-          }
           if (exitAfterLiteralSend) {
             foregroundCommand = 'zsh';
             foregroundRunnerPresent = false;
@@ -323,6 +337,9 @@ const {
   runnerHasDurablePromptHandoff,
   runnerSupportsInitialPromptArg,
   sendRunnerInstructionSafely,
+  sendRunnerInstructionWithOutcome,
+  submitRunnerPrompt,
+  getRunnerObservability,
   sendRunnerPostLaunchPrompt,
   withRunnerPromptMutationBoundary,
 } = await import('./registry.js');
@@ -523,6 +540,7 @@ test('launch observation requires exact high-confidence acceptance and never tou
 });
 
 test('sendRunnerInstructionSafely consults observability before pane on hook-authoritative idle', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -574,7 +592,7 @@ test('resolvePrimaryWorkerTarget skips reviewer windows when falling back to ses
   assert.equal(workerTarget, 'test-1:3');
 });
 
-test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in', async () => {
+test('structured post-launch sends require exact prompt evidence by default', async () => {
   let mutationStarts = 0;
   handoffRequirePromptDigestValues = [];
   paneCaptureCount = 0;
@@ -584,46 +602,41 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
     source: 'hook',
     confidence: 'high',
     observedAt: Date.now(),
+    exactPromptMatch: false,
   };
-
-  await withRunnerPromptMutationBoundary(
-    () => {
-      mutationStarts += 1;
-    },
-    () =>
-      sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
-        readyTimeoutMs: deliveryBudgetMs,
-        stabilityPolls: 1,
-        pollIntervalMs: 0,
-        verifyWaitMs: 0,
-        maxAttempts: 1,
-      }),
+  await assert.rejects(
+    withRunnerPromptMutationBoundary(
+      () => {
+        mutationStarts += 1;
+      },
+      () =>
+        sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+          readyTimeoutMs: deliveryBudgetMs,
+          stabilityPolls: 1,
+          pollIntervalMs: 0,
+          verifyWaitMs: 0,
+          maxAttempts: 1,
+        }),
+    ),
+    /Exact prompt acknowledgement did not arrive/,
   );
-  assert.equal(mutationStarts, 0);
-
-  assert.ok(
-    handoffRequirePromptDigestValues.every((value) => value !== true),
-    `dispatch-style sends must not require digest by default: ${handoffRequirePromptDigestValues.join(',')}`,
-  );
-
+  assert.equal(mutationStarts, 1);
+  assert.ok(handoffRequirePromptDigestValues.every((value) => value === true));
   handoffRequirePromptDigestValues = [];
   paneCaptureCount = 0;
   acceptDigestHandoff = true;
-
-  await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'REVIEW.md', '[test]', {
-    readyTimeoutMs: deliveryBudgetMs,
-    stabilityPolls: 1,
-    pollIntervalMs: 0,
-    verifyWaitMs: 0,
-    maxAttempts: 1,
-    requirePromptDigest: true,
-  });
-
-  assert.ok(
-    handoffRequirePromptDigestValues.some((value) => value === true),
-    'review sends can require prompt digest explicitly',
-  );
-  acceptDigestHandoff = false;
+  try {
+    await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'REVIEW.md', '[test]', {
+      readyTimeoutMs: deliveryBudgetMs,
+      stabilityPolls: 1,
+      pollIntervalMs: 0,
+      verifyWaitMs: 0,
+      maxAttempts: 1,
+    });
+    assert.ok(handoffRequirePromptDigestValues.some((value) => value === true));
+  } finally {
+    acceptDigestHandoff = false;
+  }
 });
 
 test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', async (t) => {
@@ -950,6 +963,7 @@ test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', a
     value: true,
     source: 'hook',
     confidence: 'high',
+    exactPromptMatch: true,
     observedAt: Date.now(),
   };
 
@@ -967,6 +981,7 @@ test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', a
 });
 
 test('sendRunnerPostLaunchPrompt rechecks delayed Grok acceptance before retrying', async () => {
+  grokAcceptAfterInputProbes = 2;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false;
@@ -991,7 +1006,7 @@ test('sendRunnerPostLaunchPrompt rechecks delayed Grok acceptance before retryin
     1,
     `delayed native acceptance must prevent duplicate typing; order=${callOrder.join(',')}`,
   );
-  assert.equal(grokPromptAcceptedCalls, 4, 'the second attempt must observe native acceptance');
+  assert.ok(grokPromptAcceptedCalls >= 4, 'a post-input probe must observe native acceptance');
   paneClearsAfterSubmit = true;
   grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
   grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
@@ -1064,6 +1079,7 @@ test('sendRunnerPostLaunchPrompt keeps the provider clock when the slot clock is
 });
 
 test('sendRunnerPostLaunchPrompt does not treat native idle state as exact delivery', async () => {
+  grokAcceptAfterInputProbes = 1;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false;
@@ -1116,6 +1132,7 @@ test('sendRunnerInstructionSafely stops after exact native Grok acceptance', asy
 });
 
 test('sendRunnerInstructionSafely does not suppress an intentional identical Grok resend', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneTextByCapture = null;
@@ -1214,7 +1231,8 @@ test('sendRunnerInstructionSafely honors native Grok acceptance after a busy wai
   grokPromptAcceptanceBaselineMs = Date.now();
 });
 
-test('sendRunnerInstructionSafely keeps checking a buffered Cursor composer', async () => {
+test('buffered Cursor input remains unconfirmed without native prompt evidence', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneTextByCapture = null;
@@ -1230,7 +1248,7 @@ test('sendRunnerInstructionSafely keeps checking a buffered Cursor composer', as
     { forceBusyPoll: true },
   );
 
-  assert.equal(delivered, true);
+  assert.equal(delivered, false);
   assert.equal(
     callOrder.includes('tmux:send-literal'),
     false,
@@ -1324,6 +1342,7 @@ test('codex retained delivery fails closed without an exact session state', asyn
 });
 
 test('codex retained delivery proceeds for the exact idle session', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -1389,6 +1408,7 @@ test('grok retained delivery fails closed without an exact native session state'
 });
 
 test('sendRunnerInstructionSafely prefers live pane over stale hook acceptance', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -1421,6 +1441,7 @@ test('sendRunnerInstructionSafely prefers live pane over stale hook acceptance',
 });
 
 test('sendRunnerInstructionSafely falls back to pane when hook activity is unknown', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -1448,6 +1469,7 @@ test('sendRunnerInstructionSafely falls back to pane when hook activity is unkno
 });
 
 test('sendRunnerInstructionSafely types the message when hook says not-accepted and the composer is empty', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
@@ -1581,6 +1603,7 @@ test('a failed submit leaves a typed prompt uncertain', async (t) => {
 });
 
 test('sendRunnerInstructionSafely submits the buffered instruction when the pane shows it', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
@@ -1604,6 +1627,7 @@ test('sendRunnerInstructionSafely submits the buffered instruction when the pane
 });
 
 test('loop path (forceBusyPoll) types the message when nothing is buffered', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
@@ -1627,6 +1651,7 @@ test('loop path (forceBusyPoll) types the message when nothing is buffered', asy
 });
 
 test('loop path (forceBusyPoll) submits a genuinely buffered instruction without retyping', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
@@ -1652,6 +1677,7 @@ test('loop path (forceBusyPoll) submits a genuinely buffered instruction without
 });
 
 test('a transcript echo with an empty live composer gets the message typed fresh', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = true;
@@ -1677,6 +1703,7 @@ test('a transcript echo with an empty live composer gets the message typed fresh
 });
 
 test('historical Grok progress does not suppress an identical new fix-pass prompt', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = true;
@@ -1733,6 +1760,7 @@ test('a persistently buffered composer fails loudly instead of concatenating a r
 // --- ADR-032 Phase 3 claude hook-only send path ---
 
 test('claude (hook-only) hook-idle with an EMPTY composer proves-empty then types the message', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
@@ -1772,6 +1800,7 @@ test('claude (hook-only) hook-idle with an EMPTY composer proves-empty then type
 });
 
 test('claude (hook-only) hook-idle with a BUFFERED composer submits it without retyping (no concat)', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = true;
@@ -1855,6 +1884,7 @@ test('claude (hook-only) degraded (hook unknown) holds the send instead of pane 
 });
 
 test('claude (hook-only) exact retained session idle permits delivery after transient activity expires', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = null;
@@ -1895,6 +1925,7 @@ test('claude (hook-only) exact retained session idle permits delivery after tran
 });
 
 test('claude (hook-only) uses fresh matching activity when retained session state is unavailable', async () => {
+  acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -2387,4 +2418,211 @@ test('unknown foreground state reports the process failure without sending input
     /process check failed:.*timed out/,
   );
   assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 0);
+});
+
+test('farm steer cannot report sent from a successful write without exact prompt acceptance', async () => {
+  const priorReading = promptAcceptedReading;
+  const priorActivity = activityReading;
+  const priorPane = paneText;
+  try {
+    foregroundCommand = 'codex';
+    acknowledgePromptInput = false;
+    callOrder.length = 0;
+    paneCaptureCount = 0;
+    paneTextByCapture = null;
+    paneTextAfterLiteralSend = null;
+    paneTextAfterBareSend = null;
+    activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+    promptAcceptedReading = {
+      value: false,
+      source: 'hook',
+      confidence: 'high',
+      observedAt: Date.now(),
+      exactPromptMatch: false,
+    };
+    const result = await sendRunnerInstructionWithOutcome(
+      vars,
+      target,
+      'codex',
+      'Continue the retained review.\n'.repeat(80),
+      '[test]',
+      1,
+    );
+    assert.equal(result, 'typed-unconfirmed');
+    assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+  } finally {
+    promptAcceptedReading = priorReading;
+    activityReading = priorActivity;
+    paneText = priorPane;
+  }
+});
+
+test('semantic prompt submission needs an exact post-input receipt and never reads pane text', async (t) => {
+  const prior = promptAcceptedReading;
+  t.after(() => {
+    promptAcceptedReading = prior;
+  });
+  callOrder.length = 0;
+  foregroundCommand = 'codex';
+  acknowledgePromptInput = true;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  const outcome = await submitRunnerPrompt(
+    vars,
+    target,
+    'codex',
+    'Long quoted operator message.\n'.repeat(80),
+    { timeoutMs: 20 },
+  );
+  assert.equal(outcome, 'sent');
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+  assert.equal(callOrder.includes('pane:capture'), false);
+  assert.ok(mutationRetryOptions.every((value) => value === true));
+});
+
+test('semantic submission holds untouched when the native clock boundary is unavailable', async () => {
+  callOrder.length = 0;
+  grokBaselineFailure = true;
+  const outcome = await submitRunnerPrompt(vars, target, 'grok', message, { timeoutMs: 1 });
+  assert.equal(outcome, 'held-untouched');
+  assert.equal(promptInputCommands.length, 0);
+});
+
+test('semantic bare Enter is not confirmation of an unknown existing draft', async () => {
+  callOrder.length = 0;
+  foregroundCommand = 'codex';
+  const outcome = await submitRunnerPrompt(vars, target, 'codex', '', { timeoutMs: 1 });
+  assert.equal(outcome, 'typed-unconfirmed');
+  assert.equal(callOrder.includes('tmux:send-literal'), false);
+  assert.equal(promptInputCommands.length, 1);
+});
+
+test('a runner exiting after paste leaves an unconfirmed outcome without a second copy', async () => {
+  callOrder.length = 0;
+  foregroundCommand = 'codex';
+  exitAfterLiteralSend = true;
+  const outcome = await submitRunnerPrompt(vars, target, 'codex', message, { timeoutMs: 1 });
+  assert.equal(outcome, 'typed-unconfirmed');
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+});
+
+test('exact submission observation rejects pane-only and stale receipts', async (t) => {
+  const prior = promptAcceptedReading;
+  t.after(() => {
+    promptAcceptedReading = prior;
+  });
+  for (const source of ['pane', 'signal'] as const) {
+    const since = Date.now();
+    promptAcceptedReading = {
+      value: true,
+      confidence: 'high',
+      exactPromptMatch: true,
+      source,
+      observedAt: source === 'pane' ? since : since - 1000,
+    };
+    assert.equal(
+      await sendRunnerInstructionSafely(vars, target, 'codex', message, 'test', 1, {
+        observeOnly: true,
+        acceptanceSinceMs: since,
+      }),
+      false,
+    );
+  }
+});
+
+test('semantic deliveries keep the pane serialized until receipt observation settles', async (t) => {
+  callOrder.length = 0;
+  foregroundCommand = 'codex';
+  const observer = getRunnerObservability('codex');
+  assert.ok(observer);
+  let release!: () => void;
+  let observing!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    observing = resolve;
+  });
+  t.mock.method(
+    observer,
+    'promptAccepted',
+    async (
+      _vars: SlotVars,
+      _target: string,
+      _digest: string,
+      _since: number,
+      _retired?: boolean,
+      text?: string,
+    ) => {
+      if (text === 'first') {
+        observing();
+        await held;
+        return {
+          value: true,
+          source: 'hook' as const,
+          confidence: 'high' as const,
+          exactPromptMatch: true,
+          observedAt: Date.now(),
+        };
+      }
+      return {
+        value: false,
+        source: 'hook' as const,
+        confidence: 'high' as const,
+        observedAt: Date.now(),
+      };
+    },
+  );
+  const first = submitRunnerPrompt(vars, target, 'codex', 'first', { timeoutMs: 20 });
+  await started;
+  const second = submitRunnerPrompt(vars, '%1', 'codex', 'second', { timeoutMs: 1 });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+    release();
+    assert.equal(await first, 'sent');
+    assert.equal(await second, 'typed-unconfirmed');
+  } finally {
+    release();
+    await Promise.allSettled([first, second]);
+  }
+});
+
+test('observe-only submission uses the exact retained native session instead of an unbound pane', async (t) => {
+  const prior = promptAcceptedReading;
+  t.after(() => {
+    promptAcceptedReading = prior;
+  });
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  const observer = getRunnerObservability('codex');
+  assert.ok(observer?.promptAcceptedInSession);
+  const original = observer.promptAcceptedInSession;
+  const inSession = t.mock.fn(async () => ({
+    value: true,
+    source: 'signal' as const,
+    confidence: 'high' as const,
+    exactPromptMatch: true,
+    observedAt: Date.now(),
+  }));
+  observer.promptAcceptedInSession = inSession;
+  t.after(() => {
+    observer.promptAcceptedInSession = original;
+  });
+  const retainedSession = { sessionId: 'owned-session', sessionPath: '/owned/session.jsonl' };
+  const confirmed = await sendRunnerInstructionSafely(vars, target, 'codex', message, 'test', 1, {
+    observeOnly: true,
+    acceptanceSinceMs: Date.now(),
+    retainedSession,
+  });
+  assert.equal(confirmed, true);
+  assert.equal(inSession.mock.callCount(), 1);
 });
