@@ -1,6 +1,7 @@
 {
   "$schema": "../../schemas/project.schema.json",
   "name": "farmslot-farm",
+  "repo_url": "https://github.com/deeeed/farmslot.git",
   "type": "monorepo",
   "default_branch": "main",
   "default_safety_tier": "dangerous",
@@ -12,7 +13,18 @@
     "artifact_dir": ".sandbox/farmslot-farm/task"
   },
   "static_review": {
+    "template_id": "review-pr/static",
     "instruction_files": ["runtime/review-quality.md"]
+  },
+  "workflow_defaults": {
+    "review-pr": {
+      "execution": {
+        "workspacePolicy": { "kind": "pool" },
+        "transport": "native",
+        "models": [{ "runner": "codex", "model": "gpt-6.1-sol", "effort": "high", "mode": "cold" }]
+      },
+      "review": { "mode": "cold", "publishReview": false }
+    }
   },
   "node_support": {
     "paths": ["projects/farmslot-farm/setup"]
@@ -174,6 +186,7 @@
   "execution_templates": {
     "sources": [],
     "defaults": [
+      { "when": { "flow": "review-pr" }, "templateId": "review-pr/default" },
       { "when": { "flow": "dev", "runMode": "autonomous" }, "templateId": "dev/default" },
       { "when": { "flow": "dev", "runMode": "interactive" }, "templateId": "dev/interactive" }
     ]
