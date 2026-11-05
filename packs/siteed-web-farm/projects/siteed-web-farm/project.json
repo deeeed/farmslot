@@ -90,7 +90,9 @@
       {
         "src": "ci-local.mjs",
         "dst": ".agent/ci-local.mjs"
-      },
+      }
+    ],
+    "directories": [
       {
         "src": "recipe-tools",
         "dst": ".agent/recipe-tools"
