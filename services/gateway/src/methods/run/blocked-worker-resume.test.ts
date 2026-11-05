@@ -536,3 +536,36 @@ test('a slot that lost its owner while its run kept it is re-bound only under th
   const rows = JSON.parse(await readFile(statusFile, 'utf8')).slots as Record<string, unknown>[];
   assert.equal(rows.find((row) => row.slot === run.slotId)?.current_run_id, run.id);
 });
+
+test('a budget-failed run re-binds the occupied hold its own skipped teardown left (F413)', async (t) => {
+  // fd766283: the failure dropped ownership, but teardown stopped at a process still using the
+  // repository, so the slot stayed held/occupied for this run's cleanup with its checkout intact.
+  const run = await blockedRun(t, 'OCCUPIED-OWN-CLEANUP');
+  updateRun(run.id, { status: 'failed', error: 'The five review rounds are spent.' });
+  const occupied = {
+    ...heldBy(run.slotId!, run.id),
+    current_run_id: null,
+    cleanup_run_id: run.id,
+    phase: 'occupied',
+    held_reason: 'Process 77044 still uses the slot repository; slot teardown was skipped',
+  };
+  await setSlotRow({ ...occupied, cleanup_run_id: 'other-run' });
+  assert.match(
+    (await rebindRunSlot(run, { unownedHeld: true })) ?? '',
+    /held\/occupied/,
+    "another run's cleanup hold is not taken",
+  );
+  await setSlotRow(occupied);
+  assert.match(
+    (await rebindRunSlot(run)) ?? '',
+    /held\/occupied/,
+    'a replay needs a released slot',
+  );
+  assert.equal(await rebindRunSlot(run, { unownedHeld: true }), null);
+  const rows = JSON.parse(await readFile(statusFile, 'utf8')).slots as Record<string, unknown>[];
+  const row = rows.find(({ slot }) => slot === run.slotId)!;
+  assert.equal(row.current_run_id, run.id);
+  assert.equal(row.phase, 'working');
+  assert.equal(row.cleanup_run_id, null);
+  assert.equal(row.held_reason, null);
+});

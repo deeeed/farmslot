@@ -1,0 +1,1 @@
+- Let a budget-failed run reclaim the held/occupied slot its own unfinished teardown left, so `run.extendReviewBudget` can grant more rounds on the same checkout.
