@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import fs, { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { after, afterEach, mock, test } from 'node:test';
@@ -166,7 +167,7 @@ const { refreshPublishPackage }: typeof import('./publish-package-refresh.js') =
   new URL('./publish-package-refresh.js?ticket-refresh', import.meta.url).href
 );
 
-async function fixture(t: import('node:test').TestContext) {
+async function fixture(t: import('node:test').TestContext, withEvidence = true) {
   const run = createRun({
     flowType: 'dev',
     project: 'example-ticket-refresh',
@@ -201,127 +202,129 @@ async function fixture(t: import('node:test').TestContext) {
       recordedEvidenceContractVersion: run.recordedEvidenceContractVersion ?? 0,
     }),
   );
-  const declarations = newCriteria.map((claim, index) => ({
-    id: `AC-${index + 1}`,
-    claim,
-    proofMode: 'state' as const,
-  }));
-  const recipe = {
-    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-    title: 'Counter proof',
-    description: 'Observe the counter and verify its value.',
-    proofTargets: declarations,
-    workflow: {
-      entry: 'read',
-      nodes: {
-        read: { action: 'state_read', intent: 'Read counter', next: 'assert' },
-        assert: {
-          action: 'assert_output',
-          source: 'read',
-          assert: { path: '$.count', operator: 'eq', value: 1 },
-          proves: declarations.map(({ id }) => id),
-          intent: 'Verify counter',
-          next: 'done',
-        },
-        done: { action: 'end', status: 'pass' },
-      },
-    },
-  };
-  const invocation = {
-    version: 1,
-    recipeDigest: digestRecipeDocument(recipe),
-    recipeRunId: 'counter-proof',
-    startedAt: '2026-10-12T00:00:00Z',
-    params: {},
-    redactedPaths: [],
-  };
-  const claims: RecipeClaimLedger = {
-    schemaVersion: 2,
-    recipeRunId: invocation.recipeRunId,
-    criteria: declarations.map((declaration) => ({
-      id: declaration.id,
-      text: declaration.claim,
-      kind: 'acceptance',
-      proofMode: 'state',
-      verdict: 'proven',
-      recipeNodes: ['assert'],
-      assertionIndices: [1],
-      moments: [],
-      evidence: [],
-    })),
-    recording: { status: 'not-required', segments: [] },
-  };
-  const documents = {
-    'recipe.json': recipe,
-    'recipe-invocation.json': invocation,
-    'acceptance-status.json': claims,
-    'recipe-resolution.json': {
-      schema_version: 1,
-      root: { ref: '$root', digest: digestRecipeDocument(recipe) },
-      dependencies: [],
-      edges: [],
-    },
-    'trace.json': {
-      entries: [
-        {
-          nodeId: 'read',
-          action: 'state_read',
-          intent: 'Read counter',
-          ok: true,
-          output: { count: 1 },
-        },
-        {
-          nodeId: 'assert',
-          action: 'assert_output',
-          intent: 'Verify counter',
-          ok: true,
-          output: { matched: true },
-        },
-        { nodeId: 'done', action: 'end', ok: true, status: 'pass' },
-      ].map((entry) => ({
-        ...entry,
-        startedAt: invocation.startedAt,
-        endedAt: invocation.startedAt,
-        durationMs: 0,
-      })),
-    },
-    'summary.json': {
-      recipeRunId: invocation.recipeRunId,
-      status: 'pass',
-      total: 3,
-      passed: 3,
-      failed: 0,
-      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
-      invocationDigest: digestRecipeDocument(invocation),
-    },
-    'artifact-manifest.json': {
-      version: 1,
-      runStatus: 'pass',
-      artifacts: [
-        { path: 'recipe.json', type: 'recipe' },
-        { path: 'trace.json', type: 'trace' },
-        { path: 'summary.json', type: 'summary' },
-        { path: 'acceptance-status.json', type: 'json' },
-      ],
-    },
-  };
   const evidenceManifest: ArtifactRef[] = [];
-  for (const [file, document] of Object.entries(documents)) {
-    const bytes = JSON.stringify(document);
-    await writeFile(path.join(directory, file), bytes);
-    evidenceManifest.push({
-      path: `artifacts/proof/${file}`,
-      purpose: 'json',
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-    });
+  if (withEvidence) {
+    const declarations = newCriteria.map((claim, index) => ({
+      id: `AC-${index + 1}`,
+      claim,
+      proofMode: 'state' as const,
+    }));
+    const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      title: 'Counter proof',
+      description: 'Observe the counter and verify its value.',
+      proofTargets: declarations,
+      workflow: {
+        entry: 'read',
+        nodes: {
+          read: { action: 'state_read', intent: 'Read counter', next: 'assert' },
+          assert: {
+            action: 'assert_output',
+            source: 'read',
+            assert: { path: '$.count', operator: 'eq', value: 1 },
+            proves: declarations.map(({ id }) => id),
+            intent: 'Verify counter',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    };
+    const invocation = {
+      version: 1,
+      recipeDigest: digestRecipeDocument(recipe),
+      recipeRunId: 'counter-proof',
+      startedAt: '2026-10-12T00:00:00Z',
+      params: {},
+      redactedPaths: [],
+    };
+    const claims: RecipeClaimLedger = {
+      schemaVersion: 2,
+      recipeRunId: invocation.recipeRunId,
+      criteria: declarations.map((declaration) => ({
+        id: declaration.id,
+        text: declaration.claim,
+        kind: 'acceptance',
+        proofMode: 'state',
+        verdict: 'proven',
+        recipeNodes: ['assert'],
+        assertionIndices: [1],
+        moments: [],
+        evidence: [],
+      })),
+      recording: { status: 'not-required', segments: [] },
+    };
+    const documents = {
+      'recipe.json': recipe,
+      'recipe-invocation.json': invocation,
+      'acceptance-status.json': claims,
+      'recipe-resolution.json': {
+        schema_version: 1,
+        root: { ref: '$root', digest: digestRecipeDocument(recipe) },
+        dependencies: [],
+        edges: [],
+      },
+      'trace.json': {
+        entries: [
+          {
+            nodeId: 'read',
+            action: 'state_read',
+            intent: 'Read counter',
+            ok: true,
+            output: { count: 1 },
+          },
+          {
+            nodeId: 'assert',
+            action: 'assert_output',
+            intent: 'Verify counter',
+            ok: true,
+            output: { matched: true },
+          },
+          { nodeId: 'done', action: 'end', ok: true, status: 'pass' },
+        ].map((entry) => ({
+          ...entry,
+          startedAt: invocation.startedAt,
+          endedAt: invocation.startedAt,
+          durationMs: 0,
+        })),
+      },
+      'summary.json': {
+        recipeRunId: invocation.recipeRunId,
+        status: 'pass',
+        total: 3,
+        passed: 3,
+        failed: 0,
+        cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+        invocationDigest: digestRecipeDocument(invocation),
+      },
+      'artifact-manifest.json': {
+        version: 1,
+        runStatus: 'pass',
+        artifacts: [
+          { path: 'recipe.json', type: 'recipe' },
+          { path: 'trace.json', type: 'trace' },
+          { path: 'summary.json', type: 'summary' },
+          { path: 'acceptance-status.json', type: 'json' },
+        ],
+      },
+    };
+    for (const [file, document] of Object.entries(documents)) {
+      const bytes = JSON.stringify(document);
+      await writeFile(path.join(directory, file), bytes);
+      evidenceManifest.push({
+        path: `artifacts/proof/${file}`,
+        purpose: 'json',
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      });
+    }
+    await writeFile(path.join(taskDir, 'artifacts/acceptance-status.json'), JSON.stringify(claims));
+    activeEvidence = (await readRecordedEvidencePackage(directory)).input;
+    assert.equal(
+      validateRecordedEvidencePackage(activeEvidence).status,
+      'valid',
+      JSON.stringify(validateRecordedEvidencePackage(activeEvidence)),
+    );
   }
-  await writeFile(path.join(taskDir, 'artifacts/acceptance-status.json'), JSON.stringify(claims));
-  activeEvidence = (await readRecordedEvidencePackage(directory)).input;
-  assert.equal(
-    validateRecordedEvidencePackage(activeEvidence).status,
-    'valid',
-    JSON.stringify(validateRecordedEvidencePackage(activeEvidence)),
-  );
   const prepared = makeReadyGatePackage({
     id: 'pkg-old',
     headSha: 'head',
@@ -330,7 +333,8 @@ async function fixture(t: import('node:test').TestContext) {
     reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
     draftBody: oldCriteria.join('\n'),
   });
-  await retainRunFixture({ ...run, taskFile: path.join(taskDir, 'TASK.md') }, prepared);
+  if (withEvidence)
+    await retainRunFixture({ ...run, taskFile: path.join(taskDir, 'TASK.md') }, prepared);
   prepared.packageInputHash = hashes.computeReadyGatePackageInputHash(prepared);
   prepared.reviewSubjectHash = hashes.computeReadyGateReviewSubjectHash(prepared);
   prepared.packageHash = hashes.computeReadyGatePackageHash(prepared);
@@ -369,6 +373,83 @@ async function fixture(t: import('node:test').TestContext) {
 
 const refresh = (runId: string) =>
   runWithSessionOriginator(person, () => refreshPublishPackage({ runId, refreshTicket: true }));
+const refreshInputs = (runId: string, originator = person) =>
+  runWithSessionOriginator(originator, () => ticketRefreshOwner.refreshRunTicket(getRun(runId)!));
+
+test('every retry persists the pending admission before changing task inputs', async (t) => {
+  const { run, taskDir } = await fixture(t, false);
+  const handoffPath = path.join(taskDir, 'inputs/handoff.json');
+  const original = await readFile(handoffPath, 'utf8');
+  const runsDir = path.join(root, 'runs');
+  const savedRunsDir = path.join(root, 'saved-runs');
+  await rename(runsDir, savedRunsDir);
+  await writeFile(runsDir, 'Unavailable run storage');
+  try {
+    await assert.rejects(refreshInputs(run.id), /EEXIST|ENOTDIR/);
+    const pending = getRun(run.id)!.ticketRefreshes![0];
+    assert.equal(pending.appliedAt, undefined);
+    assert.equal(pending.principalId, person.id);
+    await assert.rejects(refreshInputs(run.id), /EEXIST|ENOTDIR/);
+    assert.equal(await readFile(handoffPath, 'utf8'), original);
+  } finally {
+    await rm(runsDir);
+    await rename(savedRunsDir, runsDir);
+  }
+  const before = fetches;
+  loadedTicket = { ...newTicket, acceptanceCriteria: ['A later source edit.'] };
+  await refreshInputs(run.id, { ...person, id: 'another-person' });
+  assert.equal(fetches, before);
+  const durable: Run = JSON.parse(await readFile(path.join(runsDir, `${run.id}.json`), 'utf8'));
+  assert.equal(durable.ticketRefreshes?.length, 1);
+  assert.equal(durable.ticketRefreshes?.[0].principalId, person.id);
+  assert.deepEqual(durable.ticketRefreshes?.[0].previousCriteria, oldCriteria);
+  assert.deepEqual(durable.ticketRefreshes?.[0].criteria, newCriteria);
+  assert.ok(durable.ticketRefreshes?.[0].appliedAt);
+});
+
+test('an interrupted second file write leaves complete inputs that a retry repairs', async (t) => {
+  const { run, taskDir } = await fixture(t, false);
+  const taskPath = path.join(taskDir, 'TASK.md');
+  const original = await readFile(taskPath, 'utf8');
+  const originalWrite = fs.writeFile;
+  const write = t.mock.method(fs, 'writeFile', async (...args: Parameters<typeof fs.writeFile>) => {
+    const [file] = args;
+    if (
+      typeof file === 'string' &&
+      path.dirname(file) === taskDir &&
+      path.basename(file).startsWith('TASK.md')
+    ) {
+      await originalWrite(file, '# Interrupted\n');
+      throw new Error('Example interrupted task write');
+    }
+    return originalWrite(...args);
+  });
+  syncBuiltinESMExports();
+  const restore = () => {
+    write.mock.restore();
+    syncBuiltinESMExports();
+  };
+  t.after(restore);
+  await assert.rejects(refreshInputs(run.id), /Example interrupted task write/);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8')).task
+      .acceptanceCriteria,
+    newCriteria,
+    'the first file has already been replaced',
+  );
+  assert.equal(await readFile(taskPath, 'utf8'), original);
+  assert.equal(getRun(run.id)!.ticketRefreshes?.[0].appliedAt, undefined);
+  restore();
+  const before = fetches;
+  await refreshInputs(run.id);
+  assert.equal(fetches, before);
+  assert.match(await readFile(taskPath, 'utf8'), /- Reference fixtures are exported\./);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(taskDir, 'inputs/bug-input.json'), 'utf8')),
+    newTicket,
+  );
+  assert.ok(getRun(run.id)!.ticketRefreshes?.[0].appliedAt);
+});
 
 test('ticket scope split refreshes registration and makes the existing passing-review gate ready', async (t) => {
   const { run, taskDir, prepared } = await fixture(t);
@@ -446,7 +527,7 @@ for (const change of [
   { engineState: { publishGate: { publicationStatus: 'pending_publish' as const } } },
 ]) {
   test(`publication ${JSON.stringify(change)} refuses before reading the ticket`, async (t) => {
-    const { run, taskDir } = await fixture(t);
+    const { run, taskDir } = await fixture(t, false);
     const original = await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8');
     const before = fetches;
     updateRun(run.id, change);
@@ -458,7 +539,7 @@ for (const change of [
 }
 
 test('ticket refresh requires a person and refuses an unavailable source without writes', async (t) => {
-  const { run, taskDir } = await fixture(t);
+  const { run, taskDir } = await fixture(t, false);
   const original = await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8');
   const before = fetches;
   await assert.rejects(
@@ -730,7 +811,7 @@ test('ticket refresh retains the existing admin RPC classification', () => {
 });
 
 test('a task ownership change during ticket loading refuses without admitting the refresh', async (t) => {
-  const { run, taskDir } = await fixture(t);
+  const { run, taskDir } = await fixture(t, false);
   const original = await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8');
   fetchHook = (runId) => updateRun(runId, { taskFile: path.join(root, 'another-task/TASK.md') });
   await assert.rejects(refresh(run.id), /lost its task owner/);

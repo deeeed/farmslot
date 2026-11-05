@@ -11,6 +11,7 @@ import {
   readdir,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   writeFile as fsWriteFile,
@@ -247,6 +248,24 @@ export async function slotWriteFile(
   await requestFor(ctx)('fs.write', {
     ...nodePathParams(filePath),
     content: data,
+  });
+}
+
+/** Replace a staged file through the same local/node rename operation. */
+export async function slotRenameFile(
+  ctx: SlotLocality,
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  if (local(ctx)) {
+    await rename(expandTilde(oldPath), expandTilde(newPath));
+    return;
+  }
+  const root = path.dirname(oldPath);
+  await requestFor(ctx)('fs.rename', {
+    root,
+    oldRelPath: path.basename(oldPath),
+    newRelPath: path.relative(root, newPath),
   });
 }
 

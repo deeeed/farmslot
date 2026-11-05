@@ -58,8 +58,8 @@ export async function refreshRunTicket(run: Run): Promise<Run> {
       ticketData,
       ticketRefreshes: [...(run.ticketRefreshes ?? []), refresh],
     });
-    await persistRunNow(run, 'person ticket refresh admitted');
   }
+  await persistRunNow(run, 'person ticket refresh admitted');
   await refreshWrittenTaskTicket(run, run.ticketData!, refresh.previousCriteria, owns);
   if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
   const current = getRun(run.id)!;

@@ -121,7 +121,6 @@ export async function ensureTaskRuntime(
         input.terminalContract,
         input.checklistMarkdown,
         EXECUTION_CHECKLIST_DOCUMENT,
-        isRecord,
         input.deterministicCommands,
       ),
     };
@@ -260,12 +259,13 @@ export function refreshTaskAcceptanceInputs(input: TaskAcceptanceRefreshInput): 
     handoff.project !== input.project ||
     handoff.flow !== input.flow ||
     !isRecord(handoff.task) ||
-    !Array.isArray(handoff.task.acceptanceCriteria) ||
-    !handoff.task.acceptanceCriteria.every((criterion) => typeof criterion === 'string')
+    (handoff.task.acceptanceCriteria !== undefined &&
+      (!Array.isArray(handoff.task.acceptanceCriteria) ||
+        !handoff.task.acceptanceCriteria.every((criterion) => typeof criterion === 'string')))
   )
     throw new Error('Ticket refresh task handoff identity is invalid');
   const criteria = normalizeAcceptanceCriteria(input.criteria);
-  const current = normalizeAcceptanceCriteria(handoff.task.acceptanceCriteria);
+  const current = normalizeAcceptanceCriteria(handoff.task.acceptanceCriteria ?? []);
   if (
     !isDeepStrictEqual(current, normalizeAcceptanceCriteria(input.previousCriteria)) &&
     !isDeepStrictEqual(current, criteria)
