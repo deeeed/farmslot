@@ -2034,3 +2034,26 @@ test('the active-owner decision card refuses fresh dispatch on a node lacking th
   assert.deepEqual(freshTeardowns, []);
   assert.deepEqual(claims, []);
 });
+
+test('a manual pick after an automatic retry reads the new pick rather than the retry', async () => {
+  reset('dev', 'TAT-9000');
+  expectedTarget = undefined;
+  for (const slot of slots)
+    reuseOutcomes.set(slot.slot, { kind: 'local-work', reason: 'dirty files' });
+  defaultReuseOutcome = { kind: 'local-work', reason: 'dirty files' };
+  expectedSlot = pickedSlot = slots[1]!.slot;
+  pressureDecisions.set(slots[1]!.machine, loadDecision(slots[1]!.machine, 0.2));
+  run.decisions.push({
+    id: 'earlier-auto-retry',
+    type: 'engine_no_suitable_slot',
+    title: 'Retry',
+    description: '',
+    actions: [{ id: 'retry', label: 'Retry', style: 'secondary' }],
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+    resolvedAction: 'retry',
+  });
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, pickedSlot);
+  assert.equal(run.requestedSlotId, pickedSlot);
+});

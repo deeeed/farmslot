@@ -203,7 +203,11 @@ export interface FindSlotStepContext {
     description: string,
     actions: DecisionAction[],
     payload?: RunDecisionPayload,
-    options?: { canReplay?: (existing: RunDecision) => boolean },
+    options?: {
+      canReplay?: (existing: RunDecision) => boolean;
+      onWaiting?: (decisionId: string) => void;
+      generation?: number;
+    },
   ) => Promise<string>;
   determineSelectionMethodForRun: (
     run: Pick<Run, 'flowType'>,
@@ -1102,6 +1106,15 @@ async function waitUntilSlotClaimable(slotId: string, runId: string, generation:
   }
 }
 
+let pickerFleetRead: Promise<FleetStatus> | undefined;
+
+/** All waiting pickers share an in-flight read of the same canonical fleet. */
+function readSlotPickerFleet(): Promise<FleetStatus> {
+  return (pickerFleetRead ??= loadFleetStatus().finally(() => {
+    pickerFleetRead = undefined;
+  }));
+}
+
 /** Keep one decision asleep until its project's observed availability actually changes. */
 export async function waitForSlotPickerChange(
   runId: string,
@@ -1109,40 +1122,40 @@ export async function waitForSlotPickerChange(
   slotIds: ReadonlySet<string>,
   initialAvailability: string,
   readAvailability: () => Promise<string>,
-  decide: () => Promise<string>,
+  decide: (onWaiting: (decisionId: string) => void) => Promise<string>,
   revisions: GatewayResourceRevisions = resourceRevisions,
 ): Promise<string> {
+  if (runSupersededSince(getRun(runId), generation)) return 'abort';
   let active = true;
   let refreshing = false;
   let dirty = false;
-  let decisionObserved = false;
   let ownedDecisionId: string | undefined;
-  let configurationChanged = false;
   let rejectRefresh!: (error: unknown) => void;
   const failure = new Promise<never>((_resolve, reject) => {
     rejectRefresh = reject;
   });
+  const stop = () => {
+    if (ownedDecisionId) resolveEngineDecision(ownedDecisionId, 'abort');
+  };
   const refresh = async () => {
-    if (refreshing || !active) return;
+    if (refreshing || !active || !ownedDecisionId) return;
     refreshing = true;
     try {
       do {
         dirty = false;
-        const current = getRun(runId);
-        if (!current || runSupersededSince(current, generation)) return;
-        const decision = current.decisions.find(
-          (entry) =>
-            entry.type === 'engine_no_suitable_slot' &&
-            !entry.resolvedAt &&
-            hasEngineDecisionWaiter(entry.id),
-        );
-        if (!decision || !hasEngineDecisionWaiter(decision.id)) return;
-        decisionObserved = true;
-        ownedDecisionId = decision.id;
+        if (runSupersededSince(getRun(runId), generation)) {
+          stop();
+          return;
+        }
+        if (!hasEngineDecisionWaiter(ownedDecisionId)) return;
         const availability = await readAvailability();
-        if (!active || runSupersededSince(getRun(runId), generation)) return;
-        if (configurationChanged || availability !== initialAvailability) {
-          resolveEngineDecision(decision.id, 'retry');
+        if (!active) return;
+        if (runSupersededSince(getRun(runId), generation)) {
+          stop();
+          return;
+        }
+        if (availability !== initialAvailability) {
+          resolveEngineDecision(ownedDecisionId, 'retry');
           return;
         }
       } while (dirty && active);
@@ -1153,30 +1166,37 @@ export async function waitForSlotPickerChange(
     }
   };
   const unsubscribe = revisions.subscribe(({ changes }) => {
+    if (!active) return;
+    const current = getRun(runId);
+    if (changes.some(({ key }) => key.family === 'run' && key.runId === runId)) {
+      if (runSupersededSince(current, generation)) stop();
+      // Run progress does not change fleet availability; only cancellation owns this wake.
+      return;
+    }
     if (
       !changes.some(
         ({ key }) =>
           (key.family === 'slot' && slotIds.has(key.slotId)) ||
-          key.family === 'configuration' ||
-          (!decisionObserved && key.family === 'run' && key.runId === runId),
+          (key.family === 'configuration' && (!key.project || key.project === current?.project)),
       )
     )
       return;
-    configurationChanged ||= changes.some(({ key }) => key.family === 'configuration');
+    // Farm configuration keys include pool membership; compare observed eligibility facts
+    // before retrying, so another project's templates/learnings do not rerun selection.
     dirty = true;
     void refresh();
   });
   try {
-    const result = decide();
-    // Closing the subscription/read gap also handles a release during decision creation.
-    dirty = true;
-    void refresh();
+    const result = decide((decisionId) => {
+      ownedDecisionId = decisionId;
+      dirty = true;
+      void refresh();
+    });
     return await Promise.race([result, failure]);
   } finally {
     active = false;
     unsubscribe();
-    if (ownedDecisionId && hasEngineDecisionWaiter(ownedDecisionId))
-      resolveEngineDecision(ownedDecisionId, 'abort');
+    stop();
   }
 }
 
@@ -2072,6 +2092,13 @@ async function findSlotAttempt(
             enabled: slot.enabled,
             dispatchable: slot.dispatchable,
             missingFromPool: slot.missingFromPool,
+            resources: slot.resources,
+            repo: slot.repo,
+            linkedWorktree: slot.linkedWorktree,
+            repoBlocker: slot.repoBlocker,
+            configError: slot.configError,
+            workspaceError: slot.workspaceError,
+            headSha: slot.headSha,
             phase: slot.phase,
             currentRunId: slot.currentRunId,
             cleanupRunId: slot.cleanupRunId,
@@ -2100,8 +2127,8 @@ async function findSlotAttempt(
         generation,
         new Set(projectSlots.map((slot) => slot.slot)),
         availability(fleet),
-        async () => availability(await loadFleetStatus()),
-        () =>
+        async () => availability(await readSlotPickerFleet()),
+        (onWaiting) =>
           createEngineDecision(
             runId,
             'no_suitable_slot',
@@ -2112,7 +2139,7 @@ async function findSlotAttempt(
               { id: 'abort', label: 'Abort Run', style: 'danger' },
             ],
             slotPickerPayload,
-            { canReplay: (decision) => decision.resolvedAction === 'pick' },
+            { canReplay: (decision) => decision.resolvedAction === 'pick', onWaiting, generation },
           ),
       ),
     );
@@ -2121,9 +2148,11 @@ async function findSlotAttempt(
     if (actionId === 'abort') throw new Error('Aborted: no suitable slot');
 
     // User picked a slot via selectionData
-    const resolvedDecision = getRun(runId)!.decisions.find(
-      (d) => d.type === 'engine_no_suitable_slot' && d.resolvedAt,
-    );
+    const resolvedDecision = [...getRun(runId)!.decisions]
+      .reverse()
+      .find(
+        (d) => d.type === 'engine_no_suitable_slot' && d.resolvedAt && d.resolvedAction === 'pick',
+      );
     const pickedSlotId = (resolvedDecision?.selectionData?.slotId as string) || null;
     if (!pickedSlotId) throw new Error('No slot selected');
     // Same unconstrained-selectionData exposure as the decision-card 'pick'

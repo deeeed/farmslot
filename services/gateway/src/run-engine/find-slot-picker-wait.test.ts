@@ -36,7 +36,7 @@ function fixture(t: test.TestContext) {
   let reads = 0;
   const pending = () =>
     getRun(run.id)?.decisions.find((d) => d.type === 'engine_no_suitable_slot' && !d.resolvedAt);
-  const decide = () =>
+  const decide = (onWaiting?: (decisionId: string) => void) =>
     createEngineDecision(
       run.id,
       'no_suitable_slot',
@@ -47,6 +47,7 @@ function fixture(t: test.TestContext) {
         { id: 'abort', label: 'Abort Run', style: 'danger' },
       ],
       { kind: 'slot_picker', project: run.project, candidates: [], reason: 'no_free_slots' },
+      { onWaiting },
     );
   t.after(async () => {
     const decision = pending();
@@ -128,12 +129,10 @@ test('a release during decision creation is observed after its waiter is registe
     new Set(['owned-slot']),
     'held',
     h.read,
-    async () => {
+    async (onWaiting) => {
       h.ready();
-      const decision = h.decide();
-      await h.waiting();
-      h.revisions.advance({ family: 'run', runId: h.run.id });
-      return decision;
+      await Promise.resolve();
+      return h.decide(onWaiting);
     },
     h.revisions,
   );
@@ -196,12 +195,14 @@ test('an empty operator pick is refused without consuming its live card', async 
 
 test('failed refresh removes its own observer and decision waiter', async (t) => {
   const h = fixture(t);
+  let reads = 0;
   const result = waitForSlotPickerChange(
     h.run.id,
     0,
     new Set(['owned-slot']),
     'held',
     async () => {
+      if (reads++ === 0) return 'held';
       throw new Error('Fleet read failed');
     },
     h.decide,
@@ -209,8 +210,9 @@ test('failed refresh removes its own observer and decision waiter', async (t) =>
   );
   await h.waiting();
   const id = h.pending()!.id;
+  const rejected = assert.rejects(result, /Fleet read failed/);
   h.revisions.advance({ family: 'slot', slotId: 'owned-slot' });
-  await assert.rejects(result, /Fleet read failed/);
+  await rejected;
   assert.equal(hasEngineDecisionWaiter(id), false);
 });
 
@@ -263,4 +265,52 @@ test('an old refresh cannot abort a successor generations picker', async (t) => 
   assert.ok(hasEngineDecisionWaiter(nextId));
   resolveEngineDecision(nextId, 'abort');
   assert.equal(await next, 'abort');
+});
+
+test('cancellation notifications settle the waiter without an operator action', async (t) => {
+  const h = fixture(t);
+  const result = waitForSlotPickerChange(
+    h.run.id,
+    0,
+    new Set(['owned-slot']),
+    'held',
+    h.read,
+    h.decide,
+    h.revisions,
+  );
+  await h.waiting();
+  const id = h.pending()!.id;
+  updateRun(h.run.id, { status: 'cancelled' });
+  h.revisions.advance({ family: 'run', runId: h.run.id });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(
+    hasEngineDecisionWaiter(id),
+    false,
+    'Cancellation must release the waiting continuation',
+  );
+  assert.equal(await result, 'abort');
+});
+
+test('unrelated configuration and unchanged project facts keep the same picker asleep', async (t) => {
+  const h = fixture(t);
+  const result = waitForSlotPickerChange(
+    h.run.id,
+    0,
+    new Set(['owned-slot']),
+    'held',
+    h.read,
+    h.decide,
+    h.revisions,
+  );
+  await h.waiting();
+  const id = h.pending()!.id;
+  h.revisions.advance({ family: 'configuration', scope: 'farm', project: 'some-other-project' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(h.pending()?.id, id);
+  h.revisions.advance({ family: 'configuration', scope: 'farm' });
+  h.revisions.advance({ family: 'configuration', scope: 'farm', project: h.run.project });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(h.pending()?.id, id);
+  resolveEngineDecision(id, 'abort');
+  assert.equal(await result, 'abort');
 });
