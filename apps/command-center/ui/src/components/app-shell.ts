@@ -119,7 +119,12 @@ import {
   type PinnedWorkspacePreference,
   unpinWorkspace,
 } from '../utils/pinned-slots.js';
-import { hashParams, navigateHash, navigationHash } from '../utils/url-state.js';
+import {
+  hashParams,
+  navigateHash,
+  type NavigationLinkState,
+  prepareNavigationLink,
+} from '../utils/url-state.js';
 import { browserViewState, viewBinding, ViewStateBindings } from '../utils/view-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
@@ -352,6 +357,7 @@ export class FarmApp extends LitElement {
   private unsubResourceCache?: () => void;
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
+  private readonly navigationLinks = new WeakMap<HTMLAnchorElement, NavigationLinkState>();
 
   constructor() {
     super();
@@ -803,15 +809,13 @@ export class FarmApp extends LitElement {
   private onWorkspaceNavigation = (event: MouseEvent) => {
     const link = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
     if (!(link instanceof HTMLAnchorElement) || link.hasAttribute('download')) return;
-    const target = new URL(link.href);
-    if (
-      target.origin !== location.origin ||
-      target.pathname !== location.pathname ||
-      target.search !== location.search ||
-      !target.hash
-    )
+    const state = prepareNavigationLink(link.getAttribute('href'), this.navigationLinks.get(link));
+    if (!state) {
+      this.navigationLinks.delete(link);
       return;
-    link.hash = navigationHash(target.hash);
+    }
+    this.navigationLinks.set(link, state);
+    link.setAttribute('href', state.appliedHref);
   };
 
   private onSidebarResizeStart = (e: PointerEvent) => {
@@ -1777,7 +1781,7 @@ export class FarmApp extends LitElement {
           class="fa-active-run ${selected ? 'active' : ''} ${needsAttention
             ? 'needs-attention'
             : ''}"
-          href=${navigationHash(href)}
+          href=${href}
           title=${`${slotId ?? runId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
         >
           <div class="fa-active-run-top">
@@ -2539,7 +2543,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
               'alpha'
                 ? 'fa-nav-btn--alpha'
                 : ''}"
-              href=${navigationHash(`#${item.route}`)}
+              href="#${item.route}"
               title="${item.label}"
             >
               <span class="fa-nav-icon">${item.icon}</span>${this._sidebarExpanded

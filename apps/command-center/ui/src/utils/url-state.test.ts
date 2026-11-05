@@ -8,9 +8,27 @@ import {
   hashSearch,
   navigateHash,
   parseHashRoute,
+  prepareNavigationLink,
   readViewChoice,
   viewChoiceHash,
 } from './url-state.js';
+
+test('F414 repeated link activation derives inherited choices from the authored href', () => {
+  const expanded = 'http://localhost:5175/#runs?panels=sidebar&sidebarWidth=320';
+  const collapsed = 'http://localhost:5175/#runs?sidebarWidth=320';
+  const first = prepareNavigationLink('#doctor', undefined, expanded);
+  assert.ok(first);
+  assert.equal(new URL(first.appliedHref).hash, '#doctor?panels=sidebar&sidebarWidth=320');
+  const next = prepareNavigationLink(first.appliedHref, first, collapsed);
+  assert.ok(next);
+  assert.equal(new URL(next.appliedHref).hash, '#doctor?sidebarWidth=320');
+  const explicit = prepareNavigationLink('#doctor?panels=sidebar', undefined, collapsed);
+  assert.ok(explicit);
+  assert.equal(new URL(explicit.appliedHref).hash, '#doctor?panels=sidebar&sidebarWidth=320');
+  assert.equal(prepareNavigationLink(null, undefined, expanded), null);
+  assert.equal(prepareNavigationLink('', undefined, expanded), null);
+  assert.equal(prepareNavigationLink('https://example.com/#runs', undefined, expanded), null);
+});
 
 test('F414 navigation after an async action carries shell choices into the destination URL', async (t) => {
   const descriptors = new Map(

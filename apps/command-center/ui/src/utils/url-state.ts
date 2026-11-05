@@ -35,18 +35,40 @@ export function parseHashRoute(hash: string = location.hash): HashRouteState {
   };
 }
 
-export function buildHash(
-  route: string,
-  params: URLSearchParams = new URLSearchParams(),
-  currentHash = typeof location === 'undefined' ? '' : location.hash,
-): string {
-  const query = inheritSidebarViewState(params, hashParams(currentHash)).toString();
+export function buildHash(route: string, params: URLSearchParams = new URLSearchParams()): string {
+  const query = params.toString();
   return `#${route}${query ? `?${query}` : ''}`;
 }
 
 export function navigationHash(destination: string, currentHash = location.hash): string {
   const { route, params } = parseHashRoute(destination);
-  return buildHash(route, params, currentHash);
+  return buildHash(route, inheritSidebarViewState(params, hashParams(currentHash)));
+}
+
+export interface NavigationLinkState {
+  sourceHref: string;
+  appliedHref: string;
+}
+
+/** Re-derive inherited choices from the authored destination on every activation. */
+export function prepareNavigationLink(
+  href: string | null,
+  previous: NavigationLinkState | undefined,
+  currentUrl = location.href,
+): NavigationLinkState | null {
+  if (!href) return null;
+  const sourceHref = previous?.appliedHref === href ? previous.sourceHref : href;
+  const current = new URL(currentUrl);
+  const target = new URL(sourceHref, current);
+  if (
+    target.origin !== current.origin ||
+    target.pathname !== current.pathname ||
+    target.search !== current.search ||
+    !target.hash
+  )
+    return null;
+  target.hash = navigationHash(target.hash, current.hash);
+  return { sourceHref, appliedHref: target.href };
 }
 
 /** Apply route changes at their writer, including asynchronous action completions. */
