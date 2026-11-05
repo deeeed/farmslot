@@ -8,10 +8,12 @@ import path from 'node:path';
 import {
   buildOperatorWaitInstructions,
   type HandoffSourceKind,
+  inspectTaskAcceptanceState,
   parseProjectWorkerTemplateFileName,
   portableProjectRepo,
   readTaskDocumentAddendum,
   refreshTaskAcceptanceInputs,
+  type TaskAcceptanceState,
   type TaskInitSpec,
 } from '@farmslot/agent-runtime';
 import {
@@ -62,7 +64,12 @@ import {
   type RawProjectJson,
   readSlotRow,
 } from '../core/index.js';
-import { ORCHESTRATOR_LOCALITY, slotReadFile, slotWriteFileAtomic } from '../core/slot-io.js';
+import {
+  ORCHESTRATOR_LOCALITY,
+  type SlotLocality,
+  slotReadFile,
+  slotWriteFileAtomic,
+} from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import {
   buildFollowUpScopeContractSection,
@@ -1462,13 +1469,13 @@ export async function readFrozenTaskInit(
   return JSON.parse(await readFile(path.join(path.dirname(taskFile), TASK_INIT_INPUT), 'utf8'));
 }
 
-/** Refresh the producer-owned acceptance inputs without reinitializing authored work or receipts. */
-export async function refreshWrittenTaskTicket(
-  run: Run,
-  ticket: RunTicketData,
-  previousCriteria: readonly string[],
-  owns: () => Promise<boolean>,
-): Promise<void> {
+interface WrittenTaskTicketOwner {
+  mirrorDir: string;
+  slot: SlotLocality;
+  taskDir: string;
+}
+
+async function writtenTaskTicketOwner(run: Run): Promise<WrittenTaskTicketOwner> {
   if (!run.taskFile) throw new Error('Ticket refresh requires a registered task');
   const mirrorDir = path.dirname(run.taskFile);
   const vars = run.slotId ? await loadSlotVars(run.slotId) : undefined;
@@ -1477,6 +1484,34 @@ export async function refreshWrittenTaskTicket(
   if (run.slotId && !relative)
     throw new Error('Ticket refresh worker task directory is unavailable');
   const taskDir = vars ? path.posix.join(vars.remoteRepo, relative!) : mirrorDir;
+  return { mirrorDir, slot, taskDir };
+}
+
+export async function readWrittenTaskAcceptanceState(
+  run: Run,
+  previousCriteria: readonly string[] = [],
+  criteria: readonly string[] = [],
+): Promise<TaskAcceptanceState> {
+  const { slot, taskDir } = await writtenTaskTicketOwner(run);
+  return inspectTaskAcceptanceState({
+    handoff: await slotReadFile(slot, path.join(taskDir, 'inputs/handoff.json')),
+    runId: run.id,
+    project: run.project,
+    flow: run.flowType,
+    previousCriteria,
+    criteria,
+  });
+}
+
+/** Refresh the producer-owned acceptance inputs without reinitializing authored work or receipts. */
+export async function refreshWrittenTaskTicket(
+  run: Run,
+  ticket: RunTicketData,
+  previousCriteria: readonly string[],
+  owns: () => Promise<boolean>,
+): Promise<void> {
+  if (!run.taskFile) throw new Error('Ticket refresh requires a registered task');
+  const { mirrorDir, slot, taskDir } = await writtenTaskTicketOwner(run);
   const refreshed = refreshTaskAcceptanceInputs({
     handoff: await slotReadFile(slot, path.join(taskDir, 'inputs/handoff.json')),
     taskMarkdown: await slotReadFile(slot, path.join(taskDir, 'TASK.md')),
@@ -1509,7 +1544,7 @@ export async function refreshWrittenTaskTicket(
   if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
   for (const file of files)
     await slotWriteFileAtomic(slot, path.join(taskDir, file.path), file.text);
-  if (vars)
+  if (run.slotId)
     for (const file of files)
       await slotWriteFileAtomic(ORCHESTRATOR_LOCALITY, path.join(mirrorDir, file.path), file.text);
   if (!(await owns())) throw new Error('Ticket refresh lost its task owner');

@@ -1,12 +1,13 @@
 import { isDeepStrictEqual } from 'node:util';
 
+import { normalizeAcceptanceCriteria } from '@farmslot/agent-runtime';
 import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 import { readSlotField } from '../core/state.js';
 import { publicationStatusForRun } from '../run-completion/publication-status.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionPrincipal } from '../security/work-originator.js';
-import { refreshWrittenTaskTicket } from '../tasks/writer.js';
+import { readWrittenTaskAcceptanceState, refreshWrittenTaskTicket } from '../tasks/writer.js';
 
 import { fetchTicketData } from './ticket-data.js';
 
@@ -40,23 +41,44 @@ export async function refreshRunTicket(run: Run): Promise<Run> {
   if (!(await owns()))
     throw new Error('Ticket refresh requires an unpublished run with its task owner');
   let refresh = run.ticketRefreshes?.at(-1);
-  // Finish the same admitted snapshot after an interrupted task write, even if the source changed again.
-  if (!refresh || refresh.appliedAt) {
+  let superseded = false;
+  if (refresh && !refresh.appliedAt && !refresh.supersededAt) {
+    superseded = !(
+      await readWrittenTaskAcceptanceState(run, refresh.previousCriteria, refresh.criteria)
+    ).matchesPreviousOrTarget;
+  }
+  // Resume an interrupted write only while its admitted criteria still describe the task.
+  if (!refresh || refresh.appliedAt || refresh.supersededAt || superseded) {
     const ticketData = await fetchTicketData(run);
     if (!ticketData || ticketData.source === 'manual')
       throw new Error('Ticket refresh could not load the ticket source');
     if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
-    if (isDeepStrictEqual(ticketData, run.ticketData)) return run;
+    const { currentCriteria: previousCriteria } = await readWrittenTaskAcceptanceState(run);
+    if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
+    if (
+      !superseded &&
+      !refresh?.supersededAt &&
+      isDeepStrictEqual(ticketData, run.ticketData) &&
+      isDeepStrictEqual(
+        normalizeAcceptanceCriteria(previousCriteria),
+        normalizeAcceptanceCriteria(ticketData.acceptanceCriteria),
+      )
+    )
+      return run;
+    const requestedAt = new Date().toISOString();
+    const history = (run.ticketRefreshes ?? []).map((entry) =>
+      entry === refresh && superseded ? { ...entry, supersededAt: requestedAt } : entry,
+    );
     refresh = {
       principalId: principal.id,
       ...(principal.generation !== undefined ? { principalGeneration: principal.generation } : {}),
-      requestedAt: new Date().toISOString(),
-      previousCriteria: [...(run.ticketData?.acceptanceCriteria ?? [])],
+      requestedAt,
+      previousCriteria,
       criteria: [...ticketData.acceptanceCriteria],
     };
     run = updateRun(run.id, {
       ticketData,
-      ticketRefreshes: [...(run.ticketRefreshes ?? []), refresh],
+      ticketRefreshes: [...history, refresh],
     });
   }
   await persistRunNow(run, 'person ticket refresh admitted');
