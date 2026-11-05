@@ -408,3 +408,39 @@ test('verification reads overlapping retained tooling content once per call', (t
     code: 'TASK_INPUT_CHANGED',
   });
 });
+
+test('repin migration documents recover after the receipt swap without replacing task evidence', (t) => {
+  const { root, taskDir, provider, input } = fixture(t);
+  const previous = retainTaskExecution(taskDir, {
+    ...input,
+    selectedConfiguration: '{"identity":null}',
+  });
+  fs.writeFileSync(path.join(provider, 'action.mjs'), 'export default 2;\n');
+  const documents = {
+    checklist: '- [x] Original\n- [ ] Configured CI check\n',
+    terminalContract: '{"requireSignal":true}',
+  };
+  const receipt = repinTaskExecution(
+    taskDir,
+    { ...input, selectedConfiguration: '{"identity":null,"new":true}' },
+    previous,
+    root,
+    documents,
+  );
+  const selection = path.join(taskDir, 'inputs/recipe-binding.json');
+  fs.renameSync(selection, `${selection}.${path.basename(receipt.pin)}`);
+  fs.writeFileSync(selection, '{"identity":null}');
+  fs.writeFileSync(path.join(taskDir, 'CHECKLIST.md'), '- [x] Original\n');
+  fs.writeFileSync(path.join(taskDir, 'inputs/worker-terminal-contract.json'), '{}');
+  fs.writeFileSync(path.join(taskDir, 'artifacts/evidence.json'), 'original evidence');
+  assert.deepEqual(completeInterruptedRepin(taskDir), { previous, receipt });
+  assert.equal(fs.readFileSync(path.join(taskDir, 'CHECKLIST.md'), 'utf8'), documents.checklist);
+  assert.equal(
+    fs.readFileSync(path.join(taskDir, 'inputs/worker-terminal-contract.json'), 'utf8'),
+    documents.terminalContract,
+  );
+  assert.equal(
+    fs.readFileSync(path.join(taskDir, 'artifacts/evidence.json'), 'utf8'),
+    'original evidence',
+  );
+});

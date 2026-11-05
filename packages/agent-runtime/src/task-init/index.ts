@@ -36,6 +36,7 @@ import {
   type TaskExecutionInput,
   taskExecutionPin,
   type TaskExecutionProvenance,
+  type TaskRepinDocuments,
 } from './execution-provenance.js';
 import { installedTaskCommands, retainedMarkCommand } from './runtime-command.js';
 import {
@@ -66,6 +67,7 @@ export {
   type TaskExecutionInput,
   type TaskExecutionProvenance,
   type TaskRecipeBindingIdentity,
+  type TaskRepinDocuments,
   type TaskRetainedInput,
   verifyTaskExecutionProvenance,
 } from './execution-provenance.js';
@@ -335,8 +337,9 @@ export function repinTask(
   execution: TaskExecutionInput,
   previous: TaskExecutionProvenance,
   checkoutRoot: string,
+  documents?: TaskRepinDocuments,
 ): TaskExecutionProvenance {
-  const receipt = repinTaskExecution(taskDir, execution, previous, checkoutRoot);
+  const receipt = repinTaskExecution(taskDir, execution, previous, checkoutRoot, documents);
   followRepinnedMarker(taskDir, previous, receipt);
   return receipt;
 }
