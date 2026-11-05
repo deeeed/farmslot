@@ -923,16 +923,6 @@ async function runNativeReviewAttempt(
           snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
         throw reviewerExitForNativeSnapshot(snapshot, failure) ?? failure ?? new Error(reason);
       }
-      if (
-        completion === false &&
-        !probe.ok &&
-        probe.code === 'missing' &&
-        command?.state === 'completed' &&
-        command.outcome === 'completed'
-      )
-        throw new TerminalReviewArtifactError(
-          `Native reviewer completed its turn without a valid terminal signal: ${probe.message}`,
-        );
       // Drain this lease's history before judging silence; later pages can hold
       // activity that happened while the gateway was offline.
       if (snapshot.hasMore) continue;
@@ -943,6 +933,15 @@ async function runNativeReviewAttempt(
             `Native reviewer never started a turn within ${now - monitoringStartedAt}ms ` +
               `(session ${reviewBinding.sessionId}; command ${context.nativeSession!.commandId}; ` +
               `receipt ${command?.state ?? 'missing'})`,
+          );
+        if (
+          command?.state === 'completed' &&
+          command.outcome === 'completed' &&
+          !probe.ok &&
+          probe.code === 'missing'
+        )
+          throw new Error(
+            `Native reviewer completed its turn but its terminal signal remains unavailable: ${probe.message}`,
           );
         throw new Error(
           `Native reviewer made no checklist or tool progress for ${now - lastProgressAt}ms ` +

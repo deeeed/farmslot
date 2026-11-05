@@ -31,6 +31,7 @@ const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
 type Ending =
   | 'never-started'
   | 'missing-terminal'
+  | 'signal-read-error'
   | 'command-failed'
   | 'command-error'
   | 'timeout'
@@ -59,6 +60,7 @@ type Ending =
   | 'completion-invalid';
 let ending: Ending = 'verdict';
 let dispatchCalls = 0;
+let signalReadErrorProbes = 0;
 let markerPresent = true;
 let restoreTaskFails = false;
 const restoredTasks: string[] = [];
@@ -142,6 +144,8 @@ mock.module('../run-engine/run-monitor.js', {
           signal: { status: 'running', timestamp: new Date().toISOString() },
         };
       }
+      if (ending === 'signal-read-error' && ++signalReadErrorProbes === 1)
+        return { ok: false, code: 'missing', message: 'Failed to read SIGNAL.json: Node timeout' };
       if (ending === 'missing-terminal')
         return { ok: false, code: 'missing', message: 'review signal missing' };
       if (timeline) {
@@ -851,10 +855,20 @@ test('an accepted reviewer with no native turn reports never started', async (t)
   assert.equal(clock.polls, 1);
 });
 
-test('a completed native turn with no signal fails immediately with its completion cause', async (t) => {
+test('a completed review survives a transient signal read failure', async (t) => {
+  ending = 'signal-read-error';
+  signalReadErrorProbes = 0;
+  const run = await nativeRun(t);
+  const before = dispatchCalls;
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(signalReadErrorProbes, 2);
+  assert.equal(dispatchCalls, before + 1);
+});
+
+test('a completed native turn reports unavailable terminal signal at its existing deadline', async (t) => {
   ending = 'missing-terminal';
   const run = await nativeRun(t);
-  await assert.rejects(review(run.id), /completed its turn without.*terminal signal/);
+  await assert.rejects(review(run.id), /completed its turn but.*terminal signal/);
 });
 
 test('a native reviewer with no checklist or tool progress fails at ten idle minutes, before a one-hour budget', async (t) => {
