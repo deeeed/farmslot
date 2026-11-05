@@ -24,7 +24,7 @@ import {
 } from '../../core/active-run-selection.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { loadFleetStatus } from '../../fleet/state.js';
-import { attachLiveRecipeContext } from '../../live-recipe/context.js';
+import { attachRetainedLiveRecipeContext } from '../../live-recipe/context.js';
 import { attachReviewRoundBudget } from '../../review/review-round-budget.js';
 import { outputManifestDigest } from '../../run-completion/output.js';
 import {
@@ -33,9 +33,8 @@ import {
   retainedRunBundleRef,
   selectedRetainedRecipeGroup,
 } from '../../run-completion/retained-artifacts.js';
-import { refreshRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
+import { inspectedRun } from '../../run-engine/gate-inspection.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
-import { reconcilePublicationPackageForInspection } from '../../run-engine/publish-package-refresh.js';
 import { runListIdsPage, runListVersion, runListVersions } from '../../runs/list-version.js';
 import {
   getAllRuns,
@@ -49,7 +48,7 @@ import { readRunRecordedEvidence } from './evidence-review.js';
 
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
 async function presentRun(run: Run): Promise<Run> {
-  run = await reconcilePublicationPackageForInspection(await refreshRunGateReadiness(run));
+  run = inspectedRun(run);
   if (run.artifactBundle || run.output?.artifactBundle) {
     const groups = await retainedRecipeRunGroups(run);
     const selected = selectedRetainedRecipeGroup(groups);
@@ -59,7 +58,7 @@ async function presentRun(run: Run): Promise<Run> {
     });
   }
   return enrichDecisionsWithGateSummary(
-    await attachLiveRecipeContext(await attachReviewRoundBudget(run)),
+    attachRetainedLiveRecipeContext(await attachReviewRoundBudget(run)),
   );
 }
 
@@ -80,8 +79,8 @@ export function resolveBoundTerminalRunForSlot(
 export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   const run = getRun(params.runId);
   if (!run) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
-  // The first paint must not wait for worker/source/evidence I/O. The ordinary
-  // read still reconciles current readiness; command handlers retain their guards.
+  // The first paint must not wait for worker/source/evidence I/O. The ordinary read
+  // serves the last gate check and asks for a new one; command handlers retain their guards.
   if (params.view === 'snapshot') return { run };
   const listVersion = runListVersion(trimRunForList(run));
   return { run: await presentRun(run), listVersion, recoveryHints: runRecoveryHints(run) };
