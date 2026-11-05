@@ -15,21 +15,28 @@ const slots =
   elements
     .filter((element) => element.tagName === 'SLOT-CARD')
     .map((element) => element.slotData?.slot);
+const measure = (element, slot) => {
+  const box = element.getBoundingClientRect();
+  return { slot, x: box.x, y: box.y, width: box.width, height: box.height };
+};
 const rows = elements
-  .filter(
-    (element) =>
-      element.classList.contains('slot-name') && slots.includes(element.textContent?.trim()),
-  )
-  .map((element) => {
-    const box = element.getBoundingClientRect();
-    return {
-      slot: element.textContent.trim(),
-      x: box.x,
-      y: box.y,
-      width: box.width,
-      height: box.height,
-    };
+  .filter((element) => element.classList.contains('slot-name'))
+  .flatMap((element) => {
+    const group = element.getRootNode().host;
+    if (group?.tagName !== 'MACHINE-GROUP') return [];
+    const label = element.textContent.trim();
+    const prefix = `${group.machine}-`;
+    const slot = group.slots.find(
+      (entry) =>
+        entry.slot === label ||
+        (entry.slot.startsWith(prefix) && entry.slot.slice(prefix.length) === label),
+    );
+    return slot ? [measure(element, slot.slot)] : [];
   });
+for (const card of elements.filter((element) => element.tagName === 'SLOT-CARD')) {
+  const id = card.slotData?.slot;
+  if (id && !rows.some((row) => row.slot === id)) rows.push(measure(card, id));
+}
 const box = main?.getBoundingClientRect();
 return {
   url: location.href,
