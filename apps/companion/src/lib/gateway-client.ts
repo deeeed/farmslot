@@ -5,6 +5,8 @@ import {
   Events,
   type Frame,
   type GatewayAuthConnectResult,
+  gatewayAuthenticationRefused,
+  GatewayRecovery,
   hasAuthErrorCode,
   Methods,
   type PersonDeviceSession,
@@ -85,7 +87,6 @@ export interface GatewayRequestOptions extends ResourceReadOptions {
 }
 
 const DEFAULT_TIMEOUT = 15_000;
-const MAX_BACKOFF = 30_000;
 export class GatewayClient {
   readonly performance = new PerformanceRecorder('companion');
   private readonly performanceReporter = new PerformanceReporter(
@@ -118,8 +119,38 @@ export class GatewayClient {
   private pending = new Map<string, PendingRequest>();
   private eventSubs = new Map<string, Set<EventCallback>>();
   private connSubs = new Set<ConnectionCallback>();
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private backoff = 1000;
+  private readonly heartbeatSubs = new Set<(latencyMs: number, completedAt: number) => void>();
+  onHeartbeat(callback: (latencyMs: number, completedAt: number) => void): () => void {
+    this.heartbeatSubs.add(callback);
+    return () => this.heartbeatSubs.delete(callback);
+  }
+  private readonly recovery = new GatewayRecovery({
+    enabled: () => this.recoveryEnabled,
+    connect: () => this.connect(),
+    retire: () => {
+      this.rejectAllPending('Gateway is unreachable');
+      this.closeCurrentSocket();
+      this.invalidateTransportCapability();
+      this.setState('disconnected');
+    },
+    canProbe: () => this.pingSupported === true,
+    ping: () => this.requestRaw(Methods.GATEWAY_PING, {}, 5000),
+    onResponse: (latencyMs, completedAt) => {
+      for (const callback of this.heartbeatSubs) {
+        try {
+          callback(latencyMs, completedAt);
+        } catch (error) {
+          rethrowAsync(error);
+        }
+      }
+    },
+  });
+  get recoveryEnabled(): boolean {
+    return !this.disposed && !this.pausedForBackground && !this.authRequired && Boolean(this.url);
+  }
+  wake(): void {
+    this.recovery.wake();
+  }
   private url: string;
   private auth: GatewayAuthCredentials;
   private personSession: PersonSessionClient | null = null;
@@ -253,7 +284,6 @@ export class GatewayClient {
     this.rejectAllPending('Gateway profile changed');
     this.closeCurrentSocket();
     this.setState('disconnected', true, resourceReason);
-    this.backoff = 1000;
     if (previousSession) await previousSession.dispose();
     if (generation !== this.generation) return;
     this.configurePersonSession();
@@ -283,7 +313,6 @@ export class GatewayClient {
     )
       return;
 
-    this.cancelReconnect();
     this.lastConnectionError = null;
     this.setState('connecting');
     const socket = new WebSocket(this.url);
@@ -293,10 +322,7 @@ export class GatewayClient {
       if (this.ws !== socket) return;
       this.authenticate(socket, this.generation).catch((error: Error) => {
         if (this.ws !== socket) return;
-        this.authRequired =
-          hasAuthErrorCode(error, 'AUTH_SESSION_ENDED') ||
-          hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED') ||
-          (hasAuthErrorCode(error, 'AUTH_FAILED') && Boolean(this.auth.token));
+        this.authRequired = gatewayAuthenticationRefused(error);
         if (this.authRequired) this.clearAuthority();
         this.resourceReason = hasAuthErrorCode(error, 'AUTH_SESSION_ENDED')
           ? 'session-ended'
@@ -353,7 +379,6 @@ export class GatewayClient {
     this.rejectAllPending('Gateway reconnect requested');
     this.closeCurrentSocket();
     this.setState('disconnected');
-    this.backoff = 1000;
     this.connect();
   }
 
@@ -402,7 +427,6 @@ export class GatewayClient {
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
     this.inputSequence = inputSequenceOf(result.capabilities?.terminalInputSequence);
-    this.backoff = 1000;
     this.lastConnectionError = null;
     this.setState('connected');
     if (session?.session)
@@ -424,6 +448,8 @@ export class GatewayClient {
 
   disconnect(): void {
     this.disposed = true;
+    this.recovery.dispose();
+    this.heartbeatSubs.clear();
     this.personSession?.stopRefresh();
     this.cancelReconnect();
     this.pausedForBackground = false;
@@ -694,6 +720,7 @@ export class GatewayClient {
     authorityChanged = false,
     reason?: ResourceConnectionReason,
   ): void {
+    this.recovery.update(s);
     if (this.state === s && !authorityChanged && this.resourceReason === reason) return;
     this.resourceReason = reason;
     this.state = s;
@@ -707,13 +734,7 @@ export class GatewayClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.disposed || this.pausedForBackground || this.authRequired) return;
-    this.cancelReconnect();
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, this.backoff);
-    this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF);
+    this.recovery.update('disconnected');
   }
 
   private rejectAllPending(reason: string): void {
@@ -726,9 +747,7 @@ export class GatewayClient {
   }
 
   private cancelReconnect(): void {
-    if (!this.reconnectTimer) return;
-    clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
+    this.recovery.reset();
   }
 
   private closeCurrentSocket(): void {
@@ -757,6 +776,8 @@ export class GatewayClient {
   }
 
   private setupAppStateListener(): void {
+    this.pausedForBackground =
+      AppState.currentState === 'background' || AppState.currentState === 'inactive';
     this.appStateSubscription = AppState.addEventListener('change', this.handleAppStateChange);
   }
 
@@ -774,9 +795,8 @@ export class GatewayClient {
       this.setState('disconnected');
     } else if (nextState === 'active') {
       this.pausedForBackground = false;
-      if (this.wasConnectedBeforeBackground || this.state === 'disconnected') {
-        this.connect();
-      }
+      if (this.wasConnectedBeforeBackground || this.state === 'disconnected') this.connect();
+      this.wake();
     }
   };
 }

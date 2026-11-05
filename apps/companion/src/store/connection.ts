@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { addNetworkStateListener } from 'expo-network';
 import { AppState } from 'react-native';
 import { create } from 'zustand';
 
@@ -20,7 +21,6 @@ import {
   livenessAfterSuccess,
   livenessForTransportState,
 } from '../lib/connection-liveness';
-import { ConnectionLivenessController } from '../lib/connection-liveness-controller';
 import { type ConnectionProbeResult, runConnectionProbe } from '../lib/connection-probe';
 import { isCurrentConnectionProbe } from '../lib/connection-probe-identity';
 import {
@@ -73,8 +73,7 @@ const LIVENESS_PROBE_TIMEOUT_MS = 8_000;
 // Deleting a signed-in profile waits this long for its gateway before ending the login locally.
 const PROFILE_SIGN_OUT_TIMEOUTS = { connectMs: 5_000, pingMs: 5_000 };
 
-let livenessController: ConnectionLivenessController | null = null;
-let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
+let networkSubscription: ReturnType<typeof addNetworkStateListener> | null = null;
 const probeAttemptTracker = new ConnectionProbeAttemptTracker();
 
 export type { ConnectionProbeResult } from '../lib/connection-probe';
@@ -204,7 +203,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         if (authorityChanged) {
           if (get().workspaceAccess !== 'none' || workspaceAccess !== 'farm') resetFarmState();
           probeAttemptTracker.invalidate();
-          livenessController?.reset();
         }
         const liveness = livenessForTransportState(
           authorityChanged ? INITIAL_CONNECTION_LIVENESS : livenessFromStore(get()),
@@ -224,7 +222,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           lastConnectedAt: status === 'connected' ? Date.now() : get().lastConnectedAt,
         });
         if (status === 'connected') {
-          void livenessController?.probeFresh();
+          void get().probeConnection();
         }
       });
 
@@ -239,23 +237,15 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         client,
       });
 
-      livenessController?.stop();
-      appStateSubscription?.remove();
-      livenessController = new ConnectionLivenessController({
-        probe: () => get().probeConnection(),
-        onForeground: () => get().connect(),
-        onProbeError: (error) => {
-          const liveness = livenessAfterFailure(
-            livenessFromStore(get()),
-            get().client?.connectionState ?? 'disconnected',
-            error,
+      client.onHeartbeat((latencyMs, completedAt) => {
+        if (get().client === client)
+          set(
+            livenessPatch(livenessAfterSuccess(livenessFromStore(get()), completedAt, latencyMs)),
           );
-          set(livenessPatch(liveness));
-        },
       });
-      livenessController.setAppActive(AppState.currentState === 'active');
-      appStateSubscription = AppState.addEventListener('change', (nextState) => {
-        livenessController?.setAppActive(nextState === 'active');
+      networkSubscription?.remove();
+      networkSubscription = addNetworkStateListener(() => {
+        if (!get().signedOut) get().client?.wake();
       });
       if (!signedOut) client.connect();
     } finally {
@@ -294,7 +284,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     if (transition.changed) {
       resetFarmState();
       probeAttemptTracker.invalidate();
-      livenessController?.reset();
     }
 
     await state.client?.setConnection(
@@ -303,7 +292,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       transition.changed,
       state.activeProfileId !== (matchingProfileId ?? '') ? 'profile-change' : 'principal-change',
     );
-    if (transition.changed) void livenessController?.probeFresh();
   },
 
   setActiveProfile: async (profileId: string) => {
@@ -336,7 +324,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     if (transition.changed) {
       resetFarmState();
       probeAttemptTracker.invalidate();
-      livenessController?.reset();
     }
 
     await state.client?.setConnection(
@@ -345,7 +332,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       transition.changed,
       state.activeProfileId !== profile.id ? 'profile-change' : 'principal-change',
     );
-    if (transition.changed) void livenessController?.probeFresh();
   },
 
   saveProfile: async (
@@ -435,11 +421,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       if (transition.changed) {
         resetFarmState();
         probeAttemptTracker.invalidate();
-        livenessController?.reset();
       }
 
       await state.client?.setConnection(updated.url, auth, transition.changed);
-      if (transition.changed) void livenessController?.probeFresh();
     }
   },
 
@@ -484,7 +468,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         gatewayCompatibilityHint: null,
       });
       probeAttemptTracker.invalidate();
-      livenessController?.reset();
       resetFarmState();
 
       set({ personSession: null });
@@ -513,11 +496,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     if (transition.changed) {
       resetFarmState();
       probeAttemptTracker.invalidate();
-      livenessController?.reset();
     }
 
     await state.client?.setConnection(nextProfile.url, auth, transition.changed, 'profile-change');
-    if (transition.changed) void livenessController?.probeFresh();
     return { deviceStillListed };
   },
 
@@ -558,7 +539,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         gatewayCompatibilityHint: null,
       });
       probeAttemptTracker.invalidate();
-      livenessController?.reset();
       resetFarmState();
 
       set({ personSession: null });
@@ -588,11 +568,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     if (transition.changed) {
       resetFarmState();
       probeAttemptTracker.invalidate();
-      livenessController?.reset();
     }
 
     await state.client?.setConnection(nextProfile.url, auth, transition.changed, 'profile-change');
-    if (transition.changed) void livenessController?.probeFresh();
   },
 
   signOut: async () => {
@@ -604,9 +582,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         await AsyncStorage.setItem(SIGNED_OUT_KEY, 'true');
       },
       closeSession: () => {
-        livenessController?.stop();
-        appStateSubscription?.remove();
-        appStateSubscription = null;
+        networkSubscription?.remove();
+        networkSubscription = null;
         get().client?.disconnect();
         probeAttemptTracker.invalidate();
         resetFarmState();
@@ -638,7 +615,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   },
 
   disconnect: () => {
-    livenessController?.stop();
+    networkSubscription?.remove();
+    networkSubscription = null;
     get().client?.disconnect();
   },
 
@@ -748,19 +726,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     }
   },
 
-  testConnection: async () => {
-    if (livenessController) {
-      const result = await livenessController.probeFresh();
-      if (result.ok && 'latencyMs' in result && result.latencyMs !== undefined) {
-        return { ok: true, latencyMs: result.latencyMs };
-      }
-      return {
-        ok: false,
-        error: (!result.ok && result.error) || 'Gateway did not answer.',
-      };
-    }
-    return get().probeConnection();
-  },
+  testConnection: () => get().probeConnection(),
 }));
 
 async function authCredentialsForProfile(profile: GatewayProfile): Promise<GatewayAuthCredentials> {

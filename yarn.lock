@@ -5138,6 +5138,7 @@ __metadata:
     expo-font: "npm:~58.0.11"
     expo-haptics: "npm:~58.0.7"
     expo-linking: "npm:~58.0.15"
+    expo-network: "npm:~58.0.4"
     expo-notifications: "npm:~58.1.7"
     expo-router: "patch:expo-router@npm%3A58.0.29#~/.yarn/patches/expo-router-npm-58.0.29-9b6d4997ff.patch"
     expo-screen-orientation: "npm:~58.0.3"
@@ -13067,6 +13068,16 @@ __metadata:
     "@expo/modules-macros-win32-x64":
       optional: true
   checksum: 10c0/bfe93daf40f1370fe702f0590e46af6152593e59f4dc4a7d1ab59f9b3464e7c7cc8a1848b08c0ad40f6dc2663cb426874dfa0814a8c8288c1ba86a04d2464cfa
+  languageName: node
+  linkType: hard
+
+"expo-network@npm:~58.0.4":
+  version: 58.0.4
+  resolution: "expo-network@npm:58.0.4"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+  checksum: 10c0/7ab3de7961e83807a0b9cc198c7668339c308d14ce6e8cf212d1e43bb24dfc711d00f098c2a713ca7cc0016a4eb740072279426df1887d839adb86053dd40424
   languageName: node
   linkType: hard
 

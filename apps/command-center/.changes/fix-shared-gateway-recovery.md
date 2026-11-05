@@ -1,0 +1,1 @@
+- Retain saved views with a discreet offline indicator and recover automatically after gateway outages, focus and network changes.
