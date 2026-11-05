@@ -15,6 +15,7 @@ import {
   resourceContentWithinLimits,
 } from './content.js';
 import { applyUnifiedDiff, parseUnifiedDiff, type UnifiedDiffFile } from './diff-apply.js';
+import { gitSourceAlias } from './read-stored.js';
 import { type ResourceQuery, resourceQuery } from './registry.js';
 import type { ContentKey, ResourceContentCohort } from './store.js';
 import type {
@@ -136,6 +137,7 @@ export interface ContentPrefetchWrite {
 }
 
 interface PrefetchFiles extends ContentPrefetchWrite {
+  plan: PrefetchPlan;
   text: string;
   base: string;
   head?: string;
@@ -420,25 +422,38 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     return cache.retainContent(key, { origin: 'prefetch', cohort, token });
   }
 
-  async function readByPath(
-    path: string,
-    expected: string | undefined,
+  async function readByPaths(
+    expected: Map<string, string>,
     input: PrefetchFiles,
-  ): Promise<Uint8Array | undefined> {
-    if (!expected || !input.head) return undefined;
+  ): Promise<boolean> {
+    if (!expected.size || !input.head) return true;
+    const paths = [...expected.keys()];
+    let after: string | undefined;
     try {
-      // The batched form carries raw bytes, so files that are not UTF-8 can verify too.
-      const page = await options.request<GitShowBatchResult>(
-        Methods.GIT_SHOW,
-        { ...input.scope, ref: input.head, paths: [path] },
-        input.signal,
-      );
-      const entry = page.entries[0];
-      const data = entry?.status === 'ok' && base64Bytes(entry.content ?? '');
-      return data && (await gitBlobHashInSlices(data)) === expected ? data : undefined;
+      do {
+        const page = await options.request<GitShowBatchResult>(
+          Methods.GIT_SHOW,
+          { ...input.scope, ref: input.head, paths, ...(after ? { after } : {}) },
+          input.signal,
+        );
+        for (const entry of page.entries) {
+          if (entry.status !== 'ok' || !entry.id || entry.id !== expected.get(entry.path)) continue;
+          const data = base64Bytes(entry.content ?? '');
+          if ((await gitBlobHashInSlices(data)) !== entry.id) continue;
+          if (
+            !(await store({ kind: 'blob', id: entry.id }, data, input, {
+              alias: gitSourceAlias({ ...input.scope, ref: input.head, path: entry.path }),
+            }))
+          )
+            return false;
+        }
+        after = page.hasMore && page.entries.length ? page.cursor : undefined;
+      } while (after);
+      return true;
     } catch (error) {
+      // A by-path fallback is optional; refusal and cancellation still stop prefetch.
       if (isRefusal(error) || input.signal.aborted) throw error;
-      return undefined;
+      return true;
     }
   }
 
@@ -448,6 +463,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     readBase: () => Promise<Uint8Array | undefined>,
     blobSha: string | undefined,
     input: PrefetchFiles,
+    fallbacks: Map<string, string>,
   ): Promise<boolean> {
     if (!file.newPath) return true;
     const expected = blobSha ?? file.newId;
@@ -460,17 +476,31 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       data = text === undefined ? undefined : encoder.encode(text);
     }
     // Prefetch hashes a rebuilt file once (storage still verifies it): a match is its stored id.
-    let id = data && (await gitBlobHashInSlices(data));
+    const id = data && (await gitBlobHashInSlices(data));
     if (expected && id !== expected) {
-      data = await readByPath(file.newPath, expected, input);
-      id = expected;
+      fallbacks.set(file.newPath, expected);
+      return true;
     }
-    return !data || !id || store({ kind: 'blob', id }, data, input);
+    return (
+      !data ||
+      !id ||
+      store(
+        { kind: 'blob', id },
+        data,
+        input,
+        input.plan === 'frozen' && input.head
+          ? {
+              alias: gitSourceAlias({ ...input.scope, ref: input.head, path: file.newPath }),
+            }
+          : {},
+      )
+    );
   }
 
   /** Base sides through batched `git.show`, then new sides. False when the cache refused. */
   async function prefetchFiles(input: PrefetchFiles): Promise<boolean> {
     const { signal } = input;
+    const fallbacks = new Map<string, string>();
     const manifest = new Map((input.untrackedFiles ?? []).map((file) => [file.path, file.blobSha]));
     const files = parseUnifiedDiff(input.text).filter(
       (file) => !file.binary && file.oldMode !== GITLINK_MODE && file.newMode !== GITLINK_MODE,
@@ -486,7 +516,16 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       const id = file.oldId;
       if (id && !held.has(id) && (await retain({ kind: 'blob', id }, input))) held.add(id);
     }
-    const paths = [...byBase.keys()];
+    const paths: string[] = [];
+    for (const [path, changed] of byBase) {
+      const id = changed[0].oldId;
+      if (id && held.has(id)) {
+        const readBase = () => cache.readContent({ kind: 'blob', id });
+        for (const file of changed)
+          if (!(await rebuild(file, readBase, manifest.get(file.newPath ?? ''), input, fallbacks)))
+            return false;
+      } else paths.push(path);
+    }
     let after: string | undefined;
     let more = paths.length > 0;
     while (more) {
@@ -508,12 +547,17 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
         if (entry.status === 'ok') {
           data = base64Bytes(entry.content ?? '');
           if ((await gitBlobHashInSlices(data)) !== entry.id) continue;
-          if (!(await store(key, data, input))) return false;
+          if (
+            !(await store(key, data, input, {
+              alias: gitSourceAlias({ ...input.scope, ref: input.base, path: entry.path }),
+            }))
+          )
+            return false;
         }
         // A held base is read only when one of its new sides is not held.
         const readBase = async () => (data ??= await cache.readContent(key));
         for (const file of byBase.get(entry.path) ?? [])
-          if (!(await rebuild(file, readBase, manifest.get(file.newPath ?? ''), input)))
+          if (!(await rebuild(file, readBase, manifest.get(file.newPath ?? ''), input, fallbacks)))
             return false;
       }
       more = page.hasMore && page.entries.length > 0;
@@ -522,9 +566,9 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     const empty = async () => new Uint8Array();
     for (const file of files) {
       const blobSha = manifest.get(file.newPath ?? '');
-      if (!file.oldPath && !(await rebuild(file, empty, blobSha, input))) return false;
+      if (!file.oldPath && !(await rebuild(file, empty, blobSha, input, fallbacks))) return false;
     }
-    return true;
+    return readByPaths(fallbacks, input);
   }
 
   async function prefetchGate(
@@ -554,6 +598,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
         // Prefetch rule 6: a snapshot not taken at the local merge-base loads its bases when opened.
         if (data && run.slotId && snapshot.baseSha && snapshot.source === 'local-git') {
           const stored = await prefetchFiles({
+            plan: 'gate',
             text: decoder.decode(data),
             base: snapshot.baseSha,
             head: snapshot.headSha ?? prPackage.headSha,
@@ -620,6 +665,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       encoder.encode(diff.diff).byteLength <= RESOURCE_CONTENT_LIMITS.diffBytes
     )
       await prefetchFiles({
+        plan: 'slot',
         text: diff.diff,
         base: diff.mergeBaseSha,
         head: diff.headSha,
@@ -647,6 +693,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       return;
     if (diff.mergeBaseSha)
       await prefetchFiles({
+        plan: 'frozen',
         text: diff.diff,
         base: diff.mergeBaseSha,
         head: subject.headSha,

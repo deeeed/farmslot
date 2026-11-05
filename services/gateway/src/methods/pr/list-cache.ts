@@ -449,10 +449,12 @@ export async function servePRList(
   const now = opts.now ?? Date.now();
   if (opts.legacyInterest !== false)
     state.legacyInterest.set(opts.legacyClientId ?? anonymousLegacyClient, now);
-  // A complete farm snapshot can seed a project observation without a second upstream read.
+  // Retained farm rows keep a cold project scope readable while its collector catches up.
+  let seededPartial = false;
   if (!state.snapshot && opts.project !== undefined && !opts.force) {
-    const global = collectors.get(resourceCollectorQuery(Methods.PR_LIST).id);
-    if (global?.snapshot && !global.snapshot.truncated) {
+    const global = stateFor();
+    ensureLoaded(global);
+    if (global.snapshot) {
       state.snapshot = {
         ...global.snapshot,
         prs: global.snapshot.prs.filter((row) => row.project === opts.project),
@@ -460,7 +462,8 @@ export async function servePRList(
       state.attemptedAt = global.attemptedAt;
       state.successfulObservedAt = global.successfulObservedAt;
       state.failure = global.failure;
-      state.incomplete = global.incomplete;
+      state.incomplete = global.incomplete || global.snapshot.truncated === true;
+      seededPartial = global.snapshot.truncated === true;
       persist(state);
     }
   }
@@ -470,10 +473,11 @@ export async function servePRList(
   const clock = opts.now === undefined ? Date.now : () => now;
   if (opts.force || !state.snapshot) await refresh(state, fetch, opts.force === true, now, clock);
   else if (
-    opts.legacyInterest !== false &&
-    now - Date.parse(state.snapshot.fetchedAt) > delayMs(state) &&
+    (seededPartial ||
+      (opts.legacyInterest !== false &&
+        now - Date.parse(state.snapshot.fetchedAt) > delayMs(state) &&
+        eligible(state, now))) &&
     !state.inflight &&
-    eligible(state, now) &&
     !budgetReserved(now)
   )
     refresh(state, fetch, false, now, clock).catch(backgroundFailure);

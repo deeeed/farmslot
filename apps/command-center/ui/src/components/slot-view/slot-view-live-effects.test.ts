@@ -3,6 +3,13 @@ import { createHash } from 'node:crypto';
 import { mock, test } from 'node:test';
 
 import { createDraftStore, createMemoryDraftStorage } from '@farmslot/local-store/drafts';
+import type { GitShowBatchResult } from '@farmslot/protocol';
+import {
+  createGatewayResourceCache,
+  type GatewayResourceCache,
+  gitBlobHash,
+} from '@farmslot/protocol/client-cache';
+import { ResourceCacheConformanceTransport } from '@farmslot/protocol/client-cache/conformance.js';
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
@@ -21,10 +28,11 @@ const gateway = {
 mock.module('../../gateway-client.js', { namedExports: { gateway } });
 let hashRead: () => Promise<unknown> = async () => ({ status: 'ready', data: { hash: 'h1' } });
 let draftScope: string | undefined;
+let sourceCache: GatewayResourceCache | undefined;
 mock.module('../../resource-cache.js', {
   namedExports: {
     getEditorDraftScopeId: () => draftScope,
-    getResourceCache: () => ({ retry: () => hashRead() }),
+    getResourceCache: () => sourceCache ?? { retry: () => hashRead() },
     getResourceNativeOwnerId: () => undefined,
     getResourceWorkspaceKey: () => undefined,
     subscribeResourceCache: () => () => undefined,
@@ -67,6 +75,7 @@ const {
   handleSlotViewFileSelect,
   handleSlotViewTreeAction,
   loadSlotViewDiffContent,
+  loadSlotViewGitFileContent,
   openSlotViewFile,
 } = await import('./slot-view-live-effects.js');
 const { editSlotViewFile, saveSlotViewDraft, slotViewEditable } =
@@ -272,4 +281,90 @@ test('selecting a file whose text is cached opens its own read when none is open
   assert.ok(opened.has('src/cached.ts'));
   assert.equal(view._liveFileHashes.get('src/cached.ts'), sha256('cached\n'));
   assert.equal(view._activeFile, 'src/cached.ts');
+});
+
+test(
+  'frozen source reads one batch without a live subscription and reopens held content',
+  { timeout: 1000 },
+  async () => {
+    const transport = new ResourceCacheConformanceTransport({
+      gatewayUrl: 'ws://example.invalid',
+      principalId: 'example',
+      principalGeneration: 0,
+    });
+    transport.setConnection({
+      connected: true,
+      id: 1,
+      capabilities: {
+        ...transport.connection.capabilities!,
+        resourceChanges: { version: 1, epoch: 'conformance-epoch', workspaceReads: 1 },
+      },
+    });
+    const cache = createGatewayResourceCache({ transport });
+    sourceCache = cache;
+    const view = makeView();
+    const bytes = new TextEncoder().encode('reviewed source');
+    const ref = 'a'.repeat(40);
+    const page: GitShowBatchResult = {
+      entries: [
+        {
+          path: 'source.ts',
+          status: 'ok',
+          id: gitBlobHash(bytes),
+          size: bytes.length,
+          content: Buffer.from(bytes).toString('base64'),
+        },
+      ],
+      cursor: 'source.ts',
+      hasMore: false,
+    };
+    requests.length = 0;
+    reply = async () => page;
+    Object.assign(view._workspaceReads, {
+      read: () => assert.fail('immutable source must not subscribe'),
+      drop: () => assert.fail('immutable source has no subscription to drop'),
+    });
+    try {
+      assert.equal(await loadSlotViewGitFileContent(view, 'source', 'source.ts', ref), true);
+      assert.equal(view._liveFileContents.get('source'), 'reviewed source');
+      assert.deepEqual(requests, [
+        {
+          method: 'git.show',
+          params: {
+            slotId: 'slot-a',
+            ref,
+            paths: ['source.ts'],
+            maxBytes: 10485760,
+            maxFileBytes: 10485760,
+          },
+        },
+      ]);
+      view._liveFileContents.clear();
+      assert.equal(await loadSlotViewGitFileContent(view, 'source', 'source.ts', ref), true);
+      assert.equal(view._liveFileContents.get('source'), 'reviewed source');
+      assert.equal(requests.length, 1);
+    } finally {
+      sourceCache = undefined;
+      await cache.dispose();
+    }
+  },
+);
+
+test('mutable source keeps its live single-path read', { timeout: 1000 }, async () => {
+  const view = makeView();
+  const initial = { content: 'first' };
+  let apply: (value: { content: string }) => void = () => assert.fail('missing live callback');
+  Object.assign(view._workspaceReads, {
+    read: async (method: string, params: unknown, update: typeof apply) => {
+      assert.equal(method, 'git.show');
+      assert.deepEqual(params, { slotId: 'slot-a', ref: 'HEAD', path: 'source.ts' });
+      apply = update;
+      return initial;
+    },
+    owns: (value: unknown) => value === initial,
+  });
+  assert.equal(await loadSlotViewGitFileContent(view, 'source', 'source.ts', 'HEAD'), true);
+  assert.equal(view._liveFileContents.get('source'), 'first');
+  apply({ content: 'updated' });
+  assert.equal(view._liveFileContents.get('source'), 'updated');
 });

@@ -10,7 +10,7 @@ export * from './keys.js';
 export * from './native-history.js';
 export * from './network-cost.js';
 export * from './prefetch.js';
-export { readStoredResource } from './read-stored.js';
+export { gitSourceAlias, readGitSource, readStoredResource } from './read-stored.js';
 export * from './registry.js';
 export { RUN_LIST_COLLECTION_ID, type RunListCollectionData } from './run-list-versions.js';
 export * from './store.js';

@@ -127,6 +127,7 @@ interface FetchPRDataOptions {
   allowPartial?: boolean;
   /** Detail-only metadata must not change dashboard list/backoff payloads. */
   includeCheckSnapshot?: boolean;
+  projectConfig?: PRDataProjectionConfig | null;
 }
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -451,6 +452,16 @@ async function loadPRList(
     if (!runByPR.has(key)) runByPR.set(key, run);
   }
   const projectList = await loadProjectConfigs(true);
+  const projectsByName = new Map(projectList.map((project) => [project.name, project]));
+  const slotRepos = new Map<string, Promise<string | null>>();
+  const repoForSlot = (slotId: string) => {
+    let repo = slotRepos.get(slotId);
+    if (!repo) {
+      repo = resolveSlotRepoSlug(slotId);
+      slotRepos.set(slotId, repo);
+    }
+    return repo;
+  };
   const projectConfigs = Object.fromEntries(
     projectList.map((p) => [
       p.name,
@@ -480,7 +491,13 @@ async function loadPRList(
     activeSlots.map((s) =>
       (opts.retained
         ? findKnownPRForBranch(s, projectList, opts.storedRows ?? [])
-        : findPRForBranch(s.branch!, s.project, s.slot).catch((error: unknown) => {
+        : findPRForBranch(
+            s.branch!,
+            s.project,
+            s.slot,
+            projectsByName.get(s.project) ?? null,
+            repoForSlot,
+          ).catch((error: unknown) => {
             if (error instanceof GitHubQueryBudgetError) throw error;
             // Unread, not "no PR": the list stays readable and its observation reports it incomplete.
             console.warn(
@@ -526,9 +543,9 @@ async function loadPRList(
       const ageMs = freshness ? now - Date.parse(freshness) : Infinity;
       if (!Number.isFinite(ageMs) || ageMs > PR_DASHBOARD_TERMINAL_TTL_MS) continue;
     }
-    // resolveRepoForRun returns undefined when the project declares ci.repo
-    // (fetchPRData resolves it later); the key needs the repo now.
-    const repo = (await resolveRepoForRun(run)) ?? (await loadProjectConfig(run.project))?.ci?.repo;
+    const repo =
+      projectsByName.get(run.project)?.ci?.repo ||
+      (run.slotId ? ((await repoForSlot(run.slotId)) ?? undefined) : undefined);
     const key = candidateKey(repo, run.prNumber);
     if (prInfo.has(key)) continue;
     prInfo.set(key, {
@@ -590,7 +607,7 @@ async function loadPRList(
     const prefetchNow = Date.now();
     const prsByRepo = new Map<string, number[]>();
     for (const info of prInfo.values()) {
-      const repo = info.repo ?? (await loadProjectConfig(info.project))?.ci?.repo;
+      const repo = info.repo ?? projectsByName.get(info.project)?.ci?.repo;
       if (!repo) continue;
       info.repo = repo;
       if (!opts.force && !shouldPrefetchPRRawData(repo, info.pr, prefetchNow)) continue;
@@ -646,7 +663,7 @@ async function loadPRList(
               summary: info.summary,
               rejectIncomplete: true,
             },
-            await loadProjectConfig(info.project),
+            projectsByName.get(info.project) ?? null,
           );
         }
         return await fetchPRData({
@@ -660,6 +677,7 @@ async function loadPRList(
           force: opts.force === true && !seeded.has(`${info.repo}#${prNum}`),
           rejectIncomplete: true,
           allowPartial: false,
+          projectConfig: projectsByName.get(info.project) ?? null,
         });
       } catch (error) {
         if (error instanceof GitHubQueryBudgetError) throw error;
@@ -718,7 +736,8 @@ export interface PRDataProjectionOptions {
 
 async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   const { project, repo } = await resolveProjectRepo(opts.project, opts.repoOverride);
-  const config = await loadProjectConfig(project);
+  const config =
+    opts.projectConfig === undefined ? await loadProjectConfig(project) : opts.projectConfig;
   const raw = await getPRRawData(repo, opts.prNum, opts.force, { allowPartial: opts.allowPartial });
   return projectPRData(raw, { ...opts, project, repo }, config);
 }
@@ -1271,15 +1290,17 @@ async function findPRForBranch(
   branch: string,
   project: string,
   slotId?: string,
+  config?: ProjectConfig | null,
+  repoForSlot = resolveSlotRepoSlug,
 ): Promise<BranchPRBinding | null> {
-  const projectConfig = await loadProjectConfig(project);
+  const projectConfig = config === undefined ? await loadProjectConfig(project) : config;
   const repo = projectConfig?.ci?.repo;
   // Fallback for projects that only define their GitHub remote in the slot's
   // repo checkout (no ci.repo in project.json). Use `gh pr list` inside the
   // slot's working tree — no ETag cache, but correct results.
   if (!repo) {
     if (!slotId) return null;
-    return findPRViaSlotRepo(slotId, branch, true);
+    return findPRViaSlotRepo(slotId, branch, true, await repoForSlot(slotId));
   }
   const cached = getBinding(branch, repo);
   if (cached !== null) {
@@ -1375,9 +1396,10 @@ async function findPRViaSlotRepo(
   slotId: string,
   branch: string,
   collected = false,
+  resolvedRepo?: string | null,
 ): Promise<BranchPRBinding | null> {
   if (collected) {
-    const repo = await resolveSlotRepoSlug(slotId);
+    const repo = resolvedRepo === undefined ? await resolveSlotRepoSlug(slotId) : resolvedRepo;
     if (!repo) throw new Error(`Cannot resolve repository for upstream discovery on ${slotId}`);
     // Passive discovery uses the same concurrency, request sharing and rate-limit owner as PR data.
     const { stdout } = await ghRequest(
@@ -1425,16 +1447,6 @@ async function findPRViaSlotRepo(
   } catch {
     return null;
   }
-}
-
-// When a run belongs to a project without ci.repo, fall back to the slot
-// checkout's git remote so fetchPRData can still resolve the owner/name.
-async function resolveRepoForRun(run: Run): Promise<string | undefined> {
-  const projectCfg = await loadProjectConfig(run.project);
-  if (projectCfg?.ci?.repo) return undefined; // fetchPRData will use ci.repo
-  if (!run.slotId) return undefined;
-  const slug = await resolveSlotRepoSlug(run.slotId);
-  return slug ?? undefined;
 }
 
 // ─── prMonitor — still uses bash for now ───
