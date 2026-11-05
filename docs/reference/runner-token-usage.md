@@ -80,7 +80,6 @@ Do not merge runner usage changes unless the extractor output matches the provid
 
 Every agent session MUST retain one shared `RunnerSessionUsage` row, including all worker/reviewer roles, flows, helpers, failed attempts, relaunches and replays. The canonical durable collection is optional `Run.sessionUsage`; contexts and review results reuse the same receipt shape. New rows MUST contain:
 
-<<<<<<< Updated upstream
 | Field                                                                   | Meaning                                                                                                                                                                    |
 | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | runner, actualModel, model, effort                                      | Actual execution runner/model and requested configuration; unknown configuration is null with a gap.                                                                       |
@@ -90,17 +89,6 @@ Every agent session MUST retain one shared `RunnerSessionUsage` row, including a
 | costUsd, costStatus, costReason                                         | Finite estimate, including observed zero, or null plus `unpriced` and a reason. Missing prices MUST NOT become zero.                                                       |
 | startedAt, completedAt, durationMs                                      | Observed session lifetime; unknown duration is null with a gap. Active duration is elapsed time at measurement.                                                            |
 | source, measuredAt, error                                               | `runner-transcript`, `provider-response` or `unavailable`, measurement time and controlled acquisition reason. Supporting source metadata permits exact offline recapture. |
-=======
-| Field                                                                   | Meaning                                                                                                                                          |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| runner, actualModel, model, effort                                      | Actual execution runner/model and requested configuration; unknown configuration is null with a gap.                                             |
-| role, roles, flowType, runId                                            | Owning stage and all known roles sharing the conversation; missing ownership is explicit.                                                        |
-| runnerSessionId, identityKind                                           | Exact native conversation id, or a reserved request id for a stateless helper. No path or time heuristic.                                        |
-| turns, inputTokens, outputTokens, cacheRead, cacheCreation, totalTokens | Verified shared-reader/provider counters; unknown counters are null with a capture gap. Cache detail follows the provider accounting convention. |
-| costUsd, costStatus, costReason                                         | Finite estimate, including observed zero, or null plus `unpriced` and a reason. Missing prices MUST NOT become zero.                             |
-| startedAt, completedAt, durationMs                                      | Observed session lifetime; unknown duration is null with a gap. Active duration is elapsed time at measurement.                                  |
-| source, measuredAt, error                                               | `runner-transcript`, `provider-response` or `unavailable`, measurement time and controlled acquisition reason. Supporting source metadata permits exact offline recapture.        |
->>>>>>> Stashed changes
 
 - Shared registration MUST retain each conversation before its context is replaced or cleared. Collection MUST run at settlement and before transcript/account cleanup. An unavailable lookup MUST NOT overwrite verified usage for the same conversation. Accounting MUST NOT affect lifecycle authority or invent verdicts.
 - Exact resolution MUST use execution node/account identity. Token extraction, message-id deduplication and transcript pricing MUST reuse worker accounting. Transcript bodies MUST remain on their execution host.
