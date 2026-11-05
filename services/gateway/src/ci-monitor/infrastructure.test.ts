@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import type { ProjectCICheckGroup, PRStatus, PRStatusParams } from '@farmslot/protocol';
+import type { BotComment, ProjectCICheckGroup, PRStatus } from '@farmslot/protocol';
 
 import type { PRRawSnapshot } from '../methods/pr/raw-cache.js';
 import type { CIWatchStepContext } from '../run-engine/ci-watch-step.js';
@@ -35,20 +35,29 @@ let fixInputs: string[][] = [];
 let checkGroups: ProjectCICheckGroup[] = [];
 let deduped = false;
 let fixSuccess = false;
-let nextForcedObservation: 'unavailable' | 'partial' | undefined;
-let incompleteRaw: PRRawSnapshot | undefined;
+let incompleteObservation: 'unavailable' | 'partial' | undefined;
+let incompleteReadsRemaining = 0;
+const incompleteRaw: PRRawSnapshot[] = [];
 let checkObservations: PRStatus[] = [];
+let comments: BotComment[] = [];
+let exhaustedFixes = false;
+const pollIntervalMs = 45_000;
+const observationTimes: number[] = [];
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
   namedExports: {
     ...config,
-    loadProjectVars: async () => ({ projectJson: {} }),
+    loadProjectVars: async () => ({
+      projectJson: { ci_watch: { poll_interval_s: pollIntervalMs / 1000 } },
+    }),
   },
 });
 mock.module('../methods/pr.js', {
   namedExports: {
     ...prMethods,
-    prStatus: async (params: PRStatusParams) => {
+    prStatus: async () => {
+      observationTimes.push(Date.now());
+      if (exhaustedFixes) await new Promise<void>((resolve) => setImmediate(resolve));
       let raw: PRRawSnapshot = {
         prStateStdout: 'OPEN\tMERGEABLE\tCLEAN\t\tfix/product',
         checksStdout: synthesizeRawSnapshotFromGraphQL({
@@ -70,14 +79,14 @@ mock.module('../methods/pr.js', {
         reviewMetaStdout: '',
         fetchedAt: 1000,
       };
-      if (params.force && nextForcedObservation) {
-        const observation = nextForcedObservation;
-        nextForcedObservation = undefined;
+      if (incompleteObservation && incompleteReadsRemaining > 0) {
+        const observation = incompleteObservation;
+        incompleteReadsRemaining--;
         raw =
           observation === 'unavailable'
             ? await getPRRawData('example/product', 42, true)
             : { ...raw, checksStdout: '', partial: true };
-        incompleteRaw = raw;
+        incompleteRaw.push(raw);
       }
       const pr = prMethods.projectPRData(
         raw,
@@ -90,6 +99,7 @@ mock.module('../methods/pr.js', {
         },
         { ci: { checkGroups, botPatterns: [] } },
       );
+      pr.actionableBotComments = incompleteRaw.at(-1) === raw ? comments : [];
       checkObservations.push(pr);
       return { pr };
     },
@@ -103,6 +113,7 @@ mock.module('./inline-fix.js', {
       throw new Error('Unexpected rerun');
     },
     tryInlineCIFix: async (_run: string, _slot: string, _comments: unknown[], checks: string[]) => {
+      if (exhaustedFixes) return null;
       fixInputs.push(checks);
       return {
         attempted: true,
@@ -139,6 +150,42 @@ after(async () => {
   await Promise.all(getAllRuns().map((run) => persistRunNow(run)));
   rmSync(process.env.FARMSLOT_RUNS_DIR!, { recursive: true, force: true });
 });
+
+const actionableComment: BotComment = {
+  author: 'review-bot',
+  label: 'review',
+  action: 'fix',
+  bodyPreview: 'Fix the code',
+  createdAt: '2026-11-01T00:00:00Z',
+  source: 'issue_comment',
+  workerResponded: false,
+};
+
+function stepContext(onDispatch: () => void): CIWatchStepContext {
+  return {
+    activeMonitors: new Map(),
+    createRetrospectiveForRun: async () => {},
+    applyChainedRunEngineFlags: () => {},
+    broadcastFn: () => {},
+    buildCIWatchChainedRunParams: (_current, action) => {
+      if (action === 'dispatch-pr-complete') onDispatch();
+      return null;
+    },
+    hasValidPrNumber: () => true,
+    loadProjectVarsOrNull: async () => ({ projectJson: { ci: { repo: 'example/product' } } }),
+    resolveCIWatchTerminalPatch: () => null,
+    startRun: async () => {},
+    deferTerminalSlotRelease: () => {},
+  };
+}
+
+async function until(check: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (check()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.ok(check(), 'Expected monitor phase was not reached');
+}
 
 for (const state of ['CANCELLED', 'TIMED_OUT', 'STARTUP_FAILURE', 'ACTION_REQUIRED']) {
   test(
@@ -203,13 +250,20 @@ for (const resolved of [false, true]) {
     test(
       `${resolved ? 'resolved' : 'pending'} recovered repair cannot dispatch with ${blocker}`,
       { timeout: 2000 },
-      async () => {
+      async (t) => {
         const refusal = blocker === 'scope refusal';
         const incomplete = blocker === 'unavailable checks' || blocker === 'partial checks';
+        t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
         conclusions = refusal ? [] : [['unit-tests', 'TIMED_OUT']];
         fixInputs = [];
-        nextForcedObservation = undefined;
-        incompleteRaw = undefined;
+        incompleteObservation = incomplete
+          ? blocker === 'unavailable checks'
+            ? 'unavailable'
+            : 'partial'
+          : undefined;
+        incompleteReadsRemaining = incomplete ? 2 : 0;
+        incompleteRaw.length = 0;
+        comments = incomplete ? [actionableComment] : [];
         checkObservations = [];
         const run = createRun({
           flowType: 'dev',
@@ -246,39 +300,23 @@ for (const resolved of [false, true]) {
             : {}),
         });
         let dispatched = 0;
-        const context: CIWatchStepContext = {
-          activeMonitors: new Map(),
-          createRetrospectiveForRun: async () => {},
-          applyChainedRunEngineFlags: () => {},
-          broadcastFn: () => {},
-          buildCIWatchChainedRunParams: (_current, action) => {
-            if (action === 'dispatch-pr-complete') dispatched++;
-            return null;
-          },
-          hasValidPrNumber: () => true,
-          loadProjectVarsOrNull: async () => ({ projectJson: { ci: { repo: 'example/product' } } }),
-          resolveCIWatchTerminalPatch: () => null,
-          startRun: async () => {},
-          deferTerminalSlotRelease: () => {},
-        };
-        const armIncompleteObservation = () => {
-          if (!incomplete) return;
-          checkObservations = [];
-          nextForcedObservation = blocker === 'unavailable checks' ? 'unavailable' : 'partial';
-        };
-        if (resolved) armIncompleteObservation();
+        const context = stepContext(() => dispatched++);
         const running = executeCIWatchStep(run.id, context);
         if (!resolved) {
           // A retained card is re-presented by recovery with its original actions.
           // Resolve it once the monitor has installed its resolver.
-          while (
-            getRun(run.id)?.steps.find((step) => step.name === 'ci-watch')?.outputs?.phase !==
-            'decision_required'
-          ) {
-            await new Promise<void>((resolve) => setImmediate(resolve));
-          }
-          armIncompleteObservation();
+          await until(
+            () =>
+              getRun(run.id)?.steps.find((step) => step.name === 'ci-watch')?.outputs?.phase ===
+              'decision_required',
+          );
           resolveCIDecision(decision.id, 'dispatch-pr-complete');
+          await until(() =>
+            Boolean(
+              getRun(run.id)?.steps.find((step) => step.name === 'ci-watch')?.outputs?.nextPollAt,
+            ),
+          );
+          t.mock.timers.tick(pollIntervalMs);
         }
         const result = await running;
         assert.equal(dispatched, 0);
@@ -296,27 +334,132 @@ for (const resolved of [false, true]) {
           ['wait', 'abort'],
         );
         if (incomplete) {
-          assert.equal(nextForcedObservation, undefined);
+          const raw = incompleteRaw[0];
+          assert.ok(raw);
           if (blocker === 'unavailable checks') {
-            assert.equal(incompleteRaw?.checksAvailable, false);
-            assert.equal(incompleteRaw?.checksStdout, '');
-            assert.deepEqual(incompleteRaw?.errors, ['pr.checks#42: HTTP 503: checks unavailable']);
+            assert.equal(raw.checksAvailable, false);
+            assert.equal(raw.checksStdout, '');
+            assert.deepEqual(raw.errors, ['pr.checks#42: HTTP 503: checks unavailable']);
           } else {
-            assert.equal(incompleteRaw?.checksAvailable, true);
-            assert.equal(incompleteRaw?.partial, true);
+            assert.equal(raw.checksAvailable, true);
+            assert.equal(raw.partial, true);
           }
           assert.equal(checkObservations[0]?.checkSnapshot, undefined);
-          assert.equal(checkObservations[1]?.checkSnapshot?.checks[0]?.conclusion, 'TIMED_OUT');
-          assert.match(
-            getRun(run.id)?.decisions.at(-1)?.description ?? '',
-            /CI infrastructure\/timeout failure: unit-tests \(TIMED_OUT\)/,
-          );
+          if (!resolved) {
+            assert.equal(checkObservations[2]?.checkSnapshot?.checks[0]?.conclusion, 'TIMED_OUT');
+            assert.match(
+              getRun(run.id)?.decisions.at(-1)?.description ?? '',
+              /CI infrastructure\/timeout failure: unit-tests \(TIMED_OUT\)/,
+            );
+          }
         }
-        assert.deepEqual(fixInputs, []);
+        assert.deepEqual(fixInputs, incomplete ? [[]] : []);
       },
     );
   }
 }
+
+for (const resolved of [false, true]) {
+  test(`${resolved ? 'resolved' : 'pending'} recovered repair uses complete monitor checks without another read`, async () => {
+    conclusions = [['lint', 'FAILURE']];
+    incompleteObservation = undefined;
+    comments = [];
+    fixInputs = [];
+    checkObservations = [];
+    const run = createRun({
+      flowType: 'dev',
+      project: 'example-web-farm',
+      ticketOrPr: 'F415',
+      mode: 'validation',
+      slotId: 'fixture-slot',
+    });
+    const decision = {
+      id: `retained-${run.id}`,
+      type: 'ci_inline_fix_blocked' as const,
+      title: 'Previous code failure',
+      description: 'Repair the code',
+      actions: [{ id: 'dispatch-pr-complete', label: 'Repair', style: 'primary' as const }],
+      createdAt: '2026-11-01T00:00:00Z',
+      ...(resolved
+        ? { resolvedAt: '2026-11-01T00:01:00Z', resolvedAction: 'dispatch-pr-complete' }
+        : {}),
+    };
+    const { updateRun } = await import('../runs/store.js');
+    updateRun(run.id, { prNumber: 42, decisions: [decision] });
+    let dispatched = 0;
+    const context = stepContext(() => dispatched++);
+    const running = executeCIWatchStep(run.id, context);
+    if (!resolved) {
+      await until(
+        () =>
+          getRun(run.id)?.steps.find((step) => step.name === 'ci-watch')?.outputs?.phase ===
+          'decision_required',
+      );
+      resolveCIDecision(decision.id, 'dispatch-pr-complete');
+    }
+    const result = await running;
+    assert.equal(result.outputs?.result, 'failed');
+    assert.deepEqual(result.outputs?.failedChecks, ['lint']);
+    assert.equal(result.outputs?.pollCount, 1);
+    assert.equal(dispatched, 1);
+    assert.deepEqual(fixInputs, [['lint']]);
+    assert.equal(checkObservations.length, 2);
+    assert.equal(getRun(run.id)?.decisions.length, 1);
+    assert.equal(getRun(run.id)?.decisions[0].id, decision.id);
+  });
+}
+
+test('sustained unavailable checks reads stay within the configured poll interval', async (t) => {
+  const startedAt = Date.now();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: startedAt });
+  conclusions = [];
+  comments = [actionableComment];
+  incompleteObservation = 'unavailable';
+  incompleteReadsRemaining = Infinity;
+  incompleteRaw.length = 0;
+  observationTimes.length = 0;
+  fixInputs = [];
+  exhaustedFixes = true;
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-web-farm',
+    ticketOrPr: 'F415',
+    mode: 'validation',
+    slotId: 'fixture-slot',
+  });
+  const { updateRun } = await import('../runs/store.js');
+  updateRun(run.id, {
+    prNumber: 42,
+    ciWatchState: { consecutiveAttempts: 3, totalAttempts: 8, skips: 0 },
+  });
+  let dispatched = 0;
+  const context = stepContext(() => dispatched++);
+  const running = executeCIWatchStep(run.id, context);
+  const waiting = () =>
+    Boolean(getRun(run.id)?.steps.find((step) => step.name === 'ci-watch')?.outputs?.nextPollAt);
+  try {
+    await until(() => waiting() || observationTimes.length > 1);
+    assert.deepEqual(observationTimes, [startedAt]);
+    for (let poll = 1; poll <= 3; poll++) {
+      t.mock.timers.tick(pollIntervalMs - 1);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(observationTimes.length, poll);
+      t.mock.timers.tick(1);
+      await until(() => observationTimes.length === poll + 1 && waiting());
+      assert.equal(observationTimes.at(-1), startedAt + poll * pollIntervalMs);
+    }
+    assert.equal(dispatched, 0);
+    assert.deepEqual(fixInputs, []);
+    assert.equal(incompleteRaw.length, 4);
+  } finally {
+    context.activeMonitors.get(run.id)?.abort();
+    await running;
+    exhaustedFixes = false;
+    incompleteObservation = undefined;
+    incompleteReadsRemaining = 0;
+    comments = [];
+  }
+});
 
 test(
   'mixed failures send only code failures to the fix and report infrastructure',

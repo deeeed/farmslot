@@ -62,7 +62,7 @@ interface CIWatchFailures {
   failedNames: string[];
 }
 
-export function classifyCIWatchFailures(pr: PRStatus): CIWatchFailures {
+function classifyCIWatchFailures(pr: PRStatus): CIWatchFailures {
   const infrastructureChecks: string[] = [];
   const failedNames: string[] = [];
   for (const check of pr.checks.filter((check) => check.status === 'fail')) {
@@ -204,6 +204,7 @@ export async function monitorCI(
   // When the last pokeablePoll was resolved early by a poke(), force the next
   // prStatus to bypass the 30s gh-cache so operator refreshes see fresh data.
   let forceNextRefresh = false;
+  let latestObservation: PRStatus | undefined;
 
   const syncTimeoutProgressState = (patch?: {
     timeoutWindowStartedAt?: number;
@@ -369,6 +370,27 @@ export async function monitorCI(
     return pokeablePoll(runId, config.pollIntervalMs, signal);
   };
 
+  const canDispatchRepair = (): boolean =>
+    Boolean(
+      latestObservation?.checkSnapshot &&
+      !readDedup(runId).fixScopeRefusal &&
+      !classifyCIWatchFailures(latestObservation).infrastructureChecks.length,
+    );
+
+  const finishDispatch = async (
+    result: CIOutcome['result'],
+    failedChecks: string[],
+    actionId: string,
+  ): Promise<CIOutcome | null> => {
+    // All repair dispatches, including retained card resolutions, use only this
+    // monitor session's latest observation. Refusals resume the paced poll loop.
+    if (actionId === 'dispatch-pr-complete' && !canDispatchRepair()) {
+      forceNextRefresh = await waitForNextPoll('polling');
+      return null;
+    }
+    return buildOutcome(result, failedChecks, actionId);
+  };
+
   console.log(
     `[ci-monitor] started for run ${runId.slice(0, 8)} PR #${prNumber} repo=${ciRepo} poll=${config.pollIntervalMs / 1000}s`,
   );
@@ -393,6 +415,7 @@ export async function monitorCI(
     try {
       const result = await prStatus({ pr: prNumber, project: run!.project, force: forceThisPoll });
       pr = result.pr;
+      latestObservation = pr;
     } catch (err) {
       console.warn(
         `[ci-monitor] run ${runId.slice(0, 8)} — prStatus failed: ${(err as Error).message}`,
@@ -441,6 +464,7 @@ export async function monitorCI(
       let fresh: PRStatus;
       try {
         fresh = (await prStatus({ pr: prNumber, project: run.project, force: true })).pr;
+        latestObservation = fresh;
       } catch (error) {
         checkTimeline.push({
           timestamp: new Date().toISOString(),
@@ -466,7 +490,7 @@ export async function monitorCI(
         'inline_fix_blocked',
         `CI fix could not be validated for PR #${prNumber}: ${reason}. The PR still needs attention.`,
         [
-          ...(!infrastructureReason && !readDedup(runId).fixScopeRefusal
+          ...(canDispatchRepair()
             ? [
                 {
                   id: 'dispatch-pr-complete',
@@ -481,7 +505,7 @@ export async function monitorCI(
         { checks: fresh.checks, failedChecks, ...ciDecisionSnapshotContext(fresh) },
       );
       if (actionId === 'dispatch-pr-complete')
-        return buildOutcome('failed', failedChecks, actionId);
+        return (await finishDispatch('failed', failedChecks, actionId)) ?? 'refresh';
       if (actionId === 'abort') return buildOutcome('aborted', failedChecks);
       forceNextRefresh = await waitForNextPoll('polling');
       return 'refresh';
@@ -633,7 +657,9 @@ export async function monitorCI(
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for merge conflict`,
         );
-        return buildOutcome('failed', ['MERGE_CONFLICT'], autoAction);
+        const outcome = await finishDispatch('failed', ['MERGE_CONFLICT'], autoAction);
+        if (outcome) return outcome;
+        continue;
       }
       const actionId = await createCIDecision(
         runId,
@@ -646,8 +672,11 @@ export async function monitorCI(
         ],
         ciDecisionSnapshotContext(pr),
       );
-      if (actionId === 'dispatch-update-branch' || actionId === 'dispatch-pr-complete')
-        return buildOutcome('failed', ['MERGE_CONFLICT'], actionId);
+      if (actionId === 'dispatch-update-branch' || actionId === 'dispatch-pr-complete') {
+        const outcome = await finishDispatch('failed', ['MERGE_CONFLICT'], actionId);
+        if (outcome) return outcome;
+        continue;
+      }
       return buildOutcome('passed');
     }
 
@@ -770,7 +799,9 @@ export async function monitorCI(
           console.log(
             `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for actionable bot comments`,
           );
-          return buildOutcome('comments', [], autoAction);
+          const outcome = await finishDispatch('comments', [], autoAction);
+          if (outcome) return outcome;
+          continue;
         }
 
         // Inline fix failed or not applicable — fall through to decision
@@ -786,7 +817,9 @@ export async function monitorCI(
           ciDecisionSnapshotContext(pr),
         );
         if (actionId === 'dispatch-pr-complete') {
-          return buildOutcome('comments', [], actionId);
+          const outcome = await finishDispatch('comments', [], actionId);
+          if (outcome) return outcome;
+          continue;
         }
       }
 
@@ -906,7 +939,9 @@ export async function monitorCI(
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for failed checks`,
         );
-        return buildOutcome('failed', failedNames, autoAction);
+        const outcome = await finishDispatch('failed', failedNames, autoAction);
+        if (outcome) return outcome;
+        continue;
       }
 
       const actionId = await createCIDecision(
@@ -922,7 +957,11 @@ export async function monitorCI(
         { checks: pr.checks, ...ciDecisionSnapshotContext(pr) },
       );
       if (actionId === 'abort') return buildOutcome('aborted');
-      if (actionId === 'dispatch-pr-complete') return buildOutcome('failed', failedNames, actionId);
+      if (actionId === 'dispatch-pr-complete') {
+        const outcome = await finishDispatch('failed', failedNames, actionId);
+        if (outcome) return outcome;
+        continue;
+      }
       if (actionId === 'retry') {
         resetInlineFixConsecutiveAttempts(runId);
         await rerunFailedChecks(prNumber, ciRepo);
@@ -1019,7 +1058,9 @@ export async function monitorCI(
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for early actionable bot comments`,
         );
-        return buildOutcome('comments', [], autoAction);
+        const outcome = await finishDispatch('comments', [], autoAction);
+        if (outcome) return outcome;
+        continue;
       }
 
       // Inline fix failed or not applicable — fall through to decision
@@ -1034,7 +1075,9 @@ export async function monitorCI(
         ciDecisionSnapshotContext(pr),
       );
       if (actionId === 'dispatch-pr-complete') {
-        return buildOutcome('comments', [], actionId);
+        const outcome = await finishDispatch('comments', [], actionId);
+        if (outcome) return outcome;
+        continue;
       }
     }
 

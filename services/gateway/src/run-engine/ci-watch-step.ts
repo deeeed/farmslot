@@ -7,11 +7,10 @@ import {
   type SlotReleaseParams,
 } from '@farmslot/protocol';
 
-import { classifyCIWatchFailures, monitorCI } from '../ci-monitor/service.js';
+import { monitorCI } from '../ci-monitor/service.js';
 import { getProjectField, getProjectFieldRaw } from '../core/config.js';
 import { markSlotHeld, updateSlotStatus } from '../core/index.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
-import { prStatus } from '../methods/pr.js';
 import {
   createRetrospectiveForRun,
   isArtifactOnlyRun,
@@ -312,52 +311,12 @@ export async function executeCIWatchStep(
     };
   }
 
-  // Check if a previous CI decision already requested chaining (e.g. after gateway restart)
-  const resolvedChainDecision = current.decisions.find(
-    (d) =>
-      d.resolvedAt &&
-      (d.resolvedAction === 'dispatch-update-branch' ||
-        d.resolvedAction === 'dispatch-pr-complete'),
-  );
   const controller = new AbortController();
   activeMonitors.set(runId, controller);
-  let outcome: CIOutcome | undefined = resolvedChainDecision
-    ? {
-        result: 'failed',
-        failedChecks: ['MERGE_CONFLICT'],
-        pollCount: 0,
-        phase: 'done',
-        fixInProgress: false,
-        fixTrigger: null,
-        activeTaskFile: null,
-        totalDurationMs: 0,
-        checkTimeline: [],
-        actionableBotCommentCount: 0,
-        dispatchAction: resolvedChainDecision.resolvedAction,
-      }
-    : undefined;
+  let outcome: CIOutcome;
   try {
-    while (true) {
-      outcome ??= await monitorCI(runId, current.prNumber, ciRepo, controller.signal);
-      if (outcome.dispatchAction !== 'dispatch-pr-complete') break;
-      // Retained cards and fresh monitor outcomes share this final dispatch gate.
-      // Only a complete current checks snapshot can authorize repair dispatch.
-      // Keep the old decision as history and re-enter the monitor for a current choice.
-      const refusal = getRun(runId)?.ciWatchState?.fixScopeRefusal;
-      const fresh = refusal
-        ? null
-        : (await prStatus({ pr: current.prNumber, project: current.project, force: true })).pr;
-      if (
-        !getRun(runId)?.ciWatchState?.fixScopeRefusal &&
-        fresh?.checkSnapshot &&
-        !classifyCIWatchFailures(fresh).infrastructureChecks.length
-      )
-        break;
-      console.warn(
-        `[run-engine] run ${runId.slice(0, 8)} — CI repair dispatch is blocked by incomplete checks, current infrastructure or scope refusal`,
-      );
-      outcome = undefined;
-    }
+    // Retained decisions remain history; this session's monitor observation governs chaining.
+    outcome = await monitorCI(runId, current.prNumber, ciRepo, controller.signal);
 
     console.log(`[run-engine] run ${runId.slice(0, 8)} — CI outcome: ${outcome.result}`);
 
