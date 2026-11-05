@@ -4,7 +4,12 @@ import { chmod, copyFile, link, lstat, mkdir, readFile, realpath, rm } from 'nod
 import path from 'node:path';
 
 import { isRecord, type Run, type RunArtifactBundleRef } from '@farmslot/protocol';
-import { readRetainedRunBundle } from '@farmslot/run-bundle';
+import {
+  isRunBundleMedia,
+  parseRunBundleMissingData,
+  readRetainedRunBundle,
+  readRunBundleAvailability,
+} from '@farmslot/run-bundle';
 
 import { sha256File } from '../core/file-hash.js';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
@@ -15,6 +20,10 @@ import { retainedRunBundleRef, runBundleStore, withTaskDirWrite } from './retain
 const PROVENANCE = 'artifacts/harness-provenance.json';
 const HANDOFF = 'inputs/handoff.json';
 type Bundle = Awaited<ReturnType<typeof readRetainedRunBundle>>;
+interface TaskArtifactSource {
+  bundle: Bundle;
+  ref: RunArtifactBundleRef;
+}
 
 /** Follow only the digest-verified predecessor recorded by this run's own capture. */
 async function predecessor(
@@ -52,16 +61,16 @@ async function predecessor(
   };
 }
 
-async function sourceBundle(run: Run): Promise<Bundle> {
+async function sourceBundle(run: Run): Promise<TaskArtifactSource> {
   const store = await runBundleStore();
   let ref: RunArtifactBundleRef | undefined = retainedRunBundleRef(run);
-  let latest: Bundle | undefined;
+  let latest: TaskArtifactSource | undefined;
   const seen = new Set<string>();
   while (ref) {
     if (seen.has(ref.bundleDigest)) throw new Error('Retained predecessor cycle.');
     seen.add(ref.bundleDigest);
     const bundle = await readRetainedRunBundle(store, ref, run.id);
-    latest ??= bundle;
+    latest ??= { bundle, ref };
     const prefix = `tasks/${ref.taskKey}/`;
     if (bundle.manifest.entries[prefix + PROVENANCE]) {
       // Earlier evidence belongs to this exact frozen task, never to a replacement task.
@@ -71,7 +80,7 @@ async function sourceBundle(run: Run): Promise<Bundle> {
         (await sha256File(path.join(path.dirname(run.taskFile!), HANDOFF))) !== handoff.sha256
       )
         throw new Error('Retained task inputs differ; restoration refused.');
-      return bundle;
+      return { bundle, ref };
     }
     ref = await predecessor(bundle, run.id);
   }
@@ -96,7 +105,14 @@ async function destinationDirectory(root: string, relative: string): Promise<str
 /** Rehydrate original bytes only; never restore signals, verdict state or overwrite newer files. */
 export async function restoreRetainedTaskArtifacts(run: Run): Promise<number> {
   if (!run.taskFile || (!run.artifactBundle && !run.output?.artifactBundle)) return 0;
-  const bundle = await sourceBundle(run);
+  const { bundle, ref } = await sourceBundle(run);
+  const availability = await readRunBundleAvailability(await runBundleStore(), ref, run.id);
+  const unavailableMedia = new Set([
+    ...(bundle.manifest.missingData ?? []).map(
+      (value) => `tasks/${ref.taskKey}/${parseRunBundleMissingData(value).path}`,
+    ),
+    ...availability.prunedPaths,
+  ]);
   const entry = bundle.manifest.runs.find((entry) => entry.originalRunId === run.id)!;
   const prefix = `tasks/${entry.taskKey}/`;
   const taskFile = run.taskFile;
@@ -120,6 +136,9 @@ export async function restoreRetainedTaskArtifacts(run: Run): Promise<number> {
       if (!key.startsWith(prefix + 'artifacts/')) continue;
       assertCurrent();
       const relative = key.slice(prefix.length);
+      // Quota-deferred or age-pruned media remains unavailable evidence. It must
+      // not prevent restoring required metadata or block an intact worker.
+      if (isRunBundleMedia(relative) && unavailableMedia.has(key)) continue;
       const directory = await destinationDirectory(root, relative);
       const destination = path.join(root, relative);
       const existing = await lstat(destination).catch((error: NodeJS.ErrnoException) => {

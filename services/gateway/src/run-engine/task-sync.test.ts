@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -144,7 +145,20 @@ test('rebind restores retained worker artifacts behind a partial recapture witho
   await writeFile(path.join(dir, 'artifacts/review-result.current.json'), 'New review\n');
   await captureRunOutput(run.id, false, true);
   const beforeSync = tools.calls().length;
-  await copyTaskFilesToSlot(run.id, { artifactsOnly: true });
+  // #1858 binds the named slot before persisting run.slotId, which is still null here.
+  realRunStore.updateRun(run.id, { slotId: null });
+  const { rebindUnownedPublicationSlot } = await import('../run-completion/publication-source.js');
+  assert.equal(
+    await rebindUnownedPublicationSlot(
+      { ...realRunStore.getRun(run.id)!, slotId: 'slot-1', branch: 'owned-change' },
+      {
+        slot: async () => ({ current_run_id: null, slot_epoch: 1 }),
+        git: async () => ({ headSha: 'a'.repeat(40), branch: 'owned-change' }),
+        rebind: async () => null,
+      },
+    ),
+    true,
+  );
   assert.equal(
     tools
       .calls()
@@ -234,4 +248,60 @@ test('task restoration refuses corrupted retained bytes without publishing a rec
   await writeFile(stored, '[]\n');
   await assert.rejects(copyTaskFilesToSlot(f.run.id), /Retained artifact bytes changed/);
   await assert.rejects(readFile(path.join(f.dir, 'artifacts/harness-provenance.json')), /ENOENT/);
+});
+
+test('quota-deferred optional media does not block restoring the runtime receipt', async (t) => {
+  const f = await retainedFixture(t);
+  const { materializeRunBundle } = await import('@farmslot/run-bundle');
+  const { runBundleStore } = await import('../run-completion/retained-artifacts.js');
+  const receipt = Buffer.from('{}\n');
+  const media = Buffer.alloc(250000);
+  await mkdir(path.join(f.dir, 'artifacts'));
+  await writeFile(path.join(f.dir, 'artifacts/harness-provenance.json'), receipt);
+  await writeFile(path.join(f.dir, 'artifacts/optional.mp4'), media);
+  const retained = await materializeRunBundle({
+    store: await runBundleStore(),
+    farmslotRoot: tools.root,
+    run: f.run,
+    taskDir: f.dir,
+    artifacts: [
+      {
+        path: 'artifacts/harness-provenance.json',
+        purpose: 'task-input',
+        sizeBytes: receipt.length,
+        sha256: createHash('sha256').update(receipt).digest('hex'),
+      },
+      {
+        path: 'inputs/handoff.json',
+        purpose: 'task-input',
+        sizeBytes: receipt.length,
+        sha256: createHash('sha256').update(receipt).digest('hex'),
+      },
+      {
+        path: 'artifacts/optional.mp4',
+        purpose: 'video',
+        sizeBytes: media.length,
+        sha256: createHash('sha256').update(media).digest('hex'),
+      },
+    ],
+    manifestDigest: 'deferred-media',
+    captureKey: 'deferred-media',
+    policy: {
+      maxBundleBytes: 200000,
+      maxStoreBytes: 10000000,
+      metadataReserveBytes: 200000,
+      mediaRetentionDays: 30,
+    },
+    commit: async (ref) => {
+      realRunStore.updateRun(f.run.id, { artifactBundle: ref });
+    },
+  });
+  assert.deepEqual(retained.missingData, ['media-capacity:artifacts/optional.mp4']);
+  await rm(path.join(f.dir, 'artifacts'), { recursive: true });
+  await copyTaskFilesToSlot(f.run.id, { artifactsOnly: true });
+  assert.equal(
+    await readFile(path.join(f.dir, 'artifacts/harness-provenance.json'), 'utf8'),
+    '{}\n',
+  );
+  await assert.rejects(readFile(path.join(f.dir, 'artifacts/optional.mp4')), /ENOENT/);
 });

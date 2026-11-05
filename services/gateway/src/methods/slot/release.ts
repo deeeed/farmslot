@@ -1005,6 +1005,9 @@ async function slotReleaseImpl(
   const failedOwner =
     parkOwner?.taskFile &&
     parkOwner.status === 'failed' &&
+    (parkOwner.engineState?.taskInit?.status === 'initialized' ||
+      parkOwner.output?.artifactManifest.length ||
+      parkOwner.steps.some((step) => step.name === 'dispatch' && step.status === 'done')) &&
     publicationStatusForRun(parkOwner) === 'not_published'
       ? parkOwner
       : undefined;

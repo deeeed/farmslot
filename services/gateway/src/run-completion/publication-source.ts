@@ -69,7 +69,7 @@ export async function rebindUnownedPublicationSlot(
   if (overrides.restoreTask) await overrides.restoreTask(run);
   else {
     const { copyTaskFilesToSlot } = await import('../run-engine/task-sync.js');
-    await copyTaskFilesToSlot(run.id, { artifactsOnly: true });
+    await copyTaskFilesToSlot(run.id, { slotId: run.slotId, artifactsOnly: true });
   }
   return true;
 }

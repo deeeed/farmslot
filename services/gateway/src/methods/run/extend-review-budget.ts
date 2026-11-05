@@ -129,6 +129,9 @@ export async function runExtendReviewBudget(
     const bindNamedSlot = async (current: Run): Promise<Run> => {
       const slotId = namedSlot!;
       const before = await readSlotRow(slotId);
+      // Rebinding now restores retained artifacts after the claim. If that fails,
+      // the outer catch must roll back this tentative owner before run.slotId is written.
+      bound = { slotId, before };
       const rebound = await (dependencies.rebindSlot ?? rebindUnownedPublicationSlot)(
         { ...current, slotId },
         { expectedHeadSha: request.headSha },
@@ -137,7 +140,6 @@ export async function runExtendReviewBudget(
         throw new Error(
           `Slot ${slotId} is not free with the run branch at ${request.headSha} checked out`,
         );
-      bound = { slotId, before };
       return updateRun(current.id, { slotId });
     };
     const assertCurrent = async (snapshot: Run) => {
