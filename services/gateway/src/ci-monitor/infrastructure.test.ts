@@ -4,18 +4,40 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import type { ProjectCICheckGroup } from '@farmslot/protocol';
+import type { ProjectCICheckGroup, PRStatus, PRStatusParams } from '@farmslot/protocol';
 
-import { synthesizeRawSnapshotFromGraphQL } from '../methods/pr/raw-cache.js';
+import type { PRRawSnapshot } from '../methods/pr/raw-cache.js';
 import type { CIWatchStepContext } from '../run-engine/ci-watch-step.js';
 
 process.env.FARMSLOT_RUNS_DIR = mkdtempSync(path.join(tmpdir(), 'f415-infrastructure-'));
+const githubClient = await import('../integrations/github-client.js');
+mock.module('../integrations/github-client.js', {
+  namedExports: {
+    ...githubClient,
+    ghRequest: async (args: string[], opts?: { force?: boolean }) => {
+      assert.equal(opts?.force, true);
+      if (args[0] === 'pr' && args[1] === 'checks') {
+        throw new Error('HTTP 503: checks unavailable');
+      }
+      return {
+        stdout:
+          args[0] === 'pr' && args[1] === 'view' ? 'OPEN\tMERGEABLE\tCLEAN\t\tfix/product' : '',
+        stderr: '',
+      };
+    },
+  },
+});
+const { getPRRawData, synthesizeRawSnapshotFromGraphQL } =
+  await import('../methods/pr/raw-cache.js');
 const prMethods = await import('../methods/pr.js');
 let conclusions: Array<[string, string]> = [];
 let fixInputs: string[][] = [];
 let checkGroups: ProjectCICheckGroup[] = [];
 let deduped = false;
 let fixSuccess = false;
+let nextForcedObservation: 'unavailable' | 'partial' | undefined;
+let incompleteRaw: PRRawSnapshot | undefined;
+let checkObservations: PRStatus[] = [];
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
   namedExports: {
@@ -26,29 +48,39 @@ mock.module('../core/config.js', {
 mock.module('../methods/pr.js', {
   namedExports: {
     ...prMethods,
-    prStatus: async () => ({
-      pr: prMethods.projectPRData(
-        {
-          prStateStdout: 'OPEN\tMERGEABLE\tCLEAN\t\tfix/product',
-          checksStdout: synthesizeRawSnapshotFromGraphQL({
-            statusCheckRollup: {
-              contexts: {
-                nodes: conclusions.map(([name, conclusion]) => ({
-                  __typename: 'CheckRun',
-                  name,
-                  status: 'COMPLETED',
-                  conclusion,
-                })),
-              },
+    prStatus: async (params: PRStatusParams) => {
+      let raw: PRRawSnapshot = {
+        prStateStdout: 'OPEN\tMERGEABLE\tCLEAN\t\tfix/product',
+        checksStdout: synthesizeRawSnapshotFromGraphQL({
+          statusCheckRollup: {
+            contexts: {
+              nodes: conclusions.map(([name, conclusion]) => ({
+                __typename: 'CheckRun',
+                name,
+                status: 'COMPLETED',
+                conclusion,
+              })),
             },
-          }).checksStdout,
-          checksAvailable: true,
-          commentsStdout: '',
-          reviewCommentsStdout: '',
-          latestCommitStdout: '',
-          reviewMetaStdout: '',
-          fetchedAt: 1000,
-        },
+          },
+        }).checksStdout,
+        checksAvailable: true,
+        commentsStdout: '',
+        reviewCommentsStdout: '',
+        latestCommitStdout: '',
+        reviewMetaStdout: '',
+        fetchedAt: 1000,
+      };
+      if (params.force && nextForcedObservation) {
+        const observation = nextForcedObservation;
+        nextForcedObservation = undefined;
+        raw =
+          observation === 'unavailable'
+            ? await getPRRawData('example/product', 42, true)
+            : { ...raw, checksStdout: '', partial: true };
+        incompleteRaw = raw;
+      }
+      const pr = prMethods.projectPRData(
+        raw,
         {
           prNum: 42,
           project: 'example-web-farm',
@@ -57,8 +89,10 @@ mock.module('../methods/pr.js', {
           includeCheckSnapshot: true,
         },
         { ci: { checkGroups, botPatterns: [] } },
-      ),
-    }),
+      );
+      checkObservations.push(pr);
+      return { pr };
+    },
   },
 });
 mock.module('./inline-fix.js', {
@@ -160,13 +194,23 @@ test(
 );
 
 for (const resolved of [false, true]) {
-  for (const refusal of [false, true]) {
+  for (const blocker of [
+    'infrastructure',
+    'scope refusal',
+    'unavailable checks',
+    'partial checks',
+  ]) {
     test(
-      `${resolved ? 'resolved' : 'pending'} recovered repair cannot dispatch with ${refusal ? 'a scope refusal' : 'current infrastructure'}`,
+      `${resolved ? 'resolved' : 'pending'} recovered repair cannot dispatch with ${blocker}`,
       { timeout: 2000 },
       async () => {
+        const refusal = blocker === 'scope refusal';
+        const incomplete = blocker === 'unavailable checks' || blocker === 'partial checks';
         conclusions = refusal ? [] : [['unit-tests', 'TIMED_OUT']];
         fixInputs = [];
+        nextForcedObservation = undefined;
+        incompleteRaw = undefined;
+        checkObservations = [];
         const run = createRun({
           flowType: 'dev',
           project: 'example-web-farm',
@@ -185,6 +229,7 @@ for (const resolved of [false, true]) {
             ? { resolvedAt: '2026-11-01T00:01:00Z', resolvedAction: 'dispatch-pr-complete' }
             : {}),
         };
+        const retainedDecision = structuredClone(decision);
         const { updateRun } = await import('../runs/store.js');
         updateRun(run.id, {
           prNumber: 42,
@@ -216,6 +261,12 @@ for (const resolved of [false, true]) {
           startRun: async () => {},
           deferTerminalSlotRelease: () => {},
         };
+        const armIncompleteObservation = () => {
+          if (!incomplete) return;
+          checkObservations = [];
+          nextForcedObservation = blocker === 'unavailable checks' ? 'unavailable' : 'partial';
+        };
+        if (resolved) armIncompleteObservation();
         const running = executeCIWatchStep(run.id, context);
         if (!resolved) {
           // A retained card is re-presented by recovery with its original actions.
@@ -226,12 +277,17 @@ for (const resolved of [false, true]) {
           ) {
             await new Promise<void>((resolve) => setImmediate(resolve));
           }
+          armIncompleteObservation();
           resolveCIDecision(decision.id, 'dispatch-pr-complete');
         }
         const result = await running;
         assert.equal(dispatched, 0);
         assert.equal(result.outputs?.result, 'aborted');
-        assert.equal(getRun(run.id)?.decisions[0].resolvedAction, 'dispatch-pr-complete');
+        assert.deepEqual(getRun(run.id)?.decisions[0], {
+          ...retainedDecision,
+          resolvedAt: getRun(run.id)?.decisions[0].resolvedAt,
+          resolvedAction: 'dispatch-pr-complete',
+        });
         assert.equal(getRun(run.id)?.decisions.length, 2);
         assert.deepEqual(
           getRun(run.id)
@@ -239,6 +295,23 @@ for (const resolved of [false, true]) {
             ?.actions.map((action) => action.id),
           ['wait', 'abort'],
         );
+        if (incomplete) {
+          assert.equal(nextForcedObservation, undefined);
+          if (blocker === 'unavailable checks') {
+            assert.equal(incompleteRaw?.checksAvailable, false);
+            assert.equal(incompleteRaw?.checksStdout, '');
+            assert.deepEqual(incompleteRaw?.errors, ['pr.checks#42: HTTP 503: checks unavailable']);
+          } else {
+            assert.equal(incompleteRaw?.checksAvailable, true);
+            assert.equal(incompleteRaw?.partial, true);
+          }
+          assert.equal(checkObservations[0]?.checkSnapshot, undefined);
+          assert.equal(checkObservations[1]?.checkSnapshot?.checks[0]?.conclusion, 'TIMED_OUT');
+          assert.match(
+            getRun(run.id)?.decisions.at(-1)?.description ?? '',
+            /CI infrastructure\/timeout failure: unit-tests \(TIMED_OUT\)/,
+          );
+        }
         assert.deepEqual(fixInputs, []);
       },
     );

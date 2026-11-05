@@ -341,6 +341,7 @@ export async function executeCIWatchStep(
       outcome ??= await monitorCI(runId, current.prNumber, ciRepo, controller.signal);
       if (outcome.dispatchAction !== 'dispatch-pr-complete') break;
       // Retained cards and fresh monitor outcomes share this final dispatch gate.
+      // Only a complete current checks snapshot can authorize repair dispatch.
       // Keep the old decision as history and re-enter the monitor for a current choice.
       const refusal = getRun(runId)?.ciWatchState?.fixScopeRefusal;
       const fresh = refusal
@@ -348,12 +349,12 @@ export async function executeCIWatchStep(
         : (await prStatus({ pr: current.prNumber, project: current.project, force: true })).pr;
       if (
         !getRun(runId)?.ciWatchState?.fixScopeRefusal &&
-        fresh &&
+        fresh?.checkSnapshot &&
         !classifyCIWatchFailures(fresh).infrastructureChecks.length
       )
         break;
       console.warn(
-        `[run-engine] run ${runId.slice(0, 8)} — CI repair dispatch is blocked by current infrastructure or scope refusal`,
+        `[run-engine] run ${runId.slice(0, 8)} — CI repair dispatch is blocked by incomplete checks, current infrastructure or scope refusal`,
       );
       outcome = undefined;
     }
