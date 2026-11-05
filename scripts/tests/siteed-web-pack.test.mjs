@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +22,18 @@ const {
   lintWorkerTemplateStructure,
   resolveWorkerTerminalContract,
 } = require('../../packages/agent-runtime/scripts/worker-terminal-contract.cjs');
+
+test('Siteed fixture mappings match source file and directory types', () => {
+  const config = JSON.parse(readFileSync(new URL('project.json', pack), 'utf8'));
+  for (const { src } of config.fixtures.templates) {
+    assert.ok(statSync(new URL(`fixtures/${src}`, pack)).isFile(), `${src} must be a file`);
+  }
+  for (const src of ['recipe-tools', 'recipe-provider']) {
+    const entry = config.fixtures.directories?.find((entry) => entry.src === src);
+    assert.equal(entry?.dst, `.agent/${src}`);
+    assert.ok(statSync(new URL(`fixtures/${src}`, pack)).isDirectory());
+  }
+});
 
 test('both Siteed checklists freeze the configured CI command instead of launching validation', () => {
   const config = JSON.parse(readFileSync(new URL('project.json', pack), 'utf8'));
