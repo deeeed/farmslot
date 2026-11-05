@@ -9,6 +9,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
+import { readSlotRow, updateSlotStatusIf } from '../../core/state.js';
 import {
   extendReviewRoundBudget,
   reviewBudgetExtensionRefusal,
@@ -25,7 +26,7 @@ import {
 } from '../../run-engine/engine-decisions.js';
 import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { getRun } from '../../runs/store.js';
+import { getRun, updateRun } from '../../runs/store.js';
 
 export interface ReviewBudgetExtensionDependencies {
   authorize?: () => Principal;
@@ -43,6 +44,30 @@ function identity(run: Run): string {
     publicationStatusForRun(run),
     isGateParkInFlightOrFreed(run),
   ]);
+}
+
+/** A refused grant leaves the named slot as it found it, unless something else claimed it since. */
+async function unbindNamedSlot(
+  runId: string,
+  slotId: string,
+  before: Readonly<Record<string, unknown>> | null,
+): Promise<void> {
+  if (getRun(runId)?.slotId === slotId) updateRun(runId, { slotId: null });
+  const bound = await readSlotRow(slotId);
+  if (!before || bound?.current_run_id !== runId) return;
+  const run = getRun(runId);
+  if (!run) return;
+  const { slotOwnershipFieldsForRun } = await import('../fleet.js');
+  const written = Object.keys({
+    ...slotOwnershipFieldsForRun(run),
+    handoff_run_id: null,
+    dispatchable: false,
+  });
+  await updateSlotStatusIf(
+    slotId,
+    (slot) => slot.current_run_id === runId && slot.slot_epoch === bound.slot_epoch,
+    Object.fromEntries(written.map((key) => [key, before[key] ?? null])),
+  );
 }
 
 export async function runExtendReviewBudget(
@@ -79,22 +104,49 @@ export async function runExtendReviewBudget(
     throw new Error(
       'Invalid review budget request: supply an idempotency key, full head, expected limit and scoped brief',
     );
+  if (params.slotId !== undefined && (typeof params.slotId !== 'string' || !params.slotId.trim()))
+    throw new Error('Invalid review budget request: a named slot must be a slot id');
+  const { slotId: namedSlot, ...grant } = params;
   const request = {
-    ...params,
+    ...grant,
     headSha: params.headSha.toLowerCase(),
     scopeBrief: params.scopeBrief.trim(),
   };
   const extended = await withRunTransition(params.runId, async () => {
     const run = getRun(params.runId);
     if (!run) throw new Error(`Run not found: ${params.runId}`);
-    const expected = identity(run);
+    // A released slot also clears run.slotId; the operator names the slot that still holds the
+    // run branch at the approved head, and the same unowned-slot guards re-bind it.
+    const naming = namedSlot !== undefined && run.slotId !== namedSlot;
+    if (naming && (run.slotId || run.status !== 'failed'))
+      throw new Error(
+        'Review budget extension names a slot only for a failed run that lost its slot',
+      );
+    const expected = identity(naming ? { ...run, slotId: namedSlot } : run);
     const actor = JSON.stringify(principal);
     let slotEpoch: number | undefined;
-    const assertCurrent = async (current: Run) => {
+    let bound: { slotId: string; before: Readonly<Record<string, unknown>> | null } | undefined;
+    const bindNamedSlot = async (current: Run): Promise<Run> => {
+      const slotId = namedSlot!;
+      const before = await readSlotRow(slotId);
+      const rebound = await (dependencies.rebindSlot ?? rebindUnownedPublicationSlot)(
+        { ...current, slotId },
+        { expectedHeadSha: request.headSha },
+      );
+      if (!rebound)
+        throw new Error(
+          `Slot ${slotId} is not free with the run branch at ${request.headSha} checked out`,
+        );
+      bound = { slotId, before };
+      return updateRun(current.id, { slotId });
+    };
+    const assertCurrent = async (snapshot: Run) => {
       if (JSON.stringify(authorize()) !== actor)
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Review budget approver changed');
-      const refusal = reviewBudgetExtensionRefusal(current);
+      const refusal = reviewBudgetExtensionRefusal(snapshot);
       if (refusal) throw new Error(`Review budget extension refused: ${refusal}.`);
+      // The grant's own checks have passed; only then does a named slot get claimed.
+      const current = naming && !bound ? await bindNamedSlot(snapshot) : snapshot;
       if (
         identity(current) !== expected ||
         !current.branch ||
@@ -119,7 +171,13 @@ export async function runExtendReviewBudget(
       )
         throw new Error('Run head, ownership or approver changed while extending review budget');
     };
-    const result = await extendReviewRoundBudget(request, principal, assertCurrent);
+    let result: Awaited<ReturnType<typeof extendReviewRoundBudget>>;
+    try {
+      result = await extendReviewRoundBudget(request, principal, assertCurrent);
+    } catch (error) {
+      if (bound) await unbindNamedSlot(run.id, bound.slotId, bound.before);
+      throw error;
+    }
     const updated = getRun(run.id)!;
     emit(Events.RUN_UPDATED, { run: updated });
     return { run: updated, ...result };
