@@ -1745,6 +1745,7 @@ export interface RunTicketRefresh {
   principalGeneration?: number;
   requestedAt: string;
   appliedAt?: string;
+  supersededAt?: string;
   previousCriteria: string[];
   criteria: string[];
 }

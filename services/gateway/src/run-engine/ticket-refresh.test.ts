@@ -56,6 +56,7 @@ const oldCriteria = [
   'Every old client agrees.',
 ];
 const newCriteria = ['The counter is one.', 'Reference fixtures are exported.'];
+const observedCriteria = ['The core counter stays at one.', 'Exported fixtures cover the core.'];
 const newTicket: RunTicketData = {
   source: 'jira',
   title: 'Example core scope',
@@ -375,6 +376,120 @@ const refresh = (runId: string) =>
   runWithSessionOriginator(person, () => refreshPublishPackage({ runId, refreshTicket: true }));
 const refreshInputs = (runId: string, originator = person) =>
   runWithSessionOriginator(originator, () => ticketRefreshOwner.refreshRunTicket(getRun(runId)!));
+
+async function rewriteTaskCriteria(run: Run, taskDir: string, criteria: string[]) {
+  const handoffPath = path.join(taskDir, 'inputs/handoff.json');
+  const taskPath = path.join(taskDir, 'TASK.md');
+  const refreshed = refreshTaskAcceptanceInputs({
+    handoff: await readFile(handoffPath, 'utf8'),
+    taskMarkdown: await readFile(taskPath, 'utf8'),
+    runId: run.id,
+    project: run.project,
+    flow: run.flowType,
+    previousCriteria: oldCriteria,
+    criteria,
+  });
+  await writeFile(handoffPath, refreshed.handoff);
+  await writeFile(taskPath, refreshed.taskMarkdown);
+}
+
+for (const criteria of [newCriteria, oldCriteria]) {
+  test(`admission observes registered criteria when the ticket ${criteria === oldCriteria ? 'matches' : 'differs from'} the run snapshot`, async (t) => {
+    const { run, taskDir } = await fixture(t, false);
+    await rewriteTaskCriteria(run, taskDir, observedCriteria);
+    loadedTicket = { ...newTicket, acceptanceCriteria: criteria };
+    const result = await refresh(run.id);
+    const history = result.run.ticketRefreshes;
+    assert.ok(history);
+    assert.equal(history.length, 1);
+    assert.deepEqual(history[0].previousCriteria, observedCriteria);
+    assert.deepEqual(history[0].criteria, criteria);
+    assert.ok(history[0].appliedAt);
+    assert.deepEqual(result.run.ticketData, loadedTicket);
+    assert.deepEqual(
+      JSON.parse(await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8')).task
+        .acceptanceCriteria,
+      criteria,
+    );
+  });
+}
+
+for (const criteria of [newCriteria, observedCriteria]) {
+  test(`a legacy pending admission is superseded when the ticket ${criteria === observedCriteria ? 'matches' : 'differs from'} the observed handoff`, async (t) => {
+    const { run, taskDir } = await fixture(t, false);
+    await rewriteTaskCriteria(run, taskDir, observedCriteria);
+    const handoffPath = path.join(taskDir, 'inputs/handoff.json');
+    const taskPath = path.join(taskDir, 'TASK.md');
+    const handoffBefore = await readFile(handoffPath, 'utf8');
+    const taskBefore = await readFile(taskPath, 'utf8');
+    const pending = {
+      principalId: 'original-person',
+      requestedAt: '2026-10-12T00:00:00Z',
+      previousCriteria: oldCriteria,
+      criteria: newCriteria,
+    };
+    await persistRunNow(
+      updateRun(run.id, { ticketData: newTicket, ticketRefreshes: [pending] }),
+      'legacy pending admission',
+    );
+    loadedTicket = { ...newTicket, acceptanceCriteria: criteria };
+    const before = fetches;
+    const result = await refresh(run.id);
+    assert.equal(fetches, before + 1);
+    const history = result.run.ticketRefreshes!;
+    assert.equal(history.length, 2);
+    assert.ok(Number.isFinite(Date.parse(history[0].supersededAt!)));
+    assert.deepEqual(history[0], { ...pending, supersededAt: history[0].supersededAt });
+    assert.equal(history[1].principalId, person.id);
+    assert.deepEqual(history[1].previousCriteria, observedCriteria);
+    assert.deepEqual(history[1].criteria, criteria);
+    assert.ok(history[1].appliedAt);
+    assert.deepEqual(result.run.ticketData, loadedTicket);
+    assert.deepEqual(
+      JSON.parse(await readFile(handoffPath, 'utf8')).task.acceptanceCriteria,
+      criteria,
+    );
+    const taskAfter = await readFile(taskPath, 'utf8');
+    assert.ok(taskAfter.includes(criteria.map((text) => `- ${text}`).join('\n')));
+    assert.ok(taskAfter.includes('Keep this section.'));
+    assert.deepEqual(
+      JSON.parse(await readFile(path.join(root, 'runs', `${run.id}.json`), 'utf8')).ticketRefreshes,
+      history,
+    );
+    if (criteria === observedCriteria) {
+      assert.equal(await readFile(handoffPath, 'utf8'), handoffBefore);
+      assert.equal(taskAfter, taskBefore);
+    }
+  });
+}
+
+test('a criteria change after admission supersedes the pending snapshot before applying a fresh one', async (t) => {
+  const { run, taskDir } = await fixture(t, false);
+  const taskPath = path.join(taskDir, 'TASK.md');
+  const original = await readFile(taskPath, 'utf8');
+  await writeFile(taskPath, '# Temporarily missing acceptance section\n');
+  await assert.rejects(refreshInputs(run.id), /generated acceptance criteria section/);
+  const pending = getRun(run.id)!.ticketRefreshes![0];
+  assert.equal(pending.appliedAt, undefined);
+  await writeFile(taskPath, original);
+  await rewriteTaskCriteria(run, taskDir, observedCriteria);
+  const before = fetches;
+  const result = await refreshInputs(run.id, { ...person, id: 'another-person' });
+  assert.equal(fetches, before + 1);
+  const history = result.ticketRefreshes!;
+  assert.equal(history.length, 2);
+  assert.ok(history[0].supersededAt);
+  assert.deepEqual(history[0], { ...pending, supersededAt: history[0].supersededAt });
+  assert.equal(history[1].principalId, 'another-person');
+  assert.deepEqual(history[1].previousCriteria, observedCriteria);
+  assert.deepEqual(history[1].criteria, newCriteria);
+  assert.ok(history[1].appliedAt);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8')).task
+      .acceptanceCriteria,
+    newCriteria,
+  );
+});
 
 test('every retry persists the pending admission before changing task inputs', async (t) => {
   const { run, taskDir } = await fixture(t, false);
@@ -741,6 +856,7 @@ test('the task writer refreshes worker and gateway copies and revises the suppor
   const contract = JSON.parse(await readFile(contractPath, 'utf8'));
   await writeFile(contractPath, JSON.stringify({ ...contract, acceptanceContractVersion: 1 }));
   await cp(taskDir, workerTaskDir, { recursive: true });
+  await rewriteTaskCriteria(run, workerTaskDir, observedCriteria);
   await writeFile(
     path.join(taskDir, '.task-init.json'),
     JSON.stringify({
@@ -754,6 +870,7 @@ test('the task writer refreshes worker and gateway copies and revises the suppor
   await runWithSessionOriginator(person, () =>
     ticketRefreshOwner.refreshRunTicket(getRun(run.id)!),
   );
+  assert.deepEqual(getRun(run.id)!.ticketRefreshes?.[0].previousCriteria, observedCriteria);
   for (const directory of [taskDir, workerTaskDir]) {
     assert.deepEqual(
       JSON.parse(await readFile(path.join(directory, 'inputs/handoff.json'), 'utf8')).task
