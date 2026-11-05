@@ -1,7 +1,9 @@
 import React, { useEffect, useRef } from 'react';
-import { Modal, type ModalProps, View } from 'react-native';
+import { Modal, type ModalProps, Platform, View } from 'react-native';
 
 import type { CompanionViewLocation } from '@farmslot/protocol/surfaces/view-links';
+
+import { GatewayConnectionIndicator } from '../../components/GatewayConnectionIndicator';
 
 import { FloatingQuickActions } from './FloatingQuickActions';
 import { useOptionalQuickActions } from './quick-actions-context';
@@ -25,7 +27,12 @@ function ModalOutlet({
   const register = context?.registerOutlet;
   useEffect(() => register?.(owner), [owner, register]);
   if (!context || context.activeOutlet !== owner) return null;
-  return <FloatingQuickActions selection={sharedView ?? unavailableOverlay} beforeVoice={close} />;
+  return (
+    <>
+      <FloatingQuickActions selection={sharedView ?? unavailableOverlay} beforeVoice={close} />
+      {Platform.OS === 'android' ? <GatewayConnectionIndicator inModal /> : null}
+    </>
+  );
 }
 
 /** Routes the one shared control into the native modal's window. */

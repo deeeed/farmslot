@@ -10,7 +10,6 @@ import {
   livenessAfterFailure,
   livenessAfterSuccess,
   livenessForTransportState,
-  nextConnectionProbeDelay,
 } from './connection-liveness';
 
 test('transport connection remains unproven until an authenticated probe succeeds', () => {
@@ -49,11 +48,7 @@ test('probe errors teach auth, timeout, and host recovery', () => {
   );
 });
 
-test('probe interval backs off after failures and response time is readable', () => {
-  assert.equal(nextConnectionProbeDelay(0), 30_000);
-  assert.equal(nextConnectionProbeDelay(1), 60_000);
-  assert.equal(nextConnectionProbeDelay(2), 120_000);
-  assert.equal(nextConnectionProbeDelay(8), 120_000);
+test('response time and health labels remain readable', () => {
   assert.equal(formatLastGatewayResponse(null, 10_000), 'Never proven');
   assert.equal(formatLastGatewayResponse(5_000, 10_000), '5s ago');
   assert.equal(connectionHealthLabel('socket-up-not-proven'), 'Socket connected · proving');

@@ -60,6 +60,7 @@ export * from './surfaces/view-state.js';
 export * from './text-order.js';
 export * from './transport/events.js';
 export * from './transport/frames.js';
+export * from './transport/gateway-recovery.js';
 export * from './transport/gateway-tls.js';
 export * from './transport/observations.js';
 export * from './transport/signal.js';

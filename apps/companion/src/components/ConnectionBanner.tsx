@@ -36,7 +36,8 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
     stuck: banner?.tone === 'syncError' || healthStatus === 'socket-up-not-proven',
     outage: OUTAGE_BANNER,
   });
-  if (!visible) return null;
+  // The root indicator owns transport outages on every route, without moving the header.
+  if (!visible || healthStatus !== 'healthy') return null;
   const canRetry = connectionHealthCanRetry(
     healthStatus,
     transportStatus,

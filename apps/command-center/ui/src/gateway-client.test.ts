@@ -514,14 +514,14 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
   // Desktop secure-store failure must leave the authenticated session intact.
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
-    value: {
+    value: Object.assign(new EventTarget(), {
       farmslotDesktop: {
         loadConnection: async () => ({ url: 'ws://localhost:1234/ws', token: 'desktop-secret' }),
         saveConnection: async () => {
           throw new Error('Keychain unavailable');
         },
       },
-    },
+    }),
   });
   await initializeDesktopConnection();
   await assert.rejects(refreshed.signOut(), /Keychain unavailable/);
@@ -714,4 +714,63 @@ test('a refused request carries its typed error details', async (t) => {
   assert.ok(error instanceof GatewayRequestError);
   assert.equal(error.code, 'FS_CONFLICT');
   assert.deepEqual(error.details, details);
+});
+
+test('an authentication timeout retries automatically without requiring another sign-in', async (t) => {
+  const fake = installFakeGateway(t);
+  const { GatewayClient, gateway } = await import('./gateway-client.js');
+  const client = new GatewayClient('ws://localhost:1234/ws', { token: 'fixture' });
+  t.after(() => {
+    client.disconnect();
+    gateway.disconnect();
+  });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  fake.holdAuth = true;
+  client.connect();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const socket = fake.sockets.at(-1)!;
+  socket.failure(socket.sent.at(-1)!.id, { code: 'TIMEOUT', message: 'Gateway timed out' });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(
+    client.connectionState,
+    'disconnected',
+    'a network timeout must not become an auth refusal',
+  );
+  fake.holdAuth = false;
+  t.mock.timers.tick(1000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(client.connectionState, 'connected');
+  assert.equal(fake.sockets.length, 2);
+});
+
+test('browser focus, online and visible events recover the current client without a page reload', async (t) => {
+  const fake = installFakeGateway(t);
+  const focusTarget = new EventTarget();
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: focusTarget });
+  const { GatewayClient, gateway } = await import('./gateway-client.js');
+  const client = new GatewayClient('ws://localhost:1234/ws', { token: 'fixture' });
+  t.after(() => {
+    client.disconnect();
+    gateway.disconnect();
+  });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+  client.connect();
+  await settle();
+  for (const signal of ['focus', 'online', 'visibilitychange']) {
+    t.mock.timers.tick(1001);
+    fake.restart();
+    assert.equal(client.connectionState, 'disconnected');
+    const before = fake.sockets.length;
+    (signal === 'visibilitychange' ? document : focusTarget).dispatchEvent(new Event(signal));
+    await settle();
+    assert.equal(client.connectionState, 'connected');
+    assert.equal(fake.sockets.length, before + 1);
+  }
+  await client.signOut();
+  const before = fake.sockets.length;
+  focusTarget.dispatchEvent(new Event('focus'));
+  t.mock.timers.tick(120_000);
+  await settle();
+  assert.equal(fake.sockets.length, before, 'wake never bypasses sign-out');
 });

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { SlotStatus } from '@farmslot/protocol';
 import { fleetRecoverySummary, fleetWorkspaceRow } from '@farmslot/review-dispatch';
 
 import { colors, spacing } from '../../lib/theme';
+import { QuickActionsModal as Modal } from '../quick-actions/QuickActionsModal';
 
 import { useFleetRefreshController } from './use-fleet-refresh-controller';
 

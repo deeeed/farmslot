@@ -1,1 +1,0 @@
-- New native sessions offer the Pi and OpenCode models of the node the session will run on, instead of only the default.

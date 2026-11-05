@@ -1,0 +1,1 @@
+- Share bounded reconnect backoff, liveness probes and lifecycle/network recovery across Command Center and Companion.

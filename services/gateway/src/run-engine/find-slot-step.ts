@@ -7,6 +7,7 @@ import {
   type DispatchPreviewParams,
   type DispatchPreviewResult,
   Events,
+  type FleetStatus,
   isDispatchScoreStale,
   isTerminalRunStatus,
   ReviewQaConfigurationError,
@@ -16,6 +17,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
 } from '@farmslot/protocol';
+import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { withProjectSources } from '@farmslot/slot-config';
 
 import { loadSlotVars } from '../core/config.js';
@@ -84,6 +86,7 @@ import {
   slotModelNodeBlocker,
   slotRepoBlocker,
   slotScore,
+  type SlotScoringProjectConfig,
   type SlotSelectionOptions,
   slotSelectionOptionsFor,
   validateSlotForDispatch,
@@ -94,6 +97,7 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
+import { type GatewayResourceRevisions, resourceRevisions } from '../resources/revisions.js';
 import {
   isCancelledSlotHolder,
   reclaimCancelledSlot,
@@ -136,6 +140,7 @@ import { precheckTaskDirCollision } from '../tasks/writer.js';
 import { appBindingMismatch, boundApp, type ProjectAppDefaults } from './app-binding.js';
 import { canReplayBranchAffinityDecision, findLatestResolvedDecision } from './decision-replay.js';
 import { assertNativeRunForSlot, runExplicitRunnerModel } from './dispatch-policy.js';
+import { hasEngineDecisionWaiter, resolveEngineDecision } from './engine-decisions.js';
 import { BlockedRunError } from './errors.js';
 import { canReconcileReviewQaRun, reviewQaMigrationPatch } from './review-qa-migration.js';
 import { runSupersededSince } from './run-generation.js';
@@ -147,6 +152,7 @@ interface StepIO {
 }
 
 interface FindSlotAttempt extends StepIO {
+  slotAvailabilityChanged?: boolean;
   hostLoadWait?: SlotLoadWait;
 }
 
@@ -198,7 +204,11 @@ export interface FindSlotStepContext {
     description: string,
     actions: DecisionAction[],
     payload?: RunDecisionPayload,
-    options?: { canReplay?: (existing: RunDecision) => boolean },
+    options?: {
+      canReplay?: (existing: RunDecision) => boolean;
+      onWaiting?: (decisionId: string) => void;
+      generation?: number;
+    },
   ) => Promise<string>;
   determineSelectionMethodForRun: (
     run: Pick<Run, 'flowType'>,
@@ -1022,6 +1032,12 @@ export async function executeFindSlotStep(
       run = getRun(runId)!;
       continue;
     }
+    if (result.slotAvailabilityChanged) {
+      if (runSupersededSince(getRun(runId), generation))
+        throw runChangedError(runId, run.slotId ?? 'selection');
+      run = getRun(runId)!;
+      continue;
+    }
     if (slotClaimWaitReason)
       result = { ...result, inputs: { ...result.inputs, slotClaimWaitReason } };
     const appBinding = result.hostLoadWait ? undefined : acceptedAppBinding(getRun(runId));
@@ -1088,6 +1104,118 @@ async function waitUntilSlotClaimable(slotId: string, runId: string, generation:
       if (Date.now() - teardownSince >= EXPLICIT_SLOT_RELEASE_WAIT_MS) return;
     }
     await delay(SLOT_CLAIM_CONFLICT_POLL_MS);
+  }
+}
+
+let pickerFleetRead: Promise<FleetStatus> | undefined;
+
+/** All waiting pickers share an in-flight read of the same canonical fleet. */
+function readSlotPickerFleet(): Promise<FleetStatus> {
+  return (pickerFleetRead ??= loadFleetStatus().finally(() => {
+    pickerFleetRead = undefined;
+  }));
+}
+
+let pickerPoliciesRead: Promise<Record<string, SlotScoringProjectConfig>> | undefined;
+
+function readSlotPickerPolicies(): Promise<Record<string, SlotScoringProjectConfig>> {
+  return (pickerPoliciesRead ??= loadProjectConfigs()
+    .then(projectConfigsFromProjects)
+    .finally(() => {
+      pickerPoliciesRead = undefined;
+    }));
+}
+
+/** Keep one decision asleep until its project's observed availability actually changes. */
+export async function waitForSlotPickerChange(
+  runId: string,
+  generation: number,
+  slotIds: ReadonlySet<string>,
+  initialAvailability: string,
+  readAvailability: (reloadSelectionPolicy: boolean) => Promise<string>,
+  decide: (onWaiting: (decisionId: string) => void) => Promise<string>,
+  revisions: GatewayResourceRevisions = resourceRevisions,
+): Promise<string> {
+  if (runSupersededSince(getRun(runId), generation)) return 'abort';
+  let active = true;
+  let refreshing = false;
+  let dirty = false;
+  let configurationDirty = false;
+  let ownedDecisionId: string | undefined;
+  let rejectRefresh!: (error: unknown) => void;
+  const failure = new Promise<never>((_resolve, reject) => {
+    rejectRefresh = reject;
+  });
+  const stop = () => {
+    if (ownedDecisionId) resolveEngineDecision(ownedDecisionId, 'abort');
+  };
+  const refresh = async () => {
+    if (refreshing || !active || !ownedDecisionId) return;
+    refreshing = true;
+    try {
+      do {
+        dirty = false;
+        const reloadSelectionPolicy = configurationDirty;
+        configurationDirty = false;
+        if (runSupersededSince(getRun(runId), generation)) {
+          stop();
+          return;
+        }
+        if (!hasEngineDecisionWaiter(ownedDecisionId)) return;
+        const availability = await readAvailability(reloadSelectionPolicy);
+        if (!active) return;
+        if (runSupersededSince(getRun(runId), generation)) {
+          stop();
+          return;
+        }
+        if (availability !== initialAvailability) {
+          resolveEngineDecision(ownedDecisionId, 'retry');
+          return;
+        }
+      } while (dirty && active);
+    } catch (error) {
+      rejectRefresh(error);
+    } finally {
+      refreshing = false;
+    }
+  };
+  const unsubscribe = revisions.subscribe(({ changes }) => {
+    if (!active) return;
+    const current = getRun(runId);
+    if (changes.some(({ key }) => key.family === 'run' && key.runId === runId)) {
+      if (runSupersededSince(current, generation)) stop();
+      // Run progress does not change fleet availability; only cancellation owns this wake.
+      return;
+    }
+    if (
+      !changes.some(
+        ({ key }) =>
+          (key.family === 'slot' && slotIds.has(key.slotId)) ||
+          (key.family === 'slots' && key.project === current?.project) ||
+          (key.family === 'configuration' && (!key.project || key.project === current?.project)),
+      )
+    )
+      return;
+    // Farm configuration keys include pool membership; compare observed eligibility facts
+    // before retrying, so another project's templates/learnings do not rerun selection.
+    configurationDirty ||= changes.some(
+      ({ key }) =>
+        key.family === 'configuration' && (!key.project || key.project === current?.project),
+    );
+    dirty = true;
+    void refresh();
+  });
+  try {
+    const result = decide((decisionId) => {
+      ownedDecisionId = decisionId;
+      dirty = true;
+      void refresh();
+    });
+    return await Promise.race([result, failure]);
+  } finally {
+    active = false;
+    unsubscribe();
+    stop();
   }
 }
 
@@ -1950,9 +2078,9 @@ async function findSlotAttempt(
 
     const desc =
       reason === 'no_free_slots'
-        ? `No eligible free slots for **${run.project}**. Abort and dispatch again once an allowed slot is ready.`
+        ? `No eligible free slots for **${run.project}**. Selection resumes automatically when an allowed slot is ready.`
         : reason === 'missing_required_resources'
-          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Abort and dispatch again once an allowed resource slot is ready.`
+          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Selection resumes automatically when an allowed resource slot is ready.`
           : !skipPrepare
             ? `All ${localWorkSlots.size} eligible free slot(s) hold dirty or unpushed work. Preserve or explicitly release that work before dispatch.\n${Object.entries(
                 reuseReasons,
@@ -1968,26 +2096,91 @@ async function findSlotAttempt(
       reason,
     };
 
-    // The run waits here until a slot frees up or the operator picks one.
+    let currentSelectionPolicy = projectConfigs[run.project];
+    const availability = (snapshot: FleetStatus) =>
+      canonicalResourceJson({
+        policy: currentSelectionPolicy,
+        slots: snapshot.slots
+          .filter(
+            (slot) =>
+              slot.project === run.project &&
+              (!allowSet || allowSet.has(slot.slot)) &&
+              isFreeSlot(slot),
+          )
+          .map((slot) => ({
+            slot: slot.slot,
+            machine: slot.machine,
+            enabled: slot.enabled,
+            dispatchable: slot.dispatchable,
+            missingFromPool: slot.missingFromPool,
+            resources: slot.resources,
+            repo: slot.repo,
+            linkedWorktree: slot.linkedWorktree,
+            repoBlocker: slot.repoBlocker,
+            configError: slot.configError,
+            workspaceError: slot.workspaceError,
+            headSha: slot.headSha,
+            phase: slot.phase,
+            currentRunId: slot.currentRunId,
+            cleanupRunId: slot.cleanupRunId,
+            handoffRunId: slot.handoffRunId,
+            branch: slot.branch,
+            health: slot.health,
+            workspace: slot.workspace
+              ? {
+                  headSha: slot.workspace.headSha,
+                  dirtyFingerprint: slot.workspace.dirtyFingerprint,
+                  dirtyCount: slot.workspace.dirtyCount,
+                  publication: slot.workspace.publication,
+                  remoteDefaultSha: slot.workspace.remoteDefaultSha,
+                  epoch: slot.workspace.epoch,
+                  recoveryId: slot.workspace.recoveryId,
+                }
+              : undefined,
+          }))
+          .sort((a, b) => a.slot.localeCompare(b.slot)),
+      });
+    // A resource change retries the existing selector; it never turns an automatic choice
+    // into an operator pin or skips the source, pressure, safe-reuse and claim guards.
     const actionId = await awaitAsQueueTime(runId, 'find-slot', () =>
-      createEngineDecision(
+      waitForSlotPickerChange(
         runId,
-        'no_suitable_slot',
-        desc,
-        [
-          { id: 'pick', label: 'Use Selected Slot', style: 'primary' },
-          { id: 'abort', label: 'Abort Run', style: 'danger' },
-        ],
-        slotPickerPayload,
+        generation,
+        new Set(projectSlots.map((slot) => slot.slot)),
+        availability(fleet),
+        async (reloadSelectionPolicy) => {
+          const [snapshot, policies] = await Promise.all([
+            readSlotPickerFleet(),
+            reloadSelectionPolicy ? readSlotPickerPolicies() : undefined,
+          ]);
+          if (policies) currentSelectionPolicy = policies[run.project];
+          return availability(snapshot);
+        },
+        (onWaiting) =>
+          createEngineDecision(
+            runId,
+            'no_suitable_slot',
+            desc,
+            [
+              { id: 'pick', label: 'Use Selected Slot', style: 'primary' },
+              { id: 'retry', label: 'Retry Selection', style: 'secondary' },
+              { id: 'abort', label: 'Abort Run', style: 'danger' },
+            ],
+            slotPickerPayload,
+            { canReplay: (decision) => decision.resolvedAction === 'pick', onWaiting, generation },
+          ),
       ),
     );
+    if (actionId === 'retry') return { inputs, slotAvailabilityChanged: true };
 
     if (actionId === 'abort') throw new Error('Aborted: no suitable slot');
 
     // User picked a slot via selectionData
-    const resolvedDecision = getRun(runId)!.decisions.find(
-      (d) => d.type === 'engine_no_suitable_slot' && d.resolvedAt,
-    );
+    const resolvedDecision = [...getRun(runId)!.decisions]
+      .reverse()
+      .find(
+        (d) => d.type === 'engine_no_suitable_slot' && d.resolvedAt && d.resolvedAction === 'pick',
+      );
     const pickedSlotId = (resolvedDecision?.selectionData?.slotId as string) || null;
     if (!pickedSlotId) throw new Error('No slot selected');
     // Same unconstrained-selectionData exposure as the decision-card 'pick'

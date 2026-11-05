@@ -8,7 +8,9 @@ import 'expo-dev-client';
 import { AppEnvironmentIndicator } from '../components/AppEnvironmentIndicator';
 import { AppUpdatesMonitor } from '../components/AppUpdatesMonitor';
 import { FallbackHeaderBack } from '../components/FallbackHeaderBack';
+import { GatewayConnectionIndicator } from '../components/GatewayConnectionIndicator';
 import { GlobalFilterCoordinator } from '../components/GlobalFilterCoordinator';
+import { OfflineShown } from '../components/offline-shown';
 import { PRPushRegistration } from '../components/PRPushRegistration';
 import { ResourceStoreNotice } from '../components/ResourceStoreNotice';
 import { WhatsNewMonitor } from '../components/WhatsNewMonitor';
@@ -78,6 +80,7 @@ export default function RootLayout() {
       <WorkspaceProviders key={workspaceKey ?? authorityEpoch}>
         <QuickActionsProvider>
           <StatusBar style="light" />
+          <GatewayConnectionIndicator />
           {farm ? <GlobalFilterCoordinator /> : null}
           {access === 'farm' && !isStoreScreenshotMode ? (
             <>
@@ -253,7 +256,7 @@ function WorkspaceProviders({ children }: { children: React.ReactNode }) {
           : undefined
       }
     >
-      {children}
+      <OfflineShown.Provider value={true}>{children}</OfflineShown.Provider>
     </RecipeBridgeProvider>
   );
 }
