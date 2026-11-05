@@ -75,3 +75,14 @@ Do not merge runner usage changes unless the extractor output matches the provid
 - **L1 fixtures:** `services/gateway/src/runtime/session-usage-script.test.ts` invokes `scripts/session-usage.sh` with committed per-runner session fixtures.
 - **L3–L4 tmux:** `token-usage-smoke` in [runner-validation-harness.md](../operations/runner-validation-harness.md) polls the same script on a live-resolved session path (no duplicated JS token logic).
 - **L5 manual:** this section's `TOKEN_CHECK_OK` protocol after runner CLI upgrades.
+
+## Native reviewer receipts (ADR-057 Amendment 14)
+
+- Dedicated native reviewer contexts MAY carry `usage: RunnerSessionUsage`. The gateway MUST capture it for completed and failed/no-verdict attempts whose exact context/conversation binding remains current and observable. A superseded or unavailable binding MAY be left for offline repair. Accounting MUST NOT determine a verdict, prompt acceptance or process completion.
+- Resolution MUST use the recorded conversation id and execution node/account context. Token fields, message-id deduplication and pricing MUST use the shared worker accounting implementation. Transcript bodies MUST remain on their execution host. Missing, mismatched or unreadable history MUST remain unavailable rather than observed zero; verified prior readings MUST be preserved.
+- Reviewer receipts use the existing `session-total` scope. A run's reviewer totals MUST deduplicate by exact runner/conversation id across retained contexts and review results, selecting the largest verified total and the latest measurement on ties. Context-only spend MUST be included without constructing a review result. Legacy result-only accounting remains supported.
+- The offline backfill MUST default to dry-run, refuse live-gateway writes and preserve unrelated fields, verdicts, learning content and audit/transcript bytes. Repeated application MUST be idempotent. Failures and unresolved identities MUST be reported.
+
+### Public surface
+
+The optional field belongs to `@farmslot/protocol`'s existing `AgentContext` run data and is patch-compatible. Existing run RPCs serialize it; gateway shared reporting projects it for both clients and downstream harnesses. This amendment adds no RPC method, native host method or harness-specific override.

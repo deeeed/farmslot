@@ -603,3 +603,19 @@ The cost is that a Grok reviewer no longer reads the repository's `AGENTS.md`, p
 - `terminalReviewRefusal` on a runner definition, and `runnerTerminalReviewRefusal` in the gateway's review admission.
 - `grokAuthMethod` (the Grok adapter and account observer), and `AcpAuthMethod` / `selectAcpAuthMethod`: an ACP adapter's `authMethod` may now pick among the advertised methods.
 - `@farmslot/agent-runtime` needs a release. Until it is rolled out, nodes keep trusting review checkouts.
+
+## Amendment 14: native reviewer usage receipts, 2026-11-05
+
+**Status:** Proposed text; Arthur approved this amendment's scope on 2026-11-05, with independent text review before implementation.
+
+### Decision
+
+The gateway records an optional `AgentContext.usage` receipt using the existing `RunnerSessionUsage` contract for dedicated native reviewer contexts. It resolves the exact recorded conversation on its execution node, including the launch's isolated account directory, and reuses worker transcript accounting. Completed and failed/no-verdict contexts retain receipts while their recorded binding remains current. Superseded or unavailable sources can be repaired by the offline backfill.
+
+Receipts are supporting accounting, independent of verdicts, delivery and lifecycle authority. Missing history remains explicitly unavailable; a failed measurement cannot replace a verified receipt for the same conversation with zero. A run's reviewer rollup counts each exact runner/conversation once, selecting its most complete verified session-total receipt across retained contexts and result rows. WARM snapshots are not added together.
+
+Earlier conversations can survive in contexts after the current review result is replaced. The offline, dry-run-by-default backfill repairs those receipts and legacy placeholders while the gateway is stopped for writes. It preserves review outcomes, learning data, audit journals and transcripts. It creates no review verdict or admission.
+
+### Public surface
+
+`@farmslot/protocol` adds optional `AgentContext.usage` to existing run data. This is an additive patch-level data change; existing RPC methods carry it. Gateway reporting consumes the receipt; Command Center, Companion and harnesses such as mm-harness inherit the corrected shared token projection. The maintenance script is an operator tool described in `docs/operations/native-reviewer-usage-backfill.md`. The RPC method set and native node-service contract remain unchanged.
