@@ -87,3 +87,11 @@ test('workspace tab destinations retain display choices and exclude unsaved or a
     },
   );
 });
+
+test('Review tab destinations retain the History choice without action or draft inputs', async () => {
+  const { viewStateHref } = await import('../components/view-state');
+  assert.deepEqual(
+    viewStateHref({ pathname: '/runs' }, { runsTab: 'all', draft: 'private', token: 'private' }),
+    { pathname: '/runs', params: { runsTab: 'all' } },
+  );
+});
