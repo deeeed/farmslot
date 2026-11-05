@@ -7,6 +7,7 @@ import type {
 } from '@farmslot/protocol';
 import { reviewHistoryView } from '@farmslot/review-dispatch';
 
+import { resolveNativeContext } from '../agents/native-context.js';
 import { sessionUsageKey, upsertSessionUsage } from '../runtime/agent-session-rows.js';
 import {
   allRunSessionUsageReceipts,
@@ -97,14 +98,27 @@ export function buildFamilyUsage(runs: readonly Run[]): FamilyObservabilityUsage
 
   const rounds = histories.flatMap(({ run, history }) =>
     history.cards.map(({ round, fixes }) => {
-      const source =
-        round.usage ??
-        [...sessions.values()].find((session) =>
+      const context = run.agentContexts?.find((row) => row.id === round.key);
+      const resolved = resolveNativeContext(run, context);
+      const owner = resolved?.owner ?? context;
+      const ownerKey =
+        owner && (!context?.nativeSessionOwner || resolved)
+          ? sessionUsageKey({
+              runner: owner.runner,
+              runnerSessionId: owner.runnerSessionId,
+              nativeSession: resolved?.binding ?? owner.nativeSession,
+            })
+          : null;
+      const associated = [...sessions.values()].filter(
+        (session) =>
           session.participations.some(
             (participant) =>
               participant.runId === run.id && participant.contextIds.includes(round.key),
-          ),
-        )?.usage;
+          ) &&
+          (!context || (ownerKey !== null && session.id === ownerKey)),
+      );
+      // Replayed contexts retain old receipts. A context ID alone does not identify a conversation.
+      const source = round.usage ?? (associated.length === 1 ? associated[0].usage : undefined);
       const usage = source ? { ...source, runner: source.runner ?? round.runner } : undefined;
       return {
         id: JSON.stringify([run.id, round.key]),

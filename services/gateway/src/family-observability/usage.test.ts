@@ -251,3 +251,55 @@ test('known USD survives missing tokens and shared review participation across r
   );
   assert.equal(projection.contributions[0].usage.totalTokens, null);
 });
+
+test('a relaunched static reviewer never borrows an old conversation receipt', () => {
+  const run = makeRun({
+    flowType: 'review-pr',
+    sessionUsage: [
+      receipt({
+        runnerSessionId: 'old-reviewer',
+        contextIds: ['review'],
+        role: 'review',
+        roles: ['review'],
+        costUsd: 0.25,
+      }),
+    ],
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Review',
+        status: 'working',
+        runId: 'usage-run',
+        slotId: null,
+        runner: 'codex',
+        runnerSessionId: 'replacement',
+        model: 'gpt-6.1-sol',
+      },
+    ],
+  });
+  const round = buildFamilyUsage([run]).rounds[0];
+  assert.ok(round);
+  assert.equal(round.usage?.runnerSessionId, 'replacement');
+  assert.equal(round.usage?.totalTokens, null);
+  assert.equal(round.costScope, 'unavailable');
+});
+
+test('a missing owner and ambiguous retained identities leave round accounting unavailable', () => {
+  const run = makeRun({
+    sessionUsage: [
+      receipt({ runnerSessionId: 'old', contextIds: ['check:1'] }),
+      receipt({ runnerSessionId: 'replacement', contextIds: ['check:1'] }),
+    ],
+    engineState: {
+      publishGate: {
+        reviews: [
+          { id: 'check', mode: 'cold', loopNumber: 1, verdict: 'pass', unresolvedCount: 0 },
+        ],
+      },
+    },
+  });
+  const round = buildFamilyUsage([run]).rounds[0];
+  assert.equal(round.usage, undefined);
+  assert.equal(round.costScope, 'unavailable');
+});
