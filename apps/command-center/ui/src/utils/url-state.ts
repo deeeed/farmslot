@@ -75,11 +75,12 @@ export function prepareNavigationLink(
 export function navigateHash(
   destination: string,
   mode: 'assign' | 'push' | 'replace' = 'assign',
+  state: unknown = null,
 ): void {
   const next = navigationHash(destination);
   if (next === location.hash) return;
   if (mode === 'assign') location.hash = next;
-  else history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', next);
+  else history[mode === 'push' ? 'pushState' : 'replaceState'](state, '', next);
 }
 
 /** Context owns the route, parameter and omitted default for a persistent view choice. */

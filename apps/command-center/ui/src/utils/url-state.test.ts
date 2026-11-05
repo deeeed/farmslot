@@ -37,15 +37,18 @@ test('F414 navigation after an async action carries shell choices into the desti
   const location = { hash: '#dispatch?panels=sidebar&sidebarWidth=320&file=private-draft' };
   const currentHash = () => location.hash;
   const writes: string[] = [];
+  const states: unknown[] = [];
   Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
   Object.defineProperty(globalThis, 'history', {
     configurable: true,
     value: {
       replaceState(_data: unknown, _title: string, hash: string) {
+        states.push(_data);
         writes.push(hash);
         location.hash = hash;
       },
       pushState(_data: unknown, _title: string, hash: string) {
+        states.push(_data);
         writes.push(hash);
         location.hash = hash;
       },
@@ -60,7 +63,9 @@ test('F414 navigation after an async action carries shell choices into the desti
   await Promise.resolve();
   navigateHash('run/new-run');
   assert.equal(currentHash(), '#run/new-run?panels=sidebar&sidebarWidth=320');
-  navigateHash('#config/pool', 'replace');
+  const keptState = { source: 'existing history entry' };
+  navigateHash('#config/pool', 'replace', keptState);
+  assert.equal(states.at(-1), keptState);
   assert.equal(currentHash(), '#config/pool?panels=sidebar&sidebarWidth=320');
   const count = writes.length;
   navigateHash('#config/pool', 'push');

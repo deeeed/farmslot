@@ -125,7 +125,12 @@ test('navigation parameter declarations cannot drift from desktop sharing', () =
         /(?:^|\.)location\.hash$/.test(node.left.getText(source));
       const rawHistoryWrite =
         ts.isCallExpression(node) &&
-        /^(?:window\.)?history\.(?:pushState|replaceState)$/.test(node.expression.getText(source));
+        (/^(?:window\.)?history\.(?:pushState|replaceState)$/.test(
+          node.expression.getText(source),
+        ) ||
+          (node.arguments.length === 3 &&
+            ts.isElementAccessExpression(node.expression) &&
+            ['history', 'window.history'].includes(node.expression.expression.getText(source))));
       if (
         (rawHashWrite || rawHistoryWrite) &&
         !['utils/url-state.ts', 'utils/view-state.ts', 'testing/fake-view-state.ts'].includes(

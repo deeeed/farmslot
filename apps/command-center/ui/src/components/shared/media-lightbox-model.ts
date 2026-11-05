@@ -3,7 +3,7 @@ import { buildArtifactUrlResolver, isHtmlArtifactPath } from '@farmslot/review-d
 
 import { JSON_EXTS, MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
 import type { HtmlArtifactTarget } from '../../utils/artifact-html.js';
-import { buildHash } from '../../utils/url-state.js';
+import { buildHash, prepareNavigationLink } from '../../utils/url-state.js';
 import { runDetailEvidenceArtifactHash } from '../runs/run-detail-url-state.js';
 
 import type { LightboxItem } from './media-lightbox-types.js';
@@ -14,6 +14,9 @@ export function lightboxReportArtifactResolver(
   items: readonly LightboxItem[],
   baseUrl: string,
 ): (rawPath: string) => HtmlArtifactTarget | null {
+  const viewTarget = (viewUrl: string): HtmlArtifactTarget => ({
+    viewUrl: prepareNavigationLink(viewUrl, undefined, baseUrl)?.appliedHref ?? viewUrl,
+  });
   const byPath = new Map(items.map((item) => [item.path, item]));
   const paths = [
     ...byPath.keys(),
@@ -28,16 +31,13 @@ export function lightboxReportArtifactResolver(
     if (!mediaUrl || !URL.canParse(mediaUrl, baseUrl)) return null;
     const source = new URL(mediaUrl, baseUrl);
     const runId = source.searchParams.get('runId');
-    if (!runId) return item?.viewUrl ? { viewUrl: item.viewUrl } : null;
+    if (!runId) return item?.viewUrl ? viewTarget(item.viewUrl) : null;
     const params = new URLSearchParams();
     const recipeRun = source.searchParams.get('recipeRunId');
     if (recipeRun) params.set('recipeRun', recipeRun);
-    return {
-      viewUrl: new URL(
-        runDetailEvidenceArtifactHash(runId, { path }, buildHash('', params)),
-        baseUrl,
-      ).href,
-    };
+    return viewTarget(
+      new URL(runDetailEvidenceArtifactHash(runId, { path }, buildHash('', params)), baseUrl).href,
+    );
   };
 }
 

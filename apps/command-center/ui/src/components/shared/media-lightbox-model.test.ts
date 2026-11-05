@@ -40,6 +40,16 @@ test('a report-only gallery resolves videos from its retained inventory into the
     'https://cc.example/#run/run-1?recipeRun=recording-1&artifactRun=run-1&artifact=artifacts%2Fcase-4-run%2Fvideos%2Frecipe-run.mp4',
   );
   assert.doesNotMatch(target.viewUrl, /test-secret|token=/);
+  const shared = lightboxReportArtifactResolver(
+    document,
+    [document],
+    'https://cc.example/#runs?panels=sidebar&sidebarWidth=320',
+  )('case-4-run/videos/recipe-run.mp4');
+  assert.ok(shared);
+  const selection = new URLSearchParams(new URL(shared.viewUrl).hash.split('?')[1]);
+  assert.equal(selection.get('panels'), 'sidebar');
+  assert.equal(selection.get('sidebarWidth'), '320');
+  assert.doesNotMatch(shared.viewUrl, /test-secret|token=/);
   assert.equal(resolve('../private.mp4'), null);
   assert.equal(resolve('unknown/video.mp4'), null);
 

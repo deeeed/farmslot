@@ -359,7 +359,7 @@ export class RunDetail extends RunDetailState {
     const hash = runDetailArtifactBrowserHash(this.runId, view);
     if (hash === location.hash) return;
     // Like the Runs filter writer, keep our own update out of navigation-focus handling.
-    history[replace ? 'replaceState' : 'pushState'](history.state, '', hash);
+    navigateHash(hash, replace ? 'replace' : 'push', history.state);
     this.requestUpdate();
   }
 

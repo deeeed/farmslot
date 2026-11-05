@@ -131,5 +131,5 @@ export function writeRunsHashState(
   if (location.hash === nextHash) return;
   // Filters replace to avoid one history entry per keystroke. Explicit row
   // selection may push so browser Back returns to the inventory.
-  history[historyMode === 'push' ? 'pushState' : 'replaceState'](null, '', nextHash);
+  navigateHash(nextHash, historyMode);
 }
