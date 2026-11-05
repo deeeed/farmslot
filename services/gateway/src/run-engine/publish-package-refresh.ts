@@ -57,6 +57,7 @@ import { refreshRunGateReadiness, reviewsWithValidResults } from './gate-prerequ
 import { buildGateSummary } from './gate-summary.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
+import { buildReadyGateInputs } from './ready-gate-inputs.js';
 import { readGateRecordedEvidenceSources } from './recorded-evidence-sources.js';
 import { refreshReviewDiffIdentities, refreshReviewDiffSnapshot } from './review-diff-refresh.js';
 import { projectClaimFindingSettlements } from './review-finding-settlements.js';
@@ -653,6 +654,7 @@ async function refreshPublishPackageTransitionLocked(
   const nextPayload: ReadyGatePayload = applyBranchFreshnessToReadyGatePayload(
     {
       ...oldPayload,
+      ...(await buildReadyGateInputs(refreshedRun)),
       diffStat: prPackage.diffStat,
       branch: prPackage.branch,
       headSha: prPackage.headSha,

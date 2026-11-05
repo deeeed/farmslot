@@ -363,6 +363,8 @@ async function fixture(t: import('node:test').TestContext, withEvidence = true) 
           branch: prepared.branch,
           workerReport: '',
           diffStat: prepared.diffStat,
+          acceptanceCriteria: oldCriteria,
+          inputSnapshot: { ticketData: run.ticketData, taskFile: path.join(taskDir, 'TASK.md') },
           prPackage: prepared,
         },
       },
@@ -589,6 +591,9 @@ test('ticket scope split refreshes registration and makes the existing passing-r
     (entry) => !entry.resolvedAt && entry.payload?.kind === 'ready',
   )!;
   assert.ok(gate.payload?.kind === 'ready');
+  assert.deepEqual(gate.payload.acceptanceCriteria, newCriteria);
+  assert.deepEqual(gate.payload.inputSnapshot?.ticketData, newTicket);
+  assert.ok(gate.payload.inputSnapshot?.taskPrompt?.includes(newCriteria[1]));
   assert.equal(
     gate.payload.gateReadiness?.state,
     'ready',
@@ -629,11 +634,37 @@ test('ticket scope split refreshes registration and makes the existing passing-r
 
 test('ordinary package refresh leaves ticket registration unchanged', async (t) => {
   const { run } = await fixture(t);
+  const payloadBefore = run.decisions[0].payload;
+  assert.ok(payloadBefore?.kind === 'ready');
   const before = fetches;
   const result = await refreshPublishPackage({ runId: run.id });
   assert.equal(fetches, before);
   assert.deepEqual(result.run.ticketData?.acceptanceCriteria, oldCriteria);
   assert.equal(result.run.ticketRefreshes, undefined);
+  const gate = result.run.decisions.find(
+    (entry) => !entry.resolvedAt && entry.payload?.kind === 'ready',
+  );
+  assert.ok(gate?.payload?.kind === 'ready');
+  assert.deepEqual(gate.payload.acceptanceCriteria, payloadBefore.acceptanceCriteria);
+});
+
+test('ordinary package refresh repairs a gate after ticket inputs were already refreshed', async (t) => {
+  const { run } = await fixture(t);
+  await refreshInputs(run.id);
+  const before = fetches;
+  const result = await refreshPublishPackage({ runId: run.id });
+  assert.equal(fetches, before);
+  const gate = result.run.decisions.find(
+    (entry) => !entry.resolvedAt && entry.payload?.kind === 'ready',
+  );
+  assert.ok(gate?.payload?.kind === 'ready');
+  assert.deepEqual(gate.payload.acceptanceCriteria, newCriteria);
+  assert.deepEqual(gate.payload.inputSnapshot?.ticketData, newTicket);
+  assert.equal(
+    gate.payload.gateReadiness?.state,
+    'ready',
+    JSON.stringify(gate.payload.gateReadiness),
+  );
 });
 
 for (const change of [
