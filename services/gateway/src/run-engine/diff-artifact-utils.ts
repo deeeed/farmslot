@@ -1,14 +1,7 @@
 // run-engine/diff-artifact-utils.ts — Small IO/hash/timeout helpers for diff artifact capture.
 
 import { createHash, randomUUID } from 'node:crypto';
-
-import {
-  ORCHESTRATOR_LOCALITY,
-  slotDeletePath,
-  type SlotLocality,
-  slotRenameFile,
-  slotWriteFile,
-} from '../core/slot-io.js';
+import { rename, rm, writeFile } from 'node:fs/promises';
 
 export function parseDiffTooLargeBytes(stderr: string): number | null {
   const match = stderr.match(/(?:^|\n)farmslot-diff-bytes=(\d+)(?:\n|$)/);
@@ -17,18 +10,14 @@ export function parseDiffTooLargeBytes(stderr: string): number | null {
   return Number.isFinite(bytes) ? bytes : null;
 }
 
-export async function atomicWriteTextFile(
-  targetPath: string,
-  content: string,
-  io: SlotLocality = ORCHESTRATOR_LOCALITY,
-): Promise<void> {
+export async function atomicWriteTextFile(targetPath: string, content: string): Promise<void> {
   const tmpPath = `${targetPath}.tmp.${process.pid}.${randomUUID()}`;
   try {
-    await slotWriteFile(io, tmpPath, content);
-    await slotRenameFile(io, tmpPath, targetPath);
+    await writeFile(tmpPath, content, 'utf-8');
+    await rename(tmpPath, targetPath);
   } catch (err) {
     try {
-      await slotDeletePath(io, tmpPath);
+      await rm(tmpPath, { force: true });
     } catch (cleanupErr) {
       console.warn(
         `[run-engine] failed to remove temp artifact ${tmpPath} after write failure: ${(cleanupErr as Error).message.slice(0, 200)}`,

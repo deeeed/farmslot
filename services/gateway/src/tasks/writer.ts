@@ -62,7 +62,7 @@ import {
   type RawProjectJson,
   readSlotRow,
 } from '../core/index.js';
-import { ORCHESTRATOR_LOCALITY, slotReadFile } from '../core/slot-io.js';
+import { ORCHESTRATOR_LOCALITY, slotReadFile, slotWriteFileAtomic } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import {
   buildFollowUpScopeContractSection,
@@ -79,7 +79,6 @@ import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
 import { resolveWorkerTaskDir } from '../review/templates.js';
 import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
-import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { persistRunNow, updateRun } from '../runs/store.js';
 
@@ -1509,9 +1508,10 @@ export async function refreshWrittenTaskTicket(
   }
   if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
   for (const file of files)
-    await atomicWriteTextFile(path.join(taskDir, file.path), file.text, slot);
+    await slotWriteFileAtomic(slot, path.join(taskDir, file.path), file.text);
   if (vars)
-    for (const file of files) await atomicWriteTextFile(path.join(mirrorDir, file.path), file.text);
+    for (const file of files)
+      await slotWriteFileAtomic(ORCHESTRATOR_LOCALITY, path.join(mirrorDir, file.path), file.text);
   if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
   if (frozenInput !== undefined) {
     const frozenPath = path.join(mirrorDir, TASK_INIT_INPUT);
