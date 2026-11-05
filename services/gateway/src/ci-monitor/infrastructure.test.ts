@@ -141,7 +141,11 @@ mock.module('../sources/runtime.js', {
     withSourcePlanning: async (_project: string, action: () => unknown) => action(),
   },
 });
-const { monitorCI, resolveCIDecision } = await import('./service.js');
+const { initCIMonitor, monitorCI, resolveCIDecision } = await import('./service.js');
+const phaseWaiters = new Set<() => void>();
+initCIMonitor(() => {
+  for (const notify of phaseWaiters) notify();
+});
 const { executeCIWatchStep } = await import('../run-engine/ci-watch-step.js');
 const { createRun, getAllRuns, getRun, loadAllRuns, persistRunNow } =
   await import('../runs/store.js');
@@ -180,11 +184,16 @@ function stepContext(onDispatch: () => void): CIWatchStepContext {
 }
 
 async function until(check: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (check()) return;
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-  assert.ok(check(), 'Expected monitor phase was not reached');
+  if (check()) return;
+  // CI-state notifications are the readiness barrier, including after real I/O.
+  await new Promise<void>((resolve) => {
+    const notify = () => {
+      if (!check()) return;
+      phaseWaiters.delete(notify);
+      resolve();
+    };
+    phaseWaiters.add(notify);
+  });
 }
 
 for (const state of ['CANCELLED', 'TIMED_OUT', 'STARTUP_FAILURE', 'ACTION_REQUIRED']) {
