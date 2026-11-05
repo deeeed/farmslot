@@ -469,7 +469,7 @@ async function refreshPublishPackageTransitionLocked(
   if (progress && progress.kind !== 'idle')
     throw progress.kind === 'making-progress'
       ? new OwnedWorkerBusyError()
-      : new BlockedRunError(OWNED_WORKER_NOT_IDLE);
+      : new BlockedRunError(`${OWNED_WORKER_NOT_IDLE}. Observed state: ${progress.kind}.`);
   if (params.refreshTicket) run = await refreshRunTicket(run);
   const selectedBefore =
     params.selectedEvidenceKeys ??
