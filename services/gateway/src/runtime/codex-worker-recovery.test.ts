@@ -151,21 +151,59 @@ test('family receipt source metadata excludes native lifecycle and recovery prom
 });
 
 test('recovery never borrows a replacement conversation configuration or completion time', async () => {
-  const { recoveredWorkerSessionReceipt, upsertSessionUsage } = await import('./agent-session-rows.js');
-  const run = makeRun({ flowType: 'dev', metrics: { nudgeCount: 0, runner: 'codex', model: 'model-b', runnerSessionId: 'b' } });
+  const { recoveredWorkerSessionReceipt, upsertSessionUsage } =
+    await import('./agent-session-rows.js');
+  const run = makeRun({
+    flowType: 'dev',
+    metrics: { nudgeCount: 0, runner: 'codex', model: 'model-b', runnerSessionId: 'b' },
+  });
   const previous: import('@farmslot/protocol').RunnerSessionUsage = {
-    runner: 'codex', runnerSessionId: 'a', runnerSessionPath: '/recorded/a.jsonl', kind: 'agent', role: 'dev',
-    model: 'model-a', actualModel: 'model-a', effort: 'low', contextIds: ['dev'],
-    startedAt: '2026-11-04T00:00:00Z', completedAt: '2026-11-04T00:01:00Z', durationMs: 60000,
-    source: 'runner-transcript', totalTokens: 10, measuredAt: '2026-11-04T00:01:00Z',
+    runner: 'codex',
+    runnerSessionId: 'a',
+    runnerSessionPath: '/recorded/a.jsonl',
+    kind: 'agent',
+    role: 'dev',
+    model: 'model-a',
+    actualModel: 'model-a',
+    effort: 'low',
+    contextIds: ['dev'],
+    startedAt: '2026-11-04T00:00:00Z',
+    completedAt: '2026-11-04T00:01:00Z',
+    durationMs: 60000,
+    source: 'runner-transcript',
+    totalTokens: 10,
+    measuredAt: '2026-11-04T00:01:00Z',
   };
   run.sessionUsage = [previous];
-  run.agentContexts = [{ id: 'dev', role: 'dev', label: 'replacement', runId: run.id, slotId: run.slotId, status: 'complete',
-    runner: 'codex', runnerSessionId: 'b', model: 'model-b', effort: 'high',
-    startedAt: '2026-11-04T01:00:00Z', completedAt: '2026-11-04T02:00:00Z', updatedAt: '2026-11-04T02:00:00Z',
-  }];
-  const receipt = recoveredWorkerSessionReceipt(run, { contextId: 'dev', runnerSessionId: 'a', runnerSessionPath: '/recorded/a.jsonl' },
-    { runner: 'codex', runnerSessionId: 'a', actualModel: 'model-a', source: 'runner-transcript', totalTokens: 20, measuredAt: '2026-11-05T00:00:00Z' });
+  run.agentContexts = [
+    {
+      id: 'dev',
+      role: 'dev',
+      label: 'replacement',
+      runId: run.id,
+      slotId: run.slotId,
+      status: 'complete',
+      runner: 'codex',
+      runnerSessionId: 'b',
+      model: 'model-b',
+      effort: 'high',
+      startedAt: '2026-11-04T01:00:00Z',
+      completedAt: '2026-11-04T02:00:00Z',
+      updatedAt: '2026-11-04T02:00:00Z',
+    },
+  ];
+  const receipt = recoveredWorkerSessionReceipt(
+    run,
+    { contextId: 'dev', runnerSessionId: 'a', runnerSessionPath: '/recorded/a.jsonl' },
+    {
+      runner: 'codex',
+      runnerSessionId: 'a',
+      actualModel: 'model-a',
+      source: 'runner-transcript',
+      totalTokens: 20,
+      measuredAt: '2026-11-05T00:00:00Z',
+    },
+  );
   const restored = upsertSessionUsage([previous], receipt)[0];
   assert.equal(restored.model, 'model-a');
   assert.equal(restored.effort, 'low');

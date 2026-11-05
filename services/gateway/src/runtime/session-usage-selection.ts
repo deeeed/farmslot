@@ -27,7 +27,9 @@ export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
       runner: usage.runner ?? review.runner,
       runnerSessionId: usage.runnerSessionId ?? review.reviewerSessionId,
       model: review.model ?? usage.model ?? null,
-      role: 'review', runId: run.id, flowType: run.flowType,
+      role: 'review',
+      runId: run.id,
+      flowType: run.flowType,
     };
     rows = sessionUsageKey(receipt) ? upsertSessionUsage(rows, receipt) : [...rows, receipt];
   }

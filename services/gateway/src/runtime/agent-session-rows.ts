@@ -216,7 +216,11 @@ export function recoveredWorkerSessionReceipt(
   usage: RunnerSessionUsage,
 ): RunnerSessionUsage {
   const context = run.agentContexts?.find((item) => item.id === session.contextId);
-  if (context && context.runner === usage.runner && context.runnerSessionId === session.runnerSessionId) {
+  if (
+    context &&
+    context.runner === usage.runner &&
+    context.runnerSessionId === session.runnerSessionId
+  ) {
     const receipt = contextSessionReceipt(
       run,
       {
@@ -259,7 +263,9 @@ export function recoveredWorkerSessionReceipt(
       usage.costUsd == null ? 'Runner accounting has no verified price for this model' : undefined,
     captureGaps: [
       ...(usage.error ? [usage.error] : []),
-      ...(previous?.model == null || previous?.effort == null ? ['Historical requested configuration is unavailable'] : []),
+      ...(previous?.model == null || previous?.effort == null
+        ? ['Historical requested configuration is unavailable']
+        : []),
       ...(previous?.durationMs == null
         ? ['Historical session context/duration is unavailable']
         : []),
