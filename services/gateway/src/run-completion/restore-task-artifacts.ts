@@ -136,9 +136,6 @@ export async function restoreRetainedTaskArtifacts(run: Run): Promise<number> {
       if (!key.startsWith(prefix + 'artifacts/')) continue;
       assertCurrent();
       const relative = key.slice(prefix.length);
-      // Quota-deferred or age-pruned media remains unavailable evidence. It must
-      // not prevent restoring required metadata or block an intact worker.
-      if (isRunBundleMedia(relative) && unavailableMedia.has(key)) continue;
       const directory = await destinationDirectory(root, relative);
       const destination = path.join(root, relative);
       const existing = await lstat(destination).catch((error: NodeJS.ErrnoException) => {
@@ -149,7 +146,20 @@ export async function restoreRetainedTaskArtifacts(run: Run): Promise<number> {
         if (!existing.isFile()) throw new Error('Task artifact destination is not a file.');
         continue;
       }
-      const source = await bundle.resolveEntry(relative);
+      const source = await bundle.resolveEntry(relative).catch((error: unknown) => {
+        // A capture's immutable deferral survives later repair. Prefer readable
+        // verified bytes; skip only media still absent for a declared reason.
+        if (
+          isRunBundleMedia(relative) &&
+          unavailableMedia.has(key) &&
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'ENOENT'
+        )
+          return undefined;
+        throw error;
+      });
+      if (!source) continue;
       const temporary = path.join(directory, `.restore-${randomUUID()}`);
       try {
         await copyFile(source.path, temporary, constants.COPYFILE_FICLONE);

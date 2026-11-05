@@ -252,14 +252,14 @@ test('task restoration refuses corrupted retained bytes without publishing a rec
 
 test('quota-deferred optional media does not block restoring the runtime receipt', async (t) => {
   const f = await retainedFixture(t);
-  const { materializeRunBundle } = await import('@farmslot/run-bundle');
+  const { materializeRunBundle, readRetainedRunBundle } = await import('@farmslot/run-bundle');
   const { runBundleStore } = await import('../run-completion/retained-artifacts.js');
   const receipt = Buffer.from('{}\n');
   const media = Buffer.alloc(250000);
   await mkdir(path.join(f.dir, 'artifacts'));
   await writeFile(path.join(f.dir, 'artifacts/harness-provenance.json'), receipt);
   await writeFile(path.join(f.dir, 'artifacts/optional.mp4'), media);
-  const retained = await materializeRunBundle({
+  const request: Parameters<typeof materializeRunBundle>[0] = {
     store: await runBundleStore(),
     farmslotRoot: tools.root,
     run: f.run,
@@ -295,7 +295,8 @@ test('quota-deferred optional media does not block restoring the runtime receipt
     commit: async (ref) => {
       realRunStore.updateRun(f.run.id, { artifactBundle: ref });
     },
-  });
+  };
+  const retained = await materializeRunBundle(request);
   assert.deepEqual(retained.missingData, ['media-capacity:artifacts/optional.mp4']);
   await rm(path.join(f.dir, 'artifacts'), { recursive: true });
   await copyTaskFilesToSlot(f.run.id, { artifactsOnly: true });
@@ -304,4 +305,18 @@ test('quota-deferred optional media does not block restoring the runtime receipt
     '{}\n',
   );
   await assert.rejects(readFile(path.join(f.dir, 'artifacts/optional.mp4')), /ENOENT/);
+  // The immutable manifest still records the original deferral after repair.
+  await writeFile(path.join(f.dir, 'artifacts/optional.mp4'), media);
+  await materializeRunBundle({
+    ...request,
+    run: realRunStore.getRun(f.run.id)!,
+    existingRef: retained.ref,
+    allowChanged: true,
+    policy: { ...request.policy!, maxBundleBytes: 1000000, maxStoreBytes: 10000000 },
+  });
+  const repaired = await readRetainedRunBundle(await runBundleStore(), retained.ref, f.run.id);
+  assert.deepEqual(repaired.manifest.missingData, ['media-capacity:artifacts/optional.mp4']);
+  await rm(path.join(f.dir, 'artifacts/optional.mp4'));
+  await copyTaskFilesToSlot(f.run.id, { artifactsOnly: true });
+  assert.deepEqual(await readFile(path.join(f.dir, 'artifacts/optional.mp4')), media);
 });
