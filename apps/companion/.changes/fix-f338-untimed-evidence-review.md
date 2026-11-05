@@ -1,1 +1,0 @@
-- Keep untimed recording reviews playable with criteria navigation and same-attempt inspection screenshots without claiming AC bindings.

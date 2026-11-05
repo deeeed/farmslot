@@ -1,1 +1,0 @@
-- Use the shared longer current-run read window for gate verification, while retaining the bounded timeout and existing action guards.
