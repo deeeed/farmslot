@@ -314,11 +314,16 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
   const run = getRun(runId);
   if (!run || !run.slotId) return empty;
   try {
+    const { captureRunSessionUsage, recordRecoveredWorkerUsage } =
+      await import('../runtime/agent-session-usage.js');
+    await captureRunSessionUsage(runId);
     const vars = await loadSlotVars(run.slotId);
     const resolved = await resolveRunnerSessionForRun(run, vars);
     const runnerSessionPath = resolved?.runnerSessionPath ?? run.metrics.runnerSessionPath;
     const runnerSessionId = resolved?.runnerSessionId ?? run.metrics.runnerSessionId;
-    const workerUsage = await extractRunWorkerSessionUsage(run, vars);
+    const workerUsage = await extractRunWorkerSessionUsage(run, vars, (session, usage) =>
+      recordRecoveredWorkerUsage(run, session, usage),
+    );
     const usage =
       workerUsage ??
       (await extractRunnerSessionUsage({

@@ -7,7 +7,7 @@ import type { FleetStatus, PoolConfig } from '@farmslot/protocol';
 
 import * as realFleetState from '../fleet/state.js';
 
-function pool(machine: string): PoolConfig {
+function pool(machine: string, enabled = true): PoolConfig {
   return {
     machine,
     project: 'farm',
@@ -15,7 +15,16 @@ function pool(machine: string): PoolConfig {
     os: 'darwin',
     host: `${machine}.local`,
     sshUser: 'example',
-    slots: [],
+    slots: [
+      {
+        id: `${machine}-1`,
+        enabled,
+        mode: 'dispatch',
+        project: 'farm',
+        repo: '/fixture',
+        session: `${machine}-1`,
+      },
+    ],
   };
 }
 
@@ -37,7 +46,13 @@ const emptyFleet: FleetStatus = {
 mock.module('../fleet/state.js', {
   namedExports: {
     ...realFleetState,
-    loadPoolConfigs: async () => [pool('observed-online'), pool('observed-offline')],
+    loadPoolConfigs: async () => [
+      pool('observed-online'),
+      pool('observed-offline'),
+      pool('observed-pending'),
+      pool('farmslot-demo', false),
+      { ...pool('localhost'), slots: [] },
+    ],
     loadFleetStatus: async () => emptyFleet,
   },
 });
@@ -71,9 +86,13 @@ test('a node without a current observation does not empty the all-nodes worker l
   const online = connect('observed-online');
   // Connected, but no observation published yet (the window after every node connect).
   const pending = connect('observed-pending');
+  const demo = connect('farmslot-demo');
+  const empty = connect('localhost');
   t.after(() => {
     unregisterByWs(online);
     unregisterByWs(pending);
+    unregisterByWs(demo);
+    unregisterByWs(empty);
     resourceRevisions.dispose();
     resourceRevisions.setPublisher(() => {});
   });
@@ -98,13 +117,11 @@ test('a node without a current observation does not empty the all-nodes worker l
     connected: true,
     error: 'Node observed-pending has not published worker observations',
   });
-  assert.deepEqual(row('observed-offline'), {
-    ok: false,
-    connected: false,
-    error: 'node observed-offline is not connected',
-  });
+  assert.equal(row('observed-offline'), undefined, 'an unconnected pool is not a worker source');
+  assert.equal(row('farmslot-demo'), undefined, 'disabled slots do not admit worker discovery');
+  assert.equal(row('localhost'), undefined, 'an empty leaked pool does not admit worker discovery');
 
-  // includeDisconnected: false hides only the node with no connection.
+  // Connected-only discovery has the same eligible sources.
   const connectedOnly = await tmuxWorkerObservedList({ includeDisconnected: false });
   assert.deepEqual(connectedOnly.nodes.map((node) => node.nodeId).sort(), [
     'observed-online',

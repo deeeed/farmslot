@@ -290,6 +290,52 @@ function workspaceParams(params: unknown): Record<string, unknown> {
     ...(value.sessionId ? { executionNodeId: value.executionNodeId ?? 'local' } : {}),
   };
 }
+function gitShowFields(value: Record<string, unknown>): Record<string, unknown> {
+  if (value.paths === undefined) return value;
+  if (
+    value.path !== undefined ||
+    !Array.isArray(value.paths) ||
+    !value.paths.length ||
+    value.paths.some((path) => typeof path !== 'string' || !path)
+  )
+    throw new Error('git.show requires path or paths');
+  for (const path of value.paths) validateWorkspacePath(path);
+  if (
+    value.have !== undefined &&
+    (!Array.isArray(value.have) ||
+      value.have.some((id) => typeof id !== 'string' || !/^[0-9a-f]{40}$/i.test(id)))
+  )
+    throw new Error('Invalid held blob ids');
+  if (value.after !== undefined && typeof value.after !== 'string')
+    throw new Error('Invalid git.show cursor');
+  for (const field of ['maxBytes', 'maxFileBytes'])
+    if (
+      value[field] !== undefined &&
+      (typeof value[field] !== 'number' ||
+        !Number.isSafeInteger(value[field]) ||
+        Number(value[field]) < 1)
+    )
+      throw new Error('Invalid git.show page limit');
+  return value;
+}
+const GIT_SHOW_PAGE_FIELDS = ['paths', 'have', 'after', 'maxBytes', 'maxFileBytes'];
+function gitShowWorkspaceIdentity(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !GIT_SHOW_PAGE_FIELDS.includes(key)),
+  );
+}
+function gitShowWorkspaceParams(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    throw new Error('Workspace query requires parameters');
+  const value = input as Record<string, unknown>;
+  return gitShowFields({
+    ...workspaceParams(gitShowWorkspaceIdentity(value)),
+    ...(value.paths === undefined
+      ? {}
+      : Object.fromEntries(GIT_SHOW_PAGE_FIELDS.map((field) => [field, value[field]]))),
+  });
+}
+
 function workspaceDependencies(params: unknown, nativeReaderId?: string): ResourceKey[] {
   const value = workspaceParams(params);
   if (value.slotId)
@@ -994,7 +1040,14 @@ export const RESOURCE_QUERY_DEFINITIONS = {
   [Methods.FS_READ]: workspaceDefinition,
   [Methods.GIT_STATUS]: workspaceDefinition,
   [Methods.GIT_DIFF]: { ...workspaceDefinition, maxBytes: 5 * mb },
-  [Methods.GIT_SHOW]: workspaceDefinition,
+  [Methods.GIT_SHOW]: {
+    ...workspaceDefinition,
+    normalizeParams: gitShowWorkspaceParams,
+    dependencies: (value) =>
+      workspaceDependencies(gitShowWorkspaceIdentity(value as Record<string, unknown>)),
+    retentionGroups: (value) =>
+      workspaceRetentionGroups(gitShowWorkspaceIdentity(value as Record<string, unknown>)),
+  },
   [Methods.GIT_BRANCH_DIFF]: workspaceDefinition,
   [Methods.NATIVE_SESSION_WORKSPACE_LIST]: workspaceDefinition,
   [Methods.NATIVE_SESSION_WORKSPACE_READ]: workspaceDefinition,
@@ -1569,15 +1622,19 @@ function readDefinition(method: ResourceReadMethod, params: unknown): ResourceQu
       const value = domainParams(
         input,
         method === Methods.GIT_SHOW
-          ? ['slotId', 'runId', 'ref', 'path']
+          ? ['slotId', 'runId', 'ref', 'path', 'paths', 'have', 'after', 'maxBytes', 'maxFileBytes']
           : ['slotId', 'runId', 'base', 'head', 'path', 'oldPath'],
       );
       requiredId(value, 'runId');
-      for (const field of method === Methods.GIT_SHOW ? ['ref', 'path'] : ['base', 'head'])
+      for (const field of method === Methods.GIT_SHOW
+        ? value.paths === undefined
+          ? ['ref', 'path']
+          : ['ref']
+        : ['base', 'head'])
         requiredId(value, field);
       validateWorkspacePath(value.path);
       validateWorkspacePath(value.oldPath);
-      return { ...value, slotId: '' };
+      return { ...(method === Methods.GIT_SHOW ? gitShowFields(value) : value), slotId: '' };
     },
     dependencies: () => [],
     retentionGroups: (value) => [`run:${requiredId(value, 'runId')}`],

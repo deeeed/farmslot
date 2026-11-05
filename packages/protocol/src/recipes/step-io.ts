@@ -190,6 +190,8 @@ export interface MonitorSnapshot {
  *  Enables per-step cost tracking and model comparison across runs.
  *  Populated by callLLM() wrapper when it exists; manual until then. */
 export interface StepLLMUsage {
+  /** Shared pipeline receipt, also returned when no run owns the helper call. */
+  sessionUsage?: import('../contracts/runs.js').RunnerSessionUsage;
   provider: string; // "anthropic", "openai", "cli" (for claude -p)
   model: string; // "haiku", "opus", "sonnet", "gpt-4o"
   inputTokens?: number;

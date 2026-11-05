@@ -649,8 +649,11 @@ describe('PR list cache', { concurrency: 1 }, () => {
       const [one, two] = await Promise.all([first, second]);
       assert.deepEqual(
         one.prs.map((row) => row.pr),
-        [2],
+        [],
       );
+      assert.deepEqual(two.prs, []);
+      assert.equal(one.refreshing, true);
+      assert.equal(two.refreshing, true);
       assert.equal(one.fetchedAt, two.fetchedAt);
       assert.equal(peekPRList()?.prs[0].pr, 1, 'Scoped completion cannot replace the farm result');
       assert.notDeepEqual(prListResourceKey(), prListResourceKey('b'));

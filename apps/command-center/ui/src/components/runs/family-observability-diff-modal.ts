@@ -2,6 +2,7 @@ import { html, nothing, type TemplateResult } from 'lit';
 
 import type { FamilyObservabilityArtifact, FamilyObservabilitySnapshot } from '@farmslot/protocol';
 
+import { navigateHash } from '../../utils/url-state.js';
 import { runArtifactFetchUrl } from '../workspace/workspace-artifacts.js';
 
 import {
@@ -100,7 +101,7 @@ export function updateFamilyDiffModalHash(
   const next = familyDiffModalHash(artifact);
   if (location.hash !== next) {
     setSuppressed(true);
-    history.replaceState(null, '', next);
+    navigateHash(next, 'replace');
     queueMicrotask(() => {
       setSuppressed(false);
     });

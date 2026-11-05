@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
 
-import { viewTextField } from '@farmslot/protocol';
+import { viewTextField, viewToggleField } from '@farmslot/protocol';
 
 import { browserViewState, viewBinding, ViewStateBindings } from './view-state.js';
 
@@ -87,4 +87,13 @@ test('configured fields restore before render and persist a control update atomi
   bindings.hostDisconnected();
   browserViewState.set(viewTextField('choice', 'evidence'), 'other');
   assert.equal(choice, 'evidence', 'a disconnected host receives no route updates');
+  const sidebar = viewToggleField('panels', 'sidebar', false);
+  browserViewState.set(sidebar, true);
+  assert.equal(sidebar.read(new URLSearchParams(location.hash.split('?')[1])), true);
+  browserViewState.set(sidebar, false);
+  assert.equal(
+    sidebar.read(new URLSearchParams(location.hash.split('?')[1])),
+    false,
+    'a collapsed default must not inherit the old expanded value',
+  );
 });

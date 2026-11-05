@@ -17,7 +17,7 @@ const files = [
 if (files.length) {
   const result = spawnSync(
     'corepack',
-    ['yarn', 'lint', ...files.flatMap((file) => ['--file', file])],
+    ['yarn', 'exec', 'eslint', '--', ...files],
     { stdio: 'inherit', env: { ...process.env, CI: 'true' } },
   );
   if (result.error) throw result.error;

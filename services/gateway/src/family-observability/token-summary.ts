@@ -6,6 +6,13 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import {
+  isHelperSession,
+  isReviewSession,
+  runSessionUsageReceipts,
+  sessionUsageContributions,
+} from '../runtime/session-usage-selection.js';
+
 const MILESTONE_FLOWS: ReadonlySet<FlowType> = new Set(['pr-complete', 'update-branch']);
 
 function num(value: number | null | undefined): number {
@@ -20,26 +27,8 @@ interface TokenParts {
   total: number;
 }
 
-interface TokenContribution extends TokenParts {
-  model: string | null;
-}
-
 function emptyParts(): TokenParts {
   return { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
-}
-
-function partsFromMetrics(metrics: Run['metrics'] | undefined): TokenParts {
-  if (!metrics) return emptyParts();
-  const input = num(metrics.sessionInputTokens);
-  const output = num(metrics.sessionOutputTokens);
-  const cacheRead = num(metrics.sessionCacheRead);
-  const cacheCreation = num(metrics.sessionCacheCreation);
-  const derived = input + output + cacheRead + cacheCreation;
-  const total =
-    metrics.sessionTotalTokens != null && metrics.sessionTotalTokens > 0
-      ? metrics.sessionTotalTokens
-      : derived;
-  return { input, output, cacheRead, cacheCreation, total };
 }
 
 function mergeParts(base: TokenParts, extra: TokenParts): TokenParts {
@@ -61,35 +50,6 @@ function runLabel(run: Run): string {
   const runner = run.metrics.runner ?? 'runner';
   const model = run.metrics.model ?? 'model';
   return `${runner}-${model}`;
-}
-
-function reviewTokenParts(run: Run): TokenParts {
-  const reviews = run.engineState?.publishGate?.reviews ?? [];
-  return reviews.reduce((acc, review) => {
-    const usage = review.usage;
-    if (!usage || num(usage.totalTokens) <= 0) return acc;
-    return mergeParts(acc, {
-      input: num(usage.inputTokens),
-      output: num(usage.outputTokens),
-      cacheRead: num(usage.cacheRead),
-      cacheCreation: num(usage.cacheCreation),
-      total: num(usage.totalTokens),
-    });
-  }, emptyParts());
-}
-
-function reviewContributions(run: Run): TokenContribution[] {
-  const reviews = run.engineState?.publishGate?.reviews ?? [];
-  return reviews
-    .filter((review) => review.usage && num(review.usage.totalTokens) > 0)
-    .map((review) => ({
-      model: review.usage?.actualModel ?? review.model ?? null,
-      input: num(review.usage?.inputTokens),
-      output: num(review.usage?.outputTokens),
-      cacheRead: num(review.usage?.cacheRead),
-      cacheCreation: num(review.usage?.cacheCreation),
-      total: num(review.usage?.totalTokens),
-    }));
 }
 
 function hasRunMetrics(run: Run, worker: TokenParts, review: TokenParts): boolean {
@@ -130,9 +90,12 @@ export function buildFamilyObservabilityTokenSummary(
   familyId: string,
 ): FamilyObservabilityTokenSummary {
   const ordered = sortRunsChronologically(runs);
+  const sessionRows = sessionUsageContributions(ordered);
   let cumulativeTokens = 0;
   let cumulativeCost = 0;
   let hasAnyCost = false;
+  let hasUnpriced = false;
+  const unpricedModels = new Set<string>();
   let runsWithMetrics = 0;
   const missingRunIds: string[] = [];
   const byModelMap = new Map<
@@ -146,7 +109,7 @@ export function buildFamilyObservabilityTokenSummary(
     parts: TokenParts,
     costEstimate: number | null,
   ) => {
-    if (parts.total <= 0) return;
+    if (parts.total <= 0 && costEstimate == null) return;
     const key = model ?? 'unknown';
     const current = byModelMap.get(key) ?? {
       model: key,
@@ -175,24 +138,51 @@ export function buildFamilyObservabilityTokenSummary(
   };
 
   const runPoints: FamilyObservabilityTokenRunPoint[] = ordered.map((run) => {
-    const worker = partsFromMetrics(run.metrics);
-    const review = reviewTokenParts(run);
-    const stepParts = mergeParts(worker, review);
-    const hasMetrics = hasRunMetrics(run, worker, review);
+    const receipts = sessionRows.get(run.id) ?? [];
+    const parts = (rows: typeof receipts) =>
+      rows.reduce(
+        (acc, row) =>
+          mergeParts(acc, {
+            input: num(row.inputTokens),
+            output: num(row.outputTokens),
+            cacheRead: num(row.cacheRead),
+            cacheCreation: num(row.cacheCreation),
+            total: num(row.totalTokens),
+          }),
+        emptyParts(),
+      );
+    const worker = parts(receipts.filter((row) => !isReviewSession(row) && !isHelperSession(row)));
+    const review = parts(receipts.filter(isReviewSession));
+    const helper = parts(receipts.filter(isHelperSession));
+    const stepParts = parts(receipts);
+    const hasCapturedReceipts = runSessionUsageReceipts(run).length > 0;
+    const hasMetrics = hasCapturedReceipts || hasRunMetrics(run, worker, review);
     if (hasMetrics) runsWithMetrics += 1;
     else missingRunIds.push(run.id);
 
     cumulativeTokens += stepParts.total;
-    const cost = run.metrics.costEstimate ?? null;
+    const cost = receipts.length
+      ? receipts.every((row) => row.costUsd != null)
+        ? receipts.reduce((sum, row) => sum + num(row.costUsd), 0)
+        : null
+      : hasCapturedReceipts
+        ? 0
+        : (run.metrics.costEstimate ?? null);
+    if (receipts.some((row) => row.costUsd == null)) hasUnpriced = true;
+    for (const row of receipts)
+      if (row.costUsd == null) unpricedModels.add(row.actualModel ?? row.model ?? 'unknown');
     if (cost != null) {
       cumulativeCost += cost;
       hasAnyCost = true;
     }
 
-    addContribution(run.id, workerModel(run), worker, cost);
-    for (const reviewContribution of reviewContributions(run)) {
-      addContribution(run.id, reviewContribution.model, reviewContribution, null);
-    }
+    for (const row of receipts)
+      addContribution(
+        run.id,
+        row.actualModel ?? row.model ?? null,
+        parts([row]),
+        row.costUsd ?? null,
+      );
 
     return {
       runId: run.id,
@@ -205,6 +195,7 @@ export function buildFamilyObservabilityTokenSummary(
       runner: run.metrics.runner ?? null,
       workerTokens: worker.total,
       reviewTokens: review.total,
+      helperTokens: helper.total,
       inputTokens: stepParts.input,
       outputTokens: stepParts.output,
       cacheRead: stepParts.cacheRead,
@@ -212,7 +203,7 @@ export function buildFamilyObservabilityTokenSummary(
       stepTokens: stepParts.total,
       stepCostEstimate: cost,
       cumulativeTokens,
-      cumulativeCostEstimate: hasAnyCost ? cumulativeCost : null,
+      cumulativeCostEstimate: hasAnyCost && !hasUnpriced ? cumulativeCost : null,
       deltaTokens: stepParts.total,
       deltaCostEstimate: cost,
       hasMetrics,
@@ -220,12 +211,14 @@ export function buildFamilyObservabilityTokenSummary(
   });
 
   const byModel = [...byModelMap.values()]
-    .map(({ runIds: _runIds, ...entry }) => entry)
+    .map(({ runIds: _runIds, ...entry }) =>
+      unpricedModels.has(entry.model) ? { ...entry, costEstimate: null } : entry,
+    )
     .sort((a, b) => b.total - a.total || a.model.localeCompare(b.model));
 
   return {
     familyTotalTokens: cumulativeTokens,
-    familyTotalCostEstimate: hasAnyCost ? cumulativeCost : null,
+    familyTotalCostEstimate: hasAnyCost && !hasUnpriced ? cumulativeCost : null,
     runsWithMetrics,
     runsMissingMetrics: missingRunIds.length,
     missingRunIds,

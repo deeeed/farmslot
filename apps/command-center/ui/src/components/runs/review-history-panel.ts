@@ -13,7 +13,11 @@ import {
   type Run,
   RUN_VIEW_FIELDS,
 } from '@farmslot/protocol';
-import { resourceQuery, type ResourceReadMethod } from '@farmslot/protocol/client-cache';
+import {
+  readGitSource,
+  resourceQuery,
+  type ResourceReadMethod,
+} from '@farmslot/protocol/client-cache';
 import {
   loadReviewHistoryArtifacts,
   mergeReviewHistoryArtifacts,
@@ -36,6 +40,7 @@ import { readStoredArtifact } from '../../artifact-response.js';
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { currentRecoveryEpoch } from '../../utils/reconnect.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { useViewState } from '../../utils/view-state.js';
 import { readStored } from '../shared/read-current.js';
 import { runArtifactApiPath } from '../workspace/workspace-artifacts.js';
@@ -50,12 +55,9 @@ async function readReviewWorkspace<T>(method: ResourceReadMethod, params: unknow
 
 /** A slotless review run has no live workspace; it reads its frozen head through the run. */
 async function readReviewSource(params: GitShowParams): Promise<GitShowResult> {
-  if (params.slotId) return readReviewWorkspace<GitShowResult>(Methods.GIT_SHOW, params);
-  const { runId = '', ref, path } = params;
-  if (!runId || !ref || !path) throw new Error('Reviewed source is unavailable');
-  return readStored<GitShowResult>(
-    resourceQuery<GitShowResult>(Methods.GIT_SHOW, { slotId: '', runId, ref, path }),
-  );
+  if ((!params.slotId && !params.runId) || !params.ref || !params.path)
+    throw new Error('Reviewed source is unavailable');
+  return readGitSource(getResourceCache, params);
 }
 
 @customElement('review-history-panel')
@@ -215,7 +217,7 @@ export class ReviewHistoryPanel extends LitElement {
         purpose: 'diff',
         source: 'artifact-manifest',
       };
-      location.hash = `#run/${artifact.runId}?tab=files&file=${encodeURIComponent(artifact.path)}`;
+      navigateHash(`#run/${artifact.runId}?tab=files&file=${encodeURIComponent(artifact.path)}`);
     };
     return html`<section data-testid="review-history">
       ${history.activeReplay

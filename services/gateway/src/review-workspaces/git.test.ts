@@ -2,20 +2,70 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 
 import type { GitDiffParams, Run } from '@farmslot/protocol';
 
 import { makeRun } from '../methods/run/test-fixtures.js';
 
 let run: Run;
+let hostCalls = 0;
+let authorized = true;
+let simulated = false;
+const hostRequire = createRequire(import.meta.url);
+const exec = await import('../core/exec.js');
+mock.module('../core/exec.js', {
+  namedExports: {
+    ...exec,
+    execFileArgv: async (argv: string[]) => {
+      hostCalls++;
+      if (simulated) {
+        const input = JSON.parse(argv.at(-1)!);
+        const args: string[] = input.args;
+        return {
+          stdout: args.includes('diff')
+            ? 'frozen diff'
+            : args[0] === 'merge-base'
+              ? 'a'.repeat(40)
+              : args.at(-1)!.replace(/\^\{commit\}$/, ''),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      let stdout = '';
+      let stderr = '';
+      const process = {
+        argv: ['node', ...argv.slice(3)],
+        stdout: {
+          write: (data: string) => {
+            stdout += data;
+          },
+        },
+        stderr: {
+          write: (data: string) => {
+            stderr += data;
+          },
+        },
+        exitCode: 0,
+      };
+      runInNewContext(argv[2], { Buffer, require: hostRequire, process });
+      return { stdout, stderr, exitCode: process.exitCode };
+    },
+  },
+});
 mock.module('../runs/store.js', {
   namedExports: { getRunWithArchived: async () => run, getRun: () => run },
 });
 mock.module('../security/native-worker-owner.js', {
-  namedExports: { assertNativeRunOwner() {} },
+  namedExports: {
+    assertNativeRunOwner() {
+      if (!authorized) throw new Error('Owner access revoked');
+    },
+  },
 });
 // The local and remote paths execute the same production Git wrapper over pipes.
 mock.module('../runners/native/node.js', {
@@ -121,23 +171,29 @@ test('run-scoped batched git.show reads only the frozen head and the derived mer
   await mkdir(source);
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: source, encoding: 'utf8' }).trim();
-  const commit = async (content: string) => {
-    await writeFile(path.join(source, 'shared.txt'), content);
-    git('add', 'shared.txt');
-    git('commit', '--quiet', '-m', content);
-    return git('rev-parse', 'HEAD');
-  };
-  git('init', '--quiet');
-  git('config', 'user.email', 'fixture@example.test');
-  git('config', 'user.name', 'Fixture');
-  git('config', 'commit.gpgsign', 'false');
-  git('checkout', '--quiet', '-b', 'main');
-  const mergeBase = await commit('branch point\n');
-  git('checkout', '--quiet', '-b', 'feature');
-  const headSha = await commit('reviewed\n');
-  const newerHead = await commit('newer\n');
-  git('checkout', '--quiet', 'main');
-  const baseSha = await commit('base moved\n');
+  git('init', '--quiet', '--bare');
+  const imported = [
+    ['main', 'branch point\n', ':1', undefined],
+    ['feature', 'reviewed\n', ':2', ':1'],
+    ['feature', 'newer\n', ':3', ':2'],
+    ['main', 'base moved\n', ':4', ':1'],
+  ]
+    .map(
+      ([branch, content, mark, parent]) =>
+        `commit refs/heads/${branch}\nmark ${mark}\ncommitter Fixture <fixture@example.test> 1 +0000\ndata 7\nfixture\n${parent ? `from ${parent}\n` : ''}M 100644 inline shared.txt\ndata ${Buffer.byteLength(content!)}\n${content}\n`,
+    )
+    .join('');
+  execFileSync('git', ['fast-import', '--quiet'], { cwd: source, input: imported });
+  const [mergeBase, headSha, newerHead, baseSha, reviewedBlob, baseBlob, newerBlob] = git(
+    'rev-parse',
+    'refs/heads/main^',
+    'refs/heads/feature^',
+    'refs/heads/feature',
+    'refs/heads/main',
+    'refs/heads/feature^:shared.txt',
+    'refs/heads/main:shared.txt',
+    'refs/heads/feature:shared.txt',
+  ).split('\n');
   const identity = {
     owner: 'fixture',
     project: 'fixture',
@@ -173,12 +229,20 @@ test('run-scoped batched git.show reads only the frozen head and the derived mer
   const content = async (ref: string) =>
     Buffer.from((await read(ref)).entries[0].content!, 'base64').toString();
 
-  assert.equal(await content(headSha), 'reviewed\n');
+  hostCalls = 0;
+  const reviewed = await read(headSha);
+  assert.equal(Buffer.from(reviewed.entries[0].content!, 'base64').toString(), 'reviewed\n');
+  assert.equal(reviewed.entries[0].id, reviewedBlob);
+  assert.equal(hostCalls, 1);
+  hostCalls = 0;
   assert.equal(await content(mergeBase), 'branch point\n');
-  assert.equal((await read(headSha)).entries[0].id, git('rev-parse', `${headSha}:shared.txt`));
-  for (const ref of [baseSha, newerHead]) {
+  assert.equal(hostCalls, 1);
+  for (const [ref, id] of [
+    [baseSha, baseBlob],
+    [newerHead, newerBlob],
+  ]) {
     // Holding the object id is no authority to read it.
-    const have = [git('rev-parse', `${ref}:shared.txt`)];
+    const have = [id];
     await assert.rejects(read(ref, have), /frozen review commits/);
   }
   // Single-path reads keep today's head-only rule, even when the client asks for the merge-base.
@@ -191,8 +255,55 @@ test('run-scoped batched git.show reads only the frozen head and the derived mer
     gitDiff({ slotId: '', runId: run.id, ref: mergeBase, mergeBaseRef: true } as GitDiffParams),
     /frozen review commits/,
   );
+  hostCalls = 0;
   assert.deepEqual(await gitShow({ slotId: '', runId: run.id, ref: headSha, path: 'shared.txt' }), {
     content: 'reviewed\n',
-    id: git('rev-parse', `${headSha}:shared.txt`),
+    id: reviewedBlob,
   });
+  assert.equal(hostCalls, 1);
+});
+
+test('cached frozen diffs still check ownership and exact commits', { timeout: 1000 }, async () => {
+  run = makeRun({ id: 'cached-review', project: 'example' });
+  run.nativeOwnerPrincipalId = 'example-owner';
+  run.reviewWorkspaceSubject = {
+    repository: 'example/repo',
+    repositoryUrl: 'https://example.test/repo.git',
+    baseSha: 'a'.repeat(40),
+    headSha: 'b'.repeat(40),
+    branch: 'feature',
+    title: 'Example',
+    body: '',
+    capturedAt: '2026-11-05',
+  };
+  run.reviewWorkspace = {
+    workspaceId: run.id,
+    machine: 'example',
+    executionNodeId: 'local',
+    checkoutPath: '/example/runs/cached-review/source',
+    taskPath: '',
+    artifactPath: '',
+  };
+  const params = {
+    slotId: '',
+    runId: run.id,
+    base: run.reviewWorkspaceSubject.baseSha,
+    head: run.reviewWorkspaceSubject.headSha,
+  };
+  simulated = true;
+  try {
+    const expected = { diff: 'frozen diff', mergeBaseSha: params.base, headSha: params.head };
+    assert.deepEqual(await gitDiff(params), expected);
+    hostCalls = 0;
+    assert.deepEqual(await gitDiff(params), expected);
+    assert.equal(hostCalls, 0);
+    authorized = false;
+    await assert.rejects(gitDiff(params), /Owner access revoked/);
+    authorized = true;
+    await assert.rejects(gitDiff({ ...params, head: 'c'.repeat(40) }), /frozen review commits/);
+    assert.equal(hostCalls, 0);
+  } finally {
+    simulated = false;
+    authorized = true;
+  }
 });

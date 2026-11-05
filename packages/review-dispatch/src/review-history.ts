@@ -111,6 +111,8 @@ export interface ReviewHistoryRound {
   completedAt: string | null;
   durationMs: number | null;
   usageLabel: string | null;
+  /** The exact attempt receipt, retained for numeric accounting consumers. */
+  usage?: RunnerSessionUsage;
   headSha: string | null;
   reviewBaseSha: string | null;
   resultRecorded: boolean;
@@ -581,6 +583,15 @@ export function reviewHistoryView(
         number(raw?.unresolvedCount) ??
         number(saved?.unresolvedCount) ??
         (recorded ? issueRows.length : null);
+      const usage =
+        attempt?.usage ??
+        (review &&
+        ownsAttempt(
+          { ...review, headSha: review.reviewSnapshot?.headSha ?? undefined },
+          review.loopNumber,
+        )
+          ? review.usage
+          : undefined);
       return {
         key: actor?.id ?? `${id}:${loop}`,
         reviewId: id,
@@ -602,16 +613,8 @@ export function reviewHistoryView(
         startedAt,
         completedAt,
         durationMs: duration(startedAt, completedAt),
-        usageLabel: reviewUsageLabel(
-          attempt?.usage ??
-            (review &&
-            ownsAttempt(
-              { ...review, headSha: review.reviewSnapshot?.headSha ?? undefined },
-              review.loopNumber,
-            )
-              ? review.usage
-              : undefined),
-        ),
+        usage,
+        usageLabel: reviewUsageLabel(usage),
         headSha,
         reviewBaseSha,
         resultRecorded: recorded,

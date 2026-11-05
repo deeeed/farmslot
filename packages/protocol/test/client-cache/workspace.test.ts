@@ -74,10 +74,14 @@ test('workspace identities never accept client owner keys, command controls or e
   assert.equal(a.id, b.id);
 });
 
-test('batched git.show is a direct read, never an observed workspace query', () => {
-  assert.ok(resourceQuery('git.show', { slotId: 'slot', ref: 'HEAD', path: 'file' }));
+test('batched git.show shares the observed workspace fence', () => {
+  const single = resourceQuery('git.show', { slotId: 'slot', ref: 'HEAD', path: 'file' });
+  const batch = resourceQuery('git.show', { slotId: 'slot', ref: 'HEAD', paths: ['file'] });
+  assert.deepEqual(batch.dependencies, single.dependencies);
+  assert.equal(batch.requiresWorkspaceRead, true);
   assert.throws(
-    () => resourceQuery('git.show', { slotId: 'slot', ref: 'HEAD', paths: ['file'] }),
+    () =>
+      resourceQuery('git.show', { slotId: 'slot', ref: 'HEAD', paths: ['file'], command: 'pwd' }),
     /do not accept/,
   );
 });

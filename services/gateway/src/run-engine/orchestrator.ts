@@ -92,6 +92,7 @@ import {
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
+import { withRunSessionUsageContext } from '../runtime/run-session-usage-context.js';
 import { captureRunSourceOwnerFence } from '../sources/run-fence.js';
 import { SourceAdmissionRefusal, SourcePlanRestart, withRunSources } from '../sources/runtime.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -1873,6 +1874,16 @@ interface StepIO {
 }
 
 async function executeStep(runId: string, step: string, generation: number): Promise<StepIO> {
+  return withRunSessionUsageContext(runId, step, () =>
+    executeStepWithUsage(runId, step, generation),
+  );
+}
+
+async function executeStepWithUsage(
+  runId: string,
+  step: string,
+  generation: number,
+): Promise<StepIO> {
   for (let attempt = 0; attempt < 4; attempt++) {
     const run = getRun(runId)!;
     const requestedSlotId = run.slotId;

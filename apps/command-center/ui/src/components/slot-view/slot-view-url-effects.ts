@@ -1,6 +1,7 @@
 import type { GitDiffResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
+import { navigateHash } from '../../utils/url-state.js';
 import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
@@ -99,7 +100,7 @@ export function syncSlotViewUrlState(view: SlotView, contextId?: string): void {
     historyRun: view._historyRunId,
   });
   if (location.hash !== newHash) {
-    history.replaceState(null, '', newHash);
+    navigateHash(newHash, 'replace');
   }
 }
 

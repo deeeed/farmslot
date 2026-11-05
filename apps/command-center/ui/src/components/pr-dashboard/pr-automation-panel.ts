@@ -33,6 +33,7 @@ import './pr-rule-form.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
+import { navigateHash } from '../../utils/url-state.js';
 import type { ChoicePicker } from '../shared/choice-picker.js';
 
 import {
@@ -214,8 +215,8 @@ export class PRAutomationPanel extends LitElement {
       location.hash,
     );
     if (next && next !== location.hash) {
-      if (replace) history.replaceState(null, '', next);
-      else history.pushState(null, '', next);
+      if (replace) navigateHash(next, 'replace');
+      else navigateHash(next, 'push');
       this.dispatchEvent(
         new CustomEvent('pr-automation-navigation', { bubbles: true, composed: true }),
       );

@@ -526,6 +526,8 @@ export interface RunExtendReviewBudgetParams {
   limit: number;
   headSha: string;
   scopeBrief: string;
+  /** For a failed run whose slot was released: the slot whose checkout is its branch at headSha. */
+  slotId?: string;
 }
 
 export interface RunExtendReviewBudgetResult {

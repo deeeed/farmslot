@@ -63,6 +63,7 @@ import {
   runsDirectory,
   updateRun,
 } from '../../runs/store.js';
+import { withRunSessionUsageContext } from '../../runtime/run-session-usage-context.js';
 import { schedulerTick } from '../../work-graph/store.js';
 import { slotRelease, slotReleasePreflight } from '../slot/release.js';
 
@@ -433,7 +434,9 @@ export async function runBackfillSummaries(
           summary = run.ticketData.title;
           method = 'dry-run-title';
         } else {
-          const sr = await generateSummary(run.ticketData, run.flowType);
+          const sr = await withRunSessionUsageContext(run.id, 'summary', () =>
+            generateSummary(run.ticketData!, run.flowType),
+          );
           summary = sr.summary;
           method = 'llm';
         }

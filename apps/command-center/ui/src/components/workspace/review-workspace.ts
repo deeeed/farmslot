@@ -28,6 +28,7 @@ import {
   reviewPostRecommendation,
   sourceObservationAge,
 } from '@farmslot/protocol';
+import { readGitSource } from '@farmslot/protocol/client-cache';
 import { refreshReviewGateView, reviewGateRefreshBlocksPost } from '@farmslot/review-dispatch';
 
 import '../runs/review-history-panel.js';
@@ -53,6 +54,7 @@ import {
   readVerifiedText,
   type VerifiedText,
 } from '../../held-content.js';
+import { getResourceCache } from '../../resource-cache.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
 import { renderMarkdown } from '../../utils/markdown.js';
@@ -702,7 +704,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   private _readSavedSource(ref: string, path: string): Promise<GitShowResult> {
     const runId = this.runId;
     if (!runId || !ref || !path) throw new Error(UNRECORDED_REVIEW);
-    return gateway.request<GitShowResult>(Methods.GIT_SHOW, { slotId: '', runId, ref, path });
+    return readGitSource(getResourceCache, { slotId: '', runId, ref, path });
   }
 
   /** A newer slot status settles a branch mismatch, including after a checkout. */
@@ -1401,6 +1403,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._commentFileError = '';
     this._commentFileLoading = true;
     this._fileDiffLoading = false;
+    this._reads.releaseMethods([Methods.GIT_SHOW]);
     if (syncHash) this._syncSourceToHash();
     const reviewedHead = this._payload?.reviewSnapshot?.headSha?.trim();
     if (!reviewedHead) {
@@ -1426,16 +1429,16 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._commentFileLoading = false;
       return;
     }
-    this._reads.releaseMethods([Methods.GIT_SHOW]);
     const keep = openedContentKeeper('gate');
     try {
       const result = this.workspaceView
         ? await this._readSavedSource(reviewedHead, c.path)
         : // The reviewed head is immutable; later workspace notices carry the same content.
-          await this._reads.read<GitShowResult>(
-            Methods.GIT_SHOW,
+          await readGitSource(
+            getResourceCache,
             { slotId: this.slotId, ref: reviewedHead, path: c.path },
-            () => {},
+            (params) => this._reads.read(Methods.GIT_SHOW, params, () => {}),
+            id,
           );
       if (!captured.current() || epoch !== this._sourceLoadEpoch) return;
       keep(blobKey(result.content), result.content);
@@ -1445,7 +1448,10 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         this._commentFileError =
           error instanceof Error ? error.message : 'Reviewed source is unavailable.';
     } finally {
-      if (captured.ownsView() && epoch === this._sourceLoadEpoch) this._commentFileLoading = false;
+      if (captured.ownsView() && epoch === this._sourceLoadEpoch) {
+        this._reads.releaseMethods([Methods.GIT_SHOW]);
+        this._commentFileLoading = false;
+      }
     }
   }
 

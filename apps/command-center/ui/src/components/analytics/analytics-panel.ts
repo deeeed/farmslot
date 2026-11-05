@@ -13,7 +13,7 @@ import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { formatTokenCount } from '../../utils/review-gate-display.js';
-import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 function fmtMs(ms: number | null): string {
@@ -336,7 +336,7 @@ export class AnalyticsPanel extends LitElement {
     if (this.window) params.set('window', this.window);
     else params.delete('window');
     const nextHash = buildHash(route, params);
-    if (location.hash !== nextHash) history.replaceState(null, '', nextHash);
+    if (location.hash !== nextHash) navigateHash(nextHash, 'replace');
   }
 
   async load() {

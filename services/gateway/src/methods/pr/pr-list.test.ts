@@ -23,7 +23,29 @@ const retainRows = async (rows: readonly PRStatus[]): Promise<PRListFetchResult>
 });
 
 function pr(n: number, project: string): PRStatus {
-  return { pr: n, repo: 'org/app', title: `PR ${n}`, project, prState: 'OPEN' } as PRStatus;
+  return {
+    pr: n,
+    repo: 'org/app',
+    title: `PR ${n}`,
+    project,
+    prState: 'OPEN',
+    summary: null,
+    headRef: null,
+    slot: null,
+    session: null,
+    checks: [],
+    checkSummary: { passed: 0, failed: 0, pending: 0, skipped: 0, total: 0 },
+    allPassed: true,
+    anyFailed: false,
+    failedNames: [],
+    botComments: [],
+    actionableBotComments: [],
+    merged: false,
+    mergeable: 'MERGEABLE',
+    mergeConflict: false,
+    reviewDecision: 'APPROVED',
+    recommendation: 'READY',
+  };
 }
 
 test('project-scoped pr.list seeds a complete warm copy or collects one shared project scope when capped', async () => {
@@ -55,15 +77,16 @@ test('project-scoped pr.list seeds a complete warm copy or collects one shared p
     );
 
     resetPRListCacheForTests();
+    rmSync(path.join(dir, '.farm-cache'), { recursive: true, force: true });
     await servePRList(async () => ({ prs: [pr(1, 'a'), pr(2, 'b')], truncated: true, failed: [] }));
     const rediscovered = await prList({ project: 'b' }, fetchList, {}, retainRows);
     assert.deepEqual(calls, [{ project: 'b', force: false }]);
     assert.deepEqual(
       rediscovered.prs.map((p) => p.pr),
-      [3],
-      'rediscovery result is filtered by project too',
+      [2],
+      'retained rows stay readable during project discovery',
     );
-    assert.equal(rediscovered.refreshing, false);
+    assert.equal(rediscovered.refreshing, true);
   } finally {
     resetPRListCacheForTests();
     if (previous === undefined) delete process.env.FARMSLOT_DIR;
@@ -142,3 +165,50 @@ test('review meta folds into latest reviews, requests, and the pushed-after-chan
   assert.equal(noCommit.pushedAfterChangesRequested, false);
   assert.equal(summarizeReviewMeta([], '2026-09-14T12:00:00Z').pushedAfterChangesRequested, false);
 });
+
+test(
+  'a cold project scope serves retained farm rows during refresh and after reconnect',
+  { timeout: 1000 },
+  async (t) => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'pr-retained-scope-'));
+    const previous = process.env.FARMSLOT_DIR;
+    process.env.FARMSLOT_DIR = dir;
+    t.after(() => {
+      resetPRListCacheForTests();
+      if (previous === undefined) delete process.env.FARMSLOT_DIR;
+      else process.env.FARMSLOT_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
+    });
+    for (const reconnect of [false, true]) {
+      rmSync(path.join(dir, '.farm-cache'), { recursive: true, force: true });
+      resetPRListCacheForTests();
+      await servePRList(async () => ({ prs: [pr(1, 'a'), pr(2, 'b')], truncated: true }));
+      if (reconnect) resetPRListCacheForTests();
+      let finish!: (value: PRListFetchResult) => void;
+      const pending = new Promise<PRListFetchResult>((resolve) => {
+        finish = resolve;
+      });
+      const read = prList({ project: 'b' }, () => pending, {}, retainRows);
+      try {
+        const immediate = await Promise.race([
+          read.then(() => true),
+          new Promise<false>((resolve) => setImmediate(() => resolve(false))),
+        ]);
+        assert.equal(
+          immediate,
+          true,
+          `retained rows return before upstream; reconnect=${reconnect}`,
+        );
+        assert.deepEqual(
+          (await read).prs.map((row) => row.pr),
+          [2],
+        );
+        assert.equal((await read).refreshing, true);
+      } finally {
+        finish({ prs: [pr(3, 'b')], truncated: false, failed: [] });
+        await read;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+  },
+);

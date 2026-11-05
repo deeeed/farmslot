@@ -44,7 +44,7 @@ test(
     const root = mkdtempSync(join(tmpdir(), 'web-pack-zombie-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const provider = join(root, '.agent/recipe-provider');
-    const tools = join(root, '.agent/recipe-tools');
+    const tools = provider;
     const bin = join(root, 'bin');
     for (const dir of [provider, tools, bin]) mkdirSync(dir, { recursive: true });
     writeFileSync(

@@ -2,23 +2,51 @@ import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 
 import {
-  type GitShowResult,
+  type GitShowBatchResult,
   Methods,
   reviewedFindingContext,
   type ReviewGatePayload,
 } from '@farmslot/protocol';
-import type { ResourceQuery, ResourceQueryState } from '@farmslot/protocol/client-cache';
+import {
+  gitBlobHash,
+  type ResourceQuery,
+  type ResourceQueryState,
+} from '@farmslot/protocol/client-cache';
 
 let owner = 'owner-a';
-let state: ResourceQueryState<GitShowResult> = { status: 'loading' };
-let retried: ((value: ResourceQueryState<GitShowResult>) => void) | undefined;
+let state: ResourceQueryState<GitShowBatchResult> = { status: 'loading' };
+let retried: ((value: ResourceQueryState<GitShowBatchResult>) => void) | undefined;
 const queries: unknown[] = [];
+function ready(content: string): ResourceQueryState<GitShowBatchResult> {
+  const data = new TextEncoder().encode(content);
+  return {
+    status: 'ready',
+    data: {
+      entries: [
+        {
+          path: 'src/example.ts',
+          status: 'ok',
+          id: gitBlobHash(data),
+          size: data.length,
+          content: Buffer.from(data).toString('base64'),
+        },
+      ],
+      cursor: 'src/example.ts',
+      hasMore: false,
+    },
+  };
+}
 const cache = {
+  contentWriteToken: () => ({ connectionId: 0, ownerVersion: 0, storeVersion: 0 }),
+  openContent: async () => undefined,
+  openContentByAlias: async () => undefined,
+  heldBlobIds: async () => [],
+  storeContent: async () => true,
   retry(query: ResourceQuery<unknown>) {
     assert.equal(query.method, Methods.GIT_SHOW);
     queries.push(query.params);
     if (state.status === 'ready') return Promise.resolve(state);
-    return new Promise<ResourceQueryState<GitShowResult>>((resolve) => {
+    return new Promise<ResourceQueryState<GitShowBatchResult>>((resolve) => {
       retried = resolve;
     });
   },
@@ -55,48 +83,75 @@ test('finding inspection pins the reviewed SHA for both slot and standalone revi
   assert.equal(reviewFindingSourceRequest('review-run', 'slot', payload, 99), null);
 });
 
-test('review source retains exact numbered source and rejects a stale reply', async () => {
-  const { loadReviewFindingSource, reviewFindingSourceRequest } = await curation;
-  let current = true;
-  const params = reviewFindingSourceRequest('review-run', null, payload, 0)!;
-  state = { status: 'ready', data: { content: 'before\nReviewed value\nafter\n' } };
-  const context = await loadReviewFindingSource(params, 2, () => current);
-  assert.deepEqual(queries.at(-1), params);
-  assert.deepEqual(
-    context!.lines.find((line) => line.target),
-    { number: 2, text: 'Reviewed value', target: true },
-  );
-  const stale = loadReviewFindingSource(params, 2, () => current);
-  current = false;
-  assert.equal(await stale, null);
-});
+test(
+  'review source retains exact numbered source and rejects a stale reply',
+  { timeout: 1000 },
+  async () => {
+    const { loadReviewFindingSource, reviewFindingSourceRequest } = await curation;
+    let current = true;
+    const params = reviewFindingSourceRequest('review-run', null, payload, 0)!;
+    state = ready('before\nReviewed value\nafter\n');
+    const context = await loadReviewFindingSource(params, 2, () => current);
+    assert.deepEqual(queries.at(-1), {
+      slotId: '',
+      runId: 'review-run',
+      ref: params.ref,
+      paths: [params.path],
+      maxBytes: 10485760,
+      maxFileBytes: 10485760,
+    });
+    assert.deepEqual(
+      context!.lines.find((line) => line.target),
+      { number: 2, text: 'Reviewed value', target: true },
+    );
+    const stale = loadReviewFindingSource(params, 2, () => current);
+    current = false;
+    assert.equal(await stale, null);
+  },
+);
 
-test('slot findings read through the shared workspace cache and refuse a late owner', async () => {
-  const { loadReviewFindingSource, reviewFindingSourceRequest } = await curation;
-  const params = reviewFindingSourceRequest('run', 'slot', payload, 0)!;
-  state = { status: 'ready', data: { content: 'before\nReviewed value\n' } };
-  const context = await loadReviewFindingSource(params, 2, () => true);
-  assert.equal(context?.lines.find((line) => line.target)?.text, 'Reviewed value');
-  assert.deepEqual(queries.at(-1), { slotId: 'slot', ref: 'a'.repeat(40), path: 'src/example.ts' });
-  state = { status: 'stale', data: { content: 'saved' } };
-  const late = loadReviewFindingSource(params, 2, () => true);
-  owner = 'owner-b';
-  retried?.({ status: 'ready', data: { content: 'other owner' } });
-  await assert.rejects(late, /owner changed/);
-  owner = 'owner-a';
-});
+test(
+  'slot findings read through the shared workspace cache and refuse a late owner',
+  { timeout: 1000 },
+  async () => {
+    const { loadReviewFindingSource, reviewFindingSourceRequest } = await curation;
+    const params = reviewFindingSourceRequest('run', 'slot', payload, 0)!;
+    state = ready('before\nReviewed value\n');
+    const context = await loadReviewFindingSource(params, 2, () => true);
+    assert.equal(context?.lines.find((line) => line.target)?.text, 'Reviewed value');
+    assert.deepEqual(queries.at(-1), {
+      slotId: 'slot',
+      ref: 'a'.repeat(40),
+      paths: ['src/example.ts'],
+      maxBytes: 10485760,
+      maxFileBytes: 10485760,
+    });
+    state = { ...ready('saved'), status: 'stale' };
+    const late = loadReviewFindingSource(params, 2, () => true);
+    await new Promise((resolve) => setImmediate(resolve));
+    owner = 'owner-b';
+    retried?.(ready('other owner'));
+    await assert.rejects(late, /owner changed/);
+    owner = 'owner-a';
+  },
+);
 
-test('missing reviewed files fail without a mutable-workspace fallback', async () => {
-  const { loadReviewFindingSource, reviewFindingSourceRequest } = await curation;
-  state = { status: 'loading' };
-  const missing = loadReviewFindingSource(
-    reviewFindingSourceRequest('run', 'slot', payload, 0)!,
-    2,
-    () => true,
-  );
-  retried?.({ status: 'error', error: { code: 'READ_FAILED', message: 'Object unavailable' } });
-  await assert.rejects(missing, /Object unavailable/);
-});
+test(
+  'missing reviewed files fail without a mutable-workspace fallback',
+  { timeout: 1000 },
+  async () => {
+    const { loadReviewFindingSource, reviewFindingSourceRequest } = await curation;
+    state = { status: 'loading' };
+    const missing = loadReviewFindingSource(
+      reviewFindingSourceRequest('run', 'slot', payload, 0)!,
+      2,
+      () => true,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    retried?.({ status: 'error', error: { code: 'READ_FAILED', message: 'Object unavailable' } });
+    await assert.rejects(missing, /Object unavailable/);
+  },
+);
 
 test('selecting a line 462 finding uses the shared exact source-line context', async () => {
   const { reviewFindingSourceRequest } = await curation;

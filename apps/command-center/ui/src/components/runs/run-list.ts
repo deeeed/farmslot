@@ -48,6 +48,7 @@ import {
 } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import { readCurrent } from '../shared/read-current.js';
 import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -584,10 +585,10 @@ export class RunList extends RunListState {
     if (ids.length !== 2) return;
     const [a, b] = ids.map((id) => this.runById(id)).filter(Boolean) as Run[];
     if (a && b && !canCompareRuns(a, b)) {
-      location.hash = `runs?family=${encodeURIComponent(a.familyId)}`;
+      navigateHash(`runs?family=${encodeURIComponent(a.familyId)}`);
       return;
     }
-    location.hash = `runs/compare?a=${ids[0]}&b=${ids[1]}`;
+    navigateHash(`runs/compare?a=${ids[0]}&b=${ids[1]}`);
   }
 
   render() {
@@ -635,7 +636,7 @@ export class RunList extends RunListState {
         },
         setManageMode: (manageMode) => this.setManageMode(manageMode),
         openNewRun: () => {
-          location.hash = 'dispatch';
+          navigateHash('dispatch');
         },
       })}
       ${renderRunListSearchRow({
@@ -777,7 +778,7 @@ export class RunList extends RunListState {
                           if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
                             return;
                           event.preventDefault();
-                          location.hash = standaloneRunDetailHash(selectedRunId);
+                          navigateHash(standaloneRunDetailHash(selectedRunId));
                         }}
                         >Open full view ↗</a
                       >

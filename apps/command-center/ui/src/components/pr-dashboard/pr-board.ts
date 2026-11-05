@@ -29,7 +29,7 @@ import {
   subscribe,
 } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   activateWorkInventoryRow,
@@ -638,7 +638,7 @@ export class PRBoard extends LitElement {
     // the PR's branch, so emitting it here would override the ranker.
     // Preserve global filters so the wizard's fleet-filtered slot list keeps
     // the same scope the user chose on the board.
-    location.hash = prCompleteDispatchHash(detail);
+    navigateHash(prCompleteDispatchHash(detail));
   }
 
   private _writeUrl(push = false, closeEditor = false): void {
@@ -664,8 +664,8 @@ export class PRBoard extends LitElement {
       params.set('prTab', 'rules');
     const url = buildHash('prs', params);
     if (location.hash === url) return;
-    if (push) history.pushState(null, '', url);
-    else history.replaceState(null, '', url);
+    if (push) navigateHash(url, 'push');
+    else navigateHash(url, 'replace');
   }
 
   connectedCallback() {

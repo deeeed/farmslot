@@ -79,7 +79,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { visibleReviewDispatchCatalog } from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
-import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
 import { templateOptionsRequestKey } from '../dispatch/dispatch-wizard-template-options.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
@@ -1439,7 +1439,7 @@ export class BacklogPanel extends LitElement {
       BACKLOG_SORT_URL,
     );
     const next = buildHash(route, params);
-    if (location.hash !== next) history.replaceState(null, '', next);
+    if (location.hash !== next) navigateHash(next, 'replace');
   }
 
   private _setProjectFilter(project: string) {
@@ -3317,7 +3317,7 @@ export class BacklogPanel extends LitElement {
     params.delete(BACKLOG_MODE_PARAM);
     params.delete(BACKLOG_RUNNER_PICKER_PARAM);
     params.set('worker', encodeWorkerRouteParam(worker));
-    location.hash = buildHash('terminal', params);
+    navigateHash(buildHash('terminal', params));
   }
 
   private _renderRefinementChoice(args: {
