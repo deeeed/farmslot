@@ -2,7 +2,7 @@ import { viewListField } from '@farmslot/protocol';
 import { ARTIFACT_BROWSER_PARAMS } from '@farmslot/protocol/surfaces/view-links';
 
 import { EVIDENCE_REVIEWER_PARAMS } from './components/shared/evidence-reviewer-url-state.js';
-import { buildHash, parseHashRoute } from './utils/url-state.js';
+import { buildHash, navigateHash, parseHashRoute } from './utils/url-state.js';
 
 export interface GlobalFilters {
   projects: string[];
@@ -81,7 +81,7 @@ export function writeFiltersToHash(filters: GlobalFilters): void {
   if (location.hash === next) return;
   // replaceState does not fire `hashchange`, so the listener in state.ts cannot
   // re-apply our own write back into state — no suppression flag needed.
-  history.replaceState(null, '', next);
+  navigateHash(next, 'replace');
 }
 
 // `#runs` per-page filter state. Keys live alongside the global `projects`/

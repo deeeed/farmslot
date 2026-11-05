@@ -6,10 +6,54 @@ import {
   getHashParam,
   hashRoute,
   hashSearch,
+  navigateHash,
   parseHashRoute,
   readViewChoice,
   viewChoiceHash,
 } from './url-state.js';
+
+test('F414 navigation after an async action carries shell choices into the destination URL', async (t) => {
+  const descriptors = new Map(
+    ['location', 'history'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  const location = { hash: '#dispatch?panels=sidebar&sidebarWidth=320&file=private-draft' };
+  const currentHash = () => location.hash;
+  const writes: string[] = [];
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      replaceState(_data: unknown, _title: string, hash: string) {
+        writes.push(hash);
+        location.hash = hash;
+      },
+      pushState(_data: unknown, _title: string, hash: string) {
+        writes.push(hash);
+        location.hash = hash;
+      },
+    },
+  });
+  t.after(() => {
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+  await Promise.resolve();
+  navigateHash('run/new-run');
+  assert.equal(currentHash(), '#run/new-run?panels=sidebar&sidebarWidth=320');
+  navigateHash('#config/pool', 'replace');
+  assert.equal(currentHash(), '#config/pool?panels=sidebar&sidebarWidth=320');
+  const count = writes.length;
+  navigateHash('#config/pool', 'push');
+  assert.equal(
+    writes.length,
+    count,
+    'inherited shell choices must not create redundant history entries',
+  );
+  navigateHash('#runs?panels=!sidebar', 'push');
+  assert.equal(new URLSearchParams(currentHash().split('?')[1]).get('panels'), '!sidebar');
+});
 
 test('hash helpers parse route and query consistently', () => {
   const hash = '#slot/demo?file=src%2Findex.ts&resource=ios%20sim';

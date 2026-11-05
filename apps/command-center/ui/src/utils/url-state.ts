@@ -44,6 +44,22 @@ export function buildHash(
   return `#${route}${query ? `?${query}` : ''}`;
 }
 
+export function navigationHash(destination: string, currentHash = location.hash): string {
+  const { route, params } = parseHashRoute(destination);
+  return buildHash(route, params, currentHash);
+}
+
+/** Apply route changes at their writer, including asynchronous action completions. */
+export function navigateHash(
+  destination: string,
+  mode: 'assign' | 'push' | 'replace' = 'assign',
+): void {
+  const next = navigationHash(destination);
+  if (next === location.hash) return;
+  if (mode === 'assign') location.hash = next;
+  else history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', next);
+}
+
 /** Context owns the route, parameter and omitted default for a persistent view choice. */
 export interface ViewChoiceContext {
   route: string;

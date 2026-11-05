@@ -31,7 +31,7 @@ import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { putCapped } from '../../utils/markdown.js';
-import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 import type { LightboxPair } from '../shared/media-lightbox-types.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { slotViewHash } from '../slot-view/slot-view-url-state.js';
@@ -157,7 +157,7 @@ export class FamilyObservability extends FamilyObservabilityState {
           params.get('run') !== this.selectedRunId
         ) {
           params.set('run', this.selectedRunId);
-          history.replaceState(null, '', buildHash(route, params));
+          navigateHash(buildHash(route, params), 'replace');
         }
         this._applyDiffModalFromHash();
       } else {
@@ -218,7 +218,7 @@ export class FamilyObservability extends FamilyObservabilityState {
       gate: this._gateMaximized ? 'max' : this._gateOpen || undefined,
     });
     if (window.location.hash !== newHash) {
-      history.replaceState(null, '', newHash);
+      navigateHash(newHash, 'replace');
     }
   };
 
@@ -343,7 +343,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     if (!this.familyId) return;
     const newHash = familyTokenViewHash(this._tokenScope, this._tokenTrajectory);
     if (window.location.hash !== newHash) {
-      history.replaceState(null, '', newHash);
+      navigateHash(newHash, 'replace');
     }
   }
 
@@ -364,7 +364,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     const newHash = familyGateViewHash(view, location.hash, {
       clearWorkspaceParams: view === 'closed' && !this._diffModal,
     });
-    if (window.location.hash !== newHash) history.replaceState(null, '', newHash);
+    if (window.location.hash !== newHash) navigateHash(newHash, 'replace');
   }
 
   private _togglePublishGate = () => {
@@ -555,7 +555,7 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private _syncCompareViewHash(): void {
     const newHash = familyCompareViewHash(this._compareTab, this._compareSortKey);
-    if (window.location.hash !== newHash) history.replaceState(null, '', newHash);
+    if (window.location.hash !== newHash) navigateHash(newHash, 'replace');
   }
 
   private _applyCompareViewFromHash(): void {
@@ -631,7 +631,7 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private _openSlotHistoryAt(run: FamilyObservabilityRunSummary) {
     if (!run.slotId) return;
-    location.hash = slotHistoryHashForRun(run.slotId, run.runId);
+    navigateHash(slotHistoryHashForRun(run.slotId, run.runId));
   }
 
   private _renderRunOutputComparisonSummary(
@@ -783,7 +783,7 @@ export class FamilyObservability extends FamilyObservabilityState {
       renderRunDetail: (targetRun) => this._renderRunDetail(targetRun),
       renderDiffModal: () => this._renderDiffModal(),
       onBackToRuns: () => {
-        location.hash = 'runs';
+        navigateHash('runs');
       },
       onGenerateReport: () => {
         void this._generateReport();
@@ -801,7 +801,7 @@ export class FamilyObservability extends FamilyObservabilityState {
       evidenceThumbUrl: (artifact) => familyArtifactUrl(artifact),
       onOpenSlot: (slotId, event) => {
         event.stopPropagation();
-        location.hash = `slot/${slotId}`;
+        navigateHash(`slot/${slotId}`);
       },
       onLightboxClose: () => {
         this._lightboxOpen = false;
@@ -1040,7 +1040,7 @@ export class FamilyObservability extends FamilyObservabilityState {
         this._evidenceFilter = filter;
         const newHash = familyEvidenceFilterHash(filter);
         if (window.location.hash !== newHash) {
-          history.replaceState(null, '', newHash);
+          navigateHash(newHash, 'replace');
         }
       },
       artifactUrl: (artifact: FamilyObservabilityArtifact) => familyArtifactUrl(artifact),
@@ -1145,11 +1145,13 @@ export class FamilyObservability extends FamilyObservabilityState {
       },
     };
     if (!opened.ok || !opened.slotId) return;
-    location.hash = slotViewHash({
-      slotId: opened.slotId,
-      runId,
-      contextId: opened.contextId,
-    });
+    navigateHash(
+      slotViewHash({
+        slotId: opened.slotId,
+        runId,
+        contextId: opened.contextId,
+      }),
+    );
   }
 
   private async _copyRunnerSessionCommand(

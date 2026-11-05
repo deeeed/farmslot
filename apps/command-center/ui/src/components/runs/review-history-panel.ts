@@ -36,6 +36,7 @@ import { readStoredArtifact } from '../../artifact-response.js';
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { currentRecoveryEpoch } from '../../utils/reconnect.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { useViewState } from '../../utils/view-state.js';
 import { readStored } from '../shared/read-current.js';
 import { runArtifactApiPath } from '../workspace/workspace-artifacts.js';
@@ -215,7 +216,7 @@ export class ReviewHistoryPanel extends LitElement {
         purpose: 'diff',
         source: 'artifact-manifest',
       };
-      location.hash = `#run/${artifact.runId}?tab=files&file=${encodeURIComponent(artifact.path)}`;
+      navigateHash(`#run/${artifact.runId}?tab=files&file=${encodeURIComponent(artifact.path)}`);
     };
     return html`<section data-testid="review-history">
       ${history.activeReplay

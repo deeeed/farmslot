@@ -121,6 +121,7 @@ import {
   updateRuns,
 } from '../state.js';
 import { colors, fonts, spacing } from '../styles/theme-tokens.js';
+import { navigateHash } from '../utils/url-state.js';
 
 import {
   mockAcceptanceCriteria,
@@ -1337,7 +1338,7 @@ export class DevHarness extends LitElement {
                   <div
                     class="index-card"
                     @click=${() => {
-                      location.hash = `dev/${r.route}`;
+                      navigateHash(`dev/${r.route}`);
                     }}
                   >
                     <h3>${r.label}</h3>
@@ -2554,7 +2555,7 @@ All checks passed.`;
             .tags=${['demo', 'onboarding']}
             .saveTags=${async () => undefined}
             .filterTag=${(tag: string) => {
-              location.hash = `runs?tag=${encodeURIComponent(tag)}`;
+              navigateHash(`runs?tag=${encodeURIComponent(tag)}`);
             }}
           ></run-tag-editor>
         </div>
@@ -4787,7 +4788,7 @@ All checks passed.`;
                   <a
                     class="${this.route === 'index' ? 'active' : ''}"
                     @click=${() => {
-                      location.hash = 'dev';
+                      navigateHash('dev');
                     }}
                     >Index</a
                   >
@@ -4802,7 +4803,7 @@ All checks passed.`;
                             <a
                               class="${this.route === r.route ? 'active' : ''}"
                               @click=${() => {
-                                location.hash = `dev/${r.route}`;
+                                navigateHash(`dev/${r.route}`);
                               }}
                               >${r.label}</a
                             >

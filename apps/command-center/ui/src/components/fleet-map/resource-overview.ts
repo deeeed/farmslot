@@ -7,6 +7,7 @@ import { Methods } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, shadows, spacing } from '../../styles/theme-tokens.js';
 import { RESOURCE_CONTROL_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { navigateHash } from '../../utils/url-state.js';
 
 import type { ResourceEntry } from './fleet-canvas.js';
 
@@ -311,7 +312,7 @@ export class ResourceOverview extends LitElement {
           <span
             class="slot-link"
             @click=${() => {
-              location.hash = `slot/${e.slotId}`;
+              navigateHash(`slot/${e.slotId}`);
             }}
             >${e.slotId}</span
           >

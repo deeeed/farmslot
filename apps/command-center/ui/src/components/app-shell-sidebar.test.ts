@@ -4,23 +4,25 @@ import test from 'node:test';
 import type { TmuxWorkerListResult, TmuxWorkerNodeResult } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
-import { pinnedWorkerReadError, sidebarNavigationHash } from './app-shell-nav-model.js';
+import { navigationHash } from '../utils/url-state.js';
+
+import { pinnedWorkerReadError } from './app-shell-nav-model.js';
 
 test('F414 shell expansion and width survive route navigation without carrying route selections', () => {
   assert.equal(
-    sidebarNavigationHash(
+    navigationHash(
       '#terminal?view=new',
       '#runs?run=private-selection&panels=sidebar,monitor-details&sidebarWidth=320',
     ),
     '#terminal?view=new&panels=sidebar&sidebarWidth=320',
   );
-  assert.equal(sidebarNavigationHash('#fleet', '#runs'), '#fleet');
+  assert.equal(navigationHash('#fleet', '#runs'), '#fleet');
   assert.equal(
-    sidebarNavigationHash('#runs?panels=monitor-details', '#fleet?panels=sidebar'),
+    navigationHash('#runs?panels=monitor-details', '#fleet?panels=sidebar'),
     '#runs?panels=monitor-details%2Csidebar',
   );
   assert.equal(
-    sidebarNavigationHash('#runs?panels=!sidebar', '#fleet?panels=sidebar'),
+    navigationHash('#runs?panels=!sidebar', '#fleet?panels=sidebar'),
     '#runs?panels=%21sidebar',
   );
 });

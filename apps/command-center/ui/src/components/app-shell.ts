@@ -119,7 +119,7 @@ import {
   type PinnedWorkspacePreference,
   unpinWorkspace,
 } from '../utils/pinned-slots.js';
-import { hashParams, hashRoute } from '../utils/url-state.js';
+import { hashParams, navigateHash, navigationHash } from '../utils/url-state.js';
 import { browserViewState, viewBinding, ViewStateBindings } from '../utils/view-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
@@ -132,7 +132,6 @@ import {
   DEFAULT_SIDEBAR_WIDTH,
   pinnedWorkerReadError,
   SIDEBAR_PANEL_FIELD,
-  sidebarNavigationHash,
 } from './app-shell-nav-model.js';
 import {
   pairingAuthorityFromSelection,
@@ -388,6 +387,8 @@ export class FarmApp extends LitElement {
     this.route = this.getRouteFromHash();
     window.addEventListener('hashchange', this.onHashChange);
     this.addEventListener('click', this.onWorkspaceNavigation, true);
+    this.addEventListener('auxclick', this.onWorkspaceNavigation, true);
+    this.addEventListener('contextmenu', this.onWorkspaceNavigation, true);
     window.addEventListener('keydown', this.onGlobalKeyDown);
     window.addEventListener('pointermove', this.onSidebarResizeMove);
     window.addEventListener('pointerup', this.onSidebarResizeEnd);
@@ -410,6 +411,8 @@ export class FarmApp extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.onHashChange);
     this.removeEventListener('click', this.onWorkspaceNavigation, true);
+    this.removeEventListener('auxclick', this.onWorkspaceNavigation, true);
+    this.removeEventListener('contextmenu', this.onWorkspaceNavigation, true);
     window.removeEventListener('keydown', this.onGlobalKeyDown);
     window.removeEventListener('pointermove', this.onSidebarResizeMove);
     window.removeEventListener('pointerup', this.onSidebarResizeEnd);
@@ -798,16 +801,6 @@ export class FarmApp extends LitElement {
   }
 
   private onWorkspaceNavigation = (event: MouseEvent) => {
-    const previous = location.hash;
-    // Button and row handlers can navigate without an anchor. Run after their click handler,
-    // before the queued hashchange restores view choices. History traversal stays authoritative.
-    queueMicrotask(() => {
-      if (hashRoute() === hashRoute(previous)) return;
-      const next = sidebarNavigationHash(location.hash, previous);
-      if (next === location.hash) return;
-      history.replaceState(history.state, '', next);
-      this.displayChoices.restore();
-    });
     const link = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
     if (!(link instanceof HTMLAnchorElement) || link.hasAttribute('download')) return;
     const target = new URL(link.href);
@@ -818,7 +811,7 @@ export class FarmApp extends LitElement {
       !target.hash
     )
       return;
-    link.hash = sidebarNavigationHash(target.hash);
+    link.hash = navigationHash(target.hash);
   };
 
   private onSidebarResizeStart = (e: PointerEvent) => {
@@ -875,7 +868,7 @@ export class FarmApp extends LitElement {
     // bounce to fleet instead — hiding the nav entry alone isn't enough.
     if (!this.alphaEnabled && (hash === 'violations' || ALPHA_ROUTES.has(hash as Route))) {
       this.route = 'fleet';
-      history.replaceState(null, '', '#fleet');
+      navigateHash('#fleet', 'replace');
       return;
     }
     if (hash === 'dev' || hash.startsWith('dev/')) {
@@ -922,7 +915,7 @@ export class FarmApp extends LitElement {
     }
     if (hash === 'violations') {
       this.route = 'intelligence';
-      history.replaceState(null, '', '#intelligence');
+      navigateHash('#intelligence', 'replace');
       return;
     }
     const valid: Route[] = [
@@ -950,7 +943,7 @@ export class FarmApp extends LitElement {
     // instead — the page's job is already done.
     if (this.route === 'onboarding' && this.connection === 'connected') {
       this.route = 'fleet';
-      history.replaceState(null, '', '#fleet');
+      navigateHash('#fleet', 'replace');
     }
     this.slotParam = '';
     this.configParam = '';
@@ -985,7 +978,7 @@ export class FarmApp extends LitElement {
   }
 
   private navigate(route: Route) {
-    location.hash = sidebarNavigationHash(`#${route}`);
+    navigateHash(`#${route}`);
   }
 
   private syncState(s: AppState) {
@@ -1784,7 +1777,7 @@ export class FarmApp extends LitElement {
           class="fa-active-run ${selected ? 'active' : ''} ${needsAttention
             ? 'needs-attention'
             : ''}"
-          href=${sidebarNavigationHash(href)}
+          href=${navigationHash(href)}
           title=${`${slotId ?? runId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
         >
           <div class="fa-active-run-top">
@@ -1855,7 +1848,7 @@ export class FarmApp extends LitElement {
           'Connect URLs must include a #connect= or #doctor?connect= fragment.';
         return;
       }
-      location.hash = hash.startsWith('#doctor') ? hash : `#doctor?${hash.slice(1)}`;
+      navigateHash(hash.startsWith('#doctor') ? hash : `#doctor?${hash.slice(1)}`);
       location.reload();
       return;
     }
@@ -1865,7 +1858,7 @@ export class FarmApp extends LitElement {
       localStorage.setItem(GATEWAY_URL_STORAGE_KEY, normalized);
       localStorage.setItem(GATEWAY_CANDIDATES_STORAGE_KEY, JSON.stringify([normalized]));
       localStorage.setItem(GATEWAY_SOURCE_STORAGE_KEY, 'stored');
-      location.hash = 'doctor';
+      navigateHash('doctor');
       location.reload();
     } catch (err) {
       this.onboardingError = err instanceof Error ? err.message : 'Invalid gateway URL.';
@@ -2546,7 +2539,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
               'alpha'
                 ? 'fa-nav-btn--alpha'
                 : ''}"
-              href=${sidebarNavigationHash(`#${item.route}`)}
+              href=${navigationHash(`#${item.route}`)}
               title="${item.label}"
             >
               <span class="fa-nav-icon">${item.icon}</span>${this._sidebarExpanded

@@ -4,7 +4,6 @@ import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../state.js';
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../utils/sidebar-view-state.js';
-import { buildHash, parseHashRoute } from '../utils/url-state.js';
 
 export {
   clampSidebarWidth,
@@ -17,12 +16,6 @@ export {
 import { activeRunsForGlobalFilters } from './runs/run-list-model.js';
 
 export const SIDEBAR_WIDTH_PREF_KEY = 'farmslot:sidebar-expanded-width';
-
-/** Carry only shell choices across routes; a destination's explicit choices win. */
-export function sidebarNavigationHash(destination: string, current = location.hash): string {
-  const { route, params } = parseHashRoute(destination);
-  return buildHash(route, params, current);
-}
 
 export function pinnedWorkerReadError(state: ResourceQueryState<TmuxWorkerListResult>): string {
   if (state.error) {

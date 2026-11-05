@@ -31,6 +31,7 @@ import {
 import { colors, lifecycleColor } from '../../styles/theme-tokens.js';
 import { progressReadNotice } from '../../utils/progress-read-status.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
@@ -573,7 +574,7 @@ export class SlotDetail extends LitElement {
             class="view-tab ${this._viewTab === 'detail' ? 'active' : ''}"
             @click=${() => {
               this._viewTab = 'detail';
-              location.hash = `slot/${this.slotId}`;
+              navigateHash(`slot/${this.slotId}`);
             }}
           >
             Detail
@@ -582,7 +583,7 @@ export class SlotDetail extends LitElement {
             class="view-tab ${this._viewTab === 'workspace' ? 'active' : ''}"
             @click=${() => {
               this._viewTab = 'workspace';
-              location.hash = `slot/${this.slotId}/workspace`;
+              navigateHash(`slot/${this.slotId}/workspace`);
             }}
           >
             Workspace

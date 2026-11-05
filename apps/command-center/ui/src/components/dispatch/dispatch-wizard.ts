@@ -55,6 +55,7 @@ import {
   NODE_CATALOG_RUNNERS,
   visibleReviewDispatchCatalog,
 } from '../../utils/runner-visible-models.js';
+import { navigateHash } from '../../utils/url-state.js';
 import {
   deriveExecutionTemplatePickerView,
   pickCompatibleExecutionTemplateId,
@@ -1324,7 +1325,7 @@ export class DispatchWizard extends DispatchWizardState {
     if (prefill.startRefRedirectHash) {
       this._error =
         'Direct startRef dispatch moved to #evals so replay creates Reference/Candidate packages instead of a plain run.';
-      history.replaceState(null, '', prefill.startRefRedirectHash);
+      navigateHash(prefill.startRefRedirectHash, 'replace');
     }
     if (prefill.comparison) {
       this._comparisonFlow = Boolean(prefill.comparison.parentRunId);
@@ -1371,7 +1372,7 @@ export class DispatchWizard extends DispatchWizardState {
       this._reviewPicker.toSequence(),
       this._reviewPicker.toReviewContext(),
     );
-    if (nextHash && location.hash !== nextHash) history.replaceState(null, '', nextHash);
+    if (nextHash && location.hash !== nextHash) navigateHash(nextHash, 'replace');
   }
 
   /** Backend pressure decision for the currently selected candidate row. */
@@ -1654,7 +1655,7 @@ export class DispatchWizard extends DispatchWizardState {
       this._checkActiveRunConflict();
       if (this._activeRunConflict) return;
       const runId = await dispatchRunCreateFromDraft(payloadDraft);
-      if (current()) location.hash = `run/${runId}`;
+      if (current()) navigateHash(`run/${runId}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Dispatch failed';
       if (current()) this._error = msg;
@@ -2251,7 +2252,7 @@ export class DispatchWizard extends DispatchWizardState {
         this._devInteractiveProfile = profile;
       },
       openEvals: () => {
-        location.hash = 'evals';
+        navigateHash('evals');
       },
       enterComparisonFlow: () => this._enterComparisonFlow(),
       enterNormalFlow: () => this._enterNormalFlow(),

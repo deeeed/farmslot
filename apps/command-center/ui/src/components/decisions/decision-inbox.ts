@@ -29,6 +29,7 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe as subscribeState } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
+import { navigateHash } from '../../utils/url-state.js';
 import {
   feedbackSummaryLabel,
   renderFeedbackCandidates,
@@ -279,15 +280,15 @@ export class DecisionInbox extends LitElement {
     const route = payload?.route ?? context?.route;
     if (!route) return false;
     if (actionId === 'review-promotion') {
-      location.hash = payload?.promotionRoute ?? withHashParam(route, 'promote', '1');
+      navigateHash(payload?.promotionRoute ?? withHashParam(route, 'promote', '1'));
       return true;
     }
     if (actionId === 'open-roadmap') {
-      location.hash = route;
+      navigateHash(route);
       return true;
     }
     if (actionId === 'revise-runner') {
-      location.hash = withHashParam(route, 'runnerPicker', '1');
+      navigateHash(withHashParam(route, 'runnerPicker', '1'));
       return true;
     }
     return false;
