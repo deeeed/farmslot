@@ -8,9 +8,12 @@ import path from 'node:path';
 import {
   buildOperatorWaitInstructions,
   type HandoffSourceKind,
+  inspectTaskAcceptanceState,
   parseProjectWorkerTemplateFileName,
   portableProjectRepo,
   readTaskDocumentAddendum,
+  refreshTaskAcceptanceInputs,
+  type TaskAcceptanceState,
   type TaskInitSpec,
 } from '@farmslot/agent-runtime';
 import {
@@ -29,6 +32,7 @@ import {
   type RepeatReviewContext,
   type Run,
   runOutputReviewEnabled,
+  type RunTicketData,
   type TaskSchema,
   type TaskSchemaPhase,
   type TemplateProvenance,
@@ -60,7 +64,12 @@ import {
   type RawProjectJson,
   readSlotRow,
 } from '../core/index.js';
-import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
+import {
+  ORCHESTRATOR_LOCALITY,
+  type SlotLocality,
+  slotReadFile,
+  slotWriteFileAtomic,
+} from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import {
   buildFollowUpScopeContractSection,
@@ -75,6 +84,7 @@ import { getPRRawData, parseJsonLines } from '../methods/pr/raw-cache.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
+import { resolveWorkerTaskDir } from '../review/templates.js';
 import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { persistRunNow, updateRun } from '../runs/store.js';
@@ -1457,6 +1467,93 @@ export async function readFrozenTaskInit(
   taskFile: string,
 ): Promise<{ runId: string; slotId: string; input: HostedTaskInput }> {
   return JSON.parse(await readFile(path.join(path.dirname(taskFile), TASK_INIT_INPUT), 'utf8'));
+}
+
+interface WrittenTaskTicketOwner {
+  mirrorDir: string;
+  slot: SlotLocality;
+  taskDir: string;
+}
+
+async function writtenTaskTicketOwner(run: Run): Promise<WrittenTaskTicketOwner> {
+  if (!run.taskFile) throw new Error('Ticket refresh requires a registered task');
+  const mirrorDir = path.dirname(run.taskFile);
+  const vars = run.slotId ? await loadSlotVars(run.slotId) : undefined;
+  const slot = vars ?? ORCHESTRATOR_LOCALITY;
+  const relative = vars ? await resolveWorkerTaskDir(vars, run.project, run.taskFile) : null;
+  if (run.slotId && !relative)
+    throw new Error('Ticket refresh worker task directory is unavailable');
+  const taskDir = vars ? path.posix.join(vars.remoteRepo, relative!) : mirrorDir;
+  return { mirrorDir, slot, taskDir };
+}
+
+export async function readWrittenTaskAcceptanceState(
+  run: Run,
+  previousCriteria: readonly string[] = [],
+  criteria: readonly string[] = [],
+): Promise<TaskAcceptanceState> {
+  const { slot, taskDir } = await writtenTaskTicketOwner(run);
+  return inspectTaskAcceptanceState({
+    handoff: await slotReadFile(slot, path.join(taskDir, 'inputs/handoff.json')),
+    runId: run.id,
+    project: run.project,
+    flow: run.flowType,
+    previousCriteria,
+    criteria,
+  });
+}
+
+/** Refresh the producer-owned acceptance inputs without reinitializing authored work or receipts. */
+export async function refreshWrittenTaskTicket(
+  run: Run,
+  ticket: RunTicketData,
+  previousCriteria: readonly string[],
+  owns: () => Promise<boolean>,
+): Promise<void> {
+  if (!run.taskFile) throw new Error('Ticket refresh requires a registered task');
+  const { mirrorDir, slot, taskDir } = await writtenTaskTicketOwner(run);
+  const refreshed = refreshTaskAcceptanceInputs({
+    handoff: await slotReadFile(slot, path.join(taskDir, 'inputs/handoff.json')),
+    taskMarkdown: await slotReadFile(slot, path.join(taskDir, 'TASK.md')),
+    runId: run.id,
+    project: run.project,
+    flow: run.flowType,
+    previousCriteria,
+    criteria: ticket.acceptanceCriteria,
+  });
+  const files = [
+    { path: 'inputs/handoff.json', text: refreshed.handoff },
+    { path: 'TASK.md', text: refreshed.taskMarkdown },
+    { path: 'inputs/bug-input.json', text: `${JSON.stringify(ticket, null, 2)}\n` },
+  ];
+  // The private replay request stays on the gateway; it is never sent to the worker.
+  let frozenInput: string | undefined;
+  if (existsSync(path.join(mirrorDir, TASK_INIT_INPUT))) {
+    const frozen = await readFrozenTaskInit(run.taskFile);
+    if (frozen.runId !== run.id || frozen.slotId !== run.slotId)
+      throw new Error('Ticket refresh frozen task input belongs to another run or slot');
+    frozen.input.task.task = {
+      ...frozen.input.task.task,
+      title: ticket.title,
+      description: ticket.description,
+      acceptanceCriteria: ticket.acceptanceCriteria,
+    };
+    frozen.input.task.bugInput = ticket;
+    frozenInput = `${JSON.stringify(frozen)}\n`;
+  }
+  if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
+  for (const file of files)
+    await slotWriteFileAtomic(slot, path.join(taskDir, file.path), file.text);
+  if (run.slotId)
+    for (const file of files)
+      await slotWriteFileAtomic(ORCHESTRATOR_LOCALITY, path.join(mirrorDir, file.path), file.text);
+  if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
+  if (frozenInput !== undefined) {
+    const frozenPath = path.join(mirrorDir, TASK_INIT_INPUT);
+    await writeFile(`${frozenPath}.tmp`, frozenInput, { mode: 0o600 });
+    await rename(`${frozenPath}.tmp`, frozenPath);
+  }
+  await syncAcceptanceExecutionContract(run, slot, taskDir, mirrorDir, owns, []);
 }
 
 /** Submit the frozen input on the prepared slot, then write what reads the produced task. */

@@ -16,11 +16,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
+import type { AgentContext, Run } from '@farmslot/protocol';
+
+import { makeRun } from '../run-engine/test-fixtures.js';
+
 import { makeVars } from './test-fixtures.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const { buildClaudeBackgroundProbeCommand, readClaudeBackgroundWorkState } =
   await import('./claude-background-work.js');
+const { deriveRunnerSessionDeliveryState } = await import('./observability-files.js');
+const { readRunProgress } = await import('./run-progress.js');
 
 // Resolve once so repeated probes do not pay a version-manager shim's startup cost.
 const pythonDirectory = path.dirname(
@@ -46,6 +52,12 @@ function completed(task = 'background-1', tool = 'tool-1', status = 'completed')
     operation: 'enqueue',
     sessionId,
     content: `<task-notification><task-id>${task}</task-id><tool-use-id>${tool}</tool-use-id><status>${status}</status></task-notification>`,
+  };
+}
+function agentCompletion(status = 'completed') {
+  return {
+    ...completed(),
+    content: `<task-notification><task-id>background-1</task-id><status>${status}</status></task-notification>`,
   };
 }
 function stopCall(task = 'background-1', tool = 'stop-1') {
@@ -133,6 +145,132 @@ test('asynchronous native agents use the same task completion identity', async (
   assert.equal(f.read().state, 'active');
   await f.write([agent, completed()]);
   assert.equal(f.read().state, 'idle');
+});
+
+test('native agent completions without a tool id settle only an unambiguous earlier agent launch', async (t) => {
+  const f = await transcript(t);
+  const agent = { ...launch(), toolUseResult: { isAsync: true, agentId: 'background-1' } };
+  for (const status of ['completed', 'failed', 'killed']) {
+    await f.write([agent]);
+    assert.equal(f.read().state, 'active');
+    await appendFile(f.file, JSON.stringify(agentCompletion(status)) + '\n');
+    assert.equal(f.read().state, 'idle', 'an appended native agent completion settles its launch');
+  }
+});
+
+test('agent completions without a tool id cannot settle unrelated work or a reused agent id', async (t) => {
+  const f = await transcript(t);
+  const agent = { ...launch(), toolUseResult: { isAsync: true, agentId: 'background-1' } };
+  const resumed = { ...agent, message: launch('background-1', 'resume-2').message };
+  for (const records of [
+    [launch(), agentCompletion()],
+    [agent, { ...agentCompletion(), sessionId: 'foreign' }],
+    [agent, agentCompletion('running')],
+    [agent, completed('background-1', 'other-tool')],
+    [agentCompletion(), agent],
+    [agent, agentCompletion(), resumed],
+    [agent, agentCompletion(), resumed, agentCompletion()],
+    [agent, resumed, agentCompletion()],
+    [agent, agentCompletion(), launch('background-2', 'tool-2')],
+  ]) {
+    await f.write(records);
+    assert.equal(f.read().state, 'active', 'unrelated, ambiguous or later work remains active');
+  }
+});
+
+test('an idle ready-gate worker sharing its pane with a blocked fix has no completed background agents', async (t) => {
+  const f = await transcript(t);
+  const agents = ['agent-1', 'agent-2'].map((agentId, index) => ({
+    ...launch(agentId, `launch-${index}`),
+    toolUseResult: { isAsync: true, agentId },
+  }));
+  await f.write([
+    ...agents,
+    ...agents.flatMap(({ toolUseResult: { agentId } }, index) => [
+      {
+        ...completed(agentId),
+        content: `<task-notification><task-id>${agentId}</task-id><status>completed</status></task-notification>`,
+      },
+      completed(agentId, `later-call-${index}`),
+    ]),
+  ]);
+  const vars = makeVars();
+  const paneState = {
+    session_id: sessionId,
+    rootSessionId: sessionId,
+    tmuxPane: '%383',
+    transcript_path: f.file,
+    event: 'Notification',
+    notification_type: 'idle_prompt',
+    turnActive: false,
+    turnStartedAt: 200,
+    observedAt: 300,
+  };
+  const context: AgentContext = {
+    id: 'dev',
+    role: 'dev',
+    label: 'Dev',
+    status: 'working',
+    runId: 'run-1',
+    slotId: vars.slotId,
+    runner: 'claude',
+    target: { session: 'owned', target: 'owned:dev', paneId: '%383' },
+    runnerSessionId: sessionId,
+    promptDeliveryStartedAt: '2026-11-05T18:00:00.000Z',
+    promptAcceptance: {
+      runner: 'claude',
+      deliveryStartedAt: '2026-11-05T18:00:00.000Z',
+      turnToken: `${sessionId}:100`,
+      observedAt: 100,
+      sessionId,
+      sessionPath: f.file,
+    },
+  };
+  const run: Run = {
+    ...makeRun({
+      flowType: 'dev',
+      status: 'monitoring',
+      steps: [{ name: 'human-gate', status: 'running' }],
+    }),
+    agentContexts: [
+      context,
+      {
+        ...context,
+        id: 'review',
+        role: 'review',
+        status: 'complete',
+        target: null,
+        nativeSession: {
+          sessionId: 'review-session',
+          commandId: 'review-command',
+          generation: 'review-generation',
+          leaseId: 'review-lease',
+          executionNodeId: 'node',
+          ownerPrincipalId: 'owner',
+          closedAt: '2026-11-05T18:00:00.000Z',
+        },
+      },
+      { ...context, id: 'review-fix', role: 'review-fix', label: 'Review fix', status: 'blocked' },
+    ],
+  };
+  const progress = await readRunProgress(run, {
+    slot: async () => vars,
+    taskProgress: async () => null,
+    target: async () => ({ target: '%383', session: 'owned' }),
+    activity: async () => null, // The activity heartbeat has expired; durable turn idle remains.
+    turn: async () => deriveRunnerSessionDeliveryState(paneState, sessionId),
+    background: async () =>
+      readClaudeBackgroundWorkState(vars, '%383', {
+        pane: async () => ({ paneId: '%383', panePid: '123' }),
+        paneState: async () => paneState,
+        sessionState: async () => paneState,
+        exec: async () => ({ exitCode: 0, stdout: JSON.stringify(f.read()), stderr: '' }),
+        process: async () => ({ state: 'present', pid: '124' }),
+      }),
+    turnActive: async () => false,
+    retainedTarget: async () => ({ state: 'unknown', reason: 'Recorded runner remains present' }),
+  });
+  assert.equal(progress.kind, 'idle');
 });
 
 test('foreign sessions, tool identities and ordinary prompts cannot settle native background work', async (t) => {

@@ -59,6 +59,7 @@ def unknown():
 if os.path.basename(transcript) != session + '.jsonl':
     unknown()
 launched = set()
+agent_launches = set()
 finished = set()
 stop_calls = set()
 stop_results = set()
@@ -89,6 +90,7 @@ def save_cache(st, offset, tail):
         'v': version, 'session': session, 'dev': st.st_dev, 'ino': st.st_ino, 'offset': offset,
         'tail': hashlib.sha256(tail).hexdigest(), 'matched': matched_session,
         'launched': sorted(launched), 'finished': sorted(finished),
+        'agent_launches': sorted(agent_launches),
         'stop_calls': sorted(stop_calls), 'stop_results': sorted(stop_results),
     }
     temporary = None
@@ -115,6 +117,7 @@ try:
             offset = cache['offset']
             matched_session = cache.get('matched') is True
             launched = {tuple(entry) for entry in cache.get('launched', [])}
+            agent_launches = {tuple(entry) for entry in cache.get('agent_launches', [])}
             finished = {tuple(entry) for entry in cache.get('finished', [])}
             stop_calls = {tuple(entry) for entry in cache.get('stop_calls', [])}
             stop_results = {tuple(entry) for entry in cache.get('stop_results', [])}
@@ -159,6 +162,8 @@ try:
                     if len(tools) != 1 or not isinstance(tools[0].get('tool_use_id'), str) or not tools[0]['tool_use_id']:
                         unknown()
                     launched.add((task, tools[0]['tool_use_id']))
+                    if result.get('isAsync') is True and result.get('agentId') == task:
+                        agent_launches.add((task, tools[0]['tool_use_id']))
                 task = result.get('task_id')
                 task_type = result.get('task_type')
                 if isinstance(task, str) and task and isinstance(task_type, str) and task_type and len(tools) == 1:
@@ -178,8 +183,15 @@ try:
                     continue
                 task = notification.findtext('task-id')
                 tool = notification.findtext('tool-use-id')
-                if task and tool and notification.findtext('status') in ('completed', 'failed', 'killed'):
-                    finished.add((task, tool))
+                if task and notification.findtext('status') in ('completed', 'failed', 'killed'):
+                    if tool:
+                        finished.add((task, tool))
+                    else:
+                        # Native agent notifications can omit the call id. Require exactly one
+                        # known async call: a repeated old notification must not settle a resume.
+                        candidates = {entry for entry in agent_launches if entry[0] == task}
+                        if len(candidates) == 1:
+                            finished.update(candidates)
         after = os.fstat(stream.fileno())
         cached = save_cache(before, offset + consumed, tail) if consumed else True
 except OSError:

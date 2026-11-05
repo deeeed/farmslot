@@ -1,0 +1,1 @@
+- Refresh ticket scope from the task's registered criteria and replace stale pending refreshes with a recorded fresh admission.

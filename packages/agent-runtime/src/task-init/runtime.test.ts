@@ -12,7 +12,52 @@ import {
   builtinTerminalContract,
   defaultMarkCommand,
   ensureTaskRuntime,
+  refreshTaskAcceptanceInputs,
 } from './index.js';
+
+test('a producer-built handoff without criteria can gain criteria on refresh', () => {
+  const handoff = buildHandoffMetadata({
+    attemptId: 'empty-criteria',
+    surface: 'farmslot',
+    project: 'example',
+    flow: 'dev',
+    title: 'Initially no criteria',
+    sourceKind: 'jira',
+    acceptanceCriteria: [],
+    terminalContract: builtinTerminalContract('dev'),
+  });
+  assert.equal(Object.hasOwn(handoff.task, 'acceptanceCriteria'), false);
+  const taskMarkdown = buildTaskDocument({
+    flowType: 'dev',
+    modePreamble: '',
+    vars: { TASK_DIR: '.task/empty-criteria' },
+    description: 'Initially no criteria',
+    acceptanceCriteria: [],
+    hasTicketData: true,
+  });
+  const input = {
+    handoff: JSON.stringify(handoff),
+    taskMarkdown,
+    runId: handoff.attemptId,
+    project: handoff.project,
+    flow: handoff.flow,
+    previousCriteria: [],
+    criteria: ['The new behavior is proven.'],
+  };
+  const refreshed = refreshTaskAcceptanceInputs(input);
+  assert.deepEqual(JSON.parse(refreshed.handoff).task.acceptanceCriteria, input.criteria);
+  assert.match(refreshed.taskMarkdown, /- The new behavior is proven\./);
+  assert.deepEqual(refreshTaskAcceptanceInputs({ ...input, ...refreshed }), refreshed);
+  for (const acceptanceCriteria of [null, 'invalid', [42]])
+    assert.throws(
+      () =>
+        refreshTaskAcceptanceInputs({
+          ...input,
+          handoff: JSON.stringify({ ...handoff, task: { ...handoff.task, acceptanceCriteria } }),
+        }),
+      /handoff identity is invalid/,
+    );
+});
 
 test('interactive task documents teach the shared operator wait and resume commands', () => {
   const input = {
@@ -223,4 +268,32 @@ test('all worker review paths receive the shared scope rule exactly once', () =>
     assert.ok(document.includes('Each file must serve an AC or a required test'));
     assert.ok(document.includes('Any scope BLOCKER requires REQUEST_CHANGES, never APPROVE'));
   }
+});
+
+test('CI fix push commands carry scope for ordinary and pinned branch maintenance', () => {
+  const scope = JSON.stringify({
+    baseRef: 'main',
+    headSha: 'a'.repeat(40),
+    ownedFiles: ['src/product.ts'],
+  });
+  const vars = {
+    REPO: '/product',
+    BRANCH: 'fix/product',
+    PUBLICATION_BASE: 'main',
+    DEFAULT_BRANCH: 'main',
+    BRANCH_UPDATE_SCRIPT: '/runtime/branch-update.mjs',
+    CI_FIX_SCOPE: scope,
+  };
+  assert.equal(
+    buildBranchUpdateGuardCommand(vars, 'push'),
+    `node '/runtime/branch-update.mjs' push '${JSON.stringify({ kind: 'ordinary', repo: '/product', branch: 'fix/product', baseRef: 'main' })}' '${scope}'`,
+  );
+  assert.equal(
+    buildBranchUpdateGuardCommand({ ...vars, BRANCH_UPDATE_CONTEXT: '{"id":"pinned"}' }, 'push'),
+    `node '/runtime/branch-update.mjs' push '{"id":"pinned"}' '${scope}'`,
+  );
+  assert.equal(
+    buildBranchUpdateGuardCommand(vars),
+    `node '/runtime/branch-update.mjs' execute '${JSON.stringify({ kind: 'ordinary', repo: '/product', branch: 'fix/product', baseRef: 'main' })}'`,
+  );
 });

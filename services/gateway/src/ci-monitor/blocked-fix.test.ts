@@ -40,6 +40,19 @@ mock.module('../methods/pr.js', {
           merged: false,
           mergeConflict: false,
           checks: snapshot.checks,
+          checkSnapshot: {
+            pr: 10384,
+            repo: 'MetaMask/core',
+            fetchedAt: new Date().toISOString(),
+            checks: snapshot.checks.map((check) => ({
+              name: check.name,
+              status: check.status === 'pending' ? 'IN_PROGRESS' : 'COMPLETED',
+              conclusion:
+                check.status === 'pending' ? null : snapshot.allPassed ? 'SUCCESS' : 'FAILURE',
+              timestamp: null,
+              detailsUrl: null,
+            })),
+          },
           checkSummary: {
             passed: snapshot.allPassed ? 1 : 0,
             failed,

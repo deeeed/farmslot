@@ -5,6 +5,7 @@ import {
   Events,
   GATE_SUMMARY_KINDS,
   isPublishApprovalAction,
+  isTerminalRunStatus,
   latestExhaustedReview,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
@@ -14,6 +15,8 @@ import {
   type ReviewStatus,
   type Run,
   type RunDecision,
+  type RunRefreshPublishPackageParams,
+  type RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
 
 import { loadSlotVars, SlotConfigError } from '../core/config.js';
@@ -54,10 +57,12 @@ import { refreshRunGateReadiness, reviewsWithValidResults } from './gate-prerequ
 import { buildGateSummary } from './gate-summary.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
+import { buildReadyGateInputs } from './ready-gate-inputs.js';
 import { readGateRecordedEvidenceSources } from './recorded-evidence-sources.js';
 import { refreshReviewDiffIdentities, refreshReviewDiffSnapshot } from './review-diff-refresh.js';
 import { projectClaimFindingSettlements } from './review-finding-settlements.js';
 import { getDiffStat } from './task-artifacts.js';
+import { refreshRunTicket } from './ticket-refresh.js';
 import { activeVisualRepair, visualRepairOffered } from './visual-repair.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -397,29 +402,22 @@ export async function refreshPublishPackage(
 }
 
 async function refreshPublishPackageTransitionLocked(
-  params: {
-    runId: string;
-    decisionId?: string;
-    selectedEvidenceKeys?: string[];
-    publicationTarget?: 'draft' | 'ready';
-  },
+  params: RunRefreshPublishPackageParams,
   allowHistorical = false,
   progressReader: typeof readRunProgress = readRunProgress,
   sourceReader: typeof capturePublicationSource = capturePublicationSource,
-): Promise<{
-  run: Run;
-  packageId: string;
-  packageHash: string;
-  packageHeadSha?: string;
-  packageInputHash?: string;
-  reviewSubjectHash?: string;
-  preservedEvidenceKeys: string[];
-  droppedEvidence: { key: string; reason: string }[];
-  droppedEvidenceKeys: string[];
-  addedEvidenceKeys: string[];
-}> {
-  const run = getRun(params.runId);
-  if (!run) throw new Error(`Run not found: ${params.runId}`);
+): Promise<RunRefreshPublishPackageResult> {
+  if (params.refreshTicket !== undefined && typeof params.refreshTicket !== 'boolean')
+    throw new Error('refreshTicket must be a boolean');
+  const initialRun = getRun(params.runId);
+  if (!initialRun) throw new Error(`Run not found: ${params.runId}`);
+  let run = initialRun;
+  if (params.refreshTicket && (run.prNumber || publicationStatusForRun(run) !== 'not_published'))
+    throw new Error(
+      'Cannot refresh ticket: this run already published a PR or publication is in progress',
+    );
+  if (params.refreshTicket && (isTerminalRunStatus(run.status) || run.status === 'paused'))
+    throw new Error('Cannot refresh ticket on a terminal or paused run');
   const decision = run.decisions.find(
     (d) =>
       d.type === 'engine_human_gate' &&
@@ -472,7 +470,8 @@ async function refreshPublishPackageTransitionLocked(
   if (progress && progress.kind !== 'idle')
     throw progress.kind === 'making-progress'
       ? new OwnedWorkerBusyError()
-      : new BlockedRunError(OWNED_WORKER_NOT_IDLE);
+      : new BlockedRunError(`${OWNED_WORKER_NOT_IDLE}. Observed state: ${progress.kind}.`);
+  if (params.refreshTicket) run = await refreshRunTicket(run);
   const selectedBefore =
     params.selectedEvidenceKeys ??
     oldPayload.prPackage?.selectedEvidenceKeys ??
@@ -655,6 +654,7 @@ async function refreshPublishPackageTransitionLocked(
   const nextPayload: ReadyGatePayload = applyBranchFreshnessToReadyGatePayload(
     {
       ...oldPayload,
+      ...(await buildReadyGateInputs(refreshedRun)),
       diffStat: prPackage.diffStat,
       branch: prPackage.branch,
       headSha: prPackage.headSha,

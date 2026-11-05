@@ -1740,6 +1740,16 @@ export interface PrIntegrationStatus {
   note?: string;
 }
 
+export interface RunTicketRefresh {
+  principalId: string;
+  principalGeneration?: number;
+  requestedAt: string;
+  appliedAt?: string;
+  supersededAt?: string;
+  previousCriteria: string[];
+  criteria: string[];
+}
+
 export interface RunTicketData {
   source: 'jira' | 'github' | 'both' | 'manual';
   issueType?: string; // Jira issue type: Bug, Task, Story, etc.
@@ -3071,6 +3081,8 @@ export interface Run {
   /** Present on archived run records so archive-aware readers can suppress them from active timelines. */
   archivedAt?: string;
   ticketData?: RunTicketData;
+  /** Person-requested scope refreshes, retained across package failures and retries. */
+  ticketRefreshes?: RunTicketRefresh[];
   grade?: RunGrade;
   humanGrade?: HumanGrade;
   links?: RunLink[];
@@ -3326,6 +3338,8 @@ export interface RunEngineState {
  * and attempt counters survive gateway restart (ADR-027).
  */
 export interface RunCiWatchState {
+  /** Scope refusals stop automatic CI fix retries. */
+  fixScopeRefusal?: string;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };
