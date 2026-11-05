@@ -15,6 +15,7 @@ import { resolveEffectiveDomain } from '@farmslot/slot-config';
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { slotFileExists } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { readEvalReviewContribution, recordEvalJudgeResult } from '../evals/judge.js';
 import {
@@ -26,6 +27,7 @@ import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
+import { copyTaskFilesToSlot } from '../run-engine/task-sync.js';
 import { validateNativeRunner } from '../runners/native/manager.js';
 import { nativeReviewerOwner, nativeReviewerResultSchema } from '../runners/native/review-owner.js';
 import { cancelNativeWorkerContext, dispatchNativeWorker } from '../runners/native/worker.js';
@@ -393,6 +395,14 @@ async function runNativeReviewAttempt(
   try {
     const reviewSnapshot = await withNativeReviewMutation(async () => {
       admit();
+      if (!recovering && !(await slotFileExists(vars, `${vars.remoteRepo}/${taskDir}/mark`))) {
+        // Release removes task scaffolding. A rebound checkout needs the original
+        // prepared task, including its frozen marker and evidence, before review.
+        await copyTaskFilesToSlot(runId);
+        admit();
+        if (!(await slotFileExists(vars, `${vars.remoteRepo}/${taskDir}/mark`)))
+          throw new Error(`Native review prepared task marker is missing: ${taskDir}/mark`);
+      }
       const baseRef = (await stackPrBase(original)) ?? original.repeatReviewContext?.baseRef;
       if (
         retained &&

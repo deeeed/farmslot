@@ -10,6 +10,8 @@ import type { ReviewSnapshotRange } from './snapshots.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
+const slotIo = await import('../core/slot-io.js');
+const taskSync = await import('../run-engine/task-sync.js');
 const checklist = await import('../tasks/checklist-target.js');
 const snapshots = await import('./snapshots.js');
 const feedback = await import('./feedback.js');
@@ -55,6 +57,9 @@ type Ending =
   | 'completion-invalid';
 let ending: Ending = 'verdict';
 let dispatchCalls = 0;
+let markerPresent = true;
+let restoreTaskFails = false;
+const restoredTasks: string[] = [];
 let reattachProbes = 0;
 let timeline: { now: number; polls: number; stepMs?: number } | undefined;
 let configuredInactivityMinutes: number | undefined;
@@ -199,6 +204,7 @@ mock.module('../runners/native/worker.js', {
       if (stopFails) throw new Error('native worker stop is unconfirmed');
     },
     dispatchNativeWorker: async (input: { runId: string; contextId: string }) => {
+      assert.equal(markerPresent, true, 'reviewer launched without its retained task marker');
       dispatchCalls++;
       const current = getRun(input.runId)!.agentContexts?.find(
         (entry) => entry.id === input.contextId,
@@ -421,6 +427,18 @@ mock.module('../tasks/checklist-target.js', {
     syncChecklistTargetForRole: noop,
   },
 });
+mock.module('../core/slot-io.js', {
+  namedExports: { ...slotIo, slotFileExists: async () => markerPresent },
+});
+mock.module('../run-engine/task-sync.js', {
+  namedExports: {
+    ...taskSync,
+    copyTaskFilesToSlot: async (runId: string) => {
+      restoredTasks.push(runId);
+      if (!restoreTaskFails) markerPresent = true;
+    },
+  },
+});
 mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop } });
 mock.module('./feedback.js', {
   namedExports: {
@@ -553,6 +571,45 @@ const review = (runId: string) =>
     mode: 'cold',
     reviewId: `pipeline-review-${runId}`,
   });
+
+test('an existing prepared task is not recopied for a new reviewer', async (t) => {
+  ending = 'verdict';
+  markerPresent = true;
+  const run = await nativeRun(t);
+  const before = restoredTasks.length;
+  await review(run.id);
+  assert.equal(restoredTasks.length, before);
+});
+
+test('a review on a released checkout restores the prepared task before launching', async (t) => {
+  ending = 'verdict';
+  markerPresent = false;
+  restoredTasks.length = 0;
+  t.after(() => {
+    markerPresent = true;
+  });
+  const run = await nativeRun(t);
+  const before = dispatchCalls;
+  const result = await review(run.id);
+  assert.equal(result.verdict, 'issues');
+  assert.deepEqual(restoredTasks, [run.id]);
+  assert.equal(dispatchCalls, before + 1);
+});
+
+test('a missing retained marker refuses review before spending an attempt', async (t) => {
+  ending = 'verdict';
+  markerPresent = false;
+  restoreTaskFails = true;
+  t.after(() => {
+    markerPresent = true;
+    restoreTaskFails = false;
+  });
+  const run = await nativeRun(t);
+  const before = dispatchCalls;
+  await assert.rejects(review(run.id), /prepared task marker is missing/);
+  assert.equal(dispatchCalls, before);
+  assert.equal(getRun(run.id)?.reviewRoundAdmissions?.length ?? 0, 0);
+});
 
 test('an eval pins the blind range and records its only judge before settling the reviewer', async (t) => {
   ending = 'verdict';

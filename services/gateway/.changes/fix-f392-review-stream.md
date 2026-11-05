@@ -1,0 +1,1 @@
+- Restore a released run's prepared task before starting its native review, so progress and completion can use the retained marker.
