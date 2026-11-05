@@ -35,7 +35,6 @@ import {
   type TmuxWorkerListResult,
   type TmuxWorkerSummary,
   viewIntegerField,
-  viewToggleField,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import {
@@ -120,8 +119,13 @@ import {
   type PinnedWorkspacePreference,
   unpinWorkspace,
 } from '../utils/pinned-slots.js';
-import { hashParams } from '../utils/url-state.js';
-import { viewBinding, ViewStateBindings } from '../utils/view-state.js';
+import {
+  hashParams,
+  navigateHash,
+  type NavigationLinkState,
+  prepareNavigationLink,
+} from '../utils/url-state.js';
+import { browserViewState, viewBinding, ViewStateBindings } from '../utils/view-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
 import { runStatusColor } from './runs/run-utils.js';
@@ -131,6 +135,8 @@ import {
   activeSidebarRuns,
   clampSidebarWidth,
   DEFAULT_SIDEBAR_WIDTH,
+  pinnedWorkerReadError,
+  SIDEBAR_PANEL_FIELD,
 } from './app-shell-nav-model.js';
 import {
   pairingAuthorityFromSelection,
@@ -351,6 +357,7 @@ export class FarmApp extends LitElement {
   private unsubResourceCache?: () => void;
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
+  private readonly navigationLinks = new WeakMap<HTMLAnchorElement, NavigationLinkState>();
 
   constructor() {
     super();
@@ -366,7 +373,7 @@ export class FarmApp extends LitElement {
 
   private readonly displayChoices = new ViewStateBindings(this, [
     viewBinding(
-      viewToggleField('panels', 'sidebar', false),
+      SIDEBAR_PANEL_FIELD,
       () => this._sidebarExpanded,
       (value) => {
         this._sidebarExpanded = value;
@@ -385,6 +392,9 @@ export class FarmApp extends LitElement {
     super.connectedCallback();
     this.route = this.getRouteFromHash();
     window.addEventListener('hashchange', this.onHashChange);
+    this.addEventListener('click', this.onWorkspaceNavigation, true);
+    this.addEventListener('auxclick', this.onWorkspaceNavigation, true);
+    this.addEventListener('contextmenu', this.onWorkspaceNavigation, true);
     window.addEventListener('keydown', this.onGlobalKeyDown);
     window.addEventListener('pointermove', this.onSidebarResizeMove);
     window.addEventListener('pointerup', this.onSidebarResizeEnd);
@@ -406,6 +416,9 @@ export class FarmApp extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.onHashChange);
+    this.removeEventListener('click', this.onWorkspaceNavigation, true);
+    this.removeEventListener('auxclick', this.onWorkspaceNavigation, true);
+    this.removeEventListener('contextmenu', this.onWorkspaceNavigation, true);
     window.removeEventListener('keydown', this.onGlobalKeyDown);
     window.removeEventListener('pointermove', this.onSidebarResizeMove);
     window.removeEventListener('pointerup', this.onSidebarResizeEnd);
@@ -454,11 +467,7 @@ export class FarmApp extends LitElement {
   private renderWorkerReadStatus() {
     const state = this.workerObservation;
     if (!this.pinnedSlots.length || !this.workerQuery.belongsToWorkspace) return nothing;
-    const sourceError = state.data?.nodes
-      .filter((node) => !node.ok)
-      .map((node) => `${node.nodeId}: ${node.error ?? 'worker inventory unavailable'}`)
-      .join('; ');
-    const error = state.error?.message ?? sourceError;
+    const error = pinnedWorkerReadError(state);
     return html`
       ${state.status !== 'ready' && state.data
         ? html`<p data-pinned-workers-freshness="stale">
@@ -794,8 +803,20 @@ export class FarmApp extends LitElement {
   };
 
   private toggleSidebar() {
-    this._sidebarExpanded = !this._sidebarExpanded;
+    browserViewState.set(SIDEBAR_PANEL_FIELD, !this._sidebarExpanded);
   }
+
+  private onWorkspaceNavigation = (event: MouseEvent) => {
+    const link = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
+    if (!(link instanceof HTMLAnchorElement) || link.hasAttribute('download')) return;
+    const state = prepareNavigationLink(link.getAttribute('href'), this.navigationLinks.get(link));
+    if (!state) {
+      this.navigationLinks.delete(link);
+      return;
+    }
+    this.navigationLinks.set(link, state);
+    link.setAttribute('href', state.appliedHref);
+  };
 
   private onSidebarResizeStart = (e: PointerEvent) => {
     if (!this._sidebarExpanded) return;
@@ -851,7 +872,7 @@ export class FarmApp extends LitElement {
     // bounce to fleet instead — hiding the nav entry alone isn't enough.
     if (!this.alphaEnabled && (hash === 'violations' || ALPHA_ROUTES.has(hash as Route))) {
       this.route = 'fleet';
-      history.replaceState(null, '', '#fleet');
+      navigateHash('#fleet', 'replace');
       return;
     }
     if (hash === 'dev' || hash.startsWith('dev/')) {
@@ -898,7 +919,7 @@ export class FarmApp extends LitElement {
     }
     if (hash === 'violations') {
       this.route = 'intelligence';
-      history.replaceState(null, '', '#intelligence');
+      navigateHash('#intelligence', 'replace');
       return;
     }
     const valid: Route[] = [
@@ -926,7 +947,7 @@ export class FarmApp extends LitElement {
     // instead — the page's job is already done.
     if (this.route === 'onboarding' && this.connection === 'connected') {
       this.route = 'fleet';
-      history.replaceState(null, '', '#fleet');
+      navigateHash('#fleet', 'replace');
     }
     this.slotParam = '';
     this.configParam = '';
@@ -961,7 +982,7 @@ export class FarmApp extends LitElement {
   }
 
   private navigate(route: Route) {
-    location.hash = route;
+    navigateHash(`#${route}`);
   }
 
   private syncState(s: AppState) {
@@ -1831,7 +1852,7 @@ export class FarmApp extends LitElement {
           'Connect URLs must include a #connect= or #doctor?connect= fragment.';
         return;
       }
-      location.hash = hash.startsWith('#doctor') ? hash : `#doctor?${hash.slice(1)}`;
+      navigateHash(hash.startsWith('#doctor') ? hash : `#doctor?${hash.slice(1)}`);
       location.reload();
       return;
     }
@@ -1841,7 +1862,7 @@ export class FarmApp extends LitElement {
       localStorage.setItem(GATEWAY_URL_STORAGE_KEY, normalized);
       localStorage.setItem(GATEWAY_CANDIDATES_STORAGE_KEY, JSON.stringify([normalized]));
       localStorage.setItem(GATEWAY_SOURCE_STORAGE_KEY, 'stored');
-      location.hash = 'doctor';
+      navigateHash('doctor');
       location.reload();
     } catch (err) {
       this.onboardingError = err instanceof Error ? err.message : 'Invalid gateway URL.';

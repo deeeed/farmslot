@@ -18,6 +18,7 @@ import {
   shadows,
   spacing,
 } from '../../styles/theme-tokens.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { runStatusColor } from '../runs/run-utils.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import type { SlotPendingWork } from '../work-graph/work-graph-execution-overlay.js';
@@ -492,7 +493,7 @@ export class SlotCard extends LitElement {
                   class="thumbnail loaded"
                   @click=${(e: Event) => {
                     e.stopPropagation();
-                    location.hash = `slot/${s.slot}`;
+                    navigateHash(`slot/${s.slot}`);
                   }}
                 >
                   <img
@@ -539,7 +540,7 @@ export class SlotCard extends LitElement {
                       : ''} — click to review"
                     @click=${(e: Event) => {
                       e.stopPropagation();
-                      location.hash = 'decisions';
+                      navigateHash('decisions');
                     }}
                   >
                     ! ${this.pendingDecisions} decision${this.pendingDecisions > 1 ? 's' : ''}
@@ -617,9 +618,11 @@ export class SlotCard extends LitElement {
           .title}
         @click=${(e: Event) => {
           e.stopPropagation();
-          location.hash = isTerminalRunStatus(run.status)
-            ? `family/${run.familyId}?run=${encodeURIComponent(run.id)}`
-            : `run/${run.id}`;
+          navigateHash(
+            isTerminalRunStatus(run.status)
+              ? `family/${run.familyId}?run=${encodeURIComponent(run.id)}`
+              : `run/${run.id}`,
+          );
         }}
       >
         <span class="run-badge-status" style="background:${sc}"></span>

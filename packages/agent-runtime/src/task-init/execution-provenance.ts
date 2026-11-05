@@ -392,6 +392,26 @@ export function retainTaskExecution(
   return writeTaskExecution(taskDir, input, additionalInputs);
 }
 
+/** Only migration-owned checklist/contract additions accompany a repin. */
+export interface TaskRepinDocuments {
+  checklist: string;
+  terminalContract: string;
+}
+
+function installRepinDocuments(taskDir: string, pin: string, documents: TaskRepinDocuments): void {
+  // Contract first: an interruption must never leave a declaration without its command.
+  const files = {
+    'inputs/worker-terminal-contract.json': documents.terminalContract,
+    'CHECKLIST.md': documents.checklist,
+  };
+  for (const [relative, bytes] of Object.entries(files)) {
+    const file = path.join(taskDir, relative);
+    const staged = stagedRepinFile(file, pin);
+    fs.writeFileSync(staged, bytes);
+    fs.renameSync(staged, file);
+  }
+}
+
 /**
  * ADR-068 Amendment 8: an explicit repin after the task's own checkout changed its
  * provider. The caller verified `previous`. A new pin retains the current selection
@@ -404,6 +424,7 @@ export function repinTaskExecution(
   input: TaskExecutionInput,
   previous: TaskExecutionProvenance,
   checkoutRoot: string,
+  documents?: TaskRepinDocuments,
 ): TaskExecutionProvenance {
   // Producer additions, such as a template root outside the pack, are retained again.
   const inputsRoot = path.join(previous.pin, 'inputs');
@@ -411,14 +432,18 @@ export function repinTaskExecution(
     .filter((entry) => path.dirname(path.dirname(entry.path)) === inputsRoot)
     .map((entry) => entry.source)
     .filter((source) => fs.existsSync(source));
-  return writeTaskExecution(taskDir, input, carried, { previous, checkoutRoot });
+  return writeTaskExecution(taskDir, input, carried, { previous, checkoutRoot, documents });
 }
 
 function writeTaskExecution(
   taskDir: string,
   input: TaskExecutionInput,
   additionalInputs: readonly string[],
-  repin?: { previous: TaskExecutionProvenance; checkoutRoot: string },
+  repin?: {
+    previous: TaskExecutionProvenance;
+    checkoutRoot: string;
+    documents?: TaskRepinDocuments;
+  },
 ): TaskExecutionProvenance {
   const previousPin = repin?.previous.pin;
   const distribution = fs.realpathSync(input.distributionRoot);
@@ -568,6 +593,7 @@ function writeTaskExecution(
         taskDir: fs.realpathSync(taskDir),
         receipt,
         ...(previousPin ? { previousPin } : {}),
+        ...(repin?.documents ? { documents: repin.documents } : {}),
       }) + '\n',
       { mode: 0o444, flag: 'wx' },
     );
@@ -580,6 +606,7 @@ function writeTaskExecution(
       // The receipt names its pin, so an interrupted swap can be finished by resumeTaskRepin.
       fs.renameSync(staged(receiptPath), receiptPath);
       swapped = true;
+      if (repin?.documents) installRepinDocuments(taskDir, pin, repin.documents);
       if (selected.selectedConfiguration !== undefined) fs.renameSync(staged(selection), selection);
     }
     return receipt;
@@ -614,6 +641,22 @@ export function completeInterruptedRepin(
       ? authority(current.previousPin)
       : undefined;
   if (!isRecord(previous) || !isReceipt(previous.receipt)) return null;
+  if (isRecord(current) && current.documents !== undefined) {
+    const documents = current.documents;
+    if (
+      !isRecord(documents) ||
+      typeof documents.checklist !== 'string' ||
+      typeof documents.terminalContract !== 'string'
+    )
+      throw new TaskProvenanceError(
+        'TASK_PROVENANCE_INVALID',
+        'Invalid repin migration documents.',
+      );
+    installRepinDocuments(taskDir, receipt.pin, {
+      checklist: documents.checklist,
+      terminalContract: documents.terminalContract,
+    });
+  }
   fs.renameSync(staged, selection);
   return { previous: previous.receipt, receipt };
 }

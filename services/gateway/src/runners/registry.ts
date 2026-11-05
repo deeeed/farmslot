@@ -116,10 +116,8 @@ import {
   buildRunnerObservabilityInstallCommand,
 } from './runner-observability.js';
 import {
-  claudeSessionUsageProvider,
-  codexSessionUsageProvider,
-  piSessionUsageProvider,
   type RunnerSessionUsageProvider,
+  runnerSessionUsageProviders,
 } from './session-usage-provider.js';
 import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
 
@@ -418,7 +416,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
-    sessionUsageProvider: claudeSessionUsageProvider,
+    sessionUsageProvider: runnerSessionUsageProviders.get('claude') ?? null,
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.claude,
   },
   codex: {
@@ -479,7 +477,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: (model) => model === 'unknown' || !CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
-    sessionUsageProvider: codexSessionUsageProvider,
+    sessionUsageProvider: runnerSessionUsageProviders.get('codex') ?? null,
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.codex,
   },
   cursor: {
@@ -655,7 +653,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsEffort: (_model, effort) => isPiThinkingLevel(effort.trim().toLowerCase()),
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'event-driven',
-    sessionUsageProvider: piSessionUsageProvider,
+    sessionUsageProvider: runnerSessionUsageProviders.get('pi') ?? null,
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.pi,
   },
   opencode: {

@@ -59,6 +59,7 @@ import {
   retainTaskCheckouts,
 } from '../../fleet/slot-scaffolding.js';
 import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
+import { publicationStatusForRun } from '../../run-completion/publication-status.js';
 import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
@@ -1001,11 +1002,26 @@ async function slotReleaseImpl(
     ownsRunSlotCleanup(await readSlotRow(params.slotId), params.expectedRunId)
       ? getRun(params.expectedRunId)
       : undefined;
-  if (!preserveAgents && params.forceReset && resultOwner && isHeldForResultDecision(resultOwner)) {
+  const failedOwner =
+    parkOwner?.taskFile &&
+    parkOwner.status === 'failed' &&
+    (parkOwner.engineState?.taskInit?.status === 'initialized' ||
+      parkOwner.output?.artifactManifest.length ||
+      parkOwner.steps.some((step) => step.name === 'dispatch' && step.status === 'done')) &&
+    publicationStatusForRun(parkOwner) === 'not_published'
+      ? parkOwner
+      : undefined;
+  const retentionOwner = failedOwner ?? resultOwner;
+  if (
+    !preserveAgents &&
+    retentionOwner &&
+    ((failedOwner && !keepWork) ||
+      (params.forceReset && resultOwner && isHeldForResultDecision(resultOwner)))
+  ) {
     await assertReleaseClaim();
     try {
       const { retainFinalRunArtifacts } = await import('../../run-completion/output.js');
-      await retainFinalRunArtifacts(resultOwner.id);
+      await retainFinalRunArtifacts(retentionOwner.id);
       await assertReleaseClaim();
     } catch (error) {
       const reclaimed = await holdAfterCleanupFailure(
@@ -1016,7 +1032,7 @@ async function slotReleaseImpl(
   }
 
   // 3. Clean task files + git reset. Evidence was pulled into the artifact mirror when the run
-  // completed (run.refreshMirror pulls it again), so the release copies none of it (F313).
+  // completed. Failed unpublished runs retain again above before the last worker copy goes away.
   const taskDirName = resolveProjectTaskDirName(projectJson);
   let idleBranchAfterRelease: string | undefined;
   if (!keepWork) {

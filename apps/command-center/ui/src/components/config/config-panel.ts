@@ -33,6 +33,7 @@ import {
   getAttentionAlertPreferences,
   setAttentionAlertPreferences,
 } from '../../utils/notifications.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunnerAccountInventory } from '../shared/runner-account-inventory.js';
@@ -235,7 +236,7 @@ export class ConfigPanel extends LitElement {
   private _updateHash() {
     if (!this._selection) return;
     const subpath = formatConfigPanelRoute(this._selection, this._flowsState);
-    history.replaceState(null, '', `#config/${subpath}`);
+    navigateHash(`#config/${subpath}`, 'replace');
   }
 
   private _onFlowsStateChange(e: CustomEvent<ConfigPanelFlowsState>) {
@@ -592,7 +593,7 @@ export class ConfigPanel extends LitElement {
                   <a
                     class="cp-slot-link"
                     @click=${() => {
-                      location.hash = `slot/${slot.id}`;
+                      navigateHash(`slot/${slot.id}`);
                     }}
                     >${slot.id}</a
                   >

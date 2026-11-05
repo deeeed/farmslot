@@ -1,4 +1,4 @@
-import type { RunStatus } from './runs.js';
+import type { RunnerSessionUsage, RunStatus } from './runs.js';
 
 export type SlotAgent = 'idle' | 'working' | 'no-tmux';
 
@@ -152,6 +152,8 @@ export interface AgentContext {
   nativeCommandText?: string;
   /** Confirmed closed/released attempts retained when this context is explicitly restarted. */
   nativeSessionHistory?: NativeWorkerSessionBinding[];
+  /** Supporting session-total accounting, independent of review verdict and lifecycle. */
+  usage?: RunnerSessionUsage;
   runnerSessionId?: string | null;
   runnerSessionPath?: string | null;
   /**

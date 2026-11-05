@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import { retainTaskExecution } from '../../agent-runtime/src/task-init/execution-provenance.js';
+import { builtinTerminalContract } from '../../agent-runtime/src/task-init/index.js';
 import { retainedMarkCommand } from '../../agent-runtime/src/task-init/runtime-command.js';
 import { buildMarkShim } from '../../agent-runtime/src/task-init/write.js';
 import { handleChecklist } from '../src/harness/commands/checklist.js';
@@ -855,4 +856,189 @@ test('a repin follows changed checkout recipes and keeps task documents', async 
     assert.ok(library.root.startsWith(`${receipt.pin}${path.sep}`));
     assert.equal(fs.existsSync(path.join(library.root, 'main-flows.recipe.json')), true);
   });
+});
+
+async function legacyProviderTask(t: TestContext) {
+  const f = fixture(t);
+  const provider = path.join(f.checkout, 'provider');
+  fs.mkdirSync(provider);
+  for (const file of ['provider.mjs', 'package.json'])
+    fs.copyFileSync(path.join(f.pack, file), path.join(provider, file));
+  const config = f.options.projects?.[0]?.config;
+  assert.ok(config?.recipe);
+  const selected = {
+    ...config,
+    recipe: {
+      ...config.recipe,
+      provider: { module: 'provider.mjs', root: { projectPath: 'provider' } },
+    },
+  };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(selected));
+  const taskDir = path.join(f.checkout, 'artifacts/dev/legacy');
+  fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  fs.mkdirSync(path.join(taskDir, 'artifacts'));
+  const documents = {
+    'CHECKLIST.md': '- [x] Required validation\n',
+    'TASK.md': '# Original task\n',
+    'SIGNAL.json': '{"status":"running"}',
+    'inputs/handoff.json': JSON.stringify({ schemaVersion: 1, project: 'example', domain: '' }),
+    'inputs/worker-terminal-contract.json': JSON.stringify(
+      builtinTerminalContract('dev', { mode: 'interactive' }),
+    ),
+    'artifacts/evidence.json': '{"original":true}',
+  };
+  for (const [file, bytes] of Object.entries(documents))
+    fs.writeFileSync(path.join(taskDir, file), bytes);
+  const install = {
+    executable: path.join(f.installed, 'farmslot'),
+    packageRoot: f.installed,
+    distributionRoot: f.installed,
+  };
+  const previous = retainTaskExecution(taskDir, {
+    ...install,
+    bindingIdentity: null,
+    inputs: [],
+    selectedConfiguration: '{"identity":null}',
+  });
+  fs.writeFileSync(
+    path.join(taskDir, 'mark'),
+    buildMarkShim(retainedMarkCommand(previous.resolvedExecutable), true),
+  );
+  return {
+    ...f,
+    taskDir,
+    provider,
+    selected,
+    options: { ...f.options, projects: [{ root: f.pack, config: selected }] },
+    install,
+    previous,
+    documents,
+  };
+}
+
+test('an operator repins a legacy unbound task in its recorded project without losing task state', async (t) => {
+  const f = await legacyProviderTask(t);
+  const { previous, receipt } = await repinSelectedTask(f.options, f.taskDir, f.install);
+  assert.equal(previous.bindingIdentity, null);
+  assert.equal(receipt.bindingIdentity?.project, 'example');
+  assert.notEqual(previous.pin, receipt.pin);
+  assert.deepEqual(verifySelectedTask(f.taskDir), receipt);
+  for (const [file, bytes] of Object.entries(f.documents))
+    assert.equal(fs.readFileSync(path.join(f.taskDir, file), 'utf8'), bytes, file);
+  assert.equal(
+    fs.readFileSync(path.join(f.taskDir, 'mark'), 'utf8'),
+    buildMarkShim(retainedMarkCommand(receipt.resolvedExecutable), true),
+  );
+  await withTaskProjectHost(f.options, f.taskDir, async (host) =>
+    assert.equal(host.provider.commandOptions?.task?.stepGates.length, 1),
+  );
+});
+
+test('legacy migration refuses a different project, domain, task checkout or missing provider gates before mutation', async (t) => {
+  for (const problem of ['project', 'domain', 'checkout', 'gates'])
+    await t.test(problem, async (t) => {
+      const f = await legacyProviderTask(t);
+      let taskDir = f.taskDir;
+      if (problem === 'project' || problem === 'domain')
+        fs.writeFileSync(
+          path.join(taskDir, 'inputs/handoff.json'),
+          JSON.stringify({
+            project: problem === 'project' ? 'other' : 'example',
+            domain: problem === 'domain' ? 'other' : '',
+          }),
+        );
+      if (problem === 'checkout') {
+        taskDir = path.join(f.root, 'outside-task');
+        fs.renameSync(f.taskDir, taskDir);
+      }
+      if (problem === 'gates')
+        fs.writeFileSync(
+          path.join(f.provider, 'provider.mjs'),
+          fs
+            .readFileSync(path.join(f.provider, 'provider.mjs'), 'utf8')
+            .replace('commandOptions:', 'unusedCommandOptions:'),
+        );
+      const before = fs.readFileSync(path.join(taskDir, 'artifacts/harness-provenance.json'));
+      await assert.rejects(repinSelectedTask(f.options, taskDir, f.install));
+      assert.deepEqual(
+        fs.readFileSync(path.join(taskDir, 'artifacts/harness-provenance.json')),
+        before,
+      );
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(path.join(taskDir, 'inputs/recipe-binding.json'), 'utf8')),
+        { identity: null },
+      );
+    });
+});
+
+test('legacy migration appends a frozen configured CI step and mark produces its receipt', async (t) => {
+  const f = await legacyProviderTask(t);
+  execFileSync('git', ['init', '-q'], { cwd: f.checkout });
+  const command = `node -e "process.stdout.write('configured CI check')"`;
+  fs.writeFileSync(
+    path.join(f.pack, 'project.json'),
+    JSON.stringify({ ...f.selected, ci: { local_check: command } }),
+  );
+  await repinSelectedTask(f.options, f.taskDir, f.install);
+  const checklist = fs.readFileSync(path.join(f.taskDir, 'CHECKLIST.md'), 'utf8');
+  assert.ok(checklist.startsWith(f.documents['CHECKLIST.md']));
+  assert.match(checklist, /- \[ \] Configured CI check \[DETERMINISTIC: ci.local_check\]/);
+  const contract = JSON.parse(
+    fs.readFileSync(path.join(f.taskDir, 'inputs/worker-terminal-contract.json'), 'utf8'),
+  );
+  const { deterministicChecks: _checks, ...policy } = contract;
+  assert.deepEqual(policy, JSON.parse(f.documents['inputs/worker-terminal-contract.json']));
+  assert.deepEqual(contract.deterministicChecks, [
+    { checklist: 'CHECKLIST.md', stepNumber: 2, reference: 'ci.local_check', command },
+  ]);
+  assert.equal(
+    fs.existsSync(path.join(f.taskDir, 'artifacts/deterministic-checks/CHECKLIST.md/2.json')),
+    false,
+  );
+  await withTaskProjectHost(f.options, f.taskDir, async (host) =>
+    assert.equal(
+      await handleChecklist(['mark', f.taskDir, '2'], host.provider.commandOptions?.task),
+      0,
+    ),
+  );
+  const receipt = JSON.parse(
+    fs.readFileSync(
+      path.join(f.taskDir, 'artifacts/deterministic-checks/CHECKLIST.md/2.json'),
+      'utf8',
+    ),
+  );
+  assert.equal(receipt.status, 'passed');
+  assert.equal(receipt.command, command);
+});
+
+test('legacy migration retains explicit tooling below a runtime directory while excluding sibling state', async (t) => {
+  const f = await legacyProviderTask(t);
+  const provider = path.join(f.checkout, 'runtime/provider');
+  fs.mkdirSync(path.dirname(provider), { recursive: true });
+  fs.renameSync(f.provider, provider);
+  fs.writeFileSync(path.join(f.checkout, 'runtime/state.json'), 'unrelated runtime state');
+  const selected = {
+    ...f.selected,
+    recipe: {
+      ...f.selected.recipe,
+      provider: { module: 'provider.mjs', root: { projectPath: 'runtime/provider' } },
+    },
+  };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(selected));
+  const { receipt } = await repinSelectedTask(
+    { ...f.options, projects: [{ root: f.pack, config: selected }] },
+    f.taskDir,
+    f.install,
+  );
+  const retained = receipt.retainedInputs.find((entry) => entry.source === provider);
+  assert.ok(retained);
+  assert.equal(fs.existsSync(path.join(retained.path, 'provider.mjs')), true);
+  assert.equal(
+    receipt.retainedInputs.some(
+      (entry) =>
+        entry.source.endsWith('runtime/state.json') ||
+        entry.source === path.join(f.checkout, 'runtime'),
+    ),
+    false,
+  );
 });

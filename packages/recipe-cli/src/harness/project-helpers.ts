@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  HANDOFF_INPUT,
+  legacyTaskCheck,
   repinTask,
   resumeTaskRepin,
   retainedPathFor,
@@ -265,8 +267,10 @@ export async function projectTaskExecution(
       ...(install.excludedRoots ?? []),
       path.join(binding.root, 'tasks'),
       path.resolve(binding.checkoutRoot, binding.artifactDir),
-      path.resolve(host.context.target.value, binding.runtimeDir),
-      path.resolve(binding.checkoutRoot, binding.farmRuntimeDir),
+      ...[
+        path.resolve(host.context.target.value, binding.runtimeDir),
+        path.resolve(binding.checkoutRoot, binding.farmRuntimeDir),
+      ].filter((root) => !isPathWithin(root, workspace)),
     ],
     selectedConfiguration: JSON.stringify(selection),
   };
@@ -305,22 +309,35 @@ export async function repinSelectedTask(
   const refuse = (code: string, message: string): never => {
     throw new ProjectBindingError(code, message, 'initialize a separate task');
   };
-  if (!recorded || !selection.provider || !selection.checkoutRoot)
-    return refuse('TASK_REPIN_UNSUPPORTED', 'An unbound task has no project provider to repin.');
-  const checkout = selection.checkoutRoot;
-  const owned = (file: string): boolean =>
-    file === checkout || file.startsWith(`${checkout}${path.sep}`);
-  if (!owned(selection.provider.root))
+  const handoff: unknown = recorded
+    ? null
+    : JSON.parse(fs.readFileSync(path.join(taskDir, HANDOFF_INPUT), 'utf8'));
+  const legacyProject =
+    isRecord(handoff) && typeof handoff.project === 'string' ? handoff.project : undefined;
+  if (!recorded && !legacyProject)
+    return refuse(
+      'TASK_REPIN_UNSUPPORTED',
+      'An unbound task must record its project in its handoff.',
+    );
+  if (recorded && (!selection.provider || !selection.checkoutRoot))
+    return refuse('TASK_REPIN_UNSUPPORTED', 'The recorded task selection is incomplete.');
+  if (
+    selection.provider &&
+    selection.checkoutRoot &&
+    !isPathWithin(selection.checkoutRoot, selection.provider.root)
+  )
     refuse('TASK_REPIN_UNSUPPORTED', 'Only a provider inside the task checkout can be repinned.');
-  const selectors = [
-    '--target',
-    checkout,
-    '--project',
-    recorded.project,
-    '--adapter',
-    recorded.adapter,
-    ...(recorded.app ? ['--app', recorded.app] : []),
-  ];
+  const selectors = recorded
+    ? [
+        '--target',
+        selection.checkoutRoot!,
+        '--project',
+        recorded.project,
+        '--adapter',
+        recorded.adapter,
+        ...(recorded.app ? ['--app', recorded.app] : []),
+      ]
+    : ['--project', legacyProject!];
   return withProjectRecipeHostContext(
     { ...options, tokens: [...selectors, ...options.tokens] },
     async (host) => {
@@ -332,6 +349,29 @@ export async function repinSelectedTask(
       const current = fresh.identity;
       if (!current)
         return refuse('TASK_REPIN_UNSUPPORTED', 'The checkout selected no project provider.');
+      const checkout = fresh.checkoutRoot!;
+      if (!recorded) {
+        const artifacts = path.resolve(checkout, fresh.artifactDir!);
+        if (
+          current.project !== legacyProject ||
+          (isRecord(handoff) &&
+            typeof handoff.domain === 'string' &&
+            handoff.domain !== '' &&
+            handoff.domain !== (current.domain ?? '')) ||
+          !isPathWithin(fs.realpathSync(artifacts), fs.realpathSync(taskDir)) ||
+          fs.realpathSync(taskDir) === fs.realpathSync(artifacts) ||
+          !isPathWithin(checkout, fresh.provider!.root)
+        )
+          return refuse(
+            'TASK_BINDING_CHANGED',
+            'The legacy task must belong to the selected project checkout and domain.',
+          );
+        const documents = await legacyTaskCheck(
+          taskDir,
+          readProject(host.context.project!.configPath).ci.localCheck,
+        );
+        return { previous, receipt: repinTask(taskDir, execution, previous, checkout, documents) };
+      }
       // Only tooling bytes and configuration follow the checkout; the selection stays.
       const kept = (
         value: TaskProjectSelection,

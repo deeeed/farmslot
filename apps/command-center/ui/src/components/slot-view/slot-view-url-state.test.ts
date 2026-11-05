@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { navigateHash } from '../../utils/url-state.js';
+
 import {
   getSlotViewHashParam,
   isSlotViewHashForSlot,
@@ -20,6 +22,32 @@ test('getSlotViewHashParam reads URL encoded slot-view state', () => {
   assert.equal(requestedResourceFromHash(hash), 'ios sim');
   assert.equal(requestedRunFromHash(hash), 'abc123');
   assert.equal(getSlotViewHashParam('missing', hash), null);
+});
+
+test('F414 a slot refresh retains shell URL choices without retaining another slot selection', (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const previousHistory = Object.getOwnPropertyDescriptor(globalThis, 'history');
+  const location = { hash: '#slot/demo?panels=sidebar&sidebarWidth=320&file=old.ts' };
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: location,
+  });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      replaceState(_state: unknown, _title: string, hash: string) {
+        location.hash = hash;
+      },
+    },
+  });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, 'location', previous);
+    else Reflect.deleteProperty(globalThis, 'location');
+    if (previousHistory) Object.defineProperty(globalThis, 'history', previousHistory);
+    else Reflect.deleteProperty(globalThis, 'history');
+  });
+  navigateHash(slotViewHash({ slotId: 'demo', runId: 'run-1' }), 'replace');
+  assert.equal(location.hash, '#slot/demo?runId=run-1&panels=sidebar&sidebarWidth=320');
 });
 
 test('recipe viewer modes are constrained to supported values', () => {

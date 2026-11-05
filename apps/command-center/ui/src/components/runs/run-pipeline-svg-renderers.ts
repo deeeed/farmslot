@@ -4,6 +4,7 @@ import type { Run, RunDecision, RunStep, RunStepDisplayStatus } from '@farmslot/
 import { runStepDisplayDetail } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { navigateHash } from '../../utils/url-state.js';
 
 import {
   type ArrowDef,
@@ -414,7 +415,7 @@ function renderPipelineDecisionDiamond(
          navTarget
            ? (event: Event) => {
                event.stopPropagation();
-               location.hash = navTarget;
+               navigateHash(navTarget);
              }
            : null
        }>

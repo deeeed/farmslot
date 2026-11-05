@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const require = createRequire(new URL('../recipe-tools/package.json', import.meta.url));
+const require = createRequire(import.meta.url);
 const { createPlainWebAdapter } = await import(
   pathToFileURL(require.resolve('@farmslot/adapter-web/plain-web')).href
 );
@@ -23,6 +23,7 @@ export function createProvider(context) {
   if (cdp !== undefined) process.env.RECIPE_CDP_PORT = String(cdp);
   if (application !== undefined) process.env.RECIPE_WATCHER_PORT = String(application);
   return {
+    commandOptions: { task: { stepGates: [] } },
     runtime: createPlainWebAdapter({
       manifestPath: fileURLToPath(new URL('./web.action-manifest.json', import.meta.url)),
       url() {

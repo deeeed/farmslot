@@ -38,6 +38,7 @@ import {
   utf8ByteLength,
 } from '@farmslot/protocol/performance';
 
+import { navigateHash } from './utils/url-state.js';
 import {
   getDesktopConnection,
   isDesktopClient,
@@ -391,7 +392,7 @@ export class GatewayClient {
       const route = split < 0 ? '' : raw.slice(0, split);
       const query = new URLSearchParams(split < 0 ? raw : raw.slice(split + 1));
       query.delete('connect');
-      history.replaceState(null, '', `#${route}${query.size ? `?${query}` : ''}`);
+      navigateHash(`#${route}${query.size ? `?${query}` : ''}`, 'replace');
     }
     setGatewayMemoryAuth({}, this.url);
     syncBrowserHttpAuthCookie({}, this.url);

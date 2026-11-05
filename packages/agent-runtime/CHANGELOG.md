@@ -4,6 +4,13 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.40.1 - 2026-11-05
+
+- Reduce shared native process-tree censuses to once per second while preserving immediate launch, signal and cleanup ownership checks.
+- Verify overlapping retained tooling trees in one traversal, preserving byte, mode and link integrity checks without repeated file reads.
+- Restore engine execution and source-bound receipts for declared ci.local_check checklist steps.
+- Allow operators to bind legacy project tasks in place, retaining their evidence and freezing a missing configured CI check for the normal checklist mark.
+
 ## 0.40.0 - 2026-11-04
 
 - Persist standalone session requester attribution without changing execution ownership, and keep worker sessions behind their pinned controls.

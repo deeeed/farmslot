@@ -22,6 +22,7 @@ import '../shared/hydrating-placeholder.js';
 import '../shared/step-artifacts.js';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { openMediaLightbox } from '../shared/media-lightbox.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -210,7 +211,7 @@ export class RunCompare extends LitElement {
     const nextA = side === 'a' ? runId : this.runIdA;
     const nextB = side === 'b' ? runId : this.runIdB;
     if (!nextA || !nextB || nextA === nextB) return;
-    location.hash = `runs/compare?a=${encodeURIComponent(nextA)}&b=${encodeURIComponent(nextB)}`;
+    navigateHash(`runs/compare?a=${encodeURIComponent(nextA)}&b=${encodeURIComponent(nextB)}`);
   }
 
   private defaultStepName(): string {
@@ -273,7 +274,7 @@ export class RunCompare extends LitElement {
           <div
             class="back"
             @click=${() => {
-              location.hash = 'runs';
+              navigateHash('runs');
             }}
           >
             &lt; Back to runs
@@ -285,7 +286,7 @@ export class RunCompare extends LitElement {
         <div
           class="back"
           @click=${() => {
-            location.hash = 'runs';
+            navigateHash('runs');
           }}
         >
           &lt; Back to runs
@@ -304,7 +305,7 @@ export class RunCompare extends LitElement {
       <div
         class="back"
         @click=${() => {
-          location.hash = 'runs';
+          navigateHash('runs');
         }}
       >
         &lt; Back to runs
@@ -416,7 +417,7 @@ export class RunCompare extends LitElement {
           <span
             class="ticket"
             @click=${() => {
-              location.hash = routeForRun(run);
+              navigateHash(routeForRun(run));
             }}
             >${run.ticketOrPr}</span
           >

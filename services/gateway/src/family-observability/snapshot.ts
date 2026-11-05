@@ -66,6 +66,7 @@ import {
 import { readJsonIfExists, readTextIfExists } from './io.js';
 import { buildFamilyStateSummary, sortRunsByFreshness } from './state.js';
 import { buildFamilyObservabilityTokenSummary } from './token-summary.js';
+import { buildFamilyUsage } from './usage.js';
 
 const FAMILY_EVIDENCE_PURPOSES = new Set([
   'screenshot',
@@ -939,6 +940,7 @@ export async function buildFamilyObservabilitySnapshotFromRuns(
     runs: runSummaries,
     experiments: experiments.length ? experiments : undefined,
     tokenSummary: buildFamilyObservabilityTokenSummary(familyRuns, familyId),
+    usage: buildFamilyUsage(familyRuns),
     relatedByTicket: buildRelatedByTicket(familyRuns, allRuns),
     missingData: [...new Set(missingData)],
   };

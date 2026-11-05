@@ -14,6 +14,7 @@ import {
 
 import { colors } from '../../styles/theme-tokens.js';
 import { MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { viewDetails } from '../../utils/view-state.js';
 import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 import { renderRunTitle } from '../shared/run-title.js';
@@ -324,7 +325,7 @@ export function renderRelatedByTicket(
           const status = runStatusColor(group.latest.status);
           const familyHref = `#family/${group.familyId}?run=${group.latest.runId}`;
           const navigateFamily = () => {
-            window.location.hash = familyHref;
+            navigateHash(familyHref);
           };
           return html`
             <div

@@ -479,7 +479,10 @@ export async function startRemoteNodeStack(
       `remote-node-stack ${options.ownerTag} ${process.pid}\n`,
     );
     // Node support bundles must resolve inside FARMSLOT_ROOT: give those paths real copies.
-    for (const relative of RUNNER_OBSERVABILITY_SUPPORT_PATHS)
+    for (const relative of [
+      'scripts/write-runtime-context.sh',
+      ...RUNNER_OBSERVABILITY_SUPPORT_PATHS,
+    ])
       await materialize(root, fixture, relative);
     // The no-checkout clone has no .gitignore; pack ownership depends on it.
     await cp(path.join(root, '.gitignore'), path.join(fixture, '.gitignore'));

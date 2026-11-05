@@ -19,7 +19,7 @@ assert(
     ports[0] !== ports[1],
   'Use two distinct assigned slot ports.',
 );
-const tools = path.join(root, '.agent/recipe-tools');
+const tools = path.join(root, '.agent/recipe-provider');
 const stateFile = path.join(root, '.agent/siteed-server.json');
 const logFile = path.join(root, '.agent/siteed-server.log');
 const url = `http://127.0.0.1:${ports[0]}/`;

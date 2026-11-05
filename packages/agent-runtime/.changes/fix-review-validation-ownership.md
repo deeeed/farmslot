@@ -1,1 +1,0 @@
-- Restore engine execution and source-bound receipts for declared ci.local_check checklist steps.

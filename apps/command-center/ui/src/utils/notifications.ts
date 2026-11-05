@@ -1,3 +1,4 @@
+import { navigateHash } from './url-state.js';
 // Browser Notification API wrapper for farmslot alerts
 
 let permissionGranted = false;
@@ -129,7 +130,7 @@ export function notify(
   if (options?.route) {
     n.onclick = () => {
       window.focus();
-      window.location.hash = options.route!;
+      navigateHash(options.route!);
       n.close();
     };
   }

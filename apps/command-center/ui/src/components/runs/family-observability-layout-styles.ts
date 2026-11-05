@@ -779,6 +779,8 @@ export const familyObservabilityLayoutStyles = css`
     font-size: 11px;
     margin-top: 4px;
     line-height: 1.4;
+    height: 62px;
+    overflow: auto;
   }
   .token-totals {
     display: flex;
@@ -789,6 +791,7 @@ export const familyObservabilityLayoutStyles = css`
     display: grid;
     gap: 2px;
     text-align: right;
+    width: 132px;
   }
   .token-total-label {
     color: ${unsafeCSS(colors.textMuted)};
@@ -826,6 +829,62 @@ export const familyObservabilityLayoutStyles = css`
     width: 100%;
     height: auto;
     display: block;
+  }
+  .token-growth-frame {
+    position: relative;
+    height: 220px;
+  }
+  .token-data-hint {
+    height: 3em;
+    overflow: auto;
+  }
+  .token-growth-frame .token-chart {
+    height: 220px;
+  }
+  .token-growth-empty {
+    position: absolute;
+    inset: 80px 20px auto 70px;
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 11px;
+  }
+  .token-usage-point {
+    fill: ${unsafeCSS(colors.accent)};
+  }
+  .token-table-frame {
+    overflow: auto;
+    scrollbar-gutter: stable;
+    margin-bottom: ${unsafeCSS(spacing.md)};
+  }
+  .token-breakdown-frame {
+    height: 180px;
+  }
+  .token-session-frame {
+    height: 300px;
+  }
+  .token-round-frame {
+    height: 240px;
+  }
+  .token-table-frame thead {
+    position: sticky;
+    top: 0;
+    background: ${unsafeCSS(colors.bgCard)};
+    z-index: 1;
+  }
+  .token-session-table {
+    min-width: 850px;
+  }
+  .token-session-table td:last-child {
+    min-width: 160px;
+    max-width: 320px;
+    overflow-wrap: anywhere;
+  }
+  .token-session-link {
+    color: ${unsafeCSS(colors.accent)};
+    border: 0;
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+    padding: 2px;
   }
   .token-grid-line {
     stroke: ${unsafeCSS(colors.textMuted)}22;
@@ -908,62 +967,6 @@ export const familyObservabilityLayoutStyles = css`
   .token-legend-inline .swatch.cache {
     background: #f59e0b;
   }
-  .token-run-bars {
-    display: grid;
-    gap: 6px;
-  }
-  .token-run-row {
-    display: grid;
-    grid-template-columns: minmax(90px, 0.8fr) minmax(0, 1.6fr) minmax(52px, auto);
-    gap: 8px;
-    align-items: center;
-    border: 1px solid transparent;
-    border-radius: ${unsafeCSS(radii.sm)};
-    background: transparent;
-    color: inherit;
-    font-family: inherit;
-    font-size: 11px;
-    padding: 4px 6px;
-    cursor: pointer;
-    text-align: left;
-  }
-  .token-run-row.selected {
-    border-color: ${unsafeCSS(colors.accent)}55;
-    background: ${unsafeCSS(colors.accent)}0d;
-  }
-  .token-run-row.missing {
-    opacity: 0.55;
-    cursor: default;
-  }
-  .token-run-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: ${unsafeCSS(colors.textSecondary)};
-  }
-  .token-run-track,
-  .token-share-track {
-    height: 10px;
-    border-radius: 999px;
-    overflow: hidden;
-    background: ${unsafeCSS(colors.bgSurface)};
-    border: 1px solid ${unsafeCSS(colors.textMuted)}22;
-    display: flex;
-  }
-  .token-seg.input {
-    background: #6366f1;
-  }
-  .token-seg.output {
-    background: #22c55e;
-  }
-  .token-seg.cache {
-    background: #f59e0b;
-  }
-  .token-run-value {
-    text-align: right;
-    color: ${unsafeCSS(colors.textPrimary)};
-    font-variant-numeric: tabular-nums;
-  }
   .token-model-table {
     width: 100%;
     border-collapse: collapse;
@@ -985,10 +988,6 @@ export const familyObservabilityLayoutStyles = css`
   .token-model-table th {
     color: ${unsafeCSS(colors.textMuted)};
     font-weight: 600;
-  }
-  .token-share-fill {
-    height: 100%;
-    min-width: 2px;
   }
   @media (max-width: 960px) {
     .token-grid {

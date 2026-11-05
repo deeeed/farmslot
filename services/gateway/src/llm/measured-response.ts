@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 
+import type { RunnerSessionUsage, StepLLMUsage } from '@farmslot/protocol';
+
+import { captureHelperAttempt, observeHelperUsage } from '../runtime/agent-usage-context.js';
+
 export interface MeasuredResponseOptions {
   baseUrl: string;
   apiKey: string;
@@ -12,6 +16,7 @@ export interface MeasuredResponseOptions {
   signal?: AbortSignal;
 }
 export interface MeasuredResponse {
+  sessionUsage?: RunnerSessionUsage;
   status: 'completed' | 'incomplete' | 'unavailable';
   attempted: boolean;
   requestedModel: string;
@@ -99,6 +104,46 @@ export function measuredResponseRequestBody(
 export async function measuredResponsesCall(
   options: MeasuredResponseOptions,
   fetchImpl: typeof fetch = fetch,
+): Promise<MeasuredResponse> {
+  const measured = await captureHelperAttempt(
+    {
+      runner: 'api:responses',
+      model: options.model,
+      effort: options.reasoning,
+      source: 'provider-response',
+    },
+    async () => {
+      const response = await measuredResponsesCallUnmeasured(options, fetchImpl);
+      if (response.inputTokens !== null || response.outputTokens !== null)
+        observeHelperUsage({
+          actualModel: response.returnedModel,
+          inputTokens: response.inputTokens,
+          outputTokens: response.outputTokens,
+          cacheRead: response.cacheReadTokens,
+          cacheCreation: response.cacheWriteTokens,
+          totalTokens:
+            response.inputTokens !== null && response.outputTokens !== null
+              ? response.inputTokens + response.outputTokens
+              : null,
+        });
+      const usage: StepLLMUsage = {
+        provider: 'responses',
+        model: options.model,
+        durationMs: response.durationMs,
+      };
+      return {
+        response,
+        outcome: response.status === 'completed' ? ('completed' as const) : ('failed' as const),
+        usage,
+      };
+    },
+  );
+  return { ...measured.response, sessionUsage: measured.usage.sessionUsage };
+}
+
+async function measuredResponsesCallUnmeasured(
+  options: MeasuredResponseOptions,
+  fetchImpl: typeof fetch,
 ): Promise<MeasuredResponse> {
   if (
     !options.apiKey ||

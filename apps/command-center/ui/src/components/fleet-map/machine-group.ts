@@ -29,6 +29,7 @@ import {
   shadows,
   spacing,
 } from '../../styles/theme-tokens.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { flowColor, flowLabel, formatElapsed, runStatusColor } from '../runs/run-utils.js';
 import { renderRunTitle } from '../shared/run-title.js';
@@ -1054,7 +1055,7 @@ ${deployHint}"
           if (hasRun) {
             this.handleSlotExpand(s.slot);
           } else {
-            location.hash = `slot/${s.slot}`;
+            navigateHash(`slot/${s.slot}`);
           }
         }}
       >
@@ -1126,7 +1127,7 @@ ${deployHint}"
                 class="nav-btn"
                 @click=${(e: Event) => {
                   e.stopPropagation();
-                  location.hash = `slot/${s.slot}`;
+                  navigateHash(`slot/${s.slot}`);
                 }}
                 title="Open slot view"
               >
@@ -1138,7 +1139,7 @@ ${deployHint}"
             data-testid="runtime-capabilities-open-${s.slot}"
             @click=${(e: Event) => {
               e.stopPropagation();
-              location.hash = `slot/${s.slot}?activity=info`;
+              navigateHash(`slot/${s.slot}?activity=info`);
             }}
             title="Open runtime capabilities"
           >
@@ -1148,7 +1149,7 @@ ${deployHint}"
             class="nav-btn"
             @click=${(e: Event) => {
               e.stopPropagation();
-              location.hash = `terminal/${s.slot}`;
+              navigateHash(`terminal/${s.slot}`);
             }}
             title="Terminal"
           >
@@ -1224,7 +1225,9 @@ ${deployHint}"
             <button
               class="nav-btn"
               @click=${() => {
-                location.hash = `family/${run.familyId}${isTerminalRunStatus(run.status) ? `?run=${encodeURIComponent(run.id)}` : ''}`;
+                navigateHash(
+                  `family/${run.familyId}${isTerminalRunStatus(run.status) ? `?run=${encodeURIComponent(run.id)}` : ''}`,
+                );
               }}
               title="Retrospective"
             >
@@ -1233,7 +1236,7 @@ ${deployHint}"
             <button
               class="nav-btn"
               @click=${() => {
-                location.hash = `slot/${slotId}`;
+                navigateHash(`slot/${slotId}`);
               }}
               title="Open slot view"
             >
@@ -1242,7 +1245,7 @@ ${deployHint}"
             <button
               class="nav-btn"
               @click=${() => {
-                location.hash = `terminal/${slotId}`;
+                navigateHash(`terminal/${slotId}`);
               }}
               title="Open terminal"
             >
@@ -1251,9 +1254,11 @@ ${deployHint}"
             <button
               class="nav-btn"
               @click=${() => {
-                location.hash = isTerminalRunStatus(run.status)
-                  ? `family/${run.familyId}?run=${encodeURIComponent(run.id)}`
-                  : `run/${run.id}`;
+                navigateHash(
+                  isTerminalRunStatus(run.status)
+                    ? `family/${run.familyId}?run=${encodeURIComponent(run.id)}`
+                    : `run/${run.id}`,
+                );
               }}
               title=${isTerminalRunStatus(run.status) ? 'Open retrospective' : 'Full run detail'}
             >

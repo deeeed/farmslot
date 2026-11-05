@@ -459,6 +459,25 @@ test('a budget-failed run whose slot was released re-binds the named slot at the
   assert.equal((await readSlotRow(slotId))?.lifecycle, 'ready');
   assert.equal(getRun(run.id)!.slotId, null);
 
+  // Restoration can fail after claiming but before run.slotId is rebound.
+  await assert.rejects(
+    runExtendReviewBudget({ ...params, slotId }, emit, {
+      ...deps,
+      rebindSlot: (candidate, options) =>
+        rebindUnownedPublicationSlot(candidate, {
+          ...options,
+          git: async () => ({ branch: run.branch!, headSha: checkoutHead }),
+          restoreTask: async () => {
+            throw new Error('retained task restoration failed');
+          },
+        }),
+    }),
+    /retained task restoration failed/,
+  );
+  assert.equal(await owner(), null);
+  assert.equal((await readSlotRow(slotId))?.lifecycle, 'ready');
+  assert.equal(getRun(run.id)!.slotId, null);
+
   const result = await runExtendReviewBudget({ ...params, slotId }, emit, { ...deps, rebindSlot });
   assert.equal(result.run.slotId, slotId);
   assert.equal(await owner(), run.id);

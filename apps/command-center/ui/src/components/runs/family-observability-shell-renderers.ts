@@ -16,6 +16,8 @@ import {
   familyTokenMetricLabel,
   resolveFamilyTokenSummary,
 } from './family-observability-token-model.js';
+import { summarizeUsage } from './family-observability-usage-model.js';
+import { usageCost } from './family-observability-usage-renderers.js';
 
 interface FamilyTopbarRenderOptions {
   snapshot: FamilyObservabilitySnapshot;
@@ -108,6 +110,12 @@ export function renderFamilyTopbar(options: FamilyTopbarRenderOptions): Template
 export function renderFamilyMetricsGrid(options: FamilyMetricsRenderOptions): TemplateResult {
   const { snapshot } = options;
   const tokenSummary = resolveFamilyTokenSummary(snapshot);
+  const receiptTotals = snapshot.usage
+    ? summarizeUsage(snapshot.usage.contributions.map((row) => row.usage))
+    : null;
+  const tokenCapture = snapshot.usage
+    ? summarizeUsage(snapshot.usage.sessions.map((row) => row.usage)).measured > 0
+    : undefined;
   return html`
     <div class="metrics-grid">
       <div class="metric-card">
@@ -144,11 +152,17 @@ export function renderFamilyMetricsGrid(options: FamilyMetricsRenderOptions): Te
       </div>
       <div class="metric-card">
         <div class="metric-label">Family tokens</div>
-        <div class="metric-value">${familyTokenMetricLabel(tokenSummary)}</div>
+        <div class="metric-value">${familyTokenMetricLabel(tokenSummary, tokenCapture)}</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Est. cost</div>
-        <div class="metric-value">${familyCostMetricLabel(tokenSummary)}</div>
+        <div class="metric-label">${receiptTotals ? 'Known cost' : 'Est. cost'}</div>
+        <div class="metric-value">
+          ${receiptTotals
+            ? receiptTotals.cost != null || receiptTotals.measured
+              ? usageCost(receiptTotals.cost)
+              : 'Not captured'
+            : familyCostMetricLabel(tokenSummary)}
+        </div>
       </div>
     </div>
   `;

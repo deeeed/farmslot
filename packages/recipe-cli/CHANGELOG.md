@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.32.8 - 2026-11-05
+
+- Allow operators to bind legacy project tasks in place, retaining their evidence and freezing a missing configured CI check for the normal checklist mark.
+
 ## 0.32.7 - 2026-11-04
 
 - Align published dependencies with the native delegation and recording-tail release cohort.

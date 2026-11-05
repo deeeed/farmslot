@@ -28,7 +28,7 @@ test('Siteed fixture mappings match source file and directory types', () => {
   for (const { src } of config.fixtures.templates) {
     assert.ok(statSync(new URL(`fixtures/${src}`, pack)).isFile(), `${src} must be a file`);
   }
-  for (const src of ['recipe-tools', 'recipe-provider']) {
+  for (const src of ['recipe-provider']) {
     const entry = config.fixtures.directories?.find((entry) => entry.src === src);
     assert.equal(entry?.dst, `.agent/${src}`);
     assert.ok(statSync(new URL(`fixtures/${src}`, pack)).isDirectory());
@@ -96,6 +96,13 @@ function fixture(t) {
     `#!/usr/bin/env node
 const fs = require('node:fs');
 fs.appendFileSync(process.env.SITEED_CI_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n');
+if (process.env.SITEED_CI_ESLINT_BIN) {
+  const args = process.argv.slice(2);
+  const lintArgs = args[1] === 'lint' ? ['.', ...args.slice(2)] : args.slice(3);
+  const result = require('node:child_process').spawnSync(process.execPath,
+    [process.env.SITEED_CI_ESLINT_BIN, ...lintArgs], { stdio: 'inherit' });
+  process.exit(result.status ?? 1);
+}
 process.exit(Number(process.env.SITEED_CI_EXIT || 0));
 `,
   );
@@ -138,17 +145,36 @@ test('Siteed lint selects committed, dirty and untracked source, retaining filen
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(f.calls(), [
-    [
-      'yarn',
-      'lint',
-      '--file',
-      'src/committed.ts',
-      '--file',
-      'src/page.tsx',
-      '--file',
-      'src/space name.tsx',
-    ],
+    ['yarn', 'exec', 'eslint', '--', 'src/committed.ts', 'src/page.tsx', 'src/space name.tsx'],
   ]);
+});
+
+test('Siteed runs flat-config ESLint on changed files without scanning unchanged failures', (t) => {
+  const f = fixture(t);
+  f.write('src/unchanged.js', 'unknownUnchangedName;\n');
+  f.write(
+    'eslint.config.mjs',
+    "export default [{ files: ['**/*.js'], rules: { 'no-undef': 'error' } }];\n",
+  );
+  execFileSync('git', ['add', 'eslint.config.mjs'], { cwd: f.root });
+  f.commit();
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], { cwd: f.root });
+  f.write('src/changed file.js', 'export const answer = 42;\n');
+  const eslintRequire = createRequire(
+    new URL('../../apps/command-center/package.json', import.meta.url),
+  );
+  const bin = path.join(
+    path.dirname(eslintRequire.resolve('eslint/package.json')),
+    'bin/eslint.js',
+  );
+  const env = { SITEED_CI_ESLINT_BIN: bin };
+  const result = f.run(env);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  f.write('src/changed file.js', 'unknownChangedName;\n');
+  const failed = f.run(env);
+  assert.equal(failed.status, 1, failed.stdout + failed.stderr);
+  assert.match(failed.stdout, /unknownChangedName/);
+  assert.doesNotMatch(failed.stdout, /unknownUnchangedName/);
 });
 
 test('docs, global inputs and deleted files do not fall back to a full lint or build', (t) => {

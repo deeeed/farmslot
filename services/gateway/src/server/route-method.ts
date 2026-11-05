@@ -579,6 +579,7 @@ import { nativeObservations } from '../resources/native-observations.js';
 import { upstreamObservers } from '../resources/upstream-observers.js';
 import { rememberNativeExecutionNode } from '../runners/native/execution-nodes.js';
 import { unsubscribePty } from '../runtime/pty-stream.js';
+import { withRunSessionUsageContext } from '../runtime/run-session-usage-context.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
 import { unsubscribe as unsubscribeTerminalPoll } from '../runtime/tmux-stream.js';
 import {
@@ -712,7 +713,13 @@ export async function routeMethod(
       return { sent: true };
     }
     await assertNativeWorkerRpcAccess(method, params);
-    return routeAuthorizedMethod(method, params, context);
+    const runId =
+      params && typeof params === 'object' && 'runId' in params && typeof params.runId === 'string'
+        ? params.runId
+        : undefined;
+    return withRunSessionUsageContext(runId, method, () =>
+      routeAuthorizedMethod(method, params, context),
+    );
   });
 }
 

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
+import { Type } from '@sinclair/typebox';
 
 import { getLLMConfig } from './config.js';
 import {
@@ -248,3 +249,61 @@ test('Astra without matching provider auth never falls back to another CLI for c
     /CLI fallback disabled/,
   );
 });
+
+for (const stream of [false, true])
+  test(`helper usage retains all tool rounds with explicit pricing, streaming=${stream}`, async () => {
+    process.env.OPENAI_API_KEY ??= 'faux-test-key';
+    const faux = fauxProvider({ provider: 'openai', models: [{ id: 'faux-accounting' }] });
+    (await piModels()).setProvider(faux.provider);
+    const first = fauxAssistantMessage(fauxToolCall('inspect', {}), { stopReason: 'toolUse' });
+    const last = fauxAssistantMessage('done');
+    first.usage = {
+      input: 10,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 40,
+      totalTokens: 100,
+      cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+    };
+    last.usage = {
+      input: 1,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+      totalTokens: 10,
+      cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.04, total: 0.1 },
+    };
+    faux.setResponses([first, last]);
+    const result = await callLLMChat({
+      provider: 'openai',
+      model: 'faux-accounting',
+      reasoning: 'high',
+      messages: [{ role: 'user', content: 'inspect' }],
+      tools: [{ name: 'inspect', description: 'fixture', parameters: Type.Object({}) }],
+      toolExecutor: async () => ({
+        toolCallId: 'inspect',
+        toolName: 'inspect',
+        content: 'ok',
+        isError: false,
+      }),
+      ...(stream ? { onDelta: () => {} } : {}),
+    });
+    const observed = (result.piMessages ?? []).flatMap((message) =>
+      message.role === 'assistant' ? [message.usage] : [],
+    );
+    assert.equal(observed.length, 2);
+    assert.equal(result.usage.inputTokens, observed[0].input + observed[1].input);
+    assert.equal(result.usage.outputTokens, observed[0].output + observed[1].output);
+    const row = result.usage.sessionUsage;
+    assert.ok(row);
+    assert.equal(row.turns, 2);
+    assert.equal(row.totalTokens, observed[0].totalTokens + observed[1].totalTokens);
+    assert.equal(row.cacheRead, observed[0].cacheRead + observed[1].cacheRead);
+    assert.equal(row.cacheCreation, observed[0].cacheWrite + observed[1].cacheWrite);
+    assert.equal(row.effort, 'high');
+    assert.equal(row.identityKind, 'request');
+    assert.ok(row.runnerSessionId);
+    assert.ok(typeof row.durationMs === 'number');
+    assert.equal(row.costStatus, 'estimated');
+    assert.equal(row.runId, null, 'Out-of-run helper must not be attached to an unrelated run');
+  });
