@@ -93,6 +93,10 @@ export async function measureGatewayRequest<T>(
     }
   });
 }
+/** Work a request starts without awaiting is background work, not part of the request's cost. */
+export function outsideGatewayRequest<T>(operation: () => T): T {
+  return current.exit(operation);
+}
 export function recordGatewayResponse(bytes: number, ok: boolean): void {
   const cost = current.getStore();
   if (!cost?.active) return;

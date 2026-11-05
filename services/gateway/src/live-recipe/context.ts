@@ -35,7 +35,9 @@ import {
 import { MAX_ARTIFACT_TREE_DEPTH, slotReadFile } from '../core/slot-io.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
+import { outsideGatewayRequest } from '../observability/performance.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
+import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
 
 import {
   artifactScanFilters,
@@ -1154,6 +1156,31 @@ export function invalidateLiveRecipeContextMemo(runId?: string): void {
   // (e.g. recipe-completion → next pr-board click) gets a fresh load
   // instead of awaiting the about-to-be-stale promise.
   liveContextInflight.delete(runId);
+}
+
+/** Detail reads serve the last loaded context; a stale one reloads in the background. */
+export function attachRetainedLiveRecipeContext(run: Run): Run {
+  const cached = liveContextResultCache.get(run.id);
+  if (
+    (!cached || Date.now() - cached.at >= LIVE_CONTEXT_MEMO_TTL_MS) &&
+    !liveContextInflight.has(run.id)
+  ) {
+    const served = cached ? cached.value : (run.liveRecipeContext ?? null);
+    outsideGatewayRequest(() =>
+      attachLiveRecipeContext(run).then(
+        (loaded) => {
+          if (!liveRecipeContextsEqual(served, loaded.liveRecipeContext ?? null))
+            publishRunResources(captureRunResources(run));
+        },
+        (error: unknown) =>
+          console.warn(
+            `[live-recipe-context] ${run.id.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+      ),
+    );
+  }
+  if (!cached || liveRecipeContextsEqual(cached.value, run.liveRecipeContext)) return run;
+  return { ...run, liveRecipeContext: cached.value };
 }
 
 export async function attachLiveRecipeContext(run: Run): Promise<Run> {
