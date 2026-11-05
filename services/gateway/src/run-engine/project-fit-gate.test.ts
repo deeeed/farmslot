@@ -169,7 +169,13 @@ const offlineSelector = async () => {
   throw new Error('classifier offline');
 };
 
-for (const mention of ['src/core/api/terminalApi.ts', 'src/foo-core-bar/api.ts', 'core.ts']) {
+for (const mention of [
+  'src/core/api/terminalApi.ts',
+  'src/foo-core-bar/api.ts',
+  'core.ts',
+  'core-mobile.ts',
+  'core_mobile.ts',
+]) {
   test(`project fit ignores project-like segments in ${mention}`, async (t) => {
     t.mock.method(console, 'warn', () => {});
     const result = await detectProjectMismatchForConfigs(

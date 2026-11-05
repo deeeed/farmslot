@@ -287,7 +287,7 @@ function tokenizeProjectFitText(values: Array<string | null | undefined>): Set<s
   const matches = joined
     .toLowerCase()
     .matchAll(
-      /https?:\/\/github\.com\/([a-z0-9_.-]+\/[a-z0-9_.-]+)(?:\/[a-z0-9_.-]+)*|([a-z0-9_.-]+(?:[\\/][a-z0-9_.-]+)+)|[a-z0-9]+(?:\.[a-z0-9]+)*/g,
+      /https?:\/\/github\.com\/([a-z0-9_.-]+\/[a-z0-9_.-]+)(?:\/[a-z0-9_.-]+)*|([a-z0-9_.-]+(?:[\\/][a-z0-9_.-]+)+)|[a-z0-9_-]+(?:\.[a-z0-9_-]+)+|[a-z0-9]+/g,
     );
   return new Set(
     [...matches]
