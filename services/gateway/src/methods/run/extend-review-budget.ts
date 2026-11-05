@@ -25,7 +25,7 @@ import {
 } from '../../run-engine/engine-decisions.js';
 import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { getRun } from '../../runs/store.js';
+import { getRun, updateRun } from '../../runs/store.js';
 
 export interface ReviewBudgetExtensionDependencies {
   authorize?: () => Principal;
@@ -79,14 +79,34 @@ export async function runExtendReviewBudget(
     throw new Error(
       'Invalid review budget request: supply an idempotency key, full head, expected limit and scoped brief',
     );
+  if (params.slotId !== undefined && (typeof params.slotId !== 'string' || !params.slotId.trim()))
+    throw new Error('Invalid review budget request: a named slot must be a slot id');
+  const { slotId: namedSlot, ...grant } = params;
   const request = {
-    ...params,
+    ...grant,
     headSha: params.headSha.toLowerCase(),
     scopeBrief: params.scopeBrief.trim(),
   };
   const extended = await withRunTransition(params.runId, async () => {
-    const run = getRun(params.runId);
+    let run = getRun(params.runId);
     if (!run) throw new Error(`Run not found: ${params.runId}`);
+    // A released slot also clears run.slotId; the operator names the slot that still holds the
+    // run branch at the approved head, and the same unowned-slot guards re-bind it.
+    if (namedSlot !== undefined && run.slotId !== namedSlot) {
+      if (run.slotId || run.status !== 'failed')
+        throw new Error(
+          'Review budget extension names a slot only for a failed run that lost its slot',
+        );
+      const rebound = await (dependencies.rebindSlot ?? rebindUnownedPublicationSlot)(
+        { ...run, slotId: namedSlot },
+        { expectedHeadSha: request.headSha },
+      );
+      if (!rebound)
+        throw new Error(
+          `Slot ${namedSlot} is not free with the run branch at ${request.headSha} checked out`,
+        );
+      run = updateRun(run.id, { slotId: namedSlot });
+    }
     const expected = identity(run);
     const actor = JSON.stringify(principal);
     let slotEpoch: number | undefined;

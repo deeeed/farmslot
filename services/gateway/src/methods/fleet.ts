@@ -44,7 +44,6 @@ import { fleetStaleThresholdMs, isFleetCheckedAtStale } from '../fleet/freshness
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
-import { isTerminalTeardownInFlight } from '../run-engine/terminal-teardown-registry.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
 import { probeRunnerDescendantPids } from '../runners/session-process.js';
 import { getAllRuns, getRun, listRuns } from '../runs/store.js';
@@ -416,9 +415,8 @@ export function slotOwnershipFieldsForRun(
  * the dispatcher's write chain: a dispatch claim and this re-bind cannot both win, and the epoch
  * bump aborts a teardown's remaining writes. A released (ready) slot qualifies; with
  * `unownedHeld`, so does a busy or held slot that lost its owner while the run kept its
- * checkout, including the held/occupied hold the run's own unfinished teardown left. Returns
- * what holds the slot instead (a run, a handoff reservation, or a lifecycle that is not free),
- * or null when re-bound.
+ * checkout. Returns what holds the slot instead (a run, a handoff reservation, or a lifecycle
+ * that is not free), or null when re-bound.
  */
 export async function rebindRunSlot(
   run: Run,
@@ -437,34 +435,21 @@ export async function rebindRunSlot(
     (slot) => {
       const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
       const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
-      const unownedHeld =
-        options.unownedHeld === true &&
-        !owner &&
-        (slot.lifecycle === 'busy' || slot.lifecycle === 'held');
-      const free = slot.lifecycle === 'ready' || unownedHeld;
-      // A teardown this run's failure started and could not finish kept its checkout; it is the
-      // run's own hold, unlike one another run's cleanup left or a teardown still in progress.
-      const ownCleanupHold =
-        unownedHeld &&
-        slotClaimBlockedByRelease(slot) === 'occupied' &&
-        slot.cleanup_run_id === run.id &&
-        !isTerminalTeardownInFlight(slotId);
+      const free =
+        slot.lifecycle === 'ready' ||
+        (options.unownedHeld === true &&
+          !owner &&
+          (slot.lifecycle === 'busy' || slot.lifecycle === 'held'));
       // An archive evicts the run without this slot; re-binding would leave the
       // slot held by a run that no longer exists.
       if (isRunArchiving(run.id) || !getRun(run.id)) holder = 'nobody: the run is being archived';
       else if (owner && owner !== run.id) holder = `run ${owner}`;
       else if (reserved && reserved !== run.id) holder = `a handoff to run ${reserved}`;
-      else if ((slotClaimBlockedByRelease(slot) !== null && !ownCleanupHold) || !free)
+      else if (slotClaimBlockedByRelease(slot) !== null || !free)
         holder = `nobody, but it is ${String(slot.lifecycle ?? 'missing')}/${String(slot.phase ?? '-')}`;
       return holder === null;
     },
-    {
-      ...slotOwnershipFieldsForRun(run),
-      handoff_run_id: null,
-      cleanup_run_id: null,
-      held_reason: null,
-      dispatchable: false,
-    },
+    { ...slotOwnershipFieldsForRun(run), handoff_run_id: null, dispatchable: false },
   );
   return claimed ? null : (holder ?? 'an unknown holder');
 }

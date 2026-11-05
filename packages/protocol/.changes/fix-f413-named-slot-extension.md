@@ -1,0 +1,1 @@
+- `run.extendReviewBudget` takes an optional `slotId`: the slot a failed run whose slot was released re-binds at the approved head.
