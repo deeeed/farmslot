@@ -380,19 +380,52 @@ export async function monitorCI(
       checkSummary,
       allPassed,
       anyFailed,
-      failedNames,
+      failedNames: allFailedNames,
       actionableBotComments,
       recommendation: rawRecommendation,
       merged,
       mergeConflict,
     } = pr;
+    const infrastructureChecks: string[] = [];
+    const failedNames: string[] = [];
+    for (const check of pr.checks.filter((check) => check.status === 'fail')) {
+      const details =
+        check.failureDetails ??
+        pr.checkSnapshot?.checks.filter((detail) => detail.name === check.name);
+      if (!details?.length) {
+        failedNames.push(check.watchName || check.name);
+        continue;
+      }
+      for (const detail of details) {
+        const conclusion = (detail.conclusion ?? detail.status).toUpperCase();
+        if (
+          [
+            'CANCEL',
+            'CANCELLED',
+            'TIMED_OUT',
+            'STARTUP_FAILURE',
+            'STALE',
+            'ACTION_REQUIRED',
+          ].includes(conclusion)
+        )
+          infrastructureChecks.push(`${detail.name} (${conclusion})`);
+        else failedNames.push(detail.name);
+      }
+    }
+    const infrastructureReason = infrastructureChecks.length
+      ? `CI infrastructure/timeout failure: ${infrastructureChecks.join(', ')}. Handle outside the PR`
+      : null;
     const headShaNow = run.slotId ? await getSlotHeadSha(run.slotId) : null;
     const checkFingerprint = buildCIWatchCheckFingerprint(pr.checks);
     const recoverBlockedInlineFix = async (
       inlineFix: InlineCIFix,
       failedChecks: string[],
     ): Promise<'refresh' | CIOutcome> => {
-      const reason = inlineFix.blockedReason ?? `attempt ${inlineFix.attempts}`;
+      const fixReason = inlineFix.blockedReason ?? `attempt ${inlineFix.attempts}`;
+      const reason =
+        infrastructureReason && fixReason !== infrastructureReason
+          ? `${fixReason}. ${infrastructureReason}`
+          : fixReason;
       lastInlineCIFix = inlineFix;
       checkTimeline.push({
         timestamp: new Date().toISOString(),
@@ -413,10 +446,11 @@ export async function monitorCI(
         return 'refresh';
       }
       if (
-        fresh.merged ||
-        buildCIWatchCheckFingerprint(fresh.checks) !== checkFingerprint ||
-        buildCIBotCommentFingerprint(fresh.actionableBotComments) !==
-          buildCIBotCommentFingerprint(pr.actionableBotComments)
+        !readDedup(runId).fixScopeRefusal &&
+        (fresh.merged ||
+          buildCIWatchCheckFingerprint(fresh.checks) !== checkFingerprint ||
+          buildCIBotCommentFingerprint(fresh.actionableBotComments) !==
+            buildCIBotCommentFingerprint(pr.actionableBotComments))
       ) {
         forceNextRefresh = true;
         return 'refresh';
@@ -427,7 +461,15 @@ export async function monitorCI(
         'inline_fix_blocked',
         `CI fix could not be validated for PR #${prNumber}: ${reason}. The PR still needs attention.`,
         [
-          { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'primary' },
+          ...(!infrastructureReason && !readDedup(runId).fixScopeRefusal
+            ? [
+                {
+                  id: 'dispatch-pr-complete',
+                  label: 'Dispatch pr-complete',
+                  style: 'primary' as const,
+                },
+              ]
+            : []),
           { id: 'wait', label: 'Keep watching CI', style: 'secondary' },
           { id: 'abort', label: 'Abort', style: 'danger' },
         ],
@@ -505,14 +547,14 @@ export async function monitorCI(
     );
     const passedNames = pr.checks.filter((c) => c.status === 'pass').map((c) => c.name);
     const pendingNames = pr.checks.filter((c) => c.status === 'pending').map((c) => c.name);
-    persistRunningState(checkSummary, recommendation, passedNames, failedNames, pendingNames);
+    persistRunningState(checkSummary, recommendation, passedNames, allFailedNames, pendingNames);
     broadcastFn(Events.CI_CHECK_UPDATED, {
       runId,
       prNumber,
       checkSummary,
       recommendation,
       passedNames,
-      failedNames,
+      failedNames: allFailedNames,
       pendingNames,
       pollCount,
       pollIntervalMs: config.pollIntervalMs,
@@ -545,6 +587,37 @@ export async function monitorCI(
       updateRun(runId, { prState: pr.prState, mergedAt: pr.mergedAt ?? null });
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       return buildOutcome('passed');
+    }
+
+    const scopeRefusal = readDedup(runId).fixScopeRefusal;
+    if (scopeRefusal) {
+      const recovery = await recoverBlockedInlineFix(
+        {
+          attempted: true,
+          success: false,
+          blocked: true,
+          blockedReason: scopeRefusal,
+          attempts: readDedup(runId).consecutiveAttempts,
+        },
+        allFailedNames,
+      );
+      if (recovery !== 'refresh') return recovery;
+      continue;
+    }
+
+    if (infrastructureReason && (failedNames.length === 0 || mergeConflict)) {
+      const recovery = await recoverBlockedInlineFix(
+        {
+          attempted: false,
+          success: false,
+          blocked: true,
+          blockedReason: infrastructureReason,
+          attempts: 0,
+        },
+        allFailedNames,
+      );
+      if (recovery !== 'refresh') return recovery;
+      continue;
     }
 
     // Merge conflict — prefer update-branch (lighter), fallback to pr-complete
@@ -596,6 +669,7 @@ export async function monitorCI(
         : `CI timed out after ${configuredMs / 60000} min total`;
       if (pendingNames.length) timeoutDesc += `\nPending: ${pendingNames.join(', ')}`;
       if (failedCheckNames.length) timeoutDesc += `\nFailed: ${failedCheckNames.join(', ')}`;
+      if (infrastructureReason) timeoutDesc += `\n${infrastructureReason}.`;
       const state = readDedup(runId);
       if (state.lastProgressAt)
         timeoutDesc += `\nLast progress: ${state.lastProgressAt}${state.lastProgressReason ? ` (${state.lastProgressReason})` : ''}`;
@@ -724,10 +798,24 @@ export async function monitorCI(
     // Any watched check failed
     if (anyFailed) {
       console.log(
-        `[ci-monitor] run ${runId.slice(0, 8)} — ${checkSummary.failed} watched check(s) failed: ${failedNames.join(', ')}`,
+        `[ci-monitor] run ${runId.slice(0, 8)} — ${checkSummary.failed} watched check(s) failed: ${allFailedNames.join(', ')}`,
       );
 
       if (await isInlineFixDedupedNow(runId, run.slotId, [], failedNames)) {
+        if (infrastructureReason) {
+          const recovery = await recoverBlockedInlineFix(
+            {
+              attempted: false,
+              success: false,
+              blocked: true,
+              blockedReason: infrastructureReason,
+              attempts: 0,
+            },
+            allFailedNames,
+          );
+          if (recovery !== 'refresh') return recovery;
+          continue;
+        }
         checkTimeline.push({
           timestamp: new Date().toISOString(),
           status: 'inline-ci-fix-deduped',
@@ -750,6 +838,21 @@ export async function monitorCI(
         ciRepo,
         signal,
       );
+      if (infrastructureReason && !inlineFix?.blocked) {
+        if (inlineFix?.success) recordInlineFixSuccess(runId, [], failedNames, inlineFix.commitSha);
+        const recovery = await recoverBlockedInlineFix(
+          {
+            attempted: inlineFix?.attempted ?? false,
+            success: false,
+            blocked: true,
+            blockedReason: infrastructureReason,
+            attempts: inlineFix?.attempts ?? 0,
+          },
+          allFailedNames,
+        );
+        if (recovery !== 'refresh') return recovery;
+        continue;
+      }
       if (inlineFix?.success) {
         checkTimeline.push({
           timestamp: new Date().toISOString(),
@@ -960,7 +1063,11 @@ async function createCIDecision(
 
   // Dedup: if a decision of this type was already resolved, return its action
   const resolved = run.decisions.find(
-    (d) => d.type === type && d.resolvedAt && shouldReuseResolvedCIDecisionAction(d.resolvedAction),
+    (d) =>
+      d.type === type &&
+      d.resolvedAt &&
+      shouldReuseResolvedCIDecisionAction(d.resolvedAction) &&
+      actions.some((action) => action.id === d.resolvedAction),
   );
   if (resolved) return resolved.resolvedAction!;
 

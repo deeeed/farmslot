@@ -17,6 +17,7 @@ import {
   Methods,
   type MonitoredPRIdentity,
   normalizeCICheckDetail,
+  type PRCheckDetail,
   type PRForSlotObservationParams,
   prForSlotObservationParams,
   type PRForSlotParams,
@@ -775,7 +776,7 @@ export function projectPRData(
 
   const allChecks = parseChecksOutput(raw.checksStdout);
   const allCheckRollup = summarizeAllChecks(allChecks);
-  const watched = matchCheckGroups(allChecks, checkGroups);
+  const watched = matchCheckGroups(allChecks, checkGroups, opts.includeCheckSnapshot);
   const passed = watched.filter((w) => w.status === 'pass');
   const failed = watched.filter((w) => w.status === 'fail');
   const skipped = watched.filter((w) => w.status === 'skipped');
@@ -870,6 +871,7 @@ export function projectPRData(
       name: w.name,
       status: w.status === 'not_found' ? ('pending' as const) : w.status,
       watchName: w.watchName,
+      ...(w.failureDetails ? { failureDetails: w.failureDetails } : {}),
     })),
     ...(opts.includeCheckSnapshot && raw.checksAvailable && !raw.partial
       ? {
@@ -1005,6 +1007,7 @@ interface MatchedCheckGroup {
   name: string;
   status: 'pass' | 'fail' | 'pending' | 'skipped' | 'not_found';
   watchName: string;
+  failureDetails?: PRCheckDetail[];
 }
 
 function parseChecksOutput(output: string): ParsedCheck[] {
@@ -1037,6 +1040,10 @@ function normalizeFullCheckStatus(status: string): 'pass' | 'fail' | 'pending' |
     case 'failure':
     case 'cancel':
     case 'cancelled':
+    case 'timed_out':
+    case 'startup_failure':
+    case 'stale':
+    case 'action_required':
       return 'fail';
     case 'skip':
     case 'skipped':
@@ -1103,12 +1110,23 @@ function compileGroupMatcher(group: ProjectCICheckGroup): (check: ParsedCheck) =
 export function matchCheckGroups(
   allChecks: ParsedCheck[],
   checkGroups: ProjectCICheckGroup[],
+  includeFailureDetails = false,
 ): MatchedCheckGroup[] {
+  const details = (checks: ParsedCheck[]) => {
+    if (!includeFailureDetails) return {};
+    const failureDetails = checks
+      .filter((check) => normalizeFullCheckStatus(check.status) === 'fail')
+      .map((check) =>
+        normalizeCICheckDetail({ ...check, state: check.state || check.status.toUpperCase() }),
+      );
+    return failureDetails.length ? { failureDetails } : {};
+  };
   if (checkGroups.length === 0) {
     return allChecks.map((check) => ({
       name: check.name,
       status: normalizeFullCheckStatus(check.status),
       watchName: check.name,
+      ...details([check]),
     }));
   }
 
@@ -1129,6 +1147,7 @@ export function matchCheckGroups(
         name: latest.name,
         watchName: group.name,
         status: normalizeFullCheckStatus(latest.status),
+        ...details([latest]),
       });
       continue;
     }
@@ -1145,7 +1164,7 @@ export function matchCheckGroups(
           : normalized.includes('fail')
             ? 'fail'
             : 'skipped';
-      watched.push({ name: displayName, watchName: group.name, status });
+      watched.push({ name: displayName, watchName: group.name, status, ...details(matches) });
       continue;
     }
 
@@ -1156,7 +1175,7 @@ export function matchCheckGroups(
         : normalized.includes('pass')
           ? 'pass'
           : 'skipped';
-    watched.push({ name: displayName, watchName: group.name, status });
+    watched.push({ name: displayName, watchName: group.name, status, ...details(matches) });
   }
   return watched;
 }

@@ -1,0 +1,2 @@
+- Report cancelled, timed-out and other infrastructure check failures for handling outside the PR, while sending only code failures to a CI fix.
+- Limit CI fixes to the PR's original files, include the rule in project overrides, and block completion and further nudges after a scope violation.

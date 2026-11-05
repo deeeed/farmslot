@@ -4,6 +4,8 @@ import path from 'node:path';
 import {
   buildBranchUpdateGuardCommand,
   buildBranchUpdateInstructions,
+  type CIFixScope,
+  parseCIFixScope,
 } from '@farmslot/agent-runtime';
 import {
   type AgentContext,
@@ -57,6 +59,7 @@ import {
   completeBranchMaintenance,
   pendingBranchMaintenance,
   prepareBranchMaintenance,
+  runtimeOperation,
 } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import {
@@ -631,6 +634,13 @@ async function resolveSlotTaskDir(runId: string, project: string): Promise<strin
   }
 }
 
+interface CIFixTask {
+  taskDir: string;
+  taskPath: string;
+  scope?: CIFixScope;
+  progress?: CIWatchFixProgress;
+}
+
 /** Write CI-FIX.md to the slot's task dir using the ci-fix template */
 async function writeCIFixTask(
   slotId: string,
@@ -640,7 +650,7 @@ async function writeCIFixTask(
   prNumber: number,
   ciRepo: string,
   ciBaseRef: string,
-): Promise<{ taskDir: string; taskPath: string; progress?: CIWatchFixProgress } | null> {
+): Promise<CIFixTask | null> {
   const run = getRun(runId);
   if (!run) return null;
 
@@ -675,7 +685,17 @@ async function writeCIFixTask(
       : DEFAULT_BRANCH;
   const publicationBase = await publicationBaseForRun(run, defaultBranch);
   const operation = await prepareBranchMaintenance(run, vars, defaultBranch);
+  const scope = parseCIFixScope(
+    await runtimeOperation(vars, 'capture-ci-fix', {
+      kind: 'ordinary',
+      repo: vars.remoteRepo,
+      branch,
+      baseRef: publicationBase,
+      headSha: ciBaseRef,
+    }),
+  );
   const guardVars = {
+    CI_FIX_SCOPE: JSON.stringify(scope),
     REPO: vars.remoteRepo,
     BRANCH: branch,
     PUBLICATION_BASE: publicationBase,
@@ -720,16 +740,31 @@ async function writeCIFixTask(
   // {{...}} tokens verbatim) is never re-expanded and a colliding var cannot
   // consume the placeholder.
   // Inline fixes reuse TASK.md, which may predate stack binding or retargeting.
-  // Supply current branch instructions even for a project template without the new token.
+  // Append current branch instructions and scope even when a project omits their tokens.
   const expanded = [
-    await renderRoleTemplate(template, vars, pv, ciReplacements),
-    ...(template.includes('{{BRANCH_UPDATE_INSTRUCTIONS}}')
-      ? []
-      : ['', ciReplacements.BRANCH_UPDATE_INSTRUCTIONS]),
+    await renderRoleTemplate(template, vars, pv, {
+      ...ciReplacements,
+      BRANCH_UPDATE_INSTRUCTIONS: '',
+    }),
+    '',
+    '## CI fix scope',
+    '',
+    'Change only these files. Never edit CI configuration, workflows or timeouts. If a real fix needs any other file, or a failure is infrastructure, do not patch it. Mark blocked with the reason.',
+    '',
+    ...(scope.ownedFiles.length
+      ? scope.ownedFiles.map((file) => `- ${JSON.stringify(file)}`)
+      : ['No files are owned by this PR. Mark blocked.']),
+    '',
+    ciReplacements.BRANCH_UPDATE_INSTRUCTIONS,
   ].join('\n');
 
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
+  await writeTextFileOnSlot(
+    vars,
+    taskDirRelPath(taskDir, 'inputs/ci-fix-scope.json'),
+    JSON.stringify(scope),
+  );
   await writeTextFileOnSlot(vars, taskPath, expanded);
   await syncChecklistTargetForRole(vars, taskDir, 'ci-fix', { ciBaseRef });
 
@@ -739,7 +774,7 @@ async function writeCIFixTask(
   console.log(
     `[ci-monitor] run ${runId.slice(0, 8)} — wrote ${taskDirRelPath(taskDir, CI_FIX_CHECKLIST)} to slot`,
   );
-  return { taskDir, taskPath, progress: parseCIFixProgress(expanded) };
+  return { taskDir, taskPath, scope, progress: parseCIFixProgress(expanded) };
 }
 
 async function readRemoteCIFixProgress(
@@ -806,13 +841,22 @@ async function attemptInlineCIFix(
   }
 
   // Write CI-FIX.md to slot
-  const writeResult = recoveredContext
-    ? {
-        taskDir: path.posix.dirname(recoveredContext.taskFile!),
-        taskPath: recoveredContext.taskFile!,
-        progress: undefined,
-      }
-    : await writeCIFixTask(slotId, runId, comments, failedChecks, prNumber, ciRepo, beforeSha);
+  let writeResult: CIFixTask | null;
+  try {
+    writeResult = recoveredContext
+      ? {
+          taskDir: path.posix.dirname(recoveredContext.taskFile!),
+          taskPath: recoveredContext.taskFile!,
+        }
+      : await writeCIFixTask(slotId, runId, comments, failedChecks, prNumber, ciRepo, beforeSha);
+  } catch (error) {
+    const blockedReason = (error as Error).message;
+    mutateDedup(runId, (state) => {
+      state.fixScopeRefusal = blockedReason;
+    });
+    clearInlineFixState(runId, { phase: 'blocked' });
+    return { attempted: true, success: false, blocked: true, blockedReason, attempts };
+  }
   if (!writeResult) {
     console.warn(
       `[ci-monitor] run ${runId.slice(0, 8)} — failed to write CI-FIX.md, skipping inline fix`,
@@ -834,6 +878,43 @@ async function attemptInlineCIFix(
   let vars: Awaited<ReturnType<typeof loadSlotVars>> | undefined;
   try {
     vars = await loadSlotVars(slotId);
+    let scope: CIFixScope;
+    try {
+      if (writeResult.scope) scope = writeResult.scope;
+      else {
+        const scopePath = `${vars.remoteRepo}/${writeResult.taskDir}/inputs/ci-fix-scope.json`;
+        const result = await execOnSlot(vars, `cat ${shellQuote(scopePath)}`);
+        if (result.exitCode !== 0) throw new Error('CI_FIX_SCOPE_MISSING');
+        scope = parseCIFixScope(JSON.parse(result.stdout));
+      }
+    } catch (error) {
+      const blockedReason = `Cannot recover CI fix scope: ${(error as Error).message}`;
+      mutateDedup(runId, (state) => {
+        state.fixScopeRefusal = blockedReason;
+      });
+      clearInlineFixState(runId, { phase: 'blocked' }, writeResult.taskPath);
+      return { attempted: true, success: false, blocked: true, blockedReason, attempts };
+    }
+    const scopeVars = vars;
+    const verifyScope = async (headSha: string): Promise<string | null> => {
+      try {
+        await runtimeOperation(scopeVars, 'verify-ci-fix', {
+          repo: scopeVars.remoteRepo,
+          branch: run?.branch,
+          baseRef: scope.baseRef,
+          scope,
+          headSha,
+          operation: pendingBranchMaintenance(getRun(runId)),
+        });
+        return null;
+      } catch (error) {
+        const reason = (error as Error).message;
+        mutateDedup(runId, (state) => {
+          state.fixScopeRefusal = reason;
+        });
+        return reason;
+      }
+    };
     const signalPath = recoveredContext?.signalFile
       ? `${vars.remoteRepo}/${recoveredContext.signalFile}`
       : slotTaskRelPath(vars, writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal);
@@ -1243,6 +1324,10 @@ async function attemptInlineCIFix(
         ) {
           const lastSignalAt = new Date().toISOString();
           const currentSha = await getSlotHeadSha(slotId);
+          if (currentSha) {
+            const refusal = await verifyScope(currentSha);
+            if (refusal) return blockInlineFix(refusal, currentSha, lastSignalAt, fixProgress);
+          }
           if (ws.status === 'blocked') {
             console.log(
               `[ci-monitor] run ${runId.slice(0, 8)} — ${CI_FIX_CHECKLIST_TARGET.signal} blocked: ${ws.reason ?? 'no reason provided'}`,
@@ -1341,6 +1426,9 @@ async function attemptInlineCIFix(
 
       const currentSha = await getSlotHeadSha(slotId);
       if (currentSha && currentSha !== beforeSha && !pendingBranchMaintenance(getRun(runId))) {
+        const refusal = await verifyScope(currentSha);
+        if (refusal)
+          return blockInlineFix(refusal, currentSha, new Date().toISOString(), fixProgress);
         mutateDedup(runId, (s) => {
           s.consecutiveAttempts = 0;
         });
@@ -1485,6 +1573,15 @@ export async function tryInlineCIFix(
   if (!slotId) return null;
   const run = getRun(runId);
   if (!run) return null;
+  const refusal = readDedup(runId).fixScopeRefusal;
+  if (refusal)
+    return {
+      attempted: false,
+      success: false,
+      blocked: true,
+      blockedReason: refusal,
+      attempts: readDedup(runId).consecutiveAttempts,
+    };
   const runner = normalizeRunner(run.metrics.runner);
   const recoveringDelivery = resolveRecoverableCiFixContext(run) !== null;
 
