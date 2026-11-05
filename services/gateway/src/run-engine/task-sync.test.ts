@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { after, mock, test } from 'node:test';
+import { after, mock, test, type TestContext } from 'node:test';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 
@@ -9,6 +11,11 @@ import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 // every export the import graph needs and overrides only what this test fixes.
 import type { ExecOptions } from '../core/exec.js';
 import { fakeSshTools } from '../core/ssh-test-fixtures.js';
+
+const isolated = mkdtempSync(path.join(tmpdir(), 'task-sync-retained-'));
+process.env.FARMSLOT_HOME = path.join(isolated, 'home');
+process.env.FARMSLOT_RUNS_DIR = path.join(isolated, 'runs');
+after(() => rmSync(isolated, { recursive: true, force: true }));
 
 await import('../runtime/mock-pty.test-support.js');
 const realConfig = await import('../core/config.js');
@@ -47,7 +54,9 @@ mock.module('../runs/store.js', {
   namedExports: {
     ...realRunStore,
     getRun: (id: string) =>
-      id === 'run-1' ? { id, slotId: 'slot-1', project: 'demo', taskFile } : undefined,
+      id === 'run-1'
+        ? { id, slotId: 'slot-1', project: 'demo', taskFile }
+        : realRunStore.getRun(id),
   },
 });
 mock.module('./project-vars.js', {
@@ -102,4 +111,127 @@ test('a failed input transfer leaves no marker and retry publishes it after task
   await copyTaskFilesToSlot('run-1');
   const retry = tools.calls().slice(retryStart);
   assert.ok(retry.findIndex(copiesMarker) > retry.findIndex((call) => call[0] === 'rsync'));
+});
+
+// A release removed the worker tree; later review captures retained only generated review files.
+// A present marker does not mean the immutable runtime receipt or worker evidence survived.
+test('rebind restores retained worker artifacts behind a partial recapture without replacing newer reviews', async (t) => {
+  const { captureRunOutput } = await import('../run-completion/output.js');
+  const run = realRunStore.createRun({
+    flowType: 'dev',
+    project: 'demo',
+    ticketOrPr: 'RESTORE-1',
+    slotId: 'slot-1',
+  });
+  const dir = path.join(tools.root, 'tasks', 'dev', run.id);
+  t.after(async () => {
+    realRunStore.updateRun(run.id, { status: 'done' });
+    await realRunStore.deleteRun(run.id);
+  });
+  await mkdir(path.join(dir, 'artifacts/recipe-runs/proof'), { recursive: true });
+  await mkdir(path.join(dir, 'inputs'), { recursive: true });
+  await writeFile(path.join(dir, 'TASK.md'), '# Original task\n');
+  await writeFile(path.join(dir, 'mark'), '#!/usr/bin/env bash\n');
+  await writeFile(path.join(dir, 'inputs/handoff.json'), '{"attemptId":"original"}\n');
+  await writeFile(path.join(dir, 'artifacts/harness-provenance.json'), '{"pin":"original"}\n');
+  await writeFile(path.join(dir, 'artifacts/report.md'), 'Original worker report\n');
+  await writeFile(path.join(dir, 'artifacts/recipe-runs/proof/trace.json'), '{"steps":[]}\n');
+  await writeFile(path.join(dir, 'artifacts/review-result.current.json'), 'Old review\n');
+  realRunStore.updateRun(run.id, { status: 'failed', taskFile: path.join(dir, 'TASK.md') });
+  await captureRunOutput(run.id, false, true);
+  await rm(path.join(dir, 'artifacts'), { recursive: true });
+  await mkdir(path.join(dir, 'artifacts'));
+  await writeFile(path.join(dir, 'artifacts/review-result.current.json'), 'New review\n');
+  await captureRunOutput(run.id, false, true);
+  const beforeSync = tools.calls().length;
+  await copyTaskFilesToSlot(run.id, { artifactsOnly: true });
+  assert.equal(
+    tools
+      .calls()
+      .slice(beforeSync)
+      .some((call) => call[0] === 'scp'),
+    false,
+    'artifact rebind does not reset task inputs or checklist progress',
+  );
+  assert.ok(
+    tools
+      .calls()
+      .slice(beforeSync)
+      .some(
+        (call) =>
+          call[0] === 'rsync' &&
+          call.includes('--ignore-existing') &&
+          call.includes(`${dir}/artifacts/`),
+      ),
+  );
+  assert.equal(
+    await readFile(path.join(dir, 'artifacts/harness-provenance.json'), 'utf8'),
+    '{"pin":"original"}\n',
+  );
+  assert.equal(
+    await readFile(path.join(dir, 'artifacts/report.md'), 'utf8'),
+    'Original worker report\n',
+  );
+  assert.equal(
+    await readFile(path.join(dir, 'artifacts/recipe-runs/proof/trace.json'), 'utf8'),
+    '{"steps":[]}\n',
+  );
+  assert.equal(
+    await readFile(path.join(dir, 'artifacts/review-result.current.json'), 'utf8'),
+    'New review\n',
+  );
+});
+
+async function retainedFixture(t: TestContext) {
+  const { captureRunOutput } = await import('../run-completion/output.js');
+  const run = realRunStore.createRun({
+    flowType: 'dev',
+    project: 'demo',
+    ticketOrPr: 'RESTORE-NEGATIVE',
+    slotId: 'slot-1',
+  });
+  const dir = path.join(tools.root, 'tasks/dev', run.id);
+  t.after(async () => {
+    realRunStore.updateRun(run.id, { status: 'done' });
+    await realRunStore.deleteRun(run.id);
+  });
+  await mkdir(path.join(dir, 'artifacts'), { recursive: true });
+  await mkdir(path.join(dir, 'inputs'));
+  await writeFile(path.join(dir, 'TASK.md'), '# Task\n');
+  await writeFile(path.join(dir, 'inputs/handoff.json'), '{}\n');
+  await writeFile(path.join(dir, 'artifacts/harness-provenance.json'), '{}\n');
+  realRunStore.updateRun(run.id, { taskFile: path.join(dir, 'TASK.md'), status: 'failed' });
+  await captureRunOutput(run.id, false, true);
+  const current = realRunStore.getRun(run.id)!;
+  await rm(path.join(dir, 'artifacts'), { recursive: true });
+  return { run: current, dir };
+}
+
+test('task restoration rejects changed frozen inputs before publishing artifacts', async (t) => {
+  const f = await retainedFixture(t);
+  await writeFile(path.join(f.dir, 'inputs/handoff.json'), '{"attemptId":"replacement"}\n');
+  await assert.rejects(copyTaskFilesToSlot(f.run.id), /Retained task inputs differ/);
+  await assert.rejects(readFile(path.join(f.dir, 'artifacts/harness-provenance.json')), /ENOENT/);
+});
+
+test('task restoration rejects a redirected artifact directory', async (t) => {
+  const f = await retainedFixture(t);
+  const outside = path.join(tools.root, `outside-${f.run.id}`);
+  await mkdir(outside);
+  await symlink(outside, path.join(f.dir, 'artifacts'));
+  await assert.rejects(copyTaskFilesToSlot(f.run.id), /artifact directory is redirected/);
+  await assert.rejects(readFile(path.join(outside, 'harness-provenance.json')), /ENOENT/);
+});
+
+test('task restoration refuses corrupted retained bytes without publishing a receipt', async (t) => {
+  const f = await retainedFixture(t);
+  const { retainedRunTaskDirectory } = await import('../run-completion/retained-artifacts.js');
+  const stored = path.join(
+    await retainedRunTaskDirectory(f.run),
+    'artifacts/harness-provenance.json',
+  );
+  await chmod(stored, 0o600);
+  await writeFile(stored, '[]\n');
+  await assert.rejects(copyTaskFilesToSlot(f.run.id), /Retained artifact bytes changed/);
+  await assert.rejects(readFile(path.join(f.dir, 'artifacts/harness-provenance.json')), /ENOENT/);
 });

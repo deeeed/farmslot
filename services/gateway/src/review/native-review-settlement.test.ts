@@ -62,6 +62,7 @@ let ending: Ending = 'verdict';
 let dispatchCalls = 0;
 let signalReadErrorProbes = 0;
 let markerPresent = true;
+let provenancePresent = true;
 let restoreTaskFails = false;
 const restoredTasks: string[] = [];
 let reattachProbes = 0;
@@ -438,14 +439,21 @@ mock.module('../tasks/checklist-target.js', {
   },
 });
 mock.module('../core/slot-io.js', {
-  namedExports: { ...slotIo, slotFileExists: async () => markerPresent },
+  namedExports: {
+    ...slotIo,
+    slotFileExists: async (_vars: unknown, file: string) =>
+      file.endsWith('/mark') ? markerPresent : provenancePresent,
+  },
 });
 mock.module('../run-engine/task-sync.js', {
   namedExports: {
     ...taskSync,
     copyTaskFilesToSlot: async (runId: string) => {
       restoredTasks.push(runId);
-      if (!restoreTaskFails) markerPresent = true;
+      if (!restoreTaskFails) {
+        markerPresent = true;
+        provenancePresent = true;
+      }
     },
   },
 });
@@ -607,6 +615,28 @@ test('a review on a released checkout restores the prepared task before launchin
   assert.equal(result.verdict, 'issues');
   assert.deepEqual(restoredTasks, [run.id]);
   assert.equal(dispatchCalls, before + 1);
+});
+
+test('a present marker with a lost runtime receipt restores retained artifacts before launch', async (t) => {
+  ending = 'verdict';
+  markerPresent = true;
+  provenancePresent = false;
+  t.after(() => {
+    provenancePresent = true;
+  });
+  const run = await nativeRun(t);
+  updateRun(run.id, {
+    artifactBundle: {
+      storeId: 'store',
+      bundleDigest: 'a'.repeat(64),
+      taskKey: run.id,
+      manifestDigest: 'b'.repeat(64),
+    },
+  });
+  const before = restoredTasks.length;
+  await review(run.id);
+  assert.deepEqual(restoredTasks.slice(before), [run.id]);
+  assert.equal(provenancePresent, true);
 });
 
 test('a missing retained marker refuses review before spending an attempt', async (t) => {

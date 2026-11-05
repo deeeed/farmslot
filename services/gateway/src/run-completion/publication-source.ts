@@ -45,6 +45,7 @@ export async function rebindUnownedPublicationSlot(
   run: Run,
   overrides: Partial<PublicationSourceReaders> & {
     rebind?: (run: Run) => Promise<string | null>;
+    restoreTask?: (run: Run) => Promise<void>;
     expectedHeadSha?: string;
   } = {},
 ): Promise<boolean> {
@@ -63,7 +64,14 @@ export async function rebindUnownedPublicationSlot(
     overrides.rebind ??
     (async (target: Run) =>
       (await import('../methods/fleet.js')).rebindRunSlot(target, { unownedHeld: true }));
-  return (await rebind(run)) === null;
+  if ((await rebind(run)) !== null) return false;
+  // A released failed run's retained task must be readable before another review is admitted.
+  if (overrides.restoreTask) await overrides.restoreTask(run);
+  else {
+    const { copyTaskFilesToSlot } = await import('../run-engine/task-sync.js');
+    await copyTaskFilesToSlot(run.id, { artifactsOnly: true });
+  }
+  return true;
 }
 
 /** Source authority requires both the slot lease and its actual checkout. */
