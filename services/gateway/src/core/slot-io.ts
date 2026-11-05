@@ -2,6 +2,7 @@
 // Local: Node fs. Remote: agent RPC or SSH.
 // All functions accept a SlotLocality context (SlotVars satisfies this).
 
+import { randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import {
   chmod as fsChmod,
@@ -11,6 +12,7 @@ import {
   readdir,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   writeFile as fsWriteFile,
@@ -248,6 +250,40 @@ export async function slotWriteFile(
     ...nodePathParams(filePath),
     content: data,
   });
+}
+
+/** Replace a staged file through the same local/node rename operation. */
+export async function slotRenameFile(
+  ctx: SlotLocality,
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  if (local(ctx)) {
+    await rename(expandTilde(oldPath), expandTilde(newPath));
+    return;
+  }
+  const root = path.dirname(oldPath);
+  await requestFor(ctx)('fs.rename', {
+    root,
+    oldRelPath: path.basename(oldPath),
+    newRelPath: path.relative(root, newPath),
+  });
+}
+
+/** Write through a staged file so an interrupted write never leaves `targetPath` truncated. */
+export async function slotWriteFileAtomic(
+  ctx: SlotLocality,
+  targetPath: string,
+  content: string,
+): Promise<void> {
+  const stagedPath = `${targetPath}.tmp.${process.pid}.${randomUUID()}`;
+  try {
+    await slotWriteFile(ctx, stagedPath, content);
+    await slotRenameFile(ctx, stagedPath, targetPath);
+  } catch (err) {
+    await slotDeletePath(ctx, stagedPath).catch(() => undefined);
+    throw err;
+  }
 }
 
 export interface SlotWriteFileEntry {

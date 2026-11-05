@@ -1,0 +1,1 @@
+- Add opt-in ticket scope refresh and its person action history to publication package refresh.
