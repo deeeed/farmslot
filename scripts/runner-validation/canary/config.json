@@ -13,7 +13,18 @@
     "release": 120,
     "native-check": 10
   },
-  "knownFailures": [],
+  "knownFailures": [
+    {
+      "case": "fixer-scope",
+      "variant": "main",
+      "target": "isolated",
+      "signature": "F415: CI fixer accepted a forbidden workflow edit without a scope refusal",
+      "differences": [
+        "^F415: CI fixer accepted a forbidden workflow edit without a scope refusal$"
+      ],
+      "ledger": "F415"
+    }
+  ],
   "live": {
     "profileHome": "~/.farmslot-automation",
     "profile": "farm-automation",

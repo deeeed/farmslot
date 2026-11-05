@@ -76,6 +76,7 @@ import {
   readLaunchAckSignalSnapshot,
 } from '../runners/prompt-delivery-evidence.js';
 import {
+  getRunnerDefinition,
   normalizeRunner,
   readRunnerActivityFromObservability,
   readRunnerTurnState,
@@ -479,7 +480,12 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
   });
-  await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
+  await new Promise((resolve) =>
+    setTimeout(
+      resolve,
+      getRunnerDefinition(runner).roleWindowStartupSettleMs ?? TMUX_WINDOW_RESPAWN_SETTLE_MS,
+    ),
+  );
 
   const workerRole = primaryTarget.role ?? primaryRoleForFlow(run.flowType);
   const windowSeparator = workerTarget.indexOf(':');
@@ -503,9 +509,13 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   // Verify only that the runner process exists. Exact prompt acceptance is
   // proved by deliverPromptToLiveRunner after this fresh binding is cleared;
   // rendered TUI text is never launch or delivery evidence.
-  const verifyDeadline = Date.now() + RUNNER_LAUNCH_READY_TIMEOUT_MS;
+  const verifyDeadline =
+    Date.now() +
+    (getRunnerDefinition(runner).feedbackTiming?.inactivityMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
   while (Date.now() < verifyDeadline) {
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) =>
+      setTimeout(r, getRunnerDefinition(runner).feedbackTiming?.pollMs ?? 2000),
+    );
     if (await isWorkerSessionAlive(slotId, runner, runId)) return true;
   }
   console.warn(
@@ -981,6 +991,8 @@ async function attemptInlineCIFix(
           );
           const retry = await retryDeferredFixDelivery({
             runId,
+            retryIntervalMs: getRunnerDefinition(runner).feedbackTiming?.retryMs,
+            retryWindowMs: getRunnerDefinition(runner).feedbackTiming?.retryWindowMs,
             target: workerTarget,
             send: async (retryTarget) => {
               const retryDelivery = await sendCiFixNudge({
@@ -1145,8 +1157,11 @@ async function attemptInlineCIFix(
       };
     };
 
-    let deadline = Date.now() + INLINE_FIX_TIMEOUT_MS;
-    const hardDeadline = Date.now() + INLINE_FIX_HARD_TIMEOUT_MS;
+    const feedbackTiming = getRunnerDefinition(runner).feedbackTiming;
+    const inactivityMs = feedbackTiming?.inactivityMs ?? INLINE_FIX_TIMEOUT_MS;
+    let deadline = Date.now() + inactivityMs;
+    const hardDeadline =
+      Date.now() + (feedbackTiming ? inactivityMs * 2 : INLINE_FIX_HARD_TIMEOUT_MS);
     let lastInvalidSignalReason: string | null = null;
     let progress: InlineFixProgress = { lastProgressAt: Date.now(), stalled: false };
     while (Date.now() < hardDeadline && !signal.aborted) {
@@ -1168,19 +1183,22 @@ async function attemptInlineCIFix(
           // the runner hook's activity reading stands in for the exact turn.
           const activity = await readRunnerActivityFromObservability(vars, workerTarget, runner);
           if (!inlineFixRunnerStillBusy(false, null, activity)) break;
-          deadline = Math.min(hardDeadline, Date.now() + INLINE_FIX_TIMEOUT_MS);
+          deadline = Math.min(hardDeadline, Date.now() + inactivityMs);
           console.log(
             `[ci-monitor] run ${runId.slice(0, 8)} — inline-fix runner hook still reports ${activity?.value}; extending the wait instead of starting a conflicting follow-up`,
           );
           continue;
         }
         if (!inlineFixRunnerStillBusy(true, turnState, null)) break;
-        deadline = Math.min(hardDeadline, Date.now() + INLINE_FIX_TIMEOUT_MS);
+        deadline = Math.min(hardDeadline, Date.now() + inactivityMs);
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — exact inline-fix runner turn is still active; extending the wait instead of starting a conflicting follow-up`,
         );
       }
-      const timeout = Math.min(INLINE_FIX_FALLBACK_POLL_MS, deadline - Date.now());
+      const timeout = Math.min(
+        feedbackTiming?.pollMs ?? INLINE_FIX_FALLBACK_POLL_MS,
+        deadline - Date.now(),
+      );
       try {
         await sleep(timeout, signal);
       } catch (err) {

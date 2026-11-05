@@ -106,6 +106,8 @@ export interface View {
 }
 
 export interface DriveHooks {
+  /** Subscribe to authoritative changes instead of polling or waiting for a quiet window. */
+  onChange?(listener: () => void): () => void;
   /** The run exists; everything after this can leave it behind. */
   onCreated?(runId: string): Promise<void> | void;
   /** Read the slot every poll, not only once the run is terminal. */
@@ -151,6 +153,12 @@ export async function driveRun(options: {
   const seconds = () => Math.round((Date.now() - started) / 100) / 10;
   const { run: created } = await call<{ run: Run }>('run.create', shape.create(slotId));
   const runId = created.id;
+  let revision = 0;
+  let wake: (() => void) | undefined;
+  const unsubscribe = hooks.onChange?.(() => {
+    revision++;
+    wake?.();
+  });
   try {
     await hooks.onCreated?.(runId);
     await log(`${label}: run created`, { runId, slotId });
@@ -162,6 +170,7 @@ export async function driveRun(options: {
     let terminalSince: number | undefined;
     const deadline = started + shape.timeoutMs;
     for (;;) {
+      const readRevision = revision;
       if (Date.now() > deadline)
         throw new Inconclusive(
           `${label}: the run did not settle within ${shape.timeoutMs / 60_000} min`,
@@ -221,13 +230,15 @@ export async function driveRun(options: {
         const unchangedMs = Date.now() - changedAt;
         const waiting =
           WAITING.has(run.status) && run.decisions.some((decision) => !decision.resolvedAt);
-        let settled = unchangedMs >= STALL_MS || (waiting && unchangedMs >= 5000);
+        let settled =
+          unchangedMs >= STALL_MS || (waiting && (Boolean(hooks.onChange) || unchangedMs >= 5000));
         if (terminal) {
           // A released slot is ready. Any other slot state stands only once the orphan
           // reconciler (every 60 s) has had two passes at it.
           terminalSince ??= Date.now();
           settled ||=
-            (view.slot?.lifecycle === 'ready' && unchangedMs >= 1500) ||
+            (view.slot?.lifecycle === 'ready' &&
+              (Boolean(hooks.onChange) || unchangedMs >= 1500)) ||
             Date.now() - terminalSince > 150_000;
         }
         if (settled) {
@@ -249,11 +260,29 @@ export async function driveRun(options: {
           };
         }
       }
-      await delay(hooks.pollMs?.() ?? 500);
+      if (hooks.onChange) {
+        if (revision !== readRevision) continue;
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () => {
+              wake = undefined;
+              reject(new Inconclusive(`${label}: no change before its deadline`));
+            },
+            Math.max(1, deadline - Date.now()),
+          );
+          wake = () => {
+            clearTimeout(timer);
+            wake = undefined;
+            resolve();
+          };
+        });
+      } else await delay(hooks.pollMs?.() ?? 500);
     }
   } catch (error) {
     if (error instanceof Inconclusive) error.runId ??= runId;
     throw error;
+  } finally {
+    unsubscribe?.();
   }
 }
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
+import { RECOVERY_CASES, runRecoveryMatrix } from './recovery.mjs';
 import { runPerformanceCanary } from './performance.mjs';
-// Farmslot canary: one tool, two profiles.
+// Farmslot canary profiles.
 //
 //   canary   after every dev gateway update; zero inference, a few minutes. Against the deployed
 //            gateway (--target live, the default): per canary node a native round trip and one
@@ -17,12 +18,16 @@ import { runPerformanceCanary } from './performance.mjs';
 //            the gateway restarts. --with-review adds one reviewed run (two codex gpt-6-luna calls):
 //            REVIEW and its fix round.
 //
+//   recovery  seven concurrent recovery cases on disposable slots, zero inference.
+//             Hard ceiling 120 s including cleanup; cases over 5 s print step attribution.
+//
 // Every model a case would use must be on config.json's allowlist, or the canary stops before
 // dispatching anything. Known failures (config.json) report as KNOWN; one that passes fails the
 // canary until its entry is removed.
 //
-// Run: node --import tsx scripts/runner-validation/canary/canary.mts --profile canary|nightly
+// Run: node --import tsx scripts/runner-validation/canary/canary.mts --profile canary|nightly|recovery
 //   [--target live|isolated] [--with-review] [--only lifecycle,f324,…]
+//   [--fast-scripted] (isolated lifecycle only; skips unused prepare work and timer windows)
 //   [--survive-steps dispatch,monitor,…] [--budget step=seconds]…
 //   [--evidence <dir>] [--results <file>] [--status-file <file>] [--hold-file <file>]
 //   [--cli-snapshot <dir> | --cli-snapshots <dir>] [--node-away-s 20] [--review-node-away-s 130]
@@ -61,14 +66,17 @@ const expand = (value: string) => value.replace(/^~(?=\/|$)/, homedir());
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const profile = arg('profile') ?? 'canary';
-if (profile !== 'canary' && profile !== 'nightly')
-  throw new Error('--profile must be canary or nightly');
+if (profile !== 'canary' && profile !== 'nightly' && profile !== 'recovery')
+  throw new Error('--profile must be canary, nightly or recovery');
 const target = arg('target') ?? (profile === 'canary' ? 'live' : 'isolated');
 if (target !== 'live' && target !== 'isolated')
   throw new Error('--target must be live or isolated');
-if (profile === 'nightly' && target === 'live')
-  throw new Error('The nightly profile runs isolated only');
+if ((profile === 'nightly' || profile === 'recovery') && target === 'live')
+  throw new Error('The nightly and recovery profiles run isolated only');
 const withReview = argv.includes('--with-review');
+const fastScripted = argv.includes('--fast-scripted');
+if (fastScripted && (target !== 'isolated' || profile !== 'canary'))
+  throw new Error('--fast-scripted requires --profile canary --target isolated');
 const startedAt = new Date();
 const evidence = path.resolve(
   expand(
@@ -99,6 +107,7 @@ for (const entry of args('budget')) {
 
 // ---------------------------------------------------------------- the cases this run makes
 const CASES = [
+  ...RECOVERY_CASES,
   'performance',
   'lifecycle',
   'f324',
@@ -108,21 +117,26 @@ const CASES = [
   'review-past-wait',
   'worker-survives',
 ] as const;
-const only = arg('only')?.split(',');
+const only = arg('only')?.split(',') ?? (fastScripted ? ['lifecycle'] : undefined);
+if (fastScripted && only!.some((name) => name !== 'lifecycle'))
+  throw new Error('--fast-scripted supports lifecycle only');
 for (const name of only ?? [])
   if (!(CASES as readonly string[]).includes(name)) throw new Error(`Unknown case ${name}`);
 const available: readonly string[] =
-  profile === 'canary'
-    ? ['lifecycle', 'f324', 'native-check', 'monitor']
-    : [
-        'performance',
-        ...RESTART_STEPS,
-        'review-past-wait',
-        'worker-survives',
-        ...(withReview ? ['review'] : []),
-      ];
+  profile === 'recovery'
+    ? RECOVERY_CASES
+    : profile === 'canary'
+      ? ['lifecycle', 'f324', 'native-check', 'monitor']
+      : [
+          'performance',
+          ...RESTART_STEPS,
+          'review-past-wait',
+          'worker-survives',
+          ...(withReview ? ['review'] : []),
+        ];
 for (const name of only ?? [])
   if (!available.includes(name)) throw new Error(`Case ${name} does not run in profile ${profile}`);
+if (profile === 'recovery' && only) throw new Error('Recovery runs the full matrix; omit --only');
 const wants = (name: (typeof CASES)[number]) => !only || only.includes(name);
 const surviveSteps = (arg('survive-steps')?.split(',') ?? [...SURVIVE_STEPS]) as SurviveStep[];
 for (const step of surviveSteps)
@@ -192,10 +206,27 @@ let reported: Promise<Verdict> | undefined;
 /** Applies the known failures and reports, once, whichever path gets here first. */
 const finish = () =>
   (reported ??= (async () => {
+    if (profile === 'recovery' && Date.now() - startedAt.getTime() > 120_000) {
+      checks.push({
+        case: 'matrix-budget',
+        variant: 'main',
+        target: 'isolated',
+        status: 'fail',
+        model: 'scripted',
+        modelCalls: 0,
+        differences: ['Recovery matrix exceeded 120000ms including cleanup'],
+        observations: [],
+      });
+    }
     for (const [index, check] of checks.entries())
       checks[index] = applyKnownFailures(check, config.knownFailures);
     return report({
-      profile: profile === 'canary' ? 'canary' : 'canary-nightly',
+      profile:
+        profile === 'canary'
+          ? 'canary'
+          : profile === 'recovery'
+            ? 'canary-recovery'
+            : 'canary-nightly',
       head,
       startedAt,
       resultsFile,
@@ -227,6 +258,19 @@ try {
   const onCheck = (check: CheckResult) => {
     checks.push(check);
   };
+  if (profile === 'recovery')
+    await runRecoveryMatrix({
+      root,
+      evidence,
+      reaper,
+      log,
+      onCheck,
+      cliSnapshots: expand(arg('cli-snapshots') ?? '~/farmslot-canary/cli-snapshots'),
+      ...(arg('cli-snapshot') ? { cliSnapshot: expand(arg('cli-snapshot')!) } : {}),
+      onCleanup: (stop) => {
+        stopStack = stop;
+      },
+    });
   if (profile === 'nightly' && wants('performance'))
     onCheck(
       await runPerformanceCanary({
@@ -255,13 +299,14 @@ try {
       },
     });
   if (
-    plan.nativeCheck ||
-    plan.lifecycle ||
-    plan.f324 ||
-    plan.restarts.length ||
-    plan.review ||
-    plan.reviewPastWait ||
-    plan.survive.length
+    profile !== 'recovery' &&
+    (plan.nativeCheck ||
+      plan.lifecycle ||
+      plan.f324 ||
+      plan.restarts.length ||
+      plan.review ||
+      plan.reviewPastWait ||
+      plan.survive.length)
   )
     await runIsolated({
       root,
@@ -276,6 +321,7 @@ try {
       reviewFixNodeAwayMs: Number(arg('review-fix-node-away-s') ?? 100) * 1000,
       reviewNodeAwayMs: Number(arg('review-node-away-s') ?? 130) * 1000,
       lifecycle: plan.lifecycle,
+      fastScripted,
       nativeCheck: plan.nativeCheck,
       f324: plan.f324,
       restarts: plan.restarts,

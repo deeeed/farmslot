@@ -43,7 +43,7 @@ import { signalFromAttempt } from '../agents/runtime-recovery.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { withMachineEnv } from '../core/project-env.js';
-import { onSlotReset } from '../core/state.js';
+import { onSlotReset, readSlotField } from '../core/state.js';
 import {
   resolveExactTmuxWindowPane,
   respawnTmuxWindowWithCommand,
@@ -64,6 +64,7 @@ import {
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
+  getRunnerDefinition,
   normalizeRunner,
   readRunnerLaunchBlocker,
   runnerDefaultModel,
@@ -1401,7 +1402,10 @@ export async function runReviewRetryLoop({
       fixSignal = await deps.waitForWorkerSignal(
         vars,
         taskDir,
-        fixDeliveryDeferred ? RUNNER_LAUNCH_READY_TIMEOUT_MS : FEEDBACK_TIMEOUT_MS,
+        fixDeliveryDeferred
+          ? (getRunnerDefinition(workerRunner).feedbackTiming?.launchMs ??
+              RUNNER_LAUNCH_READY_TIMEOUT_MS)
+          : (getRunnerDefinition(workerRunner).feedbackTiming?.inactivityMs ?? FEEDBACK_TIMEOUT_MS),
         fixSignalBaseline,
         fixDeliveryDeferred ? undefined : fixHasActivity,
       );
@@ -1414,7 +1418,7 @@ export async function runReviewRetryLoop({
         fixSignal = await deps.waitForWorkerSignal(
           vars,
           taskDir,
-          FEEDBACK_TIMEOUT_MS,
+          getRunnerDefinition(workerRunner).feedbackTiming?.inactivityMs ?? FEEDBACK_TIMEOUT_MS,
           fixSignalBaseline,
           fixHasActivity,
         );
@@ -3125,6 +3129,8 @@ async function sendOwnedFeedbackToWorker(
       // retry re-resolves the worker pane until a send has been attempted.
       const retry = await retryDeferredFixDelivery({
         runId,
+        retryIntervalMs: getRunnerDefinition(runner).feedbackTiming?.retryMs,
+        retryWindowMs: getRunnerDefinition(runner).feedbackTiming?.retryWindowMs,
         target: workerTarget,
         send: (retryTarget) => deliverFixPrompt(retryTarget, true),
         rediscover: (storedTarget) =>
@@ -3529,6 +3535,8 @@ export async function waitForWorkerSignal(
 ): Promise<WorkerSignal | undefined> {
   const signalPath = slotTaskRelPath(vars, taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal);
 
+  const runner = (await readSlotField(vars.slotId, 'runner')) as string | null;
+  const pollMs = getRunnerDefinition(runner ?? '').feedbackTiming?.pollMs ?? 2000;
   const start = Date.now();
   let lastProgressAt = start;
   let lastObservedSignal = baseline;
@@ -3538,7 +3546,7 @@ export async function waitForWorkerSignal(
   const turnStatePollMs = Math.min(10_000, Math.max(2_000, Math.floor(timeoutMs / 2)));
   const maxActiveMs = Math.max(timeoutMs, Math.min(FEEDBACK_MAX_ACTIVE_MS, timeoutMs * 4));
   while (Date.now() - start < maxActiveMs && Date.now() - lastProgressAt < timeoutMs) {
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, Math.min(pollMs, timeoutMs)));
     assertNativeReviewOperationCurrent();
     const expected =
       typeof expectedAttemptId === 'function' ? expectedAttemptId() : expectedAttemptId;

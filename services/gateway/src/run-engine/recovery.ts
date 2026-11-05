@@ -26,6 +26,7 @@ import {
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../core/state.js';
+import { onNodeConnected } from '../fleet/machine-registry.js';
 import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
@@ -62,7 +63,7 @@ import {
 
 const S = PipelineSteps;
 const RECONCILE_INTERVAL_MS = 60_000; // 60s
-let orphanReconcileInFlight = false;
+let orphanReconcileInFlight: Promise<void> | undefined;
 
 type PublicationReviewRecoveryState = NonNullable<
   NonNullable<Run['engineState']>['publishGate']
@@ -511,7 +512,10 @@ async function* runsInRecoveryOrder(
 
 export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise<void> {
   const { runs: active } = deps.listRuns({ active: true });
-  if (active.length === 0) return;
+  if (active.length === 0) {
+    await reconcileOrphanedSlots(deps);
+    return;
+  }
 
   const recoverable: Run[] = [];
   const awaitingDecision: Run[] = [];
@@ -529,7 +533,10 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
     }
   }
   if (awaitingDecision.length) await representResultDecisions(awaitingDecision);
-  if (recoverable.length === 0) return;
+  if (recoverable.length === 0) {
+    await reconcileOrphanedSlots(deps);
+    return;
+  }
 
   const fleet = await deps.loadFleetStatus();
   const deferSlotBoundRecovery = fleet.slots.length === 0 && recoverable.some((run) => run.slotId);
@@ -1409,19 +1416,19 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
   await reconcileOrphanedSlots(deps);
 }
 
-export function startOrphanReconciler(deps: RunRecoveryCollaborators): void {
-  const timer = setInterval(() => {
-    if (orphanReconcileInFlight) return;
-    orphanReconcileInFlight = true;
-    reconcileOrphanedSlots(deps)
-      .catch((err) => {
-        console.error(`[run-engine] periodic reconcile error: ${(err as Error).message}`);
-      })
-      .finally(() => {
-        orphanReconcileInFlight = false;
-      });
-  }, RECONCILE_INTERVAL_MS);
+export function startOrphanReconciler(deps: RunRecoveryCollaborators): () => void {
+  const reconcile = () => {
+    reconcileOrphanedSlots(deps).catch((err) => {
+      console.error(`[run-engine] orphan reconcile error: ${(err as Error).message}`);
+    });
+  };
+  const unsubscribe = onNodeConnected(reconcile);
+  const timer = setInterval(reconcile, RECONCILE_INTERVAL_MS);
   timer.unref();
+  return () => {
+    clearInterval(timer);
+    unsubscribe();
+  };
 }
 
 /**
@@ -1488,7 +1495,15 @@ type OrphanRecoveryCollaborators = Pick<
   | 'resumeInterruptedRecovery'
 >;
 
-export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators): Promise<void> {
+export function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators): Promise<void> {
+  // Startup, reconnect and interval triggers share one pass and the same slot fences.
+  orphanReconcileInFlight ??= reconcileOrphanedSlotsOnce(deps).finally(() => {
+    orphanReconcileInFlight = undefined;
+  });
+  return orphanReconcileInFlight;
+}
+
+async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Promise<void> {
   const { runs: active } = deps.listRuns({ active: true });
   // The shared occupancy predicate, not an inline status filter. A run whose
   // park freed its slot (ADR-054 `free-slot`) keeps `slotId` as its restore

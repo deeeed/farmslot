@@ -10,7 +10,12 @@ import {
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { retainTaskInput, taskInputDigest, taskInputDigests } from './pin.js';
+import {
+  retainTaskInput,
+  taskInputDigest,
+  taskInputDigests,
+  taskInstallationDigests,
+} from './pin.js';
 
 export type TaskRecipeBindingIdentity = Pick<
   RecipeConformanceIdentity,
@@ -53,6 +58,8 @@ export interface TaskExecutionInput {
   inputs: readonly string[];
   /** Selected provider workspaces whose manifest-declared installed dependencies are retained. */
   dependencyRoots?: readonly string[];
+  /** Scripted fixtures keep installed CLI/configuration inputs for the entire stack lifetime. */
+  reuseInstalledInputs?: boolean;
   /** Configured task/artifact/runtime outputs are never retained as tooling inputs. */
   excludedRoots?: readonly string[];
   /** Host selection data. Its bytes are retained and verified with the tooling. */
@@ -288,7 +295,7 @@ export function verifyTaskExecutionProvenance(
   const distribution = fs.realpathSync(value.retainedInputs[0]!.path);
   if (
     value.package.name !== '@farmslot/cli' ||
-    value.source.kind !== 'task-retained' ||
+    !['task-retained', 'scripted-installed'].includes(value.source.kind) ||
     distribution !== fs.realpathSync(path.join(pin, 'cli')) ||
     !within(distribution, fs.realpathSync(value.source.packageRoot)) ||
     !within(distribution, fs.realpathSync(value.resolvedExecutable))
@@ -304,8 +311,19 @@ export function verifyTaskExecutionProvenance(
       'The selected tooling binding differs from the task binding.',
     );
   }
+  const installed = value.source.kind === 'scripted-installed';
+  if (
+    installed &&
+    (process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS !== '1' ||
+      distribution !== fs.realpathSync(value.retainedInputs[0]!.source))
+  )
+    throw new TaskProvenanceError(
+      'TASK_PROVENANCE_INVALID',
+      'Scripted installation reuse is unavailable.',
+    );
   for (const input of value.retainedInputs) {
     if (
+      !(installed && (input === value.retainedInputs[0] || input.path === input.source)) &&
       !within(inputsRoot, fs.realpathSync(input.path)) &&
       !within(pin, fs.realpathSync(input.path))
     )
@@ -314,9 +332,11 @@ export function verifyTaskExecutionProvenance(
         'A retained task input escapes its task directory.',
       );
   }
-  const digests = taskInputDigests([
-    ...value.retainedInputs.map((input) => input.path),
-    value.source.packageRoot,
+  const digests = (installed ? taskInstallationDigests : taskInputDigests)([
+    ...value.retainedInputs.map((input, index) =>
+      installed && index === 0 ? distribution : input.path,
+    ),
+    installed ? fs.realpathSync(value.source.packageRoot) : value.source.packageRoot,
   ]);
   for (const [index, input] of value.retainedInputs.entries()) {
     if (digests[index] !== input.sha256) {
@@ -428,11 +448,24 @@ function writeTaskExecution(
   const staged = (file: string): string => (previousPin ? stagedRepinFile(file, pin) : file);
   let swapped = false;
   try {
-    const cli = retainTaskInput(distribution, path.join(staging, 'cli'), [
-      path.resolve(taskDir),
-      store,
-      ...(input.excludedRoots ?? []),
-    ]);
+    const installed = input.reuseInstalledInputs === true;
+    if (installed && process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS !== '1')
+      throw new TaskProvenanceError(
+        'TASK_INSTALL_UNSUPPORTED',
+        'Scripted installation reuse is disabled.',
+      );
+    const cli = installed
+      ? {
+          source: distribution,
+          path: path.join(staging, 'cli'),
+          sha256: taskInstallationDigests([distribution])[0]!,
+        }
+      : retainTaskInput(distribution, path.join(staging, 'cli'), [
+          path.resolve(taskDir),
+          store,
+          ...(input.excludedRoots ?? []),
+        ]);
+    if (installed) fs.symlinkSync(distribution, cli.path, 'dir');
     const retainedInputs: TaskRetainedInput[] = [{ ...cli, path: path.join(pin, 'cli') }];
     for (const source of [
       ...new Set([...input.inputs, ...additionalInputs].map((file) => fs.realpathSync(file))),
@@ -442,6 +475,14 @@ function writeTaskExecution(
         const retained = path.join(staging, path.relative(pin, covered));
         if (!fs.existsSync(retained))
           throw new Error(`Selected task input was excluded from its tooling workspace: ${source}`);
+        continue;
+      }
+      if (installed) {
+        retainedInputs.push({
+          source,
+          path: source,
+          sha256: taskInstallationDigests([source])[0]!,
+        });
         continue;
       }
       const relative = path.join('inputs', String(retainedInputs.length), path.basename(source));
@@ -491,10 +532,15 @@ function writeTaskExecution(
       schemaVersion: 1,
       pin,
       package: { name: manifest.name, version: manifest.version },
-      source: { kind: 'task-retained', packageRoot: retainedPackage },
+      source: {
+        kind: installed ? 'scripted-installed' : 'task-retained',
+        packageRoot: retainedPackage,
+      },
       resolvedExecutable: retainedExecutable,
       entrySha256: sha256(copiedExecutable),
-      packageTreeSha256: taskInputDigest(copiedPackage),
+      packageTreeSha256: installed
+        ? taskInstallationDigests([fs.realpathSync(copiedPackage)])[0]!
+        : taskInputDigest(copiedPackage),
       recordedAt: new Date().toISOString(),
       bindingIdentity: selected.bindingIdentity,
       retainedInputs,

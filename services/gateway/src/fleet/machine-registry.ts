@@ -32,6 +32,14 @@ export interface ConnectedNode {
 }
 
 const nodes = new Map<string, ConnectedNode>();
+const nodeConnectListeners = new Set<() => void>();
+
+export function onNodeConnected(listener: () => void): () => void {
+  nodeConnectListeners.add(listener);
+  return () => {
+    nodeConnectListeners.delete(listener);
+  };
+}
 
 /** Exported into every worker shell, so keep only a ws(s) URL with no embedded credentials. */
 function workerGatewayUrl(raw: string | undefined): string | undefined {
@@ -86,6 +94,7 @@ export function registerNode(
   publishWorkerResources(machine);
   resourceRevisions.advance({ family: 'node', scope: 'farm' });
   resourceRevisions.advance({ family: 'node', nodeId: machine });
+  for (const listener of nodeConnectListeners) listener();
 }
 
 export function unregisterByWs(ws: WebSocket): string | null {

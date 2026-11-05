@@ -193,6 +193,14 @@ export interface RunnerSlotRuntimeCleanupOptions {
   stillOwned: () => Promise<boolean>;
 }
 
+export interface RunnerFeedbackTiming {
+  launchMs: number;
+  inactivityMs: number;
+  pollMs: number;
+  retryMs: number;
+  retryWindowMs: number;
+}
+
 export interface RunnerDefinition {
   /** Stop only structured, slot-isolated managed processes after the workers are stopped. */
   cleanupSlotRuntime?: (
@@ -204,6 +212,13 @@ export interface RunnerDefinition {
   authCheck?: (vars: SlotVars, model?: string | null) => string;
   /** Structured execution receipts for finite project-owned tasks. */
   taskProgress?: RunnerTaskProgressReader;
+  /** Optional structured input for a runner with a file-backed session protocol. */
+  deliverPrompt?: (
+    options: import('./session-reactivation.js').RunnerSessionReactivationOptions,
+  ) => Promise<import('./session-reactivation.js').RetainedSessionDeliveryResult>;
+  /** Finite workers need no terminal settling windows. */
+  teardownSettleMs?: number;
+  feedbackTiming?: RunnerFeedbackTiming;
   /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
   workspaceTerminalSession?: 'create-chat';
   /** Opt-in native protocol. Missing means structured sessions are unavailable. */
@@ -224,6 +239,8 @@ export interface RunnerDefinition {
   modelCatalog?: RunnerModelCatalogSource;
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
+  /** A command launched directly in a role pane does not need interactive shell startup time. */
+  roleWindowStartupSettleMs?: number;
   headlessPrintExecutables?: readonly string[];
   headlessPrintFlags?: readonly string[];
   headlessPrintPath?: keyof RunnerLaunchPaths;
@@ -711,12 +728,23 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   scripted: {
     id: 'scripted',
+    deliverPrompt: async (options) =>
+      (await import('./scripted-session.js')).deliverScriptedPrompt(options),
+    teardownSettleMs: 0,
+    feedbackTiming: {
+      launchMs: 50,
+      inactivityMs: 5000,
+      pollMs: 10,
+      retryMs: 10,
+      retryWindowMs: 5000,
+    },
+    roleWindowStartupSettleMs: 0,
     // Receipt IO must not preload resource-control consumers during registry initialization.
     taskProgress: async (input) =>
       (await import('./scripted-progress.js')).readScriptedCommandProgress(input),
     defaultLaunchMode: 'exec',
     processMatchers: ['farmslot scripted-runner', 'scripted-runner'],
-    supportsInteractivePrompt: false,
+    supportsInteractivePrompt: true,
     needsPostLaunchPrompt: false,
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
@@ -737,8 +765,13 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
     acceptsModel: () => true,
-    observabilityScope: 'none',
-    sessionUsageProvider: null,
+    observabilityScope: 'event-driven',
+    sessionUsageProvider: {
+      id: 'scripted',
+      restatesSessionTotals: false,
+      recoverSessions: async () => [],
+      applyRecord: (state) => state,
+    },
     mobileKeyProfile: null,
   },
 };
@@ -756,6 +789,18 @@ const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   cursor: createCursorLogObservability(),
   grok: grokLogObservability,
   pi: createPiHookObservability(),
+  scripted: {
+    getActivity: async (vars, target) =>
+      (await import('./scripted-session.js')).scriptedActivity(vars, target),
+    getTurnState: async (vars, target) =>
+      (await import('./scripted-session.js')).scriptedTurn(vars, target),
+    getContextPct: async () => null,
+    activeTool: async () => null,
+    lastTurnCompletedAt: async () => null,
+    promptAccepted: async () => null,
+    getSessionDeliveryState: async (vars, target) =>
+      (await import('./scripted-session.js')).scriptedTurn(vars, target),
+  },
 };
 
 export function getRunnerObservability(runnerId?: string | null): RunnerObservability | null {

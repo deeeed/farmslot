@@ -827,6 +827,8 @@ function buildScriptedRunnerLaunch(options: {
   ];
   if (options.scripted.mode === 'scenario') {
     base.push('--mode', 'scenario', '--scenario', options.scripted.scenario);
+    if (options.scripted.promptScenario)
+      base.push('--prompt-scenario', options.scripted.promptScenario);
     if (options.scripted.stepDelayMs !== undefined) {
       base.push('--step-delay-ms', String(options.scripted.stepDelayMs));
     }

@@ -1,43 +1,5 @@
 import { Command } from 'commander';
 
-import { registerAnalyticsCommand } from './commands/analytics.js';
-import { registerAuthCommands } from './commands/auth.js';
-import { registerBacklogCommand } from './commands/backlog.js';
-import { registerBugCommand } from './commands/bug.js';
-import { registerCertsCommand } from './commands/certs.js';
-import { registerCompletionCommand } from './commands/completion.js';
-import { registerConfigCommand } from './commands/config.js';
-import { registerCredentialCommands } from './commands/credential.js';
-import { registerDecisionCommand } from './commands/decision.js';
-import { registerDispatchCommand } from './commands/dispatch.js';
-import { registerDoctorCommand } from './commands/doctor.js';
-import { registerDomainCommand } from './commands/domain.js';
-import { registerExecutionTemplateCommand } from './commands/execution-template.js';
-import { registerFleetCommand } from './commands/fleet.js';
-import { registerGatewayCommand } from './commands/gateway.js';
-import { registerGraphCommand } from './commands/graph.js';
-import { registerInternalCommand } from './commands/internal.js';
-import { registerMachineCommand } from './commands/machine.js';
-import { registerNodeCommand } from './commands/node.js';
-import { registerPairCommand } from './commands/pair.js';
-import { registerPRCommand } from './commands/pr.js';
-import { registerPrincipalCommands } from './commands/principal.js';
-import { registerProjectCommand } from './commands/project.js';
-import { registerRecipeCommand } from './commands/recipe.js';
-import { registerResourceCommand } from './commands/resource.js';
-import { registerReviewCommand } from './commands/review.js';
-import { registerRoadmapCommand } from './commands/roadmap.js';
-import { registerRpcCommand } from './commands/rpc.js';
-import { registerRunCommand } from './commands/run.js';
-import { registerRunsCommand } from './commands/runs.js';
-import { registerSlotCommand } from './commands/slot.js';
-import { registerSourcesCommand } from './commands/sources.js';
-import { registerTaskCommand } from './commands/task.js';
-import { registerTuiCommand } from './commands/tui.js';
-import { registerUninstallCommand } from './commands/uninstall.js';
-import { registerUpCommand } from './commands/up.js';
-import { registerUpdateCommand } from './commands/update.js';
-import { registerWorkspaceCommand } from './commands/workspace.js';
 import { loadCheckoutEnv } from './onboarding/env-file.js';
 import { bootstrapFarmslotHome, repoRoot } from './onboarding/workspace.js';
 import { errorEnvelope } from './envelope.js';
@@ -67,44 +29,28 @@ program
 // inherited settings at .command() time, so a late override never reaches them.
 program.exitOverride();
 
-registerFleetCommand(program);
-registerInternalCommand(program);
-registerMachineCommand(program);
-registerBacklogCommand(program);
-registerDecisionCommand(program);
-registerUpCommand(program);
-registerGatewayCommand(program);
-registerPairCommand(program);
-registerSlotCommand(program);
-registerTuiCommand(program);
-registerDispatchCommand(program);
-registerDomainCommand(program);
-registerExecutionTemplateCommand(program);
-registerPRCommand(program);
-registerRecipeCommand(program);
-registerTaskCommand(program);
-registerReviewCommand(program);
-registerResourceCommand(program);
-registerSourcesCommand(program);
-registerRoadmapCommand(program);
-registerGraphCommand(program);
-registerConfigCommand(program);
-registerCredentialCommands(program);
-registerPrincipalCommands(program);
-registerRpcCommand(program);
-registerRunCommand(program);
-registerRunsCommand(program);
-registerCompletionCommand(program);
-registerNodeCommand(program);
-registerDoctorCommand(program);
-registerWorkspaceCommand(program);
-registerProjectCommand(program);
-registerUpdateCommand(program);
-registerUninstallCommand(program);
-registerAuthCommands(program);
-registerAnalyticsCommand(program);
-registerCertsCommand(program);
-registerBugCommand(program);
+// Task markers and node plumbing do not need the unrelated command graph.
+const valueFlags = new Set(['--url', '--gateway', '--timeout']);
+const invocation = process.argv.slice(2);
+let commandName: string | undefined;
+for (let index = 0; index < invocation.length; index++) {
+  const token = invocation[index]!;
+  if (valueFlags.has(token)) {
+    index++;
+    continue;
+  }
+  if (!token.startsWith('-')) {
+    commandName = token;
+    break;
+  }
+}
+if (commandName === 'internal') {
+  (await import('./commands/internal.js')).registerInternalCommand(program);
+} else if (commandName === 'task') {
+  (await import('./commands/task.js')).registerTaskCommand(program);
+} else {
+  (await import('./entry-commands.js')).registerCommands(program);
+}
 
 // parseAsync: async command actions (update) must reject through commander,
 // not become unhandled rejections. exitOverride (set above) lets usage errors

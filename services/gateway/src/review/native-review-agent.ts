@@ -35,7 +35,11 @@ import {
 } from '../runners/native/worker-control.js';
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
-import { PromptDeliveryUncertainError, runnerDefaultSafetyTier } from '../runners/registry.js';
+import {
+  getRunnerDefinition,
+  PromptDeliveryUncertainError,
+  runnerDefaultSafetyTier,
+} from '../runners/registry.js';
 import {
   clearRunActiveTaskFile,
   getAllRuns,
@@ -780,6 +784,8 @@ async function runNativeReviewAttempt(
     let deadline = monitoringStartedAt + input.reviewTimeoutMs;
     let lastProgressAt = monitoringStartedAt;
     let observedProgress = false;
+    const pollMs =
+      getRunnerDefinition(getRun(runId)?.metrics.runner ?? '').feedbackTiming?.pollMs ?? 500;
     let eventCursor: number | undefined;
     // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on and its
     // progress waits on the node. Only a node silent for a whole inactivity window fails it.
@@ -919,7 +925,7 @@ async function runNativeReviewAttempt(
             `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,
         );
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
     admit();
     const terminal = await readTerminalReviewSignal(vars, taskDir, target.signal);

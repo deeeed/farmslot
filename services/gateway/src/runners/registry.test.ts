@@ -102,10 +102,12 @@ import { assertCodexWorkerDoesNotInjectMcpOverrides, makeVars } from './test-fix
 describe('scripted runner', () => {
   it('has exec launch mode', () => {
     assert.equal(getRunnerDefinition('scripted').defaultLaunchMode, 'exec');
+    assert.equal(getRunnerDefinition('scripted').roleWindowStartupSettleMs, 0);
+    assert.equal(getRunnerDefinition('codex').roleWindowStartupSettleMs, undefined);
   });
 
-  it('does not support interactive prompt', () => {
-    assert.equal(runnerSupportsInteractivePrompt('scripted'), false);
+  it('supports structured interactive prompt delivery', () => {
+    assert.equal(runnerSupportsInteractivePrompt('scripted'), true);
   });
 
   it('does not support tmux nudges', () => {

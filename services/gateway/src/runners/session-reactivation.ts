@@ -27,6 +27,7 @@ import {
 import {
   captureRunnerPromptAcceptanceBaseline,
   execRunnerKeys,
+  getRunnerDefinition,
   getRunnerObservability,
   normalizeRunner,
   resolveLaunchBlockerWithFreshEvidence,
@@ -337,7 +338,7 @@ async function relaunchRunnerWithArgvPrompt(
   };
 }
 
-type LiveRunnerDeliveryOptions = RunnerSessionReactivationOptions & {
+export type LiveRunnerDeliveryOptions = RunnerSessionReactivationOptions & {
   promptMarker: string;
 };
 
@@ -551,6 +552,8 @@ export async function deliverPromptToRetainedRunnerSession(
   options: RunnerSessionReactivationOptions,
 ): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
+  const deliver = getRunnerDefinition(runner).deliverPrompt;
+  if (deliver) return deliver(options);
   const handoff = runnerRetainedSessionHandoff(runner);
   if (handoff === 'resume-with-prompt') {
     const sessionId = options.sessionId?.trim();
@@ -869,6 +872,8 @@ export async function deliverPromptToLiveRunner(
   options: LiveRunnerDeliveryOptions,
 ): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
+  const deliver = getRunnerDefinition(runner).deliverPrompt;
+  if (deliver) return deliver(options);
   const handoff = options.handoff ?? runnerRetainedSessionHandoff(runner);
   if (handoff === 'argv-relaunch') {
     return deliverPromptWithRetainedFallback(options);

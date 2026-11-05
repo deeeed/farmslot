@@ -67,6 +67,7 @@ export interface RemoteNodeStackOptions {
   /** The checkout under test. */
   root: string;
   evidence: string;
+  gatewayEnv?: NodeJS.ProcessEnv;
   machine: string;
   /** Slot ids; each starts with `<project>-` and belongs to that project's pool. */
   slots: string[];
@@ -252,9 +253,10 @@ const tmuxWatch = (realTmux: string, holds: string) =>
 // marker reads `swallow` answers the turn itself instead: an accepted reviewer, no model call.
 // Once the marker reads `complete`, the proxy ends every turn it swallowed (the test has written
 // the reviewer's output by then) and logs `completed`; it still swallows any turn that starts then.
-const codexProxy = (realCodex: string, holds: string) => `'use strict';
+export const codexProxy = (realCodex: string, holds: string) => `'use strict';
 const { spawn, spawnSync } = require('node:child_process');
-const { appendFileSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
+const { appendFileSync, existsSync, readFileSync, writeFileSync, watch } = require('node:fs');
+const path = require('node:path');
 const REAL = ${JSON.stringify(realCodex)};
 const HOLD = ${JSON.stringify(path.join(holds, 'review'))};
 const CALLS = ${JSON.stringify(path.join(holds, 'model-calls.log'))};
@@ -268,12 +270,20 @@ writeFileSync(HOLD + '-env.json', JSON.stringify(Object.fromEntries(Object.entri
 const turnStarts = new Set();
 const marker = () => (existsSync(HOLD) ? readFileSync(HOLD, 'utf8').trim() : '');
 const swallowed = [];
-setInterval(() => {
-  if (!swallowed.length || marker() !== 'complete') return;
-  for (const id of swallowed.splice(0))
+const completeReadyTurns = () => {
+  if (!swallowed.length) return;
+  const ready = swallowed.filter(({ thread }) => marker() === 'complete' || existsSync(HOLD + '.complete-' + thread));
+  for (const { id, thread } of ready) {
+    swallowed.splice(swallowed.findIndex(turn => turn.id === id), 1);
     process.stdout.write(JSON.stringify({ method: 'turn/completed', params: { turn: { id, status: 'completed' } } }) + '\\n');
-  appendFileSync(HOLD + '.hit', new Date().toISOString() + ' completed\\n');
-}, 100).unref();
+    appendFileSync(HOLD + '.hit', new Date().toISOString() + ' completed\\n');
+  }
+};
+const completionWatcher = watch(path.dirname(HOLD), (_event, file) => {
+  if (file && (String(file) === 'review' || String(file).startsWith('review.complete-')))
+    completeReadyTurns();
+});
+completionWatcher.unref();
 let input = '';
 process.stdin.on('data', (chunk) => {
   input += chunk;
@@ -287,7 +297,10 @@ process.stdin.on('data', (chunk) => {
         appendFileSync(HOLD + '.hit', new Date().toISOString() + ' turn ' + message.id + ' swallowed\\n');
         process.stdout.write(JSON.stringify({ id: message.id, result: { turn: { id } } }) + '\\n');
         process.stdout.write(JSON.stringify({ method: 'turn/started', params: { turn: { id } } }) + '\\n');
-        swallowed.push(id);
+        const thread = message.params?.threadId;
+        writeFileSync(HOLD + '.env-' + thread + '.json', JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([key]) => !/KEY|TOKEN|SECRET|PASSWORD/i.test(key)))), { mode: 0o600 });
+        swallowed.push({ id, thread });
+        completeReadyTurns();
         continue;
       }
       turnStarts.add(String(message.id));
@@ -322,6 +335,10 @@ child.stdout.on('data', (chunk) => {
 });
 child.on('exit', (code, signal) => {
   if (held) { clearInterval(held.timer); for (const line of held.lines) process.stdout.write(line); }
+  completionWatcher.close();
+  // The supervisor keeps stdin open until this process exits. Once the real
+  // child has exited, stop reading so the proxy can exit and confirm cleanup.
+  process.stdin.destroy();
   process.exitCode = code ?? (signal ? 1 : 0);
 });
 `;
@@ -666,6 +683,7 @@ export async function startRemoteNodeStack(
       FARMSLOT_DEMO_POOL: '0',
       GATEWAY_HOST: '127.0.0.1',
       GATEWAY_PORT: String(port),
+      ...options.gatewayEnv,
     });
     const nodeEnv = (): NodeJS.ProcessEnv => ({
       ...baseEnv,

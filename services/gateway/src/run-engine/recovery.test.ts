@@ -15,6 +15,7 @@ import {
   recoveryHealthIsReady,
   type RunRecoveryCollaborators,
   STALE_RELEASE_RECLAIM_MS,
+  startOrphanReconciler,
 } from './recovery.js';
 
 test('truthful pending-gate states retain publication review recovery ownership', () => {
@@ -3073,4 +3074,109 @@ test('startup re-enters a human gate that stopped before presenting a decision (
     offline.calls.updates.some((fields) => JSON.stringify(fields).includes('operator-required')),
     false,
   );
+});
+
+function interruptedReleaseDeps() {
+  const { deps } = buildPrepareRecoveryDeps(minimalActiveRun(), { killed: false });
+  const resumed: string[] = [];
+  const orphan = orphanCollaborators({
+    listRuns: () => ({ runs: [] }),
+    loadFleetStatus: async () => ({
+      slots: [
+        { slot: 'orphan', lifecycle: 'held', phase: 'releasing' },
+        { slot: 'owned', lifecycle: 'held', phase: 'releasing' },
+      ],
+    }),
+    readSlotField: async () => ({ status: 'running' }),
+    updateSlotStatusIf: async () => true,
+    resumeInterruptedRecovery: (slot) => {
+      resumed.push(slot);
+    },
+  });
+  return { deps: { ...deps, ...orphan }, resumed };
+}
+
+test('startup resumes an interrupted release with no active runs before the interval', async () => {
+  const { deps, resumed } = interruptedReleaseDeps();
+  await recoverActiveRuns(deps);
+  assert.deepEqual(resumed, ['orphan', 'owned']);
+});
+
+test('reconnect resumes an orphan release, protects an active slot and coalesces startup', async (t) => {
+  const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
+  const socket = {} as import('ws').WebSocket;
+  t.after(() => {
+    unregisterByWs(socket);
+  });
+  const { deps, resumed } = interruptedReleaseDeps();
+  const active = minimalActiveRun({ slotId: 'owned', status: 'monitoring' });
+  deps.listRuns = () => ({ runs: [active] });
+  let finish: (() => void) | undefined;
+  const done = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  deps.resumeInterruptedRecovery = (slot) => {
+    resumed.push(slot);
+    finish!();
+  };
+  const stop = startOrphanReconciler(deps);
+  if (typeof stop === 'function') t.after(stop);
+  registerNode('recovery-test', 1, socket);
+  await Promise.race([
+    done,
+    new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error('Reconnect did not reconcile')), 200);
+      timer.unref();
+      t.after(() => clearTimeout(timer));
+    }),
+  ]);
+  assert.deepEqual(resumed, ['orphan']);
+  await reconcileOrphanedSlots(deps);
+  resumed.length = 0;
+  let unblock: (() => void) | undefined;
+  const blocked = new Promise<void>((resolve) => {
+    unblock = resolve;
+  });
+  const load = deps.loadFleetStatus;
+  let reads = 0;
+  deps.loadFleetStatus = async () => {
+    reads++;
+    await blocked;
+    return load();
+  };
+  deps.listRuns = () => ({ runs: [] });
+  const startup = recoverActiveRuns(deps);
+  registerNode('recovery-test', 2, socket);
+  unblock!();
+  await startup;
+  assert.equal(reads, 1);
+  assert.deepEqual(resumed, ['orphan', 'owned']);
+});
+
+test('reconnect alone resumes an interrupted release without active runs', async (t) => {
+  const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
+  const socket = {} as import('ws').WebSocket;
+  t.after(() => {
+    unregisterByWs(socket);
+  });
+  const { deps, resumed } = interruptedReleaseDeps();
+  let finish: (() => void) | undefined;
+  const done = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  deps.resumeInterruptedRecovery = (slot) => {
+    resumed.push(slot);
+    if (resumed.length === 2) finish!();
+  };
+  t.after(startOrphanReconciler(deps));
+  registerNode('orphan-reconnect-test', 1, socket);
+  await Promise.race([
+    done,
+    new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error('Reconnect did not reconcile')), 200);
+      timer.unref();
+      t.after(() => clearTimeout(timer));
+    }),
+  ]);
+  assert.deepEqual(resumed, ['orphan', 'owned']);
 });
