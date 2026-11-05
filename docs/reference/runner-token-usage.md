@@ -76,13 +76,27 @@ Do not merge runner usage changes unless the extractor output matches the provid
 - **L3–L4 tmux:** `token-usage-smoke` in [runner-validation-harness.md](../operations/runner-validation-harness.md) polls the same script on a live-resolved session path (no duplicated JS token logic).
 - **L5 manual:** this section's `TOKEN_CHECK_OK` protocol after runner CLI upgrades.
 
-## Native reviewer receipts (ADR-057 Amendment 14)
+## Pipeline session receipts (ADR-057 Amendment 14)
 
-- Dedicated native reviewer contexts MAY carry `usage: RunnerSessionUsage`. The gateway MUST capture it for completed and failed/no-verdict attempts whose exact context/conversation binding remains current and observable. A superseded or unavailable binding MAY be left for offline repair. Accounting MUST NOT determine a verdict, prompt acceptance or process completion.
-- Resolution MUST use the recorded conversation id and execution node/account context. Token fields, message-id deduplication and pricing MUST use the shared worker accounting implementation. Transcript bodies MUST remain on their execution host. Missing, mismatched or unreadable history MUST remain unavailable rather than observed zero; verified prior readings MUST be preserved.
-- Reviewer receipts use the existing `session-total` scope. A run's reviewer totals MUST deduplicate by exact runner/conversation id across retained contexts and review results, selecting the largest verified total and the latest measurement on ties. Context-only spend MUST be included without constructing a review result. Legacy result-only accounting remains supported.
-- The offline backfill MUST default to dry-run, refuse live-gateway writes and preserve unrelated fields, verdicts, learning content and audit/transcript bytes. Repeated application MUST be idempotent. Failures and unresolved identities MUST be reported.
+Every agent session MUST retain one shared `RunnerSessionUsage` row, including all worker/reviewer roles, flows, helpers, failed attempts, relaunches and replays. The canonical durable collection is optional `Run.sessionUsage`; contexts and review results reuse the same receipt shape. New rows MUST contain:
+
+| Field                                                                   | Meaning                                                                                                                                          |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| runner, actualModel, model, effort                                      | Actual execution runner/model and requested configuration; unknown configuration is null with a gap.                                             |
+| role, roles, flowType, runId                                            | Owning stage and all known roles sharing the conversation; missing ownership is explicit.                                                        |
+| runnerSessionId, identityKind                                           | Exact native conversation id, or a reserved request id for a stateless helper. No path or time heuristic.                                        |
+| turns, inputTokens, outputTokens, cacheRead, cacheCreation, totalTokens | Verified shared-reader/provider counters; unknown counters are null with a capture gap. Cache detail follows the provider accounting convention. |
+| costUsd, costStatus, costReason                                         | Finite estimate, including observed zero, or null plus `unpriced` and a reason. Missing prices MUST NOT become zero.                             |
+| startedAt, completedAt, durationMs                                      | Observed session lifetime; unknown duration is null with a gap. Active duration is elapsed time at measurement.                                  |
+| source, measuredAt, error                                               | Existing evidence status, measurement time and controlled acquisition reason. Supporting source metadata permits exact offline recapture.        |
+
+- Shared registration MUST retain each conversation before its context is replaced or cleared. Collection MUST run at settlement and before transcript/account cleanup. An unavailable lookup MUST NOT overwrite verified usage for the same conversation. Accounting MUST NOT affect lifecycle authority or invent verdicts.
+- Exact resolution MUST use execution node/account identity. Token extraction, message-id deduplication and transcript pricing MUST reuse worker accounting. Transcript bodies MUST remain on their execution host.
+- All session-total rollups MUST deduplicate exact runner/conversation ids across contexts, result rows and the canonical collection, selecting the largest verified total and latest measurement on ties. Family totals MUST also deduplicate conversations retained across runs. Legacy result/metric-only records remain supported without adding them again when a canonical receipt represents them.
+- The shared LLM layer MUST record each actual provider/CLI attempt, successful or failed, including all tool rounds. Run execution context supplies run/flow/stage attribution. A reserved request id identifies a stateless request; it MUST NOT be presented as a provider-native conversation id. Retrying the same persistence write MUST NOT duplicate a receipt.
+- Unsupported sources, unpriced models and missing historical identity MUST appear as explicit capture gaps. Historical helper usage without a recorded identity remains historical step evidence; no native conversation id is invented. Out-of-run helper calls MUST disclose missing run ownership.
+- Offline backfill MUST default to dry-run, refuse live-gateway writes and preserve unrelated fields, verdicts, learning content and audit/transcript bytes. Repeated application MUST be idempotent. Report failures, unresolved identities and remaining capture gaps.
 
 ### Public surface
 
-The optional field belongs to `@farmslot/protocol`'s existing `AgentContext` run data and is patch-compatible. Existing run RPCs serialize it; gateway shared reporting projects it for both clients and downstream harnesses. This amendment adds no RPC method, native host method or harness-specific override.
+`RunnerSessionUsage`, optional `Run.sessionUsage` and optional `AgentContext.usage` belong to `@farmslot/protocol`. Existing run RPCs serialize them. Shared gateway session/LLM accounting and reporting are the consumers; both clients and harnesses inherit the same rows. Optional fields preserve older data compatibility. No new RPC, node method or project-specific accounting hook is introduced.

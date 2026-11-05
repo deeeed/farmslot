@@ -604,18 +604,28 @@ The cost is that a Grok reviewer no longer reads the repository's `AGENTS.md`, p
 - `grokAuthMethod` (the Grok adapter and account observer), and `AcpAuthMethod` / `selectAcpAuthMethod`: an ACP adapter's `authMethod` may now pick among the advertised methods.
 - `@farmslot/agent-runtime` needs a release. Until it is rolled out, nodes keep trusting review checkouts.
 
-## Amendment 14: native reviewer usage receipts, 2026-11-05
+## Amendment 14: pipeline session usage receipts, 2026-11-05
 
-**Status:** Accepted, Arthur, 2026-11-05; independent text review approved at `c0922e17e3740c74c8c9dfb3814be311f81c19f8` before implementation.
+**Status:** Proposed expanded text. Arthur approved pipeline-wide scope at 11:20 HKT; independent text review precedes implementation. The earlier reviewer-only text passed review at `c0922e17e3740c74c8c9dfb3814be311f81c19f8`.
 
 ### Decision
 
-The gateway records an optional `AgentContext.usage` receipt using the existing `RunnerSessionUsage` contract for dedicated native reviewer contexts. It resolves the exact recorded conversation on its execution node, including the launch's isolated account directory, and reuses worker transcript accounting. Completed and failed/no-verdict contexts retain receipts while their recorded binding remains current. Superseded or unavailable sources can be repaired by the offline backfill.
+EVERY agent session records usage regardless of role or flow. This includes dev, fix-bug, pr-complete, QA, primary workers, static and paired reviewers, review-fix, CI-fix, grade, write-task and summary helpers, relaunches and replays. Accounting belongs at shared session registration and shared LLM dispatch, never in individual endpoints.
 
-Receipts are supporting accounting, independent of verdicts, delivery and lifecycle authority. Missing history remains explicitly unavailable; a failed measurement cannot replace a verified receipt for the same conversation with zero. A run's reviewer rollup counts each exact runner/conversation once, selecting its most complete verified session-total receipt across retained contexts and result rows. WARM snapshots are not added together.
+Use one shared `RunnerSessionUsage` receipt throughout. Each new session row records runner, actual/requested model, effort, role, flow, run id, exact conversation id, turns, input/output/cache tokens, pricing status and duration. Unknown values are null with a capture gap; cost is an estimate or explicitly unpriced with a reason. A gateway-owned array on the existing run record retains rows after contexts or results are replaced. Context and result receipts reuse this shape. Accounting never determines a verdict, delivery acceptance, process completion or admission.
 
-Earlier conversations can survive in contexts after the current review result is replaced. The offline, dry-run-by-default backfill repairs those receipts and legacy placeholders while the gateway is stopped for writes. It preserves review outcomes, learning data, audit journals and transcripts. It creates no review verdict or admission.
+Deduplicate session totals by exact runner/conversation identity, retaining the largest verified total and latest measurement on ties. Preserve role/context participation when one conversation serves several stages. Across a family, the same conversation is counted once. Shared helper calls have a reserved request identity when the provider has no conversation concept. Each transport attempt, including a failed fallback, remains attributable. Tool rounds accumulate in their helper session rather than dropping earlier spend.
+
+Capture from the exact execution node/account through existing runner accounting. Retain source identity before a relaunch replaces it, measure at settlement and before source cleanup, and leave failed acquisition explicitly unavailable. No transcript bodies cross RPC. Offline, dry-run-by-default backfill repairs all recoverable retained sessions while writes require the gateway to be stopped. It preserves learning data, verdicts, audit journals and transcripts, and creates no review results.
+
+### Capture gaps
+
+- Legacy deleted transcripts or isolated account directories cannot supply verified counters or duration. Preserve prior verified readings and report the missing source.
+- A runner without persisted structured usage or a verifiable conversation binding cannot supply exact counters. Record an unavailable/unpriced row and the runner's reason. Interactive Cursor is a known case; native transports without transcript-path discovery may remain unavailable until their runner adapter exposes it.
+- Historical helper calls without recorded request/conversation identity cannot be assigned a fabricated native identity. Preserve recoverable step usage and report the historical identity gap.
+- Project commands that launch opaque child agents without returning their session identity cannot be individually attributed. Their parent is recorded; the child capture gap is explicit. No inference from terminal text or invented zero usage.
+- A helper invoked outside any run has no run/flow owner. Its receipt explicitly records that missing attribution rather than attaching spend to an unrelated run.
 
 ### Public surface
 
-`@farmslot/protocol` adds optional `AgentContext.usage` to existing run data. This is an additive patch-level data change; existing RPC methods carry it. Gateway reporting consumes the receipt; Command Center, Companion and harnesses such as mm-harness inherit the corrected shared token projection. The maintenance script is an operator tool described in `docs/operations/native-reviewer-usage-backfill.md`. The RPC method set and native node-service contract remain unchanged.
+`@farmslot/protocol` extends the existing `RunnerSessionUsage` shape and adds optional `Run.sessionUsage` and `AgentContext.usage` to existing run data. Fields remain optional for old records; new row producers fill the normative fields. This is additive and patch-compatible. Existing run RPCs carry the rows. Shared reporting projects deduplicated receipts for Command Center, Companion and downstream harnesses. The shared LLM wrapper carries run/role attribution through execution context. No new RPC, node-service contract, server or per-project override is added. Operators use the offline backfill documented in `docs/operations/native-reviewer-usage-backfill.md`.
