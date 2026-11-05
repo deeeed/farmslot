@@ -1,7 +1,24 @@
 #!/usr/bin/env node
 // Load the CLI in this process so its signal handlers own the invoked PID.
+import { realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// Agent tool shells can restore a different PATH than the worker launch. Honor
+// the machine's configured runtime before loading TSX or opening any connection.
+const configuredNodeBin = process.env.FARMSLOT_NODE22_BIN?.trim();
+if (configuredNodeBin) {
+  const node = realpathSync(
+    resolve(configuredNodeBin, process.platform === 'win32' ? 'node.exe' : 'node'),
+  );
+  if (realpathSync(process.execPath) !== node) {
+    if (process.platform === 'win32' || typeof process.execve !== 'function') {
+      throw new Error(`Invoke the CLI with its configured Node runtime: ${node}`);
+    }
+    // Replace this process so PID-only cancellation still reaches the CLI.
+    process.execve(node, [node, ...process.execArgv, ...process.argv.slice(1)], process.env);
+  }
+}
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const entry = resolve(
