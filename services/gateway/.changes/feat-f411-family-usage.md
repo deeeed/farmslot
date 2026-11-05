@@ -1,0 +1,1 @@
+- Include canonical session receipts, family accounting contributions and review-round timing in family observability reads without additional per-run requests.

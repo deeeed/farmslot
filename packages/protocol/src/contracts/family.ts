@@ -11,9 +11,66 @@ import type {
   RunLane,
   RunLink,
   RunMetrics,
+  RunnerSessionUsage,
   RunStatus,
   RunStepStatus,
 } from './runs.js';
+
+/** A canonical accounting delta, attributed by the gateway, never allocated by a client. */
+export interface FamilyUsageContribution {
+  sessionId: string | null;
+  runId: string;
+  usage: RunnerSessionUsage;
+}
+
+export interface FamilyUsageInterval {
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface FamilyUsageSession {
+  id: string;
+  runIds: string[];
+  participations: FamilyUsageParticipation[];
+  usage: RunnerSessionUsage;
+}
+
+export interface FamilyUsageParticipation {
+  runId: string;
+  flowType: FlowType;
+  roles: string[];
+  contextIds: string[];
+}
+
+export interface FamilyUsageRunCoverage {
+  runId: string;
+  receipts: number;
+  tokenCaptures: number;
+  costCaptures: number;
+}
+
+export interface FamilyUsageReviewRound {
+  id: string;
+  runId: string;
+  reviewId: string;
+  roundNumber: number;
+  runner: string;
+  model: string;
+  review: FamilyUsageInterval;
+  fixes: FamilyUsageInterval[];
+  usage?: RunnerSessionUsage;
+  usageOrigin: 'round-receipt' | 'associated-session' | 'unavailable';
+  /** A reused conversation's final total cannot be charged to each participating round. */
+  costScope: 'session-total' | 'shared-session' | 'unavailable';
+}
+
+/** Read-only projection of the shared accounting receipts. No client-side pricing or capture. */
+export interface FamilyObservabilityUsage {
+  sessions: FamilyUsageSession[];
+  contributions: FamilyUsageContribution[];
+  rounds: FamilyUsageReviewRound[];
+  runCoverage: FamilyUsageRunCoverage[];
+}
 
 export interface FamilyLearningEntry {
   id: string;
@@ -205,6 +262,7 @@ export interface FamilyObservabilitySnapshot {
   runs: FamilyObservabilityRunSummary[];
   experiments?: EvalExperimentProjection[];
   tokenSummary?: FamilyObservabilityTokenSummary;
+  usage?: FamilyObservabilityUsage;
   /** Other runs that share the same ticket or GitHub PR number but live in a different family (prior attempts, separate lineages). */
   relatedByTicket: RelatedRunSummary[];
   missingData: string[];

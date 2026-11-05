@@ -317,7 +317,11 @@ export function buildRunTokenSummary(run: FamilyObservabilityRunSummary): RunTok
   };
 }
 
-export function familyTokenMetricLabel(summary: FamilyObservabilityTokenSummary): string {
+export function familyTokenMetricLabel(
+  summary: FamilyObservabilityTokenSummary,
+  hasMeasuredTokens = summary.familyTotalTokens > 0 || summary.runsWithMetrics > 0,
+): string {
+  if (!hasMeasuredTokens) return 'not captured';
   const total = summary.familyTotalTokens;
   if (total < 1000) return `${total}`;
   if (total < 1_000_000) {
