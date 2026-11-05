@@ -132,6 +132,7 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
   );
   const supportPaths = [...hookSupportPaths];
   for (const requiredPath of [
+    'scripts/write-runtime-context.sh',
     ...hostedTaskTemplatePaths(projectName, projectJson),
     ...RUNNER_OBSERVABILITY_SUPPORT_PATHS,
   ]) {

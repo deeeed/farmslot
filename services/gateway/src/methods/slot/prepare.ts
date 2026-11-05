@@ -98,6 +98,7 @@ import {
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
+import { syncPrepareFixtures } from './prepare-runtime-context.js';
 import {
   acquirePrepareSentinel,
   type PrepareSentinelLock,
@@ -605,16 +606,32 @@ async function slotPrepareInner(
     checkAborted();
     step('fixtures', 'Syncing fixtures...');
     const syncLogPath = phaseLog('fixtures');
-    await runFixtureSync(vars, {
-      slotId: params.slotId,
-      flowType: params.flowType,
-      domain: effectiveDomain,
-      selectedApp,
-      logPath: syncLogPath,
-      signal,
-      prepareProfile: profileName(),
-      nodeSupportDir: hookSupportDir,
-    });
+    const sync = () =>
+      runFixtureSync(vars, {
+        slotId: params.slotId,
+        flowType: params.flowType,
+        domain: effectiveDomain,
+        selectedApp,
+        logPath: syncLogPath,
+        signal,
+        prepareProfile: profileName(),
+        nodeSupportDir: hookSupportDir,
+      });
+    if (projectVars) {
+      await syncPrepareFixtures(vars, {
+        runtimeDir,
+        supportDir: hookSupportDir ?? farmslotRoot,
+        sync,
+        writeContext: (command) =>
+          runPrepareCommand(vars, phaseLog('runtime-context'), command, {
+            timeout: 30_000,
+            signal,
+            windowLabel,
+            phase: 'fixtures',
+            preserveOtherPrepareWindows: true,
+          }),
+      });
+    } else await sync();
     step('fixtures', `Fixtures synced (log: ${syncLogPath})`);
     fixturesSynced = true;
   };
