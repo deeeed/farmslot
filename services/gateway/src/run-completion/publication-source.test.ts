@@ -86,3 +86,41 @@ test('a gate re-binds its slot only when no run holds it and the checkout is on 
     'a refused claim is not a re-bind',
   );
 });
+
+test('a released failed run restores its task after verified rebind and propagates restoration failure', async () => {
+  const released = { ...run, status: 'failed' as const };
+  const events: string[] = [];
+  const options = {
+    slot: async () => ({ current_run_id: null, slot_epoch: 2 }),
+    git,
+    expectedHeadSha: headSha,
+    rebind: async () => {
+      events.push('claim');
+      return null;
+    },
+    restoreTask: async (target: Run) => {
+      assert.equal(target.id, released.id);
+      events.push('restore');
+    },
+  };
+  assert.equal(await rebindUnownedPublicationSlot(released, options), true);
+  assert.deepEqual(events, ['claim', 'restore']);
+  await assert.rejects(
+    rebindUnownedPublicationSlot(released, {
+      ...options,
+      restoreTask: async () => {
+        throw new Error('retained artifact missing');
+      },
+    }),
+    /retained artifact missing/,
+  );
+  events.length = 0;
+  assert.equal(
+    await rebindUnownedPublicationSlot(released, {
+      ...options,
+      git: async () => ({ headSha: 'b'.repeat(40), branch: run.branch! }),
+    }),
+    false,
+  );
+  assert.deepEqual(events, []);
+});

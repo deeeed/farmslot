@@ -14,6 +14,7 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
+import { restoreRetainedTaskArtifacts } from '../run-completion/restore-task-artifacts.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { initializeExistingTaskRuntime } from '../tasks/existing-runtime.js';
 import {
@@ -25,12 +26,23 @@ import { initializeWrittenTask, TASK_INIT_INPUT } from '../tasks/writer.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';
 
-export async function copyTaskFilesToSlot(runId: string): Promise<void> {
+interface TaskCopyOptions {
+  slotId?: string;
+  /** A reviewer with an existing marker keeps its checklist, signals and frozen inputs. */
+  artifactsOnly?: boolean;
+}
+
+export async function copyTaskFilesToSlot(
+  runId: string,
+  options: TaskCopyOptions = {},
+): Promise<void> {
+  const { slotId, artifactsOnly } = options;
   const run = getRun(runId);
-  if (!run?.slotId || !run.taskFile) return;
+  if (!run?.taskFile || !(slotId ?? run.slotId)) return;
 
   try {
-    const vars = await loadSlotVars(run.slotId);
+    const vars = await loadSlotVars(slotId ?? run.slotId!);
+    await restoreRetainedTaskArtifacts(run);
     const pv = await loadProjectVarsOrNull(run.project, 'run recovery', run.id);
     const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
 
@@ -42,15 +54,18 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
 
     if (isLocal(vars.host, vars.machine)) {
       await mkdir(workerTaskAbs, { recursive: true });
-      await copyFile(run.taskFile, path.join(workerTaskAbs, 'TASK.md'));
-      for (const subdir of ['assets', 'inputs', 'artifacts']) {
+      if (!artifactsOnly) await copyFile(run.taskFile, path.join(workerTaskAbs, 'TASK.md'));
+      for (const subdir of artifactsOnly ? ['artifacts'] : ['assets', 'inputs', 'artifacts']) {
         const localDir = path.join(taskDir, subdir);
         if (existsSync(localDir)) {
           // Forward task sync intentionally includes the full prepared artifact
           // tree; WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES only applies to
           // worker-to-gateway release copies where gateway-owned outputs must
           // not be overwritten.
-          await cp(localDir, path.join(workerTaskAbs, subdir), { recursive: true });
+          await cp(localDir, path.join(workerTaskAbs, subdir), {
+            recursive: true,
+            ...(subdir === 'artifacts' ? { force: false, errorOnExist: false } : {}),
+          });
         }
       }
       console.log(`[run-engine] copied task files to ${workerTaskAbs}`);
@@ -64,15 +79,17 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
           `ssh mkdir ${workerTaskAbs} failed: ${mkdirRes.stderr.trim() || mkdirRes.stdout.trim() || `exit ${mkdirRes.exitCode}`}`,
         );
       }
-      const scpRes = await execLocal(
-        `scp -q ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(run.taskFile)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/TASK.md`)}`,
-      );
-      if (scpRes.exitCode !== 0) {
-        throw new Error(
-          `scp TASK.md to ${sshTarget}:${workerTaskAbs} failed: ${scpRes.stderr.trim() || scpRes.stdout.trim() || `exit ${scpRes.exitCode}`}`,
+      if (!artifactsOnly) {
+        const scpRes = await execLocal(
+          `scp -q ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(run.taskFile)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/TASK.md`)}`,
         );
+        if (scpRes.exitCode !== 0) {
+          throw new Error(
+            `scp TASK.md to ${sshTarget}:${workerTaskAbs} failed: ${scpRes.stderr.trim() || scpRes.stdout.trim() || `exit ${scpRes.exitCode}`}`,
+          );
+        }
       }
-      for (const subdir of ['assets', 'inputs', 'artifacts']) {
+      for (const subdir of artifactsOnly ? ['artifacts'] : ['assets', 'inputs', 'artifacts']) {
         const localDir = path.join(taskDir, subdir);
         if (!existsSync(localDir)) continue;
         // Forward task sync intentionally includes the full prepared artifact
@@ -80,7 +97,7 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
         // worker-to-gateway release copies where gateway-owned outputs must
         // not be overwritten.
         const rsyncRes = await execLocal(
-          `rsync -az ${RSYNC_SSH_SHELL_OPTION} ${shellQuote(`${localDir}/`)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/${subdir}/`)}`,
+          `rsync -az ${subdir === 'artifacts' ? '--ignore-existing ' : ''}${RSYNC_SSH_SHELL_OPTION} ${shellQuote(`${localDir}/`)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/${subdir}/`)}`,
         );
         if (rsyncRes.exitCode !== 0) {
           throw new Error(
@@ -99,14 +116,16 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
     };
     // A missing marker admits restoration. Publish it only after the prepared
     // inputs, evidence and other sidecars, so a failed copy is retried in full.
-    await copyPreparedTaskRootSidecars({
-      ...transfer,
-      excludeRelativePaths: [CHECKLIST_MARKER_INPUT],
-    });
-    await copyPreparedTaskRootSidecars({
-      ...transfer,
-      excludeRelativePaths: TASK_ROOT_SIDECARS.filter((file) => file !== CHECKLIST_MARKER_INPUT),
-    });
+    if (!artifactsOnly) {
+      await copyPreparedTaskRootSidecars({
+        ...transfer,
+        excludeRelativePaths: [CHECKLIST_MARKER_INPUT],
+      });
+      await copyPreparedTaskRootSidecars({
+        ...transfer,
+        excludeRelativePaths: TASK_ROOT_SIDECARS.filter((file) => file !== CHECKLIST_MARKER_INPUT),
+      });
+    }
     // Same rationale as methods/dispatch.ts: we just wrote artifacts/ into the
     // worker task dir. Worker-prefix cache entries warmed before this copy must
     // be dropped so loadLiveRecipeContextForRun re-reads them.

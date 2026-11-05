@@ -398,13 +398,15 @@ async function runNativeReviewAttempt(
   try {
     const reviewSnapshot = await withNativeReviewMutation(async () => {
       admit();
-      if (!recovering && !(await slotFileExists(vars, `${vars.remoteRepo}/${taskDir}/mark`))) {
-        // Release removes task scaffolding. A rebound checkout needs the original
-        // prepared task, including its frozen marker and evidence, before review.
-        await copyTaskFilesToSlot(runId);
-        admit();
-        if (!(await slotFileExists(vars, `${vars.remoteRepo}/${taskDir}/mark`)))
-          throw new Error(`Native review prepared task marker is missing: ${taskDir}/mark`);
+      if (!recovering) {
+        const markerExists = await slotFileExists(vars, `${vars.remoteRepo}/${taskDir}/mark`);
+        // A present marker does not prove the released task's worker artifacts survived.
+        if (!markerExists || original.artifactBundle || original.output?.artifactBundle) {
+          await copyTaskFilesToSlot(runId, { artifactsOnly: markerExists });
+          admit();
+          if (!(await slotFileExists(vars, `${vars.remoteRepo}/${taskDir}/mark`)))
+            throw new Error(`Native review prepared task marker is missing: ${taskDir}/mark`);
+        }
       }
       const baseRef = (await stackPrBase(original)) ?? original.repeatReviewContext?.baseRef;
       if (

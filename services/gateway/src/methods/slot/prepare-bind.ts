@@ -2,6 +2,7 @@ import type { SlotPrepareParams } from '@farmslot/protocol';
 
 import { claimSlotStatusIf, SLOT_PHASE_RELEASING, type SlotVars } from '../../core/index.js';
 import { pushRunRecipeToSlot } from '../../run-completion/artifact-mirror.js';
+import { copyTaskFilesToSlot } from '../../run-engine/task-sync.js';
 import { getRun } from '../../runs/store.js';
 
 import type { PrepareStream } from './prepare-stream.js';
@@ -34,6 +35,7 @@ export async function bindRunToSlot(
   }
   step('bind', `Bound run ${params.bindRunId.slice(0, 8)} to ${params.slotId}`);
   if (boundRun) {
+    await copyTaskFilesToSlot(boundRun.id, { slotId: vars.slotId, artifactsOnly: true });
     if (boundRun.parentRunId) {
       const { stageInheritedAcceptance } =
         await import('../../run-completion/inherited-acceptance.js');
