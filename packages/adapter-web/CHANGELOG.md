@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.18.0 - 2026-11-05
+
+- Run ordinary websites in an owned extension-free browser with shared CDP actions, screenshots and whole-run recording. Existing extension launches retain their lifecycle.
+
 ## 0.17.7 - 2026-11-04
 
 - Check host-resolver blocking in an owned blank document so strict application CSP needs no harness-only source. Keep application HTTP and WebSocket blocking checks unchanged.
