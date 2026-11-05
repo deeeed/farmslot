@@ -70,6 +70,7 @@ import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/p
 import { projectTaskRoots } from '../core/config.js';
 import { isGatewayTestProcess, isolatedTestPath } from '../core/isolated-test-path.js';
 import { readSlotField } from '../core/state.js';
+import { assertStorageVolumePresent } from '../core/storage-volume.js';
 import { farmslotRoot, isValidSafetyTier } from '../fleet/state.js';
 import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
@@ -280,6 +281,7 @@ function syncPrimaryAgentContextStatus(
 }
 
 async function ensureDir(): Promise<void> {
+  assertStorageVolumePresent(RUNS_DIR);
   if (!process.env.FARMSLOT_RUNS_DIR) {
     await mkdir(RUNS_DIR, { recursive: true });
     return;

@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { type ChatMessage, Events } from '@farmslot/protocol';
 
+import { assertStorageVolumePresent } from '../core/storage-volume.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { callLLM } from '../llm/index.js';
 import { resourceRevisions } from '../resources/revisions.js';
@@ -19,7 +20,10 @@ let memoryCache: string | null = null;
 
 function watchFile(filePath: string, invalidate: () => void): void {
   try {
-    const watcher = watch(filePath, () => {
+    // Parent-directory FSEvents survives volume revocation; Darwin file-inode
+    // watchers abort in libuv while rearming a revoked vnode.
+    const watcher = watch(path.dirname(filePath), (_event, filename) => {
+      if (filename != null && filename.toString() !== path.basename(filePath)) return;
       invalidate();
       resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot' });
       watcher.close(); // re-watch happens on next read
@@ -52,6 +56,7 @@ export function getCopilotDir(): string {
 
 export async function ensureCopilotDirs(): Promise<void> {
   const dir = getCopilotDir();
+  assertStorageVolumePresent(dir);
   await mkdir(path.join(dir, 'memory'), { recursive: true });
   await mkdir(path.join(dir, 'sessions'), { recursive: true });
 

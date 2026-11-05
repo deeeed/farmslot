@@ -36,6 +36,7 @@ import {
   withProjectMachineEnv,
 } from '../../core/index.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
+import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
@@ -241,6 +242,7 @@ async function slotPrepareWithSources(
     }
     await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
     const vars = await loadSlotVars(params.slotId);
+    if (isLocal(vars.host, vars.machine)) assertStorageVolumePresent(vars.remoteRepo);
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.
     await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.prepare);

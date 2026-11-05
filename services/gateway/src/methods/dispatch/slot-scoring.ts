@@ -700,7 +700,7 @@ export function validateSlot(
   slot: SlotStatus,
   options?: { allowWorking?: boolean },
 ): string | null {
-  if (slot.lifecycle === 'disabled') return 'Slot is disabled';
+  if (slot.lifecycle === 'disabled') return slot.repoBlocker ?? 'Slot is disabled';
   if (slot.lifecycle === 'manual') return 'Slot is in manual mode';
   if (slot.agent === 'working' && !options?.allowWorking) return 'Agent is working';
   if (slot.lifecycle === 'busy') return `Slot is busy (${slot.phase ?? 'unknown'})`;

@@ -8,6 +8,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
+import { assertStorageVolumePresent } from '../core/storage-volume.js';
 
 export function runArchiveRoot(): string {
   return process.env.FARMSLOT_RUN_ARCHIVE_ROOT ?? path.join(farmslotHome(), 'run-archive');
@@ -47,6 +48,7 @@ function serializeArchiveOperation(
 
 /** A real write, not access(W_OK): catches macOS removable-volume privacy failures. */
 export async function assertArchiveRoot(root: string): Promise<void> {
+  assertStorageVolumePresent(root);
   if (!path.isAbsolute(root) || !(await lstat(root)).isDirectory())
     throw new Error(`Run archive root must be an existing absolute directory: ${root}`);
   const probe = path.join(root, `.gateway-write-probe-${randomUUID()}`);

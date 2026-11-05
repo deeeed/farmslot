@@ -13,7 +13,9 @@ import {
 import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
 
 import { listOrphanedBacklogQueueItems } from '../backlog/store.js';
+import { isLocal } from '../core/exec.js';
 import { getGatewayListenSnapshot, remotePairingBlockedHint } from '../core/listen-address.js';
+import { gatewayStorageVolumeErrors, storageVolumeError } from '../core/storage-volume.js';
 import { getAllNodes } from '../fleet/machine-registry.js';
 import { loadPoolConfigs, loadProjectConfigs } from '../fleet/state.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
@@ -212,10 +214,28 @@ async function gatewaySection(): Promise<GatewayDoctorSection> {
 async function workspaceSection(): Promise<GatewayDoctorSection> {
   const [projects, pools] = await Promise.all([loadProjectConfigs(), loadPoolConfigs()]);
   const slots = pools.flatMap((pool) => pool.slots.map((slot) => ({ pool, slot })));
+  const storageErrors = [
+    ...gatewayStorageVolumeErrors(),
+    ...slots.flatMap(({ pool, slot }) => {
+      const error = isLocal(pool.host, pool.machine) && storageVolumeError(slot.repo);
+      return error ? [`${slot.id}: ${error}`] : [];
+    }),
+  ];
   return {
     id: 'workspace',
     label: 'Workspace',
     checks: [
+      {
+        id: 'storage-volumes',
+        label: 'Storage volumes',
+        ok: storageErrors.length === 0,
+        detail: storageErrors.length
+          ? storageErrors.join('\n')
+          : 'Configured local slot and store volumes are available',
+        hint: storageErrors.length
+          ? 'Reconnect the missing volume. Do not recreate its storage folders on another disk.'
+          : undefined,
+      },
       {
         id: 'projects',
         label: 'Projects',

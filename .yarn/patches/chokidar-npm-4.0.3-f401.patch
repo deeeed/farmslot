@@ -1,0 +1,54 @@
+diff --git a/handler.js b/handler.js
+--- a/handler.js
++++ b/handler.js
+@@ -128,9 +128,18 @@
+         }
+     };
+     try {
+-        return (0, fs_1.watch)(path, {
++        // Darwin's kqueue file watcher aborts inside libuv after forced volume removal.
++        // Watch the physical parent through FSEvents, preserving this path's events.
++        const file = exports.isMacos && !(0, fs_1.statSync)(path).isDirectory() ? (0, fs_1.realpathSync)(path) : undefined;
++        const fileName = file === undefined ? undefined : sysPath.basename(file);
++        const target = file === undefined ? path : sysPath.dirname(file);
++        const onEvent = fileName === undefined ? handleEvent : (event, name) => {
++            if (name === null || name.toString() === fileName)
++                handleEvent(event, sysPath.basename(path));
++        };
++        return (0, fs_1.watch)(target, {
+             persistent: options.persistent,
+-        }, handleEvent);
++        }, onEvent);
+     }
+     catch (error) {
+         errHandler(error);
+diff --git a/esm/handler.js b/esm/handler.js
+--- a/esm/handler.js
++++ b/esm/handler.js
+@@ -1,4 +1,4 @@
+-import { watchFile, unwatchFile, watch as fs_watch } from 'fs';
++import { watchFile, unwatchFile, statSync, realpathSync, watch as fs_watch } from 'fs';
+ import { open, stat, lstat, realpath as fsrealpath } from 'fs/promises';
+ import * as sysPath from 'path';
+ import { type as osType } from 'os';
+@@ -123,9 +123,18 @@
+         }
+     };
+     try {
+-        return fs_watch(path, {
++        // Darwin's kqueue file watcher aborts inside libuv after forced volume removal.
++        // Watch the physical parent through FSEvents, preserving this path's events.
++        const file = isMacos && !statSync(path).isDirectory() ? realpathSync(path) : undefined;
++        const fileName = file === undefined ? undefined : sysPath.basename(file);
++        const target = file === undefined ? path : sysPath.dirname(file);
++        const onEvent = fileName === undefined ? handleEvent : (event, name) => {
++            if (name === null || name.toString() === fileName)
++                handleEvent(event, sysPath.basename(path));
++        };
++        return fs_watch(target, {
+             persistent: options.persistent,
+-        }, handleEvent);
++        }, onEvent);
+     }
+     catch (error) {
+         errHandler(error);

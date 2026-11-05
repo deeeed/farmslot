@@ -2,7 +2,7 @@
 // Transforms raw JSON into protocol types
 
 import { once } from 'node:events';
-import { statSync } from 'node:fs';
+import { statSync, watch as watchDirectory } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -50,8 +50,10 @@ import {
   readSourceRuntimeSettings,
   usesRuntimeSettings,
 } from '../core/config.js';
+import { isLocal } from '../core/exec.js';
 import { watchedEventPath } from '../core/file-observation.js';
 import { onStatusCommit } from '../core/state.js';
+import { gatewayStorageVolumeErrors, storageVolumeError } from '../core/storage-volume.js';
 import { TriagePilotObservation } from '../intelligence/triage/pilot-observation.js';
 import { getFarmslotStorePath, getOpenClawStorePath } from '../llm/auth-store.js';
 import { invalidateLLMConfig } from '../llm/config.js';
@@ -616,6 +618,8 @@ function computeResourceRollup(slot: SlotStatus): ResourceRollup {
   return 'coherent';
 }
 
+const localSlotRepos = new Map<string, string>();
+
 function withFleetOverlays(fleet: FleetStatus): FleetStatus {
   const recoveryIds = workspaceRecoveryIds.get(fleet);
   const slots = fleet.slots.map((base) => {
@@ -649,11 +653,19 @@ function withFleetOverlays(fleet: FleetStatus): FleetStatus {
     if (branchOverride) {
       slot.branch = branchOverride;
     }
+    const repo = localSlotRepos.get(slot.slot);
+    const storageError = repo && storageVolumeError(repo);
+    if (storageError) {
+      slot.enabled = false;
+      slot.dispatchable = false;
+      slot.lifecycle = 'disabled';
+      slot.repoBlocker = storageError;
+    }
     slot.resourceRollup = computeResourceRollup(slot);
     return slot;
   });
   enrichSlotHostLoad(slots);
-  return { ...fleet, slots, machines: getAllMachineHealth() };
+  return { ...fleet, slots, summary: computeSummary(slots), machines: getAllMachineHealth() };
 }
 
 function transformFleet(raw: RawStatus): FleetStatus {
@@ -694,9 +706,15 @@ export async function loadFleetStatus(
     const content = await readFile(statusFile, 'utf-8');
     const raw: RawStatus = JSON.parse(content);
     const resources = statusSlotResources(raw);
-    const liveIds = new Set(
-      (await loadPoolConfigs()).flatMap((pool) => pool.slots.map((slot) => slot.id)),
-    );
+    const pools = await loadPoolConfigs();
+    const liveIds = new Set(pools.flatMap((pool) => pool.slots.map((slot) => slot.id)));
+    if (version === fleetReadVersion) {
+      localSlotRepos.clear();
+      for (const pool of pools) {
+        if (!isLocal(pool.host, pool.machine)) continue;
+        for (const slot of pool.slots) localSlotRepos.set(slot.id, slot.repo);
+      }
+    }
     next = markGhostSlots(transformFleet(raw), liveIds);
     workspaceRecoveryIds.set(
       next,
@@ -947,6 +965,38 @@ export function startFileWatcher() {
     const file = watchedEventPath(filename, details);
     if (file) projectChanged(file);
   });
+  // Observe mount topology from the internal disk, never from the revocable volume.
+  const blockedStorage = new Map<string, string>();
+  let storeErrors = new Set<string>();
+  const volumesWatcher =
+    process.platform === 'darwin'
+      ? watchDirectory('/Volumes', () => {
+          const fleet = getCachedFleet();
+          if (!fleet) return;
+          let changed = false;
+          for (const [slotId, repo] of localSlotRepos) {
+            const error = storageVolumeError(repo);
+            if (error === blockedStorage.get(slotId)) continue;
+            if (error) {
+              blockedStorage.set(slotId, error);
+              console.error(`[storage] ${slotId}: ${error}`);
+            } else {
+              blockedStorage.delete(slotId);
+              console.info(`[storage] ${slotId}: volume available again`);
+            }
+            slotResources.overlayChanged(slotId);
+            changed = true;
+          }
+          const currentErrors = new Set(gatewayStorageVolumeErrors());
+          for (const error of currentErrors)
+            if (!storeErrors.has(error)) console.error(`[storage] ${error}`);
+          storeErrors = currentErrors;
+          if (changed) for (const handler of changeHandlers) handler(fleet);
+        })
+      : undefined;
+  volumesWatcher?.on('error', (error) => {
+    throw error;
+  });
   return {
     ready: Promise.all([
       once(watcher, 'ready'),
@@ -958,6 +1008,7 @@ export function startFileWatcher() {
     assertTriagePilotObserved: (directory: string) => triagePilotObservation.assertReady(directory),
     async close(): Promise<void> {
       clearTimeout(poolDebounce);
+      volumesWatcher?.close();
       await Promise.all([
         watcher.close(),
         poolWatcher.close(),
