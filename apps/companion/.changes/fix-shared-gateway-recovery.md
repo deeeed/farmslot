@@ -1,1 +1,0 @@
-- Show a discreet offline indicator on every screen and share automatic gateway recovery with Command Center. Native network-change support requires a new 0.10.1 build.

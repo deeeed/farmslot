@@ -1,1 +1,0 @@
-- Videos in retained HTML reports open in the existing native artifact player through a report link, using the same report-relative paths as Command Center.

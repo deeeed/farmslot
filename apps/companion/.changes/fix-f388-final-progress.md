@@ -1,1 +1,0 @@
-- Stop held checklist timers at the end of their owning work.
