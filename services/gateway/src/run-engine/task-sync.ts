@@ -16,7 +16,11 @@ import {
 } from '../live-recipe/context.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { initializeExistingTaskRuntime } from '../tasks/existing-runtime.js';
-import { copyPreparedTaskRootSidecars } from '../tasks/sidecars.js';
+import {
+  CHECKLIST_MARKER_INPUT,
+  copyPreparedTaskRootSidecars,
+  TASK_ROOT_SIDECARS,
+} from '../tasks/sidecars.js';
 import { initializeWrittenTask, TASK_INIT_INPUT } from '../tasks/writer.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';
@@ -39,13 +43,6 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
     if (isLocal(vars.host, vars.machine)) {
       await mkdir(workerTaskAbs, { recursive: true });
       await copyFile(run.taskFile, path.join(workerTaskAbs, 'TASK.md'));
-      await copyPreparedTaskRootSidecars({
-        taskDir,
-        workerTaskAbs,
-        host: vars.host,
-        machine: vars.machine,
-        sshTarget: vars.sshTarget,
-      });
       for (const subdir of ['assets', 'inputs', 'artifacts']) {
         const localDir = path.join(taskDir, subdir);
         if (existsSync(localDir)) {
@@ -75,13 +72,6 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
           `scp TASK.md to ${sshTarget}:${workerTaskAbs} failed: ${scpRes.stderr.trim() || scpRes.stdout.trim() || `exit ${scpRes.exitCode}`}`,
         );
       }
-      await copyPreparedTaskRootSidecars({
-        taskDir,
-        workerTaskAbs,
-        host: vars.host,
-        machine: vars.machine,
-        sshTarget,
-      });
       for (const subdir of ['assets', 'inputs', 'artifacts']) {
         const localDir = path.join(taskDir, subdir);
         if (!existsSync(localDir)) continue;
@@ -100,6 +90,23 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
       }
       console.log(`[run-engine] copied task files to ${sshTarget}:${workerTaskAbs}`);
     }
+    const transfer = {
+      taskDir,
+      workerTaskAbs,
+      host: vars.host,
+      machine: vars.machine,
+      sshTarget: vars.sshTarget,
+    };
+    // A missing marker admits restoration. Publish it only after the prepared
+    // inputs, evidence and other sidecars, so a failed copy is retried in full.
+    await copyPreparedTaskRootSidecars({
+      ...transfer,
+      excludeRelativePaths: [CHECKLIST_MARKER_INPUT],
+    });
+    await copyPreparedTaskRootSidecars({
+      ...transfer,
+      excludeRelativePaths: TASK_ROOT_SIDECARS.filter((file) => file !== CHECKLIST_MARKER_INPUT),
+    });
     // Same rationale as methods/dispatch.ts: we just wrote artifacts/ into the
     // worker task dir. Worker-prefix cache entries warmed before this copy must
     // be dropped so loadLiveRecipeContextForRun re-reads them.

@@ -29,6 +29,8 @@ const { NativeWorkerOperationUncertainError } = await import('../runners/native/
 const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
 
 type Ending =
+  | 'never-started'
+  | 'missing-terminal'
   | 'command-failed'
   | 'command-error'
   | 'timeout'
@@ -140,6 +142,8 @@ mock.module('../run-engine/run-monitor.js', {
           signal: { status: 'running', timestamp: new Date().toISOString() },
         };
       }
+      if (ending === 'missing-terminal')
+        return { ok: false, code: 'missing', message: 'review signal missing' };
       if (timeline) {
         if (ending !== 'inactive' && timeline.polls >= 4) return { ok: true };
         return {
@@ -332,10 +336,12 @@ mock.module('../runners/native/worker-control.js', {
         return {
           session: { state: 'running' },
           commands:
-            ending !== 'inactive' && timeline.polls >= 4
-              ? [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }]
-              : [],
-          events,
+            ending === 'never-started'
+              ? [{ commandId: binding.commandId, state: 'accepted', accepted: true }]
+              : ending !== 'inactive' && timeline.polls >= 4
+                ? [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }]
+                : [],
+          events: ending === 'never-started' ? [] : events,
           cursor: timeline.polls,
           hasMore: ending === 'paged-tools' && timeline.polls === 1,
         };
@@ -559,9 +565,12 @@ const review = (runId: string) =>
     model: 'opus',
     taskDir: 'tasks/review',
     runId,
-    reviewTimeoutMs: ['timeout', 'completion-invalid-idle', 'completion-interrupted'].includes(
-      ending,
-    )
+    reviewTimeoutMs: [
+      'timeout',
+      'missing-terminal',
+      'completion-invalid-idle',
+      'completion-interrupted',
+    ].includes(ending)
       ? 0
       : timeline
         ? (ending === 'inactive' ? 60 : 30) * 60_000
@@ -829,6 +838,25 @@ test('restart recovery enforces the completion inactivity limit and drains fresh
   assert.equal(completionCommands.length, 1);
 });
 
+test('an accepted reviewer with no native turn reports never started', async (t) => {
+  ending = 'never-started';
+  const clock = { now: 0, polls: 0 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /never started a turn/);
+  assert.equal(clock.polls, 1);
+});
+
+test('a completed native turn with no signal fails immediately with its completion cause', async (t) => {
+  ending = 'missing-terminal';
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /completed its turn without.*terminal signal/);
+});
+
 test('a native reviewer with no checklist or tool progress fails at ten idle minutes, before a one-hour budget', async (t) => {
   ending = 'inactive';
   const clock = { now: 0, polls: 0 };
@@ -906,7 +934,7 @@ test('a previous native command cannot keep the current reviewer alive', async (
     timeline = undefined;
   });
   const run = await nativeRun(t);
-  await assert.rejects(review(run.id), /no checklist or tool progress for 600000ms/);
+  await assert.rejects(review(run.id), /never started a turn/);
   assert.equal(clock.polls, 1);
 });
 
@@ -937,7 +965,7 @@ test('a recovered native command gets its startup grace from its verified accept
 });
 
 for (const [end, reason] of [
-  ['timeout', /no checklist or tool progress/],
+  ['timeout', /never started a turn/],
   ['exit', /reviewer process exited/],
 ] as const) {
   test(`a reviewer ${end} settles its admitted round no-verdict`, async (t) => {

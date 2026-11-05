@@ -790,6 +790,7 @@ async function runNativeReviewAttempt(
     let deadline = monitoringStartedAt + input.reviewTimeoutMs;
     let lastProgressAt = monitoringStartedAt;
     let observedProgress = false;
+    let turnStarted = false;
     let eventCursor: number | undefined;
     // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on and its
     // progress waits on the node. Only a node silent for a whole inactivity window fails it.
@@ -850,6 +851,8 @@ async function runNativeReviewAttempt(
           event.commandId !== context.nativeSession!.commandId
         )
           continue;
+        if (['turn.started', 'text.delta', 'tool.started', 'tool.completed'].includes(event.type))
+          turnStarted = true;
         if (event.type === 'command.accepted') {
           // Recovery preserves the admitted attempt and can accept a new command
           // long after its first process. Use that command's real startup clock.
@@ -897,6 +900,7 @@ async function runNativeReviewAttempt(
       if (completion === 'continued') {
         context = admit().agentContexts!.find((candidate) => candidate.id === contextId)!;
         reviewBinding = context.nativeSession!;
+        turnStarted = false;
         eventCursor = undefined;
         continue;
       }
@@ -919,11 +923,27 @@ async function runNativeReviewAttempt(
           snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
         throw reviewerExitForNativeSnapshot(snapshot, failure) ?? failure ?? new Error(reason);
       }
+      if (
+        completion === false &&
+        !probe.ok &&
+        probe.code === 'missing' &&
+        command?.state === 'completed' &&
+        command.outcome === 'completed'
+      )
+        throw new TerminalReviewArtifactError(
+          `Native reviewer completed its turn without a valid terminal signal: ${probe.message}`,
+        );
       // Drain this lease's history before judging silence; later pages can hold
       // activity that happened while the gateway was offline.
       if (snapshot.hasMore) continue;
       const now = Date.now();
       if (now - lastProgressAt >= inactivityTimeoutMs || (now >= deadline && !observedProgress)) {
+        if (!turnStarted && (!command || !['completed', 'failed'].includes(command.state)))
+          throw new Error(
+            `Native reviewer never started a turn within ${now - monitoringStartedAt}ms ` +
+              `(session ${reviewBinding.sessionId}; command ${context.nativeSession!.commandId}; ` +
+              `receipt ${command?.state ?? 'missing'})`,
+          );
         throw new Error(
           `Native reviewer made no checklist or tool progress for ${now - lastProgressAt}ms ` +
             `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,

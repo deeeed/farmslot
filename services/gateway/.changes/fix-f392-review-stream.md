@@ -1,1 +1,1 @@
-- Restore a released run's prepared task before starting its native review, so progress and completion can use the retained marker.
+- Restore a released run's complete prepared task before native review, publish its marker last, and distinguish an unstarted turn from a completed turn missing its terminal signal.
