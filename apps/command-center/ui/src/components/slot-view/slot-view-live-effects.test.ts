@@ -297,7 +297,12 @@ test(
       id: 1,
       capabilities: {
         ...transport.connection.capabilities!,
-        resourceChanges: { version: 1, epoch: 'conformance-epoch', workspaceReads: 1 },
+        resourceChanges: {
+          version: 1,
+          epoch: 'conformance-epoch',
+          versionLists: false,
+          workspaceReads: 1,
+        },
       },
     });
     const cache = createGatewayResourceCache({ transport });
