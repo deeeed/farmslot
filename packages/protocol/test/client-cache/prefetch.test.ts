@@ -15,6 +15,7 @@ import {
   type ContentPrefetchTarget,
   createContentPrefetcher,
 } from '../../src/client-cache/prefetch.js';
+import { readGitSource } from '../../src/client-cache/read-stored.js';
 import { type ResourceQuery, resourceQuery } from '../../src/client-cache/registry.js';
 import {
   type ContentKey,
@@ -726,15 +727,6 @@ test('a package change refetches a gate only for a new package, without held con
       method: 'artifact',
       params: { runId: 'g1', path: 'artifacts/p2.diff', bundleDigest: 'bundle-p2' },
     },
-    {
-      method: 'git.show',
-      params: {
-        slotId: 'slot-g1',
-        ref: BASE,
-        paths: ['src/a.ts', 'old.txt'],
-        have: [blob(A_OLD), blob(GONE)],
-      },
-    },
   ]);
   assert.deepEqual(
     world.stores.slice(stored).map(({ key }) => key.id),
@@ -760,18 +752,7 @@ test('content held by identity is never transferred again', async () => {
   const { prefetcher } = harness(world);
   prefetcher.setTargets([target('g1', true)]);
   await flush();
-  assert.deepEqual(world.calls, [
-    { method: 'run.get', params: { runId: 'g1' } },
-    {
-      method: 'git.show',
-      params: {
-        slotId: 'slot-g1',
-        ref: BASE,
-        paths: ['src/a.ts', 'old.txt'],
-        have: [blob(A_OLD), blob(GONE)],
-      },
-    },
-  ]);
+  assert.deepEqual(world.calls, [{ method: 'run.get', params: { runId: 'g1' } }]);
   assert.deepEqual(world.stores, []);
   // Retaining loads no bytes; only the held diff is read, to list its files.
   assert.deepEqual(world.reads, [`diff:${diffHash}`]);
@@ -932,10 +913,7 @@ test('a failed patch or check reads the file by path once and keeps only a match
     calls('git.show')
       .filter((call) => call.params.ref === HEAD)
       .map((call) => call.params),
-    [
-      { slotId: 'slot-g1', ref: HEAD, paths: ['src/a.ts'] },
-      { slotId: 'slot-g1', ref: HEAD, paths: ['src/b.ts'] },
-    ],
+    [{ slotId: 'slot-g1', ref: HEAD, paths: ['src/a.ts', 'src/b.ts'] }],
   );
   const ids = world.stores.map(({ key }) => key.id);
   assert.ok(ids.includes(blob(A_NEW)));
@@ -1103,6 +1081,44 @@ function worktreeRun(world: World, runId: string, slotId: string, diff: string) 
   world.worktree.set(slotId, { diff, mergeBaseSha: BASE, headSha: HEAD });
 }
 
+for (const plan of ['slot', 'gate'] as const) {
+  test(
+    `real cache: ${plan} prefetch cannot alias worktree bytes to the head commit`,
+    { timeout: 1000 },
+    async () => {
+      const world = createWorld();
+      const diff = [...modified('src/a.ts', A_OLD, A_NEW, A_HUNK), ''].join('\n');
+      world.objects.set(BASE, new Map([['src/a.ts', A_OLD]]));
+      world.objects.set(HEAD, new Map([['src/a.ts', 'committed\n']]));
+      const slotId = plan === 'slot' ? 'slot-s' : 'slot-s1';
+      if (plan === 'slot') worktreeRun(world, 's1', slotId, diff);
+      else gateRun(world, 's1', 'p1', diff, []);
+      const { cache, prefetcher } = realCache(world, 100_000);
+      try {
+        prefetcher.setTargets([target('s1', plan === 'gate')]);
+        await flush();
+        assert.deepEqual(await cache.readContent({ kind: 'blob', id: blob(A_NEW) }), bytes(A_NEW));
+        const { request } = gateway(world);
+        const result = await readGitSource(
+          () => cache,
+          { slotId, ref: HEAD, path: 'src/a.ts' },
+          (params) => request(Methods.GIT_SHOW, params),
+        );
+        assert.deepEqual(result, { content: 'committed\n', id: blob('committed\n') });
+        const base = await readGitSource(
+          () => cache,
+          { slotId, ref: BASE, path: 'src/a.ts' },
+          () => assert.fail('the exact base alias should be held'),
+        );
+        assert.equal(base.content, A_OLD);
+      } finally {
+        prefetcher.dispose();
+        await cache.dispose();
+      }
+    },
+  );
+}
+
 test('real cache: a slot diff snapshot is prefetch and never evicts opened content', async () => {
   const world = createWorld();
   world.objects.set(BASE, new Map([['src/a.ts', A_OLD]]));
@@ -1208,7 +1224,7 @@ test('real cache: gate prefetch promotes held run content, which run prefetch ca
   await flush();
   assert.deepEqual(
     world.calls.filter((call) => call.method === Methods.GIT_SHOW).map((call) => call.params),
-    [{ slotId: 'slot-r1', ref: BASE, paths: ['src/a.ts'], have: [blob(A_OLD)] }],
+    [],
   );
   const promoted = await cohorts();
   assert.equal(promoted[blob(A_OLD)], 'prefetch/gate');

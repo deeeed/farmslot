@@ -141,6 +141,28 @@ export class WorkspaceObservations {
         throw this.unavailable('Workspace source or identity changed during the read');
     };
   }
+  /** Reuse derived reads only while their existing workspace source stays current. */
+  cacheGuard(slotId: string): (() => boolean) | undefined {
+    const matches = [...this.sources.entries()].filter(
+      ([, source]) =>
+        source.armed &&
+        !source.failure &&
+        [...source.keys.values()].some(
+          (key) => key.family === 'workspace' && 'slotId' in key && key.slotId === slotId,
+        ),
+    );
+    // A relocated slot can still have an old source awaiting teardown.
+    if (matches.length !== 1) return undefined;
+    const [id, source] = matches[0];
+    const revision = source.revision;
+    const slotRevision = resourceRevisions.revision({ family: 'slot', slotId });
+    return () =>
+      this.sources.get(id) === source &&
+      source.armed === true &&
+      !source.failure &&
+      source.revision === revision &&
+      resourceRevisions.revision({ family: 'slot', slotId }) === slotRevision;
+  }
   /** Explicit source teardown and bounded registry eviction revoke every derived workspace key. */
   release(sourceId: string) {
     const source = this.sources.get(sourceId);

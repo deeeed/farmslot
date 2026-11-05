@@ -1,11 +1,54 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 
 import type { ExecResult, GitShowBatchEntry } from '@farmslot/protocol';
+
+function execute(argv: string[], cwd?: string): ExecResult {
+  if (argv[1] !== '-e') {
+    const result = spawnSync(argv[0], argv.slice(1), {
+      cwd,
+      encoding: 'utf8',
+      maxBuffer: 15 * 1024 * 1024,
+    });
+    if (result.error) throw result.error;
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
+  }
+  const hostRequire = createRequire(import.meta.url);
+  let stdout = '';
+  let stderr = '';
+  const process = {
+    argv: ['node', ...argv.slice(3)],
+    stdout: {
+      write: (data: string) => {
+        stdout += data;
+      },
+    },
+    stderr: {
+      write: (data: string) => {
+        stderr += data;
+      },
+    },
+    exitCode: 0,
+  };
+  runInNewContext(argv[2], {
+    Buffer,
+    process,
+    require: (name: string) =>
+      name === 'node:child_process'
+        ? {
+            spawnSync: (file: string, args: string[], options: object) =>
+              spawnSync(file, args, { ...options, cwd }),
+          }
+        : hostRequire(name),
+  });
+  return { stdout, stderr, exitCode: process.exitCode };
+}
 
 const remoteArgv: string[][] = [];
 const unexpected = (name: string) => () => assert.fail(`${name} is not under test`);
@@ -14,14 +57,7 @@ mock.module('../fleet/node-rpc.js', {
   namedExports: {
     nodeExecArgv: (_machine: string, argv: string[], cwd: string) => {
       remoteArgv.push(argv);
-      return new Promise<ExecResult>((resolve) => {
-        const child = spawn(argv[0], argv.slice(1), { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-        let stdout = '';
-        let stderr = '';
-        child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
-        child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
-        child.on('close', (code) => resolve({ stdout, stderr, exitCode: code ?? 1 }));
-      });
+      return Promise.resolve(execute(argv, cwd));
     },
     nodeExec: unexpected('nodeExec'),
     sendNodeRequest: unexpected('sendNodeRequest'),
@@ -41,6 +77,7 @@ mock.module('../fleet/node-rpc.js', {
   },
 });
 
+const { makeVars } = await import('../runners/test-fixtures.js');
 const { gitDiff, gitShow, gitShowBatch } = await import('./git.js');
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
@@ -68,7 +105,13 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
 
 const slot = (repo: string, host = 'localhost') => ({
   resolveRepo: async () => repo,
-  loadVars: async () => ({ host, machine: host, remoteRepo: repo }) as any,
+  loadVars: async () => makeVars({ host, machine: host, repo, remoteRepo: repo }),
+  ...(host === 'localhost'
+    ? {
+        runOnSlot: async (_vars: unknown, argv: string[], opts?: { cwd?: string }) =>
+          execute(argv, opts?.cwd),
+      }
+    : {}),
 });
 
 const nonUtf8 = Buffer.from([0xff, 0xfe, 0x00, 0x80, 0xc3, 0x28, 0xe2, 0x82, 0x0a]);
@@ -176,12 +219,15 @@ test('batched git.show through a remote node returns non-UTF-8 bytes unchanged',
 
   const page = await gitShowBatch({ slotId: 's', ref: head, paths: ['b.bin'] }, deps);
 
-  assert.ok(remoteArgv.length > 0 && remoteArgv.every((argv) => argv[0] === 'node'));
+  assert.equal(remoteArgv.length, 1);
+  assert.equal(remoteArgv[0][0], 'node');
   assert.equal(page.entries[0].status, 'ok');
   assert.equal(page.entries[0].id, git('rev-parse', `${head}:b.bin`));
   assert.deepEqual(Buffer.from(page.entries[0].content!, 'base64'), nonUtf8);
   // The node's text decoding is what base64 protects against.
+  remoteArgv.length = 0;
   const text = await gitShow({ slotId: 's', ref: head, path: 'b.bin' }, deps);
+  assert.equal(remoteArgv.length, 1);
   assert.notDeepEqual(Buffer.from(text.content), nonUtf8);
 });
 

@@ -13,7 +13,11 @@ import {
   type Run,
   RUN_VIEW_FIELDS,
 } from '@farmslot/protocol';
-import { resourceQuery, type ResourceReadMethod } from '@farmslot/protocol/client-cache';
+import {
+  readGitSource,
+  resourceQuery,
+  type ResourceReadMethod,
+} from '@farmslot/protocol/client-cache';
 import {
   loadReviewHistoryArtifacts,
   mergeReviewHistoryArtifacts,
@@ -50,12 +54,9 @@ async function readReviewWorkspace<T>(method: ResourceReadMethod, params: unknow
 
 /** A slotless review run has no live workspace; it reads its frozen head through the run. */
 async function readReviewSource(params: GitShowParams): Promise<GitShowResult> {
-  if (params.slotId) return readReviewWorkspace<GitShowResult>(Methods.GIT_SHOW, params);
-  const { runId = '', ref, path } = params;
-  if (!runId || !ref || !path) throw new Error('Reviewed source is unavailable');
-  return readStored<GitShowResult>(
-    resourceQuery<GitShowResult>(Methods.GIT_SHOW, { slotId: '', runId, ref, path }),
-  );
+  if ((!params.slotId && !params.runId) || !params.ref || !params.path)
+    throw new Error('Reviewed source is unavailable');
+  return readGitSource(getResourceCache, params);
 }
 
 @customElement('review-history-panel')

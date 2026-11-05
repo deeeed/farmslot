@@ -118,3 +118,109 @@ test('display reads preserve typed missing-file and genuine refusal codes', asyn
     );
   }
 });
+
+test(
+  'source reads reuse held blobs and request missing paths without scanning other blobs',
+  { timeout: 1000 },
+  async () => {
+    const { gitBlobHash, readGitSource } = await import('../../src/client-cache/index.js');
+    const transport = new ResourceCacheConformanceTransport(scope);
+    transport.setConnection({
+      connected: true,
+      id: 1,
+      capabilities: {
+        ...transport.connection.capabilities!,
+        resourceChanges: {
+          version: 1,
+          epoch: 'conformance-epoch',
+          observedReads: 1,
+          workspaceReads: 1,
+        },
+      },
+    });
+    const cache = createGatewayResourceCache({ transport });
+    const data = new TextEncoder().encode('reviewed\n');
+    const other = new TextEncoder().encode('other\n');
+    const id = gitBlobHash(data);
+    const otherId = gitBlobHash(other);
+    const params = { slotId: 'example-slot', ref: 'a'.repeat(40), path: 'source.ts' };
+    try {
+      assert.equal(
+        await cache.storeContent({
+          key: { kind: 'blob', id: otherId },
+          data: other,
+          origin: 'opened',
+          cohort: 'gate',
+        }),
+        true,
+      );
+      let calls = 0;
+      const read = async (batch: unknown) => {
+        calls++;
+        assert.deepEqual(batch, {
+          slotId: 'example-slot',
+          ref: params.ref,
+          paths: ['source.ts'],
+          maxBytes: 10485760,
+          maxFileBytes: 10485760,
+        });
+        return {
+          entries: [
+            {
+              path: params.path,
+              status: 'ok' as const,
+              id,
+              size: data.length,
+              content: Buffer.from(data).toString('base64'),
+            },
+          ],
+          cursor: params.path,
+          hasMore: false,
+        };
+      };
+      assert.deepEqual(await readGitSource(() => cache, params, read), {
+        content: 'reviewed\n',
+        id,
+      });
+      assert.deepEqual(await readGitSource(() => cache, params, read), {
+        content: 'reviewed\n',
+        id,
+      });
+      assert.equal(calls, 1);
+      assert.deepEqual(
+        await readGitSource(
+          () => cache,
+          { ...params, path: 'same-blob.ts' },
+          () => assert.fail('held blob was requested'),
+          id,
+        ),
+        { content: 'reviewed\n', id },
+      );
+      assert.equal(transport.requestCount, 0);
+    } finally {
+      await cache.dispose();
+    }
+  },
+);
+
+test('batched source queries retain the same workspace and frozen-run fences', () => {
+  const params = {
+    slotId: 'example',
+    runId: 'run-one',
+    ref: 'a'.repeat(40),
+    paths: ['src/a.ts'],
+    have: ['b'.repeat(40)],
+  };
+  const slot = resourceQuery('git.show', params);
+  assert.deepEqual(slot.dependencies, [
+    { family: 'workspace', slotId: 'example', runId: 'run-one' },
+    { family: 'slot', slotId: 'example' },
+    { family: 'run', runId: 'run-one' },
+  ]);
+  assert.equal(slot.requiresWorkspaceRead, true);
+  const frozen = resourceQuery('git.show', { ...params, slotId: '' });
+  assert.equal(frozen.requiresWorkspaceRead, undefined);
+  assert.deepEqual(frozen.dependencies, []);
+  assert.deepEqual(Reflect.get(frozen.params as object, 'paths'), ['src/a.ts']);
+  assert.throws(() => resourceQuery('git.show', { ...params, path: 'src/a.ts' }), /path or paths/);
+});
