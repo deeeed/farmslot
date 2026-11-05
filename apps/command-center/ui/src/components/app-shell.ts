@@ -119,7 +119,7 @@ import {
   type PinnedWorkspacePreference,
   unpinWorkspace,
 } from '../utils/pinned-slots.js';
-import { hashParams } from '../utils/url-state.js';
+import { hashParams, hashRoute } from '../utils/url-state.js';
 import { browserViewState, viewBinding, ViewStateBindings } from '../utils/view-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
@@ -798,6 +798,16 @@ export class FarmApp extends LitElement {
   }
 
   private onWorkspaceNavigation = (event: MouseEvent) => {
+    const previous = location.hash;
+    // Button and row handlers can navigate without an anchor. Run after their click handler,
+    // before the queued hashchange restores view choices. History traversal stays authoritative.
+    queueMicrotask(() => {
+      if (hashRoute() === hashRoute(previous)) return;
+      const next = sidebarNavigationHash(location.hash, previous);
+      if (next === location.hash) return;
+      history.replaceState(history.state, '', next);
+      this.displayChoices.restore();
+    });
     const link = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
     if (!(link instanceof HTMLAnchorElement) || link.hasAttribute('download')) return;
     const target = new URL(link.href);
