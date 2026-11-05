@@ -652,7 +652,14 @@ export async function gitShowBatch(
     if (batch.length && inputBytes > MAX_SHOW_INPUT_BYTES) break;
     batch.push(path);
   }
-  const input: GitShowPageInput = { ref, paths: batch, have: params.have, maxBytes, maxFileBytes };
+  // Held ids only save transfer; ids past the same argv budget are read again.
+  const have: string[] = [];
+  for (const id of params.have ?? []) {
+    inputBytes += Buffer.byteLength(JSON.stringify(id)) + 1;
+    if (inputBytes > MAX_SHOW_INPUT_BYTES) break;
+    have.push(id);
+  }
+  const input: GitShowPageInput = { ref, paths: batch, have, maxBytes, maxFileBytes };
   const finish = (page: GitShowBatchResult): GitShowBatchResult => ({
     ...page,
     hasMore: start + page.entries.length < paths.length,

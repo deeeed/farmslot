@@ -219,3 +219,32 @@ test(
     assert.equal(result.hasMore, true);
   },
 );
+
+test('a large held set stays below the host argv limit', { timeout: 1000 }, async () => {
+  const have = Array.from({ length: 3100 }, (_, i) => i.toString(16).padStart(40, '0'));
+  let sent: { paths: string[]; have: string[] } | undefined;
+  const result = await gitShowBatch(
+    { slotId: 'held-example', ref: head, paths: ['src/cold.ts'], have },
+    {
+      resolveRepo: async () => '/example/repo',
+      loadVars: async () => makeVars(),
+      runOnSlot: async (_vars, argv) => {
+        assert.ok(Buffer.byteLength(argv[3]) < 128 * 1024, 'host input is one argv element');
+        sent = JSON.parse(argv[3]);
+        return {
+          stdout: JSON.stringify({
+            entries: [{ path: 'src/cold.ts', status: 'missing' }],
+            cursor: 'src/cold.ts',
+            hasMore: false,
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      },
+    },
+  );
+  assert.deepEqual(sent?.paths, ['src/cold.ts']);
+  assert.deepEqual(sent?.have, have.slice(0, sent?.have.length));
+  assert.ok(sent && sent.have.length > 0 && sent.have.length < have.length);
+  assert.equal(result.hasMore, false);
+});
