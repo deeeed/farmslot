@@ -8,8 +8,7 @@ import type {
   SlotHealth,
   SlotStatus,
 } from '@farmslot/protocol';
-import { type GitShowBatchResult, Methods } from '@farmslot/protocol';
-import { readGitSource } from '@farmslot/protocol/client-cache';
+import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache } from '../../resource-cache.js';
@@ -376,16 +375,6 @@ export async function loadSlotViewGitFileContent(
   const epoch = view._recoveryEpoch;
   const version = view._workspaceReads.version;
   try {
-    if (/^[0-9a-f]{40}$/i.test(ref)) {
-      const result = await readGitSource(
-        getResourceCache,
-        { slotId: view.slotId, ref, path },
-        (params) => gateway.request<GitShowBatchResult>(Methods.GIT_SHOW, { ...params }),
-      );
-      if (!isCurrentLiveResult(view, epoch, version)) return false;
-      view._liveFileContents = new Map(view._liveFileContents).set(cacheKey, result.content);
-      return true;
-    }
     const result = await view._workspaceReads.read<{ content: string }>(
       Methods.GIT_SHOW,
       {
