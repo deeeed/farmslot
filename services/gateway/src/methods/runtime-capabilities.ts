@@ -265,6 +265,9 @@ async function catalogForSlot(slotId: string): Promise<RuntimeCapabilityCatalogC
   return {
     slotId,
     project: slotVars.projectName,
+    ...(projectVars.projectJson.recipe?.recordingCapability
+      ? { recordingCapability: projectVars.projectJson.recipe.recordingCapability }
+      : {}),
     // Stamped onto every lease this slot takes, so a `machine`-scoped claim can
     // be arbitrated later from the lease snapshot alone rather than by
     // re-reading a foreign slot's config mid-acquire.
@@ -638,6 +641,9 @@ export async function completeGrantedClaim(
     ) => Promise<'retained' | 'released' | 'not-reserved'>;
   } = {},
 ): Promise<void> {
+  // The waiting recording command completes its own reservation. It must not
+  // prepare or retain the run's broader runtime resources while coding.
+  if (grant.purpose === 'recording') return;
   const prepare = deps.prepare ?? prepareRunPostureForValidation;
   const settle =
     deps.settle ?? ((leaseId, settlement) => registry.settleReservation(leaseId, settlement));

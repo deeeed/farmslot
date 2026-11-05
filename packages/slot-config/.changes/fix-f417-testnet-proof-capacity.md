@@ -1,0 +1,1 @@
+- Validate and retain shared resource capacity and recording capability references.

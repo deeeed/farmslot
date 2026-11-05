@@ -452,6 +452,7 @@ export interface RawProjectJson {
             access?: string;
             kind?: string;
             scope?: string;
+            capacity?: number;
             binding?: string;
           }>;
         };
@@ -1787,7 +1788,14 @@ export function validateRuntimeCapabilitiesConfig(
   projectConfig: string,
 ): void {
   const cfg = projectJson.runtime_capabilities;
-  if (!cfg) return;
+  const recordingCapability = projectJson.recipe?.recordingCapability;
+  if (!cfg) {
+    if (recordingCapability)
+      throw new Error(
+        `${projectConfig}: recipe.recordingCapability requires a declared runtime capability`,
+      );
+    return;
+  }
   if (typeof cfg !== 'object' || Array.isArray(cfg)) {
     throw new Error(`${projectConfig}: runtime_capabilities must be an object`);
   }
@@ -1795,6 +1803,10 @@ export function validateRuntimeCapabilitiesConfig(
   if (!providers || typeof providers !== 'object' || Array.isArray(providers)) {
     throw new Error(`${projectConfig}: runtime_capabilities.providers must be an object`);
   }
+  if (recordingCapability && !Object.prototype.hasOwnProperty.call(providers, recordingCapability))
+    throw new Error(
+      `${projectConfig}: recipe.recordingCapability '${recordingCapability}' is not declared`,
+    );
   validatePostureRetentionMap(
     cfg.posture?.defaults,
     'runtime_capabilities.posture.defaults',
@@ -1850,6 +1862,15 @@ export function validateRuntimeCapabilitiesConfig(
           `${projectConfig}: ${field}.cost.resources.${index}.scope must be slot, machine, or fleet`,
         );
       }
+      if (
+        resource.capacity !== undefined &&
+        (resource.access !== 'shared' ||
+          !Number.isSafeInteger(resource.capacity) ||
+          resource.capacity < 1)
+      )
+        throw new Error(
+          `${projectConfig}: ${field}.cost.resources.${index}.capacity must be a positive integer on a shared claim`,
+        );
       if (resource.binding !== undefined && resource.binding !== 'recording-target') {
         throw new Error(
           `${projectConfig}: ${field}.cost.resources.${index}.binding must be recording-target`,
@@ -2217,6 +2238,7 @@ export function normalizeRawRuntimeCapabilities(
         resources: (provider.cost.resources ?? []).map((resource) => ({
           id: resource.id!,
           access: resource.access as 'exclusive' | 'shared',
+          ...(resource.capacity !== undefined ? { capacity: resource.capacity } : {}),
           ...(resource.binding === 'recording-target' ? { binding: resource.binding } : {}),
           ...(resource.kind
             ? { kind: resource.kind as 'port' | 'device' | 'process' | 'service' | 'other' }

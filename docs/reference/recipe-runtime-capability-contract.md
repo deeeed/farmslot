@@ -376,6 +376,100 @@ derived from the proof plan and `parked` delegates to machine parking, and
 }
 ```
 
+### Bounded shared claims and recorded proof admission
+
+Proposed under ADR-054's 2026-11-05 amendment. The existing runtime capability
+registry remains the sole lease and queue authority.
+
+A resource claim MAY declare `capacity`, a positive safe integer, only with
+`access: "shared"`. Omission means unlimited sharing. `scope` keeps its existing
+slot, machine and fleet meanings. A shared external quota uses `fleet` so all
+nodes served by the gateway contend for the same resource ID.
+
+```json
+{
+  "id": "shared-testnet",
+  "kind": "service",
+  "access": "shared",
+  "scope": "fleet",
+  "capacity": 2
+}
+```
+
+Capacity MUST be copied into each acquired or queued lease's claims. Count each
+holding lease once per claim ID, including acquiring reservations, acquired and
+releasing leases, warm holders and unresolved cleanup. Queued leases hold no
+capacity. Idempotent acquisition of an existing lease consumes no extra permit.
+The applicable limit is the minimum declared by the request and its participating
+holders; removing or increasing a declaration cannot evade a stricter live holder.
+Existing exclusive and unbounded shared behavior MUST remain unchanged.
+
+Acquisition and FIFO reservation MUST share one conflict policy. On release,
+reserve only available permits and preserve queue order. New reservations count
+before another grant can occur. A cancelled waiter frees no permit and MUST NOT
+wake a second proof into occupied capacity. Restart MUST retain claim limits,
+queue order and ownership. Bounded shared proof permits MAY queue family siblings
+whose commands can release independently; exclusive-family and self-deadlock
+protections retain their existing behavior.
+
+`recipe.recordingCapability` MAY name one declared provider. The hosted project
+`recipe run` and `recipe call` commands MUST acquire it for `--record-video=full-run`
+before invoking recipe fixture setup or execution. A scoped conflict waits for
+an owned capability lifecycle notification on the existing gateway connection,
+then retries acquisition. No timer, model inference, provider boot for a queued
+proof, or separate quota service is permitted.
+
+Managed commands MUST obtain their owner from the existing
+`RECIPE_TASK_DIR/inputs/runtime-capability-catalog.json`. Validate version, project,
+slot and owner; reject an incompatible explicit `--run`. Direct allocated
+recordings MUST supply `--run` and the selected slot. The existing acquire RPC
+rechecks authority and current slot ownership. This metadata grants no authority.
+
+Each command MUST use a fresh `invocationId`, stable across its acquisition retries.
+The gateway accepts it only for the configured recording capability. These leases
+carry server-derived `purpose: "recording"` and their own `proofRequirement` for
+audit. They MUST NOT enter the persistent run resource plan or cause a later run
+restore to acquire a permit during coding. Separate invocations, including those
+on one run, consume separate permits and retain independent queue places.
+
+The catalog list MUST acknowledge its `recordingCapability` before the client
+uses invocation-scoped acquire or release. An older or mismatched gateway is
+refused before mutation. Invocation identity narrows ownership; it grants none.
+The command MUST release only its invocation's lease or queue place when it
+succeeds, fails or is cancelled, including an acquisition whose reply was lost.
+It MUST NOT adopt or release another invocation's existing lease. Abort execution
+when its own held lease or gateway connection is lost. Report cleanup failure
+without hiding the execution failure. Existing owner cleanup and recovery handle
+unconfirmed releases. Its requirement remains auditable on the released lease. Explicit run-scoped
+posture and resource controls retain their existing authority.
+
+Preview, list, describe and explicit recording-off commands MUST NOT acquire this
+capability. Projects without the declaration MUST add no gateway traffic.
+
+#### Public surface
+
+- `@farmslot/protocol`: optional `RuntimeCapabilityResourceClaim.capacity`,
+  `RuntimeCapabilityLeaseClaim.capacity` and `ProjectRecipeConfig.recordingCapability`.
+  `RuntimeCapabilityAcquireParams.invocationId` and
+  `RuntimeCapabilityReleaseParams.invocationId` identify command-owned leases;
+  `RuntimeCapabilityLease` carries `invocationId`, `purpose` and its requirement.
+  `RuntimeCapabilityListResult.recordingCapability` acknowledges this contract.
+  The gateway registry, CLI, configuration parser and project recipe host consume them.
+- `@farmslot/slot-config`: `RawProjectJson` accepts and validates the claim limit
+  and recording provider reference. Consumers are gateway and task initialization.
+- `@farmslot/recipe-cli/harness`: `ResolvedProjectBinding.recordingCapability`
+  carries the selected pack declaration to the Farmslot CLI. Harness adapters
+  retain their own execution and capture behavior.
+- `farmslot recipe run/call --run <runId>` names a direct recording's owner.
+  Terminal recorded proofs are the initial consumer. Existing runtime capability
+  acquire, release and lifecycle RPCs supply all admission and cleanup operations.
+
+These additions use minor versioning. Deploy the gateway and CLI before the pack;
+refresh or repin existing frozen tasks through supported operations. Do not
+silently mutate retained task inputs or adopt another run's resources. Drain
+recorded commands before changing provider configuration or capacity, preserving
+the existing provider-provenance cleanup guard.
+
 ### Host-pressure admission
 
 Refusing an acquire because the host is loaded is **opt-in per project and off by

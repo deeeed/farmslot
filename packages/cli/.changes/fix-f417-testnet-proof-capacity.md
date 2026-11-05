@@ -1,0 +1,1 @@
+- Queue recorded project proofs for declared shared resources before fixture setup and release owned permits on exit.

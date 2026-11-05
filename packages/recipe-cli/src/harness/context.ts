@@ -987,6 +987,7 @@ export async function resolveProjectContext(
     source,
     root,
     configPath: path.join(root, 'project.json'),
+    ...(recipe.recordingCapability ? { recordingCapability: recipe.recordingCapability } : {}),
     ...outputPaths,
     ...(app ? { app } : {}),
     domain: recipe.domain,

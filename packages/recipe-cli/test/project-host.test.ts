@@ -851,3 +851,13 @@ for (const command of ['launch', 'reload', 'stop', 'logs']) {
     assert.equal(fs.readFileSync(hookLog, 'utf8'), 'cancel\nfinalize\n');
   });
 }
+
+test('project binding carries its recording capability without acquiring it during discovery', async (t) => {
+  const options = fixture(t);
+  const recipe = options.projects[0]!.config.recipe;
+  assert.ok(recipe);
+  recipe.recordingCapability = 'shared-testnet';
+  await withProjectRecipeHost(options, async (host) => {
+    assert.equal(host.context.project?.recordingCapability, 'shared-testnet');
+  });
+});

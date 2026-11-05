@@ -18,6 +18,8 @@ import { createEmitter, errorEnvelope, isMachineMode } from '../envelope.js';
 import { repoRoot, resolveWorkspace } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
+import { withRecordingResource } from './recipe-recording-resource.js';
+
 export function collectRecipeOption(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
@@ -220,6 +222,7 @@ export function registerProjectExecutionCommand(
   )
     .option('--source-trust <trust>', 'Explicit recipe source trust')
     .option('--source-kind <kind>', 'Explicit recipe source kind')
+    .option('--run <runId>', 'Owning run for declared recording resource admission')
     .option('--source-name <name>', 'Recipe source name')
     .option('--source-digest <digest>', 'Recipe source digest')
     .option('--approve-plan <digest>', 'Approve an exact execution plan')
@@ -358,15 +361,34 @@ export function registerProjectExecutionCommand(
           invocation,
         },
         ({ context, engine, invocation: parsed, cli, signal, finalize, librarySources }) => {
+          const executionOptions = parsed?.options ?? cli;
           const execute = () =>
-            (operation === 'run' ? shared.handleRun : shared.handleCall)([...invocation.argv], {
-              engine,
-              parsed,
-              librarySources,
-              stream,
-              signal,
-              beforeResult: finalize,
-            });
+            withRecordingResource(
+              {
+                capabilityId: context.project?.recordingCapability,
+                slotId: context.slot?.value
+                  ? (context.slot.poolSlot ?? context.slot.value)
+                  : undefined,
+                runId: typeof executionOptions.run === 'string' ? executionOptions.run : undefined,
+                project: context.project?.name,
+                taskDir: process.env.RECIPE_TASK_DIR,
+                recorded:
+                  shared.isRecipeExecution(operation, executionOptions) &&
+                  (executionOptions.recordVideo === 'full-run' ||
+                    executionOptions.recordVideo === true),
+                options,
+                signal,
+              },
+              (admittedSignal) =>
+                (operation === 'run' ? shared.handleRun : shared.handleCall)([...invocation.argv], {
+                  engine,
+                  parsed,
+                  librarySources,
+                  stream,
+                  signal: admittedSignal,
+                  beforeResult: finalize,
+                }),
+            );
           return shared.isRecipeExecution(operation, cli)
             ? shared.withCommandJournal(operation, [operation, ...invocation.argv], execute, {
                 target: context.target.value,
