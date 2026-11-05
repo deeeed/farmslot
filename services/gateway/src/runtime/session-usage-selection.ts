@@ -5,7 +5,7 @@ import {
   sessionUsageKey,
   upsertSessionUsage,
 } from './agent-session-rows.js';
-import { preferSessionUsage, reviewerUsageReceipts } from './reviewer-usage.js';
+import { preferSessionUsage } from './reviewer-usage.js';
 
 export const isReviewSession = (row: RunnerSessionUsage): boolean => row.role === 'review';
 export const isHelperSession = (row: RunnerSessionUsage): boolean =>
@@ -16,16 +16,22 @@ export const isHelperSession = (row: RunnerSessionUsage): boolean =>
 /** Canonical receipts first; old result/metric-only records remain readable. */
 export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
   let rows = registerContextSessionUsage(run, run.updatedAt) ?? [];
-  for (const review of reviewerUsageReceipts(run)) {
+  for (const review of run.engineState?.publishGate?.reviews ?? []) {
+    if (!review.usage) continue;
+    const usage = review.usage;
     const receipt: RunnerSessionUsage = {
-      ...review.usage,
-      model: review.model,
-      role: 'review',
-      runId: run.id,
-      flowType: run.flowType,
+      ...usage,
+      costUsd: usage.costUsd ?? null,
+      costStatus: usage.costStatus,
+      costReason: usage.costReason,
+      runner: usage.runner ?? review.runner,
+      runnerSessionId: usage.runnerSessionId ?? review.reviewerSessionId,
+      model: review.model ?? usage.model ?? null,
+      role: 'review', runId: run.id, flowType: run.flowType,
     };
     rows = sessionUsageKey(receipt) ? upsertSessionUsage(rows, receipt) : [...rows, receipt];
   }
+
   if (
     !rows.some(
       (row) =>
@@ -80,23 +86,6 @@ export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
       };
       rows = sessionUsageKey(legacy) ? upsertSessionUsage(rows, legacy) : [...rows, legacy];
     }
-  }
-  for (const review of run.engineState?.publishGate?.reviews ?? []) {
-    if (review.usage?.source !== 'unavailable') continue;
-    const usage = review.usage;
-    const row: RunnerSessionUsage = {
-      ...usage,
-      runner: usage.runner ?? review.runner,
-      runnerSessionId: usage.runnerSessionId ?? review.reviewerSessionId,
-      role: 'review',
-      model: review.model ?? null,
-      runId: run.id,
-      flowType: run.flowType,
-      costUsd: null,
-      costStatus: 'unpriced',
-      costReason: usage.error ?? 'Review accounting is unavailable',
-    };
-    rows = sessionUsageKey(row) ? upsertSessionUsage(rows, row) : [...rows, row];
   }
   return rows.map<RunnerSessionUsage>((row) => {
     const priced =

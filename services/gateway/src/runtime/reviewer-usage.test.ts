@@ -130,3 +130,22 @@ test('legacy result-only rows receive explicit pricing status at the shared proj
   assert.equal(rows[1].costUsd, null);
   assert.ok(rows[1].costReason);
 });
+
+for (const withContext of [false, true]) test(`result-only measured-zero reviews stay captured, context=${withContext}`, async () => {
+  const { allRunSessionUsageReceipts } = await import('./session-usage-selection.js');
+  const { makeRun } = await import('../run-completion/test-fixtures.js');
+  const run = makeRun({ flowType: 'dev' });
+  run.engineState = { publishGate: { reviews: [{ id: 'zero-review', reviewerSessionId: 'zero-review-session', reviewedHeadSha: 'head',
+    source: 'pipeline', mode: 'cold', loopNumber: 1, verdict: 'pass', unresolvedCount: 0, feedbackSent: false, runner: 'codex', model: 'fixture',
+    usage: { runner: 'codex', runnerSessionId: 'zero-review-session', source: 'runner-transcript', totalTokens: 0, turns: 0, costUsd: 0, measuredAt: '2026-11-05T00:00:00Z' },
+  }] } };
+  if (withContext) run.agentContexts = [{ id: 'recovered-review', role: 'review', reviewId: 'zero-review', label: 'review',
+    runId: run.id, slotId: run.slotId, status: 'complete', runner: 'codex', runnerSessionId: 'zero-review-session', model: 'fixture',
+  }];
+  const row = allRunSessionUsageReceipts(run).find((receipt) => receipt.runnerSessionId === 'zero-review-session');
+  assert.ok(row);
+  assert.equal(row.source, 'runner-transcript');
+  assert.equal(row.totalTokens, 0);
+  assert.equal(row.costStatus, 'estimated');
+  assert.equal(row.costUsd, 0);
+});

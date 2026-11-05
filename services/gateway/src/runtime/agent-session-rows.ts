@@ -216,8 +216,7 @@ export function recoveredWorkerSessionReceipt(
   usage: RunnerSessionUsage,
 ): RunnerSessionUsage {
   const context = run.agentContexts?.find((item) => item.id === session.contextId);
-  if (context) {
-    const same = context.runnerSessionId === session.runnerSessionId;
+  if (context && context.runner === usage.runner && context.runnerSessionId === session.runnerSessionId) {
     const receipt = contextSessionReceipt(
       run,
       {
@@ -226,9 +225,6 @@ export function recoveredWorkerSessionReceipt(
         runnerSessionId: session.runnerSessionId,
         runnerSessionPath: session.runnerSessionPath,
         usage,
-        ...(!same
-          ? { startedAt: undefined, completedAt: undefined, nativeSession: undefined }
-          : {}),
       },
       usage.measuredAt,
     );
@@ -251,8 +247,8 @@ export function recoveredWorkerSessionReceipt(
     runId: run.id,
     flowType: run.flowType,
     slotId: previous?.slotId ?? run.slotId,
-    model: previous?.model ?? run.metrics.model ?? null,
-    effort: previous?.effort ?? run.effort ?? null,
+    model: previous?.model ?? null,
+    effort: previous?.effort ?? null,
     contextIds: previous?.contextIds ?? [],
     startedAt: previous?.startedAt ?? null,
     completedAt: previous?.completedAt ?? null,
@@ -263,6 +259,7 @@ export function recoveredWorkerSessionReceipt(
       usage.costUsd == null ? 'Runner accounting has no verified price for this model' : undefined,
     captureGaps: [
       ...(usage.error ? [usage.error] : []),
+      ...(previous?.model == null || previous?.effort == null ? ['Historical requested configuration is unavailable'] : []),
       ...(previous?.durationMs == null
         ? ['Historical session context/duration is unavailable']
         : []),
