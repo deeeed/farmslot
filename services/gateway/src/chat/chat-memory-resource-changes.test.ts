@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,11 +19,16 @@ const memoryFile = path.join(home, 'MEMORY.md');
 const memoryDirectory = path.join(home, 'memory');
 const key = { family: 'copilot', ownerId: 'gateway-copilot' } as const;
 const watchers = new Set<fs.FSWatcher>();
+const watchedPaths = new Map<fs.FSWatcher, string>();
 const watch = fs.watch;
 mock.method(fs, 'watch', (...args: Parameters<typeof fs.watch>) => {
   const watcher = Reflect.apply(watch, fs, args) as fs.FSWatcher;
   watchers.add(watcher);
-  watcher.once('close', () => watchers.delete(watcher));
+  watchedPaths.set(watcher, String(args[0]));
+  watcher.once('close', () => {
+    watchers.delete(watcher);
+    watchedPaths.delete(watcher);
+  });
   return watcher;
 });
 syncBuiltinESMExports();
@@ -153,3 +158,31 @@ test('empty summaries and failed summary writes remain publication-quiet', async
   );
   assert.equal(resourceRevisions.revision(key), before);
 });
+
+test(
+  'linked skills publish target changes and invalidate their cached bytes',
+  { timeout: 5000 },
+  async (t) => {
+    const external = await mkdtemp(path.join(os.tmpdir(), 'copilot-linked-skills-'));
+    t.after(() => rm(external, { recursive: true, force: true }));
+    const target = path.join(external, 'physical-skills.md');
+    const alias = path.join(home, 'SKILLS.md');
+    await writeFile(target, 'skills before');
+    await symlink(target, alias);
+    t.after(() => rm(alias, { force: true }));
+    assert.equal(await memory.loadSkills(), 'skills before');
+    const expected = process.platform === 'darwin' ? path.dirname(fs.realpathSync(target)) : alias;
+    assert(
+      [...watchedPaths.values()].includes(expected),
+      'Watch the physical target on Darwin and retain the file watch elsewhere',
+    );
+    let published!: () => void;
+    const observed = new Promise<void>((resolve) => {
+      published = resolve;
+    });
+    captureKeys(t, published);
+    await writeFile(target, 'skills after');
+    await observed;
+    assert.equal(await memory.loadSkills(), 'skills after');
+  },
+);

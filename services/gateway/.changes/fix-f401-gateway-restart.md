@@ -1,0 +1,1 @@
+- Keep the gateway online when a local volume disconnects, block its slots and store writes, and report missing storage in Doctor.

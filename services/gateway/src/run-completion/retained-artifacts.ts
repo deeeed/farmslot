@@ -58,6 +58,7 @@ import {
   slotFileFingerprint,
   type SlotLocality,
 } from '../core/slot-io.js';
+import { assertStorageVolumePresent } from '../core/storage-volume.js';
 import { loadContextFromArtifactRoot } from '../live-recipe/context.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import {
@@ -154,6 +155,8 @@ export function runBundleStore(create = false) {
   if (create && process.env.FARMSLOT_SANDBOX_HOME)
     throw new Error('Sandbox gateways may only read the owning gateway retained bundle store.');
   const home = runBundleHome();
+  assertStorageVolumePresent(path.join(home, 'run-bundles'));
+  assertStorageVolumePresent(runsDirectory());
   const open = () =>
     openRunBundleStore({
       runsDir: runsDirectory(),

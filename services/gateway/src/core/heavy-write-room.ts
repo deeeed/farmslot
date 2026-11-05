@@ -8,6 +8,7 @@ import path from 'node:path';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { isGatewayTestProcess } from './isolated-test-path.js';
+import { assertStorageVolumePresent } from './storage-volume.js';
 
 /** Free space a heavy write leaves on its volume unless FARMSLOT_HEAVY_WRITE_FLOOR_GB says otherwise. */
 export const HEAVY_WRITE_FLOOR_DEFAULT_GB = 50;
@@ -60,6 +61,7 @@ export async function assertConfiguredRootPresent(
   dir: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  assertStorageVolumePresent(dir);
   const target = path.resolve(dir);
   for (const { name, root } of configuredRoots(env)) {
     if (target !== root && !target.startsWith(`${root}${path.sep}`)) continue;

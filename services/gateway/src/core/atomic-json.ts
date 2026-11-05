@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, open, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import { assertStorageVolumePresent } from './storage-volume.js';
+
 export async function writeAtomicJSON(file: string, data: unknown): Promise<void> {
+  assertStorageVolumePresent(file);
   await mkdir(dirname(file), { recursive: true });
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {

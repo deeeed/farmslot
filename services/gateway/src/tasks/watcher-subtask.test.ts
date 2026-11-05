@@ -258,7 +258,13 @@ function registerChild(dir: string): void {
  */
 async function registerChildAndWait(dir: string, label: string): Promise<Emitted> {
   registerChild(dir);
-  return waitFor(label, (entry) => childProgressOf(entry)?.id === 'perps-review');
+  // The initial parent signal can also include this child. Wait for the
+  // child-driven report whose parentChecklist contract these tests verify.
+  return waitFor(
+    label,
+    (entry) =>
+      entry.parentChecklist === 'CHECKLIST.md' && childProgressOf(entry)?.id === 'perps-review',
+  );
 }
 
 /**
