@@ -1822,6 +1822,52 @@ test(
   },
 );
 
+test('runReviewRetryLoop: deferred active relaunch waits beyond the launch window without another fix attempt', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    feedbackErrors: [new ReviewFixDeliveryError('unacknowledged retained handoff')],
+  });
+  deps.resumeFixPromptDelivery = async () => ({ status: 'deferred' });
+  let launchElapsed = false;
+  let activityChecks = 0;
+  const timeouts: number[] = [];
+  deps.fixHasActivity = async () => {
+    assert.equal(launchElapsed, true, 'Check activity after the launch window');
+    activityChecks++;
+    return true;
+  };
+  deps.waitForWorkerSignal = async (_vars, _taskDir, timeout, baseline, activity) => {
+    timeouts.push(timeout);
+    assert.equal(baseline, '');
+    if (timeouts.length === 1) {
+      assert.equal(timeout, 120_000);
+      assert.equal(activity, undefined);
+      launchElapsed = true;
+      return undefined;
+    }
+    assert.equal(timeout, 30 * 60_000);
+    assert.ok(activity);
+    assert.equal(await activity(), true);
+    assert.equal(calls.markStatus.includes('failed'), false);
+    return { status: 'complete', timestamp: new Date().toISOString() };
+  };
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+  assert.equal(result.verdict, 'pass');
+  assert.deepEqual(timeouts, [120_000, 30 * 60_000]);
+  assert.ok(activityChecks >= 2);
+  assert.equal(result.retryCount, 1);
+  assert.equal(calls.relaunches, 1);
+  assert.equal(calls.sendFeedback, 1);
+  assert.equal(calls.reviewAgent, 1);
+  assert.equal(calls.markStatus.includes('failed'), false);
+});
+
 test('runReviewRetryLoop: relaunches a high-context worker before sending the fix task', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: ['issues', 'pass'],
@@ -2890,4 +2936,42 @@ test('unconfirmed fresh fix delivery returns continuable findings instead of ano
   assert.match(result.fixDeliveryFailure ?? '', /unconfirmed/);
   assert.equal(calls.relaunches, 1);
   assert.equal(calls.reviewAgent, 0, 'delivery failure does not rerun the reviewer');
+});
+
+test('runReviewRetryLoop: a deferred fix stops only after its active-worker wait becomes inactive', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: [],
+    feedbackErrors: [new ReviewFixDeliveryError('unacknowledged retained handoff')],
+  });
+  deps.resumeFixPromptDelivery = async () => ({ status: 'deferred' });
+  let waits = 0;
+  let active = true;
+  deps.fixHasActivity = async () => active;
+  deps.waitForWorkerSignal = async (_vars, _taskDir, timeout, _baseline, activity) => {
+    waits++;
+    if (waits === 1) {
+      assert.equal(timeout, 120_000);
+      return undefined;
+    }
+    assert.equal(timeout, 30 * 60_000);
+    active = false;
+    assert.ok(activity);
+    assert.equal(await activity(), false);
+    return undefined;
+  };
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 3,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+  assert.equal(waits, 2);
+  assert.equal(result.verdict, 'issues');
+  assert.equal(result.feedbackSent, false);
+  assert.equal(result.recoveryContinuationPending, true);
+  assert.match(result.fixDeliveryFailure ?? '', /activity wait expired/);
+  assert.equal(calls.relaunches, 1);
+  assert.equal(calls.sendFeedback, 1);
+  assert.equal(calls.reviewAgent, 0);
 });
