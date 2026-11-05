@@ -781,10 +781,32 @@ export async function retainedRecipeRunSummaries(run: Run, ref = retainedRunBund
   return { inventory, summaries };
 }
 
+// A retained bundle is content-addressed: only a retention prune (its availability revision)
+// or a change to the run alters the groups a detail read derives from it.
+const RECIPE_GROUP_CACHE_SIZE = 64;
+const recipeGroupCache = new Map<string, Promise<RecipeRunArtifactGroup[]>>();
+
 /** Group discovery uses only the immutable manifest and lightweight execution metadata. */
 export async function retainedRecipeRunGroups(
   run: Run,
   ref = retainedRunBundleRef(run),
+): Promise<RecipeRunArtifactGroup[]> {
+  const local = localBundleRef(run, ref);
+  const { revision } = await readRunBundleAvailability(await runBundleStore(), local, run.id);
+  const key = JSON.stringify([run.id, run.updatedAt, local.bundleDigest, revision]);
+  const cached = recipeGroupCache.get(key);
+  if (cached) return cached;
+  const groups = readRetainedRecipeRunGroups(run, ref);
+  recipeGroupCache.set(key, groups);
+  groups.catch(() => recipeGroupCache.delete(key));
+  if (recipeGroupCache.size > RECIPE_GROUP_CACHE_SIZE)
+    recipeGroupCache.delete(recipeGroupCache.keys().next().value!);
+  return groups;
+}
+
+async function readRetainedRecipeRunGroups(
+  run: Run,
+  ref: RunArtifactBundleRef,
 ): Promise<RecipeRunArtifactGroup[]> {
   const { inventory, summaries } = await retainedRecipeRunSummaries(run, ref);
   const taskDir = await retainedRunTaskDirectory(run, ref);

@@ -19,7 +19,8 @@ process.env.FARMSLOT_PROJECTS_DIR = projects;
 // The monitor persists its state on stop; keep that out of the checkout.
 const realFiles = await import('node:fs/promises');
 mock.module('node:fs/promises', { namedExports: { ...realFiles, writeFile: async () => {} } });
-const { startMonitor, stopMonitor } = await import('./fleet-monitor.js');
+const { loadPendingDecisions, scanDecisions, startMonitor, stopMonitor } =
+  await import('./fleet-monitor.js');
 
 // A project with a pending decision, a link to itself and a link into a dir nobody can read.
 const task = path.join(projects, 'app', 'tasks', 'qa', 'run-1');
@@ -73,4 +74,27 @@ test('an unreadable projects dir is logged by the boot scan, never an unhandled 
   await until(() => warn.mock.callCount() > 0);
   assert.match(String(warn.mock.calls[0]?.arguments[0]), /decision scan failed/);
   assert.deepEqual(unhandled, []);
+});
+
+test('while the monitor polls, reads serve its last scan instead of walking the tree (F366)', async (t) => {
+  // Production decision.list walked every task root on each read: 0.27-0.7 s idle, seconds under load.
+  t.after(stopMonitor);
+  monitor([]);
+  await scanDecisions();
+  const later = path.join(projects, 'app', 'tasks', 'qa', 'run-2');
+  mkdirSync(later, { recursive: true });
+  t.after(() => rmSync(later, { recursive: true, force: true }));
+  writeFileSync(
+    path.join(later, '.pending_decision.json'),
+    JSON.stringify({ id: 'decision-2', title: 'Written after the scan', actions: [] }),
+  );
+  assert.deepEqual(
+    (await loadPendingDecisions()).map(({ id }) => id),
+    ['decision-1'],
+  );
+  await scanDecisions();
+  assert.deepEqual((await loadPendingDecisions()).map(({ id }) => id).sort(), [
+    'decision-1',
+    'decision-2',
+  ]);
 });
