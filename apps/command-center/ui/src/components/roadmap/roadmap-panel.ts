@@ -46,7 +46,7 @@ import { type AppState, getState, type GlobalFilters, subscribe } from '../../st
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
-import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import {
   planningBadgeStyles,
@@ -905,7 +905,7 @@ export class RoadmapPanel extends LitElement {
       ROADMAP_SORT_URL,
     );
     const next = buildHash(route, params);
-    if (location.hash !== next) history.replaceState(null, '', next);
+    if (location.hash !== next) navigateHash(next, 'replace');
   }
 
   private _syncState(state: AppState) {
@@ -1473,7 +1473,7 @@ export class RoadmapPanel extends LitElement {
     params.delete(ROADMAP_DRAFT_PARAM);
     params.delete(ROADMAP_DRAFT_MODE_PARAM);
     params.set('worker', encodeWorkerRouteParam(worker));
-    location.hash = buildHash('terminal', params);
+    navigateHash(buildHash('terminal', params));
   }
 
   private async _setSelectedStage(stage: RoadmapItemStage) {

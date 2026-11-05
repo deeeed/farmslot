@@ -1,5 +1,6 @@
 // Initialize the desktop connection before importing any gateway consumers.
 import { browserSharedViewReceipt } from './utils/shared-view-link.js';
+import { navigateHash } from './utils/url-state.js';
 import { initializeDesktopConnection, isDesktopClient } from './desktop-connection.js';
 
 async function start(): Promise<void> {
@@ -7,7 +8,7 @@ async function start(): Promise<void> {
   if (!isDesktopClient()) {
     const receipt = browserSharedViewReceipt();
     if (receipt.status === 'refused') throw new Error(receipt.message);
-    if (receipt.status === 'accepted') history.replaceState(null, '', receipt.route);
+    if (receipt.status === 'accepted') navigateHash(receipt.route, 'replace');
     // A marked link opened into an existing SPA gets the same pre-import gate
     // as a new window, before any mounted consumer can follow its new identity.
     window.addEventListener(

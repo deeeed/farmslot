@@ -1,10 +1,10 @@
 // Farmslot Command Center — UI entry point
-
 // Register components (side-effect imports)
 import './components/app-shell.js';
 import './components/resource-store-notice.js';
 
 import { requestPermission } from './utils/notifications.js';
+import { navigateHash } from './utils/url-state.js';
 import { initializeDesktopAttention } from './desktop-attention.js';
 import { gateway } from './gateway-client.js';
 import { initializeResourceCache } from './resource-cache.js';
@@ -20,7 +20,7 @@ initializeDesktopAttention();
 // after disconnect, but their old components cannot render into the new workspace.
 // A transient disconnect keeps the views mounted.
 onWorkspaceOwnerChange(() => {
-  if (gateway.workspaceAccess === 'native') history.replaceState(null, '', '#native');
+  if (gateway.workspaceAccess === 'native') navigateHash('#native', 'replace');
   const current = document.querySelector('farm-app');
   current?.replaceWith(document.createElement('farm-app'));
 });

@@ -91,7 +91,7 @@ import {
 import { getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
-import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, hashParams, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 import { browserViewState, viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { readStored } from '../shared/read-current.js';
@@ -258,7 +258,7 @@ export class NativeSessionView extends LitElement {
     const effort = this.executionPicker.toSelection().effort;
     if (effort) params.set('effort', effort);
     else params.delete('effort');
-    history.replaceState(null, '', buildHash(this.navigationRoute, params));
+    navigateHash(buildHash(this.navigationRoute, params), 'replace');
   }
   @state() private transcript: NativeTranscript = { events: [], cursor: 0 };
   @state() private historyScope?: NativeWorkerHistoryScope;
@@ -1306,7 +1306,7 @@ ${JSON.stringify(
       params.delete('sessionId');
       params.set('executionNodeId', this.executionNodeId);
     }
-    history.replaceState(null, '', buildHash(this.navigationRoute, params));
+    navigateHash(buildHash(this.navigationRoute, params), 'replace');
   }
 
   private select(id: string, executionNodeId = 'local') {

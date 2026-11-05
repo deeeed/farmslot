@@ -1,18 +1,34 @@
-import type { Run, RunStep, SlotStatus } from '@farmslot/protocol';
+import type { Run, RunStep, SlotStatus, TmuxWorkerListResult } from '@farmslot/protocol';
 import { taskTitleText } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../state.js';
+import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../utils/sidebar-view-state.js';
+
+export {
+  clampSidebarWidth,
+  DEFAULT_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  SIDEBAR_PANEL_FIELD,
+} from '../utils/sidebar-view-state.js';
 
 import { activeRunsForGlobalFilters } from './runs/run-list-model.js';
 
 export const SIDEBAR_WIDTH_PREF_KEY = 'farmslot:sidebar-expanded-width';
-export const DEFAULT_SIDEBAR_WIDTH = 260;
-export const MIN_SIDEBAR_WIDTH = 180;
-export const MAX_SIDEBAR_WIDTH = 420;
 
-export function clampSidebarWidth(width: number): number {
-  if (!Number.isFinite(width)) return DEFAULT_SIDEBAR_WIDTH;
-  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, Math.round(width)));
+export function pinnedWorkerReadError(state: ResourceQueryState<TmuxWorkerListResult>): string {
+  if (state.error) {
+    if (['RESOURCE_SOURCE_UNAVAILABLE', 'RESOURCE_SOURCE_CHANGED'].includes(state.error.code))
+      return '';
+    return state.error.message;
+  }
+  return (
+    state.data?.nodes
+      .filter((node) => node.connected && !node.ok)
+      .map((node) => `${node.nodeId}: ${node.error ?? 'worker inventory unavailable'}`)
+      .join('; ') ?? ''
+  );
 }
 
 export function parseStoredSidebarWidth(value: string | null): number {

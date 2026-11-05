@@ -8,6 +8,7 @@ import {
   buildSessionCorrelation,
   tmuxWorkerAllowedByConfig,
   tmuxWorkerFromNodePane,
+  workerDiscoveryNodeIds,
 } from './tmux-workers.js';
 
 function fleet(): FleetStatus {
@@ -52,6 +53,42 @@ function fleet(): FleetStatus {
     },
   };
 }
+
+test('F414 worker discovery skips disabled, empty and unconnected pool machines', () => {
+  const pool = (machine: string, enabled: boolean): PoolConfig => ({
+    machine,
+    project: 'farm',
+    platform: 'mac',
+    os: 'darwin',
+    host: machine,
+    sshUser: 'fixture',
+    slots: [
+      {
+        id: machine,
+        enabled,
+        mode: 'dispatch',
+        project: 'farm',
+        repo: '/fixture',
+        session: machine,
+      },
+    ],
+  });
+  const pools = [
+    pool('online', true),
+    pool('never-connected', true),
+    pool('farmslot-demo', false),
+    { ...pool('localhost', true), slots: [] },
+  ];
+  assert.deepEqual(
+    workerDiscoveryNodeIds(pools, new Set(['online', 'farmslot-demo', 'localhost']), new Set()),
+    ['online'],
+  );
+  assert.deepEqual(
+    workerDiscoveryNodeIds(pools, new Set(), new Set(['named-offline'])),
+    ['named-offline'],
+    'explicit source reads retain their strict availability contract',
+  );
+});
 
 test('buildSessionCorrelation maps pool sessions to active run and family metadata', () => {
   const pools: PoolConfig[] = [

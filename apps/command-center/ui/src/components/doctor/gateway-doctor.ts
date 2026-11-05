@@ -12,7 +12,7 @@ import { type PerformanceSnapshot, slowestActions } from '@farmslot/protocol/per
 
 import { gateway, gatewayStatusMessage } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { readViewChoice, viewChoiceHash } from '../../utils/url-state.js';
+import { navigateHash, readViewChoice, viewChoiceHash } from '../../utils/url-state.js';
 
 const performanceView = { route: 'doctor', param: 'slowest', defaultValue: 'closed' };
 
@@ -366,7 +366,7 @@ export class GatewayDoctor extends LitElement {
           const open = (event.target as HTMLDetailsElement).open;
           this.performanceOpen = open;
           const next = viewChoiceHash(performanceView, open ? 'open' : 'closed');
-          if (location.hash !== next) history.pushState(null, '', next);
+          if (location.hash !== next) navigateHash(next, 'push');
           if (open && !this.performanceSnapshot && !this.performanceLoading)
             void this.refreshPerformance();
         }}

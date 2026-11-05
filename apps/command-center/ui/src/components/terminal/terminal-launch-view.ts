@@ -15,7 +15,7 @@ import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { getState, subscribe } from '../../state.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
-import { buildHash, hashParams } from '../../utils/url-state.js';
+import { buildHash, hashParams, navigateHash } from '../../utils/url-state.js';
 import type { ChoicePicker } from '../shared/choice-picker.js';
 import { planningChoiceStyles, renderChoiceButtons } from '../shared/planning-controls.js';
 import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -141,7 +141,7 @@ export class TerminalLaunchView extends LitElement {
       params.delete('custom');
     }
     this.error = '';
-    location.hash = buildHash('terminal', params);
+    navigateHash(buildHash('terminal', params));
   }
   private async createTerminal() {
     if (
@@ -168,9 +168,8 @@ export class TerminalLaunchView extends LitElement {
         connection !== gateway.resourceConnectionId
       )
         return;
-      location.hash = buildHash(
-        'terminal',
-        new URLSearchParams({ worker: encodeWorkerRouteParam(worker) }),
+      navigateHash(
+        buildHash('terminal', new URLSearchParams({ worker: encodeWorkerRouteParam(worker) })),
       );
     } catch (error) {
       this.error =

@@ -1,3 +1,5 @@
+import { navigateHash } from '../../utils/url-state.js';
+
 import { sanitizeCandidateRows, sanitizeSelectedCases } from './eval-cockpit-model.js';
 import {
   type CandidateRow,
@@ -141,6 +143,6 @@ export function writeEvalCockpitUrlViewState(
   if (!nextUrlState) return lastUrlState;
   const { encoded, hash: next } = nextUrlState;
   if (encoded === lastUrlState && parts.params.get('state') === encoded) return lastUrlState;
-  if (location.hash !== next) history.replaceState(null, '', next);
+  if (location.hash !== next) navigateHash(next, 'replace');
   return encoded;
 }

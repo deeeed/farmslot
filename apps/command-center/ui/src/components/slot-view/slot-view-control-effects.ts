@@ -3,6 +3,7 @@ import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
+import { navigateHash } from '../../utils/url-state.js';
 
 import type { SlotView } from './slot-view.js';
 import {
@@ -42,7 +43,7 @@ export function switchSlotViewSlot(view: SlotView, nextSlotId: string) {
   if (!nextSlotId || nextSlotId === view.slotId || hasSlotViewModalOpen(view)) return;
   // Switching slots intentionally starts a fresh slot-view URL so per-slot
   // file/history/recipe params from the previous workspace do not leak.
-  location.hash = slotViewHash({ slotId: nextSlotId });
+  navigateHash(slotViewHash({ slotId: nextSlotId }));
 }
 
 export function switchSlotViewRelativeSlot(view: SlotView, direction: -1 | 1) {

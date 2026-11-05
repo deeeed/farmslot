@@ -1,5 +1,7 @@
 import { viewStateParams, viewTextField } from '@farmslot/protocol';
 
+import { inheritSidebarViewState } from './sidebar-view-state.js';
+
 export interface HashRouteState {
   route: string;
   params: URLSearchParams;
@@ -36,6 +38,49 @@ export function parseHashRoute(hash: string = location.hash): HashRouteState {
 export function buildHash(route: string, params: URLSearchParams = new URLSearchParams()): string {
   const query = params.toString();
   return `#${route}${query ? `?${query}` : ''}`;
+}
+
+export function navigationHash(destination: string, currentHash = location.hash): string {
+  const { route, params } = parseHashRoute(destination);
+  return buildHash(route, inheritSidebarViewState(params, hashParams(currentHash)));
+}
+
+export interface NavigationLinkState {
+  sourceHref: string;
+  appliedHref: string;
+}
+
+/** Re-derive inherited choices from the authored destination on every activation. */
+export function prepareNavigationLink(
+  href: string | null,
+  previous: NavigationLinkState | undefined,
+  currentUrl = location.href,
+): NavigationLinkState | null {
+  if (!href) return null;
+  const sourceHref = previous?.appliedHref === href ? previous.sourceHref : href;
+  const current = new URL(currentUrl);
+  const target = new URL(sourceHref, current);
+  if (
+    target.origin !== current.origin ||
+    target.pathname !== current.pathname ||
+    target.search !== current.search ||
+    !target.hash
+  )
+    return null;
+  target.hash = navigationHash(target.hash, current.hash);
+  return { sourceHref, appliedHref: target.href };
+}
+
+/** Apply route changes at their writer, including asynchronous action completions. */
+export function navigateHash(
+  destination: string,
+  mode: 'assign' | 'push' | 'replace' = 'assign',
+  state: unknown = null,
+): void {
+  const next = navigationHash(destination);
+  if (next === location.hash) return;
+  if (mode === 'assign') location.hash = next;
+  else history[mode === 'push' ? 'pushState' : 'replaceState'](state, '', next);
 }
 
 /** Context owns the route, parameter and omitted default for a persistent view choice. */

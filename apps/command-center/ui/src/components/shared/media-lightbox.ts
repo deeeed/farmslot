@@ -22,7 +22,13 @@ import { type ArtifactKind, artifactKind } from '../../utils/artifact-kind.js';
 import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
+import {
+  clampSidebarWidth,
+  SIDEBAR_PANEL_FIELD,
+  SIDEBAR_WIDTH_FIELD,
+} from '../../utils/sidebar-view-state.js';
 import { splitUnifiedDiff, type UnifiedDiffSplit } from '../../utils/unified-diff.js';
+import { browserViewState } from '../../utils/view-state.js';
 import {
   acceptancePanelStyles,
   renderAcceptancePanel,
@@ -56,12 +62,24 @@ interface LightboxEvidenceState {
 export class MediaLightbox extends MediaLightboxState {
   private readonly _mediaDocuments = new Map<string, GatewayMediaDocument>();
   private _previewGeneration = 0;
+  private readonly _htmlBodies = new Map<string, string>();
+  private readonly _htmlKeys = new Map<string, string>();
+  private readonly _htmlPending = new Set<string>();
+  private _shellViewKey = '';
+  private _stopShellView?: () => void;
+
+  private currentShellViewKey(): string {
+    return `${browserViewState.get(SIDEBAR_PANEL_FIELD)}:${clampSidebarWidth(browserViewState.get(SIDEBAR_WIDTH_FIELD))}`;
+  }
 
   private clearMediaDocuments(): void {
     this._previewGeneration++;
     for (const document of this._mediaDocuments.values()) document.dispose();
     this._mediaDocuments.clear();
     this._mdCache.clear();
+    this._htmlBodies.clear();
+    this._htmlKeys.clear();
+    this._htmlPending.clear();
   }
 
   private readonly _timelineGroupOpen = new Map<string, boolean>();
@@ -83,12 +101,21 @@ export class MediaLightbox extends MediaLightboxState {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this._shellViewKey = this.currentShellViewKey();
+    this._stopShellView = browserViewState.subscribe(() => {
+      const key = this.currentShellViewKey();
+      if (key === this._shellViewKey) return;
+      this._shellViewKey = key;
+      this.requestUpdate();
+    });
     window.addEventListener('keydown', this._onKeyDown);
     document.addEventListener('fullscreenchange', this._onFullscreenChange);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this._stopShellView?.();
+    this._stopShellView = undefined;
     window.removeEventListener('keydown', this._onKeyDown);
     document.removeEventListener('fullscreenchange', this._onFullscreenChange);
     if (this._logTimer) clearInterval(this._logTimer);
@@ -1504,10 +1531,18 @@ export class MediaLightbox extends MediaLightboxState {
   }
 
   private _ensureTextPreview(url: string, kind: MediaLightboxTextPreviewKind): void {
-    if (this._mdCache.has(url)) return;
-    putCapped(this._mdCache, url, { status: 'loading' }, MD_CACHE_LIMIT);
+    const cached = this._mdCache.get(url);
+    const refreshHtml =
+      kind === 'html' && cached?.status === 'ok' && this._htmlKeys.get(url) !== this._shellViewKey;
+    if (cached && !refreshHtml) return;
+    if (kind === 'html' && this._htmlPending.has(url)) return;
+    if (!cached) putCapped(this._mdCache, url, { status: 'loading' }, MD_CACHE_LIMIT);
+    if (kind === 'html') this._htmlPending.add(url);
     const previewGeneration = this._previewGeneration;
-    const retained = this.items.find((item) => item.url === url)?.verifiedText;
+    const previewItems = [...this.items];
+    const document = previewItems.find((item) => item.url === url);
+    const retained =
+      (kind === 'html' ? this._htmlBodies.get(url) : undefined) ?? document?.verifiedText;
     (retained !== undefined
       ? Promise.resolve(retained)
       : gatewayHttpFetch(url).then((r) => {
@@ -1517,8 +1552,8 @@ export class MediaLightbox extends MediaLightboxState {
     )
       .then(async (text) => {
         if (previewGeneration !== this._previewGeneration) return;
-        const document = this.items.find((item) => item.url === url);
-        const byPath = new Map(this.items.map((item) => [item.path, item.url]));
+        if (kind === 'html') putCapped(this._htmlBodies, url, text, MD_CACHE_LIMIT);
+        const byPath = new Map(previewItems.map((item) => [item.path, item.url]));
         const content =
           kind === 'markdown'
             ? rewriteMarkdownArtifactUrls(
@@ -1530,27 +1565,36 @@ export class MediaLightbox extends MediaLightboxState {
                 ),
               )
             : text;
-        let rendered =
-          kind === 'html'
-            ? isolatedArtifactHtml(
-                content,
-                lightboxReportArtifactResolver(document, this.items, location.href),
-              )
-            : formatLightboxTextPreview(kind, content);
+        let media = this._mediaDocuments.get(url);
         if (kind === 'html' || kind === 'markdown') {
-          if (this._mediaDocuments.size >= MD_CACHE_LIMIT) {
+          if (!media && this._mediaDocuments.size >= MD_CACHE_LIMIT) {
             const oldest = this._mediaDocuments.keys().next().value;
             if (oldest !== undefined) {
               this._mediaDocuments.get(oldest)?.dispose();
               this._mediaDocuments.delete(oldest);
               this._mdCache.delete(oldest);
+              this._htmlBodies.delete(oldest);
+              this._htmlKeys.delete(oldest);
             }
           }
-          const media = new GatewayMediaDocument();
+          media ??= new GatewayMediaDocument();
           this._mediaDocuments.set(url, media);
-          rendered = await media.html(rendered);
         }
-        if (previewGeneration !== this._previewGeneration) return;
+        let rendered: string;
+        let shellKey: string;
+        do {
+          shellKey = this._shellViewKey;
+          rendered =
+            kind === 'html'
+              ? isolatedArtifactHtml(
+                  content,
+                  lightboxReportArtifactResolver(document, previewItems, location.href),
+                )
+              : formatLightboxTextPreview(kind, content);
+          if (media) rendered = await media.html(rendered);
+          if (previewGeneration !== this._previewGeneration) return;
+        } while (kind === 'html' && shellKey !== this._shellViewKey);
+        if (kind === 'html') putCapped(this._htmlKeys, url, shellKey, MD_CACHE_LIMIT);
         putCapped(
           this._mdCache,
           url,
@@ -1568,6 +1612,16 @@ export class MediaLightbox extends MediaLightboxState {
         this._mediaDocuments.delete(url);
         putCapped(this._mdCache, url, { status: 'err', error: err.message }, MD_CACHE_LIMIT);
         this._mdCacheVersion += 1;
+      })
+      .finally(() => {
+        if (kind === 'html' && previewGeneration === this._previewGeneration) {
+          this._htmlPending.delete(url);
+          if (
+            this._mdCache.get(url)?.status === 'ok' &&
+            this._htmlKeys.get(url) !== this._shellViewKey
+          )
+            this.requestUpdate();
+        }
       });
   }
 

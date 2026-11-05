@@ -22,6 +22,7 @@ import {
 
 import { gateway } from '../../gateway-client.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { navigateToPreparedSlot, runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
 
 type Timer = ReturnType<typeof setTimeout> | undefined;
@@ -148,7 +149,7 @@ export async function resolveInteractiveDevAction(
     } else if (res.reason) {
       alert(res.reason);
     } else if (res.chainedRunId) {
-      location.hash = `run/${res.chainedRunId}`;
+      navigateHash(`run/${res.chainedRunId}`);
     }
   } catch (err) {
     alert(`Interactive dev action failed: ${(err as Error).message}`);
