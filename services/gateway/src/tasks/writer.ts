@@ -8,10 +8,12 @@ import path from 'node:path';
 import {
   buildOperatorWaitInstructions,
   type HandoffSourceKind,
+  inspectTaskAcceptanceState,
   parseProjectWorkerTemplateFileName,
   portableProjectRepo,
   readTaskDocumentAddendum,
   refreshTaskAcceptanceInputs,
+  type TaskAcceptanceState,
   type TaskInitSpec,
 } from '@farmslot/agent-runtime';
 import {
@@ -26,7 +28,6 @@ import {
   humanGateEnabled,
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
-  isRecord,
   type PlanningContextProjection,
   type RepeatReviewContext,
   type Run,
@@ -1486,20 +1487,20 @@ async function writtenTaskTicketOwner(run: Run): Promise<WrittenTaskTicketOwner>
   return { mirrorDir, slot, taskDir };
 }
 
-export async function readWrittenTaskCriteria(run: Run): Promise<string[]> {
+export async function readWrittenTaskAcceptanceState(
+  run: Run,
+  previousCriteria: readonly string[] = [],
+  criteria: readonly string[] = [],
+): Promise<TaskAcceptanceState> {
   const { slot, taskDir } = await writtenTaskTicketOwner(run);
-  const handoff: unknown = JSON.parse(
-    await slotReadFile(slot, path.join(taskDir, 'inputs/handoff.json')),
-  );
-  if (
-    !isRecord(handoff) ||
-    !isRecord(handoff.task) ||
-    (handoff.task.acceptanceCriteria !== undefined &&
-      (!Array.isArray(handoff.task.acceptanceCriteria) ||
-        !handoff.task.acceptanceCriteria.every((criterion) => typeof criterion === 'string')))
-  )
-    throw new Error('Ticket refresh task handoff identity is invalid');
-  return handoff.task.acceptanceCriteria ?? [];
+  return inspectTaskAcceptanceState({
+    handoff: await slotReadFile(slot, path.join(taskDir, 'inputs/handoff.json')),
+    runId: run.id,
+    project: run.project,
+    flow: run.flowType,
+    previousCriteria,
+    criteria,
+  });
 }
 
 /** Refresh the producer-owned acceptance inputs without reinitializing authored work or receipts. */

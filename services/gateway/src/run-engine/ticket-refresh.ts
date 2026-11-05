@@ -7,7 +7,7 @@ import { readSlotField } from '../core/state.js';
 import { publicationStatusForRun } from '../run-completion/publication-status.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionPrincipal } from '../security/work-originator.js';
-import { readWrittenTaskCriteria, refreshWrittenTaskTicket } from '../tasks/writer.js';
+import { readWrittenTaskAcceptanceState, refreshWrittenTaskTicket } from '../tasks/writer.js';
 
 import { fetchTicketData } from './ticket-data.js';
 
@@ -43,10 +43,9 @@ export async function refreshRunTicket(run: Run): Promise<Run> {
   let refresh = run.ticketRefreshes?.at(-1);
   let superseded = false;
   if (refresh && !refresh.appliedAt && !refresh.supersededAt) {
-    const observed = normalizeAcceptanceCriteria(await readWrittenTaskCriteria(run));
-    superseded =
-      !isDeepStrictEqual(observed, normalizeAcceptanceCriteria(refresh.previousCriteria)) &&
-      !isDeepStrictEqual(observed, normalizeAcceptanceCriteria(refresh.criteria));
+    superseded = !(
+      await readWrittenTaskAcceptanceState(run, refresh.previousCriteria, refresh.criteria)
+    ).matchesPreviousOrTarget;
   }
   // Resume an interrupted write only while its admitted criteria still describe the task.
   if (!refresh || refresh.appliedAt || refresh.supersededAt || superseded) {
@@ -54,7 +53,7 @@ export async function refreshRunTicket(run: Run): Promise<Run> {
     if (!ticketData || ticketData.source === 'manual')
       throw new Error('Ticket refresh could not load the ticket source');
     if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
-    const previousCriteria = await readWrittenTaskCriteria(run);
+    const { currentCriteria: previousCriteria } = await readWrittenTaskAcceptanceState(run);
     if (!(await owns())) throw new Error('Ticket refresh lost its task owner');
     if (
       !superseded &&
