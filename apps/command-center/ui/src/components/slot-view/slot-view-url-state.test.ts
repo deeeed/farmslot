@@ -22,6 +22,22 @@ test('getSlotViewHashParam reads URL encoded slot-view state', () => {
   assert.equal(getSlotViewHashParam('missing', hash), null);
 });
 
+test('F414 a slot refresh retains shell URL choices without retaining another slot selection', (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { hash: '#slot/demo?panels=sidebar&sidebarWidth=320&file=old.ts' },
+  });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, 'location', previous);
+    else Reflect.deleteProperty(globalThis, 'location');
+  });
+  assert.equal(
+    slotViewHash({ slotId: 'demo', runId: 'run-1' }),
+    '#slot/demo?runId=run-1&panels=sidebar&sidebarWidth=320',
+  );
+});
+
 test('recipe viewer modes are constrained to supported values', () => {
   assert.equal(requestedRecipeEvidenceModeFromHash('#slot/demo?recipeEvidenceMode=node'), 'node');
   assert.equal(requestedRecipeEvidenceModeFromHash('#slot/demo?recipeEvidenceMode=bad'), null);

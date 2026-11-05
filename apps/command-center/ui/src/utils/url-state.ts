@@ -1,5 +1,7 @@
 import { viewStateParams, viewTextField } from '@farmslot/protocol';
 
+import { inheritSidebarViewState } from './sidebar-view-state.js';
+
 export interface HashRouteState {
   route: string;
   params: URLSearchParams;
@@ -33,8 +35,12 @@ export function parseHashRoute(hash: string = location.hash): HashRouteState {
   };
 }
 
-export function buildHash(route: string, params: URLSearchParams = new URLSearchParams()): string {
-  const query = params.toString();
+export function buildHash(
+  route: string,
+  params: URLSearchParams = new URLSearchParams(),
+  currentHash = typeof location === 'undefined' ? '' : location.hash,
+): string {
+  const query = inheritSidebarViewState(params, hashParams(currentHash)).toString();
   return `#${route}${query ? `?${query}` : ''}`;
 }
 

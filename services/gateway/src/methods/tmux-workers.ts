@@ -741,12 +741,11 @@ export async function tmuxWorkerList(
       ? allPools.filter((pool) => requestedMachines.has(pool.machine))
       : allPools;
   const activeRuns = correlationRuns();
-  const poolMachines = pools.map((pool) => pool.machine).filter(Boolean);
   const connectedMachines = getAllNodes()
     .map((node) => node.machine)
-    .filter((machine) => requestedMachines.size === 0 || requestedMachines.has(machine));
+    .filter((machine) => getNode(machine)?.ws.readyState === 1);
   const connectedNodeIds = new Set(connectedMachines);
-  const nodeIds = [...poolMachines, ...connectedMachines];
+  const nodeIds = workerDiscoveryNodeIds(pools, connectedNodeIds, requestedMachines);
 
   return buildTmuxWorkerListFromSources({
     pools,
@@ -792,6 +791,19 @@ export async function tmuxWorkerList(
   });
 }
 
+/** Configuration is not evidence of a worker source. Named reads remain strict. */
+export function workerDiscoveryNodeIds(
+  pools: readonly PoolConfig[],
+  connectedNodeIds: ReadonlySet<string>,
+  requested: ReadonlySet<string>,
+): string[] {
+  if (requested.size) return [...requested];
+  const enabled = new Set(
+    pools.filter((pool) => pool.slots.some((slot) => slot.enabled)).map((pool) => pool.machine),
+  );
+  return [...connectedNodeIds].filter((machine) => enabled.has(machine));
+}
+
 /** Shared reads use producer-owned snapshots, never the imperative collector or age fallback. */
 export async function tmuxWorkerObservedList(
   params: TmuxWorkerListParams = {},
@@ -800,14 +812,15 @@ export async function tmuxWorkerObservedList(
   const requested = new Set(params.machines ?? []);
   if (params.machine) requested.add(params.machine);
   const pools = allPools.filter((pool) => !requested.size || requested.has(pool.machine));
-  const nodeIds = [
-    ...new Set([
-      ...pools.map((pool) => pool.machine),
-      ...getAllNodes().map((node) => node.machine),
-    ]),
-  ].filter((machine) => !requested.size || requested.has(machine));
-  // A requested but unknown source is an error, never an empty authoritative inventory.
-  for (const machine of requested) if (!nodeIds.includes(machine)) nodeIds.push(machine);
+  const nodeIds = workerDiscoveryNodeIds(
+    pools,
+    new Set(
+      getAllNodes()
+        .map((node) => node.machine)
+        .filter((machine) => getNode(machine)?.ws.readyState === 1),
+    ),
+    requested,
+  );
   const admitted = new Map<string, AdmittedWorkerSource>();
   const unavailable = new Map<string, GatewayMethodError>();
   for (const nodeId of nodeIds) {

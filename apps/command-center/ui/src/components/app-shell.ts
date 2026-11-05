@@ -35,7 +35,6 @@ import {
   type TmuxWorkerListResult,
   type TmuxWorkerSummary,
   viewIntegerField,
-  viewToggleField,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import {
@@ -121,7 +120,7 @@ import {
   unpinWorkspace,
 } from '../utils/pinned-slots.js';
 import { hashParams } from '../utils/url-state.js';
-import { viewBinding, ViewStateBindings } from '../utils/view-state.js';
+import { browserViewState, viewBinding, ViewStateBindings } from '../utils/view-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
 import { runStatusColor } from './runs/run-utils.js';
@@ -131,6 +130,9 @@ import {
   activeSidebarRuns,
   clampSidebarWidth,
   DEFAULT_SIDEBAR_WIDTH,
+  pinnedWorkerReadError,
+  SIDEBAR_PANEL_FIELD,
+  sidebarNavigationHash,
 } from './app-shell-nav-model.js';
 import {
   pairingAuthorityFromSelection,
@@ -366,7 +368,7 @@ export class FarmApp extends LitElement {
 
   private readonly displayChoices = new ViewStateBindings(this, [
     viewBinding(
-      viewToggleField('panels', 'sidebar', false),
+      SIDEBAR_PANEL_FIELD,
       () => this._sidebarExpanded,
       (value) => {
         this._sidebarExpanded = value;
@@ -385,6 +387,7 @@ export class FarmApp extends LitElement {
     super.connectedCallback();
     this.route = this.getRouteFromHash();
     window.addEventListener('hashchange', this.onHashChange);
+    this.addEventListener('click', this.onWorkspaceNavigation, true);
     window.addEventListener('keydown', this.onGlobalKeyDown);
     window.addEventListener('pointermove', this.onSidebarResizeMove);
     window.addEventListener('pointerup', this.onSidebarResizeEnd);
@@ -406,6 +409,7 @@ export class FarmApp extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.onHashChange);
+    this.removeEventListener('click', this.onWorkspaceNavigation, true);
     window.removeEventListener('keydown', this.onGlobalKeyDown);
     window.removeEventListener('pointermove', this.onSidebarResizeMove);
     window.removeEventListener('pointerup', this.onSidebarResizeEnd);
@@ -454,11 +458,7 @@ export class FarmApp extends LitElement {
   private renderWorkerReadStatus() {
     const state = this.workerObservation;
     if (!this.pinnedSlots.length || !this.workerQuery.belongsToWorkspace) return nothing;
-    const sourceError = state.data?.nodes
-      .filter((node) => !node.ok)
-      .map((node) => `${node.nodeId}: ${node.error ?? 'worker inventory unavailable'}`)
-      .join('; ');
-    const error = state.error?.message ?? sourceError;
+    const error = pinnedWorkerReadError(state);
     return html`
       ${state.status !== 'ready' && state.data
         ? html`<p data-pinned-workers-freshness="stale">
@@ -794,8 +794,22 @@ export class FarmApp extends LitElement {
   };
 
   private toggleSidebar() {
-    this._sidebarExpanded = !this._sidebarExpanded;
+    browserViewState.set(SIDEBAR_PANEL_FIELD, !this._sidebarExpanded);
   }
+
+  private onWorkspaceNavigation = (event: MouseEvent) => {
+    const link = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
+    if (!(link instanceof HTMLAnchorElement) || link.hasAttribute('download')) return;
+    const target = new URL(link.href);
+    if (
+      target.origin !== location.origin ||
+      target.pathname !== location.pathname ||
+      target.search !== location.search ||
+      !target.hash
+    )
+      return;
+    link.hash = sidebarNavigationHash(target.hash);
+  };
 
   private onSidebarResizeStart = (e: PointerEvent) => {
     if (!this._sidebarExpanded) return;
@@ -961,7 +975,7 @@ export class FarmApp extends LitElement {
   }
 
   private navigate(route: Route) {
-    location.hash = route;
+    location.hash = sidebarNavigationHash(`#${route}`);
   }
 
   private syncState(s: AppState) {
@@ -1760,7 +1774,7 @@ export class FarmApp extends LitElement {
           class="fa-active-run ${selected ? 'active' : ''} ${needsAttention
             ? 'needs-attention'
             : ''}"
-          href=${href}
+          href=${sidebarNavigationHash(href)}
           title=${`${slotId ?? runId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
         >
           <div class="fa-active-run-top">
@@ -2522,7 +2536,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
               'alpha'
                 ? 'fa-nav-btn--alpha'
                 : ''}"
-              href="#${item.route}"
+              href=${sidebarNavigationHash(`#${item.route}`)}
               title="${item.label}"
             >
               <span class="fa-nav-icon">${item.icon}</span>${this._sidebarExpanded

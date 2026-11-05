@@ -16,7 +16,8 @@ export const browserViewState = createViewStateContext({
   read: () => (typeof location === 'undefined' ? new URLSearchParams() : hashParams()),
   write(params, mode) {
     if (typeof location === 'undefined' || typeof history === 'undefined') return;
-    const hash = buildHash(hashRoute(), params);
+    // A configured field write is authoritative, including restoring the collapsed default.
+    const hash = buildHash(hashRoute(), params, '');
     if (hash === location.hash) return;
     history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', hash);
     // History writes do not dispatch hashchange. Notify the same subscribers synchronously.
