@@ -159,3 +159,57 @@ test('project fit gate matches GitHub issue refs by configured repo', async () =
     rationale: 'Only one configured project matches this ticket prefix/repo.',
   });
 });
+
+const pathCandidates = [
+  projectConfig('example-core-farm', 'PROJ', 'example-org/core', []),
+  projectConfig('example-mobile-farm', 'PROJ', 'example-org/mobile', []),
+  projectConfig('example-terminal-farm', '', 'example-org/terminal', []),
+];
+const offlineSelector = async () => {
+  throw new Error('classifier offline');
+};
+
+for (const mention of ['src/core/api/terminalApi.ts', 'src/foo-core-bar/api.ts', 'core.ts']) {
+  test(`project fit ignores project-like segments in ${mention}`, async (t) => {
+    t.mock.method(console, 'warn', () => {});
+    const result = await detectProjectMismatchForConfigs(
+      run('example-terminal-farm'),
+      {
+        ...ticketData,
+        title: '[Terminal] Remove login eligibility check',
+        description: `Keep the client in ${mention}.`,
+        affectedArea: '',
+        acceptanceCriteria: [],
+        labels: [],
+      },
+      pathCandidates,
+      offlineSelector,
+    );
+    assert.equal(result, null);
+  });
+}
+
+for (const mention of [
+  'core',
+  'example-org/core',
+  'https://github.com/example-org/core',
+  'https://github.com/example-org/core/pull/123',
+]) {
+  test(`project fit keeps explicit project evidence in ${mention}`, async (t) => {
+    t.mock.method(console, 'warn', () => {});
+    const result = await detectProjectMismatchForConfigs(
+      run('example-terminal-farm'),
+      {
+        ...ticketData,
+        title: 'Remove login eligibility check',
+        description: `The owning repository is ${mention}.`,
+        affectedArea: '',
+        acceptanceCriteria: [],
+        labels: [],
+      },
+      pathCandidates,
+      offlineSelector,
+    );
+    assert.equal(result?.suggestedProject, 'example-core-farm');
+  });
+}

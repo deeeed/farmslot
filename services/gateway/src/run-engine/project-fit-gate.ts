@@ -282,10 +282,16 @@ function candidateTokens(candidate: ProjectMismatchCandidate): string[] {
 
 function tokenizeProjectFitText(values: Array<string | null | undefined>): Set<string> {
   const joined = values.filter((value): value is string => typeof value === 'string').join(' ');
+  // A source path is one token, not evidence for each directory's project name.
+  // GitHub links retain their repository identity rather than their URL prefix.
+  const matches = joined
+    .toLowerCase()
+    .matchAll(
+      /https?:\/\/github\.com\/([a-z0-9_.-]+\/[a-z0-9_.-]+)(?:\/[a-z0-9_.-]+)*|([a-z0-9_.-]+(?:[\\/][a-z0-9_.-]+)+)|[a-z0-9]+(?:\.[a-z0-9]+)*/g,
+    );
   return new Set(
-    joined
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
+    [...matches]
+      .map((match) => (match[1] ?? match[2] ?? match[0]).replace(/\.+$/, ''))
       .filter((token) => token.length > 2 && !PROJECT_FIT_STOP_WORDS.has(token)),
   );
 }
