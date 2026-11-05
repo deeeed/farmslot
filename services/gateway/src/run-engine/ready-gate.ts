@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 // ready-gate.ts — Human ready/publication gate orchestration.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -16,7 +16,6 @@ import {
   PipelineSteps,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type PublicationReviewLaunchRejection,
-  type ReadyGateInputSnapshot,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   RECIPE_REPAIR_SCOPE_TASK_PATH,
@@ -144,6 +143,7 @@ import {
   requiresPublicationApproval,
 } from './publication-policy.js';
 import { ensureCurrentPublishPackage } from './publish-package-refresh.js';
+import { buildReadyGateInputs } from './ready-gate-inputs.js';
 import {
   gateChoiceFromSelectionData,
   reconcileRunPosture,
@@ -760,35 +760,6 @@ async function currentDescriptionForGate(
     );
     return undefined;
   }
-}
-
-async function buildReadyGateInputSnapshot(current: Run): Promise<ReadyGateInputSnapshot> {
-  let taskPrompt: string | undefined;
-  if (current.taskFile) {
-    try {
-      taskPrompt = await readFile(current.taskFile, 'utf-8');
-    } catch (err) {
-      // Legacy/recycled runs can point at a task file that has already been
-      // removed. The ready gate can still render ticket/input metadata, but
-      // operators need the missing prompt surfaced in logs rather than hidden.
-      console.warn(
-        `[run-engine] ready-gate task prompt read failed for ${current.id.slice(0, 8)} at ${current.taskFile}: ${(err as Error).message}`,
-      );
-    }
-  }
-
-  return {
-    ...(current.ticketData ? { ticketData: current.ticketData } : {}),
-    taskFile: current.taskFile,
-    ...(taskPrompt ? { taskPrompt } : {}),
-    ...(current.engineState?.interactiveDev?.initialContext
-      ? { initialContext: current.engineState.interactiveDev.initialContext }
-      : {}),
-    ...(current.engineState?.interactiveDev?.checklist?.length
-      ? { checklist: current.engineState.interactiveDev.checklist }
-      : {}),
-    ...(current.templateProvenance ? { templateProvenance: current.templateProvenance } : {}),
-  };
 }
 
 async function persistGateFeedback(
@@ -1409,10 +1380,7 @@ export async function executeReadyGate(
     }
   }
 
-  const acceptanceCriteria: string[] | undefined = current.ticketData?.acceptanceCriteria?.length
-    ? current.ticketData.acceptanceCriteria
-    : undefined;
-  const inputSnapshot = await buildReadyGateInputSnapshot(current);
+  const inputs = await buildReadyGateInputs(current);
   const currentDescription = preparedPackage
     ? await currentDescriptionForGate(current, preparedPackage)
     : undefined;
@@ -1471,10 +1439,9 @@ export async function executeReadyGate(
       reviewLaunchRejection,
       reviewLineageOptions,
       ciChecks,
-      acceptanceCriteria,
+      ...inputs,
       acceptanceStatus,
       ...(acceptanceStatusError ? { acceptanceStatusError } : {}),
-      inputSnapshot,
       ...(preparedPackage
         ? {
             prPackage: preparedPackage,
