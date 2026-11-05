@@ -603,3 +603,29 @@ The cost is that a Grok reviewer no longer reads the repository's `AGENTS.md`, p
 - `terminalReviewRefusal` on a runner definition, and `runnerTerminalReviewRefusal` in the gateway's review admission.
 - `grokAuthMethod` (the Grok adapter and account observer), and `AcpAuthMethod` / `selectAcpAuthMethod`: an ACP adapter's `authMethod` may now pick among the advertised methods.
 - `@farmslot/agent-runtime` needs a release. Until it is rolled out, nodes keep trusting review checkouts.
+
+## Amendment 14: pipeline session usage receipts, 2026-11-05
+
+**Status:** Accepted, Arthur, 2026-11-05, pipeline-wide scope at 11:20 HKT. Independent expanded text review approved at `08108cbbe8eaeed6c0e33bb8a81272824b3859d3` before implementation.
+
+### Decision
+
+EVERY agent session records usage regardless of role or flow. This includes dev, fix-bug, pr-complete, QA, primary workers, static and paired reviewers, review-fix, CI-fix, grade, write-task and summary helpers, relaunches and replays. Accounting belongs at shared session registration and shared LLM dispatch, never in individual endpoints.
+
+Use one shared `RunnerSessionUsage` receipt throughout. Verified direct-provider counters use `source: provider-response`; transcript counters keep `runner-transcript`. Both enter deduplication and totals even when pricing or configuration metadata is unknown. Each new session row records runner, actual/requested model, effort, role, flow, run id, exact conversation id, turns, input/output/cache tokens, pricing status and duration. Unknown values are null with a capture gap; cost is an estimate or explicitly unpriced with a reason. A gateway-owned array on the existing run record retains rows after contexts or results are replaced. Context and result receipts reuse this shape. Accounting never determines a verdict, delivery acceptance, process completion or admission.
+
+Deduplicate session totals by exact runner/conversation identity, retaining the largest verified total and latest measurement on ties. Preserve role/context participation when one conversation serves several stages. Across a family, the same conversation is counted once. Shared helper calls have a reserved request identity when the provider has no conversation concept. Each transport attempt, including a failed fallback, remains attributable. Tool rounds accumulate in their helper session rather than dropping earlier spend.
+
+Capture from the exact execution node/account through existing runner accounting. Retain source identity before a relaunch replaces it, measure at settlement and before source cleanup, and leave failed acquisition explicitly unavailable. No transcript bodies cross RPC. Offline, dry-run-by-default backfill repairs all recoverable retained sessions while writes require the gateway to be stopped. It preserves learning data, verdicts, audit journals and transcripts, and creates no review results.
+
+### Capture gaps
+
+- Legacy deleted transcripts or isolated account directories cannot supply verified counters or duration. Preserve prior verified readings and report the missing source.
+- A runner without persisted structured usage or a verifiable conversation binding cannot supply exact counters. Record an unavailable/unpriced row and the runner's reason. Interactive Cursor is a known case; native transports without transcript-path discovery may remain unavailable until their runner adapter exposes it.
+- Historical helper calls without recorded request/conversation identity cannot be assigned a fabricated native identity. Preserve recoverable step usage and report the historical identity gap.
+- Project commands that launch opaque child agents without returning their session identity cannot be individually attributed. Their parent is recorded; the child capture gap is explicit. No inference from terminal text or invented zero usage.
+- A helper invoked outside any run has no durable run record to own its receipt. The wrapper returns its receipt with null run/flow attribution, but durable out-of-run retention is an explicit capture gap in this amendment. It MUST NOT attach spend to an unrelated run.
+
+### Public surface
+
+`@farmslot/protocol` extends the existing `RunnerSessionUsage` shape and adds optional `Run.sessionUsage` and `AgentContext.usage` to existing run data. Fields remain optional for old records; new row producers fill the normative fields. This is additive and patch-compatible. Existing run RPCs carry the rows. Shared reporting projects deduplicated receipts for Command Center, Companion and downstream harnesses. The shared LLM wrapper carries run/role attribution through execution context. No new RPC, node-service contract, server or per-project override is added. Operators use the offline backfill documented in `docs/operations/native-reviewer-usage-backfill.md`.

@@ -145,11 +145,13 @@ export interface FamilyObservabilityTokenRunPoint {
   runner: string | null;
   workerTokens: number;
   reviewTokens: number;
+  /** Stateless/API helper spend, included in stepTokens. */
+  helperTokens?: number;
   inputTokens: number;
   outputTokens: number;
   cacheRead: number;
   cacheCreation: number;
-  /** Worker + review tokens attributed to this run (excludes sibling fix-loops). */
+  /** Worker, review and helper tokens attributed to this run (excludes sibling fix-loops). */
   stepTokens: number;
   stepCostEstimate: number | null;
   cumulativeTokens: number;
@@ -171,7 +173,7 @@ export interface FamilyObservabilityTokenModelBreakdown {
   costEstimate: number | null;
 }
 
-/** Canonical family token rollup — worker sessions plus review usage, one row per run. */
+/** Canonical family token rollup across all sessions, deduplicated across runs. */
 export interface FamilyObservabilityTokenSummary {
   familyTotalTokens: number;
   familyTotalCostEstimate: number | null;

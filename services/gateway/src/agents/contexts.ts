@@ -467,7 +467,16 @@ export async function upsertAgentContext(
   const tail = result.catch(() => null);
   agentContextChains.set(runId, tail);
   try {
-    return await result;
+    const updated = await result;
+    if (
+      updated &&
+      TERMINAL_AGENT_STATUSES.has(updated.status) &&
+      !updated.usage &&
+      (!updated.nativeSession || updated.nativeSession.closedAt || updated.nativeSession.releasedAt)
+    ) {
+      await (await import('../runtime/agent-session-usage.js')).captureRunSessionUsage(runId);
+    }
+    return updated;
   } finally {
     if (agentContextChains.get(runId) === tail) agentContextChains.delete(runId);
   }

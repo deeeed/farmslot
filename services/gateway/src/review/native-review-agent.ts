@@ -8,6 +8,7 @@ import {
   type ReviewMode,
   type ReviewSessionFallback,
   type ReviewValidationDepth,
+  type RunnerSessionUsage,
 } from '@farmslot/protocol';
 import { reviewArtifactDir } from '@farmslot/review-dispatch';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
@@ -45,7 +46,8 @@ import {
   persistRunNow,
   updateRun,
 } from '../runs/store.js';
-import { unavailableRunnerSessionUsage } from '../runtime/session-usage.js';
+import { preferSessionUsage } from '../runtime/reviewer-usage.js';
+import { extractNativeAgentSessionUsage } from '../runtime/session-usage.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import {
   restoreWorkerChecklistTargetFromSlot,
@@ -391,6 +393,7 @@ async function runNativeReviewAttempt(
   let progress: { stop(): void | Promise<void> } | undefined;
   let activeTaskSet = false;
   let primaryFailure: unknown;
+  let measuredUsage: RunnerSessionUsage | undefined;
   let fallbackRecord: ReviewSessionFallback | undefined;
   try {
     const reviewSnapshot = await withNativeReviewMutation(async () => {
@@ -981,6 +984,21 @@ async function runNativeReviewAttempt(
         feedbackIncomplete: feedback.incomplete ?? false,
       }),
     );
+    const usage = preferSessionUsage(
+      context.usage,
+      await extractNativeAgentSessionUsage({
+        vars,
+        runner,
+        runnerSessionId: context.runnerSessionId ?? null,
+        runnerSessionPath:
+          context.runnerSessionPath ??
+          (retained?.runnerSessionId === context.runnerSessionId
+            ? retained?.runnerSessionPath
+            : null),
+        nativeSession: context.nativeSession,
+      }),
+    );
+    measuredUsage = usage;
     const completedAt = new Date().toISOString();
     admit();
     if (original.engineState?.evalExperiment && !feedback.incomplete) {
@@ -1001,12 +1019,7 @@ async function runNativeReviewAttempt(
             retryCount: 0,
             maxRetries: 0,
             reviewSnapshot: reviewSnapshot.snapshot,
-            usage: unavailableRunnerSessionUsage({
-              runner,
-              runnerSessionId: reviewerSessionId ?? null,
-              runnerSessionPath: null,
-              error: 'Native reviewer usage accounting is unavailable',
-            }),
+            usage,
             attempts: [
               {
                 mode: 'cold',
@@ -1015,6 +1028,7 @@ async function runNativeReviewAttempt(
                 issues: feedback.issues,
                 unresolvedCount: feedback.issues.length,
                 validationDepth,
+                usage,
                 reviewSnapshot: reviewSnapshot.snapshot,
                 artifactPaths,
                 startedAt,
@@ -1033,6 +1047,13 @@ async function runNativeReviewAttempt(
         {
           id: contextId,
           status: feedback.incomplete ? 'blocked' : 'complete',
+          usage,
+          ...(usage.runnerSessionPath
+            ? {
+                runnerSessionPath: usage.runnerSessionPath,
+                runnerSessionCapturedAt: usage.measuredAt,
+              }
+            : {}),
           lastSignalAt: completedAt,
           reviewResultValidatedAt: feedback.incomplete ? undefined : completedAt,
           // Keep the immutable review input with validation until the pipeline row is written.
@@ -1068,7 +1089,7 @@ async function runNativeReviewAttempt(
         windowName: contextId,
         slotId: vars.slotId,
         runnerSessionId: context.runnerSessionId,
-        runnerSessionPath: null,
+        runnerSessionPath: usage.runnerSessionPath ?? null,
         lastLoopNumber: loopNumber,
         lastReviewedHeadSha: reviewSnapshot.snapshot.headSha!,
       });
@@ -1101,12 +1122,7 @@ async function runNativeReviewAttempt(
         ...(recordedFallback ? { fallback: recordedFallback } : {}),
       },
       reviewSnapshot: reviewSnapshot.snapshot,
-      usage: unavailableRunnerSessionUsage({
-        runner,
-        runnerSessionId: context.runnerSessionId ?? null,
-        runnerSessionPath: null,
-        error: 'Native reviewer usage accounting is unavailable',
-      }),
+      usage,
       artifactPaths,
       taskProgressArtifactPath: persisted.taskProgressArtifactPath,
       startedAt,
@@ -1189,6 +1205,53 @@ async function runNativeReviewAttempt(
           `${failure instanceof Error ? failure.message : String(failure)}; reviewer process cleanup is unconfirmed`,
           { cause: primaryFailure },
         );
+      }
+    }
+    // Failed/no-verdict conversations still consumed tokens. Capture only a settled,
+    // current binding; an uncertain or superseded attempt remains an offline repair.
+    if (
+      stopped &&
+      !isUncertainReviewerOperation(failure) &&
+      context?.nativeSession &&
+      context.runnerSessionId &&
+      nativeReviewOperationIsCurrent()
+    ) {
+      try {
+        const captured = context;
+        const usage =
+          measuredUsage ??
+          (await extractNativeAgentSessionUsage({
+            vars,
+            runner,
+            runnerSessionId: captured.runnerSessionId ?? null,
+            runnerSessionPath: captured.runnerSessionPath,
+            nativeSession: captured.nativeSession,
+          }));
+        await withNativeReviewMutation(() =>
+          upsertAgentContext(
+            runId,
+            'review',
+            { id: contextId },
+            {
+              guard: async () => {
+                admit();
+                return true;
+              },
+              resolvePatch: (current) =>
+                current &&
+                current.runnerSessionId === captured.runnerSessionId &&
+                current.nativeSession?.sessionId === captured.nativeSession?.sessionId &&
+                current.nativeSession?.leaseId === captured.nativeSession?.leaseId &&
+                current.nativeSession?.generation === captured.nativeSession?.generation
+                  ? { usage: preferSessionUsage(current.usage, usage) }
+                  : null,
+              mirrorIf: (slot) => slot.current_run_id === runId,
+            },
+          ),
+        );
+        await persistRunNow(getRun(runId)!, 'native reviewer failure usage captured');
+      } catch {
+        // Supporting accounting must not replace the original lifecycle failure.
       }
     }
     // Every end here is no-verdict, a superseded attempt included (ADR-063 Amendment 2).
