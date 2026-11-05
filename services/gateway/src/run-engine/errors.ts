@@ -23,7 +23,7 @@ export const OWNED_WORKER_NOT_IDLE =
 
 export class OwnedWorkerBusyError extends BlockedRunError {
   constructor() {
-    super(OWNED_WORKER_NOT_IDLE);
+    super(`${OWNED_WORKER_NOT_IDLE}. Observed state: making-progress (busy).`);
     this.name = 'OwnedWorkerBusyError';
   }
 }
