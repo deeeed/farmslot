@@ -10,6 +10,8 @@ import type { ReviewSnapshotRange } from './snapshots.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
+const slotIo = await import('../core/slot-io.js');
+const taskSync = await import('../run-engine/task-sync.js');
 const checklist = await import('../tasks/checklist-target.js');
 const snapshots = await import('./snapshots.js');
 const feedback = await import('./feedback.js');
@@ -27,6 +29,9 @@ const { NativeWorkerOperationUncertainError } = await import('../runners/native/
 const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
 
 type Ending =
+  | 'never-started'
+  | 'missing-terminal'
+  | 'signal-read-error'
   | 'command-failed'
   | 'command-error'
   | 'timeout'
@@ -55,6 +60,10 @@ type Ending =
   | 'completion-invalid';
 let ending: Ending = 'verdict';
 let dispatchCalls = 0;
+let signalReadErrorProbes = 0;
+let markerPresent = true;
+let restoreTaskFails = false;
+const restoredTasks: string[] = [];
 let reattachProbes = 0;
 let timeline: { now: number; polls: number; stepMs?: number } | undefined;
 let configuredInactivityMinutes: number | undefined;
@@ -135,6 +144,10 @@ mock.module('../run-engine/run-monitor.js', {
           signal: { status: 'running', timestamp: new Date().toISOString() },
         };
       }
+      if (ending === 'signal-read-error' && ++signalReadErrorProbes === 1)
+        return { ok: false, code: 'missing', message: 'Failed to read SIGNAL.json: Node timeout' };
+      if (ending === 'missing-terminal')
+        return { ok: false, code: 'missing', message: 'review signal missing' };
       if (timeline) {
         if (ending !== 'inactive' && timeline.polls >= 4) return { ok: true };
         return {
@@ -199,6 +212,7 @@ mock.module('../runners/native/worker.js', {
       if (stopFails) throw new Error('native worker stop is unconfirmed');
     },
     dispatchNativeWorker: async (input: { runId: string; contextId: string }) => {
+      assert.equal(markerPresent, true, 'reviewer launched without its retained task marker');
       dispatchCalls++;
       const current = getRun(input.runId)!.agentContexts?.find(
         (entry) => entry.id === input.contextId,
@@ -326,10 +340,12 @@ mock.module('../runners/native/worker-control.js', {
         return {
           session: { state: 'running' },
           commands:
-            ending !== 'inactive' && timeline.polls >= 4
-              ? [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }]
-              : [],
-          events,
+            ending === 'never-started'
+              ? [{ commandId: binding.commandId, state: 'accepted', accepted: true }]
+              : ending !== 'inactive' && timeline.polls >= 4
+                ? [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }]
+                : [],
+          events: ending === 'never-started' ? [] : events,
           cursor: timeline.polls,
           hasMore: ending === 'paged-tools' && timeline.polls === 1,
         };
@@ -419,6 +435,18 @@ mock.module('../tasks/checklist-target.js', {
     ...checklist,
     restoreWorkerChecklistTargetFromSlot: noop,
     syncChecklistTargetForRole: noop,
+  },
+});
+mock.module('../core/slot-io.js', {
+  namedExports: { ...slotIo, slotFileExists: async () => markerPresent },
+});
+mock.module('../run-engine/task-sync.js', {
+  namedExports: {
+    ...taskSync,
+    copyTaskFilesToSlot: async (runId: string) => {
+      restoredTasks.push(runId);
+      if (!restoreTaskFails) markerPresent = true;
+    },
   },
 });
 mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop } });
@@ -541,9 +569,12 @@ const review = (runId: string) =>
     model: 'opus',
     taskDir: 'tasks/review',
     runId,
-    reviewTimeoutMs: ['timeout', 'completion-invalid-idle', 'completion-interrupted'].includes(
-      ending,
-    )
+    reviewTimeoutMs: [
+      'timeout',
+      'missing-terminal',
+      'completion-invalid-idle',
+      'completion-interrupted',
+    ].includes(ending)
       ? 0
       : timeline
         ? (ending === 'inactive' ? 60 : 30) * 60_000
@@ -553,6 +584,45 @@ const review = (runId: string) =>
     mode: 'cold',
     reviewId: `pipeline-review-${runId}`,
   });
+
+test('an existing prepared task is not recopied for a new reviewer', async (t) => {
+  ending = 'verdict';
+  markerPresent = true;
+  const run = await nativeRun(t);
+  const before = restoredTasks.length;
+  await review(run.id);
+  assert.equal(restoredTasks.length, before);
+});
+
+test('a review on a released checkout restores the prepared task before launching', async (t) => {
+  ending = 'verdict';
+  markerPresent = false;
+  restoredTasks.length = 0;
+  t.after(() => {
+    markerPresent = true;
+  });
+  const run = await nativeRun(t);
+  const before = dispatchCalls;
+  const result = await review(run.id);
+  assert.equal(result.verdict, 'issues');
+  assert.deepEqual(restoredTasks, [run.id]);
+  assert.equal(dispatchCalls, before + 1);
+});
+
+test('a missing retained marker refuses review before spending an attempt', async (t) => {
+  ending = 'verdict';
+  markerPresent = false;
+  restoreTaskFails = true;
+  t.after(() => {
+    markerPresent = true;
+    restoreTaskFails = false;
+  });
+  const run = await nativeRun(t);
+  const before = dispatchCalls;
+  await assert.rejects(review(run.id), /prepared task marker is missing/);
+  assert.equal(dispatchCalls, before);
+  assert.equal(getRun(run.id)?.reviewRoundAdmissions?.length ?? 0, 0);
+});
 
 test('an eval pins the blind range and records its only judge before settling the reviewer', async (t) => {
   ending = 'verdict';
@@ -772,6 +842,35 @@ test('restart recovery enforces the completion inactivity limit and drains fresh
   assert.equal(completionCommands.length, 1);
 });
 
+test('an accepted reviewer with no native turn reports never started', async (t) => {
+  ending = 'never-started';
+  const clock = { now: 0, polls: 0 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /never started a turn/);
+  assert.equal(clock.polls, 1);
+});
+
+test('a completed review survives a transient signal read failure', async (t) => {
+  ending = 'signal-read-error';
+  signalReadErrorProbes = 0;
+  const run = await nativeRun(t);
+  const before = dispatchCalls;
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(signalReadErrorProbes, 2);
+  assert.equal(dispatchCalls, before + 1);
+});
+
+test('a completed native turn reports unavailable terminal signal at its existing deadline', async (t) => {
+  ending = 'missing-terminal';
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /completed its turn but.*terminal signal/);
+});
+
 test('a native reviewer with no checklist or tool progress fails at ten idle minutes, before a one-hour budget', async (t) => {
   ending = 'inactive';
   const clock = { now: 0, polls: 0 };
@@ -849,7 +948,7 @@ test('a previous native command cannot keep the current reviewer alive', async (
     timeline = undefined;
   });
   const run = await nativeRun(t);
-  await assert.rejects(review(run.id), /no checklist or tool progress for 600000ms/);
+  await assert.rejects(review(run.id), /never started a turn/);
   assert.equal(clock.polls, 1);
 });
 
@@ -880,7 +979,7 @@ test('a recovered native command gets its startup grace from its verified accept
 });
 
 for (const [end, reason] of [
-  ['timeout', /no checklist or tool progress/],
+  ['timeout', /never started a turn/],
   ['exit', /reviewer process exited/],
 ] as const) {
   test(`a reviewer ${end} settles its admitted round no-verdict`, async (t) => {

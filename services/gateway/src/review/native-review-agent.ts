@@ -15,6 +15,7 @@ import { resolveEffectiveDomain } from '@farmslot/slot-config';
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { slotFileExists } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { readEvalReviewContribution, recordEvalJudgeResult } from '../evals/judge.js';
 import {
@@ -26,6 +27,7 @@ import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
+import { copyTaskFilesToSlot } from '../run-engine/task-sync.js';
 import { validateNativeRunner } from '../runners/native/manager.js';
 import { nativeReviewerOwner, nativeReviewerResultSchema } from '../runners/native/review-owner.js';
 import { cancelNativeWorkerContext, dispatchNativeWorker } from '../runners/native/worker.js';
@@ -393,6 +395,14 @@ async function runNativeReviewAttempt(
   try {
     const reviewSnapshot = await withNativeReviewMutation(async () => {
       admit();
+      if (!recovering && !(await slotFileExists(vars, `${vars.remoteRepo}/${taskDir}/mark`))) {
+        // Release removes task scaffolding. A rebound checkout needs the original
+        // prepared task, including its frozen marker and evidence, before review.
+        await copyTaskFilesToSlot(runId);
+        admit();
+        if (!(await slotFileExists(vars, `${vars.remoteRepo}/${taskDir}/mark`)))
+          throw new Error(`Native review prepared task marker is missing: ${taskDir}/mark`);
+      }
       const baseRef = (await stackPrBase(original)) ?? original.repeatReviewContext?.baseRef;
       if (
         retained &&
@@ -780,6 +790,7 @@ async function runNativeReviewAttempt(
     let deadline = monitoringStartedAt + input.reviewTimeoutMs;
     let lastProgressAt = monitoringStartedAt;
     let observedProgress = false;
+    let turnStarted = false;
     let eventCursor: number | undefined;
     // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on and its
     // progress waits on the node. Only a node silent for a whole inactivity window fails it.
@@ -840,6 +851,8 @@ async function runNativeReviewAttempt(
           event.commandId !== context.nativeSession!.commandId
         )
           continue;
+        if (['turn.started', 'text.delta', 'tool.started', 'tool.completed'].includes(event.type))
+          turnStarted = true;
         if (event.type === 'command.accepted') {
           // Recovery preserves the admitted attempt and can accept a new command
           // long after its first process. Use that command's real startup clock.
@@ -887,6 +900,7 @@ async function runNativeReviewAttempt(
       if (completion === 'continued') {
         context = admit().agentContexts!.find((candidate) => candidate.id === contextId)!;
         reviewBinding = context.nativeSession!;
+        turnStarted = false;
         eventCursor = undefined;
         continue;
       }
@@ -914,6 +928,21 @@ async function runNativeReviewAttempt(
       if (snapshot.hasMore) continue;
       const now = Date.now();
       if (now - lastProgressAt >= inactivityTimeoutMs || (now >= deadline && !observedProgress)) {
+        if (!turnStarted && (!command || !['completed', 'failed'].includes(command.state)))
+          throw new Error(
+            `Native reviewer never started a turn within ${now - monitoringStartedAt}ms ` +
+              `(session ${reviewBinding.sessionId}; command ${context.nativeSession!.commandId}; ` +
+              `receipt ${command?.state ?? 'missing'})`,
+          );
+        if (
+          command?.state === 'completed' &&
+          command.outcome === 'completed' &&
+          !probe.ok &&
+          probe.code === 'missing'
+        )
+          throw new Error(
+            `Native reviewer completed its turn but its terminal signal remains unavailable: ${probe.message}`,
+          );
         throw new Error(
           `Native reviewer made no checklist or tool progress for ${now - lastProgressAt}ms ` +
             `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,

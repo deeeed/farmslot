@@ -6,6 +6,7 @@ import type { AgentContext, Principal, ReviewDiffSnapshot } from '@farmslot/prot
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
 const exec = await import('../core/exec.js');
+const slotIo = await import('../core/slot-io.js');
 const checklist = await import('../tasks/checklist-target.js');
 const snapshots = await import('./snapshots.js');
 const reviewAgent = await import('./review-agent.js');
@@ -47,6 +48,10 @@ mock.module('../core/config.js', {
     loadProjectVars: async () => ({ projectJson: {} }),
     loadSlotVars: async () => vars,
   },
+});
+// Warm-lineage scenarios start with their prepared task already staged.
+mock.module('../core/slot-io.js', {
+  namedExports: { ...slotIo, slotFileExists: async () => true },
 });
 mock.module('../core/exec.js', {
   namedExports: {
