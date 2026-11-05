@@ -314,3 +314,52 @@ test('unrelated configuration and unchanged project facts keep the same picker a
   resolveEngineDecision(id, 'abort');
   assert.equal(await result, 'abort');
 });
+
+test('a relevant configuration change reloads selection policy before comparing availability', async (t) => {
+  const h = fixture(t);
+  let policy = 'on-request';
+  let configured = 'on-request';
+  const result = waitForSlotPickerChange(
+    h.run.id,
+    0,
+    new Set(['owned-slot']),
+    'on-request',
+    async (reload?: boolean) => {
+      if (reload) policy = configured;
+      return policy;
+    },
+    h.decide,
+    h.revisions,
+  );
+  await h.waiting();
+  const id = h.pending()!.id;
+  configured = 'any';
+  h.revisions.advance({ family: 'configuration', scope: 'farm', project: h.run.project });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(
+    hasEngineDecisionWaiter(id),
+    false,
+    'A changed dispatch policy must wake normal selection',
+  );
+  assert.equal(await result, 'retry');
+});
+
+test('project inventory notifications include a newly eligible slot outside the original id set', async (t) => {
+  const h = fixture(t);
+  const result = waitForSlotPickerChange(
+    h.run.id,
+    0,
+    new Set(['owned-slot']),
+    'held',
+    h.read,
+    h.decide,
+    h.revisions,
+  );
+  await h.waiting();
+  const id = h.pending()!.id;
+  h.ready();
+  h.revisions.advance({ family: 'slots', scope: 'farm', project: h.run.project });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(hasEngineDecisionWaiter(id), false, 'Refresh the live project inventory');
+  assert.equal(await result, 'retry');
+});

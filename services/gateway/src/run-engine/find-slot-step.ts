@@ -86,6 +86,7 @@ import {
   slotModelNodeBlocker,
   slotRepoBlocker,
   slotScore,
+  type SlotScoringProjectConfig,
   type SlotSelectionOptions,
   slotSelectionOptionsFor,
   validateSlotForDispatch,
@@ -1115,13 +1116,23 @@ function readSlotPickerFleet(): Promise<FleetStatus> {
   }));
 }
 
+let pickerPoliciesRead: Promise<Record<string, SlotScoringProjectConfig>> | undefined;
+
+function readSlotPickerPolicies(): Promise<Record<string, SlotScoringProjectConfig>> {
+  return (pickerPoliciesRead ??= loadProjectConfigs()
+    .then(projectConfigsFromProjects)
+    .finally(() => {
+      pickerPoliciesRead = undefined;
+    }));
+}
+
 /** Keep one decision asleep until its project's observed availability actually changes. */
 export async function waitForSlotPickerChange(
   runId: string,
   generation: number,
   slotIds: ReadonlySet<string>,
   initialAvailability: string,
-  readAvailability: () => Promise<string>,
+  readAvailability: (reloadSelectionPolicy: boolean) => Promise<string>,
   decide: (onWaiting: (decisionId: string) => void) => Promise<string>,
   revisions: GatewayResourceRevisions = resourceRevisions,
 ): Promise<string> {
@@ -1129,6 +1140,7 @@ export async function waitForSlotPickerChange(
   let active = true;
   let refreshing = false;
   let dirty = false;
+  let configurationDirty = false;
   let ownedDecisionId: string | undefined;
   let rejectRefresh!: (error: unknown) => void;
   const failure = new Promise<never>((_resolve, reject) => {
@@ -1143,12 +1155,14 @@ export async function waitForSlotPickerChange(
     try {
       do {
         dirty = false;
+        const reloadSelectionPolicy = configurationDirty;
+        configurationDirty = false;
         if (runSupersededSince(getRun(runId), generation)) {
           stop();
           return;
         }
         if (!hasEngineDecisionWaiter(ownedDecisionId)) return;
-        const availability = await readAvailability();
+        const availability = await readAvailability(reloadSelectionPolicy);
         if (!active) return;
         if (runSupersededSince(getRun(runId), generation)) {
           stop();
@@ -1177,12 +1191,17 @@ export async function waitForSlotPickerChange(
       !changes.some(
         ({ key }) =>
           (key.family === 'slot' && slotIds.has(key.slotId)) ||
+          (key.family === 'slots' && key.project === current?.project) ||
           (key.family === 'configuration' && (!key.project || key.project === current?.project)),
       )
     )
       return;
     // Farm configuration keys include pool membership; compare observed eligibility facts
     // before retrying, so another project's templates/learnings do not rerun selection.
+    configurationDirty ||= changes.some(
+      ({ key }) =>
+        key.family === 'configuration' && (!key.project || key.project === current?.project),
+    );
     dirty = true;
     void refresh();
   });
@@ -2077,9 +2096,11 @@ async function findSlotAttempt(
       reason,
     };
 
+    let currentSelectionPolicy = projectConfigs[run.project];
     const availability = (snapshot: FleetStatus) =>
-      canonicalResourceJson(
-        snapshot.slots
+      canonicalResourceJson({
+        policy: currentSelectionPolicy,
+        slots: snapshot.slots
           .filter(
             (slot) =>
               slot.project === run.project &&
@@ -2118,7 +2139,7 @@ async function findSlotAttempt(
               : undefined,
           }))
           .sort((a, b) => a.slot.localeCompare(b.slot)),
-      );
+      });
     // A resource change retries the existing selector; it never turns an automatic choice
     // into an operator pin or skips the source, pressure, safe-reuse and claim guards.
     const actionId = await awaitAsQueueTime(runId, 'find-slot', () =>
@@ -2127,7 +2148,14 @@ async function findSlotAttempt(
         generation,
         new Set(projectSlots.map((slot) => slot.slot)),
         availability(fleet),
-        async () => availability(await readSlotPickerFleet()),
+        async (reloadSelectionPolicy) => {
+          const [snapshot, policies] = await Promise.all([
+            readSlotPickerFleet(),
+            reloadSelectionPolicy ? readSlotPickerPolicies() : undefined,
+          ]);
+          if (policies) currentSelectionPolicy = policies[run.project];
+          return availability(snapshot);
+        },
         (onWaiting) =>
           createEngineDecision(
             runId,
