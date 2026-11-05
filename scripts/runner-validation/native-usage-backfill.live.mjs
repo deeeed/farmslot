@@ -89,7 +89,21 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
         nativeSession: { sessionId: 'host', ownerPrincipalId: 'owner', executionNodeId: 'local' },
       },
     ],
-    steps: [{ outputs: { usage: legacy } }],
+    steps: [
+      {
+        name: 'write-task',
+        outputs: {
+          usage: legacy,
+          summaryLlm: {
+            provider: 'openai',
+            model: 'fixture',
+            inputTokens: 1,
+            outputTokens: 2,
+            durationMs: 3,
+          },
+        },
+      },
+    ],
     engineState: { publishGate: { reviews: [{ id: 'review', usage: legacy }] } },
     learning: { proof3: ['original proof'], 'pipeline-review-loop-1': { verdict: 'pass' } },
     custom: ['do not drop'],
@@ -101,6 +115,12 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
       runnerSessionId: 'earlier-conversation',
       customContextField: 'preserve',
     });
+  document.agentContexts[0].usage = { ...legacy, customReceiptNote: 'preserve receipt note' };
+  document.agentContexts.push({
+    ...document.agentContexts[0],
+    status: 'failed',
+    usage: { ...legacy, customReceiptNote: 'separate context note' },
+  });
   const file = path.join(runs, 'run.json');
   const original = JSON.stringify(document, null, 2);
   await writeFile(file, original);
@@ -141,6 +161,13 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
   assert.equal(changed.agentContexts[2].customContextField, 'preserve');
   assert.equal(changed.engineState.publishGate.reviews.length, 1);
   assert.equal(JSON.parse(await readFile(report, 'utf8')).unrepresented.length, 0);
+  assert.equal(changed.agentContexts[0].usage.customReceiptNote, 'preserve receipt note');
+  assert.equal(changed.agentContexts.at(-1).usage.customReceiptNote, 'separate context note');
+  assert.ok(
+    JSON.parse(await readFile(report, 'utf8')).captureGaps.some(
+      (gap) => gap.sessionId === null && gap.role === 'write-task',
+    ),
+  );
   assert.deepEqual(changed.learning, document.learning);
   assert.deepEqual(changed.custom, document.custom);
   assert.equal(changed.steps[0].outputs.usage.source, 'runner-transcript');

@@ -502,7 +502,7 @@ const usageReads: Array<{
 mock.module('../runtime/session-usage.js', {
   namedExports: {
     ...accounting,
-    extractNativeReviewerSessionUsage: async (input: {
+    extractNativeAgentSessionUsage: async (input: {
       runner: string;
       runnerSessionId: string | null;
       nativeSession?: { executionNodeId: string };
@@ -1102,6 +1102,17 @@ for (const runner of ['claude', 'codex'])
     const result = await review(run.id, runner);
     const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
     assert.deepEqual(context.usage, result.usage);
+    const receipt = getRun(run.id)!.sessionUsage?.find(
+      (row) => row.runnerSessionId === context.runnerSessionId,
+    );
+    assert.ok(receipt, 'Every reviewer conversation survives on the durable session ledger');
+    assert.equal(receipt.role, 'review');
+    assert.equal(receipt.flowType, 'dev');
+    assert.equal(receipt.runId, run.id);
+    assert.equal(receipt.costStatus, 'estimated');
+    assert.equal(receipt.source, 'runner-transcript');
+    assert.equal(receipt.error, undefined);
+    assert.ok(typeof receipt.durationMs === 'number');
     assert.equal(result.usage?.source, 'runner-transcript');
     assert.equal(result.usage?.runner, runner);
     assert.equal(result.usage?.runnerSessionId, 'saved-review-conversation');

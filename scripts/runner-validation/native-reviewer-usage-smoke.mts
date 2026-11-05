@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -78,7 +77,7 @@ try {
         .map((pack) => ({ ...pack, projectJson: { ...pack.projectJson, slot_actions: actions } })),
     seeds: { [PIPE_PROJECT]: SEED },
     slotFiles: slotCli(root),
-    cliSnapshots: path.join(os.homedir(), 'dev/proof/cx-f404-cli-snapshots'),
+    cliSnapshots: path.resolve(process.argv[3] ?? path.join(evidence, 'cli-snapshots')),
     ownerTag: 'f404-reviewer-usage',
     reaper,
     log: async (event, detail) => console.log(event, JSON.stringify(detail ?? {})),

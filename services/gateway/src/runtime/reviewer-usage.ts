@@ -11,13 +11,12 @@ export function preferSessionUsage(
     previous.runnerSessionId !== next.runnerSessionId
   )
     return next;
-  const verified = (usage: RunnerSessionUsage) =>
-    usage.source === 'runner-transcript' && !usage.error;
+  const verified = (usage: RunnerSessionUsage) => usage.source !== 'unavailable' && !usage.error;
   if (verified(previous) !== verified(next)) return verified(previous) ? previous : next;
   const before = previous.totalTokens ?? -1;
   const after = next.totalTokens ?? -1;
   if (before !== after) return before > after ? previous : next;
-  return previous.measuredAt >= next.measuredAt ? previous : next;
+  return Date.parse(previous.measuredAt) >= Date.parse(next.measuredAt) ? previous : next;
 }
 
 /** Result rows retain presentation priority on equal receipts; no verdicts are synthesized. */
@@ -41,6 +40,14 @@ export function reviewerUsageReceipts(
         ]
       : [],
   );
+  for (const usage of run.sessionUsage ?? []) {
+    if (usage.role === 'review')
+      candidates.push({
+        id: usage.contextIds?.[0] ?? usage.runnerSessionId ?? 'review',
+        model: usage.model ?? null,
+        usage,
+      });
+  }
   for (const context of run.agentContexts ?? []) {
     if (
       context.role !== 'review' ||

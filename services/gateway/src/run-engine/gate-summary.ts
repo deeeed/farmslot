@@ -32,6 +32,12 @@ import {
 import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { listRuns } from '../runs/store.js';
 import { reviewerUsageReceipts } from '../runtime/reviewer-usage.js';
+import {
+  isHelperSession,
+  isReviewSession,
+  runSessionUsageReceipts,
+  sessionUsageContributions,
+} from '../runtime/session-usage-selection.js';
 
 import { publicationReviewMatchesPreparedPackage } from './gate-policy.js';
 
@@ -308,44 +314,55 @@ export function aggregateFamilyChainedLoops(
   run: Run,
   familyRuns: readonly Run[],
 ): GateTokenSummary['familyChainedLoops'] {
-  const loops = familyRuns
-    .filter(
-      (other) =>
-        other.id !== run.id &&
-        FIX_LOOP_FLOWS.has(other.flowType) &&
-        num(other.metrics?.sessionTotalTokens) > 0,
-    )
-    .map((other) => ({
-      runId: other.id,
-      flowType: other.flowType,
-      role: 'fix-loop' as const,
-      model: other.metrics.actualModel ?? other.metrics.model ?? null,
-      tokens: {
-        input: num(other.metrics.sessionInputTokens),
-        output: num(other.metrics.sessionOutputTokens),
-        total: num(other.metrics.sessionTotalTokens),
-        cacheRead: num(other.metrics.sessionCacheRead),
-        cacheCreation: num(other.metrics.sessionCacheCreation),
+  const family = familyRuns.filter(
+    (other) => other.id !== run.id && FIX_LOOP_FLOWS.has(other.flowType),
+  );
+  const contributions = sessionUsageContributions([run, ...family]);
+  const loops = family.flatMap((other) => {
+    const rows = contributions.get(other.id) ?? [];
+    const sum = (
+      field: 'inputTokens' | 'outputTokens' | 'totalTokens' | 'cacheRead' | 'cacheCreation',
+    ) => rows.reduce((total, row) => total + num(row[field]), 0);
+    if (sum('totalTokens') <= 0) return [];
+    const models = new Set(rows.map((row) => row.actualModel ?? row.model ?? null));
+    const sessionPath = rows.find((row) => row.runnerSessionPath)?.runnerSessionPath;
+    return [
+      {
+        runId: other.id,
+        flowType: other.flowType,
+        role: 'fix-loop' as const,
+        model: models.size === 1 ? [...models][0] : null,
+        tokens: {
+          input: sum('inputTokens'),
+          output: sum('outputTokens'),
+          total: sum('totalTokens'),
+          cacheRead: sum('cacheRead'),
+          cacheCreation: sum('cacheCreation'),
+        },
+        ...(sessionPath ? { perTurnSessionPath: sessionPath } : {}),
+        createdAt: other.createdAt,
       },
-      ...(other.metrics.runnerSessionPath
-        ? { perTurnSessionPath: other.metrics.runnerSessionPath }
-        : {}),
-      createdAt: other.createdAt,
-    }));
+    ];
+  });
   return loops.length ? loops : undefined;
 }
 
 /** Build the token-cost section, rolling up family fix-loops. */
 export function buildTokenSummary(run: Run): GateTokenSummary {
   const m = run.metrics;
+  const sessions = runSessionUsageReceipts(run);
+  const workerSessions = sessions.filter((row) => !isReviewSession(row) && !isHelperSession(row));
+  const workerTotal = (
+    field: 'inputTokens' | 'outputTokens' | 'cacheRead' | 'cacheCreation' | 'totalTokens' | 'turns',
+  ) => workerSessions.reduce((sum, row) => sum + num(row[field]), 0);
   const mainWorker = {
     model: workerModel(run),
-    input: num(m.sessionInputTokens),
-    output: num(m.sessionOutputTokens),
-    cacheRead: num(m.sessionCacheRead),
-    cacheCreation: num(m.sessionCacheCreation),
-    total: num(m.sessionTotalTokens),
-    turns: num(m.sessionTurns),
+    input: workerTotal('inputTokens'),
+    output: workerTotal('outputTokens'),
+    cacheRead: workerTotal('cacheRead'),
+    cacheCreation: workerTotal('cacheCreation'),
+    total: workerTotal('totalTokens'),
+    turns: workerTotal('turns'),
   };
 
   const reviews = reviewerUsageReceipts(run);
@@ -364,30 +381,32 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
   const family = run.familyId ? listRuns({ familyId: run.familyId }).runs : [];
   const familyChainedLoops = aggregateFamilyChainedLoops(run, family) ?? [];
 
-  const familyTotalTokens =
-    mainWorker.total +
-    reviewTokens.reduce((sum, r) => sum + r.total, 0) +
-    familyChainedLoops.reduce((sum, c) => sum + c.tokens.total, 0);
-
+  const familyRows = [
+    ...sessionUsageContributions([
+      run,
+      ...family.filter((other) => other.id !== run.id && FIX_LOOP_FLOWS.has(other.flowType)),
+    ]).values(),
+  ].flat();
+  const familyTotalTokens = familyRows.reduce((sum, row) => sum + num(row.totalTokens), 0);
   const runnerSessionPaths = [
-    m.runnerSessionPath,
-    ...reviews.map((r) => r.usage?.runnerSessionPath),
-    ...familyChainedLoops.map((c) => c.perTurnSessionPath),
-  ].filter((p): p is string => typeof p === 'string' && p.length > 0);
-
-  const byModel = rollupByModel([
-    { ...mainWorker },
-    ...reviewTokens.map((r) => ({
-      model: r.model,
-      input: r.input,
-      output: r.output,
-      cacheRead: r.cacheRead,
-      cacheCreation: r.cacheCreation,
-      total: r.total,
-      turns: 0,
+    ...new Set(
+      familyRows
+        .map((row) => row.runnerSessionPath)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0),
+    ),
+  ];
+  const byModel = rollupByModel(
+    familyRows.map((row) => ({
+      model: row.actualModel ?? row.model ?? null,
+      input: num(row.inputTokens),
+      output: num(row.outputTokens),
+      cacheRead: num(row.cacheRead),
+      cacheCreation: num(row.cacheCreation),
+      total: num(row.totalTokens),
+      turns:
+        row.runId === run.id && !isReviewSession(row) && !isHelperSession(row) ? num(row.turns) : 0,
     })),
-    ...familyChainedLoops.map((c) => ({ model: c.model, ...c.tokens, turns: 0 })),
-  ]);
+  );
 
   // Re-work = the post-gate family fix-loops plus human nudges on the main run.
   const reWorkTokens = familyChainedLoops.reduce((sum, c) => sum + c.tokens.total, 0);

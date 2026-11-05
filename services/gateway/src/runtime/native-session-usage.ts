@@ -6,6 +6,7 @@ import type { NativeWorkerSessionBinding, RunnerSessionUsage } from '@farmslot/p
 import type { SlotVars } from '../core/config.js';
 import {
   nativeSessionUsageArgv,
+  type NativeSessionUsageIdentity,
   type NativeSessionUsageRequest,
 } from '../runners/native-session-usage-command.js';
 import { getRunnerSessionUsageProvider } from '../runners/registry.js';
@@ -13,16 +14,16 @@ import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './session-usage-result.js';
 
 const execute = promisify(execFile);
-export interface NativeReviewerUsageInput {
-  vars: SlotVars;
+export interface NativeAgentUsageInput {
+  vars: Pick<SlotVars, 'remoteRepo' | 'slotId'> & Partial<SlotVars>;
   runner: string;
   runnerSessionId: string | null;
   runnerSessionPath?: string | null;
-  nativeSession?: NativeWorkerSessionBinding;
+  nativeSession?: NativeSessionUsageIdentity & Partial<NativeWorkerSessionBinding>;
 }
 
-export async function extractNativeReviewerSessionUsage(
-  input: NativeReviewerUsageInput,
+export async function extractNativeAgentSessionUsage(
+  input: NativeAgentUsageInput,
 ): Promise<RunnerSessionUsage> {
   const { runner, runnerSessionId, nativeSession, vars } = input;
   const unavailable = (error: string) =>

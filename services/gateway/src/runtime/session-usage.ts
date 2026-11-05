@@ -106,6 +106,10 @@ async function archivedSessionUsage(
 export async function extractRunWorkerSessionUsage(
   run: Run,
   vars?: SlotVars,
+  record?: (
+    session: import('../runners/session-usage-provider.js').RecoveredUsageSession,
+    usage: RunnerSessionUsage,
+  ) => void,
 ): Promise<RunnerSessionUsage | null> {
   const slotId = run.slotId;
   if (!slotId || usesReviewChainSessionTotal(run)) return null;
@@ -130,6 +134,7 @@ export async function extractRunWorkerSessionUsage(
       return archivedSessionUsage(run, archived, session);
     }),
   );
+  usages.forEach((usage, index) => record?.(unique[index], usage));
   const failed = usages.find((usage) => usage.error || usage.totalTokens == null);
   if (failed)
     return unavailableRunnerSessionUsage({
@@ -207,4 +212,4 @@ export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
   }
 }
 
-export { extractNativeReviewerSessionUsage } from './native-reviewer-usage.js';
+export { extractNativeAgentSessionUsage } from './native-session-usage.js';

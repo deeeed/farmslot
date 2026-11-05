@@ -657,6 +657,31 @@ export interface ReviewFixDeltaSnapshot extends ReviewDiffSnapshot {
 }
 
 export interface RunnerSessionUsage {
+  /** Pipeline receipt metadata; optional only for older records. */
+  model?: string | null;
+  effort?: string | null;
+  role?: string;
+  roles?: string[];
+  flowType?: FlowType | null;
+  runId?: string | null;
+  identityKind?: 'conversation' | 'request';
+  kind?: 'agent' | 'helper';
+  /** Correlates a helper's reservation with a subsequently returned native conversation. */
+  requestId?: string;
+  contextIds?: string[];
+  slotId?: string | null;
+  /** Exact source retained when the owning context is replayed or replaced. */
+  nativeSession?: Pick<
+    import('./agents.js').NativeWorkerSessionBinding,
+    'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
+  >;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  durationMs?: number | null;
+  costStatus?: 'estimated' | 'unpriced';
+  costReason?: string;
+  captureGaps?: string[];
+  outcome?: 'completed' | 'failed';
   runnerSessionId?: string | null;
   runnerSessionPath?: string | null;
   runner?: string | null;
@@ -670,7 +695,7 @@ export interface RunnerSessionUsage {
   totalTokens?: number | null;
   costUsd?: number | null;
   measuredAt: string;
-  source: 'runner-transcript' | 'unavailable';
+  source: 'runner-transcript' | 'provider-response' | 'unavailable';
   /** What this measurement covers. `session-total` is the runner transcript total at measurement time. */
   scope?: 'session-total';
   error?: string;
@@ -3017,6 +3042,8 @@ export interface Run {
   taskFile: string | null;
   activeTaskFile?: string; // currently active task md (TASK.md, REVIEW.md, REVIEW-FIX.md)
   agentContexts?: AgentContext[];
+  /** All known pipeline conversations, retained across context replacement and replay. */
+  sessionUsage?: RunnerSessionUsage[];
   prNumber?: number;
   /**
    * Merge outcome for `prNumber`, recorded by ci-watch when it observes the PR

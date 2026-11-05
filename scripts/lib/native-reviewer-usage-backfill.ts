@@ -1,15 +1,19 @@
-import type { RunnerSessionUsage } from '@farmslot/protocol';
+import { normalizeFlowType, type RunnerSessionUsage } from '@farmslot/protocol';
 
 import type {
   NativeSessionUsageIdentity,
   NativeSessionUsageRequest,
 } from '../../services/gateway/src/runners/native-session-usage-command.js';
+import { upsertSessionUsage } from '../../services/gateway/src/runtime/agent-session-rows.js';
 import { preferSessionUsage } from '../../services/gateway/src/runtime/reviewer-usage.js';
 
 export const LEGACY_REVIEW_USAGE_ERROR = 'Native reviewer usage accounting is unavailable';
 export const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 export const usageKey = (runner: string, session: string) => JSON.stringify([runner, session]);
+const string = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+const counter = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 
 function legacyUsage(
   value: unknown,
@@ -22,35 +26,15 @@ function legacyUsage(
     typeof value.runnerSessionId === 'string'
   );
 }
-
 export function visitLegacyUsage(
   document: unknown,
   found: (usage: { runner: string; runnerSessionId: string }) => void,
 ): void {
   if (legacyUsage(document)) found(document);
-  else if (Array.isArray(document)) for (const value of document) visitLegacyUsage(value, found);
+  else if (Array.isArray(document)) document.forEach((value) => visitLegacyUsage(value, found));
   else if (object(document))
-    for (const value of Object.values(document)) visitLegacyUsage(value, found);
+    Object.values(document).forEach((value) => visitLegacyUsage(value, found));
 }
-
-function representedKeys(document: unknown): Set<string> {
-  const keys = new Set<string>();
-  const visit = (value: unknown): void => {
-    if (
-      object(value) &&
-      value.source === 'runner-transcript' &&
-      !value.error &&
-      typeof value.runner === 'string' &&
-      typeof value.runnerSessionId === 'string'
-    )
-      keys.add(usageKey(value.runner, value.runnerSessionId));
-    else if (Array.isArray(value)) for (const item of value) visit(item);
-    else if (object(value)) for (const item of Object.values(value)) visit(item);
-  };
-  visit(document);
-  return keys;
-}
-
 function identity(value: unknown): NativeSessionUsageIdentity | undefined {
   if (
     !object(value) ||
@@ -66,61 +50,154 @@ function identity(value: unknown): NativeSessionUsageIdentity | undefined {
     ...(typeof value.stateDirectory === 'string' ? { stateDirectory: value.stateDirectory } : {}),
   };
 }
+function receipt(value: unknown): RunnerSessionUsage | undefined {
+  if (
+    !object(value) ||
+    !['runner-transcript', 'provider-response', 'unavailable'].includes(String(value.source)) ||
+    typeof value.runner !== 'string' ||
+    typeof value.runnerSessionId !== 'string' ||
+    typeof value.measuredAt !== 'string'
+  )
+    return;
+  const strings = (items: unknown): string[] | undefined =>
+    Array.isArray(items)
+      ? items.filter((item): item is string => typeof item === 'string')
+      : undefined;
+  return {
+    model: string(value.model),
+    effort: string(value.effort),
+    role: typeof value.role === 'string' ? value.role : undefined,
+    roles: strings(value.roles),
+    contextIds: strings(value.contextIds),
+    runId: string(value.runId),
+    flowType: typeof value.flowType === 'string' ? normalizeFlowType(value.flowType) : null,
+    runnerSessionPath: string(value.runnerSessionPath),
+    nativeSession: identity(value.nativeSession),
+    slotId: string(value.slotId),
+    identityKind:
+      value.identityKind === 'request'
+        ? 'request'
+        : value.identityKind === 'conversation'
+          ? 'conversation'
+          : undefined,
+    kind: value.kind === 'helper' ? 'helper' : value.kind === 'agent' ? 'agent' : undefined,
+    requestId: typeof value.requestId === 'string' ? value.requestId : undefined,
+    startedAt: string(value.startedAt),
+    completedAt: string(value.completedAt),
+    durationMs: counter(value.durationMs),
+    costStatus:
+      value.costStatus === 'estimated'
+        ? 'estimated'
+        : value.costStatus === 'unpriced'
+          ? 'unpriced'
+          : undefined,
+    costReason: typeof value.costReason === 'string' ? value.costReason : undefined,
+    captureGaps: strings(value.captureGaps),
+    outcome:
+      value.outcome === 'completed'
+        ? 'completed'
+        : value.outcome === 'failed'
+          ? 'failed'
+          : undefined,
+    source:
+      value.source === 'provider-response'
+        ? 'provider-response'
+        : value.source === 'runner-transcript'
+          ? 'runner-transcript'
+          : 'unavailable',
+    runner: value.runner,
+    runnerSessionId: value.runnerSessionId,
+    measuredAt: value.measuredAt,
+    actualModel: string(value.actualModel),
+    totalTokens: counter(value.totalTokens),
+    turns: counter(value.turns),
+    inputTokens: counter(value.inputTokens),
+    outputTokens: counter(value.outputTokens),
+    cacheRead: counter(value.cacheRead),
+    cacheCreation: counter(value.cacheCreation),
+    costUsd: counter(value.costUsd),
+    ...(typeof value.error === 'string' ? { error: value.error } : {}),
+  };
+}
+function retainedReceipts(document: unknown): Map<string, RunnerSessionUsage> {
+  const result = new Map<string, RunnerSessionUsage>();
+  const visit = (value: unknown): void => {
+    const parsed = receipt(value);
+    if (parsed) {
+      const key = usageKey(parsed.runner!, parsed.runnerSessionId!);
+      result.set(key, preferSessionUsage(result.get(key), parsed));
+    } else if (Array.isArray(value)) value.forEach(visit);
+    else if (object(value)) Object.values(value).forEach(visit);
+  };
+  visit(document);
+  return result;
+}
+function sources(document: Record<string, unknown>): Record<string, unknown>[] {
+  const entries = [
+    ...(Array.isArray(document.agentContexts) ? document.agentContexts : []),
+    ...(Array.isArray(document.sessionUsage) ? document.sessionUsage : []),
+  ].filter(object);
+  for (const value of retainedReceipts(document).values()) {
+    if (value.runId === document.id && typeof value.role === 'string') entries.push({ ...value });
+  }
+  const engine = object(document.engineState) ? document.engineState : undefined;
+  const gate = object(engine?.publishGate) ? engine.publishGate : undefined;
+  for (const review of Array.isArray(gate?.reviews) ? gate.reviews : []) {
+    if (!object(review)) continue;
+    if (object(review.usage))
+      entries.push({
+        ...review.usage,
+        role: 'review',
+        model: review.model ?? review.usage.model,
+        runner: review.usage.runner ?? review.runner,
+        runnerSessionId: review.usage.runnerSessionId ?? review.reviewerSessionId,
+      });
+    for (const attempt of Array.isArray(review.attempts) ? review.attempts : []) {
+      if (
+        object(attempt) &&
+        object(attempt.usage) &&
+        typeof attempt.usage.runnerSessionId === 'string'
+      )
+        entries.push({
+          ...attempt.usage,
+          role: 'review',
+          model: attempt.usage.model ?? review.model,
+        });
+    }
+  }
+  if (object(document.metrics)) entries.push({ ...document.metrics, role: 'worker' });
+  return entries;
+}
 
-/** Decode only migration-owned fields; all other learning/run content stays opaque. */
-export function nativeReviewerRequests(
+/** Exact context/receipt sources for all roles. Pool ownership locates terminal paths. */
+export function agentSessionRequests(
   document: unknown,
   repo: string,
   provider: (runner: string) => string | undefined,
+  nodeForSlot: (slotId: string) => string | undefined = () => undefined,
 ): NativeSessionUsageRequest[] {
-  if (
-    !object(document) ||
-    typeof document.id !== 'string' ||
-    !Array.isArray(document.agentContexts)
-  )
-    return [];
-  const contexts = document.agentContexts;
-  const represented = representedKeys(document);
+  if (!object(document) || typeof document.id !== 'string') return [];
+  const entries = sources(document);
+  const represented = retainedReceipts(document);
   const requests = new Map<string, NativeSessionUsageRequest>();
-  const candidates = new Map<string, { runner: string; runnerSessionId: string }>();
-  visitLegacyUsage(document, (usage) =>
-    candidates.set(usageKey(usage.runner, usage.runnerSessionId), usage),
-  );
-  for (const context of contexts)
-    if (
-      object(context) &&
-      context.role === 'review' &&
-      typeof context.reviewId === 'string' &&
-      typeof context.runner === 'string' &&
-      typeof context.runnerSessionId === 'string' &&
-      !represented.has(usageKey(context.runner, context.runnerSessionId)) &&
-      identity(context.nativeSession)
-    )
-      candidates.set(usageKey(context.runner, context.runnerSessionId), {
-        runner: context.runner,
-        runnerSessionId: context.runnerSessionId,
-      });
-  for (const usage of candidates.values()) {
-    const key = usageKey(usage.runner, usage.runnerSessionId);
-    const kind = provider(usage.runner);
+  for (const entry of entries) {
+    if (typeof entry.runner !== 'string' || typeof entry.runnerSessionId !== 'string') continue;
+    const key = usageKey(entry.runner, entry.runnerSessionId);
+    const known = represented.get(key);
+    if (known && known.source !== 'unavailable' && !known.error && known.totalTokens != null)
+      continue;
+    const kind = provider(entry.runner);
     if (!kind || requests.has(key)) continue;
-    const matches = contexts.filter(
-      (value) =>
-        object(value) &&
-        value.role === 'review' &&
-        value.runner === usage.runner &&
-        value.runnerSessionId === usage.runnerSessionId,
+    const matches = entries.filter(
+      (item) => item.runner === entry.runner && item.runnerSessionId === entry.runnerSessionId,
     );
-    const bindings = matches.flatMap((context) => {
-      const binding = object(context) && identity(context.nativeSession);
+    const bindings = matches.flatMap((item) => {
+      const binding = identity(item.nativeSession);
       return binding ? [binding] : [];
     });
     const binding = bindings[0];
-    const context = matches.find(
-      (value) => object(value) && typeof value.runnerSessionPath === 'string',
-    );
     if (
-      !binding ||
+      binding &&
       bindings.some(
         (other) =>
           other.ownerPrincipalId !== binding.ownerPrincipalId ||
@@ -128,72 +205,86 @@ export function nativeReviewerRequests(
       )
     )
       continue;
+    const path = matches.map((item) => string(item.runnerSessionPath)).find(Boolean);
+    const slotId = string(entry.slotId) ?? string(document.slotId) ?? document.id;
+    const node = binding?.executionNodeId ?? nodeForSlot(slotId);
+    if (!node || (!binding && !path)) continue;
     requests.set(key, {
       key,
-      runner: usage.runner,
+      runner: entry.runner,
       provider: kind,
-      runnerSessionId: usage.runnerSessionId,
+      runnerSessionId: entry.runnerSessionId,
       cwd: repo,
-      ...(object(context) && typeof context.runnerSessionPath === 'string'
-        ? { sessionPath: context.runnerSessionPath }
-        : {}),
-      slotId: typeof document.slotId === 'string' ? document.slotId : document.id,
-      nativeSession: binding,
+      slotId,
+      ...(path ? { sessionPath: path } : {}),
+      ...(binding ? { nativeSession: binding } : {}),
+      executionNodeId: node,
     });
   }
   return [...requests.values()];
 }
 
-export function backfillRequests(
+/** Enumerate unavailable identities/counters, including historical helper evidence with no id. */
+export function sessionCaptureGaps(
   document: unknown,
-  repo: string,
-  provider: (runner: string) => string | undefined,
-): NativeSessionUsageRequest[] {
-  const keys = new Set<string>();
-  visitLegacyUsage(document, (usage) => keys.add(usageKey(usage.runner, usage.runnerSessionId)));
-  return nativeReviewerRequests(document, repo, provider).filter((request) =>
-    keys.has(request.key),
-  );
+): Array<{ role: string; sessionId: string | null; reason: string }> {
+  if (!object(document)) return [];
+  const gaps: Array<{ role: string; sessionId: string | null; reason: string }> = [];
+  const known = retainedReceipts(document);
+  const seen = new Set<string>();
+  for (const entry of sources(document)) {
+    const key =
+      typeof entry.runner === 'string' && typeof entry.runnerSessionId === 'string'
+        ? usageKey(entry.runner, entry.runnerSessionId)
+        : null;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const usage = known.get(key);
+    if (
+      typeof entry.runnerSessionId !== 'string' ||
+      (usage?.source !== 'unavailable' && usage?.totalTokens != null)
+    )
+      continue;
+    gaps.push({
+      role: string(entry.role) ?? 'worker',
+      sessionId: entry.runnerSessionId,
+      reason: usage?.error ?? 'No verified accounting source',
+    });
+  }
+  for (const step of Array.isArray(document.steps) ? document.steps : []) {
+    if (!object(step) || !object(step.outputs)) continue;
+    for (const value of Object.values(step.outputs))
+      if (
+        object(value) &&
+        typeof value.provider === 'string' &&
+        typeof value.model === 'string' &&
+        !value.sessionUsage &&
+        !['heuristic', 'fallback', 'skip'].includes(value.provider)
+      )
+        gaps.push({
+          role: string(step.name) ?? 'helper',
+          sessionId: null,
+          reason: 'Historical helper has step usage but no recorded request/conversation identity',
+        });
+  }
+  return gaps;
 }
 
-/** Repair supporting receipts without constructing verdicts or changing unrelated run data. */
+/** Patch only accounting fields. Keep the rest of every run/learning record opaque. */
 export function backfillDocument(
   document: unknown,
   usages: ReadonlyMap<string, RunnerSessionUsage>,
 ): { document: unknown; replacements: number; sessionKeys: string[] } {
   let replacements = 0;
-  const receipts = new Map(usages);
-  const retain = (value: unknown): void => {
-    if (
-      object(value) &&
-      value.source === 'runner-transcript' &&
-      !value.error &&
-      typeof value.runner === 'string' &&
-      typeof value.runnerSessionId === 'string' &&
-      typeof value.measuredAt === 'string' &&
-      typeof value.totalTokens === 'number'
-    ) {
-      const usage: RunnerSessionUsage = {
-        ...value,
-        source: 'runner-transcript',
-        runner: value.runner,
-        runnerSessionId: value.runnerSessionId,
-        measuredAt: value.measuredAt,
-        totalTokens: value.totalTokens,
-      };
-      const key = usageKey(value.runner, value.runnerSessionId);
-      receipts.set(key, preferSessionUsage(receipts.get(key), usage));
-    } else if (Array.isArray(value)) value.forEach(retain);
-    else if (object(value)) Object.values(value).forEach(retain);
-  };
-  retain(document);
-  const sessionKeys = representedKeys(document);
+  const receipts = retainedReceipts(document);
+  for (const [key, measured] of usages)
+    receipts.set(key, preferSessionUsage(receipts.get(key), measured));
+  const sessionKeys = new Set<string>();
   const patch = (value: unknown): unknown => {
     if (legacyUsage(value)) {
       const usage = receipts.get(usageKey(value.runner, value.runnerSessionId));
-      if (usage?.source === 'runner-transcript' && !usage.error) {
+      if (usage && usage.source !== 'unavailable' && !usage.error) {
         replacements++;
-        sessionKeys.add(usageKey(value.runner, value.runnerSessionId));
         const next = { ...value, ...usage };
         delete next.error;
         return next;
@@ -206,27 +297,97 @@ export function backfillDocument(
     return value;
   };
   const result = patch(document);
-  if (object(result) && Array.isArray(result.agentContexts)) {
-    result.agentContexts = result.agentContexts.map((context: unknown) => {
-      if (
-        !object(context) ||
-        context.role !== 'review' ||
-        typeof context.reviewId !== 'string' ||
-        typeof context.runner !== 'string' ||
-        typeof context.runnerSessionId !== 'string' ||
-        !identity(context.nativeSession)
-      )
-        return context;
-      const key = usageKey(context.runner, context.runnerSessionId);
-      const usage = receipts.get(key);
-      if (!usage || usage.source !== 'runner-transcript' || usage.error) return context;
-      sessionKeys.add(key);
-      const merged = { ...(object(context.usage) ? context.usage : {}), ...usage };
-      delete merged.error;
-      if (JSON.stringify(context.usage) === JSON.stringify(merged)) return context;
-      replacements++;
-      return { ...context, usage: merged };
-    });
+  if (!object(result) || typeof result.id !== 'string')
+    return { document: result, replacements, sessionKeys: [] };
+  let rows: RunnerSessionUsage[] = [];
+  const existing = Array.isArray(result.sessionUsage)
+    ? result.sessionUsage.flatMap((value) => {
+        const row = receipt(value);
+        return row && object(value) ? [{ ...value, ...row }] : [];
+      })
+    : [];
+  for (const row of existing) rows = upsertSessionUsage(rows, row);
+  const measuredAt = new Date().toISOString();
+  const entries = sources(result);
+  for (const entry of entries) {
+    const runner = string(entry.runner),
+      sessionId = string(entry.runnerSessionId);
+    if (!runner || !sessionId) continue;
+    const key = usageKey(runner, sessionId);
+    const measured = receipts.get(key);
+    const native = identity(entry.nativeSession);
+    const start =
+      string(entry.startedAt) ??
+      string(object(entry.nativeSession) ? entry.nativeSession.launchRequestedAt : undefined);
+    const end =
+      string(entry.completedAt) ??
+      string(object(entry.nativeSession) ? entry.nativeSession.closedAt : undefined);
+    const duration =
+      start && end && Number.isFinite(Date.parse(start)) && Number.isFinite(Date.parse(end))
+        ? Math.max(0, Date.parse(end) - Date.parse(start))
+        : (measured?.durationMs ?? null);
+    const costUsd = measured?.costUsd ?? null;
+    const role = string(entry.role) ?? 'worker';
+    const row: RunnerSessionUsage = {
+      ...(object(entry.usage) ? entry.usage : {}),
+      ...measured,
+      runner,
+      runnerSessionId: sessionId,
+      runnerSessionPath: measured?.runnerSessionPath ?? string(entry.runnerSessionPath),
+      model: string(entry.model) ?? measured?.model ?? null,
+      actualModel: measured?.actualModel ?? null,
+      effort:
+        string(entry.effort) ??
+        string(object(entry.nativeSession) ? entry.nativeSession.effort : undefined) ??
+        string(result.effort),
+      role,
+      roles: [role],
+      contextIds: typeof entry.id === 'string' ? [entry.id] : (measured?.contextIds ?? []),
+      flowType: typeof result.flowType === 'string' ? normalizeFlowType(result.flowType) : null,
+      runId: result.id,
+      identityKind: measured?.identityKind ?? 'conversation',
+      kind: measured?.kind ?? 'agent',
+      slotId: string(entry.slotId) ?? string(result.slotId),
+      ...(native ? { nativeSession: native } : {}),
+      startedAt: start ?? measured?.startedAt ?? null,
+      completedAt: end ?? measured?.completedAt ?? null,
+      durationMs: duration,
+      turns: measured?.turns ?? null,
+      inputTokens: measured?.inputTokens ?? null,
+      outputTokens: measured?.outputTokens ?? null,
+      cacheRead: measured?.cacheRead ?? null,
+      cacheCreation: measured?.cacheCreation ?? null,
+      totalTokens: measured?.totalTokens ?? null,
+      costUsd,
+      costStatus: costUsd === null ? 'unpriced' : 'estimated',
+      costReason:
+        costUsd === null ? (measured?.costReason ?? 'No verified historical price') : undefined,
+      source: measured?.source ?? 'unavailable',
+      error: measured?.error,
+      measuredAt: measured?.measuredAt ?? measuredAt,
+      scope: 'session-total',
+      ...(!measured ? { error: 'No verified accounting source' } : {}),
+      captureGaps: [
+        ...new Set([
+          ...(measured?.captureGaps ?? []),
+          ...(duration === null ? ['Historical session duration unavailable'] : []),
+        ]),
+      ],
+    };
+    rows = upsertSessionUsage(rows, row);
+    if (row.source !== 'unavailable' && !row.error) sessionKeys.add(key);
+    if (Array.isArray(result.agentContexts) && result.agentContexts.includes(entry)) {
+      const merged = { ...(object(entry.usage) ? entry.usage : {}), ...row };
+      if (!row.error) delete merged.error;
+      if (JSON.stringify(entry.usage) !== JSON.stringify(merged)) {
+        entry.usage = merged;
+        replacements++;
+      }
+    }
+  }
+  if (rows.length && JSON.stringify(result.sessionUsage) !== JSON.stringify(rows)) {
+    result.sessionUsage = rows;
+    replacements++;
   }
   return { document: result, replacements, sessionKeys: [...sessionKeys] };
 }

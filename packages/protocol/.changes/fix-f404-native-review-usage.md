@@ -1,1 +1,1 @@
-- Retain optional reviewer context usage receipts so reporting includes earlier and failed conversations once per session.
+- Add shared pipeline session usage receipts with runner, model, effort, role, flow, identity, token splits, pricing status and duration, retained across relaunches and replays.

@@ -1,1 +1,1 @@
-- Capture native reviewer session accounting through the shared transcript reader and provide an offline historical backfill with live-gateway refusal and rollback copies.
+- Capture worker, reviewer and helper session usage through shared accounting, preserve replaced conversations, and backfill recoverable history offline without changing verdicts or learning data.

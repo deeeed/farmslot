@@ -606,7 +606,7 @@ The cost is that a Grok reviewer no longer reads the repository's `AGENTS.md`, p
 
 ## Amendment 14: pipeline session usage receipts, 2026-11-05
 
-**Status:** Proposed expanded text. Arthur approved pipeline-wide scope at 11:20 HKT; independent text review precedes implementation. The earlier reviewer-only text passed review at `c0922e17e3740c74c8c9dfb3814be311f81c19f8`.
+**Status:** Accepted, Arthur, 2026-11-05, pipeline-wide scope at 11:20 HKT. Independent expanded text review approved at `08108cbbe8eaeed6c0e33bb8a81272824b3859d3` before implementation.
 
 ### Decision
 

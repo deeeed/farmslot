@@ -13,7 +13,9 @@ export interface NativeSessionUsageRequest {
   cwd: string;
   sessionPath?: string | null;
   slotId: string;
-  nativeSession: NativeSessionUsageIdentity;
+  nativeSession?: NativeSessionUsageIdentity;
+  /** Explicit pool node for terminal sessions, which have no native host binding. */
+  executionNodeId?: string;
 }
 
 // Runs on the execution host. Resolve exact conversation identities, then use the
@@ -52,7 +54,7 @@ function record(line, label) {
 async function contextFor(request) {
   const binding = request.nativeSession;
   const fallback = { home: homedir(), cwd: request.cwd };
-  if (!binding.stateDirectory) return fallback;
+  if (!binding?.stateDirectory) return fallback;
   const journal = path.resolve(binding.stateDirectory, '../../..', 'sessions', binding.sessionId + '.journal');
   let stream;
   try { stream = createReadStream(journal); await new Promise((resolve, reject) => { stream.once('open', resolve); stream.once('error', reject); }); }
@@ -83,7 +85,7 @@ async function verifyConversation(file, request) {
     for await (const line of lines) {
       if (!line.trim()) continue;
       const row = record(line, 'Transcript');
-      const id = request.provider === 'codex-jsonl' ? (row.type === 'session_meta' ? row.payload?.id : undefined) : row.sessionId;
+      const id = request.provider === 'codex-jsonl' ? (row.type === 'session_meta' ? row.payload?.id : undefined) : request.provider === 'pi-jsonl' ? (row.type === 'session' ? row.id : undefined) : row.sessionId;
       if (typeof id === 'string') {
         if (id !== request.runnerSessionId) throw Error('Transcript conversation identity mismatch');
         return;
@@ -117,7 +119,7 @@ async function locate(request) {
     }
   } else if (request.provider === 'codex-jsonl') {
     const { DatabaseSync } = await import('node:sqlite');
-    const root = context.codexHome || (request.nativeSession.stateDirectory ? path.join(request.nativeSession.stateDirectory, 'codex-home') : process.env.CODEX_HOME || path.join(home, '.codex'));
+    const root = context.codexHome || (request.nativeSession?.stateDirectory ? path.join(request.nativeSession.stateDirectory, 'codex-home') : process.env.CODEX_HOME || path.join(home, '.codex'));
     for (const file of (await readdir(root)).filter(name => /^state_[0-9]+\.sqlite$/.test(name))) {
       const database = new DatabaseSync(path.join(root, file), { readOnly: true });
       try {

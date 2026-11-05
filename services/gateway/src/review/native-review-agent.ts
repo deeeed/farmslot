@@ -45,7 +45,7 @@ import {
   updateRun,
 } from '../runs/store.js';
 import { preferSessionUsage } from '../runtime/reviewer-usage.js';
-import { extractNativeReviewerSessionUsage } from '../runtime/session-usage.js';
+import { extractNativeAgentSessionUsage } from '../runtime/session-usage.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import {
   restoreWorkerChecklistTargetFromSlot,
@@ -957,7 +957,7 @@ async function runNativeReviewAttempt(
     );
     const usage = preferSessionUsage(
       context.usage,
-      await extractNativeReviewerSessionUsage({
+      await extractNativeAgentSessionUsage({
         vars,
         runner,
         runnerSessionId: context.runnerSessionId ?? null,
@@ -1191,7 +1191,7 @@ async function runNativeReviewAttempt(
         const captured = context;
         const usage =
           measuredUsage ??
-          (await extractNativeReviewerSessionUsage({
+          (await extractNativeAgentSessionUsage({
             vars,
             runner,
             runnerSessionId: captured.runnerSessionId ?? null,

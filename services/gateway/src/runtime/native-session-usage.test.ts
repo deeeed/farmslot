@@ -27,11 +27,11 @@ mock.module('../runners/native/node.js', {
     },
   },
 });
-const { extractNativeReviewerSessionUsage } = await import('./native-reviewer-usage.js');
+const { extractNativeAgentSessionUsage } = await import('./native-session-usage.js');
 
 test('native accounting follows the recorded reviewer owner/node rather than the producing slot', async () => {
   for (const runner of ['claude', 'codex']) {
-    const result = await extractNativeReviewerSessionUsage({
+    const result = await extractNativeAgentSessionUsage({
       vars: { ...makeVars(), machine: 'producing-node' },
       runner,
       runnerSessionId: 'conversation',
@@ -51,7 +51,7 @@ test('native accounting follows the recorded reviewer owner/node rather than the
     assert.equal(JSON.parse(calls.at(-1)!.argv.at(-2)!)[0].runner, runner);
   }
   returnedSession = 'foreign-conversation';
-  const failed = await extractNativeReviewerSessionUsage({
+  const failed = await extractNativeAgentSessionUsage({
     vars: makeVars(),
     runner: 'claude',
     runnerSessionId: 'conversation',

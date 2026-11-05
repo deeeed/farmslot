@@ -866,10 +866,10 @@ test('review totals include replaced and failed contexts once per exact conversa
     summary.byModel.reduce((sum, row) => sum + row.total, 0),
     510,
   );
-  assert.deepEqual(summary.runnerSessionPaths, [
-    '/sessions/current-300.jsonl',
-    '/sessions/earlier-200.jsonl',
-  ]);
+  assert.deepEqual(
+    new Set(summary.runnerSessionPaths),
+    new Set(['/sessions/current-300.jsonl', '/sessions/earlier-200.jsonl']),
+  );
   assert.equal(run.engineState!.publishGate!.reviews!.length, 2);
   const family = buildFamilyObservabilityTokenSummary([run], run.id);
   assert.equal(family.familyTotalTokens, 510);

@@ -14,7 +14,8 @@ import {
 import { parseSessionUsageOutput } from '../services/gateway/src/runtime/session-usage-result.js';
 import {
   backfillDocument,
-  nativeReviewerRequests,
+  agentSessionRequests,
+  sessionCaptureGaps,
   object,
   usageKey,
   visitLegacyUsage,
@@ -60,6 +61,7 @@ async function assertGatewayStopped(): Promise<void> {
 if (apply) await assertGatewayStopped();
 const peers = new Map<string, string>();
 const repos = new Map<string, string>();
+const slotNodes = new Map<string, string>();
 for (const name of await readdir(option('--pool-dir') ?? path.join(gatewayRoot, 'pool'))) {
   if (!name.endsWith('.json') || name.endsWith('.bak.json')) continue;
   const pool: unknown = JSON.parse(
@@ -74,8 +76,10 @@ for (const name of await readdir(option('--pool-dir') ?? path.join(gatewayRoot, 
     continue;
   peers.set(pool.machine, pool.host);
   for (const slot of pool.slots)
-    if (object(slot) && typeof slot.id === 'string' && typeof slot.repo === 'string')
+    if (object(slot) && typeof slot.id === 'string' && typeof slot.repo === 'string') {
       repos.set(slot.id, slot.repo);
+      slotNodes.set(slot.id, pool.machine);
+    }
 }
 const files = new Map<string, { file: string; bytes: string; document: unknown }>();
 for (const directory of [path.join(runsDir, 'archive'), runsDir]) {
@@ -106,10 +110,11 @@ for (const [id, item] of files) {
     object(item.document) && typeof item.document.slotId === 'string'
       ? (repos.get(item.document.slotId) ?? '')
       : '';
-  const requests = nativeReviewerRequests(
+  const requests = agentSessionRequests(
     item.document,
     repo,
     (runner) => runnerSessionUsageProviders.get(runner)?.id,
+    (slotId) => slotNodes.get(slotId),
   );
   fileJobs.set(id, requests);
   const covered = new Set(requests.map((request) => request.key));
@@ -121,9 +126,10 @@ for (const [id, item] of files) {
   for (const usage of missing.values())
     unresolved.push({ runId: id, runner: usage.runner, sessionId: usage.runnerSessionId });
   for (const request of requests) {
-    const node = request.nativeSession.executionNodeId;
+    const node = request.nativeSession?.executionNodeId ?? request.executionNodeId;
+    assert(node, 'Accounting request has no execution node');
     const batch = jobs.get(node) ?? new Map();
-    const key = request.nativeSession.ownerPrincipalId + ':' + request.key;
+    const key = (request.nativeSession?.ownerPrincipalId ?? 'terminal') + ':' + request.key;
     batch.set(key, { ...request, key });
     jobs.set(node, batch);
   }
@@ -202,6 +208,12 @@ const changes: Array<{
   backup?: string;
 }> = [];
 const unrepresented: Array<{ runId: string; runner: string; sessionId: string }> = [];
+const captureGaps: Array<{
+  runId: string;
+  role: string;
+  sessionId: string | null;
+  reason: string;
+}> = [];
 let lock;
 try {
   if (apply)
@@ -210,15 +222,16 @@ try {
     const usages = new Map<string, RunnerSessionUsage>();
     for (const request of fileJobs.get(id) ?? []) {
       const result = results.get(
-        request.nativeSession.executionNodeId +
+        (request.nativeSession?.executionNodeId ?? request.executionNodeId) +
           ':' +
-          request.nativeSession.ownerPrincipalId +
+          (request.nativeSession?.ownerPrincipalId ?? 'terminal') +
           ':' +
           request.key,
       );
       if (result) usages.set(request.key, result);
     }
     const patched = backfillDocument(item.document, usages);
+    for (const gap of sessionCaptureGaps(patched.document)) captureGaps.push({ runId: id, ...gap });
     const written = new Set(patched.sessionKeys);
     for (const request of fileJobs.get(id) ?? [])
       if (usages.has(request.key) && !written.has(request.key))
@@ -291,6 +304,7 @@ const report = {
   failures,
   unresolved,
   unrepresented,
+  captureGaps,
 };
 if (option('--report'))
   await import('node:fs/promises').then((fs) =>
