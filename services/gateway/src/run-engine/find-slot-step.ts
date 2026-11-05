@@ -7,6 +7,7 @@ import {
   type DispatchPreviewParams,
   type DispatchPreviewResult,
   Events,
+  type FleetStatus,
   isDispatchScoreStale,
   isTerminalRunStatus,
   ReviewQaConfigurationError,
@@ -16,6 +17,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
 } from '@farmslot/protocol';
+import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { withProjectSources } from '@farmslot/slot-config';
 
 import { loadSlotVars } from '../core/config.js';
@@ -94,6 +96,7 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
+import { type GatewayResourceRevisions, resourceRevisions } from '../resources/revisions.js';
 import {
   isCancelledSlotHolder,
   reclaimCancelledSlot,
@@ -136,6 +139,7 @@ import { precheckTaskDirCollision } from '../tasks/writer.js';
 import { appBindingMismatch, boundApp, type ProjectAppDefaults } from './app-binding.js';
 import { canReplayBranchAffinityDecision, findLatestResolvedDecision } from './decision-replay.js';
 import { assertNativeRunForSlot, runExplicitRunnerModel } from './dispatch-policy.js';
+import { hasEngineDecisionWaiter, resolveEngineDecision } from './engine-decisions.js';
 import { BlockedRunError } from './errors.js';
 import { canReconcileReviewQaRun, reviewQaMigrationPatch } from './review-qa-migration.js';
 import { runSupersededSince } from './run-generation.js';
@@ -147,6 +151,7 @@ interface StepIO {
 }
 
 interface FindSlotAttempt extends StepIO {
+  slotAvailabilityChanged?: boolean;
   hostLoadWait?: SlotLoadWait;
 }
 
@@ -1022,6 +1027,12 @@ export async function executeFindSlotStep(
       run = getRun(runId)!;
       continue;
     }
+    if (result.slotAvailabilityChanged) {
+      if (runSupersededSince(getRun(runId), generation))
+        throw runChangedError(runId, run.slotId ?? 'selection');
+      run = getRun(runId)!;
+      continue;
+    }
     if (slotClaimWaitReason)
       result = { ...result, inputs: { ...result.inputs, slotClaimWaitReason } };
     const appBinding = result.hostLoadWait ? undefined : acceptedAppBinding(getRun(runId));
@@ -1088,6 +1099,84 @@ async function waitUntilSlotClaimable(slotId: string, runId: string, generation:
       if (Date.now() - teardownSince >= EXPLICIT_SLOT_RELEASE_WAIT_MS) return;
     }
     await delay(SLOT_CLAIM_CONFLICT_POLL_MS);
+  }
+}
+
+/** Keep one decision asleep until its project's observed availability actually changes. */
+export async function waitForSlotPickerChange(
+  runId: string,
+  generation: number,
+  slotIds: ReadonlySet<string>,
+  initialAvailability: string,
+  readAvailability: () => Promise<string>,
+  decide: () => Promise<string>,
+  revisions: GatewayResourceRevisions = resourceRevisions,
+): Promise<string> {
+  let active = true;
+  let refreshing = false;
+  let dirty = false;
+  let decisionObserved = false;
+  let ownedDecisionId: string | undefined;
+  let configurationChanged = false;
+  let rejectRefresh!: (error: unknown) => void;
+  const failure = new Promise<never>((_resolve, reject) => {
+    rejectRefresh = reject;
+  });
+  const refresh = async () => {
+    if (refreshing || !active) return;
+    refreshing = true;
+    try {
+      do {
+        dirty = false;
+        const current = getRun(runId);
+        if (!current || runSupersededSince(current, generation)) return;
+        const decision = current.decisions.find(
+          (entry) =>
+            entry.type === 'engine_no_suitable_slot' &&
+            !entry.resolvedAt &&
+            hasEngineDecisionWaiter(entry.id),
+        );
+        if (!decision || !hasEngineDecisionWaiter(decision.id)) return;
+        decisionObserved = true;
+        ownedDecisionId = decision.id;
+        const availability = await readAvailability();
+        if (!active || runSupersededSince(getRun(runId), generation)) return;
+        if (configurationChanged || availability !== initialAvailability) {
+          resolveEngineDecision(decision.id, 'retry');
+          return;
+        }
+      } while (dirty && active);
+    } catch (error) {
+      rejectRefresh(error);
+    } finally {
+      refreshing = false;
+    }
+  };
+  const unsubscribe = revisions.subscribe(({ changes }) => {
+    if (
+      !changes.some(
+        ({ key }) =>
+          (key.family === 'slot' && slotIds.has(key.slotId)) ||
+          key.family === 'configuration' ||
+          (!decisionObserved && key.family === 'run' && key.runId === runId),
+      )
+    )
+      return;
+    configurationChanged ||= changes.some(({ key }) => key.family === 'configuration');
+    dirty = true;
+    void refresh();
+  });
+  try {
+    const result = decide();
+    // Closing the subscription/read gap also handles a release during decision creation.
+    dirty = true;
+    void refresh();
+    return await Promise.race([result, failure]);
+  } finally {
+    active = false;
+    unsubscribe();
+    if (ownedDecisionId && hasEngineDecisionWaiter(ownedDecisionId))
+      resolveEngineDecision(ownedDecisionId, 'abort');
   }
 }
 
@@ -1950,9 +2039,9 @@ async function findSlotAttempt(
 
     const desc =
       reason === 'no_free_slots'
-        ? `No eligible free slots for **${run.project}**. Abort and dispatch again once an allowed slot is ready.`
+        ? `No eligible free slots for **${run.project}**. Selection resumes automatically when an allowed slot is ready.`
         : reason === 'missing_required_resources'
-          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Abort and dispatch again once an allowed resource slot is ready.`
+          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Selection resumes automatically when an allowed resource slot is ready.`
           : !skipPrepare
             ? `All ${localWorkSlots.size} eligible free slot(s) hold dirty or unpushed work. Preserve or explicitly release that work before dispatch.\n${Object.entries(
                 reuseReasons,
@@ -1968,19 +2057,66 @@ async function findSlotAttempt(
       reason,
     };
 
-    // The run waits here until a slot frees up or the operator picks one.
+    const availability = (snapshot: FleetStatus) =>
+      canonicalResourceJson(
+        snapshot.slots
+          .filter(
+            (slot) =>
+              slot.project === run.project &&
+              (!allowSet || allowSet.has(slot.slot)) &&
+              isFreeSlot(slot),
+          )
+          .map((slot) => ({
+            slot: slot.slot,
+            machine: slot.machine,
+            enabled: slot.enabled,
+            dispatchable: slot.dispatchable,
+            missingFromPool: slot.missingFromPool,
+            phase: slot.phase,
+            currentRunId: slot.currentRunId,
+            cleanupRunId: slot.cleanupRunId,
+            handoffRunId: slot.handoffRunId,
+            branch: slot.branch,
+            health: slot.health,
+            workspace: slot.workspace
+              ? {
+                  headSha: slot.workspace.headSha,
+                  dirtyFingerprint: slot.workspace.dirtyFingerprint,
+                  dirtyCount: slot.workspace.dirtyCount,
+                  publication: slot.workspace.publication,
+                  remoteDefaultSha: slot.workspace.remoteDefaultSha,
+                  epoch: slot.workspace.epoch,
+                  recoveryId: slot.workspace.recoveryId,
+                }
+              : undefined,
+          }))
+          .sort((a, b) => a.slot.localeCompare(b.slot)),
+      );
+    // A resource change retries the existing selector; it never turns an automatic choice
+    // into an operator pin or skips the source, pressure, safe-reuse and claim guards.
     const actionId = await awaitAsQueueTime(runId, 'find-slot', () =>
-      createEngineDecision(
+      waitForSlotPickerChange(
         runId,
-        'no_suitable_slot',
-        desc,
-        [
-          { id: 'pick', label: 'Use Selected Slot', style: 'primary' },
-          { id: 'abort', label: 'Abort Run', style: 'danger' },
-        ],
-        slotPickerPayload,
+        generation,
+        new Set(projectSlots.map((slot) => slot.slot)),
+        availability(fleet),
+        async () => availability(await loadFleetStatus()),
+        () =>
+          createEngineDecision(
+            runId,
+            'no_suitable_slot',
+            desc,
+            [
+              { id: 'pick', label: 'Use Selected Slot', style: 'primary' },
+              { id: 'retry', label: 'Retry Selection', style: 'secondary' },
+              { id: 'abort', label: 'Abort Run', style: 'danger' },
+            ],
+            slotPickerPayload,
+            { canReplay: (decision) => decision.resolvedAction === 'pick' },
+          ),
       ),
     );
+    if (actionId === 'retry') return { inputs, slotAvailabilityChanged: true };
 
     if (actionId === 'abort') throw new Error('Aborted: no suitable slot');
 

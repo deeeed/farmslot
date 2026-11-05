@@ -28,6 +28,14 @@ export class GatewayResourceRevisions {
   private publisher?: (payload: ResourceChangedPayload) => void;
   private readonly deadlines = new Map<string, InvalidationDeadline>();
 
+  private readonly listeners = new Set<(payload: ResourceChangedPayload) => void>();
+
+  /** Internal consumers share the same coalesced changes as connected clients. */
+  subscribe(listener: (payload: ResourceChangedPayload) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   setPublisher(publish: (payload: ResourceChangedPayload) => void): void {
     this.publisher = publish;
   }
@@ -120,8 +128,11 @@ export class GatewayResourceRevisions {
       this.pending.delete(id);
     }
     // Before server initialization there are no client sockets to notify.
-    if (changes.length && this.publisher)
-      this.publisher({ version: 1, epoch: this.epoch, changes });
+    if (changes.length) {
+      const payload: ResourceChangedPayload = { version: 1, epoch: this.epoch, changes };
+      this.publisher?.(payload);
+      for (const listener of this.listeners) listener(payload);
+    }
   }
 
   clearKeyForTests(key: ResourceKey): void {
@@ -131,6 +142,7 @@ export class GatewayResourceRevisions {
   }
 
   dispose(): void {
+    this.listeners.clear();
     for (const { timer } of this.deadlines.values()) clearTimeout(timer);
     this.deadlines.clear();
     for (const timer of this.scheduled.values()) if (timer) clearTimeout(timer);

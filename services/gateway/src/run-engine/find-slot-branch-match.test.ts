@@ -1046,7 +1046,7 @@ for (const reason of ['no_free_slots', 'missing_required_resources'] as const) {
           if (payload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
           assert.equal(payload.reason, reason);
           assert.deepEqual(payload.candidates, []);
-          assert.match(description, /Abort and dispatch again/);
+          assert.match(description, /Selection resumes automatically/);
           assert.doesNotMatch(description, /listed/);
           assert.deepEqual(claims, []);
           assert.deepEqual(finishedReclaims, []);

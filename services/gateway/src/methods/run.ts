@@ -2275,6 +2275,12 @@ export async function resolveRunDecision(
   const resumeNative = params.actionId === NATIVE_WORKER_RESUME_ACTION;
   if (
     params.actionId === 'pick' &&
+    decision.type === 'engine_no_suitable_slot' &&
+    (typeof params.selectionData?.slotId !== 'string' || !params.selectionData.slotId.trim())
+  )
+    throw new Error('Select an eligible slot or wait for automatic selection.');
+  if (
+    params.actionId === 'pick' &&
     ['engine_no_suitable_slot', 'engine_branch_affinity_nudge'].includes(decision.type) &&
     typeof params.selectionData?.slotId === 'string'
   )
