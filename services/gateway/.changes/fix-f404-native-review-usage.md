@@ -1,0 +1,1 @@
+- Capture native reviewer session accounting through the shared transcript reader and provide an offline historical backfill with live-gateway refusal and rollback copies.

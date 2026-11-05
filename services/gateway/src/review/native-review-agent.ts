@@ -43,7 +43,7 @@ import {
   persistRunNow,
   updateRun,
 } from '../runs/store.js';
-import { unavailableRunnerSessionUsage } from '../runtime/session-usage.js';
+import { extractNativeReviewerSessionUsage } from '../runtime/session-usage.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import {
   restoreWorkerChecklistTargetFromSlot,
@@ -952,6 +952,17 @@ async function runNativeReviewAttempt(
         feedbackIncomplete: feedback.incomplete ?? false,
       }),
     );
+    const usage = await extractNativeReviewerSessionUsage({
+      vars,
+      runner,
+      runnerSessionId: context.runnerSessionId ?? null,
+      runnerSessionPath:
+        context.runnerSessionPath ??
+        (retained?.runnerSessionId === context.runnerSessionId
+          ? retained?.runnerSessionPath
+          : null),
+      nativeSession: context.nativeSession,
+    });
     const completedAt = new Date().toISOString();
     admit();
     if (original.engineState?.evalExperiment && !feedback.incomplete) {
@@ -972,12 +983,7 @@ async function runNativeReviewAttempt(
             retryCount: 0,
             maxRetries: 0,
             reviewSnapshot: reviewSnapshot.snapshot,
-            usage: unavailableRunnerSessionUsage({
-              runner,
-              runnerSessionId: reviewerSessionId ?? null,
-              runnerSessionPath: null,
-              error: 'Native reviewer usage accounting is unavailable',
-            }),
+            usage,
             attempts: [
               {
                 mode: 'cold',
@@ -986,6 +992,7 @@ async function runNativeReviewAttempt(
                 issues: feedback.issues,
                 unresolvedCount: feedback.issues.length,
                 validationDepth,
+                usage,
                 reviewSnapshot: reviewSnapshot.snapshot,
                 artifactPaths,
                 startedAt,
@@ -1004,6 +1011,12 @@ async function runNativeReviewAttempt(
         {
           id: contextId,
           status: feedback.incomplete ? 'blocked' : 'complete',
+          ...(usage.runnerSessionPath
+            ? {
+                runnerSessionPath: usage.runnerSessionPath,
+                runnerSessionCapturedAt: usage.measuredAt,
+              }
+            : {}),
           lastSignalAt: completedAt,
           reviewResultValidatedAt: feedback.incomplete ? undefined : completedAt,
           // Keep the immutable review input with validation until the pipeline row is written.
@@ -1039,7 +1052,7 @@ async function runNativeReviewAttempt(
         windowName: contextId,
         slotId: vars.slotId,
         runnerSessionId: context.runnerSessionId,
-        runnerSessionPath: null,
+        runnerSessionPath: usage.runnerSessionPath ?? null,
         lastLoopNumber: loopNumber,
         lastReviewedHeadSha: reviewSnapshot.snapshot.headSha!,
       });
@@ -1072,12 +1085,7 @@ async function runNativeReviewAttempt(
         ...(recordedFallback ? { fallback: recordedFallback } : {}),
       },
       reviewSnapshot: reviewSnapshot.snapshot,
-      usage: unavailableRunnerSessionUsage({
-        runner,
-        runnerSessionId: context.runnerSessionId ?? null,
-        runnerSessionPath: null,
-        error: 'Native reviewer usage accounting is unavailable',
-      }),
+      usage,
       artifactPaths,
       taskProgressArtifactPath: persisted.taskProgressArtifactPath,
       startedAt,

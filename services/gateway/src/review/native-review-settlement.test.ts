@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test, type TestContext } from 'node:test';
 
-import type { NativeSessionEvent, Principal } from '@farmslot/protocol';
+import type { NativeSessionEvent, Principal, RunnerSessionUsage } from '@farmslot/protocol';
 
 import type { ReviewSnapshotRange } from './snapshots.js';
 
@@ -493,6 +493,44 @@ mock.module('./templates.js', {
   namedExports: { expandReviewTemplate: async () => '# Review\n' },
 });
 
+const accounting = await import('../runtime/session-usage.js');
+const usageReads: Array<{
+  runner: string;
+  runnerSessionId: string | null;
+  executionNodeId?: string;
+}> = [];
+mock.module('../runtime/session-usage.js', {
+  namedExports: {
+    ...accounting,
+    extractNativeReviewerSessionUsage: async (input: {
+      runner: string;
+      runnerSessionId: string | null;
+      nativeSession?: { executionNodeId: string };
+    }): Promise<RunnerSessionUsage> => {
+      usageReads.push({
+        runner: input.runner,
+        runnerSessionId: input.runnerSessionId,
+        executionNodeId: input.nativeSession?.executionNodeId,
+      });
+      return {
+        runner: input.runner,
+        runnerSessionId: input.runnerSessionId,
+        runnerSessionPath: '/fixture/recorded-review.jsonl',
+        source: 'runner-transcript',
+        scope: 'session-total',
+        measuredAt: new Date().toISOString(),
+        turns: 72,
+        inputTokens: 123,
+        outputTokens: 334000,
+        cacheRead: 13100000,
+        cacheCreation: 12,
+        totalTokens: 13434135,
+        costUsd: 12.5,
+      };
+    },
+  },
+});
+
 const { runNativeReviewAgent } = await import('./native-review-agent.js');
 const { runReviewRoundBudget } = await import('./review-round-budget.js');
 
@@ -534,10 +572,10 @@ async function nativeRun(t: TestContext) {
   return run;
 }
 
-const review = (runId: string) =>
+const review = (runId: string, runner = 'claude') =>
   runNativeReviewAgent({
     vars,
-    runner: 'claude',
+    runner,
     model: 'opus',
     taskDir: 'tasks/review',
     runId,
@@ -574,6 +612,9 @@ test('an eval pins the blind range and records its only judge before settling th
   const receipt = await readEvalJudgeReceipt(getRun(run.id)!);
   assert.equal(receipt?.result.verdict, 'issues');
   assert.deepEqual(receipt?.result.issues, result.issues);
+  assert.equal(receipt?.result.usage?.source, 'runner-transcript');
+  assert.deepEqual(receipt?.result.usage, result.usage);
+  assert.deepEqual(receipt?.result.attempts?.[0]?.usage, result.usage);
   assert.equal(
     getRun(run.id)?.agentContexts?.find(({ id }) => id === receipt?.contextId)?.status,
     'complete',
@@ -1052,3 +1093,20 @@ for (const restart of [false, true]) {
     assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 0);
   });
 }
+
+for (const runner of ['claude', 'codex'])
+  test(`native ${runner} reviewer completion retains shared session accounting`, async (t) => {
+    ending = 'verdict';
+    const run = await nativeRun(t);
+    const before = usageReads.length;
+    const result = await review(run.id, runner);
+    assert.equal(result.usage?.source, 'runner-transcript');
+    assert.equal(result.usage?.runner, runner);
+    assert.equal(result.usage?.runnerSessionId, 'saved-review-conversation');
+    assert.equal(result.usage?.runnerSessionPath, '/fixture/recorded-review.jsonl');
+    assert.equal(result.usage?.turns, 72);
+    assert.equal(result.usage?.outputTokens, 334000);
+    assert.equal(result.usage?.cacheRead, 13100000);
+    assert.equal(usageReads.length, before + 1, 'Collect once for both result owners');
+    assert.equal(usageReads.at(-1)?.executionNodeId, binding.executionNodeId);
+  });

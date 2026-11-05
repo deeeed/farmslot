@@ -219,3 +219,13 @@ export const piSessionUsageProvider = {
     };
   },
 } satisfies RunnerSessionUsageProvider;
+
+/** One pure accounting catalog for runner controls and offline maintenance. */
+export const runnerSessionUsageProviders: ReadonlyMap<string, RunnerSessionUsageProvider> = new Map<
+  string,
+  RunnerSessionUsageProvider
+>([
+  ['claude', claudeSessionUsageProvider],
+  ['codex', codexSessionUsageProvider],
+  ['pi', piSessionUsageProvider],
+]);
