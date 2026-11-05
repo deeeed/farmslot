@@ -5,11 +5,21 @@ import { resolveNativeContext } from '../agents/native-context.js';
 import { preferSessionUsage } from './reviewer-usage.js';
 
 export const sessionUsageKey = (
-  usage: Pick<RunnerSessionUsage, 'runner' | 'runnerSessionId'>,
-): string | null =>
-  usage.runner && usage.runnerSessionId
-    ? JSON.stringify([usage.runner, usage.runnerSessionId])
+  usage: Pick<RunnerSessionUsage, 'runner' | 'runnerSessionId' | 'nativeSession'>,
+): string | null => {
+  if (!usage.runner) return null;
+  if (usage.runnerSessionId) return JSON.stringify([usage.runner, usage.runnerSessionId]);
+  const source = usage.nativeSession;
+  return source
+    ? JSON.stringify([
+        usage.runner,
+        'pending-native',
+        source.executionNodeId,
+        source.ownerPrincipalId,
+        source.sessionId,
+      ])
     : null;
+};
 
 export function upsertSessionUsage(
   rows: readonly RunnerSessionUsage[],
@@ -17,9 +27,20 @@ export function upsertSessionUsage(
 ): RunnerSessionUsage[] {
   const key = sessionUsageKey(receipt);
   if (!key) return [...rows];
-  const index = rows.findIndex((row) => sessionUsageKey(row) === key);
-  if (index < 0) return [...rows, receipt];
-  const previous = rows[index];
+  const retained =
+    receipt.runnerSessionId && receipt.nativeSession
+      ? rows.filter(
+          (row) =>
+            row.runnerSessionId ||
+            row.runner !== receipt.runner ||
+            row.nativeSession?.sessionId !== receipt.nativeSession?.sessionId ||
+            row.nativeSession?.ownerPrincipalId !== receipt.nativeSession?.ownerPrincipalId ||
+            row.nativeSession?.executionNodeId !== receipt.nativeSession?.executionNodeId,
+        )
+      : rows;
+  const index = retained.findIndex((row) => sessionUsageKey(row) === key);
+  if (index < 0) return [...retained, receipt];
+  const previous = retained[index];
   const best = preferSessionUsage(previous, receipt);
   const startedAt =
     [previous.startedAt, receipt.startedAt]
@@ -59,7 +80,7 @@ export function upsertSessionUsage(
         )
       : (previous.durationMs ?? receipt.durationMs ?? null),
   };
-  return rows.map((row, rowIndex) => (rowIndex === index ? merged : row));
+  return retained.map((row, rowIndex) => (rowIndex === index ? merged : row));
 }
 
 /** Enrich the common receipt. Unknown fields remain explicit, never observed zero. */
@@ -68,10 +89,12 @@ export function contextSessionReceipt(
   context: AgentContext,
   now: string,
 ): RunnerSessionUsage | null {
-  if (!context.runner || !context.runnerSessionId) return null;
+  if (!context.runner || (!context.runnerSessionId && !context.nativeSession)) return null;
+  const runnerSessionId = context.runnerSessionId || null;
   const captured =
+    runnerSessionId &&
     context.usage?.runner === context.runner &&
-    context.usage.runnerSessionId === context.runnerSessionId
+    context.usage.runnerSessionId === runnerSessionId
       ? context.usage
       : undefined;
   const startedAt =
@@ -93,6 +116,7 @@ export function contextSessionReceipt(
       ? captured.costUsd
       : null;
   const gaps = [...(captured?.captureGaps ?? [])];
+  if (!runnerSessionId) gaps.push('Native conversation has not been returned');
   if (!captured || captured.source === 'unavailable')
     gaps.push(captured?.error ?? 'Session usage has not been measured');
   if (durationMs === null) gaps.push('Session start time is unavailable');
@@ -102,7 +126,7 @@ export function contextSessionReceipt(
   return {
     ...captured,
     runner: context.runner,
-    runnerSessionId: context.runnerSessionId,
+    runnerSessionId,
     runnerSessionPath: captured?.runnerSessionPath ?? context.runnerSessionPath ?? null,
     nativeSession: context.nativeSession,
     slotId: context.slotId ?? run.slotId ?? null,
@@ -133,7 +157,13 @@ export function contextSessionReceipt(
     measuredAt,
     source: captured?.source ?? 'unavailable',
     scope: 'session-total',
-    ...(!captured ? { error: 'Session usage has not been measured' } : {}),
+    ...(!captured
+      ? {
+          error: runnerSessionId
+            ? 'Session usage has not been measured'
+            : 'Native conversation has not been returned',
+        }
+      : {}),
     captureGaps: [...new Set(gaps)],
   };
 }

@@ -149,3 +149,31 @@ test('warm receipts retain the whole observed conversation duration', async () =
   assert.equal(rows[0].durationMs, 300000);
   assert.equal(rows[0].totalTokens, 200);
 });
+
+test('a native reservation remains unavailable until its exact conversation arrives', async () => {
+  const { upsertSessionUsage } = await import('./agent-session-rows.js');
+  const reservation = {
+    runner: 'claude',
+    runnerSessionId: null,
+    source: 'unavailable' as const,
+    measuredAt: '2026-11-05T00:00:00Z',
+    nativeSession: {
+      sessionId: 'host-reservation',
+      ownerPrincipalId: 'owner',
+      executionNodeId: 'node',
+    },
+    costStatus: 'unpriced' as const,
+    costReason: 'Conversation not returned',
+  };
+  const rows = upsertSessionUsage([], reservation);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].runnerSessionId, null);
+  const bound = upsertSessionUsage(rows, {
+    ...reservation,
+    runnerSessionId: 'native-conversation',
+    source: 'runner-transcript',
+    totalTokens: 30,
+  });
+  assert.equal(bound.length, 1);
+  assert.equal(bound[0].runnerSessionId, 'native-conversation');
+});

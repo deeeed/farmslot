@@ -29,9 +29,9 @@ export async function extractNativeAgentSessionUsage(
   const unavailable = (error: string) =>
     unavailableRunnerSessionUsage({ runner, runnerSessionId, error });
   if (!nativeSession || !runnerSessionId)
-    return unavailable('Reviewer has no recorded native conversation identity');
+    return unavailable('Agent session has no recorded native conversation identity');
   const provider = getRunnerSessionUsageProvider(runner);
-  if (!provider) return unavailable('Reviewer has no transcript accounting provider');
+  if (!provider) return unavailable('Agent session has no transcript accounting provider');
   const request: NativeSessionUsageRequest = {
     key: 'review',
     runner,
@@ -66,10 +66,10 @@ export async function extractNativeAgentSessionUsage(
             30000,
           );
     if ('exitCode' in result && result.exitCode !== 0)
-      return unavailable(result.stderr || 'Reviewer accounting command failed');
+      return unavailable(result.stderr || 'Agent session accounting command failed');
     const rows: unknown = JSON.parse(result.stdout);
     if (!Array.isArray(rows) || rows.length !== 1)
-      return unavailable('Invalid reviewer accounting response');
+      return unavailable('Invalid agent session accounting response');
     const row: unknown = rows[0];
     if (
       !row ||
@@ -79,7 +79,7 @@ export async function extractNativeAgentSessionUsage(
       !('runnerSessionId' in row) ||
       row.runnerSessionId !== runnerSessionId
     )
-      return unavailable('Reviewer accounting response identity changed');
+      return unavailable('Agent session accounting response identity changed');
     if ('error' in row && typeof row.error === 'string') return unavailable(row.error);
     if (
       !('sessionPath' in row) ||
@@ -87,14 +87,14 @@ export async function extractNativeAgentSessionUsage(
       !('output' in row) ||
       typeof row.output !== 'string'
     )
-      return unavailable('Reviewer accounting response lacks a transcript result');
+      return unavailable('Agent session accounting response lacks a transcript result');
     return parseSessionUsageOutput(row.output, {
       runner,
       runnerSessionId,
       runnerSessionPath: row.sessionPath,
     });
   } catch (error) {
-    // Supporting accounting must retain a valid review verdict when its history is unavailable.
+    // Supporting accounting must not change lifecycle outcomes when history is unavailable.
     return unavailable(error instanceof Error ? error.message : String(error));
   }
 }

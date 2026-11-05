@@ -9,6 +9,7 @@ import {
 import {
   isHelperSession,
   isReviewSession,
+  runSessionUsageReceipts,
   sessionUsageContributions,
 } from '../runtime/session-usage-selection.js';
 
@@ -163,7 +164,9 @@ export function buildFamilyObservabilityTokenSummary(
       ? receipts.every((row) => row.costUsd != null)
         ? receipts.reduce((sum, row) => sum + num(row.costUsd), 0)
         : null
-      : (run.metrics.costEstimate ?? null);
+      : runSessionUsageReceipts(run).length > 0
+        ? 0
+        : (run.metrics.costEstimate ?? null);
     if (receipts.some((row) => row.costUsd == null)) hasUnpriced = true;
     for (const row of receipts)
       if (row.costUsd == null) unpricedModels.add(row.actualModel ?? row.model ?? 'unknown');

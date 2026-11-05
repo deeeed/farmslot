@@ -4,7 +4,10 @@ import type {
   NativeSessionUsageIdentity,
   NativeSessionUsageRequest,
 } from '../../services/gateway/src/runners/native-session-usage-command.js';
-import { upsertSessionUsage } from '../../services/gateway/src/runtime/agent-session-rows.js';
+import {
+  sessionUsageKey,
+  upsertSessionUsage,
+} from '../../services/gateway/src/runtime/agent-session-rows.js';
 import { preferSessionUsage } from '../../services/gateway/src/runtime/reviewer-usage.js';
 
 export const LEGACY_REVIEW_USAGE_ERROR = 'Native reviewer usage accounting is unavailable';
@@ -55,7 +58,7 @@ function receipt(value: unknown): RunnerSessionUsage | undefined {
     !object(value) ||
     !['runner-transcript', 'provider-response', 'unavailable'].includes(String(value.source)) ||
     typeof value.runner !== 'string' ||
-    typeof value.runnerSessionId !== 'string' ||
+    (typeof value.runnerSessionId !== 'string' && !identity(value.nativeSession)) ||
     typeof value.measuredAt !== 'string'
   )
     return;
@@ -106,7 +109,7 @@ function receipt(value: unknown): RunnerSessionUsage | undefined {
           ? 'runner-transcript'
           : 'unavailable',
     runner: value.runner,
-    runnerSessionId: value.runnerSessionId,
+    runnerSessionId: string(value.runnerSessionId),
     measuredAt: value.measuredAt,
     actualModel: string(value.actualModel),
     totalTokens: counter(value.totalTokens),
@@ -116,6 +119,7 @@ function receipt(value: unknown): RunnerSessionUsage | undefined {
     cacheRead: counter(value.cacheRead),
     cacheCreation: counter(value.cacheCreation),
     costUsd: counter(value.costUsd),
+    reasoningOutputTokens: counter(value.reasoningOutputTokens),
     ...(typeof value.error === 'string' ? { error: value.error } : {}),
   };
 }
@@ -124,7 +128,8 @@ function retainedReceipts(document: unknown): Map<string, RunnerSessionUsage> {
   const visit = (value: unknown): void => {
     const parsed = receipt(value);
     if (parsed) {
-      const key = usageKey(parsed.runner!, parsed.runnerSessionId!);
+      const key = sessionUsageKey(parsed);
+      if (!key) return;
       result.set(key, preferSessionUsage(result.get(key), parsed));
     } else if (Array.isArray(value)) value.forEach(visit);
     else if (object(value)) Object.values(value).forEach(visit);
@@ -233,21 +238,18 @@ export function sessionCaptureGaps(
   const known = retainedReceipts(document);
   const seen = new Set<string>();
   for (const entry of sources(document)) {
-    const key =
-      typeof entry.runner === 'string' && typeof entry.runnerSessionId === 'string'
-        ? usageKey(entry.runner, entry.runnerSessionId)
-        : null;
+    const key = sessionUsageKey({
+      runner: string(entry.runner),
+      runnerSessionId: string(entry.runnerSessionId),
+      nativeSession: identity(entry.nativeSession),
+    });
     if (!key || seen.has(key)) continue;
     seen.add(key);
     const usage = known.get(key);
-    if (
-      typeof entry.runnerSessionId !== 'string' ||
-      (usage?.source !== 'unavailable' && usage?.totalTokens != null)
-    )
-      continue;
+    if (usage?.source !== 'unavailable' && usage?.totalTokens != null) continue;
     gaps.push({
       role: string(entry.role) ?? 'worker',
-      sessionId: entry.runnerSessionId,
+      sessionId: string(entry.runnerSessionId),
       reason: usage?.error ?? 'No verified accounting source',
     });
   }
@@ -312,10 +314,11 @@ export function backfillDocument(
   for (const entry of entries) {
     const runner = string(entry.runner),
       sessionId = string(entry.runnerSessionId);
-    if (!runner || !sessionId) continue;
-    const key = usageKey(runner, sessionId);
-    const measured = receipts.get(key);
     const native = identity(entry.nativeSession);
+    if (!runner || (!sessionId && !native)) continue;
+    const key = sessionUsageKey({ runner, runnerSessionId: sessionId, nativeSession: native });
+    if (!key) continue;
+    const measured = receipts.get(key);
     const start =
       string(entry.startedAt) ??
       string(object(entry.nativeSession) ? entry.nativeSession.launchRequestedAt : undefined);
@@ -357,6 +360,7 @@ export function backfillDocument(
       outputTokens: measured?.outputTokens ?? null,
       cacheRead: measured?.cacheRead ?? null,
       cacheCreation: measured?.cacheCreation ?? null,
+      reasoningOutputTokens: measured?.reasoningOutputTokens ?? null,
       totalTokens: measured?.totalTokens ?? null,
       costUsd,
       costStatus: costUsd === null ? 'unpriced' : 'estimated',
@@ -366,7 +370,13 @@ export function backfillDocument(
       error: measured?.error,
       measuredAt: measured?.measuredAt ?? measuredAt,
       scope: 'session-total',
-      ...(!measured ? { error: 'No verified accounting source' } : {}),
+      ...(!measured
+        ? {
+            error: sessionId
+              ? 'No verified accounting source'
+              : 'Native conversation has not been returned',
+          }
+        : {}),
       captureGaps: [
         ...new Set([
           ...(measured?.captureGaps ?? []),

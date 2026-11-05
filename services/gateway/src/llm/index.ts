@@ -1098,10 +1098,6 @@ async function callViaClaudeCliUnmeasured(
     { timeout: 60000 },
   );
 
-  if (result.exitCode !== 0) {
-    throw new Error(`claude CLI failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`);
-  }
-
   let text: string;
   try {
     const parsed = JSON.parse(result.stdout);
@@ -1139,6 +1135,10 @@ async function callViaClaudeCliUnmeasured(
     text = parsed.result ?? result.stdout;
   } catch {
     text = result.stdout.trim();
+  }
+
+  if (result.exitCode !== 0) {
+    throw new Error(`claude CLI failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`);
   }
 
   const durationMs = Date.now() - start;

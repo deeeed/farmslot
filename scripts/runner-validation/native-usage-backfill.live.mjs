@@ -121,6 +121,17 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
     status: 'failed',
     usage: { ...legacy, customReceiptNote: 'separate context note' },
   });
+  document.agentContexts.push({
+    role: 'dev',
+    runner: 'claude',
+    status: 'launching',
+    runnerSessionId: null,
+    nativeSession: {
+      sessionId: 'pending-host',
+      ownerPrincipalId: 'owner',
+      executionNodeId: 'local',
+    },
+  });
   const file = path.join(runs, 'run.json');
   const original = JSON.stringify(document, null, 2);
   await writeFile(file, original);
@@ -157,12 +168,15 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
   await rm(pid);
   run(true);
   const changed = JSON.parse(await readFile(file, 'utf8'));
-  for (const context of changed.agentContexts) assert.equal(context.usage?.outputTokens, 20);
+  for (const context of changed.agentContexts.filter((row) => row.runnerSessionId))
+    assert.equal(context.usage?.outputTokens, 20);
+  assert.equal(changed.agentContexts.at(-1).usage.runnerSessionId, null);
+  assert.equal(changed.agentContexts.at(-1).usage.costStatus, 'unpriced');
   assert.equal(changed.agentContexts[2].customContextField, 'preserve');
   assert.equal(changed.engineState.publishGate.reviews.length, 1);
   assert.equal(JSON.parse(await readFile(report, 'utf8')).unrepresented.length, 0);
   assert.equal(changed.agentContexts[0].usage.customReceiptNote, 'preserve receipt note');
-  assert.equal(changed.agentContexts.at(-1).usage.customReceiptNote, 'separate context note');
+  assert.equal(changed.agentContexts.at(-2).usage.customReceiptNote, 'separate context note');
   assert.ok(
     JSON.parse(await readFile(report, 'utf8')).captureGaps.some(
       (gap) => gap.sessionId === null && gap.role === 'write-task',

@@ -21,6 +21,7 @@ All flows and roles use the run store's shared registration and session rows. Re
 
 | Session source                                   | Capture                                                            | Explicit gap                                                                                     |
 | ------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Native launch awaiting its conversation id       | Unavailable/unpriced row using its owned host reservation          | The conversation id stays null until returned; binding retires the pending row.                  |
 | Native Claude/Codex                              | Exact execution-host journal, account directory and conversation   | Pruned history/account directories remain unavailable.                                           |
 | Terminal Claude/Codex/Pi                         | Recorded conversation path and existing worker parser              | Missing paths or transcripts remain unavailable.                                                 |
 | Other native runners                             | Session row with exact identity and available source metadata      | Without transcript discovery or a supported parser, counters remain unavailable and unpriced.    |

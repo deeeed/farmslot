@@ -185,3 +185,54 @@ test('a review-pr generation delta is not added to its canonical conversation to
   );
   assert.equal(summary.familyTotalTokens, 100);
 });
+
+test('retained identical receipts do not add legacy cost a second time', () => {
+  const receipt = {
+    runner: 'claude',
+    runnerSessionId: 'shared-cost',
+    model: 'fixture',
+    role: 'dev',
+    source: 'runner-transcript' as const,
+    totalTokens: 100,
+    costUsd: 1,
+    measuredAt: '2026-11-05T00:00:00Z',
+  };
+  const runs = ['one', 'two'].map((id, index) =>
+    makeRun({
+      id,
+      createdAt: `2026-11-0${index + 1}T00:00:00Z`,
+      sessionUsage: [receipt],
+      metrics: {
+        nudgeCount: 0,
+        runner: 'claude',
+        model: 'fixture',
+        runnerSessionId: 'shared-cost',
+        sessionTotalTokens: 100,
+        costEstimate: 1,
+      },
+    }),
+  );
+  const summary = buildFamilyObservabilityTokenSummary(runs, 'one');
+  assert.equal(summary.familyTotalTokens, 100);
+  assert.equal(summary.familyTotalCostEstimate, 1);
+  assert.equal(summary.runPoints[1].stepCostEstimate, 0);
+});
+
+test('legacy split-only worker metrics remain visible without an explicit total', () => {
+  const run = makeRun({
+    id: 'legacy-splits',
+    createdAt: '2026-11-05T00:00:00Z',
+    metrics: {
+      nudgeCount: 0,
+      runner: 'claude',
+      model: 'fixture',
+      sessionInputTokens: 6000,
+      sessionOutputTokens: 4000,
+    },
+  });
+  const summary = buildFamilyObservabilityTokenSummary([run], run.id);
+  assert.equal(summary.familyTotalTokens, 10000);
+  assert.equal(summary.runPoints[0].inputTokens, 6000);
+  assert.equal(summary.runPoints[0].outputTokens, 4000);
+  assert.equal(summary.byModel[0].total, 10000);
+});

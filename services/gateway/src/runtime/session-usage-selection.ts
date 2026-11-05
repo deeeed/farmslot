@@ -38,7 +38,24 @@ export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
     )
   ) {
     const m = run.metrics;
-    if (m.sessionTotalTokens != null) {
+    const split = [
+      m.sessionInputTokens,
+      m.sessionOutputTokens,
+      m.sessionCacheRead,
+      m.sessionCacheCreation,
+    ];
+    const legacyTotal =
+      m.sessionTotalTokens != null && m.sessionTotalTokens > 0
+        ? m.sessionTotalTokens
+        : split.reduce<number>(
+            (sum, value) => sum + (typeof value === 'number' && Number.isFinite(value) ? value : 0),
+            0,
+          );
+    if (
+      m.sessionTotalTokens != null ||
+      m.sessionTurns != null ||
+      split.some((value) => value != null)
+    ) {
       const legacy: RunnerSessionUsage = {
         runner: m.runner,
         model: m.model,
@@ -56,7 +73,7 @@ export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
         outputTokens: m.sessionOutputTokens,
         cacheRead: m.sessionCacheRead,
         cacheCreation: m.sessionCacheCreation,
-        totalTokens: m.sessionTotalTokens,
+        totalTokens: legacyTotal,
         costUsd: m.costEstimate,
         costStatus: m.costEstimate == null ? 'unpriced' : 'estimated',
         ...(m.costEstimate == null ? { costReason: 'Legacy worker cost is unavailable' } : {}),
