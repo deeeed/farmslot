@@ -34,7 +34,11 @@ import {
 } from './diff-artifacts.js';
 import { publicationBaseForRun } from './stack-base.js';
 
-async function runtimeOperation<T>(vars: SlotVars, phase: string, input: unknown): Promise<T> {
+export async function runtimeOperation<T>(
+  vars: SlotVars,
+  phase: string,
+  input: unknown,
+): Promise<T> {
   const script = await agentRuntimeScriptForSlot(vars, 'branch-update.mjs');
   const result = await execOnSlot(
     vars,

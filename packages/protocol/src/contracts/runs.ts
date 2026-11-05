@@ -3338,6 +3338,8 @@ export interface RunEngineState {
  * and attempt counters survive gateway restart (ADR-027).
  */
 export interface RunCiWatchState {
+  /** Scope refusals stop automatic CI fix retries. */
+  fixScopeRefusal?: string;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };

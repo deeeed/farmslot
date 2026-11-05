@@ -85,7 +85,8 @@ export function buildBranchUpdateGuardCommand(
       branch: vars.PR_BRANCH || vars.BRANCH,
       baseRef: vars.PUBLICATION_BASE,
     });
-  return `${script} ${phase} ${quote(context)}`;
+  const scope = phase === 'push' && vars.CI_FIX_SCOPE ? ` ${quote(vars.CI_FIX_SCOPE)}` : '';
+  return `${script} ${phase} ${quote(context)}${scope}`;
 }
 
 /**

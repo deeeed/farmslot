@@ -1,0 +1,1 @@
+- Refuse CI fix pushes and completion when new commits touch files outside the PR's original scope, including renamed paths and edits later reverted.

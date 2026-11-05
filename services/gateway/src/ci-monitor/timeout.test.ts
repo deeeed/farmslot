@@ -30,6 +30,21 @@ mock.module('../methods/pr.js', {
           merged: false,
           mergeConflict,
           checks: [{ name: 'lint', status: checkStatus }],
+          checkSnapshot: {
+            pr: 404,
+            repo: 'deeeed/farmslot',
+            fetchedAt: new Date().toISOString(),
+            checks: [
+              {
+                name: 'lint',
+                status: checkStatus === 'pending' ? 'IN_PROGRESS' : 'COMPLETED',
+                conclusion:
+                  checkStatus === 'pending' ? null : checkStatus === 'pass' ? 'SUCCESS' : 'FAILURE',
+                timestamp: null,
+                detailsUrl: null,
+              },
+            ],
+          },
           checkSummary: {
             passed: Number(checkStatus === 'pass'),
             failed: Number(checkStatus === 'fail'),

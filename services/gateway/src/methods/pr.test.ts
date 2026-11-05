@@ -825,3 +825,28 @@ test('retained raw projection follows current local owner, summary and check con
     'The existing active CI reader keeps its established incomplete-read policy',
   );
 });
+
+test('infrastructure conclusions stay non-passing and retain watched shard details', () => {
+  const checks = ['cancel', 'timed_out', 'startup_failure', 'action_required'].map(
+    (status, index) => ({ name: `unit / ${index}`, status, startedAt: '', completedAt: '', index }),
+  );
+  const matched = matchCheckGroups(checks, [], true);
+  assert.deepEqual(
+    matched.map((check) => check.status),
+    ['fail', 'fail', 'fail', 'fail'],
+  );
+  assert.equal(summarizeAllChecks(checks).summary.failed, 4);
+  assert.equal(matched[0].failureDetails?.[0].conclusion, 'CANCEL');
+});
+
+test('raw conclusions do not replace producer buckets for skipped or unknown checks', () => {
+  const checks = [
+    { name: 'stale', status: 'skipping', state: 'STALE', startedAt: '', completedAt: '', index: 0 },
+    { name: 'unknown bucket', status: 'stale', startedAt: '', completedAt: '', index: 1 },
+  ];
+  assert.deepEqual(
+    matchCheckGroups(checks, [], true).map((check) => check.status),
+    ['skipped', 'pending'],
+  );
+  assert.equal(summarizeAllChecks(checks).summary.failed, 0);
+});
