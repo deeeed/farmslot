@@ -1013,3 +1013,134 @@ test(
     await assert.rejects(run.typed, inputQueue.TerminalInputMaybeTypedError);
   },
 );
+
+test('native network wakes recover a dropped socket and preserve its configured identity', async (t) => {
+  const original = globalThis.WebSocket;
+  Object.assign(globalThis, { WebSocket: Socket });
+  const { GatewayClient } = await import('./gateway-client');
+  const client = new GatewayClient('ws://localhost:19778', { token: 'fixture' });
+  t.after(() => {
+    client.disconnect();
+    Object.assign(globalThis, { WebSocket: original });
+  });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  client.connect();
+  const first = Socket.sockets.at(-1)!;
+  first.open();
+  first.response(first.sent[0].id, auth('fixture', 'farm'));
+  await settle();
+  first.close();
+  client.wake();
+  client.wake();
+  const next = Socket.sockets.at(-1)!;
+  assert.notEqual(next, first);
+  next.open();
+  next.response(next.sent[0].id, auth('fixture', 'farm'));
+  await settle();
+  assert.equal(client.connectionState, 'connected');
+  assert.equal(client.authenticatedPrincipal?.id, 'fixture');
+  assert.equal(client.workspaceAccess, 'farm');
+});
+
+test('native wake and backoff never bypass an authentication refusal', async (t) => {
+  const original = globalThis.WebSocket;
+  Object.assign(globalThis, { WebSocket: Socket });
+  const { GatewayClient } = await import('./gateway-client');
+  const client = new GatewayClient('ws://localhost:19778', { token: 'fixture' });
+  t.after(() => {
+    client.disconnect();
+    Object.assign(globalThis, { WebSocket: original });
+  });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  client.connect();
+  const socket = Socket.sockets.at(-1)!;
+  socket.open();
+  const refusal: ResponseFrame = {
+    type: 'res',
+    id: socket.sent[0].id,
+    ok: false,
+    error: { code: 'AUTH_FAILED', message: 'Credential refused' },
+  };
+  socket.onmessage?.({ data: JSON.stringify(refusal) });
+  await settle();
+  const count = Socket.sockets.length;
+  client.wake();
+  t.mock.timers.tick(120_000);
+  await settle();
+  assert.equal(Socket.sockets.length, count);
+  assert.equal(client.recoveryEnabled, false);
+  assert.equal(client.workspaceAccess, 'none');
+});
+
+test('profile setup finishes its previous credential write before retry or network wake can connect', async (t) => {
+  const original = globalThis.WebSocket;
+  Object.assign(globalThis, { WebSocket: Socket });
+  const { GatewayClient } = await import('./gateway-client');
+  const grant = personGrant();
+  let release!: () => void;
+  let entered!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const writing = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const client = new GatewayClient('ws://localhost:19777', {
+    sessionStorage: {
+      load: async () => ({ session: grant.session, refreshToken: grant.refreshToken }),
+      save: async () => {
+        entered();
+        await held;
+      },
+    },
+    personSessionRequired: true,
+  });
+  let switching: Promise<void> | undefined;
+  t.after(async () => {
+    release();
+    await switching;
+    client.disconnect();
+    Object.assign(globalThis, { WebSocket: original });
+  });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  client.connect();
+  const old = Socket.sockets.at(-1)!;
+  old.open();
+  await settle();
+  old.response(old.sent.at(-1)!.id, grant);
+  await writing;
+  switching = client.setConnection(
+    'ws://localhost:19778',
+    {
+      sessionStorage: {
+        load: async () => ({ session: grant.session, refreshToken: grant.refreshToken }),
+        save: async () => {},
+      },
+      personSessionRequired: true,
+    },
+    true,
+  );
+  await settle();
+  const count = Socket.sockets.length;
+  appStateListeners.forEach((listener) => listener('background'));
+  appStateListeners.forEach((listener) => listener('active'));
+  client.wake();
+  t.mock.timers.tick(1001);
+  await settle();
+  assert.equal(
+    Socket.sockets.length,
+    count,
+    'a selected profile must be ready before reconnecting',
+  );
+  release();
+  await switching;
+  const selected = Socket.sockets.at(-1)!;
+  assert.notEqual(selected, old);
+  selected.open();
+  await settle();
+  selected.response(selected.sent.at(-1)!.id, personGrant());
+  await settle();
+  selected.response(selected.sent.at(-1)!.id, auth('person-owner', 'native', 'person'));
+  await settle();
+  assert.equal(client.connectionState, 'connected');
+});

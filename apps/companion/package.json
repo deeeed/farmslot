@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/mobile",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "author": "Arthur Breton",
   "homepage": "https://siteed.net/projects/farmslot-farm",
   "private": true,
@@ -86,6 +86,7 @@
     "expo-font": "~58.0.11",
     "expo-haptics": "~58.0.7",
     "expo-linking": "~58.0.15",
+    "expo-network": "~58.0.4",
     "expo-notifications": "~58.1.7",
     "expo-router": "patch:expo-router@npm%3A58.0.29#~/.yarn/patches/expo-router-npm-58.0.29-9b6d4997ff.patch",
     "expo-screen-orientation": "~58.0.3",

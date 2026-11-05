@@ -44,6 +44,7 @@ import {
   evidenceOnlyDecisionIds,
 } from '@farmslot/review-dispatch';
 
+import './shared/gateway-connection-indicator.js';
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
 import './shared/hydrating-placeholder.js';
@@ -2466,6 +2467,11 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
   }
 
   render() {
+    return html`<gateway-connection-indicator></gateway-connection-indicator
+      >${this.renderWorkspace()}`;
+  }
+
+  private renderWorkspace() {
     const access = this.shownWorkspaceAccess;
     // Keep either saved workspace visible while its observations reconnect as stale.
     if (this.connection !== 'connected' && access === 'none') {

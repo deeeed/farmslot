@@ -102,15 +102,6 @@ export function connectionProbeTeachingError(error: unknown): string {
   return `Gateway did not answer: ${message}`;
 }
 
-export function nextConnectionProbeDelay(
-  consecutiveFailures: number,
-  healthyIntervalMs = 30_000,
-  maximumIntervalMs = 120_000,
-): number {
-  if (consecutiveFailures <= 0) return healthyIntervalMs;
-  return Math.min(healthyIntervalMs * 2 ** consecutiveFailures, maximumIntervalMs);
-}
-
 export function formatLastGatewayResponse(lastSuccessAt: number | null, now = Date.now()): string {
   if (lastSuccessAt === null) return 'Never proven';
   const elapsedSeconds = Math.max(0, Math.floor((now - lastSuccessAt) / 1000));

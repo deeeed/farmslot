@@ -11,6 +11,8 @@ import type {
   SelfPrincipalSummary,
 } from '@farmslot/protocol';
 import {
+  gatewayAuthenticationRefused,
+  GatewayRecovery,
   hasAuthErrorCode,
   Methods,
   parsePersonSessionToken,
@@ -144,7 +146,6 @@ export function gatewayStatusMessage(client: {
 }
 
 const DEFAULT_TIMEOUT = 15_000;
-const MAX_BACKOFF = 30_000;
 const HTTP_AUTH_COOKIE = 'farmslot_gateway_credential';
 const HTTP_PASSWORD_COOKIE = 'farmslot_gateway_password';
 
@@ -264,8 +265,25 @@ export class GatewayClient {
   private eventSubs = new Map<string, Set<EventCallback>>();
   private connSubs = new Set<ConnectionCallback>();
   private binarySubs = new Set<BinaryCallback>();
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private backoff = 1000;
+  private readonly recovery = new GatewayRecovery({
+    enabled: () => this.recoveryEnabled,
+    connect: () => this.connect(),
+    retire: () => {
+      this.rejectAllPending('Gateway is unreachable');
+      this.teardownSocket();
+      this.setState('disconnected');
+      this.advanceGatewayCandidate();
+    },
+    canProbe: () => this.lastAuthentication?.capabilities.gatewayPing === true,
+    ping: () => this.rawRequest(Methods.GATEWAY_PING, {}, 5000),
+  });
+  private stopRecoveryEvents?: () => void;
+  get recoveryEnabled(): boolean {
+    return !this.disposed && !this.authBlocked && !this.insecureBlocked && Boolean(this.url);
+  }
+  wake(): void {
+    this.recovery.wake();
+  }
   private urls: string[];
   private urlIndex = 0;
   private url: string;
@@ -347,6 +365,26 @@ export class GatewayClient {
       this.state = 'auth_required';
     }
     this.persistConnection();
+    const focusTarget = window;
+    const visibilityTarget = document;
+    const wake = () => this.wake();
+    const visible = () => {
+      if (visibilityTarget.visibilityState === 'visible') this.wake();
+    };
+    const network =
+      typeof navigator !== 'undefined' ? Reflect.get(navigator, 'connection') : undefined;
+    focusTarget.addEventListener('focus', wake);
+    focusTarget.addEventListener('online', wake);
+    focusTarget.addEventListener('offline', wake);
+    visibilityTarget.addEventListener('visibilitychange', visible);
+    if (network instanceof EventTarget) network.addEventListener('change', wake);
+    this.stopRecoveryEvents = () => {
+      focusTarget.removeEventListener('focus', wake);
+      focusTarget.removeEventListener('online', wake);
+      focusTarget.removeEventListener('offline', wake);
+      visibilityTarget.removeEventListener('visibilitychange', visible);
+      if (network instanceof EventTarget) network.removeEventListener('change', wake);
+    };
     if (resolved.explicit && typeof history !== 'undefined') {
       const raw = location.hash.slice(1);
       const split = raw.indexOf('?');
@@ -465,7 +503,7 @@ export class GatewayClient {
         this.lastAuthentication = undefined;
         this.adminRole = false;
         this.access = 'none';
-        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        this.recovery.reset();
         this.rejectAllPending('Signed out');
         this.teardownSocket();
         this.setState('auth_required', 'sign-out');
@@ -527,6 +565,13 @@ export class GatewayClient {
                   err.message,
                   err instanceof PersonSessionEndedError ? err.code : 'AUTH_FAILED',
                 );
+          if (!gatewayAuthenticationRefused(err)) {
+            this.rejectAllPending(`Gateway authentication did not complete: ${authError.message}`);
+            this.teardownSocket();
+            this.setState('disconnected');
+            this.advanceGatewayCandidate();
+            return;
+          }
           this.authBlocked = true;
           this.lastAuthError = authError;
           const reason: ResourceConnectionReason = hasAuthErrorCode(authError, 'AUTH_SESSION_ENDED')
@@ -715,7 +760,6 @@ export class GatewayClient {
       ) ?? false;
     this.access = workspaceAccessFromAuth(result);
     this.epoch += 1;
-    this.backoff = 1000;
     this.lastAuthError = null;
     this.authBlocked = false;
     this.setState('connected', undefined, true);
@@ -723,8 +767,7 @@ export class GatewayClient {
 
   reconnect(): void {
     if (this.disposed || this.authBlocked) return;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.backoff = 1000;
+    this.recovery.reset();
     this.rejectAllPending('Gateway reconnecting');
     this.teardownSocket();
     this.setState('disconnected');
@@ -733,10 +776,12 @@ export class GatewayClient {
 
   disconnect(): void {
     this.disposed = true;
+    this.recovery.dispose();
+    this.stopRecoveryEvents?.();
     this.performanceReporter.dispose();
     void this.person.dispose();
     clearGatewayMemoryAuth();
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.recovery.reset();
     this.rejectAllPending('Client disconnected');
     this.teardownSocket();
     this.setState('disconnected');
@@ -951,6 +996,7 @@ export class GatewayClient {
     reason?: ResourceConnectionReason,
     authorityChanged = false,
   ): void {
+    this.recovery.update(s === 'auth_required' ? 'disconnected' : s);
     if (this.state === s && this.resourceReason === reason && !authorityChanged) return;
     this.resourceReason = reason;
     this.state = s;
@@ -980,12 +1026,7 @@ export class GatewayClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.disposed) return;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = setTimeout(() => {
-      this.connect();
-    }, this.backoff);
-    this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF);
+    this.recovery.update('disconnected');
   }
 
   private rejectAllPending(reason: string): void {
