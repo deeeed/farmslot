@@ -859,6 +859,10 @@ test('the shared round keeps recorded attempt usage when replacing the old gate 
     reviewHistoryView(current).checks[0].rounds[0].usageLabel,
     '3 turns · 1,234 tokens · $0.1250',
   );
+  assert.deepEqual(
+    reviewHistoryView(current).checks[0].rounds[0].usage,
+    current.engineState.publishGate?.reviews?.[0].attempts?.[0].usage,
+  );
 });
 
 test('actorless completed attempts keep chronological 1..N labels with loop replays and gaps', () => {

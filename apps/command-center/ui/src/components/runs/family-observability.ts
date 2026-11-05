@@ -202,7 +202,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     return run;
   }
 
-  private _selectRun = (runId: string) => {
+  private _selectRun = (runId: string, writeHash = true) => {
     if (this.selectedRunId !== runId) {
       this._selectedStep = null;
       this._sessionStates = {};
@@ -210,7 +210,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     }
     this.selectedRunId = runId;
     void this._ensureFullRun(runId);
-    if (!this.familyId || this.snapshotOverride) return;
+    if (!writeHash || !this.familyId || this.snapshotOverride) return;
     const newHash = familyRunHash(this.familyId, runId, {
       evidence: this._evidenceFilter === 'all' ? undefined : this._evidenceFilter,
       tokens: this._tokenScope === 'family' ? undefined : this._tokenScope,
@@ -399,7 +399,8 @@ export class FamilyObservability extends FamilyObservabilityState {
     if (changed.has('familyId') || changed.has('snapshotOverride')) this._loadSnapshot();
     if (changed.has('fullRunOverrides')) this.requestUpdate();
     if (changed.has('initialRunId') && this.initialRunId) {
-      this._selectRun(this.initialRunId);
+      // The incoming route already carries its view choices; keep them during restoration.
+      this._selectRun(this.initialRunId, false);
     }
     if (changed.has('selectedRunId') && this.selectedRunId) {
       void this._ensureFullRun(this.selectedRunId);

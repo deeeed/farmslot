@@ -1,0 +1,1 @@
+- Ignore source-path components when checking ticket project fit while retaining explicit project and repository mentions.

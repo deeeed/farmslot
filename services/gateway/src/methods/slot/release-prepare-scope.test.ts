@@ -905,3 +905,54 @@ for (const mode of ['automatic', 'manual', 'ordinary'])
       'manual recovery and ordinary release retain recycle; automatic recovery stays cold',
     );
   });
+
+test('release retains a failed unpublished task before deleting its artifacts', async () => {
+  const run = realRuns.getRun('blocked')!;
+  run.status = 'failed';
+  run.taskFile = '/gateway/tasks/dev/proof/TASK.md';
+  run.engineState = { taskInit: { taskFile: run.taskFile, status: 'initialized' } };
+  run.slotId = SLOT_ID;
+  slotRow.current_run_id = run.id;
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  const result = await slotRelease(
+    { slotId: SLOT_ID, forceReset: true, expectedRunId: run.id },
+    emit,
+  );
+  assert.equal(result.released, true);
+  assert(events.indexOf('retain-final-result') >= 0);
+  assert(events.indexOf('retain-final-result') < events.indexOf('task-clean'));
+});
+
+test('failed unpublished task retention failure keeps the task and holds its slot', async () => {
+  const run = realRuns.getRun('blocked')!;
+  run.status = 'failed';
+  run.taskFile = '/gateway/tasks/dev/proof/TASK.md';
+  run.engineState = { taskInit: { taskFile: run.taskFile, status: 'initialized' } };
+  run.slotId = SLOT_ID;
+  slotRow.current_run_id = run.id;
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  finalRetentionError = new Error('Original task evidence unavailable');
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, forceReset: true, expectedRunId: run.id }, emit),
+    /Final result retention failed/,
+  );
+  assert.equal(events.includes('task-clean'), false);
+  assert.equal(slotRow.lifecycle, 'held');
+});
+
+test('a task that failed before initialization has no artifact retention prerequisite', async () => {
+  const run = realRuns.getRun('blocked')!;
+  run.status = 'failed';
+  run.taskFile = '/gateway/tasks/dev/proof/TASK.md';
+  run.slotId = SLOT_ID;
+  run.engineState = { taskInit: { taskFile: run.taskFile, status: 'pending' } };
+  slotRow.current_run_id = run.id;
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  finalRetentionError = new Error('artifact mirror refresh has no source artifacts');
+  const result = await slotRelease(
+    { slotId: SLOT_ID, forceReset: true, expectedRunId: run.id },
+    emit,
+  );
+  assert.equal(result.released, true);
+  assert.equal(events.includes('retain-final-result'), false);
+});

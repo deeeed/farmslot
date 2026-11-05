@@ -1,0 +1,1 @@
+- Show every family session, canonical token and known-cost totals, model and runner breakdowns, cumulative run accounting and review/fix timing, with explicit missing history, pricing and round-cost boundaries.
