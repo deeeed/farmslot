@@ -18,8 +18,24 @@ after(() => {
 process.env.FARMSLOT_PROJECTS_DIR = projects;
 // The monitor persists its state on stop; keep that out of the checkout.
 const realFiles = await import('node:fs/promises');
-mock.module('node:fs/promises', { namedExports: { ...realFiles, writeFile: async () => {} } });
-const { loadPendingDecisions, scanDecisions, startMonitor, stopMonitor } =
+// A scan can be held after it read one decision file, as a slow walk is in production.
+let holdAfterRead: { file: string; released: Promise<void> } | undefined;
+mock.module('node:fs/promises', {
+  namedExports: {
+    ...realFiles,
+    writeFile: async () => {},
+    readFile: async (...args: Parameters<typeof realFiles.readFile>) => {
+      const content = await realFiles.readFile(...args);
+      const hold = holdAfterRead;
+      if (hold && args[0] === hold.file) {
+        holdAfterRead = undefined;
+        await hold.released;
+      }
+      return content;
+    },
+  },
+});
+const { loadPendingDecisions, resolveFileDecision, scanDecisions, startMonitor, stopMonitor } =
   await import('./fleet-monitor.js');
 
 // A project with a pending decision, a link to itself and a link into a dir nobody can read.
@@ -97,4 +113,33 @@ test('while the monitor polls, reads serve its last scan instead of walking the 
     'decision-1',
     'decision-2',
   ]);
+});
+
+test('a decision resolved while a scan is in flight stays resolved (F366)', async (t) => {
+  t.after(stopMonitor);
+  monitor([]);
+  await scanDecisions();
+  const task = path.join(projects, 'app', 'tasks', 'qa', 'run-3');
+  mkdirSync(task, { recursive: true });
+  t.after(() => rmSync(task, { recursive: true, force: true }));
+  const file = path.join(task, '.pending_decision.json');
+  writeFileSync(
+    file,
+    JSON.stringify({
+      id: 'decision-3',
+      title: 'Answered mid-scan',
+      actions: [{ id: 'ack', label: 'Ack' }],
+    }),
+  );
+  let release!: () => void;
+  holdAfterRead = { file, released: new Promise((resolve) => (release = resolve)) };
+  const scan = scanDecisions();
+  await until(() => holdAfterRead === undefined);
+  await resolveFileDecision('decision-3', 'ack');
+  release();
+  await scan;
+  assert.equal(
+    (await loadPendingDecisions()).some(({ id }) => id === 'decision-3'),
+    false,
+  );
 });

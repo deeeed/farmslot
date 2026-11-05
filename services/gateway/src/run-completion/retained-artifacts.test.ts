@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -41,6 +41,7 @@ const { captureRunOutput, acknowledgeRunOutput, retainFinalRunArtifacts } =
 const {
   acquisitionTaskDirToken,
   retainedRecipeRunGroups,
+  retainedRunTaskDirectory,
   retainRunArtifacts,
   readRetainedRunText,
   withTaskDirWrite,
@@ -604,6 +605,7 @@ test('detail reads reuse the recipe groups of a retained bundle until the run or
     path.join(taskDir, 'artifacts/summary.json'),
     JSON.stringify({ status: 'pass', recipeRunId: 'recipe-1' }),
   );
+  await writeFile(path.join(taskDir, 'artifacts/notes.txt'), 'retained notes\n');
   const run = makeRun({ taskFile, slotId: undefined });
   await retainRunFixture(run);
   const first = await retainedRecipeRunGroups(run);
@@ -613,4 +615,13 @@ test('detail reads reuse the recipe groups of a retained bundle until the run or
   const second = await retainedRecipeRunGroups(edited);
   assert.notEqual(second, first);
   assert.deepEqual(second, first);
+  // A retained file that goes missing is seen on the next read, not served from the cache.
+  const retainedNotes = path.join(await retainedRunTaskDirectory(edited), 'artifacts/notes.txt');
+  await chmod(path.dirname(retainedNotes), 0o700);
+  await unlink(retainedNotes);
+  const availability = (groups: typeof first) =>
+    groups[0]?.artifactManifest?.find((artifact) => artifact.path === 'artifacts/notes.txt')
+      ?.availability;
+  assert.equal(availability(second), 'available');
+  assert.equal(availability(await retainedRecipeRunGroups(edited)), 'missing');
 });
