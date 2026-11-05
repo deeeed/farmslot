@@ -5,7 +5,6 @@ import {
   sessionUsageKey,
   upsertSessionUsage,
 } from './agent-session-rows.js';
-import { preferSessionUsage } from './reviewer-usage.js';
 
 export const isReviewSession = (row: RunnerSessionUsage): boolean => row.role === 'review';
 export const isHelperSession = (row: RunnerSessionUsage): boolean =>
@@ -107,16 +106,18 @@ export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
   });
 }
 
-/** Totals consume verified rows; UI inventories consume the unfiltered shared projection. */
+/** Accounting accepts verified tokens or USD independently; inventories retain all rows. */
 export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
   return allRunSessionUsageReceipts(run).filter(
-    (row) => row.source !== 'unavailable' && !row.error && row.totalTokens != null,
+    (row) =>
+      row.source !== 'unavailable' &&
+      !row.error &&
+      (row.totalTokens != null || row.costUsd != null),
   );
 }
 
 /** Attribute only a conversation's growth to a later run; never sum warm snapshots. */
 export function sessionUsageContributions(runs: readonly Run[]): Map<string, RunnerSessionUsage[]> {
-  const seen = new Map<string, RunnerSessionUsage>();
   const result = new Map<string, RunnerSessionUsage[]>();
   const counters = [
     'inputTokens',
@@ -127,6 +128,8 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
     'turns',
     'costUsd',
   ] as const;
+  type Counter = (typeof counters)[number];
+  const seen = new Map<string, Partial<Record<Counter, number>>>();
   for (const run of [...runs].sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   )) {
@@ -134,19 +137,21 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
     for (const row of runSessionUsageReceipts(run)) {
       const key = sessionUsageKey(row);
       const previous = key ? seen.get(key) : undefined;
-      if (previous && preferSessionUsage(previous, row) === previous) continue;
-      if (key) seen.set(key, row);
+      const highWater = { ...previous };
       const contribution = { ...row };
-      if (previous)
-        for (const field of counters) {
-          const value = row[field];
-          const before = previous[field];
-          contribution[field] =
-            typeof value === 'number' && typeof before === 'number'
-              ? Math.max(0, value - before)
-              : value;
-        }
-      contributions.push(contribution);
+      let contributes = !previous;
+      // Partial readings may observe USD and tokens separately. Neither dimension
+      // can erase the other's verified baseline or be counted a second time.
+      for (const field of counters) {
+        const value = row[field];
+        if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+        const before = previous?.[field];
+        contribution[field] = before === undefined ? value : Math.max(0, value - before);
+        if (before === undefined || value > before) contributes = true;
+        highWater[field] = before === undefined ? value : Math.max(before, value);
+      }
+      if (key) seen.set(key, highWater);
+      if (contributes) contributions.push(contribution);
     }
     result.set(run.id, contributions);
   }

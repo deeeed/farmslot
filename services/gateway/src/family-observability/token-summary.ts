@@ -109,7 +109,7 @@ export function buildFamilyObservabilityTokenSummary(
     parts: TokenParts,
     costEstimate: number | null,
   ) => {
-    if (parts.total <= 0) return;
+    if (parts.total <= 0 && costEstimate == null) return;
     const key = model ?? 'unknown';
     const current = byModelMap.get(key) ?? {
       model: key,
