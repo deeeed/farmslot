@@ -303,3 +303,91 @@ test('a missing owner and ambiguous retained identities leave round accounting u
   assert.equal(round.usage, undefined);
   assert.equal(round.costScope, 'unavailable');
 });
+
+test('round association follows the canonical promotion of its exact pending native reservation', () => {
+  const binding = {
+    sessionId: 'native-review',
+    leaseId: 'lease',
+    generation: 'generation',
+    commandId: 'command',
+    executionNodeId: 'mini',
+    ownerPrincipalId: 'owner',
+    stateDirectory: '/fixture/native',
+  };
+  const pending = makeRun({
+    id: 'pending-run',
+    flowType: 'review-pr',
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Reviewer',
+        status: 'working',
+        runId: 'pending-run',
+        slotId: null,
+        runner: 'codex',
+        nativeSession: binding,
+      },
+    ],
+  });
+  const peer = makeRun({
+    id: 'captured-run',
+    createdAt: '2026-11-05T01:00:00Z',
+    sessionUsage: [
+      receipt({
+        runnerSessionId: 'confirmed',
+        nativeSession: binding,
+        role: 'review',
+        roles: ['review'],
+        costUsd: 0.25,
+      }),
+    ],
+  });
+  const data = buildFamilyUsage([pending, peer]);
+  assert.equal(data.sessions.length, 1);
+  assert.deepEqual(data.sessions[0].runIds, ['pending-run', 'captured-run']);
+  assert.equal(data.rounds[0].usage?.runnerSessionId, 'confirmed');
+  assert.equal(data.rounds[0].usage?.costUsd, 0.25);
+  assert.equal(data.rounds[0].costScope, 'shared-session');
+});
+
+test('a pending reviewer cannot borrow a different native reservation', () => {
+  const binding = {
+    sessionId: 'current-native',
+    leaseId: 'lease',
+    commandId: 'command',
+    executionNodeId: 'mini',
+    ownerPrincipalId: 'owner',
+  };
+  const run = makeRun({
+    id: 'pending',
+    flowType: 'review-pr',
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Reviewer',
+        status: 'working',
+        runId: 'pending',
+        slotId: null,
+        runner: 'codex',
+        nativeSession: binding,
+      },
+    ],
+    sessionUsage: [
+      receipt({
+        runnerSessionId: 'old-reviewer',
+        contextIds: ['review'],
+        nativeSession: { ...binding, sessionId: 'old-native' },
+        role: 'review',
+        roles: ['review'],
+        costUsd: 0.25,
+      }),
+    ],
+  });
+  const round = buildFamilyUsage([run]).rounds[0];
+  assert.equal(round.usage?.runnerSessionId, null);
+  assert.equal(round.usage?.nativeSession?.sessionId, 'current-native');
+  assert.equal(round.usage?.totalTokens, null);
+  assert.equal(round.costScope, 'unavailable');
+});

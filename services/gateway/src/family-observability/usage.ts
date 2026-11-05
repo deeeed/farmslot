@@ -8,7 +8,11 @@ import type {
 import { reviewHistoryView } from '@farmslot/review-dispatch';
 
 import { resolveNativeContext } from '../agents/native-context.js';
-import { sessionUsageKey, upsertSessionUsage } from '../runtime/agent-session-rows.js';
+import {
+  contextSessionReceipt,
+  sessionUsageKey,
+  upsertSessionUsage,
+} from '../runtime/agent-session-rows.js';
 import {
   allRunSessionUsageReceipts,
   sessionUsageContributions,
@@ -101,22 +105,28 @@ export function buildFamilyUsage(runs: readonly Run[]): FamilyObservabilityUsage
       const context = run.agentContexts?.find((row) => row.id === round.key);
       const resolved = resolveNativeContext(run, context);
       const owner = resolved?.owner ?? context;
-      const ownerKey =
+      const ownerReceipt =
         owner && (!context?.nativeSessionOwner || resolved)
-          ? sessionUsageKey({
-              runner: owner.runner,
-              runnerSessionId: owner.runnerSessionId,
-              nativeSession: resolved?.binding ?? owner.nativeSession,
-            })
+          ? contextSessionReceipt(
+              run,
+              { ...owner, nativeSession: resolved?.binding ?? owner.nativeSession },
+              run.updatedAt,
+            )
           : null;
-      const associated = [...sessions.values()].filter(
-        (session) =>
-          session.participations.some(
+      const associated = [...sessions.values()].filter((session) => {
+        if (
+          !session.participations.some(
             (participant) =>
               participant.runId === run.id && participant.contextIds.includes(round.key),
-          ) &&
-          (!context || (ownerKey !== null && session.id === ownerKey)),
-      );
+          )
+        )
+          return false;
+        if (!context) return true;
+        if (!ownerReceipt) return false;
+        // The canonical merge also owns pending-native to confirmed-conversation promotion.
+        const matched = upsertSessionUsage([ownerReceipt], session.usage);
+        return matched.length === 1 && sessionUsageKey(matched[0]) === session.id;
+      });
       // Replayed contexts retain old receipts. A context ID alone does not identify a conversation.
       const source = round.usage ?? (associated.length === 1 ? associated[0].usage : undefined);
       const usage = source ? { ...source, runner: source.runner ?? round.runner } : undefined;
