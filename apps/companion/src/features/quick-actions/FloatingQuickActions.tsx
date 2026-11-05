@@ -11,6 +11,7 @@ import {
   resolveSharedViewLink,
 } from '@farmslot/protocol/surfaces/view-links';
 
+import { GatewayConnectionIndicator } from '../../components/GatewayConnectionIndicator';
 import { getCompanionEnvironment } from '../../lib/app-environment';
 import { quickVoiceLocation } from '../../lib/quick-actions';
 import { colors } from '../../lib/theme';
@@ -239,6 +240,7 @@ export function FloatingQuickActions({
             ) : null}
           </Pressable>
         </Pressable>
+        {Platform.OS === 'android' ? <GatewayConnectionIndicator inModal /> : null}
       </Modal>
     </>
   );

@@ -5,17 +5,19 @@ import { FullWindowOverlay } from 'react-native-screens';
 
 import { gatewayOfflineLabel } from '@farmslot/protocol';
 
+import { useQuickActionsField } from '../features/quick-actions/quick-actions-context';
 import { colors, fonts } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
 
 /** Root overlay covers nested workspaces without moving any held content. */
-export function GatewayConnectionIndicator() {
+export function GatewayConnectionIndicator({ inModal = false }: { inModal?: boolean } = {}) {
   const insets = useSafeAreaInsets();
+  const modalOutlet = useQuickActionsField('activeOutlet');
   const state = useConnectionStore((s) => s.status);
   const signedOut = useConnectionStore((s) => s.signedOut);
   const client = useConnectionStore((s) => s.client);
   const label = gatewayOfflineLabel(state, !signedOut && (client?.recoveryEnabled ?? false));
-  if (!label) return null;
+  if (!label || (Platform.OS === 'android' && !inModal && modalOutlet)) return null;
   const badge = (
     <View
       testID="gateway-offline-indicator"
@@ -27,7 +29,13 @@ export function GatewayConnectionIndicator() {
       </Text>
     </View>
   );
-  return Platform.OS === 'ios' ? <FullWindowOverlay>{badge}</FullWindowOverlay> : badge;
+  return Platform.OS === 'ios' ? (
+    <FullWindowOverlay unstable_accessibilityContainerViewIsModal={false}>
+      {badge}
+    </FullWindowOverlay>
+  ) : (
+    badge
+  );
 }
 
 const styles = StyleSheet.create({

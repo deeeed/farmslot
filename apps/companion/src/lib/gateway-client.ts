@@ -119,6 +119,7 @@ export class GatewayClient {
   private pending = new Map<string, PendingRequest>();
   private eventSubs = new Map<string, Set<EventCallback>>();
   private connSubs = new Set<ConnectionCallback>();
+  private preparingConnection: object | null = null;
   private readonly heartbeatSubs = new Set<(latencyMs: number, completedAt: number) => void>();
   onHeartbeat(callback: (latencyMs: number, completedAt: number) => void): () => void {
     this.heartbeatSubs.add(callback);
@@ -146,7 +147,13 @@ export class GatewayClient {
     },
   });
   get recoveryEnabled(): boolean {
-    return !this.disposed && !this.pausedForBackground && !this.authRequired && Boolean(this.url);
+    return (
+      !this.disposed &&
+      !this.pausedForBackground &&
+      !this.authRequired &&
+      !this.preparingConnection &&
+      Boolean(this.url)
+    );
   }
   wake(): void {
     this.recovery.wake();
@@ -272,11 +279,12 @@ export class GatewayClient {
     this.auth = auth;
     if (!changed) return;
 
+    const preparation = {};
+    this.preparingConnection = preparation;
     const previousSession = this.personSession;
     this.personSession = null;
     this.generation += 1;
     this.authRequired = false;
-    const generation = this.generation;
     this.pingSupported = null;
     this.inputSequence = null;
     this.clearAuthority();
@@ -284,9 +292,13 @@ export class GatewayClient {
     this.rejectAllPending('Gateway profile changed');
     this.closeCurrentSocket();
     this.setState('disconnected', true, resourceReason);
-    if (previousSession) await previousSession.dispose();
-    if (generation !== this.generation) return;
-    this.configurePersonSession();
+    try {
+      if (previousSession) await previousSession.dispose();
+      if (this.preparingConnection !== preparation || this.disposed) return;
+      this.configurePersonSession();
+    } finally {
+      if (this.preparingConnection === preparation) this.preparingConnection = null;
+    }
     this.connect();
   }
 
@@ -302,7 +314,8 @@ export class GatewayClient {
   }
 
   connect(): void {
-    if (this.disposed || this.pausedForBackground || this.authRequired) return;
+    if (this.disposed || this.pausedForBackground || this.authRequired || this.preparingConnection)
+      return;
     if (!this.url) {
       this.setState('disconnected');
       return;

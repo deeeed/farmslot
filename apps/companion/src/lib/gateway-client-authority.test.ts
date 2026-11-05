@@ -1071,3 +1071,76 @@ test('native wake and backoff never bypass an authentication refusal', async (t)
   assert.equal(client.recoveryEnabled, false);
   assert.equal(client.workspaceAccess, 'none');
 });
+
+test('profile setup finishes its previous credential write before retry or network wake can connect', async (t) => {
+  const original = globalThis.WebSocket;
+  Object.assign(globalThis, { WebSocket: Socket });
+  const { GatewayClient } = await import('./gateway-client');
+  const grant = personGrant();
+  let release!: () => void;
+  let entered!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const writing = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const client = new GatewayClient('ws://localhost:19777', {
+    sessionStorage: {
+      load: async () => ({ session: grant.session, refreshToken: grant.refreshToken }),
+      save: async () => {
+        entered();
+        await held;
+      },
+    },
+    personSessionRequired: true,
+  });
+  let switching: Promise<void> | undefined;
+  t.after(async () => {
+    release();
+    await switching;
+    client.disconnect();
+    Object.assign(globalThis, { WebSocket: original });
+  });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  client.connect();
+  const old = Socket.sockets.at(-1)!;
+  old.open();
+  await settle();
+  old.response(old.sent.at(-1)!.id, grant);
+  await writing;
+  switching = client.setConnection(
+    'ws://localhost:19778',
+    {
+      sessionStorage: {
+        load: async () => ({ session: grant.session, refreshToken: grant.refreshToken }),
+        save: async () => {},
+      },
+      personSessionRequired: true,
+    },
+    true,
+  );
+  await settle();
+  const count = Socket.sockets.length;
+  appStateListeners.forEach((listener) => listener('background'));
+  appStateListeners.forEach((listener) => listener('active'));
+  client.wake();
+  t.mock.timers.tick(1001);
+  await settle();
+  assert.equal(
+    Socket.sockets.length,
+    count,
+    'a selected profile must be ready before reconnecting',
+  );
+  release();
+  await switching;
+  const selected = Socket.sockets.at(-1)!;
+  assert.notEqual(selected, old);
+  selected.open();
+  await settle();
+  selected.response(selected.sent.at(-1)!.id, personGrant());
+  await settle();
+  selected.response(selected.sent.at(-1)!.id, auth('person-owner', 'native', 'person'));
+  await settle();
+  assert.equal(client.connectionState, 'connected');
+});
