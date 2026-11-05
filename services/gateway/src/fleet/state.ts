@@ -2,7 +2,7 @@
 // Transforms raw JSON into protocol types
 
 import { once } from 'node:events';
-import { statSync, watch as watchDirectory } from 'node:fs';
+import { statSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -53,7 +53,12 @@ import {
 import { isLocal } from '../core/exec.js';
 import { watchedEventPath } from '../core/file-observation.js';
 import { onStatusCommit } from '../core/state.js';
-import { gatewayStorageVolumeErrors, storageVolumeError } from '../core/storage-volume.js';
+import {
+  gatewayStorageRoots,
+  gatewayStorageVolumeErrors,
+  storageVolumeError,
+  watchStorageVolumes,
+} from '../core/storage-volume.js';
 import { TriagePilotObservation } from '../intelligence/triage/pilot-observation.js';
 import { getFarmslotStorePath, getOpenClawStorePath } from '../llm/auth-store.js';
 import { invalidateLLMConfig } from '../llm/config.js';
@@ -619,6 +624,8 @@ function computeResourceRollup(slot: SlotStatus): ResourceRollup {
 }
 
 const localSlotRepos = new Map<string, string>();
+const localStorageAvailability = new Map<string, string | undefined>();
+const storageBindingHandlers = new Set<() => void>();
 
 function withFleetOverlays(fleet: FleetStatus): FleetStatus {
   const recoveryIds = workspaceRecoveryIds.get(fleet);
@@ -709,11 +716,23 @@ export async function loadFleetStatus(
     const pools = await loadPoolConfigs();
     const liveIds = new Set(pools.flatMap((pool) => pool.slots.map((slot) => slot.id)));
     if (version === fleetReadVersion) {
+      const previousRepos = new Map(localSlotRepos);
       localSlotRepos.clear();
       for (const pool of pools) {
         if (!isLocal(pool.host, pool.machine)) continue;
-        for (const slot of pool.slots) localSlotRepos.set(slot.id, slot.repo);
+        for (const slot of pool.slots) {
+          localSlotRepos.set(slot.id, slot.repo);
+          if (previousRepos.get(slot.id) !== slot.repo || !localStorageAvailability.has(slot.id))
+            localStorageAvailability.set(slot.id, storageVolumeError(slot.repo));
+        }
       }
+      for (const slotId of localStorageAvailability.keys())
+        if (!localSlotRepos.has(slotId)) localStorageAvailability.delete(slotId);
+      if (
+        previousRepos.size !== localSlotRepos.size ||
+        [...localSlotRepos].some(([id, repo]) => previousRepos.get(id) !== repo)
+      )
+        for (const handler of storageBindingHandlers) handler();
     }
     next = markGhostSlots(transformFleet(raw), liveIds);
     workspaceRecoveryIds.set(
@@ -965,38 +984,40 @@ export function startFileWatcher() {
     const file = watchedEventPath(filename, details);
     if (file) projectChanged(file);
   });
-  // Observe mount topology from the internal disk, never from the revocable volume.
-  const blockedStorage = new Map<string, string>();
-  let storeErrors = new Set<string>();
-  const volumesWatcher =
-    process.platform === 'darwin'
-      ? watchDirectory('/Volumes', () => {
-          const fleet = getCachedFleet();
-          if (!fleet) return;
-          let changed = false;
-          for (const [slotId, repo] of localSlotRepos) {
-            const error = storageVolumeError(repo);
-            if (error === blockedStorage.get(slotId)) continue;
-            if (error) {
-              blockedStorage.set(slotId, error);
-              console.error(`[storage] ${slotId}: ${error}`);
-            } else {
-              blockedStorage.delete(slotId);
-              console.info(`[storage] ${slotId}: volume available again`);
-            }
-            slotResources.overlayChanged(slotId);
-            changed = true;
-          }
-          const currentErrors = new Set(gatewayStorageVolumeErrors());
-          for (const error of currentErrors)
-            if (!storeErrors.has(error)) console.error(`[storage] ${error}`);
-          storeErrors = currentErrors;
-          if (changed) for (const handler of changeHandlers) handler(fleet);
-        })
-      : undefined;
-  volumesWatcher?.on('error', (error) => {
-    throw error;
+  // Share one stable metadata watcher across every slot/store on a volume.
+  // Baseline includes unavailable roots, including when the gateway starts offline.
+  for (const [slotId, repo] of localSlotRepos) {
+    const error = storageVolumeError(repo);
+    localStorageAvailability.set(slotId, error);
+    if (error) console.error(`[storage] ${slotId}: ${error}`);
+  }
+  let storeErrors = new Set(gatewayStorageVolumeErrors());
+  for (const error of storeErrors) console.error(`[storage] ${error}`);
+  const storageTargets = () => [...localSlotRepos.values(), ...gatewayStorageRoots()];
+  const volumesWatcher = watchStorageVolumes(storageTargets(), () => {
+    const fleet = getCachedFleet();
+    if (!fleet) return;
+    let changed = false;
+    for (const [slotId, repo] of localSlotRepos) {
+      const error = storageVolumeError(repo);
+      if (error === localStorageAvailability.get(slotId)) continue;
+      localStorageAvailability.set(slotId, error);
+      if (error) {
+        console.error(`[storage] ${slotId}: ${error}`);
+      } else {
+        console.info(`[storage] ${slotId}: volume available again`);
+      }
+      slotResources.overlayChanged(slotId);
+      changed = true;
+    }
+    const currentErrors = new Set(gatewayStorageVolumeErrors());
+    for (const error of currentErrors)
+      if (!storeErrors.has(error)) console.error(`[storage] ${error}`);
+    storeErrors = currentErrors;
+    if (changed) for (const handler of changeHandlers) handler(fleet);
   });
+  const refreshStorageBindings = () => volumesWatcher.refresh(storageTargets());
+  storageBindingHandlers.add(refreshStorageBindings);
   return {
     ready: Promise.all([
       once(watcher, 'ready'),
@@ -1008,7 +1029,8 @@ export function startFileWatcher() {
     assertTriagePilotObserved: (directory: string) => triagePilotObservation.assertReady(directory),
     async close(): Promise<void> {
       clearTimeout(poolDebounce);
-      volumesWatcher?.close();
+      storageBindingHandlers.delete(refreshStorageBindings);
+      volumesWatcher.close();
       await Promise.all([
         watcher.close(),
         poolWatcher.close(),

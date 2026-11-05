@@ -59,7 +59,7 @@ mock.module('../fleet/node-health.js', {
     getAllMachineHealth: () => [],
   },
 });
-mock.module('../core/exec.js', { namedExports: { execLocal: forbidden } });
+mock.module('../core/exec.js', { namedExports: { execLocal: forbidden, isLocal: () => true } });
 mock.module('../core/hooks.js', { namedExports: { expandTemplate: forbidden } });
 mock.module('../core/project-env.js', { namedExports: { withProjectMachineEnv: forbidden } });
 mock.module('../core/resource-lifecycle-log.js', {
@@ -132,7 +132,10 @@ async function fixture(t: TestContext): Promise<void> {
       machine: nodeId,
       host: 'localhost',
       project,
-      slots: [{ id: slotId }, { id: otherId }],
+      slots: [
+        { id: slotId, repo: root },
+        { id: otherId, repo: root },
+      ],
     }),
   );
   await writeFile(

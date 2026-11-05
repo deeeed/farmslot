@@ -1,4 +1,4 @@
-import { lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readlinkSync, realpathSync, statSync, unwatchFile, watchFile } from 'node:fs';
 import path from 'node:path';
 
 import { expandTilde } from '@farmslot/capabilities/fs-watch';
@@ -22,30 +22,76 @@ function storagePath(target: string, links = 0): string {
   }
 }
 
-/** macOS mounts external volumes under /Volumes. A leftover directory is not a mounted disk. */
-export function storageVolumeError(
+function storageVolumeRoot(
   target: string,
   volumesRoot = process.platform === 'darwin' ? '/Volumes' : undefined,
 ): string | undefined {
   if (!volumesRoot) return undefined;
+  const volumeRoot = realpathSync(volumesRoot);
+  const resolved = storagePath(path.resolve(expandTilde(target)));
+  const relative = path.relative(volumeRoot, resolved);
+  if (
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative) ||
+    !relative
+  )
+    return undefined;
+  return path.join(volumeRoot, relative.split(path.sep)[0]);
+}
+
+/** macOS mounts external volumes under /Volumes. A leftover directory is not a mounted disk. */
+export function storageVolumeError(target: string, volumesRoot?: string): string | undefined {
   try {
-    const volumeRoot = realpathSync(volumesRoot);
-    const resolved = storagePath(path.resolve(expandTilde(target)));
-    const relative = path.relative(volumeRoot, resolved);
-    if (
-      relative === '..' ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative) ||
-      !relative
-    )
-      return undefined;
-    const volume = path.join(volumeRoot, relative.split(path.sep)[0]);
+    const volume = storageVolumeRoot(target, volumesRoot);
+    if (!volume) return undefined;
     const mounted = statSync(volume, { throwIfNoEntry: false });
-    if (mounted?.isDirectory() && mounted.dev !== statSync(volumeRoot).dev) return undefined;
+    if (mounted?.isDirectory() && mounted.dev !== statSync(path.dirname(volume)).dev)
+      return undefined;
     return `Storage unavailable: ${volume} is not mounted. Reconnect the volume before using ${target}.`;
   } catch (error) {
     return `Storage unavailable: ${target}: ${error instanceof Error ? error.message : String(error)}. Reconnect or repair its volume.`;
   }
+}
+
+export interface StorageVolumeWatch {
+  refresh(targets: Iterable<string>): void;
+  close(): void;
+}
+
+/** FSEvents omits some mount changes. One metadata watcher per volume survives unmount/replug. */
+export function watchStorageVolumes(
+  targets: Iterable<string>,
+  changed: () => void,
+): StorageVolumeWatch {
+  const listeners = new Map<string, () => void>();
+  const refresh = (targets: Iterable<string>): void => {
+    const roots = new Set(
+      [...targets].flatMap((target) => {
+        const root = storageVolumeRoot(target);
+        return root ? [root] : [];
+      }),
+    );
+    for (const [root, listener] of listeners)
+      if (!roots.has(root)) {
+        unwatchFile(root, listener);
+        listeners.delete(root);
+      }
+    for (const root of roots)
+      if (!listeners.has(root)) {
+        const listener = () => changed();
+        watchFile(root, { interval: 1000, persistent: false }, listener);
+        listeners.set(root, listener);
+      }
+  };
+  refresh(targets);
+  return {
+    refresh,
+    close() {
+      for (const [root, listener] of listeners) unwatchFile(root, listener);
+      listeners.clear();
+    },
+  };
 }
 
 export function assertStorageVolumePresent(target: string, volumesRoot?: string): void {
@@ -54,14 +100,18 @@ export function assertStorageVolumePresent(target: string, volumesRoot?: string)
 }
 
 /** The existing gateway store owners use these same configured roots. */
-export function gatewayStorageVolumeErrors(): string[] {
+export function gatewayStorageRoots(): string[] {
   const home = farmslotHome();
   return [
     home,
     path.join(home, 'run-bundles'),
     resolveRunsDir(farmslotRoot),
     process.env.FARMSLOT_RUN_ARCHIVE_ROOT ?? path.join(home, 'run-archive'),
-  ].flatMap((root) => {
+  ];
+}
+
+export function gatewayStorageVolumeErrors(): string[] {
+  return gatewayStorageRoots().flatMap((root) => {
     const error = storageVolumeError(root);
     return error ? [error] : [];
   });

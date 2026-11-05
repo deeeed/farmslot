@@ -1,6 +1,6 @@
 // chat/chat-memory.ts — Copilot workspace: MEMORY.md + session summaries
 
-import { existsSync, watch } from 'node:fs';
+import { existsSync, realpathSync, watch } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -22,8 +22,10 @@ function watchFile(filePath: string, invalidate: () => void): void {
   try {
     // Parent-directory FSEvents survives volume revocation; Darwin file-inode
     // watchers abort in libuv while rearming a revoked vnode.
-    const watcher = watch(path.dirname(filePath), (_event, filename) => {
-      if (filename != null && filename.toString() !== path.basename(filePath)) return;
+    const darwin = process.platform === 'darwin';
+    const physicalFile = darwin ? realpathSync(filePath) : filePath;
+    const watcher = watch(darwin ? path.dirname(physicalFile) : filePath, (_event, filename) => {
+      if (darwin && filename != null && filename.toString() !== path.basename(physicalFile)) return;
       invalidate();
       resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot' });
       watcher.close(); // re-watch happens on next read

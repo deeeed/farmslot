@@ -12,7 +12,13 @@ import type { FleetStatus, GatewayDoctorResult } from '../../packages/protocol/s
 import { writeAtomicJSON } from '../../services/gateway/src/core/atomic-json.js';
 import { GatewayClient } from '../../packages/cli/src/gateway-client.js';
 import { testGatewayIdentity } from '../lib/test-gateway-identity-source.mjs';
-import { freePort, linkCheckout, poll, stopProcess } from './lib/isolated-stack.mjs';
+import {
+  connectGateway,
+  freePort,
+  linkCheckout,
+  poll,
+  stopProcess,
+} from './lib/isolated-stack.mjs';
 
 const waitFor = (description: string, timeout: number, read: () => Promise<boolean>) =>
   poll(description, async () => ((await read()) ? true : undefined), timeout);
@@ -107,19 +113,23 @@ try {
     GATEWAY_HOST: '127.0.0.1',
   });
   const log = path.join(evidence, 'gateway.log');
-  const fd = openSync(log, 'w', 0o600);
-  gateway = spawn(
-    process.execPath,
-    [
-      path.join(root, 'scripts/gateway-supervisor.mjs'),
-      'yarn',
-      'workspace',
-      '@farmslot/gateway',
-      'start',
-    ],
-    { cwd: root, env, detached: true, stdio: ['ignore', fd, fd] },
-  );
-  closeSync(fd);
+  const launch = (mode: 'w' | 'a') => {
+    const fd = openSync(log, mode, 0o600);
+    const child = spawn(
+      process.execPath,
+      [
+        path.join(root, 'scripts/gateway-supervisor.mjs'),
+        'yarn',
+        'workspace',
+        '@farmslot/gateway',
+        'start',
+      ],
+      { cwd: root, env, detached: true, stdio: ['ignore', fd, fd] },
+    );
+    closeSync(fd);
+    return child;
+  };
+  gateway = launch('w');
   const connect = async () =>
     new GatewayClient({ url, timeout: 10000, credential: { token } }).connect();
   await waitFor('supervised gateway startup', 60000, async () => {
@@ -220,6 +230,41 @@ try {
   gateway.kill('SIGTERM');
   await stopped;
   assert.throws(() => process.kill(secondPid, 0), { code: 'ESRCH' });
+  // A restart while the drive remains absent must publish recovery without a poll.
+  disk('detach', '-force', mount);
+  attached = false;
+  gateway = launch('a');
+  connection = await connectGateway({ url, token, gateway, log, budgetMs: 60000 });
+  const offline = await connection.call<{ fleet: FleetStatus }>('fleet.status', {});
+  assert.equal(offline.fleet.slots[0]?.enabled, false);
+  let recoveryNotified = false;
+  connection.onEvent((event) => {
+    if (event.event !== 'fleet.updated' || !event.payload || typeof event.payload !== 'object')
+      return;
+    const fleet: unknown = Reflect.get(event.payload, 'fleet');
+    if (!fleet || typeof fleet !== 'object') return;
+    const slots: unknown = Reflect.get(fleet, 'slots');
+    if (Array.isArray(slots))
+      recoveryNotified = slots.some(
+        (slot) =>
+          slot &&
+          typeof slot === 'object' &&
+          Reflect.get(slot, 'slot') === 'storage-proof-1' &&
+          Reflect.get(slot, 'enabled') === true,
+      );
+  });
+  disk('attach', '-nobrowse', '-mountpoint', mount, image);
+  attached = true;
+  await waitFor(
+    'startup-missing recovery notification without polling',
+    10000,
+    async () => recoveryNotified,
+  );
+  assert((await readFile(task, 'utf8')).includes('Reconnected volume'));
+  const recoveryPid = Number(readFileSync(lock, 'utf8').trim());
+  connection.close();
+  await stopProcess(gateway);
+  assert.throws(() => process.kill(recoveryPid, 0), { code: 'ESRCH' });
   await writeFile(
     path.join(evidence, 'receipt.json'),
     JSON.stringify(
@@ -236,6 +281,7 @@ try {
         missingVolumePrepareRefused: true,
         missingVolumeStoreWriteRefused: true,
         taskWritesObservedBeforeAndAfter: true,
+        startupMissingRecoveryNotified: true,
         volumeDetachSurvived: true,
         unavailableSlot: true,
         doctorAlert: storage.detail,
