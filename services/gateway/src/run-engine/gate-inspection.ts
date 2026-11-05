@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import type { Run } from '@farmslot/protocol';
+import type { Run, RunDecision } from '@farmslot/protocol';
 
 import { outsideGatewayRequest } from '../observability/performance.js';
 import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
@@ -22,27 +22,54 @@ interface GateInspection {
   running: boolean;
   requested: boolean;
   timer?: ReturnType<typeof setTimeout>;
-  /** Decisions a check projected without storing them (a package still collecting). */
-  projected?: { updatedAt: string; decisions: Run['decisions'] };
+  /**
+   * Decisions a check projected without storing them (a package still collecting), by id, with
+   * the stored payload each was taken from. Writers replace a payload rather than edit it.
+   */
+  projected: Map<string, { from: RunDecision['payload']; decision: RunDecision }>;
 }
 
 const inspections = new Map<string, GateInspection>();
 
-/** The stored run, with the decisions its last check projected while the run is unchanged. */
+const hasOpenDecision = (run: Run | undefined) =>
+  Boolean(run?.decisions.some((decision) => !decision.resolvedAt));
+
+/** A projection stands only while its decision is still open on the payload it was taken from. */
+function servedDecisions(run: Run, projected: GateInspection['projected']): Run['decisions'] {
+  if (!projected.size) return run.decisions;
+  let changed = false;
+  const decisions = run.decisions.map((decision) => {
+    const entry = projected.get(decision.id);
+    if (!entry || decision.resolvedAt || decision.payload !== entry.from) return decision;
+    changed = true;
+    return entry.decision;
+  });
+  return changed ? decisions : run.decisions;
+}
+
+/** The stored run, with the decisions its last check projected. */
 export function inspectedRun(run: Run): Run {
   requestGateInspection(run);
   const projected = inspections.get(run.id)?.projected;
-  return projected?.updatedAt === run.updatedAt ? { ...run, decisions: projected.decisions } : run;
+  const decisions = projected ? servedDecisions(run, projected) : run.decisions;
+  return decisions === run.decisions ? run : { ...run, decisions };
+}
+
+function retire(runId: string): void {
+  const entry = inspections.get(runId);
+  if (!entry || entry.running) return;
+  clearTimeout(entry.timer);
+  inspections.delete(runId);
 }
 
 function requestGateInspection(run: Run): void {
-  if (!run.decisions.some((decision) => !decision.resolvedAt)) {
-    inspections.delete(run.id);
-    return;
-  }
+  if (!hasOpenDecision(run)) return retire(run.id);
   let entry = inspections.get(run.id);
   if (!entry)
-    inspections.set(run.id, (entry = { lastStartedAt: 0, running: false, requested: false }));
+    inspections.set(
+      run.id,
+      (entry = { lastStartedAt: 0, running: false, requested: false, projected: new Map() }),
+    );
   if (entry.running) entry.requested = true;
   else schedule(run.id, entry);
 }
@@ -66,29 +93,26 @@ async function inspect(runId: string, entry: GateInspection): Promise<void> {
   entry.running = true;
   entry.requested = false;
   entry.lastStartedAt = Date.now();
-  const before = entry.projected;
   try {
     const run = getRun(runId);
-    if (!run?.decisions.some((decision) => !decision.resolvedAt)) {
-      inspections.delete(runId);
-      return;
-    }
-    const inspected = await reconcilePublicationPackageForInspection(
-      await refreshRunGateReadiness(run),
-    );
+    if (!hasOpenDecision(run)) return;
+    // Readiness is stored by its writer; the package check may only project.
+    const refreshed = await refreshRunGateReadiness(run!);
+    const from = new Map(refreshed.decisions.map((decision) => [decision.id, decision.payload]));
+    const inspected = await reconcilePublicationPackageForInspection(refreshed);
     const stored = getRun(runId);
-    if (!stored) {
-      inspections.delete(runId);
-      return;
+    if (!stored) return;
+    const before = servedDecisions(stored, entry.projected);
+    entry.projected = new Map();
+    for (const decision of inspected.decisions) {
+      const taken = from.get(decision.id);
+      const current = stored.decisions.find(({ id }) => id === decision.id);
+      // Only what the check itself changed, and only while the store still holds its source.
+      if (current && decision.payload !== taken && current.payload === taken)
+        entry.projected.set(decision.id, { from: taken, decision });
     }
-    entry.projected =
-      inspected !== stored && inspected.updatedAt === stored.updatedAt
-        ? { updatedAt: stored.updatedAt, decisions: inspected.decisions }
-        : undefined;
     // Stored changes were published by their writer; a change to what reads serve is published here.
-    const served = (projected: GateInspection['projected']) =>
-      projected?.updatedAt === stored.updatedAt ? projected.decisions : stored.decisions;
-    if (!isDeepStrictEqual(served(before), served(entry.projected)))
+    if (!isDeepStrictEqual(before, servedDecisions(stored, entry.projected)))
       publishRunResources(captureRunResources(stored));
   } catch (error) {
     console.warn(
@@ -96,6 +120,11 @@ async function inspect(runId: string, entry: GateInspection): Promise<void> {
     );
   } finally {
     entry.running = false;
-    if (entry.requested && inspections.get(runId) === entry) schedule(runId, entry);
+    if (inspections.get(runId) === entry) {
+      if (!hasOpenDecision(getRun(runId))) retire(runId);
+      else if (entry.requested) schedule(runId, entry);
+    }
+    // Runs closed, archived or deleted since their last read keep no entry.
+    for (const id of inspections.keys()) if (!hasOpenDecision(getRun(id))) retire(id);
   }
 }
