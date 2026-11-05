@@ -7,9 +7,10 @@ if (!existsSync(fileURLToPath(compiled))) {
   throw new Error('Build the supplying agent runtime before branch maintenance.');
 }
 const sdk = await import(compiled.href);
-const [phase, encoded] = process.argv.slice(2);
+const [phase, encoded, scopeEncoded] = process.argv.slice(2);
 try {
   const value = JSON.parse(encoded);
+  const scope = scopeEncoded ? JSON.parse(scopeEncoded) : undefined;
   let result;
   if (phase === 'inspect') result = sdk.inspectBranchMaintenance(value);
   else if (phase === 'execute')
@@ -20,8 +21,10 @@ try {
   else if (phase === 'push')
     result =
       value.kind === 'ordinary'
-        ? sdk.pushOrdinaryBranchMaintenance(value)
-        : sdk.pushBranchMaintenance(value);
+        ? sdk.pushOrdinaryBranchMaintenance(value, scope)
+        : sdk.pushBranchMaintenance(value, scope);
+  else if (phase === 'capture-ci-fix') result = sdk.captureCIFixScope(value);
+  else if (phase === 'verify-ci-fix') result = sdk.verifyCIFixScope(value);
   else if (phase === 'verify') result = sdk.verifyBranchMaintenance(value);
   else if (phase === 'validate') result = sdk.validateBranchMaintenance(value);
   else if (phase === 'retire')

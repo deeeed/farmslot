@@ -369,11 +369,9 @@ test('default CI fix template uses explicit CI-FIX marker targeting', async () =
   assert.doesNotMatch(template, /mark start/);
   assert.doesNotMatch(template, /mark complete \|/);
   assert.doesNotMatch(template, /mark-checklist-step\.cjs .*CI-FIX\.md .*CI-FIX-SIGNAL\.json/);
-  assert.match(template, /\{\{BRANCH_UPDATE_INSTRUCTIONS\}\}/);
-  const rendered = template.replace(
-    '{{BRANCH_UPDATE_INSTRUCTIONS}}',
-    buildBranchUpdateInstructions('feat/upstream'),
-  );
+  assert.doesNotMatch(template, /Apply minimal fixes/);
+  assert.match(template, /Stage only files allowed by the engine scope below/);
+  const rendered = `${template}\n${buildBranchUpdateInstructions('feat/upstream')}`;
   assert.match(rendered, /Branch updates target `origin\/feat\/upstream`/);
   assert.match(rendered, /pre-rebase-remote-sha\.txt/);
   assert.doesNotMatch(rendered, /TASK\.md's branch-update instructions/);
