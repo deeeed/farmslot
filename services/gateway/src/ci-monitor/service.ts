@@ -57,6 +57,36 @@ export function initCIMonitor(broadcast: BroadcastFn): void {
   initCIWatchStateBroadcaster(broadcast);
 }
 
+interface CIWatchFailures {
+  infrastructureChecks: string[];
+  failedNames: string[];
+}
+
+export function classifyCIWatchFailures(pr: PRStatus): CIWatchFailures {
+  const infrastructureChecks: string[] = [];
+  const failedNames: string[] = [];
+  for (const check of pr.checks.filter((check) => check.status === 'fail')) {
+    const details =
+      check.failureDetails ??
+      pr.checkSnapshot?.checks.filter((detail) => detail.name === check.name);
+    if (!details?.length) {
+      failedNames.push(check.watchName || check.name);
+      continue;
+    }
+    for (const detail of details) {
+      const conclusion = (detail.conclusion ?? detail.status).toUpperCase();
+      if (
+        ['CANCEL', 'CANCELLED', 'TIMED_OUT', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(
+          conclusion,
+        )
+      )
+        infrastructureChecks.push(`${detail.name} (${conclusion})`);
+      else failedNames.push(detail.name);
+    }
+  }
+  return { infrastructureChecks, failedNames };
+}
+
 interface CIMonitorConfig {
   pollIntervalMs: number;
   maxPollTimeMs: number;
@@ -386,32 +416,7 @@ export async function monitorCI(
       merged,
       mergeConflict,
     } = pr;
-    const infrastructureChecks: string[] = [];
-    const failedNames: string[] = [];
-    for (const check of pr.checks.filter((check) => check.status === 'fail')) {
-      const details =
-        check.failureDetails ??
-        pr.checkSnapshot?.checks.filter((detail) => detail.name === check.name);
-      if (!details?.length) {
-        failedNames.push(check.watchName || check.name);
-        continue;
-      }
-      for (const detail of details) {
-        const conclusion = (detail.conclusion ?? detail.status).toUpperCase();
-        if (
-          [
-            'CANCEL',
-            'CANCELLED',
-            'TIMED_OUT',
-            'STARTUP_FAILURE',
-            'STALE',
-            'ACTION_REQUIRED',
-          ].includes(conclusion)
-        )
-          infrastructureChecks.push(`${detail.name} (${conclusion})`);
-        else failedNames.push(detail.name);
-      }
-    }
+    const { infrastructureChecks, failedNames } = classifyCIWatchFailures(pr);
     const infrastructureReason = infrastructureChecks.length
       ? `CI infrastructure/timeout failure: ${infrastructureChecks.join(', ')}. Handle outside the PR`
       : null;

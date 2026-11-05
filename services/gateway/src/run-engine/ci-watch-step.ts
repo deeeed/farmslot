@@ -7,10 +7,11 @@ import {
   type SlotReleaseParams,
 } from '@farmslot/protocol';
 
-import { monitorCI } from '../ci-monitor/service.js';
+import { classifyCIWatchFailures, monitorCI } from '../ci-monitor/service.js';
 import { getProjectField, getProjectFieldRaw } from '../core/config.js';
 import { markSlotHeld, updateSlotStatus } from '../core/index.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
+import { prStatus } from '../methods/pr.js';
 import {
   createRetrospectiveForRun,
   isArtifactOnlyRun,
@@ -318,53 +319,44 @@ export async function executeCIWatchStep(
       (d.resolvedAction === 'dispatch-update-branch' ||
         d.resolvedAction === 'dispatch-pr-complete'),
   );
-  if (resolvedChainDecision) {
-    const chainAction = resolvedChainDecision.resolvedAction!;
-    console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — found resolved chain decision: ${chainAction}, skipping CI monitor`,
-    );
-    const syntheticOutcome: Awaited<ReturnType<typeof monitorCI>> = {
-      result: 'failed',
-      failedChecks: ['MERGE_CONFLICT'],
-      pollCount: 0,
-      phase: 'done',
-      fixInProgress: false,
-      fixTrigger: null,
-      activeTaskFile: null,
-      totalDurationMs: 0,
-      checkTimeline: [],
-      actionableBotCommentCount: 0,
-      dispatchAction: chainAction,
-    };
-    // Jump straight to chaining logic below
-    const chainSpec = buildCIWatchChainedRunParams(current, chainAction, ciRepo);
-    if (!chainSpec) {
-      return { inputs, outputs: { ...syntheticOutcome } };
-    }
-    console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — chaining ${chainSpec.flowType} on slot ${current.slotId} ticket=${chainSpec.createParams.ticketOrPr}`,
-    );
-    const chainRun = await withSourcePlanning(chainSpec.createParams.project, async () =>
-      createRun(chainSpec.createParams),
-    );
-    applyChainedRunEngineFlags(chainRun.id, chainSpec.engineFlags);
-    if (Object.keys(chainSpec.updateFields).length) updateRun(chainRun.id, chainSpec.updateFields);
-    broadcastFn(Events.RUN_UPDATED, { run: getRun(chainRun.id) ?? chainRun });
-    // Clear agent status so chained run's find-slot can pick up this slot
-    await updateSlotStatus(current.slotId, { agent: 'idle' });
-    startRun(chainRun.id).catch((err) => {
-      console.error(
-        `[run-engine] chained ${chainSpec.flowType} run failed: ${(err as Error).message}`,
-      );
-    });
-    return { inputs, outputs: { ...syntheticOutcome, chainedRunId: chainRun.id } };
-  }
-
   const controller = new AbortController();
   activeMonitors.set(runId, controller);
-  let outcome: Awaited<ReturnType<typeof monitorCI>> | undefined;
+  let outcome: CIOutcome | undefined = resolvedChainDecision
+    ? {
+        result: 'failed',
+        failedChecks: ['MERGE_CONFLICT'],
+        pollCount: 0,
+        phase: 'done',
+        fixInProgress: false,
+        fixTrigger: null,
+        activeTaskFile: null,
+        totalDurationMs: 0,
+        checkTimeline: [],
+        actionableBotCommentCount: 0,
+        dispatchAction: resolvedChainDecision.resolvedAction,
+      }
+    : undefined;
   try {
-    outcome = await monitorCI(runId, current.prNumber, ciRepo, controller.signal);
+    while (true) {
+      outcome ??= await monitorCI(runId, current.prNumber, ciRepo, controller.signal);
+      if (outcome.dispatchAction !== 'dispatch-pr-complete') break;
+      // Retained cards and fresh monitor outcomes share this final dispatch gate.
+      // Keep the old decision as history and re-enter the monitor for a current choice.
+      const refusal = getRun(runId)?.ciWatchState?.fixScopeRefusal;
+      const fresh = refusal
+        ? null
+        : (await prStatus({ pr: current.prNumber, project: current.project, force: true })).pr;
+      if (
+        !getRun(runId)?.ciWatchState?.fixScopeRefusal &&
+        fresh &&
+        !classifyCIWatchFailures(fresh).infrastructureChecks.length
+      )
+        break;
+      console.warn(
+        `[run-engine] run ${runId.slice(0, 8)} — CI repair dispatch is blocked by current infrastructure or scope refusal`,
+      );
+      outcome = undefined;
+    }
 
     console.log(`[run-engine] run ${runId.slice(0, 8)} — CI outcome: ${outcome.result}`);
 
@@ -383,7 +375,11 @@ export async function executeCIWatchStep(
   }
 
   let chainedRunId: string | undefined;
-  const chainSpec = buildCIWatchChainedRunParams(current, outcome?.dispatchAction, ciRepo);
+  const chainSpec = buildCIWatchChainedRunParams(
+    getRun(runId) ?? current,
+    outcome?.dispatchAction,
+    ciRepo,
+  );
   if (chainSpec) {
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — chaining ${chainSpec.flowType} on slot ${current.slotId} ticket=${chainSpec.createParams.ticketOrPr}`,

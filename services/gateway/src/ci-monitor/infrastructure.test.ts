@@ -6,6 +6,9 @@ import { after, mock, test } from 'node:test';
 
 import type { ProjectCICheckGroup } from '@farmslot/protocol';
 
+import { synthesizeRawSnapshotFromGraphQL } from '../methods/pr/raw-cache.js';
+import type { CIWatchStepContext } from '../run-engine/ci-watch-step.js';
+
 process.env.FARMSLOT_RUNS_DIR = mkdtempSync(path.join(tmpdir(), 'f415-infrastructure-'));
 const prMethods = await import('../methods/pr.js');
 let conclusions: Array<[string, string]> = [];
@@ -13,8 +16,10 @@ let fixInputs: string[][] = [];
 let checkGroups: ProjectCICheckGroup[] = [];
 let deduped = false;
 let fixSuccess = false;
+const config = await import('../core/config.js');
 mock.module('../core/config.js', {
   namedExports: {
+    ...config,
     loadProjectVars: async () => ({ projectJson: {} }),
   },
 });
@@ -25,12 +30,18 @@ mock.module('../methods/pr.js', {
       pr: prMethods.projectPRData(
         {
           prStateStdout: 'OPEN\tMERGEABLE\tCLEAN\t\tfix/product',
-          checksStdout: conclusions
-            .map(
-              ([name, state]) =>
-                `${name}\t${state === 'CANCELLED' ? 'cancel' : 'fail'}\t\t\t${state}`,
-            )
-            .join('\n'),
+          checksStdout: synthesizeRawSnapshotFromGraphQL({
+            statusCheckRollup: {
+              contexts: {
+                nodes: conclusions.map(([name, conclusion]) => ({
+                  __typename: 'CheckRun',
+                  name,
+                  status: 'COMPLETED',
+                  conclusion,
+                })),
+              },
+            },
+          }).checksStdout,
           checksAvailable: true,
           commentsStdout: '',
           reviewCommentsStdout: '',
@@ -70,7 +81,23 @@ mock.module('./inline-fix.js', {
     },
   },
 });
-const { monitorCI } = await import('./service.js');
+const core = await import('../core/index.js');
+mock.module('../core/index.js', {
+  namedExports: { ...core, markSlotHeld: async () => {}, updateSlotStatus: async () => {} },
+});
+const posture = await import('../run-engine/resource-posture.js');
+mock.module('../run-engine/resource-posture.js', {
+  namedExports: { ...posture, reconcileRunPosture: async () => {} },
+});
+const sourceRuntime = await import('../sources/runtime.js');
+mock.module('../sources/runtime.js', {
+  namedExports: {
+    ...sourceRuntime,
+    withSourcePlanning: async (_project: string, action: () => unknown) => action(),
+  },
+});
+const { monitorCI, resolveCIDecision } = await import('./service.js');
+const { executeCIWatchStep } = await import('../run-engine/ci-watch-step.js');
 const { createRun, getAllRuns, getRun, loadAllRuns, persistRunNow } =
   await import('../runs/store.js');
 await loadAllRuns();
@@ -79,7 +106,7 @@ after(async () => {
   rmSync(process.env.FARMSLOT_RUNS_DIR!, { recursive: true, force: true });
 });
 
-for (const state of ['CANCELLED', 'TIMED_OUT', 'STARTUP_FAILURE', 'STALE', 'ACTION_REQUIRED']) {
+for (const state of ['CANCELLED', 'TIMED_OUT', 'STARTUP_FAILURE', 'ACTION_REQUIRED']) {
   test(
     `${state} reaches the operator without dispatching a CI fix`,
     { timeout: 2000 },
@@ -103,6 +130,119 @@ for (const state of ['CANCELLED', 'TIMED_OUT', 'STARTUP_FAILURE', 'STALE', 'ACTI
       );
     },
   );
+}
+
+test(
+  'SUCCESS plus STALE retains the producer skipping bucket in an all aggregate',
+  { timeout: 2000 },
+  async () => {
+    conclusions = [
+      ['unit / 1', 'SUCCESS'],
+      ['unit / 2', 'STALE'],
+    ];
+    checkGroups = [{ name: 'Unit', match: 'unit /', matchMode: 'includes', aggregate: 'all' }];
+    fixInputs = [];
+    try {
+      const run = createRun({
+        flowType: 'dev',
+        project: 'example-web-farm',
+        ticketOrPr: 'F415',
+        mode: 'validation',
+      });
+      const outcome = await monitorCI(run.id, 42, 'example/product', new AbortController().signal);
+      assert.equal(outcome.result, 'passed');
+      assert.deepEqual(fixInputs, []);
+      assert.deepEqual(getRun(run.id)?.decisions, []);
+    } finally {
+      checkGroups = [];
+    }
+  },
+);
+
+for (const resolved of [false, true]) {
+  for (const refusal of [false, true]) {
+    test(
+      `${resolved ? 'resolved' : 'pending'} recovered repair cannot dispatch with ${refusal ? 'a scope refusal' : 'current infrastructure'}`,
+      { timeout: 2000 },
+      async () => {
+        conclusions = refusal ? [] : [['unit-tests', 'TIMED_OUT']];
+        fixInputs = [];
+        const run = createRun({
+          flowType: 'dev',
+          project: 'example-web-farm',
+          ticketOrPr: 'F415',
+          mode: 'validation',
+          slotId: 'fixture-slot',
+        });
+        const decision = {
+          id: `retained-${run.id}`,
+          type: 'ci_inline_fix_blocked' as const,
+          title: 'Previous code failure',
+          description: 'Repair the code',
+          actions: [{ id: 'dispatch-pr-complete', label: 'Repair', style: 'primary' as const }],
+          createdAt: '2026-11-01T00:00:00Z',
+          ...(resolved
+            ? { resolvedAt: '2026-11-01T00:01:00Z', resolvedAction: 'dispatch-pr-complete' }
+            : {}),
+        };
+        const { updateRun } = await import('../runs/store.js');
+        updateRun(run.id, {
+          prNumber: 42,
+          decisions: [decision],
+          ...(refusal
+            ? {
+                ciWatchState: {
+                  consecutiveAttempts: 1,
+                  totalAttempts: 1,
+                  skips: 0,
+                  fixScopeRefusal: 'CI_FIX_OUT_OF_SCOPE: unrelated.ts',
+                },
+              }
+            : {}),
+        });
+        let dispatched = 0;
+        const context: CIWatchStepContext = {
+          activeMonitors: new Map(),
+          createRetrospectiveForRun: async () => {},
+          applyChainedRunEngineFlags: () => {},
+          broadcastFn: () => {},
+          buildCIWatchChainedRunParams: (_current, action) => {
+            if (action === 'dispatch-pr-complete') dispatched++;
+            return null;
+          },
+          hasValidPrNumber: () => true,
+          loadProjectVarsOrNull: async () => ({ projectJson: { ci: { repo: 'example/product' } } }),
+          resolveCIWatchTerminalPatch: () => null,
+          startRun: async () => {},
+          deferTerminalSlotRelease: () => {},
+        };
+        const running = executeCIWatchStep(run.id, context);
+        if (!resolved) {
+          // A retained card is re-presented by recovery with its original actions.
+          // Resolve it once the monitor has installed its resolver.
+          while (
+            getRun(run.id)?.steps.find((step) => step.name === 'ci-watch')?.outputs?.phase !==
+            'decision_required'
+          ) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+          }
+          resolveCIDecision(decision.id, 'dispatch-pr-complete');
+        }
+        const result = await running;
+        assert.equal(dispatched, 0);
+        assert.equal(result.outputs?.result, 'aborted');
+        assert.equal(getRun(run.id)?.decisions[0].resolvedAction, 'dispatch-pr-complete');
+        assert.equal(getRun(run.id)?.decisions.length, 2);
+        assert.deepEqual(
+          getRun(run.id)
+            ?.decisions.at(-1)
+            ?.actions.map((action) => action.id),
+          ['wait', 'abort'],
+        );
+        assert.deepEqual(fixInputs, []);
+      },
+    );
+  }
 }
 
 test(

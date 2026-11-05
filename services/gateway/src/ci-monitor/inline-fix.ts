@@ -641,6 +641,12 @@ interface CIFixTask {
   progress?: CIWatchFixProgress;
 }
 
+type CIFixVerification = { status: 'verified' | 'pending' } | { status: 'refused'; reason: string };
+
+function isCIFixScopeRefusal(error: unknown): error is Error {
+  return error instanceof Error && 'code' in error && error.code === 'CI_FIX_OUT_OF_SCOPE';
+}
+
 /** Write CI-FIX.md to the slot's task dir using the ci-fix template */
 async function writeCIFixTask(
   slotId: string,
@@ -684,16 +690,28 @@ async function writeCIFixTask(
       ? pv.projectJson.default_branch.trim()
       : DEFAULT_BRANCH;
   const publicationBase = await publicationBaseForRun(run, defaultBranch);
-  const operation = await prepareBranchMaintenance(run, vars, defaultBranch);
-  const scope = parseCIFixScope(
-    await runtimeOperation(vars, 'capture-ci-fix', {
-      kind: 'ordinary',
-      repo: vars.remoteRepo,
-      branch,
-      baseRef: publicationBase,
-      headSha: ciBaseRef,
-    }),
+  const scopePath = taskDirRelPath(taskDir, 'inputs/ci-fix-scope.json');
+  const savedScope = await execOnSlot(
+    vars,
+    `if test -f ${shellQuote(`${vars.remoteRepo}/${scopePath}`)}; then cat ${shellQuote(`${vars.remoteRepo}/${scopePath}`)}; fi`,
   );
+  if (savedScope.exitCode !== 0) throw new Error('Cannot read CI fix ownership');
+  const ownership = parseCIFixScope(
+    savedScope.stdout.trim()
+      ? JSON.parse(savedScope.stdout)
+      : await runtimeOperation(vars, 'capture-ci-fix', {
+          kind: 'ordinary',
+          repo: vars.remoteRepo,
+          branch,
+          baseRef: publicationBase,
+          headSha: ciBaseRef,
+        }),
+  );
+  if (!savedScope.stdout.trim())
+    await writeTextFileOnSlot(vars, scopePath, JSON.stringify(ownership));
+  // Ownership lasts for the PR run; the comparison head belongs to this attempt.
+  const scope = { ...ownership, headSha: ciBaseRef };
+  const operation = await prepareBranchMaintenance(run, vars, defaultBranch);
   const guardVars = {
     CI_FIX_SCOPE: JSON.stringify(scope),
     REPO: vars.remoteRepo,
@@ -760,11 +778,6 @@ async function writeCIFixTask(
 
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
-  await writeTextFileOnSlot(
-    vars,
-    taskDirRelPath(taskDir, 'inputs/ci-fix-scope.json'),
-    JSON.stringify(scope),
-  );
   await writeTextFileOnSlot(vars, taskPath, expanded);
   await syncChecklistTargetForRole(vars, taskDir, 'ci-fix', { ciBaseRef });
 
@@ -851,9 +864,10 @@ async function attemptInlineCIFix(
       : await writeCIFixTask(slotId, runId, comments, failedChecks, prNumber, ciRepo, beforeSha);
   } catch (error) {
     const blockedReason = (error as Error).message;
-    mutateDedup(runId, (state) => {
-      state.fixScopeRefusal = blockedReason;
-    });
+    if (isCIFixScopeRefusal(error))
+      mutateDedup(runId, (state) => {
+        state.fixScopeRefusal = blockedReason;
+      });
     clearInlineFixState(runId, { phase: 'blocked' });
     return { attempted: true, success: false, blocked: true, blockedReason, attempts };
   }
@@ -885,18 +899,15 @@ async function attemptInlineCIFix(
         const scopePath = `${vars.remoteRepo}/${writeResult.taskDir}/inputs/ci-fix-scope.json`;
         const result = await execOnSlot(vars, `cat ${shellQuote(scopePath)}`);
         if (result.exitCode !== 0) throw new Error('CI_FIX_SCOPE_MISSING');
-        scope = parseCIFixScope(JSON.parse(result.stdout));
+        scope = { ...parseCIFixScope(JSON.parse(result.stdout)), headSha: beforeSha };
       }
     } catch (error) {
       const blockedReason = `Cannot recover CI fix scope: ${(error as Error).message}`;
-      mutateDedup(runId, (state) => {
-        state.fixScopeRefusal = blockedReason;
-      });
       clearInlineFixState(runId, { phase: 'blocked' }, writeResult.taskPath);
       return { attempted: true, success: false, blocked: true, blockedReason, attempts };
     }
     const scopeVars = vars;
-    const verifyScope = async (headSha: string): Promise<string | null> => {
+    const verifyScope = async (headSha: string): Promise<CIFixVerification> => {
       try {
         await runtimeOperation(scopeVars, 'verify-ci-fix', {
           repo: scopeVars.remoteRepo,
@@ -906,13 +917,19 @@ async function attemptInlineCIFix(
           headSha,
           operation: pendingBranchMaintenance(getRun(runId)),
         });
-        return null;
+        return { status: 'verified' };
       } catch (error) {
         const reason = (error as Error).message;
+        if (!isCIFixScopeRefusal(error)) {
+          console.warn(
+            `[ci-monitor] run ${runId.slice(0, 8)} — CI fix verification pending: ${reason}`,
+          );
+          return { status: 'pending' };
+        }
         mutateDedup(runId, (state) => {
           state.fixScopeRefusal = reason;
         });
-        return reason;
+        return { status: 'refused', reason };
       }
     };
     const signalPath = recoveredContext?.signalFile
@@ -1324,10 +1341,11 @@ async function attemptInlineCIFix(
         ) {
           const lastSignalAt = new Date().toISOString();
           const currentSha = await getSlotHeadSha(slotId);
-          if (currentSha) {
-            const refusal = await verifyScope(currentSha);
-            if (refusal) return blockInlineFix(refusal, currentSha, lastSignalAt, fixProgress);
-          }
+          if (!currentSha) continue;
+          const verification = await verifyScope(currentSha);
+          if (verification.status === 'pending') continue;
+          if (verification.status === 'refused')
+            return blockInlineFix(verification.reason, currentSha, lastSignalAt, fixProgress);
           if (ws.status === 'blocked') {
             console.log(
               `[ci-monitor] run ${runId.slice(0, 8)} — ${CI_FIX_CHECKLIST_TARGET.signal} blocked: ${ws.reason ?? 'no reason provided'}`,
@@ -1337,12 +1355,6 @@ async function attemptInlineCIFix(
           const commitChanged = !!(currentSha && currentSha !== beforeSha);
           let validatedNoChange = false;
           if (!commitChanged && isNoCodeTerminalDisposition(ws.disposition)) {
-            if (!currentSha) {
-              const blockedReason =
-                'Cannot accept no-change CI completion without resolving the current HEAD';
-              console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${blockedReason}`);
-              return blockInlineFix(blockedReason, null, lastSignalAt, fixProgress);
-            }
             let artifactValidation: Awaited<ReturnType<typeof validateTerminalSignalArtifacts>>;
             try {
               artifactValidation = await validateTerminalSignalArtifacts(
@@ -1426,9 +1438,15 @@ async function attemptInlineCIFix(
 
       const currentSha = await getSlotHeadSha(slotId);
       if (currentSha && currentSha !== beforeSha && !pendingBranchMaintenance(getRun(runId))) {
-        const refusal = await verifyScope(currentSha);
-        if (refusal)
-          return blockInlineFix(refusal, currentSha, new Date().toISOString(), fixProgress);
+        const verification = await verifyScope(currentSha);
+        if (verification.status === 'pending') continue;
+        if (verification.status === 'refused')
+          return blockInlineFix(
+            verification.reason,
+            currentSha,
+            new Date().toISOString(),
+            fixProgress,
+          );
         mutateDedup(runId, (s) => {
           s.consecutiveAttempts = 0;
         });

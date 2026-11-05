@@ -1042,7 +1042,6 @@ function normalizeFullCheckStatus(status: string): 'pass' | 'fail' | 'pending' |
     case 'cancelled':
     case 'timed_out':
     case 'startup_failure':
-    case 'stale':
     case 'action_required':
       return 'fail';
     case 'skip':
