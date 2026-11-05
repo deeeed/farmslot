@@ -1153,6 +1153,7 @@ export function readProject(file: string): ProjectConfig {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as ProjectConfig & {
     repo_url?: string;
     default_branch?: string;
+    ci: ProjectConfig['ci'] & { local_check?: string };
     paths: ProjectConfig['paths'] & { runtime_dir?: string; artifact_dir?: string };
   };
   // project.json uses the existing pack spelling; registered protocol values
@@ -1161,6 +1162,7 @@ export function readProject(file: string): ProjectConfig {
     ...raw,
     repoUrl: raw.repoUrl ?? raw.repo_url ?? '',
     defaultBranch: raw.defaultBranch ?? raw.default_branch ?? '',
+    ci: { ...raw.ci, localCheck: raw.ci?.localCheck ?? raw.ci?.local_check },
     paths: {
       runtimeDir: raw.paths?.runtimeDir || raw.paths?.runtime_dir || '.agent',
       artifactDir: raw.paths?.artifactDir || raw.paths?.artifact_dir || DEFAULT_TASK_DIR,

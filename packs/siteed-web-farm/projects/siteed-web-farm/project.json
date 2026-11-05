@@ -90,13 +90,13 @@
       {
         "src": "ci-local.mjs",
         "dst": ".agent/ci-local.mjs"
+      },
+      {
+        "src": "recipe-tools/package.json",
+        "dst": ".agent/recipe-provider/package.json"
       }
     ],
     "directories": [
-      {
-        "src": "recipe-tools",
-        "dst": ".agent/recipe-tools"
-      },
       {
         "src": "recipe-provider",
         "dst": ".agent/recipe-provider"
