@@ -606,7 +606,7 @@ The cost is that a Grok reviewer no longer reads the repository's `AGENTS.md`, p
 
 ## Amendment 14: native reviewer usage receipts, 2026-11-05
 
-**Status:** Proposed text; Arthur approved this amendment's scope on 2026-11-05, with independent text review before implementation.
+**Status:** Accepted, Arthur, 2026-11-05; independent text review approved at `c0922e17e3740c74c8c9dfb3814be311f81c19f8` before implementation.
 
 ### Decision
 

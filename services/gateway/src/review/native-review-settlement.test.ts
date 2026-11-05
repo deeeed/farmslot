@@ -1100,6 +1100,8 @@ for (const runner of ['claude', 'codex'])
     const run = await nativeRun(t);
     const before = usageReads.length;
     const result = await review(run.id, runner);
+    const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+    assert.deepEqual(context.usage, result.usage);
     assert.equal(result.usage?.source, 'runner-transcript');
     assert.equal(result.usage?.runner, runner);
     assert.equal(result.usage?.runnerSessionId, 'saved-review-conversation');
@@ -1109,4 +1111,19 @@ for (const runner of ['claude', 'codex'])
     assert.equal(result.usage?.cacheRead, 13100000);
     assert.equal(usageReads.length, before + 1, 'Collect once for both result owners');
     assert.equal(usageReads.at(-1)?.executionNodeId, binding.executionNodeId);
+  });
+
+for (const runner of ['claude', 'codex'])
+  test(`failed native ${runner} reviewer retains spend without a verdict`, async (t) => {
+    ending = 'command-error';
+    const run = await nativeRun(t);
+    const before = usageReads.length;
+    await assert.rejects(review(run.id, runner), /Provider refused/);
+    const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+    assert.equal(context.status, 'failed');
+    assert.equal(context.usage?.source, 'runner-transcript');
+    assert.equal(context.usage?.runner, runner);
+    assert.equal(context.usage?.runnerSessionId, context.runnerSessionId);
+    assert.equal(usageReads.length, before + 1);
+    assert.equal(getRun(run.id)!.engineState?.publishGate?.reviews?.length ?? 0, 0);
   });

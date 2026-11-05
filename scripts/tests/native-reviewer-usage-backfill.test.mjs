@@ -72,6 +72,10 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
       },
     }) + '\n',
   );
+  await writeFile(
+    transcript.replace('review-conversation.jsonl', 'earlier-conversation.jsonl'),
+    (await readFile(transcript, 'utf8')).replaceAll('review-conversation', 'earlier-conversation'),
+  );
   const document = {
     id: 'run',
     slotId: 'slot',
@@ -90,6 +94,13 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
     learning: { proof3: ['original proof'], 'pipeline-review-loop-1': { verdict: 'pass' } },
     custom: ['do not drop'],
   };
+  for (const status of ['complete', 'failed'])
+    document.agentContexts.push({
+      ...document.agentContexts[0],
+      status,
+      runnerSessionId: 'earlier-conversation',
+      customContextField: 'preserve',
+    });
   const file = path.join(runs, 'run.json');
   const original = JSON.stringify(document, null, 2);
   await writeFile(file, original);
@@ -126,6 +137,10 @@ test('offline backfill defaults to read-only, refuses the live owner, preserves 
   await rm(pid);
   run(true);
   const changed = JSON.parse(await readFile(file, 'utf8'));
+  for (const context of changed.agentContexts) assert.equal(context.usage?.outputTokens, 20);
+  assert.equal(changed.agentContexts[2].customContextField, 'preserve');
+  assert.equal(changed.engineState.publishGate.reviews.length, 1);
+  assert.equal(JSON.parse(await readFile(report, 'utf8')).unrepresented.length, 0);
   assert.deepEqual(changed.learning, document.learning);
   assert.deepEqual(changed.custom, document.custom);
   assert.equal(changed.steps[0].outputs.usage.source, 'runner-transcript');

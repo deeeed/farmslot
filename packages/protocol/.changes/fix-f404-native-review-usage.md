@@ -1,0 +1,1 @@
+- Retain optional reviewer context usage receipts so reporting includes earlier and failed conversations once per session.

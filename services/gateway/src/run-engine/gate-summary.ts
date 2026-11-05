@@ -31,6 +31,7 @@ import {
 
 import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { listRuns } from '../runs/store.js';
+import { reviewerUsageReceipts } from '../runtime/reviewer-usage.js';
 
 import { publicationReviewMatchesPreparedPackage } from './gate-policy.js';
 
@@ -347,7 +348,7 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
     turns: num(m.sessionTurns),
   };
 
-  const reviews = run.engineState?.publishGate?.reviews ?? [];
+  const reviews = reviewerUsageReceipts(run);
   const reviewTokens = reviews
     .filter((r) => r.usage && num(r.usage.totalTokens) > 0)
     .map((r) => ({

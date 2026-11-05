@@ -934,7 +934,7 @@ export interface GateTokenSummary {
     turns: number;
   };
   /**
-   * Per review (from {@link ReviewStatus.usage}). The
+   * Per reviewer conversation, deduplicated across result and retained context receipts. The
    * input/output/cache split is present when the review's usage record carried
    * it; older entries may only have `total`.
    */

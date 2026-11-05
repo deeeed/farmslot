@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import type { ReviewStatus, RunMetrics } from '@farmslot/protocol';
 
+import { buildFamilyObservabilityTokenSummary } from '../family-observability/token-summary.js';
+
 import {
   aggregateFamilyChainedLoops,
   buildGateSummary,
@@ -783,4 +785,97 @@ test('a later reviewer failure cannot replace the captured primary worker outcom
     monitor.outputs = outputs;
     assert.equal(buildGateSummary(run, 'publication').worker.outcome, 'failure');
   }
+});
+
+test('review totals include replaced and failed contexts once per exact conversation', () => {
+  const receipt = (
+    runnerSessionId: string,
+    totalTokens: number,
+    measuredAt = '2026-11-05T00:00:00Z',
+  ) => ({
+    runner: 'claude',
+    runnerSessionId,
+    source: 'runner-transcript' as const,
+    totalTokens,
+    measuredAt,
+    runnerSessionPath: `/sessions/${runnerSessionId}-${totalTokens}.jsonl`,
+  });
+  const context = (
+    id: string,
+    status: 'complete' | 'failed',
+    runnerSessionId: string,
+    total: number,
+  ) => ({
+    id,
+    role: 'review' as const,
+    label: id,
+    status,
+    slotId: 'slot',
+    runId: 'accounting',
+    reviewId: 'pipeline-review',
+    runner: 'claude',
+    runnerSessionId,
+    nativeSession: {
+      sessionId: id,
+      executionNodeId: 'local',
+      ownerPrincipalId: 'owner',
+      leaseId: 'lease',
+      commandId: 'cmd',
+    },
+    usage: receipt(runnerSessionId, total),
+  });
+  const run = makeRun({
+    id: 'accounting',
+    metrics: metrics({ sessionTotalTokens: 10 }),
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            ...passingReview,
+            id: 'current-review',
+            runner: 'claude',
+            reviewerSessionId: 'current',
+            usage: receipt('current', 300),
+          },
+          {
+            ...passingReview,
+            id: 'warm-review',
+            runner: 'claude',
+            reviewerSessionId: 'current',
+            usage: receipt('current', 150),
+          },
+        ],
+      },
+    },
+  });
+  run.agentContexts = [
+    context('earlier-complete', 'complete', 'earlier', 100),
+    context('earlier-failed', 'failed', 'earlier', 200),
+    context('warm', 'complete', 'current', 250),
+  ];
+  const summary = buildTokenSummary(run);
+  assert.equal(summary.familyTotalTokens, 510);
+  assert.deepEqual(
+    summary.reviews.map((r) => [r.id, r.total]),
+    [
+      ['current-review', 300],
+      ['earlier-failed', 200],
+    ],
+  );
+  assert.equal(
+    summary.byModel.reduce((sum, row) => sum + row.total, 0),
+    510,
+  );
+  assert.deepEqual(summary.runnerSessionPaths, [
+    '/sessions/current-300.jsonl',
+    '/sessions/earlier-200.jsonl',
+  ]);
+  assert.equal(run.engineState!.publishGate!.reviews!.length, 2);
+  const family = buildFamilyObservabilityTokenSummary([run], run.id);
+  assert.equal(family.familyTotalTokens, 510);
+  assert.equal(family.runPoints[0].reviewTokens, 500);
+  assert.equal(
+    family.byModel.reduce((sum, row) => sum + row.total, 0),
+    510,
+  );
 });

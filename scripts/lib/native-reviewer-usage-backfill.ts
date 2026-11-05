@@ -4,6 +4,7 @@ import type {
   NativeSessionUsageIdentity,
   NativeSessionUsageRequest,
 } from '../../services/gateway/src/runners/native-session-usage-command.js';
+import { preferSessionUsage } from '../../services/gateway/src/runtime/reviewer-usage.js';
 
 export const LEGACY_REVIEW_USAGE_ERROR = 'Native reviewer usage accounting is unavailable';
 export const object = (value: unknown): value is Record<string, unknown> =>
@@ -155,16 +156,41 @@ export function backfillRequests(
   );
 }
 
-/** Patch exact legacy accounting DTOs, leaving verdicts, evidence and unknown fields intact. */
+/** Repair supporting receipts without constructing verdicts or changing unrelated run data. */
 export function backfillDocument(
   document: unknown,
   usages: ReadonlyMap<string, RunnerSessionUsage>,
 ): { document: unknown; replacements: number; sessionKeys: string[] } {
   let replacements = 0;
+  const receipts = new Map(usages);
+  const retain = (value: unknown): void => {
+    if (
+      object(value) &&
+      value.source === 'runner-transcript' &&
+      !value.error &&
+      typeof value.runner === 'string' &&
+      typeof value.runnerSessionId === 'string' &&
+      typeof value.measuredAt === 'string' &&
+      typeof value.totalTokens === 'number'
+    ) {
+      const usage: RunnerSessionUsage = {
+        ...value,
+        source: 'runner-transcript',
+        runner: value.runner,
+        runnerSessionId: value.runnerSessionId,
+        measuredAt: value.measuredAt,
+        totalTokens: value.totalTokens,
+      };
+      const key = usageKey(value.runner, value.runnerSessionId);
+      receipts.set(key, preferSessionUsage(receipts.get(key), usage));
+    } else if (Array.isArray(value)) value.forEach(retain);
+    else if (object(value)) Object.values(value).forEach(retain);
+  };
+  retain(document);
   const sessionKeys = representedKeys(document);
   const patch = (value: unknown): unknown => {
     if (legacyUsage(value)) {
-      const usage = usages.get(usageKey(value.runner, value.runnerSessionId));
+      const usage = receipts.get(usageKey(value.runner, value.runnerSessionId));
       if (usage?.source === 'runner-transcript' && !usage.error) {
         replacements++;
         sessionKeys.add(usageKey(value.runner, value.runnerSessionId));
@@ -180,5 +206,27 @@ export function backfillDocument(
     return value;
   };
   const result = patch(document);
+  if (object(result) && Array.isArray(result.agentContexts)) {
+    result.agentContexts = result.agentContexts.map((context: unknown) => {
+      if (
+        !object(context) ||
+        context.role !== 'review' ||
+        typeof context.reviewId !== 'string' ||
+        typeof context.runner !== 'string' ||
+        typeof context.runnerSessionId !== 'string' ||
+        !identity(context.nativeSession)
+      )
+        return context;
+      const key = usageKey(context.runner, context.runnerSessionId);
+      const usage = receipts.get(key);
+      if (!usage || usage.source !== 'runner-transcript' || usage.error) return context;
+      sessionKeys.add(key);
+      const merged = { ...(object(context.usage) ? context.usage : {}), ...usage };
+      delete merged.error;
+      if (JSON.stringify(context.usage) === JSON.stringify(merged)) return context;
+      replacements++;
+      return { ...context, usage: merged };
+    });
+  }
   return { document: result, replacements, sessionKeys: [...sessionKeys] };
 }
