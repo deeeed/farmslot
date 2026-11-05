@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Resume gateway-owned package work after deploy restart",
+  "description": "Verify late shutdown results cannot settle a pipeline step, then restart an isolated gateway during package preparation and finalization with the node up or restarting. Scripted workers only; no live farm, model turn or publication.",
+  "workflow": {
+    "entry": "late-shutdown-result",
+    "nodes": {
+      "late-shutdown-result": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/run-engine/gateway-shutdown.test.ts",
+        "timeout_ms": 120000,
+        "intent": "Keep late success and refusal running for restart recovery while real package errors still fail closed.",
+        "next": "package-restart"
+      },
+      "package-restart": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/canary/canary.mts --profile nightly --target isolated --only human-gate-prep,finalize --node-away-s 20",
+        "timeout_ms": 1800000,
+        "intent": "Real isolated gateway RPC runs resume package preparation and finalization after restart without manual replay or mirror refresh.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

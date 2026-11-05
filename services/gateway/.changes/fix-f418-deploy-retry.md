@@ -1,0 +1,1 @@
+- Preserve in-flight pipeline steps during gateway shutdown so restart recovery resumes package work instead of recording a deployment interruption as a permanent refusal.
