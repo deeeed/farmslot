@@ -40,7 +40,7 @@ import {
   workGraphsQuery,
 } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
-import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
 import { templateOptionsRequestKey } from '../dispatch/dispatch-wizard-template-options.js';
 import type {
@@ -327,7 +327,7 @@ export class WorkGraphPanel extends LitElement {
       WORK_GRAPH_SORT_URL,
     );
     const next = buildHash(route, params);
-    if (location.hash !== next) history.replaceState(null, '', next);
+    if (location.hash !== next) navigateHash(next, 'replace');
   }
 
   private setInventorySort(key: WorkGraphSortKey) {

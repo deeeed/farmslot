@@ -6,10 +6,77 @@ import {
   getHashParam,
   hashRoute,
   hashSearch,
+  navigateHash,
   parseHashRoute,
+  prepareNavigationLink,
   readViewChoice,
   viewChoiceHash,
 } from './url-state.js';
+
+test('F414 repeated link activation derives inherited choices from the authored href', () => {
+  const expanded = 'http://localhost:5175/#runs?panels=sidebar&sidebarWidth=320';
+  const collapsed = 'http://localhost:5175/#runs?sidebarWidth=320';
+  const first = prepareNavigationLink('#doctor', undefined, expanded);
+  assert.ok(first);
+  assert.equal(new URL(first.appliedHref).hash, '#doctor?panels=sidebar&sidebarWidth=320');
+  const next = prepareNavigationLink(first.appliedHref, first, collapsed);
+  assert.ok(next);
+  assert.equal(new URL(next.appliedHref).hash, '#doctor?sidebarWidth=320');
+  const explicit = prepareNavigationLink('#doctor?panels=sidebar', undefined, collapsed);
+  assert.ok(explicit);
+  assert.equal(new URL(explicit.appliedHref).hash, '#doctor?panels=sidebar&sidebarWidth=320');
+  assert.equal(prepareNavigationLink(null, undefined, expanded), null);
+  assert.equal(prepareNavigationLink('', undefined, expanded), null);
+  assert.equal(prepareNavigationLink('https://example.com/#runs', undefined, expanded), null);
+});
+
+test('F414 navigation after an async action carries shell choices into the destination URL', async (t) => {
+  const descriptors = new Map(
+    ['location', 'history'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  const location = { hash: '#dispatch?panels=sidebar&sidebarWidth=320&file=private-draft' };
+  const currentHash = () => location.hash;
+  const writes: string[] = [];
+  const states: unknown[] = [];
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      replaceState(_data: unknown, _title: string, hash: string) {
+        states.push(_data);
+        writes.push(hash);
+        location.hash = hash;
+      },
+      pushState(_data: unknown, _title: string, hash: string) {
+        states.push(_data);
+        writes.push(hash);
+        location.hash = hash;
+      },
+    },
+  });
+  t.after(() => {
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+  await Promise.resolve();
+  navigateHash('run/new-run');
+  assert.equal(currentHash(), '#run/new-run?panels=sidebar&sidebarWidth=320');
+  const keptState = { source: 'existing history entry' };
+  navigateHash('#config/pool', 'replace', keptState);
+  assert.equal(states.at(-1), keptState);
+  assert.equal(currentHash(), '#config/pool?panels=sidebar&sidebarWidth=320');
+  const count = writes.length;
+  navigateHash('#config/pool', 'push');
+  assert.equal(
+    writes.length,
+    count,
+    'inherited shell choices must not create redundant history entries',
+  );
+  navigateHash('#runs?panels=!sidebar', 'push');
+  assert.equal(new URLSearchParams(currentHash().split('?')[1]).get('panels'), '!sidebar');
+});
 
 test('hash helpers parse route and query consistently', () => {
   const hash = '#slot/demo?file=src%2Findex.ts&resource=ios%20sim';

@@ -3,6 +3,7 @@ import { html, nothing } from 'lit';
 import type { SlotStatus } from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { flowColor, flowLabel, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
@@ -239,7 +240,7 @@ export function renderSlotViewInfoPanel(view: SlotView) {
                   <div
                     style="cursor:pointer"
                     @click=${() => {
-                      location.hash = routeForRun(view._linkedRun!);
+                      navigateHash(routeForRun(view._linkedRun!));
                     }}
                     title="Click to open full run detail"
                   >

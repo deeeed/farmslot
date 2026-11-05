@@ -17,6 +17,7 @@ import {
 import type { ChatToolTraceEntry, StepLLMUsage } from '@farmslot/protocol';
 
 import { execLocal } from '../core/exec.js';
+import { captureHelperAttempt, observeHelperUsage } from '../runtime/agent-usage-context.js';
 
 import { resolveAuth } from './auth-resolve.js';
 import { registerCodexAstra, reportedLlmCost, requiresExactAstraProvider } from './codex-astra.js';
@@ -77,6 +78,7 @@ export async function ensureOAuthCredentialSeeded(
 const CHAT_TOKEN_WARN_THRESHOLD = 80_000;
 
 export interface LLMCallOptions {
+  usageRole?: string;
   provider?: string; // default: "anthropic"
   model?: string; // default: "haiku"
   systemPrompt?: string;
@@ -94,6 +96,7 @@ export interface ConversationMessage {
 }
 
 export interface LLMChatOptions {
+  usageRole?: string;
   provider?: string;
   model?: string;
   systemPrompt?: string;
@@ -263,9 +266,48 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMCallResult> {
   return callViaCli(resolvedModel, opts);
 }
 
+function observePiResponse(response: PiAssistantMessage, provider: string, model: string): void {
+  const usage = response.usage;
+  // pi-ai synthesizes empty zero usage for transport errors. It is not measured spend.
+  if (
+    (response.stopReason === 'error' || response.stopReason === 'aborted') &&
+    !(usage?.totalTokens > 0)
+  )
+    return;
+  observeHelperUsage({
+    actualModel: response.model ?? model,
+    inputTokens: usage?.input,
+    outputTokens: usage?.output,
+    cacheRead: usage?.cacheRead,
+    cacheCreation: usage?.cacheWrite,
+    totalTokens: usage?.totalTokens,
+    costUsd: reportedLlmCost(provider, usage?.cost?.total),
+  });
+}
+
 // ─── pi-ai path ───
 
 async function callViaPiAi(
+  provider: string,
+  model: string,
+  apiKey: string,
+  source: string,
+  opts: LLMCallOptions,
+  maxTokens: number,
+): Promise<LLMCallResult> {
+  return captureHelperAttempt(
+    {
+      runner: 'api:' + provider,
+      model,
+      effort: opts.reasoning,
+      role: opts.usageRole,
+      source: 'provider-response',
+    },
+    () => callViaPiAiUnmeasured(provider, model, apiKey, source, opts, maxTokens),
+  );
+}
+
+async function callViaPiAiUnmeasured(
   provider: string,
   model: string,
   apiKey: string,
@@ -308,6 +350,8 @@ async function callViaPiAi(
       },
     } as Parameters<PiModels['completeSimple']>[2],
   );
+
+  observePiResponse(response, provider, modelId);
 
   // Extract text — content is string | ContentBlock[]
   const text =
@@ -489,6 +533,26 @@ async function callChatViaPiAi(
   opts: LLMChatOptions,
   maxTokens: number,
 ): Promise<LLMCallResult> {
+  return captureHelperAttempt(
+    {
+      runner: 'api:' + provider,
+      model,
+      effort: opts.reasoning,
+      role: opts.usageRole,
+      source: 'provider-response',
+    },
+    () => callChatViaPiAiUnmeasured(provider, model, apiKey, source, opts, maxTokens),
+  );
+}
+
+async function callChatViaPiAiUnmeasured(
+  provider: string,
+  model: string,
+  apiKey: string,
+  source: string,
+  opts: LLMChatOptions,
+  maxTokens: number,
+): Promise<LLMCallResult> {
   const start = Date.now();
   const modelId = resolveModelId(provider, model);
 
@@ -575,6 +639,7 @@ async function callChatViaPiAi(
           opts.onDelta(event.delta);
         }
         if (event.type === 'error') {
+          observePiResponse(event.error, provider, modelId);
           // Streams terminate with a dedicated 'error' event (stopReason
           // 'error'/'aborted') instead of 'done' — ignoring it would end the
           // loop with an empty stub message and no failure surfaced.
@@ -590,6 +655,7 @@ async function callChatViaPiAi(
         }
         if (event.type === 'done') {
           realAssistantMsg = event.message;
+          observePiResponse(event.message, provider, modelId);
           if (event.reason !== 'toolUse') {
             const fallbackDelta = fallbackDoneTextDelta(
               roundText,
@@ -623,6 +689,9 @@ async function callChatViaPiAi(
     } else {
       // Non-streaming path
       const response = await models.completeSimple(piModel, context, roundOptions);
+
+      observePiResponse(response, provider, modelId);
+
       throwOnTransportStop(
         provider,
         model,
@@ -1001,6 +1070,22 @@ function isSafeIdentifierKey(key: string): boolean {
 // ─── CLI fallback ───
 
 async function callViaClaudeCli(model: string, opts: LLMCallOptions): Promise<LLMCallResult> {
+  return captureHelperAttempt(
+    {
+      runner: 'claude',
+      model,
+      effort: opts.reasoning,
+      role: opts.usageRole,
+      source: 'provider-response',
+    },
+    () => callViaClaudeCliUnmeasured(model, opts),
+  );
+}
+
+async function callViaClaudeCliUnmeasured(
+  model: string,
+  opts: LLMCallOptions,
+): Promise<LLMCallResult> {
   const start = Date.now();
   const input = opts.systemPrompt
     ? `${opts.systemPrompt}\n\n---\n\n${opts.userPrompt}`
@@ -1013,16 +1098,47 @@ async function callViaClaudeCli(model: string, opts: LLMCallOptions): Promise<LL
     { timeout: 60000 },
   );
 
-  if (result.exitCode !== 0) {
-    throw new Error(`claude CLI failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`);
-  }
-
   let text: string;
   try {
     const parsed = JSON.parse(result.stdout);
+    if (parsed && typeof parsed === 'object') {
+      if (typeof parsed.session_id === 'string') observeHelperUsage({}, parsed.session_id);
+      const u = parsed.usage;
+      const count = (value: unknown): number | undefined =>
+        typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+      if (u && typeof u === 'object') {
+        const input = count(u.input_tokens),
+          output = count(u.output_tokens);
+        const read = count(u.cache_read_input_tokens),
+          write = count(u.cache_creation_input_tokens);
+        observeHelperUsage(
+          {
+            actualModel: typeof parsed.model === 'string' ? parsed.model : null,
+            turns: count(parsed.num_turns),
+            inputTokens: input,
+            outputTokens: output,
+            cacheRead: read,
+            cacheCreation: write,
+            totalTokens:
+              input !== undefined &&
+              output !== undefined &&
+              read !== undefined &&
+              write !== undefined
+                ? input + output + read + write
+                : undefined,
+            costUsd: count(parsed.total_cost_usd),
+          },
+          typeof parsed.session_id === 'string' ? parsed.session_id : undefined,
+        );
+      }
+    }
     text = parsed.result ?? result.stdout;
   } catch {
     text = result.stdout.trim();
+  }
+
+  if (result.exitCode !== 0) {
+    throw new Error(`claude CLI failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`);
   }
 
   const durationMs = Date.now() - start;
@@ -1037,6 +1153,22 @@ async function callViaClaudeCli(model: string, opts: LLMCallOptions): Promise<LL
 }
 
 async function callViaCodexCli(model: string, opts: LLMCallOptions): Promise<LLMCallResult> {
+  return captureHelperAttempt(
+    {
+      runner: 'codex',
+      model,
+      effort: opts.reasoning,
+      role: opts.usageRole,
+      source: 'provider-response',
+    },
+    () => callViaCodexCliUnmeasured(model, opts),
+  );
+}
+
+async function callViaCodexCliUnmeasured(
+  model: string,
+  opts: LLMCallOptions,
+): Promise<LLMCallResult> {
   const start = Date.now();
   const input = opts.systemPrompt
     ? `${opts.systemPrompt}\n\n---\n\n${opts.userPrompt}`

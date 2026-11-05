@@ -15,7 +15,7 @@ import './assessment-panel.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
-import { buildHash, getHashParam } from '../../utils/url-state.js';
+import { buildHash, getHashParam, navigateHash } from '../../utils/url-state.js';
 import { readStored } from '../shared/read-current.js';
 
 function shortId(id: string | undefined): string {
@@ -504,14 +504,14 @@ export class IntelligenceIncidentsPanel extends LitElement {
     const navigation = html`<nav>
       <button
         @click=${() => {
-          location.hash = buildHash('intelligence');
+          navigateHash(buildHash('intelligence'));
         }}
       >
         Recovery incidents
       </button>
       <button
         @click=${() => {
-          location.hash = buildHash('intelligence', new URLSearchParams({ tab: 'assessments' }));
+          navigateHash(buildHash('intelligence', new URLSearchParams({ tab: 'assessments' })));
         }}
       >
         Assessments

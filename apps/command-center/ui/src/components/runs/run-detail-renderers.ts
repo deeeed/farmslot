@@ -48,6 +48,7 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { viewDetails } from '../../utils/view-state.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import type {
@@ -571,7 +572,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     : html`<div
         class="back"
         @click=${() => {
-          location.hash = runInventoryHashFromDetail();
+          navigateHash(runInventoryHashFromDetail());
         }}
       >
         &lt; Back to runs
@@ -742,7 +743,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         .disabled=${actionsBlocked}
         .saveTags=${(tags: string[]) => ctx._setRunTags(r, tags)}
         .filterTag=${(tag: string) => {
-          location.hash = `runs?tag=${encodeURIComponent(tag)}`;
+          navigateHash(`runs?tag=${encodeURIComponent(tag)}`);
         }}
       ></run-tag-editor>
       ${r.status === 'ci-watching' || r.status === 'failed'

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
@@ -7,12 +7,14 @@ import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 
 // mock.module replaces a module wholesale; spreading the real namespaces keeps
 // every export the import graph needs and overrides only what this test fixes.
-import * as realConfig from '../core/config.js';
-import * as realExec from '../core/exec.js';
+import type { ExecOptions } from '../core/exec.js';
 import { fakeSshTools } from '../core/ssh-test-fixtures.js';
-import * as realRunStore from '../runs/store.js';
 
-import * as realProjectVars from './project-vars.js';
+await import('../runtime/mock-pty.test-support.js');
+const realConfig = await import('../core/config.js');
+const realExec = await import('../core/exec.js');
+const realRunStore = await import('../runs/store.js');
+const realProjectVars = await import('./project-vars.js');
 
 const tools = fakeSshTools();
 after(() => tools.cleanup());
@@ -37,7 +39,7 @@ mock.module('../core/exec.js', {
   namedExports: {
     ...realExec,
     // Real bash, with ssh/scp/rsync resolving to the recording stand-ins.
-    execLocal: (cmd: string, opts?: realExec.ExecOptions) =>
+    execLocal: (cmd: string, opts?: ExecOptions) =>
       realExec.execLocal(tools.withFakePath(cmd), opts),
   },
 });
@@ -70,9 +72,6 @@ test('the remote task-file copy runs every ssh, scp and rsync with ConnectTimeou
   assert.deepEqual(tools.calls(), [
     ['ssh', ...opts, SSH_TARGET, `mkdir -p '${workerTaskAbs}'`],
     ['scp', '-q', ...opts, taskFile, `${SSH_TARGET}:${workerTaskAbs}/TASK.md`],
-    ['scp', '-q', ...opts, path.join(taskDir, 'mark'), `${SSH_TARGET}:${workerTaskAbs}/mark`],
-    ['ssh', ...opts, SSH_TARGET, `chmod 755 '${workerTaskAbs}/mark'`],
-    ['ssh', ...opts, SSH_TARGET, `rm -f '${workerTaskAbs}/checklist-target.json'`],
     [
       'rsync',
       '-az',
@@ -81,5 +80,26 @@ test('the remote task-file copy runs every ssh, scp and rsync with ConnectTimeou
       `${taskDir}/inputs/`,
       `${SSH_TARGET}:${workerTaskAbs}/inputs/`,
     ],
+    ['ssh', ...opts, SSH_TARGET, `rm -f '${workerTaskAbs}/checklist-target.json'`],
+    ['scp', '-q', ...opts, path.join(taskDir, 'mark'), `${SSH_TARGET}:${workerTaskAbs}/mark`],
+    ['ssh', ...opts, SSH_TARGET, `chmod 755 '${workerTaskAbs}/mark'`],
   ]);
+});
+
+test('a failed input transfer leaves no marker and retry publishes it after task data', async (t) => {
+  const rsync = path.join(tools.root, 'bin', 'rsync');
+  const original = readFileSync(rsync, 'utf8');
+  t.after(() => writeFileSync(rsync, original));
+  writeFileSync(rsync, original + '\nexit 12\n');
+  const before = tools.calls().length;
+  await assert.rejects(copyTaskFilesToSlot('run-1'), /rsync inputs.*failed/);
+  const failed = tools.calls().slice(before);
+  const copiesMarker = (call: string[]) =>
+    call[0] === 'scp' && call.includes(path.join(taskDir, 'mark'));
+  assert.equal(failed.some(copiesMarker), false);
+  writeFileSync(rsync, original);
+  const retryStart = tools.calls().length;
+  await copyTaskFilesToSlot('run-1');
+  const retry = tools.calls().slice(retryStart);
+  assert.ok(retry.findIndex(copiesMarker) > retry.findIndex((call) => call[0] === 'rsync'));
 });

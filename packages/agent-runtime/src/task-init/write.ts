@@ -12,6 +12,7 @@ import {
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
 
+import type { TaskRepinDocuments } from './execution-provenance.js';
 import { installedRuntimeScriptCommand } from './runtime-command.js';
 import {
   BUG_INPUT,
@@ -208,4 +209,28 @@ export async function ensureTaskRuntime(
   }
 
   return { taskDir, checklist, mark, handoff, terminalContract, bugInput };
+}
+
+/** Append the current configured CI check without rewriting a legacy task's existing steps. */
+export async function legacyTaskCheck(
+  taskDir: string,
+  command?: string,
+): Promise<TaskRepinDocuments | undefined> {
+  if (!command?.trim()) return undefined;
+  const contract: WorkerTerminalContractDocument = JSON.parse(
+    await readFile(path.join(taskDir, WORKER_TERMINAL_CONTRACT_INPUT), 'utf8'),
+  );
+  if (contract.deterministicChecks?.some((step) => step.reference === 'ci.local_check'))
+    return undefined;
+  const checklist =
+    (await readFile(path.join(taskDir, EXECUTION_CHECKLIST_DOCUMENT), 'utf8')) +
+    '\n## Migration validation\n\n- [ ] Configured CI check [DETERMINISTIC: ci.local_check]\n';
+  const commands = Object.fromEntries(
+    (contract.deterministicChecks ?? []).map((step) => [step.reference, step.command]),
+  );
+  const frozen = deterministicChecks.freeze(contract, checklist, EXECUTION_CHECKLIST_DOCUMENT, {
+    ...commands,
+    'ci.local_check': command,
+  });
+  return { checklist, terminalContract: JSON.stringify(frozen, null, 2) + '\n' };
 }

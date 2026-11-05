@@ -19,6 +19,7 @@ import '../shared/slot-prepare-options.js';
 import '../progress-tracker/progress-tracker.js';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { SubtaskOpenState } from '../progress-tracker/subtask-block.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
@@ -647,7 +648,7 @@ export class StepInspector extends StepInspectorState {
     }
     const qs = params.toString();
     const next = `#${base}${qs ? `?${qs}` : ''}`;
-    if (location.hash !== next) history.replaceState(null, '', next);
+    if (location.hash !== next) navigateHash(next, 'replace');
   }
 
   private _closeLightbox(): void {

@@ -59,7 +59,7 @@ import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
-import { hashParams } from '../../utils/url-state.js';
+import { hashParams, navigateHash } from '../../utils/url-state.js';
 import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
@@ -359,7 +359,7 @@ export class RunDetail extends RunDetailState {
     const hash = runDetailArtifactBrowserHash(this.runId, view);
     if (hash === location.hash) return;
     // Like the Runs filter writer, keep our own update out of navigation-focus handling.
-    history[replace ? 'replaceState' : 'pushState'](history.state, '', hash);
+    navigateHash(hash, replace ? 'replace' : 'push', history.state);
     this.requestUpdate();
   }
 
@@ -1167,7 +1167,7 @@ export class RunDetail extends RunDetailState {
     const next = runDetailStepHash(this.runId, stepName ?? null);
     if (location.hash !== next) {
       this._suppressHashSync = true;
-      location.hash = next;
+      navigateHash(next);
       queueMicrotask(() => {
         this._suppressHashSync = false;
       });
@@ -1188,7 +1188,7 @@ export class RunDetail extends RunDetailState {
       if (!current()) return;
       if (result.mode === 'warm-handoff' && result.runId) {
         // The follow-up went to the retained reviewer session; watch it there.
-        location.hash = `runs?run=${result.runId}`;
+        navigateHash(`runs?run=${result.runId}`);
         return;
       }
       const pr = result.submission?.request.pr;
@@ -1202,7 +1202,7 @@ export class RunDetail extends RunDetailState {
         view: 'detail',
       });
       // The round lives in the review queue; follow it there.
-      location.hash = `prs?${params.toString()}`;
+      navigateHash(`prs?${params.toString()}`);
     } catch (err) {
       if (!current()) return;
       alert(`Re-review failed: ${(err as Error).message}`);
@@ -1533,7 +1533,7 @@ export class RunDetail extends RunDetailState {
       this._evidenceLightboxCriterionId,
       this._evidenceGallery,
     );
-    if (location.hash !== next) history.replaceState(null, '', next);
+    if (location.hash !== next) navigateHash(next, 'replace');
   }
 
   /**
@@ -1841,7 +1841,7 @@ export class RunDetail extends RunDetailState {
             this._confirmTimer = timer;
           },
           navigateToRuns: () => {
-            location.hash = runInventoryHashFromDetail();
+            navigateHash(runInventoryHashFromDetail());
           },
         }).catch((err) => alert(`Run ${action} failed: ${(err as Error).message}`)),
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
@@ -2402,7 +2402,7 @@ export class RunDetail extends RunDetailState {
       isConnected: () => this.isConnected,
       allRuns: () => getState().runs ?? [],
       navigateToRun: (runId) => {
-        location.hash = `run/${runId}`;
+        navigateHash(`run/${runId}`);
       },
     });
   }

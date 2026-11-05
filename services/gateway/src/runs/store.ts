@@ -91,6 +91,7 @@ import {
   runnerDefaultModel,
   runnerDefaultSafetyTier,
 } from '../runners/registry.js';
+import { registerContextSessionUsage } from '../runtime/agent-session-rows.js';
 import {
   inheritableParentOwner,
   resolveNativeWorkerOwner,
@@ -1492,6 +1493,10 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
   const retired = partial.decisions ? retainDecisionHistory(run, partial.decisions) : [];
   appendDecisionHistoryFile(decisionHistoryFile(path.join(RUNS_DIR, `${id}.json`)), retired);
   const decisionHistoryCount = (run.decisionHistoryCount ?? 0) + retired.length;
+  if ('agentContexts' in partial) {
+    const retained = registerContextSessionUsage(run, updatedAt);
+    if (retained) run.sessionUsage = retained;
+  }
   Object.assign(
     run,
     partial,
@@ -1500,6 +1505,10 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
     statusChanged ? { statusChangedAt: updatedAt } : {},
   );
   syncPrimaryAgentContextStatus(run, previousStatus, updatedAt, statusProvided);
+  if ('agentContexts' in partial || statusChanged || 'sessionUsage' in partial) {
+    const rows = registerContextSessionUsage(run, updatedAt);
+    if (rows) run.sessionUsage = rows;
+  }
   if (shouldInvalidateRecipeRunGroups) {
     invalidateRecipeRunGroupCache(id);
   }

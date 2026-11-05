@@ -28,7 +28,7 @@ test('Siteed fixture mappings match source file and directory types', () => {
   for (const { src } of config.fixtures.templates) {
     assert.ok(statSync(new URL(`fixtures/${src}`, pack)).isFile(), `${src} must be a file`);
   }
-  for (const src of ['recipe-tools', 'recipe-provider']) {
+  for (const src of ['recipe-provider']) {
     const entry = config.fixtures.directories?.find((entry) => entry.src === src);
     assert.equal(entry?.dst, `.agent/${src}`);
     assert.ok(statSync(new URL(`fixtures/${src}`, pack)).isDirectory());

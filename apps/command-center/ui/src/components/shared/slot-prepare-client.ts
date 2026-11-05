@@ -2,6 +2,7 @@ import type { SlotPrepareParams, SlotPrepareResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 
 import { resolveBindOnly } from './slot-prepare-options-model.js';
@@ -69,7 +70,7 @@ export function slotPrepareLabel(slotId: string, runId: string, bindOnly: boolea
 
 /** Navigate to slot-view with the prepared run pinned in the URL. */
 export function navigateToPreparedSlot(slotId: string, runId: string): void {
-  window.location.hash = slotViewHash({ slotId, runId });
+  navigateHash(slotViewHash({ slotId, runId }));
 }
 
 export async function runSlotPrepareForRun(

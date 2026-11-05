@@ -48,6 +48,10 @@ test('one request preserves native returned identity and cache-inclusive usage',
   assert.equal(calls, 1);
   assert.equal(result.status, 'completed');
   assert.equal(result.returnedModel, 'answer-model-v1');
+  assert.equal(result.sessionUsage?.totalTokens, 108);
+  assert.equal(result.sessionUsage?.cacheRead, 60);
+  assert.equal(result.sessionUsage?.costStatus, 'unpriced');
+  assert.ok(result.sessionUsage?.costReason);
   assert.equal(result.inputTokens, 100);
   assert.equal(result.cacheReadTokens, 60);
   assert.equal(result.cacheWriteTokens, 10);
@@ -96,6 +100,10 @@ test('terminal usage survives a malformed later SSE frame without accepting its 
   assert.equal(result.attempted, true);
   assert.equal(result.responseReceived, true);
   assert.equal(result.responseId, 'resp_fixture');
+  assert.equal(result.sessionUsage?.totalTokens, 108);
+  assert.equal(result.sessionUsage?.cacheRead, 60);
+  assert.equal(result.sessionUsage?.costStatus, 'unpriced');
+  assert.ok(result.sessionUsage?.costReason);
   assert.equal(result.inputTokens, 100);
   assert.equal(result.outputTokens, 8);
   assert.equal(result.cacheReadTokens, 60);
@@ -155,6 +163,10 @@ test('terminal usage survives a read failure after receipt', async () => {
   );
   assert.equal(result.status, 'unavailable');
   assert.equal(result.text, undefined);
+  assert.equal(result.sessionUsage?.totalTokens, 108);
+  assert.equal(result.sessionUsage?.cacheRead, 60);
+  assert.equal(result.sessionUsage?.costStatus, 'unpriced');
+  assert.ok(result.sessionUsage?.costReason);
   assert.equal(result.inputTokens, 100);
   assert.equal(result.outputTokens, 8);
 });

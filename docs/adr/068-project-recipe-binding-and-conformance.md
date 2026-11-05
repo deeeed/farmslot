@@ -237,3 +237,19 @@ The repin adopts the branch's provider, including its task gates, so the operato
 ### Public surface and consequences
 
 `farmslot task repin <task-dir>` is an operator command on the execution node, run while the worker is idle. It reselects the recorded project from the task checkout and retains the current inputs in a new pin through the same producer as initialization, with the installed CLI that runs the repin. `mark` then runs that CLI, while commands rendered into the task documents keep the previous pin's. It then replaces `inputs/recipe-binding.json`, `artifacts/harness-provenance.json` and the generated marker. Task documents, checklist state, acceptance identities and evidence are unchanged. The previous pin keeps the original receipt, and the new pin's authority file names it. Both retire with the task directory. The receipt schema is unchanged. `@farmslot/agent-runtime` exports `repinTask` and `@farmslot/recipe-cli/harness` exports `repinSelectedTask`. The gateway's task mirror is not refreshed: the node copy is authoritative and the gateway checks only that a receipt exists. The [retained-tooling specification](../reference/project-recipe-contract.md#task-identity-and-gates) defines the checks.
+
+## Amendment 9: Bind a task created before its project gained a provider, 2026-11-05
+
+**Status:** Proposed implementation of the operator-requested legacy task migration. Earlier decisions retain their status.
+
+### Decision and rationale
+
+Extend explicit operator `task repin` to verified unbound tasks whose handoff names the selected project and whose physical task directory belongs to that checkout's configured artifact directory. Preserve a nonempty recorded domain. The checkout-local provider must declare task gates. Existing bound-task restrictions remain unchanged.
+
+A project can gain a provider after task initialization. Starting a separate task would lose its accumulated checklist and evidence. Migration therefore retains the configured provider through the existing pin producer, keeps the old pin and uses the existing recoverable receipt-first swap. It preserves task documents, previous checklist rows, signal state, acceptance identities and evidence. Verification and resume do not initiate migration.
+
+If the project configures a CI check absent from the old task, append one unchecked deterministic row and freeze `ci.local_check` using the existing [ADR-064](064-deterministic-checklist-checks.md) producer. Existing terminal policy stays intact. The operator then invokes the normal generated mark; migration never runs validation or manufactures a passing receipt. The new pin retains the additional contract/checklist bytes for interruption recovery.
+
+### Public surface and consequences
+
+No command or flag is added. `farmslot task repin <task-dir>` remains an explicit operator action with verified provenance and location checks. The [project recipe contract](../reference/project-recipe-contract.md#legacy-task-provider-migration) defines the requirements. Installed dependencies of checkout-local tooling are retained in their own bounded workspace, including tooling below a runtime directory. Older receipt formats without `bindingIdentity` remain refused.

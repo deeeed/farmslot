@@ -4,7 +4,7 @@ import {
   writeReviewCommentLocation,
 } from '@farmslot/protocol';
 
-import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 
 export type ReadyWorkspaceTab =
   | 'criteria'
@@ -168,7 +168,7 @@ export function writeReadyWorkspaceHashState(state: ReadyWorkspaceHashWriteState
   if (typeof location === 'undefined') return;
   const nextHash = readyWorkspaceHashWithState(state);
   if (!nextHash || location.hash === nextHash) return;
-  history.replaceState(null, '', nextHash);
+  navigateHash(nextHash, 'replace');
 }
 
 function legacyReviewTabFromPanels(params: URLSearchParams): ReviewWorkspaceTab | undefined {
@@ -211,5 +211,5 @@ export function writeReviewWorkspaceHashState(state: ReviewWorkspaceHashWriteSta
   if (typeof location === 'undefined') return;
   const nextHash = reviewWorkspaceHashWithState(state);
   if (location.hash === nextHash) return;
-  history.replaceState(null, '', nextHash);
+  navigateHash(nextHash, 'replace');
 }

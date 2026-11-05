@@ -62,6 +62,7 @@ import {
 } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { progressReadNotice } from '../../utils/progress-read-status.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { readStored } from '../shared/read-current.js';
 import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
@@ -451,7 +452,7 @@ export class FleetCanvas extends LitElement {
       fleetRefreshOpen: this.fleetRefreshOpen,
     });
     if (next && location.hash !== next) {
-      history.pushState(null, '', next);
+      navigateHash(next, 'push');
     }
   }
 
@@ -1516,10 +1517,10 @@ export class FleetCanvas extends LitElement {
           @provider-accounts-refresh=${(e: CustomEvent<{ machine?: string; force?: boolean }>) =>
             void this._refreshProviderAccounts(e.detail?.machine, e.detail?.force === true)}
           @slot-selected=${(e: CustomEvent) => {
-            location.hash = `slot/${e.detail.slotId}`;
+            navigateHash(`slot/${e.detail.slotId}`);
           }}
           @slot-terminal=${(e: CustomEvent) => {
-            location.hash = `terminal/${e.detail.slotId}`;
+            navigateHash(`terminal/${e.detail.slotId}`);
           }}
           @slot-actions-open=${(e: CustomEvent) => {
             this.actionsModalSlotId = e.detail.slotId;

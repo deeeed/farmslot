@@ -32,6 +32,7 @@ import '../terminal/terminal-view.js';
 import { gateway, GatewayRequestError } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { safeLsGet, safeLsSet } from '../../utils/storage.js';
+import { navigateHash } from '../../utils/url-state.js';
 import { readFresh, readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
@@ -733,7 +734,7 @@ export class ChatPanel extends ChatPanelState {
         // the id matches the canonical run-id shape.
         const runId = result.result.runId;
         if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
-          location.hash = `run/${runId}`;
+          navigateHash(`run/${runId}`);
         } else {
           console.warn('[chat-panel] run.create returned non-UUID runId; ignoring nav', runId);
         }

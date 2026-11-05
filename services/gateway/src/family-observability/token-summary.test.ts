@@ -70,7 +70,11 @@ test('buildFamilyObservabilityTokenSummary rolls worker and review tokens withou
   );
 
   assert.equal(summary.familyTotalTokens, 13_500);
-  assert.equal(summary.familyTotalCostEstimate, 0.7);
+  assert.equal(
+    summary.familyTotalCostEstimate,
+    null,
+    'Unpriced reviewer spend cannot silently disappear from cost',
+  );
   assert.equal(summary.runPoints[0]?.reviewTokens, 500);
   assert.equal(summary.runPoints[1]?.deltaTokens, 3000);
   assert.equal(summary.milestoneRunPoints.length, 2);
@@ -101,4 +105,157 @@ test('buildFamilyObservabilityTokenSummary records missing run ids', () => {
 
   assert.deepEqual(summary.missingRunIds, ['run-a']);
   assert.equal(summary.runsMissingMetrics, 1);
+});
+
+test('all pipeline sessions count once across reused conversations, including helpers', () => {
+  const session = (
+    runnerSessionId: string,
+    totalTokens: number,
+    role: string,
+    runner = 'claude',
+  ) => ({
+    runner,
+    runnerSessionId,
+    model: 'fixture-model',
+    actualModel: 'fixture-model',
+    identityKind: runner.startsWith('api:') ? ('request' as const) : ('conversation' as const),
+    source: 'runner-transcript' as const,
+    measuredAt: '2026-11-05T00:00:00Z',
+    role,
+    totalTokens,
+    costUsd: 0,
+    costStatus: 'estimated' as const,
+  });
+  const summary = buildFamilyObservabilityTokenSummary(
+    [
+      makeRun({
+        id: 'one',
+        createdAt: '2026-11-04T00:00:00Z',
+        sessionUsage: [session('worker', 100, 'dev'), session('review', 40, 'review')],
+      }),
+      makeRun({
+        id: 'two',
+        createdAt: '2026-11-05T00:00:00Z',
+        sessionUsage: [
+          session('worker', 150, 'review-fix'),
+          session('review', 60, 'review'),
+          session('summary', 30, 'summary', 'api:fixture'),
+        ],
+      }),
+    ],
+    'one',
+  );
+  assert.equal(summary.familyTotalTokens, 240);
+  assert.equal(summary.runPoints[0].stepTokens, 140);
+  assert.equal(summary.runPoints[1].stepTokens, 100);
+  assert.equal(summary.runPoints[1].helperTokens, 30);
+  assert.equal(summary.byModel[0].total, 240);
+  assert.equal(summary.familyTotalCostEstimate, 0);
+});
+
+test('a review-pr generation delta is not added to its canonical conversation total', () => {
+  const summary = buildFamilyObservabilityTokenSummary(
+    [
+      makeRun({
+        id: 'review-generation',
+        createdAt: '2026-11-05T00:00:00Z',
+        flowType: 'review-pr',
+        metrics: {
+          nudgeCount: 0,
+          runner: 'claude',
+          model: 'fixture',
+          runnerSessionId: 'review-worker',
+          sessionTotalTokens: 20,
+          sessionUsageScope: 'review-generation-delta',
+        },
+        sessionUsage: [
+          {
+            runner: 'claude',
+            runnerSessionId: 'review-worker',
+            role: 'review',
+            kind: 'agent',
+            source: 'runner-transcript',
+            totalTokens: 100,
+            measuredAt: '2026-11-05T00:00:00Z',
+          },
+        ],
+      }),
+    ],
+    'review-generation',
+  );
+  assert.equal(summary.familyTotalTokens, 100);
+});
+
+test('retained identical receipts do not add legacy cost a second time', () => {
+  const receipt = {
+    runner: 'claude',
+    runnerSessionId: 'shared-cost',
+    model: 'fixture',
+    role: 'dev',
+    source: 'runner-transcript' as const,
+    totalTokens: 100,
+    costUsd: 1,
+    measuredAt: '2026-11-05T00:00:00Z',
+  };
+  const runs = ['one', 'two'].map((id, index) =>
+    makeRun({
+      id,
+      createdAt: `2026-11-0${index + 1}T00:00:00Z`,
+      sessionUsage: [receipt],
+      metrics: {
+        nudgeCount: 0,
+        runner: 'claude',
+        model: 'fixture',
+        runnerSessionId: 'shared-cost',
+        sessionTotalTokens: 100,
+        costEstimate: 1,
+      },
+    }),
+  );
+  const summary = buildFamilyObservabilityTokenSummary(runs, 'one');
+  assert.equal(summary.familyTotalTokens, 100);
+  assert.equal(summary.familyTotalCostEstimate, 1);
+  assert.equal(summary.runPoints[1].stepCostEstimate, 0);
+});
+
+test('legacy split-only worker metrics remain visible without an explicit total', () => {
+  const run = makeRun({
+    id: 'legacy-splits',
+    createdAt: '2026-11-05T00:00:00Z',
+    metrics: {
+      nudgeCount: 0,
+      runner: 'claude',
+      model: 'fixture',
+      sessionInputTokens: 6000,
+      sessionOutputTokens: 4000,
+    },
+  });
+  const summary = buildFamilyObservabilityTokenSummary([run], run.id);
+  assert.equal(summary.familyTotalTokens, 10000);
+  assert.equal(summary.runPoints[0].inputTokens, 6000);
+  assert.equal(summary.runPoints[0].outputTokens, 4000);
+  assert.equal(summary.byModel[0].total, 10000);
+});
+
+test('a canonical measured zero is available even when legacy metrics were never populated', () => {
+  const run = makeRun({ id: 'measured-zero', createdAt: '2026-11-05T00:00:00Z' });
+  run.sessionUsage = [
+    {
+      runner: 'codex',
+      runnerSessionId: 'zero',
+      role: 'dev',
+      kind: 'agent',
+      source: 'runner-transcript',
+      totalTokens: 0,
+      turns: 0,
+      costUsd: 0,
+      costStatus: 'estimated',
+      measuredAt: '2026-11-05T00:00:00Z',
+    },
+  ];
+  const summary = buildFamilyObservabilityTokenSummary([run], run.id);
+  assert.equal(summary.familyTotalTokens, 0);
+  assert.equal(summary.runsWithMetrics, 1);
+  assert.equal(summary.runsMissingMetrics, 0);
+  assert.equal(summary.runPoints[0].hasMetrics, true);
 });

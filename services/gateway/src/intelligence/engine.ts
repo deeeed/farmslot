@@ -223,6 +223,7 @@ ${ticket.labels?.length ? `Labels: ${ticket.labels.join(', ')}` : ''}`;
     const controller = new AbortController();
     const result: LLMCallResult = await withTimeout(
       callLLM({
+        usageRole: 'summary',
         systemPrompt: SUMMARY_SYSTEM,
         userPrompt,
         model: cfg.intelligenceModel,

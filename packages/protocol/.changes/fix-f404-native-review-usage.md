@@ -1,0 +1,1 @@
+- Add shared pipeline session usage receipts with runner, model, effort, role, flow, identity, token splits, pricing status and duration, retained across relaunches and replays.

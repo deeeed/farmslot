@@ -1,4 +1,4 @@
-import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, hashParams, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 
 /** What the review shows, as a shareable link records it. */
 export interface EvidenceReviewerView {
@@ -63,5 +63,5 @@ export function evidenceReviewerViewKey(view: EvidenceReviewerView | null): stri
 
 export function writeEvidenceReviewerHash(view: EvidenceReviewerView | null): void {
   const next = evidenceReviewerHash(view);
-  if (location.hash !== next) history.replaceState(null, '', next);
+  if (location.hash !== next) navigateHash(next, 'replace');
 }

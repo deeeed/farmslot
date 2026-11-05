@@ -113,7 +113,9 @@ test('a new source attempt on an admitted run is announced when it is recorded',
 test.after(async () => {
   stopSourceReconciliation();
   for (const id of runs) {
-    store.updateRun(id, { status: 'failed' });
+    const run = store.updateRun(id, { status: 'failed' });
+    // Drain the fixture's background writes before deleting its storage root.
+    await store.persistRunNow(run, 'fixture teardown');
     await store.deleteRun(id);
   }
   mock.restoreAll();

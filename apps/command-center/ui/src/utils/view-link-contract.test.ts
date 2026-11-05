@@ -89,6 +89,7 @@ test('navigation parameter declarations cannot drift from desktop sharing', () =
   const program = ts.createProgram(files, parsed.options);
   const checker = program.getTypeChecker();
   const missing = new Set<string>();
+  const bypassedNavigation = new Set<string>();
   function check(key: string, file: string) {
     // Connection envelopes may carry credentials; replay belongs only to #dev.
     if (['connect', 'replay'].includes(key)) {
@@ -114,8 +115,29 @@ test('navigation parameter declarations cannot drift from desktop sharing', () =
     const source = program.getSourceFile(file)!;
     const ownsHashState =
       file.endsWith('url-state.ts') ||
-      /\b(?:parseHashRoute|hashParams|getHashParam)\b|location\.hash/.test(source.text);
+      /\b(?:parseHashRoute|hashParams|getHashParam|navigateHash|navigationHash)\b|location\.hash/.test(
+        source.text,
+      );
     function visit(node: ts.Node) {
+      const rawHashWrite =
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        /(?:^|\.)location\.hash$/.test(node.left.getText(source));
+      const rawHistoryWrite =
+        ts.isCallExpression(node) &&
+        (/^(?:window\.)?history\.(?:pushState|replaceState)$/.test(
+          node.expression.getText(source),
+        ) ||
+          (node.arguments.length === 3 &&
+            ts.isElementAccessExpression(node.expression) &&
+            ['history', 'window.history'].includes(node.expression.expression.getText(source))));
+      if (
+        (rawHashWrite || rawHistoryWrite) &&
+        !['utils/url-state.ts', 'utils/view-state.ts', 'testing/fake-view-state.ts'].includes(
+          path.relative(root, file),
+        )
+      )
+        bypassedNavigation.add(path.relative(root, file));
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
         const name = node.expression.text;
         const argument =
@@ -187,6 +209,12 @@ test('navigation parameter declarations cannot drift from desktop sharing', () =
             /(?:^|\.)location\.hash$/.test(parent.left.getText(source))
           )
             assignedHash = true;
+          if (
+            ts.isCallExpression(parent) &&
+            ts.isIdentifier(parent.expression) &&
+            ['navigateHash', 'navigationHash'].includes(parent.expression.text)
+          )
+            assignedHash = true;
           parent = parent.parent;
         }
         if (
@@ -213,6 +241,11 @@ test('navigation parameter declarations cannot drift from desktop sharing', () =
     [...missing].sort(),
     [],
     'Register navigation keys in the shared view-link contract',
+  );
+  assert.deepEqual(
+    [...bypassedNavigation].sort(),
+    [],
+    'Route writers must retain shell choices through the shared navigation adapter',
   );
   // Guard the source walk itself against silently scanning an empty directory.
   assert.ok(files.some((file) => readFileSync(file, 'utf8').includes('RUNS_TAB_PARAM')));

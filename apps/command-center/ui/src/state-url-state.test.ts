@@ -7,7 +7,48 @@ import {
   parseFiltersFromHash,
   parseRunsHashState,
   runsHashWithState,
+  writeRunsHashState,
 } from './state-url-state.js';
+
+test('F414 selecting and closing a run retain shell choices while clearing detail state', (t) => {
+  const old = new Map(
+    ['location', 'history'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  const location = {
+    hash: '#runs?run=old&panels=sidebar,monitor-details&sidebarWidth=320&file=old.ts',
+  };
+  const current = () => new URLSearchParams(location.hash.split('?')[1]);
+  const modes: string[] = [];
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      pushState(_state: unknown, _title: string, hash: string) {
+        modes.push('push');
+        location.hash = hash;
+      },
+      replaceState(_state: unknown, _title: string, hash: string) {
+        modes.push('replace');
+        location.hash = hash;
+      },
+    },
+  });
+  t.after(() => {
+    for (const [key, descriptor] of old) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+  writeRunsHashState({ run: 'next' }, 'push');
+  assert.equal(current().get('run'), 'next');
+  assert.equal(current().get('panels'), 'sidebar');
+  assert.equal(current().get('file'), null);
+  writeRunsHashState({}, 'replace');
+  assert.equal(current().get('run'), null);
+  assert.equal(current().get('panels'), 'sidebar');
+  assert.equal(current().get('sidebarWidth'), '320');
+  assert.deepEqual(modes, ['push', 'replace']);
+});
 
 test('global filters parse and update existing hash params without dropping view params', () => {
   assert.deepEqual(parseFiltersFromHash('#runs?projects=cc,ui&machines=mac%20mini&family=fam-1'), {
