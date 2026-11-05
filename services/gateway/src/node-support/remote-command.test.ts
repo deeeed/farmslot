@@ -263,6 +263,7 @@ async function withTempFarm(t: test.TestContext): Promise<{
 /** A node whose bundle uploads wait until released. */
 function gatedNode(opts: { failUpload?: boolean } = {}) {
   const uploads: string[] = [];
+  const uploadWaiters: Array<{ count: number; resolve: () => void }> = [];
   const commands = fakeCommandFiles();
   const manifests = new Map<string, string>();
   let release!: () => void;
@@ -295,47 +296,50 @@ function gatedNode(opts: { failUpload?: boolean } = {}) {
     writeFiles: async (_vars, base) => {
       if (!base.includes('.incoming')) return; // the slot's selection record
       uploads.push(base);
+      for (const waiter of uploadWaiters) {
+        if (uploads.length >= waiter.count) waiter.resolve();
+      }
       await gate;
       if (opts.failUpload) throw new Error('upload failed');
     },
   };
-  return { io, uploads, release };
+  const waitForUploads = (count: number): Promise<void> => {
+    if (uploads.length >= count) return Promise.resolve();
+    return new Promise((resolve) => {
+      uploadWaiters.push({ count, resolve });
+    });
+  };
+  return { io, uploads, release, waitForUploads };
 }
 
 const farmVars = (name: string, slotId: string, machine = 'mini'): SlotVars =>
   ({ ...remoteVars(slotId), machine, projectName: name }) as SlotVars;
 
-test('a hook expanded after a fast-forward never joins the older publish', async (t) => {
-  resetRemoteFarmCommandCache();
-  const farm = await withTempFarm(t);
-  const node = gatedNode();
-  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+test(
+  'a hook expanded after a fast-forward never joins the older publish',
+  { timeout: 30_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
 
-  const before = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, { io: node.io });
-  t.after(() => node.release());
-  const started = performance.now();
-  while (node.uploads.length < 1) {
-    assert.ok(
-      performance.now() - started < 2_000,
-      'first bundle must finish reading before the edit',
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  farm.editScript('echo v2\n');
-  const now = Date.now() + 2_100;
-  t.mock.method(Date, 'now', () => now); // expire the cache without a fixed wait
-  const after = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, { io: node.io });
-  // Hold the first upload until the second has started its own (or clearly
-  // never will), so the second call meets the first still in flight.
-  for (let waited = 0; node.uploads.length < 2 && waited < 2_000; waited += 20) {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  node.release();
+    const before = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, { io: node.io });
+    t.after(() => node.release());
+    await node.waitForUploads(1);
+    farm.editScript('echo v2\n');
+    const now = Date.now() + 2_100;
+    t.mock.method(Date, 'now', () => now); // expire the cache without a fixed wait
+    const after = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, { io: node.io });
+    // Keep the first publish in flight until the changed bundle starts its own.
+    await node.waitForUploads(2);
+    node.release();
 
-  const [oldCmd, newCmd] = await Promise.all([before, after]);
-  assert.notEqual(oldCmd, newCmd, 'the new config runs from its own bundle');
-  assert.equal(node.uploads.length, 2, 'both bundles were delivered');
-});
+    const [oldCmd, newCmd] = await Promise.all([before, after]);
+    assert.notEqual(oldCmd, newCmd, 'the new config runs from its own bundle');
+    assert.equal(node.uploads.length, 2, 'both bundles were delivered');
+  },
+);
 
 test('slots on one machine share one upload of the same bundle', async (t) => {
   resetRemoteFarmCommandCache();
