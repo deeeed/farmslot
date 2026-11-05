@@ -18,17 +18,11 @@ export interface NativeSessionUsageRequest {
   executionNodeId?: string;
 }
 
-// Runs on the execution host. Resolve exact conversation identities, then use the
-// installed CLI's public accounting module. No transcript contents cross the RPC.
-export const NATIVE_SESSION_USAGE_PROGRAM = String.raw`
-import { access, readdir, realpath } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
-import { createInterface } from 'node:readline';
+const SESSION_USAGE_MODULE = String.raw`
+import { access, realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-const input = JSON.parse(process.argv[1]);
 let modulePath = process.argv[2];
 if (!modulePath) {
   for (const directory of (process.env.PATH || '').split(path.delimiter)) {
@@ -46,6 +40,17 @@ if (!modulePath) {
 }
 if (!modulePath) throw Error('Installed CLI accounting module is unavailable');
 const { runSessionUsage } = await import(pathToFileURL(modulePath).href);
+`;
+
+// Runs on the execution host. Transcript bodies never cross the RPC.
+export const NATIVE_SESSION_USAGE_PROGRAM =
+  SESSION_USAGE_MODULE +
+  String.raw`
+import { readdir } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
+import { homedir } from 'node:os';
+const input = JSON.parse(process.argv[1]);
 function record(line, label) {
   try { const value = JSON.parse(line); if (value && typeof value === 'object' && !Array.isArray(value)) return value; }
   catch (error) { if (!(error instanceof SyntaxError)) throw error; }
@@ -162,6 +167,36 @@ export function nativeSessionUsageArgv(
     '-e',
     NATIVE_SESSION_USAGE_PROGRAM,
     JSON.stringify(requests),
+    modulePath ?? '',
+  ];
+}
+
+/** Forced-path worker accounting needs neither an operator checkout nor a node-local pool. */
+export function forcedSessionUsageArgv(
+  slotId: string,
+  runner: string | null | undefined,
+  sessionPath: string,
+  modulePath?: string,
+): string[] {
+  const program =
+    SESSION_USAGE_MODULE +
+    String.raw`
+const input = JSON.parse(process.argv[1]);
+try {
+  process.stdout.write(await runSessionUsage({ repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner }));
+} catch (error) {
+  process.stderr.write(error instanceof SyntaxError ? 'Session accounting source contains invalid structured data' : error instanceof Error ? error.message : 'Session accounting failed');
+  process.exitCode = 1;
+}
+`;
+  return [
+    'node',
+    '--experimental-strip-types',
+    '--experimental-sqlite',
+    '--input-type=module',
+    '-e',
+    program,
+    JSON.stringify({ slotId, runner, sessionPath }),
     modulePath ?? '',
   ];
 }

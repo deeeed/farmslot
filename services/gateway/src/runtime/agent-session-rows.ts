@@ -1,6 +1,12 @@
-import type { AgentContext, Run, RunnerSessionUsage } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  primaryRoleForFlow,
+  type Run,
+  type RunnerSessionUsage,
+} from '@farmslot/protocol';
 
 import { resolveNativeContext } from '../agents/native-context.js';
+import type { RecoveredUsageSession } from '../runners/session-usage-provider.js';
 
 import { preferSessionUsage } from './reviewer-usage.js';
 
@@ -128,7 +134,14 @@ export function contextSessionReceipt(
     runner: context.runner,
     runnerSessionId,
     runnerSessionPath: captured?.runnerSessionPath ?? context.runnerSessionPath ?? null,
-    nativeSession: context.nativeSession,
+    nativeSession: context.nativeSession
+      ? {
+          sessionId: context.nativeSession.sessionId,
+          executionNodeId: context.nativeSession.executionNodeId,
+          ownerPrincipalId: context.nativeSession.ownerPrincipalId,
+          stateDirectory: context.nativeSession.stateDirectory,
+        }
+      : undefined,
     slotId: context.slotId ?? run.slotId ?? null,
     identityKind: 'conversation',
     kind: 'agent',
@@ -194,4 +207,65 @@ export function registerContextSessionUsage(
     if (receipt) rows = upsertSessionUsage(rows, receipt);
   }
   return rows.length ? rows : undefined;
+}
+
+/** One receipt builder feeds persisted completion and read-only historical recovery. */
+export function recoveredWorkerSessionReceipt(
+  run: Run,
+  session: RecoveredUsageSession,
+  usage: RunnerSessionUsage,
+): RunnerSessionUsage {
+  const context = run.agentContexts?.find((item) => item.id === session.contextId);
+  if (context) {
+    const same = context.runnerSessionId === session.runnerSessionId;
+    const receipt = contextSessionReceipt(
+      run,
+      {
+        ...context,
+        runner: usage.runner ?? context.runner,
+        runnerSessionId: session.runnerSessionId,
+        runnerSessionPath: session.runnerSessionPath,
+        usage,
+        ...(!same
+          ? { startedAt: undefined, completedAt: undefined, nativeSession: undefined }
+          : {}),
+      },
+      usage.measuredAt,
+    );
+    if (receipt) return receipt;
+  }
+  const previous = run.sessionUsage?.find(
+    (row) => row.runner === usage.runner && row.runnerSessionId === session.runnerSessionId,
+  );
+  const role = previous?.role ?? primaryRoleForFlow(run.flowType);
+  return {
+    ...previous,
+    ...usage,
+    error: usage.error,
+    runnerSessionId: session.runnerSessionId,
+    runnerSessionPath: session.runnerSessionPath,
+    kind: 'agent',
+    identityKind: 'conversation',
+    role,
+    roles: previous?.roles ?? [role],
+    runId: run.id,
+    flowType: run.flowType,
+    slotId: previous?.slotId ?? run.slotId,
+    model: previous?.model ?? run.metrics.model ?? null,
+    effort: previous?.effort ?? run.effort ?? null,
+    contextIds: previous?.contextIds ?? [],
+    startedAt: previous?.startedAt ?? null,
+    completedAt: previous?.completedAt ?? null,
+    durationMs: previous?.durationMs ?? null,
+    costUsd: usage.costUsd ?? null,
+    costStatus: usage.costUsd == null ? 'unpriced' : 'estimated',
+    costReason:
+      usage.costUsd == null ? 'Runner accounting has no verified price for this model' : undefined,
+    captureGaps: [
+      ...(usage.error ? [usage.error] : []),
+      ...(previous?.durationMs == null
+        ? ['Historical session context/duration is unavailable']
+        : []),
+    ],
+  };
 }

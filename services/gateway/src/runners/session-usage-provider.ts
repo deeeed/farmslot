@@ -196,6 +196,9 @@ export const claudeSessionUsageProvider = {
 export const codexSessionUsageProvider: RunnerSessionUsageProvider = {
   id: 'codex-jsonl',
   restatesSessionTotals: true,
+  async recoverSessions(run) {
+    return (await import('./codex-usage-sessions.js')).recoverCodexUsageSessions(run);
+  },
   applyRecord: codexApplyRecord,
 };
 

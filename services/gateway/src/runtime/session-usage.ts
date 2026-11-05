@@ -1,12 +1,18 @@
 import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
-import { expandTemplate, runSessionUsage } from '@farmslot/slot-config';
+import { runSessionUsage } from '@farmslot/slot-config';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { forcedSessionUsageArgv } from '../runners/native-session-usage-command.js';
 import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { verifiedRunnerSessionArchivePath } from '../runners/session-archive.js';
 
+import {
+  recoveredWorkerSessionReceipt,
+  registerContextSessionUsage,
+  upsertSessionUsage,
+} from './agent-session-rows.js';
 import { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './session-usage-result.js';
 export { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './session-usage-result.js';
 
@@ -39,12 +45,12 @@ export async function extractRunnerSessionUsage({
   }
   try {
     if (vars && !isLocal(vars.host, vars.machine)) {
-      const farmslotDir = expandTemplate('{{farmslot_dir}}', vars);
-      const result = await execOnSlot(
-        vars,
-        `RUNNER_SESSION_PATH=${shellQuote(runnerSessionPath)} RUNNER_SESSION_RUNNER=${shellQuote(runner ?? '')} bash ${farmslotDir}/scripts/session-usage.sh ${shellQuote(slotId)} total`,
-        { timeout: 30_000, maxBuffer: 64 * 1024, selectNodeSupport: false },
-      );
+      const argv = forcedSessionUsageArgv(slotId, runner, runnerSessionPath);
+      const result = await execOnSlot(vars, argv.map(shellQuote).join(' '), {
+        timeout: 30_000,
+        maxBuffer: 64 * 1024,
+        selectNodeSupport: false,
+      });
       if (result.exitCode !== 0)
         throw new Error(result.stderr.trim() || `Usage extraction exited ${result.exitCode}`);
       return parseSessionUsageOutput(result.stdout, { runner, runnerSessionId, runnerSessionPath });
@@ -75,6 +81,7 @@ export async function extractRunnerSessionUsage({
 /** The same metric mapping feeds completion capture and historical read projection. */
 export function runnerUsageMetrics(usage: RunnerSessionUsage): Partial<Run['metrics']> {
   return {
+    ...(usage.actualModel ? { actualModel: usage.actualModel } : {}),
     ...(usage.turns != null ? { sessionTurns: usage.turns } : {}),
     ...(usage.inputTokens != null ? { sessionInputTokens: usage.inputTokens } : {}),
     ...(usage.outputTokens != null ? { sessionOutputTokens: usage.outputTokens } : {}),
@@ -161,11 +168,21 @@ export async function extractRunWorkerSessionUsage(
 }
 
 /** Recover only verified retained native usage, without rewriting stored runs. */
-export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
+export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
+  let run = storedRun;
   try {
     let workerUsage: RunnerSessionUsage | null;
     try {
-      workerUsage = await extractRunWorkerSessionUsage(run);
+      workerUsage = await extractRunWorkerSessionUsage(run, undefined, (session, usage) => {
+        const rows = registerContextSessionUsage(run, run.updatedAt) ?? [];
+        run = {
+          ...run,
+          sessionUsage: upsertSessionUsage(
+            rows,
+            recoveredWorkerSessionReceipt(run, session, usage),
+          ),
+        };
+      });
     } catch (error) {
       // A recycled/offline slot cannot replace known totals or a verified archive.
       workerUsage = unavailableRunnerSessionUsage({

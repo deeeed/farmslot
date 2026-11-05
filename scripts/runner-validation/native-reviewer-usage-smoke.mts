@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   nativeSessionUsageArgv,
+  forcedSessionUsageArgv,
   type NativeSessionUsageRequest,
 } from '../../services/gateway/src/runners/native-session-usage-command.js';
 import { parseSessionUsageOutput } from '../../services/gateway/src/runtime/session-usage-result.js';
@@ -49,6 +50,16 @@ const actions = Object.fromEntries(
     },
   ]),
 );
+actions['forced-worker'] = {
+  label: 'Read a recorded worker without a node-local pool entry',
+  command: forcedSessionUsageArgv(
+    'unregistered-accounting-slot',
+    'codex',
+    '{{repo}}/.usage-proof/codex/workers/owner/session/codex-home/sessions/record.jsonl',
+  )
+    .map(quote)
+    .join(' '),
+};
 const reaper = startReaper();
 let stack: Awaited<ReturnType<typeof startRemoteNodeStack>> | undefined;
 const cleanup = cleanupOnExit(async () => {
@@ -196,6 +207,14 @@ try {
     assert.equal(await readFile(file, 'utf8'), bytes);
     totals.push(usage);
   }
+  const forced = await stack.call<SlotActionRunResult>('slot.action.run', {
+    slotId,
+    actionId: 'slot:forced-worker',
+  });
+  assert(forced.ok, forced.stderr ?? forced.detail);
+  const forcedUsage = parseSessionUsageOutput(forced.stdout ?? '');
+  assert.equal(forcedUsage.totalTokens, 400);
+  assert.equal(forcedUsage.outputTokens, 250);
   await stack.call('run.cancel', { runId });
   assert.equal((await stack.call<{ run: Run }>('run.get', { runId })).run.status, 'cancelled');
   await writeFile(
@@ -211,6 +230,8 @@ try {
         totals,
         node: 'proof-node',
         realSlotActionRpc: true,
+        forcedPathWithoutNodePool: true,
+        forcedWorkerUsage: forcedUsage,
         prepareAndDispatch: true,
         finalStatus: 'cancelled',
         transcriptsUnchanged: true,

@@ -3,7 +3,7 @@ import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 import { loadSlotVars } from '../core/config.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
-import { contextSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
+import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
 import { extractNativeAgentSessionUsage } from './native-session-usage.js';
 import { extractRunnerSessionUsage, unavailableRunnerSessionUsage } from './session-usage.js';
 
@@ -30,21 +30,7 @@ export function recordRecoveredWorkerUsage(
   session: import('../runners/session-usage-provider.js').RecoveredUsageSession,
   usage: RunnerSessionUsage,
 ): void {
-  const context = run.agentContexts?.find((item) => item.id === session.contextId);
-  if (!context) return;
-  const same = context.runnerSessionId === session.runnerSessionId;
-  const row = contextSessionReceipt(
-    run,
-    {
-      ...context,
-      runnerSessionId: session.runnerSessionId,
-      runnerSessionPath: session.runnerSessionPath,
-      usage,
-      ...(!same ? { startedAt: undefined, completedAt: undefined, nativeSession: undefined } : {}),
-    },
-    usage.measuredAt,
-  );
-  if (row) recordRunSessionUsage(run.id, row);
+  recordRunSessionUsage(run.id, recoveredWorkerSessionReceipt(run, session, usage));
 }
 
 function completedMeasurement(

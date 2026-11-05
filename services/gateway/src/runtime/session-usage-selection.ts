@@ -14,7 +14,7 @@ export const isHelperSession = (row: RunnerSessionUsage): boolean =>
   row.runner?.startsWith('api:') === true;
 
 /** Canonical receipts first; old result/metric-only records remain readable. */
-export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
+export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
   let rows = registerContextSessionUsage(run, run.updatedAt) ?? [];
   for (const review of reviewerUsageReceipts(run)) {
     const receipt: RunnerSessionUsage = {
@@ -81,7 +81,44 @@ export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
       rows = sessionUsageKey(legacy) ? upsertSessionUsage(rows, legacy) : [...rows, legacy];
     }
   }
-  return rows.filter(
+  for (const review of run.engineState?.publishGate?.reviews ?? []) {
+    if (review.usage?.source !== 'unavailable') continue;
+    const usage = review.usage;
+    const row: RunnerSessionUsage = {
+      ...usage,
+      runner: usage.runner ?? review.runner,
+      runnerSessionId: usage.runnerSessionId ?? review.reviewerSessionId,
+      role: 'review',
+      model: review.model ?? null,
+      runId: run.id,
+      flowType: run.flowType,
+      costUsd: null,
+      costStatus: 'unpriced',
+      costReason: usage.error ?? 'Review accounting is unavailable',
+    };
+    rows = sessionUsageKey(row) ? upsertSessionUsage(rows, row) : [...rows, row];
+  }
+  return rows.map<RunnerSessionUsage>((row) => {
+    const priced =
+      row.source !== 'unavailable' &&
+      row.costStatus !== 'unpriced' &&
+      typeof row.costUsd === 'number' &&
+      Number.isFinite(row.costUsd) &&
+      row.costUsd >= 0;
+    return {
+      ...row,
+      costUsd: priced ? row.costUsd : null,
+      costStatus: priced ? 'estimated' : 'unpriced',
+      costReason: priced
+        ? undefined
+        : (row.costReason ?? row.error ?? 'No verified price for this historical session'),
+    };
+  });
+}
+
+/** Totals consume verified rows; UI inventories consume the unfiltered shared projection. */
+export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
+  return allRunSessionUsageReceipts(run).filter(
     (row) => row.source !== 'unavailable' && !row.error && row.totalTokens != null,
   );
 }

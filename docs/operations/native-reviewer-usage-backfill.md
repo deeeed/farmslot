@@ -40,3 +40,5 @@ The offline safety proof takes over five seconds and stays outside the default t
 ```sh
 node --test scripts/runner-validation/native-usage-backfill.live.mjs
 ```
+
+Family read projections consume `allRunSessionUsageReceipts(run)` from the gateway shared selector to retain unavailable rows. `runSessionUsageReceipts(run)` is the measured-only input for totals. Neither selector reads a transcript. Recorded Codex worker/fix paths recover through the same shared reader, without an archive requirement or node-local slot pool. Existing source-dated round history remains authoritative; a final session total must not be divided among earlier rounds without matching boundary receipts.

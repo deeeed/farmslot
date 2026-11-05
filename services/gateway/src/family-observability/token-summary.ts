@@ -155,7 +155,8 @@ export function buildFamilyObservabilityTokenSummary(
     const review = parts(receipts.filter(isReviewSession));
     const helper = parts(receipts.filter(isHelperSession));
     const stepParts = parts(receipts);
-    const hasMetrics = hasRunMetrics(run, worker, review);
+    const hasCapturedReceipts = runSessionUsageReceipts(run).length > 0;
+    const hasMetrics = hasCapturedReceipts || hasRunMetrics(run, worker, review);
     if (hasMetrics) runsWithMetrics += 1;
     else missingRunIds.push(run.id);
 
@@ -164,7 +165,7 @@ export function buildFamilyObservabilityTokenSummary(
       ? receipts.every((row) => row.costUsd != null)
         ? receipts.reduce((sum, row) => sum + num(row.costUsd), 0)
         : null
-      : runSessionUsageReceipts(run).length > 0
+      : hasCapturedReceipts
         ? 0
         : (run.metrics.costEstimate ?? null);
     if (receipts.some((row) => row.costUsd == null)) hasUnpriced = true;

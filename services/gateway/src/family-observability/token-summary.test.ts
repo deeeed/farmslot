@@ -236,3 +236,26 @@ test('legacy split-only worker metrics remain visible without an explicit total'
   assert.equal(summary.runPoints[0].outputTokens, 4000);
   assert.equal(summary.byModel[0].total, 10000);
 });
+
+test('a canonical measured zero is available even when legacy metrics were never populated', () => {
+  const run = makeRun({ id: 'measured-zero', createdAt: '2026-11-05T00:00:00Z' });
+  run.sessionUsage = [
+    {
+      runner: 'codex',
+      runnerSessionId: 'zero',
+      role: 'dev',
+      kind: 'agent',
+      source: 'runner-transcript',
+      totalTokens: 0,
+      turns: 0,
+      costUsd: 0,
+      costStatus: 'estimated',
+      measuredAt: '2026-11-05T00:00:00Z',
+    },
+  ];
+  const summary = buildFamilyObservabilityTokenSummary([run], run.id);
+  assert.equal(summary.familyTotalTokens, 0);
+  assert.equal(summary.runsWithMetrics, 1);
+  assert.equal(summary.runsMissingMetrics, 0);
+  assert.equal(summary.runPoints[0].hasMetrics, true);
+});

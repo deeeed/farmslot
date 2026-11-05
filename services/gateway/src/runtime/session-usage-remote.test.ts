@@ -29,7 +29,8 @@ test('remote usage uses supported node execution and preserves slot support sele
   assert.equal(usage.turns, 3);
   assert.equal(usage.totalTokens, 124);
   assert.equal(calls[0][0], vars);
-  assert.match(String(calls[0][1]), /bash ~\/farmslot-node\/scripts\/session-usage.sh/);
+  assert.match(String(calls[0][1]), /runSessionUsage/);
+  assert.equal(String(calls[0][1]).includes('scripts/session-usage.sh'), false);
   assert.deepEqual(calls[0][2], {
     timeout: 30_000,
     maxBuffer: 64 * 1024,
