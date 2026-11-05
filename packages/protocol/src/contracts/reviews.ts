@@ -2,6 +2,7 @@ export interface CICheck {
   name: string;
   status: 'pass' | 'fail' | 'pending' | 'skipped';
   watchName: string;
+  failureDetails?: PRCheckDetail[];
 }
 
 /** Read-only provider metadata; timestamps describe activity, not duration. */

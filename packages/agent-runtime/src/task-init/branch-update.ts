@@ -35,6 +35,21 @@ export interface OrdinaryBranchMaintenanceRequest {
   baseRef: string;
 }
 
+export interface CIFixScope {
+  baseRef: string;
+  headSha: string;
+  ownedFiles: string[];
+}
+
+export interface CIFixScopeRequest {
+  repo: string;
+  branch: string;
+  baseRef: string;
+  scope: CIFixScope;
+  operation?: BranchMaintenanceOperation;
+  headSha?: string;
+}
+
 interface BranchUpdateReceipt {
   operationHash: string;
   operation: BranchMaintenanceOperation;
@@ -59,8 +74,11 @@ export class BranchMaintenanceRefusal extends Error {
   constructor(
     public readonly code: string,
     cause?: unknown,
+    paths?: string[],
   ) {
-    super(`Branch maintenance refused: ${code}`, { cause });
+    super(`Branch maintenance refused: ${code}${paths?.length ? `: ${paths.join(', ')}` : ''}`, {
+      cause,
+    });
   }
 }
 
@@ -437,7 +455,10 @@ export function executeBranchMaintenance(operation: BranchMaintenanceOperation):
   return head;
 }
 
-export function pushBranchMaintenance(operation: BranchMaintenanceOperation): void {
+export function pushBranchMaintenance(
+  operation: BranchMaintenanceOperation,
+  ciFixScope?: CIFixScope,
+): void {
   let receipt = readReceipt(operation);
   const remote = fenceTarget(operation);
   if (!receipt?.resultHeadSha || receipt.phase !== 'completed') refuse('GUARDED_RESULT_MISSING');
@@ -447,6 +468,13 @@ export function pushBranchMaintenance(operation: BranchMaintenanceOperation): vo
       ? receipt.resultHeadSha
       : sha(git(operation.repo, ['rev-parse', 'HEAD']).trim());
   if (remote !== operation.remoteHeadSha && remote !== head) refuse('REMOTE_CHILD_CHANGED');
+  if (ciFixScope)
+    assertCIFixScope(
+      operation.repo,
+      ciFixScope,
+      head,
+      ciFixBaseline(operation.repo, ciFixScope, head, receipt),
+    );
   if (head !== receipt.resultHeadSha) {
     if (
       !ancestor(operation.repo, receipt.resultHeadSha, head) ||
@@ -776,6 +804,108 @@ export function retireBranchMaintenance(
   return { status: 'retired', recoveredHeadSha: recovery.recoveredHeadSha };
 }
 
+export function parseCIFixScope(value: unknown): CIFixScope {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('headSha' in value) ||
+    typeof value.headSha !== 'string' ||
+    !('baseRef' in value) ||
+    typeof value.baseRef !== 'string' ||
+    !('ownedFiles' in value) ||
+    !Array.isArray(value.ownedFiles) ||
+    !value.ownedFiles.every((file): file is string => typeof file === 'string')
+  )
+    refuse('CI_FIX_SCOPE_MISSING');
+  return { headSha: sha(value.headSha), baseRef: value.baseRef, ownedFiles: value.ownedFiles };
+}
+
+export function captureCIFixScope(
+  request: OrdinaryBranchMaintenanceRequest & { headSha: string },
+): CIFixScope {
+  const { repo } = request;
+  const branch = normalizeMaintenanceBranch(request.branch);
+  const baseRef = normalizeMaintenanceBranch(request.baseRef);
+  fetchHeads(repo, branch, baseRef);
+  if (ref(repo, branch) !== sha(request.headSha)) refuse('CI_FIX_HEAD_NOT_PUBLISHED');
+  const base = sha(git(repo, ['merge-base', ref(repo, baseRef), request.headSha]).trim());
+  return {
+    baseRef,
+    headSha: request.headSha,
+    ownedFiles: git(repo, [
+      'diff',
+      '--name-only',
+      '-z',
+      '--no-renames',
+      base,
+      request.headSha,
+      '--',
+    ])
+      .split('\0')
+      .filter(Boolean)
+      .sort(),
+  };
+}
+
+/** Check every commit, including edits later reverted and both paths of a rename. */
+export function assertCIFixScope(
+  repo: string,
+  scope: CIFixScope,
+  head: string,
+  baseline = scope.headSha,
+): void {
+  if (!ancestor(repo, baseline, head)) refuse('CI_FIX_BASE_CHANGED');
+  const owned = new Set(parseCIFixScope(scope).ownedFiles);
+  const outside = new Set<string>();
+  const commits = git(repo, ['rev-list', `${sha(baseline)}..${sha(head)}`])
+    .split('\n')
+    .filter(Boolean);
+  for (const commit of commits) {
+    const paths = git(repo, [
+      'diff',
+      '--name-only',
+      '-z',
+      '--no-renames',
+      `${commit}^`,
+      commit,
+      '--',
+    ])
+      .split('\0')
+      .filter(Boolean);
+    for (const file of paths) {
+      if (!owned.has(file)) outside.add(file);
+    }
+  }
+  if (outside.size)
+    throw new BranchMaintenanceRefusal('CI_FIX_OUT_OF_SCOPE', undefined, [...outside].sort());
+}
+
+function ciFixBaseline(
+  repo: string,
+  scope: CIFixScope,
+  head: string,
+  receipt?: BranchUpdateReceipt,
+): string {
+  if (ancestor(repo, scope.headSha, head)) return scope.headSha;
+  if (!receipt?.rebaseResultSha) return scope.headSha;
+  if (receipt.sourceHeadSha !== scope.headSha) refuse('CI_FIX_BASE_CHANGED');
+  return receipt.rebaseResultSha;
+}
+
+export function verifyCIFixScope(request: CIFixScopeRequest): void {
+  const { repo, scope } = request;
+  const branch = normalizeMaintenanceBranch(request.branch);
+  fetchHeads(repo, branch, normalizeMaintenanceBranch(request.baseRef));
+  const head = ref(repo, branch);
+  const operation = request.operation ?? ordinaryIdentity({ ...request, kind: 'ordinary' });
+  const file = receiptPath(operation);
+  const receipt: BranchUpdateReceipt | undefined = existsSync(file)
+    ? JSON.parse(readFileSync(file, 'utf8'))
+    : undefined;
+  assertCIFixScope(repo, scope, head, ciFixBaseline(repo, scope, head, receipt));
+  if (request.headSha && head !== request.headSha) refuse('CI_FIX_NOT_PUSHED');
+}
+
 function ordinaryIdentity(
   request: OrdinaryBranchMaintenanceRequest,
 ): Pick<BranchMaintenanceOperation, 'repo' | 'id'> {
@@ -848,11 +978,14 @@ export function executeOrdinaryBranchMaintenance(
   return executeBranchMaintenance(operation);
 }
 
-export function pushOrdinaryBranchMaintenance(request: OrdinaryBranchMaintenanceRequest): void {
+export function pushOrdinaryBranchMaintenance(
+  request: OrdinaryBranchMaintenanceRequest,
+  ciFixScope?: CIFixScope,
+): void {
   const file = receiptPath(ordinaryIdentity(request));
   if (!existsSync(file)) refuse('GUARDED_RESULT_MISSING');
   const saved = JSON.parse(readFileSync(file, 'utf8')) as BranchUpdateReceipt;
   if (saved.operation.id !== ordinaryIdentity(request).id || saved.operation.repo !== request.repo)
     refuse('OPERATION_CHANGED');
-  pushBranchMaintenance(saved.operation);
+  pushBranchMaintenance(saved.operation, ciFixScope);
 }

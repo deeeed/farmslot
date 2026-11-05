@@ -5,7 +5,7 @@
 > **Checklist marker:** Run `{{TASK_DIR}}/mark --checklist CI-FIX.md start` once when work begins (before the first progress mark). After each checklist item, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark --checklist CI-FIX.md complete | {{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "…" | {{TASK_DIR}}/mark --checklist CI-FIX.md blocked --reason "…"` (never hand-write signal JSON).
 > **Required completion artifacts:** Before `complete`, write non-empty `{{TASK_DIR}}/artifacts/report.md` and `{{TASK_DIR}}/artifacts/learnings.md`. Before `no-change`, write non-empty `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md`.
 
-**CRITICAL: Never pause or wait for user input. Complete ALL steps. After each step, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (or mark `[x]` manually).**
+**CRITICAL: Mark blocked when the scope rule below prevents a fix. Otherwise complete the checklist. After each step, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (or mark `[x]` manually).**
 
 This is the **Farmslot default** `ci-fix.md` template. Projects should override it under `projects/<name>/templates/worker/ci-fix.md` with repo-specific validation commands. The gateway uses this file only when the project does not supply its own.
 
@@ -26,8 +26,6 @@ STATUS: pending
 
 {{CI_ISSUES}}
 
-{{BRANCH_UPDATE_INSTRUCTIONS}}
-
 ---
 
 ## Checklist
@@ -37,13 +35,13 @@ STATUS: pending
 - [ ] **1. Update Status** — `STATUS: working` in Task block, then `{{TASK_DIR}}/mark --checklist CI-FIX.md start`, then `{{TASK_DIR}}/mark --checklist CI-FIX.md 1`.
 - [ ] **2. Fetch full context:**
   - If review comments: `unset GH_TOKEN && gh api "repos/{{GH_REPO}}/pulls/{{PR_NUMBER}}/comments" --jq '.[] | select(.in_reply_to_id == null) | {id: .id, author: .user.login, body: .body, path: .path, line: .line}'`
-  - Before changing code, run the generated shared operation from TASK.md or the branch-update instructions above. It performs the verified rebase onto the pinned publication base; do not run a second rebase.
+  - Before changing code, run the generated shared operation from TASK.md or the branch-update instructions below. It performs the verified rebase onto the pinned publication base; do not run a second rebase.
   - If CI failures: `unset GH_TOKEN && gh pr checks {{PR_NUMBER}} --repo {{GH_REPO}} 2>&1 | grep -iE 'fail|error'`
 
 ### Fix (steps 3-4)
 
 - [ ] **3. Triage each issue** — classify as REAL (needs fix) or FALSE POSITIVE (dismiss/ignore).
-- [ ] **4. Apply minimal fixes** — fix exactly what was flagged, nothing more.
+- [ ] **4. Fix real issues within the engine scope below.**
 
 ### Verify (steps 5-6)
 
@@ -53,8 +51,7 @@ STATUS: pending
 - [ ] **7. Commit and push:**
   ```bash
   cd {{REPO}}
-  # Only stage files YOU intentionally changed for the fix.
-  # Do NOT use `git add -A` — auto-fixers may have modified unrelated files.
+  # Stage only files allowed by the engine scope below.
   git add <file1> <file2> ...
   git commit -m "fix: address CI feedback"
   {{BRANCH_UPDATE_PUSH_CMD}}
