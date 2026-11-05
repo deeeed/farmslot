@@ -1,6 +1,6 @@
 import { FlashList } from '@shopify/flash-list';
 import { useIsFocused, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useShallow } from 'zustand/react/shallow';
@@ -15,6 +15,7 @@ import {
   selectRecentRunFamilyGroups,
   selectRunList,
   slotMachineMap,
+  viewChoiceField,
 } from '@farmslot/protocol';
 import { FLOW_COLORS, FLOW_LABELS, projectColor, RUNNER_COLORS } from '@farmslot/theme';
 
@@ -28,7 +29,7 @@ import {
   RunPipelineMini,
 } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
-import { withViewState } from '../../components/view-state';
+import { useViewChoice, withViewState } from '../../components/view-state';
 import { useSharedViewSelection } from '../../features/quick-actions/QuickActionsProvider';
 import { useShownMarker } from '../../hooks/useShownMarker';
 import {
@@ -74,6 +75,7 @@ const STATUS_COLORS: Record<string, string> = {
   paused: colors.statusWarn,
 };
 const DIFF_ROUTE_CONTEXT = targetWorkspaceRouteContextParams('diff');
+const RUNS_TAB_FIELD = viewChoiceField<'active' | 'all'>('runsTab', 'active', ['active', 'all']);
 
 function ProjectBadge({ project }: { project: string }) {
   const color = projectColor(project);
@@ -692,7 +694,8 @@ function RunsScreen() {
   const runFilters = useRunFilterStore((s) => s.filters);
   const runFilterCount = useRunFilterStore((s) => s.activeCount)();
   const initRunFilters = useRunFilterStore((s) => s.init);
-  const [showAllRuns, setShowAllRuns] = useState(false);
+  const [runsTab, setRunsTab] = useViewChoice(RUNS_TAB_FIELD);
+  const showAllRuns = runsTab === 'all';
   useSharedViewSelection({
     pathname: '/runs',
     params: {},
@@ -705,9 +708,9 @@ function RunsScreen() {
   }, [initRunFilters]);
 
   const openHistory = useCallback(() => {
-    setShowAllRuns(true);
+    setRunsTab('all');
     void syncRunHistory();
-  }, [syncRunHistory]);
+  }, [setRunsTab, syncRunHistory]);
 
   useEffect(() => {
     if (status !== 'connected' || !showAllRuns || activeLoading) return;
@@ -716,11 +719,11 @@ function RunsScreen() {
 
   const toggleHistoryScope = useCallback(() => {
     if (showAllRuns) {
-      setShowAllRuns(false);
+      setRunsTab('active');
       return;
     }
     openHistory();
-  }, [openHistory, showAllRuns]);
+  }, [openHistory, setRunsTab, showAllRuns]);
 
   const runsSyncMessage = historyLoading
     ? 'Downloading run history…'
