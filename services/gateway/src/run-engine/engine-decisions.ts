@@ -802,6 +802,8 @@ export async function createEngineDecision(
      * supersede the live driver's gate decision. Defaults to the run's current generation.
      */
     generation?: number;
+    /** Register a scoped observer only once this exact decision owns its waiter. */
+    onWaiting?: (decisionId: string) => void;
   },
 ): Promise<string> {
   const run = getRun(runId);
@@ -942,6 +944,7 @@ export async function createEngineDecision(
     autoAction ??
     (await new Promise<string>((resolve) => {
       engineDecisionResolvers.set(decision.id, resolve);
+      options?.onWaiting?.(decision.id);
     }));
 
   const resolvedRun = getRun(runId);

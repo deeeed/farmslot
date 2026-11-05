@@ -1,0 +1,1 @@
+- Refresh waiting slot selection when availability changes and automatically continue through normal admission, without requiring a new run.

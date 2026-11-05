@@ -111,3 +111,22 @@ test('one deadline updates its current key cohort and coalesces publication per 
     revisions.dispose();
   }
 });
+
+test('internal subscribers receive coalesced changes without replacing the client publisher', async () => {
+  const revisions = new GatewayResourceRevisions();
+  const client: ResourceChangedPayload[] = [];
+  const internal: ResourceChangedPayload[] = [];
+  revisions.setPublisher((packet) => client.push(packet));
+  const unsubscribe = revisions.subscribe((packet) => internal.push(packet));
+  revisions.advance(key);
+  revisions.advance(key);
+  await Promise.resolve();
+  assert.deepEqual(internal, client);
+  assert.equal(internal.length, 1);
+  unsubscribe();
+  revisions.advance(key);
+  await Promise.resolve();
+  assert.equal(internal.length, 1);
+  assert.equal(client.length, 2);
+  revisions.dispose();
+});
