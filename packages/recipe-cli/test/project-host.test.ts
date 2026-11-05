@@ -371,8 +371,9 @@ for (const cancelFail of [false, true]) {
         options: { scope: 'inside', hookLog, cancelFail },
       },
       async (host) => {
-        assert.equal(host.signal, signalOwner.signal);
+        assert.equal(host.signal?.aborted, false);
         signalOwner.abort('SIGTERM');
+        assert.equal(host.signal?.aborted, true);
         await host.finalize();
         await host.finalize();
       },
@@ -860,4 +861,23 @@ test('project binding carries its recording capability without acquiring it duri
   await withProjectRecipeHost(options, async (host) => {
     assert.equal(host.context.project?.recordingCapability, 'shared-testnet');
   });
+});
+
+test('command admission abort reaches inherited setup children and provider cancellation', async (t) => {
+  const options = fixture(t);
+  const parent = new AbortController();
+  t.after(() => parent.abort('owned test cleanup'));
+  const hookLog = path.join(options.cwd, 'hooks.log');
+  await withProjectRecipeHost(
+    { ...options, command: 'run', signal: parent.signal, options: { hookLog } },
+    async (host) => {
+      assert.ok(recipeExecutionSignal());
+      host.abort(new Error('proof permit lost'));
+      assert.equal(recipeExecutionSignal()?.aborted, true);
+      assert.equal(host.signal?.aborted, true);
+      assert.equal(parent.signal.aborted, false, 'command cancellation does not abort its caller');
+      await host.finalize();
+    },
+  );
+  assert.equal(fs.readFileSync(hookLog, 'utf8'), 'cancel\nfinalize\n');
 });

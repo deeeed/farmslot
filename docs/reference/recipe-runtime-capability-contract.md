@@ -423,7 +423,9 @@ Managed commands MUST obtain their owner from the existing
 `RECIPE_TASK_DIR/inputs/runtime-capability-catalog.json`. Validate version, project,
 slot and owner; reject an incompatible explicit `--run`. Direct allocated
 recordings MUST supply `--run` and the selected slot. The existing acquire RPC
-rechecks authority and current slot ownership. This metadata grants no authority.
+rechecks the active run, project and current slot allocation on every acquisition.
+The client also reads `run.get` before acquisition retries and fixture execution.
+This metadata grants no authority.
 
 Each command MUST use a fresh `invocationId`, stable across its acquisition retries.
 The gateway accepts it only for the configured recording capability. These leases
@@ -459,7 +461,9 @@ capability. Projects without the declaration MUST add no gateway traffic.
   and recording provider reference. Consumers are gateway and task initialization.
 - `@farmslot/recipe-cli/harness`: `ResolvedProjectBinding.recordingCapability`
   carries the selected pack declaration to the Farmslot CLI. Harness adapters
-  retain their own execution and capture behavior.
+  retain their own execution and capture behavior. `ProjectRecipeHost.abort` cancels
+  the command signal used by inherited setup helpers and provider cleanup. The
+  hosted CLI propagates permit loss through this method before releasing its permit.
 - `farmslot recipe run/call --run <runId>` names a direct recording's owner.
   Terminal recorded proofs are the initial consumer. Existing runtime capability
   acquire, release and lifecycle RPCs supply all admission and cleanup operations.

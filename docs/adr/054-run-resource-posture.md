@@ -568,7 +568,9 @@ existing registry and the public Farmslot project recipe commands.
 allocated recordings. Managed commands use `RECIPE_TASK_DIR`'s existing owner
 receipt and reject a conflicting override. The Terminal pack is the initial
 consumer; upper-layer harnesses inherit admission when invoked through the hosted
-command. There is no new RPC or adapter hook. These are additive minor changes.
+command. `ProjectRecipeHost.abort` propagates permit loss to inherited setup
+helpers and provider cancellation. There is no new RPC or adapter hook. These are
+additive minor changes.
 
 ### Consequences
 

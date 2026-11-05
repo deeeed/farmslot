@@ -403,6 +403,9 @@ async function fixture(
     /** Machine each slot runs on, so `machine`-scoped claims can be exercised. */
     machineFor?: (slotId: string) => string | undefined;
     recordingCapability?: string;
+    recordingOwnerMatches?: ConstructorParameters<
+      typeof RuntimeCapabilityRegistry
+    >[0]['recordingOwnerMatches'];
     onClaimGranted?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['onClaimGranted'];
     assertTargetAvailable?: ConstructorParameters<
       typeof RuntimeCapabilityRegistry
@@ -433,6 +436,7 @@ async function fixture(
   const store = options.storeFactory?.(storePath) ?? new RuntimeCapabilityStore(storePath);
   const registry = new RuntimeCapabilityRegistry({
     store,
+    recordingOwnerMatches: options.recordingOwnerMatches ?? (() => true),
     onCommit: options.onCommit,
     captureProviderProcesses: options.captureProviderProcesses,
     checkProviderCleanup: options.checkProviderCleanup,
@@ -4910,4 +4914,23 @@ test('catalog-error recovery preserves a shared provider claimed by a live sibli
   const live = leases.find((lease) => lease.owner.runId === 'live-sibling');
   assert.equal(live?.state, 'error');
   assert.match(live?.cleanupFailure ?? '', /catalog unavailable/);
+});
+
+test('recording invocation refuses a missing or changed run allocation before provider work', async (t) => {
+  const provider = entry('recording');
+  let allocated = false;
+  const { registry, actions } = await fixture(t, [provider], {
+    recordingCapability: provider.id,
+    recordingOwnerMatches: (runId, slotId, project) =>
+      allocated && runId === 'owner' && slotId === SLOT && project === 'test-project',
+  });
+  const take = () => acquireOn(registry, SLOT, provider.id, 'owner', { invocationId: 'proof' });
+  assert.equal((await take()).ok, false);
+  assert.deepEqual(actions, []);
+  allocated = true;
+  assert.equal((await take()).ok, true);
+  const before = [...actions];
+  allocated = false;
+  assert.equal((await take()).ok, false, 'idempotent retry rechecks allocation');
+  assert.deepEqual(actions, before);
 });

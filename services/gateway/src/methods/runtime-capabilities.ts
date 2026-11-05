@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   Events,
   isCompletionPrerequisiteFailure,
+  isGateParkInFlightOrFreed,
   isTerminalRunStatus,
   type ResourceSidecarMeta,
   type Run,
@@ -575,6 +576,17 @@ const registry = new RuntimeCapabilityRegistry({
   assertTargetAvailable: assertDeviceTargetAvailable,
   pressureFor,
   familyForRun: (ownerRunId) => getRun(ownerRunId)?.familyId,
+  recordingOwnerMatches: (runId, slotId, project) => {
+    const run = getRun(runId);
+    return (
+      !!run &&
+      run.slotId === slotId &&
+      run.project === project &&
+      !isTerminalRunStatus(run.status) &&
+      run.status !== 'paused' &&
+      !isGateParkInFlightOrFreed(run)
+    );
+  },
   // The durable half of the terminal fence. The registry's own owner list is a
   // bounded fast path; the run store is what still knows after a restart or an
   // eviction, from the run's own terminal status or the terminal posture

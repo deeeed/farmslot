@@ -116,6 +116,8 @@ export interface RuntimeCapabilityClaimGrant {
 export interface RuntimeCapabilityRegistryOptions {
   store: RuntimeCapabilityStore;
   catalogForSlot: (slotId: string) => Promise<RuntimeCapabilityCatalogContext>;
+  /** Current allocation authority for command-scoped recording permits. */
+  recordingOwnerMatches?: (runId: string, slotId: string, project: string) => boolean;
   captureProviderProcesses?: (
     slotId: string,
     entry: RuntimeCapabilityCatalogEntry,
@@ -1081,6 +1083,18 @@ export class RuntimeCapabilityRegistry {
           capabilityId: entry.id,
           reason:
             'Invocation identity requires the configured recording capability and a nonempty trimmed identifier of at most 128 characters',
+        },
+      };
+    if (
+      params.invocationId !== undefined &&
+      !this.options.recordingOwnerMatches?.(params.ownerRunId, params.slotId, catalog.project)
+    )
+      return {
+        ok: false,
+        conflict: {
+          kind: 'invalid-request',
+          capabilityId: entry.id,
+          reason: 'The recording no longer owns its active run, project and slot allocation',
         },
       };
     // The run record is the authority on family membership. `ownerFamilyId` is

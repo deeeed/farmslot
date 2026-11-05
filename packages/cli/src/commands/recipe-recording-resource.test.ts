@@ -9,6 +9,7 @@ import {
   type EventFrame,
   Events,
   isRecord,
+  type Run,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityLease,
   type RuntimeCapabilityLifecyclePayload,
@@ -30,7 +31,19 @@ function fixture(queued = false, borrowedInitially = false) {
   let closeListener = (): void => {};
   let closed = false;
   let borrowed = borrowedInitially;
-  const controls = { releaseBeforeReply: false, oldGateway: false, failRelease: false };
+  const allocation: Pick<Run, 'id' | 'slotId' | 'project' | 'status'> = {
+    id: 'run',
+    slotId: 'slot',
+    project: 'example',
+    status: 'monitoring',
+  };
+  const controls = {
+    releaseBeforeReply: false,
+    oldGateway: false,
+    failRelease: false,
+    missingRun: false,
+    allocation,
+  };
   const calls: Array<{ method: string; params: unknown }> = [];
   const lease: RuntimeCapabilityLease = {
     id: 'proof-lease',
@@ -50,6 +63,10 @@ function fixture(queued = false, borrowedInitially = false) {
   const connection: GatewayConnection = {
     async call<T>(method: string, params?: unknown): Promise<T> {
       calls.push({ method, params });
+      if (method === 'run.get') {
+        if (controls.missingRun) throw new Error('Unknown run');
+        return { run: controls.allocation } as T;
+      }
       if (method === RuntimeCapabilityMethods.list) {
         const result: RuntimeCapabilityListResult = {
           slotId: 'slot',
@@ -189,10 +206,10 @@ test('a recorded proof waits for its queued resource before running fixture setu
   );
   await setImmediate();
   assert.equal(invoked, false);
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 3);
   f.unrelated();
   await setImmediate();
-  assert.equal(f.calls.length, 2, 'unrelated events do not rescan or poll');
+  assert.equal(f.calls.length, 3, 'unrelated events do not rescan or poll');
   f.grant();
   assert.equal(await proof, 'proof');
   assert.equal(invoked, true);
@@ -200,8 +217,11 @@ test('a recorded proof waits for its queued resource before running fixture setu
     f.calls.map((c) => c.method),
     [
       RuntimeCapabilityMethods.list,
+      'run.get',
       RuntimeCapabilityMethods.acquire,
+      'run.get',
       RuntimeCapabilityMethods.acquire,
+      'run.get',
       RuntimeCapabilityMethods.release,
     ],
   );
@@ -281,7 +301,9 @@ test('an idempotent reply for this invocation remains owned and is released', as
     f.calls.map((call) => call.method),
     [
       RuntimeCapabilityMethods.list,
+      'run.get',
       RuntimeCapabilityMethods.acquire,
+      'run.get',
       RuntimeCapabilityMethods.release,
     ],
   );
@@ -317,7 +339,7 @@ test('managed proofs bind the existing task owner receipt without an extra flag'
   const f = fixture();
   const request = { ...f.request, runId: undefined, project: 'example', taskDir };
   assert.equal(await withRecordingResource(request, async () => 'proof', f.connect), 'proof');
-  assert.deepEqual(f.calls[1]?.params, {
+  assert.deepEqual(f.calls[2]?.params, {
     slotId: 'slot',
     capabilityId: 'testnet',
     ownerRunId: 'run',
@@ -390,4 +412,36 @@ test('cleanup failure retains both execution and release failures', async () => 
     },
   );
   assert.equal(f.closed(), true);
+});
+
+test('recording validates the current allocation before acquisition and again after waiting', async () => {
+  for (const invalid of ['missing', 'slot', 'project', 'terminal']) {
+    const f = fixture();
+    if (invalid === 'missing') f.controls.missingRun = true;
+    if (invalid === 'slot') f.controls.allocation.slotId = 'other';
+    if (invalid === 'project') f.controls.allocation.project = 'other';
+    if (invalid === 'terminal') f.controls.allocation.status = 'done';
+    await assert.rejects(
+      withRecordingResource(f.request, async () => assert.fail('foreign recording ran'), f.connect),
+    );
+    assert.equal(
+      f.calls.some((call) => call.method === RuntimeCapabilityMethods.acquire),
+      false,
+    );
+  }
+  const f = fixture(true);
+  const proof = withRecordingResource(
+    f.request,
+    async () => assert.fail('changed allocation ran'),
+    f.connect,
+  );
+  const failure = assert.rejects(proof, /no longer owns/);
+  await setImmediate();
+  f.controls.allocation.slotId = 'other';
+  f.grant();
+  await failure;
+  assert.equal(
+    f.calls.filter((call) => call.method === RuntimeCapabilityMethods.acquire).length,
+    1,
+  );
 });

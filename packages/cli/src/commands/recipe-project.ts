@@ -360,7 +360,7 @@ export function registerProjectExecutionCommand(
           ...(await projectRecipeHostOptions(operation, undefined, options)),
           invocation,
         },
-        ({ context, engine, invocation: parsed, cli, signal, finalize, librarySources }) => {
+        ({ context, engine, invocation: parsed, cli, signal, abort, finalize, librarySources }) => {
           const executionOptions = parsed?.options ?? cli;
           const execute = () =>
             withRecordingResource(
@@ -379,15 +379,26 @@ export function registerProjectExecutionCommand(
                 options,
                 signal,
               },
-              (admittedSignal) =>
-                (operation === 'run' ? shared.handleRun : shared.handleCall)([...invocation.argv], {
-                  engine,
-                  parsed,
-                  librarySources,
-                  stream,
-                  signal: admittedSignal,
-                  beforeResult: finalize,
-                }),
+              async (admittedSignal) => {
+                const cancel = () => abort(admittedSignal?.reason);
+                admittedSignal?.addEventListener('abort', cancel, { once: true });
+                if (admittedSignal?.aborted) cancel();
+                try {
+                  return await (operation === 'run' ? shared.handleRun : shared.handleCall)(
+                    [...invocation.argv],
+                    {
+                      engine,
+                      parsed,
+                      librarySources,
+                      stream,
+                      signal: admittedSignal,
+                      beforeResult: finalize,
+                    },
+                  );
+                } finally {
+                  admittedSignal?.removeEventListener('abort', cancel);
+                }
+              },
             );
           return shared.isRecipeExecution(operation, cli)
             ? shared.withCommandJournal(operation, [operation, ...invocation.argv], execute, {

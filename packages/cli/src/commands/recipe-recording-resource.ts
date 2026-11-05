@@ -4,7 +4,10 @@ import path from 'node:path';
 
 import {
   Events,
+  isGateParkInFlightOrFreed,
   isRecord,
+  isTerminalRunStatus,
+  type RunGetResult,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityListResult,
   RuntimeCapabilityMethods,
@@ -133,8 +136,24 @@ export async function withRecordingResource<T>(
       throw new Error(
         'The gateway must support this project recording capability before running recorded proofs.',
       );
+    const checkOwner = async () => {
+      const { run } = await connection.call<RunGetResult>('run.get', { runId });
+      if (
+        run.id !== runId ||
+        run.slotId !== slotId ||
+        run.project !== catalog.project ||
+        isTerminalRunStatus(run.status) ||
+        run.status === 'paused' ||
+        isGateParkInFlightOrFreed(run)
+      )
+        throw new Error(
+          'The recording no longer owns its active run, project and slot allocation.',
+        );
+      signal.throwIfAborted();
+    };
     for (;;) {
       signal.throwIfAborted();
+      await checkOwner();
       const observed = revision;
       attempted = true;
       const result = await connection.call<RuntimeCapabilityAcquireResult>(
@@ -188,6 +207,7 @@ export async function withRecordingResource<T>(
         wake = undefined;
       });
     }
+    await checkOwner();
     outcome = { value: await invoke(signal) };
   } catch (error) {
     outcome = { error };
