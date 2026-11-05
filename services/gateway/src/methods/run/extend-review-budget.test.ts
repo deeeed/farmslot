@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
@@ -8,6 +8,7 @@ import type { Principal, ReadyGatePayload, RunExtendReviewBudgetParams } from '@
 
 import '../../runtime/mock-pty.test-support.js';
 
+import { readSlotRow, statusFile } from '../../core/state.js';
 import { resourceRevisions } from '../../resources/revisions.js';
 import {
   admitReviewRound,
@@ -36,6 +37,12 @@ const principal: Principal = {
 };
 const head = 'a'.repeat(40);
 const emit = () => {};
+
+async function writeSlotRow(row: Record<string, unknown>): Promise<void> {
+  const fleet = JSON.parse(await readFile(statusFile, 'utf8').catch(() => '{"slots":[]}'));
+  const slots = (fleet.slots as Record<string, unknown>[]).filter((s) => s.slot !== row.slot);
+  await writeFile(statusFile, JSON.stringify({ ...fleet, slots: [...slots, row] }));
+}
 
 function fixture(t: TestContext, ref = `example/budget-${randomUUID()}#42`) {
   const run = createRun({
@@ -409,35 +416,60 @@ test('a budget-failed run whose slot was released re-binds the named slot at the
   const { run, params, deps } = fixture(t, 'TAT-4446');
   for (let i = 0; i < 5; i++) await admitReviewRound(run.id, `spent-${i}`);
   updateRun(run.id, { status: 'failed', error: 'The five review rounds are spent.', slotId: null });
-  const rebound: { slotId: string | null; expectedHeadSha?: string }[] = [];
-  const dependencies = {
-    ...deps,
-    rebindSlot: async (candidate: typeof run, options?: { expectedHeadSha?: string }) => {
-      rebound.push({ slotId: candidate.slotId, expectedHeadSha: options?.expectedHeadSha });
-      return candidate.slotId === 'named-slot';
-    },
+  const slotId = `named-slot-${randomUUID()}`;
+  const released = {
+    slot: slotId,
+    lifecycle: 'ready',
+    phase: null,
+    current_run_id: null,
+    slot_epoch: 4,
   };
+  await writeSlotRow(released);
+  let checkoutHead = head;
+  const rebindSlot = (candidate: typeof run, options?: { expectedHeadSha?: string }) =>
+    rebindUnownedPublicationSlot(candidate, {
+      ...options,
+      git: async () => ({ branch: run.branch!, headSha: checkoutHead }),
+    });
+  const owner = async () => (await readSlotRow(slotId))?.current_run_id ?? null;
+
+  // A stale limit refuses before the slot is touched.
   await assert.rejects(
-    runExtendReviewBudget({ ...params, slotId: 'other-slot' }, emit, dependencies),
-    /Slot other-slot is not free with the run branch at a{40}/,
+    runExtendReviewBudget({ ...params, expectedLimit: 4, slotId }, emit, { ...deps, rebindSlot }),
+    /Review budget changed/,
   );
+  assert.equal(await owner(), null);
+  // Another checkout refuses with the slot named.
+  checkoutHead = 'b'.repeat(40);
+  await assert.rejects(
+    runExtendReviewBudget({ ...params, slotId }, emit, { ...deps, rebindSlot }),
+    new RegExp(`Slot ${slotId} is not free with the run branch at a{40}`),
+  );
+  checkoutHead = head;
+  // A refusal after the claim gives the slot back.
+  await assert.rejects(
+    runExtendReviewBudget({ ...params, slotId }, emit, {
+      ...deps,
+      rebindSlot,
+      source: async () => ({ headSha: 'c'.repeat(40), branch: run.branch!, slotEpoch: 5 }),
+    }),
+    /Run head, ownership or approver changed/,
+  );
+  assert.equal(await owner(), null);
+  assert.equal((await readSlotRow(slotId))?.lifecycle, 'ready');
   assert.equal(getRun(run.id)!.slotId, null);
-  const result = await runExtendReviewBudget(
-    { ...params, slotId: 'named-slot' },
-    emit,
-    dependencies,
-  );
-  assert.equal(result.run.slotId, 'named-slot');
+
+  const result = await runExtendReviewBudget({ ...params, slotId }, emit, { ...deps, rebindSlot });
+  assert.equal(result.run.slotId, slotId);
+  assert.equal(await owner(), run.id);
   assert.equal(result.budget.limit, 7);
   assert.equal(result.run.status, 'failed', 'a grant does not start a reviewer or replay');
-  assert.deepEqual(rebound[1], { slotId: 'named-slot', expectedHeadSha: head });
-  // A run that still holds a slot cannot be moved to another one.
+  // A run that holds a slot cannot be moved to another one.
   await assert.rejects(
-    runExtendReviewBudget(
-      { ...params, requestId: randomUUID(), slotId: 'other-slot' },
-      emit,
-      dependencies,
-    ),
+    runExtendReviewBudget({ ...params, requestId: randomUUID(), slotId: 'other-slot' }, emit, {
+      ...deps,
+      rebindSlot,
+    }),
     /names a slot only for a failed run that lost its slot/,
   );
 });
