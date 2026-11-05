@@ -1,0 +1,1 @@
+- Keep observing a relaunched review-fix worker that is active after deferred delivery instead of failing it at the launch deadline.

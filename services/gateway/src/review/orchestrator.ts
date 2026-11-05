@@ -800,6 +800,7 @@ export interface ReviewRetryDeps {
   setProgressDetail?: (runId: string, detail: string) => void;
   setRunStatus?: (runId: string, status: RunStatus) => void;
   fixTurnIsActive?: typeof reviewFixTurnIsActive;
+  fixHasActivity?: typeof reviewFixHasActivity;
   getRun: typeof getRun;
 }
 
@@ -896,6 +897,7 @@ const PRODUCTION_DEPS: ReviewRetryDeps = {
     updateRun(runId, { status });
   },
   fixTurnIsActive: reviewFixTurnIsActive,
+  fixHasActivity: reviewFixHasActivity,
   getRun,
 };
 
@@ -1392,16 +1394,31 @@ export async function runReviewRetryLoop({
     let fixCompletedAt = fixStartedAt;
     let workerBlockReason: string | null = null;
     let fixFailure: unknown;
+    let deferredWorkerWasActive = false;
+    const fixHasActivity = () =>
+      (deps.fixHasActivity ?? reviewFixHasActivity)(vars, runId, workerRunner, fixTurnToken);
     try {
       fixSignal = await deps.waitForWorkerSignal(
         vars,
         taskDir,
         fixDeliveryDeferred ? RUNNER_LAUNCH_READY_TIMEOUT_MS : FEEDBACK_TIMEOUT_MS,
         fixSignalBaseline,
-        fixDeliveryDeferred
-          ? undefined
-          : () => reviewFixHasActivity(vars, runId, workerRunner, fixTurnToken),
+        fixDeliveryDeferred ? undefined : fixHasActivity,
       );
+      assertNativeReviewOperationCurrent();
+      if (!fixSignal && fixDeliveryDeferred && (await fixHasActivity())) {
+        assertNativeReviewOperationCurrent();
+        // A fresh worker may have accepted the prompt without its acknowledgement reaching us.
+        // Its activity keeps the normal fix wait alive; only its fix signal confirms delivery.
+        deferredWorkerWasActive = true;
+        fixSignal = await deps.waitForWorkerSignal(
+          vars,
+          taskDir,
+          FEEDBACK_TIMEOUT_MS,
+          fixSignalBaseline,
+          fixHasActivity,
+        );
+      }
       fixCompletedAt = new Date().toISOString();
       assertNativeReviewOperationCurrent();
       if (fixSignal) acknowledgeReservedDelivery?.();
@@ -1412,7 +1429,9 @@ export async function runReviewRetryLoop({
         if (fixDeliveryDeferred) {
           return undeliveredReviewFixResult({
             result,
-            reason: REVIEW_FIX_DELIVERY_UNCONFIRMED,
+            reason: deferredWorkerWasActive
+              ? 'Review-fix delivery remained unconfirmed after the worker activity wait expired'
+              : REVIEW_FIX_DELIVERY_UNCONFIRMED,
             run: deps.getRun(runId),
             attempts,
             retryCount,
