@@ -578,6 +578,7 @@ export async function collectRunGateAssessment(
   const generation = run.engineState?.generation ?? 0;
   const acceptanceRevision = run.acceptanceRegistration?.revision ?? 0;
   const acceptanceContractRevision = run.acceptanceExecutionContract?.revision ?? 0;
+  const ticketRefreshRevision = run.ticketRefreshes?.length ?? 0;
   const outputDigest = isArtifactOnlyRun(run) ? run.output?.manifestDigest : undefined;
   const outputDecision = outputDigest ? capturedOutputReviewDecision(run) : undefined;
   const source = { ...readers, ...overrides };
@@ -902,6 +903,7 @@ export async function collectRunGateAssessment(
       (acceptanceRevision || undefined) ||
     (getRun(run.id) ?? run).acceptanceExecutionContract?.revision !==
       (acceptanceContractRevision || undefined) ||
+    ((getRun(run.id) ?? run).ticketRefreshes?.length ?? 0) !== ticketRefreshRevision ||
     run.engineState?.publishGate?.packageHash !== retainedPackageHash
   )
     reasons.push({

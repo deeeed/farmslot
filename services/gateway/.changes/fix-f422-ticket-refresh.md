@@ -1,0 +1,1 @@
+- Allow a person to refresh an unpublished run's ticket scope through publication package refresh, re-registering acceptance inputs and retaining an audit history.

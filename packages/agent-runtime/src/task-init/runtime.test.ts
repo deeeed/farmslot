@@ -12,7 +12,52 @@ import {
   builtinTerminalContract,
   defaultMarkCommand,
   ensureTaskRuntime,
+  refreshTaskAcceptanceInputs,
 } from './index.js';
+
+test('a producer-built handoff without criteria can gain criteria on refresh', () => {
+  const handoff = buildHandoffMetadata({
+    attemptId: 'empty-criteria',
+    surface: 'farmslot',
+    project: 'example',
+    flow: 'dev',
+    title: 'Initially no criteria',
+    sourceKind: 'jira',
+    acceptanceCriteria: [],
+    terminalContract: builtinTerminalContract('dev'),
+  });
+  assert.equal(Object.hasOwn(handoff.task, 'acceptanceCriteria'), false);
+  const taskMarkdown = buildTaskDocument({
+    flowType: 'dev',
+    modePreamble: '',
+    vars: { TASK_DIR: '.task/empty-criteria' },
+    description: 'Initially no criteria',
+    acceptanceCriteria: [],
+    hasTicketData: true,
+  });
+  const input = {
+    handoff: JSON.stringify(handoff),
+    taskMarkdown,
+    runId: handoff.attemptId,
+    project: handoff.project,
+    flow: handoff.flow,
+    previousCriteria: [],
+    criteria: ['The new behavior is proven.'],
+  };
+  const refreshed = refreshTaskAcceptanceInputs(input);
+  assert.deepEqual(JSON.parse(refreshed.handoff).task.acceptanceCriteria, input.criteria);
+  assert.match(refreshed.taskMarkdown, /- The new behavior is proven\./);
+  assert.deepEqual(refreshTaskAcceptanceInputs({ ...input, ...refreshed }), refreshed);
+  for (const acceptanceCriteria of [null, 'invalid', [42]])
+    assert.throws(
+      () =>
+        refreshTaskAcceptanceInputs({
+          ...input,
+          handoff: JSON.stringify({ ...handoff, task: { ...handoff.task, acceptanceCriteria } }),
+        }),
+      /handoff identity is invalid/,
+    );
+});
 
 test('interactive task documents teach the shared operator wait and resume commands', () => {
   const input = {

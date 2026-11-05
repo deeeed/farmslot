@@ -538,6 +538,8 @@ export interface RunExtendReviewBudgetResult {
 
 export interface RunRefreshPublishPackageParams {
   runId: string;
+  /** Authenticated person action: reload ticket scope and re-register acceptance before capture. */
+  refreshTicket?: boolean;
   decisionId?: string;
   selectedEvidenceKeys?: string[];
   publicationTarget?: import('../contracts/index.js').PublicationTarget;

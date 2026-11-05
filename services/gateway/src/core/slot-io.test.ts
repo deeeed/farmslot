@@ -38,9 +38,37 @@ import {
   slotCopyFile,
   slotFileExists,
   slotReadFileBuffer,
+  slotRenameFile,
   slotWriteFileBuffer,
   slotWriteFiles,
 } from './slot-io.js';
+
+test('slot replacement uses the existing node rename operation on the same filesystem', async () => {
+  const calls: Array<{ method: string; params: unknown }> = [];
+  const io = {
+    host: 'remote.invalid',
+    machine: 'replacement-fixture',
+    sshTarget: '',
+    nodeRequest: async (method: string, params: unknown) => {
+      calls.push({ method, params });
+      return { ok: true };
+    },
+  };
+  await slotRenameFile(io, '~/worker/task/TASK.md.tmp', '~/worker/task/TASK.md');
+  assert.deepEqual(calls, [
+    {
+      method: 'fs.rename',
+      params: { root: '~/worker/task', oldRelPath: 'TASK.md.tmp', newRelPath: 'TASK.md' },
+    },
+  ]);
+  io.nodeRequest = async () => {
+    throw new Error('Owner revoked');
+  };
+  await assert.rejects(
+    slotRenameFile(io, '~/worker/task/TASK.md.tmp', '~/worker/task/TASK.md'),
+    /Owner revoked/,
+  );
+});
 
 test('owned remote file operations use their supplied transport and never fall back after denial', async () => {
   const calls: string[] = [];
