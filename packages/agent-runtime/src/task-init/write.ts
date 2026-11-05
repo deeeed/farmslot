@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   EXECUTION_CHECKLIST_DOCUMENT,
+  isRecord,
   WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
@@ -19,6 +20,7 @@ import {
   HANDOFF_INPUT,
   type HandoffMetadata,
   normalizeAcceptanceCriteria,
+  renderAcceptanceCriteria,
 } from './task-document.js';
 
 export { quoteMarkCommandWord } from './runtime-command.js';
@@ -119,6 +121,7 @@ export async function ensureTaskRuntime(
         input.terminalContract,
         input.checklistMarkdown,
         EXECUTION_CHECKLIST_DOCUMENT,
+        isRecord,
         input.deterministicCommands,
       ),
     };
@@ -233,4 +236,49 @@ export async function legacyTaskCheck(
     'ci.local_check': command,
   });
   return { checklist, terminalContract: JSON.stringify(frozen, null, 2) + '\n' };
+}
+
+/** Regenerate only ticket acceptance inputs; execution receipts retain their original bytes. */
+export interface TaskAcceptanceRefreshInput {
+  handoff: string;
+  taskMarkdown: string;
+  runId: string;
+  project: string;
+  flow: string;
+  previousCriteria: readonly string[];
+  criteria: readonly string[];
+}
+
+export function refreshTaskAcceptanceInputs(input: TaskAcceptanceRefreshInput): {
+  handoff: string;
+  taskMarkdown: string;
+} {
+  const handoff: unknown = JSON.parse(input.handoff);
+  if (
+    !isRecord(handoff) ||
+    handoff.attemptId !== input.runId ||
+    handoff.project !== input.project ||
+    handoff.flow !== input.flow ||
+    !isRecord(handoff.task) ||
+    !Array.isArray(handoff.task.acceptanceCriteria) ||
+    !handoff.task.acceptanceCriteria.every((criterion) => typeof criterion === 'string')
+  )
+    throw new Error('Ticket refresh task handoff identity is invalid');
+  const criteria = normalizeAcceptanceCriteria(input.criteria);
+  const current = normalizeAcceptanceCriteria(handoff.task.acceptanceCriteria);
+  if (
+    !isDeepStrictEqual(current, normalizeAcceptanceCriteria(input.previousCriteria)) &&
+    !isDeepStrictEqual(current, criteria)
+  )
+    throw new Error('Ticket refresh task criteria changed outside this refresh');
+  const section = /^## Acceptance Criteria[ \t]*\r?\n[\s\S]*?(?=^## |$(?![\s\S]))/m;
+  if (!section.test(input.taskMarkdown))
+    throw new Error('Ticket refresh requires the generated acceptance criteria section');
+  return {
+    handoff: `${JSON.stringify({ ...handoff, task: { ...handoff.task, acceptanceCriteria: criteria } }, null, 2)}\n`,
+    taskMarkdown: input.taskMarkdown.replace(
+      section,
+      () => `## Acceptance Criteria\n\n${renderAcceptanceCriteria(criteria)}\n\n`,
+    ),
+  };
 }
