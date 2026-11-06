@@ -3037,17 +3037,25 @@ test('spent review admission retains a delivered result for the operator instead
 });
 
 for (const mode of ['autonomous', 'interactive'] as const)
-  test(`the final recorded review in ${mode} mode waits with its findings`, async (t) => {
+  test(`the final recorded review in ${mode} mode waits with its budget decision actions`, async (t) => {
     const runId = await publicationGateRun(t, {});
     updateRun(runId, {
       mode,
       ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `spent-${i}`)),
+      output: {
+        workerFinished: true,
+        capturedAt: new Date().toISOString(),
+        artifactManifest: [],
+        manifestDigest: 'a'.repeat(64),
+        reportPath: 'artifacts/report.md',
+      },
     });
     const issues = [
       { file: 'src/order.ts', line: 4, description: 'Unresolved finding from round five' },
     ];
-    await assert.rejects(
-      executeReviewStep(runId, {
+    let held: ResultDecisionHoldError | undefined;
+    try {
+      await executeReviewStep(runId, {
         ...restartReplayContext(),
         executeReviewForRun: async () => ({
           verdict: 'issues',
@@ -3057,11 +3065,32 @@ for (const mode of ['autonomous', 'interactive'] as const)
         }),
         createEngineDecision: async () =>
           assert.fail('the operator receives the retained budget decision'),
-      }),
-      (error: unknown) => {
-        assert(error instanceof ResultDecisionHoldError);
-        assert.deepEqual(error.stepOutputs.issues, issues);
-        return true;
+      });
+    } catch (error) {
+      assert(error instanceof ResultDecisionHoldError);
+      held = error;
+    }
+    assert(held);
+    const outputs = held.stepOutputs;
+    assert.deepEqual(outputs.issues, issues);
+    const current = getRun(runId)!;
+    const decision = await buildResultDecision(
+      {
+        ...current,
+        steps: current.steps.map((step) =>
+          step.name === 'review' ? { ...step, status: 'failed', outputs } : step,
+        ),
       },
+      'review',
+    );
+    assert.match(decision.description ?? '', /five review rounds/);
+    assert(decision.payload?.kind === 'result-decision');
+    assert.equal(
+      decision.payload.actions.find((action) => action.id === 'accept-result')?.available,
+      true,
+    );
+    assert.equal(
+      decision.payload.actions.find((action) => action.id === 'accept-result')?.requiresReason,
+      true,
     );
   });
