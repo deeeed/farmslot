@@ -910,7 +910,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     try {
       const refreshed = await refreshReviewGateView(
         () =>
-          gateway.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, { runId: command.runId }),
+          gateway.request<RunGetResult>(
+            Methods.RUN_REFRESH_REVIEW_GATE,
+            { runId: command.runId },
+            { timeout: null },
+          ),
         async () => {
           if (!command.current()) throw new Error('The review view changed during refresh.');
           const state = await this._queries.run.retry();
