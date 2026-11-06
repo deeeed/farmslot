@@ -1,0 +1,1 @@
+- Wake native review completion checks when the runner or its signal file changes, while preserving polling and timeout fallbacks.
