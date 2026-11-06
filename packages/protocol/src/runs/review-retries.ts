@@ -1,9 +1,12 @@
 import type {
+  ReviewAttempt,
   ReviewBudgetExtension,
   ReviewRoundBudget,
+  ReviewRoundSettlement,
   ReviewStatus,
   Run,
 } from '../contracts/runs.js';
+import { isRecord } from '../recipe/common.js';
 
 export const MAX_REVIEW_ROUNDS = 5;
 export const MAX_UPDATE_BRANCH_REVIEW_ROUNDS = 2;
@@ -18,7 +21,209 @@ export type ReviewRoundBudgetSource = Pick<
   | 'reviewRoundOwners'
   | 'reviewRoundSettlements'
   | 'reviewBudgetExtensions'
->;
+> &
+  Partial<
+    Pick<
+      Run,
+      | 'createdAt'
+      | 'agentContexts'
+      | 'engineState'
+      | 'steps'
+      | 'reviewWorkspaceSubject'
+      | 'reviewResult'
+    >
+  >;
+
+export function reviewRoundAdmissionId(
+  reviewId: string,
+  loopNumber: number,
+  startedAt: string,
+): string {
+  return JSON.stringify([reviewId, loopNumber, startedAt]);
+}
+
+export function workspaceReviewRoundAdmissionId(
+  run: Pick<Run, 'id'> & Partial<Pick<Run, 'createdAt' | 'engineState'>>,
+  generation = run.engineState?.workspaceReviewDispatchGeneration ??
+    run.engineState?.generation ??
+    0,
+): string {
+  return reviewRoundAdmissionId(
+    `workspace-review-${run.id}`,
+    generation + 1,
+    run.createdAt ?? 'historical',
+  );
+}
+
+export function reviewRoundAdmissionIds(
+  run: ReviewRoundBudgetSource,
+  verdictOnly = false,
+): string[] {
+  if (run.reviewRoundAdmissions && !verdictOnly) return run.reviewRoundAdmissions;
+  const ids = new Set<string>();
+  const add = (reviewId: string, attempt: Partial<ReviewAttempt>, fallback?: string) => {
+    const lineage = attempt.session?.reviewId ?? reviewId;
+    const loop = attempt.loopNumber ?? 1;
+    // Older result timestamps can describe completion. The matching context
+    // records launch, so both records must identify that same round.
+    const candidates = [...(run.agentContexts ?? [])]
+      .reverse()
+      .filter(
+        (candidate) =>
+          candidate.role === 'review' &&
+          (candidate.reviewId ?? candidate.id) === lineage &&
+          (candidate.reviewLoopNumber ?? 1) === loop,
+      );
+    const at = attempt.startedAt ?? fallback;
+    const context =
+      candidates.find(
+        (candidate) => at && (candidate.startedAt === at || candidate.attemptStartedAt === at),
+      ) ?? candidates[0];
+    if (verdictOnly && context && !context.reviewResultValidatedAt && context.status !== 'complete')
+      return;
+    const times = [
+      context?.startedAt,
+      context?.attemptStartedAt,
+      attempt.startedAt,
+      fallback,
+    ].filter((v): v is string => !!v);
+    const recorded = times
+      .map((time) => reviewRoundAdmissionId(lineage, loop, time))
+      .find((id) => run.reviewRoundAdmissions?.includes(id));
+    ids.add(
+      recorded ??
+        reviewRoundAdmissionId(
+          lineage,
+          loop,
+          context?.attemptStartedAt ??
+            context?.startedAt ??
+            attempt.startedAt ??
+            fallback ??
+            'historical',
+        ),
+    );
+  };
+  for (const review of run.engineState?.publishGate?.reviews ?? []) {
+    if (review.verdict === 'skipped') continue;
+    // Older rows kept the publication row id, while their context kept the lineage.
+    const lineage =
+      review.session?.reviewId ??
+      (review.reviewerSessionId
+        ? run.agentContexts?.find(
+            (context) =>
+              context.role === 'review' &&
+              context.runId === run.id &&
+              context.artifactScope === review.id &&
+              context.runnerSessionId === review.reviewerSessionId,
+          )?.reviewId
+        : undefined) ??
+      review.id;
+    for (const attempt of review.attempts?.length ? review.attempts : [review]) {
+      if (
+        verdictOnly
+          ? ['pass', 'issues'].includes(attempt.verdict ?? '')
+          : attempt.verdict !== 'skipped'
+      )
+        add(lineage, attempt, review.startedAt);
+    }
+  }
+  const pipeline = run.steps?.find((step) => step.name === 'review')?.outputs;
+  if (pipeline && Array.isArray(pipeline.attempts)) {
+    for (const value of pipeline.attempts) {
+      if (!isRecord(value)) continue;
+      const attempt: Partial<ReviewAttempt> = {
+        ...(typeof value.loopNumber === 'number' ? { loopNumber: value.loopNumber } : {}),
+        ...(typeof value.startedAt === 'string' ? { startedAt: value.startedAt } : {}),
+      };
+      const verdict = value.verdict;
+      if (
+        verdict === 'pending' ||
+        verdict === 'pass' ||
+        verdict === 'issues' ||
+        verdict === 'failed' ||
+        verdict === 'cancelled' ||
+        verdict === 'skipped'
+      )
+        attempt.verdict = verdict;
+      if (
+        verdictOnly
+          ? ['pass', 'issues'].includes(attempt.verdict ?? '')
+          : attempt.verdict !== 'skipped'
+      )
+        add(
+          isRecord(value.session) && typeof value.session.reviewId === 'string'
+            ? value.session.reviewId
+            : typeof pipeline.reviewId === 'string'
+              ? pipeline.reviewId
+              : `pipeline-review-${run.id}`,
+          attempt,
+        );
+    }
+  }
+  for (const context of run.agentContexts ?? []) {
+    if (
+      (context.role !== 'review' && !(context.role === 'primary' && run.reviewWorkspaceSubject)) ||
+      !(context.attemptStartedAt ?? context.startedAt)
+    )
+      continue;
+    if (context.role === 'primary' && run.reviewWorkspaceSubject) {
+      if (verdictOnly && !run.reviewResult) continue;
+      ids.add(workspaceReviewRoundAdmissionId(run));
+      continue;
+    }
+    if (verdictOnly && !context.reviewResultValidatedAt) continue;
+    add(context.reviewId ?? context.id, {
+      loopNumber: context.reviewLoopNumber ?? 1,
+      startedAt: context.attemptStartedAt ?? context.startedAt,
+    });
+  }
+  return [...ids];
+}
+
+export function isReviewRoundNoVerdictSettlement(
+  value: ReviewRoundSettlement | undefined,
+): boolean {
+  return !!value && value.kind !== 'pending' && value.kind !== 'verdict';
+}
+
+/** Retained validated results seed old receipts; an unreturned launch never becomes a verdict. */
+export function reviewRoundSettlementsForRun(
+  run: ReviewRoundBudgetSource,
+): Record<string, ReviewRoundSettlement> {
+  const states = { ...run.reviewRoundSettlements };
+  const admitted = new Set(reviewRoundAdmissionIds(run));
+  for (const id of reviewRoundAdmissionIds(run, true)) {
+    if (
+      !admitted.has(id) ||
+      states[id]?.kind === 'verdict' ||
+      states[id]?.kind === 'infrastructure-fallback'
+    )
+      continue;
+    const validated = run.agentContexts?.find(
+      (context) =>
+        context.role === 'review' &&
+        context.reviewResultValidatedAt &&
+        [context.startedAt, context.attemptStartedAt].some(
+          (at) =>
+            at &&
+            reviewRoundAdmissionId(
+              context.reviewId ?? context.id,
+              context.reviewLoopNumber ?? 1,
+              at,
+            ) === id,
+        ),
+    );
+    // A validated result survives a crash before its pending/refund disposition is updated.
+    // A copied legacy row alone must not override an explicit disposition.
+    if (states[id] && !validated?.reviewResultValidatedAt) continue;
+    states[id] = {
+      kind: 'verdict',
+      reason: 'Recorded reviewer verdict',
+      at: validated?.reviewResultValidatedAt ?? validated?.completedAt ?? '',
+    };
+  }
+  return states;
+}
 
 /** Scope normalized receipts without changing their opaque identity. */
 export function reviewRoundAdmissionsInScope(run: ReviewRoundBudgetSource): string[] {
@@ -32,10 +237,14 @@ export function reviewRoundAdmissionsInScope(run: ReviewRoundBudgetSource): stri
 /** Shared gateway/client projection from durable admission and settlement metadata. */
 export function reviewRoundBudgetForRun(run: ReviewRoundBudgetSource): ReviewRoundBudget {
   const admissions = reviewRoundAdmissionsInScope(run);
-  const noVerdict = admissions.filter((id) => run.reviewRoundSettlements?.[id]).length;
+  const settlements = reviewRoundSettlementsForRun(run);
+  const noVerdict = admissions.filter((id) =>
+    isReviewRoundNoVerdictSettlement(settlements[id]),
+  ).length;
+  const used = admissions.filter((id) => settlements[id]?.kind === 'verdict').length;
   const maintenance = run.flowType === 'update-branch';
   return reviewRoundBudget(
-    admissions.length - noVerdict,
+    used,
     maintenance ? [] : (run.reviewBudgetExtensions ?? []),
     noVerdict,
     maintenance ? MAX_UPDATE_BRANCH_REVIEW_ROUNDS : MAX_REVIEW_ROUNDS,

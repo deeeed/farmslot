@@ -6,11 +6,9 @@
 // DOMAIN knowledge (product behavior, measurement methodology, environment
 // gotchas) becomes a human-gated antipattern DRAFT: exact text plus the target
 // path in the project's canonical knowledge library (the same library the
-// static reviewer consumes); farmslot never writes to that repo. Ambiguous or
-// unroutable entries become visible teaching holds — never both arms for one
-// entry, never a silent drop. Every route terminates at a human gate, and
-// "Recorded in canonical library" writes the consumption ledger so the same
-// feedback is never re-proposed.
+// static reviewer consumes); farmslot never writes to that repo. Domain claims
+// pass evidence curation first; drops live in the feedback ledger, not the inbox.
+// Eligible drafting failures retain a teaching hold. Human landing records consumption.
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -35,11 +33,19 @@ import { getRun, updateRun } from '../runs/store.js';
 
 import {
   appendFeedbackConsumptions,
+  appendLearningCurations,
   consumptionsBySourceKey,
   type FeedbackLedgerEntry,
+  type LearningCurationReceipt,
   readFeedbackLedger,
 } from './feedback-ledger.js';
 import { improvementBroadcast } from './improvement-engine.js';
+import {
+  curateLearningEntries,
+  curationDigest,
+  type LearningCurationContext,
+} from './learning-curation.js';
+import { learningCurationContext } from './learning-curation-context.js';
 
 export const LEARNINGS_DRAFT_DECISION_TYPE = 'engine_learnings_draft';
 /** Human gate: the drafts landed in the canonical library; record the consumed feedback. */
@@ -513,6 +519,7 @@ export interface RoutedLearnings {
   systemContent: string | null;
   /** Canonical library the drafts target; null when the project configures none. */
   destination: KnowledgeDestination | null;
+  drops?: LearningsHold[];
 }
 
 function reconstructSections(entries: LearningsEntry[]): string {
@@ -528,81 +535,146 @@ function reconstructSections(entries: LearningsEntry[]): string {
   return parts.join('\n\n');
 }
 
-export async function routeLearnings(project: string, learnings: string): Promise<RoutedLearnings> {
+export async function routeLearnings(
+  project: string,
+  learnings: string,
+  options: { runId?: string; context?: LearningCurationContext } = {},
+): Promise<RoutedLearnings> {
   const entries = splitLearningsEntries(learnings);
   const buckets = await classifyLearningsEntries(entries);
-
-  const holds: LearningsHold[] = buckets.unclassified.map((entry) => ({
-    entry: entry.text,
-    reason:
-      'unclassified — the router could not confidently pick system vs domain; reword the entry or route it manually',
+  const domain = buckets.domain;
+  if (!domain.length && !buckets.unclassified.length)
+    return {
+      buckets,
+      drafts: [],
+      holds: [],
+      drops: [],
+      destination: null,
+      systemContent: buckets.system.length ? reconstructSections(buckets.system) : null,
+    };
+  const destination = await resolveKnowledgeDestination(project);
+  const context =
+    options.context ??
+    (domain.length || buckets.unclassified.length
+      ? await learningCurationContext(project, destination, options.runId)
+      : { runId: options.runId ?? '', evidence: [], library: [] });
+  const digest = curationDigest(context);
+  const ledger = await readFeedbackLedger();
+  const destinationKey = destination ? knowledgeDestinationKey(destination) : project;
+  const previous = new Map(
+    (ledger.curations ?? [])
+      .filter(
+        (row) =>
+          !row.retryable &&
+          row.runId === context.runId &&
+          row.destination === destinationKey &&
+          row.contextDigest === digest,
+      )
+      .map((row) => [row.sourceKey, row]),
+  );
+  const missing = domain.filter((entry) => !previous.has(learningEntryKey(entry.text)));
+  const fresh = await curateLearningEntries(
+    missing.map((entry) => entry.text),
+    context,
+  );
+  const evaluated = new Map(missing.map((entry, index) => [entry, fresh[index]!]));
+  const curated = domain.map(
+    (entry) => previous.get(learningEntryKey(entry.text)) ?? evaluated.get(entry)!,
+  );
+  const receipts: LearningCurationReceipt[] = curated.map((result, index) => ({
+    sourceKey: learningEntryKey(domain[index]!.text),
+    runId: context.runId,
+    destination: destinationKey,
+    contextDigest: digest,
+    outcome: result.outcome,
+    reason: result.reason,
+    instruction: result.instruction,
+    retryable: result.retryable,
+    citations: result.citations,
+    recordedAt: new Date().toISOString(),
   }));
-
+  const eligible = domain.filter((_entry, index) => curated[index]?.outcome === 'keep');
+  const drops: LearningsHold[] = domain.flatMap((entry, index) =>
+    curated[index]?.outcome === 'drop'
+      ? [{ entry: entry.text, reason: curated[index]!.reason }]
+      : [],
+  );
+  const reject = (entry: LearningsEntry, reason: string) => {
+    drops.push({ entry: entry.text, reason });
+    const receipt = receipts.find((row) => row.sourceKey === learningEntryKey(entry.text));
+    if (receipt) {
+      receipt.outcome = 'drop';
+      receipt.reason = reason;
+    }
+  };
+  for (const entry of buckets.unclassified) {
+    const reason = 'Unable to classify learning; no draft eligibility established';
+    drops.push({ entry: entry.text, reason });
+    receipts.push({
+      sourceKey: learningEntryKey(entry.text),
+      runId: context.runId,
+      destination: destination ? knowledgeDestinationKey(destination) : project,
+      contextDigest: digest,
+      outcome: 'drop',
+      retryable: true,
+      reason,
+      citations: [],
+      recordedAt: new Date().toISOString(),
+    });
+  }
   const drafts: LearningsAntipatternDraft[] = [];
-  const destination = buckets.domain.length > 0 ? await resolveKnowledgeDestination(project) : null;
-  if (buckets.domain.length > 0) {
-    if (!destination) {
-      for (const entry of buckets.domain) {
+  const holds: LearningsHold[] = [];
+  const landed = consumptionsBySourceKey(ledger);
+  const pending: LearningsEntry[] = [];
+  for (const entry of eligible) {
+    const prior = landed
+      .get(learningEntryKey(entry.text))
+      ?.find((row) => destination && row.destination === knowledgeDestinationKey(destination));
+    if (prior) reject(entry, `Already recorded in ${prior.destination} as "${prior.rule}"`);
+    else if (!destination) reject(entry, 'No canonical knowledge destination configured');
+    else pending.push(entry);
+  }
+  let generated: Awaited<ReturnType<AntipatternDrafter>> = [];
+  if (pending.length) {
+    try {
+      generated = await (drafterOverride ?? draftViaLLM)(pending);
+    } catch (error) {
+      for (const entry of pending)
         holds.push({
           entry: entry.text,
-          reason: `no canonical knowledge destination configured for project "${project}" — set vars.knowledge_destination {repo, path} or static_review.support.libraries + reference_repos.<name>_library in its project.json`,
+          reason: `Draft generation unavailable: ${error instanceof Error ? error.message : String(error)}`,
         });
-      }
-    } else {
-      // Lessons already landed in THIS project's canonical library are held,
-      // not re-drafted; the ledger is machine-wide, so a lesson landed in
-      // another project's library does not count.
-      const landed = consumptionsBySourceKey(await readFeedbackLedger());
-      const destinationKey = knowledgeDestinationKey(destination);
-      const pending: LearningsEntry[] = [];
-      for (const entry of buckets.domain) {
-        const prior = landed
-          .get(learningEntryKey(entry.text))
-          ?.filter((item) => item.destination === destinationKey)
-          .at(-1);
-        if (prior) {
-          holds.push({
-            entry: entry.text,
-            reason: `already recorded in ${prior.destination} as "${prior.rule}" on ${prior.recordedAt} — reword the entry if the lesson changed`,
-          });
-        } else {
-          pending.push(entry);
-        }
-      }
-      let generated: Awaited<ReturnType<AntipatternDrafter>> = [];
-      if (pending.length > 0) {
-        try {
-          generated = await (drafterOverride ?? draftViaLLM)(pending);
-        } catch (err) {
-          console.warn(`[learnings-router] draft generation failed: ${(err as Error).message}`);
-          generated = pending.map(() => null);
-        }
-      }
-      pending.forEach((entry, index) => {
-        const draft = validAntipatternDraft(generated[index]);
-        if (!draft) {
-          holds.push({
-            entry: entry.text,
-            reason: 'antipattern draft generation failed for this entry — draft it manually',
-          });
-          return;
-        }
-        drafts.push({
-          ...draft,
-          targetPath: destination.path,
-          targetRepo: destination.repo,
-          sourceEntry: entry.text,
-        });
-      });
     }
   }
-
+  for (const [index, entry] of pending.entries()) {
+    const draft = validAntipatternDraft(generated[index]);
+    if (!draft || !destination) {
+      if (!holds.some((hold) => hold.entry === entry.text))
+        holds.push({
+          entry: entry.text,
+          reason: 'Eligible learning could not be drafted faithfully',
+        });
+      continue;
+    }
+    const evidence = curated[domain.indexOf(entry)]!;
+    drafts.push({
+      ...draft,
+      action: evidence.instruction!,
+      cause: `${draft.cause}\nEvidence: ${evidence.citations.map((c) => `run ${c.runId} ${c.path}:${c.line}`).join('; ')}`,
+      targetPath: destination.path,
+      targetRepo: destination.repo,
+      sourceEntry: entry.text,
+    });
+  }
+  // Persist before emitting any draft/hold; drops never enter the consumption index.
+  await appendLearningCurations(receipts);
   return {
     buckets,
     drafts,
     holds,
-    systemContent: buckets.system.length > 0 ? reconstructSections(buckets.system) : null,
+    drops,
     destination,
+    systemContent: buckets.system.length ? reconstructSections(buckets.system) : null,
   };
 }
 
@@ -659,7 +731,7 @@ export async function emitLearningsDraftDecision(
   }
   if (routed.holds.length > 0) {
     parts.push(
-      `${routed.holds.length} ${routed.holds.length === 1 ? 'entry' : 'entries'} held for teaching — nothing was dropped`,
+      `${routed.holds.length} ${routed.holds.length === 1 ? 'entry' : 'entries'} held for teaching for eligible learnings`,
     );
   }
   if (feedbackCandidates.length > 0) {

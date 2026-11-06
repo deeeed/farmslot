@@ -10,6 +10,7 @@ import {
   reviewRetryCapReason,
   reviewRetryCount,
   reviewRoundBudget,
+  reviewRoundBudgetForRun,
   reviewRoundBudgetLabel,
   stampReviewRetryCap,
 } from '../../src/runs/review-retries.js';
@@ -224,4 +225,22 @@ test('round budget reports no-verdict attempts against their cap without changin
   assert.equal(settled.label, 'Review rounds 4/5');
   assert.equal(reviewRoundBudgetLabel(settled), 'Review rounds 4/5 · 1/3 no-verdict');
   assert.equal(reviewRoundBudget(5, [], 2).diagnosis, plain.diagnosis);
+});
+
+test('shared round projection charges recorded verdicts, not pending or unreturned admissions', () => {
+  const budget = reviewRoundBudgetForRun({
+    id: 'run',
+    flowType: 'dev',
+    reviewRoundAdmissions: ['recorded', 'pending', 'failed', 'unreturned'],
+    reviewRoundSettlements: {
+      recorded: {
+        kind: 'verdict',
+        reason: 'Validated reviewer result',
+        at: '2026-11-06T00:00:00.000Z',
+      },
+      pending: { kind: 'pending', reason: 'Reviewer pending', at: '2026-11-06T00:00:01.000Z' },
+      failed: { reason: 'Reviewer signal missing', at: '2026-11-06T00:00:02.000Z' },
+    },
+  });
+  assert.deepEqual([budget.used, budget.remaining, budget.noVerdict], [1, 4, 1]);
 });

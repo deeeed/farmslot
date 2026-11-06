@@ -24,8 +24,10 @@ import {
   readFrozenEvalFirstOutputPackage,
 } from '../evals/package-store.js';
 import type { ReviewOptions } from '../review/orchestrator.js';
+import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
 import {
   admitReviewRound,
+  assertReviewRoundAvailable,
   runReviewRoundBudget,
   settleReviewRoundNoVerdict,
 } from '../review/review-round-budget.js';
@@ -87,7 +89,7 @@ for (const verdict of ['pass', 'issues', 'failed'] as const) {
       reviewedHeadSha: head,
     };
     updateRun(run.id, {
-      reviewRoundAdmissions: Array.from({ length: 7 }, (_, index) => `spent-${index}`),
+      ...recordedReviewRounds(Array.from({ length: 7 }, (_, index) => `spent-${index}`)),
       reviewBudgetExtensions: [
         {
           requestId: 'scoped-extension',
@@ -217,7 +219,7 @@ test('complete re-entry with zero pending decisions restores Codex after a curre
     slotId: 'isolated-review-slot',
     taskFile: path.join(taskDir, 'TASK.md'),
     steps: [{ name: 'human-gate', status: 'running' }],
-    reviewRoundAdmissions: Array.from({ length: 7 }, (_, index) => `spent-${index}`),
+    ...recordedReviewRounds(Array.from({ length: 7 }, (_, index) => `spent-${index}`)),
     decisions: [],
     reviewBudgetExtensions: [
       {
@@ -2961,3 +2963,134 @@ test('a failed reviewer leaves its selected row available to engine failure reco
     'generic engine failure recording must keep the reviewer selection for the next retry',
   );
 });
+
+test('spent review admission retains a delivered result for the operator instead of failing it', async (t) => {
+  const runId = await publicationGateRun(t, {});
+  const current = getRun(runId)!;
+  updateRun(runId, {
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `spent-${i}`)),
+    status: 'reviewing',
+    output: {
+      workerFinished: true,
+      capturedAt: new Date().toISOString(),
+      artifactManifest: [],
+      manifestDigest: 'captured-output',
+      reportPath: 'artifacts/report.md',
+    },
+    steps: [
+      {
+        name: 'monitor',
+        status: 'done',
+        outputs: { workerSignal: { status: 'complete' }, pushVerification: { verified: true } },
+      },
+      { name: 'review', status: 'running' },
+      { name: 'complete', status: 'pending' },
+    ],
+  });
+  let held: ResultDecisionHoldError | undefined;
+  try {
+    await executeReviewStep(runId, {
+      ...restartReplayContext(),
+      executeReviewForRun: async () => {
+        await assertReviewRoundAvailable(getRun(runId)!);
+        throw new Error('spent budget admitted work');
+      },
+    });
+  } catch (error) {
+    assert(
+      error instanceof ResultDecisionHoldError,
+      'budget admission must use the existing retained decision boundary',
+    );
+    held = error;
+  }
+  assert(held);
+  const heldOutputs = held.stepOutputs;
+  assert.equal(getRun(runId)?.slotId, current.slotId);
+  assert.equal(
+    held.stepOutputs.verdict,
+    undefined,
+    'a blocked launch is not an invented reviewer verdict',
+  );
+  const decision = await buildResultDecision(
+    {
+      ...getRun(runId)!,
+      steps: getRun(runId)!.steps.map((step) =>
+        step.name === 'review' ? { ...step, status: 'failed', outputs: heldOutputs } : step,
+      ),
+    },
+    'review',
+  );
+  assert.match(decision.description ?? '', /five review rounds/);
+  assert(decision.payload?.kind === 'result-decision');
+  assert.equal(
+    decision.payload.actions.find((action) => action.id === 'accept-result')?.available,
+    true,
+  );
+  assert.equal(
+    decision.payload.actions.find((action) => action.id === 'accept-result')?.requiresReason,
+    true,
+  );
+  assert.equal(
+    decision.payload.actions.find((action) => action.id === 'close-result')?.available,
+    true,
+  );
+});
+
+for (const mode of ['autonomous', 'interactive'] as const)
+  test(`the final recorded review in ${mode} mode waits with its budget decision actions`, async (t) => {
+    const runId = await publicationGateRun(t, {});
+    updateRun(runId, {
+      mode,
+      ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `spent-${i}`)),
+      output: {
+        workerFinished: true,
+        capturedAt: new Date().toISOString(),
+        artifactManifest: [],
+        manifestDigest: 'a'.repeat(64),
+        reportPath: 'artifacts/report.md',
+      },
+    });
+    const issues = [
+      { file: 'src/order.ts', line: 4, description: 'Unresolved finding from round five' },
+    ];
+    let held: ResultDecisionHoldError | undefined;
+    try {
+      await executeReviewStep(runId, {
+        ...restartReplayContext(),
+        executeReviewForRun: async () => ({
+          verdict: 'issues',
+          issues,
+          retryCount: 4,
+          maxRetries: 4,
+        }),
+        createEngineDecision: async () =>
+          assert.fail('the operator receives the retained budget decision'),
+      });
+    } catch (error) {
+      assert(error instanceof ResultDecisionHoldError);
+      held = error;
+    }
+    assert(held);
+    const outputs = held.stepOutputs;
+    assert.deepEqual(outputs.issues, issues);
+    const current = getRun(runId)!;
+    const decision = await buildResultDecision(
+      {
+        ...current,
+        steps: current.steps.map((step) =>
+          step.name === 'review' ? { ...step, status: 'failed', outputs } : step,
+        ),
+      },
+      'review',
+    );
+    assert.match(decision.description ?? '', /five review rounds/);
+    assert(decision.payload?.kind === 'result-decision');
+    assert.equal(
+      decision.payload.actions.find((action) => action.id === 'accept-result')?.available,
+      true,
+    );
+    assert.equal(
+      decision.payload.actions.find((action) => action.id === 'accept-result')?.requiresReason,
+      true,
+    );
+  });

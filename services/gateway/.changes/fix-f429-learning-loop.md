@@ -1,0 +1,2 @@
+- Read captured learning content for improvement proposals after task staging is removed or changes.
+- Curate domain learning claims against run evidence and existing rules before proposing human-approved drafts; record drops separately from consumption.

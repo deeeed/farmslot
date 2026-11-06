@@ -6,6 +6,7 @@ import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type AgentContext,
   allocateReviewerContext,
+  isReviewRoundNoVerdictSettlement,
   isTerminalRunStatus,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
@@ -391,7 +392,7 @@ export function refundedNativeReviewer(
         !context.nativeSession.releasedAt &&
         !context.reviewResultValidatedAt &&
         !!roundId &&
-        !!run.reviewRoundSettlements?.[roundId] &&
+        isReviewRoundNoVerdictSettlement(run.reviewRoundSettlements?.[roundId]) &&
         !run.agentContexts?.some(
           (later) =>
             later.role === 'review' &&

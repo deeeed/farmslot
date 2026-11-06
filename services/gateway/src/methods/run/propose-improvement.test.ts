@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { after } from 'node:test';
+import test, { after, afterEach, beforeEach } from 'node:test';
 
 import type { ImprovementDiffPayload, Run } from '@farmslot/protocol';
 
+import { installCurationFixture } from '../../intelligence/learning-curation.test-support.js';
 import { __setLearningsClassifierForTest } from '../../intelligence/learnings-router.js';
+import { retainRunFixture } from '../../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getRun, runRecordPath, updateRun } from '../../runs/store.js';
 
 import {
@@ -15,6 +17,12 @@ import {
   resumeInterruptedImprovementAnalyses,
   runProposeImprovement,
 } from './propose-improvement.js';
+
+let resetCuration: () => void;
+beforeEach(() => {
+  resetCuration = installCurationFixture();
+});
+afterEach(() => resetCuration());
 
 function createTempRunWithTask(learnings: string | null): { run: Run; taskDir: string } {
   const tmp = mkdtempSync(path.join(tmpdir(), 'farmslot-propose-test-'));
@@ -177,14 +185,13 @@ test('resume re-runs an interrupted analysis on the same placeholder and persist
   assert.equal(improvementPayload(run.id, decisionId).analysisAttempts, 2);
 });
 
-test('a resume of an all-domain run emits ONE draft card and never stacks duplicates', async (t) => {
+test('a resume records unroutable domain learning without creating duplicate gates', async (t) => {
   const { run, taskDir } = createTempRunWithTask('Product screens flake on slow seeds.');
   const decisionId = seedAnalyzingPlaceholder(run.id, 1);
 
   const { __setAntipatternDrafterForTest } = await import('../../intelligence/learnings-router.js');
   __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
-  // example-mobile-farm has no vars.antipattern_repo_key, so the domain entry
-  // becomes a teaching hold — still exactly one learnings-draft card.
+  // No canonical destination: record the drop, without a human gate.
   __setImprovementAnalyzerForTest(async () => {
     assert.fail('analyzer must not run when nothing classifies system');
   });
@@ -206,7 +213,7 @@ test('a resume of an all-domain run emits ONE draft card and never stacks duplic
 
   const draftCards = () =>
     (getRun(run.id)?.decisions ?? []).filter((d) => d.type === 'engine_learnings_draft');
-  assert.equal(draftCards().length, 1, 'exactly one learnings-draft card after resume');
+  assert.equal(draftCards().length, 0, 'a destination failure is recorded without a gate');
 
   // A second interrupted resume (crash loop) must not stack another card.
   const payload = improvementPayload(run.id, decisionId);
@@ -218,7 +225,7 @@ test('a resume of an all-domain run emits ONE draft card and never stacks duplic
     if (improvementPayload(run.id, decisionId).analysisStatus === 'no-changes') break;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  assert.equal(draftCards().length, 1, 'crash-loop resume must not duplicate the draft card');
+  assert.equal(draftCards().length, 0, 'crash-loop resume must not create a dropped-entry card');
 });
 
 test('resume terminalizes a placeholder at the retry cap without re-running it', async (t) => {
@@ -416,3 +423,38 @@ test('a retrospective stored without a payload still offers the derived human fe
     'github.com/metamask/metamask-mobile#34865:review-comment:77',
   );
 });
+
+for (const staging of ['removed', 'changed'] as const) {
+  test(`improvement reads retained learnings when task staging is ${staging}`, async (t) => {
+    const learning = '- Confirmed retained learning from the completed run.';
+    const { run, taskDir } = createTempRunWithTask(learning);
+    const current = getRun(run.id);
+    assert(current?.taskFile);
+    await retainRunFixture(current);
+    if (staging === 'removed') {
+      rmSync(path.dirname(current.taskFile), { recursive: true });
+    } else {
+      writeFileSync(
+        path.join(path.dirname(current.taskFile), 'artifacts/learnings.md'),
+        '- Changed staging belongs to later work.',
+      );
+    }
+    let observed = '';
+    let complete: (() => void) | undefined;
+    const analyzed = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    __setImprovementAnalyzerForTest(async (_runId, content) => {
+      observed = content;
+      complete?.();
+    });
+    t.after(async () => {
+      __setImprovementAnalyzerForTest(null);
+      await cleanupProposeRun(run.id, taskDir);
+    });
+    assert.deepEqual(await runProposeImprovement({ runId: run.id }, () => {}), { ok: true });
+    await analyzed;
+    assert.match(observed, /Confirmed retained learning/);
+    assert.doesNotMatch(observed, /Changed staging/);
+  });
+}

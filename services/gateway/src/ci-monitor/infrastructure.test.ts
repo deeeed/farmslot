@@ -311,6 +311,10 @@ for (const resolved of [false, true]) {
         let dispatched = 0;
         const context = stepContext(() => dispatched++);
         const running = executeCIWatchStep(run.id, context);
+        t.after(async () => {
+          context.activeMonitors.get(run.id)?.abort();
+          await running;
+        });
         if (!resolved) {
           // A retained card is re-presented by recovery with its original actions.
           // Resolve it once the monitor has installed its resolver.
@@ -369,7 +373,7 @@ for (const resolved of [false, true]) {
 }
 
 for (const resolved of [false, true]) {
-  test(`${resolved ? 'resolved' : 'pending'} recovered repair uses complete monitor checks without another read`, async () => {
+  test(`${resolved ? 'resolved' : 'pending'} recovered repair uses complete monitor checks without another read`, async (t) => {
     conclusions = [['lint', 'FAILURE']];
     incompleteObservation = undefined;
     comments = [];
@@ -398,6 +402,10 @@ for (const resolved of [false, true]) {
     let dispatched = 0;
     const context = stepContext(() => dispatched++);
     const running = executeCIWatchStep(run.id, context);
+    t.after(async () => {
+      context.activeMonitors.get(run.id)?.abort();
+      await running;
+    });
     if (!resolved) {
       await until(
         () =>

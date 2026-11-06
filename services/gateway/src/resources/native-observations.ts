@@ -43,6 +43,7 @@ import {
   type NativeCatalogSourceReceipt,
   NativeCatalogSourceUnavailable,
 } from './native-catalog-changes.js';
+import { publishNativeSessionChange } from './native-session-changes.js';
 import { resourceRevisions } from './revisions.js';
 
 /** Matches the parent's explicit private collection/detail union. No wildcard identities. */
@@ -690,6 +691,7 @@ export class GatewayNativeObservations {
     ownerId: string,
     families: readonly string[] = ['native-session', 'profiles'],
   ): void {
+    if (families.includes('native-session')) publishNativeSessionChange(nodeId, ownerId);
     // Keys remain private even here. The server must call canReadKey again before sending.
     const keys = new Map<string, NativeObservationKey>();
     for (const client of this.clients.values())
