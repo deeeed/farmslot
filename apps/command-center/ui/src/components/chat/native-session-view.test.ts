@@ -205,6 +205,7 @@ for (const [executionNodeId, homeDirectory] of [
       model: 'gpt-6.1-sol',
       effort: undefined,
       mode: 'default',
+      approvalMode: 'ask',
     });
   });
 }
@@ -309,6 +310,7 @@ test('native Default sends the selected node model after switching execution nod
     prompt: 'Read the workspace',
     unavailableNodes: [],
     mode: 'default',
+    approvalMode: 'ask',
   });
   view.updated(new Map([['executionNodeId', 'macpro']]));
   assert.equal(picker.selection?.model, 'litellm/glm-5p3');
@@ -322,6 +324,7 @@ test('native Default sends the selected node model after switching execution nod
     effort: undefined,
     mode: 'default',
     cwd: '/fixture',
+    approvalMode: 'ask',
   });
 });
 
@@ -605,6 +608,7 @@ test('prompt-first creation sends the first message once and keeps its delivery 
     cwd: '/fixture',
     executionNodeId: 'local',
     prompt: 'Read the workspace',
+    approvalMode: 'bypass',
     revision: 0,
     requestUpdate: () => undefined,
     selectRouted(id: string) {
@@ -625,6 +629,7 @@ test('prompt-first creation sends the first message once and keeps its delivery 
     calls.map((call) => call.method),
     [Methods.NATIVE_SESSION_CREATE, Methods.NATIVE_SESSION_SEND],
   );
+  assert.equal((calls[0].params as { approvalMode?: string }).approvalMode, 'bypass');
   const command = JSON.parse(stored.get('prompt-first:command:session') ?? '{}');
   assert.equal(command.text, 'Read the workspace');
   assert.equal(command.sessionId, result.session.id);
@@ -852,4 +857,65 @@ test('the addressed session keeps URL message and file disclosures during initia
   assert.match(location.hash, /messages=command-a/);
   assert.equal(Reflect.get(view, 'foldOpen').get(7), true);
   assert.equal(Reflect.get(view, 'foldOpen').get(9), false);
+});
+
+test('approval choice is independent of planning and hidden for managed workers', () => {
+  const view = new NativeSessionView();
+  Object.assign(view, { approvalMode: 'bypass', mode: 'plan' });
+  const text = litText(Reflect.get(view, 'renderApprovalMode').call(view));
+  assert.match(text, /Tool approvals/);
+  assert.match(text, /Bypass \/ yolo/);
+  assert.equal(Reflect.get(view, 'mode'), 'plan');
+  Object.assign(view, { worker: { runId: 'worker' } });
+  assert.equal(litText(Reflect.get(view, 'renderApprovalMode').call(view)), '');
+});
+
+test('an unconfirmed approval mode has an explicit retry for that same selection', async () => {
+  const snapshot = page(receipt(false));
+  snapshot.session.state = 'idle';
+  snapshot.session.approvalMode = 'ask';
+  snapshot.session.approvalModePending = 'bypass';
+  snapshot.session.capabilities.approvalModes = ['ask', 'bypass'];
+  const calls: Array<{ method: string; params: unknown }> = [];
+  const view = new NativeSessionView();
+  const api: NativeSessionApi = {
+    async request<T>(
+      method: Parameters<NativeSessionApi['request']>[0],
+      params?: unknown,
+    ): Promise<T> {
+      calls.push({ method, params });
+      return {
+        session: { ...snapshot.session, approvalMode: 'bypass', approvalModePending: undefined },
+      } as T;
+    },
+  };
+  Object.assign(view, {
+    session: snapshot.session,
+    caughtUp: true,
+    connected: true,
+    api,
+    fixture: {
+      catalog: async () => ({ runners: [], contexts: [] }),
+      list: async () => ({ sessions: [] }),
+      read: async () => snapshot,
+    },
+    schedule: () => undefined,
+  });
+  const rendered = Reflect.get(view, 'renderApprovalMode').call(view, snapshot.session);
+  assert.match(litText(rendered), /Retry approval change/);
+  assert.equal(Reflect.get(view, 'inputAllowed'), false);
+  const click = litBinding(rendered, '@click=');
+  assert(typeof click === 'function');
+  Reflect.apply(click, undefined, []);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [
+    {
+      method: Methods.NATIVE_SESSION_SET_APPROVAL_MODE,
+      params: {
+        sessionId: snapshot.session.id,
+        executionNodeId: snapshot.session.executionNodeId,
+        approvalMode: 'bypass',
+      },
+    },
+  ]);
 });

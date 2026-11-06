@@ -629,3 +629,35 @@ Capture from the exact execution node/account through existing runner accounting
 ### Public surface
 
 `@farmslot/protocol` extends the existing `RunnerSessionUsage` shape and adds optional `Run.sessionUsage` and `AgentContext.usage` to existing run data. Fields remain optional for old records; new row producers fill the normative fields. This is additive and patch-compatible. Existing run RPCs carry the rows. Shared reporting projects deduplicated receipts for Command Center, Companion and downstream harnesses. The shared LLM wrapper carries run/role attribution through execution context. No new RPC, node-service contract, server or per-project override is added. Operators use the offline backfill documented in `docs/operations/native-reviewer-usage-backfill.md`.
+
+## Amendment 15: standalone tool approval mode, 2026-11-06
+
+**Status:** Accepted, Arthur, native-interface scope at 23:05 and 23:07 HKT.
+
+Tool approval is separate from interaction mode. Standalone sessions launch with
+`approvalMode: ask` by default, or an explicit `bypass`. An idle session can change
+it through `native.session.setApprovalMode`. The journal records the choice before
+new input is admitted. A native setter with an uncertain acknowledgement blocks
+input until an explicit setter confirms the policy. Questions remain interactive.
+Worker leases, review sandboxes, publication and gate authority remain unchanged;
+this standalone operation refuses managed sessions.
+
+Claude uses its native permission mode control. Codex uses untrusted/workspace-write
+or never/danger-full-access at the next turn. ACP has no portable live permission
+setter: Cursor, Grok and OpenCode keep native permission requests enabled and the
+adapter grants each tool request in bypass, allowing ask to resume without a process
+replacement. Pi already runs tools without permission requests; retain its explicit
+`approvals: false` capability and show that fact beside the choice.
+
+### Public surface
+
+`NativeApprovalMode`, the optional create/info `approvalMode`, pending-change state,
+`NativeSessionCapabilities.approvalModes` and `NativeSessionSetApprovalModeParams`
+belong to `@farmslot/protocol`. `native.session.setApprovalMode` is also available
+through the existing raw RPC CLI. The agent-runtime host advertises support; older
+hosts reject the new launch option instead of ignoring it. Protocol/runtime and node services need a
+coordinated package release, node rollout and host refresh. No harness flag is added.
+
+`NativeWorkspaceChangesResult.repository: false` identifies a non-Git working
+directory. Changes shows a quiet empty state; Files still browses it. Other read
+failures remain errors.

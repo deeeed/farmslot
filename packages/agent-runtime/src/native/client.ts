@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type {
+  NativeApprovalMode,
   NativeCommandReceipt,
   NativeSessionCreateParams,
   NativeSessionEnsureParams,
@@ -136,6 +137,14 @@ export class NativeSessionClient {
   }
   private async call<T>(request: HostRequest): Promise<T> {
     const host = await this.host();
+    if (
+      (request.method === 'setApprovalMode' ||
+        ('params' in request &&
+          'approvalMode' in request.params &&
+          request.params.approvalMode !== undefined)) &&
+      !host.supportsApprovalMode
+    )
+      throw new Error('Native host upgrade required for per-session approval modes');
     if (
       'params' in request &&
       'profileId' in request.params &&
@@ -325,6 +334,9 @@ export class NativeSessionClient {
   }
   respond(owner: string, id: string, requestId: string, response: NativeSessionResponse) {
     return this.call<void>({ method: 'respond', owner, id, requestId, response });
+  }
+  setApprovalMode(owner: string, id: string, approvalMode: NativeApprovalMode) {
+    return this.call<NativeSessionInfo>({ method: 'setApprovalMode', owner, id, approvalMode });
   }
   interrupt(owner: string, id: string) {
     return this.call<void>({ method: 'interrupt', owner, id });

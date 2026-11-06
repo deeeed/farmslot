@@ -555,3 +555,48 @@ test('OpenCode read-only review permits declared inputs and denies other externa
     },
   });
 });
+
+for (const [runner, adapter] of [
+  ['cursor', cursorNativeAdapter],
+  ['grok', grokNativeAdapter],
+  ['opencode', opencodeNativeAdapter],
+] as const) {
+  test(`${runner} standalone bypass auto-answers tools, then ask restores requests on the same session`, async () => {
+    const f = setup();
+    const events: NativeEventInput[] = [];
+    const session = await adapter.start({ ...f, approvalMode: 'bypass' }, (event) =>
+      events.push(event),
+    );
+    try {
+      await session.send('permission', 'bypass');
+      await until(() => events.some((e) => e.type === 'turn.completed'));
+      assert.equal(
+        events.some((e) => e.type === 'approval.requested'),
+        false,
+      );
+      assert.equal(
+        JSON.parse(readFileSync(join(f.cwd, 'permission'), 'utf8')).outcome.optionId,
+        'allow-once',
+      );
+      await session.setApprovalMode!('ask');
+      events.length = 0;
+      await session.send('permission', 'ask');
+      await until(() => events.some((e) => e.type === 'approval.requested'));
+      assert.equal(
+        events.some((e) => e.type === 'turn.completed'),
+        false,
+      );
+      await session.respond(events.find((e) => e.type === 'approval.requested')!.nativeId!, {
+        decision: 'deny',
+      });
+      await until(() => events.some((e) => e.type === 'turn.completed'));
+      assert.equal(
+        JSON.parse(readFileSync(join(f.cwd, 'permission'), 'utf8')).outcome.optionId,
+        'deny-once',
+      );
+    } finally {
+      await session.close();
+      f.cleanup();
+    }
+  });
+}

@@ -185,6 +185,7 @@ const nativeOwnerMethods = new Set([
   'native.session.create',
   'native.session.ensure',
   'native.session.read',
+  'native.session.setApprovalMode',
   'native.session.send',
   'native.session.respond',
   'native.session.interrupt',

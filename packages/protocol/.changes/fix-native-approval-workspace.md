@@ -1,0 +1,1 @@
+- Choose standalone native tool approvals separately from planning, and identify non-Git Changes views.

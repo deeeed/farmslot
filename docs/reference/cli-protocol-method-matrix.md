@@ -291,6 +291,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `native.profile.remove`            | rpc-only |             |     | Retire a configuration after session cleanup; native files stay on the execution node.             |
 | `native.session.ensure`            | rpc-only |             |     | Idempotent native session creation under a caller-reserved UUID; authenticated ownership required. |
 | `native.session.read`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.session.setApprovalMode`   | rpc-only |             |     | Change an idle standalone session tool policy through farmslot rpc native.session.setApprovalMode. |
 | `native.session.list`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
 | `native.session.send`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
 | `native.session.respond`           | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |

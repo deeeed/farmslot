@@ -98,3 +98,12 @@ test('a hidden test diff never renders in Changes mode, however it arrived', () 
   assert.doesNotMatch(text, /SECRET-TEST-LINE/);
   assert.match(text, /Test file hidden/);
 });
+
+test('non-git Changes is a quiet empty state and Files remains a selectable view', () => {
+  const view = makeWorkspace(async () => ({ files: [], repository: false }));
+  view.changes = { files: [], repository: false };
+  const text = litText(view.render());
+  assert.match(text, /Not a git repository: no file changes to show/);
+  assert.match(text, /Files/);
+  assert.doesNotMatch(text, /No workspace changes/);
+});

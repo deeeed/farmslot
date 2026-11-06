@@ -161,6 +161,11 @@ export async function routeNativeSession(
           runner: string(p, 'runner'),
           cwd: string(p, 'cwd'),
         };
+        if (p.approvalMode !== undefined) {
+          if (p.approvalMode !== 'ask' && p.approvalMode !== 'bypass')
+            throw new NativeSessionMethodError('INVALID_PARAMS', 'Unknown native approval mode');
+          params.approvalMode = p.approvalMode;
+        }
         if (p.model !== undefined) params.model = string(p, 'model');
         if (p.effort !== undefined) params.effort = string(p, 'effort');
         if (p.resultSchema !== undefined) {
@@ -199,6 +204,12 @@ export async function routeNativeSession(
         if (p.resumeSessionId !== undefined) params.resumeSessionId = string(p, 'resumeSessionId');
         return { session: await client.create(principal, params, requester) };
       }
+      case Methods.NATIVE_SESSION_SET_APPROVAL_MODE:
+        if (p.approvalMode !== 'ask' && p.approvalMode !== 'bypass')
+          throw new NativeSessionMethodError('INVALID_PARAMS', 'Unknown native approval mode');
+        return {
+          session: await client.setApprovalMode(principal, string(p, 'sessionId'), p.approvalMode),
+        };
       case Methods.NATIVE_SESSION_LIST:
         return { sessions: await client.list(principal) };
       case Methods.NATIVE_SESSION_READ:

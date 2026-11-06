@@ -1,11 +1,13 @@
 import { html, LitElement, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
+import { live } from 'lit/directives/live.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import {
   type ChatMessage,
   Methods,
+  type NativeApprovalMode,
   type NativeCommandReceipt,
   type NativeProfileInfo,
   type NativeSessionCatalogResult,
@@ -189,6 +191,7 @@ export class NativeSessionView extends LitElement {
     this.requestUpdate();
   }
   @state() private mode: 'default' | 'plan' = 'default';
+  @state() private approvalMode: NativeApprovalMode = 'ask';
   @state() private cwd = '';
   @state() private customCwd = false;
   @state() private prompt = '';
@@ -255,6 +258,8 @@ export class NativeSessionView extends LitElement {
     params.set('runner', this.runner);
     params.set('model', this.model);
     params.set('mode', this.mode);
+    if (this.approvalMode === 'bypass') params.set('approvalMode', 'bypass');
+    else params.delete('approvalMode');
     const effort = this.executionPicker.toSelection().effort;
     if (effort) params.set('effort', effort);
     else params.delete('effort');
@@ -452,6 +457,7 @@ export class NativeSessionView extends LitElement {
       const runner = this.executionPicker.catalog.runners.find((entry) => entry.id === this.runner);
       if (requestedModel) this.model = nativeLaunchModel(runner, requestedModel);
       this.mode = params.get('mode') === 'plan' ? 'plan' : 'default';
+      this.approvalMode = params.get('approvalMode') === 'bypass' ? 'bypass' : 'ask';
       const effort = params.get('effort');
       const row = this.executionPicker.rows[0];
       if (effort && row && runner?.efforts.includes(effort))
@@ -524,7 +530,11 @@ export class NativeSessionView extends LitElement {
   }
 
   private get inputAllowed() {
-    return this.historyCurrent && (!this.worker || Boolean(this.workerControl));
+    return (
+      this.historyCurrent &&
+      !this.session?.approvalModePending &&
+      (!this.worker || Boolean(this.workerControl))
+    );
   }
 
   private get historyCurrent() {
@@ -1352,6 +1362,73 @@ ${JSON.stringify(
     this.schedule(0);
   }
 
+  private async setApprovalMode(approvalMode: NativeApprovalMode) {
+    const session = this.session;
+    if (!session || this.worker || this.busy || !this.historyCurrent || session.state !== 'idle')
+      return;
+    this.busy = true;
+    this.error = '';
+    const revision = this.revision;
+    try {
+      const result = await this.api.request<{ session: NativeSessionInfo }>(
+        Methods.NATIVE_SESSION_SET_APPROVAL_MODE,
+        { sessionId: session.id, executionNodeId: session.executionNodeId, approvalMode },
+      );
+      if (revision !== this.revision) return;
+      this.session = result.session;
+      this.schedule(0);
+    } catch (error) {
+      if (revision === this.revision) this.error = (error as Error).message;
+    } finally {
+      if (revision === this.revision) this.busy = false;
+    }
+  }
+
+  private renderApprovalMode(session?: NativeSessionInfo) {
+    if (this.worker) return nothing;
+    const pending = session?.approvalModePending;
+    const selected = pending ?? session?.approvalMode ?? this.approvalMode;
+    return html`<label
+        >Tool approvals<choice-picker
+          overlay
+          data-testid="native-approval-mode"
+          .value=${live(selected)}
+          ?disabled=${this.busy ||
+          (session &&
+            (!this.historyCurrent ||
+              session.state !== 'idle' ||
+              !session.capabilities.approvalModes))}
+          @change=${(event: Event) => {
+            const mode: NativeApprovalMode =
+              (event.target as HTMLElement & { value: string }).value === 'bypass'
+                ? 'bypass'
+                : 'ask';
+            if (session) void this.setApprovalMode(mode);
+            else {
+              this.approvalMode = mode;
+              this.syncLaunchUrl();
+            }
+          }}
+        >
+          <option value="ask">Ask</option>
+          <option value="bypass">Bypass / yolo</option>
+        </choice-picker></label
+      >
+      ${session && pending
+        ? html`<span class="meta">Approval change unconfirmed. Retry before sending.</span>
+            <button
+              data-testid="native-approval-retry"
+              ?disabled=${this.busy || !this.historyCurrent || session.state !== 'idle'}
+              @click=${() => void this.setApprovalMode(pending)}
+            >
+              Retry approval change
+            </button>`
+        : nothing}
+      ${session && !session.capabilities.approvals
+        ? html`<span class="meta">This runner's native tools do not request approval.</span>`
+        : nothing}`;
+  }
+
   private async create(resume?: NativeSessionInfo) {
     if (this.busy) return;
     const firstPrompt = resume ? '' : this.prompt.trim();
@@ -1386,6 +1463,7 @@ ${JSON.stringify(
           runner: resume.runner,
           model: resume.model,
           mode: resume.mode,
+          approvalMode: resume.approvalMode ?? 'ask',
           cwd: resume.cwd,
           resumeSessionId: resume.nativeSessionId,
           ...(resume.profileId
@@ -1398,6 +1476,7 @@ ${JSON.stringify(
           model: this.model || undefined,
           effort: this.executionPicker.toSelection().effort ?? undefined,
           mode: this.mode,
+          approvalMode: this.approvalMode,
           cwd: this.cwd,
           ...(this.profile
             ? { profileId: this.profile.id, accountContextId: this.profile.accountContextId }
@@ -1830,6 +1909,7 @@ ${JSON.stringify(
               ></review-dispatch-picker>
             </div>
 
+            ${this.renderApprovalMode()}
             <details class="launch-advanced" data-testid="native-advanced">
               <summary>Advanced</summary>
               ${this.catalog?.contexts.some(
@@ -1921,6 +2001,7 @@ ${JSON.stringify(
                 ><span class="meta"
                   >${session.cwd}${session.profileId ? ` · Profile ${session.profileId}` : ''}</span
                 >
+                ${this.renderApprovalMode(session)}
                 <details>
                   <summary>Session details</summary>
                   <div class="meta">

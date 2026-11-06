@@ -146,6 +146,7 @@ export const codexNativeAdapter: NativeAdapter = {
   },
   capabilities: {
     modes: ['default', 'plan'],
+    approvalModes: ['ask', 'bypass'],
     streaming: true,
     tools: true,
     approvals: true,
@@ -157,6 +158,8 @@ export const codexNativeAdapter: NativeAdapter = {
     steer: true,
   },
   async start(options, emit) {
+    let approvalMode = options.approvalMode ?? 'ask';
+    let gitRoot: string | undefined;
     let nativeSessionId = '';
     let resolvedModel = options.model;
     let structuredResult: NativeStructuredResult | undefined;
@@ -341,8 +344,8 @@ export const codexNativeAdapter: NativeAdapter = {
         capabilities: { experimentalApi: true },
       });
       process.write({ method: 'initialized', params: {} });
-      const gitRoot =
-        options.safetyTier === 'dangerous'
+      gitRoot =
+        options.safetyTier === 'dangerous' || approvalMode === 'bypass'
           ? undefined
           : await gitWritableRoot(options.cwd, options.env);
       const filesystemPolicy =
@@ -373,11 +376,14 @@ export const codexNativeAdapter: NativeAdapter = {
             : {
                 approvalPolicy:
                   options.approvalPolicy ??
-                  (options.safetyTier && options.safetyTier !== 'sandboxed'
+                  (approvalMode === 'bypass' ||
+                  (options.safetyTier && options.safetyTier !== 'sandboxed')
                     ? 'never'
                     : 'untrusted'),
                 sandbox:
-                  options.safetyTier === 'dangerous' ? 'danger-full-access' : 'workspace-write',
+                  options.safetyTier === 'dangerous' || approvalMode === 'bypass'
+                    ? 'danger-full-access'
+                    : 'workspace-write',
                 config: {
                   ...CODEX_PLAN_TOOL,
                   ...(gitRoot ? { 'sandbox_workspace_write.writable_roots': [gitRoot] } : {}),
@@ -404,6 +410,11 @@ export const codexNativeAdapter: NativeAdapter = {
     return {
       nativeSessionId,
       capabilities: { ...codexNativeAdapter.capabilities, questions: options.mode === 'plan' },
+      async setApprovalMode(mode) {
+        if (turnId) throw new Error('Wait for the current turn before changing approvals');
+        if (mode === 'ask' && !gitRoot) gitRoot = await gitWritableRoot(options.cwd, options.env);
+        approvalMode = mode;
+      },
       async send(text, id) {
         commandId = id;
         structuredResult = undefined;
@@ -413,6 +424,21 @@ export const codexNativeAdapter: NativeAdapter = {
           await (startingTurn = process.request('turn/start', {
             threadId: nativeSessionId,
             input: [{ type: 'text', text }],
+            ...(options.approvalMode !== undefined
+              ? {
+                  approvalPolicy: approvalMode === 'bypass' ? 'never' : 'untrusted',
+                  sandboxPolicy:
+                    approvalMode === 'bypass'
+                      ? { type: 'dangerFullAccess' }
+                      : {
+                          type: 'workspaceWrite',
+                          writableRoots: [options.cwd, ...(gitRoot ? [gitRoot] : [])],
+                          networkAccess: false,
+                          excludeTmpdirEnvVar: false,
+                          excludeSlashTmp: false,
+                        },
+                }
+              : {}),
             ...(options.resultSchema
               ? { outputSchema: nativeResultJsonSchema(options.resultSchema) }
               : {}),

@@ -1,4 +1,5 @@
 import type {
+  NativeApprovalMode,
   NativeResultSchema,
   NativeSessionCapabilities,
   NativeSessionEvent,
@@ -28,6 +29,8 @@ export interface NativeAdapterOptions {
   effort?: string;
   safetyTier?: SafetyTier;
   approvalPolicy?: 'never';
+  /** Mutable standalone tool policy; worker launch policy remains independent. */
+  approvalMode?: NativeApprovalMode;
   /** Removes the model's own question tool (modelQuestionsOffByRunner). */
   modelQuestions?: 'off';
   filesystemPolicy?: NativeWorkerFilesystemPolicy;
@@ -37,6 +40,8 @@ export interface NativeAdapterSession {
   nativeSessionId: string;
   capabilities?: NativeSessionCapabilities;
   send(text: string, commandId: string): Promise<void>;
+  /** Changes only the next idle standalone turn. Never grants worker authority. */
+  setApprovalMode?(mode: NativeApprovalMode): Promise<void>;
   /** Adds input to the running turn (`capabilities.steer`); rejects when the runner refuses it. */
   steer?(text: string, commandId: string): Promise<void>;
   respond(requestId: string, response: NativeSessionResponse): Promise<void>;
