@@ -12,6 +12,9 @@ requireRecoveryFaultSupport();
 const { registerHooks } = await import('node:module');
 const root = process.env.FARMSLOT_ROOT;
 assert.ok(root && existsSync(path.join(root, 'holds', 'recovery-fixture')));
+const { compilerOptions } = JSON.parse(
+  readFileSync(new URL('../../../apps/command-center/tsconfig.base.json', import.meta.url), 'utf8'),
+);
 const arm = path.join(root, 'holds', 'node-timeout');
 globalThis.__recoveryDropRequest = (method, params) => {
   if (!existsSync(arm) || method !== 'exec') return false;
@@ -37,6 +40,7 @@ function patched(source, url) {
     source: transformSync(source, {
       format: 'esm',
       loader: 'ts',
+      tsconfigRaw: { compilerOptions },
       sourcefile: fileURLToPath(url),
       target: `node${process.versions.node}`,
       keepNames: true,
@@ -58,16 +62,15 @@ registerHooks({
       return next(url, context);
     // next() can return tsx output on Node 22. Read and compile only these targets.
     const before = readFileSync(new URL(url), 'utf8');
-    const root = process.env.FARMSLOT_ROOT;
-    assert.ok(root && existsSync(path.join(root, 'holds', 'recovery-fixture')));
     if (reviewer) {
       const checkpoint =
         'const inactivityTimeoutMs = (configuredInactivityMinutes ?? 10) * 60_000;';
-      assert.ok(before.includes(checkpoint), 'Reviewer watchdog checkpoint must apply');
       return patched(
-        before.replace(
+        replaceCheckpoint(
+          before,
           checkpoint,
           "const inactivityTimeoutMs = run.project === 'recovery-silent-reviewer' && !run.recoveryAttempts?.some((attempt) => attempt.stepName === 'review') ? 500 : (configuredInactivityMinutes ?? 10) * 60_000;",
+          'Reviewer watchdog checkpoint must apply',
         ),
         url,
       );

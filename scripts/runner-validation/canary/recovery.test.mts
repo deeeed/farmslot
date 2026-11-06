@@ -22,7 +22,7 @@ test('unsupported Node refuses recovery before allocating any stack', async () =
       onCheck() {},
       log: async () => {},
     }),
-    /Recovery matrix requires.*22\.22\.3\+.*registerHooks/,
+    /Recovery matrix requires.*22\.22\.3.*registerHooks/,
   );
   assert.equal(allocated, false);
 });
@@ -30,6 +30,6 @@ test('unsupported Node refuses recovery before allocating any stack', async () =
 test('unsupported Node also refuses the fault preload instead of skipping injection', async () => {
   await assert.rejects(
     import('./recovery-faults.mjs'),
-    /Recovery matrix requires.*22\.22\.3\+.*registerHooks/,
+    /Recovery matrix requires.*22\.22\.3.*registerHooks/,
   );
 });

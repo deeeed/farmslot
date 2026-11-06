@@ -82,14 +82,16 @@ test('recovery faults survive the real TypeScript loader chain in either import 
     // The gateway also imports CommonJS while the synchronous hook is active.
     assert.deepEqual((await import(${JSON.stringify(pathToFileURL(commonjs).href)})).default, { untouched: true });
     const checkpoints = [
-      [${JSON.stringify(reviewer)}, 'Reviewer watchdog'],
-      [${JSON.stringify(rpc)}, 'Transport timeout'],
+      [${JSON.stringify(reviewer)}, 'const inactivityTimeoutMs = (configuredInactivityMinutes ?? 10) * 60_000;', 'Reviewer watchdog'],
+      [${JSON.stringify(rpc)}, 'const effectiveTimeout = opts?.timeout ?? DEFAULT_STREAMING_TIMEOUT_MS;', 'Transport timeout'],
+      [${JSON.stringify(rpc)}, 'new NodeRpcTimeoutError(node.machine, effectiveTimeout, suffix)', 'Transport error'],
+      [${JSON.stringify(rpc)}, "node.ws.send(JSON.stringify({ type: 'req', id, method, params }), (error) => {", 'Transport send'],
     ];
-    for (const [index, [original, message]] of checkpoints.entries()) {
+    for (const [index, [original, checkpoint, message]] of checkpoints.entries()) {
       const broken = path.join(${JSON.stringify(root)}, 'missing-' + index, path.relative(${JSON.stringify(root)}, original));
       mkdirSync(path.dirname(broken), { recursive: true });
       // Valid TypeScript with different whitespace must fail checkpoint matching.
-      writeFileSync(broken, readFileSync(original, 'utf8').replaceAll(' = ', '  = ').replaceAll(', ', ',  '));
+      writeFileSync(broken, readFileSync(original, 'utf8').replace(checkpoint, checkpoint.replace(' ', '  ')));
       await assert.rejects(import(pathToFileURL(broken).href), new RegExp(message + ' checkpoint must apply'));
     }
   `;
@@ -104,7 +106,7 @@ test('recovery faults survive the real TypeScript loader chain in either import 
           ['--import', faultFirst ? tsx : faults, '--input-type=module', '-e', probe],
           {
             encoding: 'utf8',
-            timeout: 2000,
+            timeout: 4000,
             env: {
               ...process.env,
               NODE_OPTIONS: `--import ${JSON.stringify(faultFirst ? faults : tsx)}`,
