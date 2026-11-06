@@ -111,3 +111,76 @@ test('a scripts-only frozen terminal bundle refuses a Grok terminal review befor
   ])
     await assert.rejects(readFile(file), /ENOENT/);
 });
+
+for (const runner of ['pi', 'opencode'])
+  test(`${runner} terminal review resolves profile roots from the final execution environment`, async (t) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'terminal-profile-roots-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const staged = path.join(root, 'scripts');
+    await cp(scripts, staged, { recursive: true });
+    const source = path.join(root, 'source');
+    const task = path.join(root, 'task');
+    const bin = path.join(root, 'bin');
+    for (const directory of [source, task, bin]) await mkdir(directory);
+    const captured = path.join(root, 'roots.json');
+    await writeFile(
+      path.join(staged, 'review-filesystem.cjs'),
+      `module.exports={sandbox:async(_policy,roots)=>{require('node:fs').writeFileSync(${JSON.stringify(captured)},JSON.stringify(roots));return {temporaryDirectory:${JSON.stringify(task)},sandbox:{executable:'/usr/bin/env',args:[]}}}};`,
+    );
+    await writeFile(path.join(bin, 'git'), `#!/bin/sh\nprintf '%s\\n' '${source}'\n`, {
+      mode: 0o700,
+    });
+    await writeFile(
+      path.join(bin, 'tmux'),
+      '#!/bin/sh\nif [ "$1" = has-session ]; then exit 1; fi\n',
+      { mode: 0o700 },
+    );
+    const selected = {
+      PI_CODING_AGENT_DIR: path.join(root, 'selected-pi'),
+      XDG_DATA_HOME: path.join(root, 'data'),
+      XDG_CACHE_HOME: path.join(root, 'cache'),
+      XDG_STATE_HOME: path.join(root, 'state'),
+      XDG_CONFIG_HOME: path.join(root, 'config'),
+    };
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(staged, 'review-terminal.cjs'),
+        JSON.stringify({
+          action: 'launch',
+          runner,
+          model: 'fixture',
+          runId: 'fixture',
+          workspaceId: 'fixture',
+          session: 'fixture',
+          cwd: source,
+          task,
+          runtimeRoots: ['~/.wrong-profile'],
+          environment: { set: selected, unset: ['XDG_CACHE_HOME'] },
+          prompt: 'Review only',
+          command: 'true',
+        }),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: bin + path.delimiter + process.env.PATH,
+          HOME: root,
+          XDG_CACHE_HOME: path.join(root, 'ambient-cache'),
+        },
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(
+      JSON.parse(await readFile(captured, 'utf8')),
+      runner === 'pi'
+        ? [selected.PI_CODING_AGENT_DIR]
+        : [
+            path.join(selected.XDG_DATA_HOME, 'opencode'),
+            path.join(root, '.cache/opencode'),
+            path.join(selected.XDG_STATE_HOME, 'opencode'),
+            path.join(selected.XDG_CONFIG_HOME, 'opencode'),
+          ],
+    );
+  });

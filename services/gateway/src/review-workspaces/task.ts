@@ -408,7 +408,7 @@ export async function materializeReviewWorkspaceTask(
       '## Completion',
       '',
       'Run ./mark start once, then read its SIGNAL.json attemptId. Use ./mark N for checklist progress.',
-      'Write artifacts/review.md with VERDICT: APPROVE, REQUEST_CHANGES or COMMENT, exact COMMIT, findings, evidence and unchecked areas.',
+      'Write artifacts/review.md with VERDICT: APPROVE, REQUEST_CHANGES or COMMENT, exact COMMIT, findings, evidence and unchecked areas. VERDICT and COMMIT must each be alone on their own line, without trailing annotations.',
       'Write artifacts/line-comments.json as {"comments":[{"path":"file","line":1,"body":"finding","severity":"major"}]}; use an empty comments array for a clean review.',
       renderReviewResultInstructions(RESULT),
       `Add runId ${JSON.stringify(run.id)}, workspaceId ${JSON.stringify(run.reviewWorkspace.workspaceId)}, headSha ${JSON.stringify(subject.headSha)}, baseSha ${JSON.stringify(subject.baseSha)}, attemptId copied from SIGNAL.json, and reportSha256 containing the SHA-256 of the exact review.md bytes.`,

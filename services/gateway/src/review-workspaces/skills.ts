@@ -11,6 +11,7 @@ import type {
   ExecutionTemplateSourceRoot,
   ReviewWorkspaceSupportBinding,
   ReviewWorkspaceSupportConfig,
+  Run,
 } from '@farmslot/protocol';
 import {
   currentProjectSources,
@@ -332,6 +333,19 @@ export async function collectReviewWorkspaceSupport(
       })),
     },
   };
+}
+
+/** Both launch transports grant the same frozen source and reference inputs. */
+export function reviewWorkspaceReadOnlyRoots(
+  workspace: NonNullable<Run['reviewWorkspace']>,
+): string[] {
+  return [
+    workspace.checkoutPath,
+    ...(workspace.support ? [workspace.support.path] : []),
+    ...(workspace.support?.references ?? [])
+      .filter((reference) => !reference.missing)
+      .map((reference) => reference.path),
+  ];
 }
 
 /** Bind {{support}} and each recorded {{<key>_repo}}; a missing reference binds to ''. */

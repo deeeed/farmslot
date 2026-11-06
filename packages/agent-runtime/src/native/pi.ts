@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 
 import {
   type NativeSessionTool,
@@ -10,6 +11,10 @@ import { acpObject as piObject } from './acp-rpc.js';
 import { type PiRecord, PiRpc } from './pi-rpc.js';
 import { NativeRequestRefused } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
+
+const { piReadOnlyReviewArgs } = createRequire(import.meta.url)(
+  '../../scripts/workspace-trust.cjs',
+) as { piReadOnlyReviewArgs: readonly string[] };
 
 const piString = (value: unknown) => (typeof value === 'string' ? value : undefined);
 
@@ -84,6 +89,7 @@ export const piNativeAdapter: NativeAdapter = {
     const rpc = new PiRpc(
       options,
       [
+        ...(options.filesystemPolicy ? piReadOnlyReviewArgs : []),
         '--mode',
         'rpc',
         ...(options.model ? ['--model', options.model] : []),

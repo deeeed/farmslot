@@ -14,9 +14,27 @@ export function opencodeEnvironment(options: NativeAdapterOptions): Record<strin
   const permission = {
     ...(acpRunsToolsUnasked(options) ? {} : { '*': 'ask' }),
     ...(options.modelQuestions === 'off' ? opencodeQuestionPermission : {}),
+    ...(options.filesystemPolicy
+      ? {
+          // Deny unspecified external directories so replacing a scalar account deny
+          // cannot turn it into an ask. OpenCode still merges explicit account path rules;
+          // these grants add the frozen inputs and task, not new unrelated directories.
+          // Ordinary sessions continue to use the account's own directory policy.
+          external_directory: {
+            '*': 'deny',
+            ...Object.fromEntries(
+              [
+                ...options.filesystemPolicy.readOnlyRoots,
+                ...options.filesystemPolicy.writableRoots,
+              ].map((root) => [root + '/*', 'allow']),
+            ),
+          },
+        }
+      : {}),
   };
   return {
     OPENCODE_DISABLE_AUTOUPDATE: '1',
+    ...(options.filesystemPolicy ? { OPENCODE_DISABLE_PROJECT_CONFIG: 'true' } : {}),
     ...(Object.keys(permission).length ? { OPENCODE_PERMISSION: JSON.stringify(permission) } : {}),
   };
 }

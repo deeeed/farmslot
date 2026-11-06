@@ -31,7 +31,10 @@ import { upsertAgentContext } from '../../agents/contexts.js';
 import { loadMachinePool, type RawProjectJson } from '../../core/config.js';
 import { resolveProjectCommandEnv } from '../../core/project-env.js';
 import { isNodeTransportUnavailableError } from '../../fleet/node-rpc.js';
-import { bindReviewWorkspaceSupportValue } from '../../review-workspaces/skills.js';
+import {
+  bindReviewWorkspaceSupportValue,
+  reviewWorkspaceReadOnlyRoots,
+} from '../../review-workspaces/skills.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import {
@@ -49,16 +52,6 @@ import { NativeWorkerOperationUncertainError } from './worker-error.js';
 import { inspectNativeWorkerProfile } from './worker-profile.js';
 
 const CONTEXT_ID = 'review';
-
-function reviewReadOnlyRoots(workspace: NonNullable<Run['reviewWorkspace']>): string[] {
-  return [
-    workspace.checkoutPath,
-    ...(workspace.support ? [workspace.support.path] : []),
-    ...(workspace.support?.references ?? [])
-      .filter((reference) => !reference.missing)
-      .map((reference) => reference.path),
-  ];
-}
 
 /** Retry only a lost transport, keeping the same session, lease and command identities. */
 export async function observeReviewWorkspaceTransport<T>(
@@ -111,7 +104,7 @@ export function assertReviewWorkspaceRun(run: Run | null | undefined): asserts r
   if (run.reviewWorkspaceTarget?.machine !== workspace.machine)
     throw new Error('Static review workspace placement changed');
   validateNativeWorkerFilesystemPolicy({
-    readOnlyRoots: reviewReadOnlyRoots(workspace),
+    readOnlyRoots: reviewWorkspaceReadOnlyRoots(workspace),
     writableRoots: [workspace.taskPath, workspace.artifactPath],
   });
   if (
@@ -290,7 +283,7 @@ export async function launchReviewWorkspaceWorker(input: {
     };
     await check();
     validateNativeWorkerFilesystemPolicy({
-      readOnlyRoots: reviewReadOnlyRoots(workspace),
+      readOnlyRoots: reviewWorkspaceReadOnlyRoots(workspace),
       writableRoots: [state.stateDirectory],
     });
     context = await saveContext(
@@ -353,7 +346,7 @@ export async function launchReviewWorkspaceWorker(input: {
     ...(modelQuestions ? { modelQuestions } : {}),
     effort,
     filesystemPolicy: {
-      readOnlyRoots: reviewReadOnlyRoots(workspace),
+      readOnlyRoots: reviewWorkspaceReadOnlyRoots(workspace),
       writableRoots: [workspace.taskPath, workspace.artifactPath],
     },
   };

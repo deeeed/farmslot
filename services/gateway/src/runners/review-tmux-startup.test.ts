@@ -296,3 +296,37 @@ test('a retained workspace session needs exact structured acceptance even if a c
     'acknowledged',
   );
 });
+
+test('Pi read-only review launch ignores project files and never installs a source-side observer', () => {
+  const command = buildInteractiveRefinementRunnerCommand({
+    runner: 'pi',
+    model: 'litellm/claude-opus-5-5',
+    repo: '/owned/source',
+    promptPath: '/owned/task/prompt.txt',
+    workspaceTrust: 'untrusted',
+    effort: 'low',
+  });
+  assert(command);
+  assert.match(command, /--no-approve/);
+  assert(!command.includes(' --approve'));
+  assert(!command.includes('.observability'));
+});
+
+test('OpenCode review passes its prompt as a prompt and disables project startup configuration', () => {
+  const command = buildInteractiveRefinementRunnerCommand({
+    runner: 'opencode',
+    repo: '/tmp/review',
+    promptPath: '/tmp/task/prompt.txt',
+    model: 'litellm/model',
+    workspaceTrust: 'untrusted',
+    modelQuestions: 'off',
+    safetyTier: 'dangerous',
+    reviewReadOnlyRoots: ['/frozen/support'],
+  });
+  assert.ok(command?.includes("OPENCODE_DISABLE_PROJECT_CONFIG='true'"));
+  assert.ok(command?.includes('\"/tmp/task/*\":\"allow\"'));
+  assert.ok(command?.includes('\"/frozen/support/*\":\"allow\"'));
+  assert.ok(command?.includes('\"question\":\"deny\"'));
+  assert.ok(command?.includes('\"external_directory\":{\"*\":\"deny\"'));
+  assert.ok(command?.includes('--prompt "$(cat'));
+});
