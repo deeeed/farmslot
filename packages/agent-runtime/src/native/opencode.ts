@@ -16,8 +16,9 @@ export function opencodeEnvironment(options: NativeAdapterOptions): Record<strin
     ...(options.modelQuestions === 'off' ? opencodeQuestionPermission : {}),
     ...(options.filesystemPolicy
       ? {
-          // Static reviews read only their declared inputs and task outputs. An explicit
-          // catch-all keeps replacing a scalar account rule from turning denies into asks.
+          // Deny unspecified external directories so replacing a scalar account deny
+          // cannot turn it into an ask. OpenCode still merges explicit account path rules;
+          // these grants add the frozen inputs and task, not new unrelated directories.
           // Ordinary sessions continue to use the account's own directory policy.
           external_directory: {
             '*': 'deny',

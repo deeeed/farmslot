@@ -104,3 +104,26 @@ test('a terminal OpenCode workspace review of an autonomous run denies the quest
     );
   }
 });
+
+test('OpenCode terminal review can read every frozen reference without granting missing or unrelated roots', async () => {
+  run = reviewRun('opencode', 'autonomous');
+  assert(run.reviewWorkspace);
+  run.reviewWorkspace.support = {
+    path: '/frozen/support',
+    sha256: 'a'.repeat(64),
+    sources: [],
+    skills: [],
+    environment: {},
+    references: [
+      { name: 'consumer', path: '/frozen/reference', headSha: 'b'.repeat(40) },
+      { name: 'absent', path: '/missing/reference', missing: true },
+    ],
+  };
+  terminalInputs.length = 0;
+  await reviewTmuxOperation(run, 'launch', 'Review references');
+  const input = terminalInputs.at(-1);
+  assert(input);
+  assert(input.command.includes('/frozen/support/*'));
+  assert(input.command.includes('/frozen/reference/*'));
+  assert(!input.command.includes('/missing/reference'));
+});

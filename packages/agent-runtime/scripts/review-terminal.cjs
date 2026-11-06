@@ -123,7 +123,9 @@ async function main() {
     readOnlyRoots: [
       cwd,
       fs.realpathSync(gitRoot),
-      ...(input.support ? [fs.realpathSync(input.support)] : []),
+      ...(input.readOnlyRoots ?? (input.support ? [input.support] : [])).map((root) =>
+        fs.realpathSync(root),
+      ),
     ],
     writableRoots: [task],
   };

@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Slotless runner source protection",
-  "description": "Opt-in: run from GUI/Aqua on macOS with Pi/LiteLLM and Cursor authenticated. Set FARMSLOT_REVIEW_RUNNER_PROOF_OUTPUT to a new private evidence root. Three tiny real reviews in isolated gateways; no live farm mutation. Each actual worker process attempts a source write before the provider starts and must record EPERM with source unchanged.",
+  "description": "Opt-in: run from GUI/Aqua on macOS with Pi/LiteLLM and Cursor authenticated. Set FARMSLOT_REVIEW_RUNNER_PROOF_OUTPUT to a new private evidence root. Four tiny real reviews in isolated gateways; no live farm mutation. Each actual worker process attempts a source write before the provider starts and must record EPERM with source unchanged.",
   "workflow": {
     "entry": "pi-native",
     "nodes": {
@@ -23,12 +23,19 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_REVIEW_PROOF_READ_ONLY=1 FARMSLOT_REVIEW_PROOF_ROUNDS=1 FARMSLOT_REVIEW_PROOF_RUNNER=pi FARMSLOT_REVIEW_PROOF_MODEL=litellm/claude-opus-5-5 FARMSLOT_REVIEW_PROOF_TRANSPORT=tmux node --import tsx scripts/runner-validation/gateway/slotless-review-retention.mts \"$FARMSLOT_REVIEW_RUNNER_PROOF_OUTPUT/pi-terminal\"",
         "intent": "Pi also completes a cold terminal review read-only; no unsupported warm-session assertion.",
-        "next": "done",
+        "next": "opencode-reference",
         "timeout_ms": 300000
       },
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "opencode-reference": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_REVIEW_PROOF_REFERENCES=1 FARMSLOT_REVIEW_PROOF_READ_ONLY=1 FARMSLOT_REVIEW_PROOF_ROUNDS=1 FARMSLOT_REVIEW_PROOF_RUNNER=opencode FARMSLOT_REVIEW_PROOF_MODEL=litellm/claude-opus-5-5 FARMSLOT_REVIEW_PROOF_EFFORT=none FARMSLOT_REVIEW_PROOF_TRANSPORT=tmux node --import tsx scripts/runner-validation/gateway/slotless-review-retention.mts \"$FARMSLOT_REVIEW_RUNNER_PROOF_OUTPUT/opencode-reference\"",
+        "timeout_ms": 300000,
+        "intent": "OpenCode reads frozen reference checkouts through its file tool and completes with source writes denied.",
+        "next": "done"
       }
     }
   }

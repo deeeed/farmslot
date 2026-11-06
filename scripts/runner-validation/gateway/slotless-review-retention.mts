@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 const repo = process.cwd();
 const reviewRunner = process.env.FARMSLOT_REVIEW_PROOF_RUNNER ?? 'codex';
 const proveReadOnly = process.env.FARMSLOT_REVIEW_PROOF_READ_ONLY === '1';
+const proveReferences = process.env.FARMSLOT_REVIEW_PROOF_REFERENCES === '1';
 assert(!proveReadOnly || ['pi', 'cursor', 'opencode', 'grok', 'claude'].includes(reviewRunner));
 const reviewModel = process.env.FARMSLOT_REVIEW_PROOF_MODEL ?? 'gpt-6.1-sol';
 const reviewTransport = process.env.FARMSLOT_REVIEW_PROOF_TRANSPORT ?? 'tmux';
@@ -117,6 +118,8 @@ git(
   'advance publication base',
 );
 const advancedBase = git('rev-parse', 'HEAD');
+const reference = path.join(root, 'reference');
+if (proveReferences) run('git', ['clone', upstream, reference]);
 const machine = os.hostname().split('.')[0];
 fs.writeFileSync(
   path.join(root, 'pool', machine + '.json'),
@@ -128,13 +131,20 @@ fs.writeFileSync(
     platform: 'cli',
     os: process.platform,
     review_workspaces: { max_concurrent: 2 },
-    slots: [],
+    slots: proveReferences
+      ? [{ id: machine + '-fixture', repo: upstream, project: 'fixture', enabled: false }]
+      : [],
   }),
 );
 fs.mkdirSync(path.join(root, 'projects/fixture/fixtures/review-support'), { recursive: true });
 fs.writeFileSync(
   path.join(root, 'projects/fixture/fixtures/review-support/skill.md'),
-  '# Fixture review\nReview only the greeting literal change and save the required report.\n',
+  '# Fixture review\nReview only the greeting literal change and save the required report.\n' +
+    (proveReferences
+      ? 'Read the frozen reference greeting at ' +
+        reference +
+        '/greeting.txt through the file-read tool and record its contents in the report.\n'
+      : ''),
 );
 // This prelude executes inside the real worker's sandbox, before the provider starts.
 // Static reviewers must not run validation probes or be asked to violate their task contract.
@@ -173,12 +183,14 @@ fs.writeFileSync(
   JSON.stringify({
     name: 'fixture',
     repo_url: upstream,
+    ...(proveReferences ? { reference_repos: { fixture: { local_name: 'reference' } } } : {}),
     paths: { runtime_dir: '.agent', artifact_dir: 'artifacts' },
     execution_templates: {},
     static_review: {
       template_id: 'review-pr/default',
       instruction_files: [],
       support: {
+        ...(proveReferences ? { environment: { FIXTURE_REFERENCE: '{{fixture_repo}}' } } : {}),
         skills: [
           {
             name: 'fixture-review',
@@ -346,6 +358,12 @@ try {
     assert.equal(finished.status, 'done', finished.error);
     assert(finished.reviewWorkspace);
     assert(finished.reviewWorkspaceSubject);
+    if (proveReferences)
+      assert(
+        finished.reviewWorkspace.support?.references?.some(
+          (r) => !r.missing && r.path === reference,
+        ),
+      );
     assert(finished.reviewResult);
     if (expectSession) assert(finished.reviewResult.session);
     assert(finished.agentContexts?.length);
@@ -359,6 +377,30 @@ try {
         ...(Array.isArray(summary.readOnlyProofs) ? summary.readOnlyProofs : []),
         readonly,
       ];
+    }
+    if (proveReferences && reviewRunner === 'opencode') {
+      const observation = JSON.parse(
+        run('python3', [
+          '-c',
+          `
+import json,os,sqlite3,sys
+root=os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share')
+db=sqlite3.connect('file:'+os.path.join(root,'opencode/opencode.db')+'?mode=ro',uri=True)
+sessions=db.execute('select id from session where directory=?',(sys.argv[1],)).fetchall()
+assert len(sessions)==1, 'Expected one exact fixture conversation'
+sid=sessions[0][0]
+reads=[]
+for (raw,) in db.execute('select data from part where session_id=?',(sid,)):
+ part=json.loads(raw);state=part.get('state') or {}
+ if part.get('type')=='tool' and part.get('tool')=='read' and (state.get('input') or {}).get('filePath')==sys.argv[2]: reads.append(state)
+assert any(state.get('status')=='completed' for state in reads), 'Frozen reference file read did not complete'
+print(json.dumps({'sessionId':sid,'filePath':sys.argv[2],'status':'completed'}))
+`,
+          finished.reviewWorkspace.checkoutPath,
+          path.join(reference, 'greeting.txt'),
+        ]),
+      );
+      summary.referenceToolRead = observation;
     }
     assert.equal(finished.slotId, null);
     assert.equal(finished.transport, reviewTransport);
