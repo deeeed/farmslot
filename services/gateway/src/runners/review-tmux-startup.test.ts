@@ -327,5 +327,6 @@ test('OpenCode review passes its prompt as a prompt and disables project startup
   assert.ok(command?.includes('\"/tmp/task/*\":\"allow\"'));
   assert.ok(command?.includes('\"/frozen/support/*\":\"allow\"'));
   assert.ok(command?.includes('\"question\":\"deny\"'));
+  assert.ok(command?.includes('\"external_directory\":{\"*\":\"deny\"'));
   assert.ok(command?.includes('--prompt "$(cat'));
 });

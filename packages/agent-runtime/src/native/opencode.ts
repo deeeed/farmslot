@@ -16,12 +16,18 @@ export function opencodeEnvironment(options: NativeAdapterOptions): Record<strin
     ...(options.modelQuestions === 'off' ? opencodeQuestionPermission : {}),
     ...(options.filesystemPolicy
       ? {
-          external_directory: Object.fromEntries(
-            [
-              ...options.filesystemPolicy.readOnlyRoots,
-              ...options.filesystemPolicy.writableRoots,
-            ].map((root) => [root + '/*', 'allow']),
-          ),
+          // Static reviews read only their declared inputs and task outputs. An explicit
+          // catch-all keeps replacing a scalar account rule from turning denies into asks.
+          // Ordinary sessions continue to use the account's own directory policy.
+          external_directory: {
+            '*': 'deny',
+            ...Object.fromEntries(
+              [
+                ...options.filesystemPolicy.readOnlyRoots,
+                ...options.filesystemPolicy.writableRoots,
+              ].map((root) => [root + '/*', 'allow']),
+            ),
+          },
         }
       : {}),
   };
