@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { NATIVE_WORKER_RESUME, NATIVE_WORKER_TRANSFER } from '@farmslot/agent-runtime/native';
 import {
+  isReviewRoundNoVerdictSettlement,
   Methods,
   type NativeSessionReadResult,
   type NativeWorkerControlTarget,
@@ -344,7 +345,9 @@ test(
       const readback = await client.call<RunGetResult>(Methods.RUN_GET, { runId: run.id });
       const budget = await runReviewRoundBudget(getRun(run.id)!);
       assert.deepEqual([budget.used, budget.noVerdict], [paidBudget.used, 1]);
-      const free = Object.values(readback.run.reviewRoundSettlements ?? {});
+      const free = Object.values(readback.run.reviewRoundSettlements ?? {}).filter(
+        isReviewRoundNoVerdictSettlement,
+      );
       assert.deepEqual(
         free.map((entry) => entry.kind),
         ['infrastructure-fallback'],

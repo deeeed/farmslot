@@ -50,7 +50,7 @@ import {
   reviewerFeedbackRelPath,
 } from '../review/review-agent.js';
 import {
-  clearReviewRoundSettlement,
+  recordReviewRoundVerdict,
   reviewContextRoundId,
   settleReviewRoundNoVerdict,
 } from '../review/review-round-budget.js';
@@ -601,6 +601,17 @@ export async function recoverInflightPublicationReviews(
   if (options.shouldAbort?.()) return { recoveredIds: [], terminalErrors: [] };
   let run = getRun(runId);
   if (!run) return { recoveredIds: [], terminalErrors: [] };
+  // Validation and result persistence can precede accounting at the crash boundary.
+  // Reconcile before complete, already-ingested contexts are excluded from recovery.
+  for (const ctx of run.agentContexts ?? []) {
+    if (ctx.role !== 'review' || !ctx.reviewResultValidatedAt) continue;
+    const roundId = reviewContextRoundId(ctx);
+    if (!roundId || getRun(runId)?.reviewRoundSettlements?.[roundId]?.kind === 'verdict') continue;
+    if (options.shouldAbort?.()) return { recoveredIds: [], terminalErrors: [] };
+    await recordReviewRoundVerdict(runId, roundId, ctx);
+  }
+  run = getRun(runId);
+  if (!run) return { recoveredIds: [], terminalErrors: [] };
   let reviews = run.engineState?.publishGate?.reviews ?? [];
   const settledContexts = (run.agentContexts ?? []).filter((ctx) =>
     reviewerContextIsSettled(ctx, reviews),
@@ -1058,7 +1069,7 @@ async function ingestRecoveredReviewer(
   // The attempt returned a verdict after all, so a no-verdict settlement no longer applies.
   const roundId = reviewContextRoundId(ctx);
   if (roundId && (persisted.verdict === 'pass' || persisted.verdict === 'issues'))
-    await clearReviewRoundSettlement(runId, roundId, ctx);
+    await recordReviewRoundVerdict(runId, roundId, ctx);
   if (native)
     await (await import('../review/native-review-agent.js')).stopSettledReviewer(runId, ctx.id);
   console.log(

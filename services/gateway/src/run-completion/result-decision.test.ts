@@ -22,6 +22,7 @@ import {
 
 import '../runtime/mock-pty.test-support.js';
 
+import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
 let run: Run;
@@ -287,7 +288,10 @@ async function heldOpus(admissions = 5): Promise<Run> {
     manifestDigest: '9bbbd8fd',
     reportPath: 'artifacts/pr-description.md',
   };
-  run.reviewRoundAdmissions = Array.from({ length: admissions }, (_, i) => `admission-${i}`);
+  Object.assign(
+    run,
+    recordedReviewRounds(Array.from({ length: admissions }, (_, i) => `admission-${i}`)),
+  );
   const decision = await buildResultDecision(run, 'review');
   Object.assign(run, { status: 'needs-decision', decisions: [decision] });
   return run;

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { mock, test, type TestContext } from 'node:test';
 
-import type { AgentContext, Principal, ReviewDiffSnapshot } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  isReviewRoundNoVerdictSettlement,
+  type Principal,
+  type ReviewDiffSnapshot,
+} from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
@@ -628,7 +633,9 @@ test('a resume that remains unavailable after reconciliation falls back under th
   assert.equal(dispatches[3]!.retainedFrom, undefined);
   assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, admittedBefore + 1);
   assert.deepEqual(
-    Object.values(getRun(run.id)!.reviewRoundSettlements ?? {}).map((entry) => entry.kind),
+    Object.values(getRun(run.id)!.reviewRoundSettlements ?? {})
+      .filter(isReviewRoundNoVerdictSettlement)
+      .map((entry) => entry.kind),
     ['infrastructure-fallback'],
   );
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, admittedBefore);
@@ -678,7 +685,12 @@ test('a superseded resume settles its round no-verdict instead of falling back',
   resumeFailure = 'superseded';
   await assert.rejects(reReview(run.id), /superseded/);
   assert.equal(dispatches.length, 2);
-  assert.equal(Object.keys(getRun(run.id)!.reviewRoundSettlements ?? {}).length, 1);
+  assert.equal(
+    Object.values(getRun(run.id)!.reviewRoundSettlements ?? {}).filter(
+      isReviewRoundNoVerdictSettlement,
+    ).length,
+    1,
+  );
 });
 
 test('a failed review retires only its own lineage', async (t) => {

@@ -1087,16 +1087,16 @@ export interface ReviewBudgetExtension {
   approvedAt: string;
 }
 
-/** Why an admitted reviewer attempt ended without a verdict (ADR-063 Amendment 2). */
+/** Durable pending, verdict or no-verdict disposition of a reviewer admission. */
 export interface ReviewRoundSettlement {
   reason: string;
   at: string;
-  /** A failed WARM launch whose farm-caused COLD replacement keeps this refund. */
-  kind?: 'infrastructure-fallback';
+  /** Pending reserves capacity; verdict spends a round. Other entries are no-verdict outcomes. */
+  kind?: 'infrastructure-fallback' | 'pending' | 'verdict';
 }
 
 export interface ReviewRoundBudget {
-  /** Admissions minus no-verdict settlements. */
+  /** Admissions with a recorded reviewer verdict; pending launches spend no round. */
   used: number;
   limit: number;
   remaining: number;
@@ -2911,7 +2911,7 @@ export interface Run {
   reviewRoundAdmissions?: string[];
   /** Gateway-owned update-branch run ID by admission receipt; absent receipts retain PR scope. */
   reviewRoundOwners?: Record<string, string>;
-  /** Gateway-owned no-verdict settlements by admission receipt; copied with the admissions. */
+  /** Gateway-owned pending, verdict and no-verdict dispositions; copied with admissions. */
   reviewRoundSettlements?: Record<string, ReviewRoundSettlement>;
   /** Gateway-authorized scoped grants; copied with admissions when a PR scope is shared. */
   reviewBudgetExtensions?: ReviewBudgetExtension[];

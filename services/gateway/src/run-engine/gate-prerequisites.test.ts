@@ -26,6 +26,7 @@ import {
 } from '@farmslot/protocol';
 
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
+import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const {
@@ -369,7 +370,7 @@ test('an exhausted fix gate does not recommend a continuation it cannot resolve'
     decisions: [decision],
     engineState: { publishGate: { reviews: [review] } },
     // The overall round budget still has room; the per-review fix cap is spent.
-    reviewRoundAdmissions: ['used-1', 'used-2', 'used-3'],
+    ...recordedReviewRounds(['used-1', 'used-2', 'used-3']),
   });
   const before = structuredClone(run);
   const refreshed = await refreshRunGateReadiness(run, {
@@ -1449,7 +1450,7 @@ test('unresolved approval accepts valid head findings, never missing reviews or 
   const actions = [{ id: 'approve-publish-unresolved' }, { id: 'hold' }];
   const exhaustedRun = {
     ...makeRun(),
-    reviewRoundAdmissions: ['one', 'two', 'three', 'four', 'five'],
+    ...recordedReviewRounds(['one', 'two', 'three', 'four', 'five']),
   };
   const inputs = {
     deterministic: passed,
@@ -1493,7 +1494,7 @@ test('unresolved approval accepts valid head findings, never missing reviews or 
       await collectRunGateReadiness(
         {
           ...makeRun({ engineState: { publishGate: { reviews: [review] } } }),
-          reviewRoundAdmissions,
+          ...recordedReviewRounds(reviewRoundAdmissions),
         },
         prepared,
         inputs,
@@ -1510,7 +1511,7 @@ test('unresolved approval accepts valid head findings, never missing reviews or 
   const spent = await collectRunGateReadiness(
     {
       ...makeRun({ engineState: { publishGate: { reviews: [review] } } }),
-      reviewRoundAdmissions: ['one', 'two', 'three', 'four', 'five'],
+      ...recordedReviewRounds(['one', 'two', 'three', 'four', 'five']),
     },
     prepared,
     inputs,

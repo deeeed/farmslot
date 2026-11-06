@@ -5,7 +5,7 @@
 // this one recorder, so these assertions cover what each of them persists: the
 // typed result and the child-unit roll-up (ADR-060) on `run.metrics.subtasks`.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -169,10 +169,7 @@ test.after(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('slotless completion durably binds its conversation, lineage and reviewed head', async () => {
-  writeFixtures();
-  const runId = makeWorkspaceRun();
-  const head = 'a'.repeat(40);
+function bindableReviewer(runId: string, head: string): void {
   updateRun(runId, {
     reviewWorkspaceSubject: {
       repository: 'example/project',
@@ -201,6 +198,13 @@ test('slotless completion durably binds its conversation, lineage and reviewed h
       },
     ],
   });
+}
+
+test('slotless completion durably binds its conversation, lineage and reviewed head', async () => {
+  writeFixtures();
+  const runId = makeWorkspaceRun();
+  const head = 'a'.repeat(40);
+  bindableReviewer(runId, head);
   await recordWorkspaceReviewCompletion(runId, 0, REVIEW_RESULT, {
     collectSubtasks: async () => null,
   });
@@ -212,3 +216,64 @@ test('slotless completion durably binds its conversation, lineage and reviewed h
   assert.equal(saved.agentContexts?.[0].deliveryBaselineRef, head);
   assert.ok(saved.agentContexts?.[0].reviewResultValidatedAt);
 });
+
+test(
+  'workspace result and verdict charge wait for the same durable budget write',
+  { timeout: 5000 },
+  async (t) => {
+    writeFixtures();
+    const runId = makeWorkspaceRun();
+    bindableReviewer(runId, 'a'.repeat(40));
+    const id = reviewRoundAdmissionId(`workspace-review-${runId}`, 1, getRun(runId)!.createdAt);
+    await admitReviewRound(runId, id);
+    const { runTransitionCoordinator } = await import('../run-lifecycle/transition-coordinator.js');
+    let entered!: () => void;
+    const started = new Promise<void>((r) => (entered = r));
+    let release!: () => void;
+    const blocked = new Promise<void>((r) => (release = r));
+    const holder = runTransitionCoordinator.withReviewBudget(runId, async () => {
+      entered();
+      await blocked;
+    });
+    await started;
+    let queued!: () => void;
+    const waiting = new Promise<void>((r) => (queued = r));
+    const original = runTransitionCoordinator.withReviewBudget.bind(runTransitionCoordinator);
+    t.mock.method(runTransitionCoordinator, 'withReviewBudget', function <
+      T,
+    >(key: string, operation: () => Promise<T>): Promise<T> {
+      if (key === runId) queued();
+      return original(key, operation);
+    });
+    const completion = recordWorkspaceReviewCompletion(runId, 0, REVIEW_RESULT, {
+      collectSubtasks: async () => null,
+    });
+    try {
+      await waiting;
+      const snapshot: Run = JSON.parse(
+        readFileSync(path.join(root, 'runs', `${runId}.json`), 'utf8'),
+      );
+      assert.equal(
+        snapshot.reviewResult,
+        undefined,
+        'the result must not be persisted ahead of its accounting',
+      );
+      assert.equal(snapshot.reviewRoundSettlements?.[id]?.kind, 'pending');
+      assert.equal(snapshot.reviewWorkspace?.retainedAt, undefined);
+      assert.equal(snapshot.agentContexts?.[0].reviewResultValidatedAt, undefined);
+      assert.equal((await runReviewRoundBudget(snapshot)).used, 0);
+    } finally {
+      release();
+      await holder;
+      await completion;
+    }
+    const saved: Run = JSON.parse(readFileSync(path.join(root, 'runs', `${runId}.json`), 'utf8'));
+    assert.equal(saved.reviewResult?.recommendation, 'APPROVE');
+    assert.equal(saved.reviewRoundSettlements?.[id]?.kind, 'verdict');
+    assert.equal(saved.reviewResult?.session?.sessionId, 'fixture-conversation');
+    assert.ok(saved.reviewWorkspace?.retainedAt);
+    assert.ok(saved.reviewWorkspace?.retainedUntil);
+    assert.equal((await runReviewRoundBudget(saved)).used, 1);
+    assert.ok(getRun(runId)?.agentContexts?.[0].reviewResultValidatedAt);
+  },
+);

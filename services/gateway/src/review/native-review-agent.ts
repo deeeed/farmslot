@@ -97,7 +97,7 @@ import {
 } from './review-agent.js';
 import {
   admitReviewRound,
-  clearReviewRoundSettlement,
+  recordReviewRoundVerdict,
   reviewLaunchStartedAt,
   reviewRoundAdmissionId,
   settleReviewRoundNoVerdict,
@@ -1086,7 +1086,7 @@ async function runNativeReviewAttempt(
     );
     await persistRunNow(getRun(runId)!, 'native reviewer result validated');
     if (feedback.incomplete) await settleReviewRoundNoVerdict(runId, roundId, 'no-feedback-file');
-    else await clearReviewRoundSettlement(runId, roundId, context);
+    else await recordReviewRoundVerdict(runId, roundId, context);
     await stopSettledReviewer(runId, contextId);
 
     if (retained && context.runnerSessionId !== retained.runnerSessionId)
