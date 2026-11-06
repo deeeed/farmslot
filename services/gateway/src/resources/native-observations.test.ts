@@ -1110,7 +1110,7 @@ async function actualProducerFixture(t: import('node:test').TestContext) {
     changeAccount(observedAt: string) {
       status = { ...status, account: { ...status.account, login: 'signed-out', observedAt } };
     },
-    sampledAt: () => producer.profileStatus(profile.id).account.observedAt,
+    sampledAt: async () => (await producer.profileStatus(profile.id)).account.observedAt,
   };
 }
 
@@ -1121,7 +1121,7 @@ test('actual native manager recovery and queued cancellation publish exact histo
   assert.equal(manager.read(f.owner.id, f.info.id).session.state, 'failed');
   assert.notEqual(f.journal(), before);
   assert.match(f.journal(), /session.closed/);
-  f.producer.fence(); // Sync scan also covers commits before fs.watch delivers its callback.
+  await f.producer.fence(); // The fence covers commits before fs.watch delivers its callback.
   await f.publication(f.history.map((interest) => interest.key));
   const recovered = f.journal();
   await manager.close(f.owner.id, f.info.id);
@@ -1130,7 +1130,7 @@ test('actual native manager recovery and queued cancellation publish exact histo
   assert.equal(receipt.state, 'failed');
   assert.equal(receipt.outcome, 'interrupted');
   assert.equal(receipt.submitted, false);
-  f.producer.fence();
+  await f.producer.fence();
   await f.publication(f.history.map((interest) => interest.key));
   assert.equal(f.probes(), 1, 'Journal activity must not start another account probe');
 });
@@ -1142,7 +1142,7 @@ test('actual native account sampling publishes only profile keys without journal
   const observedAt = '2026-10-24T00:01:00.000Z';
   f.changeAccount(observedAt);
   t.mock.timers.tick(60_000); // Existing source collector, not a panel-read timer.
-  for (let turn = 0; f.sampledAt() !== observedAt; turn++) {
+  for (let turn = 0; (await f.sampledAt()) !== observedAt; turn++) {
     assert(turn < 100, 'Shared structured account sample did not complete');
     await Promise.resolve();
   }

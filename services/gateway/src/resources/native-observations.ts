@@ -509,7 +509,7 @@ export class GatewayNativeObservations {
         try {
           if (node === 'local' && this.local && !this.local.current().ready)
             await this.local.retry();
-          sources.set(node, this.fence(node, sourceOwner(authority, node)));
+          sources.set(node, await this.fence(node, sourceOwner(authority, node)));
           if (partialList) admitted!.add(node);
         } catch (error) {
           // Only source/transport unavailability is a partial-inventory outcome.
@@ -590,7 +590,7 @@ export class GatewayNativeObservations {
           let recovered = false;
           try {
             if (supportsSource) {
-              this.fence(node, sourceOwner(authority, node));
+              await this.fence(node, sourceOwner(authority, node));
               recovered = true;
             }
           } catch (error) {
@@ -607,7 +607,7 @@ export class GatewayNativeObservations {
         if (!before) throw new NativeSourceUnavailable('gateway-read-receipt-missing');
         assertNativeSourceCurrent(
           before,
-          this.fence(node, sourceOwner(authority, node)),
+          await this.fence(node, sourceOwner(authority, node)),
           'gateway-read',
         );
       }
@@ -668,7 +668,7 @@ export class GatewayNativeObservations {
     this.remote.clear();
   }
 
-  private fence(nodeId: string, ownerId: string): NativeSourceReceipt {
+  private async fence(nodeId: string, ownerId: string): Promise<NativeSourceReceipt> {
     if (nodeId === 'local') {
       if (!this.local || this.localReceipt?.ownerId !== ownerId)
         throw new NativeSourceUnavailable();

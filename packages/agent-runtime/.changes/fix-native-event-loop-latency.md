@@ -1,0 +1,1 @@
+- Keep native cleanup and observation fences responsive with bounded asynchronous process checks and cached, chunked journal reads.

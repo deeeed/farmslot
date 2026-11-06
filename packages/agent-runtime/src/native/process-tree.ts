@@ -1,5 +1,7 @@
 import { execFile, execFileSync } from 'node:child_process';
 
+import { alive } from './storage.js';
+
 export interface ProcessIdentity {
   pid: number;
   parent: number;
@@ -36,14 +38,14 @@ export function journalProcesses(
   return processes;
 }
 const columns = 'pid=,ppid=,pgid=,lstart=';
-// Synchronous reads (session launch, runner stop, cleanup, startup recovery) block
-// their caller, so they stay short.
+// Launch registration and supervisor recovery retain their synchronous boundary.
+// Cleanup uses bounded asynchronous, batched censuses below.
 const censusTimeoutMs = 5_000;
 // The shared observer census runs off the event loop. A slow `ps` on a loaded
 // machine is not lost ownership, so observers fail only past this deadline
 // (ADR-057 Amendment 3).
 const observerCensusDeadlineMs = 30_000;
-// Launch and stop take their own synchronous snapshots. Background observers
+// Launch and stop take fresh snapshots. Background observers
 // share one census per second instead of spawning a full ps every 100 ms.
 const observerCensusIntervalMs = 1_000;
 function parseProcesses(output: string): Map<number, ProcessIdentity> {
@@ -93,6 +95,51 @@ function processes(pid?: number): Map<number, ProcessIdentity> {
 /** Shared OS census for stopped-host reconciliation; failed reads remain unknown. */
 export function readNativeProcessSnapshot(): Map<number, ProcessIdentity> {
   return processes();
+}
+
+const cleanupCensusWaiters: Array<() => void> = [];
+let cleanupCensuses = 0;
+async function cleanupProcesses(pids?: number[]): Promise<Map<number, ProcessIdentity>> {
+  const deadline = Date.now() + censusTimeoutMs;
+  await new Promise<void>((resolve, reject) => {
+    const start = () => {
+      clearTimeout(timer);
+      cleanupCensuses++;
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      const index = cleanupCensusWaiters.indexOf(start);
+      if (index >= 0) cleanupCensusWaiters.splice(index, 1);
+      reject(new Error('Native cleanup process census exceeded its deadline'));
+    }, censusTimeoutMs);
+    if (cleanupCensuses < 4) start();
+    else cleanupCensusWaiters.push(start);
+  });
+  try {
+    const timeout = deadline - Date.now();
+    if (timeout <= 0) throw new Error('Native cleanup process census exceeded its deadline');
+    return await new Promise((resolve, reject) => {
+      execFile(
+        'ps',
+        pids ? ['-p', pids.join(','), '-o', columns] : ['-axo', columns],
+        { encoding: 'utf8', timeout, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024 },
+        (error, output) => {
+          if (!error) resolve(parseProcesses(output));
+          else {
+            try {
+              if (error.code === 1 && pids?.every((pid) => !alive(pid))) resolve(new Map());
+              else reject(error);
+            } catch (probeError) {
+              reject(probeError);
+            }
+          }
+        },
+      );
+    });
+  } finally {
+    cleanupCensuses--;
+    cleanupCensusWaiters.shift()?.();
+  }
 }
 
 type Observer = { apply(snapshot: Map<number, ProcessIdentity>): void; failed(error: Error): void };
@@ -160,8 +207,12 @@ function scheduleCensus(): void {
   }, observerCensusIntervalMs);
   censusTimer.unref();
 }
-function signal(identity: ProcessIdentity, kind: NodeJS.Signals): void {
-  const current = processes(identity.pid).get(identity.pid);
+function signal(
+  identity: ProcessIdentity,
+  kind: NodeJS.Signals,
+  snapshot: Map<number, ProcessIdentity>,
+): void {
+  const current = snapshot.get(identity.pid);
   if (!current || current.identity !== identity.identity) return;
   try {
     process.kill(identity.pid, kind);
@@ -182,8 +233,10 @@ export class NativeProcessTree {
     this.rootObservation = { ...observation };
     this.applySnapshot(snapshot);
   }
-  capture(): void {
-    this.applySnapshot(processes());
+  async capture(): Promise<Map<number, ProcessIdentity>> {
+    const snapshot = await cleanupProcesses();
+    this.applySnapshot(snapshot);
+    return snapshot;
   }
   observe(
     failed: (error: Error) => void,
@@ -247,8 +300,8 @@ export class NativeProcessTree {
     return observations.map((identity) => ({ ...identity }));
   }
   /** Freeze observed owners before the final ancestry scan, preventing new child launches. */
-  stop(): void {
-    this.capture();
+  async stop(): Promise<void> {
+    const snapshot = await this.capture();
     const errors: unknown[] = [];
     const attempt = (operation: () => void) => {
       try {
@@ -258,21 +311,27 @@ export class NativeProcessTree {
         errors.push(error);
       }
     };
-    for (const entry of this.owned.values()) attempt(() => signal(entry, 'SIGSTOP'));
-    attempt(() => {
-      const frozen = processes();
+    for (const entry of this.owned.values()) attempt(() => signal(entry, 'SIGSTOP', snapshot));
+    let frozen: Map<number, ProcessIdentity>;
+    try {
+      frozen = await this.capture();
+    } catch (error) {
+      // A full census failure must not abandon the independently known stopped owners.
+      errors.push(error);
+      frozen = await cleanupProcesses([...this.owned.keys()]);
       this.applySnapshot(frozen);
-      this.stopGroup(frozen);
-    });
-    for (const entry of [...this.owned.values()].reverse()) attempt(() => signal(entry, 'SIGKILL'));
+    }
+    attempt(() => this.stopGroup(frozen));
+    for (const entry of [...this.owned.values()].reverse())
+      attempt(() => signal(entry, 'SIGKILL', frozen));
     if (errors.length)
       throw new AggregateError(
         errors,
         `Native process tree cleanup failed: ${errors.map((error) => (error instanceof Error ? error.message : String(error))).join('; ')}`,
       );
   }
-  empty(): boolean {
-    const snapshot = processes();
+  async empty(): Promise<boolean> {
+    const snapshot = await cleanupProcesses();
     this.applySnapshot(snapshot);
     if (this.owned.size > 0) return false;
     // A reused group cannot be signaled safely or counted as proof of cleanup.
@@ -290,9 +349,9 @@ export class NativeProcessTree {
     }
   }
   /** Graceful stop begins with the native root, retaining descendants for final cleanup. */
-  terminate(): void {
-    this.capture();
+  async terminate(): Promise<void> {
+    const snapshot = await this.capture();
     const root = this.owned.get(this.root);
-    if (root) signal(root, 'SIGTERM');
+    if (root) signal(root, 'SIGTERM', snapshot);
   }
 }

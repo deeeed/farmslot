@@ -147,29 +147,28 @@ test('signals revalidate targeted PID identity and propagate query failure', asy
   });
   await once(root, 'spawn');
   const tree = new NativeProcessTree(root.pid!);
-  const original = childProcess.execFileSync;
+  const original = childProcess.execFile;
   let fail = false;
-  const mock = t.mock.method(
-    childProcess,
-    'execFileSync',
-    (...args: Parameters<typeof original>) => {
-      if (args[0] === 'ps' && Array.isArray(args[1]) && args[1].includes('-p')) {
-        if (fail) throw new Error('Targeted identity unavailable');
-        return `${root.pid} 1 ${root.pid} changed-start-time\n`;
-      }
-      return original(...args);
-    },
-  );
+  const mock = t.mock.method(childProcess, 'execFile', (...args: Parameters<typeof original>) => {
+    const complete = args.at(-1) as (error: Error | null, output: string, stderr: string) => void;
+    return original('ps', ['-axo', 'pid=,ppid=,pgid=,lstart='], { encoding: 'utf8' }, () => {
+      complete(
+        fail ? new Error('Targeted identity unavailable') : null,
+        `${root.pid} 1 ${root.pid} changed-start-time\n`,
+        '',
+      );
+    });
+  });
   syncBuiltinESMExports();
   try {
-    tree.terminate();
+    await tree.terminate();
     assert.equal(alive(root.pid!), true, 'A reused PID identity was signalled');
     fail = true;
-    assert.throws(() => tree.terminate(), /Targeted identity unavailable/);
+    await assert.rejects(() => tree.terminate(), /Targeted identity unavailable/);
   } finally {
     mock.mock.restore();
     syncBuiltinESMExports();
-    tree.stop();
+    await tree.stop();
     if (alive(root.pid!)) await once(root, 'exit');
   }
 });
@@ -206,19 +205,19 @@ test('cleanup retains a detached child after its title changes and parent exits'
     root.kill('SIGKILL');
     await exited;
     assert.ok(alive(descendant));
-    tree.stop();
+    await tree.stop();
     const deadline = Date.now() + 3_000;
     while (alive(descendant) && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(alive(descendant), false, 'Detached renamed child survived cleanup');
-    assert.equal(tree.empty(), true);
+    assert.equal(await tree.empty(), true);
   } finally {
     if (root.pid && alive(root.pid)) root.kill('SIGKILL');
     if (descendant && alive(descendant)) process.kill(descendant, 'SIGKILL');
   }
 });
 
-test('retains stopped root observation without retaining live signal ownership', (t) => {
+test('retains stopped root observation without retaining live signal ownership', async (t) => {
   const root = 100039802;
   let census = `${process.pid} 1 ${process.pid} inspector\n${root} 100039801 100039801 original host birth\n`;
   const ps = t.mock.method(childProcess, 'execFileSync', () => census);
@@ -230,10 +229,10 @@ test('retains stopped root observation without retaining live signal ownership',
     const tree = new NativeProcessTree(root);
     const original = tree.snapshot();
     census = `${process.pid} 1 ${process.pid} inspector\n`;
-    tree.capture();
-    assert.equal(tree.empty(), true);
+    await tree.capture();
+    assert.equal(await tree.empty(), true);
     assert.deepEqual(tree.snapshot(), original);
-    tree.stop();
+    await tree.stop();
   } finally {
     ps.mock.restore();
     kill.mock.restore();
@@ -284,5 +283,101 @@ test('shared background observers run at most one full census per second', async
     mock.mock.restore();
     syncBuiltinESMExports();
     t.mock.timers.reset();
+  }
+});
+
+test(
+  'cleanup waits for an async batched census while the event loop stays available',
+  { timeout: 5000 },
+  async (t) => {
+    const root = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    await once(root, 'spawn');
+    const tree = new NativeProcessTree(root.pid!);
+    const exec = childProcess.execFile;
+    const sync = childProcess.execFileSync;
+    let syncScans = 0;
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release: (() => void) | undefined;
+    let first = true;
+    t.mock.method(childProcess, 'execFileSync', (...args: Parameters<typeof sync>) => {
+      syncScans++;
+      return sync(...args);
+    });
+    t.mock.method(childProcess, 'execFile', (...args: Parameters<typeof exec>) => {
+      const complete = args.at(-1) as (error: Error | null, output: string, stderr: string) => void;
+      return exec(
+        'ps',
+        ['-axo', 'pid=,ppid=,pgid=,lstart='],
+        { encoding: 'utf8' },
+        (error, stdout, stderr) => {
+          if (first) {
+            first = false;
+            release = () => complete(error, stdout, stderr);
+            entered();
+          } else complete(error, stdout, stderr);
+        },
+      );
+    });
+    syncBuiltinESMExports();
+    t.after(async () => {
+      release?.();
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+      if (root.pid && alive(root.pid)) process.kill(-root.pid, 'SIGKILL');
+      if (root.exitCode === null && root.signalCode === null) await once(root, 'exit');
+    });
+    const stopped = tree.stop();
+    assert.ok(stopped instanceof Promise);
+    await ready;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(syncScans, 0, 'Cleanup ran a synchronous ps while waiting');
+    assert.equal(alive(root.pid!), true, 'Unverified process was signalled');
+    release!();
+    await stopped;
+    if (root.exitCode === null && root.signalCode === null) await once(root, 'exit');
+    assert.equal(await tree.empty(), true);
+  },
+);
+
+test('cleanup censuses cap concurrency and expired queued reads never spawn later', async (t) => {
+  const tree = new NativeProcessTree(process.pid);
+  type Complete = (error: Error | null, output: string, stderr: string) => void;
+  const callbacks: Complete[] = [];
+  const mock = t.mock.method(
+    childProcess,
+    'execFile',
+    (...args: Parameters<typeof childProcess.execFile>) => {
+      callbacks.push(args.at(-1) as Complete);
+      return new childProcess.ChildProcess();
+    },
+  );
+  syncBuiltinESMExports();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const reads = Promise.allSettled(Array.from({ length: 5 }, () => tree.capture()));
+  try {
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(callbacks.length, 4);
+    t.mock.timers.tick(5000);
+    for (const complete of callbacks) complete(null, '', '');
+    const settled = await reads;
+    assert.equal(settled.filter((result) => result.status === 'fulfilled').length, 4);
+    const expired = settled.find((result) => result.status === 'rejected');
+    assert.equal(expired?.status, 'rejected');
+    if (expired?.status === 'rejected') assert.match(String(expired.reason), /deadline/);
+    assert.equal(mock.mock.calls.length, 4, 'Expired census started after a slot became free');
+  } finally {
+    t.mock.timers.tick(5000);
+    for (const complete of callbacks) complete(null, '', '');
+    await reads;
+    t.mock.timers.reset();
+    mock.mock.restore();
+    syncBuiltinESMExports();
   }
 });
