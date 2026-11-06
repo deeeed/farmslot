@@ -39,7 +39,7 @@ For each entry return {outcome:"drop",reason:"one-line reason"} unless ALL condi
 3. instruction is a concrete check a reviewer can perform on a diff.
 4. Compare ALL supplied library rules, including overlays. Already covered -> drop. A missing part of a covering rule may be tightened only by citing that rule and explaining the precise gap.
 5. Evidence shows the SAME failure in >=2 independent tasks/families, or a concrete blocker-class money/order outcome. All runs/reviews in one task/family count once. Only documents with confirms metadata can supply confirmation. Generic setup failure is not a money/order outcome.
-A keep object is {outcome:"keep",reason,instruction,observed:[{runId,path,line,quote}],confirmation:[{runId,path,line,quote}],coverage:"new"|"tighten",rule:{path,line,quote}|null,gap:string|null,moneyOrderBlocker:string|null}.
+A keep object is {outcome:"keep",reason,instruction,observed:[{runId,path,line,quote}],confirmation:[{runId,path,line,quote}],coverage:"new"|"tighten",rule:{path,line,quote}|null,gap:string|null,moneyOrderBlocker:string|null,moneyOrderCitation:{runId,path,line,quote}|null}.
 Citations must quote an exact excerpt of the source line at the 1-based line number. A keep must include the source run in observed. Quote actual failure/confirmation, not a heading or an unrelated line. Quotes cannot invent or widen source claims. Unavailable evidence/coverage -> drop.
 Return ONLY a JSON array with one result per input, in order.`;
 
@@ -123,7 +123,11 @@ export function validateCuration(raw: unknown, context: LearningCurationContext)
   );
   if (
     new Set(families).size < 2 &&
-    !(typeof raw.moneyOrderBlocker === 'string' && raw.moneyOrderBlocker.trim())
+    !(
+      typeof raw.moneyOrderBlocker === 'string' &&
+      raw.moneyOrderBlocker.trim() &&
+      citation(raw.moneyOrderCitation, context.evidence)
+    )
   )
     return drop(
       'No recurrence in two independent tasks/families or blocker-class money/order outcome established',

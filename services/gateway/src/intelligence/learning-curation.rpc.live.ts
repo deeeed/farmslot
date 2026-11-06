@@ -210,7 +210,21 @@ test(
           ],
         }),
       );
-      updateRun(run.id, { taskFile: path.join(task, 'TASK.md'), status: 'done' });
+      updateRun(run.id, {
+        taskFile: path.join(task, 'TASK.md'),
+        status: 'done',
+        agentContexts: [
+          {
+            id: 'reviewer',
+            label: 'Independent review',
+            role: 'review',
+            status: 'complete',
+            runId: run.id,
+            slotId: null,
+            reviewResultFile: 'artifacts/review-result.json',
+          },
+        ],
+      });
       const captured = getRun(run.id);
       assert(captured);
       await retainRunFixture(captured);

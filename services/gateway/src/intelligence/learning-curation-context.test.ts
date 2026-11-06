@@ -66,7 +66,22 @@ test('curation reads configured shared/overlay rules and retained evidence after
       2,
     ),
   );
-  updateRun(run.id, { taskFile: path.join(task, 'TASK.md'), status: 'done' });
+
+  updateRun(run.id, {
+    taskFile: path.join(task, 'TASK.md'),
+    status: 'done',
+    agentContexts: [
+      {
+        id: 'reviewer',
+        label: 'Independent review',
+        role: 'review',
+        status: 'complete',
+        runId: run.id,
+        slotId: null,
+        reviewResultFile: 'artifacts/review-result.json',
+      },
+    ],
+  });
   const captured = getRun(run.id);
   assert(captured);
   await retainRunFixture(captured);
@@ -87,6 +102,16 @@ test('curation reads configured shared/overlay rules and retained evidence after
     context.evidence.find((d) => d.path === 'artifacts/review-result.json')?.confirms,
     'independent-review',
   );
+  updateRun(run.id, { agentContexts: [] });
+  const unownedContext = await loadLearningCurationContext(project, destination, run.id);
+  const unowned = unownedContext.evidence.find((d) => d.path === 'artifacts/review-result.json');
+  assert(unowned, 'review-shaped bytes are present without a recorded reviewer owner');
+  assert.equal(
+    unowned.confirms,
+    undefined,
+    'unowned worker files cannot supply reviewer confirmation',
+  );
+
   const missing = await loadLearningCurationContext(
     project,
     { ...destination, repo: 'git@github.com:example/absent.git' },

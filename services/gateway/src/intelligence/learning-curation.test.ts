@@ -46,6 +46,7 @@ test('a single task requires a concrete money/order blocker, and covered checks 
     validateCuration(
       {
         ...one,
+        moneyOrderCitation: one.observed[0],
         moneyOrderBlocker:
           'Missing order size can submit the wrong amount; reviewer confirms the loss scenario.',
       },

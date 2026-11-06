@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { resolveConfiguredExecutionTemplateSources } from '@farmslot/agent-runtime';
 import { isRecord, type KnowledgeDestination, type Run } from '@farmslot/protocol';
-import { reviewHistoryView } from '@farmslot/review-dispatch';
+import { reviewHistoryArtifactPaths, reviewHistoryView } from '@farmslot/review-dispatch';
 import {
   currentProjectSources,
   loadProjectVars,
@@ -21,6 +21,7 @@ const MAX_DOCUMENT_CHARS = 16_000;
 const retainedDocuments = new Map<string, Promise<LearningDocument[]>>();
 
 async function evidenceForRun(run: Run): Promise<LearningDocument[]> {
+  const reviewerPaths = new Set(reviewHistoryArtifactPaths(run));
   const paths = [
     ...new Set([
       'artifacts/comments-triage.json',
@@ -66,6 +67,7 @@ async function evidenceForRun(run: Run): Promise<LearningDocument[]> {
             )
               confirms = 'accepted-fix';
           } else if (
+            reviewerPaths.has(file) &&
             isRecord(parsed) &&
             parsed.verdict === 'issues' &&
             Array.isArray(parsed.issues) &&
@@ -87,7 +89,7 @@ async function evidenceForRun(run: Run): Promise<LearningDocument[]> {
   };
   const ref = run.artifactBundle ?? run.output?.artifactBundle;
   if (!ref) return read();
-  const key = `${run.id}:${ref.bundleDigest}`;
+  const key = `${run.id}:${ref.bundleDigest}:${[...reviewerPaths].sort().join(',')}`;
   let pending = retainedDocuments.get(key);
   if (!pending) {
     pending = read();
