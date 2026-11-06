@@ -7,6 +7,10 @@ import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import { Methods } from '../../../../../packages/protocol/src/rpc/registry';
 import { savedReviewView } from '../../../../../packages/protocol/src/runs/review-chain';
+import {
+  refreshReviewGateView,
+  reviewGateRefreshBlocksPost,
+} from '../../../../../packages/review-dispatch/src/review-gate-refresh';
 import { mountHook } from '../../hooks/hook-harness.fixtures';
 
 function run(flowType: Run['flowType']): Run {
@@ -130,10 +134,7 @@ test('refresh stays pending for the server result and reports a disconnect', asy
   const shown = run('review-pr');
   const calls: Array<{ method: string; timeout: number | null | undefined }> = [];
   let disconnect: ((error: Error) => void) | undefined;
-  let finish: (() => void) | undefined;
-  const finished = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  let readbacks = 0;
   const client = {
     request: (method: string, _params: unknown, timeout?: number | null) => {
       calls.push({ method, timeout });
@@ -152,18 +153,14 @@ test('refresh stays pending for the server result and reports a disconnect', asy
           status: 'connected',
         }),
     },
-    '@farmslot/review-dispatch': {
-      refreshReviewGateView: async (refresh: () => Promise<unknown>) => {
-        try {
-          await refresh();
-          return { error: null };
-        } catch (error) {
-          return { error: error instanceof Error ? error.message : String(error) };
-        } finally {
-          finish?.();
-        }
-      },
-      reviewGateRefreshBlocksPost: (pending: boolean, error?: string) => pending || Boolean(error),
+    '@farmslot/review-dispatch': { refreshReviewGateView, reviewGateRefreshBlocksPost },
+    '../../lib/resource-cache': {
+      getResourceCache: () => ({
+        retry: async () => {
+          readbacks += 1;
+          return { status: 'ready', data: { run: shown } };
+        },
+      }),
     },
   });
   const render = () => {
@@ -185,11 +182,11 @@ test('refresh stays pending for the server result and reports a disconnect', asy
     assert.equal(render().busy, true);
     assert(disconnect);
     disconnect(new Error('Gateway disconnected'));
-    await finished;
     // Drain the dispatch and controller continuations without a wall-clock wait.
     for (let step = 0; step < 10 && render().busy; step += 1) await Promise.resolve();
     assert.equal(render().busy, false);
     assert.equal(render().error, 'Gateway disconnected');
+    assert.equal(readbacks, 1, 'the real refresh helper reads back a refused gate');
   } finally {
     hook.cleanup();
   }
