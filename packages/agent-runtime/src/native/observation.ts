@@ -151,11 +151,13 @@ export class NativeHostObservation {
       const accounts = await this.observeAccounts().catch((error: unknown) =>
         this.sampleFailed(error),
       );
+      // Watcher delivery fences the account sample; the async scan fences the durable bytes.
+      const sampleChanged = change !== this.changes;
       if (generation !== this.generation || this.stopped) return;
       const after = await this.scan();
       if (generation !== this.generation || this.stopped) return;
       if (this.failed) throw new NativeSourceUnavailable('arming-source-changed');
-      if (change !== this.changes || before.digest !== after.digest)
+      if (sampleChanged || before.digest !== after.digest)
         throw new NativeSourceUnavailable('arming-source-changed');
       this.setAccounts(accounts);
       this.snapshot = after;
