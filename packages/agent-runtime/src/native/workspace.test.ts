@@ -29,7 +29,8 @@ test('git native cwd still lists dirty files and a broken repository stays an er
   const broken = join(cwd, 'broken');
   await mkdir(broken);
   await writeFile(join(broken, '.git'), 'invalid git file');
-  await assert.rejects(nativeWorkspaceChanges(broken), /invalid gitfile format/);
+  await assert.rejects(nativeWorkspaceChanges(broken), { code: 128 });
   await writeFile(join(broken, '.git'), 'gitdir: /nonexistent/native-approval-missing-gitdir\n');
-  await assert.rejects(nativeWorkspaceChanges(broken), /not a git repository:/);
+  // Git versions use different diagnostics for a broken pointer. Both must retain the Git failure.
+  await assert.rejects(nativeWorkspaceChanges(broken), { code: 128 });
 });
