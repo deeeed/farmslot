@@ -324,10 +324,16 @@ export function collectTaskView(
   });
 
   const selection = readJsonObject(path.join(taskDir, 'inputs/recipe-binding.json'));
-  const boundTarget =
-    pickString(selection, 'checkoutRoot') ?? pickString(asObject(selection?.identity), 'target');
+  const checkoutRoot = pickString(selection, 'checkoutRoot');
+  const appTarget = pickString(asObject(selection?.identity), 'target');
+  const boundTarget = appTarget ?? checkoutRoot;
   const binding = boundTarget
-    ? { target: boundTarget, matchesCheckout: sameCheckout(target, boundTarget) }
+    ? {
+        target: boundTarget,
+        matchesCheckout: [checkoutRoot, appTarget].some(
+          (bound) => bound !== undefined && sameCheckout(target, bound),
+        ),
+      }
     : undefined;
   const runId = pickString(handoff, 'attemptId');
   const project = pickString(handoff, 'project');

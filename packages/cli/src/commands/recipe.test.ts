@@ -1064,3 +1064,16 @@ test('hosted JSON task watches stream while one-shot commands keep deferred fina
   assert.equal(watch.deferOutput, false);
   assert.equal(snapshot.deferOutput, true);
 });
+
+test('hosted status retains the caller gateway selector for its task lifecycle stream', async () => {
+  const selected = await projectRecipeHostOptions('status', undefined, {
+    gateway: 'selected-profile',
+    url: 'ws://127.0.0.1:12345/ws',
+  });
+  assert.deepEqual(selected.hostHints?.taskRunCliArgs, [
+    '--gateway',
+    'selected-profile',
+    '--url',
+    'ws://127.0.0.1:12345/ws',
+  ]);
+});

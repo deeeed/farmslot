@@ -129,3 +129,8 @@ ownership or run completion from a branch name or a worker's terminal signal.
 Hosted `farmslot recipe status --watch --json` streams the shared task-view objects
 as they change. It does not defer those records until the watch ends; one-shot
 commands retain their finalization-before-output behavior.
+
+Hosted status forwards its explicit `--gateway` and `--url` selectors via the
+shared `HarnessHost.taskRunCliArgs` hint. The child CLI resolves authentication
+normally; the hint carries no credentials. Standalone harness status uses the
+configured CLI profile and environment.

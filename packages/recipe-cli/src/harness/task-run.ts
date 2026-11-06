@@ -3,6 +3,8 @@ import { createInterface } from 'node:readline';
 
 import { isRecord } from '@farmslot/protocol';
 
+import { harnessHost } from './host.js';
+
 export interface TaskRunBinding {
   id: string;
   project: string;
@@ -40,7 +42,7 @@ export async function observeTaskRun(
   });
   const child = spawn(
     process.env.FARMSLOT_CLI || 'farmslot',
-    ['--json', 'run', 'get', '--watch', '--', binding.id],
+    [...(harnessHost().taskRunCliArgs ?? []), '--json', 'run', 'get', '--watch', '--', binding.id],
     {
       stdio: ['pipe', 'pipe', 'pipe'],
       signal,

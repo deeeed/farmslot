@@ -47,6 +47,7 @@ mock.module('../context.js', {
 });
 mock.module('../envelope.js', {
   namedExports: {
+    ...(await import('../envelope.js')),
     createEmitter: () => ({
       machine: true,
       ok: (value: unknown) => output.push(value),

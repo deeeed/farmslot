@@ -333,3 +333,7 @@ The shared task view observes that run through the existing CLI lifecycle stream
 Worker completion does not close a watch while its parent is reviewing or
 waiting for a decision. Loss of connectivity is unavailable lifecycle, never an
 inferred completed run. A watch retains its bound run through task-file cleanup.
+
+Task ownership accepts the recorded `checkoutRoot` or `identity.target` exactly,
+after realpath normalization. This lets a registered nested app and its checkout
+inspect their bound task without treating sibling paths as the same app.

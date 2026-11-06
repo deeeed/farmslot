@@ -234,14 +234,17 @@ test('checkout ownership uses the recorded checkout root when the runtime target
     path.join(dir, 'inputs/recipe-binding.json'),
     JSON.stringify({ checkoutRoot: target, identity: { target: path.join(target, 'apps/site') } }),
   );
-  const view = collectTaskView(target, dir, Date.now(), {
-    id: 'run-1',
-    project: 'example',
-    status: 'reviewing',
-    terminal: false,
-  });
-  assert.equal(view.binding?.matchesCheckout, true);
-  assert.equal(view.activity.ongoing, true);
+  for (const selected of [target, path.join(target, 'apps/site')]) {
+    fs.mkdirSync(selected, { recursive: true });
+    const view = collectTaskView(selected, dir, Date.now(), {
+      id: 'run-1',
+      project: 'example',
+      status: 'reviewing',
+      terminal: false,
+    });
+    assert.equal(view.binding?.matchesCheckout, true);
+    assert.equal(view.activity.ongoing, true);
+  }
 });
 
 test('standalone skill and fast views add no lifecycle process', async (t) => {

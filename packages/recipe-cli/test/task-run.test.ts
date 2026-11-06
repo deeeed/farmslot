@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
+import { configureHarnessHost, harnessHost } from '../src/harness/host.js';
 import { observeTaskRun, type TaskRunObserver } from '../src/harness/task-run.js';
 
 async function until(observer: TaskRunObserver, check: () => boolean) {
@@ -25,12 +26,14 @@ function cli(t: TestContext, project = 'example') {
   const executable = path.join(root, 'cli with spaces');
   const control = path.join(root, 'control');
   const pid = path.join(root, 'pid');
+  const args = path.join(root, 'args');
   fs.writeFileSync(control, '');
   fs.writeFileSync(
     executable,
     `#!/usr/bin/env node
 const fs=require('node:fs');
 fs.writeFileSync(${JSON.stringify(pid)},String(process.pid));
+fs.writeFileSync(${JSON.stringify(args)},JSON.stringify(process.argv.slice(2)));
 let stopped=false;const close=()=>{if(stopped)return;stopped=true;watch.close();process.exit(0);};
 const send=(status,terminal,done)=>process.stdout.write(JSON.stringify({status:'ok',data:{run:{id:'run',project:${JSON.stringify(project)},status,terminal,secret:'never expose'}}})+'\\n',done);
 const watch=fs.watch(${JSON.stringify(control)},()=>{const command=fs.readFileSync(${JSON.stringify(control)},'utf8');if(command==='done')send('done',true,close);else if(command==='drop')close();});
@@ -51,6 +54,7 @@ send('reviewing',false);
   return {
     control,
     pid,
+    args,
     set(value: TaskRunObserver) {
       observer = value;
     },
@@ -95,5 +99,33 @@ test(
     f.set(observer);
     assert.equal(observer.current(), undefined);
     await observer.close();
+  },
+);
+
+test(
+  'a hosted observer preserves explicit gateway selection in the authenticated CLI',
+  { timeout: 4900 },
+  async (t) => {
+    const f = cli(t);
+    const previous = harnessHost();
+    configureHarnessHost({
+      ...previous,
+      taskRunCliArgs: ['--gateway', 'selected-profile', '--url', 'ws://127.0.0.1:12345/ws'],
+    });
+    t.after(() => configureHarnessHost(previous));
+    const observer = await observeTaskRun({ id: 'run', project: 'example' });
+    f.set(observer);
+    assert.deepEqual(JSON.parse(fs.readFileSync(f.args, 'utf8')), [
+      '--gateway',
+      'selected-profile',
+      '--url',
+      'ws://127.0.0.1:12345/ws',
+      '--json',
+      'run',
+      'get',
+      '--watch',
+      '--',
+      'run',
+    ]);
   },
 );

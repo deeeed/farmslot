@@ -471,6 +471,10 @@ export async function projectRecipeHostOptions(
       !(command === 'status' && options.watch === true),
     authorizedProviders: shared.optionStrings(options, 'authorizeProvider'),
     hostHints: {
+      taskRunCliArgs: ['gateway', 'url'].flatMap((key) => {
+        const value = shared.optionString(options, key);
+        return value ? [`--${key}`, value] : [];
+      }),
       supportsLast: false,
       journaledCommands: ['run', 'call', 'launch', 'reload', 'stop', 'doctor'],
       doctorCommand: 'farmslot doctor',

@@ -47,6 +47,8 @@ export interface HarnessHost {
   doctorCommand?: string;
   /** False when failures should point to evidence instead of a journal `last` command. */
   supportsLast?: boolean;
+  /** Non-secret gateway selector arguments inherited by the task lifecycle CLI reader. */
+  taskRunCliArgs?: readonly string[];
 }
 
 const defaultHost: HarnessHost = {
