@@ -27,6 +27,7 @@ import { findingsDigest } from '../core/findings-digest.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
 import type { ReviewResult } from '../review/orchestrator.js';
 import { completionVerificationMode } from '../run-engine/push-verification.js';
+import { reviewBudgetStopReason } from '../run-engine/review-plan.js';
 import { captureEpisodeAfterRelease } from '../run-lifecycle/episode-capture-effect.js';
 import {
   operatorCompletionCollaborators,
@@ -134,7 +135,7 @@ function acceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionAct
   const unavailableReason =
     stoppedAt !== 'review'
       ? 'A refused completion prerequisite cannot be accepted. Send it back once it is fixed, or close it.'
-      : run.completionPolicy !== 'artifact-only'
+      : run.completionPolicy !== 'artifact-only' && !reviewBudgetStopReason(run)
         ? 'Accept settles without publishing; a publishing run publishes only at its gate. Send it back or close it.'
         : run.output?.captureError
           ? 'The report could not be captured. Refresh it before accepting.'
@@ -153,6 +154,8 @@ function decisionReason(
 ): string {
   const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
   if (stoppedAt === 'review') {
+    const budgetStop = reviewBudgetStopReason(run);
+    if (budgetStop) return budgetStop;
     const review = run.steps.find((step) => step.name === PipelineSteps.REVIEW)?.outputs;
     const attempts =
       typeof review?.retryCount === 'number' && typeof review.maxRetries === 'number'
@@ -425,7 +428,7 @@ export async function resolveResultDecision(
         resume = recordedReviewResult(
           run.steps.find((step) => step.name === PipelineSteps.REVIEW)?.outputs,
         );
-        if (!resume)
+        if (!resume && !reviewBudgetStopReason(run))
           throw new Error('The recorded review cannot be resumed. Accept or close the result.');
       }
       if (actionId === 'accept-result' && !reason)

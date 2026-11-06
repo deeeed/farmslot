@@ -142,6 +142,13 @@ Restart, replay, archive and retirement MUST retain ownership metadata wherever
 admission history survives. A later update-branch run gets its own two rounds.
 Existing review and publication checks still apply.
 
+When pipeline REVIEW exhausts its budget, the run MUST wait at the existing result decision
+with its slot, checkout and worker retained. A budget refusal is not a reviewer
+verdict. The operator may extend the budget, accept the captured result with a
+written reason without publishing it, or close it. Extensions keep their existing eligibility rules. A grant enables review to
+resume on the same run; it does not start work by itself. Named-slot re-binding
+remains only a fallback for historical failed runs that already lost ownership.
+
 ### Scoped extension
 
 **Status:** Accepted (lead, 2026-10-15) under ADR-063 Amendment 1.
