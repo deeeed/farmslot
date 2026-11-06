@@ -88,5 +88,8 @@
     "serialize-javascript": "7.0.5",
     "uuid": "11.1.1",
     "chokidar@npm:^4.0.0": "patch:chokidar@npm%3A4.0.3#./.yarn/patches/chokidar-npm-4.0.3-f401.patch"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.0"
   }
 }

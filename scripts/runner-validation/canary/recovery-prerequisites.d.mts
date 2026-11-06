@@ -1,1 +1,1 @@
-export function requireRecoveryFaultSupport(): void;
+export function requireRecoveryFaultSupport(nodeVersion?: string): void;
