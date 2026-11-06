@@ -341,6 +341,13 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     }
     await writeFile(
       path.join(f.task, 'artifacts/review-result.json'),
+      JSON.stringify({ ...result, verdict: 'issues', issues: [] }),
+    );
+    await assert.rejects(readReviewWorkspaceCompletion(f.run.id, f.deps), {
+      code: 'REVIEW_OUTPUT_INVALID',
+    });
+    await writeFile(
+      path.join(f.task, 'artifacts/review-result.json'),
       JSON.stringify({ ...result, headSha: 'c'.repeat(40) }),
     );
     await assert.rejects(readReviewWorkspaceCompletion(f.run.id, f.deps), /exact source/);
