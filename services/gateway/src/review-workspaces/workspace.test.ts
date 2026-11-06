@@ -599,3 +599,40 @@ test('foreign conversation preflight keeps the real checkout intact before any d
   assert.equal(readFileSync(path.join(f.workspace, 'source/source.txt'), 'utf8'), 'head\n');
   assert.ok(existsSync(file));
 });
+
+test('allocation fetches and retains a contribution base advanced independently from the warm delta', (t) => {
+  const f = fixture(t);
+  const oldHead = f.identity.headSha;
+  f.git('checkout', '--detach', f.identity.baseSha);
+  writeFileSync(path.join(f.source, 'main-only.txt'), 'new publication base\n');
+  f.git('add', '.');
+  f.git(
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.test',
+    'commit',
+    '-m',
+    'advance base',
+  );
+  const contributionBaseSha = f.git('rev-parse', 'HEAD');
+  assert.notEqual(contributionBaseSha, oldHead);
+  f.execute('allocate', {}, false, { contributionBaseSha });
+  const checkout = path.join(f.workspace, 'source');
+  assert.equal(
+    execFileSync(
+      'git',
+      ['-C', checkout, 'rev-parse', `refs/reviews/${f.identity.workspaceId}/contribution-base`],
+      { encoding: 'utf8' },
+    ).trim(),
+    contributionBaseSha,
+  );
+  assert.match(
+    execFileSync(
+      'git',
+      ['-C', checkout, 'diff', '--name-status', `${contributionBaseSha}...${oldHead}`],
+      { encoding: 'utf8' },
+    ),
+    /source.txt/,
+  );
+});

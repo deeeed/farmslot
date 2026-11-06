@@ -79,8 +79,8 @@ export function preferRetainedReviewer(
   );
   if (!incrementalReviewAvailable(previousContext)) return coldChoices;
   const context = automatedRepeatReviewSelection(previousContext, options);
-  const retained = choices.filter((choice) => {
-    if (choice.mode === 'cold') return true;
+  const retained = choices.flatMap((choice) => {
+    if (choice.mode === 'cold') return [choice];
     if (isPRWorkspaceExecutionChoice(choice)) {
       const selected = structuredClone(context);
       const workspaceRun = {
@@ -94,23 +94,25 @@ export function preferRetainedReviewer(
         effort: choice.effort ?? undefined,
         metrics: { runner: choice.runner, model: choice.model },
       };
-      if (!compatibleWorkspaceReviewer(workspaceRun, prior)) return false;
+      if (!compatibleWorkspaceReviewer(workspaceRun, prior)) return [];
       configureWorkspaceContinuity(workspaceRun, prior, selected);
-      return selected.session?.continuity === 'resumed';
+      if (selected.session?.fallback?.reason === 'retention-expired')
+        return [{ ...choice, mode: 'cold' as const }];
+      return selected.session?.continuity === 'resumed' ? [choice] : [];
     }
-    return (
-      resolveRepeatReviewResumePlan(
-        {
-          ...identity,
-          slotId: choice.slotId,
-          repeatReviewContext: context,
-        },
-        prior,
-        choice.runner,
-        choice.model,
-        choice.effort,
-      ).kind === 'resume'
-    );
+    return resolveRepeatReviewResumePlan(
+      {
+        ...identity,
+        slotId: choice.slotId,
+        repeatReviewContext: context,
+      },
+      prior,
+      choice.runner,
+      choice.model,
+      choice.effort,
+    ).kind === 'resume'
+      ? [choice]
+      : [];
   });
   return retained;
 }

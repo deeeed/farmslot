@@ -64,10 +64,49 @@ test('a persisted retirement keeps its PR fenced after the in-memory sweep ends'
       assertReviewWorkspaceAdmissionOpen({ ticketOrPr: 'example/other#42' }),
     );
   } finally {
-    noteReviewWorkspaceRetirement({
-      ...run,
-      reviewWorkspace: { ...run.reviewWorkspace!, cleanedAt: '2026-11-06T00:01:00Z' },
-    });
+    noteReviewWorkspaceRetirement(
+      {
+        ...run,
+        reviewWorkspace: { ...run.reviewWorkspace!, cleanedAt: '2026-11-06T00:01:00Z' },
+      },
+      true,
+    );
   }
   assert.doesNotThrow(() => assertReviewWorkspaceAdmissionOpen({ ticketOrPr: 'example/app#42' }));
+});
+
+test('in-memory cleanedAt cannot release a retirement before its closeout is durable', () => {
+  const run: Pick<Run, 'id' | 'ticketOrPr' | 'reviewWorkspace'> = {
+    id: 'closing-checkpoint',
+    ticketOrPr: 'example/app#43',
+    reviewWorkspace: {
+      workspaceId: 'workspace',
+      machine: 'node',
+      executionNodeId: 'node',
+      checkoutPath: '/owned/source',
+      taskPath: '/owned/task',
+      artifactPath: '/owned/task/artifacts',
+      retirement: {
+        id: 'retirement',
+        startedAt: '2026-11-06T00:00:00Z',
+        pr: { host: 'github.com', repo: 'example/app', number: 43 },
+      },
+    },
+  };
+  noteReviewWorkspaceRetirement(run);
+  const closed = {
+    ...run,
+    reviewWorkspace: { ...run.reviewWorkspace!, cleanedAt: '2026-11-06T00:01:00Z' },
+  };
+  try {
+    noteReviewWorkspaceRetirement(closed);
+    assert.throws(
+      () => assertReviewWorkspaceAdmissionOpen({ ticketOrPr: run.ticketOrPr }),
+      /cleanup is running/,
+    );
+    noteReviewWorkspaceRetirement(closed, true);
+    assert.doesNotThrow(() => assertReviewWorkspaceAdmissionOpen({ ticketOrPr: run.ticketOrPr }));
+  } finally {
+    noteReviewWorkspaceRetirement(closed, true);
+  }
 });

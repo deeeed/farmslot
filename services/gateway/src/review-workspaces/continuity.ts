@@ -44,6 +44,7 @@ export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Ru
     prior.transport === 'tmux' &&
     Boolean(getRunnerDefinition(run.metrics.runner).workspaceTerminalSession) &&
     isTerminalRunStatus(prior.status) &&
+    (!prior.reviewWorkspace?.retainedAt || !!prior.reviewWorkspace.executionStoppedAt) &&
     sameOwner &&
     run.project === prior.project &&
     reviewer?.role === 'review' &&
@@ -69,7 +70,10 @@ export function configureWorkspaceContinuity(
   const requestedLineage = run.reviewContext?.reviewLineages[0]?.reviewId;
   const retainedLineage = context.session?.reviewId ?? requestedLineage;
   if (expired && retainedLineage && (mode === 'warm' || requestedLineage)) {
-    const reviewer = compatibleWorkspaceReviewer(run, prior);
+    const reviewer =
+      mode === 'cold'
+        ? prior.agentContexts?.find((context) => context.id === 'review')
+        : compatibleWorkspaceReviewer(run, prior);
     if (!reviewer || reviewer.reviewId !== retainedLineage)
       throw new Error('WARM review unavailable: foreign or incompatible retained reviewer');
     context.mode = 'cold';
@@ -83,7 +87,7 @@ export function configureWorkspaceContinuity(
       prNumber: context.prNumber,
       lastReviewedHeadSha: context.priorReviewedHeadSha,
       fallback: {
-        reason: 'session-unavailable',
+        reason: 'retention-expired',
         detail: `Retained reviewer expired at ${expiresAt}; starting a cold review.`,
         comparedRanges: subject ? [`${subject.baseSha}...${subject.headSha}`] : [],
       },

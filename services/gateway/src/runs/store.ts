@@ -770,7 +770,7 @@ export async function loadAllRuns(): Promise<void> {
       const changed = normalizePersistedRun(run);
       const previous = runs.get(run.id);
       runs.set(run.id, run);
-      noteReviewWorkspaceRetirement(run);
+      noteReviewWorkspaceRetirement(run, true);
       publishRunResources(
         captureRunResources(run),
         previous ? captureRunResources(previous) : undefined,
@@ -1372,6 +1372,15 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
     )
   )
     throw new Error('Review identity cannot change while its workspace retirement is pending');
+  if (
+    run.reviewWorkspace?.retirement &&
+    !run.reviewWorkspace.cleanedAt &&
+    'reviewWorkspace' in partial &&
+    (!partial.reviewWorkspace ||
+      partial.reviewWorkspace.workspaceId !== run.reviewWorkspace.workspaceId ||
+      !isDeepStrictEqual(partial.reviewWorkspace.retirement, run.reviewWorkspace.retirement))
+  )
+    throw new Error('Review workspace retirement identity cannot change before durable closeout');
   if (
     run.flowType === 'review-pr' &&
     isTerminalRunStatus(run.status) &&

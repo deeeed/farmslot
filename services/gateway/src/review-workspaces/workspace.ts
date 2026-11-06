@@ -132,6 +132,7 @@ async function executeWorkspace(
       identity: identityFor(run, binding, subject),
       generation: run.engineState?.generation ?? 0,
       action,
+      contributionBaseSha: run.reviewWorkspaceSubject?.contributionBaseSha,
       allowCancelled: (action === 'cleanup' || action === 'purge') && run.status === 'cancelled',
       ...(subject.session ? { session: subject.session } : {}),
     }),

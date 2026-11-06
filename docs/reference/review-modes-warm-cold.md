@@ -423,7 +423,14 @@ the prior lineage, findings and reviewed head remain recorded.
 Existing maintenance reclaims expired owned workspace/session files. It preserves
 run records, retained result artifacts and lineage receipts. Active runs,
 unresolved review decisions and queued review requests for the same PR prevent
-reclamation. An admitted continuation stays protected until it finishes, even
+reclamation. Result retention does not confirm process shutdown: a separate durable
+stop receipt gates released capacity and warm reuse, and terminal reconciliation
+retries an interrupted stop. A validated external intake replacement waiting behind
+an earlier retirement remains unadmitted until that retirement settles; cleanup
+continues to protect every last-accepted intent. The source is re-read before publication. Retirement stays fenced until the final
+cleanup receipt reaches disk; a failed receipt write retries metadata without
+deleting the workspace twice.
+An admitted continuation stays protected until it finishes, even
 when its predecessor's deadline passes. Deletion and review admission share a
 storage fence and revalidate PR activity before deleting. Unknown identity,
 unavailable storage or unconfirmed process closure leaves the files intact.

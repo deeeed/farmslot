@@ -119,7 +119,7 @@ mock.timers.enable({ apis: ['Date'], now });
 try {
   configureWorkspaceContinuity(coldCurrent, originals[1], context, {
     ...frozenSubject,
-    baseSha: packet.base,
+    baseSha: frozenSubject.contributionBaseSha ?? packet.base,
   });
 } finally {
   mock.timers.reset();

@@ -491,8 +491,11 @@ function finishCleanup() {
     if (!(await git(['--git-dir',cache,'remote']))) await git(['--git-dir',cache,'remote','add','origin',identity.repositoryUrl], 'configure-cache');
     if (await git(['--git-dir',cache,'remote','get-url','origin']) !== identity.repositoryUrl) throw new Error('Review cache origin changed');
     if (previous?.state !== 'ready') {
-      await git(['--git-dir',cache,'fetch','--no-tags','origin',identity.headSha,identity.baseSha], 'fetch');
-      for (const [kind,sha] of [['head',identity.headSha],['base',identity.baseSha]]) {
+      const contributionBase=input.contributionBaseSha;
+      if(contributionBase && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(contributionBase))throw new Error('Invalid frozen contribution base');
+      const refs=[['head',identity.headSha],['base',identity.baseSha],...(contributionBase?[['contribution-base',contributionBase]]:[])];
+      await git(['--git-dir',cache,'fetch','--no-tags','origin',...new Set(refs.map(([,sha])=>sha))], 'fetch');
+      for (const [kind,sha] of refs) {
         if (await git(['--git-dir',cache,'rev-parse',sha+'^{commit}']) !== sha) throw new Error('Review ref is not the exact commit');
         await git(['--git-dir',cache,'update-ref','refs/reviews/'+identity.workspaceId+'/'+kind,sha], 'retain-ref');
       }

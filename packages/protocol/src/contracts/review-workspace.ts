@@ -114,6 +114,8 @@ export interface ReviewWorkspaceBinding {
   /** Frozen retention policy. Configuration changes do not move existing bindings. */
   retentionDays?: number;
   retainedAt?: string;
+  /** Confirmed terminal/native worker stop, independent of result retention. */
+  executionStoppedAt?: string;
   retainedUntil?: string;
   /** Durable admission fence, written before an asynchronous node purge starts. */
   retirement?: {

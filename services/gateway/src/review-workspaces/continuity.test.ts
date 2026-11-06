@@ -202,3 +202,26 @@ test('only expiry permits an explicit COLD fallback and preserves the prior line
   );
   assert.equal(live.mode, 'warm');
 });
+
+test('explicit cold after expiry may use another authorized machine while preserving the expiry reason', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T00:00:00Z') });
+  const result = context();
+  const source = {
+    ...prior,
+    reviewWorkspace: { ...prior.reviewWorkspace!, retainedUntil: '2026-11-03T00:00:00Z' },
+  };
+  configureWorkspaceContinuity(
+    {
+      ...current,
+      reviewMode: 'cold',
+      reviewContext: {
+        reviewLineages: [{ reviewId: 'lineage', repository: 'example/app', prNumber: 42 }],
+      },
+      reviewWorkspaceTarget: { machine: 'other-machine' },
+    },
+    source,
+    result,
+  );
+  assert.equal(result.mode, 'cold');
+  assert.match(result.session?.fallback?.detail ?? '', /expired/);
+});

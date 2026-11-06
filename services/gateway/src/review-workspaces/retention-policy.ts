@@ -45,6 +45,13 @@ export function retainedWorkspaceIsIdle(
 ): boolean {
   return (
     !!run.reviewWorkspace?.retainedAt &&
+    !!run.reviewWorkspace.executionStoppedAt &&
+    !(run.agentContexts ?? []).some(
+      (context) =>
+        context.nativeSession &&
+        !context.nativeSession.closedAt &&
+        !context.nativeSession.releasedAt,
+    ) &&
     ['done', 'failed', 'cancelled', 'blocked'].includes(run.status) &&
     !(run.agentContexts ?? []).some(
       (context) => !['complete', 'failed', 'idle'].includes(context.status),

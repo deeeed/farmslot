@@ -59,10 +59,17 @@ test('PR protection uses exact repository and number, independent of project or 
 test('only stopped terminal retained reviews release active machine capacity', () => {
   const run: Pick<Run, 'status' | 'reviewWorkspace' | 'agentContexts'> = {
     status: 'done',
-    reviewWorkspace: { ...workspace, retainedAt: ended },
+    reviewWorkspace: { ...workspace, retainedAt: ended, executionStoppedAt: ended },
     agentContexts: [],
   };
   assert.equal(retainedWorkspaceIsIdle(run), true);
+  assert.equal(
+    retainedWorkspaceIsIdle({
+      ...run,
+      reviewWorkspace: { ...run.reviewWorkspace!, executionStoppedAt: undefined },
+    }),
+    false,
+  );
   assert.equal(retainedWorkspaceIsIdle({ ...run, status: 'monitoring' }), false);
   assert.equal(retainedWorkspaceIsIdle({ ...run, reviewWorkspace: workspace }), false);
   assert.equal(

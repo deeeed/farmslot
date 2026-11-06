@@ -515,6 +515,7 @@ export type ReviewSessionRefusalReason =
   | 'missing-reviewed-head'
   | 'session-busy'
   | 'session-unavailable'
+  | 'retention-expired'
   | 'reviewed-head-not-ancestor';
 
 /** Why a re-review ran COLD in a fresh session, and the ranges it compared (ADR-063 Amendment 5). */

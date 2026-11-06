@@ -21,7 +21,12 @@ import {
   reviewWorkspaceExpiry,
   workspaceRetentionProtected,
 } from './retention-policy.js';
-import { hasReviewWorkspaceRetirements, reclaimReviewWorkspaceStorage } from './storage-use.js';
+import {
+  hasReviewWorkspaceRetirement,
+  hasReviewWorkspaceRetirements,
+  noteReviewWorkspaceRetirement,
+  reclaimReviewWorkspaceStorage,
+} from './storage-use.js';
 import { purgeReviewWorkspace, type ReviewWorkspaceSessionCleanup } from './workspace.js';
 
 let nextSweep = 0;
@@ -37,8 +42,15 @@ export async function cleanupExpiredReviewWorkspaces(now = Date.now()): Promise<
     for (const snapshot of getAllRuns()) {
       const workspace = snapshot.reviewWorkspace;
       const expiry = reviewWorkspaceExpiry(snapshot);
-      if (!workspace?.retainedAt || workspace.cleanedAt || !expiry || now < Date.parse(expiry))
+      if (workspace?.cleanedAt) {
+        if (hasReviewWorkspaceRetirement(snapshot.id)) {
+          await persistRunNow(snapshot, 'retry durable review workspace closeout');
+          noteReviewWorkspaceRetirement(snapshot, true);
+          removed.push(workspace.checkoutPath);
+        }
         continue;
+      }
+      if (!workspace?.retainedAt || !expiry || now < Date.parse(expiry)) continue;
       if (workspace.executionNodeId !== 'local' && !getNode(workspace.executionNodeId)) continue;
       const pending = () => {
         const requests = reviewWorkspacePendingPRs();
@@ -67,7 +79,8 @@ export async function cleanupExpiredReviewWorkspaces(now = Date.now()): Promise<
         check();
         if (!workspace.retirement) {
           if (snapshot.transport === 'native') await cancelReviewWorkspaceWorker(snapshot.id);
-          else await reviewTmuxOperation(snapshot, 'stop');
+          else if (snapshot.agentContexts?.some((context) => context.target))
+            await reviewTmuxOperation(snapshot, 'stop');
         }
         check();
         const current = getRun(snapshot.id)!;
@@ -157,11 +170,22 @@ export async function cleanupExpiredReviewWorkspaces(now = Date.now()): Promise<
           }),
           'expired review workspace reclaimed',
         );
+        noteReviewWorkspaceRetirement(getRun(current.id)!, true);
         removed.push(workspace.checkoutPath);
       } catch (error) {
         // The files stay owned and visible until a later maintenance pass can confirm closure/deletion.
         const message = error instanceof Error ? error.message : String(error);
         const current = getRun(snapshot.id);
+        if (current?.reviewWorkspace?.cleanedAt && hasReviewWorkspaceRetirement(current.id)) {
+          // Node deletion is confirmed. Keep admission fenced until its metadata reaches disk.
+          await persistRunNow(
+            current,
+            'retry durable review workspace closeout after node deletion',
+          );
+          noteReviewWorkspaceRetirement(current, true);
+          removed.push(workspace.checkoutPath);
+          continue;
+        }
         if (current && current.reviewWorkspaceCleanupError !== message)
           await persistRunNow(
             updateRun(current.id, { reviewWorkspaceCleanupError: message }),

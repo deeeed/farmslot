@@ -92,6 +92,19 @@ const commit = (value: string) => {
 const base = commit('Hello'),
   firstHead = commit('Hello one'),
   nextHead = commit('Hello two');
+git('checkout', '--detach', base);
+fs.writeFileSync(path.join(upstream, 'main-only.txt'), 'Independently advanced publication base\n');
+git('add', '.');
+git(
+  '-c',
+  'user.name=Fixture',
+  '-c',
+  'user.email=fixture@example.test',
+  'commit',
+  '-m',
+  'advance publication base',
+);
+const advancedBase = git('rev-parse', 'HEAD');
 const machine = os.hostname().split('.')[0];
 fs.writeFileSync(
   path.join(root, 'pool', machine + '.json'),
@@ -182,6 +195,7 @@ const summary: Record<string, unknown> = {
   base,
   firstHead,
   nextHead,
+  advancedBase,
   transport: 'tmux',
   model: 'gpt-6.1-sol',
   farmServicesChanged: false,
@@ -212,7 +226,7 @@ try {
       repositoryUrl: upstream,
       headSha: head,
       baseSha: index ? firstHead : base,
-      contributionBaseSha: base,
+      contributionBaseSha: index ? advancedBase : base,
       branch: 'fixture',
       title: 'Greeting text fixture',
       body: 'This is a private transport/retention proof. No app, network or publication work.',
@@ -270,6 +284,29 @@ try {
     assert.equal(finished.slotId, null);
     assert.equal(finished.transport, 'tmux');
     assert(finished.reviewWorkspace.retainedAt);
+    assert(finished.reviewWorkspace.executionStoppedAt);
+    const held = spawnSync(
+      'tmux',
+      ['has-session', '-t', 'review-' + finished.reviewWorkspace.workspaceId],
+      { encoding: 'utf8' },
+    );
+    assert.equal(held.status, 1, 'Completed reviewer terminal is confirmed stopped');
+    assert.equal(
+      run('git', [
+        '-C',
+        finished.reviewWorkspace.checkoutPath,
+        'rev-parse',
+        `refs/reviews/${finished.reviewWorkspace.workspaceId}/contribution-base`,
+      ]),
+      subject.contributionBaseSha,
+    );
+    run('git', [
+      '-C',
+      finished.reviewWorkspace.checkoutPath,
+      'diff',
+      '--name-status',
+      `${subject.contributionBaseSha}...${head}`,
+    ]);
     assert(!finished.reviewWorkspace.cleanedAt);
     assert(fs.existsSync(finished.reviewWorkspace.checkoutPath));
     assert(finished.reviewResult.session.sessionId);

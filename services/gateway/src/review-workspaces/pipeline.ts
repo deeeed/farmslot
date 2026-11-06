@@ -307,7 +307,7 @@ async function freezeSubject(
 export async function teardownReviewWorkspace(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
-  if (run.reviewWorkspace.cleanedAt) return;
+  if (run.reviewWorkspace.cleanedAt || run.reviewWorkspace.executionStoppedAt) return;
   const generation = run.engineState?.generation ?? 0;
   const check = () => currentWorkspaceRun(runId, generation, true);
   check();
@@ -334,24 +334,26 @@ export async function teardownReviewWorkspace(runId: string): Promise<void> {
       },
     });
   const current = check();
-  if (!current.reviewWorkspace?.retainedAt) {
-    const endedAt =
-      current.completedAt ??
-      current.agentContexts?.find((context) => context.id === 'review')?.completedAt ??
-      new Date().toISOString();
-    const days = current.reviewWorkspace?.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS;
-    await persistRunNow(
-      updateRun(runId, {
-        reviewWorkspace: {
-          ...current.reviewWorkspace!,
-          retainedAt: endedAt,
-          retainedUntil: new Date(Date.parse(endedAt) + days * 86400000).toISOString(),
-        },
-        reviewWorkspaceCleanupError: undefined,
-      }),
-      'review workspace retained for warm continuation',
-    );
-  }
+  const endedAt =
+    current.reviewWorkspace?.retainedAt ??
+    current.completedAt ??
+    current.agentContexts?.find((context) => context.id === 'review')?.completedAt ??
+    new Date().toISOString();
+  const days = current.reviewWorkspace?.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS;
+  await persistRunNow(
+    updateRun(runId, {
+      reviewWorkspace: {
+        ...current.reviewWorkspace!,
+        retainedAt: endedAt,
+        retainedUntil:
+          current.reviewWorkspace?.retainedUntil ??
+          new Date(Date.parse(endedAt) + days * 86400000).toISOString(),
+        executionStoppedAt: new Date().toISOString(),
+      },
+      reviewWorkspaceCleanupError: undefined,
+    }),
+    'review workspace retained after confirmed execution stop',
+  );
 }
 
 function hasHeldReviewWorker(run: Run): boolean {
@@ -499,7 +501,7 @@ export function reconcileReviewWorkspaceCleanup(
     for (const run of getAllRuns()) {
       if (
         !run.reviewWorkspace ||
-        run.reviewWorkspace.retainedAt ||
+        run.reviewWorkspace.executionStoppedAt ||
         (run.reviewWorkspace.cleanedAt && !hasHeldReviewWorker(run)) ||
         hasUncertainReviewOperation(run) ||
         workspaceReviewStartupNeedsRecovery(run) ||
