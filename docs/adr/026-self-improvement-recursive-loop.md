@@ -259,3 +259,32 @@ and "none" is a valid answer.
 The default task template, every pack's learnings step, the improvement engine's
 prompt and bulk retro curation apply this rule. Curated learnings files keep only
 lines that change a run, and the engine proposes nothing for noise.
+
+## Amendment 2 (2026-11-06): Curate before drafting
+
+**Status:** Accepted by the lead, 2026-11-06; implementation pending.
+
+Retrospective acceptance and explicit improvement requests remain the triggers.
+At either trigger, the shared router automatically checks domain learning claims against
+retained run/review evidence and the configured library. Only confirmed, observed
+failures with run id and file:line, a diff-checkable instruction, and recurrence
+in two independent tasks/families or a blocker-class money/order outcome qualify.
+Confirmation cites a retained check by another actor; the curator cannot confirm
+a claim itself. Template improvements retain Amendment 1's existing policy. Existing
+coverage is tightened only when evidence establishes a missing check; otherwise
+it is dropped. Worker opinion, disputed findings and unavailable evidence do not
+qualify. Record each keep/drop and one-line reason in the existing feedback
+ledger, separately from consumption. Dropped entries create no human gate, replacing the old all-entries-visible
+invariant. Eligible drafting failures retain the existing hold card.
+
+Each eligible draft still requires human approval. Farmslot never writes to the
+canonical library. This policy applies to Perps shared rules, repository overlays
+and configured harness knowledge libraries. The [learning curation spec](../reference/learning-curation.md)
+defines the evidence and ledger contract.
+
+### Public surface
+
+Existing `run.proposeImprovement` and retrospective actions remain unchanged.
+Gateway-internal curation and additive local-ledger records introduce no CLI,
+RPC or SDK export. Harnesses inherit this policy through their configured
+knowledge destination; no per-harness implementation or library writer is added.

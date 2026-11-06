@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { afterEach, beforeEach } from 'node:test';
 
 import type { LearningsDraftPayload } from '@farmslot/protocol';
 import { invalidateProjectVarsCache } from '@farmslot/slot-config';
@@ -12,6 +12,8 @@ import { farmslotRoot } from '../fleet/state.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import { feedbackLedgerPath, readFeedbackLedger } from './feedback-ledger.js';
+import { installCurationFixture } from './learning-curation.test-support.js';
+import { setLearningContextLoaderForTest } from './learning-curation-context.js';
 import {
   __setAntipatternDrafterForTest,
   __setLearningsClassifierForTest,
@@ -23,6 +25,12 @@ import {
   routeLearnings,
   splitLearningsEntries,
 } from './learnings-router.js';
+
+let resetCuration: () => void;
+beforeEach(() => {
+  resetCuration = installCurationFixture();
+});
+afterEach(() => resetCuration());
 
 const TEST_PROJECT = `.learnings-router-test-${process.pid}`;
 const TEST_PROJECT_DIR = path.join(farmslotRoot, 'projects', TEST_PROJECT);
@@ -159,8 +167,8 @@ test('AC2: a domain entry with no configured destination becomes a teaching hold
 
   const routed = await routeLearnings(TEST_PROJECT, '- product screens flake on slow seeds\n');
   assert.equal(routed.drafts.length, 0);
-  assert.equal(routed.holds.length, 1);
-  assert.match(routed.holds[0]!.reason, /vars\.knowledge_destination/);
+  assert.equal(routed.drops?.length, 1);
+  assert.match(routed.drops![0]!.reason, /No canonical/);
   assert.equal(routed.systemContent, null);
   assert.equal(routed.destination, null);
 });
@@ -383,9 +391,9 @@ test('approval gating: "landed" binds the family feedback to the draft in the le
   // Re-analysing the same learnings holds the landed lesson instead of drafting it again.
   const again = await routeLearnings(TEST_PROJECT, '- unknown balance rendered as zero\n');
   assert.equal(again.drafts.length, 0);
-  assert.equal(again.holds.length, 1);
+  assert.equal(again.drops?.length, 1);
   // The hold names the most recent consumption of that lesson (the multi-draft card).
-  assert.match(again.holds[0]!.reason, /already recorded in .* as "second-draft"/);
+  assert.match(again.drops![0]!.reason, /Already recorded in .*unknown-balance-as-zero/);
   // The same lesson text for a project whose library is a different repo is not held.
   writeFileSync(
     path.join(TEST_PROJECT_DIR, 'project.json'),
@@ -405,7 +413,7 @@ test('approval gating: "landed" binds the family feedback to the draft in the le
   assert.equal(elsewhere.holds.length, 0);
 });
 
-test('a card with no destination never offers the landed action and refuses to record', async (t) => {
+test('a dropped entry with no destination creates no human card', async (t) => {
   setupProject({});
   __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
   const run = createRun({ flowType: 'dev', project: TEST_PROJECT, ticketOrPr: 'LRN-9' });
@@ -415,13 +423,8 @@ test('a card with no destination never offers the landed action and refuses to r
     await cleanupRun(run.id);
   });
   const routed = await routeLearnings(TEST_PROJECT, '- some domain lesson\n');
-  const decisionId = await emitLearningsDraftDecision(run.id, routed);
-  const decision = getRun(run.id)!.decisions.find((entry) => entry.id === decisionId)!;
-  assert.deepEqual(
-    decision.actions.map((action) => action.id),
-    ['dismiss'],
-  );
-  await assert.rejects(() => recordLearningsDraftLanded(run, decision), /no canonical destination/);
+  assert.equal(await emitLearningsDraftDecision(run.id, routed), null);
+  assert.equal(routed.drops?.length, 1);
 });
 
 test('concurrent receipt appends stay exactly-once under the inbox lock', async (t) => {
@@ -512,9 +515,9 @@ test('no inbox configured yields an explicit skipped receipt, and nothing is dro
     '- a domain seeding trap\n\n- something ambiguous about timing\n',
   );
   // Conservation: every entry lands in exactly one bucket.
-  assert.equal(routed.drafts.length + routed.holds.length, 2);
+  assert.equal(routed.drafts.length + (routed.drops?.length ?? 0), 2);
   assert.equal(routed.drafts.length, 1);
-  assert.equal(routed.holds.length, 1);
+  assert.equal(routed.drops?.length, 1);
 
   const decisionId = await emitLearningsDraftDecision(run.id, routed);
   assert.ok(decisionId);
@@ -525,4 +528,37 @@ test('no inbox configured yields an explicit skipped receipt, and nothing is dro
     payload.receipt && 'reason' in payload.receipt ? payload.receipt.reason : '',
     /no learnings inbox configured/,
   );
+});
+
+test('F429: an uncorroborated worker entry cannot become a draft or human gate', async (t) => {
+  setupProject({ repoKey: 'testrepo' });
+  __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
+  __setAntipatternDrafterForTest(async (entries) =>
+    entries.map(() => ({
+      id: 'saved-order-leverage',
+      symptom: 'Restored order leverage differs from a position',
+      cause: 'Draft restoration wins over position leverage',
+      action: 'Prefer the current position leverage',
+    })),
+  );
+  t.after(() => {
+    __setLearningsClassifierForTest(null);
+    __setAntipatternDrafterForTest(null);
+    teardownProject();
+  });
+  setLearningContextLoaderForTest();
+  // Real worker-authored entry from run 0063e61f. It supplies no accepted finding,
+  // verified source location or recurrence; the worker claim alone is insufficient.
+  const routed = await routeLearnings(
+    TEST_PROJECT,
+    '- A saved order draft is a fallback. An open position supplies the market leverage, including when positions arrive after the form restores.',
+  );
+  assert.equal(routed.drafts.length, 0, 'a valid draft shape is not evidence of eligibility');
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: TEST_PROJECT,
+    ticketOrPr: 'UNCONFIRMED-LEARNING',
+  });
+  t.after(() => cleanupRun(run.id));
+  assert.equal(await emitLearningsDraftDecision(run.id, routed), null);
 });

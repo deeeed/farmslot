@@ -21,9 +21,29 @@ export interface FeedbackLedgerEntry extends FeedbackConsumption {
   runIds?: string[];
 }
 
+export interface LearningCitation {
+  runId: string;
+  path: string;
+  line: number;
+  quote: string;
+}
+
+export interface LearningCurationReceipt {
+  sourceKey: string;
+  runId: string;
+  destination: string;
+  contextDigest: string;
+  outcome: 'keep' | 'drop';
+  reason: string;
+  citations: LearningCitation[];
+  instruction?: string;
+  recordedAt: string;
+}
+
 export interface FeedbackLedger {
   version: 1;
   entries: FeedbackLedgerEntry[];
+  curations?: LearningCurationReceipt[];
 }
 
 export function feedbackLedgerPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -54,6 +74,32 @@ function assertLedgerShape(value: unknown, file: string): FeedbackLedger {
       throw new Error(`feedback ledger ${file} has a malformed entry`);
     }
   }
+  if (
+    'curations' in value &&
+    (!Array.isArray(value.curations) ||
+      value.curations.some(
+        (row: unknown) =>
+          !row ||
+          typeof row !== 'object' ||
+          !('sourceKey' in row) ||
+          typeof row.sourceKey !== 'string' ||
+          !('runId' in row) ||
+          typeof row.runId !== 'string' ||
+          !('destination' in row) ||
+          typeof row.destination !== 'string' ||
+          !('contextDigest' in row) ||
+          typeof row.contextDigest !== 'string' ||
+          !('outcome' in row) ||
+          !['keep', 'drop'].includes(String(row.outcome)) ||
+          !('reason' in row) ||
+          typeof row.reason !== 'string' ||
+          !('citations' in row) ||
+          !Array.isArray(row.citations) ||
+          !('recordedAt' in row) ||
+          typeof row.recordedAt !== 'string',
+      ))
+  )
+    throw new Error(`feedback ledger ${file} has malformed curation records`);
   return value as FeedbackLedger;
 }
 
@@ -119,4 +165,29 @@ export function consumptionsBySourceKey(
     map.set(entry.sourceKey, list);
   }
   return map;
+}
+
+/** Curation is not consumption. Share the same writer queue so approvals cannot lose drops. */
+export function appendLearningCurations(
+  rows: LearningCurationReceipt[],
+  file = feedbackLedgerPath(),
+): Promise<void> {
+  const write = async () => {
+    const ledger = await readFeedbackLedger(file);
+    const key = (row: LearningCurationReceipt) =>
+      JSON.stringify([row.sourceKey, row.runId, row.destination, row.contextDigest]);
+    const seen = new Set((ledger.curations ?? []).map(key));
+    const added = rows.filter((row) => {
+      if (seen.has(key(row))) return false;
+      seen.add(key(row));
+      return true;
+    });
+    if (added.length) {
+      ledger.curations = [...(ledger.curations ?? []), ...added];
+      await writeAtomicJSON(file, ledger);
+    }
+  };
+  const next = ledgerQueue.then(write, write);
+  ledgerQueue = next.catch(() => undefined);
+  return next;
 }

@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { after } from 'node:test';
+import test, { after, afterEach, beforeEach } from 'node:test';
 
 import type { ImprovementDiffPayload, Run } from '@farmslot/protocol';
 
+import { installCurationFixture } from '../../intelligence/learning-curation.test-support.js';
 import { __setLearningsClassifierForTest } from '../../intelligence/learnings-router.js';
 import { retainRunFixture } from '../../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getRun, runRecordPath, updateRun } from '../../runs/store.js';
@@ -16,6 +17,12 @@ import {
   resumeInterruptedImprovementAnalyses,
   runProposeImprovement,
 } from './propose-improvement.js';
+
+let resetCuration: () => void;
+beforeEach(() => {
+  resetCuration = installCurationFixture();
+});
+afterEach(() => resetCuration());
 
 function createTempRunWithTask(learnings: string | null): { run: Run; taskDir: string } {
   const tmp = mkdtempSync(path.join(tmpdir(), 'farmslot-propose-test-'));
@@ -207,7 +214,7 @@ test('a resume of an all-domain run emits ONE draft card and never stacks duplic
 
   const draftCards = () =>
     (getRun(run.id)?.decisions ?? []).filter((d) => d.type === 'engine_learnings_draft');
-  assert.equal(draftCards().length, 1, 'exactly one learnings-draft card after resume');
+  assert.equal(draftCards().length, 0, 'a destination failure is recorded without a gate');
 
   // A second interrupted resume (crash loop) must not stack another card.
   const payload = improvementPayload(run.id, decisionId);
@@ -219,7 +226,7 @@ test('a resume of an all-domain run emits ONE draft card and never stacks duplic
     if (improvementPayload(run.id, decisionId).analysisStatus === 'no-changes') break;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  assert.equal(draftCards().length, 1, 'crash-loop resume must not duplicate the draft card');
+  assert.equal(draftCards().length, 0, 'crash-loop resume must not create a dropped-entry card');
 });
 
 test('resume terminalizes a placeholder at the retry cap without re-running it', async (t) => {
