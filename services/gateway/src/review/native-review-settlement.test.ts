@@ -1395,9 +1395,11 @@ for (const source of ['native', 'signal'] as const) {
       return schedule(...args);
     });
     completionReadWake = (runId, contextId) => {
-      if (source === 'native')
+      if (source === 'native') {
         publishNativeSessionChange(binding.executionNodeId, binding.ownerPrincipalId);
-      else
+        // A snapshot that takes the native read floor needs no further delay.
+        t.mock.timers.tick(100);
+      } else
         emitWorkerSignal(
           vars.slotId,
           runId,
@@ -1414,6 +1416,6 @@ for (const source of ['native', 'signal'] as const) {
       completionReadWake = undefined;
     });
     assert.equal((await review(run.id)).verdict, 'issues');
-    assert.equal(Date.now(), now, 'No wall-clock advancement is needed');
+    assert.equal(Date.now(), now + (source === 'native' ? 100 : 0));
   });
 }
