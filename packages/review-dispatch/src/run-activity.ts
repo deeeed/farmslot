@@ -6,12 +6,14 @@ import {
   isTerminalRunStatus,
   primaryRoleForFlow,
   resolveRunSlotId,
+  reviewRoundAdmissionId,
   reviewRoundBudgetForRun,
   type Run,
   type RunStep,
   type RunStepDisplayStatus,
   runStepDisplayStatus,
   type SlotAgentTargetParams,
+  workspaceReviewRoundAdmissionId,
 } from '@farmslot/protocol';
 
 import { nativeWorkerTarget } from './native-worker-target.js';
@@ -186,8 +188,19 @@ export function runActivityView(run: Run): RunActivityView | null {
           decision.payload?.kind === 'ready' ? (decision.payload.reviewRoundBudget?.used ?? 0) : 0,
         ),
       );
-  // A fix prepares the next review round; a reviewer is in the round already admitted.
-  const round = used ? used + (kind === 'worker-fix' ? 1 : 0) : undefined;
+  const pending =
+    actor && run.reviewWorkspaceSubject
+      ? run.reviewRoundSettlements?.[workspaceReviewRoundAdmissionId(run)]?.kind === 'pending'
+      : actor?.role === 'review' &&
+        [actor.startedAt, actor.attemptStartedAt].some(
+          (at) =>
+            at &&
+            run.reviewRoundSettlements?.[
+              reviewRoundAdmissionId(actor.reviewId ?? actor.id, actor.reviewLoopNumber ?? 1, at)
+            ]?.kind === 'pending',
+        );
+  // A pending reviewer is in the next round, but has not spent it yet.
+  const round = used || pending ? used + (kind === 'worker-fix' || pending ? 1 : 0) : undefined;
   // This gateway progress field supplies the current count before the result is archived.
   // It never determines actor state, which comes from the structured fields above.
   const count = owner.detail?.match(/Reviewer found (\d+) issue/i)?.[1];

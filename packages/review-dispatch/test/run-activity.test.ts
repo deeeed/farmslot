@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { AgentContext, Run } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  reviewRoundAdmissionId,
+  reviewRoundBudgetForRun,
+  type Run,
+} from '@farmslot/protocol';
 
+import { recordedReviewRounds } from '../../protocol/test/recorded-review-rounds.fixture.js';
 import { runActivityStepStatus, runActivityView } from '../src/run-activity.js';
 
 const actor = (
@@ -47,7 +53,7 @@ function run(overrides: Partial<Run> = {}): Run {
         detail: 'Reviewer found 2 issue(s); worker applying fixes (1/3)...',
       },
     ],
-    reviewRoundAdmissions: Array.from({ length: 10 }, (_, i) => `admission-${i}`),
+    ...recordedReviewRounds(Array.from({ length: 10 }, (_, i) => `admission-${i}`)),
     agentContexts: [actor('review-fix')],
     ...overrides,
   };
@@ -87,9 +93,13 @@ test('activity rounds use the same maintenance ownership and settlements as the 
     flowType: 'update-branch',
     status: 'reviewing',
     agentContexts: [actor('review')],
-    reviewRoundAdmissions: ['p1', 'p2', 'p3', 'p4', 'p5', 'own', 'sibling', 'refunded', 'own'],
+    ...recordedReviewRounds(['p1', 'p2', 'p3', 'p4', 'p5', 'own', 'sibling', 'refunded', 'own']),
     reviewRoundOwners: { own: 'r1', sibling: 'other', refunded: 'r1' },
-    reviewRoundSettlements: { refunded: { reason: 'timeout', at: '2026-10-24T00:00:00Z' } },
+    reviewRoundSettlements: {
+      ...recordedReviewRounds(['p1', 'p2', 'p3', 'p4', 'p5', 'own', 'sibling', 'refunded', 'own'])
+        .reviewRoundSettlements,
+      refunded: { reason: 'timeout', at: '2026-10-24T00:00:00Z' },
+    },
   });
   assert.equal(runActivityView(source)?.label, 'Reviewer checking changes · round 1');
   assert.equal(
@@ -100,7 +110,9 @@ test('activity rounds use the same maintenance ownership and settlements as the 
     runActivityView({ ...source, flowType: 'dev' })?.label,
     'Reviewer checking changes · round 5',
   );
-  source.reviewRoundSettlements = {};
+  source.reviewRoundSettlements = recordedReviewRounds(
+    source.reviewRoundAdmissions!,
+  ).reviewRoundSettlements;
   assert.equal(runActivityView(source)?.label, 'Reviewer checking changes · round 2');
 });
 
@@ -138,7 +150,10 @@ test('activity uses a legacy gate count only when durable admission metadata is 
   source.reviewRoundAdmissions = undefined;
   assert.equal(runActivityView(source)?.label, 'Reviewer checking changes · round 5');
   source.reviewRoundAdmissions = ['one', 'refunded'];
-  source.reviewRoundSettlements = { refunded: { reason: 'timeout', at: '2026-10-24T00:00:00Z' } };
+  source.reviewRoundSettlements = {
+    ...recordedReviewRounds(['one']).reviewRoundSettlements,
+    refunded: { reason: 'timeout', at: '2026-10-24T00:00:00Z' },
+  };
   assert.equal(runActivityView(source)?.label, 'Reviewer checking changes · round 1');
 });
 
@@ -191,4 +206,19 @@ test('a non-publication flow keeps its actual review step as the current activit
   assert.equal(view.phase, undefined);
   assert.equal(view.steps.length, 1);
   assert.equal(view.steps[0].status, 'running');
+});
+
+test('the active pending reviewer has round one while completed-round usage stays zero', () => {
+  const reviewer = actor('review', { reviewId: 'first-review', reviewLoopNumber: 1 });
+  const id = reviewRoundAdmissionId('first-review', 1, reviewer.startedAt!);
+  const source = run({
+    status: 'reviewing',
+    agentContexts: [reviewer],
+    reviewRoundAdmissions: [id],
+    reviewRoundSettlements: {
+      [id]: { kind: 'pending', reason: 'Reviewer pending', at: reviewer.startedAt! },
+    },
+  });
+  assert.equal(reviewRoundBudgetForRun(source).used, 0);
+  assert.equal(runActivityView(source)?.label, 'Reviewer checking changes · round 1');
 });

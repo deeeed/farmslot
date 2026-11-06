@@ -17,6 +17,8 @@ import {
 
 import '../runtime/mock-pty.test-support.js';
 
+import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
+
 import { makeRun } from './test-fixtures.js';
 
 let run: Run;
@@ -177,7 +179,7 @@ test('8cff6e80: review findings on a pushed comparison result need a decision, n
     id: '8cff6e80-6b53-44a0-9834-9f0a44631aad',
     lane: 'comparison',
     branch: 'feat/tat-4145-opus',
-    reviewRoundAdmissions: Array.from({ length: 5 }, (_, i) => `admission-${i}`),
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `admission-${i}`)),
     output: {
       capturedAt: '2026-10-18T10:50:00.000Z',
       workerFinished: false,

@@ -819,7 +819,7 @@ test('restart after an uncertain completion reply reuses its reserved command an
   const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
   assert.equal(context.status, 'waiting');
   assert.ok(context.nativeCommandId);
-  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 0);
   assert.equal((await review(run.id)).verdict, 'issues');
   assert.equal(completionLaunches, 1);
   assert.deepEqual(completionCommands, [context.nativeCommandId, context.nativeCommandId]);
@@ -1099,7 +1099,10 @@ test('a reviewer that leaves no feedback file settles no-verdict; a verdict coun
   ending = 'verdict';
   const reviewed = await nativeRun(t);
   assert.equal((await review(reviewed.id)).verdict, 'issues');
-  assert.equal(getRun(reviewed.id)!.reviewRoundSettlements, undefined);
+  assert.deepEqual(
+    Object.values(getRun(reviewed.id)!.reviewRoundSettlements ?? {}).map((entry) => entry.kind),
+    ['verdict'],
+  );
   const budget = await runReviewRoundBudget(getRun(reviewed.id)!);
   assert.deepEqual([budget.used, budget.noVerdict], [1, 0]);
 });
@@ -1122,13 +1125,16 @@ for (const [end, uncertainty] of [
   ['uncertain-launch', NativeWorkerOperationUncertainError],
   ['uncertain-delivery', PromptDeliveryUncertainError],
 ] as const) {
-  test(`an ${end.replace('-', ' ')} leaves its round counted while the reviewer may run`, async (t) => {
+  test(`an ${end.replace('-', ' ')} reserves capacity without spending a round while the reviewer may run`, async (t) => {
     ending = end;
     const run = await nativeRun(t);
     await assert.rejects(review(run.id), uncertainty);
-    assert.equal(getRun(run.id)!.reviewRoundSettlements, undefined);
+    assert.deepEqual(
+      Object.values(getRun(run.id)!.reviewRoundSettlements ?? {}).map((entry) => entry.kind),
+      ['pending'],
+    );
     const budget = await runReviewRoundBudget(getRun(run.id)!);
-    assert.deepEqual([budget.used, budget.noVerdict], [1, 0]);
+    assert.deepEqual([budget.used, budget.noVerdict], [0, 0]);
   });
 }
 
@@ -1212,8 +1218,11 @@ test('an unconfirmed failed-command stop keeps the round reserved until cleanup 
   });
   const run = await nativeRun(t);
   await assert.rejects(review(run.id), /process cleanup is unconfirmed/);
-  assert.equal(getRun(run.id)!.reviewRoundSettlements, undefined);
-  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+  assert.deepEqual(
+    Object.values(getRun(run.id)!.reviewRoundSettlements ?? {}).map((entry) => entry.kind),
+    ['pending'],
+  );
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 0);
 });
 
 test('a failed native turn reports its provider refusal without a completion retry', async (t) => {

@@ -24,6 +24,7 @@ import {
   readFrozenEvalFirstOutputPackage,
 } from '../evals/package-store.js';
 import type { ReviewOptions } from '../review/orchestrator.js';
+import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
 import {
   admitReviewRound,
   runReviewRoundBudget,
@@ -87,7 +88,7 @@ for (const verdict of ['pass', 'issues', 'failed'] as const) {
       reviewedHeadSha: head,
     };
     updateRun(run.id, {
-      reviewRoundAdmissions: Array.from({ length: 7 }, (_, index) => `spent-${index}`),
+      ...recordedReviewRounds(Array.from({ length: 7 }, (_, index) => `spent-${index}`)),
       reviewBudgetExtensions: [
         {
           requestId: 'scoped-extension',
@@ -217,7 +218,7 @@ test('complete re-entry with zero pending decisions restores Codex after a curre
     slotId: 'isolated-review-slot',
     taskFile: path.join(taskDir, 'TASK.md'),
     steps: [{ name: 'human-gate', status: 'running' }],
-    reviewRoundAdmissions: Array.from({ length: 7 }, (_, index) => `spent-${index}`),
+    ...recordedReviewRounds(Array.from({ length: 7 }, (_, index) => `spent-${index}`)),
     decisions: [],
     reviewBudgetExtensions: [
       {

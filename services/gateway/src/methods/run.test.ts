@@ -29,7 +29,10 @@ import { beginAssessment, finishAssessment, reserveAssessment } from '../assessm
 import { invalidateProjectVarsCache, projectsDir } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { farmslotRoot } from '../fleet/state.js';
-import { admitReviewRound } from '../review/review-round-budget.js';
+import {
+  recordedReviewRound,
+  recordedReviewRounds,
+} from '../review/recorded-review-rounds.test-support.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { jiraTicketData, manualTicketData } from '../run-completion/test-fixtures.js';
 import { createEngineDecision } from '../run-engine/engine-decisions.js';
@@ -418,7 +421,7 @@ test('a sixth gate review is refused before decision consumption, restore or lau
   updateRun(run.id, {
     status: 'human-gating',
     decisions: [decision],
-    reviewRoundAdmissions: ['one', 'two', 'three', 'four', 'five'],
+    ...recordedReviewRounds(['one', 'two', 'three', 'four', 'five']),
   });
   t.after(async () => {
     updateRun(run.id, { status: 'failed' });
@@ -551,7 +554,7 @@ test('a fifth review spent during launch validation leaves the waiting request p
       await deleteRun(run.id);
     }
   });
-  for (let index = 0; index < 4; index++) await admitReviewRound(waiting.id, `spent-${index}`);
+  for (let index = 0; index < 4; index++) await recordedReviewRound(waiting.id, `spent-${index}`);
   await assert.rejects(
     runResolveDecision(
       {
@@ -565,7 +568,7 @@ test('a fifth review spent during launch validation leaves the waiting request p
       () => {},
       {
         assertReviewLaunchAllowed: async () => {
-          await admitReviewRound(sibling.id, 'concurrent-fifth');
+          await recordedReviewRound(sibling.id, 'concurrent-fifth');
         },
       },
     ),
