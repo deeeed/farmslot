@@ -1,10 +1,9 @@
 {
-  "version": "0.33.0",
+  "version": "0.34.0",
   "date": "2026-11-06",
   "items": [
-    "Run supported slotless reviewers in read-only workspaces and retain their sessions for warm re-review.",
-    "Keep ticket scope, review budgets and publication snapshots current at gates.",
-    "Read family usage and shared performance diagnostics through authenticated RPCs.",
-    "Recover interrupted ownership and enforce shared recording-resource capacity."
+    "Choose Ask or Bypass for native conversations and browse non-Git folders.",
+    "Keep native history reads responsive during cleanup and journal scans.",
+    "Preserve review refreshes, verdict accounting and operator recovery decisions."
   ]
 }

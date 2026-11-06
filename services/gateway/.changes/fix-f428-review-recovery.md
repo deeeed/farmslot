@@ -1,1 +1,0 @@
-- Correct invalid static-review output once in the same reviewer session, fail stopped reviewers explicitly, and refuse unrecoverable saved-review replays with accurate archive guidance.

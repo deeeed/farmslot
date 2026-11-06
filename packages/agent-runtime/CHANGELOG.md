@@ -4,6 +4,12 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.42.0 - 2026-11-06
+
+- Support ask/bypass tool approvals on standalone native sessions and show non-Git workspaces without a Git error.
+- Keep native cleanup and observation fences responsive with bounded asynchronous process checks and cached, chunked journal reads.
+- Native process-tree cleanup/capture and observation fences/profile status now return Promises. Callers must await them and upgrade with the matching runtime readers.
+
 ## 0.41.0 - 2026-11-06
 
 - Refuse CI fix pushes and completion when new commits touch files outside the PR's original scope, including renamed paths and edits later reverted.

@@ -1,10 +1,8 @@
 {
-  "version": "0.33.0",
+  "version": "0.34.0",
   "date": "2026-11-06",
   "items": [
-    "See family session usage, known costs and review timing, with explicit capture gaps.",
-    "Restore panel and sidebar choices from shared links and prefetch review reports and diffs.",
-    "Keep saved work visible during gateway outages and reconnect automatically.",
-    "Keep gate progress, review artifacts and posting confirmation current."
+    "Choose native approval settings and browse Files outside Git repositories.",
+    "Keep loaded review pages and refresh requests when preparation takes longer."
   ]
 }

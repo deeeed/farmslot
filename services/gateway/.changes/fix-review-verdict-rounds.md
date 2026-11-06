@@ -1,1 +1,0 @@
-- Stop charging failed or unstarted review launches as completed rounds; preserve concurrent reservations and record the charge at verdict ingestion.

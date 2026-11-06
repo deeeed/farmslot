@@ -1,1 +1,0 @@
-- Let pr-complete workers launch in their declared bootstrap runtime before updating an old branch's exact Node pin; keep engine, package-manager and other launch checks.

@@ -1,1 +1,0 @@
-- Keep review refresh pending until the gateway responds and preserve the operator page across development-stack restarts.

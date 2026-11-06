@@ -1,1 +1,0 @@
-- Support ask/bypass tool approvals on standalone native sessions and show non-Git workspaces without a Git error.

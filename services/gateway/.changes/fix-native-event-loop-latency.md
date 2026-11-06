@@ -1,1 +1,0 @@
-- Select PR intake and monitor data before cloning snapshots to avoid copying unrelated history.
