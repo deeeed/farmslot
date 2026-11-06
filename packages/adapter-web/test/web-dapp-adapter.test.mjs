@@ -23,8 +23,10 @@ import {
   createWebDappAdapter,
   DEV_SERVER_PID_FILE,
   devServerTestnetDiagnostic,
+  fixtureAccount,
   LAUNCH_SERVICES,
   parseLaunchArgs,
+  resolveAccountAddress,
   resolveBrowser,
   resolveSigner,
   SPAWN,
@@ -142,6 +144,76 @@ describe('web-dapp runtime resolution', () => {
         { account: { name: 'dev1' } },
       ),
       'dev1',
+    );
+  });
+});
+
+describe('wallet fixture accounts', () => {
+  // The public Hardhat test mnemonic and its first three addresses: no funds, no secret.
+  const MNEMONIC = 'test test test test test test test test test test test junk';
+  const ADDRESSES = [
+    '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+    '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+    '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
+  ];
+  async function fixtureEnv(accounts) {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'web-dapp-fixture-'));
+    const file = path.join(dir, 'wallet-fixture.json');
+    await writeFile(file, JSON.stringify({ password: 'pw', accounts }), { mode: 0o600 });
+    return { dir, env: { RECIPE_WALLET_FIXTURE: file } };
+  }
+
+  it('derives every account a mnemonic entry counts, selectable by name or address', async () => {
+    const { dir, env } = await fixtureEnv([
+      { name: 'dev1', type: 'mnemonic', value: MNEMONIC, count: 3 },
+    ]);
+    assert.equal((await fixtureAccount(dir, 'dev1', env)).address, ADDRESSES[0]);
+    assert.equal((await fixtureAccount(dir, 'dev3', env)).address, ADDRESSES[2]);
+    assert.equal(
+      (await fixtureAccount(dir, ADDRESSES[1].toLowerCase(), env)).address,
+      ADDRESSES[1],
+    );
+    assert.deepEqual(
+      await resolveAccountAddress(
+        { node: { account: 'dev2' }, context: { projectRoot: dir } },
+        env,
+      ),
+      { name: 'dev2', address: ADDRESSES[1] },
+    );
+    await assert.rejects(
+      fixtureAccount(dir, 'dev4', env),
+      /no account named "dev4"\. Available: dev1, dev2, dev3\./,
+    );
+  });
+
+  it("adds the host's named derivations of a fixture secret and checks their address", async () => {
+    // Hardhat accounts #6 and #7 of the same public mnemonic.
+    const SIXTH = '0x976EA74026E726554dB657fA54763abd0C3a0aa9';
+    const SEVENTH = '0x14dC79964da2C08b23698B3D3cc7Ca32193d9955';
+    const { dir, env } = await fixtureEnv([{ name: 'dev1', type: 'mnemonic', value: MNEMONIC }]);
+    const derived = (overrides = {}) => ({
+      ...env,
+      RECIPE_WALLET_DERIVED_ACCOUNTS: JSON.stringify([
+        { name: 'vip', secret: 'dev1', index: 7, address: SEVENTH, ...overrides },
+      ]),
+    });
+    assert.equal((await fixtureAccount(dir, 'vip', derived())).address, SEVENTH);
+    assert.equal((await fixtureAccount(dir, SEVENTH.toLowerCase(), derived())).address, SEVENTH);
+    assert.deepEqual(
+      await resolveAccountAddress(
+        { node: { account: 'vip' }, context: { projectRoot: dir } },
+        derived(),
+      ),
+      { name: 'vip', address: SEVENTH },
+    );
+    await assert.rejects(
+      fixtureAccount(dir, 'vip', derived({ index: 6 })),
+      new RegExp(`"vip" derives to ${SIXTH} from "dev1" index 6, not the declared ${SEVENTH}`),
+    );
+    // A derivation of a secret this fixture does not hold is not offered.
+    await assert.rejects(
+      fixtureAccount(dir, 'vip', derived({ secret: 'team' })),
+      /no account named "vip"\. Available: dev1\./,
     );
   });
 });
