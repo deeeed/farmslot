@@ -202,6 +202,32 @@ function trustClaudeWorkspace(cwd, env = process.env, owner) {
 function codexWorkspaceTrustConfig(cwd, trust) {
   return `projects={${JSON.stringify(cwd)}={trust_level=${JSON.stringify(trust)}}}`;
 }
+// Both native hosts and frozen terminal bundles resolve storage on the execution node.
+const reviewRuntimeRootsByRunner = {
+  codex: (env) => [codexHome(env)],
+  claude: (env) => [
+    env.CLAUDE_CONFIG_DIR || path.join(home(env), '.claude'),
+    ...(typeof process.getuid === 'function'
+      ? [path.join('/tmp', `claude-${process.getuid()}`)]
+      : []),
+  ],
+  cursor: (env) => [
+    path.join(home(env), '.cursor'),
+    path.join(home(env), 'Library/Caches/cursor-compile-cache'),
+    path.join(home(env), 'Library/Application Support/Cursor'),
+    ...(typeof process.getuid === 'function'
+      ? [path.join('/tmp', `cursor-agent-persist-${process.getuid()}`)]
+      : []),
+  ],
+  grok: (env) => [grokHome(env)],
+  pi: (env) => [env.PI_CODING_AGENT_DIR || path.join(home(env), '.pi/agent')],
+  opencode: (env) => [
+    path.join(env.XDG_DATA_HOME || path.join(home(env), '.local/share'), 'opencode'),
+    path.join(env.XDG_CACHE_HOME || path.join(home(env), '.cache'), 'opencode'),
+    path.join(env.XDG_STATE_HOME || path.join(home(env), '.local/state'), 'opencode'),
+    path.join(env.XDG_CONFIG_HOME || path.join(home(env), '.config'), 'opencode'),
+  ],
+};
 const reviewConfigurationRoots = (cwd) =>
   [
     '.grok/config.toml',
@@ -218,6 +244,10 @@ const reviewConfigurationRoots = (cwd) =>
     '.mcp.json',
     '.lsp.json',
     '.envrc',
+    '.pi',
+    '.opencode',
+    'opencode.json',
+    'opencode.jsonc',
   ].map((name) => path.join(fs.realpathSync(cwd), name));
 // What a Grok review may write in its home: its sessions and logs, and the bytes of the sign-in
 // lock that a token refresh takes. Everything else stays read-only: hooks, configuration, policy,
@@ -239,10 +269,13 @@ const reviewConfigurationRootsByRunner = {
   grok: reviewConfigurationRoots,
   claude: reviewConfigurationRoots,
   cursor: reviewConfigurationRoots,
+  pi: reviewConfigurationRoots,
+  opencode: reviewConfigurationRoots,
 };
 
 // The review sandbox denies repository configuration. Exclude it before Claude
 // tries to read it, rather than prompting on EPERM before accepting the task.
+const piReadOnlyReviewArgs = ['--no-approve'];
 const claudeReadOnlyReviewArgs = [
   '--setting-sources',
   'user',
@@ -251,6 +284,8 @@ const claudeReadOnlyReviewArgs = [
 ];
 
 module.exports = {
+  reviewRuntimeRootsByRunner,
+  piReadOnlyReviewArgs,
   claudeReadOnlyReviewArgs,
   codexHome,
   grokHome,

@@ -51,8 +51,9 @@ mock.module('../agents/contexts.js', {
 mock.module('../security/native-worker-owner.js', {
   namedExports: { assertNativeRunOwner: () => {} },
 });
+const workspaceSkills = await import('../review-workspaces/skills.js');
 mock.module('../review-workspaces/skills.js', {
-  namedExports: { bindReviewWorkspaceSupportValue: (value: string) => value },
+  namedExports: { ...workspaceSkills, bindReviewWorkspaceSupportValue: (value: string) => value },
 });
 mock.module('../review/session-mode.js', {
   namedExports: { WarmReviewRefusal: class extends Error {} },

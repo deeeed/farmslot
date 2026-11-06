@@ -12,6 +12,8 @@ Opt each review machine into capacity in its pool configuration:
 
 The machine must belong to the project, and the authenticated requester must own its native execution node. Select a runner with managed worker and read-only workspace capabilities. A machine can provide review capacity with no device slots.
 
+Pi, OpenCode, Cursor, Claude and Grok use the macOS host sandbox for slotless reviews; Codex enforces the same source/task boundary through its native filesystem policy. Runner profile and session directories stay writable. Pi excludes project-local startup files with `--no-approve`; OpenCode disables project configuration and grants external-directory access to declared source, frozen inputs and task outputs. Unspecified external directories default to denied for static review; explicit account path rules remain in force. Ordinary sessions retain their account policy. Grok requires native transport because its terminal trust prompt cannot be bypassed safely.
+
 Select the project template and frozen skill sources in `project.json`:
 
 ```json

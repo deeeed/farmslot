@@ -17,7 +17,10 @@ import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
 import { resolveProjectCommandEnv } from '../core/project-env.js';
 import { WarmReviewRefusal } from '../review/session-mode.js';
-import { bindReviewWorkspaceSupportValue } from '../review-workspaces/skills.js';
+import {
+  bindReviewWorkspaceSupportValue,
+  reviewWorkspaceReadOnlyRoots,
+} from '../review-workspaces/skills.js';
 import { getAllRuns, getRun, persistRunNow } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
@@ -242,6 +245,7 @@ export async function reviewTmuxOperation(
       effort: run.effort,
       trustWorkspace: true,
       workspaceTrust: 'untrusted',
+      reviewReadOnlyRoots: reviewWorkspaceReadOnlyRoots(w),
       // A cached newer Codex version shows an "Update available" notice (a modal
       // without a prompt, a history banner with one), which the launch handshake
       // fails on as an unknown prompt.
@@ -271,6 +275,7 @@ export async function reviewTmuxOperation(
       prompt,
       environment,
       support: w.support?.path,
+      readOnlyRoots: reviewWorkspaceReadOnlyRoots(w),
       runtimeRoots: nativeRunnerDefinitions[runner]?.reviewRuntimeRoots?.({ HOME: '~' }) ?? [
         '~/.codex',
       ],
