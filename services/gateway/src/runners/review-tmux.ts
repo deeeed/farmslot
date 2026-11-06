@@ -46,9 +46,14 @@ export interface ReviewTmuxOperationResult {
 export function reviewTmuxStartupState(
   signal: WorkerSignal | null,
   acceptance: RunnerPromptAcceptance | null,
-  timing?: { startedAt: string; now: number },
+  timing?: { startedAt: string; now: number; retainedSessionId?: string },
 ): 'acknowledged' | 'starting' | 'blocked' {
-  if (signal || acceptance) return 'acknowledged';
+  if (
+    timing?.retainedSessionId
+      ? acceptance?.sessionId === timing.retainedSessionId
+      : signal || acceptance
+  )
+    return 'acknowledged';
   const started = timing ? Date.parse(timing.startedAt) : NaN;
   if (timing && Number.isFinite(started) && timing.now - started >= REVIEW_STARTUP_TIMEOUT_MS)
     return 'blocked';
@@ -156,7 +161,6 @@ export function verifiedWarmReviewSessionId(run: Run): string | undefined {
 async function reserveReviewSession(run: Run): Promise<string | undefined> {
   const w = run.reviewWorkspace!;
   const argv = workspaceTerminalSessionCreateArgv(run.metrics.runner!, w.checkoutPath);
-  if (!argv) return undefined;
   const resumeSessionId = verifiedWarmReviewSessionId(run);
   if (
     resumeSessionId &&
@@ -168,6 +172,7 @@ async function reserveReviewSession(run: Run): Promise<string | undefined> {
     )
   )
     throw new Error('The retained reviewer is busy in another run');
+  if (!argv) return resumeSessionId;
   const script = path.posix.join(
     w.taskPath,
     'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts/review-session.cjs',
@@ -302,17 +307,29 @@ export async function launchReviewTmux(
     throw new Error('Stop the native reviewer before changing execution transport');
   const runnerSessionId = previous?.runnerSessionId ?? (await reserveReviewSession(run));
   await assertCurrent();
+  const prior = run.repeatReviewContext?.priorRunId
+    ? getRun(run.repeatReviewContext.priorRunId)
+    : undefined;
+  const retained = prior?.agentContexts?.find(
+    (context) =>
+      context.id === 'review' &&
+      context.reviewId === run.repeatReviewContext?.session?.reviewId &&
+      context.runnerSessionId === runnerSessionId,
+  );
+  const runnerSessionPath = previous?.runnerSessionPath ?? retained?.runnerSessionPath;
   const patch = {
     id: 'review',
     reviewId:
       resolveReviewMode({ run }) === 'warm'
         ? run.repeatReviewContext?.session?.reviewId
-        : (previous?.reviewId ?? randomUUID()),
+        : (previous?.reviewId ?? run.repeatReviewContext?.session?.reviewId ?? randomUUID()),
     label: 'Review',
     runner: run.metrics.runner,
     model: run.metrics.model,
+    effort: run.effort,
     status: 'launching' as const,
     runnerSessionId,
+    ...(runnerSessionPath ? { runnerSessionPath } : {}),
     target: { session, target: session },
     taskFile: path.posix.join(w.taskPath, 'TASK.md'),
     signalFile: path.posix.join(w.taskPath, 'SIGNAL.json'),

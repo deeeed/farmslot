@@ -122,6 +122,11 @@ export async function reloadPRRulesFromFile(): Promise<void> {
  * PRs with a live review intent across every owner, for the dashboard list.
  * Scheduler-style access to the store: the list itself is not principal-scoped.
  */
+/** Retention must defer until the durable intake store is loaded. */
+export function reviewWorkspacePendingPRs(): MonitoredPRIdentity[] | undefined {
+  return service ? listActiveReviewPRs() : undefined;
+}
+
 export function listActiveReviewPRs(): MonitoredPRIdentity[] {
   if (!service) return [];
   const live = new Set(['held', 'needs-configuration', 'queued', 'running']);

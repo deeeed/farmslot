@@ -402,3 +402,28 @@ The shared minimal-diff policy is owned by `@farmslot/agent-runtime/scripts/revi
 
 The public read-only script prints the policy with `instructions`, or the policy plus changed paths and sensitive-path candidates with `packet <repository> <publication-base> <head>`. Candidates require review against the frozen ticket; the scanner neither grants an exception nor detects semantic refactors or formatting churn. It does not change source, review results or publication authority.
 Grant-time head records provenance. Later fix heads on the same owned branch use current-head review rules and the recorded scope. An extension survives retirement of its granting run within the same PR scope. The command requires `--request-id` and accepts `--expected-limit` for a compare-and-set grant.
+
+## Slotless retention
+
+`static_review.workspace.retention_days` is a positive integer, default `7`.
+`static_review.workspace.root` is an optional absolute directory on the selected
+execution machine. Omit it to keep the existing node-owned workspace location.
+The allocator creates owner-scoped managed directories below that root, checks
+ownership and mount availability, and persists exact paths. Later configuration
+changes apply to new allocations; they do not move an existing binding.
+
+A completed slotless review records its exact conversation id/path, `reviewId`,
+validated reviewed head and retention deadline. Its retained conversation stays
+under the same project, PR, principal generation, machine, runner, model and
+effort. A re-review before expiry reuses that conversation and reviews only
+`lastReviewedHead..newHead`. Unsupported or ambiguous identity refuses WARM.
+After expiry, a fresh full-contribution COLD session is allowed with an explicit expiry reason;
+the prior lineage, findings and reviewed head remain recorded.
+
+Existing maintenance reclaims expired owned workspace/session files. It preserves
+run records, retained result artifacts and lineage receipts. Active runs,
+unresolved review decisions and queued review requests for the same PR prevent
+reclamation. An admitted continuation stays protected until it finishes, even
+when its predecessor's deadline passes. Deletion and review admission share a
+storage fence and revalidate PR activity before deleting. Unknown identity,
+unavailable storage or unconfirmed process closure leaves the files intact.

@@ -24,6 +24,7 @@ import {
   rereviewTarget,
 } from '../../pr-rules/rereview-request.js';
 import { WarmReviewRefusal } from '../../review/session-mode.js';
+import { bindWorkspaceReviewResult } from '../../review-workspaces/continuity.js';
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
@@ -40,7 +41,7 @@ import {
   terminalTransitionDeps,
 } from '../../run-lifecycle/terminal-transition.js';
 import { routeRunTransition } from '../../run-lifecycle/transition-router.js';
-import { createRun, getAllRuns, getRun, updateRun } from '../../runs/store.js';
+import { createRun, getAllRuns, getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { withSourcePlanning } from '../../sources/runtime.js';
 import { submitRereviewRequest } from '../pr-rules.js';
 
@@ -79,8 +80,15 @@ export async function runRereviewLatestHead(
 async function rereviewWithSources(
   params: RunRereviewLatestHeadParams,
 ): Promise<RunRereviewLatestHeadResult> {
-  const run = getRun(params.runId)!;
+  let run = getRun(params.runId)!;
   assertRereviewable(run);
+  if (run.reviewWorkspaceTarget && run.reviewResult) {
+    const result = bindWorkspaceReviewResult(run, run.reviewResult);
+    if (!run.reviewResult.session && result.session) {
+      run = updateRun(run.id, { reviewResult: result });
+      await persistRunNow(run, 'recover validated workspace review lineage');
+    }
+  }
   const fallbackRepo = (await loadProjectConfig(run.project))?.ci?.repo;
   const target = rereviewTarget(run, fallbackRepo);
   // The head is fetched once for both paths: it keys the intake request and
@@ -138,7 +146,7 @@ async function rereviewWithSources(
   );
   if (existing) return { mode: 'warm-handoff', runId: existing.id, headSha: live.headSha };
 
-  if (runner && model)
+  if (runner && model && !run.reviewWorkspaceTarget)
     assertWarmReviewRequestAvailable(
       parent,
       { runner, model, effort: run.effort ?? null, mode: 'warm', context: reviewContext },

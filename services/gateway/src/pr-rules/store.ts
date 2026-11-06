@@ -24,6 +24,10 @@ import { writeAtomicJSON } from '../core/atomic-json.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import {
+  assertReviewWorkspaceAdmissionOpen,
+  useReviewWorkspaceStorage,
+} from '../review-workspaces/storage-use.js';
+import {
   matchesPrincipalOwner,
   principalIdentityKey,
   principalOwnerStamp,
@@ -101,24 +105,28 @@ export class PRRuleStore {
   /** Existing source watchers call this after an external atomic configuration write. */
   reloadFromFile(): Promise<boolean> {
     this.writesPending += 1;
-    const operation = async () => {
-      // Decode inside the mutation queue so an earlier commit cannot be replaced by an old read.
-      try {
-        const data = decodePRRuleStore(JSON.parse(await readFile(this.file, 'utf8')));
-        const changed = this.sourceUnavailable || !isDeepStrictEqual(data, this.data);
-        this.data = data;
-        this.sourceUnavailable = false;
-        if (changed) publishPRAutomationResources();
-        return changed;
-      } catch (error) {
-        if (!this.sourceUnavailable) {
-          this.sourceUnavailable = true;
-          publishPRAutomationResources();
+    const operation = async () =>
+      useReviewWorkspaceStorage(async () => {
+        // Decode inside the mutation queue so an earlier commit cannot be replaced by an old read.
+        try {
+          const data = decodePRRuleStore(JSON.parse(await readFile(this.file, 'utf8')));
+          const changed = this.sourceUnavailable || !isDeepStrictEqual(data, this.data);
+          for (const intent of data.intents)
+            if (['held', 'needs-configuration', 'queued', 'running'].includes(intent.status))
+              assertReviewWorkspaceAdmissionOpen(intent.pr);
+          this.data = data;
+          this.sourceUnavailable = false;
+          if (changed) publishPRAutomationResources();
+          return changed;
+        } catch (error) {
+          if (!this.sourceUnavailable) {
+            this.sourceUnavailable = true;
+            publishPRAutomationResources();
+          }
+          // Preserve the actual observer failure. Protocol reads refuse retained old memory.
+          throw error;
         }
-        // Preserve the actual observer failure. Protocol reads refuse retained old memory.
-        throw error;
-      }
-    };
+      });
     const result = this.pending.then(operation, operation).finally(() => {
       this.writesPending -= 1;
     });
@@ -874,17 +882,21 @@ export class PRRuleStore {
 
   private change<T>(mutate: (data: PRRuleStoreData) => T | Promise<T>): Promise<T> {
     this.writesPending += 1;
-    const operation = async () => {
-      this.assertReadable();
-      const draft = structuredClone(this.data);
-      const result = await mutate(draft);
-      decodePRRuleStore(draft);
-      const changed = !isDeepStrictEqual(draft, this.data);
-      await writeAtomicJSON(this.file, draft);
-      this.data = draft;
-      if (changed) publishPRAutomationResources();
-      return structuredClone(result);
-    };
+    const operation = async () =>
+      useReviewWorkspaceStorage(async () => {
+        this.assertReadable();
+        const draft = structuredClone(this.data);
+        const result = await mutate(draft);
+        decodePRRuleStore(draft);
+        for (const intent of draft.intents)
+          if (['held', 'needs-configuration', 'queued', 'running'].includes(intent.status))
+            assertReviewWorkspaceAdmissionOpen(intent.pr);
+        const changed = !isDeepStrictEqual(draft, this.data);
+        await writeAtomicJSON(this.file, draft);
+        this.data = draft;
+        if (changed) publishPRAutomationResources();
+        return structuredClone(result);
+      });
     // Each failure reaches its caller without publishing a partial transaction; later calls can retry.
     const result = this.pending.then(operation, operation).finally(() => {
       this.writesPending -= 1;

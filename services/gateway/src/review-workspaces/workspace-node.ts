@@ -122,6 +122,8 @@ export const REVIEW_WORKSPACE_SCRIPT =
   ';\n' +
   String.raw`
 const input = JSON.parse(process.argv[1]);
+const purge = input.action === 'purge';
+if(purge)input.action='cleanup';
 const root = path.resolve(input.root);
 const identity = input.identity;
 const workspace = identity && path.join(root, 'runs', identity.workspaceId);
@@ -331,7 +333,64 @@ async function verifyCheckout() {
   // Ignored tool runtime state is not reviewed source. Preserve every other change.
   if (changes.some((entry) => !entry.startsWith('!! .agent/'))) throw new Error('Review checkout changed; refusing to discard files');
 }
+function validateCleanupSession() {
+  const files=[],directories=[];
+    const session=input.session;
+    if(session?.path && session.format==='codex-jsonl' && fs.existsSync(session.path)) {
+      const file=path.resolve(session.path);
+      const stat=fs.lstatSync(file);
+      if(!stat.isFile() || stat.isSymbolicLink() || !path.basename(file).endsWith('-'+session.runnerSessionId+'.jsonl'))
+        throw new Error('Retained conversation file ownership is unconfirmed');
+      const fd=fs.openSync(file,'r');
+      let first;
+      try {const data=Buffer.alloc(1024*1024);const count=fs.readSync(fd,data,0,data.length,0);first=data.subarray(0,count).toString('utf8').split('\n')[0];}
+      finally {fs.closeSync(fd);}
+      const meta=JSON.parse(first);
+      const canonical=(file)=>{
+        let parent=path.resolve(file),suffix=[];
+        while(!fs.existsSync(parent)){suffix.unshift(path.basename(parent));const next=path.dirname(parent);if(next===parent)throw new Error('Session cwd ownership cannot be resolved');parent=next;}
+        return path.join(fs.realpathSync(parent),...suffix);
+      };
+      if(meta.type!=='session_meta' || meta.payload?.id!==session.runnerSessionId || ![session.cwd,...(session.cwds || [])].some(cwd=>canonical(meta.payload.cwd)===canonical(cwd)))
+        throw new Error('Retained conversation metadata does not match the review');
+      const processes=spawnSync('ps',['-axo','pid=,args='],{encoding:'utf8',timeout:5000});
+      if(processes.error || processes.status!==0)throw new Error('Cannot confirm retained conversation process closure');
+      if(processes.stdout.split('\n').some(line=>Number(line.trim().split(/\s+/)[0])!==process.pid && line.trim().split(/\s+/).slice(1).includes(session.runnerSessionId)))
+        throw new Error('Retained conversation still has a live resume process');
+      const opened=spawnSync('lsof',['-nP','-t',file],{encoding:'utf8',timeout:5000});
+      if(opened.error || ![0,1].includes(opened.status) || opened.stderr.trim())throw new Error('Cannot confirm retained conversation file closure');
+      if(opened.status===0 && opened.stdout.trim())throw new Error('Retained conversation file is still open');
+      files.push(file);
+    }
+    if(session?.stateDirectory && fs.existsSync(session.stateDirectory)) {
+      const ownerHash=crypto.createHash('sha256').update(session.ownerPrincipalId || '').digest('hex');
+      const suffix=path.join('workers',ownerHash,session.nativeSessionId || '');
+      if(session.ownerPrincipalId!==identity.owner || !session.nativeSessionId || !path.resolve(session.stateDirectory).endsWith(path.sep+suffix))
+        throw new Error('Retained native state ownership is unconfirmed');
+      directory(session.stateDirectory);
+      directories.push(session.stateDirectory);
+    }
+  return {files,directories};
+}
+function finishCleanup() {
+  if(purge) {
+    const approved=validateCleanupSession();
+    for(const file of approved.files)fs.unlinkSync(file);
+    for(const dir of approved.directories)fs.rmSync(dir,{recursive:true});
+    directory(path.join(root,'retired'));
+    const stat=fs.lstatSync(workspace);
+    write(path.join(root,'retired',identity.workspaceId+'.json'),{version:1,identity,dev:stat.dev,ino:stat.ino});
+    fs.rmSync(workspace,{recursive:true,force:true});
+  }
+  write(path.join(operationPath,'state.json'),{state:'complete'});
+  process.stdout.write(JSON.stringify({state:purge?'purged':'cleaned'}));
+}
 (async () => {
+  if (root.startsWith('/Volumes/')) {
+    const volume = path.join('/Volumes', root.split('/')[2]);
+    if (!fs.existsSync(volume) || !fs.statSync(volume).isDirectory() || fs.statSync(volume).dev === fs.statSync('/Volumes').dev)
+      throw new Error('Configured review workspace volume is not mounted');
+  }
   directory(root);
   for (const name of ['runs','repositories','locks','operations']) directory(path.join(root,name));
   if (input.action === 'cancel') {
@@ -342,6 +401,16 @@ async function verifyCheckout() {
     marker(cancellationPath, identity, true);
     process.stdout.write(JSON.stringify({state:'cancelled'}));
     return;
+  }
+  const retirement=purge && read(path.join(root,'retired',identity.workspaceId+'.json'));
+  if(retirement) {
+    if(retirement.version!==1 || !same(retirement.identity,identity))throw new Error('Workspace retirement identity changed');
+    if(fs.existsSync(workspace)) {
+      const stat=fs.lstatSync(workspace);
+      if(!stat.isDirectory() || stat.isSymbolicLink() || stat.dev!==retirement.dev || stat.ino!==retirement.ino)throw new Error('Retired workspace directory changed');
+      fs.rmSync(workspace,{recursive:true,force:true});
+    }
+    process.stdout.write(JSON.stringify({state:'purged'}));return;
   }
   assertWorkspaceOperationCurrent();
   // Use the same durable claim protocol for owner storage and repository operations.
@@ -388,11 +457,11 @@ async function verifyCheckout() {
   marker(identityPath,identity,input.action === 'allocate');
   const receiptPath = path.join(workspace,'allocation.json');
   const previous = read(receiptPath);
+  if(purge)validateCleanupSession();
   // Cancellation can win before allocation creates either a cache or a receipt.
   if (input.action === 'cleanup' && (!previous || previous.state === 'cleaned') && !fs.existsSync(checkout) && same(read(cancellationPath), identity)) {
     write(receiptPath,{state:'cleaned',operationId:operation.id,updatedAt:new Date().toISOString()});
-    write(path.join(operationPath,'state.json'),{state:'complete'});
-    process.stdout.write(JSON.stringify({state:'cleaned'}));
+    finishCleanup();
     return;
   }
   const cacheMarker = path.join(root,'repositories',cacheKey+'.json');
@@ -407,8 +476,7 @@ async function verifyCheckout() {
       await git(['--git-dir',cache,'worktree','remove',checkout], 'remove-worktree');
     }
     write(receiptPath,{state:'cleaned',operationId:operation.id,updatedAt:new Date().toISOString()});
-    write(path.join(operationPath,'state.json'),{state:'complete'});
-    process.stdout.write(JSON.stringify({state:'cleaned'}));
+    finishCleanup();
   } else if (input.action === 'allocate') {
     if (['cleaned','cleaning'].includes(previous?.state)) throw new Error('Workspace was cleaned; create a new review run');
     directory(path.join(workspace,'task'));
