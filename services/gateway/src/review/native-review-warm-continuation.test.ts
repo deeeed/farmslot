@@ -206,7 +206,9 @@ mock.module('../tasks/checklist-target.js', {
     syncChecklistTargetForRole: noop,
   },
 });
-mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop, watchContext: noop } });
+mock.module('../tasks/watcher.js', {
+  namedExports: { unwatchContext: noop, watchContext: noop, onWorkerSignal: () => () => {} },
+});
 mock.module('./feedback.js', {
   namedExports: {
     logRecommendationCorrection: () => {},
