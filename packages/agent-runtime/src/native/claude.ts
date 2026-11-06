@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 import {
+  type NativeApprovalMode,
   nativeResultJsonSchema,
   type NativeSessionResponse,
   type NativeSessionTool,
@@ -107,6 +108,7 @@ export const claudeNativeAdapter: NativeAdapter = {
   resumeUnavailableReason: claudeResumeUnavailableReason,
   capabilities: {
     modes: ['default'],
+    approvalModes: ['ask', 'bypass'],
     streaming: true,
     tools: true,
     approvals: true,
@@ -135,6 +137,9 @@ export const claudeNativeAdapter: NativeAdapter = {
     let protocolFailure: Error | undefined;
     let initialized = false;
     let interruptedCommandId: string | undefined;
+    let pendingApprovalMode:
+      | { requestId: string; resolve(): void; reject(error: Error): void; timer: NodeJS.Timeout }
+      | undefined;
     let pendingInterrupt:
       | {
           requestId: string;
@@ -228,6 +233,14 @@ export const claudeNativeAdapter: NativeAdapter = {
           } else {
             pending.reject(new Error('Claude rejected the interrupt request'));
           }
+          return;
+        }
+        if (pendingApprovalMode && response.request_id === pendingApprovalMode.requestId) {
+          const pending = pendingApprovalMode;
+          pendingApprovalMode = undefined;
+          clearTimeout(pending.timer);
+          if (response.subtype === 'success') pending.resolve();
+          else pending.reject(new Error('Claude rejected the approval mode change'));
           return;
         }
         if (response.request_id === 'farmslot-initialize') {
@@ -435,7 +448,10 @@ export const claudeNativeAdapter: NativeAdapter = {
         '--replay-user-messages',
         '--permission-prompt-tool',
         'stdio',
-        ...(options.processSandbox || (options.safetyTier && options.safetyTier !== 'sandboxed')
+        ...(options.approvalMode !== undefined ? ['--allow-dangerously-skip-permissions'] : []),
+        ...(options.approvalMode === 'bypass' ||
+        options.processSandbox ||
+        (options.safetyTier && options.safetyTier !== 'sandboxed')
           ? ['--dangerously-skip-permissions']
           : []),
         ...(options.effort ? ['--effort', options.effort] : []),
@@ -448,6 +464,13 @@ export const claudeNativeAdapter: NativeAdapter = {
       options,
       onMessage,
       (error, processStopped, evidence) => {
+        if (pendingApprovalMode) {
+          clearTimeout(pendingApprovalMode.timer);
+          pendingApprovalMode.reject(
+            error ?? new Error('Claude closed before approval mode acknowledgement'),
+          );
+          pendingApprovalMode = undefined;
+        }
         if (pendingInterrupt) {
           clearTimeout(pendingInterrupt.timer);
           pendingInterrupt.reject(
@@ -472,6 +495,33 @@ export const claudeNativeAdapter: NativeAdapter = {
       },
     );
 
+    const changeApprovalMode = async (mode: NativeApprovalMode): Promise<void> => {
+      if (commandId || pendingApprovalMode)
+        throw new Error('Wait for the current turn before changing approvals');
+      await new Promise<void>((resolve, reject) => {
+        const requestId = `farmslot-approval-mode:${randomUUID()}`;
+        const timer = setTimeout(() => {
+          pendingApprovalMode = undefined;
+          reject(new Error('Claude approval mode acknowledgement timed out'));
+        }, 30_000);
+        pendingApprovalMode = { requestId, resolve, reject, timer };
+        try {
+          process.write({
+            type: 'control_request',
+            request_id: requestId,
+            request: {
+              subtype: 'set_permission_mode',
+              mode: mode === 'bypass' ? 'bypassPermissions' : 'default',
+            },
+          });
+        } catch (error) {
+          clearTimeout(timer);
+          pendingApprovalMode = undefined;
+          reject(error);
+        }
+      });
+    };
+
     try {
       await new Promise<void>((resolve, reject) => {
         resolveInitialized = resolve;
@@ -494,6 +544,8 @@ export const claudeNativeAdapter: NativeAdapter = {
           request: { subtype: 'initialize', hooks: null },
         });
       });
+      // Override an account's saved defaultMode before accepting the first standalone prompt.
+      if (options.approvalMode === 'ask') await changeApprovalMode('ask');
       if (!nativeSessionId)
         throw new Error('Claude did not provide a native session id during initialization');
       if (options.resumeSessionId && nativeSessionId !== options.resumeSessionId) {
@@ -512,6 +564,7 @@ export const claudeNativeAdapter: NativeAdapter = {
 
     return {
       nativeSessionId,
+      setApprovalMode: changeApprovalMode,
       async send(text, id) {
         if (!text) throw new Error('Claude prompt must not be empty');
         // Correlation is assigned before writing. Native replay may arrive after

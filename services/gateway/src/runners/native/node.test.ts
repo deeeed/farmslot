@@ -242,3 +242,54 @@ test('remote native routing validates reply shape and exact owner, node, and ses
     unregisterByWs(ws);
   }
 });
+
+test('older node decoders cannot silently drop an explicit approval mode before host admission', async () => {
+  const machine = 'native-old-approval-decoder';
+  const owner = 'native-owner';
+  let requests = 0;
+  const session = { id: 'session', ownerPrincipalId: owner, executionNodeId: machine };
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      requests++;
+      const frame = JSON.parse(raw);
+      assert.equal(frame.params.params.approvalMode, 'bypass');
+      handleNodeResponse(frame.id, true, { session }, undefined, undefined, ws);
+    },
+  } as WebSocket;
+  registerNode(
+    machine,
+    1,
+    ws,
+    undefined,
+    undefined,
+    { ownerPrincipalId: owner, supportsEnsure: true },
+    { principalId: 'node-test', valid: () => true },
+  );
+  const params = {
+    executionNodeId: machine,
+    sessionId: 'session',
+    runner: 'codex',
+    cwd: '/tmp',
+    approvalMode: 'bypass',
+  };
+  try {
+    for (const method of [
+      Methods.NATIVE_SESSION_CREATE,
+      Methods.NATIVE_SESSION_ENSURE,
+      Methods.NATIVE_SESSION_SET_APPROVAL_MODE,
+    ])
+      await assert.rejects(
+        routeNativeExecution(owner, method, params),
+        /Execution node upgrade required for per-session approval modes/,
+      );
+    assert.equal(requests, 0);
+    getNode(machine)!.nativeSessions!.supportsApprovalMode = true;
+    assert.deepEqual(await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, params), {
+      session,
+    });
+    assert.equal(requests, 1);
+  } finally {
+    unregisterByWs(ws);
+  }
+});

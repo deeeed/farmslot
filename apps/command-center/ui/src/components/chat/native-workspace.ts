@@ -25,6 +25,7 @@ import { WorkspaceReads } from '../workspace/workspace-reads.js';
 /** Commands a native view sends. Its reads come from the shared resource cache. */
 export type NativeSessionCommand =
   | typeof Methods.NATIVE_SESSION_CREATE
+  | typeof Methods.NATIVE_SESSION_SET_APPROVAL_MODE
   | typeof Methods.NATIVE_SESSION_SEND
   | typeof Methods.NATIVE_SESSION_RESPOND
   | typeof Methods.NATIVE_SESSION_INTERRUPT
@@ -459,7 +460,11 @@ export class NativeWorkspace extends LitElement {
                   </button>`,
               )}
               ${this.changes?.files.length === 0
-                ? html`<p class="empty">No workspace changes.</p>`
+                ? html`<p class="empty">
+                    ${this.changes.repository === false
+                      ? 'Not a git repository: no file changes to show.'
+                      : 'No workspace changes.'}
+                  </p>`
                 : changeSplit.hiddenCount > 0 && changeSplit.visible.length === 0
                   ? html`<p class="empty">Only test files changed (hidden).</p>`
                   : nothing}

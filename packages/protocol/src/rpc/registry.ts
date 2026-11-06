@@ -146,6 +146,7 @@ export const Methods = {
   NATIVE_PROFILE_REMOVE: 'native.profile.remove',
   NATIVE_SESSION_ENSURE: 'native.session.ensure',
   NATIVE_SESSION_READ: 'native.session.read',
+  NATIVE_SESSION_SET_APPROVAL_MODE: 'native.session.setApprovalMode',
   NATIVE_SESSION_LIST: 'native.session.list',
   NATIVE_SESSION_SEND: 'native.session.send',
   NATIVE_SESSION_RESPOND: 'native.session.respond',

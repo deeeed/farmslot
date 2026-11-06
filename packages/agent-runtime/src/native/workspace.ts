@@ -96,12 +96,27 @@ export async function nativeWorkspaceChanges(
 ): Promise<NativeWorkspaceChangesResult> {
   cwd = await realpath(cwd);
   if (relative !== '.') await workspacePath(cwd, relative, true);
+  const repository = await git(cwd, ['rev-parse', '--show-toplevel'], WORKSPACE_TEXT_LIMIT, {
+    LC_ALL: 'C',
+  })
+    .then((root) => root.replace(/\n$/, ''))
+    .catch((error: unknown) => {
+      const failure = error as { code?: unknown; stderr?: unknown };
+      // Only Git's explicit absence is empty. Permission/corruption/exec failures stay errors.
+      if (
+        failure.code === 128 &&
+        typeof failure.stderr === 'string' &&
+        failure.stderr.startsWith('fatal: not a git repository (or any ')
+      )
+        return undefined;
+      throw error;
+    });
+  if (repository === undefined) return { files: [], repository: false };
   const raw = await git(
     cwd,
     ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', relative],
     STATUS_OUTPUT_LIMIT,
   );
-  const repository = (await git(cwd, ['rev-parse', '--show-toplevel'])).replace(/\n$/, '');
   const records = raw.split('\0');
   const files: NativeWorkspaceChangesResult['files'] = [];
   let truncated = false;

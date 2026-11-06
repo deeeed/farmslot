@@ -189,6 +189,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'native.session.read': { classification: 'native-owner' },
   'native.session.respond': { classification: 'native-owner' },
   'native.session.send': { classification: 'native-owner' },
+  'native.session.setApprovalMode': { classification: 'native-owner' },
   'native.session.turn.diff': { classification: 'native-owner' },
   'native.session.workspace.changes': { classification: 'native-owner' },
   'native.session.workspace.diff': { classification: 'native-owner' },

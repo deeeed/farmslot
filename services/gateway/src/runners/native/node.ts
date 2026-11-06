@@ -244,6 +244,14 @@ export async function routeNativeExecution(
   const node = resolved instanceof Promise ? await resolved : resolved;
   assertNodeReconnectCurrent();
   if (
+    (params.approvalMode !== undefined || method === Methods.NATIVE_SESSION_SET_APPROVAL_MODE) &&
+    !node.nativeSessions.supportsApprovalMode
+  )
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      'Execution node upgrade required for per-session approval modes',
+    );
+  if (
     method === NATIVE_WORKER_CONFIRM_STOPPED &&
     !node.nativeSessions.supportsWorkerStopAttestation
   )

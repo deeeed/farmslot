@@ -1,0 +1,1 @@
+- Document the native session approval-policy operation in the generated gateway API reference.

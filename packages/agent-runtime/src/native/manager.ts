@@ -15,6 +15,7 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:pa
 import { promisify } from 'node:util';
 
 import {
+  type NativeApprovalMode,
   type NativeCommandReceipt,
   type NativeProfileInfo,
   type NativeSessionCreateParams,
@@ -235,6 +236,7 @@ interface SessionRecord {
   steering?: Set<string>;
   context: Record<string, string>;
   sending: boolean;
+  configuring?: boolean;
   /** A read-only checkout: no checkpoints. */
   readOnlyCheckout?: boolean;
   /** Git checkpoints around each turn, or none (no Git working tree); opened when first needed. */
@@ -429,6 +431,8 @@ export class NativeSessionManager {
     requester?: NativeSessionRequester,
   ): Promise<NativeSessionInfo> {
     assertResumeCurrent?.();
+    if (workerLaunch && params.approvalMode !== undefined)
+      throw new Error('Workers retain their launch approval policy');
     const profile = params.profileId
       ? requireNativeProfile(params.profileId, params.runner)
       : undefined;
@@ -639,6 +643,9 @@ export class NativeSessionManager {
       ...resolved,
       model: params.model ?? previous?.info.model,
       mode,
+      ...(!workerLaunch
+        ? { approvalMode: params.approvalMode ?? previous?.info.approvalMode ?? 'ask' }
+        : {}),
       accountMode: 'native',
       resultSchema: params.resultSchema ?? previous?.info.resultSchema,
       ...(effort ? { effort } : {}),
@@ -701,6 +708,7 @@ export class NativeSessionManager {
           mode,
           model: info.model,
           effort,
+          approvalMode: info.approvalMode,
           onSpawn: (pid, identity) => {
             info.processPid = pid;
             info.processIdentity = identity;
@@ -767,9 +775,26 @@ export class NativeSessionManager {
       throw new Error('Reserved sessionId belongs to another owner');
     if (record.info.workerLeaseId !== workerLaunch?.leaseId)
       throw new Error('Reserved sessionId belongs to another worker task lease');
-    for (const field of ['runner', 'cwd', 'model', 'mode', 'profileId', 'resultSchema'] as const) {
-      const requested = field === 'mode' ? (params.mode ?? 'default') : params[field];
-      if (record.info[field] !== requested)
+    for (const field of [
+      'runner',
+      'cwd',
+      'model',
+      'mode',
+      'profileId',
+      'resultSchema',
+      'approvalMode',
+    ] as const) {
+      const requested =
+        field === 'mode'
+          ? (params.mode ?? 'default')
+          : field === 'approvalMode' && !workerLaunch
+            ? (params.approvalMode ?? 'ask')
+            : params[field];
+      if (
+        (field === 'approvalMode' && !workerLaunch
+          ? (record.info[field] ?? 'ask')
+          : record.info[field]) !== requested
+      )
         throw new Error(`Reserved sessionId launch configuration differs: ${field}`);
     }
     if (!workerLaunch && params.effort !== undefined && record.info.effort !== params.effort)
@@ -1246,6 +1271,7 @@ export class NativeSessionManager {
         ...record.info.capabilities,
         // A host property, not the runner's: this host removes any session's queued input.
         cancelQueued: true,
+        ...(record.info.workerManaged ? { approvalModes: undefined } : {}),
         ...(unavailable ? { resume: false, resumeUnavailableReason: unavailable } : {}),
       },
     };
@@ -1295,7 +1321,46 @@ export class NativeSessionManager {
     );
     return { ...result, session: this.snapshot({ info: result.session }) };
   }
+  async setApprovalMode(
+    owner: string,
+    id: string,
+    mode: NativeApprovalMode,
+  ): Promise<NativeSessionInfo> {
+    if (mode !== 'ask' && mode !== 'bypass') throw new Error('Unknown native approval mode');
+    const record = this.owned(owner, id);
+    this.assertUnmanagedSession(owner, id);
+    if (
+      !record.adapter?.setApprovalMode ||
+      record.info.state !== 'idle' ||
+      record.sending ||
+      record.configuring ||
+      record.pendingRequests.size ||
+      [...record.commands.values()].some(
+        (command) =>
+          command.generation === record.info.generation &&
+          ['pending', 'unknown', 'accepted'].includes(command.state),
+      )
+    )
+      throw new Error('Wait for an idle session with no pending input before changing approvals');
+    record.configuring = true;
+    record.info.approvalModePending = mode;
+    try {
+      // Write intent before the native setting. A lost acknowledgement must never send under
+      // a policy different from the one displayed; an explicit idempotent setter can confirm it.
+      this.persist(record);
+      await record.adapter.setApprovalMode(mode);
+      record.info.approvalMode = mode;
+      delete record.info.approvalModePending;
+      this.persist(record);
+      return this.snapshot(record);
+    } finally {
+      record.configuring = false;
+    }
+  }
+
   private assertAccountCurrent(record: SessionRecord): void {
+    if (record.info.approvalModePending)
+      throw new Error('Approval mode is unconfirmed; set it again before sending input');
     if (!record.info.profileId) return;
     assertNativeProfileCurrent({
       id: record.info.profileId,

@@ -614,6 +614,10 @@
       "surface": "rpc-only",
       "note": "Opt-in native runner session; use farmslot rpc with an owning principal and execution node."
     },
+    "native.session.setApprovalMode": {
+      "surface": "rpc-only",
+      "note": "Change an idle standalone session tool policy through farmslot rpc native.session.setApprovalMode."
+    },
     "native.session.workspace.changes": {
       "surface": "rpc-only",
       "note": "Owned agent workspace session; available in Copilot and farmslot rpc."

@@ -60,6 +60,9 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
           case NATIVE_WORKER_READ:
             value = manager.readWorker(p.owner, p.id, p.leaseId, p.after, p.limit);
             break;
+          case 'setApprovalMode':
+            value = await manager.setApprovalMode(p.owner, p.id, p.approvalMode);
+            break;
           case 'create':
             value = await manager.create(p.owner, p.params, undefined, p.requester);
             break;

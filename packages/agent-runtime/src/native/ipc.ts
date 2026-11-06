@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   isNativeResultSchema,
+  type NativeApprovalMode,
   type NativeSessionCreateParams,
   type NativeSessionEnsureParams,
   type NativeSessionRequester,
@@ -30,6 +31,7 @@ import {
 } from './worker-launch.js';
 
 export interface HostIdentity {
+  supportsApprovalMode?: boolean;
   supportsStandaloneDelegation?: boolean;
   executionNodeId?: string;
   supportsEnsure?: boolean;
@@ -44,6 +46,7 @@ export interface HostIdentity {
   socket: string;
 }
 export type HostRequest =
+  | { method: 'setApprovalMode'; owner: string; id: string; approvalMode: NativeApprovalMode }
   | {
       method: typeof NATIVE_WORKER_READ;
       owner: string;
@@ -179,6 +182,13 @@ export function decodeRequest(value: unknown): HostRequest {
       runner: string(v, 'runner'),
       cwd: string(v, 'cwd'),
     };
+    if (v.approvalMode !== undefined) {
+      if (v.approvalMode !== 'ask' && v.approvalMode !== 'bypass')
+        throw new Error('Unknown native approval mode');
+      if (method === NATIVE_WORKER_ENSURE || method === NATIVE_WORKER_RESUME)
+        throw new Error('Workers retain their launch approval policy');
+      params.approvalMode = v.approvalMode;
+    }
     if (v.model !== undefined) params.model = string(v, 'model');
     if (v.effort !== undefined) params.effort = string(v, 'effort');
     if (v.resultSchema !== undefined) {
@@ -228,6 +238,11 @@ export function decodeRequest(value: unknown): HostRequest {
     return { method, owner, params, requester: parseNativeSessionRequester(p.requester) };
   }
   const id = string(p, 'id');
+  if (method === 'setApprovalMode') {
+    if (p.approvalMode !== 'ask' && p.approvalMode !== 'bypass')
+      throw new Error('Unknown native approval mode');
+    return { method, owner, id, approvalMode: p.approvalMode };
+  }
   if (method === NATIVE_WORKER_CANCEL)
     return {
       method,

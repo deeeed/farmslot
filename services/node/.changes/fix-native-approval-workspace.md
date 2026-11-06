@@ -1,0 +1,1 @@
+- Forward explicit native approval policies and advertise support so older nodes cannot silently ignore them.

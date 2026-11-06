@@ -9,9 +9,13 @@ export interface NativeSessionRequester {
   principalGeneration: number;
 }
 
+export type NativeApprovalMode = 'ask' | 'bypass';
+
 /** Native sessions are opt-in. Authentication and agent execution remain runner-owned. */
 export interface NativeSessionCapabilities {
   modes: Array<'default' | 'plan'>;
+  /** Separate from planning. Absent on hosts predating per-session tool policy. */
+  approvalModes?: NativeApprovalMode[];
   streaming: boolean;
   tools: boolean;
   approvals: boolean;
@@ -41,6 +45,8 @@ export interface NativeSessionCreateParams {
   model?: string;
   effort?: string;
   mode?: 'default' | 'plan';
+  /** Standalone sessions only. Omitted means ask, or the saved mode when resuming. */
+  approvalMode?: NativeApprovalMode;
   /** Pipeline reviewers bind this schema before their first command. */
   resultSchema?: NativeResultSchema;
   /** Exact native identity, never a live TUI takeover. */
@@ -60,6 +66,11 @@ export interface NativeWorkerControlTarget {
   leaseId: string;
 }
 
+/** Explicit idle-session tool policy change. Worker launch settings remain authoritative. */
+export interface NativeSessionSetApprovalModeParams extends NativeSessionTargetParams {
+  approvalMode: NativeApprovalMode;
+}
+
 /** Idempotent initial creation. Older runtimes reject this operation without launching. */
 export interface NativeSessionEnsureParams extends Omit<
   NativeSessionCreateParams,
@@ -71,6 +82,8 @@ export interface NativeSessionEnsureParams extends Omit<
 
 /** Opt-in declaration made by an authenticated node, not a client-supplied account claim. */
 export interface NativeExecutionNodeDeclaration {
+  /** The node forwards standalone approval settings without dropping them. */
+  supportsApprovalMode?: boolean;
   /** The runtime persists server-derived standalone requester attribution. */
   supportsStandaloneDelegation?: boolean;
   /** Source-backed journal/account receipts on the authenticated node connection. */
@@ -182,6 +195,10 @@ export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
   model?: string;
   mode: 'default' | 'plan';
   accountMode: 'native';
+  /** Absent on older journals, whose policy is ask. Workers keep their launch policy. */
+  approvalMode?: NativeApprovalMode;
+  /** A timed-out native setter blocks input until the setting is explicitly confirmed. */
+  approvalModePending?: NativeApprovalMode;
   resultSchema?: NativeResultSchema;
   effort?: string;
   /** Recovery must rebuild the trusted worker launch configuration through run controls. */
@@ -385,6 +402,8 @@ export interface NativeWorkspaceListResult {
   truncated: boolean;
 }
 export interface NativeWorkspaceChangesResult {
+  /** False for a directory outside a Git work tree; files remain browsable. */
+  repository?: boolean;
   files: Array<{ path: string; status: string }>;
   truncated?: boolean;
 }

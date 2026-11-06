@@ -1,0 +1,1 @@
+- Choose ask or bypass tool approvals at native launch or between turns; keep non-Git Files and Changes usable.
