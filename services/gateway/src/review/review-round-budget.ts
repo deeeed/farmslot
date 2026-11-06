@@ -1,16 +1,21 @@
 import {
   type AgentContext,
+  isReviewRoundNoVerdictSettlement,
+  isTerminalRunStatus,
   type Principal,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
-  type ReviewAttempt,
   type ReviewBudgetExtension,
+  reviewRoundAdmissionId,
+  reviewRoundAdmissionIds,
   reviewRoundAdmissionsInScope,
   type ReviewRoundBudget,
   reviewRoundBudget,
   reviewRoundBudgetForRun,
   type ReviewRoundSettlement,
+  reviewRoundSettlementsForRun,
   type Run,
   type RunExtendReviewBudgetParams,
+  workspaceReviewRoundAdmissionId,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
@@ -27,13 +32,15 @@ import {
 
 import { reviewPRIdentity } from './session-mode.js';
 
-export function reviewRoundAdmissionId(
-  reviewId: string,
-  loopNumber: number,
-  startedAt: string,
-): string {
-  return JSON.stringify([reviewId, loopNumber, startedAt]);
+// Launch intent is durable before runner effects. Context-free reservations from
+// an earlier gateway cannot represent a live reviewer; current startup gaps can.
+const pendingStartups = new Map<string, number>();
+const startupKey = (runId: string, admission: string) => JSON.stringify([runId, admission]);
+function releasePendingStartup(scope: readonly Run[], admission: string): void {
+  for (const run of scope) pendingStartups.delete(startupKey(run.id, admission));
 }
+
+export { reviewRoundAdmissionId } from '@farmslot/protocol';
 
 /**
  * The launch time a review attempt's round is admitted under. A review context
@@ -67,69 +74,6 @@ export function reviewContextRoundId(
   );
 }
 
-function historicalAdmissions(run: Run): string[] {
-  if (run.reviewRoundAdmissions) return run.reviewRoundAdmissions;
-  const ids = new Set<string>();
-  const add = (reviewId: string, attempt: Partial<ReviewAttempt>, fallback?: string) => {
-    const lineage = attempt.session?.reviewId ?? reviewId;
-    const loop = attempt.loopNumber ?? 1;
-    // Older result timestamps can describe completion. The matching context
-    // records launch, so both records must identify that same round.
-    const context = [...(run.agentContexts ?? [])]
-      .reverse()
-      .find(
-        (candidate) =>
-          candidate.role === 'review' &&
-          (candidate.reviewId ?? candidate.id) === lineage &&
-          (candidate.reviewLoopNumber ?? 1) === loop,
-      );
-    ids.add(
-      reviewRoundAdmissionId(
-        lineage,
-        loop,
-        context?.attemptStartedAt ??
-          context?.startedAt ??
-          attempt.startedAt ??
-          fallback ??
-          'historical',
-      ),
-    );
-  };
-  for (const review of run.engineState?.publishGate?.reviews ?? []) {
-    if (review.verdict === 'skipped') continue;
-    for (const attempt of review.attempts?.length ? review.attempts : [review]) {
-      if (attempt.verdict !== 'skipped')
-        add(review.session?.reviewId ?? review.id, attempt, review.startedAt);
-    }
-  }
-  const pipeline = run.steps.find((step) => step.name === 'review')?.outputs;
-  if (pipeline && Array.isArray(pipeline.attempts)) {
-    for (const attempt of pipeline.attempts as ReviewAttempt[]) {
-      if (attempt.verdict !== 'skipped')
-        add(
-          typeof pipeline.reviewId === 'string' ? pipeline.reviewId : `pipeline-review-${run.id}`,
-          attempt,
-        );
-    }
-  }
-  for (const context of run.agentContexts ?? []) {
-    if (
-      (context.role !== 'review' && !(context.role === 'primary' && run.reviewWorkspaceSubject)) ||
-      !(context.attemptStartedAt ?? context.startedAt)
-    )
-      continue;
-    if (context.role === 'primary' && run.reviewWorkspaceSubject) {
-      add(`workspace-review-${run.id}`, { loopNumber: 1, startedAt: run.createdAt });
-      continue;
-    }
-    add(context.reviewId ?? context.id, {
-      loopNumber: context.reviewLoopNumber ?? 1,
-      startedAt: context.attemptStartedAt ?? context.startedAt,
-    });
-  }
-  return [...ids];
-}
-
 function scopedRuns(run: Run, stored: readonly Run[]): Run[] {
   const byId = new Map(stored.map((candidate) => [candidate.id, candidate]));
   // Admission reads the live map again after archive IO. Another caller may
@@ -156,7 +100,7 @@ function scopedRuns(run: Run, stored: readonly Run[]): Run[] {
 }
 
 function admissionsFor(runs: readonly Run[]): string[] {
-  return [...new Set(runs.flatMap(historicalAdmissions))];
+  return [...new Set(runs.flatMap((run) => reviewRoundAdmissionIds(run)))];
 }
 
 function extensionsFor(runs: readonly Run[]): ReviewBudgetExtension[] {
@@ -170,7 +114,24 @@ function extensionsFor(runs: readonly Run[]): ReviewBudgetExtension[] {
 }
 
 function settlementsFor(runs: readonly Run[]): Record<string, ReviewRoundSettlement> {
-  return Object.assign({}, ...runs.map((run) => run.reviewRoundSettlements ?? {}));
+  const settlements: Record<string, ReviewRoundSettlement> = {};
+  const rank = (entry: ReviewRoundSettlement) =>
+    entry.kind === 'verdict' ? 2 : entry.kind === 'pending' ? 0 : 1;
+  for (const run of runs)
+    for (const [id, value] of Object.entries(run.reviewRoundSettlements ?? {})) {
+      const previous = settlements[id];
+      if (
+        !previous ||
+        value.at > previous.at ||
+        (value.at === previous.at && rank(value) > rank(previous))
+      )
+        settlements[id] = value;
+    }
+  // A copied legacy result cannot override an explicit disposition from its owner.
+  for (const run of runs)
+    for (const [id, value] of Object.entries(reviewRoundSettlementsForRun(run)))
+      settlements[id] ??= value;
+  return settlements;
 }
 
 function ownersFor(runs: readonly Run[]): Record<string, string> {
@@ -275,6 +236,68 @@ function refuseSpentBudget(budget: ReviewRoundBudget): void {
     );
 }
 
+/** Pending launches reserve capacity without claiming a completed review round. */
+function refuseUnavailableRounds(run: Run, scope: readonly Run[]): void {
+  const budget = budgetForRun(run, budgetFor(run, scope));
+  refuseSpentBudget(budget);
+  const settlements = settlementsFor(scope);
+  const inScope = reviewRoundAdmissionsInScope({
+    ...run,
+    reviewRoundAdmissions: admissionsFor(scope),
+    reviewRoundOwners: ownersFor(scope),
+  });
+  const pending = inScope.filter((id) => {
+    const state = settlements[id];
+    if (state?.kind === 'verdict' || isReviewRoundNoVerdictSettlement(state)) return false;
+    const contexts = scope.flatMap((candidate) =>
+      (candidate.agentContexts ?? []).filter((context) => {
+        if (
+          candidate.reviewWorkspaceSubject &&
+          (context.role === 'review' || context.role === 'primary') &&
+          workspaceReviewRoundAdmissionId(candidate) === id
+        )
+          return true;
+        return (
+          context.role === 'review' &&
+          [context.startedAt, context.attemptStartedAt].some(
+            (at) =>
+              at &&
+              reviewRoundAdmissionId(
+                context.reviewId ?? context.id,
+                context.reviewLoopNumber ?? 1,
+                at,
+              ) === id,
+          )
+        );
+      }),
+    );
+    return (
+      (contexts.length === 0 &&
+        state?.kind === 'pending' &&
+        scope.some(
+          (owner) =>
+            !owner.archivedAt &&
+            owner.status !== 'paused' &&
+            !isTerminalRunStatus(owner.status) &&
+            pendingStartups.get(startupKey(owner.id, id)) === (owner.engineState?.generation ?? 0),
+        )) ||
+      contexts.some(
+        (context) =>
+          ['launching', 'working', 'waiting'].includes(context.status) ||
+          (!!context.nativeSession &&
+            !context.nativeSession.closedAt &&
+            !context.nativeSession.releasedAt),
+      )
+    );
+  }).length;
+  if (budget.used + pending >= budget.limit)
+    throw new GatewayMethodError(
+      'REVIEW_ROUND_PENDING',
+      'Review capacity is reserved by reviewers awaiting a verdict. Wait for them to finish or resolve their failed launch.',
+      { details: { reviewRoundBudget: budget } },
+    );
+}
+
 function decisionsWithBudget(run: Run, budget: ReviewRoundBudget): Run['decisions'] {
   return run.decisions.map((decision) =>
     !decision.resolvedAt && decision.payload?.kind === 'ready'
@@ -287,16 +310,28 @@ function decisionsWithBudget(run: Run, budget: ReviewRoundBudget): Run['decision
 export async function attachReviewRoundBudget(run: Run): Promise<Run> {
   if (!run.decisions.some((decision) => !decision.resolvedAt && decision.payload?.kind === 'ready'))
     return run;
-  return { ...run, decisions: decisionsWithBudget(run, await runReviewRoundBudget(run)) };
+  const scope = scopedRuns(run, await getAllRunsWithArchived());
+  return {
+    ...run,
+    reviewRoundSettlements: settlementsFor(scope),
+    decisions: decisionsWithBudget(run, budgetForRun(run, budgetFor(run, scope))),
+  };
 }
 
 export async function assertReviewRoundAvailable(run: Run): Promise<void> {
-  refuseSpentBudget(await runReviewRoundBudget(run));
+  refuseUnavailableRounds(run, scopedRuns(run, await getAllRunsWithArchived()));
 }
 
 export function reviewBudgetScopeBrief(run: Run): string {
   const budget = budgetFor(run, [run]);
-  return formatReviewBudgetScopeBrief(budget.used, budget.limit, budget.extensions ?? []);
+  const pending = Object.values(run.reviewRoundSettlements ?? {}).some(
+    (entry) => entry.kind === 'pending',
+  );
+  return formatReviewBudgetScopeBrief(
+    budget.used + (pending ? 1 : 0),
+    budget.limit,
+    budget.extensions ?? [],
+  );
 }
 
 /** Static task inputs freeze before dispatch reserves its next admission. */
@@ -331,7 +366,7 @@ export async function prepareReviewRoundAvailabilityCheck(runId: string): Promis
   return () => {
     const run = getRun(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
-    refuseSpentBudget(budgetForRun(run, budgetFor(run, scopedRuns(run, stored))));
+    refuseUnavailableRounds(run, scopedRuns(run, stored));
   };
 }
 
@@ -372,11 +407,20 @@ export async function admitReviewRound(runId: string, attemptId: string): Promis
     const owners = ownersFor(scope);
     // A receipt admitted again (a reattach) is the same attempt and keeps its settlement.
     if (!admissions.includes(attemptId)) {
-      refuseSpentBudget(budgetForRun(run, budgetFor(run, scope)));
+      refuseUnavailableRounds(run, scope);
       admissions.push(attemptId);
       if (run.flowType === 'update-branch') owners[attemptId] = run.id;
     }
-    await persistScopedRounds(scope, admissions, settlementsFor(scope), owners);
+    const settlements = settlementsFor(scope);
+    if (!settlements[attemptId])
+      settlements[attemptId] = {
+        kind: 'pending',
+        reason: 'Waiting for reviewer verdict',
+        at: new Date().toISOString(),
+      };
+    await persistScopedRounds(scope, admissions, settlements, owners);
+    if (settlements[attemptId]?.kind === 'pending')
+      pendingStartups.set(startupKey(run.id, attemptId), run.engineState?.generation ?? 0);
   });
 }
 
@@ -389,38 +433,61 @@ export async function settleReviewRoundNoVerdict(
   runId: string,
   attemptId: string,
   reason: string,
-  kind?: ReviewRoundSettlement['kind'],
+  kind?: 'infrastructure-fallback',
 ): Promise<void> {
   // A deleted run has no budget scope left to record into.
   if (!getRun(runId)) return;
   return withBudget(runId, async (_run, scope) => {
     const admissions = admissionsFor(scope);
     const settlements = settlementsFor(scope);
-    if (!admissions.includes(attemptId) || settlements[attemptId]) return;
+    if (
+      !admissions.includes(attemptId) ||
+      isReviewRoundNoVerdictSettlement(settlements[attemptId]) ||
+      settlements[attemptId]?.kind === 'verdict'
+    )
+      return;
     settlements[attemptId] = { reason, at: new Date().toISOString(), ...(kind ? { kind } : {}) };
     await persistScopedRounds(scope, admissions, settlements);
+    releasePendingStartup(scope, attemptId);
   });
 }
 
 /** A settled attempt whose pass or issues verdict recovery later ingested counts again. */
-export async function clearReviewRoundSettlement(
+export async function recordReviewRoundVerdict(
   runId: string,
   attemptId: string,
   review?: Pick<AgentContext, 'reviewFallback'>,
 ): Promise<void> {
   if (!getRun(runId)) return;
   return withBudget(runId, async (_run, scope) => {
-    const { [attemptId]: settled, ...settlements } = settlementsFor(scope);
+    const settlements = settlementsFor(scope);
+    const settled = settlements[attemptId];
+    if (
+      settled?.kind === 'verdict' &&
+      scope.some(
+        (run) =>
+          run.reviewRoundSettlements?.[attemptId]?.kind === 'verdict' &&
+          run.reviewRoundSettlements[attemptId]?.at === settled.at,
+      )
+    )
+      return;
     // A farm replacement shares the failed WARM launch's admission. Its valid
     // verdict cannot turn that explicitly free replacement back into a paid round.
     if (
-      settled &&
+      admissionsFor(scope).includes(attemptId) &&
       !(
-        settled.kind === 'infrastructure-fallback' &&
+        settled?.kind === 'infrastructure-fallback' &&
         review?.reviewFallback?.reason === 'session-unavailable'
       )
-    )
+    ) {
+      settlements[attemptId] = {
+        kind: 'verdict',
+        reason: 'Reviewer verdict recorded',
+        at: new Date().toISOString(),
+      };
       await persistScopedRounds(scope, admissionsFor(scope), settlements);
+      releasePendingStartup(scope, attemptId);
+    }
   });
 }
 
@@ -439,7 +506,7 @@ export async function reviewNoVerdictCapReason(run: Run): Promise<string | undef
     reviewRoundAdmissions: admissionsFor(scope),
     reviewRoundOwners: ownersFor(scope),
   })
-    .flatMap((id) => settlements[id] ?? [])
+    .flatMap((id) => (isReviewRoundNoVerdictSettlement(settlements[id]) ? [settlements[id]!] : []))
     .sort((a, b) => a.at.localeCompare(b.at))
     .slice(-budget.noVerdictLimit)
     .map((entry) => entry.reason);

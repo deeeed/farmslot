@@ -12,6 +12,7 @@ import {
   reviewRequestFromSequence,
 } from '@farmslot/review-dispatch';
 
+import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
 import {
   registerWarmReviewerSession,
   resetWarmReviewerSessionsForTest,
@@ -50,7 +51,7 @@ test('complete replay repairs an unbound warm row from its original pair and cur
         selectionData: { reviewRequest: reviewRequestFromSequence(plan) },
       },
     ],
-    reviewRoundAdmissions: Array.from({ length: 7 }, (_, index) => `spent-${index}`),
+    ...recordedReviewRounds(Array.from({ length: 7 }, (_, index) => `spent-${index}`)),
     engineState: {
       publishGate: {
         reviewSequence: [{ ...plan[0], mode: 'warm' }],
@@ -68,7 +69,10 @@ test('complete replay repairs an unbound warm row from its original pair and cur
       },
     },
   });
-  run.reviewRoundAdmissions = Array.from({ length: 7 }, (_, index) => `spent-${index}`);
+  Object.assign(
+    run,
+    recordedReviewRounds(Array.from({ length: 7 }, (_, index) => `spent-${index}`)),
+  );
   const before = structuredClone(run);
   const repaired = repairUnboundRecoveryReviewPlan(run, head);
   assert.deepEqual(repaired?.sequence, [plan[1]]);

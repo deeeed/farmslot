@@ -363,7 +363,7 @@ test('a replay that supersedes the monitor settles that attempt, not the one it 
   await assert.rejects(f.monitor(), /no longer owns/);
   const settlements = getRun(f.runId)?.reviewRoundSettlements ?? {};
   assert.match(settlements[workspaceRound(f.runId, 7)]?.reason ?? '', /no longer owns/);
-  assert.equal(settlements[workspaceRound(f.runId, 8)], undefined);
+  assert.equal(settlements[workspaceRound(f.runId, 8)]?.kind, 'pending');
 });
 
 test('a monitor-only replay settles the attempt it superseded; its verdict counts that round again', async () => {
@@ -382,7 +382,7 @@ test('a monitor-only replay settles the attempt it superseded; its verdict count
   afterWait = undefined;
   await executeReviewWorkspaceStep(f.runId, PipelineSteps.MONITOR, 8, () => {});
   assert.deepEqual(getRun(f.runId)?.reviewResult, result);
-  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round], undefined);
+  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round]?.kind, 'verdict');
   assert.equal(getRun(f.runId)?.reviewRoundAdmissions?.filter((id) => id === round).length, 1);
 });
 
@@ -399,7 +399,7 @@ test('a monitor that recorded its review result before failing settles nothing',
   );
   assert.deepEqual(getRun(f.runId)?.reviewResult, result);
   // Fixture runs share one PR scope, so only this attempt's receipt is checked.
-  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round], undefined);
+  assert.equal(getRun(f.runId)?.reviewRoundSettlements?.[round]?.kind, 'verdict');
 });
 
 for (const change of ['cancel', 'generation', 'lease'] as const) {

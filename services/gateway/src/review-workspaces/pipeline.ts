@@ -9,6 +9,7 @@ import {
   type ReviewWorkspaceSubject,
   type Run,
   type WorkerSignal,
+  workspaceReviewRoundAdmissionId as workspaceReviewRoundId,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
@@ -19,8 +20,7 @@ import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import {
   admitReviewRound,
-  clearReviewRoundSettlement,
-  reviewRoundAdmissionId,
+  recordReviewRoundVerdict,
   settleReviewRoundNoVerdict,
 } from '../review/review-round-budget.js';
 import { isUncertainReviewerOperation } from '../review/terminal-result.js';
@@ -203,7 +203,7 @@ export async function recordWorkspaceReviewCompletion(
   await persistRunNow(updated, 'workspace review result');
   // A monitor replay watches the same attempt; its verdict counts even if the
   // superseded monitor settled that receipt (ADR-063 Amendment 2).
-  await clearReviewRoundSettlement(runId, monitoredWorkspaceReviewRoundId(updated, generation));
+  await recordReviewRoundVerdict(runId, monitoredWorkspaceReviewRoundId(updated, generation));
   return updated;
 }
 
@@ -472,11 +472,7 @@ export function reconcileReviewWorkspaceStartup(
         continue;
       }
       if (!acknowledged || !stillCurrent()) continue;
-      // The timeout refunded this admission. Late execution consumes that same round.
-      await clearReviewRoundSettlement(
-        observed.id,
-        monitoredWorkspaceReviewRoundId(observed, generation),
-      );
+      // Late acceptance reuses the admission; only a recorded verdict can charge it.
       if (!stillCurrent()) continue;
       const current = getRun(observed.id)!;
       await persistRunNow(
@@ -558,16 +554,6 @@ export function reconcileReviewWorkspaceCleanup(
  * reuses it; a replay that dispatches again runs at a new generation. Generation
  * 0 keeps the receipt runs admitted before attempts were told apart.
  */
-function workspaceReviewRoundId(
-  run: Pick<Run, 'id' | 'createdAt'>,
-  dispatchGeneration: number,
-): string {
-  return reviewRoundAdmissionId(
-    `workspace-review-${run.id}`,
-    dispatchGeneration + 1,
-    run.createdAt,
-  );
-}
 
 /** The attempt a monitor watches: the one its DISPATCH admitted, even after a monitor-only replay. */
 function monitoredWorkspaceReviewRoundId(

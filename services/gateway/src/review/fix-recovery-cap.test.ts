@@ -8,6 +8,7 @@ import { after, mock, test, type TestContext } from 'node:test';
 import { isQualifyingReview } from '@farmslot/protocol';
 
 import type { runNativeReviewAgent } from './native-review-agent.js';
+import { recordedReviewRound } from './recorded-review-rounds.test-support.js';
 import type { ReviewAgentResult } from './review-agent.js';
 import { UncommittedReviewFixError } from './uncommitted-fix-error.js';
 
@@ -430,8 +431,11 @@ test('a REVIEW re-entry with all rounds admitted reattaches to the running re-re
     [lineage2, 3, '2026-10-19T20:03:36.075Z'],
     [pipeline, 1, '2026-10-19T20:12:03.627Z'],
     [running, 2, runningSince],
-  ] as const)
-    await admitReviewRound(run.id, reviewRoundAdmissionId(lineage, loop, at));
+  ] as const) {
+    const id = reviewRoundAdmissionId(lineage, loop, at);
+    if (lineage === running) await admitReviewRound(run.id, id);
+    else await recordedReviewRound(run.id, id);
+  }
   const checklist = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);
   updateRun(run.id, {
     status: 'reviewing',
@@ -472,7 +476,7 @@ test('a REVIEW re-entry with all rounds admitted reattaches to the running re-re
       isLiveNativeReviewer(context, prefix(input.loopNumber)),
     );
     const lineage = input.reviewId?.trim() || live?.id || 'fresh-reviewer';
-    await admitReviewRound(
+    await recordedReviewRound(
       run.id,
       reviewRoundAdmissionId(lineage, input.loopNumber, reviewLaunchStartedAt(live)),
     );

@@ -606,3 +606,17 @@ checkouts to expire or live on external storage. Retention is durable across
 gateway restarts, uses existing maintenance, and does not occupy a farm slot.
 The expiry explanation remains in the successor's review evidence. Publication,
 identity and review-budget rules are unchanged.
+
+## Amendment 11: charge rounds only on recorded reviewer verdicts, 2026-11-06
+
+**Status:** Implementation of the lead-authorized verdict-only accounting fix. Earlier amendments remain in force except the default charge for an unsettled admission.
+
+### Decision
+
+An admission reserves review capacity before launch but spends no round. Its existing disposition records `pending`; validated result ingestion records `verdict` only after the reviewer result is persisted. Startup acknowledgement and session recovery do not count as verdicts. A missing failure settlement cannot turn an unreturned launch into a paid round. Failed outcomes and their independent automatic-launch cap remain unchanged, including the free infrastructure fallback.
+
+Retained validated contexts and recorded review results preserve historical charges, while failed/cancelled records alone do not. The same opaque receipt IDs, admission lock, scope owners, extensions and retirement copies apply. Pending live reviewers reserve capacity so parallel launchers cannot over-admit the final slot. No operator budget or live run is rewritten by this change.
+
+### Consequences
+
+The optional disposition kind gains `pending` and `verdict`. A legacy no-kind disposition still denotes a no-verdict outcome. The shared projection and gateway ingestion use the same classification. The [normative review contract](../reference/review-modes-warm-cold.md#verdict-based-charging) defines transitions and compatibility. No command or flag is added.

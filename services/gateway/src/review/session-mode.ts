@@ -1,6 +1,7 @@
 import {
   adoptedPublicationTarget,
   type AgentContext,
+  isReviewRoundNoVerdictSettlement,
   parseGitHubPullUrl,
   parseGitHubRef,
   prNumberFromRunInput,
@@ -386,7 +387,7 @@ export function persistedWarmReviewerSession(
     const refunded =
       candidate.status === 'failed' &&
       !!roundId &&
-      !!run.reviewRoundSettlements?.[roundId] &&
+      isReviewRoundNoVerdictSettlement(run.reviewRoundSettlements?.[roundId]) &&
       !candidate.reviewResultValidatedAt &&
       legacyResult;
     return (

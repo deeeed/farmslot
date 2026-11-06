@@ -331,7 +331,7 @@ test('a settled attempt whose verdict recovery ingests counts again', async (t) 
   const before = await runReviewRoundBudget(getRun(f.run.id)!);
   assert.equal(before.noVerdict, 1);
   assert.deepEqual((await f.recover()).repairedIds, ['review-2']);
-  assert.equal(getRun(f.run.id)!.reviewRoundSettlements?.[round], undefined);
+  assert.equal(getRun(f.run.id)!.reviewRoundSettlements?.[round]?.kind, 'verdict');
   const after = await runReviewRoundBudget(getRun(f.run.id)!);
   assert.deepEqual([after.used, after.noVerdict], [before.used + 1, 0]);
 });
