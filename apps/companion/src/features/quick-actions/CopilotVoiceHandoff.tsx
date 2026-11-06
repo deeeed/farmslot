@@ -1,8 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useRef } from 'react';
 
-import { quickVoiceWorkerKey } from '../../lib/quick-actions';
-import { tmuxWorkerRouteParamsFromRef } from '../../lib/tmux-workers';
 import { useCopilotController } from '../copilot/use-copilot-controller';
 
 import { useQuickActions } from './quick-actions-context';
@@ -33,19 +31,20 @@ export function CopilotVoiceHandoff({
     }
     if (viewModel.connected && !viewModel.settled) return;
     handled.current = true;
-    const worker =
-      viewModel.connected && !viewModel.error && viewModel.runtime?.status === 'running'
-        ? viewModel.runtime.terminalWorker
-        : undefined;
-    if (worker) {
-      actions.requestVoice(quickVoiceWorkerKey(worker), context);
-      router.push({
-        pathname: '/terminal/worker',
-        params: tmuxWorkerRouteParamsFromRef(worker, 'Co-Pilot'),
-      });
-    } else {
-      router.push({ pathname: '/(tabs)/copilot', params: { draft: context } });
-    }
+    const native =
+      viewModel.connected && !viewModel.error ? viewModel.runtime?.nativeSession : undefined;
+    router.push(
+      native
+        ? {
+            pathname: '/native',
+            params: {
+              sessionId: native.sessionId,
+              executionNodeId: native.executionNodeId,
+              draft: context,
+            },
+          }
+        : { pathname: '/(tabs)/copilot', params: { draft: context } },
+    );
     done();
   }, [actions, context, done, router, scope, viewModel]);
   return null;

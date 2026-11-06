@@ -1,0 +1,1 @@
+- Retain scoped native conversation snapshots and flush pending writes before store disposal.

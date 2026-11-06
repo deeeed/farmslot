@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { CopilotRuntimeSession } from '@farmslot/protocol';
@@ -8,9 +8,9 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 export interface PersistedCopilotRuntime {
   schemaVersion: 1;
   session: CopilotRuntimeSession;
-  transcriptOffset: number;
-  paneId?: string;
-  launchCommandHash?: string;
+  nativeOwnerPrincipalId?: string;
+  pendingNativeSessionId?: string;
+  stoppedNativeSessionId?: string;
 }
 
 export interface CopilotAuditRecord {
@@ -49,6 +49,7 @@ export class CopilotRuntimeStore {
   readonly auditPath: string;
   readonly rawTranscriptPath: string;
   readonly bootstrapPath: string;
+  private writing: Promise<void> = Promise.resolve();
 
   constructor(home = farmslotHome()) {
     this.dir = path.join(home, 'copilot-runtime');
@@ -71,23 +72,52 @@ export class CopilotRuntimeStore {
       if (parsed.schemaVersion !== 1 || !parsed.session?.runtimeId) {
         throw new Error(`Unsupported Co-Pilot runtime store at ${this.sessionPath}`);
       }
-      return parsed;
+      // Old immutable transcripts remain on disk. They are never rebound as a native identity.
+      for (const field of ['tmuxTarget', 'terminalWorker', 'transcriptId'])
+        Reflect.deleteProperty(parsed.session, field);
+      return {
+        schemaVersion: 1,
+        session: parsed.session,
+        ...(parsed.nativeOwnerPrincipalId
+          ? { nativeOwnerPrincipalId: parsed.nativeOwnerPrincipalId }
+          : {}),
+        ...(parsed.stoppedNativeSessionId
+          ? { stoppedNativeSessionId: parsed.stoppedNativeSessionId }
+          : {}),
+        ...(parsed.pendingNativeSessionId
+          ? { pendingNativeSessionId: parsed.pendingNativeSessionId }
+          : {}),
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw error;
     }
   }
 
-  async save(record: PersistedCopilotRuntime): Promise<void> {
-    await this.ensure();
-    const temporaryPath = `${this.sessionPath}.tmp.${process.pid}.${randomUUID()}`;
-    const redacted = redactCopilotValue(record) as PersistedCopilotRuntime;
-    await writeFile(temporaryPath, `${JSON.stringify(redacted, null, 2)}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
-    await rename(temporaryPath, this.sessionPath);
-    await chmod(this.sessionPath, 0o600);
+  save(record: PersistedCopilotRuntime): Promise<void> {
+    const snapshot = redactCopilotValue(record);
+    const write = async () => {
+      await this.ensure();
+      const temporaryPath = `${this.sessionPath}.tmp.${process.pid}.${randomUUID()}`;
+      const file = await open(temporaryPath, 'w', 0o600);
+      try {
+        await file.writeFile(`${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+        await file.sync();
+      } finally {
+        await file.close();
+      }
+      await rename(temporaryPath, this.sessionPath);
+      const directory = await open(this.dir, 'r');
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    };
+    // A new explicit write may recover from a previous failed write; that caller still
+    // received its error. Successful writes cannot overtake one another.
+    this.writing = this.writing.then(write, write);
+    return this.writing;
   }
 
   async writeBootstrap(content: string): Promise<void> {

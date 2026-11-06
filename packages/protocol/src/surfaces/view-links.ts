@@ -9,6 +9,7 @@ import { VIEW_STATE_PARAMETERS, viewListField, viewStateSearchParams } from './v
 const routes = new Set([
   'fleet',
   'native',
+  'copilot',
   'terminal',
   'devices',
   'dispatch',

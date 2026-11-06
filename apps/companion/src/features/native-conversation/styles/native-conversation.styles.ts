@@ -4,6 +4,26 @@ import { colors, fonts, radii, spacing } from '../../../lib/theme';
 
 export const nativeStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgBase },
+  historyNotice: {
+    height: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
+  },
+  historyShade: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: spacing.lg,
+    backgroundColor: '#0008',
+  },
+  historyDialog: {
+    height: '85%',
+    backgroundColor: colors.bgSurface,
+    borderRadius: radii.md,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
   timeline: { flex: 1 },
   // Overlays the bottom of the timeline, so it never moves the conversation or the composer.
   jumpLatest: {

@@ -7,6 +7,7 @@ export * from './content.js';
 export * from './diff-apply.js';
 export * from './held-data.js';
 export * from './keys.js';
+export * from './native-conversation.js';
 export * from './native-history.js';
 export * from './network-cost.js';
 export * from './prefetch.js';

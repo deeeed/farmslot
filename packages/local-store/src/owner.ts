@@ -214,6 +214,7 @@ export class ResourceCacheOwner {
     cache = createStoredResourceCache({
       contentBudgetBytes: this.options.contentBudgetBytes,
       client: {
+        conversations: client.conversations,
         get resourceConnectionReason() {
           return client.resourceConnectionReason;
         },

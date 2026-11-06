@@ -221,7 +221,7 @@ export function viewToggleOverrideField(
 
 /** Display parameters carried across sibling workspace tabs; no action or authority inputs. */
 export const VIEW_STATE_PARAMETERS: ReadonlySet<string> = new Set(
-  'panels round step section runsTab flow lane sort q tag workers treeOpen branchFilesView branchFilesClosed changesView changesClosed problemSource commentFilter commentAuthor commentThread logFilter compareStep workerSession expandedSlot messages turnFiles rawClaims prReviews prMonitors folds terminalView reviewReport stage delivery diffMode devicePanes deviceLayout sidebarWidth diffFilter diffQuery diffPath mobileDiffMode claims evidenceFilter compareIndex mediaIndex mediaSource prFilter subtasks mediaGroups familyCompareIndex assessmentConsumer finetuneProject flowNode nativeFilesTab nativeDirectory nativeFile nativeFileView projects machines'.split(
+  'panels round step section runsTab flow lane sort q tag workers treeOpen branchFilesView branchFilesClosed changesView changesClosed problemSource commentFilter commentAuthor commentThread logFilter compareStep workerSession expandedSlot messages turnFiles rawClaims prReviews prMonitors folds terminalView reviewReport stage delivery diffMode devicePanes deviceLayout sidebarWidth diffFilter diffQuery diffPath mobileDiffMode claims evidenceFilter compareIndex mediaIndex mediaSource prFilter subtasks mediaGroups familyCompareIndex assessmentConsumer finetuneProject flowNode nativeFilesTab nativeDirectory nativeFile nativeFileView copilotArchive copilotTarget projects machines'.split(
     ' ',
   ),
 );

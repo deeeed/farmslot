@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync } from 'node:fs';
@@ -7,7 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 import type {
   NativeApprovalMode,
+  NativeCommandObservation,
   NativeCommandReceipt,
+  NativeConversationCursor,
+  NativeConversationUpdate,
   NativeSessionCreateParams,
   NativeSessionEnsureParams,
   NativeSessionInfo,
@@ -18,6 +22,7 @@ import type {
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { subscribeHost } from './conversation-ipc.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
 import { alive, privateDirectory, readJson } from './storage.js';
 import {
@@ -40,6 +45,12 @@ import {
   type NativeWorkerResumeParams,
   type NativeWorkerTarget,
 } from './worker-launch.js';
+
+const passiveHostReads = new AsyncLocalStorage<boolean>();
+/** UI/history observation may use an existing host, never start a missing one. */
+export function observeExistingNativeHost<T>(read: () => Promise<T>): Promise<T> {
+  return passiveHostReads.run(true, read);
+}
 
 /** The same client is usable by gateway and execution-node services. */
 export class NativeSessionClient {
@@ -79,6 +90,57 @@ export class NativeSessionClient {
       privateDirectory(directory);
     return state;
   }
+  subscribe(
+    owner: string,
+    id: string,
+    after: NativeConversationCursor | undefined,
+    deliver: (update: NativeConversationUpdate) => void,
+    leaseId?: string,
+    generation?: string,
+  ) {
+    const host = this.existingHost();
+    if (host.conversationStreaming !== 1)
+      throw Object.assign(new Error('Native host upgrade required for conversation streaming'), {
+        code: 'NATIVE_SOURCE_UNAVAILABLE',
+      });
+    return subscribeHost(
+      host,
+      { method: 'subscribe', owner, id, after, leaseId, generation },
+      deliver,
+    );
+  }
+  async inspect(owner: string, id: string): Promise<NativeSessionInfo> {
+    const host = this.existingHost();
+    if (host.conversationStreaming !== 1)
+      throw new Error('Native host upgrade required for passive session metadata');
+    return requestHost(host, { method: 'inspect', owner, id });
+  }
+  async commandStatus(
+    owner: string,
+    id: string,
+    commandId: string,
+    waitForAcceptance = false,
+  ): Promise<NativeCommandObservation> {
+    const host = this.existingHost();
+    if (host.conversationStreaming !== 1)
+      throw new Error('Native host upgrade required for passive command receipts');
+    return requestHost(host, { method: 'commandStatus', owner, id, commandId, waitForAcceptance });
+  }
+  private existingHost(): HostIdentity {
+    const file = join(this.root, 'host.json');
+    if (!existsSync(file))
+      throw Object.assign(new Error('Native host unavailable; refresh it from the login context'), {
+        code: 'NATIVE_SOURCE_UNAVAILABLE',
+      });
+    const host = readJson<HostIdentity>(file);
+    this.assertHostNode(host);
+    if (!existsSync(join(this.root, 'ready.json')) || !alive(host.pid) || !existsSync(host.socket))
+      throw Object.assign(new Error('Native host unavailable; refresh it from the login context'), {
+        code: 'NATIVE_SOURCE_UNAVAILABLE',
+      });
+    return host;
+  }
+
   private async host(): Promise<HostIdentity> {
     privateDirectory(this.root);
     const path = join(this.root, 'host.json');
@@ -135,8 +197,13 @@ export class NativeSessionClient {
       `Native host unavailable; inspect ${join(this.root, 'host.log')}. No command was retried.`,
     );
   }
+  /** Explicit lifecycle operation. Deployment invokes it from the login/GUI context. */
+  async warm(): Promise<void> {
+    await this.host();
+  }
   private async call<T>(request: HostRequest): Promise<T> {
-    const host = await this.host();
+    const passive = request.method === 'list' || passiveHostReads.getStore() === true;
+    const host = passive ? this.existingHost() : await this.host();
     if (
       (request.method === 'setApprovalMode' ||
         ('params' in request &&
@@ -187,6 +254,13 @@ export class NativeSessionClient {
       throw new Error('Native host upgrade required for schema-bound review results');
     if ('requester' in request && request.requester && !host.supportsStandaloneDelegation)
       throw new Error('Native host upgrade required for standalone requester attribution');
+    if (
+      ['create', 'ensure', NATIVE_WORKER_ENSURE, NATIVE_WORKER_RESUME].includes(request.method) &&
+      host.conversationStreaming !== 1
+    )
+      throw new Error(
+        'Native host upgrade required for conversation streaming before launching new work',
+      );
     const result = await requestHost<T>(host, request);
     if ('params' in request && request.params.profileId) {
       const session = result as NativeSessionInfo;
@@ -306,17 +380,27 @@ export class NativeSessionClient {
     });
   }
   list(owner: string) {
+    if (!existsSync(join(this.root, 'host.json')) && !existsSync(join(this.root, 'sessions')))
+      return Promise.resolve([]);
     return this.call<NativeSessionInfo[]>({ method: 'list', owner });
   }
   read(owner: string, id: string, after?: number, limit?: number) {
     return this.call<NativeSessionReadResult>({ method: 'read', owner, id, after, limit });
   }
-  readWorker(owner: string, id: string, leaseId: string, after?: number, limit?: number) {
+  readWorker(
+    owner: string,
+    id: string,
+    leaseId: string,
+    after?: number,
+    limit?: number,
+    generation?: string,
+  ) {
     return this.call<NativeSessionReadResult>({
       method: NATIVE_WORKER_READ,
       owner,
       id,
       leaseId,
+      generation,
       after,
       limit,
     });

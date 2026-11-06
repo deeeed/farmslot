@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { withViewState } from '../../components/view-state';
 import { CopilotScreen } from '../../features/copilot/CopilotScreen';
 import { useCopilotController } from '../../features/copilot/use-copilot-controller';
-import { firstRouteParam, tmuxWorkerRouteParamsFromRef } from '../../lib/tmux-workers';
+import { firstRouteParam } from '../../lib/tmux-workers';
 
 function CopilotRoute() {
   const router = useRouter();
@@ -17,16 +17,6 @@ function CopilotRoute() {
       openNative={() =>
         router.push({ pathname: '/native', params: pendingDraft ? { draft: pendingDraft } : {} })
       }
-      openTerminal={(session) => {
-        if (session.status !== 'running' || !session.terminalWorker) return;
-        router.push({
-          pathname: '/terminal/worker',
-          params: {
-            ...tmuxWorkerRouteParamsFromRef(session.terminalWorker, 'Co-Pilot'),
-            ...(pendingDraft ? { draft: pendingDraft } : {}),
-          },
-        });
-      }}
     />
   );
 }

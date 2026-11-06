@@ -101,7 +101,7 @@ process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
 // This keeps observation startup separate from the tool-policy and workspace claims.
 const { NativeSessionClient } =
   await import('../../../packages/agent-runtime/src/native/client.js');
-await new NativeSessionClient(path.join(root, 'native')).list(owner.id);
+await new NativeSessionClient(path.join(root, 'native')).warm();
 const server = createServer();
 const wss = createWebSocketServer(server, auth);
 initServerGlobals();

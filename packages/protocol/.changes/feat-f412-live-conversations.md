@@ -1,0 +1,1 @@
+- Define bounded live conversation subscriptions and share their cache, replay, ownership fences and paint measurements across clients.

@@ -54,7 +54,7 @@ test('native accounts allow standalone native methods and reject farm, worker an
     Methods.RUN_GET,
     Methods.DECISION_LIST,
     'terminal.subscribe',
-    'chat.history',
+    'chat.archive',
     'native.unknown',
   ]) {
     assert.equal(workspaceAllowsMethod('native', method, {}), false, method);

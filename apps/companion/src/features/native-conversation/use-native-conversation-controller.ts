@@ -13,8 +13,10 @@ import {
 } from '@farmslot/protocol';
 import {
   nativeCommandLockSettled,
+  nativeConversationOmissionNotice,
   nativeHistoryCanAct,
   nativeHistoryCanSend,
+  nativeHistoryParams,
   nativeHistoryQuery,
   nativeImplementableKey,
   nativeImplementPrompt,
@@ -31,7 +33,8 @@ import {
   resourceQuery,
 } from '@farmslot/protocol/client-cache';
 
-import { observeNativeConversation } from '../../farmslot/run-collections-proof';
+import { observeNativeConversation as observeNativeConversationProof } from '../../farmslot/run-collections-proof';
+import { useNativeConversation } from '../../hooks/useNativeConversation';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { nativeConversationWritable, nativeRetryAvailable } from '../../lib/native-conversation';
@@ -238,7 +241,11 @@ export function useNativeConversationController(params: NativeConversationParams
         : undefined,
     [params.sessionId, historyOwner],
   );
-  const historyObservation = useResourceQuery(historyQuery);
+  const historyTarget = useMemo(
+    () => (historyQuery ? nativeHistoryParams(historyQuery.params) : undefined),
+    [historyQuery],
+  );
+  const historyObservation = useNativeConversation(historyTarget, focused);
   const inventoryObservation = useResourceQuery(inventoryQuery);
   const allowed = canOpenNativeConversation(
     access,
@@ -263,7 +270,11 @@ export function useNativeConversationController(params: NativeConversationParams
     ? 'This account cannot open a farm worker conversation.'
     : ((params.sessionId ? historyObservation : inventoryObservation).error?.message ?? '');
   refreshRef.current = async () => {
-    const query = historyQuery ?? inventoryQuery;
+    const query = inventoryQuery;
+    if (historyTarget) {
+      getResourceCache()?.conversations?.retry(historyTarget);
+      return;
+    }
     try {
       if (query && getResourceCache()?.read<unknown>(query).error)
         await getResourceCache()?.retry<unknown>(query);
@@ -326,7 +337,9 @@ export function useNativeConversationController(params: NativeConversationParams
       live.authorityEpoch !== authorityEpoch
     )
       throw new Error('The conversation connection changed. Reopen it before acting.');
-    const observation = historyQuery ? getResourceCache()?.read(historyQuery) : undefined;
+    const observation = historyTarget
+      ? getResourceCache()?.conversations?.read(historyTarget)
+      : undefined;
     if (
       !historyQuery ||
       !(history === 'exact'
@@ -587,7 +600,7 @@ export function useNativeConversationController(params: NativeConversationParams
   };
   useEffect(() => {
     if (__DEV__ && (params.runId || params.sessionId))
-      return observeNativeConversation((params.runId || params.sessionId)!, () => ({
+      return observeNativeConversationProof((params.runId || params.sessionId)!, () => ({
         ...proof.current,
       }));
   }, [params.runId, params.sessionId, storageKey]);
@@ -643,6 +656,8 @@ export function useNativeConversationController(params: NativeConversationParams
         ? `${worker.label}${snapshot?.scope?.released || worker.readOnly ? ' · Task history' : ''}`
         : undefined,
       historyObservation,
+      history: historyObservation.history,
+      historyNotice: nativeConversationOmissionNotice(snapshot),
       inventoryObservation,
       runObservation: params.runId ? runObservation : undefined,
     },
@@ -702,6 +717,21 @@ export function useNativeConversationController(params: NativeConversationParams
             if (alive.current) setImplementing(false);
           }
         },
+      },
+      readSaved: async (after?: number) => {
+        if (!historyTarget) return;
+        const start =
+          after ??
+          snapshot?.omissions?.[0]?.after ??
+          Math.max(snapshot?.scope?.startAfter ?? 0, (snapshot?.historyBefore ?? 200) - 200);
+        try {
+          await getResourceCache()?.conversations?.readPage(historyTarget, start);
+        } catch (cause) {
+          if (alive.current && currentStorageKey.current === storageKey) setError(message(cause));
+        }
+      },
+      dismissSaved: () => {
+        if (historyTarget) getResourceCache()?.conversations?.dismissHistory(historyTarget);
       },
       refresh: () => refreshRef.current(),
       retryRun: async () => {

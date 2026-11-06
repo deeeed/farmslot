@@ -1,8 +1,12 @@
+import { once } from 'node:events';
+
 import type { Command } from 'commander';
 
 import { type EventFrame, Methods } from '@farmslot/protocol';
 
 import { resolveContext } from '../context.js';
+
+import { followNativeSession } from './native-session-follow.js';
 
 const RESOURCE_CONTROL_BOOT_RPC_TIMEOUT_MS = 150_000;
 export const RUNTIME_CAPABILITY_ACQUIRE_RPC_TIMEOUT_MS = 420_000;
@@ -38,6 +42,7 @@ export function registerRpcCommand(program: Command): void {
     .description('Raw gateway RPC call')
     .argument('<method>', 'RPC method name')
     .argument('[params]', 'JSON params')
+    .option('--follow', 'Follow native.session.subscribe as NDJSON until Ctrl-C')
     .option('--stream', 'Show streaming events on stderr')
     .action(async (method: string, paramsStr: string | undefined, opts: any, cmd: Command) => {
       let params: unknown = {};
@@ -53,6 +58,31 @@ export function registerRpcCommand(program: Command): void {
       const { client } = resolveContext(cmd, {
         timeout: resolveRpcGatewayTimeoutMs(method, params, cmd.optsWithGlobals().timeout),
       });
+
+      if (opts.follow) {
+        if (
+          method !== Methods.NATIVE_SESSION_SUBSCRIBE ||
+          !params ||
+          typeof params !== 'object' ||
+          !('sessionId' in params) ||
+          typeof params.sessionId !== 'string'
+        )
+          throw new Error('--follow requires native.session.subscribe and a sessionId');
+        const controller = new AbortController();
+        const stop = () => controller.abort();
+        process.once('SIGINT', stop);
+        process.once('SIGTERM', stop);
+        try {
+          await followNativeSession(client, params, controller.signal, async (frame, signal) => {
+            if (!process.stdout.write(JSON.stringify(frame) + '\n'))
+              await once(process.stdout, 'drain', { signal });
+          });
+        } finally {
+          process.removeListener('SIGINT', stop);
+          process.removeListener('SIGTERM', stop);
+        }
+        return;
+      }
 
       const onEvent = opts.stream
         ? (event: EventFrame) => {

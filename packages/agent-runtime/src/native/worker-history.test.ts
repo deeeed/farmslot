@@ -338,3 +338,26 @@ test('a completed structured result remains with its original task lease after h
   );
   assert.equal(history.read('next-result-lease', [], []).commands.length, 0);
 });
+
+test('a retained lease freezes each reviewed process generation before a successor appends', () => {
+  const history = new NativeWorkerHistory();
+  const first = event(1, 'first');
+  const next = { ...event(2, 'next'), generation: 'successor' };
+  history.observe({ info, event: first });
+  history.observe({ info: { ...info, generation: 'successor' }, event: next });
+  const previous = history.read(
+    info.workerLeaseId!,
+    [first, next],
+    [],
+    undefined,
+    200,
+    info.generation,
+  );
+  assert.equal(previous.session.generation, info.generation);
+  assert.deepEqual(previous.events, [first]);
+  assert.equal(previous.scope?.endAt, 1);
+  assert.equal(previous.scope?.released, true);
+  const current = history.read(info.workerLeaseId!, [first, next], [], undefined, 200, 'successor');
+  assert.deepEqual(current.events, [next]);
+  assert.equal(current.scope?.startAfter, 1);
+});

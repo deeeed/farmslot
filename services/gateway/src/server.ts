@@ -63,6 +63,7 @@ import { taskProgress } from './methods/task.js';
 import { parseTerminalKey } from './methods/terminal.js';
 import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
 import { tmuxWorkerObservedList } from './methods/tmux-workers.js';
+import { workerSessionHistorySubscriptionKey } from './methods/worker-session-history.js';
 import { metroUnsubscribeAll } from './methods/workspace.js';
 import {
   measureGatewayRequest,
@@ -71,7 +72,9 @@ import {
 } from './observability/performance.js';
 import { initThumbnailCache, unsubscribeThumbnails } from './observability/thumbnail-cache.js';
 import { canReadResourceKey, canReadVisibleModelPreferenceKey } from './resources/authorization.js';
+import { legacySessionAppends } from './resources/legacy-session-appends.js';
 import { nativeCatalogChanges } from './resources/native-catalog-changes.js';
+import { nativeConversations } from './resources/native-conversations.js';
 import {
   NATIVE_OBSERVED_READS,
   nativeObservations,
@@ -313,6 +316,7 @@ export function createWebSocketServer(
             ws.close(1008, 'node authentication required');
             return;
           }
+          if (legacySessionAppends.accept(ws, peek.payload)) return;
           if (acceptWorkspaceSourceEvent(ws, peek.payload)) return;
           const accepted = acceptNodeFileObservation(ws, peek.payload);
           if (!accepted) return;
@@ -332,6 +336,14 @@ export function createWebSocketServer(
             return;
           }
           handleNodeExecOutput(peek.payload.requestId, peek.payload.stream, peek.payload.data, ws);
+          return;
+        }
+        if (peek.type === 'event' && peek.event === 'node.native.conversation') {
+          if (!isNodeSubjectSession(authRuntime, state)) {
+            ws.close(1008, 'node authentication required');
+            return;
+          }
+          nativeConversations.accept(ws, peek.payload);
           return;
         }
         if (peek.type === 'event' && peek.event === 'node.native.observation') {
@@ -406,12 +418,16 @@ export function createWebSocketServer(
     });
 
     ws.on('close', () => {
+      nativeConversations.disconnect(state);
+      nativeConversations.disconnectNode(ws);
+      legacySessionAppends.disconnect(ws);
       nativeObservations.detachClient(ws);
       nativeObservations.disconnectRemote(ws);
       failRequestsBoundTo(ws);
       // Cleanup node registration
       revokeNodeFileObservations(ws);
       const disconnectedMachine = unregisterByWs(ws);
+      nativeConversations.reconcile();
       if (disconnectedMachine) {
         invalidateTaskProgressForMachine(disconnectedMachine);
         invalidateReviewProgressForMachine(disconnectedMachine);
@@ -797,6 +813,7 @@ async function dispatchMessage(
         voiceInstructionFormatting: true,
         gatewayPing,
         performanceDiagnostics: 1,
+        conversationStreaming: 1,
         resourceChanges: {
           version: 1,
           epoch: resourceRevisions.epoch,
@@ -999,6 +1016,24 @@ async function dispatchMessage(
       requireAuthenticatedSession(authRuntime, state);
       authorizeGatewayMethod(authRuntime, state, frame.method);
     }
+    if (
+      frame.method === Methods.NATIVE_SESSION_SUBSCRIBE &&
+      result.payload &&
+      typeof result.payload === 'object' &&
+      'subscriptionId' in result.payload &&
+      typeof result.payload.subscriptionId === 'string'
+    ) {
+      nativeConversations.assertCurrent(state, result.payload.subscriptionId);
+      const initialBytes =
+        Buffer.byteLength(
+          JSON.stringify({ type: 'res', id: frame.id, ok: true, payload: result.payload }),
+        ) + 64;
+      if (state.ws.bufferedAmount + initialBytes > 1024 * 1024) {
+        nativeConversations.unsubscribe(state, result.payload.subscriptionId);
+        state.ws.close(1013, 'Conversation resync required');
+        return;
+      }
+    }
     const refusal = nativeResponseRefusal();
     if (!refusal && nativeWorkspaceIdentity && query)
       for (const key of query.dependencies)
@@ -1011,6 +1046,22 @@ async function dispatchMessage(
       refusal,
       result.resourceState,
     );
+    if (
+      frame.method === Methods.NATIVE_SESSION_SUBSCRIBE &&
+      result.payload &&
+      typeof result.payload === 'object' &&
+      'subscriptionId' in result.payload &&
+      typeof result.payload.subscriptionId === 'string'
+    ) {
+      if (refusal) nativeConversations.unsubscribe(state, result.payload.subscriptionId);
+      else nativeConversations.activate(state, result.payload.subscriptionId);
+    }
+    if (!refusal && frame.method === Methods.WORKER_SESSION_HISTORY_SUBSCRIBE) {
+      const key = workerSessionHistorySubscriptionKey(
+        frame.params as import('@farmslot/protocol').WorkerSessionHistorySubscribeParams,
+      );
+      state.workerSessionHistoryHandlers.get(key)?.activate?.();
+    }
   } catch (err) {
     const refusal = nativeResponseRefusal();
     if (refusal) {
@@ -1254,6 +1305,7 @@ function reconcileAuthenticationSessions(
   runtime: GatewayAuthRuntime,
   change?: CredentialStoreChange,
 ): void {
+  nativeConversations.reconcile();
   if (change?.activationLatched) {
     closeSessions(() => true);
     return;

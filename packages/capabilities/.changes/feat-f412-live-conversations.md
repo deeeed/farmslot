@@ -1,0 +1,1 @@
+- Support notification-only file watches and ranged append reads for retained terminal conversations.

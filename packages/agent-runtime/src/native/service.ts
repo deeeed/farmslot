@@ -8,7 +8,7 @@ import {
 } from '@farmslot/protocol';
 
 import { nativeTurnDiff } from './checkpoint.js';
-import type { NativeSessionClient } from './client.js';
+import { type NativeSessionClient, observeExistingNativeHost } from './client.js';
 import { NATIVE_PROFILE_METHODS, routeNativeProfile } from './profile-service.js';
 import { nativeWorkspaceChanges, nativeWorkspaceDiff, nativeWorkspaceList } from './workspace.js';
 import { readWorkspaceText } from './workspace-files.js';
@@ -217,11 +217,13 @@ export async function routeNativeSession(
           throw new NativeSessionMethodError('INVALID_PARAMS', 'limit must be an integer');
         if (p.after !== undefined && typeof p.after !== 'number')
           throw new NativeSessionMethodError('INVALID_PARAMS', 'after must be an integer');
-        return await client.read(
-          principal,
-          string(p, 'sessionId'),
-          p.after as number | undefined,
-          p.limit as number | undefined,
+        return await observeExistingNativeHost(() =>
+          client.read(
+            principal,
+            string(p, 'sessionId'),
+            p.after as number | undefined,
+            p.limit as number | undefined,
+          ),
         );
       case Methods.NATIVE_SESSION_SEND: {
         const commandId = string(p, 'commandId');

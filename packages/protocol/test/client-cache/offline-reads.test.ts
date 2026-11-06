@@ -38,7 +38,7 @@ test('reads screens used to send directly are cached with stable identities', ()
     ['backlog.spec.get', { itemId: 'item-1' }],
     ['backlog.refinementSession.get', { itemId: 'item-1' }],
     ['roadmap.refinementSession.get', { itemId: 'item-1' }],
-    ['chat.history', { sessionId: 'session-1', limit: 50 }],
+    ['chat.archive', { sessionId: 'session-1', limit: 50 }],
     ['chat.sessions', {}],
     ['chat.listActions', { sessionId: 'session-1' }],
     ['intelligence.actions.summary', { limit: 20 }],
@@ -63,8 +63,8 @@ test('reads screens used to send directly are cached with stable identities', ()
     resourceQuery('resource.pressure.snapshot', { machine: 'a', machines: ['b'] }).id,
   );
   assert.equal(
-    resourceQuery('chat.history', {}).id,
-    resourceQuery('chat.history', { sessionId: 'default' }).id,
+    resourceQuery('chat.archive', {}).id,
+    resourceQuery('chat.archive', { sessionId: 'default' }).id,
   );
   assert.equal(
     resourceQuery('resource.device.inventory', { slotId: 's', refresh: false }).id,

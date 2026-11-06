@@ -1,0 +1,1 @@
+- Follow native and Co-Pilot conversations through the shared incremental stream, preserving saved history and draft handoffs.

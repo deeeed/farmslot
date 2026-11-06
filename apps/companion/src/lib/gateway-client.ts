@@ -9,6 +9,9 @@ import {
   GatewayRecovery,
   hasAuthErrorCode,
   Methods,
+  type NativeSessionDeltaPayload,
+  type NativeSessionReadResult,
+  type NativeSessionSubscribeResult,
   type PersonDeviceSession,
   PersonSessionClient,
   PersonSessionEndedError,
@@ -19,6 +22,7 @@ import {
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
 import {
+  type NativeConversationTransport,
   requestResourceRead,
   type ResourceConnectionReason,
   type ResourceReadMethod,
@@ -479,6 +483,21 @@ export class GatewayClient {
     this.appStateSubscription?.remove();
     this.appStateSubscription = null;
   }
+
+  readonly conversations: NativeConversationTransport = {
+    readPage: (params) =>
+      this.requestResource<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params).then(
+        (result) => result.data,
+      ),
+    subscribe: (params) =>
+      this.request<NativeSessionSubscribeResult>(Methods.NATIVE_SESSION_SUBSCRIBE, params),
+    unsubscribe: (subscriptionId) =>
+      this.request(Methods.NATIVE_SESSION_UNSUBSCRIBE, { subscriptionId }),
+    onDelta: (listener) =>
+      this.subscribe(Events.NATIVE_SESSION_DELTA, (payload) =>
+        listener(payload as NativeSessionDeltaPayload),
+      ),
+  };
 
   async request<T = unknown>(
     method: string,

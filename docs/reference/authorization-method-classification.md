@@ -39,17 +39,15 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `backlog.spec.get`                      | admin                |                                                                                    |
 | `backlog.upcoming`                      | admin                | reads project config and spec paths by pathname                                    |
 | `backlog.update`                        | admin                |                                                                                    |
-| `chat.abort`                            | admin                |                                                                                    |
+| `chat.archive`                          | admin                |                                                                                    |
 | `chat.clear`                            | admin                |                                                                                    |
 | `chat.confirmAction`                    | admin                |                                                                                    |
 | `chat.context`                          | admin                |                                                                                    |
-| `chat.history`                          | admin                |                                                                                    |
 | `chat.listActions`                      | admin                |                                                                                    |
 | `chat.new`                              | admin                |                                                                                    |
 | `chat.observerEvidence`                 | admin                |                                                                                    |
 | `chat.saveMemory`                       | admin                |                                                                                    |
 | `chat.screenEvidence`                   | admin                |                                                                                    |
-| `chat.send`                             | admin                |                                                                                    |
 | `chat.sessionContext`                   | admin                |                                                                                    |
 | `chat.sessionCreate`                    | admin                |                                                                                    |
 | `chat.sessionDelete`                    | admin                |                                                                                    |
@@ -171,7 +169,9 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `native.session.respond`                | native-owner         |                                                                                    |
 | `native.session.send`                   | native-owner         |                                                                                    |
 | `native.session.setApprovalMode`        | native-owner         |                                                                                    |
+| `native.session.subscribe`              | native-owner         |                                                                                    |
 | `native.session.turn.diff`              | native-owner         |                                                                                    |
+| `native.session.unsubscribe`            | native-owner         |                                                                                    |
 | `native.session.workspace.changes`      | native-owner         |                                                                                    |
 | `native.session.workspace.diff`         | native-owner         |                                                                                    |
 | `native.session.workspace.list`         | native-owner         |                                                                                    |

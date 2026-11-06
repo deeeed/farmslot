@@ -38,6 +38,9 @@ export function nativeNodeDeclaration(
       'Native node owner must match its server-issued assignment',
     );
   const capabilities = value as Record<string, unknown>;
+  if (capabilities.conversationStreaming !== undefined && capabilities.conversationStreaming !== 1)
+    throw new GatewayMethodError('INVALID_PARAMS', 'Native conversationStreaming must be 1');
+  if (capabilities.conversationStreaming === 1) declaration.conversationStreaming = 1;
   for (const field of [
     'supportsStandaloneDelegation',
     'supportsApprovalMode',

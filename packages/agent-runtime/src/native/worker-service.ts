@@ -1,4 +1,4 @@
-import type { NativeSessionClient } from './client.js';
+import { type NativeSessionClient, observeExistingNativeHost } from './client.js';
 import { decodeRequest } from './ipc.js';
 import { NativeSessionMethodError } from './service.js';
 import {
@@ -64,12 +64,15 @@ export async function routeNativeWorkerSession(
   }
   try {
     if (request.method === NATIVE_WORKER_READ)
-      return await client.readWorker(
-        owner,
-        request.id,
-        request.leaseId,
-        request.after,
-        request.limit,
+      return await observeExistingNativeHost(() =>
+        client.readWorker(
+          owner,
+          request.id,
+          request.leaseId,
+          request.after,
+          request.limit,
+          request.generation,
+        ),
       );
     if (request.method === NATIVE_WORKER_RESPOND) {
       await client.respondWorker(

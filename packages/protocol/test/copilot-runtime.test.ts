@@ -10,7 +10,6 @@ import {
   type CopilotStartParams,
   type CopilotStatusResult,
   Events,
-  GLOBAL_CHAT_SESSION_ID,
   Methods,
 } from '../src/index.js';
 
@@ -25,9 +24,9 @@ test('Co-Pilot runtime and compatibility method names remain stable', () => {
   assert.equal(CopilotRuntimeMethods.configure, Methods.COPILOT_CONFIGURE);
   assert.equal(CopilotRuntimeMethods.start, Methods.COPILOT_START);
   assert.equal(CopilotRuntimeMethods.stop, Methods.COPILOT_STOP);
-  assert.equal(ChatMethods.send, 'chat.send');
-  assert.equal(ChatMethods.history, 'chat.history');
-  assert.equal(ChatMethods.abort, 'chat.abort');
+  assert.equal('send' in ChatMethods, false);
+  assert.equal(ChatMethods.archive, 'chat.archive');
+  assert.equal('abort' in ChatMethods, false);
   assert.equal(Events.COPILOT_RUNTIME_UPDATED, 'copilot.runtime.updated');
 });
 
@@ -35,8 +34,7 @@ test('one client-neutral session shape carries lifecycle, checkout, delivery, wo
   const session: CopilotRuntimeSession = {
     runtimeId: 'gateway-copilot',
     status: 'running',
-    tmuxTarget: 'farmslot-copilot:agent.0',
-    transcriptId: GLOBAL_CHAT_SESSION_ID,
+    nativeSession: { sessionId: 'singleton', executionNodeId: 'local' },
     runner: 'cursor',
     model: 'test-model',
     safetyTier: 'sandboxed',

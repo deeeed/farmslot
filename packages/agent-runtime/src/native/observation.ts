@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, existsSync, type FSWatcher, type Stats, watch } from 'node:fs';
-import { lstat, open, readdir } from 'node:fs/promises';
+import { existsSync, type FSWatcher, watch } from 'node:fs';
+import { lstat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { Methods, type NativeProfileStatusResult } from '@farmslot/protocol';
 
 import { listNativeProfilesAsync, providerAccountsConfigPath } from './account-profiles.js';
-import type { NativeSessionClient } from './client.js';
+import { type NativeSessionClient, observeExistingNativeHost } from './client.js';
 import type { HostIdentity } from './ipc.js';
 import { routeNativeProfile } from './profile-service.js';
 import { alive, readJsonAsync } from './storage.js';
@@ -100,7 +100,6 @@ export class NativeHostObservation {
   private scanTail: Promise<unknown> = Promise.resolve();
   private queuedScan?: Promise<SourceSnapshot>;
   private queuedScanGeneration = -1;
-  private readonly journals = new Map<string, { stamp: string; digest: string }>();
 
   constructor(
     private readonly client: NativeSessionClient,
@@ -243,7 +242,7 @@ export class NativeHostObservation {
     let failure: unknown;
     let rejected = false;
     try {
-      value = await read();
+      value = await observeExistingNativeHost(read);
     } catch (error) {
       rejected = true;
       failure = error;
@@ -329,7 +328,13 @@ export class NativeHostObservation {
     targets.set(configParent, targets.get(configParent) ?? false);
 
     for (const [path, recursive] of targets) {
-      const watcher = watch(path, { recursive }, () => void this.changed());
+      const watcher = watch(path, { recursive }, (_event, filename) => {
+        // Streaming hosts commit a small metadata receipt on semantic transitions.
+        // Text appends are delivered by the existing host socket, never journal rescans.
+        const name = filename?.toString();
+        if (name && (name.endsWith('.journal') || name.endsWith('.tmp'))) return;
+        void this.changed();
+      });
       watcher.on('error', () => {
         this.fail('watcher-error');
       });
@@ -495,60 +500,12 @@ export class NativeHostObservation {
         )
           throw new NativeSourceUnavailable('unsafe-session-directory');
       }
-      const retained = new Set<string>();
-      if (directory)
-        for (const file of (await readdir(sessions)).sort()) {
-          check();
-          if (!file.endsWith('.journal')) continue;
-          const path = join(sessions, file);
-          const stat = await lstat(path);
-          if (
-            !stat.isFile() ||
-            stat.isSymbolicLink() ||
-            stat.uid !== process.getuid?.() ||
-            stat.mode & 0o077
-          )
-            throw new NativeSourceUnavailable('unsafe-journal');
-          const stamp = journalStamp(stat);
-          retained.add(file);
-          const cached = this.journals.get(file);
-          let digest = cached?.stamp === stamp ? cached.digest : undefined;
-          if (digest === undefined) {
-            const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-            try {
-              const hash = createHash('sha256');
-              const buffer = Buffer.allocUnsafe(64 * 1024);
-              let position = 0;
-              let lastByte: number | undefined;
-              while (position < stat.size) {
-                check();
-                const { bytesRead } = await handle.read(
-                  buffer,
-                  0,
-                  Math.min(buffer.length, stat.size - position),
-                  position,
-                );
-                if (!bytesRead) throw new NativeSourceUnavailable('journal-changed-during-scan');
-                hash.update(buffer.subarray(0, bytesRead));
-                lastByte = buffer[bytesRead - 1];
-                position += bytesRead;
-              }
-              // Observe a committed prefix, never truncate or consume an incomplete append.
-              if (position && lastByte !== 10)
-                throw new NativeSourceUnavailable('incomplete-journal-append');
-              digest = hash.digest('hex');
-              const after = await handle.stat();
-              check();
-              if (!after.isFile() || after.uid !== process.getuid?.() || after.mode & 0o077)
-                throw new NativeSourceUnavailable('unsafe-journal');
-              if (journalStamp(after) === stamp) this.journals.set(file, { stamp, digest });
-            } finally {
-              await handle.close();
-            }
-          }
-          parts.push(file, `${stat.dev}:${stat.ino}`, digest);
-        }
-      for (const file of this.journals.keys()) if (!retained.has(file)) this.journals.delete(file);
+      if (directory) {
+        const receipt = await readJsonAsync<{ revision: string }>(join(sessions, 'metadata.json'));
+        if (typeof receipt.revision !== 'string' || !receipt.revision)
+          throw new NativeSourceUnavailable('invalid-metadata-receipt');
+        parts.push(receipt.revision);
+      }
     }
     host = hash([host, parts[0] ?? 'absent'].join('\n'));
     let profiles: unknown;
@@ -572,9 +529,6 @@ async function statIfPresent(file: string) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   }
-}
-function journalStamp(stat: Stats): string {
-  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
 }
 function nearestDirectory(path: string): string {
   let current = path;

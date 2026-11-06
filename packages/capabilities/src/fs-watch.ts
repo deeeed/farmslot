@@ -23,6 +23,8 @@ export interface FileWatchHandle {
 }
 
 export interface FileWatchOptions {
+  /** Wake an append reader without reading or transporting the file body. */
+  notificationsOnly?: boolean;
   onUnavailable?: (observation: FileWatchUnavailable) => void;
 }
 
@@ -91,7 +93,8 @@ export function watchFile(
     const target = basename(targetPath);
     watcher = watch(dir, { persistent: false }, (_, filename) => {
       if (filename != null && filename.toString() !== target) return;
-      void observe();
+      if (options.notificationsOnly) onChange('');
+      else void observe();
     });
     watcher.on('error', (error) => {
       if (stopped) return;

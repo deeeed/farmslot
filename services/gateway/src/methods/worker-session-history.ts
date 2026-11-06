@@ -14,8 +14,13 @@ import {
 
 import { selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
+import { getNode } from '../fleet/machine-registry.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import {
+  boundLegacyHistorySnapshot,
+  legacySessionAppends,
+} from '../resources/legacy-session-appends.js';
 import { runnerPersistsSessionFiles } from '../runners/registry.js';
 import { readRunnerSessionArchiveLines } from '../runners/session-archive.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
@@ -30,12 +35,12 @@ import { resolveBoundTerminalRunForSlot, selectActiveRunForSlot } from './run/co
 const DEFAULT_LIMIT = 300;
 const MAX_LIMIT = 1_000;
 const READ_MAX_LINES = 10_000;
-const SUBSCRIBE_POLL_MS = 1_000;
 
 type Emit = (event: string, payload: unknown) => void;
 
 interface SessionFileRead {
   path: string;
+  fileIdentity?: string;
   exists: boolean;
   size: number;
   mtimeMs: number;
@@ -43,7 +48,10 @@ interface SessionFileRead {
   truncated: boolean;
 }
 
-export type WorkerSessionHistoryUnsubscribe = () => void;
+export interface WorkerSessionHistoryUnsubscribe {
+  (): void;
+  activate?(): void;
+}
 
 export function workerSessionHistoryEnabled(): boolean {
   return process.env.FARMSLOT_EXPERIMENTAL_WORKER_HISTORY !== '0';
@@ -111,20 +119,24 @@ max_lines = ${READ_MAX_LINES}
 if not path.exists():
     print(json.dumps({"path": str(path), "exists": False, "size": 0, "mtimeMs": 0, "lines": [], "truncated": False}))
     raise SystemExit(0)
-stat = path.stat()
-items = deque(maxlen=max_lines)
-count = 0
-with path.open("r", encoding="utf-8", errors="replace") as handle:
-    for line in handle:
-        count += 1
-        items.append(line.rstrip("\\n"))
+with path.open("rb") as handle:
+    import os
+    stat = os.fstat(handle.fileno())
+    start = max(0, stat.st_size - 2 * 1024 * 1024)
+    handle.seek(start)
+    data = handle.read(stat.st_size - start)
+if start:
+    first = data.find(b"\\n") + 1
+    if not first:
+        raise RuntimeError("Transcript record exceeds initial history budget")
+    start += first
+    data = data[first:]
+end = data.rfind(b"\\n") + 1
+lines = data[:end].decode("utf-8", errors="replace").splitlines()
 print(json.dumps({
-    "path": str(path),
-    "exists": True,
-    "size": stat.st_size,
-    "mtimeMs": int(stat.st_mtime * 1000),
-    "lines": list(items),
-    "truncated": count > max_lines,
+    "path": str(path), "fileIdentity": str(stat.st_dev) + ":" + str(stat.st_ino),
+    "exists": True, "size": start + end, "mtimeMs": int(stat.st_mtime * 1000),
+    "lines": lines[-max_lines:], "truncated": start > 0 or len(lines) > max_lines,
 }))
 PY`;
   const result = await execOnSlot(vars, script, { timeout: 10_000, maxBuffer: 8 * 1024 * 1024 });
@@ -213,6 +225,7 @@ export async function workerSessionHistoryGet(
     mtimeMs?: number;
     truncated?: boolean;
     source: 'transcript' | 'transcript-archive';
+    fileIdentity?: string;
     degradedReason?: string;
   }): WorkerSessionHistoryGetResult => {
     const projection = provider.project(input.lines);
@@ -224,12 +237,13 @@ export async function workerSessionHistoryGet(
         : undefined;
     const cursor: WorkerSessionHistoryCursor = {
       path: input.path,
+      fileIdentity: input.fileIdentity,
       offset: input.size,
       mtimeMs: input.mtimeMs,
       messageCount: projection.messages.length,
     };
     return {
-      snapshot: {
+      snapshot: boundLegacyHistorySnapshot({
         slotId,
         runId: run.id,
         role,
@@ -244,7 +258,7 @@ export async function workerSessionHistoryGet(
         truncated: Boolean(input.truncated) || projection.messages.length > messages.length,
         degradedReason: [input.degradedReason, malformed].filter(Boolean).join(' ') || undefined,
         generatedAt: new Date().toISOString(),
-      },
+      }),
     };
   };
 
@@ -266,6 +280,7 @@ export async function workerSessionHistoryGet(
           return projectLines({
             lines: read.lines,
             path: read.path,
+            fileIdentity: read.fileIdentity,
             size: read.size,
             mtimeMs: read.mtimeMs,
             truncated: read.truncated,
@@ -386,15 +401,16 @@ export async function workerSessionHistorySubscribe(
   let knownMessageIds = new Set(initial.snapshot.messages.map((message) => message.id));
   let lastStateKey = historyStateKey(initial.snapshot);
   let closed = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  function schedule() {
-    if (closed) return;
-    timer = setTimeout(poll, SUBSCRIBE_POLL_MS);
-    timer.unref();
-  }
-
+  let active = false;
+  let queued: WorkerSessionHistorySnapshot | undefined;
+  let visibleSnapshot = initial.snapshot;
   const emitSnapshotDelta = (snapshot: WorkerSessionHistorySnapshot) => {
+    if (closed) return;
+    visibleSnapshot = snapshot;
+    if (!active) {
+      queued = boundLegacyHistorySnapshot(snapshot);
+      return;
+    }
     const nextCursor = snapshot.cursor;
     const nextStateKey = historyStateKey(snapshot);
     const stateChanged = nextStateKey !== lastStateKey;
@@ -407,40 +423,91 @@ export async function workerSessionHistorySubscribe(
     const messages = reset
       ? snapshot.messages
       : snapshot.messages.filter((message) => !knownMessageIds.has(message.id));
-    if (messages.length > 0 || stateChanged) {
+    if (messages.length || stateChanged)
       emit(Events.WORKER_SESSION_HISTORY_DELTA, {
         ...deltaFromSnapshot(snapshot, reset),
         messages,
       });
-    }
     lastCursor = nextCursor;
     lastStateKey = nextStateKey;
-    if (reset) knownMessageIds = new Set(snapshot.messages.map((message) => message.id));
-    else for (const message of messages) knownMessageIds.add(message.id);
+    knownMessageIds = new Set(snapshot.messages.map((message) => message.id));
   };
-
-  async function poll() {
-    try {
-      const { snapshot } = await workerSessionHistoryGet(params);
-      if (!closed) emitSnapshotDelta(snapshot);
-    } catch (err) {
-      console.warn(`[worker-history] subscription poll failed: ${(err as Error).message}`);
-      const snapshot = unavailableSnapshot(params, (err as Error).message);
-      if (!closed) emitSnapshotDelta(snapshot);
-    } finally {
-      schedule();
-    }
+  const snapshot = initial.snapshot;
+  if (
+    snapshot.source !== 'transcript' ||
+    !snapshot.slotId ||
+    !snapshot.runnerSessionPath ||
+    !snapshot.cursor
+  ) {
+    return { result: { ...initial, subscribed: false }, unsubscribe: () => undefined };
   }
-
-  schedule();
-
-  return {
-    result: { ...initial, subscribed: workerSessionHistoryEnabled() },
-    unsubscribe: () => {
-      closed = true;
-      if (timer) clearTimeout(timer);
-    },
+  const vars = await loadSlotVars(snapshot.slotId);
+  const node = getNode(vars.machine);
+  if (!node && !isLocal(vars.host, vars.machine))
+    return {
+      result: {
+        snapshot: {
+          ...snapshot,
+          degradedReason: 'Completed-message history. Its node is offline.',
+        },
+        subscribed: false,
+      },
+      unsubscribe: () => undefined,
+    };
+  const current = () => {
+    const run = snapshot.runId && getRun(snapshot.runId);
+    if (!run) throw new Error('The historical run is no longer available');
+    const context = selectAgentContext(run, { contextId: snapshot.contextId, role: snapshot.role });
+    const identity = context?.runnerSessionId ?? run.metrics.runnerSessionId;
+    if (identity && identity !== snapshot.runnerSessionId)
+      throw new Error('Legacy reviewer identity changed; reopen its history');
   };
+  const observed = await legacySessionAppends.observe(
+    JSON.stringify([vars.machine, snapshot.runId, snapshot.contextId, snapshot.runnerSessionPath]),
+    snapshot.runnerSessionPath,
+    node,
+    async () => {
+      current();
+      return (await workerSessionHistoryGet(params)).snapshot;
+    },
+    {
+      changed: (next) => {
+        try {
+          current();
+          emitSnapshotDelta(next);
+        } catch (error) {
+          emitSnapshotDelta({
+            ...snapshot,
+            source: 'unavailable',
+            degradedReason: (error as Error).message,
+          });
+        }
+      },
+      failed: (error) =>
+        emitSnapshotDelta({
+          ...visibleSnapshot,
+          source: 'unavailable',
+          degradedReason: error.message,
+        }),
+    },
+  );
+  const unsubscribe: WorkerSessionHistoryUnsubscribe = () => {
+    closed = true;
+    queued = undefined;
+    observed.stop();
+  };
+  unsubscribe.activate = () => {
+    if (closed) return;
+    active = true;
+    if (queued) {
+      emitSnapshotDelta(queued);
+      queued = undefined;
+    }
+  };
+  lastCursor = observed.snapshot.cursor;
+  lastStateKey = historyStateKey(observed.snapshot);
+  knownMessageIds = new Set(observed.snapshot.messages.map((message) => message.id));
+  return { result: { snapshot: observed.snapshot, subscribed: true }, unsubscribe };
 }
 
 function historyStateKey(snapshot: WorkerSessionHistorySnapshot): string {

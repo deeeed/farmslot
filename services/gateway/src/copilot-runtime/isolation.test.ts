@@ -25,16 +25,14 @@ function controlPlaneSnapshot() {
 
 test('all Co-Pilot lifecycle and transport operations are isolated from runs, slots, and queues', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'copilot-isolation-'));
-  const { controller, tmux } = testController({ home, checkout: process.cwd() });
+  const { controller, native } = testController({ home, checkout: process.cwd() });
   const before = controlPlaneSnapshot();
 
   await controller.status();
   await controller.start({ runner: 'cursor', model: 'test-model' });
-  await controller.send({ sessionId: 'global', message: 'inspect only' });
-  await controller.abort();
   await controller.start({ mode: 'reconnect' });
   await controller.stop({ reason: 'isolation-test' });
 
   assert.deepEqual(controlPlaneSnapshot(), before);
-  assert.equal(tmux.launchCount, 1);
+  assert.equal(native.launches, 1);
 });

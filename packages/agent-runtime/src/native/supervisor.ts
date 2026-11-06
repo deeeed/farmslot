@@ -86,6 +86,7 @@ privateDirectory(socketDirectory(root));
 durableWrite(join(root, 'host.json'), {
   supportsApprovalMode: true,
   supportsStandaloneDelegation: true,
+  conversationStreaming: 1,
   supportsEnsure: true,
   supportsWorkers: true,
   supportsWorkerResumeFence: true,

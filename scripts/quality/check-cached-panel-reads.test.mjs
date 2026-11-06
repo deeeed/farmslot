@@ -111,7 +111,7 @@ test('the violation list only shrinks: a fixed entry is stale until removed', ()
   ];
   const baseline = [
     { file: 'a.ts', method: 'backlog.spec.get' },
-    { file: 'c.ts', method: 'chat.history' },
+    { file: 'c.ts', method: 'chat.archive' },
   ];
   const { known, fresh, stale } = applyBaseline(findings, baseline);
   assert.equal(known.length, 2);

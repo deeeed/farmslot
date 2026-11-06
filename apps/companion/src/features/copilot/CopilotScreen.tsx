@@ -2,9 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { CopilotRuntimeSession } from '@farmslot/protocol';
-
 import { baseStyles, colors, spacing } from '../../lib/theme';
+import { NativeConversation } from '../native-conversation/NativeConversation';
 
 import { copilotStyles as styles } from './styles/copilot.styles';
 import { copilotStatusLine } from './copilot-status';
@@ -14,15 +13,26 @@ export function CopilotScreen({
   viewModel: vm,
   actions,
   draft,
-  openTerminal,
   openNative,
 }: ReturnType<typeof useCopilotController> & {
   draft?: string;
-  openTerminal: (session: CopilotRuntimeSession) => void;
   openNative: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const available = vm.ready && vm.runtime?.status === 'running' && !!vm.runtime.terminalWorker;
+  const native = vm.runtime?.nativeSession;
+  if (native)
+    return (
+      <View testID="companion-screen-copilot" style={{ flex: 1 }}>
+        <NativeConversation
+          embedded
+          params={{
+            sessionId: native.sessionId,
+            executionNodeId: native.executionNodeId,
+            ...(draft ? { draft } : {}),
+          }}
+        />
+      </View>
+    );
   return (
     <View
       testID="companion-screen-copilot"
@@ -38,8 +48,8 @@ export function CopilotScreen({
       <Text style={styles.title}>Operator Co-Pilot</Text>
       <Text style={styles.status}>{copilotStatusLine(vm.runtime, vm.connected, vm.loading)}</Text>
       <Text style={styles.hint}>
-        Open the persistent Co-Pilot terminal or continue a native conversation. Start and configure
-        sessions in Command Center.
+        Start the configured Co-Pilot in Command Center, then follow its native conversation here.
+        Existing terminals remain on the Terminals page.
       </Text>
       {draft ? (
         <View style={styles.pendingDraft}>
@@ -56,17 +66,6 @@ export function CopilotScreen({
       {vm.runtime?.terminalReason ? (
         <Text style={styles.hint}>{vm.runtime.terminalReason}</Text>
       ) : null}
-      <Pressable
-        testID="companion-copilot-terminal"
-        accessibilityRole="button"
-        disabled={!available}
-        style={[styles.button, !available && styles.buttonDisabled]}
-        onPress={() => {
-          if (vm.runtime) openTerminal(vm.runtime);
-        }}
-      >
-        <Text style={styles.buttonText}>Open terminal</Text>
-      </Pressable>
       <Pressable
         testID="companion-copilot-native"
         accessibilityRole="button"

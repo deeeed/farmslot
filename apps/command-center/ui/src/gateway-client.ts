@@ -1,3 +1,5 @@
+import type { NativeSessionReadResult } from '@farmslot/protocol';
+import type { NativeSessionDeltaPayload, NativeSessionSubscribeResult } from '@farmslot/protocol';
 // WebSocket client for Farmslot gateway — request/response + event subscription
 import type {
   EventFrame,
@@ -11,6 +13,7 @@ import type {
   SelfPrincipalSummary,
 } from '@farmslot/protocol';
 import {
+  Events,
   gatewayAuthenticationRefused,
   GatewayRecovery,
   hasAuthErrorCode,
@@ -21,6 +24,7 @@ import {
   signOutAccount,
   workspaceAccessFromAuth,
 } from '@farmslot/protocol';
+import type { NativeConversationTransport } from '@farmslot/protocol/client-cache';
 import {
   requestResourceRead,
   type ResourceConnectionReason,
@@ -787,6 +791,21 @@ export class GatewayClient {
     this.teardownSocket();
     this.setState('disconnected');
   }
+
+  readonly conversations: NativeConversationTransport = {
+    readPage: (params) =>
+      this.requestResource<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, params).then(
+        (result) => result.data,
+      ),
+    subscribe: (params) =>
+      this.request<NativeSessionSubscribeResult>(Methods.NATIVE_SESSION_SUBSCRIBE, params),
+    unsubscribe: (subscriptionId) =>
+      this.request(Methods.NATIVE_SESSION_UNSUBSCRIBE, { subscriptionId }),
+    onDelta: (listener) =>
+      this.subscribe(Events.NATIVE_SESSION_DELTA, (payload) =>
+        listener(payload as NativeSessionDeltaPayload),
+      ),
+  };
 
   async request<T = unknown>(
     method: string,

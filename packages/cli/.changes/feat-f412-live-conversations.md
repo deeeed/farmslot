@@ -1,0 +1,1 @@
+- Follow native conversations as ordered NDJSON over the existing gateway connection.

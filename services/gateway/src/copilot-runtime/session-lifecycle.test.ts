@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -7,43 +7,40 @@ import test from 'node:test';
 import { CopilotRuntimeController } from './controller.js';
 import { COPILOT_TMUX_SESSION } from './launcher.js';
 import { CopilotRuntimeStore } from './session-store.js';
-import { FakeCopilotTmux, testController, testWorkload } from './test-helpers.js';
+import {
+  FakeCopilotNative,
+  FakeCopilotTmux,
+  testController,
+  testWorkload,
+} from './test-helpers.js';
 
 test('first start creates one canonical runner and later starts reuse it across conversations', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'copilot-lifecycle-'));
-  const { controller, tmux } = testController({ home, checkout: process.cwd() });
+  const { controller, native } = testController({ home, checkout: process.cwd() });
   const first = await controller.start({ runner: 'cursor', model: 'test-model' });
-  await controller.send({ sessionId: 'manual:alternate', message: 'same runtime' });
   const second = await controller.start({ mode: 'reconnect' });
   assert.equal(first.reused, false);
   assert.equal(second.reused, true);
   assert.equal(second.session.runtimeId, first.session.runtimeId);
-  assert.equal(second.session.transcriptId, 'global');
-  assert.deepEqual(second.session.terminalWorker, {
-    nodeId: 'test-node',
-    session: COPILOT_TMUX_SESSION,
-    window: '0',
-    windowName: 'agent',
-    pane: '0',
-    paneId: '%99',
-    target: '%99',
-  });
-  assert.equal(tmux.launchCount, 1);
+  assert.equal(second.session.nativeSession?.sessionId, first.session.nativeSession?.sessionId);
+  assert.equal(native.launches, 1);
+  assert.equal(native.sends.size, 1, 'Reopening does not replay the bootstrap');
   await controller.stop({ reason: 'test-complete' });
 });
 
 test('restart reconciliation reattaches the exact persisted canonical target', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'copilot-reconcile-'));
-  const tmux = new FakeCopilotTmux();
-  const first = testController({ home, checkout: process.cwd(), tmux }).controller;
+  const native = new FakeCopilotNative();
+  const first = testController({ home, checkout: process.cwd(), native }).controller;
   const started = await first.start({ runner: 'cursor', model: 'test-model' });
-  const restarted = testController({ home, checkout: process.cwd(), tmux }).controller;
+  await first.dispose();
+  const restarted = testController({ home, checkout: process.cwd(), native }).controller;
   await restarted.initialize();
   const status = await restarted.status();
   assert.equal(status.session.status, 'running');
   assert.equal(status.session.runtimeId, started.session.runtimeId);
-  assert.ok(status.session.reconnectedAt);
-  assert.equal(tmux.launchCount, 1);
+  assert.equal(status.session.nativeSession?.sessionId, started.session.nativeSession?.sessionId);
+  assert.equal(native.launches, 1);
   await restarted.stop({ reason: 'restart-test-complete' });
 });
 
@@ -68,7 +65,7 @@ test('ambiguous restart reconciliation fails closed', async () => {
   });
   await controller.initialize();
   assert.equal((await controller.status()).session.status, 'ambiguous');
-  await assert.rejects(() => controller.start(), /Ambiguous Co-Pilot tmux sessions/);
+  await assert.rejects(() => controller.start(), /legacy Co-Pilot terminal/);
   assert.equal(tmux.killCount, 0);
 });
 
@@ -81,49 +78,52 @@ test('stop records an explicit terminal reason', async () => {
   assert.equal(stopped.session.terminalReason, 'operator-requested');
 });
 
-test('status throttles repeated tmux presence probes', async () => {
+test('status throttles passive native metadata reads', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'copilot-status-throttle-'));
   let nowMs = Date.parse('2026-08-14T00:00:00Z');
-  const { controller, tmux } = testController({
+  const { controller, native } = testController({
     home,
     checkout: process.cwd(),
     now: () => new Date(nowMs),
   });
   await controller.start({ runner: 'cursor', model: 'test-model' });
-  const afterStart = tmux.listCount;
+  const afterStart = native.inspections;
   await controller.status();
   await controller.status();
-  assert.equal(tmux.listCount, afterStart);
+  assert.equal(native.inspections, afterStart);
   nowMs += 5_001;
   await controller.status();
-  assert.equal(tmux.listCount, afterStart + 1);
+  assert.equal(native.inspections, afterStart + 1);
   await controller.stop({ reason: 'status-throttle-test' });
 });
 
-test('hook-driven runners remain starting until bootstrap delivery is proven', async () => {
+test('native launch stays starting until its structured bootstrap acceptance is confirmed', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'copilot-bootstrap-state-'));
-  let settleDelivery: ((accepted: boolean) => void) | undefined;
-  const delivery = new Promise<boolean>((resolve) => {
-    settleDelivery = resolve;
+  const native = new FakeCopilotNative();
+  let release!: () => void;
+  const delivery = new Promise<void>((resolve) => {
+    release = resolve;
   });
-  const { controller } = testController({
-    home,
-    checkout: process.cwd(),
-    sendInstruction: async () => delivery,
+  let sending!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    sending = resolve;
   });
-  const starting = controller.start({ runner: 'claude', model: 'opus' });
-  while (controller.currentSession()?.status !== 'starting') {
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
+  native.beforeSend = async () => {
+    sending();
+    await delivery;
+  };
+  const { controller } = testController({ home, checkout: process.cwd(), native });
+  const start = controller.start({ runner: 'claude', model: 'opus' });
+  await entered;
   assert.equal(controller.currentSession()?.status, 'starting');
-  settleDelivery?.(true);
-  assert.equal((await starting).session.status, 'running');
-  await controller.stop({ reason: 'bootstrap-state-test' });
+  release();
+  assert.equal((await start).session.status, 'running');
+  await controller.stop();
 });
 
 test('Copilot effort persists without relabelling or replacing a live conversation', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'copilot-effort-config-'));
-  const { controller, tmux } = testController({ home, checkout: process.cwd() });
+  const { controller, native } = testController({ home, checkout: process.cwd() });
   const fresh = await controller.status();
   assert.equal(fresh.session.runner, 'codex');
   assert.equal(fresh.session.model, 'gpt-6.1-sol');
@@ -137,8 +137,9 @@ test('Copilot effort persists without relabelling or replacing a live conversati
   assert.equal(reused.reused, true);
   assert.equal(reused.session.model, 'gpt-5.6-sol');
   assert.equal(reused.session.effort, 'medium');
-  assert.equal(tmux.launchCount, 1);
-  const restored = testController({ home, checkout: process.cwd(), tmux }).controller;
+  assert.equal(native.launches, 1);
+  await controller.dispose();
+  const restored = testController({ home, checkout: process.cwd(), native }).controller;
   await restored.initialize();
   assert.equal((await restored.status()).session.effort, 'medium');
   await restored.stop();
@@ -162,4 +163,112 @@ test('stopped legacy configuration resolves next-start effort before confirmatio
   assert.equal(status.session.model, 'gpt-5.6-sol');
   assert.equal(status.session.effort, 'low');
   assert.equal(status.session.dangerousLaunch.effort, 'low');
+});
+
+test('explicit stop retires a failed pre-ensure reservation before a fresh start', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-unmaterialized-stop-'));
+  let fail = true;
+  const { controller, native } = testController({
+    home,
+    checkout: process.cwd(),
+    buildBootstrap: async () => {
+      if (fail) throw new Error('Bootstrap source unavailable');
+      return '# ready';
+    },
+  });
+  t.after(async () => {
+    await controller.dispose();
+    await rm(home, { recursive: true, force: true });
+  });
+  await assert.rejects(controller.start(), /Bootstrap source unavailable/);
+  const reservation = controller.currentSession()?.nativeSession?.sessionId;
+  assert(reservation);
+  assert.equal(native.launches, 0);
+  assert.equal((await controller.stop()).session.status, 'stopped');
+  fail = false;
+  const next = await controller.start();
+  assert.notEqual(next.session.nativeSession?.sessionId, reservation);
+  assert.equal(native.launches, 1);
+  await controller.stop();
+});
+
+test('stop fences a launch still building its bootstrap and sends no delayed command', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-delayed-stop-'));
+  let release!: () => void, entered!: () => void, stopEntered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const building = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const stoppingReached = new Promise<void>((resolve) => {
+    stopEntered = resolve;
+  });
+  const { controller, native } = testController({
+    home,
+    checkout: process.cwd(),
+    buildBootstrap: async () => {
+      entered();
+      await gate;
+      return '# ready';
+    },
+  });
+  t.after(async () => {
+    release();
+    await controller.dispose();
+    await rm(home, { recursive: true, force: true });
+  });
+  const start = controller.start();
+  await building;
+  const stop = controller.stop({}, stopEntered);
+  const settled = Promise.allSettled([start, stop]);
+  void stop.then(stopEntered, stopEntered);
+  await stoppingReached;
+  release();
+  const result = await settled;
+  assert.equal(result[0].status, 'rejected');
+  assert.equal(result[1].status, 'fulfilled');
+  assert.equal(controller.currentSession()?.status, 'stopped');
+  assert.equal(native.launches, 0);
+  assert.equal(native.sends.size, 0);
+});
+
+test('the durable unacknowledged bootstrap intent remains starting while its launch is in flight', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-intent-starting-'));
+  const native = new FakeCopilotNative();
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const submitting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  native.beforeSend = async () => {
+    const id = native.requests[0].params.sessionId;
+    const commandId = 'copilot-bootstrap:' + id;
+    native.sends.set(commandId, { commandId, state: 'unknown', submitted: true, accepted: false });
+    native.publish();
+    entered();
+    await gate;
+    native.sends.set(commandId, { commandId, state: 'accepted', submitted: true, accepted: true });
+  };
+  const { controller } = testController({ home, checkout: process.cwd(), native });
+  const starting = controller.start();
+  const done = Promise.allSettled([starting]);
+  t.after(async () => {
+    release();
+    await done;
+    await controller.dispose();
+    await rm(home, { recursive: true, force: true });
+  });
+  await submitting;
+  const deadline = Date.now() + 2000;
+  while (controller.currentSession()?.lastDelivery.state !== 'deferred') {
+    assert(Date.now() < deadline, 'The metadata observer did not commit the intent');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(controller.currentSession()?.status, 'starting');
+  release();
+  assert.equal((await starting).session.status, 'running');
+  await controller.stop();
 });
