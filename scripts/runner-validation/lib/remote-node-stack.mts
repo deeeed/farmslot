@@ -10,7 +10,7 @@
 // exists; ssh waits while `holds/ssh` exists and the remote command contains the marker's text;
 // the codex reviewer's output waits while `holds/review` exists (see CODEX_PROXY). Each records
 // a `<marker>.hit` file when a call is held. Workers can hold on their own markers under `holds/`.
-import { type ChildProcess, execFileSync } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync, readdirSync, readFileSync } from 'node:fs';
 import {
@@ -530,7 +530,7 @@ export async function startRemoteNodeStack(
     await writeFile(path.join(nodeUserHome, '.zshrc'), 'unset HISTFILE\n');
     // ~/farmslot-node is the node's deployment: for this node, the checkout under test.
     await mkdir(path.join(nodeUserHome, 'farmslot-node'));
-    for (const name of ['scripts', 'packages', 'services', 'node_modules'])
+    for (const name of ['scripts', 'packages', 'services'])
       await link(path.join(root, name), path.join(nodeUserHome, 'farmslot-node', name));
     // The node's installed CLI: an immutable snapshot of the checkout, which task pinning requires.
     await mkdir(path.join(nodeUserHome, '.local', 'bin'), { recursive: true });
@@ -543,6 +543,11 @@ export async function startRemoteNodeStack(
         evidence,
         log,
       ));
+    // Helper resolution must use this node's built installation, including its runtime.
+    await link(
+      path.join(cliSnapshot, 'node_modules'),
+      path.join(nodeUserHome, 'farmslot-node', 'node_modules'),
+    );
     await link(
       path.join(cliSnapshot, 'packages/cli/bin/farmslot.mjs'),
       path.join(nodeUserHome, '.local', 'bin', 'farmslot'),
@@ -741,12 +746,27 @@ export async function startRemoteNodeStack(
       await stopProcess(gateway);
     };
     const startNode = () => {
+      if (stopping) throw new Error('The isolated node is stopping');
       nodeGeneration += 1;
-      node = startWorkspaceProcess(
-        { root, evidence, env: nodeEnv() },
-        '@farmslot/node',
-        `node-${nodeGeneration}.log`,
-      );
+      const fd = openSync(path.join(evidence, `node-${nodeGeneration}.log`), 'w', 0o600);
+      try {
+        // Exec requests without a cwd resolve helpers from this node's installation.
+        node = spawn(
+          process.execPath,
+          ['--import', import.meta.resolve('tsx'), path.join(root, 'services/node/src/index.ts')],
+          {
+            cwd: path.join(nodeUserHome, 'farmslot-node'),
+            env: {
+              ...nodeEnv(),
+              TSX_TSCONFIG_PATH: path.join(root, 'services/node/tsconfig.json'),
+            },
+            detached: true,
+            stdio: ['ignore', fd, fd],
+          },
+        );
+      } finally {
+        closeSync(fd);
+      }
       reaper.group(node.pid);
     };
     const call = <T,>(method: string, params?: unknown) => {

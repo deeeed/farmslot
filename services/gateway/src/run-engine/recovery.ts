@@ -1493,6 +1493,7 @@ type OrphanRecoveryCollaborators = Pick<
   | 'broadcast'
   | 'retryOccupiedRunSlot'
   | 'resumeInterruptedRecovery'
+  | 'absentExecutionNode'
 >;
 
 export function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators): Promise<void> {
@@ -1527,6 +1528,9 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
       // the workspace and refuses unverified or local work, so nobody has to retry a release
       // a deploy interrupted (F316). A failed recovery stays held for the operator.
       if (!deps.isTerminalTeardownInFlight(slot.slot) && slot.phase === SLOT_PHASE_RELEASING) {
+        // Keep the release fence retryable until its node can inspect the workspace.
+        // Startup can precede reconnect by longer than the workspace transport timeout.
+        if (await deps.absentExecutionNode?.(slot.slot)) continue;
         const held = await deps.updateSlotStatusIf(
           slot.slot,
           (row) =>

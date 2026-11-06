@@ -3180,3 +3180,44 @@ test('reconnect alone resumes an interrupted release without active runs', async
   ]);
   assert.deepEqual(resumed, ['orphan', 'owned']);
 });
+
+test('a remote release survives startup until its node reconnects 25 seconds later', async (t) => {
+  const { registerNode, unregisterByWs } = await import('../fleet/machine-registry.js');
+  const socket = {} as import('ws').WebSocket;
+  t.after(() => unregisterByWs(socket));
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
+  const { deps } = interruptedReleaseDeps();
+  let connected = false;
+  const row: Record<string, unknown> = {
+    lifecycle: 'held',
+    phase: 'releasing',
+    workspace_recovery: { status: 'running' },
+  };
+  const resumed: boolean[] = [];
+  deps.absentExecutionNode = async () => (connected ? null : 'late-release-node');
+  deps.loadFleetStatus = async () => ({
+    slots: [{ slot: 'remote-release', lifecycle: String(row.lifecycle), phase: String(row.phase) }],
+  });
+  deps.readSlotField = async (_slot, key) => row[key];
+  deps.updateSlotStatusIf = async (_slot, predicate, fields) => {
+    if (!predicate(row)) return false;
+    Object.assign(row, fields);
+    return true;
+  };
+  deps.resumeInterruptedRecovery = () => {
+    resumed.push(connected);
+    if (connected) row.lifecycle = 'ready';
+    else
+      setTimeout(() => {
+        row.workspace_recovery = { status: 'failed', reason: 'node unavailable' };
+      }, 15_000);
+  };
+  t.after(startOrphanReconciler(deps));
+  await recoverActiveRuns(deps);
+  t.mock.timers.tick(25_000);
+  connected = true;
+  registerNode('late-release-node', 1, socket);
+  await reconcileOrphanedSlots(deps);
+  assert.equal(row.lifecycle, 'ready', 'late reconnect must finish the interrupted release');
+  assert.deepEqual(resumed, [true], 'disconnected startup must preserve the retryable fence');
+});

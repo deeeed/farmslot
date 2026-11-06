@@ -11,6 +11,7 @@ import type { Reaper } from '../lib/isolated-stack.mjs';
 import { writeJson } from '../lib/isolated-stack.mjs';
 import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 import { recoveryGithub } from './recovery-github.mjs';
+import { requireRecoveryFaultSupport } from './recovery-prerequisites.mjs';
 import { canaryPack, canaryRunParams, SEED } from './fixtures.mjs';
 import type { CheckResult } from './outcome.mjs';
 import { stepTimings } from './outcome.mjs';
@@ -37,6 +38,7 @@ export async function runRecoveryMatrix(options: {
   onCheck(check: CheckResult): void;
   log: Log;
 }) {
+  requireRecoveryFaultSupport();
   const started = Date.now();
   const controller = new AbortController();
   const { signal } = controller;
@@ -82,7 +84,7 @@ export async function runRecoveryMatrix(options: {
                 mode: 'cold',
                 max_retries: name === 'review-cap' ? 0 : 5,
                 review_timeout_min: 0.5,
-                review_inactivity_timeout_min: name === 'silent-reviewer' ? 0.1 : 0.5,
+                review_inactivity_timeout_min: name === 'silent-reviewer' ? undefined : 0.5,
               },
               ci: { enabled: true, repo: 'fixture/recovery' },
               ci_watch: { poll_interval_s: 0.02, timeout_min: 0.1 },

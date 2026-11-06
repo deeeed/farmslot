@@ -217,6 +217,8 @@ export interface RunnerDefinition {
   /** Finite workers need no terminal settling windows. */
   teardownSettleMs?: number;
   feedbackTiming?: RunnerFeedbackTiming;
+  /** Finite scenario reviewers can use millisecond inactivity windows. */
+  reviewInactivityMs?: (replaying: boolean) => number;
   /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
   workspaceTerminalSession?: 'create-chat' | 'resume-session';
   /** Exact, metadata-verified conversation files eligible for owned review expiry cleanup. */
@@ -733,6 +735,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     deliverPrompt: async (options) =>
       (await import('./scripted-session.js')).deliverScriptedPrompt(options),
     teardownSettleMs: 0,
+    // A replay answers through real receipt IO; only the silent first attempt needs a short limit.
+    reviewInactivityMs: (replaying) => (replaying ? 30_000 : 500),
     feedbackTiming: {
       launchMs: 50,
       inactivityMs: 5000,

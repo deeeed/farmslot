@@ -7,7 +7,7 @@ export async function runScenario(c) {
   );
   assert.match(
     failed.steps.find((step) => step.name === 'review')?.detail ?? failed.error ?? '',
-    /no checklist or tool progress|inactivity/i,
+    /inactivity limit 500ms/,
   );
   await c.replay('review');
   await c.wait('review replay completes', async (run) => {

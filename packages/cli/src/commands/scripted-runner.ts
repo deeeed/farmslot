@@ -21,6 +21,10 @@ export interface ScriptedRunnerOptions {
   timeoutMs?: string | number;
 }
 
+export interface ScriptedRunnerIO {
+  writeTextFile: (filePath: string, content: string) => Promise<void>;
+}
+
 interface CommandResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -173,7 +177,7 @@ async function writeTextFile(filePath: string, content: string): Promise<void> {
 
 export async function runScriptedRunner(
   options: ScriptedRunnerOptions,
-  io: { writeTextFile: typeof writeTextFile } = { writeTextFile },
+  io: ScriptedRunnerIO = { writeTextFile },
 ): Promise<number> {
   const { writeTextFile } = io;
   if (options.mode === 'scenario' && process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS !== '1') {

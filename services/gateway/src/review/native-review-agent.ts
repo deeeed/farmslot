@@ -614,8 +614,14 @@ async function runNativeReviewAttempt(
     });
     const run = admit();
     const projectVars = await loadProjectVars(run.project);
+    const configuredInactivityMinutes =
+      projectVars.projectJson.review?.review_inactivity_timeout_min;
     const inactivityTimeoutMs =
-      (projectVars.projectJson.review?.review_inactivity_timeout_min ?? 10) * 60_000;
+      configuredInactivityMinutes !== undefined
+        ? configuredInactivityMinutes * 60_000
+        : (getRunnerDefinition(run.metrics.runner ?? '').reviewInactivityMs?.(
+            run.recoveryAttempts?.some((attempt) => attempt.stepName === 'review') ?? false,
+          ) ?? 10 * 60_000);
     const existingTerminal = recovering
       ? await probeWorkerSignalForRun(runId, vars.slotId, context!)
       : null;

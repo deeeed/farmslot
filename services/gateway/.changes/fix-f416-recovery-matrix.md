@@ -1,2 +1,2 @@
-- Fix isolated validation fixtures and run seven recovery checks concurrently with a two-minute limit and independent teardown restarts. Scripted sessions can acknowledge delivered fixes after a configured delay.
-- Recover interrupted slot releases at gateway startup and when a node reconnects, even when no runs are active. Slots owned by active runs stay protected.
+- Fix isolated validation fixtures and run seven recovery checks concurrently with a two-minute limit and independent teardown restarts. Scripted sessions support delayed acknowledgements and millisecond reviewer inactivity limits.
+- Recover interrupted slot releases at gateway startup and when a node reconnects, even when no runs are active. Releases on disconnected nodes wait for reconnect, and slots owned by active runs stay protected.
