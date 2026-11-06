@@ -189,7 +189,6 @@ try {
     webSocketDebuggerUrl: target.webSocketDebuggerUrl,
   });
   await page.session.call('Page.bringToFront');
-  await page.session.call('Runtime.enable');
   const browserErrors: unknown[] = [];
   results.browserErrors = browserErrors;
   page.session.on('Runtime.exceptionThrown', (event) => browserErrors.push(event.exceptionDetails));
@@ -325,7 +324,13 @@ try {
     'bypass',
   );
   const beforeReload = await page.evaluate<number>('performance.timeOrigin');
-  await page.navigate(await page.evaluate<string>('location.href'), 60_000);
+  let documentLoaded = false;
+  const stopReload = page.session.on('Page.loadEventFired', () => {
+    documentLoaded = true;
+  });
+  await page.session.call('Page.reload', {}, { timeoutMs: 60_000 });
+  await until(() => documentLoaded, 'reloaded main document');
+  stopReload();
   assert.notEqual(await page.evaluate<number>('performance.timeOrigin'), beforeReload);
   await page.waitForExpression(
     "document.querySelector('native-session-view')?.shadowRoot?.querySelector('[data-testid=native-approval-mode]')?.value === 'bypass'",
