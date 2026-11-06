@@ -1,0 +1,1 @@
+- Wake native review completion checks on runner and signal changes, coalescing node notifications while preserving immediate signal wakeups and polling/timeout fallbacks.

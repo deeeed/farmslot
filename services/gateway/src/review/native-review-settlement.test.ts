@@ -19,6 +19,7 @@ const { firstOutputFixture } = await import('../evals/first-output.test-support.
 const { readEvalJudgeReceipt } = await import('../evals/judge.js');
 const { freezeEvalFirstOutputPackage } = await import('../evals/package-store.js');
 const reviewAgent = await import('./review-agent.js');
+const watcher = await import('../tasks/watcher.js');
 const { upsertAgentContext } = await import('../agents/contexts.js');
 const { rewriteStatusFile } = await import('../core/state.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
@@ -59,6 +60,7 @@ type Ending =
   | 'reattach-config-changed'
   | 'completion-invalid';
 let ending: Ending = 'verdict';
+let completionReadWake: ((runId: string, contextId: string) => void) | undefined;
 let dispatchCalls = 0;
 let signalReadErrorProbes = 0;
 let markerPresent = true;
@@ -264,6 +266,20 @@ mock.module('../runners/native/worker-control.js', {
       _contextId: string,
       history?: { after?: number },
     ) => {
+      if (completionReadWake) {
+        const wake = completionReadWake;
+        completionReadWake = undefined;
+        // The notification arrives while an older snapshot is still in flight.
+        wake(_runId, _contextId);
+        return {
+          session: { state: 'running' },
+          commands: [{ commandId: binding.commandId, state: 'accepted', accepted: true }],
+          events: [],
+          pendingRequests: [],
+          cursor: 1,
+          hasMore: false,
+        };
+      }
       if (snapshotTimeouts > 0) {
         snapshotTimeouts--;
         timedOutReads++;
@@ -461,7 +477,7 @@ mock.module('../run-engine/task-sync.js', {
     },
   },
 });
-mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop } });
+mock.module('../tasks/watcher.js', { namedExports: { ...watcher, unwatchContext: noop } });
 mock.module('./feedback.js', {
   namedExports: {
     ...feedback,
@@ -571,6 +587,8 @@ mock.module('../runtime/session-usage.js', {
   },
 });
 
+const { publishNativeSessionChange } = await import('../resources/native-session-changes.js');
+const { emitWorkerSignal } = await import('../tasks/watcher.js');
 const { runNativeReviewAgent } = await import('./native-review-agent.js');
 const { runReviewRoundBudget } = await import('./review-round-budget.js');
 
@@ -1371,5 +1389,42 @@ for (const replaying of [false, true]) {
     });
     await assert.rejects(review(run.id, 'codex'), /inactivity limit 600000ms/);
     assert.equal(clock.polls, 1);
+  });
+}
+
+for (const source of ['native', 'signal'] as const) {
+  test(`review completion rechecks a ${source} notification received during its snapshot read`, async (t) => {
+    ending = 'verdict';
+    const run = await nativeRun(t);
+    const now = Date.now();
+    t.mock.timers.enable({ apis: ['Date'], now });
+    const schedule = globalThis.setTimeout;
+    t.mock.method(globalThis, 'setTimeout', (...args: Parameters<typeof setTimeout>) => {
+      assert.notEqual(args[1], 500, 'Observable completion must not wait for the polling interval');
+      return schedule(...args);
+    });
+    completionReadWake = (runId, contextId) => {
+      if (source === 'native') {
+        publishNativeSessionChange(binding.executionNodeId, binding.ownerPrincipalId);
+        // A snapshot that takes the native read floor needs no further delay.
+        t.mock.timers.tick(100);
+      } else
+        emitWorkerSignal(
+          vars.slotId,
+          runId,
+          {
+            status: 'complete',
+            outcome: 'success',
+            timestamp: new Date().toISOString(),
+          },
+          'review',
+          contextId,
+        );
+    };
+    t.after(() => {
+      completionReadWake = undefined;
+    });
+    assert.equal((await review(run.id)).verdict, 'issues');
+    assert.equal(Date.now(), now + (source === 'native' ? 100 : 0));
   });
 }

@@ -26,6 +26,8 @@ import {
   type NativeInterest,
 } from './native-observations.js';
 
+const { onNativeSessionChange } = await import('./native-session-changes.js');
+
 const a: Principal = {
   id: 'producer-owner-a',
   subject: { type: 'person', displayName: 'A' },
@@ -1185,4 +1187,50 @@ test('a native catalog observer counts as interest in the node model catalogs', 
     () => ({}),
   );
   assert.equal(source.hasCatalogInterest(), true);
+});
+
+test('admitted native source changes wake internal readers without any client interest', (t) => {
+  const machine = `completion-${randomUUID()}`;
+  const socket = { readyState: WebSocket.OPEN } as WebSocket;
+  const source = new GatewayNativeObservations(() => undefined);
+  let changes = 0;
+  const unsubscribe = onNativeSessionChange(machine, a.id, () => {
+    changes++;
+  });
+  registerNode(
+    machine,
+    1,
+    socket,
+    undefined,
+    undefined,
+    { ownerPrincipalId: a.id, supportsObservations: true },
+    { principalId: 'completion-node', valid: () => true },
+  );
+  t.after(() => {
+    unsubscribe();
+    source.dispose();
+    unregisterByWs(socket);
+  });
+  const receipt = {
+    version: 1 as const,
+    nodeId: machine,
+    ownerId: a.id,
+    incarnation: 'first',
+    revision: 0,
+    ready: true,
+  };
+  assert.throws(() => source.acceptRemote({}, receipt, () => true), { code: 'AUTH_FORBIDDEN' });
+  assert.throws(() => source.acceptRemote(socket, receipt, () => false), {
+    code: 'AUTH_FORBIDDEN',
+  });
+  assert.equal(changes, 0);
+  source.acceptRemote(socket, receipt, () => true);
+  assert.equal(changes, 1);
+  source.acceptRemote(socket, { ...receipt, revision: 1, changed: ['profiles'] }, () => true);
+  assert.equal(changes, 1);
+  source.acceptRemote(socket, { ...receipt, revision: 2, changed: ['native-session'] }, () => true);
+  assert.equal(changes, 2);
+  unsubscribe();
+  source.acceptRemote(socket, { ...receipt, revision: 3 }, () => true);
+  assert.equal(changes, 2);
 });
