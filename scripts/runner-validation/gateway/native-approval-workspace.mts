@@ -44,12 +44,14 @@ await writeFile(
   }),
 );
 if (reuse && reusedId) {
-  assert(/^[0-9a-f-]{36}$/.test(reusedId));
   const directory = path.join(root, 'native/sessions');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await chmod(path.join(root, 'native'), 0o700);
-  const journal = fs.readFileSync(path.join(reuse.root, 'native/sessions', reusedId + '.journal'));
-  await writeFile(path.join(directory, reusedId + '.journal'), journal, { mode: 0o600 });
+  for (const id of reuse.closed) {
+    assert(/^[0-9a-f-]{36}$/.test(id));
+    const journal = fs.readFileSync(path.join(reuse.root, 'native/sessions', id + '.journal'));
+    await writeFile(path.join(directory, id + '.journal'), journal, { mode: 0o600 });
+  }
 }
 Object.assign(process.env, {
   NODE_TEST_CONTEXT: '1',
@@ -111,6 +113,7 @@ const client = new GatewayClient({
   credential: { token: grant.accessToken },
   timeout: 60_000,
 });
+const connection = await client.connect();
 const cdp = `http://127.0.0.1:${Number(process.env.FARMSLOT_CDP_PORT ?? 19223)}`;
 let page: CdpWebPage | undefined;
 let tabId: string | undefined;
@@ -136,7 +139,7 @@ const screenshot = async (name: string) => {
   await writeFile(path.join(output, name + '.png'), Buffer.from(shot.data, 'base64'));
 };
 const read = (id: string) =>
-  client.call('native.session.read', {
+  connection.call('native.session.read', {
     sessionId: id,
     executionNodeId: 'local',
     limit: 500,
@@ -330,7 +333,45 @@ try {
     ['codex', 'gpt-6-luna'],
     ['pi', process.env.FARMSLOT_PI_PROOF_MODEL ?? 'litellm/DeepSeek-V4-Flash'],
   ] as const) {
-    const created = (await client.call('native.session.create', {
+    const retained =
+      reuse &&
+      (await Promise.all(reuse.closed.map(read))).find(
+        (body) =>
+          body.session.runner === runner &&
+          body.session.model === model &&
+          body.session.state === 'closed',
+      );
+    if (retained) {
+      assert.equal(retained.session.approvalMode, 'bypass');
+      assert(
+        retained.events.some(
+          (event) => event.type === 'turn.completed' && event.status === 'completed',
+        ),
+      );
+      assert(retained.events.some((event) => event.type === 'tool.completed'));
+      assert.equal(
+        retained.events.some((event) => event.type === 'approval.requested'),
+        false,
+      );
+      sessions.push(retained.session);
+      proofs.push({
+        runner,
+        model,
+        sessionId: retained.session.id,
+        toolCompleted: true,
+        approvals: 0,
+        changedToAsk: false,
+        sameConversation: true,
+        nonGitChanges: false,
+        filesBrowsable: false,
+      });
+      await writeFile(
+        path.join(output, runner + '-receipt.json'),
+        JSON.stringify(retained, null, 2),
+      );
+      continue;
+    }
+    const created = (await connection.call('native.session.create', {
       executionNodeId: 'local',
       runner,
       model,
@@ -340,7 +381,7 @@ try {
     })) as { session: NativeSessionInfo };
     sessions.push(created.session);
     const commandId = crypto.randomUUID();
-    await client.call('native.session.send', {
+    await connection.call('native.session.send', {
       executionNodeId: 'local',
       sessionId: created.session.id,
       commandId,
@@ -397,12 +438,20 @@ try {
   throw error;
 } finally {
   for (const session of sessions)
-    await client.call('native.session.close', { executionNodeId: 'local', sessionId: session.id });
+    await connection.call('native.session.close', {
+      executionNodeId: 'local',
+      sessionId: session.id,
+    });
   results.closed = sessions.map((session) => session.id);
   await writeFile(path.join(output, 'result.json'), JSON.stringify(results, null, 2) + '\n');
   if (tabId) await fetch(cdp + '/json/close/' + tabId);
   page?.close();
   await vite?.close();
+  connection.close();
+  resetServerGlobalsForTests();
+  for (const socket of wss.clients) socket.terminate();
+  await new Promise<void>((resolve) => wss.close(() => resolve()));
+  await new Promise<void>((resolve) => server.close(() => resolve()));
   const lock = path.join(root, 'native/lock/owner.json');
   if (fs.existsSync(lock)) {
     const owner = JSON.parse(fs.readFileSync(lock, 'utf8')) as { pid: number };
@@ -410,12 +459,25 @@ try {
       encoding: 'utf8',
     });
     assert(argv.includes(path.join(root, 'native')));
+    const host = JSON.parse(fs.readFileSync(path.join(root, 'native/worker.json'), 'utf8')) as {
+      pid: number;
+    };
+    const gone = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true;
+        throw error;
+      }
+    };
     process.kill(owner.pid, 'SIGTERM');
-    await until(() => !fs.existsSync(path.join(root, 'native/lock')), 'private host cleanup');
+    await until(
+      () => !fs.existsSync(path.join(root, 'native/lock')) && gone(owner.pid) && gone(host.pid),
+      'private host cleanup',
+    );
   }
-  resetServerGlobalsForTests();
-  for (const socket of wss.clients) socket.terminate();
-  await new Promise<void>((resolve) => wss.close(() => resolve()));
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  results.hostStopped = !fs.existsSync(lock);
+  await writeFile(path.join(output, 'result.json'), JSON.stringify(results, null, 2) + '\n');
   console.log(JSON.stringify(results));
 }

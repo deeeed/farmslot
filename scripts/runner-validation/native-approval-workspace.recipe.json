@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Standalone native approvals and non-Git workspace",
-  "description": "Run from macOS GUI/Aqua with the isolated Agent Chrome profile on FARMSLOT_CDP_PORT and Claude, Codex and Pi authenticated. Uses a private gateway and native host, no farm runs or production service changes. Haiku, Luna and DeepSeek run tiny read-only tools. FARMSLOT_NATIVE_PROOF_REUSE may name this proof's retained result to reuse its closed Claude evidence without replay.",
+  "description": "Run from macOS GUI/Aqua with the isolated Agent Chrome profile on FARMSLOT_CDP_PORT and Claude, Codex and Pi authenticated. Uses a private gateway and native host, no farm runs or production service changes. Haiku, Luna and DeepSeek run tiny read-only tools. FARMSLOT_NATIVE_PROOF_REUSE may name this proof's retained result to reuse its closed tool evidence without replay.",
   "workflow": {
     "entry": "native-approval-workspace",
     "nodes": {
