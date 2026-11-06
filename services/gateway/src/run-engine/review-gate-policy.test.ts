@@ -13,6 +13,7 @@ type Completion = Awaited<
   ReturnType<typeof import('../review-workspaces/task.js').readReviewWorkspaceCompletion>
 >;
 let latest: Completion | Error = null;
+let completionReads = 0;
 const unused = () => {
   throw new Error('Unexpected review operation');
 };
@@ -24,6 +25,7 @@ mock.module('../review-workspaces/task.js', {
       checklistPath: '/owned/task/CHECKLIST.md',
     }),
     readReviewWorkspaceCompletion: async () => {
+      completionReads++;
       if (latest instanceof Error) throw latest;
       return latest;
     },
@@ -50,8 +52,9 @@ mock.module('./review-artifacts.js', {
 });
 const root = await mkdtemp(path.join(os.tmpdir(), 'review-gate-policy-'));
 process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
-const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+const { createRun, deleteRun, getRun, persistRunNow, updateRun } = await import('../runs/store.js');
 const { refreshReviewGate } = await import('./review-gate.js');
+const { collectRunGateReadiness } = await import('./gate-prerequisites.js');
 test.after(() => rm(root, { recursive: true, force: true }));
 
 test('refresh invalidates stale APPROVE and then projects revised minor and major verdicts', async (t) => {
@@ -66,7 +69,16 @@ test('refresh invalidates stale APPROVE and then projects revised minor and majo
     ticketOrPr: 'example/project#1',
   });
   t.after(async () => {
-    updateRun(run.id, { status: 'done' });
+    const current = getRun(run.id)!;
+    await persistRunNow(
+      updateRun(run.id, {
+        status: 'done',
+        reviewWorkspace: current.reviewWorkspace
+          ? { ...current.reviewWorkspace, cleanedAt: new Date().toISOString() }
+          : undefined,
+      }),
+      'fixture cleanup',
+    );
     await deleteRun(run.id);
   });
   updateRun(run.id, {
@@ -145,4 +157,62 @@ test('refresh invalidates stale APPROVE and then projects revised minor and majo
       recommendation,
     );
   }
+});
+
+test('workspace gate inspection projects the captured result without recopying live artifacts', async (t) => {
+  const run = createRun({
+    flowType: 'review-pr',
+    project: 'review-policy-fixture',
+    ticketOrPr: 'example/project#1',
+  });
+  t.after(async () => {
+    const current = getRun(run.id)!;
+    await persistRunNow(
+      updateRun(run.id, {
+        status: 'done',
+        reviewWorkspace: current.reviewWorkspace
+          ? { ...current.reviewWorkspace, cleanedAt: new Date().toISOString() }
+          : undefined,
+      }),
+      'fixture cleanup',
+    );
+    await deleteRun(run.id);
+  });
+  const result: RunReviewResult = {
+    recommendation: 'COMMENT',
+    reviewMd: 'VERDICT: COMMENT',
+    lineComments: [],
+  };
+  latest = {
+    signal: { status: 'complete', outcome: 'success', timestamp: new Date().toISOString() },
+    result,
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    taskFile: '/fixture/task/TASK.md',
+    reviewResult: result,
+    reviewWorkspace: {
+      workspaceId: 'workspace',
+      machine: 'local',
+      executionNodeId: 'local',
+      checkoutPath: '/fixture/source',
+      taskPath: '/fixture/task',
+      artifactPath: '/fixture/task/artifacts',
+    },
+  });
+  const reads = completionReads;
+  const inputs = {
+    deterministic: async () => {},
+    progress: async () => ({ kind: 'idle' as const }),
+  };
+  for (let i = 0; i < 2; i++) {
+    const readiness = await collectRunGateReadiness(run, null, inputs);
+    assert.equal(readiness.state, 'ready', JSON.stringify(readiness.reasons));
+  }
+  assert.equal(completionReads, reads, 'Readiness must not reacquire the package on each read');
+  updateRun(run.id, { reviewResult: undefined });
+  const absent = await collectRunGateReadiness(run, null, inputs);
+  assert.equal(absent.state, 'not-ready');
+  assert(absent.reasons.some(({ code }) => code === 'review-document-missing'));
+  assert.equal(completionReads, reads, 'A missing capture requires explicit refresh');
 });
