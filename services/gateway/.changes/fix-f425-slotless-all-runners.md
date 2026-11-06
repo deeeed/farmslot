@@ -1,0 +1,1 @@
+- Launch Pi and OpenCode slotless reviews without source-side observers or project startup configuration, and pass OpenCode its review prompt correctly.

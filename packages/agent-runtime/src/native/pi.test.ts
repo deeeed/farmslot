@@ -329,3 +329,21 @@ test('a Pi prompt waits past 30 s for its reply while other requests stay bounde
   await sending;
   assert.equal(rpcStopped, false, 'the separate fixture remains live until teardown closes it');
 });
+
+test('read-only Pi ignores project-local startup configuration', async () => {
+  const f = setup();
+  const session = await piNativeAdapter.start(
+    {
+      ...f,
+      model: 'litellm/flash',
+      filesystemPolicy: { readOnlyRoots: [f.cwd], writableRoots: [f.cwd + '-reports'] },
+    },
+    () => {},
+  );
+  try {
+    assert(JSON.parse(readFileSync(join(f.cwd, 'argv'), 'utf8')).includes('--no-approve'));
+  } finally {
+    await session.close();
+    f.cleanup();
+  }
+});

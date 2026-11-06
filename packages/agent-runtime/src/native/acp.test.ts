@@ -524,3 +524,34 @@ test('Grok resumes the same named account when HOME becomes isolated', async () 
     f.cleanup();
   }
 });
+
+test('OpenCode read-only reviews disable project startup configuration without changing ordinary sessions', () => {
+  const options = { cwd: '/w', executable: 'opencode' };
+  assert.equal(opencodeEnvironment(options).OPENCODE_DISABLE_PROJECT_CONFIG, undefined);
+  assert.equal(
+    opencodeEnvironment({
+      ...options,
+      filesystemPolicy: { readOnlyRoots: ['/source'], writableRoots: ['/task'] },
+    }).OPENCODE_DISABLE_PROJECT_CONFIG,
+    'true',
+  );
+});
+
+test('OpenCode read-only review permits declared inputs and denies other external directories only in read-only review', () => {
+  const env = opencodeEnvironment({
+    cwd: '/source',
+    executable: 'opencode',
+    processSandbox: { executable: '/usr/bin/sandbox-exec', args: [] },
+    modelQuestions: 'off',
+    filesystemPolicy: { readOnlyRoots: ['/source', '/frozen/support'], writableRoots: ['/task'] },
+  });
+  assert.deepEqual(JSON.parse(env.OPENCODE_PERMISSION), {
+    question: 'deny',
+    external_directory: {
+      '*': 'deny',
+      '/source/*': 'allow',
+      '/frozen/support/*': 'allow',
+      '/task/*': 'allow',
+    },
+  });
+});

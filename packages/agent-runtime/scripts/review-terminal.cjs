@@ -123,31 +123,17 @@ async function main() {
     readOnlyRoots: [
       cwd,
       fs.realpathSync(gitRoot),
-      ...(input.support ? [fs.realpathSync(input.support)] : []),
+      ...(input.readOnlyRoots ?? (input.support ? [input.support] : [])).map((root) =>
+        fs.realpathSync(root),
+      ),
     ],
     writableRoots: [task],
   };
-  const runtimeRoots = input.runtimeRoots.map((root) =>
-    root.replace(/^~(?=\/|$)/, process.env.HOME),
-  );
-  const {
-    workspaceTrustByRunner,
-    reviewConfigurationRootsByRunner,
-    terminalReviewRefusalByRunner,
-  } = require('./workspace-trust.cjs');
-  if (terminalReviewRefusalByRunner[input.runner])
-    throw new Error(terminalReviewRefusalByRunner[input.runner]);
-  const guard = await sandbox(
-    policy,
-    runtimeRoots,
-    reviewConfigurationRootsByRunner[input.runner]?.(cwd) ?? [],
-  );
   const promptFile = path.join(task, '.terminal-prompt.txt');
   fs.writeFileSync(promptFile, input.prompt, { mode: 0o600 });
   const environment = {
     ...process.env,
     ...input.environment.set,
-    TMPDIR: guard.temporaryDirectory,
     DISABLE_OMX: '1',
     DISABLE_OMC: '1',
   };
@@ -159,6 +145,23 @@ async function main() {
     'FARMSLOT_GATEWAY_PASSWORD',
   ])
     delete environment[key];
+  const {
+    workspaceTrustByRunner,
+    reviewConfigurationRootsByRunner,
+    terminalReviewRefusalByRunner,
+    reviewRuntimeRootsByRunner,
+  } = require('./workspace-trust.cjs');
+  if (terminalReviewRefusalByRunner[input.runner])
+    throw new Error(terminalReviewRefusalByRunner[input.runner]);
+  const runtimeRoots = (
+    reviewRuntimeRootsByRunner[input.runner]?.(environment) ?? input.runtimeRoots
+  ).map((root) => root.replace(/^~(?=\/|$)/, environment.HOME));
+  const guard = await sandbox(
+    policy,
+    runtimeRoots,
+    reviewConfigurationRootsByRunner[input.runner]?.(cwd) ?? [],
+  );
+  environment.TMPDIR = guard.temporaryDirectory;
   environment.FARMSLOT_SIGNAL_ATTEMPT_ID = require('node:crypto').randomUUID();
   // This helper accepts only the gateway's farm review launch, after identity and source-policy checks.
   workspaceTrustByRunner[input.runner]?.(cwd, environment, undefined, {

@@ -1,0 +1,1 @@
+- Allow Pi and OpenCode in managed read-only review workspaces through the shared host sandbox, with runner profile storage writable and project startup configuration excluded.
