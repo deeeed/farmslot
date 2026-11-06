@@ -652,7 +652,6 @@ export async function readReviewWorkspaceCompletion(
     if (openChild) throw new Error(openChild);
   }
   const raw = await confinedRead(io, taskDir, RESULT);
-
   invalidateProjectVarsCache(run.project);
   const policy = resolveApprovalPolicy(
     (await deps.loadProjectVars(run.project)).projectJson.approvalPolicy,

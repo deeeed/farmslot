@@ -1081,9 +1081,9 @@ async function replayRunStep(
       const completion = await readReviewWorkspaceCompletion(existing.id);
       if (!completion?.result)
         reviewBlock =
-          'No complete saved review remains after workspace cleanup. Request another review.';
+          'No complete saved review remains after workspace stop or cleanup. Request another review.';
     } catch (error) {
-      reviewBlock = `The saved review cannot be replayed after workspace cleanup: ${error instanceof Error ? error.message : String(error)}. Request another review.`;
+      reviewBlock = `The saved review cannot be replayed after workspace stop or cleanup: ${error instanceof Error ? error.message : String(error)}. Request another review.`;
     }
   }
   if (reviewBlock)

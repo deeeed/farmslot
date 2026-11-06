@@ -438,3 +438,59 @@ test('native correction waits for its own command rather than the original compl
   assert.deepEqual(getRun(run.id)?.reviewResult, result);
   assert.equal(getRun(run.id)?.agentContexts?.[0].runnerSessionId, 'original-session');
 });
+
+for (const transport of ['tmux', 'native'] as const) {
+  test(`engine restart retains ${transport} correction admission without another send`, async (t) => {
+    const { run, delivered } = await fixture(t, 'example/mobile#44', transport);
+    const receipt = {
+      requestedAt: new Date(clock).toISOString(),
+      error: invalidReview().message,
+      ...(transport === 'native' ? { commandId: 'e'.repeat(64) } : {}),
+    };
+    if (transport === 'native') nativeRepairCommand = receipt.commandId;
+    const { FLOW_STEPS } = await import('@farmslot/protocol');
+    const names = FLOW_STEPS['review-pr'];
+    const monitorIndex = names.indexOf(PipelineSteps.MONITOR);
+    updateRun(run.id, {
+      status: 'monitoring',
+      steps: names.map((name, index) => ({
+        name,
+        status: index < monitorIndex ? 'done' : 'pending',
+        ...(name === PipelineSteps.MONITOR
+          ? { outputs: { reviewOutputRepair: receipt, obsoleteTelemetry: true } }
+          : {}),
+      })),
+    });
+    signal = {
+      status: 'complete',
+      outcome: 'success',
+      attemptId: 'original-attempt',
+      timestamp: new Date(Date.parse(delivered) + 1000).toISOString(),
+    };
+    terminalFailure = invalidReview();
+    afterWait = () => {
+      terminalFailure = undefined;
+      signal = { ...signal!, timestamp: new Date(clock + 1).toISOString() };
+      afterWait = undefined;
+    };
+    const stopAtGate = new Error('Monitor recovered; do not open a fixture publication gate');
+    const { startRun } = await import('../run-engine/orchestrator.js');
+    await assert.rejects(
+      startRun(run.id, {
+        onStepStarted: ({ stepName }) => {
+          if (stepName === PipelineSteps.HUMAN_GATE) throw stopAtGate;
+        },
+      }),
+      (error) => error === stopAtGate,
+    );
+    assert.equal(instructions.length, 0, 'Engine re-entry must not admit another correction');
+    assert.deepEqual(getRun(run.id)?.reviewResult, result);
+    assert.deepEqual(
+      getRun(run.id)?.steps.find(({ name }) => name === PipelineSteps.MONITOR)?.outputs
+        ?.reviewOutputRepair,
+      receipt,
+    );
+    if (transport === 'native')
+      assert(nativeRepairReads >= 2, 'Observe the restored correction command');
+  });
+}

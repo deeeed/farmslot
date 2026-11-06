@@ -441,3 +441,23 @@ test('a pushed terminal disposition renews before retiring its input without SDK
   assert.equal(owner.engineState!.publishGate!.maintainedSnapshot!.headSha, 'd'.repeat(40));
   assert.equal(maintenance.pendingBranchMaintenance(worker), undefined);
 });
+
+test('monitor reset retains only its admitted review correction', () => {
+  const reviewOutputRepair = {
+    requestedAt: '2026-11-06T00:00:00Z',
+    error: 'Invalid result',
+    commandId: 'correction',
+  };
+  assert.deepEqual(
+    maintenance.retainedMaintenanceStepOutputs(PipelineSteps.MONITOR, {
+      reviewOutputRepair,
+      workerSignal: { status: 'complete' },
+      oldTelemetry: true,
+    }),
+    { reviewOutputRepair },
+  );
+  assert.equal(
+    maintenance.retainedMaintenanceStepOutputs(PipelineSteps.DISPATCH, { reviewOutputRepair }),
+    undefined,
+  );
+});
