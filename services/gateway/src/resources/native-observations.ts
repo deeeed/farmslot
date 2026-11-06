@@ -151,6 +151,20 @@ function sourceOwner(authority: NativeReadAuthority, node: string): string {
   return authority.owners?.[node] ?? authority.ownerId;
 }
 
+function supportsNativeSource(authority: NativeReadAuthority, node: string): boolean {
+  const registered = node === 'local' ? undefined : getNode(node);
+  const validOwner =
+    !authority.owners ||
+    isGenerationZeroPrincipal(loadCredentialStore().principals, sourceOwner(authority, node));
+  return (
+    validOwner &&
+    (node === 'local' ||
+      (registered?.nativeSessions?.ownerPrincipalId === sourceOwner(authority, node) &&
+        (registered.nativeSessions as { supportsObservations?: boolean }).supportsObservations ===
+          true))
+  );
+}
+
 /** Used unchanged for read admission, stamping and event/key filtering. Authentication is resolved
  * afresh by the connection owner; neither params nor a saved owner field grants authority. */
 export async function authorizeNativeObservation(
@@ -571,8 +585,10 @@ export class GatewayNativeObservations {
               throw new NativeSourceUnavailable();
             let recovered = false;
             try {
-              this.cachedFence(node, sourceOwner(authority, node));
-              recovered = true;
+              if (supportsNativeSource(authority, node)) {
+                this.cachedFence(node, sourceOwner(authority, node));
+                recovered = true;
+              }
             } catch (error) {
               if (
                 !(
@@ -643,22 +659,9 @@ export class GatewayNativeObservations {
           )
             throw new NativeSourceUnavailable();
           // Recovery during a held page changes its availability projection. Refetch it.
-          const registered = node === 'local' ? undefined : getNode(node);
-          const validOwner =
-            !authority.owners ||
-            isGenerationZeroPrincipal(
-              loadCredentialStore().principals,
-              sourceOwner(authority, node),
-            );
-          const supportsSource =
-            validOwner &&
-            (node === 'local' ||
-              (registered?.nativeSessions?.ownerPrincipalId === sourceOwner(authority, node) &&
-                (registered.nativeSessions as { supportsObservations?: boolean })
-                  .supportsObservations === true));
           let recovered = false;
           try {
-            if (supportsSource) {
+            if (supportsNativeSource(authority, node)) {
               await this.fence(node, sourceOwner(authority, node));
               recovered = true;
             }

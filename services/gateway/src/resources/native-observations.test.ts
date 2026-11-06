@@ -1301,3 +1301,30 @@ for (const change of ['advance', 'disconnect', 'assignment'] as const)
       release();
     }
   });
+
+test('a revoked disconnected assignment stays unavailable while healthy hosts remain readable', async (t) => {
+  const f = await partialFixture(t);
+  const { loadCredentialStore } = await import('../security/credential-store.js');
+  const disconnected = f.issued.get(f.offline)!;
+  for (const credential of loadCredentialStore().credentials.filter(
+    (item) => item.principalId === disconnected,
+  ))
+    f.writer.revokeCredential(credential.id);
+  let read = false;
+  const unavailableExecutionNodes = [f.offline, f.old, 'local'].map((executionNodeId) => ({
+    executionNodeId,
+  }));
+  const result = await f.source.read(
+    f.connection,
+    [f.interest],
+    async () => {
+      read = true;
+      const { admitNativeCollectionNode } = await import('./native-observations.js');
+      admitNativeCollectionNode(f.healthy);
+      return { sessions: [], unavailableExecutionNodes };
+    },
+    () => ({}),
+  );
+  assert.equal(read, true);
+  assert.deepEqual(result.payload.unavailableExecutionNodes, unavailableExecutionNodes);
+});
