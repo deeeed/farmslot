@@ -18,6 +18,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - `run.extendReviewBudget` takes an optional `slotId`: the slot a failed run whose slot was released re-binds at the approved head.
 - Clarify that farm-wide worker discovery skips disconnected machines and pools with no enabled slots.
 - Retain watched check failure conclusions and CI fix scope refusals for operator decisions.
+- Allow the four scripted recovery behaviours in scenario configuration.
 - Declare bounded shared runtime claims and project recording capability metadata.
 - Record when a pending ticket refresh is superseded so its history survives a fresh admission.
 - Add opt-in ticket scope refresh and its person action history to publication package refresh.

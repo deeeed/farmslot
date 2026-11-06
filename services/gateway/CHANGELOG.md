@@ -31,6 +31,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Discover workers only on connected machines with enabled slots, while retaining strict availability checks for explicitly selected sources.
 - Report cancelled, timed-out and other infrastructure check failures for handling outside the PR, while sending only code failures to a CI fix and checking retained repair decisions before dispatch.
 - Keep CI fix ownership across attempts and restarts, include the rule in project overrides, wait for publication, and block completion and further nudges after an out-of-scope edit.
+- Fix isolated validation fixtures and run seven recovery checks concurrently with a two-minute limit and independent teardown restarts. The interactive scripted scenario supports delayed acknowledgements, while other scripted workers keep their existing delivery behavior. Reviewer limits follow project configuration. Hosted task requests remain compatible with older node installations.
+- Recover interrupted slot releases at gateway startup and when a node reconnects, even when no runs are active. Releases on disconnected nodes wait for reconnect, and slots owned by active runs stay protected.
 - Enforce shared runtime claim capacity across nodes through the existing durable admission queue.
 - Resume gateway-owned package work across gateway and node restarts, retaining in-flight steps and retrying requests explicitly rejected before execution without replaying accepted commands.
 - Refresh publish gates from the current ticket criteria and task inputs so readiness evaluates the refreshed scope.
