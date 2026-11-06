@@ -4,6 +4,14 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.24.0 - 2026-11-06
+
+- Preserve each review round's numeric usage receipt alongside its display label for family accounting.
+- Prefetch review reports and per-round diffs in the shared content budget, and distinguish uncaptured artifacts from read failures.
+- Stop checklist elapsed timers when their owning work ends, including held progress at a review gate.
+- Verify that release review replaces saved slot eligibility with the current inspection before sending any release.
+- Offer custom native directories only for targets in the native catalog.
+
 ## 0.23.0 - 2026-11-04
 
 - Start native conversations from a prompt, a filtered workspace or custom directory on a catalogued machine, and shared harness/model/effort controls.

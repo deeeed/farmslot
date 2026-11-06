@@ -1,1 +1,0 @@
-- Resolve review and machine settings consistently when execution-only pools share a machine, including static task generation and terminal controls.

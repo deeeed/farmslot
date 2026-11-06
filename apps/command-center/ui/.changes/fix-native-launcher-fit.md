@@ -1,1 +1,0 @@
-- Keep native launch errors concise, settings under Advanced, and controls within narrow panels.

@@ -1,1 +1,0 @@
-- Inspect the captured review gate package without recopying live reviewer artifacts on background reads. Refresh and publication still validate current reviewer output.

@@ -6,6 +6,27 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.77.0 - 2026-11-06
+
+- Add a family usage projection for shared session receipts, accounting contributions and review-round timing.
+- Measure shared RPC and offline cache performance, with authenticated diagnostics and action budgets.
+- Share context-configured display state across clients and expose bounded resident content previews for cached first paint.
+- Preserve structured missing-file errors through display reads.
+- Restore the Review History choice from shared links and retain it across native tab navigation.
+- Give current run reads a bounded two-minute window for publication-source and retained-evidence verification, so a slow read can refresh a ready gate.
+- Add shared pipeline session usage receipts with runner, model, effort, role, flow, identity, token splits, pricing status and duration, retained across relaunches and replays.
+- `run.extendReviewBudget` takes an optional `slotId`: the slot a failed run whose slot was released re-binds at the approved head.
+- Clarify that farm-wide worker discovery skips disconnected machines and pools with no enabled slots.
+- Retain watched check failure conclusions and CI fix scope refusals for operator decisions.
+- Declare bounded shared runtime claims and project recording capability metadata.
+- Record when a pending ticket refresh is superseded so its history survives a fresh admission.
+- Add opt-in ticket scope refresh and its person action history to publication package refresh.
+- Retain slotless review workspaces and exact reviewer conversations for a configurable project window, default seven days, so re-reviews resume the prior session on only the new diff. Expired storage is reclaimed safely and expiry is reported before a cold review.
+- Runs record `requestedSlotId`, the slot a caller or operator explicitly asked for, separately from the slot the engine placed them on.
+- Share bounded reconnect backoff, liveness probes and lifecycle/network recovery across Command Center and Companion.
+- Resume interrupted recovery without an identity from the client. Keep live owners and local work protected, and park unpublished commits retained by a terminal owner.
+- Open held review source without rereading it and batch missing source reads during prefetch.
+
 ## 0.76.0 - 2026-11-04
 
 - Define admin-person standalone session requester attribution, execution-target availability and real home metadata.

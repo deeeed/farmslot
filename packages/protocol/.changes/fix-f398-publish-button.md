@@ -1,1 +1,0 @@
-- Give current run reads a bounded two-minute window for publication-source and retained-evidence verification, so a slow read can refresh a ready gate.

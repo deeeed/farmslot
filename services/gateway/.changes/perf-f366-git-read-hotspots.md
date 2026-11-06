@@ -1,3 +1,0 @@
-- Read remote and saved-review Git source with one host request per file or page.
-- Reuse frozen Git diffs and workspace observations until the workspace changes.
-- Keep retained pull requests visible during refresh and avoid repeating project and repository lookups.

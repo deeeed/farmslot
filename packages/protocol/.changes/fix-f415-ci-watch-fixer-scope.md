@@ -1,1 +1,0 @@
-- Retain watched check failure conclusions and CI fix scope refusals for operator decisions.

@@ -6,6 +6,14 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.18.0 - 2026-11-06
+
+- Add a read-only browser probe for the family session-usage panel.
+- Add a reusable read-only probe for shared view restoration and cached review history.
+- Open release review for selected eligible slots from the shown fleet while a fresh read is pending. Release still requires current workspace inspection.
+- Fit run terminals to their panels, refit on resize and load xterm’s complete styles so measurement glyphs stay hidden. Progress notices are quiet without a source and use one short failure line with a shared styled Retry.
+- Retain saved views with a discreet offline indicator and recover automatically after gateway outages, focus and network changes.
+
 ## 0.17.0 - 2026-11-04
 
 - Start native conversations from a prompt, a filtered workspace or custom directory on a catalogued machine, and shared harness/model/effort controls.

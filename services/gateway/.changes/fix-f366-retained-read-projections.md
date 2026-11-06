@@ -1,1 +1,0 @@
-- Serve `decision.list` file decisions from the monitor's last scan and reuse a retained bundle's recipe groups in `run.get`, so neither read walks the disk each time.

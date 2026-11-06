@@ -1,8 +1,10 @@
 {
-  "version": "0.32.0",
-  "date": "2026-11-04",
+  "version": "0.33.0",
+  "date": "2026-11-06",
   "items": [
-    "Supervise standalone native sessions under each target's configured account, with requester attribution.",
-    "Keep reviews and resource boot operations reliable through long outages and preparation."
+    "Run supported slotless reviewers in read-only workspaces and retain their sessions for warm re-review.",
+    "Keep ticket scope, review budgets and publication snapshots current at gates.",
+    "Read family usage and shared performance diagnostics through authenticated RPCs.",
+    "Recover interrupted ownership and enforce shared recording-resource capacity."
   ]
 }

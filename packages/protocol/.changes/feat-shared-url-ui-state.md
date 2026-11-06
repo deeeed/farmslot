@@ -1,2 +1,0 @@
-- Share context-configured display state across clients and expose bounded resident content previews for cached first paint.
-- Preserve structured missing-file errors through display reads.

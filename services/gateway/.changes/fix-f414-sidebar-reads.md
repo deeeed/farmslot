@@ -1,1 +1,0 @@
-- Discover workers only on connected machines with enabled slots, while retaining strict availability checks for explicitly selected sources.

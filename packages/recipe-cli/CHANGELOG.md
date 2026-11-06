@@ -4,6 +4,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.34.0 - 2026-11-06
+
+- Carry project recording resource declarations into the hosted invocation context.
+
 ## 0.33.0 - 2026-11-06
 
 - Use recorded task checkout bindings and parent run lifecycle in task status views; keep watches open through review after worker completion.

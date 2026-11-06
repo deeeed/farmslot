@@ -1,1 +1,0 @@
-- Preserve failed unpublished task artifacts before slot release and restore verified retained evidence on rebind and reviewer preparation, including runtime provenance required by progress markers.

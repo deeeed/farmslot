@@ -6,6 +6,59 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.33.0 - 2026-11-06
+
+- Include canonical session receipts, family accounting contributions and review-round timing in family observability reads without additional per-run requests.
+- Measure shared RPC and offline cache performance, with authenticated diagnostics and action budgets.
+- Return a typed missing-file result for local and remote file reads so uncaptured review artifacts remain distinct from read failures.
+- Restore the dev-server log tail window after slot preparation.
+- Allow static review support on machines with execution-only pools while preserving a single review-enabled pool authority.
+- Resolve review and machine settings consistently when execution-only pools share a machine, including static task generation and terminal controls.
+- Keep observing a relaunched review-fix worker that is active after deferred delivery instead of failing it at the launch deadline.
+- Direct workers to prepared proof resources instead of unreachable control-plane capability lease calls.
+- Serve `decision.list` and `run.get` from stored data. Live source, package and progress checks run in the background, at most once per gate every 30 seconds while it is read; the live recipe context also reloads in the background.
+- Serve `decision.list` file decisions from the monitor's last scan and reuse a retained bundle's recipe groups in `run.get`, so neither read walks the disk each time.
+- Stop background fleet health monitoring from launching viewer-only workspace Git inspections while retaining held observations and stale machine refreshes.
+- Stop slot-isolated managed runner daemons and their updaters during completed-run cleanup and explicit release. Keep the slot held for unknown occupants, stale process identities or changed ownership.
+- Retain final review-fix and role checklists with their timing signals, and serve settled progress from the retained run after its live watcher stops.
+- Retain final proof, review and learning artifacts before closing or discarding a held result; keep the judged snapshot unchanged and stop cleanup if retention fails.
+- Preserve failed unpublished task artifacts before slot release and restore verified retained evidence on rebind and reviewer preparation, including runtime provenance required by progress markers.
+- Restore a released run's complete prepared task before native review, publish its marker last, and distinguish an unstarted turn from a completed turn missing its terminal signal.
+- Keep the gateway online when a local volume disconnects, block its slots and store writes, and report missing storage in Doctor.
+- Capture worker, reviewer and helper session usage through shared accounting, recover recorded worker transcripts without node-local pools, and backfill retained history offline without changing verdicts or learning data.
+- Ignore source-path components when checking ticket project fit while retaining explicit project and repository mentions.
+- A budget-failed run whose slot was released can be granted more review rounds by naming the slot that holds its branch at the approved head.
+- Discover workers only on connected machines with enabled slots, while retaining strict availability checks for explicitly selected sources.
+- Report cancelled, timed-out and other infrastructure check failures for handling outside the PR, while sending only code failures to a CI fix and checking retained repair decisions before dispatch.
+- Keep CI fix ownership across attempts and restarts, include the rule in project overrides, wait for publication, and block completion and further nudges after an out-of-scope edit.
+- Enforce shared runtime claim capacity across nodes through the existing durable admission queue.
+- Resume gateway-owned package work across gateway and node restarts, retaining in-flight steps and retrying requests explicitly rejected before execution without replaying accepted commands.
+- Refresh publish gates from the current ticket criteria and task inputs so readiness evaluates the refreshed scope.
+- Allow publication package refresh after completed background tasks whose native completion receipts omit the call ID, while preserving checks for active or unproven work. Refusals now include the observed worker state.
+- Refresh ticket scope from the task's registered criteria and replace stale pending refreshes with a recorded fresh admission.
+- Allow a person to refresh an unpublished run's ticket scope through publication package refresh, re-registering acceptance inputs and retaining an audit history.
+- Retain slotless review workspaces and exact reviewer conversations for a configurable project window, default seven days, so re-reviews resume the prior session on only the new diff. Expired storage is reclaimed safely and expiry is reported before a cold review.
+- Launch Pi and OpenCode slotless reviews without source-side observers or project startup configuration, and pass OpenCode its review prompt correctly.
+- Inspect the captured review gate package without recopying live reviewer artifacts on background reads. Refresh and publication still validate current reviewer output.
+- Refresh waiting slot selection when availability changes and automatically continue through normal admission, without requiring a new run.
+- Accept clean before evidence at the frozen publication merge base after merging the base branch, and give reviewers the same provenance rules.
+- Only list configured native execution targets in the standalone launcher.
+- Refresh checkout-local runtime bindings during preparation so moved slots retain their physical repository root and assigned ports.
+- Replaying slot selection retains stored caller and operator picks, including after Continue or restart cleanup. Queue retries keep their original slot intent; legacy placement records do not become pins.
+- Scheduling prefers nodes whose last successful model listing includes the model, even after expiry or a failed refresh, with a fallback when none qualifies. Only fresh listings can refuse execution; model collection uses the machine environment.
+- Park attributed commits and retain their run records consistently when completed or cancelled work is reclaimed, archived or dropped; explicit retention also backfills ended history without resetting its checkout.
+- Restore progress watches for running workers in manual slots. Idle and finished slots show retained progress or no progress instead of an unsupported-watch error.
+- Apply review replay runner/model overrides to the reviewer while preserving the original worker and its session.
+- Keep static reviews on source and recorded CI evidence; enforce frozen local-check receipts before publication.
+- Resume interrupted workspace recovery when passive inspection is unavailable. Release failed claims without clearing recovery, preserve unpublished commits, and report the exact verification failure.
+- Clear superseded inactive cleanup ownership when a successor claims or launches, while retaining active release fences.
+- Select slot-free review templates using the reviewed project's configured platform in mixed-project pools, so web and CLI reviews work on hosts whose default project is mobile.
+- Confirm semantic terminal sends and farm instructions from exact runner receipts, and report unconfirmed submission without silently retyping pasted text.
+- Match worker window names exactly during launch selection and cleanup so a missing dev window cannot select devserver-log.
+- Read remote and saved-review Git source with one host request per file or page.
+- Reuse frozen Git diffs and workspace observations until the workspace changes.
+- Keep retained pull requests visible during refresh and avoid repeating project and repository lookups.
+
 ## 0.32.0 - 2026-11-04
 
 - Let a global-admin person launch and supervise standalone native sessions across configured execution owners, with target availability and home directories.
