@@ -524,3 +524,15 @@ test('Grok resumes the same named account when HOME becomes isolated', async () 
     f.cleanup();
   }
 });
+
+test('OpenCode read-only reviews disable project startup configuration without changing ordinary sessions', () => {
+  const options = { cwd: '/w', executable: 'opencode' };
+  assert.equal(opencodeEnvironment(options).OPENCODE_DISABLE_PROJECT_CONFIG, undefined);
+  assert.equal(
+    opencodeEnvironment({
+      ...options,
+      filesystemPolicy: { readOnlyRoots: ['/source'], writableRoots: ['/task'] },
+    }).OPENCODE_DISABLE_PROJECT_CONFIG,
+    'true',
+  );
+});

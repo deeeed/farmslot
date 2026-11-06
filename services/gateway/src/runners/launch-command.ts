@@ -447,7 +447,20 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
     return `${shellQuote(binary)}${isolated}${flags}${modelFlag} ${promptArg}`;
   }
+  if (runnerId === 'opencode' && options.workspaceTrust === 'untrusted') {
+    return `OPENCODE_DISABLE_PROJECT_CONFIG=true ${shellQuote(binary)}${modelFlag} --prompt ${promptArg}`;
+  }
   if (runnerId === 'pi') {
+    if (options.workspaceTrust === 'untrusted')
+      return [
+        shellQuote(binary),
+        reviewFlags,
+        piThinkingFlag(options.effort).trim(),
+        `--model ${shellQuote(resolvePiModel(options.model))}`,
+        promptArg,
+      ]
+        .filter(Boolean)
+        .join(' ');
     return `${buildPiLaunch({
       binary,
       model: options.model,

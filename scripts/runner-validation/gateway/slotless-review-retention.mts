@@ -8,6 +8,18 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 const repo = process.cwd();
+const reviewRunner = process.env.FARMSLOT_REVIEW_PROOF_RUNNER ?? 'codex';
+const proveReadOnly = process.env.FARMSLOT_REVIEW_PROOF_READ_ONLY === '1';
+assert(!proveReadOnly || ['pi', 'cursor', 'opencode', 'grok', 'claude'].includes(reviewRunner));
+const reviewModel = process.env.FARMSLOT_REVIEW_PROOF_MODEL ?? 'gpt-6.1-sol';
+const reviewTransport = process.env.FARMSLOT_REVIEW_PROOF_TRANSPORT ?? 'tmux';
+assert(['tmux', 'native'].includes(reviewTransport));
+const reviewEffort =
+  process.env.FARMSLOT_REVIEW_PROOF_EFFORT === 'none'
+    ? undefined
+    : (process.env.FARMSLOT_REVIEW_PROOF_EFFORT ?? 'low');
+const rounds = Number(process.env.FARMSLOT_REVIEW_PROOF_ROUNDS ?? '2');
+assert([1, 2].includes(rounds));
 const root = fs.realpathSync(fs.mkdtempSync('/tmp/slotless-review-proof-'));
 assert(process.argv[2], 'Pass a new evidence directory outside the private fixture');
 const out = path.resolve(process.argv[2]);
@@ -124,6 +136,38 @@ fs.writeFileSync(
   path.join(root, 'projects/fixture/fixtures/review-support/skill.md'),
   '# Fixture review\nReview only the greeting literal change and save the required report.\n',
 );
+// This prelude executes inside the real worker's sandbox, before the provider starts.
+// Static reviewers must not run validation probes or be asked to violate their task contract.
+const proofRunner = path.join(root, 'proof-runner');
+if (proveReadOnly) {
+  const binary = run('/usr/bin/which', [reviewRunner === 'cursor' ? 'cursor-agent' : reviewRunner]);
+  const probe = path.join(root, 'read-only-probe.cjs');
+  fs.writeFileSync(
+    probe,
+    `
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const source=process.cwd();
+if(process.env.TMPDIR===path.join(path.dirname(source),'task/.review-runtime/tmp')&&path.basename(source)==='source'&&source.startsWith(${JSON.stringify(root)}+path.sep)) {
+  const file=path.join(source,'greeting.txt'),before=fs.readFileSync(file);let denial;
+  try{fs.appendFileSync(file,'WRITE_MUST_BE_DENIED');}catch(error){if(!['EPERM','EACCES','EROFS'].includes(error.code))throw error;denial=error.code;}
+  const after=fs.readFileSync(file);
+  const result={writeDenied:!!denial,denial,sourceUnchanged:before.equals(after),sha256:crypto.createHash('sha256').update(after).digest('hex')};
+  fs.writeFileSync(path.join(path.dirname(source),'task/artifacts/read-only.json'),JSON.stringify(result));
+  if(!result.writeDenied||!result.sourceUnchanged)process.exitCode=1;
+}
+`,
+  );
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  fs.writeFileSync(
+    proofRunner,
+    `#!/bin/sh\n${quote(process.execPath)} ${quote(probe)} || exit $?\nexec ${quote(binary)} "$@"\n`,
+    { mode: 0o700 },
+  );
+  const poolPath = path.join(root, 'pool', machine + '.json');
+  const pool = JSON.parse(fs.readFileSync(poolPath, 'utf8'));
+  pool[reviewRunner === 'cursor' ? 'cursor_path' : reviewRunner + '_path'] = proofRunner;
+  fs.writeFileSync(poolPath, JSON.stringify(pool));
+}
 fs.writeFileSync(
   path.join(root, 'projects/fixture/project.json'),
   JSON.stringify({
@@ -213,24 +257,25 @@ const summary: Record<string, unknown> = {
   firstHead,
   nextHead,
   advancedBase,
-  transport: 'tmux',
-  model: 'gpt-6.1-sol',
+  transport: reviewTransport,
+  runner: reviewRunner,
+  model: reviewModel,
   farmServicesChanged: false,
 };
 const save = () =>
   fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify(summary, null, 2));
 try {
   let prior: Run | undefined;
-  for (const [index, head] of [firstHead, nextHead].entries()) {
+  for (const [index, head] of [firstHead, nextHead].slice(0, rounds).entries()) {
     const params = {
       flowType: 'review-pr',
       project: 'fixture',
       ticketOrPr: 'example/fixture#42',
       mode: 'autonomous',
-      runner: 'codex',
-      model: 'gpt-6.1-sol',
-      effort: 'low',
-      transport: 'tmux',
+      runner: reviewRunner,
+      model: reviewModel,
+      effort: reviewEffort,
+      transport: reviewTransport,
       reviewMode: index ? 'warm' : 'cold',
       reviewWorkspaceTarget: { machine },
     };
@@ -298,10 +343,26 @@ try {
     assert(finished.reviewWorkspaceSubject);
     assert(finished.reviewResult?.session);
     assert(finished.agentContexts?.length);
+    if (proveReadOnly) {
+      const readonly = JSON.parse(
+        fs.readFileSync(path.join(finished.reviewWorkspace.artifactPath, 'read-only.json'), 'utf8'),
+      );
+      assert.equal(readonly.writeDenied, true);
+      assert.equal(readonly.sourceUnchanged, true);
+      summary.readOnlyProofs = [
+        ...(Array.isArray(summary.readOnlyProofs) ? summary.readOnlyProofs : []),
+        readonly,
+      ];
+    }
     assert.equal(finished.slotId, null);
-    assert.equal(finished.transport, 'tmux');
+    assert.equal(finished.transport, reviewTransport);
     assert(finished.reviewWorkspace.retainedAt);
     assert(finished.reviewWorkspace.executionStoppedAt);
+    if (reviewTransport === 'native')
+      assert(
+        finished.agentContexts[0].nativeSession?.closedAt,
+        'Native worker closure is confirmed',
+      );
     const reread = await readReviewWorkspaceCompletion(finished.id);
     assert.equal(
       reread?.result?.reviewMd,
@@ -337,7 +398,7 @@ try {
     assert(fs.existsSync(finished.reviewWorkspace.checkoutPath));
     assert(finished.reviewResult.session.sessionId);
     assert.equal(finished.reviewResult.session.lastReviewedHeadSha, head);
-    assert.equal(finished.agentContexts.find((c) => c.id === 'review')?.effort, 'low');
+    assert.equal(finished.agentContexts.find((c) => c.id === 'review')?.effort, reviewEffort);
     assert.equal(
       fs.readFileSync(path.join(finished.reviewWorkspace.checkoutPath, 'greeting.txt'), 'utf8'),
       index ? 'Hello two\n' : 'Hello one\n',

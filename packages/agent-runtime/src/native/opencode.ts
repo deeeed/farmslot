@@ -17,6 +17,7 @@ export function opencodeEnvironment(options: NativeAdapterOptions): Record<strin
   };
   return {
     OPENCODE_DISABLE_AUTOUPDATE: '1',
+    ...(options.filesystemPolicy ? { OPENCODE_DISABLE_PROJECT_CONFIG: 'true' } : {}),
     ...(Object.keys(permission).length ? { OPENCODE_PERMISSION: JSON.stringify(permission) } : {}),
   };
 }

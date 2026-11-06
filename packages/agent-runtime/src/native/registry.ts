@@ -44,6 +44,7 @@ export interface NativeWorkspaceTrustOptions {
 
 const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-trust.cjs') as {
   claudeReadOnlyReviewArgs: readonly string[];
+  piReadOnlyReviewArgs: readonly string[];
   codexHome(environment: NodeJS.ProcessEnv): string;
   grokHome(environment: NodeJS.ProcessEnv): string;
   reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
@@ -119,6 +120,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'codex',
     supportsWorkers: true,
     supportsReadOnlyWorkspace: true,
+    reviewRuntimeRoots: (env) => [workspaceTrust.codexHome(env)],
     defaultEffort: 'low',
     account: {
       standardDirectory: workspaceTrust.codexHome,
@@ -213,6 +215,14 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
   // Pi and OpenCode sign in per provider: a profile separates their own login stores,
   // while provider keys in the environment still apply.
   opencode: {
+    reviewConfigurationRoots: reviewConfigurationRootsByRunner.opencode,
+    supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
+    reviewRuntimeRoots: (env) => [
+      join(env.XDG_DATA_HOME || join(env.HOME || homedir(), '.local/share'), 'opencode'),
+      join(env.XDG_CACHE_HOME || join(env.HOME || homedir(), '.cache'), 'opencode'),
+      join(env.XDG_STATE_HOME || join(env.HOME || homedir(), '.local/state'), 'opencode'),
+      join(env.XDG_CONFIG_HOME || join(env.HOME || homedir(), '.config'), 'opencode'),
+    ],
     adapter: opencodeNativeAdapter,
     binary: 'opencode',
     supportsWorkers: true,
@@ -225,6 +235,12 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   pi: {
+    reviewStartupArgs: workspaceTrust.piReadOnlyReviewArgs,
+    reviewConfigurationRoots: reviewConfigurationRootsByRunner.pi,
+    supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
+    reviewRuntimeRoots: (env) => [
+      env.PI_CODING_AGENT_DIR || join(env.HOME || homedir(), '.pi/agent'),
+    ],
     adapter: piNativeAdapter,
     binary: 'pi',
     supportsWorkers: true,

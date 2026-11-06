@@ -218,6 +218,10 @@ const reviewConfigurationRoots = (cwd) =>
     '.mcp.json',
     '.lsp.json',
     '.envrc',
+    '.pi',
+    '.opencode',
+    'opencode.json',
+    'opencode.jsonc',
   ].map((name) => path.join(fs.realpathSync(cwd), name));
 // What a Grok review may write in its home: its sessions and logs, and the bytes of the sign-in
 // lock that a token refresh takes. Everything else stays read-only: hooks, configuration, policy,
@@ -239,10 +243,13 @@ const reviewConfigurationRootsByRunner = {
   grok: reviewConfigurationRoots,
   claude: reviewConfigurationRoots,
   cursor: reviewConfigurationRoots,
+  pi: reviewConfigurationRoots,
+  opencode: reviewConfigurationRoots,
 };
 
 // The review sandbox denies repository configuration. Exclude it before Claude
 // tries to read it, rather than prompting on EPERM before accepting the task.
+const piReadOnlyReviewArgs = ['--no-approve'];
 const claudeReadOnlyReviewArgs = [
   '--setting-sources',
   'user',
@@ -251,6 +258,7 @@ const claudeReadOnlyReviewArgs = [
 ];
 
 module.exports = {
+  piReadOnlyReviewArgs,
   claudeReadOnlyReviewArgs,
   codexHome,
   grokHome,
