@@ -1,1 +1,1 @@
-- Preserve in-flight pipeline steps during gateway shutdown so restart recovery resumes package work instead of recording a deployment interruption as a permanent refusal.
+- Resume gateway-owned package work across gateway and node restarts, retaining in-flight steps and retrying requests explicitly rejected before execution without replaying accepted commands.

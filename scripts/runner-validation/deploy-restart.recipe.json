@@ -7,16 +7,23 @@
     "nodes": {
       "late-shutdown-result": {
         "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/run-engine/gateway-shutdown.test.ts",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks services/gateway/src/run-engine/gateway-shutdown.test.ts",
         "timeout_ms": 120000,
         "intent": "Keep late success and refusal running for restart recovery while real package errors still fail closed.",
+        "next": "complete-node-restart"
+      },
+      "complete-node-restart": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/deploy-step-retry.mts",
+        "timeout_ms": 300000,
+        "intent": "A real node rejects a held COMPLETE request during command closeout; the step resumes on the replacement node without a manual replay.",
         "next": "package-restart"
       },
       "package-restart": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/canary/canary.mts --profile nightly --target isolated --only human-gate-prep,finalize --node-away-s 20",
         "timeout_ms": 1800000,
-        "intent": "Real isolated gateway RPC runs resume package preparation and finalization after restart without manual replay or mirror refresh.",
+        "intent": "Non-regression: isolated package preparation and finalization still match their baseline across gateway and node restarts.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }
