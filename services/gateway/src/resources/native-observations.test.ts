@@ -512,6 +512,7 @@ test('authorized collection recovery notifies an observer whose initial source r
 async function partialFixture(
   t: import('node:test').TestContext,
   publish?: (key: NativeInterest['key']) => void,
+  localClient?: (home: string) => import('@farmslot/agent-runtime/native').NativeSessionClient,
 ) {
   const { mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
@@ -563,7 +564,7 @@ async function partialFixture(
   const source = new GatewayNativeObservations((key) => {
     published.push(key);
     publish?.(key);
-  });
+  }, localClient?.(home));
   const connection = {};
   source.attachClient(connection, () => owner);
   const receipt = {
@@ -1234,3 +1235,69 @@ test('admitted native source changes wake internal readers without any client in
   source.acceptRemote(socket, { ...receipt, revision: 3 }, () => true);
   assert.equal(changes, 2);
 });
+
+for (const change of ['advance', 'disconnect', 'assignment'] as const)
+  test(`final aggregate fence rejects earlier remote ${change} during the last local scan`, async (t) => {
+    const { NativeHostObservation } = await import('@farmslot/agent-runtime/native/observation');
+    const { NativeSessionClient } = await import('@farmslot/agent-runtime/native');
+    const f = await partialFixture(
+      t,
+      undefined,
+      (home) => new NativeSessionClient(join(home, 'local-source'), 'local'),
+    );
+    await f.source.startLocal(f.owner.id);
+    const fence = NativeHostObservation.prototype.fence;
+    let entered!: () => void;
+    const scanning = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let scans = 0;
+    t.mock.method(
+      NativeHostObservation.prototype,
+      'fence',
+      async function (this: InstanceType<typeof NativeHostObservation>) {
+        if (++scans === 2) {
+          entered();
+          await held;
+        }
+        return fence.call(this);
+      },
+    );
+    const pending = f.source.read(
+      f.connection,
+      [f.interest],
+      async () => ({
+        sessions: [],
+        unavailableExecutionNodes: [f.offline, f.old].map((executionNodeId) => ({
+          executionNodeId,
+        })),
+      }),
+      () => ({}),
+    );
+    const rejected = assert.rejects(pending, {
+      code: change === 'advance' ? 'RESOURCE_OBSERVATION_CHANGED' : 'NATIVE_SOURCE_UNAVAILABLE',
+    });
+    try {
+      await scanning;
+      if (change === 'advance')
+        f.source.acceptRemote(f.socket, { ...f.receipt, revision: 1 }, () => true);
+      else if (change === 'disconnect') unregisterByWs(f.socket);
+      else {
+        const { loadCredentialStore } = await import('../security/credential-store.js');
+        const principal = f.issued.get(f.healthy)!;
+        for (const credential of loadCredentialStore().credentials.filter(
+          (item) => item.principalId === principal,
+        ))
+          f.writer.revokeCredential(credential.id);
+        f.writer.retirePrincipals([principal]);
+      }
+      release();
+      await rejected;
+    } finally {
+      release();
+    }
+  });

@@ -318,7 +318,14 @@ export class NativeProcessTree {
     } catch (error) {
       // A full census failure must not abandon the independently known stopped owners.
       errors.push(error);
-      frozen = await cleanupProcesses([...this.owned.keys()]);
+      try {
+        frozen = await cleanupProcesses([...this.owned.keys()]);
+      } catch (fallbackError) {
+        throw new AggregateError(
+          [...errors, fallbackError],
+          'Native process tree cleanup censuses failed',
+        );
+      }
       this.applySnapshot(frozen);
     }
     attempt(() => this.stopGroup(frozen));

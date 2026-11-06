@@ -290,9 +290,17 @@ test(
   'cleanup waits for an async batched census while the event loop stays available',
   { timeout: 5000 },
   async (t) => {
+    let release: (() => void) | undefined;
     const root = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
       detached: true,
       stdio: 'ignore',
+    });
+    t.after(async () => {
+      release?.();
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+      if (root.pid && alive(root.pid)) process.kill(-root.pid, 'SIGKILL');
+      if (root.pid && root.exitCode === null && root.signalCode === null) await once(root, 'exit');
     });
     await once(root, 'spawn');
     const tree = new NativeProcessTree(root.pid!);
@@ -303,7 +311,6 @@ test(
     const ready = new Promise<void>((resolve) => {
       entered = resolve;
     });
-    let release: (() => void) | undefined;
     let first = true;
     t.mock.method(childProcess, 'execFileSync', (...args: Parameters<typeof sync>) => {
       syncScans++;
@@ -325,13 +332,7 @@ test(
       );
     });
     syncBuiltinESMExports();
-    t.after(async () => {
-      release?.();
-      t.mock.restoreAll();
-      syncBuiltinESMExports();
-      if (root.pid && alive(root.pid)) process.kill(-root.pid, 'SIGKILL');
-      if (root.exitCode === null && root.signalCode === null) await once(root, 'exit');
-    });
+
     const stopped = tree.stop();
     assert.ok(stopped instanceof Promise);
     await ready;

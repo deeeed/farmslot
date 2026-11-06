@@ -963,13 +963,13 @@ process.stdout.write(JSON.stringify(body));
       const pid = Number(line.trim().split(/\s+/, 1)[0]);
       if (!Number.isInteger(pid) || !matchesProcess(pid, marker)) continue;
       const tree = new NativeProcessTree(pid);
-      tree.terminate();
+      await tree.terminate();
       let until = Date.now() + 5000;
-      while (!tree.empty() && Date.now() < until) await delay(100);
-      if (!tree.empty()) tree.stop();
+      while (!(await tree.empty()) && Date.now() < until) await delay(100);
+      if (!(await tree.empty())) await tree.stop();
       until = Date.now() + 5000;
-      while (!tree.empty() && Date.now() < until) await delay(100);
-      assert(tree.empty(), 'Fixture browser cleanup unconfirmed');
+      while (!(await tree.empty()) && Date.now() < until) await delay(100);
+      assert(await tree.empty(), 'Fixture browser cleanup unconfirmed');
     }
   } catch (error) {
     cleanupErrors.push(error);

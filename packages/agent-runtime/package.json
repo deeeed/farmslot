@@ -66,7 +66,8 @@
     "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/agent-runtime && yarn workspace @farmslot/agent-runtime build",
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/agent-runtime",
     "test:acceptance-live": "node --import tsx ../../scripts/e2e-acceptance-ledger.mts",
-    "test:branch-maintenance-live": "node --import tsx --test test/branch-maintenance-live.mts"
+    "test:branch-maintenance-live": "node --import tsx --test test/branch-maintenance-live.mts",
+    "test:native-observation-live": "NATIVE_OBSERVATION_LIVE=1 node --import tsx --test --test-name-pattern='source admits the actual supervisor' src/native/observation.test.ts"
   },
   "dependencies": {
     "@farmslot/adapter-sdk": "workspace:*",

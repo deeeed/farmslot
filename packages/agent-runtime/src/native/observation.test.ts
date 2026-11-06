@@ -43,31 +43,35 @@ function setup() {
   };
 }
 
-test('source admits the actual supervisor and its separately registered ready host', async () => {
-  const fixture = setup();
-  let supervisorPid: number | undefined;
-  try {
-    assert.deepEqual(await new NativeSessionClient(fixture.root).list('A'), []);
-    const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json'));
-    supervisorPid = supervisor.pid;
-    const worker = readJson<{ pid: number }>(join(fixture.root, 'worker.json'));
-    const ready = readJson<{ pid: number }>(join(fixture.root, 'ready.json'));
-    assert.notEqual(supervisor.pid, worker.pid);
-    assert.equal(ready.pid, worker.pid);
-    await fixture.source.start();
-    assert.equal((await fixture.source.fence()).ready, true);
-    writeFileSync(join(fixture.root, 'ready.json'), JSON.stringify({ pid: supervisor.pid }));
-    await assert.rejects(() => fixture.source.fence(), NativeSourceUnavailable);
-  } finally {
-    fixture.source.stop();
-    if (supervisorPid && alive(supervisorPid)) process.kill(supervisorPid, 'SIGTERM');
-    const deadline = Date.now() + 4000;
-    while (existsSync(join(fixture.root, 'lock')) && Date.now() < deadline) await delay(20);
-    assert.equal(existsSync(join(fixture.root, 'lock')), false, 'Private native owner must stop');
-    rmSync(socketDirectory(fixture.root), { recursive: true, force: true });
-    fixture.close();
-  }
-});
+test(
+  'source admits the actual supervisor and its separately registered ready host',
+  { skip: process.env.NATIVE_OBSERVATION_LIVE !== '1' },
+  async () => {
+    const fixture = setup();
+    let supervisorPid: number | undefined;
+    try {
+      assert.deepEqual(await new NativeSessionClient(fixture.root).list('A'), []);
+      const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json'));
+      supervisorPid = supervisor.pid;
+      const worker = readJson<{ pid: number }>(join(fixture.root, 'worker.json'));
+      const ready = readJson<{ pid: number }>(join(fixture.root, 'ready.json'));
+      assert.notEqual(supervisor.pid, worker.pid);
+      assert.equal(ready.pid, worker.pid);
+      await fixture.source.start();
+      assert.equal((await fixture.source.fence()).ready, true);
+      writeFileSync(join(fixture.root, 'ready.json'), JSON.stringify({ pid: supervisor.pid }));
+      await assert.rejects(() => fixture.source.fence(), NativeSourceUnavailable);
+    } finally {
+      fixture.source.stop();
+      if (supervisorPid && alive(supervisorPid)) process.kill(supervisorPid, 'SIGTERM');
+      const deadline = Date.now() + 4000;
+      while (existsSync(join(fixture.root, 'lock')) && Date.now() < deadline) await delay(20);
+      assert.equal(existsSync(join(fixture.root, 'lock')), false, 'Private native owner must stop');
+      rmSync(socketDirectory(fixture.root), { recursive: true, force: true });
+      fixture.close();
+    }
+  },
+);
 
 test('armed source sees real journal appends before fs.watch callback; no command or host launch', async () => {
   const fixture = setup();
