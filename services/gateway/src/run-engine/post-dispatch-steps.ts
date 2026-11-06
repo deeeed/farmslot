@@ -12,6 +12,7 @@ import {
   isReviewValidationDepth,
   pipelineReviewOffReason,
   PipelineSteps,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReadyGatePrPackage,
   reviewPolicySatisfied,
   type ReviewSelection,
@@ -54,6 +55,7 @@ import {
   type ReviewOptions,
   type ReviewResult,
 } from '../review/orchestrator.js';
+import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import {
   markReviewedInputsRerun,
   reviewedInputsAwaitingReview,
@@ -124,6 +126,7 @@ import {
   TerminalReviewArtifactError,
 } from './recover-inflight-reviews.js';
 import { reconcileRunPosture } from './resource-posture.js';
+import { publicationReviewLaunchRejectionFromError } from './review-launch-gate.js';
 import {
   automaticPublicationReviewPlan,
   humanGateReviewPolicy,
@@ -895,7 +898,39 @@ export async function executeReviewStep(
   });
   // The engine records partial I/O on failure; keep the selected reviewer for its next retry.
   stepPartialIO.set(runId, { inputs });
-  const executeReviewForRun = context.executeReviewForRun ?? executeReview;
+  const review = context.executeReviewForRun ?? executeReview;
+  const executeReviewForRun: typeof executeReview = async (...args) => {
+    let reviewed: ReviewResult;
+    try {
+      reviewed = await review(...args);
+    } catch (error) {
+      const rejection = publicationReviewLaunchRejectionFromError(error);
+      if (rejection?.code !== PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached)
+        throw error;
+      throw new ResultDecisionHoldError(rejection.message, inputs, {
+        ...getRun(runId)?.steps.find((step) => step.name === S.REVIEW)?.outputs,
+        reviewLaunchRejection: rejection,
+      });
+    }
+    if (reviewed.verdict === 'issues') {
+      const latest = getRun(runId);
+      const budget = latest && (await runReviewRoundBudget(latest));
+      if (budget?.remaining === 0) {
+        const message = budget.diagnosis ?? 'Review budget exhausted; waiting for the operator.';
+        throw new ResultDecisionHoldError(message, inputs, {
+          ...reviewed,
+          reviewLaunchRejection: {
+            code: PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached,
+            message,
+            userAction: 'Extend the review budget, accept the result with a reason, or close it.',
+            rejectedAt: new Date().toISOString(),
+            details: { reviewRoundBudget: budget },
+          },
+        });
+      }
+    }
+    return reviewed;
+  };
   const execution = reviewSelection ? executionModelFromSelection(reviewSelection) : null;
   // Without a sequence the project's review configuration selects the reviewer.
   const reviewer = execution
