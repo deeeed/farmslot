@@ -457,6 +457,7 @@ export {
   type StageReporterOptions,
 } from './stage-progress.js';
 export { closest } from './suggest.js';
+export type { TaskRunBinding, TaskRunLifecycle, TaskRunObserver } from './task-run.js';
 export {
   CHECKLIST_LABEL_LIMIT,
   collectTaskView,

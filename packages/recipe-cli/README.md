@@ -45,3 +45,17 @@ Docs: https://farmslot.io/docs/reference/recipe-discovery
 ```sh
 yarn workspace @farmslot/recipe-cli quality
 ```
+
+Task status views use `inputs/recipe-binding.json` to associate a task with its
+checkout. Branch names are display text only. For a Farmslot task, the handoff's
+`attemptId` identifies its owning run. `status --watch`, `status --task` and the
+home status view read that lifecycle through one `farmslot --json run get <id>
+--watch` process, selected by `FARMSLOT_CLI` or PATH. The CLI reuses its configured
+authenticated Gateway connection and emits one envelope per lifecycle change.
+Deploy a CLI that supports this flag before activating the updated harness.
+
+Worker completion remains visible while the parent run reviews or waits on CI.
+An unavailable parent lifecycle is shown as unavailable. It is never inferred
+from a ticket spelling, branch name, worker signal or task-file silence. Skill
+runs without a parent retain their file-based completion behavior. No runtime
+probes, task writes, new Gateway method or authentication implementation are added.

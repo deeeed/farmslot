@@ -520,3 +520,65 @@ blockers (the preview's no-slot error, a queued item's waiting reason), a skippe
 slot reads "Physical device slot is reserved for runs that request a device
 (project slot_selection.physical_devices = on-request)". No CLI flag, SDK export
 or worker contract.
+
+## Amendment: bounded shared claims for recorded proofs (2026-11-05)
+
+**Status:** Proposed.
+
+### Decision
+
+Extend the existing scoped resource claims with optional shared `capacity`.
+The gateway admits at most that many holding leases across the claim's scope,
+including reservations, warm holders and unresolved cleanup. Missing capacity
+retains unlimited sharing. Exclusive claims retain their existing behavior.
+Persist capacity with each lease and use the same conflict policy for acquisition
+and FIFO reservation. The strictest limit among a request and its participating
+holders applies. A configuration change never revokes a holder's work.
+
+A project may declare `recipe.recordingCapability`. Hosted recorded recipe commands
+acquire that capability before fixture setup, wait on the existing scoped queue
+and release their own invocation-scoped lease on exit. Each command has a stable
+invocation identity, including parallel commands on one run. Its auditable
+requirement stays on the lease instead of entering the run resource plan, so
+coding and later resource restores do not automatically reserve proof permits. Managed tasks use their existing runtime
+catalog owner receipt; direct allocated commands name their run explicitly.
+Unrecorded commands, previews and unconfigured projects retain their current path.
+The recorder's target-specific capture admission keeps its existing role.
+
+This addresses shared external quotas, such as several nodes using one testnet
+API through the same public IP. A two-permit fleet claim limits simultaneous
+admitted proofs; it does not meter HTTP requests. The project pack owns the limit.
+No quota service, new scheduler, resource store or project-specific gateway logic
+is introduced. Existing cancellation, cleanup and owner fences remain authoritative.
+
+The normative details are in the
+[resource capability contract](../reference/recipe-runtime-capability-contract.md#bounded-shared-claims-and-recorded-proof-admission).
+
+### Public surface
+
+`@farmslot/protocol` adds optional `capacity` on declared and persisted claims,
+and `ProjectRecipeConfig.recordingCapability`. Existing acquire/release RPCs accept
+an optional recording `invocationId`; the lease retains its purpose and requirement,
+and the catalog list acknowledges recording admission before a client mutates it. `@farmslot/slot-config` validates
+and preserves those fields. `@farmslot/recipe-cli/harness` carries the selected
+recording capability in `ResolvedProjectBinding`. Consumers are the gateway's
+existing registry and the public Farmslot project recipe commands.
+
+`farmslot recipe run` and `recipe call` gain optional `--run <runId>` for direct
+allocated recordings. Managed commands use `RECIPE_TASK_DIR`'s existing owner
+receipt and reject a conflicting override. The Terminal pack is the initial
+consumer; upper-layer harnesses inherit admission when invoked through the hosted
+command. `ProjectRecipeHost.abort` propagates permit loss to inherited setup
+helpers and provider cancellation. There is no new RPC or adapter hook. These are
+additive minor changes.
+
+### Consequences
+
+The existing lease queue now supports bounded sharing as well as exclusivity.
+Recorded commands add one owned subscription while waiting and no polling timer.
+The gateway persists the queue and reserves available capacity before notifying
+its owner. A failed proof still releases its permit; failed cleanup stays visible.
+
+Deploy the updated gateway and CLI before enabling the pack declaration. Existing
+frozen tasks adopt the updated pack through supported task refresh/repin. Preserve
+their identity, progress and evidence; do not rewrite retained inputs in place.

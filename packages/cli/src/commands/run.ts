@@ -66,12 +66,13 @@ import {
 
 import { bold, cyan, green } from '../colors.js';
 import { type CommandContext, resolveContext } from '../context.js';
-import { createEmitter } from '../envelope.js';
+import { createEmitter, okEnvelope } from '../envelope.js';
 import { GatewayRpcError } from '../gateway-client.js';
 import { withProgress, withStreamProgress } from '../progress.js';
 import { collectRunCreatePlan } from '../wizard/run-create-wizard.js';
 
 import { dispatchBacklogItem, resolveItem } from './backlog.js';
+import { watchRunLifecycle } from './run-watch.js';
 
 export function parseOptionalPrNumber(raw: string | undefined): number | undefined {
   if (raw == null || raw.trim() === '') return undefined;
@@ -825,10 +826,31 @@ export function registerRunCommand(program: Command): void {
   run
     .command('get <runId>')
     .description('Show one run')
-    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+    .option('--watch', 'Stream lifecycle changes until the run ends')
+    .action(async (runId: string, opts: { watch?: boolean }, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
+        if (opts.watch) {
+          const parentPipe = process.env.FARMSLOT_TASK_WATCH_PIPE === '1' && !process.stdin.isTTY;
+          const parentEnded = () => process.kill(process.pid, 'SIGTERM');
+          if (parentPipe) {
+            process.stdin.once('end', parentEnded);
+            process.stdin.resume();
+          }
+          try {
+            await watchRunLifecycle(await client.connect(), runId, (run) => {
+              if (emit.machine) output.write(JSON.stringify(okEnvelope('run.get', { run })) + '\n');
+              else output.write(`${run.id.slice(0, 8)} ${run.status}\n`);
+            });
+          } finally {
+            if (parentPipe) {
+              process.stdin.off('end', parentEnded);
+              process.stdin.pause();
+            }
+          }
+          return;
+        }
         const result = await withProgress(
           `Loading run ${runId.slice(0, 8)}`,
           () =>

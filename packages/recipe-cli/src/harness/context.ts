@@ -614,7 +614,7 @@ export interface LoadProjectProviderOptions {
   host?: HarnessHostConfig;
   hostHints?: Pick<
     HarnessHostConfig,
-    'doctorHint' | 'doctorCommand' | 'supportsLast' | 'journaledCommands'
+    'doctorHint' | 'doctorCommand' | 'supportsLast' | 'journaledCommands' | 'taskRunCliArgs'
   >;
   command?: string;
   options?: CliOptions;
@@ -987,6 +987,7 @@ export async function resolveProjectContext(
     source,
     root,
     configPath: path.join(root, 'project.json'),
+    ...(recipe.recordingCapability ? { recordingCapability: recipe.recordingCapability } : {}),
     ...outputPaths,
     ...(app ? { app } : {}),
     domain: recipe.domain,

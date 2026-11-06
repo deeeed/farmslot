@@ -623,3 +623,13 @@ test('a completion whose preparation throws still settles the reservation', asyn
   }
   assert.deepEqual(settled, [{ leaseId: 'lease-queued', retain: false }]);
 });
+
+test('recording grants stay with their command instead of preparing the run posture', async () => {
+  await completeGrantedClaim(
+    { ...GRANT, purpose: 'recording' },
+    {
+      prepare: async () => assert.fail('recording grant prepared the run resource plan'),
+      settle: async () => assert.fail('recording reservation belongs to its waiting command'),
+    },
+  );
+});

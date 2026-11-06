@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.3 - 2026-11-06
+
+- Align the published runtime pin with task lifecycle status so installed harnesses retain one runtime copy.
+
 ## 0.31.2 - 2026-11-04
 
 - Align published dependencies with the native delegation and recording-tail release cohort.
