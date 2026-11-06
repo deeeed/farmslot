@@ -56,7 +56,7 @@ mock.module('../core/exec.js', {
   },
 });
 const fresh: string = './hosted-task-init.js?partial-preservation';
-const { initializeHostedTaskOnSlot, hostedTaskCommand } = (await import(
+const { initializeHostedTaskOnSlot, hostedTaskCommand, hostedTaskRequest } = (await import(
   fresh
 )) as typeof import('./hosted-task-init.js');
 
@@ -206,4 +206,34 @@ test('transport forwards node pool and captured pack roots through the installed
     projects: path.join(support, 'projects'),
     provider: path.join(root, 'pool-provider'),
   });
+});
+
+test('hosted requests keep the installed request shape for ordinary runners', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-request-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'worker'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'worker/dev.md'), '# Task\n- [ ] Observe\n');
+  const template = selectExecutionTemplate({
+    sources: [projectWorkerTemplateSource('fixture', root)],
+    flow: 'dev',
+    platform: 'cli',
+  });
+  for (const runner of [undefined, 'claude', 'codex', 'pi', 'scripted']) {
+    const request = JSON.parse(
+      hostedTaskRequest('fixture-1', {
+        runner,
+        binding: 'static',
+        template,
+        task: {
+          taskDir: '/fixture/task',
+          flow: 'dev',
+          platform: 'cli',
+          task: { title: 'Task', sourceKind: 'text' },
+          handoff: { surface: 'farmslot', project: 'fixture', attemptId: 'attempt' },
+        },
+      }),
+    );
+    assert.equal(Object.hasOwn(request, 'runner'), runner === 'scripted');
+    if (runner === 'scripted') assert.equal(request.runner, 'scripted');
+  }
 });

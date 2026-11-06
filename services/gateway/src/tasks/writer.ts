@@ -1427,6 +1427,7 @@ export async function writeTaskFile(
   // The node producer imports project tooling from the slot checkout, which prepare
   // has not checked out or installed yet: freeze its input (ADR-068 Amendment 7).
   const input: HostedTaskInput = {
+    ...(run.metrics.runner === 'scripted' ? { runner: 'scripted' } : {}),
     binding: projectVars.projectJson.recipe?.provider ? 'project' : 'static',
     task: taskData,
     template: configuredTemplate,

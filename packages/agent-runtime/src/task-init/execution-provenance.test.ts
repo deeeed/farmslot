@@ -108,6 +108,34 @@ test('task tooling survives install pruning and provider/library updates', (t) =
   );
 });
 
+test('scripted tasks reuse the installed CLI and detect mutations', (t) => {
+  const { root, taskDir, input } = fixture(t);
+  const previous = process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+  process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS = '1';
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+    else process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS = previous;
+  });
+  const shared = { ...input, reuseInstalledInputs: true };
+  t.mock.method(fs, 'cpSync', () => {
+    throw new Error('Scripted initialization must not copy installed inputs');
+  });
+  const first = retainTaskExecution(taskDir, shared);
+  const secondTask = path.join(root, 'second-task');
+  const second = retainTaskExecution(secondTask, shared);
+  assert.notEqual(first.pin, second.pin);
+  assert.equal(fs.realpathSync(first.resolvedExecutable), fs.realpathSync(input.executable));
+  assert.equal(fs.realpathSync(second.resolvedExecutable), fs.realpathSync(input.executable));
+  assert.equal(first.retainedInputs[1]!.path, fs.realpathSync(input.inputs[0]!));
+  assert.deepEqual(verifyTaskExecutionProvenance(secondTask, null), second);
+  fs.writeFileSync(input.executable, 'mutated installation');
+  assert.throws(() => verifyTaskExecutionProvenance(taskDir, null), { code: 'TASK_INPUT_CHANGED' });
+  delete process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+  assert.throws(() => retainTaskExecution(path.join(root, 'third-task'), shared), {
+    code: 'TASK_INSTALL_UNSUPPORTED',
+  });
+});
+
 test('a repin replaces the selection and receipt; the previous pin keeps the original', (t) => {
   const { root, taskDir, provider, input } = fixture(t);
   const previous = retainTaskExecution(taskDir, {

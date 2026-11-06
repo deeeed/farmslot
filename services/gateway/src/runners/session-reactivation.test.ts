@@ -1316,3 +1316,56 @@ test('retained resume refuses window-wide replacement when the target has multip
     false,
   );
 });
+
+test('a scripted worker without an interactive receipt keeps retained delivery unsupported', async (t) => {
+  commands.length = 0;
+  const previous = sessionPathExists;
+  sessionPathExists = false;
+  t.after(() => {
+    sessionPathExists = previous;
+  });
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'scripted',
+    prompt: 'Read REVIEW-FIX.md',
+    taskDir: 'tasks/fix',
+  });
+  assert.deepEqual(result, {
+    delivered: false,
+    disposition: 'safe-send',
+    reason: "Runner 'scripted' does not support retained-session handoff",
+  });
+  assert.equal(
+    commands.some((command) => command.includes('send-keys') || command.includes('respawn-window')),
+    false,
+  );
+});
+
+test('a scripted worker without an interactive receipt keeps live delivery unconfirmed', async (t) => {
+  commands.length = 0;
+  const previous = sessionPathExists;
+  sessionPathExists = false;
+  t.after(() => {
+    sessionPathExists = previous;
+  });
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'scripted',
+    prompt: 'Read REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
+    taskDir: 'tasks/fix',
+    priorPromptSendAttempted: true,
+  });
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.disposition, 'hold');
+    assert.equal(result.retryable, true);
+    assert.doesNotMatch(result.reason, /No scripted interactive session/);
+  }
+  assert.equal(
+    commands.some((command) => command.includes('send-keys') || command.includes('respawn-window')),
+    false,
+  );
+});

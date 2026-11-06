@@ -69,6 +69,20 @@ export const CANARY_REPO: Record<string, string> = {
   'packages/cli/bin/farmslot.mjs': FAKE_RUNNER,
 };
 
+/** A finite worker stays observable until MONITOR takes over, without a launch window. */
+export function fastCanaryRepo(): Record<string, string> {
+  return {
+    ...CANARY_REPO,
+    'packages/cli/bin/farmslot.mjs': FAKE_RUNNER.replace(
+      'import { mkdirSync, writeFileSync }',
+      'import { existsSync, mkdirSync, watch, writeFileSync }',
+    ).replace(
+      'const artifacts =',
+      "const ready = path.join(taskDir, 'canary-monitor-ready');\nconst watcher = watch(taskDir, () => { if (existsSync(ready)) watcher.close(); });\nif (existsSync(ready)) watcher.close();\nconst artifacts =",
+    ),
+  };
+}
+
 export const CANARY_TAGS = ['canary'];
 
 /**
@@ -221,13 +235,16 @@ function buildPack(
 }
 
 /** The canary demo project; each slot owns its local origin. */
-export const canaryPack = (): ProjectPack =>
+export const canaryPack = (fast = false): ProjectPack =>
   buildPack(CANARY_PROJECT, {
     title: 'Canary',
     devStep: 'Run the scripted canary scenario.',
     dispatchPrompt: 'Read {{TASK_FILE}} and follow it.',
     projectJson: {
       hooks: { post_merge_install: 'true' },
+      ...(fast
+        ? { prepare: { default: 'canary', profiles: { canary: { phases: ['git'] } } } }
+        : {}),
       default_branch: 'main',
       review: { enabled: false },
       monitoring: { poll_interval_min: 0.02, total_timeout_min: 15 },

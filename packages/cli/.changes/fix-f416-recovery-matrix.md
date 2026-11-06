@@ -1,0 +1,1 @@
+- Add scripted recovery behaviours, reuse installed inputs in disposable scenarios, and load task and internal commands without unrelated command registrations.

@@ -3,11 +3,37 @@ import test from 'node:test';
 
 import type { ScriptedRunnerConfig } from '@farmslot/protocol';
 
-import { scriptedCommandForRunner, scriptedRelaunchOptions } from './scripted-config.js';
+import {
+  assertScriptedRunnerConfig,
+  scriptedCommandForRunner,
+  scriptedRelaunchOptions,
+} from './scripted-config.js';
 
 const scenario: ScriptedRunnerConfig = { mode: 'scenario', scenario: 'success' };
 const command: ScriptedRunnerConfig = { mode: 'command', commandRef: 'work' };
 const projectJson = { scripted: { commands: { work: { command: 'run', timeout_ms: 5 } } } };
+
+test('recovery behaviours use the same scenario feature gate', () => {
+  for (const scenario of [
+    'silent',
+    'late-ack',
+    'commit-out-of-band',
+    'edit-forbidden-file',
+  ] as const) {
+    const params = {
+      runner: 'scripted',
+      projectName: 'p',
+      scripted: { mode: 'scenario' as const, scenario, stepDelayMs: 1 },
+    };
+    assert.doesNotThrow(() =>
+      assertScriptedRunnerConfig({ ...params, env: { FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '1' } }),
+    );
+    assert.throws(
+      () => assertScriptedRunnerConfig({ ...params, env: {} }),
+      /FARMSLOT_ENABLE_SCRIPTED_SCENARIOS/,
+    );
+  }
+});
 
 test('only a scripted worker in command mode names a project command', () => {
   assert.deepEqual(scriptedCommandForRunner('scripted', command, projectJson, 'p'), {

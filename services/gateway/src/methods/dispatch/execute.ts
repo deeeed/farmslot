@@ -90,6 +90,7 @@ import {
   captureRunnerPromptAcceptanceBaseline,
   detectRunnerLaunchBlocker,
   execRunnerKeys,
+  getRunnerDefinition,
   normalizeRunner,
   PromptDeliveryUncertainError,
   runnerAppliesOwnSandbox,
@@ -1896,7 +1897,9 @@ export async function dispatchExecute(
     const usesRoleWindow = Boolean(roleWindowName);
     const settleFreshRoleWindow = async () => {
       if (!usesRoleWindow) return;
-      await new Promise((resolve) => setTimeout(resolve, ROLE_WINDOW_STARTUP_SETTLE_MS));
+      const settleMs =
+        getRunnerDefinition(runner).roleWindowStartupSettleMs ?? ROLE_WINDOW_STARTUP_SETTLE_MS;
+      if (settleMs) await new Promise((resolve) => setTimeout(resolve, settleMs));
     };
     if (repeatReviewResumePlan.kind === 'resume') {
       await runPressureGate();

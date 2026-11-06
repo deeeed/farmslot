@@ -528,11 +528,11 @@ test('review prompt recovery stays unsupported for non-interactive runners', asy
     { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
     'missing-run',
     {
-      id: 'rev-scripted',
-      runner: 'scripted',
-      taskFile: 'tasks/run-1/REVIEW.rev-scripted.md',
-      signalFile: 'tasks/run-1/REVIEW.rev-scripted-SIGNAL.json',
-      target: { session: 'ff-1', window: 'rev-scripted', pane: null, target: 'ff-1:rev-scripted' },
+      id: 'rev-none',
+      runner: 'none',
+      taskFile: 'tasks/run-1/REVIEW.rev-none.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-none-SIGNAL.json',
+      target: { session: 'ff-1', window: 'rev-none', pane: null, target: 'ff-1:rev-none' },
       attemptStartedAt: '2026-08-24T03:37:05.626Z',
     },
     {

@@ -64,6 +64,7 @@ import {
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
+  getRunnerDefinition,
   normalizeRunner,
   readRunnerLaunchBlocker,
   runnerDefaultModel,
@@ -747,13 +748,7 @@ export interface ReviewRetryDeps {
     runId: string,
     label?: string,
   ) => { stop(): void | Promise<void> };
-  waitForWorkerSignal: (
-    vars: Awaited<ReturnType<typeof loadSlotVars>>,
-    taskDir: string,
-    timeoutMs: number,
-    baseline: string,
-    turnActive?: () => Promise<boolean>,
-  ) => Promise<WorkerSignal | undefined>;
+  waitForWorkerSignal: typeof waitForWorkerSignal;
   // Loop never reads the return values — narrow to Promise<void> so test mocks don't have to
   // synthesize the production AgentContext shape just to satisfy the type checker.
   markAgentContextStatus: (...args: Parameters<typeof markAgentContextStatus>) => Promise<void>;
@@ -1401,9 +1396,16 @@ export async function runReviewRetryLoop({
       fixSignal = await deps.waitForWorkerSignal(
         vars,
         taskDir,
-        fixDeliveryDeferred ? RUNNER_LAUNCH_READY_TIMEOUT_MS : FEEDBACK_TIMEOUT_MS,
+        fixDeliveryDeferred
+          ? (getRunnerDefinition(workerRunner, deps.getRun(runId)?.scripted).feedbackTiming
+              ?.launchMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS)
+          : (getRunnerDefinition(workerRunner, deps.getRun(runId)?.scripted).feedbackTiming
+              ?.inactivityMs ?? FEEDBACK_TIMEOUT_MS),
         fixSignalBaseline,
         fixDeliveryDeferred ? undefined : fixHasActivity,
+        undefined,
+        undefined,
+        getRunnerDefinition(workerRunner, deps.getRun(runId)?.scripted).feedbackTiming?.pollMs,
       );
       assertNativeReviewOperationCurrent();
       if (!fixSignal && fixDeliveryDeferred && (await fixHasActivity())) {
@@ -1414,9 +1416,13 @@ export async function runReviewRetryLoop({
         fixSignal = await deps.waitForWorkerSignal(
           vars,
           taskDir,
-          FEEDBACK_TIMEOUT_MS,
+          getRunnerDefinition(workerRunner, deps.getRun(runId)?.scripted).feedbackTiming
+            ?.inactivityMs ?? FEEDBACK_TIMEOUT_MS,
           fixSignalBaseline,
           fixHasActivity,
+          undefined,
+          undefined,
+          getRunnerDefinition(workerRunner, deps.getRun(runId)?.scripted).feedbackTiming?.pollMs,
         );
       }
       fixCompletedAt = new Date().toISOString();
@@ -1910,7 +1916,7 @@ export async function resumeReviewFixPromptDelivery(
   const priorPromptSendAttempted =
     options.priorPromptSendAttempted ?? Boolean(context.promptDeliveryStartedAt);
   // A runner that cannot take a prompt can still hold a recorded one.
-  const interactive = runnerSupportsInteractivePrompt(runner);
+  const interactive = runnerSupportsInteractivePrompt(runner, deps.getRun(runId)?.scripted);
   if (
     !storedTarget ||
     !session ||
@@ -2501,6 +2507,7 @@ async function recoverReviewFixPass({
             (attemptId) => {
               expiredAttemptId = attemptId;
             },
+            getRunnerDefinition(workerRunner, getRun(runId)?.scripted).feedbackTiming?.pollMs,
           );
         } catch (error) {
           waitFailure = error;
@@ -3125,6 +3132,10 @@ async function sendOwnedFeedbackToWorker(
       // retry re-resolves the worker pane until a send has been attempted.
       const retry = await retryDeferredFixDelivery({
         runId,
+        retryIntervalMs: getRunnerDefinition(runner, getRun(runId)?.scripted).feedbackTiming
+          ?.retryMs,
+        retryWindowMs: getRunnerDefinition(runner, getRun(runId)?.scripted).feedbackTiming
+          ?.retryWindowMs,
         target: workerTarget,
         send: (retryTarget) => deliverFixPrompt(retryTarget, true),
         rediscover: (storedTarget) =>
@@ -3526,6 +3537,7 @@ export async function waitForWorkerSignal(
   turnActive?: () => Promise<boolean>,
   expectedAttemptId?: string | (() => string | undefined),
   onTimeout?: (expiredAttemptId: string | undefined) => void,
+  pollMs = 2000,
 ): Promise<WorkerSignal | undefined> {
   const signalPath = slotTaskRelPath(vars, taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal);
 
@@ -3538,7 +3550,7 @@ export async function waitForWorkerSignal(
   const turnStatePollMs = Math.min(10_000, Math.max(2_000, Math.floor(timeoutMs / 2)));
   const maxActiveMs = Math.max(timeoutMs, Math.min(FEEDBACK_MAX_ACTIVE_MS, timeoutMs * 4));
   while (Date.now() - start < maxActiveMs && Date.now() - lastProgressAt < timeoutMs) {
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, Math.min(pollMs, timeoutMs)));
     assertNativeReviewOperationCurrent();
     const expected =
       typeof expectedAttemptId === 'function' ? expectedAttemptId() : expectedAttemptId;

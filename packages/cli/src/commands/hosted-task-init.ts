@@ -42,6 +42,7 @@ import { cliInstallation } from './task.js';
 type TaskData = Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'>;
 
 export interface HostedTaskInitRequest {
+  runner?: string;
   version: 1;
   slotId: string;
   binding: 'project' | 'static';
@@ -172,6 +173,7 @@ function isHostedRequest(value: unknown): value is HostedTaskInitRequest {
     !isRecord(value) ||
     value.version !== 1 ||
     !string(value.slotId) ||
+    (value.runner !== undefined && !string(value.runner)) ||
     (value.binding !== 'project' && value.binding !== 'static') ||
     !isRecord(value.task) ||
     !isRecord(value.template)
@@ -185,6 +187,7 @@ function isHostedRequest(value: unknown): value is HostedTaskInitRequest {
         ![
           'version',
           'slotId',
+          'runner',
           'binding',
           'task',
           'template',
@@ -528,10 +531,13 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
     if (request.binding === 'static') {
       if (project.projectJson.recipe?.provider || project.projectJson.vars?.mark_cmd)
         throw refusal('Static tasks cannot discard a declared provider or marker policy.');
+      const scripted =
+        request.runner === 'scripted' && process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS === '1';
       return produce({
         ...installation,
+        ...(scripted ? { reuseInstalledInputs: true } : {}),
         bindingIdentity: null,
-        inputs: [path.dirname(project.projectConfig)],
+        inputs: [scripted ? project.projectConfig : path.dirname(project.projectConfig)],
         excludedRoots: [path.join(path.dirname(project.projectConfig), 'tasks')],
         selectedConfiguration: '{"identity":null}',
       });

@@ -42,6 +42,7 @@ const producedTaskFiles = [
 const HOSTED_TASK_INIT_TIMEOUT_MS = 10 * 60_000;
 
 export interface HostedTaskInput {
+  runner?: string;
   binding: 'project' | 'static';
   task: Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'>;
   template: SelectedExecutionTemplate;
@@ -65,6 +66,7 @@ export function hostedTaskRequest(slotId: string, input: HostedTaskInput): strin
   const request = JSON.stringify({
     version: 1,
     slotId,
+    ...(input.runner === 'scripted' ? { runner: 'scripted' } : {}),
     binding: input.binding,
     task: input.task,
     template: {

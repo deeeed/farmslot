@@ -1,0 +1,1 @@
+- Scripted recovery checks reuse their disposable node's installed CLI and configuration while preserving task ownership and content verification.

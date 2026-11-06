@@ -40,6 +40,9 @@ function request(): HostedTaskInitRequest {
 test('private request accepts the declared grammar and rejects executable or gate authority', () => {
   const valid = request();
   assert.deepEqual(parseHostedTaskInitRequest(valid), valid);
+  const scripted = { ...valid, runner: 'scripted' };
+  assert.deepEqual(parseHostedTaskInitRequest(scripted), scripted);
+  assert.throws(() => parseHostedTaskInitRequest({ ...valid, runner: 1 }), /invalid or forbidden/);
   for (const forbidden of [
     { execution: {} },
     { markCommand: 'unfrozen mark' },

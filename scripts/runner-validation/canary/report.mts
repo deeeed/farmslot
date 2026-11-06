@@ -84,13 +84,16 @@ export async function report(options: {
   extra: Record<string, unknown>;
 }): Promise<Verdict> {
   const result = verdict(options.checks, options.setupError, options.cleanupErrors);
-  const minutes = Math.ceil((Date.now() - options.startedAt.getTime()) / 60_000);
+  const finishedAt = new Date();
+  const wallMs = finishedAt.getTime() - options.startedAt.getTime();
+  const slowest = [...options.checks].sort((a, b) => (b.durationS ?? 0) - (a.durationS ?? 0))[0];
   await writeJson(options.resultsFile, {
     schemaVersion: 2,
     profile: options.profile,
     head: options.head,
     startedAt: options.startedAt.toISOString(),
-    finishedAt: new Date().toISOString(),
+    finishedAt: finishedAt.toISOString(),
+    wallMs,
     ok: result.ok,
     summary: result.summary,
     modelCalls: options.checks.reduce((sum, check) => sum + check.modelCalls, 0),
@@ -101,7 +104,7 @@ export async function report(options: {
     evidence: options.evidence,
   });
   const stamp = new Date().toISOString().slice(0, 16);
-  const line = `${result.ok ? 'OK' : 'BLOCKED'} ${stamp}Z ${options.profile} ${options.head.slice(0, 8)} ${result.summary} (${minutes}m) results=${options.resultsFile}`;
+  const line = `${result.ok ? 'OK' : 'BLOCKED'} ${stamp}Z ${options.profile} ${options.head.slice(0, 8)} ${result.summary} wall=${wallMs}ms slowest=${slowest?.case ?? '-'}:${slowest?.durationS ?? '-'}s results=${options.resultsFile}`;
   if (options.statusFile) await writeAtomic(options.statusFile, `${line}\n`);
   console.log(line);
   // A failed canary holds the next deploy, unless something already holds it.

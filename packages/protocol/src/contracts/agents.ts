@@ -239,13 +239,21 @@ export interface AgentContextSelector {
 
 export type SafetyTier = 'sandboxed' | 'full-auto' | 'dangerous';
 
-export type ScriptedRunnerScenario = 'success' | 'failure' | 'timeout';
+export type ScriptedRunnerScenario =
+  | 'success'
+  | 'failure'
+  | 'timeout'
+  | 'silent'
+  | 'late-ack'
+  | 'commit-out-of-band'
+  | 'edit-forbidden-file';
 
 export type ScriptedRunnerConfig =
   | {
       mode: 'scenario';
       scenario: ScriptedRunnerScenario;
       stepDelayMs?: number;
+      promptScenario?: 'success' | 'edit-forbidden-file';
     }
   | {
       mode: 'command';
