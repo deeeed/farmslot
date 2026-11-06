@@ -243,7 +243,8 @@ function refuseSpentBudget(budget: ReviewRoundBudget): void {
       PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached,
       budget.diagnosis!,
       {
-        userAction: 'Stop review work. Diagnose the remaining design or scope problem.',
+        userAction:
+          'Wait for the operator to extend the budget, accept the result, or close the run.',
         details: { reviewRoundBudget: budget },
       },
     );
