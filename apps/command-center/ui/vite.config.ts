@@ -50,9 +50,9 @@ export default defineConfig({
     watch: {
       awaitWriteFinish: { stabilityThreshold: 400, pollInterval: 50 },
     },
-    hmr: {
-      overlay: false,
-    },
+    hmr: process.env.FARMSLOT_DEV_UI_HMR === '0' ? false : { overlay: false },
+    // Vite still opens its reconnect/reload socket with hmr:false.
+    ws: process.env.FARMSLOT_DEV_UI_HMR === '0' ? false : undefined,
     proxy: {
       '/ws': {
         target: gatewayTarget,

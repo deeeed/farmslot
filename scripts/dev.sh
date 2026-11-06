@@ -167,5 +167,8 @@ if [ "$GATEWAY_HOST" = "127.0.0.1" ] || [ "$GATEWAY_HOST" = "localhost" ]; then
 fi
 echo "[dev] Gateway auth: credential store, solo mode only before activation on loopback"
 
+# A live operator keeps its in-flight review through stack restarts and source updates.
+# Isolated worktrees retain hot reload; a direct UI dev server keeps its Vite default.
+export FARMSLOT_DEV_UI_HMR="${FARMSLOT_DEV_UI_HMR:-${FARMSLOT_DISABLE_ORCHESTRATION:-0}}"
 cd "$FARMSLOT_ROOT/apps/command-center"
 exec yarn dev
