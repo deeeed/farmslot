@@ -610,8 +610,9 @@ async function runNativeReviewAttempt(
     });
     const run = admit();
     const projectVars = await loadProjectVars(run.project);
-    const inactivityTimeoutMs =
-      (projectVars.projectJson.review?.review_inactivity_timeout_min ?? 10) * 60_000;
+    const configuredInactivityMinutes =
+      projectVars.projectJson.review?.review_inactivity_timeout_min;
+    const inactivityTimeoutMs = (configuredInactivityMinutes ?? 10) * 60_000;
     const existingTerminal = recovering
       ? await probeWorkerSignalForRun(runId, vars.slotId, context!)
       : null;
@@ -795,6 +796,7 @@ async function runNativeReviewAttempt(
     let deadline = monitoringStartedAt + input.reviewTimeoutMs;
     let lastProgressAt = monitoringStartedAt;
     let observedProgress = false;
+    const pollMs = 500;
     let turnStarted = false;
     let eventCursor: number | undefined;
     // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on and its
@@ -953,7 +955,7 @@ async function runNativeReviewAttempt(
             `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,
         );
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
     admit();
     const terminal = await readTerminalReviewSignal(vars, taskDir, target.signal);

@@ -1,21 +1,28 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { watch } from 'node:fs';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Command } from 'commander';
 
-import type { WorkerSignal } from '@farmslot/protocol';
+import type { ScriptedRunnerScenario, WorkerSignal } from '@farmslot/protocol';
 
 import { repoRoot } from '../onboarding/workspace.js';
 
 export interface ScriptedRunnerOptions {
   taskDir: string;
   mode: 'scenario' | 'command';
-  scenario?: 'success' | 'failure' | 'timeout';
+  scenario?: ScriptedRunnerScenario;
   stepDelayMs?: string | number;
+  promptScenario?: 'success' | 'edit-forbidden-file';
   commandRef?: string;
   project?: string;
   timeoutMs?: string | number;
+}
+
+export interface ScriptedRunnerIO {
+  writeTextFile: (filePath: string, content: string) => Promise<void>;
 }
 
 interface CommandResult {
@@ -168,7 +175,11 @@ async function writeTextFile(filePath: string, content: string): Promise<void> {
   await writeFile(filePath, content, 'utf-8');
 }
 
-export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise<number> {
+export async function runScriptedRunner(
+  options: ScriptedRunnerOptions,
+  io: ScriptedRunnerIO = { writeTextFile },
+): Promise<number> {
+  const { writeTextFile } = io;
   if (options.mode === 'scenario' && process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS !== '1') {
     throw new Error('scripted scenario mode requires FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1');
   }
@@ -218,6 +229,26 @@ export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise
   if (options.mode === 'scenario') {
     const scenario = options.scenario ?? 'success';
     const stepDelayMs = parseNonNegativeInt(options.stepDelayMs, 500);
+    if (scenario === 'silent') {
+      await sleep(stepDelayMs);
+      return 0;
+    }
+    if (scenario === 'commit-out-of-band' || scenario === 'edit-forbidden-file') {
+      const relative =
+        scenario !== 'edit-forbidden-file'
+          ? 'scripted-change.txt'
+          : '.github/workflows/scripted.yml';
+      await writeTextFile(
+        path.join(commandCwd, relative),
+        `scripted fixture ${provenance.startedAt}\n`,
+      );
+      const result = await runCommand(
+        `git add -- ${relative} && git -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit --only -qm 'test: scripted change' -- ${relative}`,
+        commandCwd,
+        2000,
+      );
+      if (result.exitCode !== 0) throw new Error(`Scripted commit failed: ${result.stderr}`);
+    }
     if (scenario === 'timeout') {
       await sleep(stepDelayMs || 60_000);
       reason = 'scripted timeout scenario intentionally left without terminal success';
@@ -280,6 +311,20 @@ export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise
     `# Scripted Runner Report\n\n- Mode: ${options.mode}\n- Scenario: ${options.scenario ?? 'n/a'}\n- Command ref: ${options.commandRef ?? 'n/a'}\n- Status: ${status}\n- Outcome: ${outcome}\n- Reason: ${reason}\n`,
   );
 
+  if (options.mode === 'scenario') {
+    await writeTextFile(
+      path.join(artifactsDir, 'pr-description.md'),
+      '# Scripted change\n\nDeterministic recovery fixture.\n',
+    );
+    await writeTextFile(
+      path.join(artifactsDir, 'comments-report.md'),
+      '# Comments\n\nFixture comments addressed.\n',
+    );
+    await writeTextFile(
+      path.join(artifactsDir, 'learnings.md'),
+      '# Learnings\n\n- Recovery fixture completed.\n',
+    );
+  }
   const signal: WorkerSignal = {
     status,
     outcome,
@@ -292,7 +337,132 @@ export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise
     timestamp: new Date().toISOString(),
   };
   await writeTextFile(path.join(taskDir, 'SIGNAL.json'), `${JSON.stringify(signal, null, 2)}\n`);
+  if (options.mode === 'scenario' && options.scenario === 'late-ack')
+    await runScriptedSession(
+      taskDir,
+      parseNonNegativeInt(options.stepDelayMs, 100),
+      options.promptScenario,
+    );
   return exitCode;
+}
+
+/** A session consumes only requests delivered by the shared runner adapter. */
+export async function runScriptedSession(
+  taskDir: string,
+  ackDelayMs: number,
+  promptScenario = 'success',
+): Promise<void> {
+  const pane = process.env.TMUX_PANE;
+  if (!pane || !/^%[0-9]+$/.test(pane)) throw new Error('Scripted session requires a tmux pane');
+  const directory = path.join(process.cwd(), '.agent', `scripted-${pane.slice(1)}`);
+  await mkdir(directory, { recursive: true });
+  let promptDigest: string | undefined;
+  let acknowledged = false;
+  let turnStartedAt: number | undefined;
+  const receipt = async (active: boolean) => {
+    const pending = path.join(directory, 'session.pending');
+    await writeTextFile(
+      pending,
+      JSON.stringify({
+        pid: process.pid,
+        active,
+        promptDigest,
+        acknowledged,
+        turnStartedAt,
+        observedAt: Date.now(),
+      }),
+    );
+    await rename(pending, path.join(directory, 'session.json'));
+  };
+  await receipt(false);
+  const inbox = path.join(directory, 'prompt.json');
+  await new Promise<void>((resolve, reject) => {
+    let working = false;
+    let stopping = false;
+    const watcher = watch(directory, () => {
+      void consume().catch(fail);
+    });
+    const close = () => {
+      watcher.close();
+      process.removeListener('SIGTERM', finish);
+      process.removeListener('SIGINT', finish);
+    };
+    const finish = () => {
+      stopping = true;
+      close();
+      if (!working) resolve();
+    };
+    const fail = (error: unknown) => {
+      close();
+      reject(error);
+    };
+    process.once('SIGTERM', finish);
+    process.once('SIGINT', finish);
+    async function consume() {
+      if (working || stopping) return;
+      working = true;
+      try {
+        if (!(await fileExists(inbox))) return;
+        const request: unknown = JSON.parse(await readFile(inbox, 'utf8'));
+        if (
+          !request ||
+          typeof request !== 'object' ||
+          !('prompt' in request) ||
+          typeof request.prompt !== 'string' ||
+          !('taskDir' in request) ||
+          typeof request.taskDir !== 'string'
+        )
+          throw new Error('Invalid scripted prompt request');
+        await unlink(inbox);
+        promptDigest = createHash('sha256').update(request.prompt).digest('hex');
+        acknowledged = false;
+        turnStartedAt = Date.now();
+        await receipt(true);
+        await sleep(ackDelayMs);
+        const requested = path.resolve(process.cwd(), request.taskDir);
+        if (requested !== path.resolve(taskDir))
+          throw new Error('Scripted prompt targets a different task');
+        const relative =
+          promptScenario === 'edit-forbidden-file'
+            ? '.github/workflows/scripted.yml'
+            : 'scripted-change.txt';
+        const change = path.join(process.cwd(), relative);
+        await writeTextFile(change, `scripted fix ${Date.now()}\n`);
+        const committed = await runCommand(
+          `git add -- ${relative} && git -c commit.gpgsign=false -c core.hooksPath=/dev/null commit --only -qm 'test: apply scripted fix' -- ${relative}`,
+          process.cwd(),
+          2000,
+        );
+        if (committed.exitCode !== 0)
+          throw new Error(`Scripted fix commit failed: ${committed.stderr}`);
+        const mark = path.join(taskDir, 'mark');
+        const checklist = request.prompt.includes('CI-FIX.md') ? 'CI-FIX' : 'REVIEW-FIX';
+        const rows =
+          (await readFile(path.join(taskDir, `${checklist}.md`), 'utf8')).match(/^- \[ \]/gm)
+            ?.length ?? 0;
+        const command = (args: string) =>
+          `"${mark}" --checklist ${checklist}.md --signal ${checklist}-SIGNAL.json ${args}`;
+        const result = await runCommand(
+          [
+            ...Array.from({ length: Math.max(0, rows - 1) }, (_, index) =>
+              command(String(index + 1)),
+            ),
+            command('complete --mark-last'),
+          ].join(' && '),
+          process.cwd(),
+          5000,
+        );
+        if (result.exitCode !== 0)
+          throw new Error(`Scripted acknowledgement failed: ${result.stderr}`);
+        acknowledged = true;
+        await receipt(false);
+      } finally {
+        working = false;
+        if (stopping) resolve();
+      }
+    }
+    void consume().catch(fail);
+  });
 }
 
 export function registerScriptedRunnerCommand(program: Command): void {
@@ -301,7 +471,14 @@ export function registerScriptedRunnerCommand(program: Command): void {
     .description('Internal checkout-local non-LLM worker harness for Farmslot validation')
     .requiredOption('--task-dir <path>', 'Worker task directory relative to the launched repo')
     .requiredOption('--mode <mode>', 'scripted mode: scenario or command')
-    .option('--scenario <name>', 'Scenario mode: success, failure, or timeout')
+    .option(
+      '--scenario <name>',
+      'Scenario mode: success, failure, timeout, silent, late-ack, commit-out-of-band, or edit-forbidden-file',
+    )
+    .option(
+      '--prompt-scenario <name>',
+      'Interactive prompt behaviour: success or edit-forbidden-file',
+    )
     .option('--step-delay-ms <ms>', 'Scenario step delay in ms')
     .option('--command-ref <name>', 'Project-owned command reference name')
     .option('--project <name>', 'Project whose project.json owns the command ref')

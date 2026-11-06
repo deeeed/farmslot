@@ -35,6 +35,7 @@ import {
   claudeRunParams,
   fakeClaude,
   fakePi,
+  fastCanaryRepo,
   PI_TURN_FAILURE,
   piRunParams,
   PIPE_PROJECT,
@@ -135,6 +136,7 @@ export interface IsolatedOptions {
   /** For review-past-wait: past REVIEW's 120 s reconnect wait. */
   reviewNodeAwayMs: number;
   lifecycle?: boolean;
+  fastScripted?: boolean;
   nativeCheck?: boolean;
   f324?: boolean;
   restarts?: Array<{ step: RestartStep; variants: Variant[] }>;
@@ -1221,8 +1223,12 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     evidence,
     machine: 'ri-node',
     slots,
-    projects: (holds) => [canaryPack(), ...projectPacks(holds)],
-    seeds: { [CANARY_PROJECT]: CANARY_REPO, [PIPE_PROJECT]: SEED, [REVIEW_PROJECT]: SEED },
+    projects: (holds) => [canaryPack(options.fastScripted), ...projectPacks(holds)],
+    seeds: {
+      [CANARY_PROJECT]: options.fastScripted ? fastCanaryRepo() : CANARY_REPO,
+      [PIPE_PROJECT]: SEED,
+      [REVIEW_PROJECT]: SEED,
+    },
     slotFiles: (slotId, fixture) =>
       slotId.startsWith(`${CANARY_PROJECT}-`) ? {} : slotCli(options.root)(slotId, fixture),
     cliSnapshots: options.cliSnapshots,
@@ -1245,7 +1251,18 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     shapeName: ShapeName,
     phases: HoldPhase[],
   ): Promise<ScenarioResult> {
-    const shape = SHAPES[shapeName];
+    const original = SHAPES[shapeName];
+    const shape =
+      options.fastScripted && original.project === CANARY_PROJECT
+        ? {
+            ...original,
+            timeoutMs: 30_000,
+            create: (slotId: string) => ({
+              ...original.create(slotId),
+              scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 1 },
+            }),
+          }
+        : original;
     slotCounter[shape.project] = (slotCounter[shape.project] ?? 0) + 1;
     const slotId = `${shape.project}-${slotCounter[shape.project]}`;
     const dir = path.join(evidence, label);
@@ -1389,6 +1406,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         slotId,
         shape,
         hooks: {
+          ...(options.fastScripted
+            ? { onChange: (listener: () => void) => stack.connection().onEvent(listener) }
+            : {}),
           onCreated: (created) => {
             runId = created;
           },
@@ -1397,6 +1417,12 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             const { run } = view;
             if (stepStatus(run, 'monitor') === 'running' && !existsSync(monitoring))
               await writeFile(monitoring, `${runId}\n`);
+            if (options.fastScripted && stepStatus(run, 'monitor') === 'running' && run.taskFile) {
+              const context = run.agentContexts?.find((entry) => entry.role === 'dev');
+              if (!context?.taskFile) throw new Error('Scripted worker has no task binding');
+              const task = path.resolve(hold.slotRepo, path.dirname(context.taskFile));
+              await writeFile(path.join(task, 'canary-monitor-ready'), 'ready\n');
+            }
             if (await watchPhase(view, summary, changedAt)) return 'again';
             // A scripted review answers each reviewer turn, except one a REVIEW hold still keeps.
             if (shape.scriptedReview && phases[current]?.step !== 'review') {
@@ -1491,6 +1517,12 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         runId: error.runId,
       };
     }
+    if (options.fastScripted && (result.durationS ?? 0) > 5)
+      result.observations.push(
+        `SLOW ${result.case}: ${result.durationS}s; ${Object.entries(result.timingsS ?? {})
+          .map(([step, seconds]) => `${step} ${seconds}s`)
+          .join(', ')}`,
+      );
     await log(`${base.case} ${base.variant}: ${result.status.toUpperCase()}`, {
       differences: result.differences,
       ...(result.observations.length ? { observations: result.observations } : {}),

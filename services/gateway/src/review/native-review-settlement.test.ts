@@ -66,7 +66,7 @@ let provenancePresent = true;
 let restoreTaskFails = false;
 const restoredTasks: string[] = [];
 let reattachProbes = 0;
-let timeline: { now: number; polls: number; stepMs?: number } | undefined;
+let timeline: { now: number; polls: number; stepMs?: number; maxPolls?: number } | undefined;
 let configuredInactivityMinutes: number | undefined;
 const readCursors: Array<number | undefined> = [];
 /** Reviewer reads, and approval refusals, that time out at the node before one is answered. */
@@ -319,6 +319,10 @@ mock.module('../runners/native/worker-control.js', {
         readCursors.push(history?.after);
         timeline.now += timeline.stepMs ?? 10 * 60_000;
         timeline.polls++;
+        assert.ok(
+          timeline.polls <= (timeline.maxPolls ?? Infinity),
+          'Reviewer exceeded its millisecond inactivity limit',
+        );
         const events: NativeSessionEvent[] = [
           {
             sessionId: binding.sessionId,
@@ -1267,3 +1271,96 @@ for (const runner of ['claude', 'codex'])
     assert.equal(usageReads.length, before + 1);
     assert.equal(getRun(run.id)!.engineState?.publishGate?.reviews?.length ?? 0, 0);
   });
+
+test('a project can give its reviewer a millisecond inactivity limit', async (t) => {
+  ending = 'inactive';
+  configuredInactivityMinutes = 500 / 60_000;
+  const clock = { now: 0, polls: 0, stepMs: 500, maxPolls: 1 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+    configuredInactivityMinutes = undefined;
+  });
+  const run = await nativeRun(t);
+  updateRun(run.id, { metrics: { ...getRun(run.id)!.metrics, runner: 'scripted' } });
+  await assert.rejects(review(run.id), /inactivity limit 500ms/);
+  assert.equal(clock.polls, 1);
+});
+
+test('an explicit project inactivity limit also applies to a scripted run', async (t) => {
+  ending = 'inactive';
+  configuredInactivityMinutes = 5;
+  const clock = { now: 0, polls: 0, stepMs: 300_000, maxPolls: 1 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+    configuredInactivityMinutes = undefined;
+  });
+  const run = await nativeRun(t);
+  updateRun(run.id, { metrics: { ...getRun(run.id)!.metrics, runner: 'scripted' } });
+  await assert.rejects(review(run.id), /inactivity limit 300000ms/);
+  assert.equal(clock.polls, 1);
+});
+
+test('a review replay uses the current project inactivity limit', async (t) => {
+  ending = 'inactive';
+  configuredInactivityMinutes = 0.5;
+  const clock = { now: 0, polls: 0, stepMs: 30_000, maxPolls: 1 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+    configuredInactivityMinutes = undefined;
+  });
+  const run = await nativeRun(t);
+  updateRun(run.id, {
+    metrics: { ...getRun(run.id)!.metrics, runner: 'scripted' },
+    recoveryAttempts: [
+      {
+        id: 'replay',
+        attempt: 1,
+        stepName: 'review',
+        startedAt: new Date().toISOString(),
+        status: 'started',
+        triggeredBy: 'operator',
+      },
+    ],
+  });
+  await assert.rejects(review(run.id), /inactivity limit 30000ms/);
+  assert.equal(clock.polls, 1);
+});
+
+for (const replaying of [false, true]) {
+  test(`a native reviewer keeps its default window with a scripted worker, replay=${replaying}`, async (t) => {
+    ending = 'inactive';
+    const clock = { now: 0, polls: 0, stepMs: 600_000, maxPolls: 1 };
+    timeline = clock;
+    t.mock.method(Date, 'now', () => clock.now);
+    t.after(() => {
+      timeline = undefined;
+    });
+    const run = await nativeRun(t);
+    updateRun(run.id, {
+      metrics: { ...getRun(run.id)!.metrics, runner: 'scripted' },
+      scripted: { mode: 'scenario', scenario: 'late-ack' },
+      ...(replaying
+        ? {
+            recoveryAttempts: [
+              {
+                id: 'replay',
+                attempt: 1,
+                stepName: 'review',
+                startedAt: new Date().toISOString(),
+                status: 'started' as const,
+                triggeredBy: 'operator' as const,
+              },
+            ],
+          }
+        : {}),
+    });
+    await assert.rejects(review(run.id, 'codex'), /inactivity limit 600000ms/);
+    assert.equal(clock.polls, 1);
+  });
+}

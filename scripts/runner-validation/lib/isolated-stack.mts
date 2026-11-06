@@ -7,7 +7,7 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, existsSync, openSync } from 'node:fs';
-import { link, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, link, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -193,7 +193,10 @@ export async function linkCheckout(
   options: { packageManager?: boolean } = {},
 ): Promise<void> {
   execFileSync('git', ['clone', '--shared', '--no-checkout', root, dir], { stdio: 'pipe' });
-  for (const entry of ['scripts', 'services', 'packages', 'node_modules'])
+  // Support bundles reject paths resolving outside FARMSLOT_ROOT. Keep framework scripts
+  // inside the fixture too, including newly added support paths, without weakening that guard.
+  await cp(path.join(root, 'scripts'), path.join(dir, 'scripts'), { recursive: true });
+  for (const entry of ['services', 'packages', 'node_modules'])
     await symlink(path.join(root, entry), path.join(dir, entry));
   // The launch preflight checks a slot's package manager the way a worker would run it. A fixture
   // whose slots PREPARE for real has none: PREPARE would install this repo's dependencies.

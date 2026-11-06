@@ -102,10 +102,34 @@ import { assertCodexWorkerDoesNotInjectMcpOverrides, makeVars } from './test-fix
 describe('scripted runner', () => {
   it('has exec launch mode', () => {
     assert.equal(getRunnerDefinition('scripted').defaultLaunchMode, 'exec');
+    assert.equal(getRunnerDefinition('scripted').roleWindowStartupSettleMs, 0);
+    assert.equal(getRunnerDefinition('codex').roleWindowStartupSettleMs, undefined);
   });
 
-  it('does not support interactive prompt', () => {
+  it('enables structured prompt delivery only for the interactive scenario', () => {
     assert.equal(runnerSupportsInteractivePrompt('scripted'), false);
+    assert.equal(
+      runnerSupportsInteractivePrompt('scripted', { mode: 'command', commandRef: 'work' }),
+      false,
+    );
+    assert.equal(
+      runnerSupportsInteractivePrompt('scripted', { mode: 'scenario', scenario: 'success' }),
+      false,
+    );
+    assert.equal(
+      runnerSupportsInteractivePrompt('scripted', { mode: 'scenario', scenario: 'late-ack' }),
+      true,
+    );
+    assert.equal(getRunnerDefinition('scripted').feedbackTiming, undefined);
+    assert.equal(
+      getRunnerDefinition('scripted', { mode: 'command', commandRef: 'work' }).feedbackTiming,
+      undefined,
+    );
+    assert.equal(
+      getRunnerDefinition('scripted', { mode: 'scenario', scenario: 'late-ack' }).feedbackTiming
+        ?.pollMs,
+      10,
+    );
   });
 
   it('does not support tmux nudges', () => {

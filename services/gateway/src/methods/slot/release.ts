@@ -83,7 +83,7 @@ import {
   retireNativeWorkersForSlot,
 } from '../../runners/native/worker.js';
 import { cleanupSlotRunnerRuntimes } from '../../runners/owned-stop.js';
-import { runnerPromptSubmitKey } from '../../runners/registry.js';
+import { getRunnerDefinition, runnerPromptSubmitKey } from '../../runners/registry.js';
 import { archiveRunnerSessionsForSlotRelease } from '../../runners/session-archive.js';
 import {
   RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS,
@@ -1294,6 +1294,9 @@ export async function killAgentInSession(
   // the ownership check and could reach a newer claim. A failed mutation leaves
   // the releasing fence for the stale-fence reconciler to reclaim.
   const TMUX_CMD_TIMEOUT = 10_000;
+  const settleMs = getRunnerDefinition(runner ?? '').teardownSettleMs;
+  const settle = (ms: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, settleMs ?? ms));
   const session = await resolveTmuxSession(vars.slotId, vars);
   const roleWindow = agentDispatchWindow(role);
   const hasSession =
@@ -1388,7 +1391,7 @@ export async function killAgentInSession(
   // warm handoff whose child flow retained its parent worker window. Multiple
   // same-runner candidates fail closed instead of interrupting a reviewer.
 
-  if (agentPid && options.graceful !== false) {
+  if (agentPid && options.graceful !== false && settleMs === undefined) {
     await options.assertClaim?.();
     await execOnSlot(
       vars,
@@ -1416,7 +1419,17 @@ export async function killAgentInSession(
         timeout: TMUX_CMD_TIMEOUT,
         noRetry: true,
       });
-      await new Promise((r) => setTimeout(r, 1000));
+      if (settleMs === 0) {
+        // Structured fixture sessions finish their active turn before exiting.
+        // Wait for the process condition, without charging every teardown a fixed delay.
+        const deadline = Date.now() + 1000;
+        while (Date.now() < deadline) {
+          const probe = await execOnSlot(vars, `kill -0 ${shellQuote(agentPid)} 2>/dev/null`, {
+            timeout: TMUX_CMD_TIMEOUT,
+          });
+          if (probe.exitCode !== 0) break;
+        }
+      } else await settle(1000);
       await options.assertClaim?.();
       await execOnSlot(
         vars,
@@ -1426,7 +1439,7 @@ export async function killAgentInSession(
     }
   }
 
-  await new Promise((r) => setTimeout(r, 1000));
+  await settle(1000);
   const shellAlive =
     (
       await execOnSlot(vars, `kill -0 ${shellQuote(panePid)} 2>/dev/null && echo yes`, {
@@ -1440,13 +1453,13 @@ export async function killAgentInSession(
       timeout: TMUX_CMD_TIMEOUT,
       noRetry: true,
     });
-    await new Promise((r) => setTimeout(r, 300));
+    await settle(300);
     await options.assertClaim?.();
     await execOnSlot(vars, tmuxShellSnippet(`send-keys -t ${shellQuote(target)} C-c 2>/dev/null`), {
       timeout: TMUX_CMD_TIMEOUT,
       noRetry: true,
     });
-    await new Promise((r) => setTimeout(r, 300));
+    await settle(300);
     await options.assertClaim?.();
     await execOnSlot(
       vars,
@@ -1462,7 +1475,7 @@ export async function killAgentInSession(
       ),
       { timeout: TMUX_CMD_TIMEOUT, noRetry: true },
     );
-    await new Promise((r) => setTimeout(r, 1000));
+    await settle(1000);
   }
 }
 

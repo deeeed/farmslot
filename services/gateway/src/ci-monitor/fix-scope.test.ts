@@ -191,6 +191,7 @@ mock.module('../core/tmux.js', {
 mock.module('../runners/registry.js', {
   namedExports: {
     normalizeRunner: () => 'fixture',
+    getRunnerDefinition: () => ({ roleWindowStartupSettleMs: 0 }),
     runnerRetainedSessionHandoff: () => 'in-place',
     runnerProcessPatternSource: () => 'fixture',
     WORKER_ENV_PREFIX: '',

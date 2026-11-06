@@ -29,11 +29,26 @@ export function assertScriptedRunnerConfig(params: {
     if (!scriptedScenariosEnabled(params.env)) {
       throw new Error('scripted scenario mode requires FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1');
     }
-    if (!['success', 'failure', 'timeout'].includes(scripted.scenario)) {
+    if (
+      ![
+        'success',
+        'failure',
+        'timeout',
+        'silent',
+        'late-ack',
+        'commit-out-of-band',
+        'edit-forbidden-file',
+      ].includes(scripted.scenario)
+    ) {
       throw new Error(
         `Unsupported scripted scenario: ${(scripted as { scenario?: string }).scenario}`,
       );
     }
+    if (
+      scripted.promptScenario !== undefined &&
+      !['success', 'edit-forbidden-file'].includes(scripted.promptScenario)
+    )
+      throw new Error('Unsupported scripted.promptScenario');
     if (
       scripted.stepDelayMs !== undefined &&
       (!Number.isInteger(scripted.stepDelayMs) || scripted.stepDelayMs < 0)

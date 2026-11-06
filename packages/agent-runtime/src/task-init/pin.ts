@@ -30,7 +30,10 @@ interface InputDigestState {
 }
 
 /** Verify overlapping retained trees with one read per file, preserving each root's digest. */
-export function taskInputDigests(roots: readonly string[]): string[] {
+export function taskInputDigests(
+  roots: readonly string[],
+  include: (file: string) => boolean = () => true,
+): string[] {
   const states = new Map<string, InputDigestState>();
   for (const root of roots) {
     const absolute = path.resolve(root);
@@ -45,7 +48,8 @@ export function taskInputDigests(roots: readonly string[]): string[] {
     if (stat.isDirectory()) {
       for (const entry of active) entry.hash.update(`d\0${path.relative(entry.root, file)}\0`);
       for (const name of fs.readdirSync(file).sort()) {
-        if (!ignored.has(name)) walk(path.join(file, name), active);
+        const child = path.join(file, name);
+        if (!ignored.has(name) && include(child)) walk(child, active);
       }
     } else if (stat.isSymbolicLink()) {
       const target = fs.readlinkSync(file);
@@ -74,6 +78,18 @@ export function taskInputDigests(roots: readonly string[]): string[] {
 /** Content and executable modes, including installed dependencies and link targets. */
 export function taskInputDigest(root: string): string {
   return taskInputDigests([root])[0]!;
+}
+
+/** Scripted fixtures reuse an installation without reading local credentials. */
+export function taskInstallationDigests(roots: readonly string[]): string[] {
+  return taskInputDigests(roots, (file) => {
+    const name = path.basename(file);
+    return (
+      name !== '.npmrc' &&
+      name !== '.env' &&
+      !(name.startsWith('.env.') && !['.env.example', '.env.template'].includes(name))
+    );
+  });
 }
 
 /** Generalized task-local pinning; never installs packages or changes a global pointer. */

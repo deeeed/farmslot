@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -166,3 +167,165 @@ test('scripted command uses support-only config and the executing CLI provenance
     'success',
   );
 });
+
+for (const scenario of ['silent', 'commit-out-of-band', 'edit-forbidden-file'] as const) {
+  test(`scripted ${scenario} writes its promised evidence`, { timeout: 3000 }, async (t) => {
+    const dir = makeTaskDir();
+    const previous = process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+    const cwd = process.cwd();
+    process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS = '1';
+    process.chdir(dir);
+    t.after(() => {
+      process.chdir(cwd);
+      if (previous === undefined) delete process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+      else process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS = previous;
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '--allow-empty',
+      '-qm',
+      'seed',
+    );
+    const before = git('rev-parse', 'HEAD');
+    const commits = scenario === 'commit-out-of-band' || scenario === 'edit-forbidden-file';
+    if (commits) {
+      writeFileSync(path.join(dir, 'unrelated.txt'), 'already staged\n');
+      git('add', 'unrelated.txt');
+    }
+    const states: string[] = [];
+    assert.equal(
+      await runScriptedRunner(
+        { taskDir: dir, mode: 'scenario', scenario, stepDelayMs: 1 },
+        {
+          writeTextFile: async (file, content) => {
+            if (file === path.join(dir, 'SIGNAL.json')) states.push(JSON.parse(content).status);
+            await mkdir(path.dirname(file), { recursive: true });
+            await writeFile(file, content);
+          },
+        },
+      ),
+      0,
+    );
+    if (scenario === 'silent') assert.equal(existsSync(path.join(dir, 'SIGNAL.json')), false);
+    else
+      assert.equal(
+        JSON.parse(await readFile(path.join(dir, 'SIGNAL.json'), 'utf8')).status,
+        'complete',
+      );
+    if (commits) {
+      assert.notEqual(git('rev-parse', 'HEAD'), before);
+      assert.equal(
+        git('show', '--format=', '--name-only', 'HEAD'),
+        scenario === 'commit-out-of-band'
+          ? 'scripted-change.txt'
+          : '.github/workflows/scripted.yml',
+      );
+      assert.equal(git('diff', '--cached', '--name-only'), 'unrelated.txt');
+    }
+  });
+}
+
+test(
+  'late-ack consumes a delivered prompt and delays its acknowledgement',
+  { timeout: 3000 },
+  async (t) => {
+    const dir = makeTaskDir();
+    const task = path.join(dir, 'task');
+    mkdirSync(task);
+    writeFileSync(path.join(task, 'REVIEW-FIX.md'), '# Fix\n\n- [ ] Apply the fixture fix.\n');
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.name', 'Fixture');
+    git('config', 'user.email', 'fixture@example.invalid');
+    git('-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'seed');
+    writeFileSync(
+      path.join(task, 'mark'),
+      '#!/bin/sh\ncase "$*" in *complete*) printf complete > "' + task + '/ack" ;; esac\n',
+      { mode: 0o755 },
+    );
+    const root = new URL('../../../../', import.meta.url).pathname;
+    const child = spawn(
+      process.execPath,
+      [
+        path.join(root, 'packages/cli/bin/farmslot.mjs'),
+        'scripted-runner',
+        '--mode',
+        'scenario',
+        '--scenario',
+        'late-ack',
+        '--step-delay-ms',
+        '100',
+        '--task-dir',
+        task,
+      ],
+      {
+        cwd: dir,
+        env: {
+          ...process.env,
+          FARMSLOT_ROOT: root,
+          FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '1',
+          TMUX_PANE: '%88',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    let output = '';
+    child.stderr.on('data', (data) => {
+      output += data;
+    });
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        const closed = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+        child.kill('SIGTERM');
+        await closed;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const sessionDir = path.join(dir, '.agent', 'scripted-88');
+    const receipt = path.join(sessionDir, 'session.json');
+    const wait = async (predicate: () => boolean) => {
+      const deadline = Date.now() + 2000;
+      while (!predicate()) {
+        assert.ok(child.exitCode === null, output);
+        assert.ok(Date.now() < deadline, output || 'scripted session deadline');
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    };
+    await wait(() => existsSync(receipt));
+    assert.equal(
+      JSON.parse(readFileSync(path.join(task, 'SIGNAL.json'), 'utf8')).status,
+      'complete',
+    );
+    writeFileSync(
+      path.join(sessionDir, 'prompt.json'),
+      JSON.stringify({ prompt: 'Read REVIEW-FIX.md', taskDir: task }),
+    );
+    await wait(() => JSON.parse(readFileSync(receipt, 'utf8')).active);
+    const activeAt = JSON.parse(readFileSync(receipt, 'utf8')).observedAt;
+    assert.equal(existsSync(path.join(task, 'ack')), false);
+    await wait(() => JSON.parse(readFileSync(receipt, 'utf8')).acknowledged);
+    const accepted = JSON.parse(readFileSync(receipt, 'utf8'));
+    assert.ok(accepted.observedAt - activeAt >= 100);
+    assert.equal(readFileSync(path.join(task, 'ack'), 'utf8'), 'complete');
+    assert.equal(git('show', '--format=', '--name-only', 'HEAD'), 'scripted-change.txt');
+    // A stop during a turn must settle that turn before the session exits.
+    writeFileSync(
+      path.join(sessionDir, 'prompt.json'),
+      JSON.stringify({ prompt: 'Read REVIEW-FIX.md again', taskDir: task }),
+    );
+    await wait(() => JSON.parse(readFileSync(receipt, 'utf8')).active);
+    const closed = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill('SIGTERM');
+    await closed;
+    assert.equal(JSON.parse(readFileSync(receipt, 'utf8')).acknowledged, true);
+  },
+);
