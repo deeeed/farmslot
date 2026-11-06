@@ -12,6 +12,7 @@ import {
   pendingResultDecision,
   type PipelineStep,
   PipelineSteps as S,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ResultDecisionPayload,
   type Run,
   type RunReplayStepParams,
@@ -22,6 +23,7 @@ import {
 
 import '../runtime/mock-pty.test-support.js';
 
+import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
 let run: Run;
@@ -287,7 +289,10 @@ async function heldOpus(admissions = 5): Promise<Run> {
     manifestDigest: '9bbbd8fd',
     reportPath: 'artifacts/pr-description.md',
   };
-  run.reviewRoundAdmissions = Array.from({ length: admissions }, (_, i) => `admission-${i}`);
+  Object.assign(
+    run,
+    recordedReviewRounds(Array.from({ length: admissions }, (_, i) => `admission-${i}`)),
+  );
   const decision = await buildResultDecision(run, 'review');
   Object.assign(run, { status: 'needs-decision', decisions: [decision] });
   return run;
@@ -965,4 +970,88 @@ test('Send back resumes a recovered undelivered fix from the original reviewed h
   assert.equal(resumed?.feedbackSent, false);
   assert.deepEqual(starts, [run.id]);
   assert.deepEqual(releases, []);
+});
+
+async function heldBudgetResult(): Promise<Run> {
+  await heldOpus();
+  run.completionPolicy = undefined;
+  run.slotId = 'retained-budget-slot';
+  run.steps.find((step) => step.name === S.REVIEW)!.outputs = {
+    reviewLaunchRejection: {
+      code: PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached,
+      message: 'The five review rounds are spent.',
+      userAction: 'Wait for the operator.',
+      rejectedAt: '2026-11-06T14:28:18Z',
+    },
+  };
+  run.decisions = [await buildResultDecision(run, 'review')];
+  return run;
+}
+
+test('a budget hold accepts an explicitly reasoned result without publishing', async () => {
+  await heldBudgetResult();
+  const decisionId = pending().id;
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId, actionId: 'accept-result' }),
+    /written reason/,
+  );
+  assert.equal(run.status, 'needs-decision');
+  assert.equal(run.slotId, 'retained-budget-slot');
+  assert.deepEqual(releases, []);
+  await resolveResultDecision(
+    {
+      runId: run.id,
+      decisionId,
+      actionId: 'accept-result',
+      reason: 'Accept this scoped result without publishing it.',
+    },
+    { releaseSlot: false },
+  );
+  assert.equal(run.status, 'done');
+  assert.equal(run.resultDecisionReceipt?.action, 'accept-result');
+  assert.equal(run.output?.closedAt !== undefined, true);
+  assert.equal(run.engineState?.publishGate?.publicationStatus, undefined);
+  assert.deepEqual(starts, []);
+});
+
+test('an extended admission-only budget hold resumes review without inventing prior findings', async () => {
+  await heldBudgetResult();
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /review rounds/,
+  );
+  // The real grant/ownership RPC is covered separately; this action reads its persisted receipt.
+  run.reviewBudgetExtensions = [
+    {
+      runId: run.id,
+      requestId: 'budget-hold-extension',
+      previousLimit: 5,
+      limit: 6,
+      headSha: 'a'.repeat(40),
+      scopeBrief: 'One scoped review.',
+      project: run.project,
+      branch: run.branch!,
+      principalId: 'fixture-lead',
+      principalSubject: { type: 'service', displayName: 'Fixture lead' },
+      approvedAt: '2026-11-06T14:30:00Z',
+    },
+  ];
+  const before = run.slotId;
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  assert.equal(run.status, 'reviewing');
+  assert.equal(run.slotId, before);
+  assert.deepEqual(starts, [run.id]);
+  assert.equal(takeSendBackReview(run.id), undefined, 'there was no verdict to resume');
+  assert.deepEqual(releases, []);
+});
+
+test('publishing review holds without a budget refusal keep their existing acceptance policy', async () => {
+  await heldOpus(1);
+  run.completionPolicy = undefined;
+  const decision = await buildResultDecision(run, 'review');
+  assert(decision.payload?.kind === 'result-decision');
+  assert.equal(
+    decision.payload.actions.find((action) => action.id === 'accept-result')?.available,
+    false,
+  );
 });

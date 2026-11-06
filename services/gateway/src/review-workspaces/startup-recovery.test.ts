@@ -201,7 +201,11 @@ test('late exact-prompt acknowledgement resumes the original monitor and its ref
   );
   assert.deepEqual(current.steps[0].outputs, { session: 'original-reviewer' });
   assert.deepEqual(current.reviewRoundAdmissions, [round]);
-  assert.equal((await runReviewRoundBudget(current)).used, 1);
+  assert.equal(
+    (await runReviewRoundBudget(current)).used,
+    0,
+    'startup acknowledgement is not a reviewer verdict',
+  );
   assert.equal(current.agentContexts?.[0].runnerSessionId, 'original-session');
   assert.equal(launches, 0);
 });
@@ -348,7 +352,11 @@ test('an unavailable node retains its attempt while a healthy reviewer reaches i
   assert.equal(getRun(offline.run.id)?.status, 'reconciling');
   assert.match(getRun(offline.run.id)?.error ?? '', /Execution node is offline/);
   assert.equal((await runReviewRoundBudget(getRun(offline.run.id)!)).used, 0);
-  assert.equal((await runReviewRoundBudget(getRun(healthy.run.id)!)).used, 1);
+  assert.equal(
+    (await runReviewRoundBudget(getRun(healthy.run.id)!)).used,
+    0,
+    'a resumed monitor has not recorded a verdict',
+  );
   unavailableRunId = undefined;
   await reconcileReviewWorkspaceStartup(
     () => {},

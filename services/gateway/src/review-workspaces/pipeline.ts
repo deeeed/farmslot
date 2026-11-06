@@ -9,6 +9,7 @@ import {
   type ReviewWorkspaceSubject,
   type Run,
   type WorkerSignal,
+  workspaceReviewRoundAdmissionId as workspaceReviewRoundId,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
@@ -19,8 +20,7 @@ import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import {
   admitReviewRound,
-  clearReviewRoundSettlement,
-  reviewRoundAdmissionId,
+  recordReviewRoundVerdict,
   settleReviewRoundNoVerdict,
 } from '../review/review-round-budget.js';
 import { isUncertainReviewerOperation } from '../review/terminal-result.js';
@@ -170,9 +170,37 @@ export async function recordWorkspaceReviewCompletion(
       }`,
     );
   }
-  const run = currentWorkspaceRun(runId, generation);
-  reviewResult = bindWorkspaceReviewResult(run, reviewResult);
-  const reviewer = run.agentContexts?.find((context) => context.id === 'review');
+  const current = currentWorkspaceRun(runId, generation);
+  await recordReviewRoundVerdict(
+    runId,
+    monitoredWorkspaceReviewRoundId(current, generation),
+    undefined,
+    () => {
+      const run = currentWorkspaceRun(runId, generation);
+      reviewResult = bindWorkspaceReviewResult(run, reviewResult);
+      const endedAt = new Date().toISOString();
+      updateRun(runId, {
+        reviewResult,
+        ...(run.reviewWorkspace && !run.reviewWorkspace.retainedAt
+          ? {
+              reviewWorkspace: {
+                ...run.reviewWorkspace,
+                retainedAt: endedAt,
+                retainedUntil: new Date(
+                  Date.parse(endedAt) +
+                    (run.reviewWorkspace.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS) *
+                      86400000,
+                ).toISOString(),
+              },
+            }
+          : {}),
+        metrics: withSubtaskMetrics(run.metrics, subtasks),
+      });
+    },
+  );
+  const reviewer = currentWorkspaceRun(runId, generation).agentContexts?.find(
+    (context) => context.id === 'review',
+  );
   if (reviewResult.session?.sessionId && reviewer) {
     await upsertAgentContext(runId, 'review', {
       id: reviewer.id,
@@ -182,29 +210,7 @@ export async function recordWorkspaceReviewCompletion(
       reviewResultValidatedAt: new Date().toISOString(),
     });
   }
-  const endedAt = new Date().toISOString();
-  const updated = updateRun(runId, {
-    reviewResult,
-    ...(run.reviewWorkspace && !run.reviewWorkspace.retainedAt
-      ? {
-          reviewWorkspace: {
-            ...run.reviewWorkspace,
-            retainedAt: endedAt,
-            retainedUntil: new Date(
-              Date.parse(endedAt) +
-                (run.reviewWorkspace.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS) *
-                  86400000,
-            ).toISOString(),
-          },
-        }
-      : {}),
-    metrics: withSubtaskMetrics(currentWorkspaceRun(runId, generation).metrics, subtasks),
-  });
-  await persistRunNow(updated, 'workspace review result');
-  // A monitor replay watches the same attempt; its verdict counts even if the
-  // superseded monitor settled that receipt (ADR-063 Amendment 2).
-  await clearReviewRoundSettlement(runId, monitoredWorkspaceReviewRoundId(updated, generation));
-  return updated;
+  return currentWorkspaceRun(runId, generation);
 }
 
 async function admittedRun(runId: string, generation: number) {
@@ -472,11 +478,7 @@ export function reconcileReviewWorkspaceStartup(
         continue;
       }
       if (!acknowledged || !stillCurrent()) continue;
-      // The timeout refunded this admission. Late execution consumes that same round.
-      await clearReviewRoundSettlement(
-        observed.id,
-        monitoredWorkspaceReviewRoundId(observed, generation),
-      );
+      // Late acceptance reuses the admission; only a recorded verdict can charge it.
       if (!stillCurrent()) continue;
       const current = getRun(observed.id)!;
       await persistRunNow(
@@ -558,16 +560,6 @@ export function reconcileReviewWorkspaceCleanup(
  * reuses it; a replay that dispatches again runs at a new generation. Generation
  * 0 keeps the receipt runs admitted before attempts were told apart.
  */
-function workspaceReviewRoundId(
-  run: Pick<Run, 'id' | 'createdAt'>,
-  dispatchGeneration: number,
-): string {
-  return reviewRoundAdmissionId(
-    `workspace-review-${run.id}`,
-    dispatchGeneration + 1,
-    run.createdAt,
-  );
-}
 
 /** The attempt a monitor watches: the one its DISPATCH admitted, even after a monitor-only replay. */
 function monitoredWorkspaceReviewRoundId(

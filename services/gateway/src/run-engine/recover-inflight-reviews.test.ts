@@ -13,6 +13,7 @@ import {
   type WorkerSignal,
 } from '@farmslot/protocol';
 
+import { recordedReviewRound } from '../review/recorded-review-rounds.test-support.js';
 import {
   admitReviewRound,
   reviewRoundAdmissionId,
@@ -1514,7 +1515,7 @@ test('appendRecoveredContinuationAttempt keeps an exhausted review instead of wi
   assert.equal(merged.unresolvedCount, 6);
 });
 
-test('TAT-4006: a reviewer lost to a host outage settles no-verdict, so five admissions use 4/5', async (t) => {
+test('TAT-4006: a reviewer lost to a host outage settles no-verdict, so four verdicts and one pending launch use 4/5', async (t) => {
   const repo = await mkdtemp(path.join(os.tmpdir(), 'lost-reviewer-'));
   t.after(() => rm(repo, { recursive: true, force: true }));
   const vars = makeVars({ remoteRepo: repo, repo });
@@ -1566,10 +1567,11 @@ test('TAT-4006: a reviewer lost to a host outage settles no-verdict, so five adm
     },
   };
   const lostRound = reviewRoundAdmissionId('review-4', 1, lost.startedAt!);
-  for (const round of ['round-1', 'round-2', 'round-3', lostRound, 'round-5'])
-    await admitReviewRound(run.id, round);
+  for (const round of ['round-1', 'round-2', 'round-3', 'round-5'])
+    await recordedReviewRound(run.id, round);
+  await admitReviewRound(run.id, lostRound);
   updateRun(run.id, { agentContexts: [lost] });
-  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 5);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 4);
 
   await recoverInflightPublicationReviews(run.id, vars.slotId, {
     readers: {

@@ -14,11 +14,15 @@ import {
   buildRetrospectivePayload,
   readCommentsTriageSummary,
 } from '../../run-completion/orchestrator.js';
+import { readTaskArtifactText } from '../../run-completion/retrospective.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
 async function readRunLearnings(run: Run): Promise<string> {
+  // Captured bytes belong to the bundle; task staging can be removed or reused.
+  if (run.artifactBundle || run.output?.artifactBundle)
+    return (await readTaskArtifactText(run, 'learnings.md')) ?? '';
   if (!run.taskFile) return '';
   const { readFile } = await import('node:fs/promises');
   const taskDir = path.dirname(run.taskFile);
@@ -141,7 +145,7 @@ async function routeThenAnalyze(
 ): Promise<void> {
   const router = await import('../../intelligence/learnings-router.js');
   const engine = await import('../../intelligence/improvement-engine.js');
-  const routed = await router.routeLearnings(run.project, learnings);
+  const routed = await router.routeLearnings(run.project, learnings, { runId });
   let emissionError: string | null = null;
   try {
     await router.emitLearningsDraftDecision(runId, routed, {
@@ -159,7 +163,8 @@ async function routeThenAnalyze(
   if (routed.systemContent) {
     await analyze(
       runId,
-      composeImprovementAnalysisContent(rationale, routed.systemContent),
+      composeImprovementAnalysisContent(rationale, routed.systemContent) +
+        `\n\nDomain curation: ${routed.drafts.length} drafts, ${routed.holds.length} eligible holds, ${routed.drops?.length ?? 0} drops recorded in the feedback ledger.`,
       placeholderId,
     );
     return;
@@ -170,7 +175,7 @@ async function routeThenAnalyze(
     'no-changes',
     emissionError
       ? `Nothing classified for the project-template improvement path, and the learnings-draft card FAILED to emit (${emissionError}) — the routed drafts/holds are only in the gateway log; re-trigger after fixing the cause.`
-      : `Routed ${routed.drafts.length} domain ${routed.drafts.length === 1 ? 'draft' : 'drafts'} and ${routed.holds.length} teaching ${routed.holds.length === 1 ? 'hold' : 'holds'} — nothing classified for the project-template improvement path.`,
+      : `Routed ${routed.drafts.length} domain drafts, ${routed.holds.length} eligible holds and recorded ${routed.drops?.length ?? 0} drops — nothing classified for the project-template improvement path.`,
   );
 }
 

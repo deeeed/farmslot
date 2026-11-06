@@ -99,3 +99,30 @@ test('concurrent appends are serialized and none are lost', async (t) => {
   assert.equal(results.flat().length, 10);
   assert.equal((await readFeedbackLedger(file)).entries.length, 10);
 });
+
+test('curation drops are idempotent, survive concurrent consumption and are never consumption', async (t) => {
+  const { appendLearningCurations } = await import('./feedback-ledger.js');
+  const dir = mkdtempSync(path.join(tmpdir(), 'learning-curation-ledger-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'ledger.json');
+  const receipt = {
+    sourceKey: 'learning:hash',
+    runId: 'run-a',
+    destination: ENTRY.destination,
+    contextDigest: 'digest',
+    outcome: 'drop' as const,
+    reason: 'Already covered',
+    citations: [],
+    recordedAt: ENTRY.recordedAt,
+  };
+  await Promise.all([
+    appendLearningCurations([receipt, receipt], file),
+    appendFeedbackConsumptions([ENTRY], file),
+  ]);
+  const ledger = await readFeedbackLedger(file);
+  assert.equal(ledger.curations?.length, 1);
+  assert.equal(ledger.entries.length, 1);
+  assert.equal(consumptionsBySourceKey(ledger).has('learning:hash'), false);
+  await appendLearningCurations([{ ...receipt, contextDigest: 'new-library' }], file);
+  assert.equal((await readFeedbackLedger(file)).curations?.length, 2);
+});

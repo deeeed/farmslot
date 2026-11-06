@@ -10,8 +10,8 @@ import '../../runtime/mock-pty.test-support.js';
 
 import { readSlotRow, statusFile } from '../../core/state.js';
 import { resourceRevisions } from '../../resources/revisions.js';
+import { recordedReviewRound } from '../../review/recorded-review-rounds.test-support.js';
 import {
-  admitReviewRound,
   assertReviewRoundAvailable,
   nextReviewBudgetScopeBrief,
   reviewBudgetScopeBrief,
@@ -78,8 +78,8 @@ function fixture(t: TestContext, ref = `example/budget-${randomUUID()}#42`) {
 
 test('five spent rounds stay spent; durable grant admits sixth/seventh and blocks eighth', async (t) => {
   const { run, params, deps } = fixture(t);
-  for (let i = 0; i < 5; i++) await admitReviewRound(run.id, `spent-${i}`);
-  await assert.rejects(admitReviewRound(run.id, 'sixth'), /five review rounds/);
+  for (let i = 0; i < 5; i++) await recordedReviewRound(run.id, `spent-${i}`);
+  await assert.rejects(recordedReviewRound(run.id, 'sixth'), /five review rounds/);
   const watched = resourceRevisions.sample([
     { family: 'run', runId: run.id },
     { family: 'review', runId: run.id },
@@ -103,13 +103,13 @@ test('five spent rounds stay spent; durable grant admits sixth/seventh and block
     await readFile(path.join(runsDirectory(), `${run.id}.json`), 'utf8'),
   );
   assert.deepEqual(persisted.reviewBudgetExtensions, [result.receipt]);
-  await admitReviewRound(run.id, 'sixth');
+  await recordedReviewRound(run.id, 'sixth');
   assert.match(reviewBudgetScopeBrief(getRun(run.id)!), /Attempt 6\/7/);
   assert.match(reviewBudgetScopeBrief(getRun(run.id)!), /scoped correction/);
   updateRun(run.id, { engineState: { generation: 2 } });
-  await admitReviewRound(run.id, 'sixth');
-  await admitReviewRound(run.id, 'seventh');
-  await assert.rejects(admitReviewRound(run.id, 'eighth'), /All 7 authorized/);
+  await recordedReviewRound(run.id, 'sixth');
+  await recordedReviewRound(run.id, 'seventh');
+  await assert.rejects(recordedReviewRound(run.id, 'eighth'), /All 7 authorized/);
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 7);
 });
 
@@ -201,8 +201,8 @@ test('a parent PR grant preserves the update-branch limit, gate refusal and inst
       },
     },
   });
-  await admitReviewRound(update.run.id, 'maintenance-one');
-  await admitReviewRound(update.run.id, 'maintenance-two');
+  await recordedReviewRound(update.run.id, 'maintenance-one');
+  await recordedReviewRound(update.run.id, 'maintenance-two');
   await runExtendReviewBudget(parent.params, emit, parent.deps);
   const budget = await runReviewRoundBudget(getRun(update.run.id)!);
   assert.deepEqual([budget.used, budget.limit, budget.extensions], [2, 2, undefined]);
@@ -229,14 +229,14 @@ test('PR-scoped grant survives retirement of its original run and retains spent 
   const second = fixture(t, first.run.ticketOrPr);
   const url = `https://github.com/${first.run.ticketOrPr.replace('#', '/pull/')}`;
   for (const entry of [first, second]) updateRun(entry.run.id, { links: [{ label: 'PR', url }] });
-  for (let i = 0; i < 5; i++) await admitReviewRound(first.run.id, `past-${i}`);
+  for (let i = 0; i < 5; i++) await recordedReviewRound(first.run.id, `past-${i}`);
   await runExtendReviewBudget(first.params, emit, first.deps);
   updateRun(first.run.id, { status: 'failed' });
   await deleteRun(first.run.id);
   const budget = await runReviewRoundBudget(getRun(second.run.id)!);
   assert.equal(budget.used, 5);
   assert.equal(budget.limit, 7);
-  await admitReviewRound(second.run.id, 'successor-sixth');
+  await recordedReviewRound(second.run.id, 'successor-sixth');
   assert.match(reviewBudgetScopeBrief(getRun(second.run.id)!), /scoped correction/);
 });
 
@@ -275,9 +275,9 @@ test('a spent PR budget points at an extension only for the run that can receive
   const owner = fixture(t);
   const url = `https://github.com/${owner.run.ticketOrPr.replace('#', '/pull/')}`;
   updateRun(owner.run.id, { links: [{ label: 'PR', url }] });
-  for (let i = 0; i < 5; i++) await admitReviewRound(owner.run.id, `past-${i}`);
+  for (let i = 0; i < 5; i++) await recordedReviewRound(owner.run.id, `past-${i}`);
   await runExtendReviewBudget(owner.params, emit, owner.deps);
-  for (let i = 5; i < 7; i++) await admitReviewRound(owner.run.id, `extended-${i}`);
+  for (let i = 5; i < 7; i++) await recordedReviewRound(owner.run.id, `extended-${i}`);
   const ownerBudget = await runReviewRoundBudget(getRun(owner.run.id)!);
   assert.match(ownerBudget.diagnosis ?? '', /request a lead-approved scoped extension/);
 
@@ -304,7 +304,7 @@ test('a spent PR budget points at an extension only for the run that can receive
     [0, 5, undefined],
   );
   await assertReviewRoundAvailable(getRun(review.id)!);
-  for (let i = 0; i < 5; i++) await admitReviewRound(review.id, `review-own-${i}`);
+  for (let i = 0; i < 5; i++) await recordedReviewRound(review.id, `review-own-${i}`);
   assert.equal((await runReviewRoundBudget(getRun(owner.run.id)!)).used, 7);
   await assert.rejects(assertReviewRoundAvailable(getRun(review.id)!), (error: Error) => {
     assert.equal(
@@ -335,7 +335,7 @@ test('a spent PR budget points at an extension only for the run that can receive
 test('a grant re-presents a waiting publish gate (TAT-4145 bda11b1a)', async (t) => {
   // bda11b1a: the 16:11Z grant (5 -> 6) left gate 22ae4d45 saying five rounds were spent.
   const { run, params, deps } = fixture(t);
-  for (let i = 0; i < 5; i++) await admitReviewRound(run.id, `spent-${i}`);
+  for (let i = 0; i < 5; i++) await recordedReviewRound(run.id, `spent-${i}`);
   updateRun(run.id, { status: 'human-gating' });
   const payload: ReadyGatePayload = {
     kind: 'ready',
@@ -374,7 +374,7 @@ test('a grant re-presents a waiting publish gate (TAT-4145 bda11b1a)', async (t)
 test('a budget-failed run can extend after its slot was released without starting work', async (t) => {
   // TAT-4359: terminal budget failure releases the lease but preserves the branch.
   const { run, params, deps } = fixture(t, 'TAT-4359');
-  for (let i = 0; i < 5; i++) await admitReviewRound(run.id, `spent-${i}`);
+  for (let i = 0; i < 5; i++) await recordedReviewRound(run.id, `spent-${i}`);
   updateRun(run.id, { status: 'failed', error: 'The five review rounds are spent.' });
   let owner: string | null = null;
   let epoch = 2;
@@ -407,14 +407,14 @@ test('a budget-failed run can extend after its slot was released without startin
   const replayed = await runExtendReviewBudget(params, emit, dependencies);
   assert.deepEqual(replayed.receipt, result.receipt);
   assert.equal(epoch, 3, 'an idempotent grant does not reclaim again');
-  await admitReviewRound(run.id, 'extended-sixth');
+  await recordedReviewRound(run.id, 'extended-sixth');
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).remaining, 1);
 });
 
 test('a budget-failed run whose slot was released re-binds the named slot at the approved head (F413)', async (t) => {
   // fd766283: an operator release cleared run.slotId; the slot's checkout is the run branch.
   const { run, params, deps } = fixture(t, 'TAT-4446');
-  for (let i = 0; i < 5; i++) await admitReviewRound(run.id, `spent-${i}`);
+  for (let i = 0; i < 5; i++) await recordedReviewRound(run.id, `spent-${i}`);
   updateRun(run.id, { status: 'failed', error: 'The five review rounds are spent.', slotId: null });
   const slotId = `named-slot-${randomUUID()}`;
   const released = {

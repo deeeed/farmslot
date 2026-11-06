@@ -21,6 +21,7 @@ import { rerunReviewIfReviewedInputsChanged } from '../run-engine/post-dispatch-
 import { makeReadyGatePackage } from '../run-engine/test-fixtures.js';
 import { getRun, updateRun } from '../runs/store.js';
 
+import { recordedReviewRounds } from './recorded-review-rounds.test-support.js';
 import {
   noteReviewInputsAtLaunch,
   readReviewedInputs,
@@ -213,7 +214,7 @@ test('accept-findings is available for reviewed issues at a spent budget, but no
   };
   updateRun(run.id, {
     status: 'human-gating',
-    reviewRoundAdmissions: ['one', 'two', 'three', 'four', 'five'],
+    ...recordedReviewRounds(['one', 'two', 'three', 'four', 'five']),
     engineState: {
       ...getRun(run.id)!.engineState,
       publishGate: { reviews: [review] },
