@@ -226,3 +226,39 @@ test('WARM requires explicit matching review context even when the PR and runner
   };
   assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), []);
 });
+
+test('expired WARM-only workspace intake retains an explicit cold fallback choice', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T00:00:00Z') });
+  const { intent, prior } = fixture();
+  prior.slotId = null;
+  prior.transport = 'tmux';
+  prior.createdByPrincipalId = prior.nativeOwnerPrincipalId = 'owner';
+  prior.reviewWorkspace = {
+    workspaceId: 'workspace',
+    machine: 'machine-a',
+    executionNodeId: 'machine-a',
+    checkoutPath: '/owned/source',
+    taskPath: '/owned/task',
+    artifactPath: '/owned/task/artifacts',
+    retainedAt: '2026-11-01T00:00:00Z',
+    executionStoppedAt: '2026-11-01T00:00:00Z',
+    retainedUntil: '2026-11-03T00:00:00Z',
+  };
+  Object.assign(prior.agentContexts![0], {
+    id: 'review',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: undefined,
+  });
+  const choice: PRExecutionChoice = {
+    machine: 'machine-a',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    transport: 'tmux',
+    effort: null,
+    mode: 'warm',
+  };
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', [choice], [prior]), [
+    { ...choice, mode: 'cold' },
+  ]);
+});

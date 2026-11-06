@@ -283,6 +283,7 @@ export interface RawProjectJson {
     review_input_timeout_ms?: number;
   };
   static_review?: {
+    workspace?: { retention_days?: number; root?: string };
     domain?: string;
     support?: ReviewWorkspaceSupportConfig;
     /** Exact canonical execution-template catalog id for static review. */
@@ -999,11 +1000,12 @@ export function normalizeRawStaticReview(
   const config = raw as Record<string, unknown>;
   if (
     Object.keys(config).some(
-      (key) => !['template_id', 'instruction_files', 'domain', 'support'].includes(key),
+      (key) =>
+        !['template_id', 'instruction_files', 'domain', 'support', 'workspace'].includes(key),
     )
   ) {
     throw new Error(
-      `${projectConfig}: static_review only accepts template_id, instruction_files, domain and support`,
+      `${projectConfig}: static_review only accepts template_id, instruction_files, domain, support and workspace`,
     );
   }
   if (
@@ -1028,9 +1030,37 @@ export function normalizeRawStaticReview(
     (typeof config.domain !== 'string' || !isValidDomainName(config.domain))
   )
     throw new Error(`${projectConfig}: static_review.domain must be a valid domain`);
+  let workspace: import('@farmslot/protocol').ReviewWorkspacePolicy | undefined;
+  if (config.workspace !== undefined) {
+    const value = config.workspace;
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error(`${projectConfig}: static_review.workspace must be an object`);
+    const raw = value as Record<string, unknown>;
+    if (Object.keys(raw).some((key) => !['retention_days', 'root'].includes(key)))
+      throw new Error(`${projectConfig}: static_review.workspace has an unsupported property`);
+    if (
+      raw.retention_days !== undefined &&
+      (typeof raw.retention_days !== 'number' ||
+        !Number.isSafeInteger(raw.retention_days) ||
+        raw.retention_days <= 0)
+    )
+      throw new Error(
+        `${projectConfig}: static_review.workspace.retention_days must be a positive integer`,
+      );
+    if (
+      raw.root !== undefined &&
+      (typeof raw.root !== 'string' || !path.isAbsolute(raw.root) || raw.root.includes('\0'))
+    )
+      throw new Error(`${projectConfig}: static_review.workspace.root must be an absolute path`);
+    workspace = {
+      ...(typeof raw.retention_days === 'number' ? { retentionDays: raw.retention_days } : {}),
+      ...(typeof raw.root === 'string' ? { root: raw.root } : {}),
+    };
+  }
   if (config.support !== undefined)
     validateStaticReviewSupport(config.support, projectConfig, referenceRepos);
   return {
+    ...(workspace ? { workspace } : {}),
     ...(config.domain !== undefined ? { domain: config.domain as string } : {}),
     ...(config.support !== undefined
       ? { support: structuredClone(config.support) as ReviewWorkspaceSupportConfig }

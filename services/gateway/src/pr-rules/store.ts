@@ -6,6 +6,7 @@ import {
   assertPRReviewRequest,
   assertPRTeamConfig,
   assertPRTriggerRuleConfig,
+  type MonitoredPRIdentity,
   monitoredPRKey,
   type PRReviewContribution,
   type PRReviewIntent,
@@ -23,6 +24,12 @@ import {
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
+import {
+  assertReviewWorkspaceAdmissionOpen,
+  reviewWorkspaceRetirementPending,
+  useReviewWorkspaceStorage,
+  waitForReviewWorkspaceRetirements,
+} from '../review-workspaces/storage-use.js';
 import {
   matchesPrincipalOwner,
   principalIdentityKey,
@@ -49,6 +56,10 @@ export interface PRRuleStoreData {
   submissions?: PRReviewSubmission[];
   actions?: PRRuleActionRecord[];
 }
+
+type PRReloadResult =
+  | { kind: 'published'; changed: boolean }
+  | { kind: 'deferred'; prs: MonitoredPRIdentity[] };
 
 export class PRRuleStore {
   async scheduleWebhookRefresh(
@@ -77,6 +88,8 @@ export class PRRuleStore {
   }
   private pending: Promise<unknown> = Promise.resolve();
   private sourceUnavailable = false;
+  private sourceFailure: string | undefined;
+  private validatedRetirementReload = false;
   private writesPending = 0;
   get admissionPending(): boolean {
     return this.writesPending > 0;
@@ -95,28 +108,82 @@ export class PRRuleStore {
       // No rule store exists before the first profile is saved; other load failures are fatal.
       return new PRRuleStore(file, { version: 1, teams: [], rules: [], intents: [] });
     }
-    return new PRRuleStore(file, decodePRRuleStore(JSON.parse(contents)));
+    const data = decodePRRuleStore(JSON.parse(contents));
+    const deferred = data.intents.some(
+      (intent) =>
+        ['held', 'needs-configuration', 'queued', 'running'].includes(intent.status) &&
+        reviewWorkspaceRetirementPending(intent.pr),
+    );
+    const store = new PRRuleStore(
+      file,
+      deferred
+        ? {
+            ...data,
+            intents: data.intents.filter((intent) => !reviewWorkspaceRetirementPending(intent.pr)),
+          }
+        : data,
+    );
+    if (deferred) {
+      // Runs hydrate durable retirement claims before this store loads. Same-PR drafts
+      // could not have been accepted before those claims; preserve every other intent.
+      store.validatedRetirementReload = true;
+      void store.reloadFromFile().catch((error) => {
+        // A detached startup reload may lose its source while waiting. Refuse reads and
+        // cleanup with a retained diagnostic until a later valid source reload recovers.
+        store.validatedRetirementReload = false;
+        store.sourceUnavailable = true;
+        store.sourceFailure = error instanceof Error ? error.message : String(error);
+        publishPRAutomationResources();
+      });
+    }
+    return store;
   }
 
   /** Existing source watchers call this after an external atomic configuration write. */
   reloadFromFile(): Promise<boolean> {
     this.writesPending += 1;
     const operation = async () => {
-      // Decode inside the mutation queue so an earlier commit cannot be replaced by an old read.
-      try {
-        const data = decodePRRuleStore(JSON.parse(await readFile(this.file, 'utf8')));
-        const changed = this.sourceUnavailable || !isDeepStrictEqual(data, this.data);
-        this.data = data;
-        this.sourceUnavailable = false;
-        if (changed) publishPRAutomationResources();
-        return changed;
-      } catch (error) {
-        if (!this.sourceUnavailable) {
-          this.sourceUnavailable = true;
-          publishPRAutomationResources();
-        }
-        // Preserve the actual observer failure. Protocol reads refuse retained old memory.
-        throw error;
+      for (;;) {
+        const result: PRReloadResult = await useReviewWorkspaceStorage(async () => {
+          // Decode under the mutation queue. Only unreadable or invalid source latches unavailable.
+          let data: PRRuleStoreData;
+          try {
+            data = decodePRRuleStore(JSON.parse(await readFile(this.file, 'utf8')));
+          } catch (error) {
+            this.validatedRetirementReload = false;
+            this.sourceFailure = error instanceof Error ? error.message : String(error);
+            if (!this.sourceUnavailable) {
+              this.sourceUnavailable = true;
+              publishPRAutomationResources();
+            }
+            throw error;
+          }
+          const prs = data.intents
+            .filter((intent) =>
+              ['held', 'needs-configuration', 'queued', 'running'].includes(intent.status),
+            )
+            .map((intent) => intent.pr);
+          if (prs.some(reviewWorkspaceRetirementPending)) {
+            // This valid replacement is not admitted. Ordinary reads/actions stay blocked;
+            // cleanup can still see the last accepted intents and finish its earlier claim.
+            this.validatedRetirementReload = true;
+            return { kind: 'deferred', prs };
+          }
+          for (const pr of prs) assertReviewWorkspaceAdmissionOpen(pr);
+          const changed =
+            this.sourceUnavailable ||
+            this.validatedRetirementReload ||
+            !isDeepStrictEqual(data, this.data);
+          this.data = data;
+          this.sourceUnavailable = false;
+          this.sourceFailure = undefined;
+          this.validatedRetirementReload = false;
+          if (changed) publishPRAutomationResources();
+          return { kind: 'published', changed };
+        });
+        if (result.kind === 'published') return result.changed;
+        await waitForReviewWorkspaceRetirements(result.prs);
+        // Read again after settlement. Never publish a snapshot held across an asynchronous wait.
       }
     };
     const result = this.pending.then(operation, operation).finally(() => {
@@ -127,11 +194,22 @@ export class PRRuleStore {
     return result;
   }
 
+  /** Recovery bookkeeping may use accepted data while a validated replacement remains unadmitted. */
+  snapshotForRetention(): PRRuleStoreData {
+    if (!this.validatedRetirementReload) this.assertReadable();
+    return structuredClone(this.data);
+  }
+
   private assertReadable(): void {
     if (this.sourceUnavailable)
       throw new GatewayMethodError(
         'SOURCE_UNAVAILABLE',
-        'PR rule source is unavailable; repair it before reading or acting',
+        `PR rule source is unavailable; repair it before reading or acting${this.sourceFailure ? ': ' + this.sourceFailure : ''}`,
+      );
+    if (this.validatedRetirementReload)
+      throw new GatewayMethodError(
+        'REVIEW_WORKSPACE_CLEANUP_PENDING',
+        'PR rule source is waiting for review workspace cleanup',
       );
   }
 
@@ -874,17 +952,21 @@ export class PRRuleStore {
 
   private change<T>(mutate: (data: PRRuleStoreData) => T | Promise<T>): Promise<T> {
     this.writesPending += 1;
-    const operation = async () => {
-      this.assertReadable();
-      const draft = structuredClone(this.data);
-      const result = await mutate(draft);
-      decodePRRuleStore(draft);
-      const changed = !isDeepStrictEqual(draft, this.data);
-      await writeAtomicJSON(this.file, draft);
-      this.data = draft;
-      if (changed) publishPRAutomationResources();
-      return structuredClone(result);
-    };
+    const operation = async () =>
+      useReviewWorkspaceStorage(async () => {
+        this.assertReadable();
+        const draft = structuredClone(this.data);
+        const result = await mutate(draft);
+        decodePRRuleStore(draft);
+        for (const intent of draft.intents)
+          if (['held', 'needs-configuration', 'queued', 'running'].includes(intent.status))
+            assertReviewWorkspaceAdmissionOpen(intent.pr);
+        const changed = !isDeepStrictEqual(draft, this.data);
+        await writeAtomicJSON(this.file, draft);
+        this.data = draft;
+        if (changed) publishPRAutomationResources();
+        return structuredClone(result);
+      });
     // Each failure reaches its caller without publishing a partial transaction; later calls can retry.
     const result = this.pending.then(operation, operation).finally(() => {
       this.writesPending -= 1;

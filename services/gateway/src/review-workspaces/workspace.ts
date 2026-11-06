@@ -1,8 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { NATIVE_WORKER_STATE } from '@farmslot/agent-runtime/native';
-import type { ReviewWorkspaceBinding, Run } from '@farmslot/protocol';
+import {
+  DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS,
+  type ReviewWorkspaceBinding,
+  type Run,
+} from '@farmslot/protocol';
 
 import { execFileArgv, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
@@ -17,6 +22,17 @@ import { useReviewWorkspaceStorage } from './storage-use.js';
 import { REVIEW_WORKSPACE_SCRIPT } from './workspace-node.js';
 
 export { REVIEW_WORKSPACE_SCRIPT } from './workspace-node.js';
+
+export interface ReviewWorkspaceSessionCleanup {
+  runnerSessionId?: string;
+  format?: 'codex-jsonl';
+  path?: string;
+  cwd: string;
+  cwds?: string[];
+  stateDirectory?: string;
+  nativeSessionId?: string;
+  ownerPrincipalId?: string;
+}
 
 interface WorkspaceOptions {
   assertCurrent: () => void | Promise<void>;
@@ -75,8 +91,8 @@ function identityFor(run: Run, binding: ReviewWorkspaceBinding, subject: Allocat
 
 async function executeWorkspace(
   run: Run,
-  action: 'allocate' | 'cleanup' | 'cancel',
-  subject: AllocateOptions,
+  action: 'allocate' | 'cleanup' | 'cancel' | 'purge',
+  subject: AllocateOptions & { session?: ReviewWorkspaceSessionCleanup },
 ): Promise<void> {
   const binding = structuredClone(run.reviewWorkspace!);
   const expected = JSON.stringify({
@@ -89,7 +105,7 @@ async function executeWorkspace(
     await subject.assertCurrent();
     const current = ownedRun(run.id);
     if (
-      action === 'cleanup' &&
+      (action === 'cleanup' || action === 'purge') &&
       current.agentContexts?.some(
         (context) => context.nativeSession && !context.nativeSession.closedAt,
       )
@@ -116,7 +132,9 @@ async function executeWorkspace(
       identity: identityFor(run, binding, subject),
       generation: run.engineState?.generation ?? 0,
       action,
-      allowCancelled: action === 'cleanup' && run.status === 'cancelled',
+      contributionBaseSha: run.reviewWorkspaceSubject?.contributionBaseSha,
+      allowCancelled: (action === 'cleanup' || action === 'purge') && run.status === 'cancelled',
+      ...(subject.session ? { session: subject.session } : {}),
     }),
   ];
   await check();
@@ -137,7 +155,13 @@ async function executeWorkspace(
     );
   if (
     receipt?.state !==
-    (action === 'allocate' ? 'ready' : action === 'cancel' ? 'cancelled' : 'cleaned')
+    (action === 'allocate'
+      ? 'ready'
+      : action === 'cancel'
+        ? 'cancelled'
+        : action === 'purge'
+          ? 'purged'
+          : 'cleaned')
   )
     throw new Error('Workspace operation returned an invalid receipt');
 }
@@ -199,7 +223,13 @@ export async function allocateReviewWorkspace(
     if (!state.stateDirectory.startsWith('/') || !state.stateDirectory.endsWith(suffix))
       throw new Error('Node returned an incompatible worker state root');
     const nativeRoot = state.stateDirectory.slice(0, -suffix.length);
-    const root = path.posix.join(path.posix.dirname(nativeRoot), 'review-workspaces', ownerHash);
+    const configuredRoot = admission.project.staticReview?.workspace?.root;
+    const root = originalBinding
+      ? path.posix.resolve(originalBinding.checkoutPath, '../../..')
+      : path.posix.join(
+          configuredRoot ?? path.posix.join(path.posix.dirname(nativeRoot), 'review-workspaces'),
+          ownerHash,
+        );
     const workspace = path.posix.join(root, 'runs', workspaceId);
     const binding: ReviewWorkspaceBinding = {
       workspaceId,
@@ -209,8 +239,20 @@ export async function allocateReviewWorkspace(
       taskPath: path.posix.join(workspace, 'task'),
       artifactPath: path.posix.join(workspace, 'task', 'artifacts'),
       ...(originalBinding?.support ? { support: originalBinding.support } : {}),
+      ...(!originalBinding
+        ? {
+            retentionDays:
+              admission.project.staticReview?.workspace?.retentionDays ??
+              DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS,
+          }
+        : originalBinding.retentionDays !== undefined
+          ? { retentionDays: originalBinding.retentionDays }
+          : {}),
+      ...(originalBinding?.retainedAt
+        ? { retainedAt: originalBinding.retainedAt, retainedUntil: originalBinding.retainedUntil }
+        : {}),
     };
-    if (originalBinding && JSON.stringify(originalBinding) !== JSON.stringify(binding))
+    if (originalBinding && !isDeepStrictEqual(originalBinding, binding))
       throw new Error('Persisted review workspace binding conflicts with node-owned paths');
     updateRun(runId, { reviewWorkspace: binding });
     await persistRunNow(ownedRun(runId), 'review workspace allocation identity');
@@ -222,6 +264,21 @@ export async function allocateReviewWorkspace(
 export async function cleanupReviewWorkspace(
   runId: string,
   options: WorkspaceOptions,
+): Promise<void> {
+  return cleanupWorkspace(runId, options, false);
+}
+
+export async function purgeReviewWorkspace(
+  runId: string,
+  options: WorkspaceOptions & { session?: ReviewWorkspaceSessionCleanup },
+): Promise<void> {
+  return cleanupWorkspace(runId, options, true);
+}
+
+async function cleanupWorkspace(
+  runId: string,
+  options: WorkspaceOptions & { session?: ReviewWorkspaceSessionCleanup },
+  purge: boolean,
 ): Promise<void> {
   return exclusive(runId, async () => {
     await options.assertCurrent();
@@ -237,7 +294,11 @@ export async function cleanupReviewWorkspace(
     await options.assertCurrent();
     await removeReviewWorkspaceSkills(run);
     await options.assertCurrent();
-    await executeWorkspace(run, 'cleanup', { ...subject, assertCurrent: options.assertCurrent });
+    await executeWorkspace(run, purge ? 'purge' : 'cleanup', {
+      ...subject,
+      assertCurrent: options.assertCurrent,
+      session: options.session,
+    });
   });
 }
 

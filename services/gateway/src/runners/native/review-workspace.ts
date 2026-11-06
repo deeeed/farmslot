@@ -260,6 +260,7 @@ export async function launchReviewWorkspaceWorker(input: {
         reviewId: randomUUID(),
         runner,
         model,
+        effort,
         taskFile: path.posix.join(workspace.taskPath, 'TASK.md'),
         signalFile: path.posix.join(workspace.taskPath, 'SIGNAL.json'),
         artifactScope: workspace.artifactPath,
@@ -453,6 +454,20 @@ export async function readReviewWorkspaceWorker(
   if (command?.accepted && !binding.closedAt) {
     assertCurrent();
     const run = ownedRun(runId);
+    if (
+      snapshot.session.nativeSessionId &&
+      contextFor(run)?.runnerSessionId !== snapshot.session.nativeSessionId
+    ) {
+      await saveContext(
+        runId,
+        {
+          runnerSessionId: snapshot.session.nativeSessionId,
+          runnerSessionCapturedAt: new Date().toISOString(),
+        },
+        binding,
+        assertCurrent,
+      );
+    }
     if (run.metrics.runnerSessionId !== snapshot.session.nativeSessionId) {
       await persistRunNow(
         updateRun(runId, {

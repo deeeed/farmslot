@@ -164,3 +164,27 @@ test('support environment may bind {{<key>_repo}} only for declared reference re
     /unsupported support environment binding REF/,
   );
 });
+
+test('slotless workspace policy accepts two days and an absolute execution-node root', () => {
+  assert.deepEqual(
+    normalizeRawStaticReview(
+      { workspace: { retention_days: 2, root: '/Volumes/review-disk/workspaces' } },
+      'project.json',
+    )?.workspace,
+    { retentionDays: 2, root: '/Volumes/review-disk/workspaces' },
+  );
+  for (const workspace of [
+    { retention_days: 0 },
+    { retention_days: -1 },
+    { retention_days: 1.5 },
+    { retention_days: '2' },
+    { root: 'relative/path' },
+    { root: '' },
+    { unexpected: true },
+  ]) {
+    assert.throws(
+      () => normalizeRawStaticReview({ workspace }, 'project.json'),
+      /static_review.workspace/,
+    );
+  }
+});

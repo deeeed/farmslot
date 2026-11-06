@@ -77,7 +77,12 @@ import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
-import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
+import {
+  assertReviewWorkspaceAdmissionOpen,
+  hasReviewWorkspaceRetirement,
+  noteReviewWorkspaceRetirement,
+  runNeedsExecutionStorage,
+} from '../review-workspaces/storage-use.js';
 import {
   assertRunNotArchiving,
   beginRunArchive,
@@ -766,6 +771,7 @@ export async function loadAllRuns(): Promise<void> {
       const changed = normalizePersistedRun(run);
       const previous = runs.get(run.id);
       runs.set(run.id, run);
+      noteReviewWorkspaceRetirement(run, true);
       publishRunResources(
         captureRunResources(run),
         previous ? captureRunResources(previous) : undefined,
@@ -1191,9 +1197,11 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
 }
 
 export function createRun(params: RunCreateParams, options?: RunRecordBuildOptions): Run {
+  if (params.flowType === 'review-pr') assertReviewWorkspaceAdmissionOpen(params);
   const run = buildRunRecord(params, options);
   if (runs.has(run.id)) throw new Error('Run creation identity is already registered');
   runs.set(run.id, run);
+  noteReviewWorkspaceRetirement(run);
   if (!options?.deferBackgroundPersist) {
     persistRunBackground(run, 'create');
   }
@@ -1358,6 +1366,31 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
   if (
+    run.reviewWorkspace?.retirement &&
+    !run.reviewWorkspace.cleanedAt &&
+    (['project', 'ticketOrPr', 'prNumber', 'prWork'] as const).some(
+      (key) => key in partial && !isDeepStrictEqual(partial[key], run[key]),
+    )
+  )
+    throw new Error('Review identity cannot change while its workspace retirement is pending');
+  if (
+    run.reviewWorkspace?.retirement &&
+    !run.reviewWorkspace.cleanedAt &&
+    'reviewWorkspace' in partial &&
+    (!partial.reviewWorkspace ||
+      partial.reviewWorkspace.workspaceId !== run.reviewWorkspace.workspaceId ||
+      !isDeepStrictEqual(partial.reviewWorkspace.retirement, run.reviewWorkspace.retirement))
+  )
+    throw new Error('Review workspace retirement identity cannot change before durable closeout');
+  if (
+    run.flowType === 'review-pr' &&
+    isTerminalRunStatus(run.status) &&
+    ((partial.status !== undefined && !isTerminalRunStatus(partial.status)) ||
+      (partial.engineState !== undefined &&
+        partial.engineState.generation !== run.engineState?.generation))
+  )
+    assertReviewWorkspaceAdmissionOpen(run);
+  if (
     'decisionHistoryCount' in partial &&
     partial.decisionHistoryCount !== run.decisionHistoryCount
   )
@@ -1504,6 +1537,7 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
     decisionHistoryCount ? { decisionHistoryCount } : {},
     statusChanged ? { statusChangedAt: updatedAt } : {},
   );
+  noteReviewWorkspaceRetirement(run);
   syncPrimaryAgentContextStatus(run, previousStatus, updatedAt, statusProvided);
   if ('agentContexts' in partial || statusChanged || 'sessionUsage' in partial) {
     const rows = registerContextSessionUsage(run, updatedAt);
@@ -1624,6 +1658,10 @@ export function updateRunStep(id: string, stepName: string, partial: Partial<Run
 }
 
 function assertNativeWorkersReleased(run: Run): void {
+  if (hasReviewWorkspaceRetirement(run.id))
+    throw new Error(
+      'Review workspace ownership cannot leave the run store before durable cleanup closeout',
+    );
   if (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) {
     throw new Error(
       'Review workspace ownership cannot leave the run store before checkout cleanup',

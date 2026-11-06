@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
 import {
+  DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS,
   Events,
   parseGitHubRef,
   PipelineSteps,
@@ -34,6 +35,7 @@ import {
   observeReviewWorkspaceTransport,
   readReviewWorkspaceWorker,
 } from '../runners/native/review-workspace.js';
+import { getRunnerDefinition } from '../runners/registry.js';
 import { observeReviewPromptAcceptance } from '../runners/review-startup.js';
 import {
   launchReviewTmux,
@@ -47,7 +49,11 @@ import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 
 import { preflightReviewWorkspaceAccount } from './account-preflight.js';
 import { assertReviewWorkspaceAdmitted, inspectReviewWorkspaceTarget } from './admission.js';
-import { compatibleWorkspaceReviewer, configureWorkspaceContinuity } from './continuity.js';
+import {
+  bindWorkspaceReviewResult,
+  compatibleWorkspaceReviewer,
+  configureWorkspaceContinuity,
+} from './continuity.js';
 import { holdWorkspaceReview, waitingAtReviewGate } from './gate.js';
 import { createReviewWorkspaceProgressPublisher } from './progress.js';
 import { ensureReviewWorkspaceSupport } from './support.js';
@@ -57,11 +63,7 @@ import {
   readReviewWorkspaceCompletion,
   readReviewWorkspaceSignal,
 } from './task.js';
-import {
-  allocateReviewWorkspace,
-  cancelReviewWorkspaceAllocation,
-  cleanupReviewWorkspace,
-} from './workspace.js';
+import { allocateReviewWorkspace, cancelReviewWorkspaceAllocation } from './workspace.js';
 
 /** Repository-cache contention is a wait, not a failed review or permission to steal a lock. */
 async function waitForWorkspaceOperation<T>(
@@ -154,8 +156,34 @@ export async function recordWorkspaceReviewCompletion(
       }`,
     );
   }
+  const run = currentWorkspaceRun(runId, generation);
+  reviewResult = bindWorkspaceReviewResult(run, reviewResult);
+  const reviewer = run.agentContexts?.find((context) => context.id === 'review');
+  if (reviewResult.session?.sessionId && reviewer) {
+    await upsertAgentContext(runId, 'review', {
+      id: reviewer.id,
+      status: 'complete',
+      completedAt: new Date().toISOString(),
+      deliveryBaselineRef: reviewResult.reviewSnapshot?.headSha ?? undefined,
+      reviewResultValidatedAt: new Date().toISOString(),
+    });
+  }
+  const endedAt = new Date().toISOString();
   const updated = updateRun(runId, {
     reviewResult,
+    ...(run.reviewWorkspace && !run.reviewWorkspace.retainedAt
+      ? {
+          reviewWorkspace: {
+            ...run.reviewWorkspace,
+            retainedAt: endedAt,
+            retainedUntil: new Date(
+              Date.parse(endedAt) +
+                (run.reviewWorkspace.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS) *
+                  86400000,
+            ).toISOString(),
+          },
+        }
+      : {}),
     metrics: withSubtaskMetrics(currentWorkspaceRun(runId, generation).metrics, subtasks),
   });
   await persistRunNow(updated, 'workspace review result');
@@ -216,6 +244,7 @@ async function freezeSubject(
     repositoryUrl,
     headSha: pr.headSha,
     baseSha: pr.baseSha,
+    contributionBaseSha: pr.baseSha,
     branch: pr.branch,
     title: pr.title,
     body: pr.body,
@@ -259,7 +288,9 @@ async function freezeSubject(
     }
     const savedPrior = getRun(prior.id);
     if (!savedPrior) throw new Error('The prior review was removed during session recovery');
-    configureWorkspaceContinuity(run, savedPrior, context);
+    configureWorkspaceContinuity(run, savedPrior, context, subject);
+    if (context.mode === 'warm' && context.priorReviewedHeadSha)
+      subject.baseSha = context.priorReviewedHeadSha;
   }
   await persistRunNow(
     updateRun(runId, {
@@ -276,27 +307,52 @@ async function freezeSubject(
 export async function teardownReviewWorkspace(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
+  if (run.reviewWorkspace.cleanedAt || run.reviewWorkspace.executionStoppedAt) return;
   const generation = run.engineState?.generation ?? 0;
+  const check = () => currentWorkspaceRun(runId, generation, true);
+  check();
   if (run.transport === 'tmux') {
-    if (run.agentContexts?.some((c) => c.target)) await reviewTmuxOperation(run, 'stop');
-  } else await cancelReviewWorkspaceWorker(runId);
-  if (run.reviewWorkspace.cleanedAt) return;
-  const check = () => {
-    currentWorkspaceRun(runId, generation, true);
-  };
+    if (run.agentContexts?.some((context) => context.target))
+      await reviewTmuxOperation(run, 'stop');
+    const reviewer = getRun(runId)?.agentContexts?.find((context) => context.id === 'review');
+    if (reviewer && !['complete', 'failed', 'idle'].includes(reviewer.status))
+      await upsertAgentContext(runId, 'review', { id: reviewer.id, status: 'idle' });
+  } else {
+    const reviewer = run.agentContexts?.find((context) => context.id === 'review');
+    await cancelReviewWorkspaceWorker(runId);
+    if (reviewer?.status === 'complete' && reviewer.reviewResultValidatedAt)
+      await upsertAgentContext(runId, 'review', {
+        id: reviewer.id,
+        status: 'complete',
+        completedAt: reviewer.completedAt,
+      });
+  }
   if (run.status === 'cancelled')
-    await cancelReviewWorkspaceAllocation(runId, { assertCurrent: check });
-  await waitForWorkspaceOperation(
-    () => cleanupReviewWorkspace(runId, { assertCurrent: check }),
-    check,
-  );
-  const current = currentWorkspaceRun(runId, generation, true);
+    await cancelReviewWorkspaceAllocation(runId, {
+      assertCurrent: () => {
+        check();
+      },
+    });
+  const current = check();
+  const endedAt =
+    current.reviewWorkspace?.retainedAt ??
+    current.completedAt ??
+    current.agentContexts?.find((context) => context.id === 'review')?.completedAt ??
+    new Date().toISOString();
+  const days = current.reviewWorkspace?.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS;
   await persistRunNow(
     updateRun(runId, {
-      reviewWorkspace: { ...current.reviewWorkspace!, cleanedAt: new Date().toISOString() },
+      reviewWorkspace: {
+        ...current.reviewWorkspace!,
+        retainedAt: endedAt,
+        retainedUntil:
+          current.reviewWorkspace?.retainedUntil ??
+          new Date(Date.parse(endedAt) + days * 86400000).toISOString(),
+        executionStoppedAt: new Date().toISOString(),
+      },
       reviewWorkspaceCleanupError: undefined,
     }),
-    'workspace checkout cleaned',
+    'review workspace retained after confirmed execution stop',
   );
 }
 
@@ -445,6 +501,7 @@ export function reconcileReviewWorkspaceCleanup(
     for (const run of getAllRuns()) {
       if (
         !run.reviewWorkspace ||
+        run.reviewWorkspace.executionStoppedAt ||
         (run.reviewWorkspace.cleanedAt && !hasHeldReviewWorker(run)) ||
         hasUncertainReviewOperation(run) ||
         workspaceReviewStartupNeedsRecovery(run) ||
@@ -473,6 +530,8 @@ export function reconcileReviewWorkspaceCleanup(
         }
       }
     }
+    const { cleanupExpiredReviewWorkspaces } = await import('./retention.js');
+    await cleanupExpiredReviewWorkspaces();
   })().finally(() => {
     cleanupInProgress = undefined;
   });
@@ -705,6 +764,11 @@ async function executeOwnedReviewWorkspaceStep(
           const startup = reviewTmuxStartupState(signal, acceptance, {
             startedAt: context?.promptDeliveryStartedAt ?? started,
             now: Date.now(),
+            ...(resolveReviewMode({ run: current }) === 'warm' &&
+            getRunnerDefinition(current.metrics.runner).workspaceTerminalSession ===
+              'resume-session'
+              ? { retainedSessionId: current.repeatReviewContext?.session?.priorSessionId }
+              : {}),
           });
           if (startup === 'blocked')
             throw new BlockedRunError(
@@ -747,6 +811,15 @@ async function executeOwnedReviewWorkspaceStep(
             );
             await persistRunNow(getRun(runId)!, 'reviewer startup acknowledgment');
             emit(Events.RUN_UPDATED, { run: getRun(runId) });
+          }
+          if (
+            resolveReviewMode({ run: current }) === 'warm' &&
+            getRunnerDefinition(current.metrics.runner).workspaceTerminalSession ===
+              'resume-session' &&
+            startup !== 'acknowledged'
+          ) {
+            await delay(1000);
+            continue;
           }
           const completion = await observe(() => readReviewWorkspaceCompletion(runId));
           check();
