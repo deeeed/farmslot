@@ -429,7 +429,9 @@ retries an interrupted stop. A validated external intake replacement waiting beh
 an earlier retirement remains unadmitted until that retirement settles; cleanup
 continues to protect every last-accepted intent. The source is re-read before publication. Retirement stays fenced until the final
 cleanup receipt reaches disk; a failed receipt write retries metadata without
-deleting the workspace twice.
+deleting the workspace twice. Restored queue rows behind an earlier durable
+retirement stay visible but unadmitted until settlement; all other pending
+reviews continue to protect storage.
 An admitted continuation stays protected until it finishes, even
 when its predecessor's deadline passes. Deletion and review admission share a
 storage fence and revalidate PR activity before deleting. Unknown identity,

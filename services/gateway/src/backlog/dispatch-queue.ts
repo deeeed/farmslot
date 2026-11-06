@@ -70,8 +70,10 @@ import {
 } from '../review-workspaces/admission.js';
 import { constrainDirectWorkflowExecution } from '../review-workspaces/direct-defaults.js';
 import { bindPRExecutionProfilesToPool } from '../review-workspaces/pool-policy.js';
+import { reviewPR } from '../review-workspaces/retention-policy.js';
 import {
   assertReviewWorkspaceAdmissionOpen,
+  reviewWorkspaceRetirementPending,
   useReviewWorkspaceStorage,
 } from '../review-workspaces/storage-use.js';
 import { assertReviewNativeRunnerHealthy } from '../runners/native/review-health.js';
@@ -121,6 +123,7 @@ function resolveQueueFile(): string {
 
 const QUEUE_FILE = resolveQueueFile();
 const queue: QueueRecord[] = [];
+const unadmittedRestoredReviews = new Set<string>();
 let queuePersistChain: Promise<void> = Promise.resolve();
 
 /** Default exclusive-claim TTL. Holders must re-validate before createRun. */
@@ -187,6 +190,7 @@ export async function resetDispatchQueueForTests(): Promise<void> {
   _createAndStartRun = null;
   // Removing the rows revokes any callback still waiting before createRun.
   queue.length = 0;
+  unadmittedRestoredReviews.clear();
   cancelDispatchRetries();
   try {
     await dispatchInFlight;
@@ -347,8 +351,16 @@ function findNonTerminalHandoffOwner(item: QueueItem): Run | undefined {
   });
 }
 
+function restoreQueueRecord(record: QueueRecord): void {
+  const pr = reviewPR(record);
+  if (record.flowType === 'review-pr' && pr && reviewWorkspaceRetirementPending(pr))
+    unadmittedRestoredReviews.add(record.id);
+  queue.push(record);
+}
+
 export async function loadQueue(): Promise<void> {
   queue.length = 0;
+  unadmittedRestoredReviews.clear();
   try {
     const raw = await readFile(QUEUE_FILE, 'utf-8');
     const items: QueueRecord[] = JSON.parse(raw);
@@ -378,7 +390,7 @@ export async function loadQueue(): Promise<void> {
           );
           continue;
         }
-        queue.push(normalized);
+        restoreQueueRecord(normalized);
         continue;
       }
       if (normalized.status === 'dispatching') {
@@ -449,7 +461,7 @@ export async function loadQueue(): Promise<void> {
         normalized.status = 'queued';
         normalized.runId = undefined;
         clearClaimFields(normalized);
-        queue.push(normalized);
+        restoreQueueRecord(normalized);
       }
     }
     console.log(`[dispatch-queue] loaded ${queue.length} queued items from disk`);
@@ -1066,8 +1078,20 @@ export function listItems(): QueueItem[] {
     .map(publicQueueItem);
 }
 
-export function getQueueSnapshot(): QueueRecord[] {
-  return queue.map(cloneQueueRecord);
+export function getQueueSnapshot(options: { forRetention?: boolean } = {}): QueueRecord[] {
+  return queue
+    .filter((record) => {
+      if (!unadmittedRestoredReviews.has(record.id)) return true;
+      const pr = reviewPR(record);
+      if (!pr || !reviewWorkspaceRetirementPending(pr)) {
+        unadmittedRestoredReviews.delete(record.id);
+        return true;
+      }
+      // A prior durable retirement ordered this restored row after cleanup.
+      // Keep it visible and dispatch-fenced, without treating it as already admitted.
+      return !options.forRetention;
+    })
+    .map(cloneQueueRecord);
 }
 
 export function mutateQueueItemForTests(

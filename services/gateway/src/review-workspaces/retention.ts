@@ -56,7 +56,7 @@ export async function cleanupExpiredReviewWorkspaces(now = Date.now()): Promise<
         const requests = reviewWorkspacePendingPRs();
         if (!requests) throw new Error('Review intake state is not available for cleanup');
         return [
-          ...getQueueSnapshot().filter(
+          ...getQueueSnapshot({ forRetention: true }).filter(
             (item) =>
               item.flowType === 'review-pr' && ['queued', 'dispatching'].includes(item.status),
           ),
