@@ -13,9 +13,23 @@ const gatewayHost = process.env.GATEWAY_PROXY_HOST || process.env.GATEWAY_HOST |
 const vitePort = Number(process.env.VITE_PORT) || 5174;
 const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
 const base = process.env.FARMSLOT_CC_BASE || process.env.VITE_BASE || '/';
+const hmr = process.env.FARMSLOT_DEV_UI_HMR !== '0';
 
 export default defineConfig({
   base,
+  plugins: [
+    {
+      name: 'operator-ui-reload-policy',
+      configureServer(server) {
+        if (hmr) return;
+        // Chrome queues same-origin WebSockets behind an unfinished HMR handshake.
+        server.httpServer?.on('upgrade', (request, socket) => {
+          if (request.headers['sec-websocket-protocol'] === 'vite-hmr')
+            socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+        });
+      },
+    },
+  ],
   root: resolve(__dirname),
   define: {
     __FARMSLOT_APP_VERSION__: JSON.stringify(appVersion),
@@ -50,9 +64,9 @@ export default defineConfig({
     watch: {
       awaitWriteFinish: { stabilityThreshold: 400, pollInterval: 50 },
     },
-    hmr: {
-      overlay: false,
-    },
+    hmr: hmr ? { overlay: false } : false,
+    // Vite still opens its reconnect/reload socket with hmr:false.
+    ws: hmr ? undefined : false,
     proxy: {
       '/ws': {
         target: gatewayTarget,
