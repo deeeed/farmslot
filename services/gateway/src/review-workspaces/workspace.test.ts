@@ -118,6 +118,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
     action = 'allocate',
     changes: Record<string, unknown> = {},
     allowCancelled = false,
+    extra: Record<string, unknown> = {},
   ) =>
     JSON.parse(
       execFileSync(
@@ -125,7 +126,13 @@ function fixture(t: { after: (fn: () => void) => void }) {
         [
           '-e',
           REVIEW_WORKSPACE_SCRIPT,
-          JSON.stringify({ root, identity: { ...identity, ...changes }, action, allowCancelled }),
+          JSON.stringify({
+            root,
+            identity: { ...identity, ...changes },
+            action,
+            allowCancelled,
+            ...extra,
+          }),
         ],
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
       ),
@@ -264,6 +271,8 @@ test('allocator persists binding before Git, rechecks generation, and requires p
     pool: { machine: 'machine', host: 'localhost' },
     executionNodeId: 'local',
   } as ReviewWorkspaceAdmission;
+  const customRoot = path.join(f.directory, 'external-review-root');
+  admission.project.staticReview = { workspace: { root: customRoot, retentionDays: 2 } };
   const options = { ...run.reviewWorkspaceSubject!, assertCurrent: () => undefined };
   const originalPersistCount = persisted.length;
   let checkpoint = 0;
@@ -283,6 +292,8 @@ test('allocator persists binding before Git, rechecks generation, and requires p
   assert.deepEqual(binding, persisted.at(-1)!.reviewWorkspace);
   assert.equal(readFileSync(path.join(binding.checkoutPath, 'source.txt'), 'utf8'), 'head\n');
   assert.equal(binding.artifactPath, path.join(binding.taskPath, 'artifacts'));
+  assert.equal(binding.retentionDays, 2);
+  assert.ok(binding.checkoutPath.startsWith(customRoot + path.sep));
   assert.equal(binding.checkoutPath.startsWith(binding.taskPath), false);
   run.reviewWorkspace!.support = {
     path: path.join(path.dirname(binding.taskPath), 'frozen-support'),
@@ -295,6 +306,11 @@ test('allocator persists binding before Git, rechecks generation, and requires p
     (await allocateReviewWorkspace(run.id, admission, options)).support,
     run.reviewWorkspace!.support,
   );
+  admission.project.staticReview = {
+    workspace: { root: path.join(f.directory, 'new-root'), retentionDays: 14 },
+  };
+  assert.deepEqual(await allocateReviewWorkspace(run.id, admission, options), run.reviewWorkspace);
+  assert.equal(existsSync(path.join(f.directory, 'new-root')), false);
   run.agentContexts = [{ nativeSession: { ownerPrincipalId: 'owner' } }] as Run['agentContexts'];
   await assert.rejects(
     cleanupReviewWorkspace(run.id, { assertCurrent: () => undefined }),
@@ -535,4 +551,88 @@ require('node:fs').renameSync = (from, to) => {
     { retired: [] },
   );
   assert(existsSync(support), 'another allocated workspace still needs its support');
+});
+
+test('an unmounted configured external volume is rejected before directory creation', (t) => {
+  const f = fixture(t);
+  const root = '/Volumes/farmslot-unmounted-' + randomUUID();
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [
+          '-e',
+          REVIEW_WORKSPACE_SCRIPT,
+          JSON.stringify({ root, identity: f.identity, action: 'allocate' }),
+        ],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      ),
+    /volume is not mounted/,
+  );
+  assert.equal(existsSync(root), false);
+});
+
+test('foreign conversation preflight keeps the real checkout intact before any deletion', (t) => {
+  const f = fixture(t);
+  f.execute();
+  const id = randomUUID(),
+    file = path.join(f.directory, 'rollout-' + id + '.jsonl');
+  writeFileSync(
+    file,
+    JSON.stringify({
+      type: 'session_meta',
+      payload: { id: 'foreign', cwd: path.join(f.workspace, 'source') },
+    }) + '\n',
+  );
+  assert.throws(
+    () =>
+      f.execute('purge', {}, false, {
+        session: {
+          runnerSessionId: id,
+          format: 'codex-jsonl',
+          path: file,
+          cwd: path.join(f.workspace, 'source'),
+        },
+      }),
+    /does not match the review/,
+  );
+  assert.equal(readFileSync(path.join(f.workspace, 'source/source.txt'), 'utf8'), 'head\n');
+  assert.ok(existsSync(file));
+});
+
+test('allocation fetches and retains a contribution base advanced independently from the warm delta', (t) => {
+  const f = fixture(t);
+  const oldHead = f.identity.headSha;
+  f.git('checkout', '--detach', f.identity.baseSha);
+  writeFileSync(path.join(f.source, 'main-only.txt'), 'new publication base\n');
+  f.git('add', '.');
+  f.git(
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.test',
+    'commit',
+    '-m',
+    'advance base',
+  );
+  const contributionBaseSha = f.git('rev-parse', 'HEAD');
+  assert.notEqual(contributionBaseSha, oldHead);
+  f.execute('allocate', {}, false, { contributionBaseSha });
+  const checkout = path.join(f.workspace, 'source');
+  assert.equal(
+    execFileSync(
+      'git',
+      ['-C', checkout, 'rev-parse', `refs/reviews/${f.identity.workspaceId}/contribution-base`],
+      { encoding: 'utf8' },
+    ).trim(),
+    contributionBaseSha,
+  );
+  assert.match(
+    execFileSync(
+      'git',
+      ['-C', checkout, 'diff', '--name-status', `${contributionBaseSha}...${oldHead}`],
+      { encoding: 'utf8' },
+    ),
+    /source.txt/,
+  );
 });

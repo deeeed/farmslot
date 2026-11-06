@@ -27,6 +27,7 @@ import { getAllRuns } from '../runs/store.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 
 import { resolveReviewWorkspacePool } from './pool.js';
+import { retainedWorkspaceIsIdle } from './retention-policy.js';
 
 export interface ReviewWorkspaceAdmissionInput {
   project: string;
@@ -55,6 +56,7 @@ export function activeWorkspaceReviews(
 ): number {
   return runs.filter((run) => {
     if (run.id === excludingRunId || run.reviewWorkspaceTarget?.machine !== machine) return false;
+    if (retainedWorkspaceIsIdle(run)) return false;
     const terminal = ['done', 'failed', 'cancelled', 'blocked'].includes(run.status);
     const nativeActive = run.agentContexts?.some(
       (context) =>

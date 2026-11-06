@@ -220,3 +220,35 @@ test('entering a held decision cancels the next automatic capture', async () => 
   assert.equal(h.calls.length, 1);
   assert.equal(h.timers.size, 0);
 });
+
+test('an open review-posting gate stops capture while worker progress changes its status', () => {
+  for (const status of ['human-gating', 'reconciling', 'reviewing', 'blocked'] as const) {
+    const run: LiveArtifactRefreshRun = {
+      status,
+      decisions: [
+        {
+          id: 'review-posting',
+          type: 'engine_review_posting',
+          title: 'Post review',
+          description: '',
+          actions: [],
+          createdAt: '2026-11-06T00:00:00Z',
+          payload: {
+            kind: 'review',
+            reviewMd: 'Saved review',
+            recommendation: 'COMMENT',
+            lineComments: [],
+            repo: null,
+            prNumber: null,
+          },
+        },
+      ],
+    };
+    const h = harness();
+    h.refresh.update({ ...live, active: liveArtifactRefreshActive(run) });
+    h.advance(LIVE_ARTIFACT_REFRESH_INTERVAL_MS * 3);
+    assert.deepEqual(h.calls, [], status);
+    run.decisions[0].resolvedAt = '2026-11-06T00:01:00Z';
+    if (status === 'reviewing') assert.equal(liveArtifactRefreshActive(run), true);
+  }
+});

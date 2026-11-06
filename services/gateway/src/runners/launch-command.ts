@@ -429,6 +429,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       questionsArgs.trim(),
       modelFlag.trim(),
       options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
+      options.resumeSessionId ? `resume --all ${shellQuote(options.resumeSessionId)}` : '',
       promptArg,
     ]
       .filter(Boolean)

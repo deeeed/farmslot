@@ -1,0 +1,1 @@
+- Keep review Post confirmation through unchanged background refreshes and stop automatic artifact sync while a review-posting decision is open.

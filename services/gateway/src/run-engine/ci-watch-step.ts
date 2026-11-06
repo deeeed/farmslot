@@ -311,59 +311,11 @@ export async function executeCIWatchStep(
     };
   }
 
-  // Check if a previous CI decision already requested chaining (e.g. after gateway restart)
-  const resolvedChainDecision = current.decisions.find(
-    (d) =>
-      d.resolvedAt &&
-      (d.resolvedAction === 'dispatch-update-branch' ||
-        d.resolvedAction === 'dispatch-pr-complete'),
-  );
-  if (resolvedChainDecision) {
-    const chainAction = resolvedChainDecision.resolvedAction!;
-    console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — found resolved chain decision: ${chainAction}, skipping CI monitor`,
-    );
-    const syntheticOutcome: Awaited<ReturnType<typeof monitorCI>> = {
-      result: 'failed',
-      failedChecks: ['MERGE_CONFLICT'],
-      pollCount: 0,
-      phase: 'done',
-      fixInProgress: false,
-      fixTrigger: null,
-      activeTaskFile: null,
-      totalDurationMs: 0,
-      checkTimeline: [],
-      actionableBotCommentCount: 0,
-      dispatchAction: chainAction,
-    };
-    // Jump straight to chaining logic below
-    const chainSpec = buildCIWatchChainedRunParams(current, chainAction, ciRepo);
-    if (!chainSpec) {
-      return { inputs, outputs: { ...syntheticOutcome } };
-    }
-    console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — chaining ${chainSpec.flowType} on slot ${current.slotId} ticket=${chainSpec.createParams.ticketOrPr}`,
-    );
-    const chainRun = await withSourcePlanning(chainSpec.createParams.project, async () =>
-      createRun(chainSpec.createParams),
-    );
-    applyChainedRunEngineFlags(chainRun.id, chainSpec.engineFlags);
-    if (Object.keys(chainSpec.updateFields).length) updateRun(chainRun.id, chainSpec.updateFields);
-    broadcastFn(Events.RUN_UPDATED, { run: getRun(chainRun.id) ?? chainRun });
-    // Clear agent status so chained run's find-slot can pick up this slot
-    await updateSlotStatus(current.slotId, { agent: 'idle' });
-    startRun(chainRun.id).catch((err) => {
-      console.error(
-        `[run-engine] chained ${chainSpec.flowType} run failed: ${(err as Error).message}`,
-      );
-    });
-    return { inputs, outputs: { ...syntheticOutcome, chainedRunId: chainRun.id } };
-  }
-
   const controller = new AbortController();
   activeMonitors.set(runId, controller);
-  let outcome: Awaited<ReturnType<typeof monitorCI>> | undefined;
+  let outcome: CIOutcome;
   try {
+    // Retained decisions remain history; this session's monitor observation governs chaining.
     outcome = await monitorCI(runId, current.prNumber, ciRepo, controller.signal);
 
     console.log(`[run-engine] run ${runId.slice(0, 8)} — CI outcome: ${outcome.result}`);
@@ -383,7 +335,11 @@ export async function executeCIWatchStep(
   }
 
   let chainedRunId: string | undefined;
-  const chainSpec = buildCIWatchChainedRunParams(current, outcome?.dispatchAction, ciRepo);
+  const chainSpec = buildCIWatchChainedRunParams(
+    getRun(runId) ?? current,
+    outcome?.dispatchAction,
+    ciRepo,
+  );
   if (chainSpec) {
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — chaining ${chainSpec.flowType} on slot ${current.slotId} ticket=${chainSpec.createParams.ticketOrPr}`,

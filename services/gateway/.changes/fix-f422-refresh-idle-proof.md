@@ -1,0 +1,1 @@
+- Allow publication package refresh after completed background tasks whose native completion receipts omit the call ID, while preserving checks for active or unproven work. Refusals now include the observed worker state.

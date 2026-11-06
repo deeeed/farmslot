@@ -1,0 +1,1 @@
+- Honor the configured machine Node runtime at CLI startup so agent tool shells cannot silently select a different interpreter. Preserve the CLI process identity, arguments and signal cleanup.

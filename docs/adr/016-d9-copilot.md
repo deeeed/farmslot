@@ -113,3 +113,86 @@ Default: `anthropic/sonnet`. Override via `COPILOT_PROVIDER` / `COPILOT_MODEL` i
 - **v2** — Autonomous tool-use (execute actions without confirm)
 - **v2** — Vector/semantic memory search (OpenClaw uses SQLite+embeddings)
 - **v2** — Native multi-turn message history (requires pi-ai AssistantMessage reconstruction)
+
+## Amendment 1: copilot entry and live conversations, 2026-11-05
+
+**Status:** Proposed. Requires approval before implementation. The base ADR remains Accepted.
+
+### Decision
+
+Command Center opens on the copilot conversation for an authorized farm administrator.
+The prompt can address the farm copilot, start a run, or launch a selected native
+runner in a slot or custom directory on an enrolled execution node. Runs, families
+and fleet remain directly addressable views. Existing restricted native workspaces
+keep their authorized entry points.
+
+Use the existing native runtime for the copilot as well as standalone sessions,
+workers and reviewers. Runner CLIs own inference, accounts, tools and execution.
+The copilot remains one configured farm agent, not a new agent per browser. Opening
+a view starts no inference and launches no process. Explicit start or first send
+uses the configured launch policy and existing safety confirmation.
+
+Forward native journal events through the existing authenticated WebSocket with
+cursor-based subscriptions. One shared conversation controller renders incremental
+text in Command Center and Companion. It reuses native launch and timeline models;
+there is no new copilot-only chat engine or per-harness UI. Metadata continues through
+ADR-071's cache. Text uses its live-stream exception, with bounded replay and no
+per-token invalidation or history refetch.
+
+The [conversation specification](../reference/copilot-conversations.md) owns the
+contracts, budgets, parity evidence and completion checks. All six existing native
+adapters already emit text deltas. The copilot transcript poller and the views'
+history-refresh paths prevent those deltas from reaching the screen directly.
+
+The pinned t3code implementation is the capability reference. Match its structured
+stream for every provider listed in the specification. Missing adapters are work
+to complete, not evidence that a runner cannot stream. An exception needs evidence
+that the same reference provider has the same limitation. None is accepted here.
+Farmslot's existing Claude text-delta support remains required even where the
+inspected reference handler publishes completed assistant blocks.
+
+### Rationale
+
+The native host already owns launch, command receipts, journals and runner-specific
+stream decoding. Reusing it removes transcript scraping and avoids a second
+execution/account model. t3code demonstrates the provider-event to conversation
+subscription approach. Farmslot can use its own normalized event contract rather
+than copy t3code's server or UI.
+
+### Consequences
+
+This amendment supersedes the base ADR's direct model calls, prior-turn prompt
+reconstruction, mutable chat-body store and text response broadcasts. It replaces
+the copilot tmux transcript loop and per-view conversation-body polling. Existing
+observer evidence and confirmed action semantics remain. No observer notifications
+are appended to the copilot's conversation.
+
+For newly launched managed conversations, structured native adapters replace TUI
+output as the conversation source. ADR-047's pane-only limitation does not excuse
+a provider that the reference streams. Existing TUI processes are never taken over
+or relaunched by opening a view. Their history stays readable under ADR-047/056;
+raw Terminal keeps ADR-002's explicit diagnostic transport. This does not preserve
+a second chat writer or polling implementation.
+
+Run creation and native launches use existing typed commands and explicit operator
+confirmation. Text cannot authorize side effects or resolve publication gates.
+ADR-048 packet validation, ADR-051 ownership and requester attribution, and pinned
+worker control checks remain authoritative. No account transfer or credential
+migration is part of this decision.
+
+The cost is adapter parity work, an incremental journal feed and one consumer
+cutover. Offline history uses the existing scoped client store; reconnect resumes
+reads only. No new memory, search, voice, autonomous execution or identity system is
+approved. This proposal ships no code.
+
+### Public surface
+
+Proposed, unshipped protocol additions are `native.session.subscribe`,
+`native.session.unsubscribe` and `native.session.delta`. They reuse native targets,
+including worker pins, and carry existing `NativeSessionEvent` values. Copilot
+status exposes its native target instead of a tmux target or separate transcript.
+The spec defines the shared `@farmslot/protocol/client-cache` subscription controller
+for Command Center, Companion and the CLI. `farmslot rpc --follow` is the proposed
+CLI consumer, not an existing command. Upper-layer harnesses use the same SDK feed;
+runner-specific decoding stays inside native adapters. No additional model API,
+port, CLI family or harness-specific flag is introduced.

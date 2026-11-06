@@ -24,7 +24,7 @@ import { importPRProject } from '../pr-rules/project-import.js';
 import { buildRereviewRequest } from '../pr-rules/rereview-request.js';
 import { PRRuleService } from '../pr-rules/service.js';
 import { PRSourceCheckpoints } from '../pr-rules/source-checkpoints.js';
-import { PRRuleStore } from '../pr-rules/store.js';
+import { PRRuleStore, type PRRuleStoreData } from '../pr-rules/store.js';
 import { setDirectPublicationAuthority } from '../review-publication/direct.js';
 import { supervisedPublicationOwner } from '../review-publication/supervision.js';
 import { getRunWithArchived } from '../runs/store.js';
@@ -122,13 +122,17 @@ export async function reloadPRRulesFromFile(): Promise<void> {
  * PRs with a live review intent across every owner, for the dashboard list.
  * Scheduler-style access to the store: the list itself is not principal-scoped.
  */
-export function listActiveReviewPRs(): MonitoredPRIdentity[] {
-  if (!service) return [];
+/** Retention must defer until the durable intake store is loaded. */
+export function reviewWorkspacePendingPRs(): MonitoredPRIdentity[] | undefined {
+  return service ? listActiveReviewPRs(service.store.snapshotForRetention()) : undefined;
+}
+
+export function listActiveReviewPRs(
+  snapshot: PRRuleStoreData | undefined = service?.store.snapshot(),
+): MonitoredPRIdentity[] {
+  if (!snapshot) return [];
   const live = new Set(['held', 'needs-configuration', 'queued', 'running']);
-  return service.store
-    .snapshot()
-    .intents.filter((intent) => live.has(intent.status))
-    .map((intent) => intent.pr);
+  return snapshot.intents.filter((intent) => live.has(intent.status)).map((intent) => intent.pr);
 }
 
 /**

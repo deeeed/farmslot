@@ -1,0 +1,1 @@
+- Retain slotless review workspaces and exact reviewer conversations for a configurable project window, default seven days, so re-reviews resume the prior session on only the new diff. Expired storage is reclaimed safely and expiry is reported before a cold review.

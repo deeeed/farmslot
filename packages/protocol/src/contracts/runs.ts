@@ -515,6 +515,7 @@ export type ReviewSessionRefusalReason =
   | 'missing-reviewed-head'
   | 'session-busy'
   | 'session-unavailable'
+  | 'retention-expired'
   | 'reviewed-head-not-ancestor';
 
 /** Why a re-review ran COLD in a fresh session, and the ranges it compared (ADR-063 Amendment 5). */
@@ -523,7 +524,8 @@ export interface ReviewSessionFallback {
   detail: string;
   /**
    * `lastReviewedHead..currentHead`. After a rebase, the branch's own change at both
-   * heads (`mergeBase..head`), compared with `git range-diff`.
+   * heads (`mergeBase..head`), compared with `git range-diff`. Retention expiry
+   * starts a fresh full-contribution COLD (`baseSha...headSha`, ADR-063 Amendment10).
    */
   comparedRanges: string[];
 }
@@ -543,7 +545,7 @@ export interface ReviewSessionTrace {
   priorSessionId?: string;
   sessionId?: string;
   refusalReason?: ReviewSessionRefusalReason;
-  /** Set when a re-review's retained session was unavailable and it ran a delta-scoped COLD. */
+  /** Why a retained session was unavailable for a COLD review; expiry may require full scope. */
   fallback?: ReviewSessionFallback;
 }
 
@@ -1738,6 +1740,16 @@ export interface PrIntegrationStatus {
   mergeStateStatus?: string;
   /** Operator/worker-facing summary — not a prepare gate. */
   note?: string;
+}
+
+export interface RunTicketRefresh {
+  principalId: string;
+  principalGeneration?: number;
+  requestedAt: string;
+  appliedAt?: string;
+  supersededAt?: string;
+  previousCriteria: string[];
+  criteria: string[];
 }
 
 export interface RunTicketData {
@@ -3071,6 +3083,8 @@ export interface Run {
   /** Present on archived run records so archive-aware readers can suppress them from active timelines. */
   archivedAt?: string;
   ticketData?: RunTicketData;
+  /** Person-requested scope refreshes, retained across package failures and retries. */
+  ticketRefreshes?: RunTicketRefresh[];
   grade?: RunGrade;
   humanGrade?: HumanGrade;
   links?: RunLink[];
@@ -3326,6 +3340,8 @@ export interface RunEngineState {
  * and attempt counters survive gateway restart (ADR-027).
  */
 export interface RunCiWatchState {
+  /** Scope refusals stop automatic CI fix retries. */
+  fixScopeRefusal?: string;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };

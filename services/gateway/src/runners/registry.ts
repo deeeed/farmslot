@@ -218,7 +218,9 @@ export interface RunnerDefinition {
   teardownSettleMs?: number;
   feedbackTiming?: RunnerFeedbackTiming;
   /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
-  workspaceTerminalSession?: 'create-chat';
+  workspaceTerminalSession?: 'create-chat' | 'resume-session';
+  /** Exact, metadata-verified conversation files eligible for owned review expiry cleanup. */
+  workspaceSessionFileCleanup?: 'codex-jsonl';
   /** Opt-in native protocol. Missing means structured sessions are unavailable. */
   nativeTransport?:
     | 'codex-app-server'
@@ -446,6 +448,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: true,
     sessionArchive: 'jsonl',
+    workspaceTerminalSession: 'resume-session',
+    workspaceSessionFileCleanup: 'codex-jsonl',
     sessionReload: 'with-prompt',
     // `codex resume` indexes sessions by cwd; a rollout recorded in another
     // slot's worktree is not offered there.

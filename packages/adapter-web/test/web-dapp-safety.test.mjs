@@ -368,6 +368,51 @@ describe('leaf CLI launch', () => {
   });
 });
 
+describe('fixture account selection', () => {
+  it('launches a higher-index account of a counted mnemonic, by address or by name', async () => {
+    const s = await slot();
+    writeFileSync(
+      s.fixture,
+      JSON.stringify({
+        password: 'correct horse battery',
+        accounts: [{ name: 'dev1', type: 'mnemonic', value: TEST_MNEMONIC, count: 3 }],
+      }),
+      { mode: 0o600 },
+    );
+    // Hardhat account #2, index 2 of the test mnemonic.
+    const third = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC';
+    const args = await launchArgs(s, { account: third.toLowerCase() });
+    const first = await launchWebDappBrowser(args, launchEnv(s));
+    trackPids(s.runtime);
+    assert.deepEqual(first.account, { name: 'dev3', address: third, secret: 'dev1', index: 2 });
+    const again = await launchWebDappBrowser({ ...args, account: 'dev3' }, launchEnv(s));
+    assert.equal(again.reused, true);
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
+  it('relaunches when the account name now resolves to another key', async () => {
+    const s = await slot();
+    // Hardhat accounts #7 and #8 of the test mnemonic.
+    const seventh = '0x14dC79964da2C08b23698B3D3cc7Ca32193d9955';
+    const eighth = '0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f';
+    const at = (index, address) =>
+      launchEnv(s, {
+        RECIPE_WALLET_DERIVED_ACCOUNTS: JSON.stringify([
+          { name: 'vip', secret: 'dev1', index, address },
+        ]),
+      });
+    const args = await launchArgs(s, { account: 'vip' });
+    const first = await launchWebDappBrowser(args, at(7, seventh));
+    trackPids(s.runtime);
+    assert.equal(first.account.address, seventh);
+    const moved = await launchWebDappBrowser(args, at(8, eighth));
+    trackPids(s.runtime);
+    assert.notEqual(moved.reused, true);
+    assert.deepEqual(moved.account, { name: 'vip', address: eighth, secret: 'dev1', index: 8 });
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+});
+
 describe('process ownership', () => {
   it('never signals a live foreign pid and keeps its pid file; drops a dead pid file', async () => {
     const s = await slot();

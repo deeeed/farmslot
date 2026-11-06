@@ -1,0 +1,32 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Retained slotless review and expiry",
+  "description": "Opt-in: consumes two real Codex turns. Set FARMSLOT_REVIEW_RETENTION_PROOF_OUTPUT to a private evidence directory. Creates an isolated farm and tiny Git source, runs two genuine reviews, reads results through authenticated Gateway RPC, verifies exact-session continuation, then clock-controlled expiry and pending-review protection. No live farm, publication or slot action.",
+  "workflow": {
+    "entry": "startup-recovery",
+    "nodes": {
+      "two-rounds": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/slotless-review-retention.mts \"$FARMSLOT_REVIEW_RETENTION_PROOF_OUTPUT\"",
+        "intent": "Two genuine completed reviews share the exact retained conversation while the second checks only the new Git delta.",
+        "next": "expiry"
+      },
+      "expiry": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/slotless-review-expiry.mts \"$FARMSLOT_REVIEW_RETENTION_PROOF_OUTPUT/result.json\"",
+        "intent": "Pending review protects retained files, expiry reports cold fallback, and authenticated run.cleanup reclaims the custom-root support cache, and run records/report bytes survive before fixture teardown.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "startup-recovery": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/pr-rules/retention-startup.live.ts",
+        "intent": "A private authenticated gateway remains reachable while intake is deferred behind a setup-time retirement snapshot, then source reads recover after settlement.",
+        "next": "two-rounds"
+      }
+    }
+  }
+}

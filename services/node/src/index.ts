@@ -118,7 +118,15 @@ function connect(): void {
       const frame: Frame = JSON.parse(raw.toString());
       if (frame.type === 'req') {
         if (disposed && frame.method !== 'exec.cancel') {
-          sendResponse(frame.id, false, undefined, 'Node is shutting down.', undefined, socket);
+          // No handler ran: the gateway may safely wait and submit this request again.
+          sendResponse(
+            frame.id,
+            false,
+            undefined,
+            'Node is shutting down.',
+            'NODE_SHUTTING_DOWN',
+            socket,
+          );
           return;
         }
         await handleRequest(frame, socket, requests);

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstat, readdir, readFile, readlink, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -15,6 +15,7 @@ interface CleanupStorage {
   nativeRoot: string;
 }
 
+const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const digestPattern = /^[a-f0-9]{64}$/;
 const retiredPattern = /^\.reclaim-[a-f0-9]{64}-[a-f0-9-]{36}$/;
 
@@ -167,58 +168,67 @@ export function cleanupReviewWorkspaceCaches(
     };
     if (await directory(cacheRoot)) await support(path.join(cacheRoot, 'bundles'), true);
 
-    // Current local layout and the historical node layout are both gateway-managed roots.
+    // Discover only known managed layouts and owner roots bound by persisted local runs.
+    const ownerRoots = new Set<string>();
     for (const root of new Set([
       path.join(path.dirname(storage.nativeRoot), 'review-workspaces'),
       path.join(storage.nativeRoot, 'nodes', 'review-workspaces'),
-    ])) {
-      for (const ownerHash of await entries(root)) {
-        if (!digestPattern.test(ownerHash)) continue;
-        const ownerRoot = path.join(root, ownerHash);
-        if (
-          !(await directory(ownerRoot)) ||
-          protectedOwners.has(ownerRoot) ||
-          !(await allocatorIsIdle(ownerRoot))
-        )
-          continue;
-        const supportRoot = path.join(ownerRoot, 'support');
-        const digests = await support(supportRoot, false);
-        if (dryRun) removed.push(...digests.map((digest) => path.join(supportRoot, digest)));
-        else if (digests.length) {
-          // The node allocator owns the cross-process claim through receipt checks and rename.
-          const result = await execFileArgv(
-            [
-              process.execPath,
-              '-e',
-              REVIEW_WORKSPACE_SCRIPT,
-              JSON.stringify({ root: ownerRoot, action: 'reclaim-support', digests }),
-            ],
-            { timeout: 30_000 },
-          );
-          const receipt: unknown = JSON.parse(result.stdout);
-          if (!record(receipt)) throw new Error('Invalid review cache retirement receipt');
-          if (result.exitCode !== 0) {
-            if (
-              record(receipt.error) &&
-              receipt.error.code === 'REVIEW_WORKSPACE_OPERATION_PENDING'
-            )
-              continue;
-            throw new Error(result.stderr || 'Review cache retirement failed');
-          }
-          if (!Array.isArray(receipt.retired)) throw new Error('Missing cache retirement paths');
-          for (const name of receipt.retired) {
-            if (
-              typeof name !== 'string' ||
-              !retiredPattern.test(name) ||
-              !digests.includes(name.slice(9, 73))
-            )
-              throw new Error('Invalid cache retirement path');
-            await rm(path.join(supportRoot, name), { recursive: true });
-            removed.push(path.join(supportRoot, name.slice(9, 73)));
-          }
+    ]))
+      for (const ownerHash of await entries(root))
+        if (digestPattern.test(ownerHash)) ownerRoots.add(path.join(root, ownerHash));
+    for (const run of runs) {
+      const workspace = run.reviewWorkspace;
+      if (workspace?.executionNodeId !== 'local' || !run.nativeOwnerPrincipalId) continue;
+      const ownerRoot = path.resolve(workspace.checkoutPath, '../../..');
+      if (
+        path.basename(ownerRoot) !== hash(run.nativeOwnerPrincipalId) ||
+        path.resolve(workspace.checkoutPath) !==
+          path.join(ownerRoot, 'runs', workspace.workspaceId, 'source')
+      )
+        continue;
+      ownerRoots.add(ownerRoot);
+    }
+    for (const ownerRoot of ownerRoots) {
+      if (
+        !(await directory(ownerRoot)) ||
+        protectedOwners.has(ownerRoot) ||
+        !(await allocatorIsIdle(ownerRoot))
+      )
+        continue;
+      const supportRoot = path.join(ownerRoot, 'support');
+      const digests = await support(supportRoot, false);
+      if (dryRun) removed.push(...digests.map((digest) => path.join(supportRoot, digest)));
+      else if (digests.length) {
+        // The node allocator owns the cross-process claim through receipt checks and rename.
+        const result = await execFileArgv(
+          [
+            process.execPath,
+            '-e',
+            REVIEW_WORKSPACE_SCRIPT,
+            JSON.stringify({ root: ownerRoot, action: 'reclaim-support', digests }),
+          ],
+          { timeout: 30_000 },
+        );
+        const receipt: unknown = JSON.parse(result.stdout);
+        if (!record(receipt)) throw new Error('Invalid review cache retirement receipt');
+        if (result.exitCode !== 0) {
+          if (record(receipt.error) && receipt.error.code === 'REVIEW_WORKSPACE_OPERATION_PENDING')
+            continue;
+          throw new Error(result.stderr || 'Review cache retirement failed');
         }
-        // Bare repositories retain the Git objects used by saved Code/Diff views.
+        if (!Array.isArray(receipt.retired)) throw new Error('Missing cache retirement paths');
+        for (const name of receipt.retired) {
+          if (
+            typeof name !== 'string' ||
+            !retiredPattern.test(name) ||
+            !digests.includes(name.slice(9, 73))
+          )
+            throw new Error('Invalid cache retirement path');
+          await rm(path.join(supportRoot, name), { recursive: true });
+          removed.push(path.join(supportRoot, name.slice(9, 73)));
+        }
       }
+      // Bare repositories retain the Git objects used by saved Code/Diff views.
     }
     return removed.sort();
   });

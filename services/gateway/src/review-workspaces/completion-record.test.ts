@@ -45,12 +45,12 @@ const CHILD_METRICS: RunSubtaskMetrics[] = [
   },
 ];
 
-const REVIEW_RESULT = {
+const REVIEW_RESULT: RunReviewResult = {
   recommendation: 'APPROVE',
   reviewMd: 'VERDICT: APPROVE\n',
   lineComments: [],
   artifactManifest: [],
-} as unknown as RunReviewResult;
+};
 
 function writeFixtures(): void {
   const projectDir = path.join(process.env.FARMSLOT_PROJECTS_DIR!, PROJECT);
@@ -167,4 +167,48 @@ test('a superseded generation cannot record a completion', async () => {
 
 test.after(() => {
   rmSync(root, { recursive: true, force: true });
+});
+
+test('slotless completion durably binds its conversation, lineage and reviewed head', async () => {
+  writeFixtures();
+  const runId = makeWorkspaceRun();
+  const head = 'a'.repeat(40);
+  updateRun(runId, {
+    reviewWorkspaceSubject: {
+      repository: 'example/project',
+      repositoryUrl: 'https://github.com/example/project.git',
+      headSha: head,
+      baseSha: 'b'.repeat(40),
+      branch: 'feature',
+      title: 'Review fixture',
+      body: '',
+      capturedAt: '2026-11-06T01:00:00Z',
+    },
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Reviewer',
+        runId,
+        slotId: null,
+        status: 'working',
+        runner: 'codex',
+        model: 'gpt-5-codex',
+        reviewId: 'fixture-lineage',
+        runnerSessionId: 'fixture-conversation',
+        runnerSessionPath: '/fixture/session.jsonl',
+        runnerSessionCapturedAt: '2026-11-06T01:01:00Z',
+      },
+    ],
+  });
+  await recordWorkspaceReviewCompletion(runId, 0, REVIEW_RESULT, {
+    collectSubtasks: async () => null,
+  });
+  const saved = getRun(runId)!;
+  assert.equal(saved.reviewResult?.session?.reviewId, 'fixture-lineage');
+  assert.equal(saved.reviewResult?.session?.sessionId, 'fixture-conversation');
+  assert.equal(saved.reviewResult?.session?.lastReviewedHeadSha, head);
+  assert.equal(saved.reviewResult?.reviewSnapshot?.headSha, head);
+  assert.equal(saved.agentContexts?.[0].deliveryBaselineRef, head);
+  assert.ok(saved.agentContexts?.[0].reviewResultValidatedAt);
 });

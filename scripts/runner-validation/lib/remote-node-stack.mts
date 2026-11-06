@@ -85,6 +85,8 @@ export interface RemoteNodeStackOptions {
   cliSnapshot?: string;
   /** Written to `<fixture>/.owner`, so an outside sweep can match a stack it owns. */
   ownerTag: string;
+  /** Owned transparent relay for deterministic node-closeout fault injection. */
+  nodeProxy?: { start(gatewayUrl: string): Promise<string>; stop(): Promise<void> };
   reaper: Reaper;
   /** Given what stops the stack before anything starts, so a signal during startup can use it. */
   onCleanup?: (cleanup: () => Promise<string[]>) => void;
@@ -104,6 +106,7 @@ export interface RemoteNodeStack {
     whileDown?: () => Promise<void>;
   }): Promise<{ downMs: number; nodeOfflineMs?: number }>;
   waitForNode(connected: boolean, budgetMs?: number): Promise<void>;
+  restartNode(whileStopping: () => Promise<void>): Promise<void>;
   /** The panes of a tmux session on the stack's private server (none when it has no such session). */
   panes(session: string): Array<{ paneId: string; panePid: number; dead: boolean }>;
   cleanup(): Promise<string[]>;
@@ -403,6 +406,7 @@ export async function startRemoteNodeStack(
     connection?.close();
     connection = undefined;
     await attempt('node', () => stopProcess(node));
+    await attempt('node proxy', async () => options.nodeProxy?.stop());
     const nativeDirectories = nativeHostDirectories();
     for (const directory of nativeDirectories) {
       const file = path.join(directory, 'host.json');
@@ -434,8 +438,20 @@ export async function startRemoteNodeStack(
           );
       });
     await attempt('tmux', async () => {
-      if (existsSync(tmuxSocket))
-        execFileSync('tmux', ['-S', tmuxSocket, 'kill-server'], { stdio: 'ignore' });
+      if (existsSync(tmuxSocket)) {
+        try {
+          execFileSync('tmux', ['-S', tmuxSocket, 'kill-server'], { stdio: 'ignore' });
+        } catch (error) {
+          // Cancellation can stop the private server before its socket disappears.
+          // Only an already-empty owned fixture makes that cleanup complete.
+          if (
+            listProcesses().some(
+              (entry) => entry.command.includes(fixture) && entry.pid !== process.pid,
+            )
+          )
+            throw error;
+        }
+      }
     });
     // Anything left that names the fixture (runners, held fixture calls) is reported and killed.
     await attempt('leftovers', async () => {
@@ -660,6 +676,7 @@ export async function startRemoteNodeStack(
     let port = await freePort();
     while (port === LIVE_PORT) port = await freePort();
     const url = `ws://127.0.0.1:${port}`;
+    const nodeGatewayUrl = options.nodeProxy ? await options.nodeProxy.start(url) : url;
     const token = testGatewayIdentity(home);
     testGatewayProfile(home, url, token);
     let nodeToken = '';
@@ -702,7 +719,7 @@ export async function startRemoteNodeStack(
       FARMSLOT_NODE_TOKEN: nodeToken,
       FARMSLOT_GATEWAY_TOKEN: '',
       FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '1',
-      GATEWAY_URL: url,
+      GATEWAY_URL: nodeGatewayUrl,
       MACHINE_NAME: machine,
       SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen-control.sock'),
     });
@@ -784,6 +801,22 @@ export async function startRemoteNodeStack(
       },
       call,
       waitForNode,
+      async restartNode(whileStopping) {
+        const info = (
+          await call<{ nodes: Array<{ machine: string; pid: number }> }>('nodes.list')
+        ).nodes.find((entry) => entry.machine === machine);
+        const parents = new Map(listProcesses().map((entry) => [entry.pid, entry.ppid]));
+        let owner = info?.pid;
+        while (owner && owner !== node?.pid) owner = parents.get(owner);
+        if (!info || owner !== node?.pid) throw new Error('Node PID is not owned by this fixture');
+        process.kill(info.pid, 'SIGTERM');
+        await whileStopping();
+        await poll('owned node closeout', async () => !alive(info.pid) || undefined, 15_000);
+        await stopProcess(node);
+        await waitForNode(false);
+        startNode();
+        await waitForNode(true);
+      },
       async restartGateway({ nodeAwayMs, whileDown }) {
         const away = nodeAwayMs !== undefined;
         if (away) {

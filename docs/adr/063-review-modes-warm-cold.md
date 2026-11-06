@@ -567,3 +567,42 @@ This changes gateway budget selection only. Existing admission records and
 budget projections remain authoritative; no record, RPC, CLI flag, SDK export,
 harness setting or worker-loaded package changes. WARM lineage and review
 publication requirements remain unchanged.
+
+## Amendment 10: retained slotless review workspaces, 2026-11-06
+
+**Status:** Proposed implementation of Arthur's F423 direction, 2026-11-06.
+**Specification:** [Slotless retention](../reference/review-modes-warm-cold.md#slotless-retention).
+
+### Decision
+
+A slotless `review-pr` retains its execution workspace and runner-native
+conversation for seven days after the review finishes. Project configuration
+may choose another positive retention period, including two days, and an
+absolute workspace root on the execution machine. The default root remains
+unchanged. Existing bindings retain their recorded paths; changing configuration
+does not move or adopt a workspace.
+
+The validated result durably binds the reviewId, exact runner conversation,
+reviewed head, owner, project and repository/PR. A warm re-review uses that
+lineage and compares only the last reviewed head with the newly frozen head.
+Runner launch and resume remain owned by the shared runner capability layer.
+Expiry permits an explicitly reported cold review of the frozen current contribution;
+previous findings and lineage remain inputs. Missing or ambiguous
+identity before expiry remains a refusal, not a silent cold substitution.
+
+Cleanup reclaims only owned execution and session files after expiry. An active
+or pending review of the same repository/PR protects the workspace, including
+queued requests and a continuation already admitted before expiry. Cleanup and
+new review admission must fence each other so that a request cannot lose its
+retained workspace during reclamation. Run records, retained result artifacts,
+reviewed heads and lineage receipts are never deleted by this policy. Unknown
+ownership, in-flight execution or an unavailable node defers deletion.
+
+### Rationale and consequences
+
+Immediate workspace teardown discarded the continuation needed by slotless
+re-reviews. A bounded buffer preserves warm review while allowing expensive
+checkouts to expire or live on external storage. Retention is durable across
+gateway restarts, uses existing maintenance, and does not occupy a farm slot.
+The expiry explanation remains in the successor's review evidence. Publication,
+identity and review-budget rules are unchanged.

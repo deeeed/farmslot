@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { Run, WorkerSignal } from '@farmslot/protocol';
 
 import type { RawPoolJson } from '../core/config.js';
 
@@ -243,4 +243,56 @@ test('read-only Grok review stays inside its own sandbox instead of a shared lea
   });
   assert.ok(review?.includes('--no-leader'));
   assert.ok(!buildInteractiveRefinementRunnerCommand(options)?.includes('--no-leader'));
+});
+
+test('Codex workspace resume names the exact retained conversation and disables cwd filtering', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const command = buildInteractiveRefinementRunnerCommand({
+    runner: 'codex',
+    repo: '/new/owned/review',
+    promptPath: '/new/task/prompt.txt',
+    resumeSessionId: id,
+  });
+  assert.ok(command);
+  assert.match(command, /resume --all/);
+  assert.ok(command.includes(id));
+  assert.ok(command.includes("--cd '/new/owned/review'"));
+});
+
+test('a retained workspace session needs exact structured acceptance even if a checklist signal exists', () => {
+  const signal: WorkerSignal = { status: 'running', timestamp: new Date(started).toISOString() };
+  const timing = {
+    startedAt: new Date(started).toISOString(),
+    now: started + 10,
+    retainedSessionId: 'retained',
+  };
+  assert.equal(reviewTmuxStartupState(signal, null, timing), 'starting');
+  assert.equal(
+    reviewTmuxStartupState(
+      signal,
+      {
+        runner: 'codex',
+        sessionId: 'wrong',
+        sessionPath: '/owned/session.jsonl',
+        deliveryStartedAt: timing.startedAt,
+        observedAt: timing.now,
+      },
+      timing,
+    ),
+    'starting',
+  );
+  assert.equal(
+    reviewTmuxStartupState(
+      signal,
+      {
+        runner: 'codex',
+        sessionId: 'retained',
+        sessionPath: '/owned/session.jsonl',
+        deliveryStartedAt: timing.startedAt,
+        observedAt: timing.now,
+      },
+      timing,
+    ),
+    'acknowledged',
+  );
 });

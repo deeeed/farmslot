@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -8,10 +9,19 @@ import { fileURLToPath } from 'node:url';
 
 const packageDir = fileURLToPath(new URL('..', import.meta.url));
 
-async function startBootstrap(t: TestContext, args: string[]) {
+async function startBootstrap(t: TestContext, args: string[], managedRuntime = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-bootstrap-'));
   await mkdir(path.join(root, 'bin'));
   await mkdir(path.join(root, 'src'));
+  const managedDir = path.join(root, 'managed runtime');
+  if (managedRuntime) {
+    await mkdir(managedDir);
+    await copyFile(
+      process.execPath,
+      path.join(managedDir, path.basename(process.execPath)),
+      constants.COPYFILE_FICLONE,
+    );
+  }
   await copyFile(path.join(packageDir, 'bin/farmslot.mjs'), path.join(root, 'bin/farmslot.mjs'));
   await symlink(path.resolve(packageDir, '../../node_modules'), path.join(root, 'node_modules'));
   await writeFile(path.join(root, 'package.json'), '{"type":"module"}');
@@ -28,7 +38,7 @@ async function startBootstrap(t: TestContext, args: string[]) {
       clearInterval(timer);
       process.exitCode = 23;
     });
-    console.log(JSON.stringify({ pid: process.pid, entry: '${name}', args: process.argv.slice(2), value }));
+    console.log(JSON.stringify({ pid: process.pid, execPath: process.execPath, entry: '${name}', args: process.argv.slice(2), value }));
   `;
   await writeFile(path.join(root, 'src/entry.ts'), entry('normal'));
   await writeFile(path.join(root, 'src/scripted-runner-entry.ts'), entry('scripted'));
@@ -58,6 +68,7 @@ async function startBootstrap(t: TestContext, args: string[]) {
         ...process.env,
         TSX_TSCONFIG_PATH: 'missing-parent/tsconfig.json',
         TSX_DISABLE_CACHE: '',
+        FARMSLOT_NODE22_BIN: managedRuntime ? managedDir : '',
       },
       stdio: 'pipe',
       detached: true,
@@ -84,25 +95,36 @@ async function startBootstrap(t: TestContext, args: string[]) {
     await closed;
     await rm(root, { recursive: true, force: true });
   });
-  const ready = await new Promise<{ pid: number; entry: string; args: string[]; value: number }>(
-    (resolve, reject) => {
-      const deadline = setTimeout(() => reject(new Error(`bootstrap not ready: ${stderr}`)), 3000);
-      child.once('error', reject);
-      child.once('close', () => {
-        clearTimeout(deadline);
-        if (!runtimePid) reject(new Error(`bootstrap exited before readiness: ${stderr}`));
-      });
-      child.stdout.on('data', (chunk: Buffer) => {
-        output += chunk.toString();
-        if (runtimePid || !output.includes('\n')) return;
-        const row = JSON.parse(output.split('\n')[0]!);
-        runtimePid = row.pid;
-        clearTimeout(deadline);
-        resolve(row);
-      });
-    },
-  );
-  return { child, ready, closed, output: () => output, stderr: () => stderr };
+  const ready = await new Promise<{
+    pid: number;
+    execPath: string;
+    entry: string;
+    args: string[];
+    value: number;
+  }>((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error(`bootstrap not ready: ${stderr}`)), 3000);
+    child.once('error', reject);
+    child.once('close', () => {
+      clearTimeout(deadline);
+      if (!runtimePid) reject(new Error(`bootstrap exited before readiness: ${stderr}`));
+    });
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+      if (runtimePid || !output.includes('\n')) return;
+      const row = JSON.parse(output.split('\n')[0]!);
+      runtimePid = row.pid;
+      clearTimeout(deadline);
+      resolve(row);
+    });
+  });
+  return {
+    child,
+    ready,
+    closed,
+    managedNode: path.join(managedDir, path.basename(process.execPath)),
+    output: () => output,
+    stderr: () => stderr,
+  };
 }
 
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
@@ -145,6 +167,31 @@ test(
     const fixture = await startBootstrap(t, ['scripted-runner', '--task-dir', 'task path']);
     assert.equal(fixture.ready.entry, 'scripted');
     assert.deepEqual(fixture.ready.args, ['scripted-runner', '--task-dir', 'task path']);
+    fixture.child.kill('SIGTERM');
+    assert.deepEqual(await fixture.closed, { code: 23, signal: null });
+  },
+);
+
+test(
+  'bootstrap uses the configured machine Node even when invoked by another interpreter',
+  { timeout: 4900 },
+  async (t) => {
+    const fixture = await startBootstrap(
+      t,
+      ['rpc', 'runtime.capability.list', '{"slotId":"fixture"}'],
+      true,
+    );
+    assert.equal(fixture.ready.execPath, await realpath(fixture.managedNode));
+    assert.equal(
+      fixture.ready.pid,
+      fixture.child.pid,
+      'runtime handoff preserves the signal-owning PID',
+    );
+    assert.deepEqual(fixture.ready.args, [
+      'rpc',
+      'runtime.capability.list',
+      '{"slotId":"fixture"}',
+    ]);
     fixture.child.kill('SIGTERM');
     assert.deepEqual(await fixture.closed, { code: 23, signal: null });
   },
