@@ -104,16 +104,12 @@ const coldCurrent: Run = {
   reviewContext: reviewRequestContextForRun(originals[1]),
   reviewWorkspaceTarget: { machine: 'mini' },
 };
+const retainedContext = originals[1].repeatReviewContext;
+assert(retainedContext);
+const frozenSubject = originals[1].reviewWorkspaceSubject;
+assert(frozenSubject);
 const context: RepeatReviewContext = {
-  generation: 2,
-  verdict: 'pass',
-  repository: 'example/fixture',
-  prNumber: 42,
-  unresolvedFindings: [],
-  artifactRefs: [],
-  farmslotEvidenceRefs: [],
-  priorFamilyId: originals[1].familyId,
-  ...originals[1].repeatReviewContext,
+  ...retainedContext,
   session: originals[1].reviewResult!.session,
   priorRunId: originals[1].id,
   priorReviewedHeadSha: packet.nextHead,
@@ -122,7 +118,7 @@ const context: RepeatReviewContext = {
 mock.timers.enable({ apis: ['Date'], now });
 try {
   configureWorkspaceContinuity(coldCurrent, originals[1], context, {
-    ...originals[1].reviewWorkspaceSubject,
+    ...frozenSubject,
     baseSha: packet.base,
   });
 } finally {

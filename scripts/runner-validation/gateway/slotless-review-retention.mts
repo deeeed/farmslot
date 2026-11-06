@@ -229,6 +229,8 @@ try {
       assert(request);
       updateRun(created.id, { reviewContext: request });
       continuation = {
+        version: 1,
+        chainId: prior.id,
         generation: 2,
         verdict: 'pass',
         priorRunId: prior.id,
@@ -262,6 +264,7 @@ try {
     fs.writeFileSync(path.join(out, `round-${index + 1}.json`), JSON.stringify(finished, null, 2));
     assert.equal(finished.status, 'done', finished.error);
     assert(finished.reviewWorkspace);
+    assert(finished.reviewWorkspaceSubject);
     assert(finished.reviewResult?.session);
     assert(finished.agentContexts?.length);
     assert.equal(finished.slotId, null);
