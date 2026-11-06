@@ -1136,6 +1136,45 @@ test('resource claim scope defaults to slot and rejects an unknown value', () =>
   );
 });
 
+test('shared claim capacity is validated and survives normalization', () => {
+  const project = (capacity: number, access = 'shared'): RawProjectJson => ({
+    slot_actions: { permit: { label: 'Permit', command: 'true' } },
+    runtime_capabilities: {
+      providers: {
+        permit: {
+          label: 'Permit',
+          version: '1',
+          share_policy: 'exclusive',
+          cost: { class: 'low', resources: [{ id: 'network', access, scope: 'fleet', capacity }] },
+          actions: {
+            acquire: { kind: 'slot-action', action_id: 'permit' },
+            health: { kind: 'slot-action', action_id: 'permit' },
+            release: { kind: 'slot-action', action_id: 'permit' },
+          },
+          affected_resources: [],
+          release_effects: ['Release permit'],
+        },
+      },
+    },
+  });
+  const configured = project(2);
+  validateRuntimeCapabilitiesConfig(configured, 'project.json');
+  assert.equal(
+    normalizeRawRuntimeCapabilities(configured.runtime_capabilities)?.providers.permit?.cost
+      .resources[0]?.capacity,
+    2,
+  );
+  for (const capacity of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])
+    assert.throws(
+      () => validateRuntimeCapabilitiesConfig(project(capacity), 'project.json'),
+      /capacity must be a positive integer/,
+    );
+  assert.throws(
+    () => validateRuntimeCapabilitiesConfig(project(2, 'exclusive'), 'project.json'),
+    /shared claim/,
+  );
+});
+
 function recordingProject(): RawProjectJson {
   return {
     slot_actions: { record: { label: 'Record', command: 'record' } },

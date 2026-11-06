@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   Events,
   isCompletionPrerequisiteFailure,
+  isGateParkInFlightOrFreed,
   isTerminalRunStatus,
   type ResourceSidecarMeta,
   type Run,
@@ -265,6 +266,9 @@ async function catalogForSlot(slotId: string): Promise<RuntimeCapabilityCatalogC
   return {
     slotId,
     project: slotVars.projectName,
+    ...(projectVars.projectJson.recipe?.recordingCapability
+      ? { recordingCapability: projectVars.projectJson.recipe.recordingCapability }
+      : {}),
     // Stamped onto every lease this slot takes, so a `machine`-scoped claim can
     // be arbitrated later from the lease snapshot alone rather than by
     // re-reading a foreign slot's config mid-acquire.
@@ -572,6 +576,17 @@ const registry = new RuntimeCapabilityRegistry({
   assertTargetAvailable: assertDeviceTargetAvailable,
   pressureFor,
   familyForRun: (ownerRunId) => getRun(ownerRunId)?.familyId,
+  recordingOwnerMatches: (runId, slotId, project) => {
+    const run = getRun(runId);
+    return (
+      !!run &&
+      run.slotId === slotId &&
+      run.project === project &&
+      !isTerminalRunStatus(run.status) &&
+      run.status !== 'paused' &&
+      !isGateParkInFlightOrFreed(run)
+    );
+  },
   // The durable half of the terminal fence. The registry's own owner list is a
   // bounded fast path; the run store is what still knows after a restart or an
   // eviction, from the run's own terminal status or the terminal posture
@@ -638,6 +653,9 @@ export async function completeGrantedClaim(
     ) => Promise<'retained' | 'released' | 'not-reserved'>;
   } = {},
 ): Promise<void> {
+  // The waiting recording command completes its own reservation. It must not
+  // prepare or retain the run's broader runtime resources while coding.
+  if (grant.purpose === 'recording') return;
   const prepare = deps.prepare ?? prepareRunPostureForValidation;
   const settle =
     deps.settle ?? ((leaseId, settlement) => registry.settleReservation(leaseId, settlement));

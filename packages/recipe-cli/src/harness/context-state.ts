@@ -94,6 +94,7 @@ export interface ResolvedProjectLibrary extends RecipeLibrarySource {
 
 export interface ResolvedProjectBinding {
   name: string;
+  recordingCapability?: string;
   source: ContextSource;
   root: string;
   configPath: string;

@@ -402,6 +402,10 @@ async function fixture(
     >[0]['recoveryStartedAtForRun'];
     /** Machine each slot runs on, so `machine`-scoped claims can be exercised. */
     machineFor?: (slotId: string) => string | undefined;
+    recordingCapability?: string;
+    recordingOwnerMatches?: ConstructorParameters<
+      typeof RuntimeCapabilityRegistry
+    >[0]['recordingOwnerMatches'];
     onClaimGranted?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['onClaimGranted'];
     assertTargetAvailable?: ConstructorParameters<
       typeof RuntimeCapabilityRegistry
@@ -432,6 +436,7 @@ async function fixture(
   const store = options.storeFactory?.(storePath) ?? new RuntimeCapabilityStore(storePath);
   const registry = new RuntimeCapabilityRegistry({
     store,
+    recordingOwnerMatches: options.recordingOwnerMatches ?? (() => true),
     onCommit: options.onCommit,
     captureProviderProcesses: options.captureProviderProcesses,
     checkProviderCleanup: options.checkProviderCleanup,
@@ -441,6 +446,9 @@ async function fixture(
       (async (slotId) => ({
         slotId,
         project: 'test-project',
+        ...(options.recordingCapability
+          ? { recordingCapability: options.recordingCapability }
+          : {}),
         ...(options.machineFor?.(slotId) ? { machine: options.machineFor(slotId)! } : {}),
         capabilities,
       })),
@@ -2962,7 +2970,7 @@ function acquireOn(
   slotId: string,
   capabilityId: string,
   ownerRunId: string,
-  extra: { queueOnConflict?: boolean } = {},
+  extra: { queueOnConflict?: boolean; invocationId?: string } = {},
 ) {
   return registry.acquire({
     slotId,
@@ -2972,6 +2980,195 @@ function acquireOn(
     ...extra,
   });
 }
+
+test('a bounded shared fleet claim queues the third proof and reserves only one freed permit', async (t) => {
+  const provider = entry('testnet-proof');
+  const claim = {
+    id: 'shared-testnet',
+    access: 'shared' as const,
+    scope: 'fleet' as const,
+    capacity: 2,
+  };
+  provider.cost.resources = [claim];
+  const grants: RuntimeCapabilityClaimGrant[] = [];
+  const { registry } = await fixture(t, [provider], {
+    machineFor: (slot) => `host-${slot}`,
+    onClaimGranted: (grant) => {
+      grants.push(grant);
+    },
+  });
+  const first = await acquireOn(registry, SLOT, provider.id, 'run-a');
+  const second = await acquireOn(registry, SLOT_B, provider.id, 'run-b');
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  const third = await acquireOn(registry, SLOT_C, provider.id, 'run-c', { queueOnConflict: true });
+  assert.equal(third.ok, false);
+  if (third.ok) return;
+  assert.equal(third.conflict.kind, 'scoped-wait');
+  const fourth = await acquireOn(registry, 'slot-d', provider.id, 'run-d', {
+    queueOnConflict: true,
+  });
+  assert.equal(fourth.ok, false);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', keepWarm: false });
+  assert.deepEqual(
+    grants.map((grant) => grant.owner.runId),
+    ['run-c'],
+  );
+  const state = await registry.status({ slotId: SLOT_C });
+  assert.equal(state.leases.find((lease) => lease.owner.runId === 'run-c')?.state, 'acquiring');
+  const waiting = await registry.status({ slotId: 'slot-d' });
+  assert.equal(waiting.claimWaiters?.find((waiter) => waiter.owner.runId === 'run-d')?.position, 1);
+  const completed = await acquireOn(registry, SLOT_C, provider.id, 'run-c', {
+    queueOnConflict: true,
+  });
+  assert.equal(completed.ok, true);
+  assert.equal(
+    (await acquireOn(registry, 'slot-e', provider.id, 'run-e', { queueOnConflict: true })).ok,
+    false,
+  );
+});
+
+test('a bounded shared provider counts separate owners on one slot', async (t) => {
+  const provider = entry('shared-proof', 'shared');
+  provider.cost.resources = [{ id: 'budget', access: 'shared', scope: 'fleet', capacity: 2 }];
+  const { registry } = await fixture(t, [provider]);
+  assert.equal((await acquire(registry, provider.id, 'a')).ok, true);
+  assert.equal((await acquire(registry, provider.id, 'b')).ok, true);
+  assert.equal(
+    (await acquire(registry, provider.id, 'a')).ok,
+    true,
+    'idempotent acquire consumes no extra permit',
+  );
+  assert.equal((await acquire(registry, provider.id, 'c')).ok, false);
+});
+
+test('bounded shared proof permits allow family siblings to wait for independent release', async (t) => {
+  const provider = entry('proof');
+  provider.cost.resources = [{ id: 'budget', access: 'shared', scope: 'fleet', capacity: 2 }];
+  const grants: string[] = [];
+  const { registry } = await fixture(t, [provider], {
+    familyForRun: () => 'family',
+    recordingCapability: provider.id,
+    onClaimGranted: (grant) => {
+      grants.push(grant.owner.runId);
+    },
+  });
+  await acquireOn(registry, SLOT, provider.id, 'a', { invocationId: 'proof-a' });
+  await acquireOn(registry, SLOT_B, provider.id, 'b', { invocationId: 'proof-b' });
+  const queued = await acquireOn(registry, SLOT_C, provider.id, 'c', {
+    queueOnConflict: true,
+    invocationId: 'proof-c',
+  });
+  assert.equal(queued.ok, false);
+  if (queued.ok) return;
+  assert.equal(queued.conflict.kind, 'scoped-wait');
+  await registry.release({ slotId: SLOT, ownerRunId: 'a', keepWarm: false });
+  assert.deepEqual(grants, ['c']);
+});
+
+test('bounded capacity survives restart and cancelled queue places consume nothing', async (t) => {
+  const provider = entry('proof');
+  provider.cost.resources = [{ id: 'budget', access: 'shared', scope: 'fleet', capacity: 2 }];
+  const original = await fixture(t, [provider]);
+  await acquireOn(original.registry, SLOT, provider.id, 'a');
+  await acquireOn(original.registry, SLOT_B, provider.id, 'b');
+  await acquireOn(original.registry, SLOT_C, provider.id, 'c', { queueOnConflict: true });
+  const grants: string[] = [];
+  let next = 0;
+  const restarted = new RuntimeCapabilityRegistry({
+    store: new RuntimeCapabilityStore(original.storePath),
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      capabilities: [provider],
+    }),
+    runAction: async () => ({ ok: true }),
+    onClaimGranted: (grant) => {
+      grants.push(grant.owner.runId);
+    },
+    leaseId: () => `restart-${++next}`,
+  });
+  assert.equal((await restarted.status({ slotId: SLOT })).leases[0]?.claims?.[0]?.capacity, 2);
+  const queued = await acquireOn(restarted, 'slot-d', provider.id, 'd', { queueOnConflict: true });
+  assert.equal(queued.ok, false);
+  await restarted.release({ slotId: SLOT_C, ownerRunId: 'c', keepWarm: false });
+  assert.deepEqual(grants, []);
+  await restarted.release({ slotId: SLOT_B, ownerRunId: 'b', keepWarm: false });
+  assert.deepEqual(grants, ['d']);
+});
+
+test('recording leases retain their requirement without entering the run resource plan', async (t) => {
+  const browser = entry('browser');
+  const recording = entry('recorded-proof');
+  const { registry } = await fixture(t, [browser, recording], {
+    recordingCapability: recording.id,
+  });
+  await acquire(registry, browser.id, 'run-a');
+  const result = await acquireOn(registry, SLOT, recording.id, 'run-a', {
+    invocationId: 'recording-a',
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.lease.purpose, 'recording');
+  assert.equal(result.lease.proofRequirement?.capabilityId, recording.id);
+  assert.deepEqual(
+    (await registry.status({ slotId: SLOT })).proofPlans['run-a']?.requirements.map(
+      (requirement) => requirement.capabilityId,
+    ),
+    ['browser'],
+  );
+  await registry.release({
+    slotId: SLOT,
+    ownerRunId: 'run-a',
+    leaseId: result.lease.id,
+    keepWarm: false,
+  });
+  assert.deepEqual(
+    (await registry.status({ slotId: SLOT })).proofPlans['run-a']?.requirements.map(
+      (requirement) => requirement.capabilityId,
+    ),
+    ['browser'],
+  );
+});
+
+test('separate recorded commands on one run consume separate permits and queue independently', async (t) => {
+  const provider = entry('recording');
+  provider.cost.resources = [{ id: 'budget', access: 'shared', scope: 'fleet', capacity: 2 }];
+  const grants: RuntimeCapabilityClaimGrant[] = [];
+  const { registry } = await fixture(t, [provider], {
+    recordingCapability: provider.id,
+    onClaimGranted: (grant) => {
+      grants.push(grant);
+    },
+  });
+  const take = (invocationId: string) =>
+    acquireOn(registry, SLOT, provider.id, 'same-run', { invocationId, queueOnConflict: true });
+  const first = await take('a');
+  const second = await take('b');
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  const third = await take('c');
+  const fourth = await take('d');
+  assert.equal(third.ok, false);
+  assert.equal(fourth.ok, false);
+  if (third.ok || fourth.ok) return;
+  assert.equal(third.conflict.kind, 'scoped-wait');
+  assert.equal(fourth.conflict.kind, 'scoped-wait');
+  await registry.release({
+    slotId: SLOT,
+    ownerRunId: 'same-run',
+    invocationId: 'a',
+    keepWarm: false,
+  });
+  assert.equal(grants.length, 1);
+  assert.equal(grants[0]?.purpose, 'recording');
+  const state = await registry.status({ slotId: SLOT });
+  assert.equal(state.leases.find((lease) => lease.invocationId === 'b')?.state, 'acquired');
+  assert.equal(state.leases.find((lease) => lease.invocationId === 'c')?.state, 'acquiring');
+  assert.equal(state.leases.find((lease) => lease.invocationId === 'd')?.state, 'queued');
+  assert.equal((await take('c')).ok, true);
+  assert.equal((await registry.status({ slotId: SLOT })).proofPlans['same-run'], undefined);
+});
 
 test('a fleet-scoped exclusive claim conflicts across slots and a slot-scoped one does not', async (t) => {
   const { registry } = await fixture(t, [
@@ -4717,4 +4914,23 @@ test('catalog-error recovery preserves a shared provider claimed by a live sibli
   const live = leases.find((lease) => lease.owner.runId === 'live-sibling');
   assert.equal(live?.state, 'error');
   assert.match(live?.cleanupFailure ?? '', /catalog unavailable/);
+});
+
+test('recording invocation refuses a missing or changed run allocation before provider work', async (t) => {
+  const provider = entry('recording');
+  let allocated = false;
+  const { registry, actions } = await fixture(t, [provider], {
+    recordingCapability: provider.id,
+    recordingOwnerMatches: (runId, slotId, project) =>
+      allocated && runId === 'owner' && slotId === SLOT && project === 'test-project',
+  });
+  const take = () => acquireOn(registry, SLOT, provider.id, 'owner', { invocationId: 'proof' });
+  assert.equal((await take()).ok, false);
+  assert.deepEqual(actions, []);
+  allocated = true;
+  assert.equal((await take()).ok, true);
+  const before = [...actions];
+  allocated = false;
+  assert.equal((await take()).ok, false, 'idempotent retry rechecks allocation');
+  assert.deepEqual(actions, before);
 });

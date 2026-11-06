@@ -30,6 +30,8 @@ export interface RuntimeCapabilityListParams {
 export interface RuntimeCapabilityListResult {
   slotId: string;
   project: string;
+  /** Acknowledges invocation-scoped recording admission on this gateway. */
+  recordingCapability?: string;
   capabilities: RuntimeCapabilityCatalogEntry[];
 }
 
@@ -37,6 +39,8 @@ export interface RuntimeCapabilityAcquireParams {
   slotId: string;
   capabilityId: string;
   ownerRunId: string;
+  /** Idempotent command identity, accepted only by the configured recording capability. */
+  invocationId?: string;
   ownerFamilyId?: string;
   proofRequirement: RuntimeCapabilityProofRequirement;
   parameters?: Record<string, unknown>;
@@ -83,6 +87,8 @@ export type RuntimeCapabilityAcquireResult =
 export interface RuntimeCapabilityReleaseParams {
   slotId: string;
   ownerRunId: string;
+  /** Release only this recording invocation, including an uncertain acquisition. */
+  invocationId?: string;
   capabilityId?: string;
   leaseId?: string;
   /** Explicitly retry cleanup with the current provider after provenance changed. */

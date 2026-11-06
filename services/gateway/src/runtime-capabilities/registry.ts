@@ -47,6 +47,7 @@ import {
 export interface RuntimeCapabilityCatalogContext {
   slotId: string;
   project: string;
+  recordingCapability?: string;
   /**
    * The machine this slot runs on, stamped onto every lease it takes so a
    * `machine`-scoped claim can be arbitrated from the snapshot alone. Absent
@@ -109,11 +110,14 @@ export interface RuntimeCapabilityClaimGrant {
   /** The reserved lease, `acquiring` with no provider behind it yet. */
   leaseId: string;
   claimId: string;
+  purpose?: 'recording';
 }
 
 export interface RuntimeCapabilityRegistryOptions {
   store: RuntimeCapabilityStore;
   catalogForSlot: (slotId: string) => Promise<RuntimeCapabilityCatalogContext>;
+  /** Current allocation authority for command-scoped recording permits. */
+  recordingOwnerMatches?: (runId: string, slotId: string, project: string) => boolean;
   captureProviderProcesses?: (
     slotId: string,
     entry: RuntimeCapabilityCatalogEntry,
@@ -361,8 +365,9 @@ function holdsClaimAgainst(
   lease: RuntimeCapabilityLease,
   sameSlot: boolean,
   acquiringRunId: string,
+  boundedShared = false,
 ): boolean {
-  if (!sameSlot) return holdsClaim(lease);
+  if (!sameSlot || boundedShared) return holdsClaim(lease);
   if (scopedWaitOf(lease) !== undefined) return false;
   if (isClaimReservation(lease) && lease.owner.runId === acquiringRunId) return false;
   return blocksAcquisition(lease) || lease.providerCleanupDeferred !== undefined;
@@ -417,7 +422,13 @@ function claimsOfEntry(
 ): RuntimeCapabilityLeaseClaim[] {
   return entry.cost.resources.map((claim) => {
     const scope = runtimeCapabilityClaimScope(claim);
-    if (claim.binding !== 'recording-target') return { id: claim.id, access: claim.access, scope };
+    if (claim.binding !== 'recording-target')
+      return {
+        id: claim.id,
+        access: claim.access,
+        scope,
+        ...(claim.capacity !== undefined ? { capacity: claim.capacity } : {}),
+      };
     if (!entry.parameters)
       throw new InvalidRecordingClaimError(
         'Recording binding requires a declared parameter schema',
@@ -498,9 +509,23 @@ interface ClaimConflict {
   scope: RuntimeCapabilityClaimScope;
   /** Whether the holder is on a different slot than the acquirer. */
   crossSlot: boolean;
+  sharedCapacity?: number;
+  independentRecording?: boolean;
+}
+
+interface ClaimRequest {
+  slotId: string;
+  machine?: string;
+  capabilityId: string;
+  ownerRunId: string;
+  claims: RuntimeCapabilityLeaseClaim[];
+  excludeLeaseId?: string;
+  invocationId?: string;
 }
 
 function claimConflictReason(conflict: ClaimConflict): string {
+  if (conflict.sharedCapacity !== undefined)
+    return `Resource '${conflict.claimId}' has reached shared capacity ${conflict.sharedCapacity} at ${conflict.scope} scope`;
   return conflict.crossSlot
     ? `Resource '${conflict.claimId}' is claimed at ${conflict.scope} scope by capability ` +
         `'${conflict.holder.capabilityId}' on slot '${conflict.holder.slotId}' for ` +
@@ -769,6 +794,7 @@ export class RuntimeCapabilityRegistry {
     return {
       slotId,
       project: catalog.project,
+      ...(catalog.recordingCapability ? { recordingCapability: catalog.recordingCapability } : {}),
       capabilities: structuredClone(catalog.capabilities),
     };
   }
@@ -1042,6 +1068,35 @@ export class RuntimeCapabilityRegistry {
         },
       };
     }
+    if (
+      params.invocationId !== undefined &&
+      (catalog.recordingCapability !== entry.id ||
+        typeof params.invocationId !== 'string' ||
+        !params.invocationId.trim() ||
+        params.invocationId !== params.invocationId.trim() ||
+        params.invocationId.length > 128)
+    )
+      return {
+        ok: false,
+        conflict: {
+          kind: 'invalid-request',
+          capabilityId: entry.id,
+          reason:
+            'Invocation identity requires the configured recording capability and a nonempty trimmed identifier of at most 128 characters',
+        },
+      };
+    if (
+      params.invocationId !== undefined &&
+      !this.options.recordingOwnerMatches?.(params.ownerRunId, params.slotId, catalog.project)
+    )
+      return {
+        ok: false,
+        conflict: {
+          kind: 'invalid-request',
+          capabilityId: entry.id,
+          reason: 'The recording no longer owns its active run, project and slot allocation',
+        },
+      };
     // The run record is the authority on family membership. `ownerFamilyId` is
     // optional on the wire, so a caller could omit it and get a family-less lease
     // that family cleanup then misses, or pass someone else's family and be
@@ -1148,6 +1203,7 @@ export class RuntimeCapabilityRegistry {
         params.slotId,
         params.ownerRunId,
         parameters,
+        params.invocationId,
       );
     } catch (error) {
       if (!(error instanceof InvalidRecordingClaimError)) throw error;
@@ -1164,6 +1220,7 @@ export class RuntimeCapabilityRegistry {
             lease.slotId === params.slotId &&
             lease.capabilityId === entry.id &&
             lease.owner.runId === params.ownerRunId &&
+            lease.invocationId === params.invocationId &&
             ACTIVE_STATES.has(lease.state),
         )
       : undefined;
@@ -1196,6 +1253,7 @@ export class RuntimeCapabilityRegistry {
           lease.slotId === params.slotId &&
           lease.capabilityId === entry.id &&
           lease.owner.runId === params.ownerRunId &&
+          lease.invocationId === params.invocationId &&
           holdsClaim(lease),
       );
     // Asked for EVERY device-claiming acquire, not only one that names a
@@ -1237,6 +1295,7 @@ export class RuntimeCapabilityRegistry {
         lease.slotId === params.slotId &&
         lease.capabilityId === entry.id &&
         lease.owner.runId === params.ownerRunId &&
+        lease.invocationId === params.invocationId &&
         ACTIVE_STATES.has(lease.state),
     );
     const deferredRefusal: RuntimeCapabilityAcquireResult | undefined = deferredProvider
@@ -1254,7 +1313,11 @@ export class RuntimeCapabilityRegistry {
     if (deferredRefusal && sameOwner?.state !== 'acquired') return deferredRefusal;
 
     const recordRequestedPlan = (preserveExisting = false): void => {
-      if (!recordPlan) return;
+      if (
+        !recordPlan ||
+        (catalog.recordingCapability === entry.id && params.invocationId !== undefined)
+      )
+        return;
       const existingPlan = snapshot.proofPlans[params.ownerRunId];
       const requirements = existingPlan?.requirements ?? [];
       if (
@@ -1374,6 +1437,7 @@ export class RuntimeCapabilityRegistry {
               {
                 ...ownedParams,
                 capabilityId: dependencyId,
+                invocationId: undefined,
                 proofRequirement: {
                   capabilityId: dependencyId,
                   reason: `Required by ${entry.id}: ${params.proofRequirement.reason}`,
@@ -1608,6 +1672,7 @@ export class RuntimeCapabilityRegistry {
       params.slotId,
       params.ownerRunId,
       parameters,
+      params.invocationId,
     );
     if (claimConflict) {
       // The proof plan is already recorded above, so a queued run's plan is
@@ -1662,6 +1727,7 @@ export class RuntimeCapabilityRegistry {
         {
           ...ownedParams,
           capabilityId: dependencyId,
+          invocationId: undefined,
           proofRequirement: requirement,
           parameters: dependencyParameters,
           queueOnPressure: false,
@@ -1999,6 +2065,13 @@ export class RuntimeCapabilityRegistry {
       slotId: params.slotId,
       project: catalog.project,
       capabilityId: entry.id,
+      ...(catalog.recordingCapability === entry.id && params.invocationId !== undefined
+        ? {
+            purpose: 'recording' as const,
+            invocationId: params.invocationId,
+            proofRequirement: structuredClone(params.proofRequirement),
+          }
+        : {}),
       owner: {
         runId: params.ownerRunId,
         ...(params.ownerFamilyId ? { familyId: params.ownerFamilyId } : {}),
@@ -2060,6 +2133,7 @@ export class RuntimeCapabilityRegistry {
     ownerRunId: string,
     ownerFamilyId: string | undefined,
   ): boolean {
+    if (conflict.independentRecording) return true;
     if (!conflict.crossSlot) return false;
     if (conflict.holder.owner.runId === ownerRunId) return false;
     return !(ownerFamilyId !== undefined && conflict.holder.owner.familyId === ownerFamilyId);
@@ -2083,24 +2157,89 @@ export class RuntimeCapabilityRegistry {
     /** Whose acquire this is, so its own queue place cannot block it. */
     acquiringRunId: string,
     parameters: Record<string, unknown>,
+    invocationId?: string,
   ): ClaimConflict | null {
-    const requested = new Map(claimsOfEntry(entry, parameters).map((claim) => [claim.id, claim]));
-    if (requested.size === 0) return null;
+    return this.findHeldClaimConflict(
+      snapshot,
+      {
+        slotId,
+        machine: catalog.machine,
+        capabilityId: entry.id,
+        ownerRunId: acquiringRunId,
+        claims: claimsOfEntry(entry, parameters),
+        invocationId,
+      },
+      catalog,
+    );
+  }
+
+  /** Acquisition and queue reservations apply the same persisted claim limits. */
+  private findHeldClaimConflict(
+    snapshot: RuntimeCapabilityStoreSnapshot,
+    request: ClaimRequest,
+    catalog?: RuntimeCapabilityCatalogContext,
+  ): ClaimConflict | null {
+    const requested = new Map(request.claims.map((claim) => [claim.id, claim]));
+    const shared = new Map<string, { capacity: number; holders: Map<string, ClaimConflict> }>();
     for (const lease of snapshot.leases) {
-      const sameSlot = lease.slotId === slotId;
-      if (sameSlot && lease.capabilityId === entry.id) continue;
-      if (!holdsClaimAgainst(lease, sameSlot, acquiringRunId)) continue;
+      if (lease.id === request.excludeLeaseId) continue;
+      const sameSlot = lease.slotId === request.slotId;
       for (const held of this.claimsHeldByLease(lease, catalog, sameSlot)) {
         const wanted = requested.get(held.id);
         if (!wanted) continue;
-        if (wanted.access !== 'exclusive' && held.access !== 'exclusive') continue;
-        const scope = widerRuntimeCapabilityClaimScope(
-          runtimeCapabilityClaimScope(wanted),
-          held.scope,
-        );
-        if (!claimReachesSlot(lease, scope, slotId, catalog.machine)) continue;
-        return { holder: lease, claimId: held.id, scope, crossSlot: !sameSlot };
+        const boundedShared =
+          wanted.access === 'shared' &&
+          held.access === 'shared' &&
+          (wanted.capacity !== undefined || held.capacity !== undefined);
+        if (
+          sameSlot &&
+          lease.capabilityId === request.capabilityId &&
+          ((!boundedShared &&
+            lease.invocationId === undefined &&
+            request.invocationId === undefined) ||
+            (lease.owner.runId === request.ownerRunId &&
+              lease.invocationId === request.invocationId))
+        )
+          continue;
+        if (!holdsClaimAgainst(lease, sameSlot, request.ownerRunId, boundedShared)) continue;
+        const scope = widerRuntimeCapabilityClaimScope(wanted.scope, held.scope);
+        if (!claimReachesSlot(lease, scope, request.slotId, request.machine)) continue;
+        const conflict = {
+          holder: lease,
+          claimId: held.id,
+          scope,
+          crossSlot: !sameSlot,
+          independentRecording:
+            request.invocationId !== undefined &&
+            lease.purpose === 'recording' &&
+            lease.invocationId !== request.invocationId,
+        };
+        if (wanted.access === 'exclusive' || held.access === 'exclusive') return conflict;
+        let occupancy = shared.get(held.id);
+        if (!occupancy) {
+          occupancy = { capacity: wanted.capacity ?? Infinity, holders: new Map() };
+          shared.set(held.id, occupancy);
+        }
+        occupancy.capacity = Math.min(occupancy.capacity, held.capacity ?? Infinity);
+        occupancy.holders.set(lease.id, conflict);
       }
+    }
+    for (const occupancy of shared.values()) {
+      if (occupancy.holders.size < occupancy.capacity) continue;
+      const holders = [...occupancy.holders.values()];
+      const conflict =
+        holders.find(
+          (holder) => holder.crossSlot && holder.holder.owner.runId !== request.ownerRunId,
+        ) ?? holders[0];
+      if (conflict)
+        return {
+          ...conflict,
+          sharedCapacity: occupancy.capacity,
+          independentRecording:
+            request.invocationId !== undefined &&
+            conflict.holder.purpose === 'recording' &&
+            conflict.holder.invocationId !== request.invocationId,
+        };
     }
     return null;
   }
@@ -2132,6 +2271,7 @@ export class RuntimeCapabilityRegistry {
         lease.slotId === params.slotId &&
         lease.capabilityId === entry.id &&
         lease.owner.runId === params.ownerRunId &&
+        lease.invocationId === params.invocationId &&
         scopedWaitOf(lease) !== undefined,
     );
     const reason = claimConflictReason(conflict);
@@ -2224,6 +2364,7 @@ export class RuntimeCapabilityRegistry {
             lease.slotId === params.slotId &&
             lease.capabilityId === entry.id &&
             lease.owner.runId === params.ownerRunId &&
+            lease.invocationId === params.invocationId &&
             holdsClaim(lease),
         )
       ) {
@@ -2240,6 +2381,7 @@ export class RuntimeCapabilityRegistry {
               lease.slotId === params.slotId &&
               lease.capabilityId === entry.id &&
               lease.owner.runId === params.ownerRunId &&
+              lease.invocationId === params.invocationId &&
               scopedWaitOf(lease),
           )
         : undefined;
@@ -2254,6 +2396,7 @@ export class RuntimeCapabilityRegistry {
           params.slotId,
           params.ownerRunId,
           parameters,
+          params.invocationId,
         );
       } catch (error) {
         if (!(error instanceof InvalidRecordingClaimError)) throw error;
@@ -2603,7 +2746,8 @@ export class RuntimeCapabilityRegistry {
           detail: `resource '${claimId}' was released; reserved for the next run in the queue`,
         });
         this.announceGrant(waiter, claimId);
-        break;
+        const reservedClaim = waiter.claims.find((claim) => claim.id === claimId);
+        if (reservedClaim?.access !== 'shared' || reservedClaim.capacity === undefined) break;
       }
     }
   }
@@ -2616,6 +2760,7 @@ export class RuntimeCapabilityRegistry {
       capabilityId: lease.capabilityId,
       leaseId: lease.id,
       claimId,
+      ...(lease.purpose ? { purpose: lease.purpose } : {}),
     });
   }
 
@@ -2636,20 +2781,17 @@ export class RuntimeCapabilityRegistry {
   ): boolean {
     const wanted = waiter.claims?.find((claim) => claim.id === claimId);
     if (!wanted) return false;
-    return snapshot.leases.some((lease) => {
-      if (lease.id === waiter.id) return false;
-      const sameSlot = lease.slotId === waiter.slotId;
-      if (sameSlot && lease.capabilityId === waiter.capabilityId) return false;
-      // The same rule the completing acquire will apply. Reserving a claim this
-      // waiter's own acquire would then be refused for hands it a lease it
-      // cannot finish, which is the strand the reservation exists to avoid.
-      if (!holdsClaimAgainst(lease, sameSlot, waiter.owner.runId)) return false;
-      const held = lease.claims?.find((claim) => claim.id === claimId);
-      if (!held) return false;
-      if (wanted.access !== 'exclusive' && held.access !== 'exclusive') return false;
-      const scope = widerRuntimeCapabilityClaimScope(wanted.scope, held.scope);
-      return claimReachesSlot(lease, scope, waiter.slotId, waiter.machine);
-    });
+    return (
+      this.findHeldClaimConflict(snapshot, {
+        slotId: waiter.slotId,
+        machine: waiter.machine,
+        capabilityId: waiter.capabilityId,
+        ownerRunId: waiter.owner.runId,
+        claims: [wanted],
+        excludeLeaseId: waiter.id,
+        invocationId: waiter.invocationId,
+      }) !== null
+    );
   }
 
   private updateReferenceCounts(
@@ -2776,6 +2918,14 @@ export class RuntimeCapabilityRegistry {
   }
 
   async release(params: RuntimeCapabilityReleaseParams): Promise<RuntimeCapabilityReleaseResult> {
+    if (
+      params.invocationId !== undefined &&
+      (typeof params.invocationId !== 'string' ||
+        !params.invocationId.trim() ||
+        params.invocationId !== params.invocationId.trim() ||
+        params.invocationId.length > 128)
+    )
+      throw new Error('Invalid recording invocation identity');
     const force = params.force === true;
     // `force` historically meant both "bypass provenance" and "bypass keep-warm".
     // ADR-054 splits the second half into `keepWarm`; unset keeps the old behaviour.
@@ -2785,6 +2935,7 @@ export class RuntimeCapabilityRegistry {
       (lease) =>
         lease.owner.runId === params.ownerRunId &&
         (!params.capabilityId || lease.capabilityId === params.capabilityId) &&
+        (params.invocationId === undefined || lease.invocationId === params.invocationId) &&
         (!params.leaseId || lease.id === params.leaseId),
       { force, keepWarmFor: () => keepWarm },
     );
