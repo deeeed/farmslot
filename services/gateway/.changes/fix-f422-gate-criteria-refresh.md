@@ -1,1 +1,0 @@
-- Refresh publish gates from the current ticket criteria and task inputs so readiness evaluates the refreshed scope.

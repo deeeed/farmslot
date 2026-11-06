@@ -1,1 +1,0 @@
-- Capture worker, reviewer and helper session usage through shared accounting, recover recorded worker transcripts without node-local pools, and backfill retained history offline without changing verdicts or learning data.

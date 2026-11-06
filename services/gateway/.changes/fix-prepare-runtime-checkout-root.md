@@ -1,1 +1,0 @@
-- Refresh checkout-local runtime bindings during preparation so moved slots retain their physical repository root and assigned ports.

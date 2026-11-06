@@ -1,1 +1,0 @@
-- Show gateway outages without moving saved content, and reconnect after transient authentication timeouts or focus/network changes.

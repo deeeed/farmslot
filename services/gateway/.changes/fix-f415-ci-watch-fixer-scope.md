@@ -1,2 +1,0 @@
-- Report cancelled, timed-out and other infrastructure check failures for handling outside the PR, while sending only code failures to a CI fix and checking retained repair decisions before dispatch.
-- Keep CI fix ownership across attempts and restarts, include the rule in project overrides, wait for publication, and block completion and further nudges after an out-of-scope edit.

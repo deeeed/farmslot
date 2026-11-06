@@ -1,9 +1,10 @@
 {
-  "version": "0.32.0",
-  "date": "2026-11-04",
+  "version": "0.33.0",
+  "date": "2026-11-06",
   "items": [
-    "Start a native conversation from a prompt, workspace or custom directory on any available machine.",
-    "Start regular terminals or native sessions from Terminals; Co-Pilot defaults to native and keeps tmux selectable.",
-    "Keep offline views synchronized across tabs and preserve artifact selections in links."
+    "See family session usage, known costs and review timing, with explicit capture gaps.",
+    "Restore panel and sidebar choices from shared links and prefetch review reports and diffs.",
+    "Keep saved work visible during gateway outages and reconnect automatically.",
+    "Keep gate progress, review artifacts and posting confirmation current."
   ]
 }

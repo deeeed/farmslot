@@ -1,1 +1,0 @@
-- Preserve sidebar expansion and width in URL navigation, and keep disconnected worker sources quiet in pinned workspaces.

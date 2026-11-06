@@ -1,1 +1,0 @@
-- Serve `decision.list` and `run.get` from stored data. Live source, package and progress checks run in the background, at most once per gate every 30 seconds while it is read; the live recipe context also reloads in the background.

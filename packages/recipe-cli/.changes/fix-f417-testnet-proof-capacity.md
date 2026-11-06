@@ -1,1 +1,0 @@
-- Carry project recording resource declarations into the hosted invocation context.
