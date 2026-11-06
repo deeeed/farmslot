@@ -507,6 +507,7 @@ export async function launchWebDappBrowser(
     previous.cdpPort === cdpPort &&
     previous.appOrigin === appOrigin &&
     previous.account?.name === account.name &&
+    previous.account?.address?.toLowerCase() === account.address.toLowerCase() &&
     previous.browser?.headless === headless &&
     (previous.network ?? 'testnet') === network &&
     previous.networkEnforcement?.fingerprint === enforcementFingerprint &&
