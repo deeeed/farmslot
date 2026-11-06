@@ -110,3 +110,22 @@ failures go to stderr with a non-zero exit instead of a stdout envelope.
 
 Implementation: `packages/cli/src/envelope.ts` (`createEmitter`). Contract
 tests: `packages/cli/src/envelope.test.ts`.
+
+### Run lifecycle stream
+
+`farmslot --json run get <run-id> --watch` emits one normal `run.get` envelope
+per lifecycle change. Its `data.run` is a read-only projection containing `id`,
+`project`, optional `slotId`, `status` and `terminal`. It reads one initial
+snapshot and consumes existing run events over one authenticated connection.
+Usage-only events do not emit another envelope. Terminal lifecycle closes the
+stream; interruption closes its connection.
+
+The shared recipe CLI task view consumes this stream for tasks whose handoff
+binds a Farmslot run. `mm-harness status` inherits the same reader. It checks the
+recorded checkout binding, preserves worker progress, and reports unknown
+lifecycle explicitly when the control plane cannot be reached. It does not infer
+ownership or run completion from a branch name or a worker's terminal signal.
+
+Hosted `farmslot recipe status --watch --json` streams the shared task-view objects
+as they change. It does not defer those records until the watch ends; one-shot
+commands retain their finalization-before-output behavior.

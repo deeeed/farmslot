@@ -465,7 +465,10 @@ export async function projectRecipeHostOptions(
     slotPoolDir,
     command,
     options,
-    deferOutput: options.json === true && options.jsonStream !== true,
+    deferOutput:
+      options.json === true &&
+      options.jsonStream !== true &&
+      !(command === 'status' && options.watch === true),
     authorizedProviders: shared.optionStrings(options, 'authorizeProvider'),
     hostHints: {
       supportsLast: false,
