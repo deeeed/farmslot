@@ -1,1 +1,0 @@
-- Restore the Review History choice from shared links and retain it across native tab navigation.

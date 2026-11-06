@@ -1,1 +1,0 @@
-- Preserve each review round's numeric usage receipt alongside its display label for family accounting.

@@ -1,2 +1,0 @@
-- Resume interrupted workspace recovery when passive inspection is unavailable. Release failed claims without clearing recovery, preserve unpublished commits, and report the exact verification failure.
-- Clear superseded inactive cleanup ownership when a successor claims or launches, while retaining active release fences.

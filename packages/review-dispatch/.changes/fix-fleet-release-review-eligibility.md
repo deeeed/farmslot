@@ -1,1 +1,0 @@
-- Verify that release review replaces saved slot eligibility with the current inspection before sending any release.

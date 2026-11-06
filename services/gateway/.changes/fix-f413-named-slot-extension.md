@@ -1,1 +1,0 @@
-- A budget-failed run whose slot was released can be granted more review rounds by naming the slot that holds its branch at the approved head.

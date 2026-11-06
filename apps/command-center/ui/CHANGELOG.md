@@ -6,6 +6,21 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.33.0 - 2026-11-06
+
+- Show every family session, canonical token and known-cost totals, model and runner breakdowns, cumulative run accounting and review/fix timing, with explicit missing history, pricing and round-cost boundaries.
+- Measure shared RPC and offline cache performance, with authenticated diagnostics and action budgets.
+- Restore selectable display choices from shared URL state and preload review-round reports and diffs without warnings for uncaptured artifacts.
+- Refresh final review-fix progress at the gate and stop elapsed timers for completed checklist work.
+- Keep slow current-run reads pending through the shared budget instead of pausing publication actions after the generic 15-second deadline.
+- Preserve sidebar expansion and width in URL navigation, and keep disconnected worker sources quiet in pinned workspaces.
+- Keep review Post confirmation through unchanged background refreshes and stop automatic artifact sync while a review-posting decision is open.
+- Open release review for selected eligible slots from the shown fleet while a fresh read is pending. Release still requires current workspace inspection.
+- Keep native launch errors concise, settings under Advanced, and controls within narrow panels.
+- Fit run terminals to their panels, refit on resize and load xterm’s complete styles so measurement glyphs stay hidden. Progress notices are quiet without a source and use one short failure line with a shared styled Retry.
+- Show gateway outages without moving saved content, and reconnect after transient authentication timeouts or focus/network changes.
+- Reuse held review source and request missing files through batched reads.
+
 ## 0.32.0 - 2026-11-04
 
 - Keep custom native working directories on the selected execution target and default them to its reported home.

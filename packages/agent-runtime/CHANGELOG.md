@@ -4,6 +4,14 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.41.0 - 2026-11-06
+
+- Refuse CI fix pushes and completion when new commits touch files outside the PR's original scope, including renamed paths and edits later reverted.
+- Scripted recovery checks reuse their disposable node's installed CLI and configuration while preserving task ownership and content verification.
+- Validate ticket refreshes against the same task acceptance state during admission and updates.
+- Regenerate task acceptance inputs for an explicit ticket scope refresh without replacing execution receipts.
+- Allow Pi and OpenCode in managed read-only review workspaces through the shared host sandbox, with runner profile storage writable and project startup configuration excluded.
+
 ## 0.40.1 - 2026-11-05
 
 - Reduce shared native process-tree censuses to once per second while preserving immediate launch, signal and cleanup ownership checks.

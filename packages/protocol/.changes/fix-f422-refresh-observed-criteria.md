@@ -1,1 +1,0 @@
-- Record when a pending ticket refresh is superseded so its history survives a fresh admission.

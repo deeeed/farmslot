@@ -1,1 +1,0 @@
-- Validate ticket refreshes against the same task acceptance state during admission and updates.

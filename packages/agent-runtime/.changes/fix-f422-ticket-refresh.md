@@ -1,1 +1,0 @@
-- Regenerate task acceptance inputs for an explicit ticket scope refresh without replacing execution receipts.

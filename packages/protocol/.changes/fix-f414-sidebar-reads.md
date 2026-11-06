@@ -1,1 +1,0 @@
-- Clarify that farm-wide worker discovery skips disconnected machines and pools with no enabled slots.

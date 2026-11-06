@@ -1,1 +1,0 @@
-- Allow the four scripted recovery behaviours in scenario configuration.

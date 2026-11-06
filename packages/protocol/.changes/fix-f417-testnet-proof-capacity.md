@@ -1,1 +1,0 @@
-- Declare bounded shared runtime claims and project recording capability metadata.

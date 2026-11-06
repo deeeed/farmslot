@@ -1,1 +1,0 @@
-- Open release review for selected eligible slots from the shown fleet while a fresh read is pending. Release still requires current workspace inspection.
