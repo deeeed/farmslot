@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { mock } from 'node:test';
+import { createServer } from 'node:http';
 const repo = process.cwd();
 const packet = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 assert.equal(packet.pass, true);
@@ -137,10 +138,56 @@ for (const [index, row] of snapshot.entries()) {
   assert.equal(hash(row.report), hashes[index]);
   assert(fs.existsSync(path.join(root, 'runs', row.id + '.json')));
 }
+const supportPaths = [
+  ...new Set(
+    originals.flatMap((run) =>
+      run.reviewWorkspace?.support ? [run.reviewWorkspace.support.path] : [],
+    ),
+  ),
+];
+assert(supportPaths.length > 0, 'The real project support cache must exercise custom-root cleanup');
+const { createWebSocketServer, initServerGlobals } = await load('services/gateway/src/server.ts');
+const { GatewayClient } = await load('packages/cli/src/gateway-client.ts');
+const credential = auth.writer.issueCredential(packet.ownerId, 'Disposable cache-cleanup proof');
+const server = createServer((_request, response) => {
+  response.writeHead(404);
+  response.end();
+});
+const wss = createWebSocketServer(server, auth);
+initServerGlobals();
+await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+const address = server.address();
+assert(address && typeof address !== 'string');
+const client = new GatewayClient({
+  url: `ws://127.0.0.1:${address.port}/ws`,
+  credential: { token: credential.secret },
+  timeout: 30000,
+});
+try {
+  const preview = await client.call('run.cleanup', { dryRun: true });
+  for (const cache of supportPaths) {
+    assert(preview.cacheDirsRemoved?.includes(cache));
+    assert(fs.existsSync(cache));
+  }
+  const reclaimed = await client.call('run.cleanup', { dryRun: false });
+  for (const cache of supportPaths) {
+    assert(reclaimed.cacheDirsRemoved?.includes(cache));
+    assert(!fs.existsSync(cache));
+  }
+  for (const [index, row] of snapshot.entries()) {
+    assert(fs.existsSync(path.join(root, 'runs', row.id + '.json')));
+    assert.equal(hash(row.report), hashes[index]);
+  }
+} finally {
+  for (const connection of wss.clients) connection.terminate();
+  await new Promise<void>((resolve) => wss.close(() => resolve()));
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
 const result = {
   pass: true,
   root,
   pendingProtected: true,
+  customSupportReclaimedViaRpc: supportPaths,
   pendingRun: pending.id,
   removed,
   sessionRemoved: !fs.existsSync(session),

@@ -13,6 +13,7 @@ import { reviewPR } from './retention-policy.js';
 
 export function runNeedsExecutionStorage(run: Run): boolean {
   return (
+    hasReviewWorkspaceRetirement(run.id) ||
     (!run.archivedAt && !isTerminalRunStatus(run.status)) ||
     run.decisions.some((decision) => !decision.resolvedAt) ||
     Boolean(run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) ||

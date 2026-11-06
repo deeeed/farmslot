@@ -88,6 +88,7 @@ export class PRRuleStore {
   }
   private pending: Promise<unknown> = Promise.resolve();
   private sourceUnavailable = false;
+  private sourceFailure: string | undefined;
   private validatedRetirementReload = false;
   private writesPending = 0;
   get admissionPending(): boolean {
@@ -107,7 +108,35 @@ export class PRRuleStore {
       // No rule store exists before the first profile is saved; other load failures are fatal.
       return new PRRuleStore(file, { version: 1, teams: [], rules: [], intents: [] });
     }
-    return new PRRuleStore(file, decodePRRuleStore(JSON.parse(contents)));
+    const data = decodePRRuleStore(JSON.parse(contents));
+    const deferred = data.intents.some(
+      (intent) =>
+        ['held', 'needs-configuration', 'queued', 'running'].includes(intent.status) &&
+        reviewWorkspaceRetirementPending(intent.pr),
+    );
+    const store = new PRRuleStore(
+      file,
+      deferred
+        ? {
+            ...data,
+            intents: data.intents.filter((intent) => !reviewWorkspaceRetirementPending(intent.pr)),
+          }
+        : data,
+    );
+    if (deferred) {
+      // Runs hydrate durable retirement claims before this store loads. Same-PR drafts
+      // could not have been accepted before those claims; preserve every other intent.
+      store.validatedRetirementReload = true;
+      void store.reloadFromFile().catch((error) => {
+        // A detached startup reload may lose its source while waiting. Refuse reads and
+        // cleanup with a retained diagnostic until a later valid source reload recovers.
+        store.validatedRetirementReload = false;
+        store.sourceUnavailable = true;
+        store.sourceFailure = error instanceof Error ? error.message : String(error);
+        publishPRAutomationResources();
+      });
+    }
+    return store;
   }
 
   /** Existing source watchers call this after an external atomic configuration write. */
@@ -122,6 +151,7 @@ export class PRRuleStore {
             data = decodePRRuleStore(JSON.parse(await readFile(this.file, 'utf8')));
           } catch (error) {
             this.validatedRetirementReload = false;
+            this.sourceFailure = error instanceof Error ? error.message : String(error);
             if (!this.sourceUnavailable) {
               this.sourceUnavailable = true;
               publishPRAutomationResources();
@@ -146,6 +176,7 @@ export class PRRuleStore {
             !isDeepStrictEqual(data, this.data);
           this.data = data;
           this.sourceUnavailable = false;
+          this.sourceFailure = undefined;
           this.validatedRetirementReload = false;
           if (changed) publishPRAutomationResources();
           return { kind: 'published', changed };
@@ -163,7 +194,7 @@ export class PRRuleStore {
     return result;
   }
 
-  /** Only cleanup may use accepted intents while a validated replacement waits behind retirement. */
+  /** Recovery bookkeeping may use accepted data while a validated replacement remains unadmitted. */
   snapshotForRetention(): PRRuleStoreData {
     if (!this.validatedRetirementReload) this.assertReadable();
     return structuredClone(this.data);
@@ -173,7 +204,7 @@ export class PRRuleStore {
     if (this.sourceUnavailable)
       throw new GatewayMethodError(
         'SOURCE_UNAVAILABLE',
-        'PR rule source is unavailable; repair it before reading or acting',
+        `PR rule source is unavailable; repair it before reading or acting${this.sourceFailure ? ': ' + this.sourceFailure : ''}`,
       );
     if (this.validatedRetirementReload)
       throw new GatewayMethodError(

@@ -79,6 +79,7 @@ import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
 import {
   assertReviewWorkspaceAdmissionOpen,
+  hasReviewWorkspaceRetirement,
   noteReviewWorkspaceRetirement,
   runNeedsExecutionStorage,
 } from '../review-workspaces/storage-use.js';
@@ -1657,6 +1658,10 @@ export function updateRunStep(id: string, stepName: string, partial: Partial<Run
 }
 
 function assertNativeWorkersReleased(run: Run): void {
+  if (hasReviewWorkspaceRetirement(run.id))
+    throw new Error(
+      'Review workspace ownership cannot leave the run store before durable cleanup closeout',
+    );
   if (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) {
     throw new Error(
       'Review workspace ownership cannot leave the run store before checkout cleanup',

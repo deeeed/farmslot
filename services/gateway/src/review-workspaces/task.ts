@@ -129,8 +129,22 @@ function sameWorkspaceIdentity(
   return (
     Boolean(a) &&
     isDeepStrictEqual(
-      { ...a, cleanedAt: undefined, retainedAt: undefined, retainedUntil: undefined },
-      { ...b, cleanedAt: undefined, retainedAt: undefined, retainedUntil: undefined },
+      {
+        ...a,
+        cleanedAt: undefined,
+        retainedAt: undefined,
+        retainedUntil: undefined,
+        executionStoppedAt: undefined,
+        retirement: undefined,
+      },
+      {
+        ...b,
+        cleanedAt: undefined,
+        retainedAt: undefined,
+        retainedUntil: undefined,
+        executionStoppedAt: undefined,
+        retirement: undefined,
+      },
     )
   );
 }

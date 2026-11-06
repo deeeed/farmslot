@@ -119,6 +119,11 @@ fs.writeFileSync(
     slots: [],
   }),
 );
+fs.mkdirSync(path.join(root, 'projects/fixture/fixtures/review-support'), { recursive: true });
+fs.writeFileSync(
+  path.join(root, 'projects/fixture/fixtures/review-support/skill.md'),
+  '# Fixture review\nReview only the greeting literal change and save the required report.\n',
+);
 fs.writeFileSync(
   path.join(root, 'projects/fixture/project.json'),
   JSON.stringify({
@@ -129,6 +134,15 @@ fs.writeFileSync(
     static_review: {
       template_id: 'review-pr/default',
       instruction_files: [],
+      support: {
+        skills: [
+          {
+            name: 'fixture-review',
+            root: { projectPath: 'fixtures/review-support' },
+            entry: 'skill.md',
+          },
+        ],
+      },
       workspace: { root: path.join(root, 'external-review-root'), retention_days: 2 },
     },
     monitoring: { total_timeout_min: 5, inactivity_timeout_min: 3 },
@@ -156,6 +170,9 @@ const { createRun, getRun, updateRun, persistRunNow } = await load(
 const { loadProjectVars } = await load('services/gateway/src/core/config.ts');
 const { resolveConfiguredExecutionTemplate } = await load(
   'services/gateway/src/tasks/execution-template-catalog.ts',
+);
+const { readReviewWorkspaceCompletion } = await load(
+  'services/gateway/src/review-workspaces/task.ts',
 );
 const { startRun } = await load('services/gateway/src/run-engine/orchestrator.ts');
 const { configureWorkspaceContinuity } = await load(
@@ -285,6 +302,15 @@ try {
     assert.equal(finished.transport, 'tmux');
     assert(finished.reviewWorkspace.retainedAt);
     assert(finished.reviewWorkspace.executionStoppedAt);
+    const reread = await readReviewWorkspaceCompletion(finished.id);
+    assert.equal(
+      reread?.result?.reviewMd,
+      finished.reviewResult.reviewMd,
+      'Closed retained review still supports publication/evidence rereads',
+    );
+    assert(
+      finished.reviewWorkspace.support?.path.startsWith(path.join(root, 'external-review-root')),
+    );
     const held = spawnSync(
       'tmux',
       ['has-session', '-t', 'review-' + finished.reviewWorkspace.workspaceId],

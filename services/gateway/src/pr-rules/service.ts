@@ -115,7 +115,7 @@ export class PRRuleService {
       id: string,
     ) => number | undefined = principalOwnerGeneration,
   ) {
-    this.previousAudience = this.notificationAudience();
+    this.previousAudience = this.notificationAudience(this.store.snapshotForRetention().teams);
   }
 
   start(): void {
@@ -844,12 +844,11 @@ export class PRRuleService {
     this.notifyChanges();
   }
 
-  private notificationAudience(): Map<string, PrincipalOwner> {
+  private notificationAudience(
+    teams: PRTeamProfile[] = this.store.snapshot().teams,
+  ): Map<string, PrincipalOwner> {
     return new Map(
-      teamNotificationAudience(this.store.snapshot().teams).map((owner) => [
-        principalOwnerKey(owner),
-        owner,
-      ]),
+      teamNotificationAudience(teams).map((owner) => [principalOwnerKey(owner), owner]),
     );
   }
 

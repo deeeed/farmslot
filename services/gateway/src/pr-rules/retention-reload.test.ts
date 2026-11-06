@@ -17,6 +17,7 @@ import type { PRRuleStoreData } from './store.js';
 const root = mkdtempSync(path.join(os.tmpdir(), 'review-reload-retirement-'));
 after(() => files.rm(root, { recursive: true, force: true }));
 let observed: (() => void) | undefined;
+let readListener: ((file: unknown) => void) | undefined;
 mock.module('node:fs/promises', {
   namedExports: {
     ...files,
@@ -25,6 +26,8 @@ mock.module('node:fs/promises', {
       const notify = observed;
       observed = undefined;
       if (notify) setImmediate(notify);
+      const listener = readListener;
+      if (listener) setImmediate(() => listener(args[0]));
       return contents;
     },
   },
@@ -121,3 +124,135 @@ for (const malformed of [false, true])
       await reload;
     }
   });
+
+test(
+  'startup restores deferred admission, preserves other PRs and rereads automatically after retirement',
+  { timeout: 5000 },
+  async () => {
+    const file = path.join(root, 'restart.json');
+    const mixed: PRRuleStoreData = {
+      ...replacement,
+      intents: [
+        ...replacement.intents,
+        { ...replacement.intents[0], id: 'other-pending', pr: { ...pr, number: 43 } },
+      ],
+    };
+    await files.writeFile(file, JSON.stringify(mixed));
+    noteReviewWorkspaceRetirement(retired, true);
+    let reads = 0;
+    let ready!: () => void;
+    const validated = new Promise<void>((resolve) => (ready = resolve));
+    readListener = (f) => {
+      if (String(f) === file && ++reads === 4) ready();
+    };
+    try {
+      const first = await PRRuleStore.load(file);
+      assert.throws(() => first.snapshot(), /cleanup/);
+      const second = await PRRuleStore.load(file);
+      assert.throws(() => second.snapshot(), /cleanup/);
+      const { PRRuleService } = await import('./service.js');
+      assert.doesNotThrow(
+        () =>
+          new PRRuleService(
+            second,
+            () => true,
+            () => {},
+          ),
+        'deferred startup must not prevent cleanup service initialization',
+      );
+      await validated;
+      assert.deepEqual(
+        second.snapshotForRetention().intents.map((intent) => intent.id),
+        ['other-pending'],
+      );
+      const latest = {
+        ...mixed,
+        intents: mixed.intents.map((intent) => ({ ...intent, headSha: 'b'.repeat(40) })),
+      };
+      await files.writeFile(file, JSON.stringify(latest));
+      let rereads = 0;
+      let settled!: () => void;
+      const published = new Promise<void>((resolve) => (settled = resolve));
+      readListener = (f) => {
+        if (String(f) === file && ++rereads === 2) settled();
+      };
+      let cleanup = false;
+      await reclaimReviewWorkspaceStorage(async () => {
+        cleanup = true;
+        noteReviewWorkspaceRetirement(
+          {
+            ...retired,
+            reviewWorkspace: { ...retired.reviewWorkspace!, cleanedAt: '2026-11-06T00:01:00Z' },
+          },
+          true,
+        );
+        return [];
+      });
+      assert.equal(cleanup, true);
+      await published;
+      assert.deepEqual(first.snapshot().intents, latest.intents);
+      assert.deepEqual(second.snapshot().intents, latest.intents);
+    } finally {
+      readListener = undefined;
+      noteReviewWorkspaceRetirement(
+        {
+          ...retired,
+          reviewWorkspace: { ...retired.reviewWorkspace!, cleanedAt: '2026-11-06T00:01:00Z' },
+        },
+        true,
+      );
+    }
+  },
+);
+
+test(
+  'detached startup reload retains source failure diagnostics and recovers on a valid replacement',
+  { timeout: 5000 },
+  async () => {
+    const file = path.join(root, 'restart-invalid.json');
+    await files.writeFile(file, JSON.stringify(replacement));
+    noteReviewWorkspaceRetirement(retired, true);
+    let reads = 0;
+    let ready!: () => void;
+    const waiting = new Promise<void>((resolve) => (ready = resolve));
+    readListener = (f) => {
+      if (String(f) === file && ++reads === 2) ready();
+    };
+    try {
+      const store = await PRRuleStore.load(file);
+      assert.throws(() => store.snapshot(), /cleanup/);
+      await waiting;
+      await files.writeFile(file, '{invalid');
+      let failed!: () => void;
+      const failure = new Promise<void>((resolve) => (failed = resolve));
+      readListener = (f) => {
+        if (String(f) === file) failed();
+      };
+      await reclaimReviewWorkspaceStorage(async () => {
+        noteReviewWorkspaceRetirement(
+          {
+            ...retired,
+            reviewWorkspace: { ...retired.reviewWorkspace!, cleanedAt: '2026-11-06T00:01:00Z' },
+          },
+          true,
+        );
+        return [];
+      });
+      await failure;
+      assert.throws(() => store.snapshot(), /source is unavailable.*:/);
+      assert.throws(() => store.snapshotForRetention(), /source is unavailable/);
+      await files.writeFile(file, JSON.stringify(replacement));
+      await store.reloadFromFile();
+      assert.deepEqual(store.snapshot().intents, replacement.intents);
+    } finally {
+      readListener = undefined;
+      noteReviewWorkspaceRetirement(
+        {
+          ...retired,
+          reviewWorkspace: { ...retired.reviewWorkspace!, cleanedAt: '2026-11-06T00:01:00Z' },
+        },
+        true,
+      );
+    }
+  },
+);

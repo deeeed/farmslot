@@ -14,7 +14,7 @@
       "expiry": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/slotless-review-expiry.mts \"$FARMSLOT_REVIEW_RETENTION_PROOF_OUTPUT/result.json\"",
-        "intent": "Pending review protects retained files, expiry reports cold fallback, and cleanup preserves run records and report bytes before fixture teardown.",
+        "intent": "Pending review protects retained files, expiry reports cold fallback, and authenticated run.cleanup reclaims the custom-root support cache, and run records/report bytes survive before fixture teardown.",
         "next": "done"
       },
       "done": {
