@@ -38,6 +38,7 @@ import { readCommandJournal } from './command-journal.js';
 import { runtimeContextOwned } from './context.js';
 import { resolveRuntimeContextPath } from './overlay.js';
 import { PREPARE_PROGRESS_ARTIFACT, recipeRuntimeDir } from './paths.js';
+import type { TaskRunBinding, TaskRunLifecycle } from './task-run.js';
 
 // RECIPE_LIBRARY_PATH as the task view lists it: name=path or a bare path, each
 // resolved; an entry without a name keeps none.
@@ -173,6 +174,8 @@ export interface TaskView {
   currentStep?: number;
   elapsedMs?: number;
   activity: TaskViewActivity;
+  binding?: { target: string; matchesCheckout: boolean };
+  run?: TaskRunBinding & { status?: string; terminal?: boolean };
 }
 
 export interface TaskViewPrepare {
@@ -199,11 +202,9 @@ export interface TaskViewCommand {
 /** Whether a task is in progress in this checkout, and why not when it is not. */
 export interface TaskViewActivity {
   ongoing: boolean;
-  reason?: 'no-task' | 'finished' | 'silent';
+  reason?: 'no-task' | 'finished' | 'silent' | 'foreign-task' | 'run-unavailable';
   /** Time since the task last wrote its signal, ticked a row, or ran a harness command. */
   idleMs?: number;
-  /** False when the task names a ticket and the checked-out branch does not carry it. */
-  branchCarriesTicket?: boolean;
 }
 
 // A task that has neither marked a row nor run a harness command for this long
@@ -221,6 +222,7 @@ export function collectTaskView(
   target: string,
   taskDir: string | undefined,
   now: number,
+  lifecycle?: TaskRunLifecycle,
 ): TaskView {
   target = fs.existsSync(target) ? fs.realpathSync(target) : path.resolve(target);
   taskDir = taskDir && (fs.existsSync(taskDir) ? fs.realpathSync(taskDir) : path.resolve(taskDir));
@@ -318,55 +320,113 @@ export function collectTaskView(
         parseTime(operation.startedAt),
       ]),
     ],
-    branch: base.checkout.branch,
-    ticket,
     now,
   });
 
+  const selection = readJsonObject(path.join(taskDir, 'inputs/recipe-binding.json'));
+  const checkoutRoot = pickString(selection, 'checkoutRoot');
+  const appTarget = pickString(asObject(selection?.identity), 'target');
+  const boundTarget = appTarget ?? checkoutRoot;
+  const binding = boundTarget
+    ? {
+        target: boundTarget,
+        matchesCheckout: [checkoutRoot, appTarget].some(
+          (bound) => bound !== undefined && sameCheckout(target, bound),
+        ),
+      }
+    : undefined;
+  const runId = pickString(handoff, 'attemptId');
+  const project = pickString(handoff, 'project');
+  const run =
+    handoff?.surface === 'farmslot' && runId && project && binding?.matchesCheckout !== false
+      ? { id: runId, project, ...(base.isolation?.slotId ? { slotId: base.isolation.slotId } : {}) }
+      : undefined;
+  return applyTaskRunLifecycle(
+    {
+      ...base,
+      taskDir,
+      ...(binding ? { binding } : {}),
+      ...(run ? { run } : {}),
+      // The readiness record is the only place a harness records itself for a task.
+      harness: section({
+        version: pickString(asObject(sandbox?.harness), 'version'),
+        sourceKind: pickString(asObject(sandbox?.harness), 'source'),
+      }),
+      template: section({
+        id: pickString(template, 'id'),
+        sourceId: pickString(template, 'sourceId'),
+        flow: pickString(handoff, 'flow'),
+        domain: pickString(handoff, 'domain'),
+        surface: pickString(handoff, 'surface'),
+        title: pickString(task, 'title'),
+        ticket,
+      }),
+      ...(criteria.length > 0 || rawLedger
+        ? {
+            acceptance: acceptanceCriteriaView(
+              criteria,
+              rawLedger ? (rawLedger as unknown as AcceptanceStatusLedger) : null,
+            ),
+          }
+        : {}),
+      fixture: section({
+        fixture: pickString(fixtures, 'fixture'),
+        canonicalFixture: pickString(fixtures, 'canonicalFixture'),
+        status: pickString(fixtures, 'status'),
+        walletReset: pickBoolean(fixtures, 'walletReset'),
+      }),
+      sandbox: section({ ready: pickBoolean(sandbox, 'ready') }),
+      ...(prepare ? { prepare } : {}),
+      checklist,
+      subtasks: readSubtasks(taskDir),
+      signal: section({
+        status: pickString(signal, 'status'),
+        step: pickString(signal, 'step'),
+        timestamp: pickString(signal, 'timestamp'),
+        attemptId: pickString(signal, 'attemptId'),
+      }),
+      ...(lastCommand ? { lastCommand } : {}),
+      ...timing,
+      activity,
+    },
+    lifecycle,
+  );
+}
+
+function sameCheckout(left: string, right: string): boolean {
+  const canonical = (value: string) =>
+    fs.existsSync(value) ? fs.realpathSync(value) : path.resolve(value);
+  return canonical(left) === canonical(right);
+}
+
+/** Parent lifecycle and checkout binding govern ownership, independently of worker progress. */
+export function applyTaskRunLifecycle(view: TaskView, lifecycle?: TaskRunLifecycle): TaskView {
+  if (view.binding?.matchesCheckout === false)
+    return {
+      ...view,
+      run: undefined,
+      activity: { ...view.activity, ongoing: false, reason: 'foreign-task' },
+    };
+  if (!view.run) return view;
+  const matched = lifecycle?.id === view.run.id && lifecycle.project === view.run.project;
+  if (!matched || !lifecycle)
+    return {
+      ...view,
+      run: {
+        id: view.run.id,
+        project: view.run.project,
+        ...(view.run.slotId ? { slotId: view.run.slotId } : {}),
+      },
+      activity: { ...view.activity, ongoing: false, reason: 'run-unavailable' },
+    };
   return {
-    ...base,
-    taskDir,
-    // The readiness record is the only place a harness records itself for a task.
-    harness: section({
-      version: pickString(asObject(sandbox?.harness), 'version'),
-      sourceKind: pickString(asObject(sandbox?.harness), 'source'),
-    }),
-    template: section({
-      id: pickString(template, 'id'),
-      sourceId: pickString(template, 'sourceId'),
-      flow: pickString(handoff, 'flow'),
-      domain: pickString(handoff, 'domain'),
-      surface: pickString(handoff, 'surface'),
-      title: pickString(task, 'title'),
-      ticket,
-    }),
-    ...(criteria.length > 0 || rawLedger
-      ? {
-          acceptance: acceptanceCriteriaView(
-            criteria,
-            rawLedger ? (rawLedger as unknown as AcceptanceStatusLedger) : null,
-          ),
-        }
-      : {}),
-    fixture: section({
-      fixture: pickString(fixtures, 'fixture'),
-      canonicalFixture: pickString(fixtures, 'canonicalFixture'),
-      status: pickString(fixtures, 'status'),
-      walletReset: pickBoolean(fixtures, 'walletReset'),
-    }),
-    sandbox: section({ ready: pickBoolean(sandbox, 'ready') }),
-    ...(prepare ? { prepare } : {}),
-    checklist,
-    subtasks: readSubtasks(taskDir),
-    signal: section({
-      status: pickString(signal, 'status'),
-      step: pickString(signal, 'step'),
-      timestamp: pickString(signal, 'timestamp'),
-      attemptId: pickString(signal, 'attemptId'),
-    }),
-    ...(lastCommand ? { lastCommand } : {}),
-    ...timing,
-    activity,
+    ...view,
+    run: { ...view.run, status: lifecycle.status, terminal: lifecycle.terminal },
+    activity: {
+      ...view.activity,
+      ongoing: !lifecycle.terminal,
+      ...(lifecycle.terminal ? { reason: 'finished' as const } : { reason: undefined }),
+    },
   };
 }
 
@@ -448,18 +508,11 @@ function readLastCommand(target: string, now: number): TaskViewCommand | undefin
 function taskActivity(input: {
   status: string | undefined;
   lastWrites: Array<number | undefined>;
-  branch: string | undefined;
-  ticket: string | undefined;
   now: number;
 }): TaskViewActivity {
   const writes = input.lastWrites.filter((value): value is number => value !== undefined);
   const idleMs = writes.length > 0 ? input.now - Math.max(...writes) : undefined;
-  const branchCarriesTicket =
-    input.ticket && input.branch ? input.branch.includes(input.ticket) : undefined;
-  const extra = {
-    ...(idleMs !== undefined ? { idleMs } : {}),
-    ...(branchCarriesTicket !== undefined ? { branchCarriesTicket } : {}),
-  };
+  const extra = { ...(idleMs !== undefined ? { idleMs } : {}) };
   // A directory with no signal and no timestamp at all is not a task yet.
   if (input.status === undefined && writes.length === 0)
     return { ongoing: false, reason: 'no-task', ...extra };

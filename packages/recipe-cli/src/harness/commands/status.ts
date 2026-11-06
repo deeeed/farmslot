@@ -34,7 +34,7 @@ import {
 import { EXIT, usageOut } from '../shared.js';
 import { collectTaskView, findTaskDir } from '../task-view.js';
 
-import { handleStatusTaskView, renderAcceptanceLines } from './status-watch.js';
+import { handleStatusTaskView, readTaskView, renderAcceptanceLines } from './status-watch.js';
 
 export type StatusCommandOptions = ReadinessViewOptions;
 
@@ -45,6 +45,7 @@ export async function handleStatus(
   const target = targetPath(options);
   const json = optionFlag(options, 'json');
   const watch = optionFlag(options, 'watch');
+  const fast = optionFlag(options, 'fast');
   const taskDir = optionString(options, 'task');
   if (watch || taskDir) {
     const resolvedTask = taskDir ? path.resolve(taskDir) : undefined;
@@ -57,9 +58,15 @@ export async function handleStatus(
         'Pass a task directory under temp/tasks, or omit --task to follow the newest one.',
       );
     }
-    return handleStatusTaskView({ target, taskDir: resolvedTask, json, watch });
+    return handleStatusTaskView({ target, taskDir: resolvedTask, json, watch, fast });
   }
-  const fast = optionFlag(options, 'fast');
+  const currentTask = findTaskDir(target);
+  const taskView = currentTask
+    ? fast
+      ? collectTaskView(target, currentTask, Date.now())
+      : await readTaskView(target, currentTask, Date.now())
+    : undefined;
+  const taskField = taskView ? { task: taskView } : {};
   const allDevices = optionFlag(options, 'allDevices');
   const { adapter } = requestedAdapter(options);
   if (!adapter) {
@@ -127,6 +134,7 @@ export async function handleStatus(
             target,
             ...harnessContextField(),
             ...journalFields,
+            ...taskField,
             ...viewField,
             devices: liveView.devicesWithLive,
             ...(liveFlags ? { featureFlags: liveFlags } : {}),
@@ -153,6 +161,7 @@ export async function handleStatus(
             target,
             ...harnessContextField(),
             ...journalFields,
+            ...taskField,
             ...viewField,
             devices,
             ...(staticFeatureFlags ? { featureFlags: staticFeatureFlags } : {}),
@@ -181,8 +190,11 @@ export async function handleStatus(
   }
   for (const evidence of latestProof) console.log(`Evidence: ${evidence}`);
   if (view) console.log(view.text);
-  if (!fast) {
-    const taskView = collectTaskView(target, findTaskDir(target), Date.now());
+  if (taskView?.run)
+    console.log(
+      `Run ${taskView.run.id.slice(0, 8)}: ${taskView.run.status ?? 'lifecycle unavailable'}`,
+    );
+  if (!fast && taskView) {
     if (taskView.activity.ongoing && taskView.acceptance?.length) {
       console.log(renderAcceptanceLines(taskView).join('\n'));
     }

@@ -1,6 +1,6 @@
 // The live task view behind `status --watch`, and the one-shot `status --task`
-// that prints the same thing once. Both read files only: no probe, no launch, no
-// write, so watching a slot can never disturb the run it reports on.
+// that prints the same thing once. Task files supply worker progress; a bound
+// run supplies its lifecycle through the authenticated control-plane read stream.
 
 import os from 'node:os';
 import path from 'node:path';
@@ -9,9 +9,11 @@ import { isTerminalWorkerSignalStatus } from '@farmslot/protocol';
 
 import { color } from '../cli-color.js';
 import { harnessContextField } from '../context-state.js';
-import { harnessHost } from '../host.js';
+import { harnessHost, withRecipeSignals } from '../host.js';
 import { EXIT } from '../shared.js';
+import { observeTaskRun, type TaskRunBinding, type TaskRunObserver } from '../task-run.js';
 import {
+  applyTaskRunLifecycle,
   CHECKLIST_LABEL_LIMIT,
   collectTaskView,
   findTaskDir,
@@ -31,21 +33,30 @@ export interface StatusWatchOptions {
   taskDir?: string;
   json: boolean;
   watch: boolean;
+  fast?: boolean;
 }
 
 export interface StatusWatchDeps {
   now: () => number;
-  wait: (ms: number) => Promise<void>;
+  wait: (ms: number, signal?: AbortSignal) => Promise<void>;
   write: (text: string) => void;
   isTty: boolean;
+  observeRun?: (binding: TaskRunBinding, signal?: AbortSignal) => Promise<TaskRunObserver>;
 }
 
 export async function handleStatusTaskView(options: StatusWatchOptions): Promise<number> {
   const deps: StatusWatchDeps = {
     now: () => Date.now(),
-    wait: (ms) =>
+    wait: (ms, signal) =>
       new Promise((resolve) => {
-        setTimeout(resolve, ms);
+        const finish = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, ms);
+        signal?.addEventListener('abort', finish, { once: true });
+        if (signal?.aborted) finish();
       }),
     write: (text) => process.stdout.write(text),
     isTty: Boolean(process.stdout.isTTY),
@@ -55,18 +66,32 @@ export async function handleStatusTaskView(options: StatusWatchOptions): Promise
   // The alternate-screen redraw owns the cursor until the loop ends, including
   // the Ctrl-C that is the normal way to leave it.
   const restore = () => deps.write(SHOW_CURSOR);
-  const interrupt = () => {
-    restore();
-    process.exit(EXIT.ok);
-  };
-  process.on('SIGINT', interrupt);
   deps.write(HIDE_CURSOR);
   try {
     return await runStatusWatch(options, deps);
   } finally {
-    process.off('SIGINT', interrupt);
     restore();
   }
+}
+
+export async function readTaskView(
+  target: string,
+  taskDir: string | undefined,
+  now: number,
+  observeRun: NonNullable<StatusWatchDeps['observeRun']> = observeTaskRun,
+): Promise<TaskView> {
+  const view = collectTaskView(target, taskDir, now);
+  if (!view.run) return view;
+  const binding = view.run;
+  return withRecipeSignals(async (signal) => {
+    const observer = await observeRun(binding, signal);
+    try {
+      signal.throwIfAborted();
+      return applyTaskRunLifecycle(view, observer.current());
+    } finally {
+      await observer.close();
+    }
+  });
 }
 
 export async function runStatusWatch(
@@ -78,30 +103,76 @@ export async function runStatusWatch(
   // A task that was already finished when watching began is history, not the run
   // to wait for: keep watching until a task is seen in progress and then ends.
   let sawInProgress = false;
-  for (;;) {
-    const taskDir = options.taskDir ?? findTaskDir(options.target);
-    const view = collectTaskView(options.target, taskDir, deps.now());
-    const changes = changedLines(previous, view);
+  let observer: TaskRunObserver | undefined;
+  let observed: string | undefined;
+  const control = new AbortController();
+  const interrupt = () => control.abort();
+  process.on('SIGINT', interrupt);
+  process.on('SIGTERM', interrupt);
+  process.on('SIGHUP', interrupt);
+  try {
+    for (;;) {
+      if (control.signal.aborted) return EXIT.ok;
+      const taskDir = options.taskDir ?? findTaskDir(options.target);
+      let view = collectTaskView(options.target, taskDir, deps.now(), observer?.current());
+      // Released task files do not end the lifecycle already bound by this watch.
+      if (!view.run && previous?.run && observer && !view.template?.surface)
+        view = applyTaskRunLifecycle(
+          {
+            ...previous,
+            checkout: view.checkout,
+            operations: view.operations,
+            ...(view.isolation ? { isolation: view.isolation } : {}),
+          },
+          observer.current(),
+        );
+      const binding = view.run
+        ? JSON.stringify([view.taskDir, view.run.id, view.run.project, view.run.slotId])
+        : undefined;
+      if (binding !== observed) {
+        await observer?.close();
+        observer = undefined;
+        observed = binding;
+        if (view.run && !options.fast)
+          observer = await (deps.observeRun ?? observeTaskRun)(view.run, control.signal);
+        view = applyTaskRunLifecycle(view, observer?.current());
+      }
+      if (control.signal.aborted) return EXIT.ok;
+      const changes = changedLines(previous, view);
 
-    if (options.json && !options.watch) {
-      deps.write(`${JSON.stringify({ ...view, ...harnessContextField() }, null, 2)}\n`);
-    } else if (options.json) {
-      if (changes.length > 0)
-        deps.write(`${JSON.stringify({ ...view, ...harnessContextField() })}\n`);
-    } else if (options.watch && !deps.isTty) {
-      for (const line of changes) deps.write(`${line}\n`);
-    } else {
-      deps.write(
-        `${deps.isTty && options.watch ? CLEAR_SCREEN : ''}${renderTaskView(view, title, options.taskDir !== undefined).join('\n')}\n`,
-      );
+      if (options.json && !options.watch) {
+        deps.write(`${JSON.stringify({ ...view, ...harnessContextField() }, null, 2)}\n`);
+      } else if (options.json) {
+        if (changes.length > 0)
+          deps.write(`${JSON.stringify({ ...view, ...harnessContextField() })}\n`);
+      } else if (options.watch && !deps.isTty) {
+        for (const line of changes) deps.write(`${line}\n`);
+      } else {
+        deps.write(
+          `${deps.isTty && options.watch ? CLEAR_SCREEN : ''}${renderTaskView(view, title, options.taskDir !== undefined).join('\n')}\n`,
+        );
+      }
+
+      previous = view;
+      const terminal = view.run
+        ? view.run.terminal === true
+        : isTerminalWorkerSignalStatus(view.signal?.status);
+      if (view.activity.ongoing) sawInProgress = true;
+      if (!options.watch || (terminal && (sawInProgress || options.taskDir !== undefined)))
+        return EXIT.ok;
+      const changed = new AbortController();
+      const offChange = observer?.onChange?.(() => changed.abort());
+      try {
+        await deps.wait(REFRESH_MS, AbortSignal.any([control.signal, changed.signal]));
+      } finally {
+        offChange?.();
+      }
     }
-
-    previous = view;
-    const terminal = isTerminalWorkerSignalStatus(view.signal?.status);
-    if (view.activity.ongoing) sawInProgress = true;
-    if (!options.watch || (terminal && (sawInProgress || options.taskDir !== undefined)))
-      return EXIT.ok;
-    await deps.wait(REFRESH_MS);
+  } finally {
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', interrupt);
+    process.off('SIGHUP', interrupt);
+    await observer?.close();
   }
 }
 
@@ -198,10 +269,13 @@ export function renderTaskView(view: TaskView, title: string, explicitTask = fal
     );
   }
 
+  if (view.run)
+    lines.push(`run ${view.run.id.slice(0, 8)} ${view.run.status ?? 'lifecycle unavailable'}`);
   lines.push(...renderOperations(view));
   lines.push('');
   if (!view.activity.ongoing) {
-    lines.push(out('warn', 'no ongoing task detected'));
+    if (view.activity.reason !== 'run-unavailable')
+      lines.push(out('warn', 'no ongoing task detected'));
     lines.push(out('dim', idleReason(view)));
     if (!view.taskDir || !explicitTask) return lines;
     lines.push('');
@@ -264,15 +338,16 @@ export function renderAcceptanceLines(view: TaskView): string[] {
 // One sentence saying why nothing is in progress, built only from allowlisted fields.
 function idleReason(view: TaskView): string {
   if (!view.taskDir) return 'no task directory under temp/tasks';
-  const { reason, idleMs, branchCarriesTicket } = view.activity;
+  const { reason, idleMs } = view.activity;
+  if (reason === 'foreign-task') return `task binding belongs to ${view.binding?.target}`;
+  if (reason === 'run-unavailable') return `Next: farmslot run get ${view.run?.id}`;
   if (reason === 'no-task') return `${path.basename(view.taskDir)} holds no task files yet`;
-  const what = reason === 'finished' ? (view.signal?.status ?? 'finished') : 'silent';
+  const what =
+    reason === 'finished' ? (view.run?.status ?? view.signal?.status ?? 'finished') : 'silent';
   return joinParts(
     [
       `last task ${path.basename(view.taskDir)}: ${what}`,
       idleMs !== undefined && `last update ${formatDuration(idleMs)} ago`,
-      branchCarriesTicket === false &&
-        `checkout is on ${view.checkout.branch}, which does not carry ${view.template?.ticket}`,
     ],
     ', ',
   );
@@ -281,13 +356,13 @@ function idleReason(view: TaskView): string {
 // Piped output is a log: one line per thing that actually moved, never a redraw.
 export function changedLines(previous: TaskView | undefined, next: TaskView): string[] {
   // A different task directory is a new context, announced like the first one.
-  if (!previous || previous.taskDir !== next.taskDir) {
+  if (!previous || previous.taskDir !== next.taskDir || previous.run?.id !== next.run?.id) {
     return [
       joinParts(
         [
           path.basename(next.checkout.target),
           next.taskDir ? path.basename(next.taskDir) : 'no-task-dir',
-          `status=${next.signal?.status ?? 'unknown'}`,
+          `status=${next.run?.status ?? (next.run ? 'unavailable' : next.signal?.status) ?? 'unknown'}`,
           `step=${next.signal?.step ? stepLabel(next.signal.step) : 'none'}`,
         ],
         ' ',
@@ -303,6 +378,8 @@ export function changedLines(previous: TaskView | undefined, next: TaskView): st
     ];
   }
   const lines: string[] = [];
+  if (previous.run?.status !== next.run?.status && next.run)
+    lines.push(`run ${next.run.id.slice(0, 8)} ${next.run.status ?? 'lifecycle unavailable'}`);
   for (const operation of next.operations) {
     const before = previous.operations.find((entry) => entry.id === operation.id);
     if (

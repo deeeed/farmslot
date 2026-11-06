@@ -322,3 +322,18 @@ A project may ship `templates/task-document.md`. The writer renders it with the 
 - Lightweight interactive dev keeps its own pairing: `CHECKLIST.md` is the operator-agreed plan and `TASK.md` the context.
 
 See also: [Agent runtime](agent-runtime.md), [Template variables](template-variables.md), and the worker artifacts by flow reference on the documentation site.
+
+### Read-only task status
+
+Task status readers associate a task with `inputs/recipe-binding.json`'s recorded
+checkout target. Branch text supplies no task identity. Legacy skill tasks keep
+their local progress semantics. A handoff with `surface: "farmslot"` binds its
+`attemptId` to the parent run, independently of a worker signal's attempt ID.
+The shared task view observes that run through the existing CLI lifecycle stream.
+Worker completion does not close a watch while its parent is reviewing or
+waiting for a decision. Loss of connectivity is unavailable lifecycle, never an
+inferred completed run. A watch retains its bound run through task-file cleanup.
+
+Task ownership accepts the recorded `checkoutRoot` or `identity.target` exactly,
+after realpath normalization. This lets a registered nested app and its checkout
+inspect their bound task without treating sibling paths as the same app.

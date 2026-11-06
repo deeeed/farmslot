@@ -498,9 +498,16 @@ export async function projectRecipeHostOptions(
     slotPoolDir,
     command,
     options,
-    deferOutput: options.json === true && options.jsonStream !== true,
+    deferOutput:
+      options.json === true &&
+      options.jsonStream !== true &&
+      !(command === 'status' && options.watch === true),
     authorizedProviders: shared.optionStrings(options, 'authorizeProvider'),
     hostHints: {
+      taskRunCliArgs: ['gateway', 'url'].flatMap((key) => {
+        const value = shared.optionString(options, key);
+        return value ? [`--${key}`, value] : [];
+      }),
       supportsLast: false,
       journaledCommands: ['run', 'call', 'launch', 'reload', 'stop', 'doctor'],
       doctorCommand: 'farmslot doctor',

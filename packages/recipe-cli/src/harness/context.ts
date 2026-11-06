@@ -614,7 +614,7 @@ export interface LoadProjectProviderOptions {
   host?: HarnessHostConfig;
   hostHints?: Pick<
     HarnessHostConfig,
-    'doctorHint' | 'doctorCommand' | 'supportsLast' | 'journaledCommands'
+    'doctorHint' | 'doctorCommand' | 'supportsLast' | 'journaledCommands' | 'taskRunCliArgs'
   >;
   command?: string;
   options?: CliOptions;
