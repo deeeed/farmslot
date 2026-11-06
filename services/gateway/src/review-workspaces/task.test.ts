@@ -525,3 +525,23 @@ test('static inline comments retain canonical severities and permit body-only fi
     /line comments disagree/,
   );
 });
+
+test('retained task reads ignore closeout receipts while preserving immutable source identity', async () => {
+  await withFixture(async (f) => {
+    await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    assert.equal(await readReviewWorkspaceSignal(f.run.id, f.deps), null);
+    assert.equal(await readReviewWorkspaceCompletion(f.run.id, f.deps), null);
+    f.run.reviewWorkspace!.executionStoppedAt = new Date().toISOString();
+    f.run.reviewWorkspace!.retainedAt = new Date().toISOString();
+    f.run.reviewWorkspace!.retainedUntil = new Date(Date.now() + 86400000).toISOString();
+    f.run.reviewWorkspace!.retirement = {
+      id: 'retirement',
+      startedAt: new Date().toISOString(),
+      pr: { host: 'github.com', repo: 'example/project', number: 1 },
+    };
+    assert.equal(await readReviewWorkspaceSignal(f.run.id, f.deps), null);
+    assert.equal(await readReviewWorkspaceCompletion(f.run.id, f.deps), null);
+    f.run.reviewWorkspace!.workspaceId = 'different-workspace';
+    await assert.rejects(readReviewWorkspaceSignal(f.run.id, f.deps), /identity/);
+  });
+});

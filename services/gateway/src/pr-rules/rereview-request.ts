@@ -14,6 +14,8 @@ import {
 } from '@farmslot/protocol';
 import { reviewRequestContextForRun } from '@farmslot/review-dispatch';
 
+import { reviewWorkspaceExpiry } from '../review-workspaces/retention-policy.js';
+
 export interface RereviewTeamCandidate {
   id: string;
   config: { name?: string; repositories: Array<{ repo: string; project?: string }> };
@@ -30,6 +32,8 @@ export type RereviewRun = Pick<
   | 'prNumber'
   | 'slotId'
   | 'reviewWorkspaceTarget'
+  | 'reviewWorkspace'
+  | 'completedAt'
   | 'transport'
   | 'effort'
   | 'reviewValidationDepth'
@@ -126,7 +130,11 @@ export function buildRereviewRequest(
   const runner = run.metrics.runner;
   const model = run.metrics.model;
   const reviewContext = reviewRequestContextForRun({ ...run, decisions: run.decisions ?? [] });
-  const mode = reviewContext ? ('warm' as const) : ('cold' as const);
+  const expiry = run.reviewWorkspaceTarget ? reviewWorkspaceExpiry(run) : null;
+  const mode =
+    reviewContext && !(expiry && Date.now() >= Date.parse(expiry))
+      ? ('warm' as const)
+      : ('cold' as const);
   return {
     teamId: team.id,
     pr: { host: 'github.com', repo: target.repo, number: target.number },

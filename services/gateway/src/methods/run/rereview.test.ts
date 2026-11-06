@@ -110,6 +110,7 @@ mock.module('../../fleet/state.js', {
 mock.module('../../runs/store.js', {
   namedExports: {
     ...store,
+    persistRunNow: async () => {},
     getRun: (id: string) => runs.get(id),
     getAllRuns: () => [...runs.values()],
     listRuns: () => ({ runs: [...runs.values()] }),
@@ -132,6 +133,18 @@ mock.module('../../run-engine/orchestrator.js', {
     ...orchestrator,
     applyChainedRunEngineFlags: () => {},
     startRun: async () => {},
+  },
+});
+
+const workspaceIntakeRuns: Run[] = [];
+const intake = await import('../pr-rules.js');
+mock.module('../pr-rules.js', {
+  namedExports: {
+    ...intake,
+    submitRereviewRequest: async (run: Run) => {
+      workspaceIntakeRuns.push(structuredClone(run));
+      return {};
+    },
   },
 });
 
@@ -280,4 +293,45 @@ test('a parent cancelled during the ancestry lookup gets no warm re-review', asy
     'a cancelled review starts no child',
   );
   assert.equal(runs.get(prior.id)!.status, 'cancelled');
+});
+
+test('slotless rereview repairs structured legacy lineage and submits WARM through normal intake', async () => {
+  workspaceIntakeRuns.length = 0;
+  runs.set(prior.id, {
+    ...prior,
+    status: 'done',
+    slotId: null,
+    reviewWorkspaceTarget: { machine: 'review-node' },
+    reviewWorkspace: {
+      workspaceId: 'workspace',
+      machine: 'review-node',
+      executionNodeId: 'review-node',
+      checkoutPath: '/owned/source',
+      taskPath: '/owned/task',
+      artifactPath: '/owned/task/artifacts',
+    },
+    reviewWorkspaceSubject: {
+      repository: 'owner/repo',
+      repositoryUrl: 'https://example.invalid/repo.git',
+      headSha: priorHead,
+      baseSha: 'b'.repeat(40),
+      branch: 'feature',
+      title: 'Fixture',
+      body: '',
+      capturedAt: '2026-11-06T01:00:00Z',
+    },
+    reviewResult: { ...prior.reviewResult!, session: undefined },
+    agentContexts: [{ ...prior.agentContexts![0], id: 'review', slotId: null }],
+  });
+  const result = await runRereviewLatestHead({ runId: prior.id });
+  assert.equal(result.mode, 'review-intake');
+  assert.equal(workspaceIntakeRuns.length, 1);
+  assert.equal(workspaceIntakeRuns[0].reviewResult?.session?.sessionId, 'prior-session');
+  assert.equal(workspaceIntakeRuns[0].reviewResult?.session?.reviewId, 'review-lineage');
+  assert.equal(workspaceIntakeRuns[0].reviewResult?.session?.lastReviewedHeadSha, priorHead);
+  assert.equal(
+    ancestryCalls,
+    0,
+    'slotless continuation is validated by the workspace intake/launch path',
+  );
 });

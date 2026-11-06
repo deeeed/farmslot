@@ -364,3 +364,32 @@ test('public run.cleanup reclaims an archived review cache through the existing 
   assert(preview.cacheDirsRemoved?.includes(cache));
   assert(existsSync(path.join(f.runsDir, 'archive', closed.id + '.json')));
 });
+
+for (const kind of ['local-closed', 'local-active', 'remote-closed'])
+  test(`custom-root support reclamation respects ${kind} ownership`, async (t) => {
+    const f = await fixture(t);
+    const ownerRoot = path.join(f.root, 'external-review-root', hash('owner'));
+    const cache = await f.support(path.join(ownerRoot, 'support'));
+    const run = f.run('custom-root');
+    run.reviewWorkspace = {
+      ...run.reviewWorkspace!,
+      executionNodeId: kind === 'remote-closed' ? 'remote-node' : 'local',
+      checkoutPath: path.join(ownerRoot, 'runs', run.id, 'source'),
+      taskPath: path.join(ownerRoot, 'runs', run.id, 'task'),
+      artifactPath: path.join(ownerRoot, 'runs', run.id, 'task/artifacts'),
+      support: { ...run.reviewWorkspace!.support!, path: cache },
+    };
+    if (kind === 'local-active') run.status = 'monitoring';
+    f.setRuns([run]);
+    const preview = await cleanupReviewWorkspaceCaches(true, f.storage);
+    if (kind === 'local-closed') {
+      assert(preview.includes(cache));
+      assert(existsSync(cache));
+      assert((await cleanupReviewWorkspaceCaches(false, f.storage)).includes(cache));
+      assert(!existsSync(cache));
+    } else {
+      assert(!preview.includes(cache));
+      await cleanupReviewWorkspaceCaches(false, f.storage);
+      assert(existsSync(cache));
+    }
+  });

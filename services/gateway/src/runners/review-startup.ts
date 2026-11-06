@@ -62,7 +62,12 @@ export async function observeReviewPromptAcceptance(
   if (!vars) return null;
   const since = Date.parse(deliveryStartedAt);
   if (!Number.isFinite(since)) return null;
-  const binding = await observability.getSessionBinding(vars, vars.session, since);
+  // A retained conversation may have been created in the prior owned checkout.
+  // Verify the new prompt against its exact file rather than selecting by the new cwd.
+  const binding =
+    context.runnerSessionId && context.runnerSessionPath
+      ? { sessionId: context.runnerSessionId, sessionPath: context.runnerSessionPath }
+      : await observability.getSessionBinding(vars, vars.session, since);
   if (!binding) return null;
   const prompt = await execOnSlot(
     vars,
