@@ -316,6 +316,23 @@ try {
     { timeoutMs: 30_000 },
   );
   await screenshot('non-git-files');
+  await page.click('[data-testid=native-new]');
+  await page.waitForSelector('[data-testid=native-prompt]');
+  await page.click('[data-testid=native-approval-mode]');
+  await page.click('[data-choice-value=bypass]');
+  assert.equal(
+    await page.evaluate("new URLSearchParams(location.hash.split('?')[1]).get('approvalMode')"),
+    'bypass',
+  );
+  const beforeReload = await page.evaluate<number>('performance.timeOrigin');
+  await page.navigate(await page.evaluate<string>('location.href'), 60_000);
+  assert.notEqual(await page.evaluate<number>('performance.timeOrigin'), beforeReload);
+  await page.waitForExpression(
+    "document.querySelector('native-session-view')?.shadowRoot?.querySelector('[data-testid=native-approval-mode]')?.value === 'bypass'",
+    { timeoutMs: 60_000 },
+  );
+  await screenshot('approval-choice-reload');
+  results.launchApprovalUrlReload = true;
   const proofs = [
     {
       runner: 'claude',

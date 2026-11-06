@@ -6,6 +6,7 @@ import {
   receiveSharedViewLink,
   resolveSharedViewLink,
   viewLinkFromRoute,
+  viewRouteFromLink,
 } from '../src/surfaces/view-links.js';
 import { mergeViewStateParams } from '../src/surfaces/view-state.js';
 
@@ -42,6 +43,7 @@ test('a selected native conversation preserves its node and session but no comma
           leaseId: 'current-lease',
           generation: '9',
           draft: 'private unsent instruction',
+          approvalMode: 'bypass',
         },
       },
     },
@@ -563,4 +565,13 @@ test('registered family views preserve the displayed section', () => {
   assert.equal(link.status, 'available');
   if (link.status === 'available')
     assert.equal(new URL(link.url).searchParams.get('section'), 'changes');
+});
+
+test('native launch approval choices round trip through shared links', () => {
+  for (const approvalMode of ['ask', 'bypass']) {
+    const route = `#native?executionNodeId=local&cwd=%2Ftmp&approvalMode=${approvalMode}`;
+    const link = viewLinkFromRoute(route);
+    assert.notEqual(link, null, 'the launch choice is a registered view parameter');
+    assert.equal(viewRouteFromLink(link), route);
+  }
 });

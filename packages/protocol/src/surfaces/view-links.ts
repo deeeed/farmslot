@@ -44,7 +44,7 @@ export const ARTIFACT_BROWSER_PARAMS = [
 
 export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set([
   ...(
-    'cwd custom effort a b activity artifact artifactAc artifactRun artifactTrace artifactPhase artifactView assessment backlogProject backlogStatus capture create demo dispatchConfig draft draftMode file item resource runId contextId history historyRun host recipeRun recipeDependency ' +
+    'cwd custom effort approvalMode a b activity artifact artifactAc artifactRun artifactTrace artifactPhase artifactView assessment backlogProject backlogStatus capture create demo dispatchConfig draft draftMode file item resource runId contextId history historyRun host recipeRun recipeDependency ' +
     'recipeNode recipeArtifact recipeEvidenceMode recipeViewer recipeViewerMode recipeViewerPair review reviewAt reviewCheck reviewDrawer reviewFile comment commentFile commentLine commentHead ' +
     'cmpSort cmpTab diffArtifact diffRun direction evidence evidencePreview family familyId flow flowType focus gate graph intent lane ' +
     'layout lightboxIndex lightboxRecipeRunId machines modal mode model node panel parentRunId pr prDraft prEditor prHistory prHost project projects ' +
@@ -217,6 +217,7 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
           'model',
           'effort',
           'mode',
+          'approvalMode',
           'runId',
           'sessionId',
           'executionNodeId',

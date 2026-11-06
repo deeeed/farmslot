@@ -1,1 +1,1 @@
-- Choose standalone native tool approvals separately from planning, and identify non-Git Changes views.
+- Choose standalone native tool approvals separately from planning, preserve launch choices in shared links, and identify non-Git Changes views.
