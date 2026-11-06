@@ -7,6 +7,7 @@ import test, { after } from 'node:test';
 import type { ImprovementDiffPayload, Run } from '@farmslot/protocol';
 
 import { __setLearningsClassifierForTest } from '../../intelligence/learnings-router.js';
+import { retainRunFixture } from '../../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getRun, runRecordPath, updateRun } from '../../runs/store.js';
 
 import {
@@ -416,3 +417,38 @@ test('a retrospective stored without a payload still offers the derived human fe
     'github.com/metamask/metamask-mobile#34865:review-comment:77',
   );
 });
+
+for (const staging of ['removed', 'changed'] as const) {
+  test(`improvement reads retained learnings when task staging is ${staging}`, async (t) => {
+    const learning = '- Confirmed retained learning from the completed run.';
+    const { run, taskDir } = createTempRunWithTask(learning);
+    const current = getRun(run.id);
+    assert(current?.taskFile);
+    await retainRunFixture(current);
+    if (staging === 'removed') {
+      rmSync(path.dirname(current.taskFile), { recursive: true });
+    } else {
+      writeFileSync(
+        path.join(path.dirname(current.taskFile), 'artifacts/learnings.md'),
+        '- Changed staging belongs to later work.',
+      );
+    }
+    let observed = '';
+    let complete: (() => void) | undefined;
+    const analyzed = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    __setImprovementAnalyzerForTest(async (_runId, content) => {
+      observed = content;
+      complete?.();
+    });
+    t.after(async () => {
+      __setImprovementAnalyzerForTest(null);
+      await cleanupProposeRun(run.id, taskDir);
+    });
+    assert.deepEqual(await runProposeImprovement({ runId: run.id }, () => {}), { ok: true });
+    await analyzed;
+    assert.match(observed, /Confirmed retained learning/);
+    assert.doesNotMatch(observed, /Changed staging/);
+  });
+}

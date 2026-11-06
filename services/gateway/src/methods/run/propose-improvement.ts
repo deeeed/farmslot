@@ -14,11 +14,15 @@ import {
   buildRetrospectivePayload,
   readCommentsTriageSummary,
 } from '../../run-completion/orchestrator.js';
+import { readTaskArtifactText } from '../../run-completion/retrospective.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
 async function readRunLearnings(run: Run): Promise<string> {
+  // Captured bytes belong to the bundle; task staging can be removed or reused.
+  if (run.artifactBundle || run.output?.artifactBundle)
+    return (await readTaskArtifactText(run, 'learnings.md')) ?? '';
   if (!run.taskFile) return '';
   const { readFile } = await import('node:fs/promises');
   const taskDir = path.dirname(run.taskFile);
