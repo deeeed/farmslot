@@ -246,7 +246,7 @@ export function isNativeWorkerInstructionCommandId(commandId: string): boolean {
 
 export async function sendNativeWorkerInstruction(input: {
   runId: string;
-  slotId: string;
+  slotId: string | null;
   role?: AgentRole;
   contextId?: string;
   /** Stable logical instruction identity, e.g. monitor nudge count or budget warning. */
@@ -275,6 +275,7 @@ export async function sendNativeWorkerInstruction(input: {
   const allowOperatorWait = input.allowOperatorWait && context?.role === 'review-fix';
   if (
     run.slotId !== input.slotId ||
+    (input.slotId === null && (!run.reviewWorkspace || run.reviewWorkspace.cleanedAt)) ||
     isTerminalRunStatus(run.status) ||
     (!allowOperatorWait && ['paused', 'blocked'].includes(run.status)) ||
     binding.closedAt
@@ -295,7 +296,8 @@ export async function sendNativeWorkerInstruction(input: {
       snapshot.pendingRequests.length)
   )
     return 'not-attempted';
-  if ((await readSlotField(input.slotId, 'current_run_id')) !== run.id) return 'not-attempted';
+  if (input.slotId !== null && (await readSlotField(input.slotId, 'current_run_id')) !== run.id)
+    return 'not-attempted';
   const latest = workerBinding(run.id, input.role, input.contextId);
   input.assertCurrent?.();
   assertInstruction(latest.context);

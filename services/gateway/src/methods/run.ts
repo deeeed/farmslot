@@ -270,7 +270,7 @@ export function assertDuplicateRunAllowed(
   if (params.lane !== 'comparison') {
     const duplicate = sameTicket[0];
     throw new Error(
-      `Active run already exists for ${params.ticketOrPr}: ${duplicate.id.slice(0, 8)} (status=${duplicate.status}). Cancel it first.`,
+      `Active run already exists for ${params.ticketOrPr}: ${duplicate.id.slice(0, 8)} (status=${duplicate.status}). ${isTerminalRunStatus(duplicate.status) ? 'Archive it first.' : 'Cancel it first.'}`,
     );
   }
   if (!params.familyId) {

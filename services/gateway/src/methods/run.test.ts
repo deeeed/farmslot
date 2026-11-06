@@ -4243,3 +4243,19 @@ test('a parked approval probes its restored checkout and refuses a base conflict
   );
   assert.ok(events.includes(Events.RUN_UPDATED));
 });
+
+test('a failed static review duplicate names archive rather than a cancel that preserves failure', () => {
+  const duplicate = makeRun({
+    status: 'failed',
+    flowType: 'review-pr',
+    ticketOrPr: 'example/core#11206',
+  });
+  assert.throws(
+    () =>
+      assertDuplicateRunAllowed(
+        { ticketOrPr: duplicate.ticketOrPr, project: duplicate.project, flowType: 'review-pr' },
+        [duplicate],
+      ),
+    /Archive it first/,
+  );
+});

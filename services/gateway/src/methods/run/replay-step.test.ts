@@ -4651,3 +4651,57 @@ test('review replay clears the capacity hold so restart can observe the retry', 
     dispatch,
   );
 });
+
+test('a cleaned static review with no saved artifacts refuses monitor replay before changing generation', async (t) => {
+  const priorOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'replay-empty-owner';
+  const run = createRun(
+    {
+      flowType: 'review-pr',
+      project: 'replay-empty',
+      ticketOrPr: 'example/core#11206',
+      transport: 'tmux',
+      reviewWorkspaceTarget: { machine: 'local' },
+    },
+    { nativeOwnerPrincipalId: 'replay-empty-owner' },
+  );
+  const directory = path.join(runsDirectory(), 'replay-empty-' + run.id);
+  await mkdir(path.join(directory, 'bundle/artifacts'), { recursive: true });
+  await mkdir(path.join(directory, 'view'), { recursive: true });
+  updateRun(run.id, {
+    status: 'failed',
+    taskFile: path.join(directory, 'view/TASK.md'),
+    engineState: { generation: 2 },
+    steps: [
+      { name: 'dispatch', status: 'done', outputs: { session: 'original-reviewer' } },
+      { name: 'monitor', status: 'failed' },
+      { name: 'human-gate', status: 'skipped' },
+      { name: 'complete', status: 'skipped' },
+    ],
+    reviewWorkspace: {
+      workspaceId: run.id,
+      machine: 'local',
+      executionNodeId: 'local',
+      checkoutPath: path.join(directory, 'source'),
+      taskPath: path.join(directory, 'task'),
+      artifactPath: path.join(directory, 'task/artifacts'),
+      cleanedAt: new Date().toISOString(),
+    },
+  });
+  t.after(async () => {
+    await evictTestRun(run.id, 'failed');
+    await rm(directory, { recursive: true, force: true });
+    if (priorOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = priorOwner;
+  });
+  const before = structuredClone(getRun(run.id));
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'monitor' }, () => {}, {
+      afterGenerationBump: async () => {
+        throw new Error('Unrecoverable replay changed generation');
+      },
+    }),
+    { code: 'REVIEW_RESTART_REQUIRED' },
+  );
+  assert.deepEqual(getRun(run.id), before);
+});

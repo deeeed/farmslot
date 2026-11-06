@@ -124,11 +124,13 @@ export function pendingBranchMaintenance(
     : (output?.branchMaintenanceOperation as BranchMaintenanceOperation | undefined);
 }
 
-/** Reset ordinary step telemetry without dropping immutable maintenance input. */
+/** Reset ordinary step telemetry without dropping admitted operation state. */
 export function retainedMaintenanceStepOutputs(
   stepName: string,
   outputs: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
+  if (stepName === PipelineSteps.MONITOR && outputs?.reviewOutputRepair)
+    return { reviewOutputRepair: outputs.reviewOutputRepair };
   if (stepName !== PipelineSteps.WRITE_TASK || !outputs?.branchMaintenanceOperation)
     return undefined;
   return {

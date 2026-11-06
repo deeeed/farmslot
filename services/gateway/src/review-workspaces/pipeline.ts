@@ -3,10 +3,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS,
   Events,
+  isRecord,
   parseGitHubRef,
   PipelineSteps,
   type ReviewWorkspaceSubject,
   type Run,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
@@ -35,6 +37,10 @@ import {
   observeReviewWorkspaceTransport,
   readReviewWorkspaceWorker,
 } from '../runners/native/review-workspace.js';
+import {
+  nativeWorkerInstructionCommandId,
+  sendNativeWorkerInstruction,
+} from '../runners/native/worker-control.js';
 import { getRunnerDefinition } from '../runners/registry.js';
 import { observeReviewPromptAcceptance } from '../runners/review-startup.js';
 import {
@@ -43,9 +49,11 @@ import {
   reviewTmuxOperation,
   reviewTmuxStartupState,
 } from '../runners/review-tmux.js';
-import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import { workspaceTerminalOperation } from '../runtime/workspace-terminal.js';
 import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
 import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
+import { artifactContractWorkerInstruction } from '../tasks/worker-terminal-contract.js';
 
 import { preflightReviewWorkspaceAccount } from './account-preflight.js';
 import { assertReviewWorkspaceAdmitted, inspectReviewWorkspaceTarget } from './admission.js';
@@ -64,6 +72,12 @@ import {
   readReviewWorkspaceSignal,
 } from './task.js';
 import { allocateReviewWorkspace, cancelReviewWorkspaceAllocation } from './workspace.js';
+
+interface ReviewOutputRepair {
+  requestedAt: string;
+  error: string;
+  commandId?: string;
+}
 
 /** Repository-cache contention is a wait, not a failed review or permission to steal a lock. */
 async function waitForWorkspaceOperation<T>(
@@ -594,11 +608,13 @@ export async function executeReviewWorkspaceStep(
       await settleReviewRoundNoVerdict(
         runId,
         roundId,
-        error instanceof BlockedRunError
-          ? error.detail
-          : error instanceof Error
-            ? error.message
-            : String(error),
+        error instanceof GatewayMethodError && error.code === 'REVIEW_WORKER_STOPPED'
+          ? 'review-worker-stopped'
+          : error instanceof BlockedRunError
+            ? error.detail
+            : error instanceof Error
+              ? error.message
+              : String(error),
       );
     throw error;
   }
@@ -730,6 +746,23 @@ async function executeOwnedReviewWorkspaceStep(
           },
         };
       }
+      const savedRepair = run.steps.find((entry) => entry.name === PipelineSteps.MONITOR)?.outputs
+        ?.reviewOutputRepair;
+      let repair: ReviewOutputRepair | undefined;
+      if (
+        isRecord(savedRepair) &&
+        typeof savedRepair.requestedAt === 'string' &&
+        typeof savedRepair.error === 'string'
+      )
+        repair = {
+          requestedAt: savedRepair.requestedAt,
+          error: savedRepair.error,
+          ...(typeof savedRepair.commandId === 'string'
+            ? { commandId: savedRepair.commandId }
+            : {}),
+        };
+      const freshAfterRepair = (signal: WorkerSignal | null) =>
+        !repair || Boolean(signal && Date.parse(signal.timestamp) > Date.parse(repair.requestedAt));
       const project = await loadProjectVars(run.project);
       const config = resolveMonitorConfig(project.projectJson.monitoring, run.project, 'review-pr');
       const started =
@@ -750,6 +783,65 @@ async function executeOwnedReviewWorkspaceStep(
       const progress = createReviewWorkspaceProgressPublisher(runId, emit, {
         isCurrent: () => ownsWorkspaceGeneration(runId, generation),
       });
+      const readCompletion = async () => {
+        try {
+          return await observe(() => readReviewWorkspaceCompletion(runId));
+        } catch (error) {
+          if (
+            !(error instanceof GatewayMethodError) ||
+            error.code !== 'REVIEW_OUTPUT_INVALID' ||
+            repair
+          )
+            throw error;
+          check();
+          const current = currentWorkspaceRun(runId, generation);
+          const text = `In the original task directory ${current.reviewWorkspace!.taskPath}: ${artifactContractWorkerInstruction(error.message)}`;
+          const binding = current.agentContexts?.find(
+            (entry) => entry.id === 'review',
+          )?.nativeSession;
+          repair = {
+            requestedAt: new Date(Date.now()).toISOString(),
+            error: error.message,
+            ...(binding
+              ? {
+                  commandId: nativeWorkerInstructionCommandId(
+                    runId,
+                    binding,
+                    'review-output-repair',
+                    text,
+                  ),
+                }
+              : {}),
+          };
+          const monitor = current.steps.find((entry) => entry.name === PipelineSteps.MONITOR);
+          updateRunStep(runId, PipelineSteps.MONITOR, {
+            outputs: { ...monitor?.outputs, reviewOutputRepair: repair },
+          });
+          await persistRunNow(
+            currentWorkspaceRun(runId, generation),
+            'review output correction admission',
+          );
+          check();
+          if (current.transport === 'native') {
+            const outcome = await sendNativeWorkerInstruction({
+              runId,
+              slotId: null,
+              role: 'review',
+              contextId: 'review',
+              key: 'review-output-repair',
+              text,
+              assertCurrent: check,
+            });
+            if (outcome !== 'confirmed')
+              throw new Error('Review output correction delivery was not confirmed');
+          } else {
+            await workspaceTerminalOperation(current, 'send', { text, enter: true });
+          }
+          check();
+          emit(Events.RUN_UPDATED, { run: getRun(runId) });
+          return null;
+        }
+      };
       while (Date.now() < deadline) {
         check();
         await progress.publish();
@@ -821,7 +913,7 @@ async function executeOwnedReviewWorkspaceStep(
             await delay(1000);
             continue;
           }
-          const completion = await observe(() => readReviewWorkspaceCompletion(runId));
+          const completion = freshAfterRepair(signal) ? await readCompletion() : null;
           check();
           if (completion) {
             if (
@@ -849,6 +941,7 @@ async function executeOwnedReviewWorkspaceStep(
                 workerSignal: completion.signal,
                 headSha: run.reviewWorkspaceSubject?.headSha,
                 ...(completion.signal.status === 'blocked' ? { partial: true } : {}),
+                ...(repair ? { reviewOutputRepair: repair } : {}),
               },
             };
           }
@@ -857,9 +950,9 @@ async function executeOwnedReviewWorkspaceStep(
           );
           check();
           if (!state.exists)
-            throw new BlockedRunError(
+            throw new GatewayMethodError(
+              'REVIEW_WORKER_STOPPED',
               'Reviewer exited before completing its review',
-              'review-worker-stopped',
             );
           await delay(1000);
           continue;
@@ -870,12 +963,17 @@ async function executeOwnedReviewWorkspaceStep(
         const binding = run.agentContexts?.find(
           (context) => context.id === 'review',
         )?.nativeSession;
-        const command = snapshot.commands.find((entry) => entry.commandId === binding?.commandId);
+        const command = snapshot.commands.find(
+          (entry) => entry.commandId === (repair?.commandId ?? binding?.commandId),
+        );
+        const signal = repair ? await observe(() => readReviewWorkspaceSignal(runId)) : null;
+        const priorRepair = repair;
         const completion =
-          command?.accepted && command.outcome === 'completed'
-            ? await observe(() => readReviewWorkspaceCompletion(runId))
+          command?.accepted && command.outcome === 'completed' && freshAfterRepair(signal)
+            ? await readCompletion()
             : null;
         check();
+        if (!priorRepair && repair) continue;
         if (completion && command?.accepted && command.outcome === 'completed') {
           if (
             !completion.result ||
@@ -893,6 +991,7 @@ async function executeOwnedReviewWorkspaceStep(
             outputs: {
               workerSignal: completion.signal,
               headSha: run.reviewWorkspaceSubject?.headSha,
+              ...(repair ? { reviewOutputRepair: repair } : {}),
               nativeCommandId: command.commandId,
             },
           };
