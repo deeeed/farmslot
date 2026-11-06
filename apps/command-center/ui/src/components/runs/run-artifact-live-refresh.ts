@@ -16,7 +16,8 @@ export function liveArtifactRefreshActive(run: LiveArtifactRefreshRun | null | u
     !isTerminalRunStatus(run.status) &&
     !isHeldForResultDecision(run) &&
     !awaitsHumanDecision(run) &&
-    !pendingOutputReview(run),
+    !pendingOutputReview(run) &&
+    !run.decisions.some((decision) => !decision.resolvedAt && decision.payload?.kind === 'review'),
   );
 }
 

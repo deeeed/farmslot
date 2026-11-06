@@ -53,7 +53,6 @@ import {
   reviewResultArtifactPath,
 } from '../review/terminal-result.js';
 import { assertReviewCommentLines } from '../review-publication/validate-comments.js';
-import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
 import type { InheritedAcceptanceCandidate } from '../run-completion/inherited-acceptance.js';
 import { isArtifactOnlyRun } from '../run-completion/orchestrator.js';
 import { verifyRunOutputReview } from '../run-completion/output.js';
@@ -196,11 +195,9 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
       return { ...acceptance, inheritedSource };
     }
     if (run.reviewWorkspace) {
-      // Workspace review completion already validates its frozen task, result,
-      // report and completion guard through the owning review implementation.
-      const result = run.reviewWorkspace.cleanedAt
-        ? run.reviewResult
-        : (await readReviewWorkspaceCompletion(run.id))?.result;
+      // Completion captures and validates this package before the gate opens.
+      // Refresh and publication own live rereads; readiness must not recopy it.
+      const result = run.reviewResult;
       return {
         criteria: [],
         ledger: null,
@@ -371,12 +368,7 @@ const readers: GatePrerequisiteReaders = {
   qaCompletion: (run) => assertQaCompletion(run, { retained: true }),
   recordedEvidence: readGateRecordedEvidence,
   reviewDocument: async (run) => {
-    if (run.reviewWorkspace)
-      return Boolean(
-        run.reviewWorkspace.cleanedAt
-          ? run.reviewResult
-          : (await readReviewWorkspaceCompletion(run.id))?.result,
-      );
+    if (run.reviewWorkspace) return Boolean(run.reviewResult);
     const taskDir = await retainedRunTaskDirectory(run);
     await qualifyRetainedRunMetadata(run);
     const [review, input] = await Promise.all([

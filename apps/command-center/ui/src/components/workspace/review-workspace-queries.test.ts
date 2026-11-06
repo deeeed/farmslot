@@ -6,7 +6,7 @@ import type { RunDecision } from '@farmslot/protocol';
 import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { installFakeGateway } from '../../testing/fake-gateway.js';
 
-test('review inputs share canonical reads, retire stale confirmations and preserve admitted reply ownership', async (t) => {
+test('review inputs share reads, preserve background confirmation and retire changed gate ownership', async (t) => {
   const fake = installFakeGateway(t);
   fake.resourceEpoch = 'review-epoch';
   let revision = 0;
@@ -147,20 +147,37 @@ test('review inputs share canonical reads, retire stale confirmations and preser
       changes: [{ key: { family: 'run', runId: 'run-a' }, revision, kind: 'updated' }],
     });
   };
+  const retiredBeforeRefresh = first.retired;
   first.confirmation = true;
   hold = true;
   invalidate();
   await flush();
   assert.equal(queries.ready, false);
-  assert.equal(first.confirmation, false);
+  assert.equal(
+    first.confirmation,
+    true,
+    'Background invalidation preserves the pending Post click',
+  );
   assert.throws(() => queries.requireDecision('post'), /current read/);
   assert(admitted.current(), 'Ordinary staleness does not detach an already admitted command');
+  hold = false;
+  for (const request of socket.sent.filter(({ method }) => method === 'run.get'))
+    socket.response(request.id, reply('run-a'), stamp('run-a'));
+  await flush();
+  assert(queries.ready);
+  assert.equal(first.retired, retiredBeforeRefresh, 'An unchanged gate keeps its view scope');
+  assert.equal(first.confirmation, true, 'An unchanged reply preserves confirmation');
+  first.confirmation = true;
+  hold = true;
+  invalidate();
+  await flush();
   hold = false;
   actions = ['dismiss'];
   report = 'Replacement review';
   for (const request of socket.sent.filter(({ method }) => method === 'run.get'))
     socket.response(request.id, reply('run-a'), stamp('run-a'));
   await flush();
+  assert.equal(first.confirmation, false, 'Changed review inputs reset confirmation');
   assert.equal(queries.requireDecision('dismiss').payload?.kind, 'review');
   assert.throws(() => queries.requireDecision('post'), /no longer available/);
   first.readOnly = true;
@@ -180,6 +197,11 @@ test('review inputs share canonical reads, retire stale confirmations and preser
   await flush();
   assert.equal(beforeSwitch.ownsView(), false);
   const beforeOwner = queries.capture();
+  first.confirmation = true;
+  gateway.disconnect();
+  queries.sync();
+  await flush();
+  assert.equal(first.confirmation, false, 'A connection loss retires confirmation');
   hold = true;
   await gateway.setAuthCredentials({ token: 'replacement-review-secret' });
   await flush();
