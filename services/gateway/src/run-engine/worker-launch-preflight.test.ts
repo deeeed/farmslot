@@ -12,6 +12,8 @@ import { isRecord, type Run, type RunStep } from '@farmslot/protocol';
 import type { ProjectVars } from '../core/config.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
+import type { ToolchainObservation } from './worker-toolchain-preflight.js';
+
 await import('../runtime/mock-pty.test-support.js');
 const root = await mkdtemp(path.join(os.tmpdir(), 'launch-binding-'));
 process.env.FARMSLOT_HOME = root;
@@ -53,10 +55,12 @@ const capabilities = await import('../methods/runtime-capabilities.js');
 let selectedVars = vars;
 const commands: string[] = [];
 let currentRun: Run | undefined;
+let observedToolchain: ToolchainObservation | undefined;
 let duringSlotRead: (() => void) | undefined;
 beforeEach(() => {
   selectedVars = vars;
   currentRun = undefined;
+  observedToolchain = undefined;
   duringSlotRead = undefined;
   commands.length = 0;
 });
@@ -140,7 +144,7 @@ mock.module('../core/exec.js', {
         stderr: '',
         stdout: JSON.stringify(
           command.includes('nodeMissing')
-            ? {
+            ? (observedToolchain ?? {
                 packageManager: null,
                 requirements: [],
                 tools: {
@@ -149,7 +153,7 @@ mock.module('../core/exec.js', {
                   packageManagerNode: {},
                   ruby: {},
                 },
-              }
+              })
             : { status: 'verified', detail: 'fixture retained inputs match' },
         ),
       };
@@ -287,4 +291,33 @@ test('native recovery and fix relaunch outcomes survive transient detail clearin
     assert.equal(row.outcome, name === 'toolchain' ? 'skipped' : 'ok');
     assert.match(String(row.detail), /attempts=1/);
   }
+});
+
+test('only the initial pr-complete dispatch defers the old branch Node pin', async () => {
+  observedToolchain = {
+    packageManager: null,
+    requirements: [
+      { tool: 'node', range: '24.16.0', source: '.nvmrc' },
+      { tool: 'node', range: '^24.16.0', source: 'package.json engines.node' },
+      { tool: 'node', range: '24.22.1', source: '.tool-versions' },
+    ],
+    tools: { node: { version: '24.22.1' }, packageManager: {}, packageManagerNode: {}, ruby: {} },
+  };
+  currentRun = runFixture();
+  currentRun.flowType = 'pr-complete';
+  const input = {
+    runId: currentRun.id,
+    vars,
+    projectVars: project,
+    wrapCommand: (command: string) => command,
+    record: () => {},
+  };
+  await (
+    await admitWorkerLaunch(input)
+  )();
+  currentRun.flowType = 'dev';
+  await assert.rejects(admitWorkerLaunch(input), /expected 24.16.0 from \.nvmrc/);
+  currentRun.flowType = 'pr-complete';
+  currentRun.status = 'fixing';
+  await assert.rejects(admitWorkerLaunch(input), /expected 24.16.0 from \.nvmrc/);
 });
