@@ -151,13 +151,17 @@ export function fixtureEntry(fixture, name) {
       .join(', ');
     throw new Error(`wallet fixture has no account named "${name}". Available: ${names}.`);
   }
+  return checkedEntry(entry);
+}
+
+function checkedEntry(entry) {
   if (entry.type !== 'mnemonic' && entry.type !== 'privateKey') {
     throw new Error(
-      `wallet fixture account "${name}" must be mnemonic or privateKey, got "${entry.type}".`,
+      `wallet fixture account "${entry.name}" must be mnemonic or privateKey, got "${entry.type}".`,
     );
   }
   if (typeof entry.value !== 'string' || !entry.value.trim()) {
-    throw new Error(`wallet fixture account "${name}" has no value.`);
+    throw new Error(`wallet fixture account "${entry.name}" has no value.`);
   }
   return entry;
 }
@@ -238,7 +242,7 @@ export function walletAccounts(fixture, projectRoot, env = process.env) {
   const accounts = [];
   for (const entry of fixture.accounts) {
     if (entry?.type !== 'mnemonic' && entry?.type !== 'privateKey') continue;
-    fixtureEntry(fixture, entry.name);
+    checkedEntry(entry);
     const count = entry.type === 'mnemonic' ? mnemonicCount(entry) : 1;
     for (let index = 0; index < count; index += 1) {
       const account = viemAccountFromEntry(entry, projectRoot, index);
@@ -256,11 +260,7 @@ export function walletAccounts(fixture, projectRoot, env = process.env) {
       (candidate) => candidate?.type === 'mnemonic' && candidate.name === item.secret,
     );
     if (!entry) continue;
-    const account = viemAccountFromEntry(
-      fixtureEntry(fixture, item.secret),
-      projectRoot,
-      item.index,
-    );
+    const account = viemAccountFromEntry(checkedEntry(entry), projectRoot, item.index);
     if (item.address && item.address.toLowerCase() !== account.address.toLowerCase()) {
       throw new Error(
         `wallet account "${item.name}" derives to ${account.address} from "${item.secret}" index ${item.index}, not the declared ${item.address}.`,
