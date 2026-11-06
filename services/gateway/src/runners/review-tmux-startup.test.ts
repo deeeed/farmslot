@@ -319,7 +319,13 @@ test('OpenCode review passes its prompt as a prompt and disables project startup
     promptPath: '/tmp/task/prompt.txt',
     model: 'litellm/model',
     workspaceTrust: 'untrusted',
+    modelQuestions: 'off',
+    safetyTier: 'dangerous',
+    reviewReadOnlyRoots: ['/frozen/support'],
   });
-  assert.ok(command?.startsWith('OPENCODE_DISABLE_PROJECT_CONFIG=true '));
+  assert.ok(command?.includes("OPENCODE_DISABLE_PROJECT_CONFIG='true'"));
+  assert.ok(command?.includes('\"/tmp/task/*\":\"allow\"'));
+  assert.ok(command?.includes('\"/frozen/support/*\":\"allow\"'));
+  assert.ok(command?.includes('\"question\":\"deny\"'));
   assert.ok(command?.includes('--prompt "$(cat'));
 });

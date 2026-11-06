@@ -1,0 +1,35 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Slotless runner source protection",
+  "description": "Opt-in: run from GUI/Aqua on macOS with Pi/LiteLLM and Cursor authenticated. Set FARMSLOT_REVIEW_RUNNER_PROOF_OUTPUT to a new private evidence root. Three tiny real reviews in isolated gateways; no live farm mutation. Each actual worker process attempts a source write before the provider starts and must record EPERM with source unchanged.",
+  "workflow": {
+    "entry": "pi-native",
+    "nodes": {
+      "pi-native": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_REVIEW_PROOF_READ_ONLY=1 FARMSLOT_REVIEW_PROOF_ROUNDS=1 FARMSLOT_REVIEW_PROOF_RUNNER=pi FARMSLOT_REVIEW_PROOF_MODEL=litellm/claude-opus-5-5 FARMSLOT_REVIEW_PROOF_TRANSPORT=native node --import tsx scripts/runner-validation/gateway/slotless-review-retention.mts \"$FARMSLOT_REVIEW_RUNNER_PROOF_OUTPUT/pi-native\"",
+        "intent": "Pi completes a read-only native review through the production authenticated gateway and records its conversation.",
+        "next": "cursor-native",
+        "timeout_ms": 300000
+      },
+      "cursor-native": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_REVIEW_PROOF_READ_ONLY=1 FARMSLOT_REVIEW_PROOF_ROUNDS=1 FARMSLOT_REVIEW_PROOF_RUNNER=cursor FARMSLOT_REVIEW_PROOF_MODEL=composer-2.5 FARMSLOT_REVIEW_PROOF_EFFORT=none FARMSLOT_REVIEW_PROOF_TRANSPORT=native node --import tsx scripts/runner-validation/gateway/slotless-review-retention.mts \"$FARMSLOT_REVIEW_RUNNER_PROOF_OUTPUT/cursor-native\"",
+        "intent": "Cursor completes the same source/task boundary with GUI keychain access.",
+        "next": "pi-terminal",
+        "timeout_ms": 300000
+      },
+      "pi-terminal": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_REVIEW_PROOF_READ_ONLY=1 FARMSLOT_REVIEW_PROOF_ROUNDS=1 FARMSLOT_REVIEW_PROOF_RUNNER=pi FARMSLOT_REVIEW_PROOF_MODEL=litellm/claude-opus-5-5 FARMSLOT_REVIEW_PROOF_TRANSPORT=tmux node --import tsx scripts/runner-validation/gateway/slotless-review-retention.mts \"$FARMSLOT_REVIEW_RUNNER_PROOF_OUTPUT/pi-terminal\"",
+        "intent": "Pi also completes a cold terminal review read-only; no unsupported warm-session assertion.",
+        "next": "done",
+        "timeout_ms": 300000
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

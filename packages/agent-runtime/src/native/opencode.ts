@@ -14,6 +14,16 @@ export function opencodeEnvironment(options: NativeAdapterOptions): Record<strin
   const permission = {
     ...(acpRunsToolsUnasked(options) ? {} : { '*': 'ask' }),
     ...(options.modelQuestions === 'off' ? opencodeQuestionPermission : {}),
+    ...(options.filesystemPolicy
+      ? {
+          external_directory: Object.fromEntries(
+            [
+              ...options.filesystemPolicy.readOnlyRoots,
+              ...options.filesystemPolicy.writableRoots,
+            ].map((root) => [root + '/*', 'allow']),
+          ),
+        }
+      : {}),
   };
   return {
     OPENCODE_DISABLE_AUTOUPDATE: '1',

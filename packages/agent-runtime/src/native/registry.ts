@@ -48,6 +48,7 @@ const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-t
   codexHome(environment: NodeJS.ProcessEnv): string;
   grokHome(environment: NodeJS.ProcessEnv): string;
   reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
+  reviewRuntimeRootsByRunner: Record<string, (env: NodeJS.ProcessEnv) => string[]>;
   terminalReviewRefusalByRunner: Record<string, string>;
   grokReviewHomeAccess(environment: NodeJS.ProcessEnv): NativeReviewRuntimeAccess;
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
@@ -120,7 +121,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'codex',
     supportsWorkers: true,
     supportsReadOnlyWorkspace: true,
-    reviewRuntimeRoots: (env) => [workspaceTrust.codexHome(env)],
+    reviewRuntimeRoots: workspaceTrust.reviewRuntimeRootsByRunner.codex,
     defaultEffort: 'low',
     account: {
       standardDirectory: workspaceTrust.codexHome,
@@ -135,12 +136,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.claude,
     trustWorkspace: workspaceTrustByRunner.claude,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
-    reviewRuntimeRoots: (env) => [
-      claudeDirectory(env),
-      // Claude Code creates its tool-runner scratch directory outside
-      // CLAUDE_CONFIG_DIR. Keep that state writable inside the review sandbox.
-      ...(typeof process.getuid === 'function' ? [join('/tmp', `claude-${process.getuid()}`)] : []),
-    ],
+    reviewRuntimeRoots: workspaceTrust.reviewRuntimeRootsByRunner.claude,
     adapter: claudeNativeAdapter,
     binary: 'claude',
     supportsWorkers: true,
@@ -161,16 +157,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
   cursor: {
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.cursor,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
-    reviewRuntimeRoots: (env) => [
-      join(env.HOME ?? homedir(), '.cursor'),
-      join(env.HOME ?? homedir(), 'Library/Caches/cursor-compile-cache'),
-      join(env.HOME ?? homedir(), 'Library/Application Support/Cursor'),
-      // cursor-agent locks chats under /tmp/cursor-agent-persist-<uid> (realpath
-      // /private/tmp/...). Denying that mkdir kills the tmux reviewer in seconds.
-      ...(typeof process.getuid === 'function'
-        ? [join('/tmp', `cursor-agent-persist-${process.getuid()}`)]
-        : []),
-    ],
+    reviewRuntimeRoots: workspaceTrust.reviewRuntimeRootsByRunner.cursor,
     adapter: cursorNativeAdapter,
     binary: 'cursor-agent',
     supportsWorkers: true,
@@ -198,7 +185,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.grok,
     trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
-    reviewRuntimeRoots: (env) => [workspaceTrust.grokHome(env)],
+    reviewRuntimeRoots: workspaceTrust.reviewRuntimeRootsByRunner.grok,
     reviewRuntimeAccess: workspaceTrust.grokReviewHomeAccess,
     terminalReviewRefusal: workspaceTrust.terminalReviewRefusalByRunner.grok,
     adapter: grokNativeAdapter,
@@ -217,12 +204,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
   opencode: {
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.opencode,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
-    reviewRuntimeRoots: (env) => [
-      join(env.XDG_DATA_HOME || join(env.HOME || homedir(), '.local/share'), 'opencode'),
-      join(env.XDG_CACHE_HOME || join(env.HOME || homedir(), '.cache'), 'opencode'),
-      join(env.XDG_STATE_HOME || join(env.HOME || homedir(), '.local/state'), 'opencode'),
-      join(env.XDG_CONFIG_HOME || join(env.HOME || homedir(), '.config'), 'opencode'),
-    ],
+    reviewRuntimeRoots: workspaceTrust.reviewRuntimeRootsByRunner.opencode,
     adapter: opencodeNativeAdapter,
     binary: 'opencode',
     supportsWorkers: true,
@@ -238,9 +220,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     reviewStartupArgs: workspaceTrust.piReadOnlyReviewArgs,
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.pi,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
-    reviewRuntimeRoots: (env) => [
-      env.PI_CODING_AGENT_DIR || join(env.HOME || homedir(), '.pi/agent'),
-    ],
+    reviewRuntimeRoots: workspaceTrust.reviewRuntimeRootsByRunner.pi,
     adapter: piNativeAdapter,
     binary: 'pi',
     supportsWorkers: true,

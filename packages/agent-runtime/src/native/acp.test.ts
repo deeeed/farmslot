@@ -536,3 +536,17 @@ test('OpenCode read-only reviews disable project startup configuration without c
     'true',
   );
 });
+
+test('OpenCode read-only review permits its task and frozen inputs without changing other directory permissions', () => {
+  const env = opencodeEnvironment({
+    cwd: '/source',
+    executable: 'opencode',
+    processSandbox: { executable: '/usr/bin/sandbox-exec', args: [] },
+    modelQuestions: 'off',
+    filesystemPolicy: { readOnlyRoots: ['/source', '/frozen/support'], writableRoots: ['/task'] },
+  });
+  assert.deepEqual(JSON.parse(env.OPENCODE_PERMISSION), {
+    question: 'deny',
+    external_directory: { '/source/*': 'allow', '/frozen/support/*': 'allow', '/task/*': 'allow' },
+  });
+});

@@ -242,6 +242,7 @@ export async function reviewTmuxOperation(
       effort: run.effort,
       trustWorkspace: true,
       workspaceTrust: 'untrusted',
+      reviewReadOnlyRoots: w.support ? [w.support.path] : [],
       // A cached newer Codex version shows an "Update available" notice (a modal
       // without a prompt, a history banner with one), which the launch handshake
       // fails on as an unknown prompt.

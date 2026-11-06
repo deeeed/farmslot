@@ -5,6 +5,7 @@ import {
   modelQuestionsOffByRunner,
   type ModelQuestionsSwitch,
 } from '@farmslot/agent-runtime/native/model-questions';
+import { opencodeEnvironment } from '@farmslot/agent-runtime/native/opencode';
 import {
   codexWorkspaceTrustConfig,
   nativeRunnerDefinitions,
@@ -386,6 +387,8 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   effort?: string;
   trustWorkspace?: boolean;
   workspaceTrust?: 'trusted' | 'untrusted';
+  /** Frozen review support, alongside the source and sibling task directory. */
+  reviewReadOnlyRoots?: string[];
   /** Codex only: no startup update check, whose modal would block an unattended launch. */
   skipUpdateCheck?: boolean;
   /** Codex only: hooks off, so the operator's own hooks neither run nor ask for review. */
@@ -448,7 +451,20 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     return `${shellQuote(binary)}${isolated}${flags}${modelFlag} ${promptArg}`;
   }
   if (runnerId === 'opencode' && options.workspaceTrust === 'untrusted') {
-    return `OPENCODE_DISABLE_PROJECT_CONFIG=true ${shellQuote(binary)}${modelFlag} --prompt ${promptArg}`;
+    const environment = opencodeEnvironment({
+      cwd: options.repo,
+      executable: binary,
+      safetyTier: options.safetyTier,
+      modelQuestions: options.modelQuestions,
+      filesystemPolicy: {
+        readOnlyRoots: [options.repo, ...(options.reviewReadOnlyRoots ?? [])],
+        writableRoots: [path.posix.dirname(options.promptPath)],
+      },
+    });
+    const prefix = Object.entries(environment)
+      .map(([key, value]) => `${key}=${shellQuote(value)}`)
+      .join(' ');
+    return `${prefix} ${shellQuote(binary)}${modelFlag} --prompt ${promptArg}`;
   }
   if (runnerId === 'pi') {
     if (options.workspaceTrust === 'untrusted')

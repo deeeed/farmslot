@@ -219,6 +219,11 @@ const { readReviewWorkspaceCompletion } = await load(
   'services/gateway/src/review-workspaces/task.ts',
 );
 const { startRun } = await load('services/gateway/src/run-engine/orchestrator.ts');
+const { getRunnerDefinition } = await load('services/gateway/src/runners/registry.ts');
+const expectSession =
+  rounds === 2 ||
+  reviewTransport === 'native' ||
+  !!getRunnerDefinition(reviewRunner).workspaceTerminalSession;
 const { configureWorkspaceContinuity } = await load(
   'services/gateway/src/review-workspaces/continuity.ts',
 );
@@ -341,7 +346,8 @@ try {
     assert.equal(finished.status, 'done', finished.error);
     assert(finished.reviewWorkspace);
     assert(finished.reviewWorkspaceSubject);
-    assert(finished.reviewResult?.session);
+    assert(finished.reviewResult);
+    if (expectSession) assert(finished.reviewResult.session);
     assert(finished.agentContexts?.length);
     if (proveReadOnly) {
       const readonly = JSON.parse(
@@ -396,14 +402,17 @@ try {
     ]);
     assert(!finished.reviewWorkspace.cleanedAt);
     assert(fs.existsSync(finished.reviewWorkspace.checkoutPath));
-    assert(finished.reviewResult.session.sessionId);
-    assert.equal(finished.reviewResult.session.lastReviewedHeadSha, head);
+    if (expectSession) {
+      assert(finished.reviewResult.session?.sessionId);
+      assert.equal(finished.reviewResult.session.lastReviewedHeadSha, head);
+    }
     assert.equal(finished.agentContexts.find((c) => c.id === 'review')?.effort, reviewEffort);
     assert.equal(
       fs.readFileSync(path.join(finished.reviewWorkspace.checkoutPath, 'greeting.txt'), 'utf8'),
       index ? 'Hello two\n' : 'Hello one\n',
     );
     if (prior) {
+      assert(finished.reviewResult.session);
       assert.equal(finished.reviewResult.session.sessionId, prior.reviewResult!.session!.sessionId);
       assert.equal(
         finished.agentContexts[0].runnerSessionPath,
