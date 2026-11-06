@@ -1,0 +1,1 @@
+- Resume gateway-owned package work across gateway and node restarts, retaining in-flight steps and retrying requests explicitly rejected before execution without replaying accepted commands.

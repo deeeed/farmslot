@@ -32,6 +32,7 @@ import {
   loadSlotVars,
 } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
+import { isGatewayShuttingDown } from '../core/gateway-shutdown.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import {
@@ -817,6 +818,7 @@ export interface StartRunOptions {
 const drivenGenerations = new Map<string, number>();
 
 export async function startRun(runId: string, options: StartRunOptions = {}): Promise<void> {
+  if (isGatewayShuttingDown()) return;
   return withoutCleanupSignal(() => startRunGeneration(runId, options));
 }
 
@@ -889,7 +891,13 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
   for (let i = startIdx; i < steps.length; i++) {
     const stepName = steps[i];
     const current = getRun(runId);
-    if (!current || current.status === 'cancelled' || current.status === 'paused') return;
+    if (
+      isGatewayShuttingDown() ||
+      !current ||
+      current.status === 'cancelled' ||
+      current.status === 'paused'
+    )
+      return;
     // Stale loop: a replay bumped the generation — bail so the new startRun takes over
     if (getRunGeneration(runId) !== myGen) {
       console.log(
@@ -943,7 +951,13 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
 
       // Re-check cancellation/pause after async step
       const after = getRun(runId);
-      if (!after || after.status === 'cancelled' || after.status === 'paused') return;
+      if (
+        isGatewayShuttingDown() ||
+        !after ||
+        after.status === 'cancelled' ||
+        after.status === 'paused'
+      )
+        return;
       // A replay/resume that bumped the generation mid-step owns the run now —
       // the stale loop must not mark this step done or advance concurrently.
       if (getRunGeneration(runId) !== myGen) {
@@ -980,6 +994,14 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       }
     } catch (err) {
       const msg = (err as Error).message;
+      if (isGatewayShuttingDown()) {
+        // A deploy can stop the node before this gateway exits. Keep the durable
+        // running step for startup recovery, never turn its interruption into a refusal.
+        console.log(
+          `[run-engine] run ${runId.slice(0, 8)} step ${stepName} interrupted by gateway shutdown: ${msg}`,
+        );
+        return;
+      }
 
       // Intentional redirect (collision → comparison-lane fork): the current run
       // was already cancelled with redirectedToRunId set before throwing. Mark
@@ -1909,11 +1931,16 @@ async function executeStepWithUsage(
         step === S.PREPARE ||
         step === S.DISPATCH ||
         step === S.MONITOR ||
+        step === S.COMPLETE ||
+        step === S.FINALIZE ||
         step === S.HUMAN_GATE
       ) {
         return await withNodeReconnectWait(operation, () => {
           const live = current();
-          if (['blocked', 'done', 'failed', 'cancelled', 'paused'].includes(live.status))
+          if (
+            isGatewayShuttingDown() ||
+            ['blocked', 'done', 'failed', 'cancelled', 'paused'].includes(live.status)
+          )
             throw new Error('Run stopped while awaiting its execution node');
         });
       }

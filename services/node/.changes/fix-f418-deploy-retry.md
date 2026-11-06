@@ -1,0 +1,1 @@
+- Identify shutdown admission refusals so a gateway can wait for the replacement node without replaying accepted commands or interrupting their confirmed closeout.
