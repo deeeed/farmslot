@@ -1,1 +1,0 @@
-- Keep the operator UI mounted across stack restarts without disabling hot reload in isolated worker stacks.

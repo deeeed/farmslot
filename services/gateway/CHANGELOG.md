@@ -6,6 +6,18 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.34.0 - 2026-11-06
+
+- Correct invalid static-review output once in the same reviewer session, fail stopped reviewers explicitly, and refuse unrecoverable saved-review replays with accurate archive guidance.
+- Read captured learning content for improvement proposals after task staging is removed or changes.
+- Curate domain learning claims against run evidence and existing rules before proposing human-approved drafts; record drops separately from consumption.
+- Keep spent-review-budget runs and their workers, slots and checkouts for an operator decision, with scoped extension, accept-with-reason or close.
+- Route authenticated per-session native approval changes without changing worker or publication authority.
+- Select PR intake and monitor data before cloning snapshots to avoid copying unrelated history.
+- Let pr-complete workers launch in their declared bootstrap runtime before updating an old branch's exact Node pin; keep engine, package-manager and other launch checks.
+- Stop charging failed or unstarted review launches as completed rounds; preserve concurrent reservations and record the charge at verdict ingestion.
+- Wake native review completion checks on runner and signal changes, coalescing node notifications while preserving immediate signal wakeups and polling/timeout fallbacks.
+
 ## 0.33.0 - 2026-11-06
 
 - Include canonical session receipts, family accounting contributions and review-round timing in family observability reads without additional per-run requests.

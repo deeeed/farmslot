@@ -6,6 +6,11 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.78.0 - 2026-11-06
+
+- Choose standalone native tool approvals separately from planning, preserve launch choices in shared links, and identify non-Git Changes views.
+- Charge review rounds only for recorded verdicts, keeping pending reservations and no-verdict outcomes distinct.
+
 ## 0.77.0 - 2026-11-06
 
 - Add a family usage projection for shared session receipts, accounting contributions and review-round timing.

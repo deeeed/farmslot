@@ -1,1 +1,0 @@
-- Route authenticated per-session native approval changes without changing worker or publication authority.
