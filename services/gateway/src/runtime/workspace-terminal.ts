@@ -37,6 +37,8 @@ export async function resolveWorkspaceTerminal(params: SlotAgentTargetParams) {
   const run = getRun(params.runId);
   if (!run?.reviewWorkspace || run.slotId !== null || run.reviewWorkspace.cleanedAt)
     throw new Error('The review worktree is no longer available');
+  if (run.reviewWorkspace.retirement)
+    throw new Error('The review worktree is being reclaimed after retention expiry');
   assertNativeRunOwner(run);
   const pools = await loadPoolConfigs();
   const pool = resolveReviewWorkspacePool(pools, run.reviewWorkspace.machine);
@@ -102,6 +104,8 @@ export async function workspaceTerminalOperation(
   input: { lines?: number; text?: string; enter?: boolean } = {},
 ) {
   assertNativeRunOwner(run);
+  if (action !== 'stop' && run.reviewWorkspace?.retirement)
+    throw new Error('The review worktree is being reclaimed after retention expiry');
   if (run.transport === 'tmux' && action === 'ensure') {
     if (!(await reviewTmuxOperation(run, 'inspect')).exists)
       throw new Error('The reviewer terminal has not started yet');

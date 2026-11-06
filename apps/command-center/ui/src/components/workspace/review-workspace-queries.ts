@@ -140,9 +140,11 @@ export class ReviewWorkspaceQueries implements ReactiveController {
           : undefined,
       );
       const decision = this.decision;
+      // A retained decision survives background invalidation; actions still require a fresh read.
       const confirmationScope = JSON.stringify([
         scope,
-        this.ready,
+        gateway.connectionState,
+        gateway.resourceConnectionId,
         decision?.resolvedAt,
         decision?.actions,
         decision?.payload?.kind === 'review'

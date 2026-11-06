@@ -150,3 +150,78 @@ test('workspace continuity binds the creator generation in both directions', () 
   assert.equal(result.session?.continuity, 'resumed');
   assert.equal(result.session?.sessionId, 'chat');
 });
+
+test('the Codex workspace capability permits a verified retained conversation', () => {
+  const source = {
+    ...prior,
+    agentContexts: prior.agentContexts!.map((c) => ({
+      ...c,
+      runner: 'codex',
+      runnerSessionPath: '/owned/previous/rollout.jsonl',
+    })),
+  };
+  const next = { ...current, metrics: { runner: 'codex', model: 'model' } };
+  const result = context();
+  configureWorkspaceContinuity(next, source, result);
+  assert.equal(result.session?.priorSessionId, 'chat');
+  assert.equal(result.session?.continuity, 'resumed');
+});
+
+test('only expiry permits an explicit COLD fallback and preserves the prior lineage', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T01:00:00Z') });
+  const source = {
+    ...prior,
+    completedAt: '2026-11-01T00:00:00Z',
+    reviewWorkspace: { ...prior.reviewWorkspace!, retentionDays: 2 },
+  };
+  const result = context();
+  result.currentHeadSha = 'b'.repeat(40);
+  const subject = {
+    repository: 'example/app',
+    repositoryUrl: 'https://example.invalid/app.git',
+    baseSha: 'c'.repeat(40),
+    headSha: result.currentHeadSha,
+    branch: 'feature',
+    title: 'Fixture',
+    body: '',
+    capturedAt: '2026-11-06T01:00:00Z',
+  };
+  configureWorkspaceContinuity(current, source, result, subject);
+  assert.equal(result.mode, 'cold');
+  assert.equal(result.session?.reviewId, 'lineage');
+  assert.match(result.session?.fallback?.detail ?? '', /expired/);
+  assert.deepEqual(result.session?.fallback?.comparedRanges, [
+    `${subject.baseSha}...${subject.headSha}`,
+  ]);
+  const live = context();
+  configureWorkspaceContinuity(
+    current,
+    { ...source, completedAt: '2026-11-05T00:00:00Z' },
+    live,
+    subject,
+  );
+  assert.equal(live.mode, 'warm');
+});
+
+test('explicit cold after expiry may use another authorized machine while preserving the expiry reason', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T00:00:00Z') });
+  const result = context();
+  const source = {
+    ...prior,
+    reviewWorkspace: { ...prior.reviewWorkspace!, retainedUntil: '2026-11-03T00:00:00Z' },
+  };
+  configureWorkspaceContinuity(
+    {
+      ...current,
+      reviewMode: 'cold',
+      reviewContext: {
+        reviewLineages: [{ reviewId: 'lineage', repository: 'example/app', prNumber: 42 }],
+      },
+      reviewWorkspaceTarget: { machine: 'other-machine' },
+    },
+    source,
+    result,
+  );
+  assert.equal(result.mode, 'cold');
+  assert.match(result.session?.fallback?.detail ?? '', /expired/);
+});

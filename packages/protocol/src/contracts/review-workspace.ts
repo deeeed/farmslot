@@ -8,6 +8,8 @@ export function staticReviewReplayBlock(
   params: Pick<RunReplayStepParams, 'stepName' | 'runner' | 'model' | 'freshDispatch'>,
 ): string | null {
   if (!run.reviewWorkspaceTarget) return null;
+  if (run.reviewWorkspace?.retirement && !run.reviewWorkspace.cleanedAt)
+    return 'Workspace retention cleanup is pending; retry after the owned operation settles.';
   const ownsAttempt = Boolean(
     run.reviewWorkspace || run.agentContexts?.some((context) => context.id === 'review'),
   );
@@ -70,6 +72,15 @@ export interface ReviewWorkspaceSupportBinding {
   }>;
 }
 
+export const DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS = 7;
+
+/** Trusted project policy, applied only to newly allocated review workspaces. */
+export interface ReviewWorkspacePolicy {
+  retentionDays?: number;
+  /** Absolute path on the selected execution node. */
+  root?: string;
+}
+
 /** Operator-selected machine for a static review without a slot. */
 export interface ReviewWorkspaceTarget {
   machine: string;
@@ -80,7 +91,10 @@ export interface ReviewWorkspaceSubject {
   repository: string;
   repositoryUrl: string;
   headSha: string;
+  /** Exact comparison base; a warm review uses the last reviewed head. */
   baseSha: string;
+  /** Frozen PR base for whole-contribution scope inventory. */
+  contributionBaseSha?: string;
   branch: string;
   title: string;
   body: string;
@@ -97,6 +111,18 @@ export interface ReviewWorkspaceBinding {
   taskPath: string;
   artifactPath: string;
   support?: ReviewWorkspaceSupportBinding;
-  /** Node receipt confirms the source checkout was removed; task/report paths remain. */
+  /** Frozen retention policy. Configuration changes do not move existing bindings. */
+  retentionDays?: number;
+  retainedAt?: string;
+  /** Confirmed terminal/native worker stop, independent of result retention. */
+  executionStoppedAt?: string;
+  retainedUntil?: string;
+  /** Durable admission fence, written before an asynchronous node purge starts. */
+  retirement?: {
+    id: string;
+    startedAt: string;
+    pr: import('./pr-monitoring.js').MonitoredPRIdentity;
+  };
+  /** Node receipt confirms execution files were reclaimed; durable run evidence remains. */
   cleanedAt?: string;
 }

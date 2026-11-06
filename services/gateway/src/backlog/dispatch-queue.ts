@@ -70,6 +70,12 @@ import {
 } from '../review-workspaces/admission.js';
 import { constrainDirectWorkflowExecution } from '../review-workspaces/direct-defaults.js';
 import { bindPRExecutionProfilesToPool } from '../review-workspaces/pool-policy.js';
+import { reviewPR } from '../review-workspaces/retention-policy.js';
+import {
+  assertReviewWorkspaceAdmissionOpen,
+  reviewWorkspaceRetirementPending,
+  useReviewWorkspaceStorage,
+} from '../review-workspaces/storage-use.js';
 import { assertReviewNativeRunnerHealthy } from '../runners/native/review-health.js';
 import { assertNativeRunner, normalizeRunner } from '../runners/registry.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
@@ -117,6 +123,7 @@ function resolveQueueFile(): string {
 
 const QUEUE_FILE = resolveQueueFile();
 const queue: QueueRecord[] = [];
+const unadmittedRestoredReviews = new Set<string>();
 let queuePersistChain: Promise<void> = Promise.resolve();
 
 /** Default exclusive-claim TTL. Holders must re-validate before createRun. */
@@ -183,6 +190,7 @@ export async function resetDispatchQueueForTests(): Promise<void> {
   _createAndStartRun = null;
   // Removing the rows revokes any callback still waiting before createRun.
   queue.length = 0;
+  unadmittedRestoredReviews.clear();
   cancelDispatchRetries();
   try {
     await dispatchInFlight;
@@ -343,8 +351,16 @@ function findNonTerminalHandoffOwner(item: QueueItem): Run | undefined {
   });
 }
 
+function restoreQueueRecord(record: QueueRecord): void {
+  const pr = reviewPR(record);
+  if (record.flowType === 'review-pr' && pr && reviewWorkspaceRetirementPending(pr))
+    unadmittedRestoredReviews.add(record.id);
+  queue.push(record);
+}
+
 export async function loadQueue(): Promise<void> {
   queue.length = 0;
+  unadmittedRestoredReviews.clear();
   try {
     const raw = await readFile(QUEUE_FILE, 'utf-8');
     const items: QueueRecord[] = JSON.parse(raw);
@@ -374,7 +390,7 @@ export async function loadQueue(): Promise<void> {
           );
           continue;
         }
-        queue.push(normalized);
+        restoreQueueRecord(normalized);
         continue;
       }
       if (normalized.status === 'dispatching') {
@@ -445,7 +461,7 @@ export async function loadQueue(): Promise<void> {
         normalized.status = 'queued';
         normalized.runId = undefined;
         clearClaimFields(normalized);
-        queue.push(normalized);
+        restoreQueueRecord(normalized);
       }
     }
     console.log(`[dispatch-queue] loaded ${queue.length} queued items from disk`);
@@ -496,6 +512,7 @@ export function addItem(
   /** Set only by a live admin dispatch.queue.add that delegated static review. */
   { delegatedOwnerPrincipalId }: { delegatedOwnerPrincipalId?: string } = {},
 ): QueueItem {
+  if (params.flowType === 'review-pr') assertReviewWorkspaceAdmissionOpen(params);
   if (delegatedOwnerPrincipalId && !delegatesStaticReview(params))
     throw new Error('Only a direct static review can be delegated');
   if (params.sourceSelections !== undefined) {
@@ -868,72 +885,74 @@ export async function cancelGraphQueuedItem(params: {
    */
   commitDependent?: (item: QueueItem) => void | Promise<void>;
 }): Promise<boolean> {
-  const idx = queue.findIndex(
-    (item) =>
-      (item.status === 'queued' || item.status === 'dispatching') &&
-      item.workGraphId === params.workGraphId &&
-      item.workNodeId === params.workNodeId,
-  );
-  if (idx < 0) return false;
-  const candidate = queue[idx];
-  // Handoff already won: create stamped a live Run. Do not tear down the row
-  // (or its claim epoch) out from under the dispatcher that just created it.
-  if (candidate?.runId) {
-    const stamped = getRun(candidate.runId);
-    if (stamped && !isTerminalRunStatus(stamped.status)) {
-      console.log(
-        `[dispatch-queue] skip cancel of ${candidate.id.slice(0, 8)}: stamped live run ${stamped.id.slice(0, 8)}`,
-      );
-      return false;
+  return useReviewWorkspaceStorage(async () => {
+    const idx = queue.findIndex(
+      (item) =>
+        (item.status === 'queued' || item.status === 'dispatching') &&
+        item.workGraphId === params.workGraphId &&
+        item.workNodeId === params.workNodeId,
+    );
+    if (idx < 0) return false;
+    const candidate = queue[idx];
+    // Handoff already won: create stamped a live Run. Do not tear down the row
+    // (or its claim epoch) out from under the dispatcher that just created it.
+    if (candidate?.runId) {
+      const stamped = getRun(candidate.runId);
+      if (stamped && !isTerminalRunStatus(stamped.status)) {
+        console.log(
+          `[dispatch-queue] skip cancel of ${candidate.id.slice(0, 8)}: stamped live run ${stamped.id.slice(0, 8)}`,
+        );
+        return false;
+      }
     }
-  }
-  const [item] = queue.splice(idx, 1);
-  if (!item) return false;
-  // Revoke claim so any in-flight dispatcher fails re-validation.
-  item.claimEpoch = (item.claimEpoch ?? 0) + 1;
-  clearClaimFields(item);
-
-  // Durable removal first — if this throws, restore memory so the row is not lost.
-  try {
-    await enqueuePersist('graph-dependency-regressed');
-  } catch (err) {
-    item.status = 'queued';
-    item.runId = undefined;
+    const [item] = queue.splice(idx, 1);
+    if (!item) return false;
+    // Revoke claim so any in-flight dispatcher fails re-validation.
+    item.claimEpoch = (item.claimEpoch ?? 0) + 1;
     clearClaimFields(item);
-    queue.splice(Math.min(idx, queue.length), 0, item);
-    broadcastQueue();
-    throw err;
-  }
 
-  if (params.commitDependent) {
+    // Durable removal first — if this throws, restore memory so the row is not lost.
     try {
-      await params.commitDependent(item);
+      await enqueuePersist('graph-dependency-regressed');
     } catch (err) {
-      // Dependent failed after durable remove: put the row back and re-persist
-      // so queue and dependent agree (row present, dependent not applied).
       item.status = 'queued';
       item.runId = undefined;
       clearClaimFields(item);
       queue.splice(Math.min(idx, queue.length), 0, item);
-      try {
-        await enqueuePersist('graph-cancel-dependent-failed');
-      } catch (persistErr) {
-        broadcastQueue();
-        throw new Error(
-          `Dependent mutation failed (${(err as Error).message}) and restoring the queue row to disk also failed (${(persistErr as Error).message})`,
-          { cause: err },
-        );
-      }
       broadcastQueue();
       throw err;
     }
-  }
 
-  console.log(
-    `[dispatch-queue] cancelled graph queue item ${item.id.slice(0, 8)}: ${params.reason}`,
-  );
-  broadcastQueue();
-  return true;
+    if (params.commitDependent) {
+      try {
+        await params.commitDependent(item);
+      } catch (err) {
+        // Dependent failed after durable remove: put the row back and re-persist
+        // so queue and dependent agree (row present, dependent not applied).
+        item.status = 'queued';
+        item.runId = undefined;
+        clearClaimFields(item);
+        queue.splice(Math.min(idx, queue.length), 0, item);
+        try {
+          await enqueuePersist('graph-cancel-dependent-failed');
+        } catch (persistErr) {
+          broadcastQueue();
+          throw new Error(
+            `Dependent mutation failed (${(err as Error).message}) and restoring the queue row to disk also failed (${(persistErr as Error).message})`,
+            { cause: err },
+          );
+        }
+        broadcastQueue();
+        throw err;
+      }
+    }
+
+    console.log(
+      `[dispatch-queue] cancelled graph queue item ${item.id.slice(0, 8)}: ${params.reason}`,
+    );
+    broadcastQueue();
+    return true;
+  });
 }
 
 const REVIEW_QA_MIGRATION_HOLD = 'Review/QA migration: ';
@@ -948,6 +967,7 @@ export function updateItem(
   }
   const item = queue.find((q) => q.id === params.itemId);
   if (!item) throw new Error(`Queue item not found: ${params.itemId}`);
+  if (item.flowType === 'review-pr') assertReviewWorkspaceAdmissionOpen(item);
   if (item.status !== 'queued') {
     throw new Error(`Cannot update queue item ${params.itemId}: item is ${item.status}`);
   }
@@ -1058,8 +1078,20 @@ export function listItems(): QueueItem[] {
     .map(publicQueueItem);
 }
 
-export function getQueueSnapshot(): QueueRecord[] {
-  return queue.map(cloneQueueRecord);
+export function getQueueSnapshot(options: { forRetention?: boolean } = {}): QueueRecord[] {
+  return queue
+    .filter((record) => {
+      if (!unadmittedRestoredReviews.has(record.id)) return true;
+      const pr = reviewPR(record);
+      if (!pr || !reviewWorkspaceRetirementPending(pr)) {
+        unadmittedRestoredReviews.delete(record.id);
+        return true;
+      }
+      // A prior durable retirement ordered this restored row after cleanup.
+      // Keep it visible and dispatch-fenced, without treating it as already admitted.
+      return !options.forRetention;
+    })
+    .map(cloneQueueRecord);
 }
 
 export function mutateQueueItemForTests(

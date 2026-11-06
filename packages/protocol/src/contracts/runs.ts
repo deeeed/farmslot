@@ -515,6 +515,7 @@ export type ReviewSessionRefusalReason =
   | 'missing-reviewed-head'
   | 'session-busy'
   | 'session-unavailable'
+  | 'retention-expired'
   | 'reviewed-head-not-ancestor';
 
 /** Why a re-review ran COLD in a fresh session, and the ranges it compared (ADR-063 Amendment 5). */
@@ -523,7 +524,8 @@ export interface ReviewSessionFallback {
   detail: string;
   /**
    * `lastReviewedHead..currentHead`. After a rebase, the branch's own change at both
-   * heads (`mergeBase..head`), compared with `git range-diff`.
+   * heads (`mergeBase..head`), compared with `git range-diff`. Retention expiry
+   * starts a fresh full-contribution COLD (`baseSha...headSha`, ADR-063 Amendment10).
    */
   comparedRanges: string[];
 }
@@ -543,7 +545,7 @@ export interface ReviewSessionTrace {
   priorSessionId?: string;
   sessionId?: string;
   refusalReason?: ReviewSessionRefusalReason;
-  /** Set when a re-review's retained session was unavailable and it ran a delta-scoped COLD. */
+  /** Why a retained session was unavailable for a COLD review; expiry may require full scope. */
   fallback?: ReviewSessionFallback;
 }
 

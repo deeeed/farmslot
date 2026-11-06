@@ -964,6 +964,18 @@
       "description": "Canonical static-review template and optional frozen fixture guidance, without project prepare.",
       "additionalProperties": false,
       "properties": {
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "retention_days": { "type": "integer", "minimum": 1, "default": 7 },
+            "root": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute workspace root on the execution node; omit for the existing node-owned default."
+            }
+          }
+        },
         "template_id": {
           "type": "string",
           "pattern": "^\\S+$",

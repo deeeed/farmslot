@@ -404,6 +404,7 @@ export interface ProjectConfig {
     instructionFiles?: string[];
     domain?: string;
     support?: import('./review-workspace.js').ReviewWorkspaceSupportConfig;
+    workspace?: import('./review-workspace.js').ReviewWorkspacePolicy;
   };
   /** Project-owned resources that may be leased after core prepare. */
   runtimeCapabilities?: ProjectRuntimeCapabilitiesConfig;

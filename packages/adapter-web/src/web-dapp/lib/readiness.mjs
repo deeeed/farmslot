@@ -11,10 +11,9 @@ import path from 'node:path';
 import { ownsProcess, pidAlive, portFree } from './processes.mjs';
 import {
   canonicalPath,
-  fixtureEntry,
   loadWalletFixture,
   readBrowserState,
-  viemAccountFromEntry,
+  walletAccount,
   webDappPolicy,
   webDappRuntimeDir,
 } from './runtime.mjs';
@@ -359,7 +358,7 @@ export async function webDappReadiness({
 
   try {
     const { file, fixture } = await loadWalletFixture(target, env);
-    const address = viemAccountFromEntry(fixtureEntry(fixture, account), target).address;
+    const { address } = walletAccount(fixture, account, target, env);
     checks.push(
       check('wallet-fixture', true, `${path.basename(file)}: account ${account} -> ${address}`),
     );

@@ -12,6 +12,8 @@ import type {
   PRTriggerRule,
 } from '@farmslot/protocol';
 
+import { reclaimReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
+
 import { reviewIntentAuthorized, reviewIntentId } from './intents.js';
 import { resolvePreviewQaPreset } from './qa-preset.js';
 import { PRRuleStore } from './store.js';
@@ -449,4 +451,42 @@ test('QA admission retains closed and draft restrictions while static review ret
     );
     assert.equal(reviewIntentAuthorized(intent), false);
   }
+});
+
+test('external PR-intake reload cannot publish while retention cleanup owns storage', async (t) => {
+  const { store, file } = await fixture(t);
+  const { team } = await ruleFor(store, 'owner', true);
+  const changed = store.snapshot();
+  changed.teams[0].config.name = 'External replacement';
+  await writeFile(file, JSON.stringify(changed));
+  let release!: () => void;
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cleanup = reclaimReviewWorkspaceStorage(async () => {
+    entered();
+    await held;
+    return [];
+  });
+  await ready;
+  let published = false;
+  const reload = store.reloadFromFile().then((result) => {
+    published = true;
+    return result;
+  });
+  try {
+    // Drain the file read as well as promise callbacks without a wall-clock sleep.
+    for (let i = 0; i < 20; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(published, false);
+    assert.equal(store.team(team.id, 'owner').config.name, team.config.name);
+  } finally {
+    release();
+    await cleanup;
+    await reload;
+  }
+  assert.equal(store.team(team.id, 'owner').config.name, 'External replacement');
 });

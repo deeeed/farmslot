@@ -59,6 +59,7 @@ import { getAllSessions, initChatStore } from './chat/chat-store.js';
 import { initCopilotObserver, routeEventToObserver } from './chat/copilot-observer.js';
 import { initCIMonitor } from './ci-monitor/service.js';
 import { initCopilotRuntime } from './copilot-runtime/controller.js';
+import { beginGatewayShutdown, isGatewayShuttingDown } from './core/gateway-shutdown.js';
 import { loadGatewayTlsMaterial } from './core/gateway-tls.js';
 import { getGatewayListenSnapshot, setGatewayListenAddress } from './core/listen-address.js';
 import { loadEvalSuiteCaps } from './evals/suite-cap-store.js';
@@ -270,7 +271,6 @@ async function main(): Promise<void> {
   let stopPRDetailCollection = async (): Promise<void> => {};
   let stopRunnerModelCatalogCollection = async (): Promise<void> => {};
   let stopProviderAccountsCollection = async (): Promise<void> => {};
-  let shuttingDown = false;
   const releaseIdentityResources = (): void => {
     stopUpstreamInterest();
     stopPRListCollection();
@@ -282,8 +282,8 @@ async function main(): Promise<void> {
   };
   process.once('exit', releaseIdentityResources);
   const shutdown = async (code: number): Promise<void> => {
-    if (shuttingDown) return;
-    shuttingDown = true;
+    if (isGatewayShuttingDown()) return;
+    beginGatewayShutdown();
     stopUpstreamInterest();
     stopPRListCollection();
     try {
