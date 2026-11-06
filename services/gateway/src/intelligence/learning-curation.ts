@@ -26,6 +26,7 @@ export interface CuratedLearning {
   reason: string;
   citations: LearningCitation[];
   instruction?: string;
+  retryable?: boolean;
 }
 export type LearningEvaluator = (
   entries: string[],
@@ -72,10 +73,11 @@ export function setLearningEvaluatorForTest(value?: LearningEvaluator): void {
 
 export const curationDigest = (context: LearningCurationContext) =>
   createHash('sha256').update(JSON.stringify(context)).digest('hex');
-const drop = (reason: string): CuratedLearning => ({
+const drop = (reason: string, retryable = false): CuratedLearning => ({
   outcome: 'drop',
   reason: reason.replace(/\s+/g, ' ').trim().slice(0, 500),
   citations: [],
+  ...(retryable ? { retryable: true } : {}),
 });
 
 function citation(raw: unknown, documents: LearningDocument[]): LearningCitation | undefined {
@@ -101,14 +103,14 @@ function citations(raw: unknown, documents: LearningDocument[]): LearningCitatio
 
 export function validateCuration(raw: unknown, context: LearningCurationContext): CuratedLearning {
   if (!isRecord(raw) || typeof raw.reason !== 'string' || !raw.reason.trim())
-    return drop('Curation response missing a reason');
+    return drop('Curation response missing a reason', true);
   if (raw.outcome === 'drop') return drop(raw.reason);
   if (raw.outcome !== 'keep' || typeof raw.instruction !== 'string' || !raw.instruction.trim())
-    return drop('No diff-checkable instruction established');
+    return drop('No diff-checkable instruction established', true);
   const observed = citations(raw.observed, context.evidence);
   const confirmed = citations(raw.confirmation, context.evidence);
   if (!observed?.some((c) => c.runId === context.runId) || !confirmed)
-    return drop('Observed failure and confirmation lack verified source citations');
+    return drop('Observed failure and confirmation lack verified source citations', true);
   // Repeating the same source line cannot independently confirm itself.
   if (
     confirmed.some(
@@ -116,7 +118,7 @@ export function validateCuration(raw: unknown, context: LearningCurationContext)
     ) ||
     confirmed.every((c) => observed.some((o) => JSON.stringify(o) === JSON.stringify(c)))
   )
-    return drop('Failure citation cannot confirm itself');
+    return drop('Failure citation cannot confirm itself', true);
   const families = observed.map(
     (c) =>
       context.evidence.find((d) => d.runId === c.runId && d.path === c.path)?.familyId ?? c.runId,
@@ -131,15 +133,17 @@ export function validateCuration(raw: unknown, context: LearningCurationContext)
   )
     return drop(
       'No recurrence in two independent tasks/families or blocker-class money/order outcome established',
+      true,
     );
+  if (raw.coverage === 'covered') return drop('Existing rule covers the learning');
   if (raw.coverage !== 'new' && raw.coverage !== 'tighten')
-    return drop('Existing rule covers the learning');
+    return drop('Coverage result unavailable or malformed', true);
   if (raw.coverage === 'tighten') {
     const rule = isRecord(raw.rule)
       ? citation({ ...raw.rule, runId: '' }, context.library)
       : undefined;
     if (!rule || typeof raw.gap !== 'string' || !raw.gap.trim())
-      return drop('No verified existing rule and specific tightening gap');
+      return drop('No verified existing rule and specific tightening gap', true);
   }
   return {
     outcome: 'keep',
@@ -162,7 +166,7 @@ export async function curateLearningEntries(
         ? 'Configured knowledge library unavailable'
         : undefined);
   if (!entries.length) return [];
-  if (unavailable) return entries.map(() => drop(unavailable));
+  if (unavailable) return entries.map(() => drop(unavailable, true));
   try {
     const results: CuratedLearning[] = [];
     for (let start = 0; start < entries.length; start += 12) {
@@ -173,7 +177,7 @@ export async function curateLearningEntries(
     return results;
   } catch (error) {
     return entries.map(() =>
-      drop(`Curation unavailable: ${error instanceof Error ? error.message : String(error)}`),
+      drop(`Curation unavailable: ${error instanceof Error ? error.message : String(error)}`, true),
     );
   }
 }

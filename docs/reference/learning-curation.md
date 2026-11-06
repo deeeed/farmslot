@@ -19,7 +19,8 @@ Unavailable source/library content MUST produce a drop reason, not a guess.
 The existing gateway-owned feedback ledger MUST preserve consumption entries and
 store curation outcomes separately. Each outcome binds the learning hash, source
 run, destination and evidence/library digest to keep/drop, one-line reason and
-verified citations. Repeated identical evaluations are idempotent. A drop MUST
+verified citations. Repeated completed evaluations are idempotent. Infrastructure or malformed
+provider failures are marked retryable and MUST be evaluated again after recovery. A drop MUST
 NOT appear as consumption or create a hold/draft gate. An eligible entry that
 cannot be drafted records the failure and uses the existing hold card. Only eligible drafts
 reach the existing human gate, with their supporting evidence. No automatic

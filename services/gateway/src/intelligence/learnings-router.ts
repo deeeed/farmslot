@@ -543,6 +543,15 @@ export async function routeLearnings(
   const entries = splitLearningsEntries(learnings);
   const buckets = await classifyLearningsEntries(entries);
   const domain = buckets.domain;
+  if (!domain.length && !buckets.unclassified.length)
+    return {
+      buckets,
+      drafts: [],
+      holds: [],
+      drops: [],
+      destination: null,
+      systemContent: buckets.system.length ? reconstructSections(buckets.system) : null,
+    };
   const destination = await resolveKnowledgeDestination(project);
   const context =
     options.context ??
@@ -556,6 +565,7 @@ export async function routeLearnings(
     (ledger.curations ?? [])
       .filter(
         (row) =>
+          !row.retryable &&
           row.runId === context.runId &&
           row.destination === destinationKey &&
           row.contextDigest === digest,
@@ -579,6 +589,7 @@ export async function routeLearnings(
     outcome: result.outcome,
     reason: result.reason,
     instruction: result.instruction,
+    retryable: result.retryable,
     citations: result.citations,
     recordedAt: new Date().toISOString(),
   }));
@@ -605,6 +616,7 @@ export async function routeLearnings(
       destination: destination ? knowledgeDestinationKey(destination) : project,
       contextDigest: digest,
       outcome: 'drop',
+      retryable: true,
       reason,
       citations: [],
       recordedAt: new Date().toISOString(),

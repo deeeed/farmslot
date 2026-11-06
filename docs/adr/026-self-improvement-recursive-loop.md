@@ -262,7 +262,7 @@ lines that change a run, and the engine proposes nothing for noise.
 
 ## Amendment 2 (2026-11-06): Curate before drafting
 
-**Status:** Accepted by the lead, 2026-11-06; implementation pending.
+**Status:** Accepted by the lead, 2026-11-06; implementation in this change.
 
 Retrospective acceptance and explicit improvement requests remain the triggers.
 At either trigger, the shared router automatically checks domain learning claims against

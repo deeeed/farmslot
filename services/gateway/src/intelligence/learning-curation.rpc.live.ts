@@ -84,12 +84,17 @@ test(
     const faux = fauxProvider({ provider: 'openai', models: [{ id: 'curation-fixture' }] });
     (await piModels()).setProvider(faux.provider);
     let curationCalls = 0;
+    let retryInjected = false;
     const response = (context: Context) => {
       const user = context.messages.at(-1);
       assert(user?.role === 'user' && typeof user.content === 'string');
       if (context.systemPrompt?.startsWith('Curate learning')) {
         curationCalls += 1;
         const packet = JSON.parse(user.content);
+        if (!packet.entries[0].includes('provider-owned') && !retryInjected) {
+          retryInjected = true;
+          throw new Error('503 fixture provider cooling down');
+        }
         const observed = packet.documents
           .filter((d: { path: string }) => d.path === 'artifacts/report.md')
           .slice(0, 2)
@@ -239,12 +244,10 @@ test(
       let run;
       do {
         run = (await rpc<RunGetResult>('run.get', { runId })).run;
-        if (
-          run.decisions.some(
-            (d) => d.payload?.kind === 'improvement' && d.payload.analysisStatus === 'no-changes',
-          )
-        )
-          return run;
+        const latest = [...run.decisions]
+          .reverse()
+          .find((d) => d.payload?.kind === 'improvement')?.payload;
+        if (latest?.kind === 'improvement' && latest.analysisStatus === 'no-changes') return run;
         await new Promise((resolve) => setImmediate(resolve));
       } while (Date.now() < deadline);
       throw new Error('Analysis did not finish');
@@ -256,6 +259,16 @@ test(
       false,
     );
     await rpc('run.proposeImprovement', { runId: eligible });
+    const failedRun = await wait(eligible);
+    assert.equal(
+      failedRun.decisions.some((d) => d.type === 'engine_learnings_draft'),
+      false,
+    );
+    assert.equal(
+      (await readFeedbackLedger()).curations?.find((r) => r.runId === eligible)?.retryable,
+      true,
+    );
+    await rpc('run.proposeImprovement', { runId: eligible });
     const keepRun = await wait(eligible);
     const gate = keepRun.decisions.find((d) => d.payload?.kind === 'learnings-draft');
     assert(gate?.payload?.kind === 'learnings-draft');
@@ -263,7 +276,7 @@ test(
     assert.equal(gate.resolvedAt ?? null, null);
     const ledger = await readFeedbackLedger();
     assert.equal(ledger.entries.length, 0);
-    assert.equal(ledger.curations?.filter((r) => r.outcome === 'drop').length, 1);
+    assert.equal(ledger.curations?.filter((r) => r.outcome === 'drop' && !r.retryable).length, 1);
     assert.equal(ledger.curations?.filter((r) => r.outcome === 'keep').length, 1);
     assert.equal(await readFile(path.join(library, 'antipatterns.md'), 'utf8'), rule);
     await rpc('run.resolveDecision', { runId: eligible, decisionId: gate.id, actionId: 'landed' });

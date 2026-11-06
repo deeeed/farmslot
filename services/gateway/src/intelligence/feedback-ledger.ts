@@ -37,6 +37,7 @@ export interface LearningCurationReceipt {
   reason: string;
   citations: LearningCitation[];
   instruction?: string;
+  retryable?: boolean;
   recordedAt: string;
 }
 
@@ -175,7 +176,13 @@ export function appendLearningCurations(
   const write = async () => {
     const ledger = await readFeedbackLedger(file);
     const key = (row: LearningCurationReceipt) =>
-      JSON.stringify([row.sourceKey, row.runId, row.destination, row.contextDigest]);
+      JSON.stringify([
+        row.sourceKey,
+        row.runId,
+        row.destination,
+        row.contextDigest,
+        Boolean(row.retryable),
+      ]);
     const seen = new Set((ledger.curations ?? []).map(key));
     const added = rows.filter((row) => {
       if (seen.has(key(row))) return false;

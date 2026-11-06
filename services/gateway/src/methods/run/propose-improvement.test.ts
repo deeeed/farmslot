@@ -185,14 +185,13 @@ test('resume re-runs an interrupted analysis on the same placeholder and persist
   assert.equal(improvementPayload(run.id, decisionId).analysisAttempts, 2);
 });
 
-test('a resume of an all-domain run emits ONE draft card and never stacks duplicates', async (t) => {
+test('a resume records unroutable domain learning without creating duplicate gates', async (t) => {
   const { run, taskDir } = createTempRunWithTask('Product screens flake on slow seeds.');
   const decisionId = seedAnalyzingPlaceholder(run.id, 1);
 
   const { __setAntipatternDrafterForTest } = await import('../../intelligence/learnings-router.js');
   __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
-  // example-mobile-farm has no vars.antipattern_repo_key, so the domain entry
-  // becomes a teaching hold — still exactly one learnings-draft card.
+  // No canonical destination: record the drop, without a human gate.
   __setImprovementAnalyzerForTest(async () => {
     assert.fail('analyzer must not run when nothing classifies system');
   });

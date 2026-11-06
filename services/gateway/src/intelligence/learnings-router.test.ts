@@ -12,7 +12,8 @@ import { farmslotRoot } from '../fleet/state.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import { feedbackLedgerPath, readFeedbackLedger } from './feedback-ledger.js';
-import { installCurationFixture } from './learning-curation.test-support.js';
+import { setLearningEvaluatorForTest } from './learning-curation.js';
+import { installCurationFixture, keptCuration } from './learning-curation.test-support.js';
 import { setLearningContextLoaderForTest } from './learning-curation-context.js';
 import {
   __setAntipatternDrafterForTest,
@@ -153,7 +154,7 @@ test('AC1: a mixed fixture yields exactly one system arm and one domain draft â€
   assert.match(routed.drafts[0]!.sourceEntry, /Performance\.getMetrics/);
 });
 
-test('AC2: a domain entry with no configured destination becomes a teaching hold, not a guessed path', async (t) => {
+test('a domain entry with no configured destination is dropped without guessing a path', async (t) => {
   setupProject({});
   __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
   __setAntipatternDrafterForTest(async () => {
@@ -218,7 +219,7 @@ test('knowledge destination comes from config only: explicit vars win, static_re
   );
 });
 
-test('AC3: a draft the drafter cannot shape faithfully is held, and slugs are validated', async (t) => {
+test('an eligible draft that cannot be shaped faithfully remains an eligible hold', async (t) => {
   setupProject({ repoKey: 'testrepo' });
   __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
   __setAntipatternDrafterForTest(async (entries) =>
@@ -388,11 +389,11 @@ test('approval gating: "landed" binds the family feedback to the draft in the le
     2,
   );
   assert.equal(ledger.entries.filter((entry) => entry.sourceKey.startsWith('learning:')).length, 2);
-  // Re-analysing the same learnings holds the landed lesson instead of drafting it again.
+  // Re-analysing the same learnings drops the landed lesson instead of drafting it again.
   const again = await routeLearnings(TEST_PROJECT, '- unknown balance rendered as zero\n');
   assert.equal(again.drafts.length, 0);
   assert.equal(again.drops?.length, 1);
-  // The hold names the most recent consumption of that lesson (the multi-draft card).
+  // The drop names the existing consumption of that lesson.
   assert.match(again.drops![0]!.reason, /Already recorded in .*unknown-balance-as-zero/);
   // The same lesson text for a project whose library is a different repo is not held.
   writeFileSync(
@@ -562,3 +563,54 @@ test('F429: an uncorroborated worker entry cannot become a draft or human gate',
   t.after(() => cleanupRun(run.id));
   assert.equal(await emitLearningsDraftDecision(run.id, routed), null);
 });
+
+for (const failure of ['transport', 'malformed'] as const)
+  test(`provider ${failure} failure retries unchanged evidence, then reuses success`, async (t) => {
+    setupProject({ repoKey: 'testrepo' });
+    __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
+    __setAntipatternDrafterForTest(async (entries) =>
+      entries.map(() => ({
+        id: 'retry-confirmed-learning',
+        symptom: 'Wrong amount',
+        cause: 'Missing check',
+        action: 'Check amount',
+      })),
+    );
+    const root = mkdtempSync(path.join(tmpdir(), 'curation-retry-'));
+    const previous = process.env.FARMSLOT_FEEDBACK_LEDGER;
+    process.env.FARMSLOT_FEEDBACK_LEDGER = path.join(root, 'ledger.json');
+    t.after(() => {
+      if (previous === undefined) delete process.env.FARMSLOT_FEEDBACK_LEDGER;
+      else process.env.FARMSLOT_FEEDBACK_LEDGER = previous;
+      __setLearningsClassifierForTest(null);
+      __setAntipatternDrafterForTest(null);
+      teardownProject();
+      rmSync(root, { recursive: true, force: true });
+    });
+    let calls = 0;
+    setLearningEvaluatorForTest(async (entries, context) => {
+      if (++calls === 1) {
+        if (failure === 'transport') throw new Error('503 cooling down');
+        return entries.map(() => ({ outcome: 'keep' }));
+      }
+      return entries.map(() => keptCuration(context));
+    });
+    const first = await routeLearnings(TEST_PROJECT, '- Confirmed recurring order failure', {
+      runId: 'retry-run',
+    });
+    assert.equal(first.drafts.length, 0);
+    const second = await routeLearnings(TEST_PROJECT, '- Confirmed recurring order failure', {
+      runId: 'retry-run',
+    });
+    assert.equal(second.drafts.length, 1, 'recovering the provider must retry the same packet');
+    assert.equal(calls, 2);
+    const third = await routeLearnings(TEST_PROJECT, '- Confirmed recurring order failure', {
+      runId: 'retry-run',
+    });
+    assert.equal(third.drafts.length, 1);
+    assert.equal(calls, 2, 'a completed evaluation is reused');
+    const receipts = (await readFeedbackLedger()).curations ?? [];
+    assert.equal(receipts.length, 2);
+    assert.equal(receipts[0]?.retryable, true);
+    assert.equal(receipts[1]?.outcome, 'keep');
+  });
