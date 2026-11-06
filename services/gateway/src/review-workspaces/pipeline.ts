@@ -1001,9 +1001,9 @@ async function executeOwnedReviewWorkspaceStep(
           command?.outcome === 'interrupted' ||
           ['closed', 'failed'].includes(snapshot.session.state)
         ) {
-          throw new GatewayMethodError(
-            'REVIEW_WORKER_STOPPED',
+          throw new BlockedRunError(
             'Reviewer stopped before producing a valid result for the frozen head',
+            'review-worker-stopped',
           );
         }
         if (command?.outcome === 'completed' && !completion) {
