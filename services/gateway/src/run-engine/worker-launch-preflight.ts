@@ -251,7 +251,12 @@ export async function admitWorkerLaunch(
             };
           const observation = parseToolchainObservation(result);
           return observation
-            ? checkToolchainObservation(observation, input.vars.slotId, pins !== null)
+            ? checkToolchainObservation(
+                observation,
+                input.vars.slotId,
+                pins !== null,
+                initial?.status === 'dispatching' ? initial.flowType : undefined,
+              )
             : { status: 'unverified', detail: 'Toolchain observation is invalid.' };
         },
       },
