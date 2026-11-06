@@ -601,6 +601,17 @@ export async function recoverInflightPublicationReviews(
   if (options.shouldAbort?.()) return { recoveredIds: [], terminalErrors: [] };
   let run = getRun(runId);
   if (!run) return { recoveredIds: [], terminalErrors: [] };
+  // Validation and result persistence can precede accounting at the crash boundary.
+  // Reconcile before complete, already-ingested contexts are excluded from recovery.
+  for (const ctx of run.agentContexts ?? []) {
+    if (ctx.role !== 'review' || !ctx.reviewResultValidatedAt) continue;
+    const roundId = reviewContextRoundId(ctx);
+    if (!roundId || getRun(runId)?.reviewRoundSettlements?.[roundId]?.kind === 'verdict') continue;
+    if (options.shouldAbort?.()) return { recoveredIds: [], terminalErrors: [] };
+    await recordReviewRoundVerdict(runId, roundId, ctx);
+  }
+  run = getRun(runId);
+  if (!run) return { recoveredIds: [], terminalErrors: [] };
   let reviews = run.engineState?.publishGate?.reviews ?? [];
   const settledContexts = (run.agentContexts ?? []).filter((ctx) =>
     reviewerContextIsSettled(ctx, reviews),

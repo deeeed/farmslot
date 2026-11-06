@@ -105,13 +105,26 @@ export function reviewRoundAdmissionIds(
   };
   for (const review of run.engineState?.publishGate?.reviews ?? []) {
     if (review.verdict === 'skipped') continue;
+    // Older rows kept the publication row id, while their context kept the lineage.
+    const lineage =
+      review.session?.reviewId ??
+      (review.reviewerSessionId
+        ? run.agentContexts?.find(
+            (context) =>
+              context.role === 'review' &&
+              context.runId === run.id &&
+              context.artifactScope === review.id &&
+              context.runnerSessionId === review.reviewerSessionId,
+          )?.reviewId
+        : undefined) ??
+      review.id;
     for (const attempt of review.attempts?.length ? review.attempts : [review]) {
       if (
         verdictOnly
           ? ['pass', 'issues'].includes(attempt.verdict ?? '')
           : attempt.verdict !== 'skipped'
       )
-        add(review.session?.reviewId ?? review.id, attempt, review.startedAt);
+        add(lineage, attempt, review.startedAt);
     }
   }
   const pipeline = run.steps?.find((step) => step.name === 'review')?.outputs;
@@ -180,10 +193,16 @@ export function reviewRoundSettlementsForRun(
   const states = { ...run.reviewRoundSettlements };
   const admitted = new Set(reviewRoundAdmissionIds(run));
   for (const id of reviewRoundAdmissionIds(run, true)) {
-    if (!admitted.has(id) || states[id]) continue;
+    if (
+      !admitted.has(id) ||
+      states[id]?.kind === 'verdict' ||
+      states[id]?.kind === 'infrastructure-fallback'
+    )
+      continue;
     const validated = run.agentContexts?.find(
       (context) =>
-        (context.reviewResultValidatedAt || context.completedAt) &&
+        context.role === 'review' &&
+        context.reviewResultValidatedAt &&
         [context.startedAt, context.attemptStartedAt].some(
           (at) =>
             at &&
@@ -194,6 +213,9 @@ export function reviewRoundSettlementsForRun(
             ) === id,
         ),
     );
+    // A validated result survives a crash before its pending/refund disposition is updated.
+    // A copied legacy row alone must not override an explicit disposition.
+    if (states[id] && !validated?.reviewResultValidatedAt) continue;
     states[id] = {
       kind: 'verdict',
       reason: 'Recorded reviewer verdict',

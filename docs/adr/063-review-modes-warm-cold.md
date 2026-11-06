@@ -615,7 +615,7 @@ identity and review-budget rules are unchanged.
 
 An admission reserves review capacity before launch but spends no round. Its existing disposition records `pending`; validated result ingestion records `verdict` only after the reviewer result is persisted. Startup acknowledgement and session recovery do not count as verdicts. A missing failure settlement cannot turn an unreturned launch into a paid round. Failed outcomes and their independent automatic-launch cap remain unchanged, including the free infrastructure fallback.
 
-Retained validated contexts and recorded review results preserve historical charges, while failed/cancelled records alone do not. The same opaque receipt IDs, admission lock, scope owners, extensions and retirement copies apply. Pending live reviewers reserve capacity so parallel launchers cannot over-admit the final slot. No operator budget or live run is rewritten by this change.
+Retained validated contexts and recorded review results preserve historical charges, while failed/cancelled records alone do not. The same opaque receipt IDs, admission lock, scope owners, extensions and retirement copies apply. Pending live reviewers reserve capacity so parallel launchers cannot over-admit the final slot. No operator grant is changed; reconciliation uses only gateway-validated result history.
 
 ### Consequences
 

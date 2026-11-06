@@ -6,6 +6,7 @@ import test, { type TestContext } from 'node:test';
 
 import {
   type ReadyGatePayload,
+  reviewRoundBudgetForRun,
   reviewRoundBudgetLabel,
   type ReviewStatus,
   type Run,
@@ -21,6 +22,7 @@ import {
   createRun,
   deleteRun,
   getRun,
+  persistRunNow,
   runsDirectory,
   updateRun,
 } from '../runs/store.js';
@@ -793,4 +795,72 @@ test('a saved terminal workspace reviewer retains its reservation across restart
   });
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 4);
   await assert.rejects(admitReviewRound(run.id, 'duplicate'), { code: 'REVIEW_ROUND_PENDING' });
+});
+
+test('a persisted validated verdict is charged once after reload even before accounting finishes', async (t) => {
+  const run = fixture(t);
+  for (let index = 0; index < 4; index++) await reviewedRound(run.id, `earlier-${index}`);
+  const startedAt = new Date().toISOString();
+  const id = reviewRoundAdmissionId('interrupted-accounting', 1, startedAt);
+  await admitReviewRound(run.id, id);
+  updateRun(run.id, {
+    agentContexts: [
+      {
+        id: 'interrupted-accounting',
+        runId: run.id,
+        slotId: null,
+        role: 'review',
+        label: 'Review',
+        status: 'complete',
+        reviewId: 'interrupted-accounting',
+        reviewLoopNumber: 1,
+        startedAt,
+        reviewResultValidatedAt: new Date().toISOString(),
+      },
+    ],
+  });
+  await persistRunNow(getRun(run.id)!);
+  const restored: Run = JSON.parse(
+    await readFile(path.join(runsDirectory(), `${run.id}.json`), 'utf8'),
+  );
+  assert.equal(restored.reviewRoundSettlements?.[id]?.kind, 'pending');
+  assert.equal(reviewRoundBudgetForRun(restored).used, 5);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 5);
+  await recordReviewRoundVerdict(run.id, id);
+  const stamp = getRun(run.id)!.reviewRoundSettlements?.[id]?.at;
+  await recordReviewRoundVerdict(run.id, id);
+  assert.equal(getRun(run.id)!.reviewRoundSettlements?.[id]?.at, stamp);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 5);
+});
+
+test('a closed native session releases pending capacity despite a stale working signal', async (t) => {
+  const run = fixture(t);
+  for (let index = 0; index < 4; index++) await reviewedRound(run.id, `completed-${index}`);
+  const startedAt = new Date().toISOString();
+  await admitReviewRound(run.id, reviewRoundAdmissionId('closed-review', 1, startedAt));
+  updateRun(run.id, {
+    agentContexts: [
+      {
+        id: 'closed-review',
+        runId: run.id,
+        slotId: null,
+        role: 'review',
+        label: 'Review',
+        status: 'working',
+        reviewId: 'closed-review',
+        reviewLoopNumber: 1,
+        startedAt,
+        nativeSession: {
+          sessionId: 'session',
+          executionNodeId: 'mini',
+          ownerPrincipalId: 'owner',
+          leaseId: 'lease',
+          commandId: 'command',
+          closedAt: new Date().toISOString(),
+        },
+      },
+    ],
+  });
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 4);
+  await admitReviewRound(run.id, 'replacement-for-closed');
 });

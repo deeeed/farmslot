@@ -25,7 +25,8 @@ await import('../runtime/mock-pty.test-support.js');
 const { recoverInflightPublicationReviews } = await import('./recover-inflight-reviews.js');
 const { collectRunGateReadiness } = await import('./gate-prerequisites.js');
 const { reviewResultArtifactPath } = await import('../review/terminal-result.js');
-const { createRun, getRun, updateRun } = await import('../runs/store.js');
+const { createRun, getRun, updateRun, persistRunNow, runsDirectory } =
+  await import('../runs/store.js');
 const { makeReadyGatePackage, deleteTestRunIfPresent } = await import('./test-fixtures.js');
 const { copyWorkerArtifacts } = await import('./review-artifacts.js');
 const { readRetainedRunText } = await import('../run-completion/retained-artifacts.js');
@@ -324,13 +325,26 @@ test('an ingested PASS regains its launch snapshot and exact structured result w
 
 test('a settled attempt whose verdict recovery ingests counts again', async (t) => {
   const f = await fixture(t);
+  // No prior verdict was accepted for this interrupted attempt.
+  const pending = getRun(f.run.id)!;
+  updateRun(f.run.id, {
+    engineState: {
+      ...pending.engineState,
+      publishGate: {
+        ...pending.engineState?.publishGate,
+        reviews: [
+          { ...f.existing, verdict: 'failed', recoveryContinuationPending: true, attempts: [] },
+        ],
+      },
+    },
+  });
   // The reviewer's launch reply was lost, so its attempt was settled; it went on to finish.
   const round = reviewContextRoundId(f.ctx)!;
   await admitReviewRound(f.run.id, round);
   await settleReviewRoundNoVerdict(f.run.id, round, 'Native reviewer launch is unconfirmed');
   const before = await runReviewRoundBudget(getRun(f.run.id)!);
   assert.equal(before.noVerdict, 1);
-  assert.deepEqual((await f.recover()).repairedIds, ['review-2']);
+  assert.ok((await f.recover()).recoveredIds.includes('review-2'));
   assert.equal(getRun(f.run.id)!.reviewRoundSettlements?.[round]?.kind, 'verdict');
   const after = await runReviewRoundBudget(getRun(f.run.id)!);
   assert.deepEqual([after.used, after.noVerdict], [before.used + 1, 0]);
@@ -338,6 +352,19 @@ test('a settled attempt whose verdict recovery ingests counts again', async (t) 
 
 test('recovered farm fallback verdict preserves its free admission', async (t) => {
   const f = await fixture(t);
+  // No prior verdict was accepted for this interrupted attempt.
+  const pending = getRun(f.run.id)!;
+  updateRun(f.run.id, {
+    engineState: {
+      ...pending.engineState,
+      publishGate: {
+        ...pending.engineState?.publishGate,
+        reviews: [
+          { ...f.existing, verdict: 'failed', recoveryContinuationPending: true, attempts: [] },
+        ],
+      },
+    },
+  });
   f.ctx.reviewFallback = {
     reason: 'session-unavailable',
     detail: 'the retained reviewer could not resume',
@@ -353,7 +380,7 @@ test('recovered farm fallback verdict preserves its free admission', async (t) =
     'infrastructure-fallback',
   );
   const before = await runReviewRoundBudget(getRun(f.run.id)!);
-  assert.deepEqual((await f.recover()).repairedIds, ['review-2']);
+  assert.deepEqual((await f.recover()).recoveredIds, ['review-2']);
   assert.equal(getRun(f.run.id)!.reviewRoundSettlements?.[round]?.kind, 'infrastructure-fallback');
   const after = await runReviewRoundBudget(getRun(f.run.id)!);
   assert.deepEqual([after.used, after.noVerdict], [before.used, 1]);
@@ -423,4 +450,40 @@ test('recovered issues mark their launch inputs reviewed without replacing the p
   assert.equal(state.publishGate?.reviews?.[0]?.verdict, 'issues');
   assert.equal(state.reviewedInputs?.fingerprint, passing);
   assert.equal(state.reviewedInputs?.rerunFor, launched);
+});
+
+test('restart after result persistence repairs accounting before skipping an already-ingested verdict', async (t) => {
+  const f = await fixture(t);
+  const round = reviewContextRoundId(f.ctx)!;
+  await admitReviewRound(f.run.id, round);
+  await f.recover();
+  const current = getRun(f.run.id)!;
+  updateRun(f.run.id, {
+    agentContexts: current.agentContexts?.map((context) =>
+      context.id === f.ctx.id
+        ? {
+            ...context,
+            reviewResultValidatedAt: context.reviewResultValidatedAt ?? f.ctx.completedAt,
+          }
+        : context,
+    ),
+    reviewRoundSettlements: {
+      ...current.reviewRoundSettlements,
+      [round]: { kind: 'pending', reason: 'Interrupted before accounting', at: f.ctx.startedAt! },
+    },
+  });
+  await persistRunNow(getRun(f.run.id)!);
+  const saved: typeof current = JSON.parse(
+    await readFile(path.join(runsDirectory(), `${f.run.id}.json`), 'utf8'),
+  );
+  assert.equal(saved.reviewRoundSettlements?.[round]?.kind, 'pending');
+  assert.deepEqual((await f.recover()).recoveredIds, []);
+  const restored: typeof current = JSON.parse(
+    await readFile(path.join(runsDirectory(), `${f.run.id}.json`), 'utf8'),
+  );
+  assert.equal(restored.reviewRoundSettlements?.[round]?.kind, 'verdict');
+  assert.equal((await runReviewRoundBudget(restored)).used, 1);
+  const stamp = restored.reviewRoundSettlements?.[round]?.at;
+  await f.recover();
+  assert.equal(getRun(f.run.id)!.reviewRoundSettlements?.[round]?.at, stamp);
 });

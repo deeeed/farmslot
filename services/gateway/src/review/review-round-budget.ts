@@ -129,8 +129,21 @@ function settlementsFor(runs: readonly Run[]): Record<string, ReviewRoundSettlem
     }
   // A copied legacy result cannot override an explicit disposition from its owner.
   for (const run of runs)
-    for (const [id, value] of Object.entries(reviewRoundSettlementsForRun(run)))
-      settlements[id] ??= value;
+    for (const [id, value] of Object.entries(reviewRoundSettlementsForRun(run))) {
+      const original = run.reviewRoundSettlements?.[id];
+      const reconciled =
+        original &&
+        original.kind !== 'verdict' &&
+        original.kind !== 'infrastructure-fallback' &&
+        value.kind === 'verdict';
+      if (
+        !settlements[id] ||
+        (reconciled &&
+          settlements[id]?.kind !== 'verdict' &&
+          settlements[id]?.kind !== 'infrastructure-fallback')
+      )
+        settlements[id] = value;
+    }
   return settlements;
 }
 
@@ -281,12 +294,10 @@ function refuseUnavailableRounds(run: Run, scope: readonly Run[]): void {
             !isTerminalRunStatus(owner.status) &&
             pendingStartups.get(startupKey(owner.id, id)) === (owner.engineState?.generation ?? 0),
         )) ||
-      contexts.some(
-        (context) =>
-          ['launching', 'working', 'waiting'].includes(context.status) ||
-          (!!context.nativeSession &&
-            !context.nativeSession.closedAt &&
-            !context.nativeSession.releasedAt),
+      contexts.some((context) =>
+        context.nativeSession
+          ? !context.nativeSession.closedAt && !context.nativeSession.releasedAt
+          : ['launching', 'working', 'waiting'].includes(context.status),
       )
     );
   }).length;
@@ -457,35 +468,37 @@ export async function recordReviewRoundVerdict(
   runId: string,
   attemptId: string,
   review?: Pick<AgentContext, 'reviewFallback'>,
+  recordResult?: () => void,
 ): Promise<void> {
   if (!getRun(runId)) return;
   return withBudget(runId, async (_run, scope) => {
+    // A workspace result and its disposition must reach the same durable snapshot.
+    recordResult?.();
+    const admissions = admissionsFor(scope);
     const settlements = settlementsFor(scope);
     const settled = settlements[attemptId];
-    if (
+    const alreadyRecorded =
       settled?.kind === 'verdict' &&
       scope.some(
         (run) =>
           run.reviewRoundSettlements?.[attemptId]?.kind === 'verdict' &&
           run.reviewRoundSettlements[attemptId]?.at === settled.at,
-      )
-    )
-      return;
-    // A farm replacement shares the failed WARM launch's admission. Its valid
-    // verdict cannot turn that explicitly free replacement back into a paid round.
-    if (
-      admissionsFor(scope).includes(attemptId) &&
-      !(
-        settled?.kind === 'infrastructure-fallback' &&
-        review?.reviewFallback?.reason === 'session-unavailable'
-      )
-    ) {
-      settlements[attemptId] = {
-        kind: 'verdict',
-        reason: 'Reviewer verdict recorded',
-        at: new Date().toISOString(),
-      };
-      await persistScopedRounds(scope, admissionsFor(scope), settlements);
+      );
+    if (alreadyRecorded && !recordResult) return;
+    const freeFallback =
+      settled?.kind === 'infrastructure-fallback' &&
+      review?.reviewFallback?.reason === 'session-unavailable';
+    if (admissions.includes(attemptId) && !freeFallback)
+      settlements[attemptId] =
+        settled?.kind === 'verdict'
+          ? settled
+          : {
+              kind: 'verdict',
+              reason: 'Reviewer verdict recorded',
+              at: new Date().toISOString(),
+            };
+    if (recordResult || (admissions.includes(attemptId) && !freeFallback)) {
+      await persistScopedRounds(scope, admissions, settlements);
       releasePendingStartup(scope, attemptId);
     }
   });

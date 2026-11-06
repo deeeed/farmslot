@@ -170,9 +170,37 @@ export async function recordWorkspaceReviewCompletion(
       }`,
     );
   }
-  const run = currentWorkspaceRun(runId, generation);
-  reviewResult = bindWorkspaceReviewResult(run, reviewResult);
-  const reviewer = run.agentContexts?.find((context) => context.id === 'review');
+  const current = currentWorkspaceRun(runId, generation);
+  await recordReviewRoundVerdict(
+    runId,
+    monitoredWorkspaceReviewRoundId(current, generation),
+    undefined,
+    () => {
+      const run = currentWorkspaceRun(runId, generation);
+      reviewResult = bindWorkspaceReviewResult(run, reviewResult);
+      const endedAt = new Date().toISOString();
+      updateRun(runId, {
+        reviewResult,
+        ...(run.reviewWorkspace && !run.reviewWorkspace.retainedAt
+          ? {
+              reviewWorkspace: {
+                ...run.reviewWorkspace,
+                retainedAt: endedAt,
+                retainedUntil: new Date(
+                  Date.parse(endedAt) +
+                    (run.reviewWorkspace.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS) *
+                      86400000,
+                ).toISOString(),
+              },
+            }
+          : {}),
+        metrics: withSubtaskMetrics(run.metrics, subtasks),
+      });
+    },
+  );
+  const reviewer = currentWorkspaceRun(runId, generation).agentContexts?.find(
+    (context) => context.id === 'review',
+  );
   if (reviewResult.session?.sessionId && reviewer) {
     await upsertAgentContext(runId, 'review', {
       id: reviewer.id,
@@ -182,29 +210,7 @@ export async function recordWorkspaceReviewCompletion(
       reviewResultValidatedAt: new Date().toISOString(),
     });
   }
-  const endedAt = new Date().toISOString();
-  const updated = updateRun(runId, {
-    reviewResult,
-    ...(run.reviewWorkspace && !run.reviewWorkspace.retainedAt
-      ? {
-          reviewWorkspace: {
-            ...run.reviewWorkspace,
-            retainedAt: endedAt,
-            retainedUntil: new Date(
-              Date.parse(endedAt) +
-                (run.reviewWorkspace.retentionDays ?? DEFAULT_REVIEW_WORKSPACE_RETENTION_DAYS) *
-                  86400000,
-            ).toISOString(),
-          },
-        }
-      : {}),
-    metrics: withSubtaskMetrics(currentWorkspaceRun(runId, generation).metrics, subtasks),
-  });
-  await persistRunNow(updated, 'workspace review result');
-  // A monitor replay watches the same attempt; its verdict counts even if the
-  // superseded monitor settled that receipt (ADR-063 Amendment 2).
-  await recordReviewRoundVerdict(runId, monitoredWorkspaceReviewRoundId(updated, generation));
-  return updated;
+  return currentWorkspaceRun(runId, generation);
 }
 
 async function admittedRun(runId: string, generation: number) {
