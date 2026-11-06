@@ -59,6 +59,8 @@ export interface ProjectRecipeHost {
   cli: CliOptions;
   invocation?: ParsedArgs;
   signal?: AbortSignal;
+  /** Abort this command, including inherited setup helpers and provider work. */
+  abort(reason?: unknown): void;
   finalize(): Promise<void>;
 }
 
@@ -99,7 +101,11 @@ export function withProjectRecipeHostContext<T>(
       isRecipeExecution(options.command, options.options) ||
       (options.command === 'doctor' && options.options?.fix === true) ||
       ['launch', 'reload', 'stop', 'logs'].includes(options.command ?? '');
-    const execute = async (signal?: AbortSignal): Promise<T> => {
+    const execute = async (parentSignal?: AbortSignal): Promise<T> => {
+      const commandController = new AbortController();
+      const signal = parentSignal
+        ? AbortSignal.any([parentSignal, commandController.signal])
+        : undefined;
       const previousHost = harnessHost();
       const previousContext = harnessContext();
       const previousAdapters = harnessAdapters();
@@ -250,6 +256,7 @@ export function withProjectRecipeHostContext<T>(
               cli: commandOptions,
               ...(invocation ? { invocation: { ...invocation, options: commandOptions } } : {}),
               signal,
+              abort: (reason) => commandController.abort(reason),
               finalize,
             }),
           );

@@ -197,6 +197,8 @@ export interface ProjectRecipeCheck {
 
 export interface ProjectRecipeConfig {
   provider: ProjectRecipeProvider;
+  /** Runtime capability held by hosted full-run recording commands, including fixture setup. */
+  recordingCapability?: string;
   libraries?: ProjectRecipeLibrary[];
   checks?: ProjectRecipeCheck[];
   adapter?: string;
@@ -242,9 +244,15 @@ export function validateProjectRecipeConfig(value: unknown): asserts value is Pr
     if (value.provider[field] !== undefined && !string(value.provider[field]))
       fail(`provider.${field}`);
   }
-  for (const field of ['adapter', 'app', 'domain', 'template', 'manifest']) {
+  for (const field of ['adapter', 'app', 'domain', 'template', 'manifest', 'recordingCapability']) {
     if (value[field] !== undefined && !string(value[field])) fail(field);
   }
+  if (
+    value.recordingCapability !== undefined &&
+    (typeof value.recordingCapability !== 'string' ||
+      !/^[a-z][a-z0-9.-]*$/.test(value.recordingCapability))
+  )
+    fail('recordingCapability');
   if (value.checks !== undefined) {
     if (!Array.isArray(value.checks) || value.checks.length === 0) return fail('checks');
     const refs = new Set<string>();

@@ -37,3 +37,13 @@ for (const checks of [
     );
   });
 }
+
+test('recording capability is an explicit runtime capability identifier', () => {
+  const provider = { module: './provider.mjs' };
+  validateProjectRecipeConfig({ provider, recordingCapability: 'shared-testnet' });
+  for (const recordingCapability of ['', ' gate ', '../gate', 2, null])
+    assert.throws(
+      () => validateProjectRecipeConfig({ provider, recordingCapability }),
+      /recordingCapability/,
+    );
+});

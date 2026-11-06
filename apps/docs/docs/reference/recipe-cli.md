@@ -400,6 +400,7 @@ Options:
   --recording-reason <text>      Explain an explicit recording opt-out
   --source-trust <trust>         Explicit recipe source trust
   --source-kind <kind>           Explicit recipe source kind
+  --run <runId>                  Owning run for declared recording resource admission
   --source-name <name>           Recipe source name
   --source-digest <digest>       Recipe source digest
   --approve-plan <digest>        Approve an exact execution plan
@@ -579,6 +580,7 @@ Options:
   --recording-reason <text>      Explain an explicit recording opt-out
   --source-trust <trust>         Explicit recipe source trust
   --source-kind <kind>           Explicit recipe source kind
+  --run <runId>                  Owning run for declared recording resource admission
   --source-name <name>           Recipe source name
   --source-digest <digest>       Recipe source digest
   --approve-plan <digest>        Approve an exact execution plan

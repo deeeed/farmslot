@@ -46,6 +46,8 @@ export interface RuntimeCapabilityResourceClaim {
   binding?: 'recording-target';
   id: string;
   access: RuntimeCapabilitySharePolicy;
+  /** Maximum simultaneous leases for a shared claim; absent means unlimited. */
+  capacity?: number;
   kind?: 'port' | 'device' | 'process' | 'service' | 'other';
   /**
    * Absent means `slot`. Normalization fills it in, so a catalog entry always
@@ -245,6 +247,11 @@ export interface RuntimeCapabilityLeaseHealth {
 
 export interface RuntimeCapabilityLease {
   id: string;
+  /** Server-derived command lifetime; omitted leases follow the run resource plan. */
+  purpose?: 'recording';
+  invocationId?: string;
+  /** Invocation-scoped requirement retained for audit without changing the run plan. */
+  proofRequirement?: RuntimeCapabilityProofRequirement;
   slotId: string;
   project: string;
   capabilityId: string;
@@ -302,6 +309,8 @@ export interface RuntimeCapabilityLeaseClaim {
   id: string;
   access: RuntimeCapabilitySharePolicy;
   scope: RuntimeCapabilityClaimScope;
+  /** Frozen shared-claim limit from the admitted provider. */
+  capacity?: number;
 }
 
 /**
