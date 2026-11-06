@@ -553,7 +553,10 @@ export async function deliverPromptToRetainedRunnerSession(
 ): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
   const deliver = getRunnerDefinition(runner).deliverPrompt;
-  if (deliver) return deliver(options);
+  if (deliver) {
+    const delivered = await deliver(options);
+    if (delivered) return delivered;
+  }
   const handoff = runnerRetainedSessionHandoff(runner);
   if (handoff === 'resume-with-prompt') {
     const sessionId = options.sessionId?.trim();
@@ -873,7 +876,10 @@ export async function deliverPromptToLiveRunner(
 ): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
   const deliver = getRunnerDefinition(runner).deliverPrompt;
-  if (deliver) return deliver(options);
+  if (deliver) {
+    const delivered = await deliver(options);
+    if (delivered) return delivered;
+  }
   const handoff = options.handoff ?? runnerRetainedSessionHandoff(runner);
   if (handoff === 'argv-relaunch') {
     return deliverPromptWithRetainedFallback(options);

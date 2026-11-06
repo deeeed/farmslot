@@ -44,14 +44,16 @@ async function session(vars: SlotVars, target: string) {
 
 export async function deliverScriptedPrompt(
   options: RunnerSessionReactivationOptions,
-): Promise<RetainedSessionDeliveryResult> {
+): Promise<RetainedSessionDeliveryResult | null> {
   const current = await session(options.vars, options.target);
-  if (!current || !options.taskDir)
+  // Command workers and finite scenarios keep the ordinary delivery contract.
+  if (!current) return null;
+  if (!options.taskDir)
     return {
       delivered: false,
       disposition: 'hold',
       retryable: false,
-      reason: 'No scripted interactive session',
+      reason: 'Scripted prompt needs a task directory',
     };
   if (
     current.acknowledged &&

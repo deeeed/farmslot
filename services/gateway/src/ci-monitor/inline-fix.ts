@@ -514,10 +514,11 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   // rendered TUI text is never launch or delivery evidence.
   const verifyDeadline =
     Date.now() +
-    (getRunnerDefinition(runner).feedbackTiming?.inactivityMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
+    (getRunnerDefinition(runner, run?.scripted).feedbackTiming?.inactivityMs ??
+      RUNNER_LAUNCH_READY_TIMEOUT_MS);
   while (Date.now() < verifyDeadline) {
     await new Promise((r) =>
-      setTimeout(r, getRunnerDefinition(runner).feedbackTiming?.pollMs ?? 2000),
+      setTimeout(r, getRunnerDefinition(runner, run?.scripted).feedbackTiming?.pollMs ?? 2000),
     );
     if (await isWorkerSessionAlive(slotId, runner, runId)) return true;
   }
@@ -1089,8 +1090,8 @@ async function attemptInlineCIFix(
           );
           const retry = await retryDeferredFixDelivery({
             runId,
-            retryIntervalMs: getRunnerDefinition(runner).feedbackTiming?.retryMs,
-            retryWindowMs: getRunnerDefinition(runner).feedbackTiming?.retryWindowMs,
+            retryIntervalMs: getRunnerDefinition(runner, run?.scripted).feedbackTiming?.retryMs,
+            retryWindowMs: getRunnerDefinition(runner, run?.scripted).feedbackTiming?.retryWindowMs,
             target: workerTarget,
             send: async (retryTarget) => {
               const retryDelivery = await sendCiFixNudge({
@@ -1255,7 +1256,7 @@ async function attemptInlineCIFix(
       };
     };
 
-    const feedbackTiming = getRunnerDefinition(runner).feedbackTiming;
+    const feedbackTiming = getRunnerDefinition(runner, run?.scripted).feedbackTiming;
     const inactivityMs = feedbackTiming?.inactivityMs ?? INLINE_FIX_TIMEOUT_MS;
     let deadline = Date.now() + inactivityMs;
     const hardDeadline =

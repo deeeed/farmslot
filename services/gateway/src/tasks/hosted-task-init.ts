@@ -66,7 +66,7 @@ export function hostedTaskRequest(slotId: string, input: HostedTaskInput): strin
   const request = JSON.stringify({
     version: 1,
     slotId,
-    runner: input.runner,
+    ...(input.runner === 'scripted' ? { runner: 'scripted' } : {}),
     binding: input.binding,
     task: input.task,
     template: {

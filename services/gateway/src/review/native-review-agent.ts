@@ -38,11 +38,7 @@ import {
 } from '../runners/native/worker-control.js';
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
-import {
-  getRunnerDefinition,
-  PromptDeliveryUncertainError,
-  runnerDefaultSafetyTier,
-} from '../runners/registry.js';
+import { PromptDeliveryUncertainError, runnerDefaultSafetyTier } from '../runners/registry.js';
 import {
   clearRunActiveTaskFile,
   getAllRuns,
@@ -616,12 +612,7 @@ async function runNativeReviewAttempt(
     const projectVars = await loadProjectVars(run.project);
     const configuredInactivityMinutes =
       projectVars.projectJson.review?.review_inactivity_timeout_min;
-    const inactivityTimeoutMs =
-      configuredInactivityMinutes !== undefined
-        ? configuredInactivityMinutes * 60_000
-        : (getRunnerDefinition(run.metrics.runner ?? '').reviewInactivityMs?.(
-            run.recoveryAttempts?.some((attempt) => attempt.stepName === 'review') ?? false,
-          ) ?? 10 * 60_000);
+    const inactivityTimeoutMs = (configuredInactivityMinutes ?? 10) * 60_000;
     const existingTerminal = recovering
       ? await probeWorkerSignalForRun(runId, vars.slotId, context!)
       : null;
@@ -805,8 +796,7 @@ async function runNativeReviewAttempt(
     let deadline = monitoringStartedAt + input.reviewTimeoutMs;
     let lastProgressAt = monitoringStartedAt;
     let observedProgress = false;
-    const pollMs =
-      getRunnerDefinition(getRun(runId)?.metrics.runner ?? '').feedbackTiming?.pollMs ?? 500;
+    const pollMs = 500;
     let turnStarted = false;
     let eventCursor: number | undefined;
     // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on and its

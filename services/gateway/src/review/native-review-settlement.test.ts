@@ -1272,8 +1272,9 @@ for (const runner of ['claude', 'codex'])
     assert.equal(getRun(run.id)!.engineState?.publishGate?.reviews?.length ?? 0, 0);
   });
 
-test('a scripted run gives its native reviewer a millisecond inactivity limit', async (t) => {
+test('a project can give its reviewer a millisecond inactivity limit', async (t) => {
   ending = 'inactive';
+  configuredInactivityMinutes = 500 / 60_000;
   const clock = { now: 0, polls: 0, stepMs: 500, maxPolls: 1 };
   timeline = clock;
   t.mock.method(Date, 'now', () => clock.now);
@@ -1303,13 +1304,15 @@ test('an explicit project inactivity limit also applies to a scripted run', asyn
   assert.equal(clock.polls, 1);
 });
 
-test('a scripted review replay allows receipt IO without the silent launch deadline', async (t) => {
+test('a review replay uses the current project inactivity limit', async (t) => {
   ending = 'inactive';
+  configuredInactivityMinutes = 0.5;
   const clock = { now: 0, polls: 0, stepMs: 30_000, maxPolls: 1 };
   timeline = clock;
   t.mock.method(Date, 'now', () => clock.now);
   t.after(() => {
     timeline = undefined;
+    configuredInactivityMinutes = undefined;
   });
   const run = await nativeRun(t);
   updateRun(run.id, {
@@ -1328,3 +1331,36 @@ test('a scripted review replay allows receipt IO without the silent launch deadl
   await assert.rejects(review(run.id), /inactivity limit 30000ms/);
   assert.equal(clock.polls, 1);
 });
+
+for (const replaying of [false, true]) {
+  test(`a native reviewer keeps its default window with a scripted worker, replay=${replaying}`, async (t) => {
+    ending = 'inactive';
+    const clock = { now: 0, polls: 0, stepMs: 600_000, maxPolls: 1 };
+    timeline = clock;
+    t.mock.method(Date, 'now', () => clock.now);
+    t.after(() => {
+      timeline = undefined;
+    });
+    const run = await nativeRun(t);
+    updateRun(run.id, {
+      metrics: { ...getRun(run.id)!.metrics, runner: 'scripted' },
+      scripted: { mode: 'scenario', scenario: 'late-ack' },
+      ...(replaying
+        ? {
+            recoveryAttempts: [
+              {
+                id: 'replay',
+                attempt: 1,
+                stepName: 'review',
+                startedAt: new Date().toISOString(),
+                status: 'started' as const,
+                triggeredBy: 'operator' as const,
+              },
+            ],
+          }
+        : {}),
+    });
+    await assert.rejects(review(run.id, 'codex'), /inactivity limit 600000ms/);
+    assert.equal(clock.polls, 1);
+  });
+}

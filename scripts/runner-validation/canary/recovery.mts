@@ -84,7 +84,7 @@ export async function runRecoveryMatrix(options: {
                 mode: 'cold',
                 max_retries: name === 'review-cap' ? 0 : 5,
                 review_timeout_min: 0.5,
-                review_inactivity_timeout_min: name === 'silent-reviewer' ? undefined : 0.5,
+                review_inactivity_timeout_min: 0.5,
               },
               ci: { enabled: true, repo: 'fixture/recovery' },
               ci_watch: { poll_interval_s: 0.02, timeout_min: 0.1 },
@@ -379,6 +379,15 @@ export async function runRecoveryMatrix(options: {
       await scenario.runScenario(context);
     } catch (error) {
       differences = [error instanceof Error ? error.message : String(error)];
+      if (
+        error instanceof Error &&
+        'stdout' in error &&
+        typeof error.stdout === 'string' &&
+        error.stdout.trim()
+      )
+        differences.push(error.stdout);
+      if (error instanceof Error && 'code' in error) differences.push(`code=${error.code}`);
+      if (error instanceof Error && 'signal' in error) differences.push(`signal=${error.signal}`);
     }
     try {
       if (existsSync(path.join(repo, '.agent'))) {

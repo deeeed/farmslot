@@ -106,8 +106,30 @@ describe('scripted runner', () => {
     assert.equal(getRunnerDefinition('codex').roleWindowStartupSettleMs, undefined);
   });
 
-  it('supports structured interactive prompt delivery', () => {
-    assert.equal(runnerSupportsInteractivePrompt('scripted'), true);
+  it('enables structured prompt delivery only for the interactive scenario', () => {
+    assert.equal(runnerSupportsInteractivePrompt('scripted'), false);
+    assert.equal(
+      runnerSupportsInteractivePrompt('scripted', { mode: 'command', commandRef: 'work' }),
+      false,
+    );
+    assert.equal(
+      runnerSupportsInteractivePrompt('scripted', { mode: 'scenario', scenario: 'success' }),
+      false,
+    );
+    assert.equal(
+      runnerSupportsInteractivePrompt('scripted', { mode: 'scenario', scenario: 'late-ack' }),
+      true,
+    );
+    assert.equal(getRunnerDefinition('scripted').feedbackTiming, undefined);
+    assert.equal(
+      getRunnerDefinition('scripted', { mode: 'command', commandRef: 'work' }).feedbackTiming,
+      undefined,
+    );
+    assert.equal(
+      getRunnerDefinition('scripted', { mode: 'scenario', scenario: 'late-ack' }).feedbackTiming
+        ?.pollMs,
+      10,
+    );
   });
 
   it('does not support tmux nudges', () => {

@@ -36,6 +36,7 @@ import {
   RUNNER_PICKER_MODELS,
   type RunnerMobileKeyProfile,
   type SafetyTier,
+  type ScriptedRunnerConfig,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -210,15 +211,13 @@ export interface RunnerDefinition {
   authCheck?: (vars: SlotVars, model?: string | null) => string;
   /** Structured execution receipts for finite project-owned tasks. */
   taskProgress?: RunnerTaskProgressReader;
-  /** Optional structured input for a runner with a file-backed session protocol. */
+  /** Structured session input; null falls back to the ordinary delivery contract. */
   deliverPrompt?: (
     options: import('./session-reactivation.js').RunnerSessionReactivationOptions,
-  ) => Promise<import('./session-reactivation.js').RetainedSessionDeliveryResult>;
+  ) => Promise<import('./session-reactivation.js').RetainedSessionDeliveryResult | null>;
   /** Finite workers need no terminal settling windows. */
   teardownSettleMs?: number;
   feedbackTiming?: RunnerFeedbackTiming;
-  /** Finite scenario reviewers can use millisecond inactivity windows. */
-  reviewInactivityMs?: (replaying: boolean) => number;
   /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
   workspaceTerminalSession?: 'create-chat' | 'resume-session';
   /** Exact, metadata-verified conversation files eligible for owned review expiry cleanup. */
@@ -735,22 +734,13 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     deliverPrompt: async (options) =>
       (await import('./scripted-session.js')).deliverScriptedPrompt(options),
     teardownSettleMs: 0,
-    // A replay answers through real receipt IO; only the silent first attempt needs a short limit.
-    reviewInactivityMs: (replaying) => (replaying ? 30_000 : 500),
-    feedbackTiming: {
-      launchMs: 50,
-      inactivityMs: 5000,
-      pollMs: 10,
-      retryMs: 10,
-      retryWindowMs: 5000,
-    },
     roleWindowStartupSettleMs: 0,
     // Receipt IO must not preload resource-control consumers during registry initialization.
     taskProgress: async (input) =>
       (await import('./scripted-progress.js')).readScriptedCommandProgress(input),
     defaultLaunchMode: 'exec',
     processMatchers: ['farmslot scripted-runner', 'scripted-runner'],
-    supportsInteractivePrompt: true,
+    supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
@@ -771,13 +761,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
     acceptsModel: () => true,
-    observabilityScope: 'event-driven',
-    sessionUsageProvider: {
-      id: 'scripted',
-      restatesSessionTotals: false,
-      recoverSessions: async () => [],
-      applyRecord: (state) => state,
-    },
+    observabilityScope: 'none',
+    sessionUsageProvider: null,
     mobileKeyProfile: null,
   },
 };
@@ -1024,16 +1009,41 @@ export function isKnownRunner(runnerId?: string | null): boolean {
   return Object.prototype.hasOwnProperty.call(KNOWN_RUNNERS, normalizeRunner(runnerId));
 }
 
-export function getRunnerDefinition(runnerId?: string | null): RunnerDefinition {
+const SCRIPTED_INTERACTIVE_RUNNER: RunnerDefinition = {
+  ...KNOWN_RUNNERS.scripted!,
+  supportsInteractivePrompt: true,
+  observabilityScope: 'event-driven',
+  feedbackTiming: {
+    launchMs: 50,
+    inactivityMs: 5000,
+    pollMs: 10,
+    retryMs: 10,
+    retryWindowMs: 5000,
+  },
+};
+
+export function getRunnerDefinition(
+  runnerId?: string | null,
+  scripted?: ScriptedRunnerConfig,
+): RunnerDefinition {
   const normalized = normalizeRunner(runnerId);
+  if (
+    normalized === 'scripted' &&
+    scripted?.mode === 'scenario' &&
+    scripted.scenario === 'late-ack'
+  )
+    return SCRIPTED_INTERACTIVE_RUNNER;
   const def = KNOWN_RUNNERS[normalized] ?? KNOWN_RUNNERS[DEFAULT_RUNNER];
   if (!def) throw new Error(`Unknown runner: ${runnerId}`);
   return def;
 }
 
-export function runnerSupportsInteractivePrompt(runnerId?: string | null): boolean {
+export function runnerSupportsInteractivePrompt(
+  runnerId?: string | null,
+  scripted?: ScriptedRunnerConfig,
+): boolean {
   if (!isKnownRunner(runnerId)) return false;
-  return getRunnerDefinition(runnerId).supportsInteractivePrompt;
+  return getRunnerDefinition(runnerId, scripted).supportsInteractivePrompt;
 }
 
 export function runnerSupportsTmuxNudges(runnerId?: string | null): boolean {
