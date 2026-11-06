@@ -1,10 +1,24 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Static review replay recovery",
-  "description": "Isolated production gateway and real browser controls prove replay refusal without run mutation and a usable same-PR recovery path. A real task workspace and tmux session prove the unacknowledged-start deadline and accepted task progress. No paid reviewer is launched by this recipe.",
+  "description": "Isolated production gateway and real browser controls prove replay refusal without run mutation and a usable same-PR recovery path. A real task workspace and tmux session prove the unacknowledged-start deadline and accepted task progress. No paid reviewer is launched by this recipe. Also verify one same-session output correction and admission of only recoverable saved reviews.",
   "workflow": {
-    "entry": "replay-and-request",
+    "entry": "contract-regressions",
     "nodes": {
+      "contract-regressions": {
+        "action": "command",
+        "cmd": "PATH=\"$PWD/node_modules/.bin:$PATH\" node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json --workers 2 src/review-workspaces/output-repair.test.ts src/runners/native/worker-control-superseded.test.ts src/methods/run.test.ts src/methods/run/replay-step.test.ts",
+        "timeout_ms": 120000,
+        "intent": "Correct output once in the same conversation, wait for the new completion, preserve ownership refusals and name Archive for failed duplicates.",
+        "next": "recovery-rpc"
+      },
+      "recovery-rpc": {
+        "action": "command",
+        "cmd": "FARMSLOT_REVIEW_RECOVERY_PROOF_OUT=\"${FARMSLOT_REVIEW_RECOVERY_PROOF_OUT:-temp/static-review-recovery}\" TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/review-workspaces/recovery.rpc.live.ts",
+        "timeout_ms": 120000,
+        "intent": "Real gateway Resume fails an absent reviewer instead of reconciling forever; empty saved replay refuses before mutation, while a valid saved result remains recoverable.",
+        "next": "replay-and-request"
+      },
       "replay-and-request": {
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-static-review-interface.mts temp/static-review-recovery-recipe recovery",

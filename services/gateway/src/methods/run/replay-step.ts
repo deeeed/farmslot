@@ -49,6 +49,7 @@ import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { pipelineReviewSelection, resolveReviewRunnerModel } from '../../review/orchestrator.js';
 import { getReviewConfig } from '../../review/templates.js';
+import { readReviewWorkspaceCompletion } from '../../review-workspaces/task.js';
 import { captureRunOutput } from '../../run-completion/output.js';
 import { markPreparedPackageStale } from '../../run-completion/prepared-package-stale.js';
 import { retainedMaintenanceStepOutputs } from '../../run-engine/branch-maintenance.js';
@@ -1070,7 +1071,21 @@ async function replayRunStep(
   }
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   if (existing.reviewWorkspaceTarget) assertNativeRunOwner(existing);
-  const reviewBlock = staticReviewReplayBlock(existing, params);
+  let reviewBlock = staticReviewReplayBlock(existing, params);
+  if (
+    !reviewBlock &&
+    params.stepName === PS.MONITOR &&
+    (existing.reviewWorkspace?.cleanedAt || existing.reviewWorkspace?.executionStoppedAt)
+  ) {
+    try {
+      const completion = await readReviewWorkspaceCompletion(existing.id);
+      if (!completion?.result)
+        reviewBlock =
+          'No complete saved review remains after workspace cleanup. Request another review.';
+    } catch (error) {
+      reviewBlock = `The saved review cannot be replayed after workspace cleanup: ${error instanceof Error ? error.message : String(error)}. Request another review.`;
+    }
+  }
   if (reviewBlock)
     throw new GatewayMethodError('REVIEW_RESTART_REQUIRED', reviewBlock, {
       userAction:

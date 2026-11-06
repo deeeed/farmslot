@@ -652,7 +652,7 @@ export async function readReviewWorkspaceCompletion(
     if (openChild) throw new Error(openChild);
   }
   const raw = await confinedRead(io, taskDir, RESULT);
-  const artifact = JSON.parse(raw) as Record<string, unknown>;
+
   invalidateProjectVarsCache(run.project);
   const policy = resolveApprovalPolicy(
     (await deps.loadProjectVars(run.project)).projectJson.approvalPolicy,
@@ -673,7 +673,11 @@ export async function readReviewWorkspaceCompletion(
     })),
   );
   if (feedback.incomplete && !feedback.recommendation)
-    throw new Error(feedback.terminalInvalidReason);
+    throw new GatewayMethodError(
+      'REVIEW_OUTPUT_INVALID',
+      feedback.terminalInvalidReason ?? 'Review output is invalid',
+    );
+  const artifact = JSON.parse(raw) as Record<string, unknown>;
   if (
     artifact.runId !== runId ||
     artifact.workspaceId !== snapshot.workspace.workspaceId ||

@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import type { AgentContext, NativeSessionReadResult, Run } from '@farmslot/protocol';
+import { NATIVE_WORKER_SEND } from '@farmslot/agent-runtime/native';
+import type {
+  AgentContext,
+  NativeSessionReadResult,
+  NativeSessionSendResult,
+  Run,
+} from '@farmslot/protocol';
 
 const error = 'Native runner emitted invalid JSON';
 const failedSession = '3c9dd59b-8912-416a-aa8e-f87a7102b8b4';
@@ -69,13 +75,25 @@ mock.module('../../runs/store.js', {
 });
 // Each read gets its own session: failed after the host stopped, except a reviewer still working.
 const healthySessions = new Set<string>();
+const idleSessions = new Set<string>();
+const instructionReceipts: string[] = [];
 mock.module('./node.js', {
   namedExports: {
     routeNativeExecution: async (
       _owner: string,
       _method: string,
-      params: { sessionId: string; after?: number; limit?: number },
+      params: { sessionId: string; after?: number; limit?: number; commandId?: string },
     ) => {
+      if (_method === NATIVE_WORKER_SEND) {
+        assert(params.commandId);
+        instructionReceipts.push(params.sessionId);
+        return {
+          commandId: params.commandId,
+          submitted: true,
+          state: 'accepted',
+          accepted: true,
+        } satisfies NativeSessionSendResult;
+      }
       readOptions = { after: params.after, limit: params.limit };
       const healthy = healthySessions.has(params.sessionId);
       return {
@@ -85,7 +103,13 @@ mock.module('./node.js', {
           id: params.sessionId,
           generation: binding(params.sessionId).generation,
           workerLeaseId: binding(params.sessionId).leaseId,
-          ...(healthy ? { state: 'running', error: undefined, processStopped: false } : {}),
+          ...(healthy
+            ? {
+                state: idleSessions.has(params.sessionId) ? 'idle' : 'running',
+                error: undefined,
+                processStopped: false,
+              }
+            : {}),
         },
       };
     },
@@ -95,7 +119,8 @@ const owner = await import('../../security/native-worker-owner.js');
 mock.module('../../security/native-worker-owner.js', {
   namedExports: { ...owner, assertNativeRunOwner: () => {} },
 });
-const { clearSettledWorkerError, readNativeWorkerSnapshot } = await import('./worker-control.js');
+const { clearSettledWorkerError, readNativeWorkerSnapshot, sendNativeWorkerInstruction } =
+  await import('./worker-control.js');
 const { reconcileNativeRunAgentRuntime } = await import('./worker-runtime.js');
 const { makeRun } = await import('../../run-engine/test-fixtures.js');
 
@@ -302,4 +327,65 @@ test('a finished reviewer does not put its later host failure on the run', async
   await readNativeWorkerSnapshot(current.id, undefined, finished.id);
   assert.equal(current.error, 'Operator item 1 (deposit split) cannot run in this checkout.');
   assert.equal(current.agentContexts?.[0]?.error, error);
+});
+
+test('a slotless workspace reviewer receives its instruction through the same leased native session', async () => {
+  const context = relaunch();
+  healthySessions.add(relaunchSession);
+  idleSessions.add(relaunchSession);
+  current = {
+    ...run('', context),
+    transport: 'native',
+    slotId: null,
+    reviewWorkspace: {
+      workspaceId: 'output-repair',
+      machine: 'macpro',
+      executionNodeId: 'macpro',
+      checkoutPath: '/owned/source',
+      taskPath: '/owned/task',
+      artifactPath: '/owned/task/artifacts',
+    },
+  };
+  const before = instructionReceipts.length;
+  assert.equal(
+    await sendNativeWorkerInstruction({
+      runId: current.id,
+      slotId: null,
+      role: 'review',
+      contextId: context.id,
+      key: 'review-output-repair',
+      text: 'Correct your review result.',
+    }),
+    'confirmed',
+  );
+  assert.deepEqual(instructionReceipts.slice(before), [relaunchSession]);
+  current = {
+    ...current,
+    reviewWorkspace: { ...current.reviewWorkspace!, cleanedAt: new Date().toISOString() },
+  };
+  assert.equal(
+    await sendNativeWorkerInstruction({
+      runId: current.id,
+      slotId: null,
+      role: 'review',
+      contextId: context.id,
+      key: 'review-output-repair',
+      text: 'Correct your review result.',
+    }),
+    'not-attempted',
+  );
+  current = { ...current, reviewWorkspace: undefined };
+  assert.equal(
+    await sendNativeWorkerInstruction({
+      runId: current.id,
+      slotId: null,
+      role: 'review',
+      contextId: context.id,
+      key: 'review-output-repair',
+      text: 'Correct your review result.',
+    }),
+    'not-attempted',
+  );
+  assert.equal(instructionReceipts.length, before + 1);
+  idleSessions.delete(relaunchSession);
 });
