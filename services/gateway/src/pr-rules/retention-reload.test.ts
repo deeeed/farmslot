@@ -33,6 +33,8 @@ mock.module('node:fs/promises', {
   },
 });
 const { PRRuleStore } = await import('./store.js');
+const { PRRuleService } = await import('./service.js');
+const { PRReviewDispatcher } = await import('./dispatch.js');
 const pr = { host: 'github.com', repo: 'example/app', number: 42 };
 const replacement: PRRuleStoreData = {
   version: 1,
@@ -150,7 +152,6 @@ test(
       assert.throws(() => first.snapshot(), /cleanup/);
       const second = await PRRuleStore.load(file);
       assert.throws(() => second.snapshot(), /cleanup/);
-      const { PRRuleService } = await import('./service.js');
       assert.doesNotThrow(
         () =>
           new PRRuleService(
@@ -160,6 +161,26 @@ test(
           ),
         'deferred startup must not prevent cleanup service initialization',
       );
+      const recoveryService = new PRRuleService(
+        second,
+        () => true,
+        () => {},
+      );
+      assert.doesNotThrow(() => recoveryService.notifyChanges());
+      const dispatcher = new PRReviewDispatcher(
+        second,
+        recoveryService,
+        () => true,
+        () => recoveryService.notifyChanges(),
+      );
+      dispatcher.start();
+      try {
+        await assert.rejects(dispatcher.reconcile(), /cleanup/);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.match(dispatcher.error ?? '', /cleanup/);
+      } finally {
+        dispatcher.stop();
+      }
       await validated;
       assert.deepEqual(
         second.snapshotForRetention().intents.map((intent) => intent.id),

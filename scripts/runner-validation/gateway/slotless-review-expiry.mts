@@ -11,7 +11,8 @@ const repo = process.cwd();
 const packet = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 assert.equal(packet.pass, true);
 const root = packet.root;
-assert(root.startsWith('/tmp/slotless-review-proof-'));
+assert.equal(path.dirname(root), fs.realpathSync('/tmp'));
+assert(path.basename(root).startsWith('slotless-review-proof-'));
 assert.equal(
   JSON.parse(fs.readFileSync(path.join(root, 'proof-owned.json'), 'utf8')).purpose,
   'slotless-review-retention',

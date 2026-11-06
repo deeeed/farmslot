@@ -25,6 +25,7 @@ import {
 
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
 import { resolvePRExecution } from '../backlog/pr-execution.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { loadProjectConfig } from '../fleet/state.js';
 import { GitHubPRUnavailableError } from '../integrations/github-errors.js';
 import type { PRMonitoringService } from '../pr-monitoring/service.js';
@@ -853,7 +854,20 @@ export class PRRuleService {
   }
 
   notifyChanges(): void {
-    const audience = this.notificationAudience();
+    let audience: Map<string, PrincipalOwner>;
+    try {
+      audience = this.notificationAudience();
+    } catch (error) {
+      if (
+        !(error instanceof GatewayMethodError) ||
+        !['SOURCE_UNAVAILABLE', 'REVIEW_WORKSPACE_CLEANUP_PENDING'].includes(error.code)
+      )
+        throw error;
+      // A refused source has no safe owner-scoped payload. Keep reads/actions refused
+      // and invalidate the shared resource; schedulers retain their error and retry.
+      publishPRAutomationResources();
+      return;
+    }
     for (const owner of new Map([...this.previousAudience, ...audience]).values())
       runWithPrincipalOwner(owner, () => this.changed(owner.ownerId));
     this.previousAudience = audience;

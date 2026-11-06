@@ -8,7 +8,7 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 const repo = process.cwd();
-const root = fs.mkdtempSync('/tmp/slotless-review-proof-');
+const root = fs.realpathSync(fs.mkdtempSync('/tmp/slotless-review-proof-'));
 assert(process.argv[2], 'Pass a new evidence directory outside the private fixture');
 const out = path.resolve(process.argv[2]);
 assert(!out.startsWith(root + path.sep));

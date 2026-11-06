@@ -3,7 +3,7 @@
   "title": "Retained slotless review and expiry",
   "description": "Opt-in: consumes two real Codex turns. Set FARMSLOT_REVIEW_RETENTION_PROOF_OUTPUT to a private evidence directory. Creates an isolated farm and tiny Git source, runs two genuine reviews, reads results through authenticated Gateway RPC, verifies exact-session continuation, then clock-controlled expiry and pending-review protection. No live farm, publication or slot action.",
   "workflow": {
-    "entry": "two-rounds",
+    "entry": "startup-recovery",
     "nodes": {
       "two-rounds": {
         "action": "command",
@@ -20,6 +20,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "startup-recovery": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/pr-rules/retention-startup.live.ts",
+        "intent": "A private authenticated gateway remains reachable while intake is deferred behind a setup-time retirement snapshot, then source reads recover after settlement.",
+        "next": "two-rounds"
       }
     }
   }
