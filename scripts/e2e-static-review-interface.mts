@@ -1237,13 +1237,13 @@ process.stdout.write(JSON.stringify(body));
         'Chrome no longer owns the fixture profile',
       );
       const tree = new NativeProcessTree(pid);
-      tree.terminate();
+      await tree.terminate();
       const deadline = Date.now() + 5000;
-      while (!tree.empty() && Date.now() < deadline) await delay(100);
-      if (!tree.empty()) tree.stop();
+      while (!(await tree.empty()) && Date.now() < deadline) await delay(100);
+      if (!(await tree.empty())) await tree.stop();
       const killedBy = Date.now() + 5000;
-      while (!tree.empty() && Date.now() < killedBy) await delay(100);
-      assert(tree.empty(), 'Fixture Chrome process cleanup is unconfirmed');
+      while (!(await tree.empty()) && Date.now() < killedBy) await delay(100);
+      assert(await tree.empty(), 'Fixture Chrome process cleanup is unconfirmed');
     } catch (error) {
       if (
         (error as NodeJS.ErrnoException).code !== 'ENOENT' &&

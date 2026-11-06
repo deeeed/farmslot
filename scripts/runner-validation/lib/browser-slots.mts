@@ -107,13 +107,13 @@ export async function prepareBrowserSlots(root: string, fixture: string, evidenc
         }
         if (present) execFileSync('tmux', ['kill-session', '-t', session], { stdio: 'pipe' });
         for (const tree of workers.get(session) ?? []) {
-          tree.terminate();
+          await tree.terminate();
           const deadline = Date.now() + 5000;
-          while (!tree.empty() && Date.now() < deadline) await delay(100);
-          if (!tree.empty()) tree.stop();
+          while (!(await tree.empty()) && Date.now() < deadline) await delay(100);
+          if (!(await tree.empty())) await tree.stop();
           const stoppedBy = Date.now() + 5000;
-          while (!tree.empty() && Date.now() < stoppedBy) await delay(100);
-          assert(tree.empty(), 'Runtime work cleanup unconfirmed');
+          while (!(await tree.empty()) && Date.now() < stoppedBy) await delay(100);
+          assert(await tree.empty(), 'Runtime work cleanup unconfirmed');
         }
       } catch (error) {
         errors.push(error);
@@ -126,13 +126,13 @@ export async function prepareBrowserSlots(root: string, fixture: string, evidenc
           Number.isInteger(pid) && pid > 0 && matchesProcess(pid, '--user-data-dir=' + profile),
         );
         const tree = new NativeProcessTree(pid);
-        tree.terminate();
+        await tree.terminate();
         const deadline = Date.now() + 5000;
-        while (!tree.empty() && Date.now() < deadline) await delay(100);
-        if (!tree.empty()) tree.stop();
+        while (!(await tree.empty()) && Date.now() < deadline) await delay(100);
+        if (!(await tree.empty())) await tree.stop();
         const stoppedBy = Date.now() + 5000;
-        while (!tree.empty() && Date.now() < stoppedBy) await delay(100);
-        assert(tree.empty(), 'Runtime browser cleanup unconfirmed');
+        while (!(await tree.empty()) && Date.now() < stoppedBy) await delay(100);
+        assert(await tree.empty(), 'Runtime browser cleanup unconfirmed');
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') errors.push(error);
       }

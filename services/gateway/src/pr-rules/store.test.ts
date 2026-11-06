@@ -490,3 +490,14 @@ test('external PR-intake reload cannot publish while retention cleanup owns stor
   }
   assert.equal(store.team(team.id, 'owner').config.name, 'External replacement');
 });
+
+test('snapshot projection copies only selected rule data and preserves store isolation', async (t) => {
+  const { store } = await fixture(t);
+  const team = await store.saveTeam('owner', teamConfig);
+  const teams = store.snapshot((data) => data.teams);
+  assert.deepEqual(teams, [team]);
+  teams[0].config.name = 'Outside mutation';
+  teams.pop();
+  assert.equal(store.team(team.id, 'owner').config.name, teamConfig.name);
+  assert.equal(store.snapshot().teams.length, 1);
+});

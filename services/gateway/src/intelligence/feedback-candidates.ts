@@ -52,6 +52,10 @@ export interface FeedbackPRTarget {
   prNumber: number;
 }
 
+function feedbackTargetKey(target: FeedbackPRTarget): string {
+  return monitoredPRKey({ host: target.host, repo: target.repository, number: target.prNumber });
+}
+
 export interface FeedbackCandidateInput {
   target: FeedbackPRTarget;
   /** Every run in the family, including the terminal run. */
@@ -434,11 +438,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     }
   }
 
-  const targetKey = monitoredPRKey({
-    host: target.host,
-    repo: target.repository,
-    number: target.prNumber,
-  });
+  const targetKey = feedbackTargetKey(target);
   const matchingMonitors = input.monitors.filter(
     (monitor) => monitoredPRKey(monitor.config.pr) === targetKey,
   );
@@ -628,7 +628,7 @@ export async function refreshRetrospectiveFeedback(
   };
 }
 
-type MonitorSource = () => FeedbackCandidateInput['monitors'];
+type MonitorSource = (targetKey: string) => FeedbackCandidateInput['monitors'];
 let monitorSource: MonitorSource = () => [];
 /** Wired at gateway startup once PR monitoring is initialised; tests inject fixtures. */
 export function setFeedbackMonitorSource(source: MonitorSource | null): void {
@@ -665,7 +665,7 @@ export async function collectFeedbackCandidates(
     target,
     familyRuns: family,
     triage,
-    monitors: monitorSource(),
+    monitors: monitorSource(feedbackTargetKey(target)),
     ledger,
   });
   const all = [...candidates, ...repairs];

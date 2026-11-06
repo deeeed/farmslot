@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -38,7 +39,9 @@ export function providerAccountsConfigPath(home = farmslotHome()): string {
 function readConfig(home: string): AccountConfig {
   const file = providerAccountsConfigPath(home);
   if (!existsSync(file)) return { version: 1, accounts: {} };
-  const value: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  return decodeConfig(JSON.parse(readFileSync(file, 'utf8')));
+}
+function decodeConfig(value: unknown): AccountConfig {
   if (
     !object(value) ||
     value.version !== 1 ||
@@ -72,6 +75,17 @@ function writeConfig(home: string, config: AccountConfig): void {
 
 export function listNativeProfiles(home = farmslotHome()): NativeProfileInfo[] {
   return Object.values(readConfig(home).nativeProfiles ?? {});
+}
+export async function listNativeProfilesAsync(home = farmslotHome()): Promise<NativeProfileInfo[]> {
+  let contents: string;
+  try {
+    contents = await readFile(providerAccountsConfigPath(home), 'utf8');
+  } catch (error) {
+    // An undeclared profile source has the same empty inventory as the synchronous reader.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  return Object.values(decodeConfig(JSON.parse(contents)).nativeProfiles ?? {});
 }
 export function findNativeProfile(
   id: string,

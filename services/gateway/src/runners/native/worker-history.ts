@@ -121,7 +121,7 @@ export async function authorizeNativeWorkerHistory(
     if (run.transport !== 'native') resolveReviewWorkspaceOwner(binding.ownerPrincipalId);
     return { ...selected, run };
   };
-  return current();
+  return { ...current(), revalidate: current };
 }
 
 export async function routeNativeWorkerRead(method: string, params: Record<string, unknown>) {

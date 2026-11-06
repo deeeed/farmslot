@@ -23,6 +23,7 @@ import {
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { cloneStoreSnapshot } from '../core/store-snapshot.js';
 import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import {
   assertReviewWorkspaceAdmissionOpen,
@@ -213,9 +214,11 @@ export class PRRuleStore {
       );
   }
 
-  snapshot(): PRRuleStoreData {
+  snapshot(): PRRuleStoreData;
+  snapshot<Result>(select: (data: Readonly<PRRuleStoreData>) => Result): Result;
+  snapshot<Result>(select?: (data: Readonly<PRRuleStoreData>) => Result): PRRuleStoreData | Result {
     this.assertReadable();
-    return structuredClone(this.data);
+    return cloneStoreSnapshot(this.data, select);
   }
 
   /** Other authority loss keeps a contribution held so restored authority admits it unchanged. */

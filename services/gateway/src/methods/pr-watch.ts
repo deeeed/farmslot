@@ -98,9 +98,15 @@ function configuration(value: unknown): PRMonitorConfig {
   return value;
 }
 
-/** Every persisted monitor, for retrospective feedback capture. Empty until monitoring is initialised. */
-export function monitorsSnapshot(): PRMonitor[] {
-  return service ? service.store.snapshot().monitors : [];
+/** Select the feedback PR before copying monitor history. Empty until monitoring is initialised. */
+export function monitorsSnapshot(targetKey?: string): PRMonitor[] {
+  return service
+    ? service.store.snapshot((data) =>
+        targetKey
+          ? data.monitors.filter((monitor) => monitoredPRKey(monitor.config.pr) === targetKey)
+          : data.monitors,
+      )
+    : [];
 }
 
 /** PRs with an active monitor across every owner, for the dashboard list. */

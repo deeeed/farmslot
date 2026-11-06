@@ -72,8 +72,8 @@ test('a shutdown race is resolved only by fresh process absence after the child 
   });
   let exited: { error?: Error; stopped: boolean } | undefined;
   const original = NativeProcessTree.prototype.stop;
-  t.mock.method(NativeProcessTree.prototype, 'stop', function (this: NativeProcessTree) {
-    original.call(this);
+  t.mock.method(NativeProcessTree.prototype, 'stop', async function (this: NativeProcessTree) {
+    await original.call(this);
     throw new Error('Shutdown observation raced process exit');
   });
   const child = new JsonLineProcess(
@@ -101,12 +101,12 @@ test('a stop error cannot become successful cleanup while process absence remain
   });
   let stopped: boolean | undefined;
   const original = NativeProcessTree.prototype.stop;
-  t.mock.method(NativeProcessTree.prototype, 'stop', function (this: NativeProcessTree) {
-    original.call(this);
+  t.mock.method(NativeProcessTree.prototype, 'stop', async function (this: NativeProcessTree) {
+    await original.call(this);
     throw new Error('Owned process cleanup unconfirmed');
   });
   // The actual child is stopped, but this negative withholds the OS absence proof.
-  t.mock.method(NativeProcessTree.prototype, 'empty', () => false);
+  t.mock.method(NativeProcessTree.prototype, 'empty', async () => false);
   const child = new JsonLineProcess(
     process.execPath,
     ['-e', 'process.stdout.write(JSON.stringify({ready:true})+"\\n");setInterval(()=>{},1000);'],

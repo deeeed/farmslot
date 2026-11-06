@@ -1,0 +1,2 @@
+- Keep native cleanup and observation fences responsive with bounded asynchronous process checks and cached, chunked journal reads.
+- Native process-tree cleanup/capture and observation fences/profile status now return Promises. Callers must await them and upgrade with the matching runtime readers.

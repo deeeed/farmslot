@@ -268,12 +268,13 @@ export class JsonLineProcess {
     if (this.closing || this.cleanupStarted) return;
     this.closing = true;
     this.fail(undefined);
-    try {
-      this.tree?.terminate();
-      this.stopTimer = setTimeout(() => this.beginCleanup(), 3_000);
-    } catch (error) {
-      this.beginCleanup(new Error('Native termination failed', { cause: error }));
-    }
+    void (this.tree?.terminate() ?? Promise.resolve()).then(
+      () => {
+        if (!this.cleanupStarted) this.stopTimer = setTimeout(() => this.beginCleanup(), 3_000);
+      },
+      (error: unknown) =>
+        this.beginCleanup(new Error('Native termination failed', { cause: error })),
+    );
   }
 
   /** Internal completion never rejects; callers of close receive any cleanup failure. */
@@ -329,7 +330,7 @@ export class JsonLineProcess {
     }
     let stopError: unknown;
     try {
-      this.tree.stop();
+      await this.tree.stop();
     } catch (error) {
       // A group can disappear while shutdown snapshots are being taken. Accept
       // cleanup only after fresh OS evidence proves every tracked process and
@@ -338,7 +339,10 @@ export class JsonLineProcess {
     }
     const deadline = Date.now() + 3_000;
     while (Date.now() < deadline) {
-      if (this.tree.empty() && (this.child.exitCode !== null || this.child.signalCode !== null))
+      if (
+        (await this.tree.empty()) &&
+        (this.child.exitCode !== null || this.child.signalCode !== null)
+      )
         return;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
