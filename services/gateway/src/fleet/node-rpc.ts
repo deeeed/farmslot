@@ -17,6 +17,7 @@ import { type ConnectedNode, getNode } from './machine-registry.js';
 
 let reqSeq = 0;
 interface PendingNodeRequest {
+  node: ConnectedNode;
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
@@ -26,6 +27,8 @@ interface PendingNodeRequest {
   cleanup?(): void;
 }
 const pending = new Map<string, PendingNodeRequest>();
+// Retire only new admissions. Accepted commands still confirm closeout on this socket.
+const stoppingNodes = new WeakSet<WebSocket>();
 
 // Per-request output listeners for streaming exec output
 const outputListeners = new Map<string, (stream: string, data: string) => void>();
@@ -82,6 +85,9 @@ export function handleNodeResponse(
   takePendingRequest(id);
   if (ok) {
     entry.resolve(payload);
+  } else if (errorCode === 'NODE_SHUTTING_DOWN' && source === entry.node.ws) {
+    stoppingNodes.add(source);
+    entry.reject(new NodeRequestNotAcceptedError(entry.node.machine));
   } else {
     const error = new Error(errorMsg || 'Node error') as NodeJS.ErrnoException & {
       details?: unknown;
@@ -139,7 +145,7 @@ export type NodeTransportUnavailableReason =
   | 'timeout'
   | 'connection-replaced';
 
-/** Transport evidence only. Remote error codes never instantiate this local error. */
+/** Transport evidence only; arbitrary remote command errors never instantiate this error. */
 export class NodeTransportUnavailableError extends Error {
   readonly code = 'NODE_TRANSPORT_UNAVAILABLE';
   constructor(
@@ -149,6 +155,14 @@ export class NodeTransportUnavailableError extends Error {
   ) {
     super(message);
     this.name = 'NodeTransportUnavailableError';
+  }
+}
+
+/** The authenticated daemon rejected admission before executing the request. */
+class NodeRequestNotAcceptedError extends NodeTransportUnavailableError {
+  constructor(machine: string) {
+    super(machine, 'not-connected', `Node ${machine} is stopping; request was not accepted`);
+    this.name = 'NodeRequestNotAcceptedError';
   }
 }
 
@@ -204,9 +218,22 @@ export function sendNodeRequest(
   params: unknown,
   opts?: { timeout?: number; onRequestId?: (id: string) => void; requireSameConnection?: boolean },
 ): Promise<unknown> {
-  return measureManagedOperation('node', 'node', () =>
-    sendNodeRequestUnmeasured(node, method, params, opts),
-  );
+  return measureManagedOperation('node', 'node', async () => {
+    try {
+      return await sendNodeRequestUnmeasured(node, method, params, opts);
+    } catch (error) {
+      // Native connection-bound mutations keep their caller's authority/revalidation path.
+      if (
+        !(error instanceof NodeRequestNotAcceptedError) ||
+        opts?.requireSameConnection ||
+        !reconnectWait.getStore()
+      )
+        throw error;
+      const replacement = await waitForNode(node.machine);
+      assertNodeReconnectCurrent();
+      return sendNodeRequestUnmeasured(replacement, method, params, opts);
+    }
+  });
 }
 
 function sendNodeRequestUnmeasured(
@@ -216,6 +243,7 @@ function sendNodeRequestUnmeasured(
   opts?: { timeout?: number; onRequestId?: (id: string) => void; requireSameConnection?: boolean },
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    if (stoppingNodes.has(node.ws)) return reject(new NodeRequestNotAcceptedError(node.machine));
     if (node.ws.readyState !== WebSocket.OPEN) {
       return reject(
         new NodeTransportUnavailableError(
@@ -231,6 +259,7 @@ function sendNodeRequestUnmeasured(
       takePendingRequest(id)?.reject(new NodeRpcTimeoutError(node.machine, TIMEOUT));
     }, TIMEOUT);
     pending.set(id, {
+      node,
       resolve,
       reject,
       timer,
@@ -295,6 +324,7 @@ function sendNodeRequestStreamingUnmeasured(
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (opts?.signal?.aborted) return reject(new Error('Remote execution cancelled before send.'));
+    if (stoppingNodes.has(node.ws)) return reject(new NodeRequestNotAcceptedError(node.machine));
     if (node.ws.readyState !== WebSocket.OPEN) {
       return reject(
         new NodeTransportUnavailableError(
@@ -361,6 +391,7 @@ function sendNodeRequestStreamingUnmeasured(
     }, effectiveTimeout);
     if (opts?.onOutput) outputListeners.set(id, opts.onOutput);
     pending.set(id, {
+      node,
       resolve,
       reject,
       timer,
@@ -438,7 +469,8 @@ export function resolveAfterNodeReconnect<T>(machine: string, resolve: () => T):
 }
 
 export function isNodeConnected(machine: string): boolean {
-  return getNode(machine)?.ws.readyState === WebSocket.OPEN;
+  const node = getNode(machine);
+  return Boolean(node && node.ws.readyState === WebSocket.OPEN && !stoppingNodes.has(node.ws));
 }
 
 export function waitForNode(
@@ -463,7 +495,7 @@ async function waitForNodeUnmeasured(
   };
   check();
   const connected = getNode(machine);
-  if (connected?.ws.readyState === WebSocket.OPEN) {
+  if (connected?.ws.readyState === WebSocket.OPEN && !stoppingNodes.has(connected.ws)) {
     if (scope) scope.deadline = undefined;
     return connected;
   }
@@ -472,7 +504,7 @@ async function waitForNodeUnmeasured(
   while (Date.now() < deadline) {
     check();
     const node = getNode(machine);
-    if (node && node.ws.readyState === WebSocket.OPEN) {
+    if (node && node.ws.readyState === WebSocket.OPEN && !stoppingNodes.has(node.ws)) {
       if (scope) scope.deadline = undefined;
       return node;
     }
@@ -582,6 +614,9 @@ async function nodeExecRequest(
           ),
       )) as ExecResult;
     } catch (err) {
+      // An explicit admission rejection is not a lost reply, even for noRetry commands.
+      if (attempt === 0 && err instanceof NodeRequestNotAcceptedError && reconnectWait.getStore())
+        continue;
       const msg = (err as Error).message;
       if (
         attempt === 0 &&
