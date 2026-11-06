@@ -162,11 +162,11 @@ export function fixtureEntry(fixture, name) {
   return entry;
 }
 
-// Mnemonics use BIP-44 index 0, the MetaMask default and the derivation the
-// Extension fixture flow imports.
-export function viemAccountFromEntry(entry, projectRoot) {
+// Mnemonics use BIP-44 m/44'/60'/0'/0/<addressIndex>, the MetaMask derivation
+// the Extension fixture flow imports; index 0 is the wallet's first account.
+export function viemAccountFromEntry(entry, projectRoot, addressIndex = 0) {
   const { mnemonicToAccount, privateKeyToAccount } = loadViemAccounts(projectRoot);
-  if (entry.type === 'mnemonic') return mnemonicToAccount(entry.value.trim(), { addressIndex: 0 });
+  if (entry.type === 'mnemonic') return mnemonicToAccount(entry.value.trim(), { addressIndex });
   const raw = entry.value.trim();
   const key = raw.startsWith('0x') ? raw : `0x${raw}`;
   if (!/^0x[0-9a-fA-F]{64}$/u.test(key)) {
@@ -175,9 +175,127 @@ export function viemAccountFromEntry(entry, projectRoot) {
   return privateKeyToAccount(key);
 }
 
+// Named HD derivations of the fixture's mnemonic entries that the host adds,
+// e.g. a team's shared test account at a higher index: JSON
+// [{ "name", "secret": <mnemonic entry name>, "index", "address"? }]. Names and
+// indexes only; the key stays in the fixture.
+export const DERIVED_ACCOUNTS_ENV = 'RECIPE_WALLET_DERIVED_ACCOUNTS';
+
+export function derivedAccounts(env = process.env) {
+  const raw = env[DERIVED_ACCOUNTS_ENV];
+  if (!raw) return [];
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${DERIVED_ACCOUNTS_ENV} is not JSON: ${error.message}`);
+  }
+  const valid = (item) =>
+    item &&
+    typeof item.name === 'string' &&
+    item.name.trim() &&
+    typeof item.secret === 'string' &&
+    item.secret.trim() &&
+    Number.isInteger(item.index) &&
+    item.index >= 0 &&
+    (item.address === undefined || /^0x[0-9a-fA-F]{40}$/u.test(item.address));
+  if (!Array.isArray(value) || !value.every(valid)) {
+    throw new Error(
+      `${DERIVED_ACCOUNTS_ENV} must be an array of { name, secret, index, address? } (index a non-negative integer).`,
+    );
+  }
+  return value;
+}
+
+function mnemonicCount(entry) {
+  const count = Number(entry.count ?? entry.numberOfAccounts ?? 1);
+  if (!Number.isInteger(count) || count < 1 || count > 100) {
+    throw new Error(
+      `wallet fixture account "${entry.name}" count must be an integer from 1 through 100.`,
+    );
+  }
+  return count;
+}
+
+// names[index] when the entry gives one; a single account keeps the entry's
+// name; otherwise dev1 with count 3 is dev1, dev2, dev3 (a name without a
+// trailing number gets one appended).
+function derivedName(entry, index, count) {
+  const explicit = Array.isArray(entry.names) ? entry.names[index] : undefined;
+  if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
+  if (count === 1) return entry.name;
+  const match = /^(.*?)(\d+)$/u.exec(entry.name);
+  return match ? `${match[1]}${Number(match[2]) + index}` : `${entry.name}${index + 1}`;
+}
+
+/**
+ * Every account the fixture offers: each mnemonic entry expanded to its count,
+ * each private key, then the host's named derivations (DERIVED_ACCOUNTS_ENV)
+ * of the secrets this fixture holds. `account` is the viem account holding the
+ * key: sign with it, never log or persist it.
+ */
+export function walletAccounts(fixture, projectRoot, env = process.env) {
+  const accounts = [];
+  for (const entry of fixture.accounts) {
+    if (entry?.type !== 'mnemonic' && entry?.type !== 'privateKey') continue;
+    fixtureEntry(fixture, entry.name);
+    const count = entry.type === 'mnemonic' ? mnemonicCount(entry) : 1;
+    for (let index = 0; index < count; index += 1) {
+      const account = viemAccountFromEntry(entry, projectRoot, index);
+      accounts.push({
+        name: derivedName(entry, index, count),
+        address: account.address,
+        secret: entry.name,
+        index,
+        account,
+      });
+    }
+  }
+  for (const item of derivedAccounts(env)) {
+    const entry = fixture.accounts.find(
+      (candidate) => candidate?.type === 'mnemonic' && candidate.name === item.secret,
+    );
+    if (!entry) continue;
+    const account = viemAccountFromEntry(
+      fixtureEntry(fixture, item.secret),
+      projectRoot,
+      item.index,
+    );
+    if (item.address && item.address.toLowerCase() !== account.address.toLowerCase()) {
+      throw new Error(
+        `wallet account "${item.name}" derives to ${account.address} from "${item.secret}" index ${item.index}, not the declared ${item.address}.`,
+      );
+    }
+    accounts.push({
+      name: item.name,
+      address: account.address,
+      secret: item.secret,
+      index: item.index,
+      account,
+    });
+  }
+  return accounts;
+}
+
+// The fixture account a selector names: an account name, else an address.
+export function walletAccount(fixture, selector, projectRoot, env = process.env) {
+  const accounts = walletAccounts(fixture, projectRoot, env);
+  const wanted = String(selector ?? '').trim();
+  const found =
+    accounts.find((account) => account.name === wanted) ??
+    (/^0x[0-9a-fA-F]{40}$/u.test(wanted)
+      ? accounts.find((account) => account.address.toLowerCase() === wanted.toLowerCase())
+      : undefined);
+  if (!found) {
+    const names = accounts.map((account) => account.name).join(', ');
+    throw new Error(`wallet fixture has no account named "${wanted}". Available: ${names}.`);
+  }
+  return found;
+}
+
 export async function fixtureAccount(projectRoot, name, env = process.env) {
   const { fixture } = await loadWalletFixture(projectRoot, env);
-  return viemAccountFromEntry(fixtureEntry(fixture, name), projectRoot);
+  return walletAccount(fixture, name, projectRoot, env).account;
 }
 
 // Address-only view of the account a node targets: an explicit address wins

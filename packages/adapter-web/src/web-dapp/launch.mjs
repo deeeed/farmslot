@@ -11,11 +11,12 @@
 //   wallet requests.
 //
 // Inputs (flags): --target <checkout> --cdp-port <port> --app-port <port>
-//   [--signer extension|injected] [--signer-module <path>] [--account <fixture name>]
+//   [--signer extension|injected] [--signer-module <path>] [--account <name|address>]
 //   [--fresh-profile] [--headless | --headful] [--slow-mo <ms>] [--start-chain <id>]
 //   [--json] [--network mainnet --mainnet-confirmation REAL_FUNDS] (testnet
 //   otherwise, enforced in the browser from the venue policy)
 //   env: TERMINAL_CHROME_BIN, RECIPE_WEB_DAPP_SIGNER_MODULE, RECIPE_WALLET_FIXTURE,
+//   RECIPE_WALLET_DERIVED_ACCOUNTS,
 //   TERMINAL_HEADLESS, TERMINAL_SLOW_MO, TERMINAL_WINDOW, TERMINAL_SCREEN
 //   (plus whatever the signer module reads)
 //   The browser is headful by default, in a window placed per slot (see
@@ -68,10 +69,9 @@ import {
 } from './lib/processes.mjs';
 import { assertLaunchNetwork, devServerTestnetDiagnostic } from './lib/readiness.mjs';
 import {
-  fixtureEntry,
   loadWalletFixture,
   resolveSigner,
-  viemAccountFromEntry,
+  walletAccount,
   webDappPolicy,
   webDappRuntimeDir,
 } from './lib/runtime.mjs';
@@ -86,7 +86,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const macosFocus = createRequire(import.meta.url)('../macos-focus.cjs');
 
 function usage() {
-  return 'Usage: launch.mjs --target <checkout> --cdp-port <port> --app-port <port> [--signer extension|injected] [--signer-module <path>] [--account <name>] [--fresh-profile] [--headless | --headful] [--slow-mo <ms>] [--network testnet|mainnet --mainnet-confirmation REAL_FUNDS] [--start-chain <id>] [--json]';
+  return 'Usage: launch.mjs --target <checkout> --cdp-port <port> --app-port <port> [--signer extension|injected] [--signer-module <path>] [--account <name|address>] [--fresh-profile] [--headless | --headful] [--slow-mo <ms>] [--network testnet|mainnet --mainnet-confirmation REAL_FUNDS] [--start-chain <id>] [--json]';
 }
 
 export function parseLaunchArgs(argv, env = process.env) {
@@ -490,7 +490,14 @@ export async function launchWebDappBrowser(
   }
 
   const { fixture } = await loadWalletFixture(target, env);
-  const accountAddress = viemAccountFromEntry(fixtureEntry(fixture, args.account), target).address;
+  // --account is an account name or address; the browser runs under its name.
+  const selected = walletAccount(fixture, args.account, target, env);
+  const account = {
+    name: selected.name,
+    address: selected.address,
+    secret: selected.secret,
+    index: selected.index,
+  };
 
   const previous = readStateFile(stateFile);
   const reusable =
@@ -499,7 +506,7 @@ export async function launchWebDappBrowser(
     previous.signer === signer &&
     previous.cdpPort === cdpPort &&
     previous.appOrigin === appOrigin &&
-    previous.account?.name === args.account &&
+    previous.account?.name === account.name &&
     previous.browser?.headless === headless &&
     (previous.network ?? 'testnet') === network &&
     previous.networkEnforcement?.fingerprint === enforcementFingerprint &&
@@ -507,7 +514,7 @@ export async function launchWebDappBrowser(
     ownsProcess('wallet-host', previous.hostPid, runtime);
   if (reusable) {
     await browserWebSocketUrl(cdpPort, 5000);
-    log(`reusing browser pid ${previous.browserPid} (${signer}, ${args.account})`);
+    log(`reusing browser pid ${previous.browserPid} (${signer}, ${account.name})`);
     const state = { ...previous, slowMoMs };
     if (previous.slowMoMs !== slowMoMs)
       writePrivateFile(stateFile, `${JSON.stringify(state, null, 2)}\n`);
@@ -518,7 +525,7 @@ export async function launchWebDappBrowser(
   const browser = await resolveBrowser(env);
   const profile = path.join(
     runtime,
-    `profile-${signer}-${args.account.replace(/[^A-Za-z0-9_-]/gu, '_')}`,
+    `profile-${signer}-${account.name.replace(/[^A-Za-z0-9_-]/gu, '_')}`,
   );
   if (args['fresh-profile'] && existsSync(profile)) {
     const retired = `${profile}.retired-${Date.now()}`;
@@ -571,7 +578,7 @@ export async function launchWebDappBrowser(
         target,
         runtime,
         profile,
-        account: args.account,
+        account: account.name,
         fixture,
         env,
         freshProfile,
@@ -683,7 +690,7 @@ export async function launchWebDappBrowser(
       '--target',
       target,
       '--account',
-      args.account,
+      account.name,
       '--start-chain',
       String(args['start-chain'] ?? policy.startChain),
       '--network',
@@ -758,7 +765,7 @@ export async function launchWebDappBrowser(
       appListeners: cdpListenerPids(appPort),
       cdpPort,
       appOrigin,
-      account: { name: args.account, address: accountAddress },
+      account,
       browserPid,
       hostPid,
       browser: {
