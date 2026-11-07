@@ -77,8 +77,8 @@ test('project catalog writes notify capabilities and retire the owning project v
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   assert.equal((await loadProjectVars(project)).projectJson.default_branch, 'after');
-  await fs.unlink(file);
   const changed = resourceRevisions.revision(key);
+  await fs.unlink(file);
   while (resourceRevisions.revision(key) === changed) {
     assert(Date.now() < deadline, 'A removed catalog must notify its readers');
     await new Promise((resolve) => setTimeout(resolve, 20));

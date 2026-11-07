@@ -1,0 +1,1 @@
+- Share native tool diffs and text-diff formatting between clients, with optional registered-agent effort choices.

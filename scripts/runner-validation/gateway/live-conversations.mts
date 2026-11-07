@@ -257,6 +257,7 @@ try {
       host: '127.0.0.1',
       port: 5191,
       strictPort: true,
+      fs: { allow: [repo, fs.realpathSync(path.join(repo, 'node_modules'))] },
       proxy: {
         '/ws': { target: `http://127.0.0.1:${address.port}`, ws: true },
         '/api': { target: `http://127.0.0.1:${address.port}` },
@@ -319,6 +320,7 @@ try {
   const models: Record<string, string> = {
     codex: 'gpt-6-luna',
     claude: 'haiku',
+    'claude-acp': 'haiku',
     pi: process.env.FARMSLOT_PI_PROOF_MODEL ?? 'litellm/DeepSeek-V4-Flash',
     cursor: 'auto',
     opencode: process.env.FARMSLOT_OPENCODE_PROOF_MODEL ?? 'litellm/DeepSeek-V4-Flash',
@@ -345,6 +347,8 @@ try {
         const workspace = path.join(root, 'workspaces', runner);
         await mkdir(workspace, { recursive: true });
         const leaseId = crypto.randomUUID();
+        const reviewOutput = path.join(root, 'review-output', runner);
+        await mkdir(reviewOutput, { recursive: true });
         info = await privateNative.ensureWorker(
           owner.id,
           {
@@ -360,6 +364,14 @@ try {
             environment: { set: {}, unset: [] },
             safetyTier: 'sandboxed',
             approvalPolicy: 'never',
+            ...(process.env.FARMSLOT_STREAM_PROOF_READONLY === '1'
+              ? {
+                  filesystemPolicy: {
+                    readOnlyRoots: [workspace],
+                    writableRoots: [reviewOutput, path.join(root, 'counters')],
+                  },
+                }
+              : {}),
           },
         );
         sessions.push(info);
@@ -486,6 +498,37 @@ try {
         return proof.visibleBeforeCompletion;
       }, runner + ' first visible stream text');
       if (proof.visibleBeforeCompletion) await screenshot(runner + '-streaming');
+      if (managed && process.env.FARMSLOT_STREAM_PROOF_READONLY === '1') {
+        const rows = execFileSync('ps', ['-axo', 'pid=,ppid=,args='], { encoding: 'utf8' })
+          .split('\n')
+          .flatMap((line) => {
+            const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+            return match
+              ? [{ pid: Number(match[1]), parent: Number(match[2]), argv: match[3] }]
+              : [];
+          });
+        const owned = new Set([info.processPid!]);
+        for (let pass = 0; pass < rows.length; pass++) {
+          let added = false;
+          for (const row of rows)
+            if (owned.has(row.parent) && !owned.has(row.pid)) {
+              owned.add(row.pid);
+              added = true;
+            }
+          if (!added) break;
+        }
+        assert(
+          rows.some(
+            (row) =>
+              owned.has(row.pid) &&
+              row.argv.includes('disableAllHooks') &&
+              row.argv.includes('true'),
+          ),
+          'Read-only provider CLI must receive explicit hook isolation',
+        );
+        results.readOnlyHookIsolation = true;
+      }
+
       await until(
         () => completed || proof.frames.some((frame) => frame.kind === 'terminal'),
         runner + ' turn completion',

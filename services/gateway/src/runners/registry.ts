@@ -1,3 +1,4 @@
+import { CLAUDE_ACP_EFFORTS } from '@farmslot/agent-runtime/native/claude-acp';
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
@@ -200,6 +201,14 @@ export interface RunnerFeedbackTiming {
   retryWindowMs: number;
 }
 
+export interface NativeRunnerChoices {
+  models: string[];
+  modes: Array<'default' | 'plan'>;
+  defaultModel?: string;
+  efforts?: string[];
+  defaultEffort?: string | null;
+}
+
 export interface RunnerDefinition {
   /** Stop only structured, slot-isolated managed processes after the workers are stopped. */
   cleanupSlotRuntime?: (
@@ -229,10 +238,13 @@ export interface RunnerDefinition {
     | 'cursor-acp'
     | 'grok-acp'
     | 'opencode-acp'
-    | 'pi-rpc';
+    | 'pi-rpc'
+    | 'acp';
   /** Native task leases and saved-conversation recovery have been implemented for this runner. */
   supportsNativeTaskReuse?: boolean;
-  nativeChoices?: { models: string[]; modes: Array<'default' | 'plan'>; defaultModel?: string };
+  nativeChoices?: NativeRunnerChoices;
+  /** Protocol-only agents cannot be launched as a terminal CLI. */
+  nativeOnly?: boolean;
   /**
    * Structured model catalog. Absent means this runner does not report one.
    * The reader must not parse runner TUI or CLI help text.
@@ -767,6 +779,31 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
 };
 
+KNOWN_RUNNERS['claude-acp'] = {
+  // Terminal capabilities fail closed; the native adapter owns conversation recovery.
+  ...KNOWN_RUNNERS.none,
+  defaultModel: DEFAULT_CLAUDE_MODEL,
+  acceptsModel: KNOWN_RUNNERS.claude.acceptsModel,
+  sessionUsageProvider: KNOWN_RUNNERS.claude.sessionUsageProvider,
+  supportsNativeTaskReuse: true,
+  id: 'claude-acp',
+  nativeTransport: 'acp',
+  nativeOnly: true,
+  nativeChoices: {
+    models: ['sonnet', 'opus', 'haiku'],
+    modes: ['default', 'plan'],
+    efforts: [...CLAUDE_ACP_EFFORTS],
+    defaultEffort: null,
+  },
+  supportsInteractivePrompt: false,
+  supportsTmuxNudges: false,
+  resolvesPreTaskLaunchBlockers: false,
+  processMatchers: ['claude-agent-acp'],
+  requiresExplicitTerminationIdentity: true,
+  flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
+  acceptsEffort: (_model, effort) => CLAUDE_ACP_EFFORTS.includes(effort),
+};
+
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: {
     ...claudeHookObservability,
@@ -1052,6 +1089,12 @@ export function runnerSupportsTmuxNudges(runnerId?: string | null): boolean {
 }
 
 /** Native chat and farm workers launch through the runner's native adapter. */
+export function assertRunnerTransport(runner: string, transport: 'tmux' | 'native'): void {
+  if (transport === 'native') assertNativeRunner(runner);
+  else if (getRunnerDefinition(runner).nativeOnly)
+    throw new Error('This agent requires native transport');
+}
+
 export function assertNativeRunner(runner: string): void {
   if (!KNOWN_RUNNERS[runner]?.nativeTransport)
     throw new Error(`Runner has no native transport: ${runner}`);

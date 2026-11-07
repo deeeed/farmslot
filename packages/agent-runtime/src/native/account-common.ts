@@ -87,7 +87,7 @@ export async function accountJsonCommand(
   }
 }
 
-async function executablePath(
+export async function resolveNativeAccountExecutable(
   binary: string,
   options: NativeAccountProbeOptions,
   env: NodeJS.ProcessEnv,
@@ -134,7 +134,11 @@ export async function observeNativeAccount(
   const env = { ...(options.env ?? process.env) };
   delete env.CLAUDECODE;
   try {
-    const executable = await executablePath(options.executable ?? binary, options, env);
+    const executable = await resolveNativeAccountExecutable(
+      options.executable ?? binary,
+      options,
+      env,
+    );
     if (!executable) return { ...base, reason: 'not-installed' };
     base.installed = true;
     base.executable = executable;

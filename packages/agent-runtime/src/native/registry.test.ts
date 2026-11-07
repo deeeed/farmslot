@@ -69,3 +69,15 @@ test('opencode review roots honor XDG data, cache, state and config locations', 
     ],
   );
 });
+
+test('registered Claude Code ACP retains native approvals and workspace policy', () => {
+  const definition = nativeRunnerDefinitions['claude-acp'];
+  assert(definition);
+  assert.equal(definition.supportsWorkers, true);
+  assert.deepEqual(definition.adapter.capabilities.modes, ['default', 'plan']);
+  assert.deepEqual(definition.adapter.capabilities.approvalModes, ['ask', 'bypass']);
+  assert.equal(
+    definition.account.standardDirectory({ HOME: '/home/account' }),
+    nativeRunnerDefinitions.claude.account.standardDirectory({ HOME: '/home/account' }),
+  );
+});

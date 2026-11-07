@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { diffArtifactCandidate, diffFocusedFilePathFromRequest } from './diff';
+import { nativeToolDiffText } from '@farmslot/protocol/client-cache';
+
+import { diffArtifactCandidate, diffFocusedFilePathFromRequest, parseUnifiedDiff } from './diff';
 
 test('diffArtifactCandidate prefers renderable diff text over diff-stat json', () => {
   assert.equal(
@@ -35,5 +37,17 @@ test('diffFocusedFilePathFromRequest ignores manifest artifact paths and preserv
   assert.equal(
     diffFocusedFilePathFromRequest('app/controllers/perps/HyperLiquidProvider.ts', manifest),
     'app/controllers/perps/HyperLiquidProvider.ts',
+  );
+});
+
+test('native ACP file creation retains its real path and lines in the mobile viewer', () => {
+  const files = parseUnifiedDiff(
+    nativeToolDiffText({ path: '/tmp/acp/new.txt', oldText: null, newText: 'hello ACP\n' }),
+  );
+  assert.equal(files[0]?.path, '/tmp/acp/new.txt');
+  assert.equal(files[0]?.additions, 1);
+  assert.equal(
+    files[0]?.hunks.flatMap((hunk) => hunk.lines).find((line) => line.type === 'add')?.text,
+    'hello ACP',
   );
 });

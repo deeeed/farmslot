@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -7,6 +7,7 @@ import test from 'node:test';
 import { observeOpenCodeAccount } from './account-opencode.js';
 import { createAcpAdapter } from './acp.js';
 import { acpPermission, cursorRequest } from './acp-requests.js';
+import { claudeAcpNativeAdapter } from './claude-acp.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
 import { opencodeEnvironment, opencodeNativeAdapter } from './opencode.js';
@@ -16,22 +17,22 @@ const fixture = `#!/usr/bin/env node
 if(process.argv.includes('--version')) { console.log('fixture 1'); process.exit(0); }
 const fs=require('node:fs');
 if(process.env.OPENCODE_PERMISSION!==undefined)fs.writeFileSync('opencode-permission',process.env.OPENCODE_PERMISSION);
-let session='fixture-session',prompt,authenticated=false;
-const configOptions=[{id:'model',currentValue:'specific-model',options:[{value:'specific-model'}]}];
+let session='fixture-session',prompt,authenticated=process.env.ACP_FIXTURE_EXISTING_LOGIN==='1';
+const configOptions=process.env.ACP_FIXTURE_CONFIG?JSON.parse(process.env.ACP_FIXTURE_CONFIG):[{id:'model',currentValue:'specific-model',options:[{value:'specific-model'}]}];
 const send=m=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...m})+'\\n');
 const update=u=>send({method:'session/update',params:{sessionId:session,update:u}});
 const result=(id,value)=>send({id,result:value});
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);fs.appendFileSync('wire',line+'\\n');
  if(m.jsonrpc!=='2.0')process.exit(9);
- if(m.method==='initialize')return result(m.id,{protocolVersion:1,agentCapabilities:{loadSession:true},authMethods:[{id:'cursor_login'},{id:'cached_token'},{id:'opencode-login'}]});
+ if(m.method==='initialize')return result(m.id,{protocolVersion:1,agentCapabilities:{loadSession:true},authMethods:process.env.ACP_FIXTURE_EXISTING_LOGIN==='1'?[]:[{id:'cursor_login'},{id:'cached_token'},{id:'opencode-login'}]});
  if(m.method==='authenticate'){authenticated=true;return result(m.id,{})}
  if(m.method==='session/new'||m.method==='session/load'){
   if(!authenticated)process.exit(10);
   if(m.method==='session/load') {session=m.params.sessionId;update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'REPLAY'}})}
-  return result(m.id,{...(m.method==='session/new'?{sessionId:session}:{}),modes:{availableModes:[{id:'agent'},{id:'plan'}]},configOptions});
+  return result(m.id,{...(m.method==='session/new'?{sessionId:session}:{}),modes:{availableModes:[{id:'default'},{id:'agent'},{id:'plan'}]},configOptions});
  }
- if(m.method==='session/set_config_option'){configOptions[0].currentValue=m.params.value;return result(m.id,{configOptions});}
+ if(m.method==='session/set_config_option'){const option=configOptions.find(x=>x.id===m.params.configId);if(!option)return send({id:m.id,error:{code:-32602,message:'Unknown config'}});if(process.env.ACP_FIXTURE_CONFIRM_MISMATCH!=='1')option.currentValue=m.params.value;return result(m.id,{configOptions});}
  if(m.method==='session/set_model'||m.method==='session/set_mode')return result(m.id,{});
  if(m.method==='session/prompt'){
   prompt=m.id;const text=m.params.prompt[0].text;
@@ -41,6 +42,17 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='plan'){
    update({sessionUpdate:'plan',entries:[{content:'Inspect',priority:'high',status:'in_progress'},{content:'Report',priority:'low',status:'pending'}]});
    update({sessionUpdate:'plan',entries:[{content:'Inspect',priority:'high',status:'completed'},{content:'Report',priority:'low',status:'completed'}]});
+   return result(prompt,{stopReason:'end_turn'});
+  }
+  if(text==='late-file-diff'){
+   update({sessionUpdate:'tool_call',toolCallId:'late-edit',title:'Edit existing file',kind:'edit',status:'in_progress',content:[{type:'diff',path:'/work/existing.txt',oldText:'before\\n',newText:'optimistic\\n'}]});
+   update({sessionUpdate:'tool_call_update',toolCallId:'late-edit',status:'completed'});
+   update({sessionUpdate:'tool_call_update',toolCallId:'late-edit',content:[{type:'diff',path:'/work/existing.txt',oldText:'whole before\\n',newText:'whole after\\n'}]});
+   return result(prompt,{stopReason:'end_turn'});
+  }
+  if(text==='file-diff'){
+   update({sessionUpdate:'tool_call',toolCallId:'edit1',title:'Edit fixture',kind:'edit',status:'in_progress',rawOutput:{written:true},content:[{type:'diff',path:'/work/example.txt',oldText:'before\\n',newText:'after\\n'}]});
+   update({sessionUpdate:'tool_call_update',toolCallId:'edit1',status:'completed',rawOutput:{written:true}});
    return result(prompt,{stopReason:'end_turn'});
   }
   if(text==='shell'){
@@ -579,6 +591,12 @@ for (const [runner, adapter] of [
         JSON.parse(readFileSync(join(f.cwd, 'permission'), 'utf8')).outcome.optionId,
         'allow-once',
       );
+      const automatic = events.find((event) => event.type === 'approval.resolved');
+      assert.equal(automatic?.data?.decision, 'approve');
+      assert.equal(automatic?.data?.automatic, true);
+      assert.equal(automatic?.data?.approvalMode, 'bypass');
+      assert.equal(automatic?.request?.title, 'Write fixture');
+      assert.equal(automatic?.commandId, 'bypass');
       await session.setApprovalMode!('ask');
       events.length = 0;
       await session.send('permission', 'ask');
@@ -604,7 +622,7 @@ for (const [runner, adapter] of [
 
 // No executables/accounts are installed for these rows. This proves only their shared
 // ACP transport contract, not provider flags, authentication or live parity.
-for (const provider of ['Kiro', 'FX', 'Antigravity', 'ACP registry']) {
+for (const provider of ['ACP registry']) {
   test(
     `${provider}, not installed: shared ACP contract emits text before turn completion`,
     { timeout: 10_000 },
@@ -642,3 +660,247 @@ for (const provider of ['Kiro', 'FX', 'Antigravity', 'ACP registry']) {
     },
   );
 }
+
+test('an ACP agent with an existing login needs no advertised or interactive authentication method', async (t) => {
+  const f = setup();
+  t.after(f.cleanup);
+  const events: NativeEventInput[] = [];
+  const adapter = createAcpAdapter({
+    args: () => [],
+    modes: ['default', 'plan'],
+    defaultModeId: 'default',
+  });
+  const session = await adapter.start(
+    { ...f, env: { ...process.env, ACP_FIXTURE_EXISTING_LOGIN: '1' } },
+    (event) => events.push(event),
+  );
+  try {
+    assert.equal(session.nativeSessionId, 'fixture-session');
+    const calls = readFileSync(join(f.cwd, 'wire'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.equal(
+      calls.some((call) => call.method === 'authenticate'),
+      false,
+    );
+    assert.equal(
+      calls.find((call) => call.method === 'session/set_mode')?.params.modeId,
+      'default',
+    );
+  } finally {
+    await session.close();
+    f.cleanup();
+  }
+});
+
+test('generic ACP model and effort configuration uses advertised options and confirms both choices', async (t) => {
+  const f = setup();
+  t.after(f.cleanup);
+  const configOptions = [
+    {
+      id: 'provider-model',
+      category: 'model',
+      currentValue: 'opus',
+      options: [{ value: 'opus' }, { value: 'haiku' }],
+    },
+    {
+      id: 'thinking',
+      category: 'thought_level',
+      currentValue: 'high',
+      options: [{ value: 'low' }, { value: 'high' }],
+    },
+  ];
+  const adapter = createAcpAdapter({
+    authMethod: 'cursor_login',
+    args: () => [],
+    modes: ['default', 'plan'],
+    effortConfig: true,
+  });
+  const session = await adapter.start(
+    {
+      ...f,
+      model: 'haiku',
+      effort: 'low',
+      mode: 'plan',
+      env: { ...process.env, ACP_FIXTURE_CONFIG: JSON.stringify(configOptions) },
+    },
+    () => {},
+  );
+  try {
+    const calls = readFileSync(join(f.cwd, 'wire'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      calls
+        .filter((call) => call.method === 'session/set_config_option')
+        .map((call) => [call.params.configId, call.params.value]),
+      [
+        ['provider-model', 'haiku'],
+        ['thinking', 'low'],
+      ],
+    );
+    assert.equal(
+      calls.some((call) => call.method === 'session/set_model'),
+      false,
+    );
+    assert.equal(calls.find((call) => call.method === 'session/set_mode')?.params.modeId, 'plan');
+  } finally {
+    await session.close();
+    f.cleanup();
+  }
+});
+
+test('a failed automatic-approval audit cannot grant the ACP permission', async (t) => {
+  const f = setup();
+  t.after(f.cleanup);
+  const events: NativeEventInput[] = [];
+  let auditFailed = false;
+  const adapter = createAcpAdapter({ args: () => [], modes: ['default'] });
+  const session = await adapter.start(
+    { ...f, approvalMode: 'bypass', env: { ...process.env, ACP_FIXTURE_EXISTING_LOGIN: '1' } },
+    (event) => {
+      if (event.type === 'approval.resolved') {
+        auditFailed = true;
+        throw new Error('Private audit store unavailable');
+      }
+      events.push(event);
+    },
+  );
+  try {
+    await session.send('permission', 'audit-failure');
+    await until(() =>
+      events.some((event) => event.type === 'session.closed' || event.type === 'turn.completed'),
+    );
+    assert.equal(auditFailed, true);
+    assert.equal(existsSync(join(f.cwd, 'permission')), false);
+  } finally {
+    await session.close();
+  }
+});
+
+test('ACP diff content survives raw output and partial terminal tool updates', async (t) => {
+  const f = setup();
+  t.after(f.cleanup);
+  const events: NativeEventInput[] = [];
+  const adapter = createAcpAdapter({
+    authMethod: 'cursor_login',
+    args: () => [],
+    modes: ['default'],
+  });
+  const session = await adapter.start(f, (event) => events.push(event));
+  try {
+    await session.send('file-diff', 'edit');
+    await until(() => events.some((event) => event.type === 'turn.completed'));
+    const tool = events.find((event) => event.type === 'tool.completed')?.tool;
+    assert.deepEqual(tool?.diffs, [
+      { path: '/work/example.txt', oldText: 'before\n', newText: 'after\n' },
+    ]);
+    assert.deepEqual(tool?.output, { written: true });
+    assert.deepEqual(tool?.paths, ['/work/example.txt']);
+  } finally {
+    await session.close();
+  }
+});
+
+for (const scenario of [
+  'unsupported-model',
+  'unsupported-effort',
+  'confirmation-mismatch',
+] as const) {
+  test(`ACP rejects ${scenario} before starting a prompt`, async (t) => {
+    const f = setup();
+    t.after(f.cleanup);
+    const adapter = createAcpAdapter({ args: () => [], modes: ['default'], effortConfig: true });
+    await assert.rejects(
+      adapter
+        .start(
+          {
+            ...f,
+            model: scenario === 'unsupported-model' ? 'unlisted' : 'haiku',
+            effort: scenario === 'unsupported-effort' ? 'unlisted' : 'low',
+            env: {
+              ...process.env,
+              ACP_FIXTURE_EXISTING_LOGIN: '1',
+              ACP_FIXTURE_CONFIRM_MISMATCH: scenario === 'confirmation-mismatch' ? '1' : '0',
+              ACP_FIXTURE_CONFIG: JSON.stringify([
+                {
+                  id: 'model',
+                  category: 'model',
+                  currentValue: 'opus',
+                  options: [{ value: 'haiku' }, { value: 'opus' }],
+                },
+                {
+                  id: 'effort',
+                  category: 'thought_level',
+                  currentValue: 'high',
+                  options: [{ value: 'low' }, { value: 'high' }],
+                },
+              ]),
+            },
+          },
+          () => {},
+        )
+        .then(async (session) => {
+          await session.close();
+        }),
+      /did not (advertise|confirm)/,
+    );
+    assert(!readFileSync(join(f.cwd, 'wire'), 'utf8').includes('session/prompt'));
+  });
+}
+
+test('read-only ACP reviews disable user hooks while ordinary sessions preserve user settings', async (t) => {
+  for (const review of [true, false]) {
+    const f = setup();
+    t.after(f.cleanup);
+    const session = await claudeAcpNativeAdapter.start(
+      {
+        ...f,
+        ...(review ? { filesystemPolicy: { readOnlyRoots: [f.cwd], writableRoots: [] } } : {}),
+        env: {
+          ...process.env,
+          ACP_FIXTURE_EXISTING_LOGIN: '1',
+          CLAUDE_CODE_EXECUTABLE: f.executable,
+        },
+      },
+      () => {},
+    );
+    try {
+      const calls = readFileSync(join(f.cwd, 'wire'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      const policy = calls.find((call) => call.method === 'session/new')?.params._meta?.claudeCode
+        ?.options;
+      if (review) {
+        assert.deepEqual(policy?.settingSources, ['user']);
+        assert.equal(policy?.settings?.disableAllHooks, true);
+      } else assert.equal(policy, undefined);
+    } finally {
+      await session.close();
+    }
+  }
+});
+
+test('ACP journals a final file diff arriving after the tool completed', async (t) => {
+  const f = setup();
+  t.after(f.cleanup);
+  const events: NativeEventInput[] = [];
+  const session = await createAcpAdapter({
+    args: () => [],
+    authMethod: 'cursor_login',
+    modes: ['default'],
+  }).start(f, (event) => events.push(event));
+  try {
+    await session.send('late-file-diff', 'late');
+    await until(() => events.some((event) => event.type === 'turn.completed'));
+    assert.deepEqual(
+      events.filter((event) => event.type === 'tool.completed').at(-1)?.tool?.diffs,
+      [{ path: '/work/existing.txt', oldText: 'whole before\n', newText: 'whole after\n' }],
+    );
+  } finally {
+    await session.close();
+  }
+});

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import type { NativeSessionCatalogResult } from '@farmslot/protocol';
 
+import { catalogForNativeRunners } from '../src/catalog.js';
 import {
   nativeLaunchChoices,
   nativeLaunchModel,
@@ -151,4 +152,19 @@ test('changing execution nodes drops unlisted models while current-node custom i
     nativeLaunchModelSelection(target, 'custom-provider-model'),
     'custom-provider-model',
   );
+});
+
+test('native catalog carries registered agent effort choices to the shared model picker', () => {
+  const result = catalogForNativeRunners([
+    {
+      runner: 'claude-acp',
+      models: ['haiku'],
+      defaultModel: 'haiku',
+      modes: ['default', 'plan'],
+      efforts: ['low', 'high'],
+      defaultEffort: 'low',
+    },
+  ]);
+  assert.deepEqual(result.runners[0].efforts, ['low', 'high']);
+  assert.equal(result.runners[0].defaultEffort, 'low');
 });
