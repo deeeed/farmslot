@@ -272,3 +272,31 @@ test('the durable unacknowledged bootstrap intent remains starting while its lau
   assert.equal((await starting).session.status, 'running');
   await controller.stop();
 });
+
+test('a generic resume of the stopped session cannot create a second co-pilot', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-generic-resume-'));
+  const { controller, native } = testController({ home, checkout: process.cwd() });
+  t.after(async () => {
+    await controller.dispose();
+    await rm(home, { recursive: true, force: true });
+  });
+  const started = await controller.start();
+  const id = started.session.nativeSession!.sessionId;
+  await controller.stop();
+  const closed = native.sessions.get(id);
+  assert(closed);
+  native.sessions.set(id, {
+    ...closed,
+    state: 'idle',
+    generation: 'generic-resume',
+    processStopped: false,
+  });
+  native.publish();
+  await assert.rejects(controller.start(), /resumed.*Stop|stop.*resumed/i);
+  assert.equal([...native.sessions.values()].filter((info) => info.state !== 'closed').length, 1);
+  await controller.stop();
+  assert.equal(native.sessions.get(id)?.state, 'closed');
+  const fresh = await controller.start();
+  assert.notEqual(fresh.session.nativeSession?.sessionId, id);
+  await controller.stop();
+});

@@ -592,7 +592,7 @@ try {
     await until(
       () => fs.existsSync(path.join(root, 'stop-proof')),
       'owned proof close request',
-      30 * 60_000,
+      60 * 60_000,
     );
   }
   results.performance ??= await page.evaluate(

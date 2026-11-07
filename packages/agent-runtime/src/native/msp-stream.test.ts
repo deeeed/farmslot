@@ -17,7 +17,7 @@ test('uninstalled Muse/MSP contract streams item deltas before completion withou
   };
   stream.accept('foreign', 'item/started', { item });
   stream.accept('session', 'item/delta', { itemId: 'answer', delta: 'foreign' });
-  assert.deepEqual(events, []);
+  assert.equal(events.length, 0);
   stream.accept('session', 'item/started', { item });
   stream.accept('session', 'item/delta', { itemId: 'answer', delta: 'hello' });
   assert.deepEqual(

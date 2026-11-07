@@ -857,7 +857,25 @@ export function createGatewayResourceCache(
             });
         });
       },
-      async forget(target) {
+      forget(target) {
+        const deletingStore = store;
+        const incarnation = storeVersion;
+        // Enqueue an accepted refusal before any observer can close the profile.
+        // Privacy deletion bypasses cross-tab budget admission, as generic refusals do.
+        const deleting = updateStore(
+          deletingStore,
+          () => deletingStore === store && incarnation === storeVersion && !deletingStore.deleted,
+          async () => {
+            await deletingStore.deleteQuery(nativeConversationStorageId(target));
+            const legacyId = nativeHistoryStorageId(
+              nativeHistoryQuery(target, connection.scope.principalId ?? ''),
+            );
+            const previous = await deletingStore.getQuery(legacyId);
+            if (previous && storedNativeHistoryMatches(target, previous.data))
+              await deletingStore.deleteQuery(legacyId);
+          },
+          false,
+        );
         const wanted = nativeHistoryParams(target);
         for (const entry of entries.values()) {
           if (
@@ -869,26 +887,7 @@ export function createGatewayResourceCache(
             notify(entry);
           }
         }
-        const owner = hydrationOwnerVersion;
-        await barrier;
-        const deletingStore = store;
-        await updateStore(
-          deletingStore,
-          () =>
-            !disposed &&
-            owner === hydrationOwnerVersion &&
-            deletingStore === store &&
-            !deletingStore.deleted,
-          async () => {
-            await deletingStore.deleteQuery(nativeConversationStorageId(target));
-            const legacyId = nativeHistoryStorageId(
-              nativeHistoryQuery(target, connection.scope.principalId ?? ''),
-            );
-            const previous = await deletingStore.getQuery(legacyId);
-            if (previous && storedNativeHistoryMatches(target, previous.data))
-              await deletingStore.deleteQuery(legacyId);
-          },
-        );
+        return deleting;
       },
     },
     () => connection,

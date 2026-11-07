@@ -316,6 +316,16 @@ export class CopilotRuntimeController {
       const stopped = this.persisted!.stoppedNativeSessionId === id;
       if (this.persisted!.nativeOwnerPrincipalId !== owner && !stopped)
         throw new Error('Stop the original-owner Co-Pilot before changing its native owner');
+      if (
+        stopped &&
+        (await this.retiredNativeResumed(this.persisted!.nativeOwnerPrincipalId ?? owner, id))
+      ) {
+        session.status = 'failed';
+        session.terminalReason = this.resumedReason();
+        await this.persist();
+        this.emitRuntime();
+        throw new Error(session.terminalReason);
+      }
       if (!stopped) {
         let observed: NativeCommandObservation | undefined;
         try {
@@ -574,10 +584,28 @@ export class CopilotRuntimeController {
       void this.reconcile(true).catch((error) => this.backgroundFailed(error));
     });
   }
-  private hasStopIntent(id: string): boolean {
+  private resumedReason(): string {
+    return 'This Co-Pilot was resumed from another native view. Stop it before starting another.';
+  }
+  private async retiredNativeResumed(owner: string, id: string): Promise<boolean> {
+    let info: NativeSessionInfo;
+    try {
+      info = await this.native.inspect(owner, id);
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'NOT_FOUND')
+        return false;
+      throw error;
+    }
+    this.assertNative(info, owner, id);
     return (
-      this.persisted?.session.status === 'stopping' || this.persisted?.stoppedNativeSessionId === id
+      !['closed', 'failed'].includes(info.state) || Boolean(info.processPid && !info.processStopped)
     );
+  }
+  private isStopping(): boolean {
+    return this.persisted?.session.status === 'stopping';
+  }
+  private hasStopIntent(id: string): boolean {
+    return this.isStopping() || this.persisted?.stoppedNativeSessionId === id;
   }
   private assertNative(info: NativeSessionInfo, owner: string, id: string): void {
     if (
@@ -667,12 +695,25 @@ export class CopilotRuntimeController {
       }
       return;
     }
-    if (
-      session.status === 'stopping' ||
-      this.persisted!.stoppedNativeSessionId === session.nativeSession.sessionId
-    )
-      return;
+    if (this.isStopping()) return;
     const expected = session.nativeSession.sessionId;
+    if (this.persisted!.stoppedNativeSessionId === expected) {
+      const resumed = await this.retiredNativeResumed(
+        this.persisted!.nativeOwnerPrincipalId!,
+        expected,
+      );
+      if (
+        this.disposed ||
+        this.isStopping() ||
+        this.persisted?.session.nativeSession?.sessionId !== expected
+      )
+        return;
+      session.status = resumed ? 'failed' : 'stopped';
+      if (resumed) session.terminalReason = this.resumedReason();
+      await this.persist();
+      this.emitRuntime();
+      return;
+    }
     if (this.persisted!.nativeOwnerPrincipalId)
       this.watchNative(this.persisted!.nativeOwnerPrincipalId);
     try {

@@ -219,6 +219,7 @@ test('an info-only committed setting is delivered even though the event cursor i
   if (update.kind === 'delta') {
     assert.equal(update.cursor.sequence, 1);
     assert.deepEqual(update.page.events, []);
+    assert(update.page.session);
     assert.equal(update.page.session.approvalModePending, 'bypass');
   }
   subscription.stop();

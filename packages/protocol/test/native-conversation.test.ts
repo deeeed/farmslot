@@ -771,3 +771,93 @@ test('pre-upgrade chat history remains readable offline through the immutable ar
   stop();
   await cache.dispose('network');
 });
+
+for (const delayedLock of [false, true])
+  test(
+    `a refusal survives immediate profile close${delayedLock ? ' with another tab holding the write lock' : ''}`,
+    { timeout: 2000 },
+    async (t) => {
+      const scope = {
+        gatewayUrl: 'ws://refusal-close',
+        principalId: 'reader',
+        principalGeneration: 0,
+      };
+      const base = new ResourceCacheConformanceTransport(scope);
+      base.setConnection({
+        id: 1,
+        connected: true,
+        capabilities: { ...base.connection.capabilities!, conversationStreaming: 1 },
+      });
+      let receive!: (payload: NativeSessionDeltaPayload) => void;
+      const transport = Object.assign(base, {
+        conversations: {
+          subscribe: async () => ({ ...initial, subscriptionId: 'subscription' }),
+          unsubscribe: async () => undefined,
+          onDelta(listener: (payload: NativeSessionDeltaPayload) => void) {
+            receive = listener;
+            return () => undefined;
+          },
+        },
+      });
+      const store = createMemoryResourceStore();
+      const reopened = createMemoryResourceStore();
+      await store.setMetadata({ scope, authority: base.connection.authority! });
+      const legacyId = nativeHistoryStorageId(nativeHistoryQuery(target, 'reader'));
+      const snapshot = reduceNativeConversation(undefined, initial);
+      for (const [id, data] of [
+        [nativeConversationStorageId(target), snapshot],
+        [legacyId, { ...page, historyRead: { projection: 5, pageReadCount: 0, pageAfters: [] } }],
+      ] as const)
+        await store.putQuery({
+          id,
+          data,
+          bytes: JSON.stringify(data).length,
+          observedAt: Date.now(),
+        });
+      const close = store.close.bind(store);
+      store.close = async () => {
+        await reopened.setMetadata({ scope, authority: base.connection.authority! });
+        for (const row of await store.listQueries()) {
+          const saved = await store.getQuery(row.id);
+          if (saved) await reopened.putQuery(saved);
+        }
+        await close();
+      };
+      let release!: () => void;
+      const lock = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      t.after(release);
+      let locks = 0;
+      const cache = createGatewayResourceCache({ transport, store });
+      let retirement: Promise<void> | undefined;
+      let retiring = false;
+      const stop = cache.conversations!.observe(target, (state) => {
+        if (state.error?.code === 'AUTH_FORBIDDEN' && !retiring) {
+          retiring = true;
+          retirement = cache.dispose('profile-change');
+        }
+      });
+      await settle();
+      if (delayedLock)
+        store.withWriteLock = async (write) => {
+          locks++;
+          await lock;
+          return write();
+        };
+      receive({ kind: 'terminal', reason: 'access-denied', subscriptionId: 'subscription' });
+      assert(retirement);
+      await retirement;
+      assert.equal(locks, 0);
+      const offline = new ResourceCacheConformanceTransport(scope);
+      const next = createGatewayResourceCache({ transport: offline, store: reopened });
+      const unobserve = next.conversations!.observe(target, () => undefined);
+      await settle();
+      assert.equal(next.conversations!.read(target).data, undefined);
+      assert.equal(await reopened.getQuery(nativeConversationStorageId(target)), undefined);
+      assert.equal(await reopened.getQuery(legacyId), undefined);
+      stop();
+      unobserve();
+      await next.dispose('network');
+    },
+  );

@@ -4,7 +4,11 @@ import test, { mock } from 'node:test';
 import React from 'react';
 
 import type { NativeSessionReadResult } from '@farmslot/protocol';
-import type { ResourceQuery, ResourceQueryState } from '@farmslot/protocol/client-cache';
+import type {
+  NativeConversationState,
+  ResourceQuery,
+  ResourceQueryState,
+} from '@farmslot/protocol/client-cache';
 
 import type { NativeConversationParams } from '../features/native-conversation/use-native-conversation-controller';
 
@@ -78,6 +82,21 @@ const history: ResourceQueryState<NativeSessionReadResult> = {
     ],
   },
 };
+const conversation: NativeConversationState = {
+  ...history,
+  data: history.data
+    ? {
+        ...history.data,
+        historyBefore: 0,
+        truncated: false,
+        retainedBytes: new TextEncoder().encode(JSON.stringify(history.data.events)).byteLength,
+        historyRead: { pageReadCount: 0, pageAfters: [] },
+      }
+    : undefined,
+};
+mock.module('../hooks/useNativeConversation', {
+  namedExports: { useNativeConversation: () => conversation },
+});
 const loading = { status: 'loading' };
 mock.module('@react-native-async-storage/async-storage', {
   defaultExport: { getItem: async () => null, setItem: async () => undefined },
@@ -107,6 +126,7 @@ mock.module('./resource-cache', {
     subscribeResourceCache: () => () => undefined,
     getResourceNativeOwnerId: () => (remembered === 'none' ? undefined : 'saved-owner'),
     getResourceCache: () => undefined,
+    getResourceWorkspaceKey: () => (remembered === 'none' ? undefined : 'saved-scope'),
   },
 });
 mock.module('../hooks/useResourceQuery', {

@@ -11,6 +11,7 @@ test('node native execution rejects other owners and conflicting execution ident
   assert.deepEqual(service.declaration, {
     ownerPrincipalId: 'owner',
     supportsStandaloneDelegation: true,
+    conversationStreaming: 1,
     supportsApprovalMode: true,
     supportsEnsure: true,
     supportsWorkers: true,
@@ -65,6 +66,7 @@ test('native target metadata reports its actual home and refuses an old ready ho
       socket,
       token: secret,
       supportsStandaloneDelegation: true,
+      conversationStreaming: 1,
     }),
     { mode: 0o600 },
   );
