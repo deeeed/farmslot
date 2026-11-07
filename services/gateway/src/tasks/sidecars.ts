@@ -8,9 +8,12 @@ import {
   SUBTASKS_DIR,
 } from '@farmslot/protocol/checklist-target';
 
+import { loadSlotVars } from '../core/config.js';
 import { execLocal, isLocal } from '../core/exec.js';
 import { RSYNC_SSH_SHELL_OPTION, SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
+import { getRun } from '../runs/store.js';
 
 export const CHECKLIST_MARKER_INPUT = 'mark';
 // CHECKLIST.md is a task-root file like the marker and manifest: when the
@@ -56,6 +59,8 @@ export interface CopyTaskDirSubdirectoriesParams {
   host: string;
   machine: string;
   sshTarget?: string;
+  runId?: string;
+  slotId?: string;
   /** Node-produced identity/documents are never replaced by gateway staging. */
   excludeRelativePaths?: readonly string[];
 }
@@ -74,6 +79,15 @@ export async function copyTaskDirSubdirectories(
 ): Promise<string[]> {
   const local = isLocal(params.host, params.machine);
   const copied: string[] = [];
+  if (usesNodeLink(params.machine)) {
+    const stager = await linkedStager(params);
+    for (const subdir of TASK_DIR_COPIED_SUBDIRS) {
+      if (!existsSync(path.join(params.taskDir, subdir))) continue;
+      await stager.walk(path.join(params.taskDir, subdir), subdir, false);
+      copied.push(subdir);
+    }
+    return copied;
+  }
 
   for (const subdir of TASK_DIR_COPIED_SUBDIRS) {
     const source = path.join(params.taskDir, subdir);
@@ -116,6 +130,8 @@ export interface CopyPreparedTaskRootSidecarsParams {
   host: string;
   machine: string;
   sshTarget?: string;
+  runId?: string;
+  slotId?: string;
   /** Node-produced identity/documents are never replaced by gateway staging. */
   excludeRelativePaths?: readonly string[];
 }
@@ -125,6 +141,27 @@ export async function copyPreparedTaskRootSidecars(
 ): Promise<string[]> {
   const copied: string[] = [];
   const local = isLocal(params.host, params.machine);
+  if (usesNodeLink(params.machine)) {
+    const stager = await linkedStager(params);
+    for (const sidecar of [
+      ...TASK_ROOT_SIDECARS.filter((file) => file !== CHECKLIST_MARKER_INPUT),
+      CHECKLIST_MARKER_INPUT,
+    ]) {
+      if (params.excludeRelativePaths?.includes(sidecar)) continue;
+      const source = path.join(params.taskDir, sidecar);
+      if (!existsSync(source)) {
+        if (sidecar === CHECKLIST_TARGET_MANIFEST)
+          await stager.call({
+            operation: 'file.delete',
+            input: { root: stager.root, relPath: path.join(stager.relative, sidecar) },
+          });
+        continue;
+      }
+      await stager.upload(source, sidecar, false);
+      copied.push(sidecar);
+    }
+    return copied;
+  }
 
   for (const sidecar of TASK_ROOT_SIDECARS) {
     if (params.excludeRelativePaths?.includes(sidecar)) continue;
@@ -184,4 +221,23 @@ export async function copyPreparedTaskRootSidecars(
   }
 
   return copied;
+}
+
+async function linkedStager(params: CopyPreparedTaskRootSidecarsParams) {
+  const run = params.runId ? getRun(params.runId) : undefined;
+  if (params.runId && !run) throw new Error('Node-link task owner is no longer available.');
+  if (!params.slotId) throw new Error('Node-link task copy needs its existing slot context.');
+  const vars = await loadSlotVars(params.slotId);
+  if (vars.machine !== params.machine) throw new Error('Task staging machine changed.');
+  const { createNodeLinkTaskStager } = await import('../fleet/node-link-task-copy.js');
+  return createNodeLinkTaskStager(
+    {
+      ...(run ? { runId: run.id } : {}),
+      taskFile: run?.taskFile ?? path.join(params.taskDir, 'TASK.md'),
+    },
+    vars,
+    params.taskDir,
+    params.workerTaskAbs,
+    params.excludeRelativePaths,
+  );
 }

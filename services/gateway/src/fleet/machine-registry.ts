@@ -3,6 +3,8 @@ import type { WebSocket } from 'ws';
 import {
   type NativeExecutionNodeDeclaration,
   type NodeInfo,
+  type NodeLinkCapabilities,
+  type NodeLinkPrincipal,
   type NodeObservationCapabilities,
   peerVersionCompatibility,
   type PeerVersionDeclaration,
@@ -18,6 +20,8 @@ import { gatewayPeerVersions } from './peer-versions.js';
 export interface ConnectedNode extends PeerVersionDeclaration {
   machine: string;
   pid: number;
+  nodeLink?: NodeLinkCapabilities;
+  nodePrincipal?: NodeLinkPrincipal;
   connectedAt: string;
   versionMatch?: boolean;
   compatibilityReason?: string;
@@ -72,7 +76,12 @@ export function registerNode(
   observationAuthority?: () => boolean,
   conditionalWrites?: boolean,
   terminalInputSequence?: boolean,
-  versions?: { node: PeerVersionDeclaration; gateway?: PeerVersionDeclaration },
+  versions?: {
+    node: PeerVersionDeclaration;
+    gateway?: PeerVersionDeclaration;
+    nodeLink?: NodeLinkCapabilities;
+    nodePrincipal?: NodeLinkPrincipal;
+  },
 ): void {
   const declaration = { ...versions?.node, protocolVersion };
   const compatibility = peerVersionCompatibility(
@@ -86,6 +95,8 @@ export function registerNode(
   nodes.set(machine, {
     machine,
     pid,
+    ...(versions?.nodeLink ? { nodeLink: versions.nodeLink } : {}),
+    ...(versions?.nodePrincipal ? { nodePrincipal: versions.nodePrincipal } : {}),
     connectedAt: new Date().toISOString(),
     ...declaration,
     versionMatch: compatibility.compatible,
@@ -132,6 +143,7 @@ export function getAllNodes(): NodeInfo[] {
   return Array.from(nodes.values()).map((node) => ({
     machine: node.machine,
     pid: node.pid,
+    ...(node.nodeLink ? { nodeLink: node.nodeLink } : {}),
     connectedAt: node.connectedAt,
     protocolVersion: node.protocolVersion,
     minimumProtocolVersion: node.minimumProtocolVersion,

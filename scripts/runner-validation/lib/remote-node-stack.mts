@@ -68,6 +68,8 @@ export interface RemoteNodeStackOptions {
   root: string;
   evidence: string;
   gatewayEnv?: NodeJS.ProcessEnv;
+  /** Exercise the default-off node link in this owned fixture only. */
+  nodeLink?: boolean;
   machine: string;
   /** Slot ids; each starts with `<project>-` and belongs to that project's pool. */
   slots: string[];
@@ -675,6 +677,21 @@ export async function startRemoteNodeStack(
       await writeJson(path.join(fixture, 'pool', `${pack.name}.json`), pool(proofHost));
       // Node view: its slots are local to it (node-side commands check this).
       await writeJson(path.join(nodePoolDir, `${pack.name}.json`), pool('localhost'));
+    }
+
+    if (options.nodeLink) {
+      for (const [directory, host] of [
+        [path.join(fixture, 'pool'), proofHost],
+        [nodePoolDir, 'localhost'],
+      ])
+        await writeJson(path.join(directory, `${machine}.json`), {
+          machine,
+          host,
+          ssh_user: userInfo().username,
+          os: process.platform,
+          slots: [],
+          env: { FARMSLOT_NODE_LINK_ENABLED: '1' },
+        });
     }
 
     // ---------------------------------------------------------------- processes

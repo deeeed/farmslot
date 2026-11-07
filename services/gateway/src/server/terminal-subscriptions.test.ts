@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { TerminalSubscriptionState } from './client-state.js';
-import { terminalUnsubscribeKeysForRequest } from './terminal-subscriptions.js';
+import {
+  adoptWorkerTerminalSubscription,
+  terminalUnsubscribeKeysForRequest,
+} from './terminal-subscriptions.js';
 
 function subscriptionState(keys: string[]): TerminalSubscriptionState {
   return {
@@ -53,4 +56,31 @@ test('terminalUnsubscribeKeysForRequest preserves legacy slot-key unsubscribe', 
     ),
     ['runner-browser-1'],
   );
+});
+
+test('late node PTY attachment cannot recreate an unsubscribed or disconnected worker subscription', async () => {
+  const state = subscriptionState([]);
+  const key = 'fixture:%1';
+  const registration = `worker:${key}`;
+  state.terminalSubscribeSeq.set(registration, 1);
+  let finish!: (handler: (data: string) => void) => void;
+  const attaching = new Promise<(data: string) => void>((resolve) => {
+    finish = resolve;
+  });
+  const complete = attaching.then((handler) =>
+    adoptWorkerTerminalSubscription(state, key, 1, handler, true),
+  );
+  // Unsubscribe arrives before the node confirms its attachment.
+  state.terminalSubscribeSeq.set(registration, 2);
+  finish(() => undefined);
+  assert.equal(await complete, false);
+  assert.equal(state.workerTerminalHandlers.size, 0);
+  assert.equal(
+    adoptWorkerTerminalSubscription(state, key, 2, () => undefined, false),
+    false,
+  );
+  assert.equal(state.workerTerminalHandlers.size, 0);
+  const current = () => undefined;
+  assert.equal(adoptWorkerTerminalSubscription(state, key, 2, current, true), true);
+  assert.equal(state.workerTerminalHandlers.get(key), current);
 });

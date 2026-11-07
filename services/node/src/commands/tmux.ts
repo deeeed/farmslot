@@ -13,6 +13,7 @@ import type { RawPoolJson } from '@farmslot/slot-config';
 
 import { resolveExecPoolDir } from './exec.js';
 import { GitHeadCache } from './git-head-cache.js';
+import { writeLiteralTerminalInput } from './terminal-input.js';
 
 const supportRoot = path.dirname(resolveExecPoolDir(import.meta.url, ''));
 const { runnerRuntimeDir }: { runnerRuntimeDir(repo: string, runtimeDir?: string): string } =
@@ -139,16 +140,34 @@ export async function capture(session: string, lines = 200): Promise<string[]> {
   }
 }
 
-export async function send(session: string, text: string, enter = true): Promise<void> {
+export async function send(
+  session: string,
+  text: string,
+  enter = true,
+  literal = false,
+): Promise<void> {
+  if (literal) {
+    if (enter) throw new Error('Raw terminal input supplies Enter as a byte, not a named key');
+    return writeLiteralTerminalInput(tmuxOutput, session, text);
+  }
   const args = ['send-keys', '-t', session, text];
   if (enter) args.push('Enter');
   await execFileAsync(TMUX, args, { timeout: 5000 });
 }
 
 /** Runs tmux with `args` and returns its stdout. */
-export async function tmuxOutput(args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync(TMUX, args, { timeout: 5000 });
-  return stdout;
+export async function tmuxOutput(args: string[], input?: string): Promise<string> {
+  const operation = execFileAsync(TMUX, args, { timeout: 5000 });
+  const written =
+    input === undefined
+      ? undefined
+      : new Promise<void>((resolve, reject) => {
+          // execFile uses piped stdin. Keep data out of tmux's argument parser and argv limits.
+          operation.child.stdin!.once('error', reject);
+          operation.child.stdin!.end(input, resolve);
+        });
+  const [result] = await Promise.all([operation, written]);
+  return result.stdout;
 }
 
 /** `tmux -V` when the node started, or an empty string when tmux could not run. */

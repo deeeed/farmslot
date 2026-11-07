@@ -365,6 +365,11 @@
       "import": "./dist/node/farm-layout.js",
       "default": "./dist/node/farm-layout.js"
     },
+    "./node/node-pty-helper": {
+      "types": "./dist/node/node-pty-helper.d.ts",
+      "import": "./dist/node/node-pty-helper.js",
+      "default": "./dist/node/node-pty-helper.js"
+    },
     "./node/loopback-host": {
       "types": "./dist/node/loopback-host.d.ts",
       "import": "./dist/node/loopback-host.js",

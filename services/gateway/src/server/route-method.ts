@@ -119,6 +119,7 @@ import {
   type NodeHealthAllResult,
   type NodeHealthParams,
   type NodeHealthResult,
+  nodeLinkCapabilities,
   type PairingCandidatesParams,
   type PairingCreateParams,
   peerVersionCompatibility,
@@ -600,6 +601,7 @@ import { startWatchingActiveSlots } from '../tasks/watcher.js';
 import type { ClientState } from './client-state.js';
 import { routeRunMethod } from './run-route.js';
 import {
+  adoptWorkerTerminalSubscription,
   removeTerminalSubscriptionForKey,
   terminalKeysForSlot,
   terminalUnsubscribeKeysForRequest,
@@ -1180,17 +1182,32 @@ async function routeAuthorizedMethod(
     case Methods.TERMINAL_WORKER_SUBSCRIBE: {
       const sub = p as TerminalWorkerSubscribeParams;
       const key = terminalWorkerUnsubscribeKey(sub);
+      const registration = `worker:${key}`;
+      const mySeq = (state.terminalSubscribeSeq.get(registration) ?? 0) + 1;
+      state.terminalSubscribeSeq.set(registration, mySeq);
       const oldHandler = state.workerTerminalHandlers.get(key);
       if (oldHandler) {
         unsubscribeWorkerTerminalPty(key, oldHandler);
         state.workerTerminalHandlers.delete(key);
       }
       const { ptyHandler } = await terminalWorkerSubscribe(sub, emit);
-      state.workerTerminalHandlers.set(key, ptyHandler);
-      return { subscribed: true };
+      return {
+        subscribed: adoptWorkerTerminalSubscription(
+          state,
+          key,
+          mySeq,
+          ptyHandler,
+          isActiveClient(state),
+        ),
+      };
     }
     case Methods.TERMINAL_WORKER_UNSUBSCRIBE: {
       const key = terminalWorkerUnsubscribeKey(p as TerminalWorkerUnsubscribeParams);
+      const registration = `worker:${key}`;
+      state.terminalSubscribeSeq.set(
+        registration,
+        (state.terminalSubscribeSeq.get(registration) ?? 0) + 1,
+      );
       const handler = state.workerTerminalHandlers.get(key);
       if (handler) {
         unsubscribeWorkerTerminalPty(key, handler);
@@ -1466,6 +1483,11 @@ async function routeAuthorizedMethod(
               },
             }
           : undefined;
+      const nodeLink = nodeLinkCapabilities((p as Record<string, unknown>).nodeLink);
+      const nodePrincipal =
+        resolved.ok && resolved.principal.subject.type === 'node'
+          ? { principalId: resolved.principal.id, generation: resolved.principal.generation ?? 0 }
+          : undefined;
       const previousNativeNode = getNode(machine);
       if (previousNativeNode && previousNativeNode.ws !== state.ws)
         nativeConversations.disconnectNode(previousNativeNode.ws);
@@ -1506,7 +1528,7 @@ async function routeAuthorizedMethod(
         },
         conditionalWrites === true,
         terminalInputSequence === true,
-        { node: peerVersions, gateway: gatewayPeerVersions },
+        { node: peerVersions, gateway: gatewayPeerVersions, nodeLink, nodePrincipal },
       );
       nativeConversations.reconcile();
       nativeObservations.registrationChanged(
@@ -1599,7 +1621,7 @@ async function routeAuthorizedMethod(
           `[server] failed to resub screen sessions for ${machine}: ${(err as Error).message}`,
         );
       });
-      return { registered: true, ...gatewayPeerVersions };
+      return { registered: true, ...gatewayPeerVersions, ...(nodeLink ? { nodeLink } : {}) };
     }
     case Methods.SOURCES_STATUS: {
       const caller = sourceRpcCaller(authRuntime, state, method);

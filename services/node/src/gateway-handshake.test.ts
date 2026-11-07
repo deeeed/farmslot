@@ -276,3 +276,11 @@ test('a nonconforming gateway reply with a declared break closes and refuses reg
     await harness.close();
   }
 });
+
+test('missing issued pilot identity requires operator action, not rapid retry', () => {
+  for (const code of ['NODE_LINK_IDENTITY_REQUIRED'])
+    assert.equal(
+      isDeterministicHandshakeRejection(new GatewayRequestError(code, 'Pilot not ready')),
+      true,
+    );
+});

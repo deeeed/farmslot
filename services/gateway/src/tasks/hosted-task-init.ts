@@ -7,6 +7,7 @@ import {
   type ExecutionTemplateReference,
   isExecutionTemplateReference,
   isRecord,
+  type Run,
 } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
@@ -88,6 +89,7 @@ export async function initializeHostedTaskOnSlot(
   slot: SlotVars,
   gatewayTaskDir: string,
   input: HostedTaskInput,
+  run?: Run,
 ): Promise<ExecutionTemplateReference> {
   const requestPath = path.posix.join(input.task.taskDir, `.task-init-${randomUUID()}.json`);
   const request = hostedTaskRequest(slot.slotId, input);
@@ -122,7 +124,13 @@ export async function initializeHostedTaskOnSlot(
       throw new Error('Node task initialization returned an invalid result.');
     const reference = envelope.data.executionTemplate;
     if (!hadReceipt)
-      await syncHostedTaskSidecars(slot, gatewayTaskDir, input.task.taskDir, producedTaskFiles);
+      await syncHostedTaskSidecars(
+        slot,
+        gatewayTaskDir,
+        input.task.taskDir,
+        producedTaskFiles,
+        run,
+      );
     for (const file of producedTaskFiles) {
       const remote = path.posix.join(input.task.taskDir, file);
       if (
@@ -160,9 +168,12 @@ export async function syncHostedTaskSidecars(
   gatewayTaskDir: string,
   workerTaskDir: string,
   excludeRelativePaths: readonly string[] = [],
+  run?: Run,
 ): Promise<void> {
   const transfer = {
     excludeRelativePaths,
+    slotId: slot.slotId,
+    ...(run ? { runId: run.id } : {}),
     taskDir: gatewayTaskDir,
     workerTaskAbs: workerTaskDir,
     host: slot.host,

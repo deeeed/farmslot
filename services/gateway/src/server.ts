@@ -43,6 +43,7 @@ import { GatewayInternalError, GatewayMethodError } from './core/method-error.js
 import { setSlotUpdateHook } from './core/state.js';
 import { unregisterByWs } from './fleet/machine-registry.js';
 import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
+import { acceptNodeLinkStream } from './fleet/node-link.js';
 import { failRequestsBoundTo, handleNodeExecOutput, handleNodeResponse } from './fleet/node-rpc.js';
 import { pairingExchange } from './fleet/pairing.js';
 import {
@@ -336,6 +337,14 @@ export function createWebSocketServer(
             return;
           }
           handleNodeExecOutput(peek.payload.requestId, peek.payload.stream, peek.payload.data, ws);
+          return;
+        }
+        if (peek.type === 'event' && peek.event === 'node.link.stream') {
+          if (!isNodeSubjectSession(authRuntime, state)) {
+            ws.close(1008, 'node authentication required');
+            return;
+          }
+          void acceptNodeLinkStream(ws, peek.payload);
           return;
         }
         if (peek.type === 'event' && peek.event === 'node.native.conversation') {

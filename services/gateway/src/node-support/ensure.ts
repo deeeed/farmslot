@@ -36,6 +36,7 @@ import {
   slotWriteFiles,
 } from '../core/index.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import {
   NODE_SUPPORT_ROOT,
   nodeSupportHashPath,
@@ -230,7 +231,10 @@ export async function ensureNodeSupportBundle(
   if (currentProjectSources() ?? options.projectVars?.sourceContext) {
     // No copied pack bundle is admitted. The service deployment still owns framework scripts.
     return {
-      supportDir: isLocal(vars.host, vars.machine) ? farmslotRoot : '~/farmslot-node',
+      supportDir:
+        isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)
+          ? farmslotRoot
+          : '~/farmslot-node',
       hash: null,
       published: false,
       paths: ['scripts'],
@@ -242,7 +246,7 @@ export async function ensureNodeSupportBundle(
   const projectVars = options.projectVars ?? (await loadProjectVarsIfAny(vars.projectName));
   if (!projectVars) return null;
   const supportPaths = nodeSupportBundlePaths(vars.projectName, projectVars.projectJson);
-  if (isLocal(vars.host, vars.machine)) {
+  if (isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)) {
     step('support', 'Using local node support source');
     return { supportDir: farmslotRoot, hash: null, published: false, paths: supportPaths };
   }
@@ -455,7 +459,7 @@ export async function selectedNodeSupportDir(
   io: Pick<NodeSupportIo, 'exec'> = defaultIo,
   timeout?: number,
 ): Promise<string | undefined> {
-  if (isLocal(vars.host, vars.machine)) return farmslotRoot;
+  if (isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)) return farmslotRoot;
   if (currentProjectSources() ?? projectVars?.sourceContext) return '~/farmslot-node';
   const result = await io.exec(
     vars,

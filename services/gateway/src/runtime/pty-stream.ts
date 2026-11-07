@@ -1,15 +1,16 @@
 // pty-stream.ts — Spawn node-pty with `tmux attach`, multicast data to subscribers
 
 import { execFile, execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import { createRequire } from 'node:module';
-import path from 'node:path';
 import { promisify } from 'node:util';
 
 import * as pty from 'node-pty';
 
+import type { NodeLinkLease } from '@farmslot/protocol';
+import { ensureNodePtySpawnHelpersExecutable } from '@farmslot/protocol/node/node-pty-helper';
+
 import { SSH_CONNECT_OPTIONS, SSH_INTERACTIVE_CONNECT_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote, tmuxAttachCommandForTarget } from '../core/tmux.js';
+import { type LinkedPty, openLinkedPty } from '../fleet/node-link-terminal.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -17,7 +18,7 @@ export type PtyDataHandler = (data: string) => void;
 export type PtyExitHandler = (key: string, exitCode: number) => void;
 
 interface PtySession {
-  ptyProcess: pty.IPty;
+  ptyProcess: pty.IPty | LinkedPty;
   session: string;
   attachSession: string;
   handlers: Set<PtyDataHandler>;
@@ -35,44 +36,7 @@ let nextPtyId = 0;
 const PTY_DETACH_LINGER_MS = 8000;
 const pendingDetaches = new Map<string, NodeJS.Timeout>();
 
-const require = createRequire(import.meta.url);
-
-function ensureNodePtySpawnHelpersExecutable(): void {
-  let packageJsonPath: string;
-  try {
-    packageJsonPath = require.resolve('node-pty/package.json');
-  } catch (err) {
-    console.warn(`[pty] failed to resolve node-pty package path: ${(err as Error).message}`);
-    return;
-  }
-
-  const prebuildsDir = path.join(path.dirname(packageJsonPath), 'prebuilds');
-  let platforms: string[];
-  try {
-    platforms = fs.readdirSync(prebuildsDir);
-  } catch (err) {
-    console.warn(`[pty] failed to inspect node-pty prebuilds: ${(err as Error).message}`);
-    return;
-  }
-
-  for (const platform of platforms) {
-    const helperPath = path.join(prebuildsDir, platform, 'spawn-helper');
-    if (!fs.existsSync(helperPath)) continue;
-
-    try {
-      const mode = fs.statSync(helperPath).mode;
-      if ((mode & 0o111) === 0o111) continue;
-      fs.chmodSync(helperPath, mode | 0o755);
-      console.warn(`[pty] repaired executable bit on ${helperPath}`);
-    } catch (err) {
-      console.warn(
-        `[pty] failed to repair node-pty spawn-helper ${helperPath}: ${(err as Error).message}`,
-      );
-    }
-  }
-}
-
-ensureNodePtySpawnHelpersExecutable();
+ensureNodePtySpawnHelpersExecutable(import.meta.url);
 
 // Resolve tmux absolute path once at load time
 let tmuxPath = 'tmux';
@@ -187,18 +151,21 @@ export function ptyExitHandlerCountForTests(): number {
 }
 
 export interface PtyAttachOptions {
+  assertCurrent?: () => void | Promise<void>;
+  lease?: NodeLinkLease;
+  nodeId?: string; // configured node-link pilot, including the gateway machine
   sshTarget?: string; // e.g. "deeeed@mini.local" — if set, PTY goes through SSH
   selectTarget?: string; // optional window/pane target to activate after attaching to the session
 }
 
-export function subscribePty(
+export async function subscribePty(
   key: string,
   session: string,
   handler: PtyDataHandler,
   cols?: number,
   rows?: number,
   opts?: PtyAttachOptions,
-): void {
+): Promise<void> {
   let ps = ptySessions.get(key);
   const lingering = pendingDetaches.get(key);
   if (lingering) {
@@ -207,6 +174,10 @@ export function subscribePty(
     log('linger-cancel', key, 'reusing live pty');
   }
   if (!ps) {
+    if (opts?.nodeId) {
+      await attachLinkedPty(key, session, handler, cols ?? 120, rows ?? 40, opts);
+      return;
+    }
     ps = attachPty(key, session, cols, rows, opts);
   }
   ps.handlers.add(handler);
@@ -260,11 +231,11 @@ export function writePty(key: string, data: string): void {
   ps.ptyProcess.write(data);
 }
 
-export function resizePty(key: string, cols: number, rows: number): void {
+export function resizePty(key: string, cols: number, rows: number): void | Promise<void> {
   const ps = ptySessions.get(key);
   if (!ps) return;
   log('resize', key, `cols=${cols} rows=${rows}`);
-  ps.ptyProcess.resize(cols, rows);
+  return ps.ptyProcess.resize(cols, rows);
 }
 
 export function hasPty(key: string): boolean {
@@ -426,8 +397,72 @@ function detachPty(key: string): void {
   ps.handlers.clear();
   // SIGHUP cleanly detaches the tmux client
   try {
-    process.kill(ps.ptyProcess.pid, 'SIGHUP');
+    if (ps.ptyProcess.pid === 0) ps.ptyProcess.kill();
+    else process.kill(ps.ptyProcess.pid, 'SIGHUP');
   } catch (err) {
     console.warn(`[pty] failed to signal pty key=${key}: ${(err as Error).message}`);
+  }
+}
+
+const pendingLinkedPtys = new Map<string, Promise<void>>();
+
+async function attachLinkedPty(
+  key: string,
+  session: string,
+  handler: PtyDataHandler,
+  cols: number,
+  rows: number,
+  opts: PtyAttachOptions,
+): Promise<void> {
+  const assertCurrent = opts.assertCurrent;
+  if (!assertCurrent)
+    throw new Error('Node terminal attachment requires its domain authority fence');
+  await assertCurrent();
+  const previous = pendingLinkedPtys.get(key);
+  if (previous) {
+    await previous;
+    const current = ptySessions.get(key);
+    if (!current) throw new Error('Node terminal attachment closed before subscription');
+    current.handlers.add(handler);
+    return;
+  }
+  const handlers = new Set([handler]);
+  const attach = async () => {
+    let closed = false;
+    const ptyProcess = await openLinkedPty({
+      nodeId: opts.nodeId!,
+      resourceId: key,
+      session,
+      selectTarget: opts.selectTarget,
+      cols,
+      rows,
+      assertCurrent,
+      lease: opts.lease,
+      onData: (data) => {
+        for (const subscriber of handlers) subscriber(data);
+      },
+      onExit: (code) => {
+        closed = true;
+        if (ptySessions.get(key)?.handlers === handlers) {
+          ptySessions.delete(key);
+          for (const exited of exitHandlers) exited(key, code);
+        }
+      },
+    });
+    if (closed) throw new Error('Node terminal attachment exited before subscription');
+    ptySessions.set(key, {
+      ptyProcess,
+      session,
+      attachSession: session,
+      handlers,
+      id: ++nextPtyId,
+    });
+  };
+  const pending = attach();
+  pendingLinkedPtys.set(key, pending);
+  try {
+    await pending;
+  } finally {
+    if (pendingLinkedPtys.get(key) === pending) pendingLinkedPtys.delete(key);
   }
 }

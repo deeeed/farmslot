@@ -7,6 +7,7 @@ import {
   Methods,
   MINIMUM_PROTOCOL_VERSION,
   type NativeExecutionNodeDeclaration,
+  type NodeLinkCapabilities,
   type NodeObservationCapabilities,
   type NodeRegistrationResult,
   peerVersionCompatibility,
@@ -56,6 +57,7 @@ const DETERMINISTIC_REJECTION_CODES = new Set([
   'AUTH_INVALID_CLIENT',
   'INVALID_PARAMS',
   'PROTOCOL_INCOMPATIBLE',
+  'NODE_LINK_IDENTITY_REQUIRED',
 ]);
 
 export function isDeterministicHandshakeRejection(error: unknown): boolean {
@@ -201,6 +203,7 @@ export interface NodeRegisterOptions {
   /** The node types a `tmux.send` carrying `seq` once per (pane, stream, n). */
   terminalInputSequence?: boolean;
   observationCapabilities?: NodeObservationCapabilities;
+  nodeLink?: NodeLinkCapabilities;
   /** The URL this node dials; the gateway hands it to workers on this machine. */
   gatewayUrl?: string;
   timeoutMs?: number;
@@ -230,6 +233,7 @@ export async function registerNode(
       pid: options.pid,
       ...nodePeerVersions,
       capabilities: options.capabilities,
+      ...(options.nodeLink ? { nodeLink: options.nodeLink } : {}),
       ...(options.observationCapabilities
         ? { observationCapabilities: options.observationCapabilities }
         : {}),

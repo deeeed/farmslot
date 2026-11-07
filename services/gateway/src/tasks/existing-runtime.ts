@@ -45,13 +45,18 @@ export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
     return;
   const slot = run.slotId ? await loadSlotVars(run.slotId) : undefined;
   if (!slot) throw new Error('Existing task initialization requires its execution slot.');
-  await initializeAuthoredTaskOnSlot(slot, { ...run, taskFile: run.taskFile, attemptId: run.id });
+  await initializeAuthoredTaskOnSlot(
+    slot,
+    { ...run, taskFile: run.taskFile, attemptId: run.id },
+    run,
+  );
 }
 
 /** Direct dispatch and run adoption share the node producer; neither invents a Run. */
 export async function initializeAuthoredTaskOnSlot(
   slot: SlotVars,
   run: AuthoredTaskContext,
+  ownerRun?: Run,
 ): Promise<void> {
   const project = await loadProjectVars(run.project);
   const retained = existsSync(
@@ -134,29 +139,34 @@ export async function initializeAuthoredTaskOnSlot(
     : !isLightweightInteractiveDevRun(run) && checklist
       ? `${checklist}\n`
       : null;
-  await initializeHostedTaskOnSlot(slot, path.dirname(run.taskFile), {
-    binding: project.projectJson.recipe?.provider ? 'project' : 'static',
-    template: selected,
-    task: {
-      taskDir: workerTaskDir,
-      flow: run.flowType,
-      platform: slot.platform,
-      runMode: run.mode ?? undefined,
-      domain: selected.effectiveDomain ?? undefined,
+  await initializeHostedTaskOnSlot(
+    slot,
+    path.dirname(run.taskFile),
+    {
+      binding: project.projectJson.recipe?.provider ? 'project' : 'static',
+      template: selected,
       task: {
-        title: run.ticketData?.title ?? run.ticketOrPr,
-        sourceKind: 'text',
-        acceptanceCriteria: run.ticketData?.acceptanceCriteria ?? [],
+        taskDir: workerTaskDir,
+        flow: run.flowType,
+        platform: slot.platform,
+        runMode: run.mode ?? undefined,
+        domain: selected.effectiveDomain ?? undefined,
+        task: {
+          title: run.ticketData?.title ?? run.ticketOrPr,
+          sourceKind: 'text',
+          acceptanceCriteria: run.ticketData?.acceptanceCriteria ?? [],
+        },
+        handoff: {
+          surface: handoff.surface,
+          project: handoff.project,
+          attemptId: handoff.attemptId,
+          repo: handoff.repo,
+        },
+        terminalContract,
+        bugInput: run.ticketData ?? undefined,
+        authored: { taskMarkdown: task, checklistMarkdown, handoff },
       },
-      handoff: {
-        surface: handoff.surface,
-        project: handoff.project,
-        attemptId: handoff.attemptId,
-        repo: handoff.repo,
-      },
-      terminalContract,
-      bugInput: run.ticketData ?? undefined,
-      authored: { taskMarkdown: task, checklistMarkdown, handoff },
     },
-  });
+    ownerRun,
+  );
 }

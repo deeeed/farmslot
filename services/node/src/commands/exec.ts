@@ -13,7 +13,11 @@ import {
 
 export type { ExecResult };
 
-export type OutputCallback = (stream: 'stdout' | 'stderr', data: string) => void;
+export type OutputCallback = (
+  stream: 'stdout' | 'stderr',
+  data: string,
+  signal: AbortSignal,
+) => void | Promise<void>;
 
 // Resolve the operator's exported login environment once, then reuse it for
 // every command. Resource health probes run frequently; starting each command
@@ -116,10 +120,11 @@ export async function exec(
   if (signal?.aborted) return cancelled();
   const { FORCE_COLOR: _droppedLoginForceColor, ...loginEnvNoForceColor } = loginEnvironment;
   void _droppedLoginForceColor;
-  const env: NodeJS.ProcessEnv = argvMode
+  const loginExports = !argvMode || params.environment === 'login';
+  const env: NodeJS.ProcessEnv = !loginExports
     ? { ...envNoForceColor, PATH: loginEnvironment.PATH }
     : { ...envNoForceColor, ...loginEnvNoForceColor, PATH: loginEnvironment.PATH };
-  if (!argvMode) {
+  if (loginExports) {
     for (const name of SHELL_BOOKKEEPING_ENV) delete env[name];
   }
   if (params.requestScoped) {
@@ -176,8 +181,15 @@ export async function exec(
     const closeout = createNodeExecCloseout(killProcessTree, params.closeoutTimeoutMs, () => {
       stderr += '\ncommand required forced termination before closeout completed';
     });
-    const terminateWithEscalation = closeout.terminate;
+    const outputAbort = new AbortController();
+    const terminateWithEscalation = () => {
+      outputAbort.abort();
+      proc.stdout.resume();
+      proc.stderr.resume();
+      closeout.terminate();
+    };
 
+    let pendingDeliveries = 0;
     const appendOutput = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
       const nextOutputBytes = outputBytes + chunk.byteLength;
       let keptChunk = chunk;
@@ -197,7 +209,35 @@ export async function exec(
       const text = keptChunk.toString();
       if (stream === 'stdout') stdout += text;
       else stderr += text;
-      onOutput?.(stream, text);
+      try {
+        const delivery = outputAbort.signal.aborted
+          ? undefined
+          : onOutput?.(stream, text, outputAbort.signal);
+        if (delivery) {
+          const readable = stream === 'stdout' ? proc.stdout : proc.stderr;
+          readable.pause();
+          pendingDeliveries++;
+          void delivery.then(
+            () => {
+              pendingDeliveries--;
+              readable.resume();
+              tryResolve();
+            },
+            (error: unknown) => {
+              if (!outputAbort.signal.aborted && !resolved) {
+                stderr += `\noutput delivery failed: ${error instanceof Error ? error.message : String(error)}`;
+                terminateWithEscalation();
+              }
+              pendingDeliveries--;
+              readable.resume();
+              tryResolve();
+            },
+          );
+        }
+      } catch (error) {
+        stderr += `\noutput delivery failed: ${error instanceof Error ? error.message : String(error)}`;
+        terminateWithEscalation();
+      }
     };
 
     let stdoutEnded = false;
@@ -207,7 +247,8 @@ export async function exec(
     let exitCode = 1;
 
     const tryResolve = () => {
-      if (resolved || !processClosed || !stdoutEnded || !stderrEnded) return;
+      if (resolved || !processClosed || !stdoutEnded || !stderrEnded || pendingDeliveries > 0)
+        return;
       resolved = true;
       if (timeoutTimer) clearTimeout(timeoutTimer);
       closeout.dispose();

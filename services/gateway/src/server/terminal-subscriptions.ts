@@ -1,6 +1,6 @@
 // terminal-subscriptions.ts — Terminal subscription key ownership and cleanup helpers
 
-import { unsubscribePty } from '../runtime/pty-stream.js';
+import { type PtyDataHandler, unsubscribePty } from '../runtime/pty-stream.js';
 import { unsubscribe as unsubscribeTerminalPoll } from '../runtime/tmux-stream.js';
 
 import type { ClientState, TerminalSubscriptionState } from './client-state.js';
@@ -43,4 +43,20 @@ export function terminalUnsubscribeKeysForRequest(
     return [slotId];
   }
   return [];
+}
+
+/** Async node attachment may finish after Unsubscribe, a replacement, or client disconnect. */
+export function adoptWorkerTerminalSubscription(
+  state: TerminalSubscriptionState,
+  key: string,
+  sequence: number,
+  handler: PtyDataHandler,
+  active: boolean,
+): boolean {
+  if (!active || state.terminalSubscribeSeq.get(`worker:${key}`) !== sequence) {
+    unsubscribePty(key, handler);
+    return false;
+  }
+  state.workerTerminalHandlers.set(key, handler);
+  return true;
 }

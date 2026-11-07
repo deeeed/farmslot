@@ -1,8 +1,10 @@
 import type { PeerVersionDeclaration } from '../peer-versions.js';
+import type { NodeLinkCapabilities } from '../transport/node-link.js';
 
 export interface NodeInfo extends PeerVersionDeclaration {
   machine: string;
   pid: number;
+  nodeLink?: NodeLinkCapabilities;
   connectedAt: string;
   version?: string;
   versionMatch?: boolean;
@@ -24,6 +26,7 @@ export interface NodesListResult {
 
 export interface NodeRegistrationResult extends PeerVersionDeclaration {
   registered: boolean;
+  nodeLink?: NodeLinkCapabilities;
 }
 
 export interface NodeDeployParams {
@@ -47,6 +50,8 @@ interface NodeExecCommonParams {
   cwd?: string;
   timeout?: number;
   maxBuffer?: number;
+  /** Policy-selected exports; values never cross the control link. */
+  environment?: 'service' | 'login';
 }
 
 export type NodeExecParams =

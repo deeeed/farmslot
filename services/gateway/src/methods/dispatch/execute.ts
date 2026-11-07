@@ -57,6 +57,7 @@ import {
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import { auditBlindTrialTask, verifyBlindTrialForDispatch } from '../../evals/blind-trial.js';
+import { usesNodeLink } from '../../fleet/node-link-policy.js';
 import { ensureRunRuntimeReady } from '../../fleet/runtime-ready.js';
 import {
   invalidateArtifactTextCache,
@@ -1615,7 +1616,16 @@ export async function dispatchExecute(
       throw new Error(
         'The node-owned retained task is missing or belongs to another allocation. Recover the original task or author a fresh task directory; never delete its receipt.',
       );
-    if (isLocal(vars.host, vars.machine)) {
+    if (usesNodeLink(vars.machine)) {
+      const { createNodeLinkTaskStager } = await import('../../fleet/node-link-task-copy.js');
+      const stager = await createNodeLinkTaskStager(
+        { runId: currentRun.id, taskFile: taskFilePath },
+        vars,
+        taskDir,
+        workerTaskAbs,
+      );
+      await stager.upload(taskFilePath, 'TASK.md', false);
+    } else if (isLocal(vars.host, vars.machine)) {
       await mkdir(workerTaskAbs, { recursive: true });
       await copyFile(taskFilePath, path.join(workerTaskAbs, 'TASK.md'));
     } else {
@@ -1628,6 +1638,8 @@ export async function dispatchExecute(
     for (const sidecar of await copyPreparedTaskRootSidecars({
       taskDir,
       workerTaskAbs,
+      slotId: vars.slotId,
+      ...(currentRun ? { runId: currentRun.id } : {}),
       host: vars.host,
       machine: vars.machine,
       sshTarget: vars.sshTarget,
@@ -1639,6 +1651,8 @@ export async function dispatchExecute(
     for (const subdir of await copyTaskDirSubdirectories({
       taskDir,
       workerTaskAbs,
+      slotId: vars.slotId,
+      ...(currentRun ? { runId: currentRun.id } : {}),
       host: vars.host,
       machine: vars.machine,
       sshTarget: vars.sshTarget,

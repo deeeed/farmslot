@@ -1,0 +1,1 @@
+- Route pilot task transfers and terminal streams over the enrolled node link, preserving command ownership and uncertain outcomes.

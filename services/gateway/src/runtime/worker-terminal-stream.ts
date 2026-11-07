@@ -1,8 +1,14 @@
 // worker-terminal-stream.ts — Poll node tmux panes by worker ref and stream terminal.data
 
-import type { TerminalData, TerminalInputSequence, TmuxWorkerRef } from '@farmslot/protocol';
+import {
+  NodeLinkFailure,
+  type TerminalData,
+  type TerminalInputSequence,
+  type TmuxWorkerRef,
+} from '@farmslot/protocol';
 
 import { getNode } from '../fleet/machine-registry.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 
 export type WorkerTerminalDataHandler = (data: TerminalData) => void;
@@ -58,6 +64,12 @@ export async function sendWorkerTerminalInput(
   seq?: TerminalInputSequence,
 ): Promise<void> {
   const node = requireNode(worker);
+  const linked = usesNodeLink(worker.nodeId);
+  if (linked && node.nodeLink?.commands !== 1)
+    throw new NodeLinkFailure(
+      'UNSUPPORTED_OPERATION',
+      'Raw input requires the enabled node-link adapter.',
+    );
   await sendNodeRequest(
     node,
     'tmux.send',
@@ -65,6 +77,7 @@ export async function sendWorkerTerminalInput(
       session: worker.target,
       text: data,
       enter: false,
+      ...(linked ? { literal: true } : {}),
       ...(seq && node.terminalInputSequence ? { seq } : {}),
     },
     { timeout: 5_000, onRequestId: () => dispatched?.() },

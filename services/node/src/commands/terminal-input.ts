@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   formatTerminalInputRecord,
   isTerminalInputStream,
@@ -7,7 +9,7 @@ import {
   type TerminalInputSequence,
 } from '@farmslot/protocol';
 
-type RunTmux = (args: string[]) => Promise<string>;
+type RunTmux = (args: string[], input?: string) => Promise<string>;
 
 /** `tmux.send` with `seq`: the stream and number of a terminal input batch, or an error. */
 export function requireInputSequence(value: unknown): TerminalInputSequence {
@@ -33,6 +35,28 @@ const MAX_PANES = 512;
 export function tmuxKeepsPaneOptions(version: string): boolean {
   const match = /tmux (?:next-)?(\d+)\./.exec(version);
   return match ? Number(match[1]) >= 3 : /tmux master/.test(version);
+}
+
+/** A raw terminal batch must not reinterpret names such as Up or command separators. */
+export async function writeLiteralTerminalInput(
+  run: RunTmux,
+  pane: string,
+  text: string,
+): Promise<void> {
+  if (!text) return;
+  const buffer = `farmslot-input-${randomUUID()}`;
+  await run(['load-buffer', '-b', buffer, '-'], text);
+  try {
+    // -r preserves LF bytes; no -p means no synthetic bracketed-paste wrapper.
+    await run(['paste-buffer', '-d', '-r', '-b', buffer, '-t', pane]);
+  } catch (error) {
+    try {
+      await run(['delete-buffer', '-b', buffer]);
+    } catch (cleanup) {
+      throw new AggregateError([error, cleanup], 'Terminal paste and buffer cleanup failed');
+    }
+    throw error;
+  }
 }
 
 /**
@@ -61,14 +85,18 @@ export function createTerminalInputWriter(run: RunTmux, now: () => number = Date
     text: string,
     enter: boolean,
     seq: TerminalInputSequence,
+    literal: boolean,
   ): Promise<boolean> {
+    if (literal && enter)
+      throw new Error('Raw terminal input supplies Enter as a byte, not a named key');
     if ((typed.get(pane)?.get(seq.stream) ?? -1) >= seq.n) return false;
     const option = terminalInputRecordOption(seq.stream);
     const recorded = parseTerminalInputRecord(
       await run(['show-options', '-pqv', '-t', pane, option]),
     );
     if (recorded !== null && recorded >= seq.n) return false;
-    await run(['send-keys', '-t', pane, text, ...(enter ? ['Enter'] : [])]);
+    if (literal) await writeLiteralTerminalInput(run, pane, text);
+    else await run(['send-keys', '-t', pane, text, ...(enter ? ['Enter'] : [])]);
     remember(pane, seq);
     try {
       await run(['set-option', '-p', '-t', pane, option, formatTerminalInputRecord(seq.n, now())]);
@@ -89,9 +117,10 @@ export function createTerminalInputWriter(run: RunTmux, now: () => number = Date
     text: string,
     enter: boolean,
     seq: TerminalInputSequence,
+    literal = false,
   ): Promise<boolean> {
     const previous = chains.get(pane) ?? Promise.resolve();
-    const current = previous.then(() => typeOnce(pane, text, enter, seq));
+    const current = previous.then(() => typeOnce(pane, text, enter, seq, literal));
     const settled = current.catch(() => undefined);
     chains.set(pane, settled);
     try {

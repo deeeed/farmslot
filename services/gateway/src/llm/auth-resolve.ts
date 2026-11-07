@@ -149,7 +149,7 @@ function readCodexCliOAuth(): { access: string; refresh?: string; expires?: numb
 }
 
 /**
- * Import auth profiles from a remote machine's OpenClaw installation via SSH.
+ * Import profiles through the configured pilot node, or the explicit legacy remote import.
  * Returns the parsed store or null on failure.
  */
 export async function importRemoteOpenClaw(
@@ -166,6 +166,50 @@ export async function importRemoteOpenClaw(
   const remotePath = '~/.openclaw/agents/main/agent/auth-profiles.json';
 
   try {
+    const [{ loadPoolConfigs }, { resolveMachinePoolConfigs }, { usesNodeLink }] =
+      await Promise.all([
+        import('../fleet/state.js'),
+        import('../fleet/machine-pool.js'),
+        import('../fleet/node-link-policy.js'),
+      ]);
+    const matches = [...resolveMachinePoolConfigs(await loadPoolConfigs()).values()].filter(
+      (pool) =>
+        pool.sshUser === sshUser &&
+        (pool.host === host || pool.machine === host || `${pool.machine}.local` === host),
+    );
+    const linked = matches.filter((pool) => usesNodeLink(pool.machine));
+    if (linked.length > 1)
+      throw new Error('Remote account import matches more than one execution node.');
+    if (linked.length === 1) {
+      const [{ getNode }, { sendNodeRequest, NodeTransportUnavailableError }] = await Promise.all([
+        import('../fleet/machine-registry.js'),
+        import('../fleet/node-rpc.js'),
+      ]);
+      const node = getNode(linked[0].machine);
+      if (!node)
+        throw new NodeTransportUnavailableError(
+          linked[0].machine,
+          'not-connected',
+          'Configured account-import node is offline; SSH fallback is not automatic.',
+        );
+      const reply = await sendNodeRequest(
+        node,
+        'fs.read',
+        {
+          root: '~',
+          relPath: '.openclaw/agents/main/agent/auth-profiles.json',
+        },
+        { timeout: 10_000, requireSameConnection: true },
+      );
+      if (
+        !reply ||
+        typeof reply !== 'object' ||
+        !('content' in reply) ||
+        typeof reply.content !== 'string'
+      )
+        throw new Error('Remote account import returned no file content.');
+      return JSON.parse(reply.content);
+    }
     const result = await execLocal(
       `ssh ${SSH_CONNECT_SHELL_OPTIONS} -o StrictHostKeyChecking=accept-new ${sshUser}@${host} 'cat ${remotePath}'`,
       { timeout: 10000 },
