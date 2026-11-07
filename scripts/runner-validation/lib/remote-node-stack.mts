@@ -85,6 +85,8 @@ export interface RemoteNodeStackOptions {
   cliSnapshots: string;
   /** A node CLI snapshot to use as is (a host's deployed one) instead of building one. */
   cliSnapshot?: string;
+  /** Pin the disposable execution runtime instead of selecting host asdf shims. */
+  nodeBin?: string;
   /** Written to `<fixture>/.owner`, so an outside sweep can match a stack it owns. */
   ownerTag: string;
   /** Owned transparent relay for deterministic node-closeout fault injection. */
@@ -522,11 +524,12 @@ export async function startRemoteNodeStack(
         if (existsSync(path.join(realHome, name)))
           await link(path.join(realHome, name), path.join(userHome, name));
     }
+    const selectedNodePath = options.nodeBin ? `${options.nodeBin}:` : '';
     // Node commands run through a login shell, where /etc/zprofile reorders PATH. A real node's
-    // profile then puts asdf first; this one does the same and keeps the fixture bin first.
+    // profile puts asdf first; an explicitly pinned fixture runtime precedes those shims.
     await writeFile(
       path.join(nodeUserHome, '.zprofile'),
-      `export PATH=${JSON.stringify(`${fakeBin}:${path.join(nodeUserHome, '.asdf', 'shims')}`)}:"$PATH"\n`,
+      `export PATH=${JSON.stringify(`${fakeBin}:${selectedNodePath}${path.join(nodeUserHome, '.asdf', 'shims')}`)}:"$PATH"\n`,
     );
     // Pane shells exit during cleanup; a history file written then would recreate the fixture.
     await writeFile(path.join(nodeUserHome, '.zshrc'), 'unset HISTFILE\n');
@@ -732,7 +735,7 @@ export async function startRemoteNodeStack(
       FARMSLOT_ROOT: fixture,
       HOME: nodeUserHome,
       // A real node resolves node through asdf (~/.tool-versions); worker launch preflight checks it.
-      PATH: `${fakeBin}${path.delimiter}${path.join(nodeUserHome, '.asdf', 'shims')}${path.delimiter}${process.env.PATH}`,
+      PATH: `${fakeBin}${path.delimiter}${selectedNodePath}${path.join(nodeUserHome, '.asdf', 'shims')}${path.delimiter}${process.env.PATH}`,
       FARMSLOT_HOME: nodeHome,
       FARMSLOT_NATIVE_STATE_DIR: nodeNativeRoot,
       FARMSLOT_POOL_DIR: nodePoolDir,
@@ -741,6 +744,7 @@ export async function startRemoteNodeStack(
       FARMSLOT_NODE_TOKEN: nodeToken,
       FARMSLOT_GATEWAY_TOKEN: '',
       FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '1',
+      ...(options.nodeBin ? { FARMSLOT_NODE22_BIN: options.nodeBin } : {}),
       GATEWAY_URL: nodeGatewayUrl,
       MACHINE_NAME: machine,
       SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen-control.sock'),
