@@ -9,6 +9,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 ## 0.20.0 - 2026-11-07
 
 - Recognize native conversation launch and send actions in planning validation.
+- Use valid compatible node declarations in the canonical inventory proof.
 
 ## 0.19.0 - 2026-11-06
 

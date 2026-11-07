@@ -193,11 +193,86 @@ test('auth then registration resolve on their own ACKs while unrelated frames fl
 });
 
 test('only gateway-evaluated refusals count as deterministic', () => {
-  for (const code of ['AUTH_FAILED', 'AUTH_FORBIDDEN', 'AUTH_RATE_LIMITED', 'INVALID_PARAMS']) {
+  for (const code of [
+    'AUTH_FAILED',
+    'AUTH_FORBIDDEN',
+    'AUTH_RATE_LIMITED',
+    'INVALID_PARAMS',
+    'PROTOCOL_INCOMPATIBLE',
+  ]) {
     assert.equal(isDeterministicHandshakeRejection(new GatewayRequestError(code, code)), true);
   }
   for (const code of ['TIMEOUT', 'SOCKET_CLOSED', 'SOCKET_ERROR', 'INTERNAL_ERROR']) {
     assert.equal(isDeterministicHandshakeRejection(new GatewayRequestError(code, code)), false);
   }
   assert.equal(isDeterministicHandshakeRejection(new Error('AUTH_FORBIDDEN')), false);
+});
+
+for (const gatewayVersion of ['0.76.0', '0.80.0']) {
+  test(`registration accepts compatible gateway ${gatewayVersion} and sends both declarations`, async () => {
+    const harness = await serverWith((frame, server) => {
+      const params = frame.params as Record<string, unknown>;
+      assert.equal(params.minimumProtocolVersion, '0.76.0');
+      assert.equal(params.minimumRuntimeVersion, '0.42.0');
+      assert.equal(typeof params.runtimeVersion, 'string');
+      server.send(
+        JSON.stringify({
+          type: 'res',
+          id: frame.id,
+          ok: true,
+          payload: {
+            registered: true,
+            protocolVersion: gatewayVersion,
+            minimumProtocolVersion: '0.76.0',
+            runtimeVersion: '0.43.0',
+            minimumRuntimeVersion: '0.42.0',
+          },
+        }),
+      );
+    });
+    try {
+      const result = await registerNode(harness.client, {
+        machine: 'compatibility-fixture',
+        pid: 1,
+        capabilities: [],
+      });
+      assert.equal(result.registered, true);
+      assert.equal(result.protocolVersion, gatewayVersion);
+    } finally {
+      await harness.close();
+    }
+  });
+}
+
+test('a nonconforming gateway reply with a declared break closes and refuses registration', async () => {
+  const harness = await serverWith((frame, server) => {
+    server.send(
+      JSON.stringify({
+        type: 'res',
+        id: frame.id,
+        ok: true,
+        payload: {
+          registered: true,
+          protocolVersion: '9.0.0',
+          minimumProtocolVersion: '9.0.0',
+          runtimeVersion: '0.43.0',
+          minimumRuntimeVersion: '0.42.0',
+        },
+      }),
+    );
+  });
+  try {
+    await assert.rejects(
+      registerNode(harness.client, { machine: 'compatibility-fixture', pid: 1, capabilities: [] }),
+      (error) => {
+        assert(error instanceof GatewayRequestError);
+        assert.equal(error.code, 'PROTOCOL_INCOMPATIBLE');
+        assert.match(error.message, /declared minimum 9\.0\.0/);
+        assert.equal(isDeterministicHandshakeRejection(error), true);
+        return true;
+      },
+    );
+  } finally {
+    await harness.close();
+  }
 });

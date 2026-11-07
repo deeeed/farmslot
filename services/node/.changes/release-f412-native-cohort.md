@@ -1,0 +1,1 @@
+- Advertise protocol/runtime support floors and refuse incompatible gateway replies with deterministic backoff.

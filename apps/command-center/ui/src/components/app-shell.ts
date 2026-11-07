@@ -752,7 +752,7 @@ export class FarmApp extends LitElement {
   }
 
   private renderNodeVersionRow(node: NodeInfo, gatewayProtocolVersion: string) {
-    const match = node.versionMatch ?? node.protocolVersion === gatewayProtocolVersion;
+    const match = node.versionMatch;
     return html`
       <div class="fa-node-version-row">
         <div>
@@ -761,7 +761,13 @@ export class FarmApp extends LitElement {
             >pid ${node.pid} · connected ${new Date(node.connectedAt).toLocaleTimeString()}</span
           >
         </div>
-        <span class="fa-node-version-pill ${match ? 'ok' : 'warn'}">
+        <span
+          class="fa-node-version-pill ${match ? 'ok' : 'warn'}"
+          title=${node.compatibilityReason ??
+          (match
+            ? 'Declared peer versions are compatible.'
+            : 'Peer version compatibility is unverified.')}
+        >
           node ${node.protocolVersion ?? 'unknown'} / gateway ${gatewayProtocolVersion}
         </span>
       </div>

@@ -231,7 +231,11 @@ class LeadTests(unittest.TestCase):
         project.update(heartbeat_hooks=['machine', 'lock'], mutating_heartbeat_hooks=['machine'],
                        hooks={'nodes': ['nodes'], 'machine': ['awake'], 'lock': ['lock']}, expected_nodes=['one', 'two'])
         def hook(config, repo, name):
-            if name == 'nodes':return json.dumps({'nodes': [{'machine': 'one', 'protocolVersion': '1'}], 'gatewayProtocolVersion': '2'})
+            if name == 'nodes':return json.dumps({'nodes': [
+                {'machine': 'one', 'protocolVersion': '0.76.0', 'versionMatch': False},
+                {'machine': 'newer', 'protocolVersion': '0.80.0', 'versionMatch': True},
+                {'machine': 'legacy', 'protocolVersion': '0.77.0'},
+            ], 'gatewayProtocolVersion': '0.79.0'})
             raise RuntimeError('lock check failed')
         with patch('lanes.status', return_value=[]), patch.object(lead, 'project_hook', side_effect=hook):
             result = lead.heartbeat(self.config, read_only=True)

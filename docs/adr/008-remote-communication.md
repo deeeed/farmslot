@@ -248,7 +248,7 @@ The original design left exec timeout hardcoded at 30s in the gateway and ignore
 
 ## Amendment 2: Declared peer version compatibility, 2026-11-07
 
-**Status:** Proposed. Arthur approved the policy and ADR owner; implementation review is pending.
+**Status:** Accepted policy: Arthur approved the policy and ADR owner; the independent contract pair approved it. Implementation and activation remain pending in #1897.
 
 Gateway, node and selected worker runtime admission use the shared [peer-version contract](../reference/node-worker-cli-health.md#peer-version-compatibility), not version equality. Each peer declares its release version and oldest supported peer version for the protocol and service runtime. Both declared lower bounds must be satisfied; a higher minor version alone is not a break. A failed bound names both versions and the declared minimum before worker launch. Existing feature-capability and retained-input checks remain authoritative.
 

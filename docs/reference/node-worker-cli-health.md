@@ -18,6 +18,8 @@ Each new `node.connect` request and successful reply MUST declare `protocolVersi
 
 For each protocol/runtime pair, admission MUST accept exactly when neither supplied version is below the other side's declared minimum. It MUST NOT infer a break from a different minor or major number. The initial floors are protocol `0.76.0` and runtime `0.42.0`. A missing legacy version or floor is unverified, not an invented incompatibility. A malformed supplied declaration is an explicit configuration error.
 
+`nodes.list.gatewayCompatibility` carries the gateway's four declarations; each `NodeInfo` carries the node's declarations and optional `compatibilityReason`.
+
 The gateway handshake, node handshake and worker source preflight MUST consume one shared comparison. A declared break MUST refuse before worker launch with the component, actual version and unmet minimum. The gateway MUST check both bounds from the `node.connect` request before changing registry, native-owner or conversation state, so an incompatible reconnect cannot displace a healthy connection. Refusal uses `PROTOCOL_INCOMPATIBLE`; malformed declarations use `INVALID_PARAMS`. Both are deterministic handshake failures. A node that receives an incompatible reply MUST close its connection and use deterministic backoff. Legacy gateways retain their existing checks until the single coordinated activation; this change does not certify an old binary as upgraded.
 
 The protocol `0.76.0` floor covers additive or capability-gated node-facing changes through this cut. The runtime `0.42.0` floor protects the selected runtime imported by the worker probe across the cleanup Promise boundary; it does not rewrite task pins.

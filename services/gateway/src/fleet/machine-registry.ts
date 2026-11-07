@@ -1,9 +1,11 @@
 import type { WebSocket } from 'ws';
 
-import type {
-  NativeExecutionNodeDeclaration,
-  NodeInfo,
-  NodeObservationCapabilities,
+import {
+  type NativeExecutionNodeDeclaration,
+  type NodeInfo,
+  type NodeObservationCapabilities,
+  peerVersionCompatibility,
+  type PeerVersionDeclaration,
 } from '@farmslot/protocol';
 
 import { revokeNodeFileObservations } from '../resources/node-file-observations.js';
@@ -11,12 +13,14 @@ import { resourceRevisions } from '../resources/revisions.js';
 import { publishWorkerResources, scheduleWorkerStatusExpiry } from '../resources/worker-changes.js';
 import { advanceSourceRevision } from '../sources/change-signal.js';
 
-export interface ConnectedNode {
+import { gatewayPeerVersions } from './peer-versions.js';
+
+export interface ConnectedNode extends PeerVersionDeclaration {
   machine: string;
   pid: number;
   connectedAt: string;
-  protocolVersion?: string;
   versionMatch?: boolean;
+  compatibilityReason?: string;
   ws: WebSocket;
   nativeSessions?: NativeExecutionNodeDeclaration;
   nativeAuthority?: { principalId: string; valid(): boolean };
@@ -68,16 +72,24 @@ export function registerNode(
   observationAuthority?: () => boolean,
   conditionalWrites?: boolean,
   terminalInputSequence?: boolean,
+  versions?: { node: PeerVersionDeclaration; gateway?: PeerVersionDeclaration },
 ): void {
+  const declaration = { ...versions?.node, protocolVersion };
+  const compatibility = peerVersionCompatibility(
+    { ...(versions?.gateway ?? gatewayPeerVersions), protocolVersion: gatewayProtocolVersion },
+    declaration,
+    'gateway',
+    `node ${machine}`,
+  );
   const previous = nodes.get(machine);
   if (previous) revokeNodeFileObservations(previous.ws);
-  const versionMatch = protocolVersion != null && protocolVersion === gatewayProtocolVersion;
   nodes.set(machine, {
     machine,
     pid,
     connectedAt: new Date().toISOString(),
-    protocolVersion,
-    versionMatch: protocolVersion != null ? versionMatch : undefined,
+    ...declaration,
+    versionMatch: compatibility.compatible,
+    compatibilityReason: compatibility.reason,
     ws,
     nativeSessions,
     observationCapabilities,
@@ -122,7 +134,11 @@ export function getAllNodes(): NodeInfo[] {
     pid: node.pid,
     connectedAt: node.connectedAt,
     protocolVersion: node.protocolVersion,
+    minimumProtocolVersion: node.minimumProtocolVersion,
+    runtimeVersion: node.runtimeVersion,
+    minimumRuntimeVersion: node.minimumRuntimeVersion,
     versionMatch: node.versionMatch,
+    compatibilityReason: node.compatibilityReason,
     ...(node.execCancellation ? { execCancellation: true } : {}),
     ...(node.conditionalWrites ? { conditionalWrites: true } : {}),
     ...(node.terminalInputSequence ? { terminalInputSequence: true } : {}),

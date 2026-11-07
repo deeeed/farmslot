@@ -1,29 +1,61 @@
 import path from 'node:path';
 
+import { peerVersionCompatibility, type PeerVersionDeclaration } from '@farmslot/protocol';
+
 import { shellQuote } from '../core/tmux.js';
+import { gatewayPeerVersions } from '../fleet/peer-versions.js';
 
 export interface WorkerSourceExpectation {
   cliVersion: string;
   protocolVersion: string;
-  wireVersion: string;
   runtimeScript: string;
   taskDir: string | null;
 }
 
 /** Verify retained templates/libraries through their existing provenance owner, never current main. */
+export interface WorkerSourceProbeResult {
+  status: 'verified' | 'mismatch' | 'unverified';
+  detail: string;
+  retry?: false;
+  peerVersions?: PeerVersionDeclaration;
+}
+
+/** The remote reports facts; range decisions always use the gateway's shared comparator. */
+export function workerSourceCompatibility(
+  result: WorkerSourceProbeResult,
+): WorkerSourceProbeResult {
+  if (result.status === 'mismatch') return result;
+  const compatibility = peerVersionCompatibility(
+    gatewayPeerVersions,
+    result.peerVersions ?? {},
+    'gateway',
+    'worker source',
+  );
+  if (compatibility.compatible === false)
+    return { ...result, status: 'mismatch', detail: compatibility.reason! };
+  if (compatibility.compatible === undefined)
+    return {
+      ...result,
+      status: 'unverified',
+      retry: false,
+      detail: `${compatibility.reason} ${result.detail}`,
+    };
+  return result;
+}
+
 export function workerSourceProbeCommand(expected: WorkerSourceExpectation): string {
   const runtimeModule = path.posix.join(
     path.posix.dirname(expected.runtimeScript),
     '../dist/index.js',
   );
   const program = String.raw`
-const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('node:module'),{pathToFileURL}=require('node:url');
+const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('node:module'),{pathToFileURL}=require('node:url');let peerVersions;
 (async()=>{
  const expected=JSON.parse(process.argv[1]),cliPath=process.argv[2];
  const warnings=[];
  const result=(status,detail,retry)=>{
-  if(warnings.length){detail='Package version warning: '+warnings.join('; ')+'. '+detail;if(status==='verified'){status='unverified';retry=false}}
-  process.stdout.write(JSON.stringify({status,detail,...(retry===false?{retry:false}:{})}));
+  if(warnings.length){detail='Package version warning: '+warnings.join('; ')+'. '+detail;}
+  process.stdout.write(JSON.stringify({status,detail,...(peerVersions?{peerVersions}:{}),...(retry===false?{retry:false}:{})}));
  };
  if(!cliPath){result('mismatch','Worker farmslot CLI is missing. Install the matching CLI through the supported update route and retry this run.');return}
  const cli=fs.realpathSync(cliPath);
@@ -36,7 +68,8 @@ const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('n
  for(const [name,actual,wanted] of [['CLI',cliPackage.version,expected.cliVersion],['protocol package',protocolPackage?.version,expected.protocolVersion]]){
   if(actual!==wanted)warnings.push(name+' resolved '+actual+'; expected '+wanted);
  }
- if(protocol.PROTOCOL_VERSION!==expected.wireVersion){result('mismatch','node wire protocol resolved '+protocol.PROTOCOL_VERSION+'; expected '+expected.wireVersion+'. Install compatible node/CLI helpers through the supported update route and retry this run.');return}
+ const runtimePackage=manifest(expected.runtimeModule,'@farmslot/agent-runtime');
+ peerVersions={protocolVersion:protocol.PROTOCOL_VERSION,minimumProtocolVersion:protocol.MINIMUM_PROTOCOL_VERSION,runtimeVersion:runtimePackage?.version,minimumRuntimeVersion:runtimePackage?.minimumRuntimeVersion};
  if(!expected.taskDir){result('unverified','No retained task source receipt is bound to this launch.',false);return}
  const receiptFile=path.join(expected.taskDir,'artifacts/harness-provenance.json');
  if(!fs.existsSync(receiptFile)){result('unverified','This task has no retained source receipt; existing source admission still applies.',false);return}
@@ -48,7 +81,7 @@ const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('n
   throw e;
  }
  result('verified','Selected CLI/protocol and retained pack/template/library bytes match their receipts.');
-})().catch(e=>{process.stdout.write(JSON.stringify({status:'unverified',detail:e.message}));});`;
+})().catch(e=>{process.stdout.write(JSON.stringify({status:'unverified',detail:e.message,...(peerVersions?{peerVersions}:{})}));});`;
   const packet = JSON.stringify({ ...expected, runtimeModule });
   return `node -e ${shellQuote(program)} ${shellQuote(packet)} "\${FARMSLOT_CLI:-$(command -v farmslot)}"`;
 }

@@ -121,6 +121,8 @@ import {
   type NodeHealthResult,
   type PairingCandidatesParams,
   type PairingCreateParams,
+  peerVersionCompatibility,
+  type PeerVersionDeclaration,
   type PRAddCommentParams,
   type PRDeleteCommentParams,
   type PREditCommentParams,
@@ -245,6 +247,7 @@ import { GatewayInternalError, GatewayMethodError } from '../core/method-error.j
 import { getAllNodes, getNode, registerNode } from '../fleet/machine-registry.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
 import { pairingCandidates, pairingCreate } from '../fleet/pairing.js';
+import { gatewayPeerVersions } from '../fleet/peer-versions.js';
 import {
   sendWatchInstructions,
   shouldAutoStartResourceWatches,
@@ -1360,6 +1363,9 @@ async function routeAuthorizedMethod(
         machine,
         pid,
         protocolVersion,
+        minimumProtocolVersion,
+        runtimeVersion,
+        minimumRuntimeVersion,
         capabilities,
         gatewayUrl,
         execCancellation,
@@ -1370,6 +1376,9 @@ async function routeAuthorizedMethod(
         machine: string;
         pid: number;
         protocolVersion?: string;
+        minimumProtocolVersion?: string;
+        runtimeVersion?: string;
+        minimumRuntimeVersion?: string;
         capabilities?: import('@farmslot/protocol').RecipeRuntimeCapabilityDeclaration[];
         gatewayUrl?: unknown;
         execCancellation?: unknown;
@@ -1383,6 +1392,36 @@ async function routeAuthorizedMethod(
         resolved.ok ? resolved.principal : undefined,
         authRuntime.store.snapshot().principals,
       );
+      const peerVersions: PeerVersionDeclaration = {
+        protocolVersion,
+        minimumProtocolVersion,
+        runtimeVersion,
+        minimumRuntimeVersion,
+      };
+      const compatibility = peerVersionCompatibility(
+        gatewayPeerVersions,
+        peerVersions,
+        'gateway',
+        `node ${machine}`,
+      );
+      if (compatibility.compatible === false) {
+        if (compatibility.status === 'invalid')
+          throw new GatewayMethodError('INVALID_PARAMS', compatibility.reason!);
+        broadcast({
+          type: 'event',
+          event: Events.NODE_VERSION_MISMATCH,
+          payload: {
+            machine,
+            nodeVersion: protocolVersion,
+            gatewayVersion: PROTOCOL_VERSION,
+            reason: compatibility.reason,
+          },
+          seq: nextEventSeq(),
+        });
+        throw new GatewayMethodError('PROTOCOL_INCOMPATIBLE', compatibility.reason!, {
+          userAction: 'Update the peer below the declared supported minimum, then reconnect.',
+        });
+      }
       if (
         (p as Record<string, unknown>).nativeSessions !== undefined &&
         state.authentication?.kind !== 'credential'
@@ -1467,6 +1506,7 @@ async function routeAuthorizedMethod(
         },
         conditionalWrites === true,
         terminalInputSequence === true,
+        { node: peerVersions, gateway: gatewayPeerVersions },
       );
       nativeConversations.reconcile();
       nativeObservations.registrationChanged(
@@ -1475,24 +1515,21 @@ async function routeAuthorizedMethod(
         previousNativeNode?.ws,
       );
       markMachineOnline(machine, capabilities);
-      const versionMatch = protocolVersion === PROTOCOL_VERSION;
-      if (protocolVersion && !versionMatch) {
-        console.log(
-          `Node connected: ${machine} (pid ${pid}) ⚠ version mismatch: node=${protocolVersion} gateway=${PROTOCOL_VERSION}`,
-        );
-        broadcast({
-          type: 'event',
-          event: Events.NODE_VERSION_MISMATCH,
-          payload: { machine, nodeVersion: protocolVersion, gatewayVersion: PROTOCOL_VERSION },
-          seq: nextEventSeq(),
-        });
-      } else {
-        console.log(`Node connected: ${machine} (pid ${pid}) v=${protocolVersion ?? 'unknown'}`);
-      }
+      const versionMatch = compatibility.compatible;
+      console.log(
+        `Node connected: ${machine} (pid ${pid}) v=${protocolVersion ?? 'unknown'}; compatibility ${compatibility.status}`,
+      );
       broadcast({
         type: 'event',
         event: Events.NODE_CONNECTED,
-        payload: { machine, pid, protocolVersion, versionMatch, capabilities },
+        payload: {
+          machine,
+          pid,
+          ...peerVersions,
+          versionMatch,
+          compatibilityReason: compatibility.reason,
+          capabilities,
+        },
         seq: nextEventSeq(),
       });
       // Refresh this machine's slot branches now that node exec is available.
@@ -1562,7 +1599,7 @@ async function routeAuthorizedMethod(
           `[server] failed to resub screen sessions for ${machine}: ${(err as Error).message}`,
         );
       });
-      return { registered: true };
+      return { registered: true, ...gatewayPeerVersions };
     }
     case Methods.SOURCES_STATUS: {
       const caller = sourceRpcCaller(authRuntime, state, method);
@@ -1583,7 +1620,11 @@ async function routeAuthorizedMethod(
         : sourcesUnpin(p as import('@farmslot/protocol').SourcesUnpinParams, caller);
     }
     case Methods.NODES_LIST:
-      return { nodes: getAllNodes(), gatewayProtocolVersion: PROTOCOL_VERSION };
+      return {
+        nodes: getAllNodes(),
+        gatewayProtocolVersion: PROTOCOL_VERSION,
+        gatewayCompatibility: gatewayPeerVersions,
+      };
 
     case Methods.NODE_DEPLOY: {
       const { machine } = p as { machine: string };

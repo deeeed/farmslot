@@ -9,6 +9,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## 0.79.0 - 2026-11-07
 
 - Define bounded live conversation subscriptions and share their cache, replay, ownership fences and paint measurements across clients.
+- Declare peer versions and oldest supported peers; accept mutually supported protocol/runtime releases without exact-version equality.
 
 ## 0.78.0 - 2026-11-06
 

@@ -4,9 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { PROTOCOL_VERSION } from '@farmslot/protocol';
-
 import {
+  workerSourceCompatibility,
   type WorkerSourceExpectation,
   workerSourceProbeCommand,
 } from './worker-source-preflight.js';
@@ -24,7 +23,6 @@ export async function expected(): Promise<WorkerSourceExpectation> {
   return {
     cliVersion: cliPackage.version,
     protocolVersion: protocolPackage.version,
-    wireVersion: PROTOCOL_VERSION,
     runtimeScript: path.join(root, 'packages/agent-runtime/scripts/task-init-cli.mjs'),
     taskDir: null,
   };
@@ -34,5 +32,5 @@ export async function probe(value: WorkerSourceExpectation, cliPath = cli) {
     env: { ...process.env, FARMSLOT_CLI: cliPath },
     timeout: 4000,
   });
-  return JSON.parse(result.stdout);
+  return workerSourceCompatibility(JSON.parse(result.stdout));
 }

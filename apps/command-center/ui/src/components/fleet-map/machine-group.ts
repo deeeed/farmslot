@@ -889,10 +889,8 @@ export class MachineGroup extends LitElement {
         this.gatewayProtocolVersion
       ) {
         const deployHint = `bash scripts/deploy-node.sh ${m}`;
-        const title = `Node protocol v${info.protocolVersion} does not match gateway v${this.gatewayProtocolVersion}.\nUpdate:\n${deployHint}`;
-        return html`<span class="node-badge stale" title="${title}"
-          >NODE v${info.protocolVersion} ≠ v${this.gatewayProtocolVersion}</span
-        >`;
+        const title = `${info.compatibilityReason ?? 'The gateway reports incompatible peer versions.'}\nUpdate:\n${deployHint}`;
+        return html`<span class="node-badge stale" title="${title}">NODE INCOMPATIBLE</span>`;
       }
     }
 

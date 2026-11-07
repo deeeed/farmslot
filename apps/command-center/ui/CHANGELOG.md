@@ -9,6 +9,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## 0.35.0 - 2026-11-07
 
 - Use the shared live native conversation stream for native sessions and the Co-Pilot home, with an explicit launcher and saved conversation history.
+- Keep Co-Pilot settings and unsaved choices stable during background reads, require a fresh read before actions, and explain the gateway update needed for native conversations.
+- Show authoritative peer compatibility and declared refusal reasons without recomputing version equality.
 
 ## 0.34.0 - 2026-11-06
 

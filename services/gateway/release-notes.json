@@ -2,7 +2,8 @@
   "version": "0.35.0",
   "date": "2026-11-07",
   "items": [
-    "Stream native conversations through one shared feed and keep Co-Pilot conversations together.",
-    "Restore completed task identity before gate recovery without rerunning the worker."
+    "Stream native conversations and keep Co-Pilot settings stable.",
+    "Accept mutually supported node/runtime releases; explain declared breaks before launch.",
+    "Restore the verified completed task before gate recovery."
   ]
 }

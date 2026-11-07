@@ -1,10 +1,12 @@
-export interface NodeInfo {
+import type { PeerVersionDeclaration } from '../peer-versions.js';
+
+export interface NodeInfo extends PeerVersionDeclaration {
   machine: string;
   pid: number;
   connectedAt: string;
   version?: string;
-  protocolVersion?: string;
   versionMatch?: boolean;
+  compatibilityReason?: string;
   uptime?: number;
   /** This node can cancel exec requests on their original connection. */
   execCancellation?: boolean;
@@ -17,6 +19,11 @@ export interface NodeInfo {
 export interface NodesListResult {
   nodes: NodeInfo[];
   gatewayProtocolVersion: string;
+  gatewayCompatibility?: PeerVersionDeclaration;
+}
+
+export interface NodeRegistrationResult extends PeerVersionDeclaration {
+  registered: boolean;
 }
 
 export interface NodeDeployParams {

@@ -9,7 +9,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## 0.35.0 - 2026-11-07
 
 - Share authorized native and terminal conversation streams and bind the configured Co-Pilot to one durable native session.
+- Treat workspace changes during a read as retryable supersession while retaining errors for lost sources or changed ownership.
+- Keep a cold pipeline recheck out of an unrelated human-gate reviewer lineage.
 - Retry completion from the original verified task after an earlier recovery wrote a replacement task, preserving the completed checks, evidence and checkout.
+- Admit compatible node and worker versions in either direction, and reject declared breaks before replacing registrations or launching work.
 
 ## 0.34.0 - 2026-11-06
 

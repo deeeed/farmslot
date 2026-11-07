@@ -1,5 +1,8 @@
 {
   "version": "0.35.0",
   "date": "2026-11-07",
-  "items": ["Follow native conversations as they stream and resume them from Co-Pilot."]
+  "items": [
+    "Follow streamed native conversations with stable Co-Pilot settings.",
+    "Show declared node compatibility and actionable refusal reasons."
+  ]
 }

@@ -23,6 +23,7 @@ import type {
   TerminalData,
   WorkGraphProjection,
 } from '../contracts/index.js';
+import type { PeerVersionDeclaration } from '../peer-versions.js';
 import type { CIWatchFixProgress, CIWatchFixTrigger, CIWatchPhase } from '../recipes/step-io.js';
 import type {
   FileTransferProgress,
@@ -253,11 +254,12 @@ export interface MonitorViolationPayload {
   violation: MonitorViolation;
 }
 
-export interface NodeConnectedPayload {
+export interface NodeConnectedPayload extends PeerVersionDeclaration {
   machine: string;
   pid: number;
   protocolVersion?: string;
   versionMatch?: boolean;
+  compatibilityReason?: string;
   capabilities?: import('../recipe/common.js').RecipeRuntimeCapabilityDeclaration[];
 }
 
