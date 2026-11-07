@@ -2409,6 +2409,7 @@ export async function resolveRunDecision(
       normalizedReviews,
       existing.slotId,
       await readReadyGatePreparedPackage(getRun(existing.id)!).catch(() => undefined),
+      getRun(existing.id)!,
     );
   }
   const consume = async (): Promise<RunResolveDecisionResult> => {
