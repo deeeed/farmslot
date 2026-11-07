@@ -35,6 +35,7 @@ const {
   collectRunGateReadiness,
   projectRunGateActions,
   refreshRunGateReadiness,
+  reviewsWithValidResults,
 } = await import('./gate-prerequisites.js');
 const { makeRun, makeReadyGatePackage, deleteTestRunIfPresent } =
   await import('./test-fixtures.js');
@@ -1998,4 +1999,161 @@ test('a refresh and the resolve-time assertion apply a recorded base conflict (F
       mergeConflicts,
     );
   }
+});
+
+test('revalidation repairs a recorded round-nine advisory verdict without changing its artifact or earlier rounds', async (t) => {
+  const { reviewRoundAdmissionId } = await import('../review/review-round-budget.js');
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+  });
+  const startedAt = '2026-11-07T06:08:44.510Z';
+  const id = 'pipeline-review';
+  const admission = reviewRoundAdmissionId(id, 2, startedAt);
+  const issue = {
+    file: 'artifacts/provenance.json',
+    description: 'Follow up on baseline identity',
+    severity: 'minor' as const,
+  };
+  const review: ReviewStatus = {
+    id,
+    source: 'dispatch',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    reviewerSessionId: 'session-9',
+    artifactPaths: ['artifacts/pipeline-review/review-loop-2/review-result.json'],
+    reviewedHeadSha: prepared.headSha,
+    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+    reviewSnapshot: prepared.reviewSnapshot,
+    issues: [issue],
+    completedAt: '2026-11-07T06:19:19.751Z',
+    attempts: [
+      {
+        mode: 'cold',
+        loopNumber: 2,
+        startedAt,
+        completedAt: '2026-11-07T06:19:19.751Z',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        issues: [issue],
+        artifactPaths: ['artifacts/pipeline-review/review-loop-2/review-result.json'],
+        reviewSnapshot: prepared.reviewSnapshot,
+      },
+    ],
+  };
+  const run = {
+    ...makeRun({ engineState: { publishGate: { reviews: [review] } } }),
+    ...recordedReviewRounds([...Array.from({ length: 8 }, (_, i) => `prior-${i}`), admission]),
+  };
+  const raw = JSON.stringify({
+    schemaVersion: 1,
+    verdict: 'pass',
+    recommendation: 'APPROVE',
+    issues: [issue],
+  });
+  const before = structuredClone(run);
+  const read = async () => raw;
+  const validated = await reviewsWithValidResults(run, read);
+  assert.equal(validated[0]?.verdict, 'pass');
+  assert.equal(validated[0]?.unresolvedCount, 0);
+  assert.deepEqual(validated[0]?.issues, [issue]);
+  assert.equal(validated[0]?.attempts?.[0].verdict, 'pass');
+  const assessment = await collectRunGateAssessment(run, prepared, {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewResult: read,
+    reviewedInputsAwaitingReview: async () => null,
+  });
+  assert.equal(assessment.readiness.state, 'ready', JSON.stringify(assessment.readiness.reasons));
+  assert.equal(assessment.reviews?.[0].verdict, 'pass');
+  assert.deepEqual(run, before, 'raw history and artifacts remain immutable');
+  const retained = structuredClone(run);
+  const retainedReview = retained.engineState!.publishGate!.reviews![0];
+  const failedFix: NonNullable<ReviewStatus['attempts']>[number] = {
+    mode: 'cold',
+    loopNumber: 3,
+    verdict: 'failed',
+    unresolvedCount: 1,
+    issues: [issue],
+    completedAt: '2026-11-07T06:20:00Z',
+    artifactPaths: ['artifacts/review-loop-3/fix-delta.diff'],
+  };
+  retainedReview.attempts!.push(failedFix);
+  const repaired = (await reviewsWithValidResults(retained, read))[0];
+  assert.equal(
+    repaired?.verdict,
+    'pass',
+    'a later failed fix cannot change the original artifact policy round',
+  );
+  assert.equal(repaired.attempts![0].verdict, 'pass');
+  assert.deepEqual(repaired.attempts!.at(-1), failedFix, 'failed fix remains audit history');
+  const stored = createRun({
+    flowType: 'dev',
+    project: run.project,
+    ticketOrPr: 'F440-POLICY-REFRESH',
+  });
+  t.after(() => deleteTestRunIfPresent(stored.id));
+  const decision = pendingReadyDecision();
+  if (decision.payload?.kind !== 'ready') throw new Error('Expected ready fixture');
+  decision.payload.prPackage = prepared;
+  decision.actions = [
+    { id: APPROVE_PUBLISH_ACTION, label: 'Publish', style: 'primary' },
+    { id: 'hold', label: 'Hold', style: 'secondary' },
+  ];
+  const reset = () =>
+    updateRun(stored.id, {
+      status: 'human-gating',
+      decisions: [decision],
+      engineState: structuredClone(run.engineState),
+      reviewRoundAdmissions: run.reviewRoundAdmissions,
+      reviewRoundSettlements: run.reviewRoundSettlements,
+    });
+  reset();
+  const inputs = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewResult: read,
+    reviewedInputsAwaitingReview: async () => null,
+  };
+  const { assertPublicationReviewPolicySatisfied } = await import('./gate-policy.js');
+  assert.throws(
+    () => assertPublicationReviewPolicySatisfied(getRun(stored.id)!, prepared),
+    /passing reviews/,
+  );
+  const refreshed = await refreshRunGateReadiness(getRun(stored.id)!, inputs);
+  assert(refreshed.decisions[0].actions.some((action) => action.id === APPROVE_PUBLISH_ACTION));
+  assert.equal(getRun(stored.id)!.engineState!.publishGate!.reviews![0].verdict, 'pass');
+  assert.doesNotThrow(
+    () => assertPublicationReviewPolicySatisfied(getRun(stored.id)!, prepared),
+    'final enforcement agrees with readiness',
+  );
+  reset();
+  const newReview = { ...review, issues: [{ ...issue, severity: 'major' as const }] };
+  await refreshRunGateReadiness(getRun(stored.id)!, {
+    ...inputs,
+    reviewResult: async () => {
+      updateRun(stored.id, { engineState: { publishGate: { reviews: [newReview] } } });
+      return raw;
+    },
+  });
+  assert.deepEqual(
+    getRun(stored.id)!.engineState!.publishGate!.reviews,
+    [newReview],
+    'concurrent reviewer ledger wins over a policy repair',
+  );
+
+  const firstRound = { ...run, ...recordedReviewRounds([admission]) };
+  assert.equal((await reviewsWithValidResults(firstRound, read))[0]?.verdict, 'issues');
+  const major = JSON.stringify({
+    schemaVersion: 1,
+    verdict: 'pass',
+    recommendation: 'APPROVE',
+    issues: [{ ...issue, severity: 'major' }],
+  });
+  assert.equal((await reviewsWithValidResults(run, async () => major))[0]?.verdict, 'issues');
 });

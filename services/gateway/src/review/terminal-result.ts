@@ -111,18 +111,25 @@ export function acceptedReviewFixPredecessor(review: ReviewStatus): ReviewAttemp
     : undefined;
 }
 
-/** Read the attempt whose verdict is projected; a later blocked fix is audit history. */
-export function reviewResultArtifactPath(
-  review: Pick<ReviewStatus, 'attempts' | 'artifactPaths' | 'completedAt'>,
-): string | undefined {
-  const attempt =
+/** The artifact and its policy context must select the same retained completion. */
+export function reviewResultAttempt(
+  review: Pick<ReviewStatus, 'attempts' | 'completedAt'>,
+): ReviewAttempt | undefined {
+  return (
     (review.completedAt
       ? review.attempts
           ?.slice()
           .reverse()
           .find((entry) => entry.completedAt === review.completedAt)
-      : undefined) ?? review.attempts?.at(-1);
-  return (attempt?.artifactPaths ?? review.artifactPaths)
+      : undefined) ?? review.attempts?.at(-1)
+  );
+}
+
+/** Read the attempt whose verdict is projected; a later blocked fix is audit history. */
+export function reviewResultArtifactPath(
+  review: Pick<ReviewStatus, 'attempts' | 'artifactPaths' | 'completedAt'>,
+): string | undefined {
+  return (reviewResultAttempt(review)?.artifactPaths ?? review.artifactPaths)
     ?.slice()
     .reverse()
     .find(

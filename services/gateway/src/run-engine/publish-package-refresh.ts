@@ -53,7 +53,11 @@ import {
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
-import { refreshRunGateReadiness, reviewsWithValidResults } from './gate-prerequisites.js';
+import {
+  applyValidatedReviewResults,
+  refreshRunGateReadiness,
+  reviewsWithValidResults,
+} from './gate-prerequisites.js';
 import { buildGateSummary } from './gate-summary.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
@@ -548,6 +552,7 @@ async function refreshPublishPackageTransitionLocked(
       publishGate: { ...refreshedRun.engineState?.publishGate, reviews: capturedReviews },
     },
   });
+  const validatedReviews = applyValidatedReviewResults(capturedReviews, valid);
   const projection =
     prPackage.headSha &&
     valid.some((review) => review.verdict === 'issues') &&
@@ -560,10 +565,10 @@ async function refreshPublishPackageTransitionLocked(
           refreshedRun,
           await readGateRecordedEvidenceSources(refreshedRun, prPackage),
           prPackage.headSha,
-          capturedReviews,
+          validatedReviews,
           new Set(valid.map((review) => review.id)),
         )
-      : { reviews: capturedReviews, receipts: [] };
+      : { reviews: validatedReviews, receipts: [] };
   for (const receipt of projection.receipts) {
     if (!receipt.settledReviewFindings?.length) continue;
     await commitRunVisualJudgment(

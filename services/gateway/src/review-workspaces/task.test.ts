@@ -7,11 +7,16 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import type { ReviewWorkspaceSubject, Run } from '@farmslot/protocol';
+import {
+  type ReviewWorkspaceSubject,
+  type Run,
+  workspaceReviewRoundAdmissionId,
+} from '@farmslot/protocol';
 
 import type { ProjectVars } from '../core/config.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { makeRun } from '../methods/run/test-fixtures.js';
+import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
 import { resolveConfiguredExecutionTemplate } from '../tasks/execution-template-catalog.js';
 
 import {
@@ -434,6 +439,33 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     assert(composed?.result?.reviewMd.includes(bodyOnlyFinding.description));
     assert.deepEqual(composed?.result?.lineComments, []);
     assert.equal(await readFile(path.join(view, 'artifacts/review.md'), 'utf8'), paraphrasedReport);
+    const minorReport = report.replace('APPROVE', 'COMMENT');
+    const minor = { ...bodyOnlyFinding, severity: 'minor' };
+    await writeFile(path.join(f.task, 'artifacts/review.md'), minorReport);
+    await writeFile(
+      path.join(f.task, 'artifacts/review-result.json'),
+      JSON.stringify({
+        ...result,
+        verdict: 'issues',
+        recommendation: 'COMMENT',
+        issues: [minor],
+        reportSha256: digest(minorReport),
+      }),
+    );
+    assert.equal(
+      (await readReviewWorkspaceCompletion(f.run.id, f.deps))?.result?.recommendation,
+      'COMMENT',
+    );
+    Object.assign(
+      f.run,
+      recordedReviewRounds(['earlier-1', 'earlier-2', workspaceReviewRoundAdmissionId(f.run)]),
+    );
+    const advisory = await readReviewWorkspaceCompletion(f.run.id, f.deps);
+    assert.equal(advisory?.result?.recommendation, 'APPROVE');
+    assert(advisory?.result?.reviewMd.includes(minor.description));
+    delete f.run.reviewRoundAdmissions;
+    delete f.run.reviewRoundSettlements;
+
     await writeFile(path.join(f.task, 'artifacts/review.md'), report);
     await writeFile(
       path.join(f.task, 'artifacts/review-result.json'),

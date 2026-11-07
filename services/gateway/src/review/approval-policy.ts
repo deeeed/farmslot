@@ -1,3 +1,4 @@
+import type { ReviewIssue } from '@farmslot/protocol';
 import {
   resolveApprovalPolicy,
   type ReviewRecommendation,
@@ -40,4 +41,21 @@ export function stricterReviewRecommendation(
   right: ReviewRecommendation,
 ): ReviewRecommendation {
   return REVIEW_RECOMMENDATION_RANK[right] > REVIEW_RECOMMENDATION_RANK[left] ? right : left;
+}
+
+interface ReviewPolicyFindings {
+  blocking: readonly ReviewIssue[];
+  advisoriesOnly: boolean;
+}
+
+/** Existing round-3+ task policy, applied only with an authoritative admission round. */
+export function reviewPolicyFindings(
+  findings: readonly ReviewIssue[],
+  round: number | undefined,
+): ReviewPolicyFindings {
+  const blocking =
+    typeof round === 'number' && Number.isSafeInteger(round) && round >= 3
+      ? findings.filter((issue) => issue.severity !== 'minor' && issue.severity !== 'nit')
+      : findings;
+  return { blocking, advisoriesOnly: findings.length > 0 && blocking.length === 0 };
 }

@@ -99,6 +99,7 @@ import {
   admitReviewRound,
   recordReviewRoundVerdict,
   reviewLaunchStartedAt,
+  reviewPolicyRound,
   reviewRoundAdmissionId,
   settleReviewRoundNoVerdict,
 } from './review-round-budget.js';
@@ -969,7 +970,13 @@ async function runNativeReviewAttempt(
     admit();
     const terminal = await readTerminalReviewSignal(vars, taskDir, target.signal);
     const feedback = applyTerminalReviewSignal(
-      await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath),
+      await readReviewFeedback(
+        vars,
+        taskDir,
+        feedbackRelPath,
+        resultRelPath,
+        reviewPolicyRound(getRun(runId), roundId),
+      ),
       terminal,
     );
     logRecommendationCorrection(contextId, feedback);

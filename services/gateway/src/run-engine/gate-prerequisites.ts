@@ -41,9 +41,10 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { evalWorkerBlockedReason } from '../evals/blocked-first-output.js';
 import { assertQaCompletion } from '../qa/completion.js';
-import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
+import { loadReviewApprovalPolicy, reviewPolicyFindings } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import {
+  reviewAttemptPolicyRound,
   reviewBudgetExtensionRefusal,
   runReviewRoundBudget,
 } from '../review/review-round-budget.js';
@@ -51,6 +52,7 @@ import { reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
 import {
   acceptedReviewFixPredecessor,
   reviewResultArtifactPath,
+  reviewResultAttempt,
 } from '../review/terminal-result.js';
 import { assertReviewCommentLines } from '../review-publication/validate-comments.js';
 import type { InheritedAcceptanceCandidate } from '../run-completion/inherited-acceptance.js';
@@ -469,6 +471,7 @@ export async function reviewsWithValidResults(
     run.engineState?.publishGate?.reviews ?? [],
   )) {
     const input = acceptedReviewFixPredecessor(review) ?? review;
+    const reviewRound = reviewAttemptPolicyRound(run, review, input === review ? undefined : input);
     const artifact = reviewResultArtifactPath(input);
     const raw = artifact ? await readReviewResult(run, artifact) : undefined;
     if (raw) {
@@ -476,11 +479,50 @@ export async function reviewsWithValidResults(
         raw,
         artifact!,
         await loadReviewApprovalPolicy(run.project),
+        undefined,
+        reviewRound,
       );
-      if (!result.incomplete && result.verdict === input.verdict) valid.push(review);
+      if (result.incomplete) continue;
+      if (result.verdict === input.verdict) valid.push(review);
+      else if (
+        input.verdict === 'issues' &&
+        result.verdict === 'pass' &&
+        reviewPolicyFindings(result.issues, reviewRound).advisoriesOnly
+      ) {
+        // Re-read old mapper output from its exact artifact. Keep the original
+        // artifact and earlier attempts; the current projection follows policy.
+        if (input !== review) valid.push(review);
+        else
+          valid.push({
+            ...review,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            issues: result.issues,
+            recoveryContinuationPending: false,
+            maxRetriesExhausted: false,
+            ...(review.attempts?.length
+              ? {
+                  attempts: review.attempts.map((attempt) =>
+                    attempt === reviewResultAttempt(review)
+                      ? { ...attempt, verdict: 'pass', unresolvedCount: 0, issues: result.issues }
+                      : attempt,
+                  ),
+                }
+              : {}),
+          });
+      }
     }
   }
   return valid;
+}
+
+/** Only artifact-validated rows can replace recorded policy projections. */
+export function applyValidatedReviewResults(
+  reviews: ReviewStatus[],
+  validated: ReviewStatus[],
+): ReviewStatus[] {
+  const byId = new Map(validated.map((review) => [review.id, review]));
+  return reviews.map((review) => byId.get(review.id) ?? review);
 }
 
 /**
@@ -512,7 +554,13 @@ async function acceptableHeadFindings(
     );
     const raw = artifact ? await source.reviewResult(run, artifact) : undefined;
     const result = raw
-      ? parseStructuredReviewFeedback(raw, artifact!, await loadReviewApprovalPolicy(run.project))
+      ? parseStructuredReviewFeedback(
+          raw,
+          artifact!,
+          await loadReviewApprovalPolicy(run.project),
+          undefined,
+          reviewAttemptPolicyRound(run, review, entry === review ? undefined : entry),
+        )
       : undefined;
     if (!result || result.incomplete || result.verdict !== 'issues' || result.issues.length < count)
       return undefined;
@@ -548,7 +596,9 @@ export async function collectRunGateAssessment(
   readiness: RunGateReadiness;
   acceptance?: AcceptanceStatusLedger;
   reviews?: ReviewStatus[];
+  reviewPolicyRepairs?: ReviewStatus[];
 }> {
+  const recordedReviews = run.engineState?.publishGate?.reviews ?? [];
   // Receipt-derived decorations are display data, never imported authority.
   if (run.engineState?.publishGate?.reviews?.some((review) => review.settledFindings?.length))
     run = {
@@ -594,6 +644,33 @@ export async function collectRunGateAssessment(
       });
     }
   }
+  // Read once, before deriving blockers, so legacy minor-only ISSUES rows use
+  // the same exact-round policy as fresh completion and publication validation.
+  let validInputs =
+    !publicationFulfilled && preparedPackage
+      ? await reviewsWithValidResults(run, source.reviewResult)
+      : [];
+  const reviewPolicyRepairs = validInputs.filter(
+    (review) =>
+      review.verdict === 'pass' &&
+      recordedReviews.some(
+        (recorded) => recorded.id === review.id && recorded.verdict === 'issues',
+      ),
+  );
+  if (validInputs.length)
+    run = {
+      ...run,
+      engineState: {
+        ...run.engineState,
+        publishGate: {
+          ...run.engineState?.publishGate,
+          reviews: applyValidatedReviewResults(
+            run.engineState?.publishGate?.reviews ?? [],
+            validInputs,
+          ),
+        },
+      },
+    };
   const reviewBlock =
     !publicationFulfilled &&
     (preparedPackage || requiresPublicationApproval(run)) &&
@@ -642,11 +719,6 @@ export async function collectRunGateAssessment(
       actionId: 'hold',
     });
   }
-  // One structured-result read serves the review prerequisite and `review` claims.
-  let validInputs =
-    !publicationFulfilled && preparedPackage
-      ? await reviewsWithValidResults(run, source.reviewResult)
-      : [];
   let projected: AcceptanceStatusLedger | undefined;
   let acceptance = await source.acceptance(artifactRun);
   if (acceptance.error) {
@@ -944,6 +1016,7 @@ export async function collectRunGateAssessment(
     },
     ...(projected ? { acceptance: projected } : {}),
     ...(preparedPackage ? { reviews: run.engineState?.publishGate?.reviews } : {}),
+    ...(reviewPolicyRepairs.length ? { reviewPolicyRepairs } : {}),
   };
 }
 
@@ -1114,12 +1187,14 @@ export async function refreshRunGateReadiness(
   overrides: Partial<GatePrerequisiteReaders> = {},
 ): Promise<Run> {
   const generation = run.engineState?.generation ?? 0;
+  const reviewPolicyGate = run.engineState?.publishGate;
   const pending = run.decisions.filter(
     (decision) => !decision.resolvedAt && isPrerequisiteGatePayload(decision.payload),
   );
   if (!pending.length || runSupersededSince(run, generation) || isTerminalRunStatus(run.status))
     return run;
   const progress = await (overrides.progress ?? readRunProgress)(run);
+  const policyRepairsByDecision = new Map<string, ReviewStatus[]>();
   const updates = await Promise.all(
     pending.map(async (decision) => {
       const payload = decision.payload!;
@@ -1128,17 +1203,19 @@ export async function refreshRunGateReadiness(
         readiness: assessment,
         acceptance,
         reviews,
+        reviewPolicyRepairs,
       } = await collectRunGateAssessment(run, prepared, {
         ...overrides,
         progress: async () => progress,
       });
+      if (reviewPolicyRepairs) policyRepairsByDecision.set(decision.id, reviewPolicyRepairs);
       const definitions = runGateDefinitionActions(decision);
       const { actions, readiness } = projectRunGateActions(definitions, assessment, payload);
       return {
         ...decision,
         actions,
         context: { ...decision.context, gateActions: definitions },
-        // The projection lives on the decision only; task and engine ledgers stay unchanged.
+        // Claim decorations stay on the decision; verified policy repairs also update the ledger.
         payload: {
           ...payload,
           gateReadiness: readiness,
@@ -1158,6 +1235,25 @@ export async function refreshRunGateReadiness(
     return now && !now.resolvedAt && now.payload === before.payload;
   });
   if (!applicable.length) return current!;
+  const policyRepairs = applicable.flatMap(
+    (decision) => policyRepairsByDecision.get(decision.id) ?? [],
+  );
+  // Policy repair and the offered gate actions must reach the same stored run.
+  // A reviewer or package writer that changed the ledger during artifact IO wins.
+  if (policyRepairs.length && current!.engineState?.publishGate !== reviewPolicyGate)
+    return current!;
+  const engineState = policyRepairs.length
+    ? {
+        ...current!.engineState,
+        publishGate: {
+          ...current!.engineState?.publishGate,
+          reviews: applyValidatedReviewResults(
+            current!.engineState?.publishGate?.reviews ?? [],
+            policyRepairs,
+          ),
+        },
+      }
+    : undefined;
   const decisions = current!.decisions.map(
     (decision) => applicable.find((update) => update.id === decision.id) ?? decision,
   );
@@ -1169,7 +1265,9 @@ export async function refreshRunGateReadiness(
     gate.type === 'engine_review_posting' ? 'review_posting' : 'human_gate',
     readiness,
   );
-  return current!.status === status && isDeepStrictEqual(current!.decisions, decisions)
+  return !engineState &&
+    current!.status === status &&
+    isDeepStrictEqual(current!.decisions, decisions)
     ? current!
-    : updateRun(run.id, { status, decisions });
+    : updateRun(run.id, { status, decisions, ...(engineState ? { engineState } : {}) });
 }
