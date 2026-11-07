@@ -6,6 +6,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.37.0 - 2026-11-07
+
+- Route pilot task transfers and terminal streams over the enrolled node link, preserving command ownership and uncertain outcomes.
+- Resolve completion handoffs to the recorded worker attempt and canonical pane identity, so empty legacy role placeholders do not keep idle or exited workers unconfirmed.
+
 ## 0.36.0 - 2026-11-07
 
 - Register Claude Code ACP for native sessions and refuse native-only agents on terminal launch paths.

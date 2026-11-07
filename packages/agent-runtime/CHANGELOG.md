@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.44.1 - 2026-11-07
+
+- Keep the native launch wrapper alive through an immediate startup abort so its child can stop with confirmed ownership and cleanup.
+
 ## 0.44.0 - 2026-11-07
 
 - Support existing-login ACP agents with confirmed model and effort choices, audited Bypass approvals and structured tool diffs.
