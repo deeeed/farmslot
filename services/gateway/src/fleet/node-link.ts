@@ -15,6 +15,7 @@ import {
   NODE_LINK_RECEIPT_RETENTION_MS,
   type NodeLinkAuthority,
   type NodeLinkCommand,
+  nodeLinkCommandDeadline,
   type NodeLinkCursor,
   NodeLinkFailure,
   type NodeLinkGrant,
@@ -59,6 +60,10 @@ interface NodeLinkIntent {
 }
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+
+export function createNodeLinkCommandId(timeoutMs = 60_000): string {
+  return `nl1:${Date.now() + timeoutMs}:${randomUUID()}`;
+}
 
 async function writeIntent(file: string, value: NodeLinkIntent): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -170,7 +175,14 @@ async function invokeUnqueued(
         'CAPACITY',
         'Gateway intent capacity reached; uncertain outcomes are retained.',
       );
-    const expiresAt = Date.now() + (invocation.timeoutMs ?? 60_000);
+    const expiresAt =
+      nodeLinkCommandDeadline(invocation.commandId) ??
+      Date.now() + (invocation.timeoutMs ?? 60_000);
+    if (expiresAt <= Date.now())
+      throw new NodeLinkFailure(
+        'COMMAND_EXPIRED',
+        'Expired command keys cannot be renewed after retention.',
+      );
     const command: NodeLinkCommand = {
       commandId: invocation.commandId,
       operation,
@@ -421,6 +433,7 @@ async function pruneSettledIntents(
       throw new NodeLinkFailure('INTENT_CORRUPT', 'Cannot prune an invalid intent.');
     const receipt = value.receipt;
     if (
+      nodeLinkCommandDeadline(value.command.commandId) !== value.command.expiresAt ||
       !receipt?.closeoutConfirmed ||
       !receipt.settledAt ||
       Math.max(value.command.expiresAt, receipt.settledAt) + NODE_LINK_RECEIPT_RETENTION_MS >=
@@ -792,7 +805,7 @@ export async function inspectNodeLinkPrograms(
       'Node identity is unavailable for inventory.',
     );
   const principal = currentSessionOriginator();
-  const id = randomUUID();
+  const id = createNodeLinkCommandId();
   const receipt = await invokeNodeLink(
     { operation: 'system.which', input: { programs } },
     {

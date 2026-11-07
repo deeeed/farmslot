@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { type ExecResult, NodeLinkFailure } from '@farmslot/protocol';
 
 import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from '../core/cleanup-scope.js';
@@ -9,7 +7,7 @@ import { readSlotRow } from '../core/state.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 import { getNode } from './machine-registry.js';
-import { invokeNodeLink } from './node-link.js';
+import { createNodeLinkCommandId, invokeNodeLink } from './node-link.js';
 
 const fence = (row: Readonly<Record<string, unknown>> | null) =>
   JSON.stringify([
@@ -40,9 +38,9 @@ export async function execThroughNodeLink(
         ? row.handoff_run_id
         : undefined;
   const principal = currentSessionOriginator();
-  const commandId = randomUUID();
-  const signal = cleanupSignal(options.signal);
   const timeoutMs = options.timeout ?? 10 * 60_000;
+  const commandId = createNodeLinkCommandId(timeoutMs);
+  const signal = cleanupSignal(options.signal);
   const receipt = await trackCleanupCommand(
     invokeNodeLink(
       {

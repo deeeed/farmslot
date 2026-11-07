@@ -912,3 +912,49 @@ test(
     assert.equal(await readFile(path.join(root, 'once'), 'utf8'), 'written');
   },
 );
+
+test('pruned gateway intents cannot renew an expired command key and repeat its effect', async (t) => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-expired-key-')));
+  const previousHome = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = root;
+  const machine = 'node-link-expired-key';
+  const { principal } = await linkedNode(t, root, machine);
+  t.after(async () => {
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
+    await rm(root, { recursive: true, force: true });
+  });
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { createNodeLinkCommandId, inspectNodeLinkPrograms } = await import('./node-link.js');
+  const { createHash } = await import('node:crypto');
+  const commandId = createNodeLinkCommandId(1000);
+  const request = {
+    operation: 'file.write' as const,
+    input: { root, relPath: 'once', content: 'first', expectedHash: null },
+  };
+  const invocation = {
+    commandId,
+    target: { nodeId: machine, resourceId: 'workspace' },
+    root,
+    authority: {
+      requester: { principalId: 'operator', generation: 1 },
+      executor: principal,
+      grantId: 'once',
+      approvalId: 'once',
+      approval: 'framework' as const,
+    },
+    assertCurrent: () => undefined,
+  };
+  await invokeNodeLink(request, invocation);
+  t.mock.timers.tick(10 * 60_000);
+  await inspectNodeLinkPrograms(machine, ['node']);
+  const intent = path.join(
+    root,
+    'node-link-intents',
+    machine,
+    createHash('sha256').update(commandId).digest('hex') + '.json',
+  );
+  await assert.rejects(readFile(intent), { code: 'ENOENT' });
+  await assert.rejects(invokeNodeLink(request, invocation), { code: 'COMMAND_EXPIRED' });
+  assert.equal(await readFile(path.join(root, 'once'), 'utf8'), 'first');
+});

@@ -201,9 +201,10 @@ test('cancellation intent cannot admit a successor until confirmed closeout', as
   );
 });
 
-test('expired settled receipts reclaim capacity but cannot replay after restart', async (t) => {
+test('expired settled receipts reclaim capacity but their keys cannot acquire a new deadline', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'node-link-retention-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   let effects = 0;
   const owner = {
     authorize: () => undefined,
@@ -212,26 +213,18 @@ test('expired settled receipts reclaim capacity but cannot replay after restart'
       return null;
     },
   };
-  const broker = new NodeLinkCommands(root, owner, 4);
-  const first = { ...command(), expiresAt: Date.now() + 60_000 };
+  const broker = new NodeLinkCommands(root, owner, 6);
+  const expiry = Date.now() + 60_000;
+  const first = { ...command(), commandId: `nl1:${expiry}:original`, expiresAt: expiry };
   await broker.execute(first);
-  const { createHash } = await import('node:crypto');
-  const { readFile, writeFile } = await import('node:fs/promises');
-  const file = path.join(
-    root,
-    createHash('sha256').update(first.commandId).digest('hex') + '.json',
-  );
-  const receipt = JSON.parse(await readFile(file, 'utf8'));
-  // Keep the command identity expired beyond the documented reconciliation window.
-  receipt.expiresAt = Date.now() - 24 * 60 * 60_000;
-  receipt.settledAt = receipt.expiresAt;
-  await writeFile(file, JSON.stringify(receipt));
+  t.mock.timers.tick(10 * 60_000);
   for (const id of ['second', 'third', 'fourth', 'fifth'])
     await broker.execute({ ...command(), commandId: id });
   assert.equal(effects, 5);
-  const restarted = new NodeLinkCommands(root, owner, 4);
-  await assert.rejects(restarted.execute({ ...first, expiresAt: receipt.expiresAt }), {
-    code: 'COMMAND_EXPIRED',
+  const restarted = new NodeLinkCommands(root, owner, 6);
+  await assert.rejects(restarted.execute(first), { code: 'COMMAND_EXPIRED' });
+  await assert.rejects(restarted.execute({ ...first, expiresAt: Date.now() + 60_000 }), {
+    code: 'INVALID_PARAMS',
   });
   assert.equal(effects, 5);
 });

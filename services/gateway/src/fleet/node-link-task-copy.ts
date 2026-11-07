@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -19,7 +19,7 @@ import { currentSessionOriginator } from '../security/work-originator.js';
 import { isWorkerMirrorEntry, TASK_ROOT_SIDECARS } from '../tasks/sidecars.js';
 
 import { getNode } from './machine-registry.js';
-import { invokeNodeLink } from './node-link.js';
+import { createNodeLinkCommandId, invokeNodeLink } from './node-link.js';
 import { invokeNodeLinkAttempt } from './node-link-attempt.js';
 
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -120,7 +120,7 @@ export async function createNodeLinkTaskStager(
   const call = async (request: NodeLinkOperationRequest, readOnly = false) => {
     await assertCurrent();
     const commandId = readOnly
-      ? randomUUID()
+      ? createNodeLinkCommandId()
       : hash(JSON.stringify([vars.machine, vars.slotId, epoch, runGeneration, 'task-copy']));
     const receipt = await trackCleanupCommand(
       (readOnly ? invokeNodeLink : invokeNodeLinkAttempt)(request, {

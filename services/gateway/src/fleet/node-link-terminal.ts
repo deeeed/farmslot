@@ -1,11 +1,9 @@
-import { randomUUID } from 'node:crypto';
-
 import { type NodeLinkCommand, NodeLinkFailure, type NodeLinkLease } from '@farmslot/protocol';
 
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 import { getNode } from './machine-registry.js';
-import { inspectNodeLinkPrograms, invokeNodeLink } from './node-link.js';
+import { createNodeLinkCommandId, inspectNodeLinkPrograms, invokeNodeLink } from './node-link.js';
 import { sendNodeRequest } from './node-rpc.js';
 
 export interface LinkedPtyOptions {
@@ -49,7 +47,7 @@ export async function openLinkedPty(options: LinkedPtyOptions): Promise<LinkedPt
   }
   argv.push('attach-session', '-t', `=${options.session}`);
   const principal = currentSessionOriginator();
-  const id = randomUUID();
+  const id = createNodeLinkCommandId(24 * 60 * 60_000);
   const controller = new AbortController();
   let command: NodeLinkCommand | undefined;
   let started!: () => void;

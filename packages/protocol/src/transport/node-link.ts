@@ -162,6 +162,14 @@ export function isNodeLinkTarget(value: unknown): value is NodeLinkTarget {
   return record(value) && identity(value.nodeId) && identity(value.resourceId);
 }
 
+/** Deadline-bearing keys remain expired after their settled receipt has been pruned. */
+export function nodeLinkCommandDeadline(commandId: string): number | undefined {
+  const match = /^nl1:([0-9]{1,16}):[^:]+$/.exec(commandId);
+  if (!match) return undefined;
+  const deadline = Number(match[1]);
+  return Number.isSafeInteger(deadline) && deadline > 0 ? deadline : undefined;
+}
+
 export function isNodeLinkCommand(value: unknown): value is NodeLinkCommand {
   return (
     record(value) &&
@@ -170,6 +178,8 @@ export function isNodeLinkCommand(value: unknown): value is NodeLinkCommand {
     isNodeLinkTarget(value.target) &&
     isNodeLinkAuthority(value.authority) &&
     finite(value.expiresAt) &&
+    (!value.commandId.startsWith('nl1:') ||
+      nodeLinkCommandDeadline(value.commandId) === value.expiresAt) &&
     Object.hasOwn(value, 'input') &&
     Object.keys(value).every((key) =>
       ['commandId', 'operation', 'target', 'authority', 'expiresAt', 'input'].includes(key),

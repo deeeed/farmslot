@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -9,7 +9,12 @@ import {
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { invokeNodeLink, type NodeLinkInvocation, reconcileNodeLinkIntent } from './node-link.js';
+import {
+  createNodeLinkCommandId,
+  invokeNodeLink,
+  type NodeLinkInvocation,
+  reconcileNodeLinkIntent,
+} from './node-link.js';
 
 const attempts = new Map<string, Promise<void>>();
 
@@ -44,7 +49,7 @@ export async function invokeNodeLinkAttempt(
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
     await invocation.assertCurrent();
-    const commandId = randomUUID();
+    const commandId = createNodeLinkCommandId(invocation.timeoutMs);
     await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
     const temporary = `${file}.${commandId}.tmp`;
     const handle = await open(temporary, 'wx', 0o600);

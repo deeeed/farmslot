@@ -11,6 +11,7 @@ import {
   NODE_LINK_LIMITS,
   NODE_LINK_RECEIPT_RETENTION_MS,
   type NodeLinkCommand,
+  nodeLinkCommandDeadline,
   NodeLinkFailure,
   type NodeLinkReceipt,
 } from '@farmslot/protocol';
@@ -441,6 +442,7 @@ export class NodeLinkCommands {
       if (!isNodeLinkReceipt(value))
         throw new NodeLinkFailure('RECEIPT_CORRUPT', 'Cannot prune an invalid receipt.');
       if (
+        nodeLinkCommandDeadline(value.commandId) !== value.expiresAt ||
         this.active.has(value.commandId) ||
         !isNodeLinkTerminal(value.state) ||
         !value.closeoutConfirmed ||
