@@ -7,6 +7,7 @@ import test from 'node:test';
 import { observeOpenCodeAccount } from './account-opencode.js';
 import { createAcpAdapter } from './acp.js';
 import { acpPermission, cursorRequest } from './acp-requests.js';
+import { claudeAcpNativeAdapter } from './claude-acp.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
 import { opencodeEnvironment, opencodeNativeAdapter } from './opencode.js';
@@ -41,6 +42,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='plan'){
    update({sessionUpdate:'plan',entries:[{content:'Inspect',priority:'high',status:'in_progress'},{content:'Report',priority:'low',status:'pending'}]});
    update({sessionUpdate:'plan',entries:[{content:'Inspect',priority:'high',status:'completed'},{content:'Report',priority:'low',status:'completed'}]});
+   return result(prompt,{stopReason:'end_turn'});
+  }
+  if(text==='late-file-diff'){
+   update({sessionUpdate:'tool_call',toolCallId:'late-edit',title:'Edit existing file',kind:'edit',status:'in_progress',content:[{type:'diff',path:'/work/existing.txt',oldText:'before\\n',newText:'optimistic\\n'}]});
+   update({sessionUpdate:'tool_call_update',toolCallId:'late-edit',status:'completed'});
+   update({sessionUpdate:'tool_call_update',toolCallId:'late-edit',content:[{type:'diff',path:'/work/existing.txt',oldText:'whole before\\n',newText:'whole after\\n'}]});
    return result(prompt,{stopReason:'end_turn'});
   }
   if(text==='file-diff'){
@@ -843,3 +850,57 @@ for (const scenario of [
     assert(!readFileSync(join(f.cwd, 'wire'), 'utf8').includes('session/prompt'));
   });
 }
+
+test('read-only ACP reviews disable user hooks while ordinary sessions preserve user settings', async (t) => {
+  for (const review of [true, false]) {
+    const f = setup();
+    t.after(f.cleanup);
+    const session = await claudeAcpNativeAdapter.start(
+      {
+        ...f,
+        ...(review ? { filesystemPolicy: { readOnlyRoots: [f.cwd], writableRoots: [] } } : {}),
+        env: {
+          ...process.env,
+          ACP_FIXTURE_EXISTING_LOGIN: '1',
+          CLAUDE_CODE_EXECUTABLE: f.executable,
+        },
+      },
+      () => {},
+    );
+    try {
+      const calls = readFileSync(join(f.cwd, 'wire'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      const policy = calls.find((call) => call.method === 'session/new')?.params._meta?.claudeCode
+        ?.options;
+      if (review) {
+        assert.deepEqual(policy?.settingSources, ['user']);
+        assert.equal(policy?.settings?.disableAllHooks, true);
+      } else assert.equal(policy, undefined);
+    } finally {
+      await session.close();
+    }
+  }
+});
+
+test('ACP journals a final file diff arriving after the tool completed', async (t) => {
+  const f = setup();
+  t.after(f.cleanup);
+  const events: NativeEventInput[] = [];
+  const session = await createAcpAdapter({
+    args: () => [],
+    authMethod: 'cursor_login',
+    modes: ['default'],
+  }).start(f, (event) => events.push(event));
+  try {
+    await session.send('late-file-diff', 'late');
+    await until(() => events.some((event) => event.type === 'turn.completed'));
+    assert.deepEqual(
+      events.filter((event) => event.type === 'tool.completed').at(-1)?.tool?.diffs,
+      [{ path: '/work/existing.txt', oldText: 'whole before\n', newText: 'whole after\n' }],
+    );
+  } finally {
+    await session.close();
+  }
+});

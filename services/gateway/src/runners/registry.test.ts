@@ -1485,7 +1485,7 @@ describe('custom runner fallback behavior', () => {
       assert.match(command, new RegExp(pattern));
     }
     assert.doesNotMatch('/usr/bin/node', new RegExp(pattern));
-    assert.deepEqual(runnerIdsRequiringExplicitTerminationIdentity(), ['cursor']);
+    assert.deepEqual(runnerIdsRequiringExplicitTerminationIdentity(), ['cursor', 'claude-acp']);
     assert.equal(runnerIdsSafeForUnattributedTermination().includes('cursor'), false);
   });
 });

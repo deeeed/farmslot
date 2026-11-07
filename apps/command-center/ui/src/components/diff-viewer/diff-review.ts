@@ -1,5 +1,5 @@
 import { html as diff2html, parse } from 'diff2html';
-import { ColorSchemeType } from 'diff2html/lib-esm/types';
+import { ColorSchemeType } from 'diff2html/lib/types.js';
 import { html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';

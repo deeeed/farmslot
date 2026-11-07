@@ -543,6 +543,8 @@ export function buildRunnerSessionReloadCommand(
   opts: RunnerSessionReloadOptions = {},
 ): string {
   const runner = normalizeRunner(runnerId);
+  if (!runnerSupportsSessionReload(runner))
+    throw new Error(`Runner '${runner}' does not support persisted session reload`);
   assertRunnerTransport(runner, 'tmux');
   const repo = opts.repo ?? vars.remoteRepo;
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);

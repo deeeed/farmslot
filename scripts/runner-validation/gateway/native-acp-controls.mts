@@ -42,6 +42,7 @@ assert(target);
 const page = await CdpWebPage.connectToTarget(target);
 const cwd = await mkdtemp(path.join(setup.root, 'acp-control-'));
 const sessions: NativeSessionInfo[] = [];
+const editOnly = process.env.FARMSLOT_ACP_PROOF_EDIT_ONLY === '1';
 const result: Record<string, unknown> = { pass: false, productionServicesChanged: false };
 const wait = async (check: () => Promise<boolean>, description: string) => {
   const end = Date.now() + 180_000;
@@ -102,7 +103,7 @@ try {
     model: 'haiku',
     effort: 'low',
     mode: 'default',
-    approvalMode: 'ask',
+    approvalMode: editOnly ? 'bypass' : 'ask',
     cwd,
     executionNodeId: 'local',
   });
@@ -113,17 +114,25 @@ try {
   assert.equal(session.model, 'haiku');
   assert.equal(session.effort, 'low');
   assert.equal(session.cwd, cwd);
+  if (editOnly) await writeFile(path.join(cwd, 'allowed.txt'), 'prefix\nbefore ACP\nsuffix\n');
   await show(session);
   let after = await send(
     session,
-    `Use the Write tool to create ${cwd}/allowed.txt with exactly hello ACP followed by a newline. Do not use any other tools. Wait for my permission and do not retry if denied.`,
+    editOnly
+      ? `Use Edit once to replace before ACP with hello ACP in ${cwd}/allowed.txt, preserving the other lines. Use no other tools.`
+      : `Use Write once to create ${cwd}/allowed.txt with exactly hello ACP followed by a newline. Use no other tools. Wait for permission and do not retry if denied.`,
   );
-  await wait(async () => (await read(session)).pendingRequests.length > 0, 'Ask permission');
-  await page.waitForSelector('[data-testid=native-approve]');
-  await screenshot('ask');
-  await page.click('[data-testid=native-approve]');
+  if (!editOnly) {
+    await wait(async () => (await read(session)).pendingRequests.length > 0, 'Ask permission');
+    await page.waitForSelector('[data-testid=native-approve]');
+    await screenshot('ask');
+    await page.click('[data-testid=native-approve]');
+  }
   let receipt = await complete(session, after);
-  assert.equal(await readFile(path.join(cwd, 'allowed.txt'), 'utf8'), 'hello ACP\n');
+  assert.equal(
+    await readFile(path.join(cwd, 'allowed.txt'), 'utf8'),
+    editOnly ? 'prefix\nhello ACP\nsuffix\n' : 'hello ACP\n',
+  );
   assert(
     receipt.events.some(
       (event) =>
@@ -131,72 +140,92 @@ try {
         event.tool?.diffs?.some((diff) => diff.path.endsWith('allowed.txt')),
     ),
   );
+  const finalEdit = receipt.events.filter((event) => event.type === 'tool.completed').at(-1)?.tool
+    ?.diffs?.[0];
+  if (editOnly) {
+    assert(finalEdit?.oldText?.includes('prefix\n'));
+    assert(finalEdit?.newText.includes('hello ACP\nsuffix'));
+    result.finalWholeFileDiff = true;
+  }
   await writeFile(path.join(output, 'ask-receipt.json'), JSON.stringify(receipt, null, 2));
-  result.askApproved = true;
-
-  after = await send(
-    session,
-    `Use Write once to create ${cwd}/denied.txt containing denied. I will deny this request. After the denial, reply DENIED and stop. Do not retry or use other tools.`,
+  result.askApproved = !editOnly;
+  const foldClosed = await page.evaluate(
+    `(() => { const find = root => { const row=root.querySelector('[data-testid=native-work-fold]'); if(row)return row; for(const node of root.querySelectorAll('*')) if(node.shadowRoot){const row=find(node.shadowRoot);if(row)return row;} }; return find(document)?.getAttribute('aria-expanded') === 'false'; })()`,
   );
-  await wait(async () => (await read(session)).pendingRequests.length > 0, 'Deny permission');
-  await page.waitForSelector('[data-testid=native-deny]');
-  await page.click('[data-testid=native-deny]');
-  receipt = await complete(session, after);
-  await assert.rejects(readFile(path.join(cwd, 'denied.txt')), { code: 'ENOENT' });
-  assert(
-    receipt.events.some(
-      (event) =>
-        event.sequence > after &&
-        event.type === 'approval.resolved' &&
-        event.response?.decision === 'deny',
-    ),
+  if (foldClosed) await page.click('[data-testid=native-work-fold]');
+  await page.click('.tool details > summary');
+  await page.waitForExpression(
+    `(() => { const find=root=>{const diff=root.querySelector('diff-review');if(diff)return diff;for(const node of root.querySelectorAll('*'))if(node.shadowRoot){const diff=find(node.shadowRoot);if(diff)return diff;}};const text=find(document)?.textContent??'';return text.includes('hello ACP')&&${editOnly ? "text.includes('prefix')&&text.includes('suffix')" : 'true'}; })()`,
   );
-  result.denyPreventedWrite = true;
-
-  await connection.call('native.session.setApprovalMode', {
-    sessionId: session.id,
-    executionNodeId: 'local',
-    approvalMode: 'bypass',
-  });
-  after = await send(
-    session,
-    `Use Write once to create ${cwd}/bypass.txt with exactly automatic ACP followed by a newline. Do not use other tools.`,
-  );
-  receipt = await complete(session, after);
-  assert.equal(await readFile(path.join(cwd, 'bypass.txt'), 'utf8'), 'automatic ACP\n');
-  const turn = receipt.events.filter((event) => event.sequence > after);
-  assert(!turn.some((event) => event.type === 'approval.requested'));
-  assert(
-    turn.some(
-      (event) =>
-        event.type === 'approval.resolved' &&
-        event.data?.approvalMode === 'bypass' &&
-        event.data?.automatic === true,
-    ),
-  );
-  await writeFile(path.join(output, 'bypass-receipt.json'), JSON.stringify(receipt, null, 2));
-  result.bypassAuditedWithoutPrompt = true;
-  await connection.call('native.session.setApprovalMode', {
-    sessionId: session.id,
-    executionNodeId: 'local',
-    approvalMode: 'ask',
-  });
-  after = await send(
-    session,
-    `Use Write once to create ${cwd}/ask-restored.txt containing restored. Wait for permission. If denied, stop without retrying.`,
-  );
-  await wait(
-    async () => (await read(session)).pendingRequests.length > 0,
-    'Ask restored on same conversation',
-  );
-  await page.waitForSelector('[data-testid=native-deny]');
-  await screenshot('ask-restored');
-  await page.click('[data-testid=native-deny]');
-  receipt = await complete(session, after);
-  result.askRestoredSameConversation = receipt.session.nativeSessionId === session.nativeSessionId;
-  assert(result.askRestoredSameConversation);
-  await writeFile(path.join(output, 'final-receipt.json'), JSON.stringify(receipt, null, 2));
+  await screenshot('final-edit-diff');
+  result.browserFinalWholeFileDiff = true;
   result.session = receipt.session;
+  if (!editOnly) {
+    after = await send(
+      session,
+      `Use Write once to create ${cwd}/denied.txt containing denied. I will deny this request. After the denial, reply DENIED and stop. Do not retry or use other tools.`,
+    );
+    await wait(async () => (await read(session)).pendingRequests.length > 0, 'Deny permission');
+    await page.waitForSelector('[data-testid=native-deny]');
+    await page.click('[data-testid=native-deny]');
+    receipt = await complete(session, after);
+    await assert.rejects(readFile(path.join(cwd, 'denied.txt')), { code: 'ENOENT' });
+    assert(
+      receipt.events.some(
+        (event) =>
+          event.sequence > after &&
+          event.type === 'approval.resolved' &&
+          event.response?.decision === 'deny',
+      ),
+    );
+    result.denyPreventedWrite = true;
+
+    await connection.call('native.session.setApprovalMode', {
+      sessionId: session.id,
+      executionNodeId: 'local',
+      approvalMode: 'bypass',
+    });
+    after = await send(
+      session,
+      `Use Write once to create ${cwd}/bypass.txt with exactly automatic ACP followed by a newline. Do not use other tools.`,
+    );
+    receipt = await complete(session, after);
+    assert.equal(await readFile(path.join(cwd, 'bypass.txt'), 'utf8'), 'automatic ACP\n');
+    const turn = receipt.events.filter((event) => event.sequence > after);
+    assert(!turn.some((event) => event.type === 'approval.requested'));
+    assert(
+      turn.some(
+        (event) =>
+          event.type === 'approval.resolved' &&
+          event.data?.approvalMode === 'bypass' &&
+          event.data?.automatic === true,
+      ),
+    );
+    await writeFile(path.join(output, 'bypass-receipt.json'), JSON.stringify(receipt, null, 2));
+    result.bypassAuditedWithoutPrompt = true;
+    await connection.call('native.session.setApprovalMode', {
+      sessionId: session.id,
+      executionNodeId: 'local',
+      approvalMode: editOnly ? 'bypass' : 'ask',
+    });
+    after = await send(
+      session,
+      `Use Write once to create ${cwd}/ask-restored.txt containing restored. Wait for permission. If denied, stop without retrying.`,
+    );
+    await wait(
+      async () => (await read(session)).pendingRequests.length > 0,
+      'Ask restored on same conversation',
+    );
+    await page.waitForSelector('[data-testid=native-deny]');
+    await screenshot('ask-restored');
+    await page.click('[data-testid=native-deny]');
+    receipt = await complete(session, after);
+    result.askRestoredSameConversation =
+      receipt.session.nativeSessionId === session.nativeSessionId;
+    assert(result.askRestoredSameConversation);
+    await writeFile(path.join(output, 'final-receipt.json'), JSON.stringify(receipt, null, 2));
+    result.session = receipt.session;
+  }
   result.pass = true;
 } catch (error) {
   result.error = String(error);

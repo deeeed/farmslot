@@ -23,7 +23,9 @@ const adapter = createAcpAdapter({
   effortConfig: true,
   sessionMetadata: (options) => {
     const policy = {
-      ...(options.processSandbox ? { settingSources: ['user'] } : {}),
+      ...(options.filesystemPolicy
+        ? { settingSources: ['user'], settings: { disableAllHooks: true } }
+        : {}),
       ...(options.modelQuestions === 'off' ? { disallowedTools: ['AskUserQuestion'] } : {}),
     };
     return Object.keys(policy).length ? { claudeCode: { options: policy } } : undefined;

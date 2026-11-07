@@ -55,6 +55,10 @@ test('Claude Code ACP uses the common native lifecycle with explicit model, effo
   assert.equal(isKnownRunner('claude-acp'), true);
   const definition = getRunnerDefinition('claude-acp');
   assert.equal(definition.nativeTransport, 'acp');
+  assert.equal(definition.mobileKeyProfile, null);
+  assert.equal(definition.sessionReload, 'none');
+  assert.equal(definition.gracefulExit, null);
+  assert.equal(definition.observabilityScope, 'none');
   assert.deepEqual(definition.nativeChoices?.modes, ['default', 'plan']);
   assert.deepEqual(definition.nativeChoices?.efforts, ['low', 'medium', 'high', 'xhigh', 'max']);
   assert.equal(runnerSupportsEffort('claude-acp', 'haiku', 'low'), true);

@@ -61,7 +61,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
         event.nativeId && JSON.stringify([event.generation, event.commandId, event.nativeId]);
       const previous = identity ? tools.get(identity) : undefined;
       if (previous) {
-        const completed = previous.event.type === 'tool.completed' ? previous.event : event;
+        const completed = event.type === 'tool.completed' ? event : previous.event;
         const started = event.type === 'tool.started' ? event : previous.event;
         // Keep the entry's sequence: cached history keeps only this merged event, and the next read
         // keys the tool by it, so a card the reader opened stays the same card when it finishes.

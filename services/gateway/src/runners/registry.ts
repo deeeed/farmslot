@@ -780,7 +780,12 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
 };
 
 KNOWN_RUNNERS['claude-acp'] = {
-  ...KNOWN_RUNNERS.claude,
+  // Terminal capabilities fail closed; the native adapter owns conversation recovery.
+  ...KNOWN_RUNNERS.none,
+  defaultModel: DEFAULT_CLAUDE_MODEL,
+  acceptsModel: KNOWN_RUNNERS.claude.acceptsModel,
+  sessionUsageProvider: KNOWN_RUNNERS.claude.sessionUsageProvider,
+  supportsNativeTaskReuse: true,
   id: 'claude-acp',
   nativeTransport: 'acp',
   nativeOnly: true,

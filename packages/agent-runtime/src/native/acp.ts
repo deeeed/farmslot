@@ -295,11 +295,12 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
             if (!previous) publish({ type: 'tool.started', nativeId: id, tool, data: details });
             tools.set(id, tool);
             if (
-              (update.status === 'completed' || update.status === 'failed') &&
-              previous?.status !== update.status
+              (tool.status === 'completed' || tool.status === 'failed') &&
+              (previous?.status !== tool.status || diffs !== undefined)
             ) {
               publish({ type: 'tool.completed', nativeId: id, tool, data: details });
-              // Retain the final tool to avoid duplicating terminal updates.
+              // Terminal status can precede the provider hook's corrected file diff.
+              // Repeated completion is an upsert under the same native tool identity.
             }
           }
         },
