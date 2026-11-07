@@ -1,1 +1,0 @@
-- Register Claude Code ACP for native sessions and refuse native-only agents on terminal launch paths.

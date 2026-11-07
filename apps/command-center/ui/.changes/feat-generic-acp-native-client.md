@@ -1,1 +1,0 @@
-- Use registered ACP agents with the native model and effort picker, audited tool approvals and file diffs.

@@ -1,1 +1,0 @@
-- Apply the existing round-3+ advisory policy consistently to completed and refreshed reviews, retaining minor and nit findings without blocking approval.

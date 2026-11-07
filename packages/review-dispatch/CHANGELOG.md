@@ -4,6 +4,11 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.0 - 2026-11-07
+
+- Use registered native-agent effort choices in the shared launch picker.
+- Align active-review round labels with verdict-only usage and keep pending or completed budget records out of failure explanations.
+
 ## 0.24.0 - 2026-11-06
 
 - Preserve each review round's numeric usage receipt alongside its display label for family accounting.

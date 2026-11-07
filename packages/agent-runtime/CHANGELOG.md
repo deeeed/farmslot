@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.44.0 - 2026-11-07
+
+- Support existing-login ACP agents with confirmed model and effort choices, audited Bypass approvals and structured tool diffs.
+
 ## 0.43.0 - 2026-11-07
 
 - Publish bounded native conversation deltas from committed journals and observe durable metadata without polling or starting missing hosts.

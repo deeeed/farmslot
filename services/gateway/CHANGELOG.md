@@ -6,6 +6,14 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.0 - 2026-11-07
+
+- Register Claude Code ACP for native sessions and refuse native-only agents on terminal launch paths.
+- Allow same-head re-review of repaired ignored evidence for pipeline reviews using the recorded review-input receipt.
+- Apply the existing round-3+ advisory policy consistently to completed and refreshed reviews, retaining minor and nit findings without blocking approval.
+- Keep hosted recipe execution and discovery on the assigned iOS or Android slot platform while preserving web/headless project adapter selection and explicit target overrides.
+- Honor explicitly reviewed interactive runs when automatic project review is disabled, and show the actual package refusal in completion decisions.
+
 ## 0.35.0 - 2026-11-07
 
 - Share authorized native and terminal conversation streams and bind the configured Co-Pilot to one durable native session.

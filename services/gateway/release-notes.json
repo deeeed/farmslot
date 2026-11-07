@@ -1,9 +1,11 @@
 {
-  "version": "0.35.0",
+  "version": "0.36.0",
   "date": "2026-11-07",
   "items": [
-    "Stream native conversations and keep Co-Pilot settings stable.",
-    "Accept mutually supported node/runtime releases; explain declared breaks before launch.",
-    "Restore the verified completed task before gate recovery."
+    "Register Claude Code ACP for native sessions and refuse native-only agents on terminal launch paths",
+    "Allow same-head re-review of repaired ignored evidence for pipeline reviews using the recorded review-input receipt",
+    "Apply the existing round-3+ advisory policy consistently to completed and refreshed reviews, retaining minor and nit findings without blocking approval",
+    "Keep hosted recipe execution and discovery on the assigned iOS or Android slot platform while preserving web/headless project adapter selection and explicit target overrides",
+    "Honor explicitly reviewed interactive runs when automatic project review is disabled, and show the actual package refusal in completion decisions"
   ]
 }

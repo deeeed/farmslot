@@ -1,0 +1,1 @@
+- Refresh the generated gateway API version for the ACP protocol release.
