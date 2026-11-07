@@ -341,6 +341,108 @@ test('run gate Request Review continues the runner latest validated lineage WARM
   );
 });
 
+test('run gate explicit runner wins newer lineages and uses only that runner settings', () => {
+  const claudeContext = { reviewId: 'claude-review', familyId: 'family-1' };
+  const gate: RunDecision = {
+    id: 'gate-1',
+    type: 'engine_human_gate',
+    title: 'Ready',
+    description: '',
+    createdAt: '2026-11-07T01:00:00Z',
+    actions: [],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+      workerReport: '',
+      branch: 'feature',
+      reviewLineageOptions: [
+        {
+          context: claudeContext,
+          runner: 'claude',
+          model: 'opus',
+          effort: null,
+          reviewedAt: '2026-11-07T00:30:00Z',
+        },
+        {
+          context: { reviewId: 'newer-codex-review', familyId: 'family-1' },
+          runner: 'codex',
+          model: 'gpt-6.1-sol',
+          effort: 'high',
+          reviewedAt: '2026-11-07T01:20:00Z',
+        },
+      ],
+    },
+  };
+  const run = repeatReviewRun();
+  for (const mode of ['warm', 'cold'] as const) {
+    assert.deepEqual(
+      buildRunGateParams(run, gate, 'request-review', {
+        runner: 'claude',
+        model: 'opus',
+        ...(mode === 'cold' ? { reviewMode: mode } : {}),
+      }).selectionData?.reviewRequest,
+      {
+        runner: 'claude',
+        model: 'opus',
+        effort: null,
+        mode,
+        context: { reviewLineages: [claudeContext] },
+      },
+    );
+  }
+  assert(gate.payload?.kind === 'ready');
+  const retained = gate.payload.reviewLineageOptions?.find((option) => option.runner === 'claude');
+  assert(retained);
+  retained.unavailableReason = 'the retained reviewer session no longer exists';
+  assert.deepEqual(
+    buildRunGateParams(run, gate, 'request-review', {
+      runner: 'claude',
+      model: 'opus',
+      reviewMode: 'cold',
+    }).selectionData?.reviewRequest,
+    {
+      runner: 'claude',
+      model: 'opus',
+      effort: null,
+      mode: 'cold',
+      context: { reviewLineages: [claudeContext] },
+    },
+  );
+  assert.throws(
+    () => buildRunGateParams(run, gate, 'request-review', { runner: 'claude', model: 'opus' }),
+    /Cannot resume this review: the retained reviewer session no longer exists/,
+  );
+  assert.deepEqual(
+    buildRunGateParams(run, gate, 'request-review', {
+      runner: 'claude',
+      model: 'opus',
+      reviewContext: JSON.stringify({ reviewLineages: [claudeContext] }),
+    }).selectionData?.reviewRequest,
+    {
+      runner: 'claude',
+      model: 'opus',
+      effort: null,
+      mode: 'cold',
+      context: { reviewLineages: [claudeContext] },
+    },
+  );
+  gate.payload.reviewLineageOptions = gate.payload.reviewLineageOptions?.filter(
+    (option) => option.runner !== 'claude',
+  );
+  for (const reviewMode of [undefined, 'cold']) {
+    assert.deepEqual(
+      buildRunGateParams(run, gate, 'request-review', {
+        runner: 'claude',
+        model: 'opus',
+        ...(reviewMode ? { reviewMode } : {}),
+      }).selectionData?.reviewRequest,
+      { runner: 'claude', model: 'opus', effort: null, mode: 'cold' },
+    );
+  }
+});
+
 test('run create builds params from a GitHub/Jira ticket source', () => {
   assert.deepEqual(
     buildRunCreateParams({
