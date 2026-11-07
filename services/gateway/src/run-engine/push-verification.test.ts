@@ -8,8 +8,6 @@ import test, { type TestContext } from 'node:test';
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import type { ExecResult, Run } from '@farmslot/protocol';
 
-import { runContractSection } from '../tasks/run-contract.js';
-
 import {
   completionVerificationMode,
   inspectWorktreePublishState,
@@ -38,10 +36,6 @@ test('artifact-only output is retained without commit or publication verificatio
     for (const lane of ['comparison', 'validation', 'production'] as const) {
       const run = shape({ flowType, completionPolicy: 'artifact-only', lane });
       assert.equal(completionVerificationMode(run), 'none', `${flowType}/${lane}`);
-      assert.doesNotMatch(
-        runContractSection(run, 'temp/tasks/t') ?? '',
-        /Commit the change locally/,
-      );
     }
 });
 

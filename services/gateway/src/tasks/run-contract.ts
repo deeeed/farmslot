@@ -26,8 +26,8 @@ export function shouldApplyArtifactOnlyTaskPolicy(run: RunContractRun): boolean 
  * The `## Run contract` section for an autonomous dev or fix-bug run, or `null`.
  * Interactive and validation runs get none: their checklist owns pauses and pushes.
  * Comparison replays get none either: their replay guardrails keep the diff local.
- * Other artifact-only runs also retain the working-tree diff and task artifacts;
- * they neither require a local commit nor publish.
+ * Other artifact-only runs never publish, but the engine still requires their
+ * work committed, so their contract asks for a local commit and no push.
  */
 export function runContractSection(run: RunContractRun, taskDir: string): string | null {
   if (run.mode !== 'autonomous' || !RUN_CONTRACT_FLOWS.has(run.flowType)) return null;
@@ -39,7 +39,7 @@ export function runContractSection(run: RunContractRun, taskDir: string): string
     '',
     `- Never pause or ask for input. Recipe, recipe-library or action-contract mismatches never block: copy the closest recipe into the task, adapt to current actions and continue. Use testnet unless the dispatch asks for mainnet; never block over it. Run \`${taskDir}/mark blocked --reason "…"\` and stop only for missing credentials, a product decision the ticket does not settle, or a farm/device failure outside the checkout.`,
     run.completionPolicy === 'artifact-only'
-      ? '- Keep the local working-tree diff and task artifacts as the output. The engine retains them before releasing the slot; a commit is not required. This run is artifact-only: never `git push` and never run a `gh pr` write.'
+      ? '- Commit the change locally with a Conventional Commit. This run is artifact-only and never publishes: never `git push` and never run a `gh pr` write. The local commit and the task artifacts are its output.'
       : '- Commit the change locally with a Conventional Commit. Until Farmslot publishes the PR, never `git push` and never run a `gh pr` write: Farmslot publishes the branch and the PR after the operator approves it at the publication gate. A later Farmslot follow-up checklist, such as CI-FIX.md, may include its own push step; follow it.',
     "- Evidence must be in the run's bundle when it completes: releasing the slot copies nothing back. If you build a binary after the evidence capture, capture it again or publish it from this run.",
     '- Never credit or attribute the work to an AI agent in commits, PR text or code comments.',
