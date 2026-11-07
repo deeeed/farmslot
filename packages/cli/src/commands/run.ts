@@ -154,14 +154,16 @@ export function buildRunGateParams(
     });
     if (
       options.runner &&
+      !options.reviewContext &&
       decision.payload?.kind === 'ready' &&
       decision.payload.reviewLineageOptions &&
       model.rows[0].context
     )
       model.setMode(model.rows[0].id, 'warm');
+    // Apply explicit COLD before submission validates retained WARM availability.
     model.setSequence([
       parseReviewSelection({
-        ...model.toSelection(),
+        ...model.rows[0].selection,
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
         ...(options.reviewMode ? { mode: options.reviewMode } : {}),

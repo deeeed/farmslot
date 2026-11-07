@@ -393,6 +393,41 @@ test('run gate explicit runner wins newer lineages and uses only that runner set
     );
   }
   assert(gate.payload?.kind === 'ready');
+  const retained = gate.payload.reviewLineageOptions?.find((option) => option.runner === 'claude');
+  assert(retained);
+  retained.unavailableReason = 'the retained reviewer session no longer exists';
+  assert.deepEqual(
+    buildRunGateParams(run, gate, 'request-review', {
+      runner: 'claude',
+      model: 'opus',
+      reviewMode: 'cold',
+    }).selectionData?.reviewRequest,
+    {
+      runner: 'claude',
+      model: 'opus',
+      effort: null,
+      mode: 'cold',
+      context: { reviewLineages: [claudeContext] },
+    },
+  );
+  assert.throws(
+    () => buildRunGateParams(run, gate, 'request-review', { runner: 'claude', model: 'opus' }),
+    /Cannot resume this review: the retained reviewer session no longer exists/,
+  );
+  assert.deepEqual(
+    buildRunGateParams(run, gate, 'request-review', {
+      runner: 'claude',
+      model: 'opus',
+      reviewContext: JSON.stringify({ reviewLineages: [claudeContext] }),
+    }).selectionData?.reviewRequest,
+    {
+      runner: 'claude',
+      model: 'opus',
+      effort: null,
+      mode: 'cold',
+      context: { reviewLineages: [claudeContext] },
+    },
+  );
   gate.payload.reviewLineageOptions = gate.payload.reviewLineageOptions?.filter(
     (option) => option.runner !== 'claude',
   );
