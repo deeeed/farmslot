@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Persistent node commands and terminal streams",
+  "description": "Start an isolated gateway and issued node. Verify durable file outcomes after node restart, streamed process and PTY output, numbered input without repeats, and worker survival after observer detach. Then run a scripted task through normal prepare, dispatch and monitor into COMPLETE with pipeline review explicitly off. Assert no SSH, SCP or rsync node-control calls. Supply FARMSLOT_VALIDATION_CLI_SNAPSHOT with an existing immutable CLI snapshot; the proof never installs or selects one. This is functional conformance, not the live native performance comparison.",
+  "workflow": {
+    "entry": "daemon",
+    "nodes": {
+      "daemon": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/node-link.mts",
+        "timeout_ms": 180000,
+        "intent": "The actual node daemon retains execution identity and outcomes across restart, streams its own terminal, types numbered input once and preserves the worker after detach.",
+        "next": "run"
+      },
+      "run": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/node-link-run.mts",
+        "timeout_ms": 300000,
+        "intent": "A real isolated task prepares, dispatches and completes its worker over WebSocket without node-control SSH calls or a model reviewer.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

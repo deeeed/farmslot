@@ -216,3 +216,26 @@ test('real tmux types a resent batch once and keeps the record on the pane', asy
     await tmux(['kill-session', '-t', session]).catch(() => undefined);
   }
 });
+
+test('node-link raw input keeps key names, delimiters and Unicode as literal bytes', async () => {
+  const calls: Array<{ args: string[]; input?: string }> = [];
+  const writer = createTerminalInputWriter(async (args, input?: string) => {
+    calls.push({ args, input });
+    return '';
+  });
+  const texts = ['Up', 'Enter', ';', 'a\\b', 'é', '\u0003'];
+  for (const [n, text] of texts.entries())
+    await writer('%1', text, false, { stream: 'raw-keys', n }, true);
+  assert.deepEqual(
+    calls.filter((call) => call.args[0] === 'load-buffer').map((call) => call.input),
+    texts,
+  );
+  assert.equal(
+    calls.filter((call) => call.args[0] === 'paste-buffer' && call.args.includes('-r')).length,
+    texts.length,
+  );
+  assert.equal(
+    calls.some((call) => call.args[0] === 'send-keys'),
+    false,
+  );
+});

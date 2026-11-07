@@ -1,21 +1,26 @@
 import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
+import path from 'node:path';
 
 import WebSocket from 'ws';
 
 import { expandTilde } from '@farmslot/capabilities/fs-watch';
 import {
   type Frame,
+  NODE_LINK_LIMITS,
   type NodeFsChangedPayload,
   type NodeFsWatchResult,
+  NodeLinkFailure,
   PROTOCOL_VERSION,
   type RecipeRuntimeCapabilityDeclaration,
   type RequestFrame,
   type ResponseFrame,
 } from '@farmslot/protocol';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { configuredNodeLinkEnabled } from '@farmslot/protocol/node/slot-by-repo';
 
 import { captureHelperPath } from './commands/capture-helper-path.js';
-import { exec } from './commands/exec.js';
+import { exec, resolveExecPoolDir } from './commands/exec.js';
 import { ExecRequests } from './commands/exec-requests.js';
 import {
   fsCheckIgnore,
@@ -71,23 +76,33 @@ import {
   stopAllWorkspaceWatches,
   stopWorkspaceWatch,
 } from './commands/workspace-watch.js';
+import { NodeLinkAgent } from './link/agent.js';
+import { NODE_LINK_OPERATIONS } from './link/operations.js';
+import {
+  AUTH_RETRY_DELAY,
+  MAX_TRANSPORT_BACKOFF,
+  nodeLinkReconnectDelay,
+} from './link/reconnect.js';
 import { resolveGatewayCredential } from './gateway-credential.js';
 import {
   authenticateNode,
   describeHandshakeFailure,
+  GatewayRequestError,
   isDeterministicHandshakeRejection,
   registerNode,
 } from './gateway-handshake.js';
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
-const MAX_TRANSPORT_BACKOFF = 2_000;
-const AUTH_RETRY_DELAY = 30_000;
 const nativeSessions = new NativeNodeSessions(MACHINE_NAME);
 const sources = new NodeSources(MACHINE_NAME);
 const sendTerminalInputOnce = createTerminalInputWriter(tmux.tmuxOutput);
 
 const execConnections = new Map<WebSocket, ExecRequests>();
+const nodeLinkEnabled = configuredNodeLinkEnabled(MACHINE_NAME, resolveExecPoolDir());
+const nodeLinks = new Map<WebSocket, NodeLinkAgent>();
+type NodeLinkCloseout = { ok: true } | { ok: false; error: unknown };
+const nodeLinkCloseouts = new Map<WebSocket, Promise<NodeLinkCloseout>>();
 let ws: WebSocket | null = null;
 let backoff = 500;
 let disposed = false;
@@ -99,7 +114,10 @@ function connect(): void {
   if (disposed) return;
 
   console.log(`Connecting to gateway at ${GATEWAY_URL} as "${MACHINE_NAME}"...`);
-  const socket = new WebSocket(GATEWAY_URL, { handshakeTimeout: 5_000 });
+  const socket = new WebSocket(GATEWAY_URL, {
+    handshakeTimeout: 5_000,
+    ...(nodeLinkEnabled ? { maxPayload: NODE_LINK_LIMITS.frameBytes } : {}),
+  });
   ws = socket;
   const requests = new ExecRequests();
   execConnections.set(socket, requests);
@@ -137,6 +155,16 @@ function connect(): void {
   });
 
   socket.on('close', () => {
+    const link = nodeLinks.get(socket);
+    if (link)
+      nodeLinkCloseouts.set(
+        socket,
+        link.retire().then(
+          () => ({ ok: true }) as const,
+          (error: unknown) => ({ ok: false, error }) as const,
+        ),
+      );
+    nodeLinks.delete(socket);
     void requests.close().then(() => execConnections.delete(socket));
     if (ws !== socket) {
       // A superseded socket closing late must not tear down the subscriptions
@@ -163,8 +191,9 @@ function connect(): void {
 
 function scheduleReconnect(): void {
   if (disposed) return;
-  console.log(`Reconnecting in ${backoff}ms...`);
-  setTimeout(() => connect(), backoff);
+  const delay = nodeLinkEnabled ? nodeLinkReconnectDelay(backoff) : backoff;
+  console.log(`Reconnecting in ${delay}ms...`);
+  setTimeout(() => connect(), delay);
   backoff = Math.min(backoff * 2, MAX_TRANSPORT_BACKOFF);
 }
 
@@ -183,10 +212,10 @@ async function handshake(socket: WebSocket): Promise<void> {
     // Re-read on every connection attempt so issued/rotated node credentials take
     // effect on reconnect without restarting the daemon.
     const credential = resolveGatewayCredential();
-    await authenticateNode(socket, { machine: MACHINE_NAME, credential });
+    const authentication = await authenticateNode(socket, { machine: MACHINE_NAME, credential });
     step = 'registration';
     const capabilities = await collectCaptureCapabilities();
-    await registerNode(socket, {
+    const registered = await registerNode(socket, {
       machine: MACHINE_NAME,
       pid: process.pid,
       capabilities,
@@ -194,6 +223,9 @@ async function handshake(socket: WebSocket): Promise<void> {
       gatewayUrl: GATEWAY_URL,
       execCancellation: true,
       conditionalWrites: true,
+      ...(nodeLinkEnabled
+        ? { nodeLink: { commands: 1, streams: 1, operations: NODE_LINK_OPERATIONS } }
+        : {}),
       terminalInputSequence: tmuxKeepsPaneOptions(tmux.TMUX_VERSION),
       observationCapabilities: { workers: 1, files: 1, fileAppends: 1, workspace: 1 },
     });
@@ -202,6 +234,42 @@ async function handshake(socket: WebSocket): Promise<void> {
       // owns backoff state. Release this one without disturbing it.
       socket.close();
       return;
+    }
+    if (nodeLinkEnabled) {
+      if (registered.nodeLink?.commands !== 1)
+        throw new GatewayRequestError(
+          'NODE_LINK_UNSUPPORTED',
+          'Gateway did not negotiate the enabled node-link feature.',
+          'Stage matching node-link readers or disable the pilot after its drain.',
+        );
+      const principal = authentication.principal;
+      if (!principal || principal.subjectKind !== 'node' || principal.generation === undefined)
+        throw new GatewayRequestError(
+          'NODE_LINK_IDENTITY_REQUIRED',
+          'Pilot needs an issued node identity and generation.',
+          'Enroll this node with its existing machine owner before enabling the pilot.',
+        );
+      nodeLinks.set(
+        socket,
+        new NodeLinkAgent(
+          path.join(farmslotHome(), 'node-link', encodeURIComponent(MACHINE_NAME)),
+          MACHINE_NAME,
+          { principalId: principal.id, generation: principal.generation },
+          () => ws === socket && socket.readyState === WebSocket.OPEN && !disposed,
+          (frame) => {
+            if (
+              ws !== socket ||
+              socket.readyState !== WebSocket.OPEN ||
+              socket.bufferedAmount > NODE_LINK_LIMITS.queuedBytes
+            )
+              return false;
+            const encoded = JSON.stringify(frame);
+            if (Buffer.byteLength(encoded) > NODE_LINK_LIMITS.frameBytes) return false;
+            socket.send(encoded);
+            return true;
+          },
+        ),
+      );
     }
     // One source owner per daemon, reannounced only on this authenticated socket.
     try {
@@ -416,9 +484,40 @@ async function handleRequest(
 ): Promise<void> {
   const params = (frame.params ?? {}) as Record<string, unknown>;
   const responseSocket =
-    params.requestScoped === true || frame.method === 'exec.cancel' ? socket : undefined;
+    params.requestScoped === true ||
+    frame.method === 'exec.cancel' ||
+    frame.method.startsWith('node.link.')
+      ? socket
+      : undefined;
 
   try {
+    if (frame.method.startsWith('node.link.')) {
+      if (!nodeLinkEnabled)
+        throw new NodeLinkFailure('NODE_LINK_DISABLED', 'Node-link pilot is disabled.');
+      if (nodeLinkCloseouts.size) {
+        // A replacement cannot admit effects until every original owner confirms cleanup.
+        const closeouts = await Promise.all(nodeLinkCloseouts.values());
+        if (closeouts.some((closeout) => !closeout.ok))
+          throw new NodeLinkFailure(
+            'NODE_LINK_CLEANUP_UNCONFIRMED',
+            'Original node link cleanup needs reconciliation.',
+          );
+        nodeLinkCloseouts.clear();
+      }
+      const link = nodeLinks.get(socket);
+      if (frame.method === 'node.link.status' && !link) {
+        sendResponse(frame.id, true, { ready: false }, undefined, undefined, socket);
+        return;
+      }
+      if (!link)
+        throw new NodeLinkFailure(
+          'NODE_LINK_NOT_READY',
+          'Node link is not registered yet; no command admitted.',
+        );
+      const result = await link.handle(frame.method, frame.params);
+      sendResponse(frame.id, true, result, undefined, undefined, socket);
+      return;
+    }
     switch (frame.method) {
       case 'sources.materialize': {
         const result = await sources.materialize(
@@ -598,13 +697,14 @@ async function handleRequest(
         const session = requireString(params, 'session');
         const text = requireString(params, 'text');
         const enter = typeof params.enter === 'boolean' ? params.enter : true;
+        const literal = params.literal === true;
         if (params.seq !== undefined) {
           const seq = requireInputSequence(params.seq);
-          const typed = await sendTerminalInputOnce(session, text, enter, seq);
+          const typed = await sendTerminalInputOnce(session, text, enter, seq, literal);
           sendResponse(frame.id, true, typed ? { sent: true } : { sent: true, repeat: true });
           break;
         }
-        await tmux.send(session, text, enter);
+        await tmux.send(session, text, enter, literal);
         sendResponse(frame.id, true, { sent: true });
         break;
       }
@@ -1027,6 +1127,13 @@ async function shutdown(): Promise<void> {
   if (disposed) return;
   console.log('Shutting down node...');
   disposed = true;
+  const previousCloseouts = await Promise.all(nodeLinkCloseouts.values());
+  const cleanupFailures = previousCloseouts.flatMap((closeout) =>
+    closeout.ok ? [] : [closeout.error],
+  );
+  if (cleanupFailures.length)
+    throw new AggregateError(cleanupFailures, 'Node link cleanup remains unconfirmed.');
+  await Promise.all([...nodeLinks.values()].map((link) => link.retire()));
   await Promise.all([...execConnections.values()].map((requests) => requests.close()));
   stopScreenControlServer();
   stopAllCaptures();

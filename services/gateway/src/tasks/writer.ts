@@ -1572,6 +1572,7 @@ export async function initializeWrittenTask(
     slotVars,
     taskAbsDir,
     frozen.input,
+    run,
   );
   if (run.acceptanceContractVersion === 1) {
     const taskDir = opts?.initializeTask ? taskAbsDir : frozen.input.task.taskDir;
@@ -1589,7 +1590,7 @@ export async function initializeWrittenTask(
   await writeQaInput(taskAbsDir, { ...run, executionTemplate });
 
   if (!opts?.initializeTask)
-    await syncHostedTaskSidecars(slotVars, taskAbsDir, frozen.input.task.taskDir);
+    await syncHostedTaskSidecars(slotVars, taskAbsDir, frozen.input.task.taskDir, [], run);
 }
 
 /**

@@ -10,6 +10,8 @@ import { execLocal, isLocal } from '../core/exec.js';
 import { RSYNC_SSH_SHELL_OPTION, SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 import { auditBlindTrialTask } from '../evals/blind-trial.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
+import { copyTaskThroughNodeLink } from '../fleet/node-link-task-copy.js';
 import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
@@ -52,7 +54,10 @@ export async function copyTaskFilesToSlot(
     const flowSubdir = path.basename(path.dirname(taskDir));
     const workerTaskAbs = path.join(vars.remoteRepo, taskDirName, flowSubdir, taskFolderId);
 
-    if (isLocal(vars.host, vars.machine)) {
+    const linked = usesNodeLink(vars.machine);
+    if (linked) {
+      await copyTaskThroughNodeLink(run, vars, taskDir, workerTaskAbs, artifactsOnly);
+    } else if (isLocal(vars.host, vars.machine)) {
       await mkdir(workerTaskAbs, { recursive: true });
       if (!artifactsOnly) await copyFile(run.taskFile, path.join(workerTaskAbs, 'TASK.md'));
       for (const subdir of artifactsOnly ? ['artifacts'] : ['assets', 'inputs', 'artifacts']) {
@@ -116,7 +121,7 @@ export async function copyTaskFilesToSlot(
     };
     // A missing marker admits restoration. Publish it only after the prepared
     // inputs, evidence and other sidecars, so a failed copy is retried in full.
-    if (!artifactsOnly) {
+    if (!artifactsOnly && !linked) {
       await copyPreparedTaskRootSidecars({
         ...transfer,
         excludeRelativePaths: [CHECKLIST_MARKER_INPUT],

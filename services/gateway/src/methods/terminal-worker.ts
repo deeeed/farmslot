@@ -12,9 +12,11 @@ import type {
 import { isLocal } from '../core/exec.js';
 import { resolveMachinePoolConfig } from '../fleet/machine-pool.js';
 import { getNode } from '../fleet/machine-registry.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import {
   hasPty,
+  type PtyAttachOptions,
   type PtyDataHandler,
   resizePty,
   subscribePty,
@@ -44,10 +46,12 @@ export function terminalWorkerSubscriptionKey(params: {
   return `${params.worker.nodeId}:${params.worker.target}`;
 }
 
-async function resolveWorkerPtyOptions(worker: TmuxWorkerRef): Promise<{ sshTarget?: string }> {
+async function resolveWorkerPtyOptions(worker: TmuxWorkerRef): Promise<PtyAttachOptions> {
   const pools = await loadPoolConfigs();
   const pool = resolveMachinePoolConfig(pools, worker.nodeId);
   if (!pool) throw new Error(`pool config for tmux worker node ${worker.nodeId} was not found`);
+  if (usesNodeLink(worker.nodeId))
+    return { nodeId: worker.nodeId, assertCurrent: () => assertTmuxWorkerControlAllowed(worker) };
   if (isLocal(pool.host, pool.machine)) return {};
   return { sshTarget: `${pool.sshUser}@${pool.host}` };
 }
@@ -62,7 +66,7 @@ export async function terminalWorkerSubscribe(
   const ptyHandler: PtyDataHandler = (data: string) => {
     emit('terminal.data', { worker: params.worker, data, timestamp: Date.now() });
   };
-  subscribePty(key, params.worker.session, ptyHandler, params.cols, params.rows, {
+  await subscribePty(key, params.worker.session, ptyHandler, params.cols, params.rows, {
     ...ptyOptions,
     selectTarget: params.worker.target,
   });
@@ -89,7 +93,7 @@ async function workerInputLanding(
   key: string,
   { worker, data, seq }: TerminalWorkerInputParams,
 ): Promise<InputLanding> {
-  if (hasPty(key)) {
+  if (hasPty(key) && !usesNodeLink(worker.nodeId)) {
     const local = !(await resolveWorkerPtyOptions(worker)).sshTarget;
     // The worker pane keeps its own record of typed input, on the worker's machine.
     return {
@@ -110,7 +114,7 @@ export async function terminalWorkerResize(params: TerminalWorkerResizeParams): 
   await assertTmuxWorkerControlAllowed(params.worker);
   const key = terminalWorkerSubscriptionKey(params);
   if (hasPty(key)) {
-    resizePty(key, params.cols, params.rows);
+    await resizePty(key, params.cols, params.rows);
     return;
   }
   await resizeWorkerTerminal(params.worker, params.cols, params.rows);

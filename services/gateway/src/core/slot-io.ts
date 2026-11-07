@@ -33,6 +33,7 @@ import {
   type NodeFsReadChunkResult,
 } from '@farmslot/protocol';
 
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import {
   assertNodeReconnectCurrent,
   isNodeTransportUnavailableError,
@@ -124,7 +125,10 @@ export const ORCHESTRATOR_LOCALITY: SlotLocality = {
 };
 
 function local(ctx: SlotLocality): boolean {
-  return isLocal(ctx.host, ctx.machine);
+  return (
+    (ctx.machine === ORCHESTRATOR_LOCALITY.machine && ctx.host === ORCHESTRATOR_LOCALITY.host) ||
+    (isLocal(ctx.host, ctx.machine) && !usesNodeLink(ctx.machine))
+  );
 }
 
 function requestFor(ctx: SlotLocality): NonNullable<SlotLocality['nodeRequest']> {

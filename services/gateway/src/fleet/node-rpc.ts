@@ -14,6 +14,7 @@ import { isLocal, loadSlotVars } from '../core/index.js';
 import { executionKind, measureManagedOperation } from '../observability/performance.js';
 
 import { type ConnectedNode, getNode } from './machine-registry.js';
+import { usesNodeLink } from './node-link-policy.js';
 
 let reqSeq = 0;
 interface PendingNodeRequest {
@@ -96,6 +97,11 @@ export function handleNodeResponse(
     if (errorDetails !== undefined) error.details = errorDetails;
     entry.reject(error);
   }
+}
+
+/** Retire an exchange after its caller reconciled or fenced the durable operation separately. */
+export function retireBoundNodeRequest(id: string, socket: WebSocket, reason: Error): void {
+  if (pending.get(id)?.responseSocket === socket) takePendingRequest(id)?.reject(reason);
 }
 
 /**
@@ -647,7 +653,7 @@ export async function getSlotLocality(slotId: string): Promise<{
   sshTarget?: string;
 }> {
   const vars = await loadSlotVars(slotId);
-  const local = isLocal(vars.host, vars.machine);
+  const local = isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine);
   return {
     isLocal: local,
     machine: vars.machine,

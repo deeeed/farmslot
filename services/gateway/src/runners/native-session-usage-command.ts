@@ -200,3 +200,32 @@ try {
     modulePath ?? '',
   ];
 }
+
+/** Existing accounting semantics, evaluated in the selected node's CLI environment. */
+export function workspaceSessionUsageArgv(
+  input: {
+    repo: string;
+    slotId: string;
+    runner?: string | null;
+    sessionPath?: string | null;
+  },
+  modulePath?: string,
+): string[] {
+  const program =
+    SESSION_USAGE_MODULE +
+    String.raw`
+const input = JSON.parse(process.argv[1]);
+process.stdout.write(await runSessionUsage({ repo: input.repo, slotId: input.slotId, action: 'total',
+  ...(input.sessionPath ? { forcedPath: input.sessionPath, forcedRunner: input.runner } : {}) }));
+`;
+  return [
+    'node',
+    '--experimental-strip-types',
+    '--experimental-sqlite',
+    '--input-type=module',
+    '-e',
+    program,
+    JSON.stringify(input),
+    modulePath ?? '',
+  ];
+}

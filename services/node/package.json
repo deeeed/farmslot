@@ -16,6 +16,7 @@
     "@farmslot/capabilities": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "@farmslot/slot-config": "workspace:*",
+    "node-pty": "^1.0.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

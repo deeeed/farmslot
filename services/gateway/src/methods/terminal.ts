@@ -21,8 +21,9 @@ import {
   TERMINAL_AGENT_STATUSES,
 } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execArgvOnSlot, execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { readSlotRow } from '../core/state.js';
 import {
   resolveTmuxSession,
   shellQuote,
@@ -30,6 +31,8 @@ import {
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import { getNode } from '../fleet/machine-registry.js';
+import { inspectNodeLinkPrograms } from '../fleet/node-link.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { getSlotLocality } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { getRun } from '../runs/store.js';
@@ -51,6 +54,10 @@ import {
   writeSequencedInput,
 } from '../runtime/terminal-input-sequence.js';
 import { sendKeys, snapshot, subscribe, unsubscribe } from '../runtime/tmux-stream.js';
+import {
+  sendWorkerTerminalInput,
+  workerNodeTypesInputOnce,
+} from '../runtime/worker-terminal-stream.js';
 import {
   isWorkspaceTerminal,
   resolveWorkspaceTerminal,
@@ -284,7 +291,30 @@ export async function terminalSubscribe(
     const identity = terminalEventIdentity({ slotId: '', runId: run.id });
     const ptyHandler: PtyDataHandler = (data) =>
       emit('terminal.data', { ...identity, data, timestamp: Date.now() });
-    subscribePty(key, session, ptyHandler, params.cols, params.rows, { sshTarget });
+    const machine = run.reviewWorkspace!.machine;
+    await subscribePty(
+      key,
+      session,
+      ptyHandler,
+      params.cols,
+      params.rows,
+      usesNodeLink(machine)
+        ? {
+            nodeId: machine,
+            assertCurrent: async () => {
+              const current = await resolveWorkspaceTerminal(params);
+              if (
+                current.run.reviewWorkspace?.workspaceId !== run.reviewWorkspace?.workspaceId ||
+                current.session !== session
+              )
+                throw new GatewayMethodError(
+                  'STALE_AUTHORITY',
+                  'Review workspace terminal changed',
+                );
+            },
+          }
+        : { sshTarget },
+    );
     emit('terminal.mode', { ...identity, mode: 'pty' });
     return { key, handler: (_data: TerminalData) => {}, ptyHandler, identity };
   }
@@ -305,7 +335,7 @@ export async function terminalSubscribe(
     role,
     contextId,
   });
-  const { isLocal: local, sshTarget } = await getSlotLocality(params.slotId);
+  const { isLocal: local, sshTarget, machine } = await getSlotLocality(params.slotId);
   console.log(
     `[terminal] subscribe slot=${params.slotId} role=${role ?? '-'} bare=${bare} target=${target} interactive=${params.interactive} local=${local} ssh=${sshTarget || 'none'} cols=${params.cols} rows=${params.rows}`,
   );
@@ -314,7 +344,9 @@ export async function terminalSubscribe(
   if (params.interactive) {
     // Ensure the base tmux session exists before attaching to a role/window target.
     const repoDir = await resolveRepoDir(params.slotId);
-    await reinitTmuxSession(resolved.session, repoDir, sshTarget);
+    if (usesNodeLink(machine))
+      await ensureLinkedTmuxSession(params.slotId, resolved.session, repoDir);
+    else await reinitTmuxSession(resolved.session, repoDir, sshTarget);
     await assertInteractiveTargetReady(params.slotId, target, resolved.session, role, params);
 
     const ptyHandler: PtyDataHandler = (data: string) => {
@@ -325,9 +357,28 @@ export async function terminalSubscribe(
       });
     };
     const ptyOpts: PtyAttachOptions = {};
-    if (sshTarget) ptyOpts.sshTarget = sshTarget;
+    if (usesNodeLink(machine)) {
+      const row = await readSlotRow(params.slotId);
+      const fence = terminalSlotFence(row);
+      const runId = typeof row?.current_run_id === 'string' ? row.current_run_id : undefined;
+      ptyOpts.nodeId = machine;
+      if (runId && typeof row?.slot_epoch === 'number')
+        ptyOpts.lease = {
+          runId,
+          contextId: contextId ?? 'primary',
+          leaseId: `workspace:${params.slotId}:${row.slot_epoch}`,
+          generation: String(row.slot_epoch),
+        };
+      ptyOpts.assertCurrent = async () => {
+        if (terminalSlotFence(await readSlotRow(params.slotId)) !== fence)
+          throw new GatewayMethodError('STALE_AUTHORITY', 'Terminal slot lease changed');
+        const current = await resolveAgentOrBareTarget(params.slotId, params);
+        if (current.session !== resolved.session || current.target !== target)
+          throw new GatewayMethodError('STALE_AUTHORITY', 'Terminal execution target changed');
+      };
+    } else if (sshTarget) ptyOpts.sshTarget = sshTarget;
     if (target !== resolved.session) ptyOpts.selectTarget = target;
-    subscribePty(key, resolved.session, ptyHandler, params.cols, params.rows, ptyOpts);
+    await subscribePty(key, resolved.session, ptyHandler, params.cols, params.rows, ptyOpts);
     emit('terminal.mode', { ...eventIdentity, mode: 'pty' });
 
     const handler = (_data: TerminalData) => {};
@@ -406,6 +457,14 @@ export async function terminalInput(
 async function terminalInputLanding(params: TerminalInputParams): Promise<InputLanding> {
   if (isWorkspaceTerminal(params)) {
     const { key, run, session } = await resolveWorkspaceTerminal(params);
+    const machine = run.reviewWorkspace!.machine;
+    if (usesNodeLink(machine)) {
+      const worker = { nodeId: machine, session, target: session };
+      return {
+        typesOnce: workerNodeTypesInputOnce(worker),
+        write: (dispatched, seq) => sendWorkerTerminalInput(worker, params.data, dispatched, seq),
+      };
+    }
     return {
       record: workspacePaneInputRecord(run, session),
       write: () => {
@@ -416,6 +475,14 @@ async function terminalInputLanding(params: TerminalInputParams): Promise<InputL
   }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const key = terminalKey({ ...params, role: resolved.role, contextId: resolved.contextId });
+  const machine = await resolveMachine(params.slotId);
+  if (machine && usesNodeLink(machine)) {
+    const worker = { nodeId: machine, session: resolved.session, target: resolved.target };
+    return {
+      typesOnce: workerNodeTypesInputOnce(worker),
+      write: (dispatched, seq) => sendWorkerTerminalInput(worker, params.data, dispatched, seq),
+    };
+  }
   // The slot pane keeps its own record of typed input, read and written on the slot's host.
   const record = tmuxPaneInputRecord(resolved.target, async (command) =>
     execOnSlot(await loadSlotVars(params.slotId), command, { timeout: 5_000, noRetry: true }),
@@ -472,13 +539,13 @@ const NOT_RECORDED = 'typed but not recorded on the pane';
 export async function terminalResize(params: TerminalResizeParams): Promise<void> {
   if (isWorkspaceTerminal(params)) {
     const { key } = await resolveWorkspaceTerminal(params);
-    if (hasPty(key)) resizePty(key, params.cols, params.rows);
+    if (hasPty(key)) await resizePty(key, params.cols, params.rows);
     return;
   }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const key = terminalKey({ ...params, role: resolved.role, contextId: resolved.contextId });
   const ptyKey = selectPtyKey(params.slotId, key, hasPty);
-  if (ptyKey) resizePty(ptyKey, params.cols, params.rows);
+  if (ptyKey) await resizePty(ptyKey, params.cols, params.rows);
 }
 
 export async function terminalReinit(
@@ -492,11 +559,13 @@ export async function terminalReinit(
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const session = resolved.session;
   const repoDir = await resolveRepoDir(params.slotId);
-  const { sshTarget } = await getSlotLocality(params.slotId);
+  const { sshTarget, machine } = await getSlotLocality(params.slotId);
   console.log(
     `[terminal] reinit slot=${params.slotId} session=${session} repoDir=${repoDir} ssh=${sshTarget || 'local'}`,
   );
-  const ok = await reinitTmuxSession(session, repoDir, sshTarget);
+  const ok = usesNodeLink(machine)
+    ? await ensureLinkedTmuxSession(params.slotId, session, repoDir)
+    : await reinitTmuxSession(session, repoDir, sshTarget);
   return { reinitialized: ok };
 }
 
@@ -563,4 +632,34 @@ export async function terminalSnapshot(
     lines,
     timestamp: Date.now(),
   };
+}
+
+async function ensureLinkedTmuxSession(
+  slotId: string,
+  session: string,
+  cwd?: string,
+): Promise<boolean> {
+  const vars = await loadSlotVars(slotId);
+  const binary = (await inspectNodeLinkPrograms(vars.machine, ['tmux'])).paths.tmux;
+  if (!binary) throw new Error('Tmux is unavailable on this node');
+  const options = { cwd: cwd ?? vars.remoteRepo, timeout: 5000, noRetry: true };
+  const exists = await execArgvOnSlot(vars, [binary, 'has-session', '-t', `=${session}`], options);
+  if (exists.exitCode === 0) return true;
+  if (exists.exitCode !== 1) throw new Error(`Tmux session inspection failed: ${exists.stderr}`);
+  const created = await execArgvOnSlot(
+    vars,
+    [binary, 'new-session', '-d', '-s', session, '-c', options.cwd],
+    options,
+  );
+  if (created.exitCode !== 0) throw new Error(`Tmux session creation failed: ${created.stderr}`);
+  return true;
+}
+
+function terminalSlotFence(row: Readonly<Record<string, unknown>> | null): string {
+  return JSON.stringify([
+    row?.slot_epoch,
+    row?.current_run_id ?? null,
+    row?.handoff_run_id ?? null,
+    row?.cleanup_run_id ?? null,
+  ]);
 }

@@ -155,3 +155,28 @@ export async function findSlotByRepo<P extends SlotPoolFile = SlotPoolFile>(
     throw new SlotByRepoError([], options.slotId);
   return candidates[0] ?? null;
 }
+
+/** One default-off setting, read by gateway routing and the existing node service. */
+export const NODE_LINK_FLAG = 'FARMSLOT_NODE_LINK_ENABLED';
+
+export function configuredNodeLinkEnabled(machine: string, poolDirectory: string): boolean {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(machine))
+    throw new Error('Invalid node machine identity');
+  let content: string;
+  try {
+    content = readFileSync(path.join(poolDirectory, `${machine}.json`), 'utf8');
+  } catch (error) {
+    // Older/private installations may have no canonical machine pool yet: the pilot stays off.
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+  const pool: unknown = JSON.parse(content);
+  if (!pool || typeof pool !== 'object' || !('machine' in pool) || pool.machine !== machine)
+    throw new Error('Node-link policy requires its canonical machine pool');
+  const env = 'env' in pool ? pool.env : undefined;
+  if (!env || typeof env !== 'object') return false;
+  const setting = Reflect.get(env, NODE_LINK_FLAG);
+  if (setting !== undefined && setting !== '0' && setting !== '1')
+    throw new Error(`${NODE_LINK_FLAG} must be 0 or 1`);
+  return setting === '1';
+}

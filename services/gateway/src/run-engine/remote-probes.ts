@@ -5,6 +5,8 @@ import type { WorkerTransport } from '@farmslot/protocol';
 import { execFileArgv } from '../core/exec.js';
 import { SSH_CONNECT_OPTIONS } from '../core/ssh-options.js';
 import { getNode } from '../fleet/machine-registry.js';
+import { inspectNodeLinkPrograms } from '../fleet/node-link.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 
 const REMOTE_PATH_CRITICAL = ['tmux', 'lsof', 'node'] as const;
@@ -22,9 +24,14 @@ export async function probeRemotePath(
     );
     return { ok: true };
   }
-  if (locality.isLocal) return { ok: true };
+  if (locality.isLocal && !usesNodeLink(locality.machine)) return { ok: true };
   const { machine, sshTarget } = locality;
   const critical = transport === 'native' ? ['node', 'ps'] : REMOTE_PATH_CRITICAL;
+  if (usesNodeLink(machine)) {
+    const inventory = await inspectNodeLinkPrograms(machine, [...critical]);
+    const missing = critical.filter((program) => !inventory.paths[program]);
+    return missing.length ? { ok: false, missing: [...missing], machine } : { ok: true };
+  }
   const cmd = critical
     .map((b) => `printf '%s=%s\\n' '${b}' "$(command -v '${b}' 2>/dev/null || echo MISSING)"`)
     .join('; ');

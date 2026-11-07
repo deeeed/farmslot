@@ -63,6 +63,8 @@ export * from './transport/events.js';
 export * from './transport/frames.js';
 export * from './transport/gateway-recovery.js';
 export * from './transport/gateway-tls.js';
+export * from './transport/node-link.js';
+export * from './transport/node-link-operations.js';
 export * from './transport/observations.js';
 export * from './transport/signal.js';
 export { MINIMUM_PROTOCOL_VERSION, PROTOCOL_VERSION } from './version.js';

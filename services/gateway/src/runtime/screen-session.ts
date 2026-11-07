@@ -14,7 +14,12 @@ import type { BrowserContextParams, ResourceRelaunchedPayload } from '@farmslot/
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { SSH_CONNECT_OPTIONS } from '../core/ssh-options.js';
 import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
-import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
+import {
+  getSlotLocality,
+  NodeTransportUnavailableError,
+  sendNodeRequest,
+} from '../fleet/node-rpc.js';
 import { getActiveResource, onResourceRelaunched } from '../fleet/resource-manager.js';
 import { getCachedFleet } from '../fleet/state.js';
 import { resolveBrowserPid, resolveSlotStreamAsync } from '../methods/stream-resolve.js';
@@ -362,6 +367,8 @@ export async function subscribeScreen(
           timeout: NODE_SCREEN_SUBSCRIBE_TIMEOUT_MS,
         });
       } catch (err) {
+        // An uncertain pilot admission is reconciled, never repeated automatically.
+        if (usesNodeLink(node.machine)) throw err;
         const msg = err instanceof Error ? err.message : String(err);
         if (!msg.includes('timeout')) throw err;
         log('node-mediated-retry', key, msg);
@@ -387,6 +394,12 @@ export async function subscribeScreen(
       ss.ownerRunId = getCachedFleet()?.slots.find((slot) => slot.slot === slotId)?.currentRunId;
       sessions.set(key, ss);
     } else {
+      if (machine && usesNodeLink(machine))
+        throw new NodeTransportUnavailableError(
+          machine,
+          'not-connected',
+          'Configured capture node is offline; SSH fallback is not automatic.',
+        );
       // Direct fallback: existing spawn logic
       if (platform === 'android') {
         ss = spawnAndroid(key, slotId, resourceId, devInfo.androidSerial, maxSize, info.ssh);

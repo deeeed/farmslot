@@ -10,6 +10,7 @@ import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@
 import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
 import { getNode } from '../fleet/machine-registry.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 import { executionKind, measureManagedOperation } from '../observability/performance.js';
 
@@ -48,7 +49,9 @@ export function isLocal(host: string, machine: string): boolean {
 
 /** A remote slot machine with no connected node: commands sent to it now fail. */
 export function isDisconnectedRemote(vars: Pick<SlotVars, 'host' | 'machine'>): boolean {
-  return !isLocal(vars.host, vars.machine) && !getNode(vars.machine);
+  return (
+    (!isLocal(vars.host, vars.machine) || usesNodeLink(vars.machine)) && !getNode(vars.machine)
+  );
 }
 
 // ─── ExecOptions ───
@@ -283,7 +286,7 @@ export async function execOnSlot(
       .join(' ')} ${cmd}`;
   }
 
-  if (isLocal(slotVars.host, slotVars.machine)) {
+  if (isLocal(slotVars.host, slotVars.machine) && !usesNodeLink(slotVars.machine)) {
     return execLocal(cmd, {
       cwd,
       timeout: opts.timeout,
@@ -312,6 +315,13 @@ export async function execOnSlot(
       return { exitCode: EXEC_TIMEOUT_EXIT_CODE, stdout: '', stderr: error.message };
     }
   }
+  if (usesNodeLink(slotVars.machine)) {
+    const { execThroughNodeLink } = await import('../fleet/node-link-process.js');
+    const shell =
+      slotVars.osType === 'darwin' || slotVars.osType === 'macos' ? '/bin/zsh' : '/bin/bash';
+    const args = shell === '/bin/zsh' ? ['-f', '-c'] : ['--noprofile', '--norc', '-c'];
+    return execThroughNodeLink(slotVars, [shell, ...args, cmd], { ...opts, cwd, signal }, 'login');
+  }
   // The timeout belongs to the command after its support bundle is ready,
   // just as execLocal starts its timer at spawn. Resolution has its own
   // bounded delivery wait; a slow local hash must not turn a hook into a 1ms exec.
@@ -336,8 +346,17 @@ export async function execArgvOnSlot(
   assertCleanupCurrent();
   const signal = cleanupSignal(opts.signal);
   const cwd = opts.cwd ?? slotVars.remoteRepo;
-  if (isLocal(slotVars.host, slotVars.machine)) {
+  if (isLocal(slotVars.host, slotVars.machine) && !usesNodeLink(slotVars.machine)) {
     return execFileArgv(argv, { ...opts, cwd, signal });
+  }
+  if (usesNodeLink(slotVars.machine)) {
+    const { execThroughNodeLink } = await import('../fleet/node-link-process.js');
+    return execThroughNodeLink(
+      slotVars,
+      argv,
+      { ...opts, cwd: opts.cwd ?? slotVars.remoteRepo, signal },
+      'service',
+    );
   }
   return trackCleanupCommand(
     nodeExecArgv(slotVars.machine, argv, cwd, {

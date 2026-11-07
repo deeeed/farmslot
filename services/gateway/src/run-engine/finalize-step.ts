@@ -17,6 +17,8 @@ import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
 import { markRunSlotHeld } from '../core/index.js';
 import { SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
+import { nodeExecArgv } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
@@ -39,6 +41,7 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import { rerequestChangesRequestedReviewers } from '../run-completion/review-rerequest.js';
+import { workspaceSessionUsageArgv } from '../runners/native-session-usage-command.js';
 import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { commitRunPublication, getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -236,11 +239,23 @@ export async function executeFinalizeStep(
         ? `RUNNER_SESSION_PATH='${runnerSessionPath.replace(/'/g, `'\\''`)}' RUNNER_SESSION_RUNNER='${(runner ?? '').replace(/'/g, `'\\''`)}' `
         : '';
       const cmd = `${usageEnv}bash "${farmslotRoot}/scripts/session-usage.sh" '${current.slotId}' total 2>/dev/null`;
-      const result = isLocal(vars.host, vars.machine)
-        ? await execLocal(cmd, { timeout: 15000 })
-        : await execLocal(`ssh ${SSH_CONNECT_SHELL_OPTIONS} ${vars.sshTarget} "${cmd}"`, {
-            timeout: 15000,
-          });
+      const result = usesNodeLink(vars.machine)
+        ? await nodeExecArgv(
+            vars.machine,
+            workspaceSessionUsageArgv({
+              repo: vars.remoteRepo,
+              slotId: current.slotId,
+              runner,
+              sessionPath: runnerSessionPath,
+            }),
+            undefined,
+            { timeout: 15_000, maxBuffer: 64 * 1024 },
+          )
+        : isLocal(vars.host, vars.machine)
+          ? await execLocal(cmd, { timeout: 15000 })
+          : await execLocal(`ssh ${SSH_CONNECT_SHELL_OPTIONS} ${vars.sshTarget} "${cmd}"`, {
+              timeout: 15000,
+            });
       if (result.stdout.trim()) {
         const metricsLines = result.stdout.trim().split('\n');
         session = Object.fromEntries(
