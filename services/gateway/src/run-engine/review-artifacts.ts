@@ -23,7 +23,7 @@ import { slotCopyDir, slotFileExists, slotListDir } from '../core/slot-io.js';
 import {
   loadReviewApprovalPolicy,
   normalizeReviewRecommendation,
-  reviewAdvisoriesAreNonBlocking,
+  reviewPolicyFindings,
   stricterReviewRecommendation,
 } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
@@ -366,7 +366,7 @@ export async function readReviewArtifacts(
       result.reviewMd,
     );
     if (
-      reviewAdvisoriesAreNonBlocking([...feedback.issues, ...lineFindings], reviewRound) &&
+      reviewPolicyFindings([...feedback.issues, ...lineFindings], reviewRound).advisoriesOnly &&
       normalizeReviewRecommendation(result.recommendation)
     )
       result.recommendation = feedback.recommendation!;

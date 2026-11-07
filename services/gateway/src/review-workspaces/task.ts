@@ -58,10 +58,7 @@ import {
 import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { collectSupportFiles } from '../node-support/files.js';
-import {
-  normalizeReviewRecommendation,
-  reviewAdvisoriesAreNonBlocking,
-} from '../review/approval-policy.js';
+import { normalizeReviewRecommendation, reviewPolicyFindings } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { nextReviewBudgetScopeBrief, reviewPolicyRound } from '../review/review-round-budget.js';
 import { STATIC_REVIEW_EXECUTION_RULE } from '../review/static-review-execution.js';
@@ -741,7 +738,7 @@ export async function readReviewWorkspaceCompletion(
     throw new Error('Review recommendation conflicts with findings or incomplete evidence');
   const markdownRecommendation = reviewRecommendationFromMarkdown(reviewMd);
   const advisoryRecommendation =
-    reviewAdvisoriesAreNonBlocking([...issues, ...commentFindings], reviewRound) &&
+    reviewPolicyFindings([...issues, ...commentFindings], reviewRound).advisoriesOnly &&
     normalizeReviewRecommendation(markdownRecommendation) !== null;
   if (
     (!advisoryRecommendation && markdownRecommendation !== recommendation) ||

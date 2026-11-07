@@ -16,7 +16,7 @@ import { shellQuote } from '../core/tmux.js';
 import {
   loadReviewApprovalPolicy,
   normalizeReviewRecommendation,
-  reviewAdvisoriesAreNonBlocking,
+  reviewPolicyFindings,
   stricterReviewRecommendation,
 } from './approval-policy.js';
 import { parseReviewIssueBullets } from './issues.js';
@@ -121,13 +121,12 @@ export function parseStructuredReviewFeedback(
     ];
     // The task's round-3+ rule keeps minor/nit follow-ups visible but non-blocking.
     // Only gateway-owned admission metadata supplies the round, never result JSON.
-    const advisoryRound =
-      typeof reviewRound === 'number' && Number.isSafeInteger(reviewRound) && reviewRound >= 3;
-    const blockingFindings = advisoryRound
-      ? findings.filter((issue) => issue.severity !== 'minor' && issue.severity !== 'nit')
-      : findings;
+    const { blocking: blockingFindings, advisoriesOnly } = reviewPolicyFindings(
+      findings,
+      reviewRound,
+    );
     const required = reviewRecommendation(blockingFindings, policy);
-    if (reviewAdvisoriesAreNonBlocking(findings, reviewRound)) {
+    if (advisoriesOnly) {
       if (
         candidate.recommendation !== undefined &&
         !normalizeReviewRecommendation(candidate.recommendation)

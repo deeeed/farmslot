@@ -33,6 +33,7 @@ import {
 } from '../runs/store.js';
 
 import { reviewPRIdentity } from './session-mode.js';
+import { reviewResultAttempt } from './terminal-result.js';
 
 // Launch intent is durable before runner effects. Context-free reservations from
 // an earlier gateway cannot represent a live reviewer; current startup gaps can.
@@ -101,7 +102,7 @@ export function reviewContextPolicyRound(
 export function reviewAttemptPolicyRound(
   run: Run,
   review: ReviewStatus,
-  attempt: ReviewAttempt = review.attempts?.at(-1) ?? review,
+  attempt: ReviewAttempt = reviewResultAttempt(review) ?? review,
 ): number | undefined {
   const lineage = attempt.session?.reviewId ?? review.session?.reviewId ?? review.id;
   if (!attempt.startedAt) return undefined;
