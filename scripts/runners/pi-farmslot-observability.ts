@@ -57,16 +57,25 @@ export default async function (pi: {
     throw new Error('FARMSLOT_PI_REQUEST_TIMEOUT_MS must be a positive integer');
   let timeoutFailure: string | null = null;
   let abortOperation: (() => void) | undefined;
-  const boundedFetch = deadlinePiFetch(globalThis.fetch, timeoutMs, () => {
+  const originalFetch = globalThis.fetch;
+  const boundedFetch = deadlinePiFetch(originalFetch, timeoutMs, () => {
     if (abortOperation) {
       timeoutFailure = `Pi model request timed out after ${timeoutMs}ms and one retry`;
       abortOperation();
     }
   });
-  globalThis.fetch = boundedFetch;
+  let requestFetch: typeof globalThis.fetch = boundedFetch;
+  const ownedFetch: typeof globalThis.fetch = (input, options) => requestFetch(input, options);
+  globalThis.fetch = ownedFetch;
+  pi.on('session_shutdown', async () => {
+    // Cached SDK clients may retain this fetch function after Pi invalidates the
+    // old extension runtime. Retire its recorder even when another wrapper owns global fetch.
+    requestFetch = originalFetch;
+    if (globalThis.fetch === ownedFetch) globalThis.fetch = originalFetch;
+  });
   try {
     const catalog = await resolvePiProviderCatalog(process.env);
-    globalThis.fetch = providerReasoningFetch(boundedFetch, catalog, (configuration) => {
+    requestFetch = providerReasoningFetch(boundedFetch, catalog, (configuration) => {
       console.error('[farmslot-pi] request', JSON.stringify(configuration));
       pi.appendEntry?.('farmslot-model-request', configuration);
     });

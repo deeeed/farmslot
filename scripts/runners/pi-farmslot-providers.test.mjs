@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
@@ -610,4 +611,100 @@ test('reasoning-enabled LiteLLM requests have the same wire guard and record as 
   assert.equal(records[0].effort, 'medium');
   assert.equal(records[0].reasoning, true);
   assert.equal(records[0].requestedMaxTokens, 32768);
+});
+
+async function checkExtensionReload(extensionUrl) {
+  const assert = (await import('node:assert/strict')).default;
+  const { default: install } = await import(extensionUrl);
+  const originalEnv = process.env;
+  const originalFetch = globalThis.fetch;
+  process.env = {
+    ...originalEnv,
+    FARMSLOT_PI_OLLAMA: '0',
+    FARMSLOT_PI_REQUEST_TIMEOUT_MS: '300000',
+  };
+  for (const key of Object.keys(process.env))
+    if (
+      key.startsWith('FARMSLOT_PI_ROUTER_') ||
+      key === 'LITELLM_URL' ||
+      key === 'LITELLM_BASE_URL'
+    )
+      delete process.env[key];
+  process.env.FARMSLOT_PI_ROUTER_URL = 'http://router.test/v1';
+  console.error = () => {};
+  let sent = 0;
+  const baseFetch = async (input) => {
+    if (String(input).endsWith('/models'))
+      return Response.json({
+        data: [{ id: 'model', context_length: 1048576, max_output_tokens: 32768 }],
+      });
+    sent++;
+    return new Response('OK');
+  };
+  globalThis.fetch = baseFetch;
+  const load = async () => {
+    const events = new Map();
+    const records = [];
+    const runtime = { active: true };
+    await install({
+      on: (event, handler) => events.set(event, handler),
+      appendEntry: (_type, record) => {
+        if (!runtime.active) throw new Error('Extension runtime was invalidated by reload');
+        records.push(record);
+      },
+    });
+    return { events, records, runtime };
+  };
+  const request = () =>
+    globalThis.fetch('http://router.test/v1/chat/completions', {
+      body: JSON.stringify({
+        model: 'model',
+        reasoning_effort: 'medium',
+        max_completion_tokens: 32768,
+      }),
+    });
+  try {
+    const before = await load();
+    assert.equal(await (await request()).text(), 'OK');
+    const previousFetch = globalThis.fetch;
+    await before.events.get('session_shutdown')?.({ reason: 'reload' });
+    before.runtime.active = false;
+    const after = await load();
+    assert.equal(await (await request()).text(), 'OK');
+    assert.equal(before.records.length, 1);
+    assert.equal(after.records.length, 1, 'only the current extension records the request');
+    // SDK clients may retain the previous fetch function across a reload.
+    assert.equal(
+      await (
+        await previousFetch('http://router.test/v1/chat/completions', {
+          body: JSON.stringify({ model: 'model', reasoning_effort: 'medium' }),
+        })
+      ).text(),
+      'OK',
+    );
+    assert.equal(before.records.length, 1);
+    assert.equal(after.records.length, 1);
+    assert.equal(sent, 3);
+    await after.events.get('session_shutdown')?.({ reason: 'exit' });
+    assert.equal(globalThis.fetch, baseFetch);
+  } finally {
+    process.env = originalEnv;
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test('extension reload retires the old fetch recorder before its runtime is invalidated', () => {
+  // The supported Node floor needs explicit type stripping; a fresh process also
+  // isolates the extension's fetch and environment ownership from other tests.
+  const extensionUrl = new URL('./pi-farmslot-observability.ts', import.meta.url).href;
+  execFileSync(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      '--input-type=module',
+      '--eval',
+      `await (${checkExtensionReload.toString()})(${JSON.stringify(extensionUrl)});`,
+    ],
+    { stdio: 'pipe', timeout: 4000 },
+  );
 });
