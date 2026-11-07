@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
+import { readTaskProvenance } from '@farmslot/agent-runtime';
 import {
   type AgentContext,
   blockedWorkerRecoveryStep,
@@ -52,6 +56,7 @@ import { getReviewConfig } from '../../review/templates.js';
 import { readReviewWorkspaceCompletion } from '../../review-workspaces/task.js';
 import { captureRunOutput } from '../../run-completion/output.js';
 import { markPreparedPackageStale } from '../../run-completion/prepared-package-stale.js';
+import { readRetainedRunText } from '../../run-completion/retained-artifacts.js';
 import { retainedMaintenanceStepOutputs } from '../../run-engine/branch-maintenance.js';
 import { pendingDecisionForRun } from '../../run-engine/decision-projection.js';
 import { resolveEngineDecision } from '../../run-engine/engine-decisions.js';
@@ -105,6 +110,10 @@ import { rebindRunSlot } from '../fleet.js';
 import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
 import { assertReleaseRunGuards, slotReleasePreflight } from '../slot/release.js';
 
+import {
+  completedTaskReplayAnchor,
+  readCompletedTaskReplayBinding,
+} from './completed-task-replay.js';
 import {
   isInternalArtifactOnlyEvalTicket,
   isLocalDevRef,
@@ -980,11 +989,64 @@ export async function runReplayStep(
   emit: Emit,
   hooks: RunReplayStepHooks = {},
 ): Promise<RunReplayStepResult> {
-  // Cancelled replay serializes demand reclamation before any cleanup. Other
-  // terminal replays protect only claim-to-revive below, so preflight remains
+  // Cancelled replay and completed-task rebinding serialize their state changes.
+  // Other terminal replays protect only claim-to-revive, so their preflight stays
   // interruptible by force-complete. Blocked resume already holds its transition.
-  if (getRun(params.runId)?.status === 'cancelled')
-    return withRunTransition(params.runId, () => replayRunStepCoalesced(params, emit, hooks, true));
+  const candidate = getRun(params.runId);
+  if (
+    candidate?.status === 'cancelled' ||
+    (candidate && completedTaskReplayAnchor(candidate, params.stepName))
+  )
+    return withRunTransition(params.runId, async () => {
+      const current = getRun(params.runId);
+      if (current && completedTaskReplayAnchor(current, params.stepName)) {
+        assertRunNotArchiving(current.id);
+        assertReplayOutsideTerminalCleanup(current);
+        if (current.transport === 'native') assertNativeRunOwner(current);
+        const expectedTask = current.taskFile;
+        const expectedGeneration = current.engineState?.generation;
+        const expectedBundle = current.artifactBundle ? { ...current.artifactBundle } : undefined;
+        const binding = await readCompletedTaskReplayBinding(current, params.stepName, {
+          taskRoot: async (run) => {
+            const { getOrchestratorTaskRoot, loadProjectVars } =
+              await import('../../core/config.js');
+            return getOrchestratorTaskRoot(
+              run.project,
+              (await loadProjectVars(run.project)).projectJson,
+            );
+          },
+          handoff: (taskFile) =>
+            readFile(path.join(path.dirname(taskFile), 'inputs/handoff.json'), 'utf8'),
+          capturedHandoff: (run) => readRetainedRunText(run, 'inputs/handoff.json'),
+          assertContract: async (run) => {
+            if (!(await readFrozenWorkerTerminalContractForRun(run)))
+              throw new Error('Completed task has no frozen dispatch contract.');
+          },
+          provenance: async (taskFile) => readTaskProvenance(path.dirname(taskFile)),
+        });
+        if (binding) {
+          const latest = getRun(current.id);
+          if (
+            !latest ||
+            latest.taskFile !== expectedTask ||
+            latest.engineState?.generation !== expectedGeneration ||
+            completedTaskReplayAnchor(latest, params.stepName) !== binding.taskFile ||
+            !isDeepStrictEqual(latest.artifactBundle, expectedBundle)
+          )
+            throw new Error('Run changed while restoring its completed task.');
+          assertRunNotArchiving(current.id);
+          const restored = updateRun(current.id, {
+            ...binding,
+            engineState: {
+              ...latest.engineState,
+              taskInit: { taskFile: binding.taskFile, status: 'initialized' },
+            },
+          });
+          await persistRunNow(restored, 'Restore completed task identity before completion replay');
+        }
+      }
+      return replayRunStepCoalesced(params, emit, hooks, true);
+    });
   return replayRunStepCoalesced(params, emit, hooks);
 }
 

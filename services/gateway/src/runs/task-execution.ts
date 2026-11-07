@@ -10,7 +10,7 @@ const stepStartedAt = (run: TaskRun, name: string) =>
   run.steps.find((step) => step.name === name)?.startedAt;
 
 /** `<flow>/<task folder>`: the same on the gateway, the slot and a mirror import. */
-function sameTask(a: string | null | undefined, b: string | null | undefined): boolean {
+export function sameTask(a: string | null | undefined, b: string | null | undefined): boolean {
   const identity = (taskFile: string) =>
     path.join(
       path.basename(path.dirname(path.dirname(taskFile))),

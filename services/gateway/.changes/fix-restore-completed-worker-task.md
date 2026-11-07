@@ -1,0 +1,1 @@
+- Retry completion from the original verified task after an earlier recovery wrote a replacement task, preserving the completed checks, evidence and checkout.
