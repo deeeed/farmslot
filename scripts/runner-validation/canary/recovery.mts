@@ -26,9 +26,11 @@ export const RECOVERY_CASES = [
   'fixer-scope',
   'interrupted-teardown',
 ] as const;
+type RecoveryCase = (typeof RECOVERY_CASES)[number];
 const exec = promisify(execFile);
 
 export async function runRecoveryMatrix(options: {
+  cases?: readonly RecoveryCase[];
   root: string;
   evidence: string;
   reaper: Reaper;
@@ -39,6 +41,7 @@ export async function runRecoveryMatrix(options: {
   log: Log;
 }) {
   requireRecoveryFaultSupport();
+  const cases = options.cases ?? RECOVERY_CASES;
   const started = Date.now();
   const controller = new AbortController();
   const { signal } = controller;
@@ -49,10 +52,7 @@ export async function runRecoveryMatrix(options: {
     await Promise.allSettled(jobs);
     return (await Promise.all(stops.map((stop) => stop()))).flat();
   });
-  const startStack = async (
-    names: readonly (typeof RECOVERY_CASES)[number][],
-    evidence: string,
-  ) => {
+  const startStack = async (names: readonly RecoveryCase[], evidence: string) => {
     await mkdir(evidence, { recursive: true });
     const stack = await startRemoteNodeStack({
       ...options,
@@ -119,16 +119,23 @@ export async function runRecoveryMatrix(options: {
   };
   // Restarting a shared gateway interrupts unrelated cases. The teardown case owns
   // its restartable stack; all seven jobs can now finish without a cross-case barrier.
-  const [sharedStack, teardownStack] = await Promise.all([
-    startStack(
-      RECOVERY_CASES.filter((name) => name !== 'interrupted-teardown'),
-      options.evidence,
+  const groups: RecoveryCase[][] = [
+    cases.filter((name) => name !== 'interrupted-teardown'),
+    cases.filter((name) => name === 'interrupted-teardown'),
+  ].filter((names) => names.length);
+  const stacks = await Promise.all(
+    groups.map((names) =>
+      startStack(
+        names,
+        names.includes('interrupted-teardown')
+          ? path.join(options.evidence, 'teardown-stack')
+          : options.evidence,
+      ),
     ),
-    startStack(['interrupted-teardown'], path.join(options.evidence, 'teardown-stack')),
-  ]);
-  jobs = RECOVERY_CASES.map(async (name) => {
+  );
+  jobs = cases.map(async (name) => {
     const t0 = Date.now();
-    const stack = name === 'interrupted-teardown' ? teardownStack : sharedStack;
+    const stack = stacks[groups.findIndex((names) => names.includes(name))];
     const call = stack.call.bind(stack);
     const slotId = `recovery-${name}-1`;
     const repo = stack.slotRepo(slotId);
@@ -452,7 +459,7 @@ export async function runRecoveryMatrix(options: {
     controller.abort(new Error('Recovery matrix finished'));
     await Promise.allSettled(jobs);
   }
-  for (const stack of [sharedStack, teardownStack]) {
+  for (const stack of stacks) {
     const modelCalls = path.join(stack.holds, 'model-calls.log');
     assert.ok(
       !existsSync(modelCalls) || !(await readFile(modelCalls, 'utf8')).trim(),

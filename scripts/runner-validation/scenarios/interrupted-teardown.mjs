@@ -4,9 +4,17 @@ import path from 'node:path';
 
 export async function runScenario(c) {
   await c.start({ scripted: { mode: 'scenario', scenario: 'late-ack', stepDelayMs: 1 } });
-  const run = await c.wait('run reaches the gate', (run) =>
-    run.decisions.some((decision) => !decision.resolvedAt && decision.type === 'engine_human_gate'),
-  );
+  const run = await c.wait('run reaches the gate', async (run) => {
+    // The reviewed profile opts into review even when automatic project review is disabled.
+    await c.answer(run, false);
+    return run.decisions.some(
+      (decision) => !decision.resolvedAt && decision.type === 'engine_human_gate',
+    );
+  });
+  assert.equal(run.reviewRoundAdmissions?.length, 1);
+  const review = run.steps.find((step) => step.name === 'review');
+  assert.equal(review?.status, 'done');
+  assert.equal(review.outputs?.verdict, 'pass');
   const branch = c.git('branch', '--show-current');
   const head = c.git('rev-parse', 'HEAD');
   await writeFile(path.join(c.stack.holds, 'git'), 'fetch');
