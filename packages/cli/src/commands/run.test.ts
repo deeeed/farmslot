@@ -17,6 +17,7 @@ import {
   type Run,
   type RunDecision,
 } from '@farmslot/protocol';
+import { resultDecisionView } from '@farmslot/review-dispatch';
 
 import {
   assertRunGateActionAvailable,
@@ -1297,6 +1298,23 @@ test('direct publication flags preserve unset, explicit true and explicit false 
   );
   assert.equal(buildRunCreateParams({ ...base, publishReview: false }).publishReview, false);
   assert.equal(buildRunCreateParams({ ...base, reviewTeam: 'team' }).reviewTeamId, 'team');
+});
+
+test('a completion refusal already used as the reason is shown once in CLI and shared view', () => {
+  const message = 'Artifact mirror refresh failed: current evidence provenance does not match.';
+  const payload: ResultDecisionPayload = {
+    kind: 'result-decision',
+    stoppedAt: 'complete',
+    reason: message,
+    refusal: { message, reasons: [] },
+    delivered: { reportPath: 'artifacts/report.md', manifestDigest: 'sha256:report' },
+    findingsDigest: 'sha256:refusal',
+    actions: [],
+  };
+  assert.equal(formatResultDecision(payload).filter((line) => line.includes(message)).length, 1);
+  const view = resultDecisionView({ id: 'result', payload });
+  assert.equal(view.reason, message);
+  assert.equal(view.detail, null);
 });
 
 test('gate CLI shows a held result decision and sends its written reason', () => {

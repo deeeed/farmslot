@@ -24,11 +24,16 @@ const taskDir = 'tasks/review';
 const config = await import('../core/config.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
 const vars = makeVars({ remoteRepo: repo, repo });
+const reachedReviewPolicy = new Error('Reviewed interactive policy reached slot resolution');
+let stopAfterReviewPolicy = false;
 mock.module('../core/config.js', {
   namedExports: {
     ...config,
     loadProjectVars: async () => ({ projectJson }),
-    loadSlotVars: async () => vars,
+    loadSlotVars: async () => {
+      if (stopAfterReviewPolicy) throw reachedReviewPolicy;
+      return vars;
+    },
   },
 });
 // Every reviewer launch reaches the native reviewer; none may happen at the cap.
@@ -96,6 +101,29 @@ const {
   publicationReviewMatchesPreparedPackage,
   reviewFinalSnapshotMatchesPreparedPackage,
 } = await import('../run-engine/gate-policy.js');
+
+test('the real review owner honors an explicit interactive opt-in when automatic review is disabled', async (t) => {
+  const run = createRun({
+    project,
+    flowType: 'dev',
+    mode: 'interactive',
+    devInteractiveProfile: 'reviewed',
+    ticketOrPr: 'explicit-interactive-review',
+    slotId: vars.slotId,
+  });
+  projectJson.review.enabled = false;
+  stopAfterReviewPolicy = true;
+  t.after(async () => {
+    projectJson.review.enabled = true;
+    stopAfterReviewPolicy = false;
+    await deleteTestRunIfPresent(run.id);
+  });
+  // Stop before any runtime work; this still calls the production skip-policy boundary.
+  await assert.rejects(
+    executeReview(run.id, vars.slotId, { validationDepth: 'static-code' }),
+    (error: unknown) => error === reachedReviewPolicy,
+  );
+});
 
 async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, string>, atCap = true) {
   const run = createRun({

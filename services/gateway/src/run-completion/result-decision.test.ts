@@ -878,7 +878,10 @@ test('the decision states why the run stopped in one line', async () => {
   await heldOpus();
   assert.equal(pending().payload.reason, 'Review found 1 issue after 1/2 fix attempts.');
   await heldQa();
-  assert.equal(pending().payload.reason, 'COMPLETE was refused.');
+  assert.equal(
+    pending().payload.reason,
+    'A declared deterministic check has no current passing receipt.',
+  );
 });
 
 test('restart holds again a run a cut-short completion send-back left without a decision', async () => {

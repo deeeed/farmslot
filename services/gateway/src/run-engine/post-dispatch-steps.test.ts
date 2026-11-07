@@ -23,7 +23,7 @@ import {
   finalizeEvalResultPackageForRun,
   readFrozenEvalFirstOutputPackage,
 } from '../evals/package-store.js';
-import type { ReviewOptions } from '../review/orchestrator.js';
+import { type ReviewOptions, shouldSkipForDisabledReviewConfig } from '../review/orchestrator.js';
 import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
 import {
   admitReviewRound,
@@ -1221,6 +1221,65 @@ test('interactive send-feedback continues from existing findings without another
   assert.equal(io.outputs?.verdict, 'pass');
   assert.equal(io.outputs?.interactiveRetry, true);
 });
+
+for (const profile of ['reviewed', 'lightweight', 'autonomous'] as const) {
+  test(`explicit reviewed interactive evidence gets a fresh verdict with automatic review disabled (${profile})`, async (t) => {
+    const run = createRun({
+      flowType: 'dev',
+      mode: profile === 'autonomous' ? 'autonomous' : 'interactive',
+      ...(profile === 'autonomous' ? {} : { devInteractiveProfile: profile }),
+      project: 'example-mobile-farm',
+      ticketOrPr: 'repaired-interactive-evidence',
+      slotId: 'remote-mobile-1',
+    });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    const oldReview: ReviewStatus = {
+      id: 'prior-evidence-review',
+      source: 'human-gate',
+      mode: 'cold',
+      loopNumber: 1,
+      verdict: 'issues',
+      unresolvedCount: 1,
+      reviewedHeadSha: 'e'.repeat(40),
+      issues: [
+        { file: 'artifacts/evidence-manifest.json', description: 'Old evidence is missing' },
+      ],
+    };
+    updateRun(run.id, { engineState: { publishGate: { reviews: [oldReview] } } });
+    const calls: Array<ReviewOptions | undefined> = [];
+    const io = await executeReviewStep(run.id, {
+      ...restartReplayContext(),
+      executeReviewForRun: async (_runId, _slotId, options) => {
+        calls.push(options);
+        if (shouldSkipForDisabledReviewConfig({ enabled: false }, options, getRun(_runId)))
+          return { skipped: true, reason: 'disabled-for-project', retryCount: 0 };
+        return { verdict: 'pass', issues: [], retryCount: 0 };
+      },
+    });
+    if (profile === 'reviewed') {
+      assert.equal(calls.length, 1);
+      assert.notEqual(
+        calls[0]?.publicationReview,
+        true,
+        'pipeline review keeps its restart contract',
+      );
+      assert.equal(calls[0]?.resumeFromResult, undefined, 'old gate issues are not a new verdict');
+      assert.equal(io.outputs?.verdict, 'pass');
+      assert.notEqual(io.outputs?.skipped, true);
+    } else if (profile === 'lightweight') {
+      assert.equal(calls.length, 0, 'lightweight policy still skips automatic review');
+    } else {
+      assert.equal(calls.length, 1);
+      assert.notEqual(calls[0]?.publicationReview, true);
+      assert.equal(io.outputs?.reason, 'disabled-for-project');
+    }
+    assert.deepEqual(
+      getRun(run.id)?.engineState?.publishGate?.reviews,
+      [oldReview],
+      'historical findings remain unchanged until the new package binds its review',
+    );
+  });
+}
 
 test('the pipeline review runs the dispatch sequence row 1, else the project review config', async (t) => {
   const row: ReviewSelection = {
