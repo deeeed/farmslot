@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { AgentContext, NativeSessionReadResult, Run } from '@farmslot/protocol';
+import type {
+  AgentContext,
+  AgentContextSelector,
+  NativeSessionReadResult,
+  Run,
+} from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
@@ -378,6 +383,7 @@ test('a rehosted publication worker is observed in its exact resumed pane', asyn
     },
   ];
   context.role = 'primary';
+  context.target = { target: '%1', session: 'owned', paneId: '%1' };
   for (const active of [false, true]) {
     let probes = 0;
     const progress = await readAgentContextProgress(run, context, {
@@ -397,4 +403,150 @@ test('a rehosted publication worker is observed in its exact resumed pane', asyn
     assert.equal(progress.kind, active ? 'making-progress' : 'idle');
     assert.equal(probes, 1);
   }
+});
+
+function completedHandoff(): Run {
+  const run = makeRun({
+    id: 'chained-completion',
+    flowType: 'pr-complete',
+    status: 'completing',
+    slotId: 'slot-1',
+  });
+  const primary: AgentContext = {
+    id: 'primary',
+    role: 'primary',
+    label: 'Primary',
+    status: 'working',
+    runId: run.id,
+    slotId: run.slotId,
+    target: null,
+    taskFile: null,
+    signalFile: null,
+    runner: 'claude',
+    runnerSessionId: null,
+    runnerSessionPath: null,
+  };
+  const worker: AgentContext = {
+    id: 'dev',
+    role: 'dev',
+    label: 'Worker',
+    status: 'working',
+    runId: run.id,
+    slotId: run.slotId,
+    runner: 'claude',
+    target: { session: 'owned', window: 'dev', pane: '%419', target: 'owned:dev' },
+    runnerSessionId: 'worker-session',
+    runnerSessionPath: '/tmp/worker-session.jsonl',
+    signalAttemptId: 'worker-attempt',
+    taskFile: 'tasks/owned/TASK.md',
+    signalFile: 'tasks/owned/SIGNAL.json',
+  };
+  return {
+    ...run,
+    agentContexts: [primary, worker],
+    steps: [
+      { name: 'dispatch', status: 'done' },
+      {
+        name: 'monitor',
+        status: 'done',
+        outputs: { workerSignal: { status: 'complete', attemptId: 'worker-attempt' } },
+      },
+      { name: 'complete', status: 'running' },
+    ],
+  };
+}
+
+const handedOffReaders = (kind: 'idle' | 'active' | 'unknown') => ({
+  slot: async () => slot,
+  taskProgress: async () => null,
+  target: async (_slot: string, selector?: AgentContextSelector) => ({
+    target: selector?.contextId === 'primary' ? '%empty' : '%419',
+    session: 'owned',
+  }),
+  activity: async (_vars: SlotVars, target: string) =>
+    target === '%419' && kind !== 'unknown'
+      ? reading(kind === 'active' ? ('tool-running' as const) : ('idle' as const))
+      : null,
+  turn: async (_vars: SlotVars, target: string) =>
+    target === '%419' && kind !== 'unknown'
+      ? reading(kind === 'active' ? ('active' as const) : ('idle' as const))
+      : null,
+  background: async (_vars: SlotVars, target: string) =>
+    target === '%419' && kind !== 'unknown' ? reading('idle' as const) : null,
+  retainedTarget: async () => ({
+    state: 'unknown' as const,
+    reason: 'Runner operation is unconfirmed',
+  }),
+});
+
+test('completed handoff observes the recorded worker instead of an empty primary placeholder', async () => {
+  const run = completedHandoff();
+  const observed: Array<string | null | undefined> = [];
+  const idle = handedOffReaders('idle');
+  assert.equal(
+    (
+      await readRunProgress(run, {
+        ...idle,
+        target: async (slot, selector) => {
+          observed.push(selector?.contextId);
+          return idle.target(slot, selector);
+        },
+      })
+    ).kind,
+    'idle',
+  );
+  assert.deepEqual(observed, ['dev'], 'an empty primary placeholder is not a second execution');
+  assert.equal((await readRunProgress(run, handedOffReaders('active'))).kind, 'making-progress');
+  assert.equal((await readRunProgress(run, handedOffReaders('unknown'))).kind, 'unproven');
+});
+
+test('completed handoff requires one exact attempt owner and never drops real uncertain work', async () => {
+  for (const changed of [
+    'attempt',
+    'launching',
+    'owned-primary',
+    'delivery',
+    'ambiguous',
+  ] as const) {
+    const run = completedHandoff();
+    const primary = run.agentContexts![0]!;
+    const worker = run.agentContexts![1]!;
+    if (changed === 'attempt') worker.signalAttemptId = 'another-attempt';
+    if (changed === 'launching') primary.status = 'launching';
+    if (changed === 'owned-primary')
+      primary.target = { session: 'owned', target: '%422', paneId: '%422' };
+    if (changed === 'delivery') run.steps[0]!.outputs = { promptDeliveryUncertain: true };
+    if (changed === 'ambiguous') run.agentContexts!.push({ ...worker, id: 'another-worker' });
+    assert.equal((await readRunProgress(run, handedOffReaders('idle'))).kind, 'unproven', changed);
+  }
+  const monitoring = completedHandoff();
+  monitoring.steps = [
+    { name: 'monitor', status: 'running' },
+    { name: 'complete', status: 'pending' },
+  ];
+  assert.equal((await readRunProgress(monitoring, handedOffReaders('idle'))).kind, 'unproven');
+});
+
+test('a completed handoff canonicalizes a recorded legacy pane before confirming runner exit', async () => {
+  const run = completedHandoff();
+  const worker = run.agentContexts![1]!;
+  run.agentContexts = [{ ...worker, id: 'primary', role: 'primary' }];
+  for (const state of ['absent', 'unknown'] as const) {
+    let reads = 0;
+    const progress = await readRunProgress(run, {
+      ...handedOffReaders('unknown'),
+      retainedTarget: async (_vars, context) => {
+        reads++;
+        assert.equal(context.target?.paneId, '%419');
+        return state === 'absent' ? { state } : { state, reason: 'Process inventory unavailable' };
+      },
+    });
+    assert.equal(reads, 1);
+    assert.equal(progress.kind, state === 'absent' ? 'idle' : 'unproven');
+  }
+  assert.equal(
+    run.agentContexts[0]?.target?.paneId,
+    undefined,
+    'reading never rewrites stored context',
+  );
 });

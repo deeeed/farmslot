@@ -2,6 +2,7 @@ import {
   ACTIVE_RUN_STATUSES,
   type AgentContext,
   type AgentRole,
+  isRecord,
   nativeWorkerBindingIsHeld,
   normalizeRunner,
   type Run,
@@ -25,6 +26,7 @@ import {
 } from './registry.js';
 import { readRetainedWorkerProgressTarget } from './retained-worker-progress.js';
 import { reviewWorkspaceRunnerVars } from './review-startup.js';
+import { runnerSessionContextTarget } from './session-record.js';
 
 export interface RunProgressObservation {
   kind: MonitorProgressKind;
@@ -99,6 +101,24 @@ const progressReaders: RunProgressReaders = {
   taskProgress: async (input) => (await import('./registry.js')).readRunnerTaskProgress(input),
   retainedTarget: readRetainedWorkerProgressTarget,
 };
+
+function contextHasRunnerBinding(context: AgentContext): boolean {
+  return Boolean(
+    context.target ||
+    context.nativeSession ||
+    context.nativeSessionOwner ||
+    context.runnerSessionId,
+  );
+}
+
+function workerHasHandedOff(run: Run): boolean {
+  return (
+    run.decisions.some((decision) => !decision.resolvedAt && decision.payload?.kind === 'ready') ||
+    run.steps.some(
+      (step) => (step.name === 'complete' || step.name === 'finalize') && step.status === 'running',
+    )
+  );
+}
 
 async function observeContext(
   run: Run,
@@ -182,21 +202,17 @@ async function observeContext(
     return { kind, activeRole };
   };
   const progress = await observeTarget(target.target);
-  // The worker has handed off at a publication gate, COMPLETE or FINALIZE; review fixes are over.
-  const handedOff =
-    run.decisions.some((decision) => !decision.resolvedAt && decision.payload?.kind === 'ready') ||
-    run.steps.some(
-      (step) => (step.name === 'complete' || step.name === 'finalize') && step.status === 'running',
-    );
+  const retainedTarget = context ? runnerSessionContextTarget(run, context) : null;
   // A context still launching has no runner yet, which absence cannot tell from one that exited.
   if (
     progress.kind !== 'unproven' ||
-    !context?.target?.paneId ||
-    !handedOff ||
+    !context ||
+    !retainedTarget ||
+    !workerHasHandedOff(run) ||
     context.status === 'launching'
   )
     return progress;
-  const retained = await source.retainedTarget(vars, context);
+  const retained = await source.retainedTarget(vars, { ...context, target: retainedTarget });
   if (retained.state === 'absent')
     return {
       kind: 'idle',
@@ -227,13 +243,7 @@ export async function readRunProgress(
   overrides: Partial<RunProgressReaders> = {},
 ): Promise<RunProgressObservation> {
   const source = { ...progressReaders, ...overrides };
-  const ownedRunner = run.agentContexts?.some(
-    (context) =>
-      context.target ||
-      context.nativeSession ||
-      context.nativeSessionOwner ||
-      context.runnerSessionId,
-  );
+  const ownedRunner = run.agentContexts?.some(contextHasRunnerBinding);
   const uncertainDelivery = run.steps.some(
     (step) => step.outputs?.promptDeliveryUncertain || step.outputs?.nativeWorkerOperationUncertain,
   );
@@ -244,7 +254,49 @@ export async function readRunProgress(
     run.steps.some((step) => step.name === 'dispatch' && step.status === 'pending')
   )
     return { kind: 'idle' };
-  const primary = selectAgentContext(run, { role: 'primary' });
+  const selectedPrimary = selectAgentContext(run, { role: 'primary' });
+  let primary = selectedPrimary;
+  const finished = run.steps.find((step) => step.name === 'monitor' && step.status === 'done')
+    ?.outputs?.workerSignal;
+  const placeholder =
+    !selectedPrimary ||
+    (selectedPrimary.role === 'primary' &&
+      selectedPrimary.status !== 'launching' &&
+      !contextHasRunnerBinding(selectedPrimary) &&
+      !selectedPrimary.runnerSessionPath &&
+      !selectedPrimary.taskFile &&
+      !selectedPrimary.signalFile &&
+      !selectedPrimary.signalAttemptId &&
+      !selectedPrimary.startedAt &&
+      !selectedPrimary.attemptStartedAt &&
+      !selectedPrimary.promptDeliveryStartedAt &&
+      !selectedPrimary.promptAcceptance &&
+      !selectedPrimary.nativeCommandId);
+  if (
+    run.transport !== 'native' &&
+    placeholder &&
+    !uncertainDelivery &&
+    workerHasHandedOff(run) &&
+    isRecord(finished) &&
+    (finished.status === 'complete' || finished.status === 'done') &&
+    typeof finished.attemptId === 'string' &&
+    finished.attemptId
+  ) {
+    // A chained run may retain its worker under the parent role. The completed
+    // attempt binds that owner; an empty canonical role is not another execution.
+    const owners = (run.agentContexts ?? []).filter(
+      (context) =>
+        context.id !== selectedPrimary?.id &&
+        context.runId === run.id &&
+        (context.slotId ?? run.slotId) === run.slotId &&
+        context.signalAttemptId === finished.attemptId &&
+        context.runnerSessionId &&
+        context.runnerSessionPath &&
+        runnerSessionContextTarget(run, context),
+    );
+    const [owner] = owners;
+    if (owners.length === 1 && owner) primary = owner;
+  }
   const acceptedFix = run.agentContexts?.find(
     (context) =>
       context.role === 'review-fix' &&
@@ -259,6 +311,7 @@ export async function readRunProgress(
     ...(run.agentContexts ?? []).filter(
       (context) =>
         context.id !== primary?.id &&
+        context.id !== selectedPrimary?.id &&
         context.id !== acceptedFix?.id &&
         ['working', 'launching', 'waiting', 'blocked'].includes(context.status),
     ),
