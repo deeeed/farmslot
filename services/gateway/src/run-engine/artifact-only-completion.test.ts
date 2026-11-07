@@ -59,7 +59,7 @@ test('comparison readiness refuses a failed artifact capture', async (t) => {
 });
 
 // F219: 0b97288d/af00ac09 passed review, then COMPLETE refused their recorded claim verdicts.
-test('eval completion retains unapproved claims without requiring publication approval', async (t) => {
+test('eval and comparison completion retain unapproved claims without publication approval', async (t) => {
   const { run } = await trial(t, 'review');
   updateRun(run.id, {
     engineState: {
@@ -83,9 +83,14 @@ test('eval completion retains unapproved claims without requiring publication ap
   await assert.doesNotReject(assertRunGateReady(current, null, 'complete'));
   await assert.doesNotReject(assertRunGateReady(current, null, 'finalize'));
   await assert.rejects(assertRunGateReady(current, null, 'approve-publish'), /claim verdicts/);
-  // An ordinary artifact-only output is outside the eval exception.
+  // Gate-free comparisons defer judgments to separate cold reviews, even without eval metadata.
   updateRun(run.id, { engineState: undefined });
-  await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /claim verdicts/);
+  await assert.doesNotReject(assertRunGateReady(getRun(run.id)!, null, 'complete'));
+  await assert.doesNotReject(assertRunGateReady(getRun(run.id)!, null, 'finalize'));
+  await assert.rejects(
+    assertRunGateReady(getRun(run.id)!, null, 'approve-publish'),
+    /claim verdicts/,
+  );
 
   updateRun(run.id, { engineState: evalState });
   const retained = path.join(
@@ -95,6 +100,9 @@ test('eval completion retains unapproved claims without requiring publication ap
   await chmod(retained, 0o600);
   await writeFile(retained, '{}');
   await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
+  updateRun(run.id, { engineState: undefined });
+  await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
+  await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'finalize'), /evidence package/);
 });
 
 // F238: 61cf9212's worker blocked before running its recipe; its output was never finalized.
@@ -176,10 +184,11 @@ test('an output review judges claims awaiting review; other verdicts still refus
   // A visual claim outside any recording is weak, not awaiting review.
   const weak = await reviewed('visual');
   await assert.rejects(assertRunGateReady(weak, null, 'complete'), /claim verdicts/);
-  // A comparison trial has no output review to judge them.
+  // Comparison trials retain those claims for separate cold reviews.
   updateRun(awaiting.id, { lane: 'comparison', variant: 'candidate' });
+  await assert.doesNotReject(assertRunGateReady(getRun(awaiting.id)!, null, 'complete'));
   await assert.rejects(
-    assertRunGateReady(getRun(awaiting.id)!, null, 'complete'),
+    assertRunGateReady(getRun(awaiting.id)!, null, 'approve-publish'),
     /claim verdicts/,
   );
 });
