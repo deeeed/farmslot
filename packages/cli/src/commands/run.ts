@@ -144,12 +144,21 @@ export function buildRunGateParams(
         ...(decision.payload?.kind === 'ready' && decision.payload.reviewLineageOptions
           ? { lineageOptions: decision.payload.reviewLineageOptions }
           : {}),
-        ...(options.runner ? { defaults: { runner: options.runner } } : {}),
         ...(options.reviewContext
           ? { reviewContext: parseReviewRequestContext(JSON.parse(options.reviewContext)) }
           : {}),
       },
+      ...(options.runner
+        ? { sequence: [{ runner: options.runner, model: null, effort: null, mode: 'cold' }] }
+        : {}),
     });
+    if (
+      options.runner &&
+      decision.payload?.kind === 'ready' &&
+      decision.payload.reviewLineageOptions &&
+      model.rows[0].context
+    )
+      model.setMode(model.rows[0].id, 'warm');
     model.setSequence([
       parseReviewSelection({
         ...model.toSelection(),
