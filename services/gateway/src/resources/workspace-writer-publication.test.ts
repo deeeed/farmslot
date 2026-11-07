@@ -57,7 +57,9 @@ const loadVars = async (slotId: string) => {
 };
 // Mock only config/inventory discovery and unrelated artifact/review dependencies.
 // Execution, methods, recursive file source, branch watcher, admission and publisher stay real.
-mock.module('../core/config.js', { namedExports: { loadSlotVars: loadVars } });
+const poolRoot = await realpath(await mkdtemp(path.join(tmpdir(), 'writer-publication-pool-')));
+after(() => rm(poolRoot, { recursive: true, force: true }));
+mock.module('../core/config.js', { namedExports: { loadSlotVars: loadVars, poolDir: poolRoot } });
 mock.module('../core/index.js', {
   namedExports: {
     loadSlotVars: loadVars,
