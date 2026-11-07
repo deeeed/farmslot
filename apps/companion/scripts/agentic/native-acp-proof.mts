@@ -93,7 +93,7 @@ const openDiff = async () => {
   await wait(
     async () =>
       (await device.capture.snapshot(selection)).nodes.some(
-        (node) => node.label?.trim() === 'File diff',
+        (node) => node.label?.trim().toLowerCase() === 'file diff',
       ),
     'foreground file diff viewer',
   );
