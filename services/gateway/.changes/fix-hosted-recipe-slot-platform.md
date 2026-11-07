@@ -1,0 +1,1 @@
+- Keep hosted recipe execution and discovery on the assigned iOS or Android slot platform while preserving web/headless project adapter selection and explicit target overrides.

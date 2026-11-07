@@ -429,7 +429,8 @@ test('housekeeping archives a bundle no run references and the farm is warned be
   );
 });
 
-test('a task dir settles only once its runs have ended and been quiet, and a run update unsettles it', async () => {
+test('a task dir settles only once its runs have ended and been quiet, and a run update unsettles it', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const taskDir = (name: string) => path.join(root, 'projects/example/tasks/qa', name);
   const live = createRun({
     flowType: 'dev',
@@ -461,7 +462,7 @@ test('a task dir settles only once its runs have ended and been quiet, and a run
   await withTaskAdmission(path.join(taskDir('ended'), 'TASK.md'), async () => {
     assert.equal((await acquisitionTaskDirToken(quiet))(taskDir('ended')), undefined);
   });
-  await delay(2);
+  t.mock.timers.tick(2);
   updateRun(ended.id, { ticketOrPr: 'ENDED-GRADED' });
   const updatedAt = getRun(ended.id)!.updatedAt;
   assert.notEqual(updatedAt, endedAt);
