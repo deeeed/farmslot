@@ -1628,11 +1628,16 @@ test('hosted recipe paths preserve node-support remapping and reject artifact es
     () => buildHostedRecipeCommand('recipe_run', project, { ...slot, projectName: 'other' }),
     /belongs to project other/,
   );
-  const retargeted = buildHostedRecipeCommand('recipe_run', project, slot, {
-    recipePath: '~/repos/product/.task/recipe.json',
-    artifactsDir: '~/repos/product/.task/artifacts',
-    target: { udid: 'selected-device', platform: 'ios' },
-  })!;
+  const retargeted = buildHostedRecipeCommand(
+    'recipe_run',
+    project,
+    { ...slot, platform: 'android' },
+    {
+      recipePath: '~/repos/product/.task/recipe.json',
+      artifactsDir: '~/repos/product/.task/artifacts',
+      target: { udid: 'selected-device', platform: 'ios' },
+    },
+  )!;
   assert.match(retargeted, /--device 'selected-device' --platform 'ios'/);
   assert.throws(
     () =>
