@@ -7,7 +7,7 @@ description: Send to a model in tmux with process identity checks, native turn p
 
 Use this transport for lane messages. The shared runner adapter selects the submission key.
 Codex submission always uses `Enter`, including steering a busy turn. Never press `Tab`.
-The shell entry points resolve their TypeScript loader from the owning Farmslot checkout,
+The shell entry points resolve their TypeScript loader and source mappings from the owning Farmslot checkout,
 so they also work when invoked from another checkout or a temporary directory.
 
 ## Send and inspect
