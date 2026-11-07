@@ -12,8 +12,8 @@ import {
   listPiProviderSources,
   openaiBaseUrl,
   PiProviderConfigurationError,
+  providerReasoningFetch,
   resolvePiProviderCatalog,
-  routerReasoningFetch,
   unavailablePiAuth,
 } from './pi-farmslot-providers.mjs';
 
@@ -402,13 +402,13 @@ test('router wire guard records actual effort and refuses an off or missing effo
   );
   let requests = 0;
   const records = [];
-  const fetch = routerReasoningFetch(
+  const fetch = providerReasoningFetch(
     async (_input, options) => {
       requests++;
       assert.equal(JSON.parse(options.body).reasoning_effort, 'medium');
       return new Response('OK');
     },
-    router,
+    [router],
     (record) => records.push(record),
   );
   const body = { model: 'DeepSeek-V4.1-Flash-1017', reasoning_effort: 'medium', max_tokens: 32768 };
@@ -450,7 +450,7 @@ test('router guard leaves other providers unchanged and accepts Request inputs',
     requests++;
     return new Response('OK');
   };
-  const fetch = routerReasoningFetch(upstream, router);
+  const fetch = providerReasoningFetch(upstream, [router]);
   await fetch('http://native.test/v1/chat/completions', { body: 'unrelated' });
   await fetch(
     new Request('http://router.test/v1/chat/completions', {
@@ -459,5 +459,155 @@ test('router guard leaves other providers unchanged and accepts Request inputs',
     }),
   );
   assert.equal(requests, 2);
-  assert.equal(routerReasoningFetch(upstream, undefined), upstream);
+  assert.equal(providerReasoningFetch(upstream, undefined), upstream);
+});
+
+test('LiteLLM model info supplies real DeepSeek limits and reasoning', async () => {
+  const fetchImpl = async (url) => ({
+    ok: true,
+    json: async () => ({
+      data: String(url).endsWith('/model/info')
+        ? [
+            {
+              model_name: 'deepseek-v4p1-flash',
+              model_info: {
+                max_input_tokens: 1048576,
+                max_output_tokens: 393216,
+                supports_reasoning: true,
+              },
+            },
+          ]
+        : [{ id: 'deepseek-v4p1-flash' }, { id: 'unrelated' }],
+    }),
+  });
+  const [provider] = await resolvePiProviderCatalog(
+    { FARMSLOT_PI_OLLAMA: '0', LITELLM_URL: 'http://litellm.test/v1' },
+    { fetchImpl },
+  );
+  assert.equal(provider.models[0].contextWindow, 1048576);
+  assert.equal(provider.models[0].maxTokens, 393216);
+  assert.equal(provider.models[0].reasoning, true);
+  assert.equal(provider.models[1].contextWindow, 128000);
+});
+
+test('model-specific comparison limits cap DeepSeek without changing other LiteLLM models', async () => {
+  const fetchImpl = async (url) => ({
+    ok: true,
+    json: async () => ({
+      data: String(url).endsWith('/model/info')
+        ? [
+            {
+              model_name: 'deepseek-v4p1-flash',
+              model_info: {
+                max_input_tokens: 1048576,
+                max_output_tokens: 393216,
+                supports_reasoning: true,
+              },
+            },
+          ]
+        : [{ id: 'deepseek-v4p1-flash' }, { id: 'unrelated' }],
+    }),
+  });
+  const [provider] = await resolvePiProviderCatalog(
+    {
+      FARMSLOT_PI_OLLAMA: '0',
+      LITELLM_URL: 'http://litellm.test/v1',
+      FARMSLOT_PI_LITELLM_MODEL_LIMITS: JSON.stringify({
+        'deepseek-v4p1-flash': { contextWindow: 1048576, maxTokens: 32768, reasoning: true },
+      }),
+    },
+    { fetchImpl },
+  );
+  assert.equal(provider.models[0].contextWindow, 1048576);
+  assert.equal(provider.models[0].maxTokens, 32768);
+  assert.equal(provider.models[0].reasoning, true);
+  assert.equal(provider.models[1].maxTokens, 8192);
+  assert.equal(provider.models[1].reasoning, false);
+});
+
+test('model-specific fallback survives unavailable LiteLLM info and never inflates reported limits', async () => {
+  const env = {
+    FARMSLOT_PI_OLLAMA: '0',
+    LITELLM_URL: 'http://litellm.test/v1',
+    FARMSLOT_PI_LITELLM_MODEL_LIMITS: JSON.stringify({
+      'deepseek-v4p1-flash': { contextWindow: 1048576, maxTokens: 32768, reasoning: true },
+    }),
+  };
+  const [provider] = await resolvePiProviderCatalog(env, {
+    fetchImpl: async (url) =>
+      String(url).endsWith('/model/info')
+        ? { ok: false }
+        : {
+            ok: true,
+            json: async () => ({ data: [{ id: 'deepseek-v4p1-flash' }] }),
+          },
+  });
+  assert.equal(provider.models[0].contextWindow, 1048576);
+  assert.equal(provider.models[0].maxTokens, 32768);
+  assert.equal(provider.models[0].reasoning, true);
+  const [smaller] = await resolvePiProviderCatalog(env, {
+    fetchImpl: modelsFetch({
+      id: 'deepseek-v4p1-flash',
+      context_length: 262144,
+      max_output_tokens: 16384,
+    }),
+  });
+  assert.equal(smaller.models[0].contextWindow, 262144);
+  assert.equal(smaller.models[0].maxTokens, 16384);
+});
+
+test('model-specific configuration rejects malformed JSON, unknown fields and invalid values', async () => {
+  for (const value of [
+    'bad',
+    '[]',
+    'null',
+    '{"model":false}',
+    '{"model":{"context_length":1048576}}',
+    '{"model":{"maxTokens":0}}',
+    '{"model":{"reasoning":"maybe"}}',
+  ])
+    await assert.rejects(
+      resolvePiProviderCatalog(
+        { ...routerEnv, FARMSLOT_PI_ROUTER_MODEL_LIMITS: value },
+        { fetchImpl: modelsFetch({ id: 'model' }) },
+      ),
+      PiProviderConfigurationError,
+    );
+});
+
+test('reasoning-enabled LiteLLM requests have the same wire guard and record as router requests', async () => {
+  const [provider] = await resolvePiProviderCatalog(
+    { FARMSLOT_PI_OLLAMA: '0', LITELLM_URL: 'http://litellm.test/v1' },
+    {
+      fetchImpl: modelsFetch({ id: 'model', reasoning: true }),
+    },
+  );
+  let sent = 0;
+  const records = [];
+  const fetch = providerReasoningFetch(
+    async () => {
+      sent++;
+      return new Response('OK');
+    },
+    [provider],
+    (record) => records.push(record),
+  );
+  await assert.rejects(
+    fetch('http://litellm.test/v1/chat/completions', {
+      body: JSON.stringify({ model: 'model', reasoning_effort: 'none' }),
+    }),
+    /refusing a non-reasoning request/,
+  );
+  await fetch('http://litellm.test/v1/chat/completions', {
+    body: JSON.stringify({
+      model: 'model',
+      reasoning_effort: 'medium',
+      max_completion_tokens: 32768,
+    }),
+  });
+  assert.equal(sent, 1);
+  assert.equal(records[0].provider, 'litellm');
+  assert.equal(records[0].effort, 'medium');
+  assert.equal(records[0].reasoning, true);
+  assert.equal(records[0].requestedMaxTokens, 32768);
 });

@@ -1,1 +1,1 @@
-- Preserve reported or configured Pi model limits, require router reasoning, and record effective request settings instead of silently using fixed context and output budgets.
+- Preserve discovered Pi model limits, use LiteLLM metadata with model-specific comparison budgets, and record actual reasoning requests instead of fixed context and output defaults.

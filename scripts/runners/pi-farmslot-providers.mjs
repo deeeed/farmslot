@@ -108,7 +108,7 @@ export function listPiProviderSources(env = process.env) {
 export async function fetchOpenAiModels(
   baseUrl,
   apiKey,
-  { fetchImpl = globalThis.fetch, timeoutMs = 400 } = {},
+  { fetchImpl = globalThis.fetch, timeoutMs = 400, endpoint = 'models', idField = 'id' } = {},
 ) {
   if (typeof fetchImpl !== 'function') return [];
   const controller = new AbortController();
@@ -116,11 +116,14 @@ export async function fetchOpenAiModels(
   try {
     const headers = {};
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-    const response = await fetchImpl(`${baseUrl}/models`, { headers, signal: controller.signal });
+    const response = await fetchImpl(`${baseUrl}/${endpoint}`, {
+      headers,
+      signal: controller.signal,
+    });
     if (!response.ok) return [];
     const body = await response.json();
     const rows = Array.isArray(body?.data) ? body.data : [];
-    return rows.filter((row) => typeof row?.id === 'string' && row.id.trim());
+    return rows.filter((row) => typeof row?.[idField] === 'string' && row[idField].trim());
   } catch {
     return [];
   } finally {
@@ -149,17 +152,69 @@ function reasoningSetting(value, name) {
   throw new PiProviderConfigurationError(`${name} must be true, false, 1 or 0`);
 }
 
-function modelEntry(row, source, defaults) {
+function configuredModelLimits(raw, name) {
+  if (raw === undefined) return new Map();
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new PiProviderConfigurationError(`${name} must be a JSON object keyed by model id`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new PiProviderConfigurationError(`${name} must be a JSON object keyed by model id`);
+  return new Map(
+    Object.entries(parsed).map(([id, settings]) => {
+      if (
+        !settings ||
+        typeof settings !== 'object' ||
+        Array.isArray(settings) ||
+        Object.keys(settings).some(
+          (key) => !['contextWindow', 'maxTokens', 'reasoning'].includes(key),
+        )
+      )
+        throw new PiProviderConfigurationError(
+          `${name}/${id} must contain contextWindow, maxTokens or reasoning`,
+        );
+      return [
+        id,
+        {
+          contextWindow: positiveInteger(settings.contextWindow, `${name}/${id} contextWindow`),
+          maxTokens: positiveInteger(settings.maxTokens, `${name}/${id} maxTokens`),
+          reasoning: reasoningSetting(settings.reasoning, `${name}/${id} reasoning`),
+        },
+      ];
+    }),
+  );
+}
+
+function modelLimit(reported, cap, fallback, name) {
+  const real = positiveInteger(reported, name);
+  return cap === undefined ? (real ?? fallback) : Math.min(real ?? cap, cap);
+}
+
+function modelEntry(row, source, defaults, info = {}, configured = {}) {
   const context =
-    row.context_length ?? row.max_model_len ?? row.context_window ?? row.contextWindow;
+    row.context_length ??
+    row.max_model_len ??
+    row.context_window ??
+    row.contextWindow ??
+    info.max_input_tokens;
   const output =
-    row.max_output_tokens ?? row.max_completion_tokens ?? row.max_tokens ?? row.maxTokens;
+    row.max_output_tokens ??
+    row.max_completion_tokens ??
+    row.max_tokens ??
+    row.maxTokens ??
+    info.max_output_tokens;
   const reasoning =
-    reasoningSetting(row.reasoning ?? row.supports_reasoning, `${source}/${row.id} reasoning`) ??
+    reasoningSetting(
+      row.reasoning ?? row.supports_reasoning ?? info.supports_reasoning,
+      `${source}/${row.id} reasoning`,
+    ) ??
+    configured.reasoning ??
     defaults.reasoning;
-  if (source === 'router' && !reasoning)
+  if ((source === 'router' || configured.reasoning === true) && !reasoning)
     throw new PiProviderConfigurationError(
-      `Router model ${row.id} requires reasoning for code work`,
+      `Model ${source}/${row.id} requires reasoning for code work`,
     );
   return {
     id: row.id,
@@ -167,9 +222,18 @@ function modelEntry(row, source, defaults) {
     reasoning,
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow:
-      positiveInteger(context, `${source}/${row.id} context`) ?? defaults.contextWindow,
-    maxTokens: positiveInteger(output, `${source}/${row.id} maxTokens`) ?? defaults.maxTokens,
+    contextWindow: modelLimit(
+      context,
+      configured.contextWindow,
+      defaults.contextWindow,
+      `${source}/${row.id} context`,
+    ),
+    maxTokens: modelLimit(
+      output,
+      configured.maxTokens,
+      defaults.maxTokens,
+      `${source}/${row.id} maxTokens`,
+    ),
   };
 }
 
@@ -185,9 +249,29 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
           reasoningSetting(env[`${prefix}_REASONING`], `${prefix}_REASONING`) ??
           source.id === 'router',
       };
-      const rows = await fetchOpenAiModels(source.baseUrl, source.apiKey, opts);
+      const overrides = configuredModelLimits(
+        env[`${prefix}_MODEL_LIMITS`],
+        `${prefix}_MODEL_LIMITS`,
+      );
+      const fetchOptions = { timeoutMs: source.id === 'litellm' ? 5000 : 400, ...opts };
+      const [rows, infos] = await Promise.all([
+        fetchOpenAiModels(source.baseUrl, source.apiKey, fetchOptions),
+        source.id === 'litellm'
+          ? fetchOpenAiModels(source.baseUrl, source.apiKey, {
+              ...fetchOptions,
+              endpoint: 'model/info',
+              idField: 'model_name',
+            })
+          : [],
+      ]);
       if (rows.length === 0) return null;
-      return { ...source, models: rows.map((row) => modelEntry(row, source.id, defaults)) };
+      const infoById = new Map(infos.map((entry) => [entry.model_name, entry.model_info]));
+      return {
+        ...source,
+        models: rows.map((row) =>
+          modelEntry(row, source.id, defaults, infoById.get(row.id) ?? {}, overrides.get(row.id)),
+        ),
+      };
     }),
   );
   return resolved.filter(Boolean);
@@ -196,18 +280,24 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
 /** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effort: string, requestedMaxTokens?: number }} PiModelRequestConfiguration */
 
 /**
- * Refuse a router request that Pi downgraded to non-reasoning; record actual wire effort.
+ * Refuse a reasoning-enabled request that Pi downgraded to non-reasoning; record actual wire effort.
  * @param {(configuration: PiModelRequestConfiguration) => void} [onRequest]
  */
-export function routerReasoningFetch(fetchImpl, router, onRequest) {
-  if (!router) return fetchImpl;
+export function providerReasoningFetch(fetchImpl, providers = [], onRequest) {
+  const byUrl = new Map(
+    providers
+      .filter((source) => ['router', 'litellm'].includes(source.id))
+      .map((source) => [`${source.baseUrl}/chat/completions`, source]),
+  );
+  if (byUrl.size === 0) return fetchImpl;
   return async (input, options = {}) => {
     const url = input instanceof Request ? input.url : String(input);
-    if (url === `${router.baseUrl}/chat/completions`) {
+    const provider = byUrl.get(url);
+    if (provider) {
       const raw = options.body ?? (input instanceof Request ? await input.clone().text() : '');
       const payload = JSON.parse(raw);
-      const model = router.models.find((entry) => entry.id === payload.model);
-      if (model) {
+      const model = provider.models.find((entry) => entry.id === payload.model);
+      if (model && (provider.id === 'router' || model.reasoning)) {
         const effort = payload.reasoning_effort;
         if (
           !model.reasoning ||
@@ -216,10 +306,10 @@ export function routerReasoningFetch(fetchImpl, router, onRequest) {
           ['off', 'none'].includes(effort)
         )
           throw new PiProviderConfigurationError(
-            `Router model ${model.id} requires a reasoning effort; refusing a non-reasoning request`,
+            `Model ${provider.id}/${model.id} requires a reasoning effort; refusing a non-reasoning request`,
           );
         onRequest?.({
-          provider: router.id,
+          provider: provider.id,
           model: model.id,
           contextWindow: model.contextWindow,
           maxTokens: model.maxTokens,

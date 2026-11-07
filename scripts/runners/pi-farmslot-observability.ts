@@ -8,8 +8,8 @@ import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-h
 import {
   deadlinePiFetch,
   PiProviderConfigurationError,
+  providerReasoningFetch,
   resolvePiProviderCatalog,
-  routerReasoningFetch,
 } from './pi-farmslot-providers.mjs';
 import {
   deliverTaskOnce,
@@ -66,14 +66,10 @@ export default async function (pi: {
   globalThis.fetch = boundedFetch;
   try {
     const catalog = await resolvePiProviderCatalog(process.env);
-    globalThis.fetch = routerReasoningFetch(
-      boundedFetch,
-      catalog.find((source) => source.id === 'router'),
-      (configuration) => {
-        console.error('[farmslot-pi] request', JSON.stringify(configuration));
-        pi.appendEntry?.('farmslot-model-request', configuration);
-      },
-    );
+    globalThis.fetch = providerReasoningFetch(boundedFetch, catalog, (configuration) => {
+      console.error('[farmslot-pi] request', JSON.stringify(configuration));
+      pi.appendEntry?.('farmslot-model-request', configuration);
+    });
     for (const source of catalog) {
       pi.registerProvider?.(source.id, {
         name: source.name,
