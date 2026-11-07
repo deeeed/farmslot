@@ -56,6 +56,13 @@ import { applyKnownFailures, type CheckResult, type KnownFailure } from './outco
 import { report, type Verdict } from './report.mjs';
 
 const argv = process.argv.slice(2);
+if (argv.includes('--help')) {
+  console.log(`Usage: node --import tsx scripts/runner-validation/canary/canary.mts
+  --profile canary|nightly|recovery --target live|isolated
+  [--only case,...] [--evidence <dir>] [--results <file>]
+Recovery cases: ${RECOVERY_CASES.join(', ')}`);
+  process.exit(0);
+}
 const arg = (name: string) => {
   const index = argv.indexOf(`--${name}`);
   return index >= 0 ? argv[index + 1] : undefined;
@@ -136,7 +143,6 @@ const available: readonly string[] =
         ];
 for (const name of only ?? [])
   if (!available.includes(name)) throw new Error(`Case ${name} does not run in profile ${profile}`);
-if (profile === 'recovery' && only) throw new Error('Recovery runs the full matrix; omit --only');
 const wants = (name: (typeof CASES)[number]) => !only || only.includes(name);
 const surviveSteps = (arg('survive-steps')?.split(',') ?? [...SURVIVE_STEPS]) as SurviveStep[];
 for (const step of surviveSteps)
@@ -260,6 +266,7 @@ try {
   };
   if (profile === 'recovery')
     await runRecoveryMatrix({
+      cases: only as (typeof RECOVERY_CASES)[number][] | undefined,
       root,
       evidence,
       reaper,
