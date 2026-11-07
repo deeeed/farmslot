@@ -1,1 +1,0 @@
-- Keep the native launch wrapper alive through an immediate startup abort so its child can stop with confirmed ownership and cleanup.
