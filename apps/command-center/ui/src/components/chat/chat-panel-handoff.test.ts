@@ -255,7 +255,7 @@ test('dangerous confirmation preflights a stale read without changing the displa
     fingerprint = params.confirmation.fingerprint;
   });
   const confirm = litBindings(panel.render(), '@click=').at(-1);
-  assert.equal(typeof confirm, 'function');
+  assert(typeof confirm === 'function');
   await confirm();
   assert.equal(fingerprint, binding.fingerprint);
 });
