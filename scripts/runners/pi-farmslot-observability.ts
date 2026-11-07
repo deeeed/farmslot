@@ -5,7 +5,12 @@ import path from 'node:path';
 import { Type } from 'typebox';
 
 import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-hook-writer.mjs';
-import { deadlinePiFetch, resolvePiProviderCatalog } from './pi-farmslot-providers.mjs';
+import {
+  deadlinePiFetch,
+  PiProviderConfigurationError,
+  resolvePiProviderCatalog,
+  routerReasoningFetch,
+} from './pi-farmslot-providers.mjs';
 import {
   deliverTaskOnce,
   farmslotStatusLine,
@@ -42,6 +47,7 @@ function toolResult(text: string, isError = false) {
 export default async function (pi: {
   on: (event: string, handler: (...args: never[]) => unknown) => void;
   registerProvider?: (id: string, provider: Record<string, unknown>) => void;
+  appendEntry?: (type: string, data: Record<string, unknown>) => void;
   registerTool?: (tool: Record<string, unknown>) => void;
   registerCommand?: (name: string, spec: Record<string, unknown>) => void;
   sendUserMessage?: (text: string) => void;
@@ -60,6 +66,14 @@ export default async function (pi: {
   globalThis.fetch = boundedFetch;
   try {
     const catalog = await resolvePiProviderCatalog(process.env);
+    globalThis.fetch = routerReasoningFetch(
+      boundedFetch,
+      catalog.find((source) => source.id === 'router'),
+      (configuration) => {
+        console.error('[farmslot-pi] request', JSON.stringify(configuration));
+        pi.appendEntry?.('farmslot-model-request', configuration);
+      },
+    );
     for (const source of catalog) {
       pi.registerProvider?.(source.id, {
         name: source.name,
@@ -68,8 +82,20 @@ export default async function (pi: {
         api: 'openai-completions',
         models: source.models,
       });
+      for (const model of source.models)
+        console.error(
+          '[farmslot-pi] registered',
+          JSON.stringify({
+            provider: source.id,
+            model: model.id,
+            contextWindow: model.contextWindow,
+            maxTokens: model.maxTokens,
+            reasoning: model.reasoning,
+          }),
+        );
     }
   } catch (error) {
+    if (error instanceof PiProviderConfigurationError) throw error;
     // Optional local/router discovery must not block xAI/Grok launch.
     if (process.env.FARMSLOT_PI_PROVIDERS_DEBUG) {
       console.error('[farmslot-pi] provider discovery failed', error);

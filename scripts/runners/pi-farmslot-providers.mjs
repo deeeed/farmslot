@@ -1,4 +1,4 @@
-// OpenAI-compatible PI providers (Ollama, LiteLLM, custom router). Fail open.
+// OpenAI-compatible Pi providers: optional discovery, validated model configuration.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -105,7 +105,7 @@ export function listPiProviderSources(env = process.env) {
   return sources.filter((source) => source.baseUrl);
 }
 
-export async function fetchOpenAiModelIds(
+export async function fetchOpenAiModels(
   baseUrl,
   apiKey,
   { fetchImpl = globalThis.fetch, timeoutMs = 400 } = {},
@@ -120,7 +120,7 @@ export async function fetchOpenAiModelIds(
     if (!response.ok) return [];
     const body = await response.json();
     const rows = Array.isArray(body?.data) ? body.data : [];
-    return rows.map((row) => (typeof row?.id === 'string' ? row.id : '')).filter(Boolean);
+    return rows.filter((row) => typeof row?.id === 'string' && row.id.trim());
   } catch {
     return [];
   } finally {
@@ -128,15 +128,48 @@ export async function fetchOpenAiModelIds(
   }
 }
 
-function modelEntry(id) {
+export class PiProviderConfigurationError extends Error {}
+
+function positiveInteger(value, name) {
+  if (value === undefined || value === null) return undefined;
+  if (
+    (typeof value !== 'number' && typeof value !== 'string') ||
+    (typeof value === 'string' && !/^[1-9]\d*$/.test(value)) ||
+    !Number.isSafeInteger(Number(value)) ||
+    Number(value) <= 0
+  )
+    throw new PiProviderConfigurationError(`${name} must be a positive safe integer`);
+  return Number(value);
+}
+
+function reasoningSetting(value, name) {
+  if (value === undefined || value === null) return undefined;
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  throw new PiProviderConfigurationError(`${name} must be true, false, 1 or 0`);
+}
+
+function modelEntry(row, source, defaults) {
+  const context =
+    row.context_length ?? row.max_model_len ?? row.context_window ?? row.contextWindow;
+  const output =
+    row.max_output_tokens ?? row.max_completion_tokens ?? row.max_tokens ?? row.maxTokens;
+  const reasoning =
+    reasoningSetting(row.reasoning ?? row.supports_reasoning, `${source}/${row.id} reasoning`) ??
+    defaults.reasoning;
+  if (source === 'router' && !reasoning)
+    throw new PiProviderConfigurationError(
+      `Router model ${row.id} requires reasoning for code work`,
+    );
   return {
-    id,
-    name: id,
-    reasoning: false,
+    id: row.id,
+    name: row.id,
+    reasoning,
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 8192,
+    contextWindow:
+      positiveInteger(context, `${source}/${row.id} context`) ?? defaults.contextWindow,
+    maxTokens: positiveInteger(output, `${source}/${row.id} maxTokens`) ?? defaults.maxTokens,
   };
 }
 
@@ -144,12 +177,60 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
   const sources = listPiProviderSources(env);
   const resolved = await Promise.all(
     sources.map(async (source) => {
-      const ids = await fetchOpenAiModelIds(source.baseUrl, source.apiKey, opts);
-      if (ids.length === 0) return null;
-      return { ...source, models: ids.map(modelEntry) };
+      const prefix = `FARMSLOT_PI_${source.id.toUpperCase()}`;
+      const defaults = {
+        contextWindow: positiveInteger(env[`${prefix}_CONTEXT`], `${prefix}_CONTEXT`) ?? 128000,
+        maxTokens: positiveInteger(env[`${prefix}_MAX_TOKENS`], `${prefix}_MAX_TOKENS`) ?? 8192,
+        reasoning:
+          reasoningSetting(env[`${prefix}_REASONING`], `${prefix}_REASONING`) ??
+          source.id === 'router',
+      };
+      const rows = await fetchOpenAiModels(source.baseUrl, source.apiKey, opts);
+      if (rows.length === 0) return null;
+      return { ...source, models: rows.map((row) => modelEntry(row, source.id, defaults)) };
     }),
   );
   return resolved.filter(Boolean);
+}
+
+/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effort: string, requestedMaxTokens?: number }} PiModelRequestConfiguration */
+
+/**
+ * Refuse a router request that Pi downgraded to non-reasoning; record actual wire effort.
+ * @param {(configuration: PiModelRequestConfiguration) => void} [onRequest]
+ */
+export function routerReasoningFetch(fetchImpl, router, onRequest) {
+  if (!router) return fetchImpl;
+  return async (input, options = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === `${router.baseUrl}/chat/completions`) {
+      const raw = options.body ?? (input instanceof Request ? await input.clone().text() : '');
+      const payload = JSON.parse(raw);
+      const model = router.models.find((entry) => entry.id === payload.model);
+      if (model) {
+        const effort = payload.reasoning_effort;
+        if (
+          !model.reasoning ||
+          typeof effort !== 'string' ||
+          !effort.trim() ||
+          ['off', 'none'].includes(effort)
+        )
+          throw new PiProviderConfigurationError(
+            `Router model ${model.id} requires a reasoning effort; refusing a non-reasoning request`,
+          );
+        onRequest?.({
+          provider: router.id,
+          model: model.id,
+          contextWindow: model.contextWindow,
+          maxTokens: model.maxTokens,
+          requestedMaxTokens: payload.max_completion_tokens ?? payload.max_tokens,
+          reasoning: true,
+          effort,
+        });
+      }
+    }
+    return fetchImpl(input, options);
+  };
 }
 
 /** Native auth excludes extensions; their authenticated model discovery is the admission check. */

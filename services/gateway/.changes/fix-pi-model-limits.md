@@ -1,0 +1,1 @@
+- Preserve reported or configured Pi model limits, require router reasoning, and record effective request settings instead of silently using fixed context and output budgets.
