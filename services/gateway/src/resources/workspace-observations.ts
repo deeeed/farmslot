@@ -138,7 +138,10 @@ export class WorkspaceObservations {
         throw error;
       }
       if (captured.revision !== revision)
-        throw this.unavailable('Workspace source or identity changed during the read');
+        throw new GatewayMethodError(
+          'RESOURCE_OBSERVATION_CHANGED',
+          'Workspace contents changed during the read',
+        );
     };
   }
   /** Reuse derived reads only while their existing workspace source stays current. */

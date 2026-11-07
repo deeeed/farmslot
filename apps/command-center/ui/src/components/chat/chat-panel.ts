@@ -30,7 +30,7 @@ import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { hashParams, navigateHash } from '../../utils/url-state.js';
 import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { readFailureText, ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   copilotStatusQuery,
@@ -59,6 +59,9 @@ export class ChatPanel extends LitElement {
   @state() private archive?: ChatHistoryResult;
   @state() private archiveError = '';
   private archiveStop?: () => void;
+  private configurationDirty = false;
+  private configurationIdentity?: string;
+  private configurationScope?: string;
   private pendingHandoff?: {
     scope: string | undefined;
     target: 'copilot' | 'agent';
@@ -124,9 +127,23 @@ export class ChatPanel extends LitElement {
   private readonly runtimeQuery = new ResourceQueryController<CopilotStatusResult>(
     this,
     (state) => {
+      const scope = getResourceWorkspaceKey();
+      if (scope !== this.configurationScope) {
+        this.configurationScope = scope;
+        this.configurationDirty = false;
+        this.configurationIdentity = undefined;
+      }
       this.runtime = state.data?.session;
       const session = this.runtime;
-      if (!session || this.busy) return;
+      if (!session || this.busy || this.configurationDirty) return;
+      const identity = JSON.stringify([
+        session.runner,
+        session.model,
+        session.effort,
+        session.autostart,
+      ]);
+      if (identity === this.configurationIdentity) return;
+      this.configurationIdentity = identity;
       this.picker.setSequence([
         {
           runner: session.runner,
@@ -165,8 +182,9 @@ export class ChatPanel extends LitElement {
     super.disconnectedCallback();
     this.archiveStop?.();
   }
-  private ownerGuard() {
-    this.runtimeQuery.requireReady();
+  private async ownerGuard() {
+    if (!this.nativeCopilotSupported) throw new Error('Native Co-Pilot needs the gateway update.');
+    await this.runtimeQuery.requireCurrent();
     const cache = getResourceCache(),
       scope = getResourceWorkspaceKey();
     return () =>
@@ -211,7 +229,7 @@ export class ChatPanel extends LitElement {
     this.requestUpdate();
   }
   private async configure(): Promise<void> {
-    const owns = this.ownerGuard();
+    const owns = await this.ownerGuard();
     const choice = this.picker.selection!;
     const result = await gateway.request<CopilotConfigureResult>(Methods.COPILOT_CONFIGURE, {
       runner: choice.runner,
@@ -221,9 +239,10 @@ export class ChatPanel extends LitElement {
     });
     if (!owns()) throw new Error('Co-Pilot account changed');
     this.runtime = result.session;
+    this.configurationDirty = false;
   }
   private readonly ensureSession = async (): Promise<NativeSessionInfo> => {
-    const owns = this.ownerGuard();
+    const owns = await this.ownerGuard();
     const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, {
       safetyTier: 'sandboxed',
     });
@@ -252,7 +271,7 @@ export class ChatPanel extends LitElement {
     }
   }
   private async start(params: CopilotStartParams = { safetyTier: 'sandboxed' }): Promise<void> {
-    const owns = this.ownerGuard();
+    const owns = await this.ownerGuard();
     const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, params);
     if (!owns()) throw new Error('Co-Pilot account changed');
     this.runtime = result.session;
@@ -284,12 +303,15 @@ export class ChatPanel extends LitElement {
     this.phrase = '';
     this.dangerous = true;
   }
+  private get nativeCopilotSupported(): boolean {
+    return gateway.authenticatedConnection?.capabilities.conversationStreaming === 1;
+  }
   render() {
     if (!this.open) return nothing;
     const runtime = this.targetChoice === 'copilot' ? this.runtime : undefined;
     const active =
       runtime && ['starting', 'running', 'reconnecting', 'stopping'].includes(runtime.status);
-    const disabled = this.busy || !this.runtimeQuery.ready;
+    const disabled = this.busy || !this.runtimeQuery.actable || !this.nativeCopilotSupported;
     return html`<style>
         chat-panel {
           display: flex;
@@ -319,6 +341,11 @@ export class ChatPanel extends LitElement {
         }
         chat-panel .copilot-settings {
           padding: 12px 16px;
+        }
+        chat-panel .copilot-settings-hint {
+          margin: 0 0 12px;
+          font-size: 12px;
+          color: var(--fs-text-muted, #999);
         }
         chat-panel .copilot-settings input {
           margin: 8px;
@@ -375,7 +402,7 @@ export class ChatPanel extends LitElement {
               ?disabled=${disabled}
               @click=${() =>
                 this.act(async () => {
-                  this.ownerGuard();
+                  await this.ownerGuard();
                   const result = await gateway.request<CopilotStopResult>(Methods.COPILOT_STOP, {
                     reason: 'operator-requested',
                   });
@@ -387,17 +414,33 @@ export class ChatPanel extends LitElement {
           : nothing}
       </div>
       <div class="copilot-notice" role="status">
-        ${this.error ||
-        (this.targetChoice === 'copilot' ? this.runtimeQuery.state.error?.message : '') ||
-        runtime?.terminalReason ||
-        'Opening this view starts no agent.'}
+        ${this.targetChoice === 'copilot' &&
+        gateway.authenticatedConnection &&
+        !this.nativeCopilotSupported
+          ? html`Native Co-Pilot is waiting for the gateway update. Use
+              <a href="#terminal">Terminals</a> for existing sessions.`
+          : this.error ||
+            (this.targetChoice === 'copilot' ? readFailureText(this.runtimeQuery) : '') ||
+            (runtime && ['failed', 'ambiguous'].includes(runtime.status)
+              ? runtime.terminalReason
+              : '') ||
+            'Send a message to start working. Opening this view starts no agent.'}
       </div>
       ${this.settings && this.targetChoice === 'copilot'
-        ? html`<section class="copilot-settings">
+        ? html`<section class="copilot-settings" aria-label="Co-Pilot settings">
+            <p class="copilot-settings-hint">
+              Runner and model apply to the next Co-Pilot session.
+              ${active
+                ? 'Stop the current session before changing them.'
+                : 'Save your choices, then send a message to start.'}
+            </p>
             <review-dispatch-picker
               .viewModel=${this.picker}
               .disabled=${disabled || active}
-              @review-dispatch-change=${() => this.requestUpdate()}
+              @review-dispatch-change=${() => {
+                this.configurationDirty = true;
+                this.requestUpdate();
+              }}
             ></review-dispatch-picker>
             <label
               ><input
@@ -406,8 +449,9 @@ export class ChatPanel extends LitElement {
                 ?disabled=${disabled}
                 @change=${(event: Event) => {
                   this.autostart = (event.target as HTMLInputElement).checked;
+                  this.configurationDirty = true;
                 }}
-              />Start automatically with the gateway</label
+              />Start automatically when the gateway starts</label
             >
             <button
               data-testid="copilot-save-config"
@@ -440,6 +484,7 @@ export class ChatPanel extends LitElement {
               >Saved conversations
               <select
                 data-testid="copilot-archive"
+                title="Read a previous conversation without starting an agent"
                 .value=${this.archiveId}
                 @change=${(event: Event) => {
                   this.archiveId = (event.target as HTMLSelectElement).value;

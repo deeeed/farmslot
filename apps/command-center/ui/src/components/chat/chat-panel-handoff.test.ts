@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import { litBindings, litText } from '../../testing/lit-text.js';
+
 let scope = 'scope-a';
+const gateway = {
+  connectionState: 'connected',
+  authenticatedConnection: { capabilities: { conversationStreaming: 1 as number | undefined } },
+};
 mock.module('./native-session-view.js', { namedExports: {} });
 mock.module('./chat-message.js', { namedExports: {} });
 mock.module('../shared/review-dispatch-picker.js', { namedExports: {} });
@@ -9,7 +15,7 @@ mock.module('./native-session-observation.js', {
   namedExports: { observeNativeArchiveResource: () => () => undefined },
 });
 mock.module('../../gateway-client.js', {
-  namedExports: { gateway: { connectionState: 'connected' } },
+  namedExports: { gateway },
 });
 mock.module('../../resource-cache.js', {
   namedExports: {
@@ -109,4 +115,97 @@ test('an explicit submit waits for current conversation authority and is deliver
   await Reflect.get(panel, 'deliverHandoff').call(panel);
   await Reflect.get(panel, 'deliverHandoff').call(panel);
   assert.equal(sends, 1);
+});
+
+test('settings keep drafts and action availability during a superseded background read', () => {
+  const panel = new ChatPanel();
+  const query = Reflect.get(panel, 'runtimeQuery');
+  const session = {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'low',
+    autostart: false,
+    status: 'stopped',
+  };
+  const current = { status: 'ready', data: { session } };
+  query.onChange(current);
+  const picker = Reflect.get(panel, 'picker');
+  picker.setSequence([{ runner: 'codex', model: 'gpt-6-luna', effort: 'low', mode: 'cold' }]);
+  Reflect.set(panel, 'configurationDirty', true);
+  Reflect.set(panel, 'autostart', true);
+  query.state = {
+    ...current,
+    status: 'stale',
+    error: { code: 'RESOURCE_OBSERVATION_CHANGED', message: 'Workspace changed during read' },
+  };
+  Object.defineProperty(query, 'actable', { value: true });
+  query.onChange(query.state);
+  assert.equal(picker.selection.model, 'gpt-6-luna');
+  assert.equal(Reflect.get(panel, 'autostart'), true);
+  assert.doesNotMatch(litText(panel.render()), /Workspace changed during read/);
+  Reflect.set(panel, 'settings', true);
+  assert(litBindings(panel.render(), '?disabled=').every((disabled) => disabled === false));
+});
+
+test('an older gateway has a stable update notice and cannot launch or change the native copilot', () => {
+  const panel = new ChatPanel();
+  Reflect.set(panel, 'settings', true);
+  const query = Reflect.get(panel, 'runtimeQuery');
+  Object.defineProperty(query, 'actable', { value: true });
+  query.state = {
+    status: 'stale',
+    error: {
+      code: 'RESOURCE_OBSERVATION_UNAVAILABLE',
+      message: 'Workspace source or identity changed during the read',
+    },
+  };
+  gateway.authenticatedConnection.capabilities.conversationStreaming = undefined;
+  try {
+    const rendered = panel.render();
+    assert.match(litText(rendered), /gateway update/i);
+    assert.doesNotMatch(litText(rendered), /Workspace source or identity changed during the read/);
+    assert(
+      litBindings(rendered, '?disabled=')
+        .slice(1)
+        .every((disabled) => disabled === true),
+    );
+    assert.match(litText(rendered), /Saved conversations/);
+  } finally {
+    gateway.authenticatedConnection.capabilities.conversationStreaming = 1;
+  }
+});
+
+test('action preflight waits for a current settings read before capturing its owner', async () => {
+  const panel = new ChatPanel();
+  let checked = false;
+  const query = Reflect.get(panel, 'runtimeQuery');
+  query.requireCurrent = async () => {
+    checked = true;
+  };
+  const owns = await Reflect.get(panel, 'ownerGuard').call(panel);
+  assert.equal(checked, true);
+  assert.equal(owns(), true);
+  scope = 'replacement-scope';
+  try {
+    assert.equal(owns(), false);
+  } finally {
+    scope = 'scope-a';
+  }
+});
+
+test('unchanged runtime refreshes preserve the runner picker row identity', () => {
+  const panel = new ChatPanel();
+  const query = Reflect.get(panel, 'runtimeQuery');
+  const session = {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'low',
+    autostart: false,
+    status: 'stopped',
+  };
+  query.onChange({ status: 'ready', data: { session } });
+  const picker = Reflect.get(panel, 'picker');
+  const row = picker.rows[0].id;
+  query.onChange({ status: 'stale', data: { session: { ...session } } });
+  assert.equal(picker.rows[0].id, row);
 });

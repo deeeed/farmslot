@@ -1,0 +1,1 @@
+- Keep Co-Pilot settings and unsaved choices stable during background reads, require a fresh read before actions, and explain the gateway update needed for native conversations.
