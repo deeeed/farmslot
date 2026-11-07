@@ -57,6 +57,7 @@ export async function runRecoveryMatrix(options: {
     const stack = await startRemoteNodeStack({
       ...options,
       evidence,
+      nodeBin: path.dirname(process.execPath),
       onCleanup: (stop) => {
         stops.push(stop);
       },
