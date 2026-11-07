@@ -18,6 +18,7 @@ import { shellQuote } from '../core/tmux.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
 import { collectRunGateReadiness } from '../run-engine/gate-prerequisites.js';
 import { rerunReviewIfReviewedInputsChanged } from '../run-engine/post-dispatch-steps.js';
+import type { PublishGateReviewPlanDependencies } from '../run-engine/ready-gate.js';
 import { makeReadyGatePackage } from '../run-engine/test-fixtures.js';
 import { getRun, updateRun } from '../runs/store.js';
 
@@ -378,7 +379,7 @@ test('a package refused after the re-run is left to the gate, not thrown', async
   assert.equal(await awaiting(), false, 'a review that ran still counts as the re-run');
 });
 
-test('the re-run reviews with the row the pipeline review ran, after the gate consumed it', async (t) => {
+test('a cold pipeline recheck keeps its runner without borrowing the gate reviewer lineage', async (t) => {
   const { run, artifacts } = await slotWithTask(t);
   const row: ReviewSelection = {
     runner: 'codex',
@@ -391,6 +392,14 @@ test('the re-run reviews with the row the pipeline review ran, after the gate co
     steps: getRun(run.id)!.steps.map((step) =>
       step.name === 'review' ? { ...step, inputs: { ...step.inputs, reviewSelection: row } } : step,
     ),
+    engineState: {
+      ...getRun(run.id)!.engineState,
+      publishGate: {
+        reviewSequenceContext: {
+          reviewLineages: [{ familyId: run.familyId, reviewId: 'claude-gate-review' }],
+        },
+      },
+    },
   });
   await reviewPasses(run.id);
   const plans: ReviewSelection[][] = [];
@@ -399,7 +408,10 @@ test('the re-run reviews with the row the pipeline review ran, after the gate co
       _runId: string,
       _slotId: string,
       plan: ReviewSelection[],
+      _source: 'dispatch' | 'human-gate',
+      dependencies?: PublishGateReviewPlanDependencies,
     ) => {
+      assert.deepEqual(dependencies?.reviewSequenceContext, { reviewLineages: [null] });
       plans.push(plan);
       return { reviewIds: [] };
     },

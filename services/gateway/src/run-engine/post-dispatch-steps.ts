@@ -1152,7 +1152,7 @@ export async function rerunReviewIfReviewedInputsChanged(
     reviewSlotId,
     plan,
     'dispatch',
-    lineage ? { reviewSequenceContext: { reviewLineages: [lineage] } } : undefined,
+    { reviewSequenceContext: { reviewLineages: [lineage ?? null] } },
   );
   await reconcilePublishGateReviewPlanResult(runId, plan, reviewPlanResult, context, {
     reviewedPackage,
