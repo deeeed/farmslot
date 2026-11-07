@@ -130,6 +130,8 @@ test('a historical dev-server log record is never inspected or stopped as a work
         role: 'dev',
         label: 'Dev',
         status: 'complete',
+        slotId: SLOT_ID,
+        runId: RUN_ID,
         runner: 'pi',
         target: {
           session: 'mmt-3',

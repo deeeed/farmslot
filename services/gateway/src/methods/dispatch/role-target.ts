@@ -38,8 +38,8 @@ export function parseCapturedAgentPaneTarget(session: string, raw: string): Agen
  * over a persisted numeric tmux target.
  */
 export function canonicalAgentContextTarget(target: AgentContextTarget): string {
-  assertWorkerWindow(target.window);
-  assertWorkerWindow(target.target.split(':')[1]?.replace(/^=/, '').split('.')[0]);
+  if (isDevServerLogTarget(target))
+    throw new Error(`${DEVSERVER_LOG_WINDOW_NAME} cannot be used as a worker target`);
   const paneId = target.paneId?.trim();
   if (paneId && /^%\d+$/.test(paneId)) return paneId;
   const session = target.session?.trim();
@@ -48,6 +48,13 @@ export function canonicalAgentContextTarget(target: AgentContextTarget): string 
     return `${session}:${window}`;
   }
   return target.target;
+}
+
+export function isDevServerLogTarget(target: AgentContextTarget): boolean {
+  return (
+    target.window === DEVSERVER_LOG_WINDOW_NAME ||
+    target.target.split(':')[1]?.replace(/^=/, '').split('.')[0] === DEVSERVER_LOG_WINDOW_NAME
+  );
 }
 
 function assertWorkerWindow(window: string | null | undefined): void {

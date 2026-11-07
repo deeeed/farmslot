@@ -24,9 +24,15 @@ import {
   updateSlotStatusIf,
 } from '../core/index.js';
 import { slotRealpath } from '../core/slot-io.js';
-import { DEVSERVER_LOG_WINDOW_NAME, resolveTmuxSession, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  DEVSERVER_LOG_WINDOW_NAME,
+  resolveTmuxSession,
+  shellQuote,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import { isActiveSlotHolder, slotPinIsRequestOnly } from '../methods/dispatch/slot-scoring.js';
 import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
+import { resolveDevServerLogPath } from '../methods/slot/prepare-devserver-log.js';
 import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
@@ -271,6 +277,17 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       root.command.split('/').at(-1) !== 'tail' ||
       censusRows.some((row) => row.parent === panePid)
     )
+      return `Dev-server log pane process ${panePid} is still occupied; cleanup deferred`;
+    const project = await loadProjectVars(vars.projectName);
+    const logPath = resolveDevServerLogPath(project.projectJson, vars, project);
+    const args = await execOnSlot(vars, `ps -ww -o args= -p ${shellQuote(panePid)}`, {
+      cwd: '/',
+      timeout: 15000,
+    });
+    // Preparation launches exactly `tail -F <configured path>`. A different
+    // file or command in this window is still a workspace occupant.
+    const tailedPath = /^(?:\S*\/)?tail -F (.+)$/.exec(args.stdout.trim())?.[1];
+    if (!logPath || args.exitCode !== 0 || tailedPath !== logPath)
       return `Dev-server log pane process ${panePid} is still occupied; cleanup deferred`;
   }
   for (const panePid of ownedShells) {

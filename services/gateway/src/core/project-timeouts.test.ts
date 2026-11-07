@@ -4,8 +4,12 @@ import test from 'node:test';
 import type { RawProjectJson } from './config.js';
 import { runtimeBootTimeoutMs } from './project-timeouts.js';
 
+interface ProjectTimeoutFixture extends RawProjectJson {
+  timeouts?: { build_compile_s?: number; prepare_preflight_s?: number };
+}
+
 test('runtime boot reserves the default budget unless preparation explicitly overrides it', () => {
-  const cases: Array<[RawProjectJson, number]> = [
+  const cases: Array<[ProjectTimeoutFixture, number]> = [
     [{}, 900_000],
     [{ timeouts: { build_compile_s: 600 } }, 900_000],
     [{ timeouts: { build_compile_s: 5400 } }, 5_400_000],

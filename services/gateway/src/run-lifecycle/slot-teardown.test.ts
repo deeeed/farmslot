@@ -46,6 +46,9 @@ let workspaceHelperAlive = false;
 let rawProcessCensus: string | null = null;
 let cwdProcessCensus: string | null = null;
 let tmuxInventory = '';
+let logTailArgs = '';
+let logTailArgsExitCode = 0;
+let devServerLog: string | undefined;
 /** The pane process's own command line, as `ps` reports it. */
 let paneLaunch = '';
 let runnerProbe: RunnerDescendantPidProbe = { state: 'absent' };
@@ -134,7 +137,10 @@ mock.module('../core/index.js', {
       session: 'mmt-1',
       resourceVars: { cdp_port: '9542' },
     }),
-    loadProjectVars: async () => ({ runtimeDir: '.agent' }),
+    loadProjectVars: async () => ({
+      runtimeDir: '.agent',
+      projectJson: { health: { dev_server_log: devServerLog } },
+    }),
     readSlotRow: async () => slotRow,
     markSlotStatusIf: async (
       _id: string,
@@ -193,6 +199,8 @@ mock.module('../core/index.js', {
       if (cmd.startsWith(': farmslot-owned-process-reap'))
         return { stdout: reapBrowserSession(cmd), stderr: '', exitCode: 0 };
       if (cmd.includes('list-panes -a')) return { stdout: tmuxInventory, stderr: '', exitCode: 0 };
+      if (cmd.startsWith('ps -ww -o args= -p'))
+        return { stdout: logTailArgs, stderr: '', exitCode: logTailArgsExitCode };
       if (cmd.startsWith('ps -ww -o command= -p'))
         return { stdout: paneLaunch, stderr: '', exitCode: paneLaunch ? 0 : 1 };
       const display = /display-message -p -t '(%\d+)'/.exec(cmd);
@@ -492,6 +500,9 @@ beforeEach(() => {
   rawProcessCensus = null;
   cwdProcessCensus = null;
   tmuxInventory = '';
+  logTailArgs = 'tail -F /slot/.agent/dev-server.log';
+  logTailArgsExitCode = 0;
+  devServerLog = '{{runtime_dir}}/dev-server.log';
   paneLaunch = '';
   run.agentContexts = [];
   run.taskFile = null;
@@ -918,6 +929,8 @@ test('boot failure before worker launch releases a slot whose only pane tails th
       role: 'dev',
       label: 'Dev',
       status: 'working',
+      slotId: SLOT_ID,
+      runId: RUN_ID,
       runner: 'pi',
       target: null,
     },
@@ -932,8 +945,42 @@ test('boot failure before worker launch releases a slot whose only pane tails th
   assert.equal(slotRow?.phase, null);
   assert.equal(slotRow?.current_run_id, null);
   assert.equal(slotRow?.cleanup_run_id, null);
-  assert.equal(run.agentContexts[0]!.target, null);
+  assert.equal(run.agentContexts?.[0]?.target, null);
   assert.deepEqual(runnerProbePids, [], 'no worker probe waits on the log pane');
+});
+
+test('a childless tail of another file in the dev-server log window still blocks teardown', async () => {
+  tmuxInventory = 'mmt-1\t%250\t88042\t/slot\t/slot\t$2\t1791363049\tdevserver-log\n';
+  rawProcessCensus = '88042 1 88042 Fri Oct 9 01:00:00 2026 /usr/bin/tail\n';
+  cwdProcessCensus = 'p88042\nn/slot\n';
+  logTailArgs = 'tail -F /slot/another-file.log';
+
+  assert.match((await slotTeardownBlocker(run)) ?? '', /log pane process 88042 is still occupied/);
+});
+
+test('the dev-server log tail requires readable matching arguments and no children', async () => {
+  tmuxInventory = 'mmt-1\t%250\t88042\t/slot\t/slot\t$2\t1791363049\tdevserver-log\n';
+  const root = '88042 1 88042 Fri Oct 9 01:00:00 2026 /usr/bin/tail\n';
+  rawProcessCensus = root;
+  cwdProcessCensus = 'p88042\nn/slot\n';
+  logTailArgs = '/usr/bin/tail -F /slot/.agent/dev-server.log\n';
+  assert.equal(await slotTeardownBlocker(run), null);
+
+  logTailArgsExitCode = 1;
+  assert.ok(await slotTeardownBlocker(run), 'unreadable arguments block cleanup');
+  logTailArgsExitCode = 0;
+  logTailArgs = '';
+  assert.ok(await slotTeardownBlocker(run), 'empty arguments block cleanup');
+  logTailArgs = 'tail -F /slot/.agent/dev-server.log /slot/another-file.log';
+  assert.ok(await slotTeardownBlocker(run), 'an additional file blocks cleanup');
+  logTailArgs = 'tail -f /slot/.agent/dev-server.log';
+  assert.ok(await slotTeardownBlocker(run), 'only the preparation command is exempt');
+  logTailArgs = 'tail -F /slot/.agent/dev-server.log';
+  rawProcessCensus = `${root}88043 88042 88042 Fri Oct 9 01:00:00 2026 node\n`;
+  assert.ok(await slotTeardownBlocker(run), 'a tail with children blocks cleanup');
+  rawProcessCensus = root;
+  devServerLog = undefined;
+  assert.ok(await slotTeardownBlocker(run), 'an unconfigured log path blocks cleanup');
 });
 
 test('a dev-server log name grants no authority over a foreign pane or another process', async () => {

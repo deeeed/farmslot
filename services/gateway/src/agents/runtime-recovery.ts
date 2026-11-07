@@ -554,8 +554,7 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
       ...(inspection.runnerSessionPath !== undefined
         ? { runnerSessionPath: inspection.runnerSessionPath }
         : {}),
-      // A dispatch interrupted before it captured the pane: without the id, an exited runner
-      // reads as unproven at the gate.
+      // Recover a missing pane id only from the pane whose runner was proven live.
       ...(!ctx.target?.paneId && inspection.target
         ? { target: agentTargetFromWorkerRef(inspection.target) }
         : {}),

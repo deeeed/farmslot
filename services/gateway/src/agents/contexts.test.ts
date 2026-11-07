@@ -664,6 +664,55 @@ test('raw target selection does not borrow the primary worker context', async (t
   assert.equal(selectAgentContext(run, { target: 'mme-1:missing' }), null);
 });
 
+for (const lookup of ['selectAgentContext', 'resolveAgentTarget']) {
+  test(`${lookup} skips historical log-window contexts when finding another target`, async (t) => {
+    const run = createRun({
+      flowType: 'dev',
+      project: 'example-browser-farm',
+      ticketOrPr: `LOG-TARGET-${lookup}`,
+      slotId: 'runner-browser-1',
+    });
+    t.after(() => cleanupRun(run.id));
+    const primary = synthesizePrimaryContext(run);
+    assert.ok(primary);
+    for (const window of ['devserver-log', null]) {
+      const updated = updateRun(run.id, {
+        agentContexts: [
+          {
+            ...primary,
+            target: { session: 'mme-1', window, paneId: '%250', target: 'mme-1:devserver-log' },
+          },
+          {
+            ...primary,
+            id: 'review',
+            role: 'review',
+            runner: 'codex',
+            target: { session: 'mme-1', window: 'review', target: 'mme-1:review' },
+          },
+        ],
+      });
+      if (lookup === 'selectAgentContext') {
+        assert.equal(selectAgentContext(updated, { target: 'mme-1:review.1' })?.id, 'review');
+        assert.equal(selectAgentContext(updated, { target: 'mme-1:missing' }), null);
+        assert.equal(selectAgentContext(updated, { target: '%250' }), null);
+        assert.equal(selectAgentContext(updated, { contextId: primary.id }), null);
+      } else {
+        const resolved = await resolveAgentTarget('runner-browser-1', {
+          runId: run.id,
+          target: 'mme-1:review',
+        });
+        assert.equal(resolved.target, 'mme-1:review');
+        assert.equal(resolved.runner, 'codex');
+        const missing = await resolveAgentTarget('runner-browser-1', {
+          runId: run.id,
+          target: 'mme-1:missing',
+        });
+        assert.equal(missing.runner, undefined);
+      }
+    }
+  });
+}
+
 test('a missing explicit run cannot fall back to the current slot without a bare-session action', async () => {
   await assert.rejects(
     () => resolveAgentOrBareTarget('runner-browser-1', { runId: 'removed-history-run' }),
