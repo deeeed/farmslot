@@ -1,0 +1,1 @@
+- Complete artifact-only comparison runs with their retained working-tree diff and artifacts, without requiring a commit or publication nudge.

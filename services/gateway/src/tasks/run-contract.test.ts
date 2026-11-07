@@ -36,7 +36,7 @@ test('autonomous dev and fix-bug runs get the run contract', () => {
   }
 });
 
-test('artifact-only runs outside comparison replays get a contract that commits and never publishes', () => {
+test('artifact-only runs outside comparison replays keep local diff output and never publish', () => {
   for (const flowType of ['dev', 'fix-bug'] as const) {
     const section = runContractSection(
       { flowType, mode: 'autonomous', completionPolicy: 'artifact-only', lane: 'validation' },
@@ -44,10 +44,7 @@ test('artifact-only runs outside comparison replays get a contract that commits 
     );
     assert.ok(section);
     assert.match(section, /Never pause or ask for input\./);
-    assert.match(
-      section,
-      /Commit the change locally with a Conventional Commit\. This run is artifact-only/,
-    );
+    assert.match(section, /Keep the local working-tree diff and task artifacts as the output/);
     assert.match(section, /never `git push` and never run a `gh pr` write/);
     assert.doesNotMatch(section, /publication gate|CI-FIX\.md/);
   }
