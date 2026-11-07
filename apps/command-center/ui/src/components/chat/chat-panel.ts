@@ -421,7 +421,7 @@ export class ChatPanel extends LitElement {
               <a href="#terminal">Terminals</a> for existing sessions.`
           : this.error ||
             (this.targetChoice === 'copilot' ? readFailureText(this.runtimeQuery) : '') ||
-            (runtime && ['failed', 'ambiguous'].includes(runtime.status)
+            (runtime && ['failed', 'ambiguous', 'reconnecting'].includes(runtime.status)
               ? runtime.terminalReason
               : '') ||
             'Send a message to start working. Opening this view starts no agent.'}
@@ -516,10 +516,10 @@ export class ChatPanel extends LitElement {
               ?disabled=${disabled || !dangerousStartParams(runtime.dangerousLaunch, this.phrase)}
               @click=${() =>
                 this.act(async () => {
-                  const params = dangerousStartParams(
-                    this.runtimeQuery.requireReady().session.dangerousLaunch,
-                    this.phrase,
-                  );
+                  const binding = this.runtime?.dangerousLaunch;
+                  await this.runtimeQuery.requireCurrent();
+                  // Keep the fingerprint the user saw; the server rejects a changed checkout.
+                  const params = binding && dangerousStartParams(binding, this.phrase);
                   if (params) await this.start(params);
                 })}
             >

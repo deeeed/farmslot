@@ -209,3 +209,53 @@ test('unchanged runtime refreshes preserve the runner picker row identity', () =
   query.onChange({ status: 'stale', data: { session: { ...session } } });
   assert.equal(picker.rows[0].id, row);
 });
+
+test('a persistent reconnecting runtime keeps its actual failure reason visible', () => {
+  const panel = new ChatPanel();
+  Reflect.set(panel, 'runtime', {
+    status: 'reconnecting',
+    terminalReason: 'Native execution owner changed',
+  });
+  assert.match(litText(panel.render()), /Native execution owner changed/);
+});
+
+test('dangerous confirmation preflights a stale read without changing the displayed fingerprint', async () => {
+  const panel = new ChatPanel();
+  const query = Reflect.get(panel, 'runtimeQuery');
+  const binding = {
+    fingerprint: 'displayed-fingerprint',
+    typedPhrase: 'ENABLE DANGEROUS CO-PILOT',
+    warning: 'Existing safety warning',
+    checkout: '/owned',
+    branch: 'feature',
+    head: 'a',
+    dirtyFileCount: 0,
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    safetyTier: 'dangerous',
+  };
+  Reflect.set(panel, 'runtime', { status: 'stopped', dangerousLaunch: binding });
+  Reflect.set(panel, 'dangerous', true);
+  Reflect.set(panel, 'phrase', binding.typedPhrase);
+  query.state = { status: 'stale', data: { session: { dangerousLaunch: binding } } };
+  query.requireReady = () => {
+    throw new Error('stale read must preflight');
+  };
+  let fresh = false;
+  query.requireCurrent = async () => {
+    fresh = true;
+    Reflect.set(panel, 'runtime', {
+      status: 'stopped',
+      dangerousLaunch: { ...binding, fingerprint: 'unseen-new-fingerprint' },
+    });
+  };
+  let fingerprint: string | undefined;
+  Reflect.set(panel, 'start', async (params: { confirmation: { fingerprint: string } }) => {
+    assert.equal(fresh, true);
+    fingerprint = params.confirmation.fingerprint;
+  });
+  const confirm = litBindings(panel.render(), '@click=').at(-1);
+  assert.equal(typeof confirm, 'function');
+  await confirm();
+  assert.equal(fingerprint, binding.fingerprint);
+});

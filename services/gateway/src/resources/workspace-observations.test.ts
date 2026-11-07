@@ -221,3 +221,40 @@ test('live failure closes its owned watcher before publishing invalidation', asy
   assert.deepEqual(published, [true]);
   owner.release('live');
 });
+
+test('a watcher failure during async identity validation remains unavailable', async () => {
+  const owner = new WorkspaceObservations(() => {});
+  let fail!: (error: Error) => void;
+  let release!: () => void;
+  let entered!: () => void;
+  let hold = false;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const paused = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const confirm = await owner.capture({
+    root: '/owned',
+    sourceId: 'async-source',
+    keys: [key],
+    current: async () => {
+      if (hold) {
+        entered();
+        await paused;
+      }
+      return true;
+    },
+    arm: async (_changed, failed) => {
+      fail = failed;
+      return () => {};
+    },
+  });
+  hold = true;
+  const confirming = confirm();
+  await waiting;
+  fail(new Error('watcher connection lost'));
+  release();
+  await assert.rejects(confirming, { code: 'RESOURCE_OBSERVATION_UNAVAILABLE' });
+  owner.release('async-source');
+});
