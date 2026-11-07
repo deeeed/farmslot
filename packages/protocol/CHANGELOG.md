@@ -6,6 +6,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.80.0 - 2026-11-07
+
+- Share native tool diffs and text-diff formatting between clients, with optional registered-agent effort choices.
+
 ## 0.79.0 - 2026-11-07
 
 - Define bounded live conversation subscriptions and share their cache, replay, ownership fences and paint measurements across clients.

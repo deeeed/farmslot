@@ -1,8 +1,7 @@
 {
-  "version": "0.35.0",
+  "version": "0.36.0",
   "date": "2026-11-07",
   "items": [
-    "Follow streamed native conversations with stable Co-Pilot settings.",
-    "Show declared node compatibility and actionable refusal reasons."
+    "Use registered ACP agents with the native model and effort picker, audited tool approvals and file diffs"
   ]
 }

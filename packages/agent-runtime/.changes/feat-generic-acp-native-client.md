@@ -1,1 +1,0 @@
-- Support existing-login ACP agents with confirmed model and effort choices, audited Bypass approvals and structured tool diffs.

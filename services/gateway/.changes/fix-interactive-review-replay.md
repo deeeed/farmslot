@@ -1,1 +1,0 @@
-- Honor explicitly reviewed interactive runs when automatic project review is disabled, and show the actual package refusal in completion decisions.
