@@ -260,3 +260,116 @@ test('a large retained thread response resolves without becoming a runner event'
   await child.close();
   assert.equal(stopped, true);
 });
+
+for (const closedPipe of [false, true]) {
+  test(
+    closedPipe
+      ? 'SIGTERM during native spawn closes protocol input safely'
+      : 'SIGTERM during native spawn keeps the wrapper until its child stops',
+    { timeout: 10_000 },
+    async (t) => {
+      const { mkdtemp, readFile, realpath, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const path = await import('node:path');
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const { alive } = await import('./storage.js');
+      const execute = promisify(execFile);
+      const root = await realpath(await mkdtemp(path.join(tmpdir(), 'native-startup-signal-')));
+      const runner = path.join(root, 'runner.cjs');
+      const marker = path.join(root, 'child.json');
+      const preload = path.join(root, 'signal-during-spawn.cjs');
+      await writeFile(runner, 'setInterval(() => {}, 1000);\n');
+      // Reproduce the OS signal in the exact spawn-to-handler gap, without a timing sleep.
+      await writeFile(
+        preload,
+        `
+const cp = require('node:child_process');
+const fs = require('node:fs');
+const spawn = cp.spawn;
+cp.spawn = (...args) => {
+  const child = spawn(...args);
+  fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ pid: child.pid, wrapper: process.pid }));
+  process.kill(process.pid, 'SIGTERM');
+  return child;
+};
+`,
+      );
+      let complete!: (result: { stopped: boolean; error?: Error }) => void;
+      const exited = new Promise<{ stopped: boolean; error?: Error }>((resolve) => {
+        complete = resolve;
+      });
+      const child = new JsonLineProcess(
+        process.execPath,
+        [runner],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, '--require ' + JSON.stringify(preload)]
+              .filter(Boolean)
+              .join(' '),
+          },
+        },
+        () => {},
+        (error, stopped) => complete({ error, stopped }),
+      );
+      t.after(async () => {
+        const stopFixtureChild = async () => {
+          let value: { pid: number; wrapper: number } | undefined;
+          try {
+            value = JSON.parse(await readFile(marker, 'utf8'));
+          } catch (error) {
+            if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+              throw error;
+          }
+          if (!value) return;
+          assert(
+            Number.isSafeInteger(value.pid) && value.pid > 1 && value.wrapper === child.child.pid,
+          );
+          if (!alive(value.pid)) return;
+          let command: string;
+          try {
+            command = (await execute('ps', ['-p', String(value.pid), '-o', 'command='])).stdout;
+          } catch (error) {
+            // A fresh absence probe proves the owned child exited during this read.
+            if (!alive(value.pid)) return;
+            throw error;
+          }
+          assert(command.includes(runner), 'Refuse to stop a reused child PID');
+          try {
+            process.kill(value.pid, 'SIGKILL');
+          } catch (error) {
+            if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+          }
+        };
+        const failures: unknown[] = [];
+        for (const cleanup of [
+          () => child.close(),
+          stopFixtureChild,
+          () => rm(root, { recursive: true, force: true }),
+        ]) {
+          try {
+            await cleanup();
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        if (failures.length)
+          throw new AggregateError(failures, 'Native signal fixture cleanup failed');
+      });
+      const pending = assert.rejects(
+        child.request('initialize', {}),
+        (error: unknown) =>
+          error instanceof Error &&
+          (('code' in error && error.code === 'EPIPE') ||
+            /closed|Native runner exited/.test(error.message)),
+      );
+      if (closedPipe)
+        child.child.stdin.destroy(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+      const [result] = await Promise.all([exited, pending]);
+      assert.equal(result.stopped, true, result.error?.message);
+      await child.close();
+    },
+  );
+}

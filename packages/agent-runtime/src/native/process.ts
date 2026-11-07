@@ -13,9 +13,10 @@ const registeredLaunch = `
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 if (fs.readSync(0, Buffer.alloc(1), 0, 1, null) !== 1) process.exit(1);
-const child = spawn(process.argv[2], process.argv.slice(3), { stdio: 'inherit' });
+let child;
+process.on('SIGTERM', () => child?.kill('SIGTERM'));
+child = spawn(process.argv[2], process.argv.slice(3), { stdio: 'inherit' });
 child.on('error', error => { process.stderr.write(error.message); process.exit(1); });
-process.on('SIGTERM', () => child.kill('SIGTERM'));
 child.on('exit', (code, signal) => {
   if (signal) { process.removeAllListeners(signal); process.kill(process.pid, signal); }
   else process.exit(code ?? 1);
