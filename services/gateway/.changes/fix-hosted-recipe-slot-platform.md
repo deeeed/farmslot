@@ -1,0 +1,1 @@
+- Keep hosted recipe execution and discovery on the assigned slot platform unless an explicit target selects another platform.
