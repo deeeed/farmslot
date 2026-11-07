@@ -1,8 +1,6 @@
 // methods/chat.ts — Co-pilot chat RPC handlers
 
 import {
-  type ChatAbortParams,
-  type ChatAbortResult,
   type ChatClearParams,
   type ChatClearResult,
   type ChatConfirmActionParams,
@@ -20,8 +18,6 @@ import {
   type ChatSaveMemoryResult,
   type ChatScreenEvidenceParams,
   type ChatScreenEvidenceResult,
-  type ChatSendParams,
-  type ChatSendResult,
   type ChatSessionContextParams,
   type ChatSessionContextResult,
   type ChatSessionCreateParams,
@@ -63,12 +59,7 @@ import { getCopilotRuntime } from '../copilot-runtime/controller.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
-export async function chatSend(params: ChatSendParams, emit: Emit): Promise<ChatSendResult> {
-  void emit;
-  return getCopilotRuntime().send(params);
-}
-
-export function chatHistory(params: ChatHistoryParams): ChatHistoryResult {
+export function chatArchive(params: ChatHistoryParams): ChatHistoryResult {
   const sessionId = normalizeSessionId(params.sessionId);
   const messages = getSessionMessages(sessionId, params.limit);
   return { messages };
@@ -192,10 +183,6 @@ export async function chatConfirmAction(
 
 export function chatListActions(params: ChatListActionsParams): ChatListActionsResult {
   return { actions: listChatActions(params.sessionId) };
-}
-
-export function chatAbort(_params: ChatAbortParams): Promise<ChatAbortResult> {
-  return getCopilotRuntime().abort();
 }
 
 export async function chatContext(): Promise<ChatContextResult> {

@@ -1,3 +1,5 @@
+import { setTimeout as wait } from 'node:timers/promises';
+
 import { WebSocket as NodeWebSocket } from 'ws';
 
 import {
@@ -140,9 +142,10 @@ export class GatewayClient {
    * Waits out a gateway reload by opening a new socket. Only a failure before the socket
    * opened is retried, so a sent request is never replayed.
    */
-  private async untilReconnected<T>(attempt: () => Promise<T>): Promise<T> {
+  private async untilReconnected<T>(attempt: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const deadline = Date.now() + this.reconnectWindowMs;
     for (let delay = 250, waiting = false; ; delay = Math.min(delay * 2, 5_000)) {
+      signal?.throwIfAborted();
       try {
         return await attempt();
       } catch (error) {
@@ -158,7 +161,7 @@ export class GatewayClient {
             `\nfarmslot: the gateway is not accepting connections (reloading?); retrying for up to ${Math.round(this.reconnectWindowMs / 1000)}s\n`,
           );
         waiting = true;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await wait(delay, undefined, { signal });
       }
     }
   }
@@ -208,12 +211,14 @@ export class GatewayClient {
    * one socket and forwards broadcast events. One-shot commands keep using
    * per-invocation sockets via call().
    */
-  connect(): Promise<GatewayConnection> {
-    return this.untilReconnected(() => this.openConnection());
+  connect(signal?: AbortSignal): Promise<GatewayConnection> {
+    return this.untilReconnected(() => this.openConnection(signal), signal);
   }
 
-  private async openConnection(): Promise<GatewayConnection> {
+  private async openConnection(signal?: AbortSignal): Promise<GatewayConnection> {
+    signal?.throwIfAborted();
     const credential = await this.currentCredentials(true);
+    signal?.throwIfAborted();
     const ws = new NodeWebSocket(this.url);
     let socketOpened = false;
     const pending = new Map<
@@ -280,6 +285,11 @@ export class GatewayClient {
     // The auth response is a regular res frame, so the persistent message
     // handler above settles the handshake through its pending-map entry.
     const authId = 'connect-auth';
+    const abort = () => {
+      pending.get(authId)?.reject(signal?.reason ?? new Error('Connection cancelled'));
+      ws.terminate();
+    };
+    signal?.addEventListener('abort', abort, { once: true });
     try {
       await new Promise<void>((resolve, reject) => {
         const needsAuth = Boolean(credential?.token || credential?.password);
@@ -297,7 +307,9 @@ export class GatewayClient {
             reject(err);
           },
         });
+        if (signal?.aborted) abort();
         ws.addEventListener('open', () => {
+          if (signal?.aborted) return;
           socketOpened = true;
           if (!needsAuth) {
             pending.delete(authId);
@@ -332,6 +344,7 @@ export class GatewayClient {
       await forgetRejectedPersonCredential(err, this.credential);
       throw err;
     } finally {
+      signal?.removeEventListener('abort', abort);
       pending.delete(authId);
     }
 

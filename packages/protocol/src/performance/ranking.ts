@@ -61,6 +61,7 @@ export function slowestActions(snapshot: PerformanceSnapshot): SlowAction[] {
     farmslot_rpc_duration_seconds: 'RPC',
     farmslot_client_cached_paint_seconds: 'Cached paint',
     farmslot_client_visible_read_seconds: 'Visible read',
+    farmslot_native_text_render_seconds: 'Text render',
     farmslot_client_background_refresh_seconds: 'Background refresh',
     farmslot_client_blocking_refresh_seconds: 'Blocking refresh',
   };

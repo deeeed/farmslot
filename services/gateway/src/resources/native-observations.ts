@@ -147,6 +147,10 @@ export interface NativeReadAuthority {
   owners?: Readonly<Record<string, string>>;
 }
 const authorityGuards = new WeakMap<NativeReadAuthority, () => void>();
+/** Recheck a captured target at the synchronous frame-delivery boundary. */
+export function assertNativeObservationAuthority(authority: NativeReadAuthority): void {
+  authorityGuards.get(authority)?.();
+}
 function sourceOwner(authority: NativeReadAuthority, node: string): string {
   return authority.owners?.[node] ?? authority.ownerId;
 }
@@ -245,7 +249,21 @@ export async function authorizeNativeObservation(
       )
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native session identity changed');
     }
-    return { ownerId, nodes: [key.nodeId] };
+    const authority = { ownerId, nodes: [key.nodeId] };
+    authorityGuards.set(authority, () =>
+      runWithSessionOriginator(reader, () => {
+        const currentOwner = isStandaloneAdmin(reader)
+          ? standaloneOwner(reader, key.nodeId)
+          : requireNativeSessionOwner();
+        if (
+          currentOwner !== ownerId ||
+          (key.nodeId === 'local' && !ownsLocalNativeProfile(ownerId))
+        )
+          throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native target ownership changed');
+        if (key.nodeId !== 'local') resolveNativeExecutionNode(ownerId, key.nodeId);
+      }),
+    );
+    return authority;
   });
 }
 

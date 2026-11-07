@@ -34,6 +34,7 @@ import type { TmuxWorkerRef } from '../rpc/tmux.js';
 import type { WorkerSignal } from './signal.js';
 
 export const Events = {
+  NATIVE_SESSION_DELTA: 'native.session.delta',
   RESOURCE_CHANGED: 'resource.changed',
   // Fleet state changes
   FLEET_UPDATED: 'fleet.updated',
@@ -126,7 +127,6 @@ export const Events = {
   HELLO: 'hello',
 
   // Co-Pilot Chat
-  CHAT_RESPONSE: 'chat.response',
   CHAT_MEMORY_SAVED: 'chat.memory.saved',
   COPILOT_OBSERVER_NOTIFICATION: 'copilot.observer.notification',
   COPILOT_RUNTIME_UPDATED: 'copilot.runtime.updated',

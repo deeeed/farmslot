@@ -1,7 +1,7 @@
 import type { SafetyTier } from '../contracts/agents.js';
 
+import type { NativeSessionInfo, NativeSessionTargetParams } from './native-session.js';
 import { Methods } from './registry.js';
-import type { TmuxWorkerRef } from './tmux.js';
 
 export const CopilotRuntimeMethods = {
   status: Methods.COPILOT_STATUS,
@@ -96,10 +96,8 @@ export interface CopilotDangerousConfirmation {
 export interface CopilotRuntimeSession {
   runtimeId: string;
   status: CopilotRuntimeStatus;
-  tmuxTarget: string;
-  /** Authoritative terminal identity for clients; avoids rediscovering the singleton via inventory. */
-  terminalWorker?: TmuxWorkerRef;
-  transcriptId: string;
+  /** Configured singleton target; absent until an explicit start. */
+  nativeSession?: NativeSessionTargetParams;
   runner: string;
   model: string;
   effort?: string;
@@ -144,6 +142,7 @@ export interface CopilotStartParams {
 }
 
 export interface CopilotStartResult {
+  nativeSession?: NativeSessionInfo;
   session: CopilotRuntimeSession;
   reused: boolean;
   reconnected: boolean;

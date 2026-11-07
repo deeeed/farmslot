@@ -23,10 +23,8 @@ export const GATEWAY_COMMAND_METHODS = [
   Methods.BACKLOG_MARK_READY,
   Methods.BACKLOG_REFINE,
   Methods.BACKLOG_UPDATE,
-  Methods.CHAT_ABORT,
   Methods.CHAT_CONFIRM_ACTION,
   Methods.CHAT_NEW,
-  Methods.CHAT_SEND,
   Methods.CHAT_SESSION_CREATE,
   Methods.CHAT_SESSION_PIN,
   Methods.CHAT_SESSIONS_BULK_DELETE,
@@ -213,6 +211,8 @@ export type CommandMethod = (typeof GATEWAY_COMMAND_METHODS)[number];
 export const GATEWAY_READ_EXCEPTIONS = {
   /** Output arrives continuously and has no value to keep; the pane and device lists are cached. */
   stream: [
+    Methods.NATIVE_SESSION_SUBSCRIBE,
+    Methods.NATIVE_SESSION_UNSUBSCRIBE,
     Methods.TERMINAL_SNAPSHOT,
     Methods.TERMINAL_SUBSCRIBE,
     Methods.TERMINAL_UNSUBSCRIBE,

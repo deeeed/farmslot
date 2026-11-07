@@ -225,3 +225,21 @@ test('observation watches refuse a missing parent instead of admitting an inacti
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('notification-only append watches never read or publish the file body', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-append-notice-'));
+  const target = path.join(dir, 'session.jsonl');
+  await writeFile(target, 'initial\n');
+  let receive!: (content: string) => void;
+  const changed = new Promise<string>((resolve) => {
+    receive = resolve;
+  });
+  const watcher = watchFile(target, (content) => receive(content), { notificationsOnly: true });
+  try {
+    await writeFile(target, 'private journal body\n');
+    assert.equal(await changed, '', 'Only an append notice may cross this watch');
+  } finally {
+    watcher.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

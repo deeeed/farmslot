@@ -85,17 +85,15 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `backlog.spec.get`                      | backlog          | read-only     | —      | —      | Backlog Spec Get gateway method.                      |
 | `backlog.upcoming`                      | backlog          | bounded-write | —      | —      | Backlog Upcoming gateway method.                      |
 | `backlog.update`                        | backlog          | bounded-write | —      | —      | Backlog Update gateway method.                        |
-| `chat.abort`                            | chat             | bounded-write | —      | —      | Chat Abort gateway method.                            |
+| `chat.archive`                          | chat             | bounded-write | —      | —      | Chat Archive gateway method.                          |
 | `chat.clear`                            | chat             | bounded-write | —      | —      | Chat Clear gateway method.                            |
 | `chat.confirmAction`                    | chat             | bounded-write | —      | —      | Chat ConfirmAction gateway method.                    |
 | `chat.context`                          | chat             | bounded-write | —      | —      | Chat Context gateway method.                          |
-| `chat.history`                          | chat             | bounded-write | —      | —      | Chat History gateway method.                          |
 | `chat.listActions`                      | chat             | read-only     | —      | —      | Chat ListActions gateway method.                      |
 | `chat.new`                              | chat             | bounded-write | —      | —      | Chat New gateway method.                              |
 | `chat.observerEvidence`                 | chat             | bounded-write | —      | —      | Chat ObserverEvidence gateway method.                 |
 | `chat.saveMemory`                       | chat             | bounded-write | —      | —      | Chat SaveMemory gateway method.                       |
 | `chat.screenEvidence`                   | chat             | bounded-write | —      | —      | Chat ScreenEvidence gateway method.                   |
-| `chat.send`                             | chat             | bounded-write | —      | —      | Chat Send gateway method.                             |
 | `chat.sessionContext`                   | chat             | bounded-write | —      | —      | Chat SessionContext gateway method.                   |
 | `chat.sessionCreate`                    | chat             | bounded-write | —      | —      | Chat SessionCreate gateway method.                    |
 | `chat.sessionDelete`                    | chat             | bounded-write | —      | —      | Chat SessionDelete gateway method.                    |
@@ -217,7 +215,9 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `native.session.respond`                | native           | bounded-write | —      | —      | Native Session Respond gateway method.                |
 | `native.session.send`                   | native           | bounded-write | —      | —      | Native Session Send gateway method.                   |
 | `native.session.setApprovalMode`        | native           | bounded-write | —      | —      | Native Session SetApprovalMode gateway method.        |
+| `native.session.subscribe`              | native           | bounded-write | —      | —      | Native Session Subscribe gateway method.              |
 | `native.session.turn.diff`              | native           | bounded-write | —      | —      | Native Session Turn Diff gateway method.              |
+| `native.session.unsubscribe`            | native           | bounded-write | —      | —      | Native Session Unsubscribe gateway method.            |
 | `native.session.workspace.changes`      | native           | bounded-write | —      | —      | Native Session Workspace Changes gateway method.      |
 | `native.session.workspace.diff`         | native           | bounded-write | —      | —      | Native Session Workspace Diff gateway method.         |
 | `native.session.workspace.list`         | native           | read-only     | —      | —      | Native Session Workspace List gateway method.         |
@@ -446,7 +446,6 @@ Source: `packages/protocol/src/transport/frames.ts`
 | ------------------------------- | --------- | -------------------------------------------- |
 | `backlog.updated`               | backlog   | Backlog Updated gateway event.               |
 | `chat.memory.saved`             | chat      | Chat Memory Saved gateway event.             |
-| `chat.response`                 | chat      | Chat Response gateway event.                 |
 | `ci.check.updated`              | ci        | Ci Check Updated gateway event.              |
 | `copilot.observer.notification` | copilot   | Copilot Observer Notification gateway event. |
 | `copilot.runtime.updated`       | copilot   | Copilot Runtime Updated gateway event.       |
@@ -464,6 +463,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `llm.auth.login.progress`       | llm       | Llm Auth Login Progress gateway event.       |
 | `machine.pause.updated`         | machine   | Machine Pause Updated gateway event.         |
 | `monitor.violation`             | monitor   | Monitor Violation gateway event.             |
+| `native.session.delta`          | native    | Native Session Delta gateway event.          |
 | `node.connected`                | node      | Node Connected gateway event.                |
 | `node.disconnected`             | node      | Node Disconnected gateway event.             |
 | `node.health.updated`           | node      | Node Health Updated gateway event.           |

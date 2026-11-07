@@ -11,6 +11,8 @@ import { installFakeGateway } from './testing/fake-gateway.js';
 
 // Unavailable persistent storage falls back to memory without prefetching.
 let persistentStore = false;
+let pendingStoreClose: Promise<void> | undefined;
+let browserWorkerStops = 0;
 mock.module('@farmslot/local-store/browser', {
   namedExports: {
     async createBrowserSqliteResourceStore(): Promise<ResourceStore> {
@@ -18,12 +20,18 @@ mock.module('@farmslot/local-store/browser', {
       return {
         ...memory,
         persistent: persistentStore,
+        async close() {
+          await pendingStoreClose;
+          await memory.close();
+        },
         get deleted() {
           return memory.deleted;
         },
       };
     },
-    closeBrowserResourceStores() {},
+    closeBrowserResourceStores() {
+      browserWorkerStops++;
+    },
   },
 });
 
@@ -145,4 +153,24 @@ test('a durable store prefetches pending gates and active runs from the shared o
   gateway.reconnect();
   await flush();
   assert.deepEqual(prefetchReads(), ['gate-run', 'active-run']);
+
+  initializeResourceCache();
+  await flush();
+  assert.ok(getResourceCache());
+  let releaseClose!: () => void;
+  pendingStoreClose = new Promise((resolve) => {
+    releaseClose = resolve;
+  });
+  const stops = browserWorkerStops;
+  const retiring = disposeResourceCache();
+  await flush();
+  assert.equal(
+    browserWorkerStops,
+    stops,
+    'The browser worker must remain available until final store writes and close finish',
+  );
+  releaseClose();
+  await retiring;
+  pendingStoreClose = undefined;
+  assert.equal(browserWorkerStops, stops + 1);
 });

@@ -1,0 +1,1 @@
+- Use the shared live native conversation stream for native sessions and the Co-Pilot home, with an explicit launcher and saved conversation history.

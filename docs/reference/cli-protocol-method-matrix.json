@@ -23,6 +23,46 @@
       "surface": "typed-command",
       "command": "farmslot analytics"
     },
+    "assessment.evaluate": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.evaluate."
+    },
+    "assessment.feedback": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.feedback."
+    },
+    "assessment.get": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.get."
+    },
+    "assessment.list": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.list."
+    },
+    "assessment.report": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.report."
+    },
+    "assessment.status": {
+      "surface": "rpc-only",
+      "note": "Interim provider status inspection; use `farmslot rpc assessment.status`."
+    },
+    "assessment.suggestion.analyze": {
+      "surface": "rpc-only",
+      "note": "Confirmed opt-in assessment of the previewed packet; use farmslot rpc assessment.suggestion.analyze."
+    },
+    "assessment.suggestion.preview": {
+      "surface": "rpc-only",
+      "note": "Read-only preview of an explicitly admitted checklist, Co-Pilot context or review-routing suggestion; use farmslot rpc assessment.suggestion.preview."
+    },
+    "assessment.summary": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.summary."
+    },
+    "assessment.test": {
+      "surface": "rpc-only",
+      "note": "Explicit provider smoke test; use `farmslot rpc assessment.test`."
+    },
     "auth.connect": {
       "surface": "typed-command",
       "command": "farmslot login",
@@ -33,13 +73,13 @@
       "command": "farmslot login",
       "note": "Person credential or one-use pairing code creates the selected CLI device session."
     },
-    "auth.session.refresh": {
-      "surface": "na",
-      "note": "Transport-private renewal through the shared PersonSessionClient; refresh tokens never authenticate general RPCs."
-    },
     "auth.session.list": {
       "surface": "rpc-only",
       "note": "Command Center signed-in device settings and farmslot rpc auth.session.list."
+    },
+    "auth.session.refresh": {
+      "surface": "na",
+      "note": "Transport-private renewal through the shared PersonSessionClient; refresh tokens never authenticate general RPCs."
     },
     "auth.session.revoke": {
       "surface": "typed-command",
@@ -111,9 +151,9 @@
       "surface": "typed-command",
       "command": "farmslot backlog"
     },
-    "chat.abort": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
+    "chat.archive": {
+      "surface": "rpc-only",
+      "note": "Read immutable pre-native conversations through the scoped archive reader."
     },
     "chat.clear": {
       "surface": "na",
@@ -124,10 +164,6 @@
       "note": "Command Center chat surface (web UI)."
     },
     "chat.context": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.history": {
       "surface": "na",
       "note": "Command Center chat surface (web UI)."
     },
@@ -148,10 +184,6 @@
       "note": "Command Center chat surface (web UI)."
     },
     "chat.screenEvidence": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.send": {
       "surface": "na",
       "note": "Command Center chat surface (web UI)."
     },
@@ -446,6 +478,14 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "gateway.performance.get": {
+      "surface": "rpc-only",
+      "note": "Performance diagnostics via the shared client, Doctor and farmslot rpc."
+    },
+    "gateway.performance.report": {
+      "surface": "rpc-only",
+      "note": "Performance diagnostics via the shared client, Doctor and farmslot rpc."
+    },
     "gateway.ping": {
       "surface": "rpc-only",
       "note": "Interim: lightweight authenticated liveness probe; use `farmslot rpc gateway.ping`."
@@ -453,6 +493,10 @@
     "gateway.status": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "gateway.update": {
+      "surface": "rpc-only",
+      "note": "Update a clean default-branch checkout through the shared UI or farmslot rpc gateway.update."
     },
     "git.branchDiff": {
       "surface": "na",
@@ -501,6 +545,18 @@
     "intelligence.actions.summary": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "intelligence.triage.analyze": {
+      "surface": "rpc-only",
+      "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.analyze; shared typed gateway result, no arbitrary paths or terminal buffers."
+    },
+    "intelligence.triage.feedback": {
+      "surface": "rpc-only",
+      "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.feedback; shared typed gateway result, no arbitrary paths or terminal buffers."
+    },
+    "intelligence.triage.get": {
+      "surface": "rpc-only",
+      "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.get; shared typed gateway result, no arbitrary paths or terminal buffers."
     },
     "llm.auth.add": {
       "surface": "rpc-only",
@@ -618,15 +674,23 @@
       "surface": "rpc-only",
       "note": "Change an idle standalone session tool policy through farmslot rpc native.session.setApprovalMode."
     },
+    "native.session.subscribe": {
+      "surface": "rpc-only",
+      "note": "Follow the selected native conversation with farmslot rpc --follow."
+    },
+    "native.session.turn.diff": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.unsubscribe": {
+      "surface": "rpc-only",
+      "note": "Release a connection-scoped native conversation subscription."
+    },
     "native.session.workspace.changes": {
       "surface": "rpc-only",
       "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
     },
     "native.session.workspace.diff": {
-      "surface": "rpc-only",
-      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
-    },
-    "native.session.turn.diff": {
       "surface": "rpc-only",
       "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
     },
@@ -857,6 +921,15 @@
       "surface": "typed-command",
       "command": "farmslot principal list"
     },
+    "principal.retire": {
+      "surface": "typed-command",
+      "command": "farmslot principal retire"
+    },
+    "principal.reuseRetiredId": {
+      "surface": "typed-command",
+      "command": "farmslot principal create --reuse-retired-id <id>",
+      "note": "Admin-only explicit replacement; ordinary creation keeps retired ids reserved."
+    },
     "principal.revokeRole": {
       "surface": "typed-command",
       "command": "farmslot principal revokeRole"
@@ -904,6 +977,10 @@
     "resource.list": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "resource.observers.replace": {
+      "surface": "na",
+      "note": "Connection-bound collector interest replacement, sent by the shared client cache on its existing authenticated socket."
     },
     "resource.pressure.history": {
       "surface": "rpc-only",
@@ -968,9 +1045,23 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "run.adopt": {
+      "surface": "typed-command",
+      "command": "farmslot run adopt"
+    },
+    "run.adoptPublishedPr": {
+      "surface": "typed-command",
+      "command": "farmslot run adopt-published-pr",
+      "note": "Credential-backed human attestation of an existing exact-head publication."
+    },
     "run.archive": {
       "surface": "typed-command",
       "command": "farmslot run"
+    },
+    "run.attestBeforeAttempt": {
+      "surface": "typed-command",
+      "note": "Records a verified person attestation of a same-run before-only attempt without resolving the gate.",
+      "command": "farmslot run gate --action attest-before-attempt"
     },
     "run.autoRecovery.stop": {
       "surface": "rpc-only",
@@ -1028,6 +1119,11 @@
       "surface": "typed-command",
       "command": "farmslot runs"
     },
+    "run.extendReviewBudget": {
+      "surface": "typed-command",
+      "command": "farmslot run extend-review-budget",
+      "note": "Authenticated admin grants scoped additional rounds on the owned unpublished run."
+    },
     "run.forSlot": {
       "surface": "typed-command",
       "command": "farmslot run for-slot"
@@ -1052,10 +1148,19 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "run.linkedTickets.set": {
+      "surface": "rpc-only",
+      "note": "Operator-added Jira metadata; use the existing farmslot rpc entry."
+    },
     "run.list": {
       "surface": "typed-command",
       "command": "farmslot run",
       "tui": true
+    },
+    "run.overrideClaim": {
+      "surface": "typed-command",
+      "note": "farmslot run gate --action mark-untestable records a verified human exception without resolving the gate.",
+      "command": "farmslot run gate --action mark-untestable"
     },
     "run.pause": {
       "surface": "typed-command",
@@ -1118,6 +1223,11 @@
       "surface": "typed-command",
       "command": "farmslot run resume"
     },
+    "run.reviewVisualClaim": {
+      "surface": "typed-command",
+      "command": "farmslot run gate --action confirm-visual|reject-visual",
+      "note": "Record authenticated visual meaning for captured evidence without resolving the gate."
+    },
     "run.sessionCommand": {
       "surface": "typed-command",
       "command": "farmslot run session"
@@ -1129,10 +1239,6 @@
     "run.tags.list": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.linkedTickets.set": {
-      "surface": "rpc-only",
-      "note": "Operator-added Jira metadata; use the existing farmslot rpc entry."
     },
     "run.tags.set": {
       "surface": "rpc-only",
@@ -1265,6 +1371,22 @@
       "surface": "typed-command",
       "command": "farmslot slot"
     },
+    "sources.pin": {
+      "surface": "typed-command",
+      "command": "farmslot sources pin"
+    },
+    "sources.status": {
+      "surface": "typed-command",
+      "command": "farmslot sources status"
+    },
+    "sources.sync": {
+      "surface": "typed-command",
+      "command": "farmslot sources sync"
+    },
+    "sources.unpin": {
+      "surface": "typed-command",
+      "command": "farmslot sources unpin"
+    },
     "stream.snapshot": {
       "surface": "na",
       "note": "Binary stream relay for the web UI."
@@ -1381,6 +1503,16 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "tmux.worker.createSession": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc tmux.worker.createSession",
+      "note": "Creates an isolated terminal on an explicitly selected connected machine; Command Center reuses the existing terminal viewer."
+    },
+    "tmux.worker.endSession": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc tmux.worker.endSession",
+      "note": "Command Center ends an explicitly confirmed unmanaged session after checking current pane identity."
+    },
     "tmux.worker.list": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
@@ -1404,6 +1536,10 @@
     "workGraph.addNode": {
       "surface": "typed-command",
       "command": "farmslot graph add-node"
+    },
+    "workGraph.attachRun": {
+      "surface": "typed-command",
+      "command": "farmslot graph attach-run"
     },
     "workGraph.create": {
       "surface": "typed-command",
@@ -1433,6 +1569,10 @@
       "surface": "typed-command",
       "command": "farmslot graph remove-node"
     },
+    "workGraph.retry": {
+      "surface": "typed-command",
+      "command": "farmslot graph retry"
+    },
     "workGraph.schedulerTick": {
       "surface": "typed-command",
       "command": "farmslot graph tick"
@@ -1460,146 +1600,6 @@
     "workspace.metro.unsubscribe": {
       "surface": "na",
       "note": "Slot Workspace IDE view (web UI)."
-    },
-    "tmux.worker.endSession": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc tmux.worker.endSession",
-      "note": "Command Center ends an explicitly confirmed unmanaged session after checking current pane identity."
-    },
-    "gateway.update": {
-      "surface": "rpc-only",
-      "note": "Update a clean default-branch checkout through the shared UI or farmslot rpc gateway.update."
-    },
-    "assessment.suggestion.preview": {
-      "surface": "rpc-only",
-      "note": "Read-only preview of an explicitly admitted checklist, Co-Pilot context or review-routing suggestion; use farmslot rpc assessment.suggestion.preview."
-    },
-    "assessment.suggestion.analyze": {
-      "surface": "rpc-only",
-      "note": "Confirmed opt-in assessment of the previewed packet; use farmslot rpc assessment.suggestion.analyze."
-    },
-    "assessment.status": {
-      "surface": "rpc-only",
-      "note": "Interim provider status inspection; use `farmslot rpc assessment.status`."
-    },
-    "assessment.test": {
-      "surface": "rpc-only",
-      "note": "Explicit provider smoke test; use `farmslot rpc assessment.test`."
-    },
-    "assessment.list": {
-      "surface": "rpc-only",
-      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.list."
-    },
-    "assessment.get": {
-      "surface": "rpc-only",
-      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.get."
-    },
-    "assessment.feedback": {
-      "surface": "rpc-only",
-      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.feedback."
-    },
-    "assessment.summary": {
-      "surface": "rpc-only",
-      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.summary."
-    },
-    "assessment.report": {
-      "surface": "rpc-only",
-      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.report."
-    },
-    "assessment.evaluate": {
-      "surface": "rpc-only",
-      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.evaluate."
-    },
-    "intelligence.triage.get": {
-      "surface": "rpc-only",
-      "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.get; shared typed gateway result, no arbitrary paths or terminal buffers."
-    },
-    "intelligence.triage.analyze": {
-      "surface": "rpc-only",
-      "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.analyze; shared typed gateway result, no arbitrary paths or terminal buffers."
-    },
-    "intelligence.triage.feedback": {
-      "surface": "rpc-only",
-      "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.feedback; shared typed gateway result, no arbitrary paths or terminal buffers."
-    },
-    "run.adopt": {
-      "surface": "typed-command",
-      "command": "farmslot run adopt"
-    },
-    "sources.status": {
-      "surface": "typed-command",
-      "command": "farmslot sources status"
-    },
-    "sources.sync": {
-      "surface": "typed-command",
-      "command": "farmslot sources sync"
-    },
-    "sources.pin": {
-      "surface": "typed-command",
-      "command": "farmslot sources pin"
-    },
-    "sources.unpin": {
-      "surface": "typed-command",
-      "command": "farmslot sources unpin"
-    },
-    "workGraph.retry": {
-      "surface": "typed-command",
-      "command": "farmslot graph retry"
-    },
-    "run.overrideClaim": {
-      "surface": "typed-command",
-      "note": "farmslot run gate --action mark-untestable records a verified human exception without resolving the gate.",
-      "command": "farmslot run gate --action mark-untestable"
-    },
-    "run.attestBeforeAttempt": {
-      "surface": "typed-command",
-      "note": "Records a verified person attestation of a same-run before-only attempt without resolving the gate.",
-      "command": "farmslot run gate --action attest-before-attempt"
-    },
-    "run.reviewVisualClaim": {
-      "surface": "typed-command",
-      "command": "farmslot run gate --action confirm-visual|reject-visual",
-      "note": "Record authenticated visual meaning for captured evidence without resolving the gate."
-    },
-    "run.adoptPublishedPr": {
-      "surface": "typed-command",
-      "command": "farmslot run adopt-published-pr",
-      "note": "Credential-backed human attestation of an existing exact-head publication."
-    },
-    "principal.retire": {
-      "surface": "typed-command",
-      "command": "farmslot principal retire"
-    },
-    "principal.reuseRetiredId": {
-      "surface": "typed-command",
-      "command": "farmslot principal create --reuse-retired-id <id>",
-      "note": "Admin-only explicit replacement; ordinary creation keeps retired ids reserved."
-    },
-    "workGraph.attachRun": {
-      "surface": "typed-command",
-      "command": "farmslot graph attach-run"
-    },
-    "run.extendReviewBudget": {
-      "surface": "typed-command",
-      "command": "farmslot run extend-review-budget",
-      "note": "Authenticated admin grants scoped additional rounds on the owned unpublished run."
-    },
-    "resource.observers.replace": {
-      "surface": "na",
-      "note": "Connection-bound collector interest replacement, sent by the shared client cache on its existing authenticated socket."
-    },
-    "tmux.worker.createSession": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc tmux.worker.createSession",
-      "note": "Creates an isolated terminal on an explicitly selected connected machine; Command Center reuses the existing terminal viewer."
-    },
-    "gateway.performance.get": {
-      "surface": "rpc-only",
-      "note": "Performance diagnostics via the shared client, Doctor and farmslot rpc."
-    },
-    "gateway.performance.report": {
-      "surface": "rpc-only",
-      "note": "Performance diagnostics via the shared client, Doctor and farmslot rpc."
     }
   }
 }

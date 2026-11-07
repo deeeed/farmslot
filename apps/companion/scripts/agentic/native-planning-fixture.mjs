@@ -75,7 +75,6 @@ export const forbiddenPlanningMethods = [
   'copilot.start',
   'copilot.configure',
   'copilot.stop',
-  'chat.send',
   'native.session.create',
   'native.session.ensure',
   'native.session.send',

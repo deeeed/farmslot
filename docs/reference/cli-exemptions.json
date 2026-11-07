@@ -4,9 +4,6 @@
     "auth.session.refresh": {
       "reason": "Transport-private renewal through the shared PersonSessionClient; refresh tokens never authenticate general RPCs."
     },
-    "chat.abort": {
-      "reason": "Command Center chat surface (web UI)."
-    },
     "chat.clear": {
       "reason": "Command Center chat surface (web UI)."
     },
@@ -14,9 +11,6 @@
       "reason": "Command Center chat surface (web UI)."
     },
     "chat.context": {
-      "reason": "Command Center chat surface (web UI)."
-    },
-    "chat.history": {
       "reason": "Command Center chat surface (web UI)."
     },
     "chat.listActions": {
@@ -32,9 +26,6 @@
       "reason": "Command Center chat surface (web UI)."
     },
     "chat.screenEvidence": {
-      "reason": "Command Center chat surface (web UI)."
-    },
-    "chat.send": {
       "reason": "Command Center chat surface (web UI)."
     },
     "chat.sessionContext": {

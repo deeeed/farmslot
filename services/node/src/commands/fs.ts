@@ -312,6 +312,7 @@ export async function fsReadChunk(params: NodeFsReadChunkParams): Promise<NodeFs
     const { bytesRead } = await handle.read(buf, 0, toRead, params.offset);
     const slice = bytesRead === toRead ? buf : buf.subarray(0, bytesRead);
     return {
+      fileIdentity: `${info.dev}:${info.ino}`,
       content: slice.toString('base64'),
       size: info.size,
       offset: params.offset,

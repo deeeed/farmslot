@@ -12,12 +12,10 @@ function record(home: string): PersistedCopilotRuntime {
   const checkout = testCheckout('/operator/farmslot');
   return {
     schemaVersion: 1,
-    transcriptOffset: 17,
     session: {
       runtimeId: 'gateway-copilot',
       status: 'running',
-      tmuxTarget: 'farmslot-copilot:agent.0',
-      transcriptId: 'global',
+      nativeSession: { sessionId: 'session', executionNodeId: 'local' },
       runner: 'cursor',
       model: 'test-model',
       autostart: false,
@@ -36,7 +34,7 @@ function record(home: string): PersistedCopilotRuntime {
         model: 'test-model',
       }),
     },
-    launchCommandHash: `hash-${home.length}`,
+    nativeOwnerPrincipalId: `owner-${home.length}`,
   };
 }
 

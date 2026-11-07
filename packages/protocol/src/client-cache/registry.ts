@@ -609,7 +609,7 @@ function machineParams(params: unknown, extra: readonly string[] = []): Record<s
   };
 }
 
-function chatHistoryParams(params: unknown): Record<string, unknown> {
+function chatArchiveParams(params: unknown): Record<string, unknown> {
   const { limit, ...session } = domainParams(params, ['sessionId', 'limit']);
   if (limit !== undefined && (!Number.isSafeInteger(limit) || Number(limit) < 1))
     throw new Error('Invalid chat history limit');
@@ -1412,14 +1412,14 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       { family: 'planning', collection: 'roadmap', itemId: requiredId(params, 'itemId') },
     ],
   },
-  [Methods.CHAT_HISTORY]: {
+  [Methods.CHAT_ARCHIVE]: {
     persisted: true,
     maxBytes: 5 * mb,
     retention: keptUpTo(20 * mb),
-    live: true,
-    normalizeParams: chatHistoryParams,
+    live: false,
+    normalizeParams: chatArchiveParams,
     dependencies: (params: unknown) => [
-      { ...copilotRuntimeKey, sessionId: String(chatHistoryParams(params).sessionId) },
+      { ...copilotRuntimeKey, sessionId: String(chatArchiveParams(params).sessionId) },
     ],
   },
   // Creating, pinning and saving a session publish no key yet.

@@ -8,46 +8,43 @@ import { writeEvidence } from '../lib/evidence.mjs';
 export const SCENARIO_ID = 'copilot-runtime-smoke';
 
 function rpc(method, params = {}) {
-  const script = path.resolve('apps/command-center/scripts/cdp.mjs');
-  const stdout = execFileSync('node', [script, 'gateway', method, JSON.stringify(params)], {
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      FARMSLOT_RPC_TIMEOUT_MS: process.env.FARMSLOT_RPC_TIMEOUT_MS ?? '60000',
+  const stdout = execFileSync(
+    process.execPath,
+    [
+      path.resolve('apps/command-center/scripts/cdp.mjs'),
+      'gateway',
+      method,
+      JSON.stringify(params),
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        FARMSLOT_RPC_TIMEOUT_MS: process.env.FARMSLOT_RPC_TIMEOUT_MS ?? '60000',
+      },
     },
-  });
+  );
   return JSON.parse(stdout);
 }
 
-async function waitForHistory(token, timeoutMs) {
+async function waitForIdle(target, commandId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const history = rpc('chat.history', { sessionId: 'global' });
-    if (history.messages.some((message) => message.content.includes(token))) return history;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const page = rpc('native.session.read', { ...target, limit: 500 });
+    const command = commandId
+      ? page.commands.find((row) => row.commandId === commandId)
+      : undefined;
+    if (
+      page.session.state === 'failed' ||
+      command?.state === 'failed' ||
+      command?.state === 'unknown'
+    )
+      throw new Error(page.session.error ?? command?.reason ?? 'Native command failed');
+    if (page.session.state === 'idle' && (!commandId || command?.state === 'completed'))
+      return page;
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Timed out waiting for ${token} in shared Co-Pilot history`);
-}
-
-async function waitForIdle(session, sinceMs, timeoutMs) {
-  return JSON.parse(
-    execFileSync(
-      process.execPath,
-      [
-        '--import',
-        'tsx',
-        path.resolve('scripts/runner-validation/gateway/copilot-idle.mts'),
-        JSON.stringify({
-          checkout: session.checkout.path,
-          runner: session.runner,
-          target: session.tmuxTarget,
-          sinceMs,
-          timeoutMs,
-        }),
-      ],
-      { encoding: 'utf8', env: process.env, timeout: timeoutMs + 10000 },
-    ),
-  );
+  throw new Error('Timed out waiting for the native Co-Pilot receipt');
 }
 
 export async function runScenario({
@@ -58,141 +55,60 @@ export async function runScenario({
   resumeExisting = false,
 }) {
   const runner = runnerAdapter.RUNNER_ID;
-  const marker = randomUUID();
-  const clientToken = `COPILOT_COMMAND_CENTER_PROOF_${marker}`;
-  const directToken = `COPILOT_DIRECT_TMUX_PROOF_${marker}`;
-  const report = {
-    runner,
-    start: null,
-    send: null,
-    directTmuxMessages: 0,
-    reconnect: null,
-    isolation: null,
-    stop: null,
-    pass: false,
-    error: null,
-  };
+  const report = { runner, pass: false, error: null };
   try {
-    if (resumeExisting) assert.equal(via, 'model-effort');
-    if (via === 'model-effort') {
-      assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
-      assert.ok(
-        process.env.TMUX_TMPDIR?.startsWith('/tmp/fs-'),
-        'Use the private validation tmux server',
-      );
+    if (via === 'model-effort')
       assert.equal(
-        rpc('copilot.status').session.status,
-        resumeExisting ? 'running' : 'stopped',
-        'Start with an idle private Copilot',
+        process.env.FARMSLOT_GATEWAY,
+        'ws://127.0.0.1:18777',
+        'Model/effort validation requires the private gateway',
       );
-    }
     const before = rpc('operator.snapshot');
-    if (!resumeExisting)
-      try {
-        rpc('copilot.stop', { reason: 'runner-validation-reset' });
-      } catch (error) {
-        if (!String(error).includes('METHOD_NOT_FOUND')) throw error;
-      }
-    if (via === 'model-effort' && !resumeExisting) {
-      assert.equal(runner, 'codex');
-      report.configured = rpc('copilot.configure', { runner, model: 'gpt-6-astra', effort: 'low' });
+    if (!resumeExisting) {
+      rpc('copilot.stop', { reason: 'runner-validation-reset' });
+      report.configured = rpc('copilot.configure', {
+        runner,
+        ...(via === 'model-effort' ? { model: 'gpt-6-astra', effort: 'low' } : {}),
+      });
     }
     report.start = rpc(
       'copilot.start',
-      resumeExisting ? { mode: 'reconnect' } : { runner, safetyTier: 'sandboxed' },
+      resumeExisting ? { mode: 'reconnect' } : { safetyTier: 'sandboxed' },
     );
-    const startedAt = Date.parse(report.start.session.startedAt);
-    assert.ok(Number.isFinite(startedAt));
-    report.bootstrapIdle = await waitForIdle(report.start.session, startedAt, timeoutMs);
+    const target = report.start.session.nativeSession;
+    assert.ok(target, 'The Co-Pilot must bind its configured native singleton');
+    const bootstrap = await waitForIdle(target, undefined, timeoutMs);
+    assert.equal(bootstrap.session.runner, runner);
     if (via === 'model-effort') {
-      assert.equal(report.start.session.model, 'gpt-6-astra');
-      assert.equal(report.start.session.effort, 'low');
-      const panePid = Number(
-        execFileSync(
-          'tmux',
-          ['display-message', '-p', '-t', report.start.session.tmuxTarget, '#{pane_pid}'],
-          { encoding: 'utf8' },
-        ).trim(),
-      );
-      const census = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
-        .trim()
-        .split('\n')
-        .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
-        .filter(Boolean)
-        .map((match) => ({ pid: Number(match[1]), parent: Number(match[2]), command: match[3] }));
-      const owned = new Set([panePid]);
-      for (let added = true; added; ) {
-        added = false;
-        for (const process of census)
-          if (owned.has(process.parent) && !owned.has(process.pid)) {
-            owned.add(process.pid);
-            added = true;
-          }
-      }
-      const worker = census.find(
-        (process) =>
-          owned.has(process.pid) &&
-          /(?:^|\/)codex(?:\s|$)/.test(process.command) &&
-          process.command.includes('--model gpt-6-astra') &&
-          /model_reasoning_effort=["']?low/.test(process.command),
-      );
-      assert.ok(worker, 'Owned runner argv must carry Astra and low reasoning effort');
-      report.launchIdentity = { pid: worker.pid, panePid, model: 'gpt-6-astra', effort: 'low' };
+      assert.equal(bootstrap.session.model, 'gpt-6-astra');
+      assert.equal(bootstrap.session.effort, 'low');
       assert.throws(
         () => rpc('copilot.configure', { effort: 'medium' }),
         /Stop the Co-Pilot runtime/,
       );
-      const reconnected = rpc('copilot.start', {
-        mode: 'reconnect',
-        model: 'gpt-5.6-sol',
-        effort: 'medium',
-      });
-      assert.equal(reconnected.reused, true);
-      assert.equal(reconnected.session.model, 'gpt-6-astra');
-      assert.equal(reconnected.session.effort, 'low');
-      assert.deepEqual(reconnected.session.terminalWorker, report.start.session.terminalWorker);
     }
-    const sentAt = Date.now();
-    report.send = rpc('chat.send', {
-      sessionId: 'global',
-      message: `Acknowledge ${clientToken} once.`,
+    const commandId = randomUUID();
+    report.send = rpc('native.session.send', {
+      ...target,
+      commandId,
+      text: 'Acknowledge the isolated Co-Pilot runtime smoke once. Do not call tools or change farm state.',
     });
-    if (report.send.delivery?.state !== 'accepted')
-      throw new Error('Client prompt lacks an exact delivery acknowledgement');
-    await waitForHistory(clientToken, timeoutMs);
-    report.clientIdle = await waitForIdle(report.start.session, sentAt, timeoutMs);
-
-    execFileSync('tmux', [
-      'send-keys',
-      '-t',
-      'farmslot-copilot:agent.0',
-      '-l',
-      `Acknowledge ${directToken} once.`,
-    ]);
-    execFileSync('tmux', ['send-keys', '-t', 'farmslot-copilot:agent.0', 'Enter']);
-    const shared = await waitForHistory(directToken, timeoutMs);
-    report.directTmuxMessages = shared.messages.filter((message) =>
-      message.content.includes(directToken),
-    ).length;
-
+    const completed = await waitForIdle(target, commandId, timeoutMs);
+    assert(
+      completed.events.some(
+        (event) => event.type === 'text.delta' && event.commandId === commandId,
+      ),
+    );
     report.reconnect = rpc('copilot.start', { mode: 'reconnect' });
+    assert.equal(report.reconnect.reused, true);
+    assert.equal(report.reconnect.session.runtimeId, report.start.session.runtimeId);
+    assert.deepEqual(report.reconnect.session.nativeSession, target);
     report.stop = rpc('copilot.stop', { reason: 'runner-validation-complete' });
+    assert.equal(report.stop.session.status, 'stopped');
     const after = rpc('operator.snapshot');
-    report.isolation = {
-      totalSlots: [before.counts.totalSlots, after.counts.totalSlots],
-      activeRuns: [before.counts.activeRuns, after.counts.activeRuns],
-      queuedItems: [before.counts.queuedItems, after.counts.queuedItems],
-    };
-    report.pass =
-      report.start.session.status === 'running' &&
-      report.send.delivery?.state === 'accepted' &&
-      report.directTmuxMessages === 1 &&
-      report.reconnect.reused === true &&
-      report.reconnect.session.runtimeId === report.start.session.runtimeId &&
-      report.stop.session.status === 'stopped' &&
-      report.isolation.totalSlots[0] === report.isolation.totalSlots[1] &&
-      report.isolation.activeRuns[0] === report.isolation.activeRuns[1] &&
-      report.isolation.queuedItems[0] === report.isolation.queuedItems[1];
+    for (const field of ['totalSlots', 'activeRuns', 'queuedItems'])
+      assert.equal(after.counts[field], before.counts[field], field + ' changed');
+    report.pass = true;
   } catch (error) {
     report.error = error?.message || String(error);
   }

@@ -16,6 +16,7 @@ import {
 import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { ResourceCacheConformanceTransport } from '../../../../../../packages/protocol/src/client-cache/conformance.js';
+import { GatewayRequestTimeoutError } from '../../gateway-request-timeout.js';
 import { litBinding, litBindings, litText } from '../../testing/lit-text.js';
 
 import type { NativeSessionFixture } from './native-session-view.js';
@@ -294,6 +295,7 @@ test('native Default sends the selected node model after switching execution nod
   Object.defineProperty(view, 'isConnected', { value: true });
   Object.assign(view, {
     requestUpdate: () => undefined,
+    dispatchEvent: () => true,
     executionPicker: picker,
     executionNodeId: 'mini',
     connected: true,
@@ -780,7 +782,9 @@ test('a create timeout keeps the prompt and gives one short next step', async ()
     fixture: {},
     api: {
       request: async () => {
-        throw new Error('Request native.session.create timed out after 15000ms');
+        throw new GatewayRequestTimeoutError(
+          'Request native.session.create timed out after 15000ms',
+        );
       },
     },
   });

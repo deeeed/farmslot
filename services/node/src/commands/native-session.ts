@@ -11,7 +11,11 @@ import {
   routeNativeSession,
 } from '@farmslot/agent-runtime/native/service';
 import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-service';
-import type { NativeExecutionNodeDeclaration } from '@farmslot/protocol';
+import type {
+  NativeConversationCursor,
+  NativeConversationUpdate,
+  NativeExecutionNodeDeclaration,
+} from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 /** The daemon owns routing; its detached native host survives daemon/gateway disconnects. */
@@ -31,6 +35,7 @@ export class NativeNodeSessions {
         ownerPrincipalId: owner.trim(),
         supportsStandaloneDelegation: true,
         supportsApprovalMode: true,
+        conversationStreaming: 1,
         supportsEnsure: true,
         supportsWorkers: true,
         supportsWorkerStopAttestation: true,
@@ -54,6 +59,55 @@ export class NativeNodeSessions {
     return this.client.metadata();
   }
 
+  private streams = new Map<
+    string,
+    | import('@farmslot/agent-runtime/native/conversation-ipc').NativeConversationConnection
+    | undefined
+  >();
+  private streamEpoch = 0;
+  async subscribe(
+    id: string,
+    owner: string,
+    sessionId: string,
+    after: NativeConversationCursor | undefined,
+    publish: (update: NativeConversationUpdate) => void,
+    leaseId?: string,
+    generation?: string,
+  ) {
+    if (!this.declaration || owner !== this.declaration.ownerPrincipalId || this.streams.has(id))
+      throw new Error('Invalid native conversation source');
+    const epoch = this.streamEpoch;
+    this.streams.set(id, undefined);
+    try {
+      const stream = await this.client.subscribe(
+        owner,
+        sessionId,
+        after,
+        publish,
+        leaseId,
+        generation,
+      );
+      if (epoch !== this.streamEpoch || !this.streams.has(id)) {
+        stream.stop();
+        throw new Error('Native conversation connection closed during subscribe');
+      }
+      this.streams.set(id, stream);
+      return stream;
+    } catch (error) {
+      if (epoch === this.streamEpoch) this.streams.delete(id);
+      throw error;
+    }
+  }
+  unsubscribe(id: string): void {
+    this.streams.get(id)?.stop();
+    this.streams.delete(id);
+  }
+  stopStreams(): void {
+    this.streamEpoch++;
+    for (const stream of this.streams.values()) stream?.stop();
+    this.streams.clear();
+  }
+
   private observation?: NativeHostObservation;
 
   /** Called once by the daemon transport owner, never by an RPC or panel. */
@@ -69,6 +123,7 @@ export class NativeNodeSessions {
   }
 
   stopObservation(): void {
+    this.stopStreams();
     this.observation?.stop();
   }
   observationReceipt(): NativeSourceReceipt | undefined {

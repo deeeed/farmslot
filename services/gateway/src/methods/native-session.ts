@@ -147,6 +147,21 @@ export async function nativeSessionRoute(
             ? 'Worker-managed sessions require pinned worker controls'
             : 'Native workspace enrollment does not grant worker access',
         );
+      if (method === Methods.NATIVE_SESSION_SET_APPROVAL_MODE && params.approvalMode === 'bypass') {
+        const { getCopilotRuntime } = await import('../copilot-runtime/controller.js');
+        const runtime = getCopilotRuntime();
+        await runtime.initialize();
+        const copilot = runtime.currentSession();
+        if (
+          copilot?.nativeSession?.sessionId === inspected.session.id &&
+          (copilot.nativeSession.executionNodeId ?? 'local') === executionNodeId &&
+          copilot.safetyTier !== 'dangerous'
+        )
+          throw new GatewayMethodError(
+            'INVALID_PARAMS',
+            'Use the Co-Pilot dangerous-start confirmation to change its tool policy',
+          );
+      }
       if (delegated && standaloneOwner(actingPrincipal, executionNodeId) !== owner)
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native target owner changed');
     }

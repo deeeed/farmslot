@@ -1,1215 +1,522 @@
-import { html, type PropertyValues } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { html, LitElement, nothing, type PropertyValues } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 
-import type {
-  ChatClientContext,
-  ChatHistoryResult,
-  ChatListActionsResult,
-  ChatMemorySavedPayload,
-  ChatMessage,
-  ChatNewResult,
-  ChatResponsePayload,
-  ChatSendIntent,
-  ChatSessionContextResult,
-  ChatSessionCreateResult,
-  ChatSessionsResult,
-  CopilotConfigureResult,
-  CopilotObserverNotificationPayload,
-  CopilotRuntimeSession,
-  CopilotStartResult,
-  CopilotStatusResult,
-  CopilotStopResult,
+import {
+  type ChatClientContext,
+  type ChatHistoryResult,
+  type ChatSendIntent,
+  type ChatSessionsResult,
+  type CopilotConfigureResult,
+  type CopilotRuntimeSession,
+  type CopilotStartParams,
+  type CopilotStartResult,
+  type CopilotStatusResult,
+  type CopilotStopResult,
+  Methods,
+  type NativeSessionInfo,
+  viewChoiceField,
+  viewTextField,
+  viewToggleField,
 } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import './chat-message.js';
 import './native-session-view.js';
-import './chat-history-modal.js';
+import './chat-message.js';
 import '../shared/review-dispatch-picker.js';
-import '../terminal/terminal-view.js';
 
-import { gateway, GatewayRequestError } from '../../gateway-client.js';
+import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
-import { safeLsGet, safeLsSet } from '../../utils/storage.js';
-import { navigateHash } from '../../utils/url-state.js';
-import { readFresh, readStored } from '../shared/read-current.js';
+import { hashParams, navigateHash } from '../../utils/url-state.js';
+import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
-import { buildChatClientContext } from './chat-client-context.js';
-import { collectChatActionIds, pruneStaleChatActions } from './chat-panel-action-model.js';
 import {
-  ACTIVE_SESSION_KEY,
-  chatSessionDisplayName,
-  clampChatDrawerHeight,
-  errorMessage,
-  formatChatInt,
-  formatChatUsd,
-  SHARED_SESSION_ID,
-  UNAVAILABLE_REJECT_CODES,
-} from './chat-panel-model.js';
-import { applyChatPanelResponse } from './chat-panel-response-model.js';
-import {
-  copilotRuntimeStatusLabel,
   copilotStatusQuery,
   dangerousLaunchSummary,
   dangerousStartParams,
 } from './chat-panel-runtime-model.js';
-import { ChatPanelState } from './chat-panel-state.js';
-import { renderChatPanelStyles } from './chat-panel-styles.js';
-import { chatPanelViewModel } from './chat-panel-view-model.js';
+import { observeNativeArchiveResource } from './native-session-observation.js';
+import type { NativeSessionView } from './native-session-view.js';
 
+/** Launch policy around the shared native view. No transcript parser, writer or body subscription. */
+const settingsField = viewToggleField('panels', 'copilot-settings', false);
+const archiveField = viewTextField('copilotArchive');
+const targetField = viewChoiceField('copilotTarget', 'copilot', ['copilot', 'agent']);
 @customElement('chat-panel')
-export class ChatPanel extends ChatPanelState {
+export class ChatPanel extends LitElement {
+  @property({ type: Boolean }) open = true;
+  @state() private runtime?: CopilotRuntimeSession;
+  @state() private busy = false;
+  @state() private error = '';
+  @state() private settings = false;
+  @state() private dangerous = false;
+  @state() private phrase = '';
+  @state() private autostart = false;
+  @state() private targetChoice: 'copilot' | 'agent' = 'copilot';
+  @state() private archiveId = '';
+  @state() private archive?: ChatHistoryResult;
+  @state() private archiveError = '';
+  private archiveStop?: () => void;
+  private pendingHandoff?: {
+    scope: string | undefined;
+    target: 'copilot' | 'agent';
+    text: string;
+    submit: boolean;
+  };
+  protected override updated(): void {
+    void this.deliverHandoff();
+  }
+  private async deliverHandoff(): Promise<void> {
+    const handoff = this.pendingHandoff;
+    if (!handoff) return;
+    if (handoff.scope !== getResourceWorkspaceKey()) {
+      this.pendingHandoff = undefined;
+      return;
+    }
+    if (handoff.target !== this.targetChoice) return;
+    const view = this.querySelector<NativeSessionView>('native-session-view');
+    if (!view || (handoff.submit && (!this.runtimeQuery.ready || !view.canSubmitPrompt))) return;
+    await view.updateComplete;
+    if (
+      this.pendingHandoff !== handoff ||
+      handoff.scope !== getResourceWorkspaceKey() ||
+      !view.isConnected
+    )
+      return;
+    this.pendingHandoff = undefined;
+    if (!handoff.submit) view.prepareUnsentDraft(handoff.text);
+    else {
+      try {
+        await view.submitPrompt(handoff.text);
+      } catch (error) {
+        if (handoff.scope === getResourceWorkspaceKey())
+          this.error = error instanceof Error ? error.message : String(error);
+      }
+    }
+  }
+  private readonly display = new ViewStateBindings(this, [
+    viewBinding(
+      targetField,
+      () => this.targetChoice,
+      (value) => {
+        this.targetChoice = value;
+      },
+    ),
+    viewBinding(
+      settingsField,
+      () => this.settings,
+      (value) => {
+        this.settings = value;
+      },
+    ),
+    viewBinding(
+      archiveField,
+      () => this.archiveId,
+      (value) => {
+        this.archiveId = value;
+      },
+    ),
+  ]);
+  private readonly archives = new ResourceQueryController<ChatSessionsResult>(this);
+  private readonly picker = new ReviewDispatchViewModel({ context: { allowedActions: ['chat'] } });
   private readonly runtimeQuery = new ResourceQueryController<CopilotStatusResult>(
     this,
     (state) => {
-      if (state.data) this.syncRuntime(state.data.session);
-      else {
-        this.runtime = null;
-        this.runtimeWorkerRefJson = '';
-        this.dangerousConfirmationOpen = false;
-        this.runtimeLoading = false;
-        this.runtimeNotice = '';
-        this.runtimeError = '';
-      }
+      this.runtime = state.data?.session;
+      const session = this.runtime;
+      if (!session || this.busy) return;
+      this.picker.setSequence([
+        {
+          runner: session.runner,
+          model: session.model,
+          effort: session.effort === 'auto' ? null : (session.effort ?? null),
+          mode: 'cold',
+        },
+      ]);
+      this.autostart = session.autostart;
     },
   );
-  private readonly usageQuery = new ResourceQueryController<ChatSessionContextResult>(
-    this,
-    (state) => {
-      this.usageContext = state.data ?? null;
-      this.usageError = state.error?.message ?? null;
-      this.usageLoading = state.status === 'loading';
-    },
-  );
-
-  @state() private agentWorkspace = safeLsGet('farmslot-copilot-view') !== 'terminal';
-
-  private selectExperience(workspace: boolean) {
-    this.agentWorkspace = workspace;
-    safeLsSet('farmslot-copilot-view', workspace ? 'workspace' : 'terminal');
-  }
-
-  private experiencePicker() {
-    return html`<div class="cp-experience" aria-label="Copilot experience">
-      <button
-        class="cp-new-btn"
-        aria-pressed=${!this.agentWorkspace}
-        data-testid="copilot-terminal-mode"
-        @click=${() => this.selectExperience(false)}
-      >
-        Terminal (tmux)</button
-      ><button
-        class="cp-new-btn"
-        aria-pressed=${this.agentWorkspace}
-        data-testid="copilot-workspace-mode"
-        @click=${() => this.selectExperience(true)}
-      >
-        Native session
-      </button>
-    </div>`;
-  }
   protected override createRenderRoot() {
     return this;
   }
-
-  connectedCallback() {
-    super.connectedCallback();
-    this.loadHistory();
-    void this.loadSessions();
-    this.unsubResponse = gateway.subscribe<ChatResponsePayload>(Events.CHAT_RESPONSE, (payload) => {
-      this.handleChatResponse(payload);
-    });
-    this.unsubMemory = gateway.subscribe<ChatMemorySavedPayload>(Events.CHAT_MEMORY_SAVED, (p) => {
-      if (!p.sessionId || p.sessionId === this.activeSessionId()) this.showMemoryToast(p.path);
-    });
-    this.unsubObserver = gateway.subscribe<CopilotObserverNotificationPayload>(
-      Events.COPILOT_OBSERVER_NOTIFICATION,
-      (payload) => {
-        this.observerNotifications = [payload, ...this.observerNotifications].slice(0, 5);
-        this.dispatchEvent(
-          new CustomEvent('notification', { detail: payload, bubbles: true, composed: true }),
-        );
-      },
-    );
-    this.unsubConnection = gateway.onConnectionChange((s) => {
-      if (s !== 'connected') return;
-      void this.reconcileActionsAfterReconnect();
-    });
-  }
-
-  protected override willUpdate(changed: PropertyValues<this>) {
+  protected override willUpdate(changed: PropertyValues) {
     super.willUpdate(changed);
-    if (changed.has('open')) this.runtimeQuery.setQuery(copilotStatusQuery(this.open));
+    this.runtimeQuery.setQuery(copilotStatusQuery(this.open && this.targetChoice === 'copilot'));
+    this.archives.setQuery(
+      this.open && this.settings && this.targetChoice === 'copilot'
+        ? resourceQuery<ChatSessionsResult>(Methods.CHAT_SESSIONS, {})
+        : undefined,
+    );
+    if (changed.has('archiveId') || changed.has('open')) {
+      this.archiveStop?.();
+      this.archiveStop = undefined;
+      this.archive = undefined;
+      this.archiveError = '';
+      if (this.archiveId && this.open)
+        this.archiveStop = observeNativeArchiveResource(this.archiveId, (state) => {
+          this.archive = state.data;
+          this.archiveError = state.error?.message ?? '';
+        });
+    }
   }
-
-  disconnectedCallback() {
+  override disconnectedCallback() {
     super.disconnectedCallback();
-    this.unsubResponse?.();
-    this.unsubMemory?.();
-    this.unsubObserver?.();
-    this.unsubConnection?.();
-    this.stopResize();
+    this.archiveStop?.();
   }
-
-  private activeSessionId(): string {
-    return this.activeSessionIdValue;
+  private ownerGuard() {
+    this.runtimeQuery.requireReady();
+    const cache = getResourceCache(),
+      scope = getResourceWorkspaceKey();
+    return () =>
+      cache === getResourceCache() &&
+      scope === getResourceWorkspaceKey() &&
+      gateway.connectionState === 'connected';
   }
-
-  private switchSession(nextId: string, loadHistory = true) {
-    const previous = this.activeSessionId();
-    if (previous === nextId) return;
-    this.abortStreamingSession(previous);
-    this.resetStreamingState();
-    this.activeSessionIdValue = nextId;
-    safeLsSet(ACTIVE_SESSION_KEY, nextId);
-    if (loadHistory) void this.loadHistory();
-    if (this.usageOpen) void this.loadUsageContext();
-  }
-
-  private resetStreamingState() {
-    this.streamingText = '';
-    this.streamingStatus = '';
-    this.streamingError = '';
-    this.sending = false;
-  }
-
-  private async loadSessions() {
-    try {
-      const applyStored = (result: ChatSessionsResult) => {
-        this.sessionSummaries = result.sessions;
-      };
-      applyStored(
-        await readStored<ChatSessionsResult>(
-          resourceQuery<ChatSessionsResult>(Methods.CHAT_SESSIONS, {}),
-          applyStored,
-        ),
-      );
-    } catch (err) {
-      const message = errorMessage(err);
-      if (
-        message === 'Not connected' ||
-        (err instanceof GatewayRequestError && err.code === 'METHOD_NOT_FOUND')
-      )
-        return;
-      console.warn('[chat-panel] could not load sessions:', err);
-    }
-  }
-
-  // On WS reconnect: prune action cards the gateway no longer knows about
-  // (gateway restart drops the registry — invalidate-all v1) and toast the
-  // operator. Only the active session is reconciled here; other sessions get
-  // pruned via loadHistory() when the operator switches in.
-  private async reconcileActionsAfterReconnect(): Promise<void> {
-    const renderedIds = collectChatActionIds(this.messages);
-    if (renderedIds.size === 0) return;
-    const sessionId = this.activeSessionId();
-    let liveIds: Set<string>;
-    try {
-      const cache = getResourceCache();
-      if (!cache) return;
-      const connection = gateway.resourceConnectionId;
-      const result = await readFresh(
-        cache,
-        resourceQuery<ChatListActionsResult>(Methods.CHAT_LIST_ACTIONS, { sessionId }),
-        () =>
-          cache === getResourceCache() &&
-          connection === gateway.resourceConnectionId &&
-          gateway.connectionState === 'connected' &&
-          sessionId === this.activeSessionId(),
-      );
-      liveIds = new Set(result.actions.map((action) => action.actionId));
-    } catch (err) {
-      const message = errorMessage(err);
-      // Older gateways without the method are a known forward-compat case;
-      // skip pruning rather than surfacing a misleading toast.
-      if (err instanceof GatewayRequestError && err.code === 'METHOD_NOT_FOUND') return;
-      if (message === 'Not connected') return;
-      console.warn('[chat-panel] chat.listActions failed:', err);
+  private async chooseTarget(value: string): Promise<void> {
+    if (value === 'run') {
+      navigateHash('#dispatch?transport=native');
       return;
     }
-
-    const { messages, pruned } = pruneStaleChatActions(this.messages, liveIds);
-    if (pruned > 0) {
-      this.messages = messages;
-      this.surfaceToast(
-        `ChatActionExpired: ${pruned} action${pruned === 1 ? '' : 's'} expired (gateway restart)`,
-      );
+    if (value === 'terminal') {
+      navigateHash('#terminal?view=new&transport=tmux');
+      return;
     }
-    // Symmetric refill: prune above only drops client-side stale ids; any
-    // server-issued cards that landed during the disconnect window aren't on
-    // the client yet. loadHistory() re-fetches messages from the gateway so
-    // those cards (and any new assistant responses) become visible.
-    void this.loadHistory();
+    const scope = getResourceWorkspaceKey();
+    const draft =
+      this.querySelector<NativeSessionView>('native-session-view')?.takeUnsentDraft() ??
+      this.pendingHandoff?.text ??
+      '';
+    const params = hashParams();
+    for (const name of [
+      'sessionId',
+      'executionNodeId',
+      'cwd',
+      'custom',
+      'runner',
+      'model',
+      'effort',
+      'mode',
+      'approvalMode',
+    ])
+      params.delete(name);
+    this.targetChoice = value === 'agent' ? 'agent' : 'copilot';
+    this.archiveId = '';
+    this.dangerous = false;
+    if (this.targetChoice === 'agent') params.set('copilotTarget', 'agent');
+    else params.delete('copilotTarget');
+    navigateHash(`#copilot${params.size ? '?' + params.toString() : ''}`, 'replace');
+    this.pendingHandoff = { scope, target: this.targetChoice, text: draft, submit: false };
+    this.requestUpdate();
   }
-
-  // Reuses the cp-toast surface used by memorySavedToast and dispatches a
-  // bubbling 'toast' CustomEvent for any global listener.
-  private surfaceToast(message: string): void {
-    this.memorySavedToast = message;
-    if (this.toastTimer) clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => {
-      this.memorySavedToast = null;
-    }, 4000);
-    this.dispatchEvent(
-      new CustomEvent('toast', {
-        detail: { kind: 'warn', message },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-  }
-
-  private async loadHistory(sessionId = this.activeSessionId()) {
-    try {
-      const applyStored = (result: ChatHistoryResult) => {
-        if (sessionId !== this.activeSessionId()) return;
-        this.messages = result.messages;
-        this.sessionCost = result.messages.reduce(
-          (sum, message) => sum + (message.usage?.costUsd ?? 0),
-          0,
-        );
-        this.scrollToBottom();
-      };
-      applyStored(
-        await readStored<ChatHistoryResult>(
-          resourceQuery<ChatHistoryResult>(Methods.CHAT_HISTORY, {
-            sessionId,
-          }),
-          applyStored,
-        ),
-      );
-    } catch (err) {
-      const message = errorMessage(err);
-      const isOptionalHistoryError =
-        message === 'Not connected' ||
-        (err instanceof GatewayRequestError && err.code === 'METHOD_NOT_FOUND');
-      if (isOptionalHistoryError) {
-        // History is optional before the gateway is connected or when paired with an older gateway.
-        if (sessionId !== this.activeSessionId()) return;
-        this.messages = [];
-        this.sessionCost = 0;
-        return;
-      }
-      if (sessionId !== this.activeSessionId()) return;
-      this.messages = [
-        {
-          id: `history-error-${Date.now()}`,
-          role: 'system',
-          content: `Could not load chat history: ${message}`,
-          timestamp: new Date().toISOString(),
-        },
-      ];
-      this.sessionCost = 0;
-    }
-  }
-
-  private handleChatResponse(payload: ChatResponsePayload) {
-    const next = applyChatPanelResponse(
-      {
-        messages: this.messages,
-        streamingText: this.streamingText,
-        streamingStatus: this.streamingStatus,
-        streamingError: this.streamingError,
-        sending: this.sending,
-        sessionCost: this.sessionCost,
-        usageOpen: this.usageOpen,
-      },
-      payload,
-      this.activeSessionId(),
-    );
-    if (next.ignored) return;
-    this.messages = [...next.messages];
-    this.streamingText = next.streamingText;
-    this.streamingStatus = next.streamingStatus;
-    this.streamingError = next.streamingError;
-    this.sending = next.sending;
-    this.sessionCost = next.sessionCost;
-    if (next.shouldLoadUsageContext) void this.loadUsageContext();
-    if (next.shouldLoadSessions) void this.loadSessions();
-    if (next.shouldScrollToBottom) this.scrollToBottom();
-  }
-
-  private showMemoryToast(filePath: string) {
-    const filename = filePath.split('/').pop() ?? filePath;
-    this.memorySavedToast = `Saved: ${filename}`;
-    if (this.toastTimer) clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => {
-      this.memorySavedToast = null;
-    }, 3000);
-  }
-
-  private scrollToBottom() {
-    this.updateComplete.then(() => {
-      const el = this.querySelector('.cp-messages-end');
-      el?.scrollIntoView({ behavior: 'smooth' });
+  private async configure(): Promise<void> {
+    const owns = this.ownerGuard();
+    const choice = this.picker.selection!;
+    const result = await gateway.request<CopilotConfigureResult>(Methods.COPILOT_CONFIGURE, {
+      runner: choice.runner,
+      model: choice.model ?? undefined,
+      effort: choice.effort ?? 'auto',
+      autostart: this.autostart,
     });
+    if (!owns()) throw new Error('Co-Pilot account changed');
+    this.runtime = result.session;
   }
-
-  private currentClientContext(contextOverride?: Partial<ChatClientContext>): ChatClientContext {
-    const current = buildChatClientContext();
-    return {
-      ...current,
-      ...contextOverride,
-      query: {
-        ...(current.query ?? {}),
-        ...(contextOverride?.query ?? {}),
-      },
-      affordances: [...(current.affordances ?? []), ...(contextOverride?.affordances ?? [])],
-    };
-  }
-
-  private async loadRuntime() {
-    await this.runtimeQuery.retry();
-  }
-
-  private runtimeCommandOwner() {
+  private readonly ensureSession = async (): Promise<NativeSessionInfo> => {
+    const owns = this.ownerGuard();
+    const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, {
+      safetyTier: 'sandboxed',
+    });
+    if (!owns()) throw new Error('Co-Pilot account changed');
+    if (!result.nativeSession)
+      throw new Error('The gateway did not return a native Co-Pilot session');
+    this.runtime = result.session;
+    return result.nativeSession;
+  };
+  private async act(action: () => Promise<void>): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    this.error = '';
+    const cache = getResourceCache(),
+      scope = getResourceWorkspaceKey();
+    const owns = () => cache === getResourceCache() && scope === getResourceWorkspaceKey();
     try {
-      this.runtimeQuery.requireReady();
-    } catch (err) {
-      this.runtimeError = errorMessage(err);
-      return;
-    }
-    const cache = getResourceCache();
-    const workspaceKey = getResourceWorkspaceKey();
-    return () => cache === getResourceCache() && workspaceKey === getResourceWorkspaceKey();
-  }
-
-  private async startRuntime(mode: 'start' | 'reconnect' = 'start') {
-    const ownsRuntime = this.runtimeCommandOwner();
-    if (!ownsRuntime) return;
-    this.runtimeLoading = true;
-    this.runtimeError = '';
-    try {
-      if (mode === 'start') {
-        await this.saveRuntimeConfig(false, false);
-        if (!ownsRuntime()) return;
+      await action();
+    } catch (error) {
+      if (owns()) this.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (owns()) {
+        this.busy = false;
         await this.runtimeQuery.retry();
-        if (!ownsRuntime()) return;
-        this.runtimeQuery.requireReady();
       }
-      const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, {
-        mode,
-        safetyTier: 'sandboxed',
-      });
-      if (!ownsRuntime()) return;
-      this.runtimeNotice = result.reconnected || result.reused ? 'Reconnected' : 'Started';
-      await this.loadHistory(result.session.transcriptId);
-    } catch (err) {
-      if (ownsRuntime()) this.runtimeError = errorMessage(err);
-    } finally {
-      if (ownsRuntime()) this.runtimeLoading = false;
     }
   }
-
-  private async stopRuntime() {
-    const ownsRuntime = this.runtimeCommandOwner();
-    if (!ownsRuntime) return;
-    this.runtimeLoading = true;
-    this.runtimeError = '';
-    try {
-      await gateway.request<CopilotStopResult>(Methods.COPILOT_STOP, {
-        reason: 'operator-requested',
-      });
-      if (!ownsRuntime()) return;
-      this.runtimeNotice = 'Stopped';
-    } catch (err) {
-      if (ownsRuntime()) this.runtimeError = errorMessage(err);
-    } finally {
-      if (ownsRuntime()) this.runtimeLoading = false;
-    }
+  private async start(params: CopilotStartParams = { safetyTier: 'sandboxed' }): Promise<void> {
+    const owns = this.ownerGuard();
+    const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, params);
+    if (!owns()) throw new Error('Co-Pilot account changed');
+    this.runtime = result.session;
+    this.dangerous = false;
   }
-
-  private async openDangerousConfirmation() {
-    const ownsRuntime = this.runtimeCommandOwner();
-    if (!ownsRuntime) return;
-    try {
-      await this.saveRuntimeConfig(false);
-      if (!ownsRuntime()) return;
-      await this.runtimeQuery.retry();
-      if (!ownsRuntime()) return;
-      this.runtimeQuery.requireReady();
-    } catch (err) {
-      if (ownsRuntime()) this.runtimeError = errorMessage(err);
-      return;
-    }
-    this.dangerousTypedPhrase = '';
-    this.dangerousConfirmationOpen = true;
-  }
-
-  private async startDangerousRuntime() {
-    const ownsRuntime = this.runtimeCommandOwner();
-    if (!ownsRuntime) return;
-    const binding = this.runtimeQuery.requireReady().session.dangerousLaunch;
-    const params = dangerousStartParams(binding, this.dangerousTypedPhrase);
-    if (!params) return;
-    this.runtimeLoading = true;
-    this.runtimeError = '';
-    try {
-      await gateway.request<CopilotStartResult>(Methods.COPILOT_START, params);
-      if (!ownsRuntime()) return;
-      this.runtimeNotice = 'Dangerous runtime started';
-      this.dangerousConfirmationOpen = false;
-    } catch (err) {
-      if (ownsRuntime()) this.runtimeError = errorMessage(err);
-    } finally {
-      if (ownsRuntime()) this.runtimeLoading = false;
-    }
-  }
-
-  private syncRuntime(session: CopilotRuntimeSession) {
-    this.runtime = session;
-    this.runtimePicker.setSequence([
-      {
-        runner: session.runner,
-        model: session.model,
-        effort: session.effort === 'auto' ? null : (session.effort ?? null),
-        mode: 'cold',
-      },
-    ]);
-    this.runtimeAutostart = session.autostart;
-    this.runtimeWorkerRefJson = session.terminalWorker
-      ? JSON.stringify(session.terminalWorker)
-      : '';
-    if (session.status === 'failed' || session.status === 'ambiguous') this.runtimeNotice = '';
-  }
-
-  private async saveRuntimeConfig(showNotice = true, manageLoading = true) {
-    const ownsRuntime = this.runtimeCommandOwner();
-    if (!ownsRuntime) return;
-    if (manageLoading) this.runtimeLoading = true;
-    this.runtimeError = '';
-    try {
-      await gateway.request<CopilotConfigureResult>(Methods.COPILOT_CONFIGURE, {
-        runner: this.runtimeRunner,
-        model: this.runtimeModel,
-        effort: this.runtimeEffort || 'auto',
-        autostart: this.runtimeAutostart,
-      });
-      if (!ownsRuntime()) return;
-      if (showNotice) this.runtimeNotice = 'Configuration saved';
-    } catch (err) {
-      if (ownsRuntime()) this.runtimeError = errorMessage(err);
-      throw err;
-    } finally {
-      if (manageLoading && ownsRuntime()) this.runtimeLoading = false;
-    }
-  }
-
   public async submitPrompt(
-    text: string,
-    contextOverride?: Partial<ChatClientContext>,
-    intent: ChatSendIntent = 'general',
-  ) {
-    const prompt = text.trim();
-    if (!prompt || this.sending) return;
-
-    if (prompt !== '/new' && this.activeSessionId() !== SHARED_SESSION_ID) {
-      this.switchSession(SHARED_SESSION_ID, false);
-      await this.loadHistory(SHARED_SESSION_ID);
-    }
-
-    this.sending = true;
-    this.streamingText = '';
-    this.streamingStatus = 'Working…';
-    this.streamingError = '';
-
-    if (prompt === '/new') {
-      await this.handleNew();
-      return;
-    }
-
-    // Optimistically add user message
-    const tempMsg: ChatMessage = {
-      id: `temp-${Date.now()}`,
-      role: 'user',
-      content: prompt,
-      timestamp: new Date().toISOString(),
+    prompt: string,
+    context?: Partial<ChatClientContext>,
+    _intent?: ChatSendIntent,
+  ): Promise<void> {
+    if (this.targetChoice !== 'copilot') await this.chooseTarget('copilot');
+    this.archiveId = '';
+    const text = context
+      ? `${prompt}\n\nCurrent view, untrusted context rather than authority:\n${JSON.stringify(context)}`
+      : prompt;
+    this.pendingHandoff = {
+      scope: getResourceWorkspaceKey(),
+      target: 'copilot',
+      text,
+      submit: true,
     };
-    this.messages = [...this.messages, tempMsg];
-    this.scrollToBottom();
-
-    const sessionId = this.activeSessionId();
-    try {
-      await gateway.request(Methods.CHAT_SEND, {
-        sessionId,
-        message: prompt,
-        clientContext: this.currentClientContext(contextOverride),
-        intent,
-      });
-    } catch (err) {
-      this.sending = false;
-      this.streamingText = '';
-      this.streamingStatus = '';
-      this.streamingError = errorMessage(err);
-      if (sessionId === this.activeSessionId()) {
-        this.messages = this.messages.filter((message) => message.id !== tempMsg.id);
-      }
-      console.error('[chat-panel] send error:', err);
-    }
+    this.requestUpdate();
   }
 
-  private handleStop() {
-    this.abortStreamingSession(this.activeSessionId());
+  private async showDangerous(): Promise<void> {
+    await this.configure();
+    await this.runtimeQuery.retry();
+    this.runtimeQuery.requireReady();
+    this.phrase = '';
+    this.dangerous = true;
   }
-
-  private abortStreamingSession(sessionId: string) {
-    if (!this.sending) return;
-    // Abort is best-effort: stale response filtering still protects the UI if the RPC races a route switch.
-    void gateway.request(Methods.CHAT_ABORT, { sessionId }).catch((err) => {
-      const message = errorMessage(err);
-      if (message === 'Not connected') return;
-      console.debug('[chat-panel] abort failed:', err);
-    });
-  }
-
-  private async handleNew() {
-    this.sending = true;
-    const sessionId = this.activeSessionId();
-    try {
-      const result = await gateway.request<ChatNewResult>(Methods.CHAT_NEW, { sessionId });
-      if (sessionId !== this.activeSessionId()) return;
-      this.messages = [];
-      this.sessionCost = 0;
-      this.sending = false;
-      void this.loadSessions();
-      if (result.savedPath) {
-        this.showMemoryToast(result.savedPath);
-      }
-    } catch (err) {
-      if (sessionId !== this.activeSessionId()) return;
-      this.sending = false;
-      this.messages = [
-        ...this.messages,
-        {
-          id: `new-error-${Date.now()}`,
-          role: 'assistant',
-          content: `Could not save and clear this chat: ${errorMessage(err)}`,
-          timestamp: new Date().toISOString(),
-        },
-      ];
-    }
-  }
-
-  private async toggleUsage() {
-    const nextOpen = !this.usageOpen;
-    this.usageOpen = nextOpen;
-    if (nextOpen) await this.loadUsageContext();
-    else this.usageQuery.setQuery(undefined);
-  }
-
-  private async loadUsageContext() {
-    this.usageQuery.setQuery(
-      resourceQuery<ChatSessionContextResult>(Methods.CHAT_SESSION_CONTEXT, {
-        sessionId: this.activeSessionId(),
-      }),
-    );
-    await this.usageQuery.retry();
-  }
-
-  private clampDrawerHeight(height: number): number {
-    return clampChatDrawerHeight(height, window.innerHeight, this.minDrawerHeight);
-  }
-
-  private startResize(e: PointerEvent) {
-    if (this.fullscreen) return;
-    e.preventDefault();
-    this.resizing = true;
-    this.resizeStartY = e.clientY;
-    this.resizeStartHeight = this.drawerHeight;
-    window.addEventListener('pointermove', this.onResizeMove);
-    window.addEventListener('pointerup', this.onResizeEnd, { once: true });
-  }
-
-  private readonly onResizeMove = (e: PointerEvent) => {
-    if (!this.resizing) return;
-    const delta = this.resizeStartY - e.clientY;
-    this.drawerHeight = this.clampDrawerHeight(this.resizeStartHeight + delta);
-  };
-
-  private readonly onResizeEnd = () => {
-    this.stopResize();
-  };
-
-  private stopResize() {
-    this.resizing = false;
-    window.removeEventListener('pointermove', this.onResizeMove);
-    window.removeEventListener('pointerup', this.onResizeEnd);
-  }
-
-  private toggleFullscreen() {
-    this.fullscreen = !this.fullscreen;
-  }
-
-  private async createManualSession() {
-    try {
-      const result = await gateway.request<ChatSessionCreateResult>(
-        Methods.CHAT_SESSION_CREATE,
-        {},
-      );
-      this.switchSession(result.session.id);
-      await this.loadSessions();
-    } catch (err) {
-      this.streamingError = `Could not create chat: ${errorMessage(err)}`;
-    }
-  }
-
-  private async pinActiveSession() {
-    const id = this.activeSessionId();
-    if (id === SHARED_SESSION_ID || this.pinningActive) return;
-    this.pinningActive = true;
-    try {
-      await gateway.request(Methods.CHAT_SESSION_PIN, { sessionId: id });
-      await this.loadSessions();
-      this.surfaceToast('Chat saved — will persist across reloads.');
-    } catch (err) {
-      this.streamingError = `Could not save chat: ${errorMessage(err)}`;
-    } finally {
-      this.pinningActive = false;
-    }
-  }
-
-  private openHistory() {
-    this.historyOpen = true;
-    void this.loadSessions();
-  }
-
-  private closeHistory() {
-    this.historyOpen = false;
-  }
-
-  private onHistorySelect(e: CustomEvent<{ sessionId: string }>) {
-    this.historyOpen = false;
-    this.switchSession(e.detail.sessionId);
-  }
-
-  private async onHistoryDelete(e: CustomEvent<{ sessionIds: string[] }>) {
-    const ids = e.detail.sessionIds.filter((id) => id !== SHARED_SESSION_ID);
-    if (!ids.length) return;
-    try {
-      await gateway.request(Methods.CHAT_SESSIONS_BULK_DELETE, { sessionIds: ids });
-      if (ids.includes(this.activeSessionId())) this.switchSession(SHARED_SESSION_ID);
-      await this.loadSessions();
-    } catch (err) {
-      this.streamingError = `Could not delete chats: ${errorMessage(err)}`;
-    }
-  }
-
-  private async onHistoryPin(e: CustomEvent<{ sessionId: string }>) {
-    try {
-      await gateway.request(Methods.CHAT_SESSION_PIN, { sessionId: e.detail.sessionId });
-      await this.loadSessions();
-    } catch (err) {
-      this.streamingError = `Could not save chat: ${errorMessage(err)}`;
-    }
-  }
-
-  private async onActionConfirm(e: CustomEvent<{ actionId: string }>) {
-    const card = e.target as
-      | (HTMLElement & {
-          markResolved?: (r: { ok: boolean; unavailable?: boolean; message?: string }) => void;
-        })
-      | null;
-    const actionId = e.detail.actionId;
-    if (!actionId) {
-      card?.markResolved?.({ ok: false, message: 'Missing action id.' });
-      return;
-    }
-    try {
-      const result = await gateway.request<{
-        ok: true;
-        type: string;
-        result?: Record<string, unknown>;
-      }>(Methods.CHAT_CONFIRM_ACTION, {
-        sessionId: this.activeSessionId(),
-        actionId,
-      });
-      card?.markResolved?.({ ok: true });
-      if (result.type === 'memory.update') {
-        this.showMemoryToast('MEMORY.md');
-      } else if (result.type === 'run.create' && typeof result.result?.runId === 'string') {
-        // Defense-in-depth: gateway is trusted today, but a stray non-UUID would
-        // route to a garbage URL and break the back button. Only navigate when
-        // the id matches the canonical run-id shape.
-        const runId = result.result.runId;
-        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
-          navigateHash(`run/${runId}`);
-        } else {
-          console.warn('[chat-panel] run.create returned non-UUID runId; ignoring nav', runId);
-        }
-      }
-    } catch (err) {
-      const message = errorMessage(err);
-      // Server raises ChatActionRejectError with a typed reason; the gateway
-      // surfaces it as a CHAT_ACTION_REJECT_<REASON> code on the WS error
-      // frame. Match on the code so wording tweaks can't desync the UI.
-      const code = err instanceof GatewayRequestError ? err.code : '';
-      const unavailable = UNAVAILABLE_REJECT_CODES.has(code);
-      card?.markResolved?.({ ok: false, unavailable, message });
-      console.error('[chat-panel] action failed:', err);
-    }
-  }
-
   render() {
-    if (!this.open) return html``;
-
-    if (this.agentWorkspace)
-      return html`${renderChatPanelStyles()}
-        <div
-          class="cp-drawer ${this.fullscreen ? 'fullscreen' : ''}"
-          style="--cp-height:${this.fullscreen ? '100vh' : `${this.drawerHeight}px`}"
+    if (!this.open) return nothing;
+    const runtime = this.targetChoice === 'copilot' ? this.runtime : undefined;
+    const active =
+      runtime && ['starting', 'running', 'reconnecting', 'stopping'].includes(runtime.status);
+    const disabled = this.busy || !this.runtimeQuery.ready;
+    return html`<style>
+        chat-panel {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-height: 0;
+          color: var(--fs-text-primary, #ddd);
+        }
+        chat-panel .copilot-bar {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-height: 42px;
+          flex-wrap: wrap;
+          padding: 8px 16px;
+          border-bottom: 1px solid var(--fs-border, #333);
+        }
+        chat-panel native-session-view {
+          flex: 1;
+          min-height: 0;
+        }
+        chat-panel .copilot-notice {
+          min-height: 24px;
+          padding: 4px 16px;
+          font-size: 12px;
+          color: var(--fs-text-muted, #999);
+        }
+        chat-panel .copilot-settings {
+          padding: 12px 16px;
+        }
+        chat-panel .copilot-settings input {
+          margin: 8px;
+        }
+        chat-panel .copilot-warning {
+          padding: 12px;
+          border: 1px solid #96762a;
+        }
+      </style>
+      <div class="copilot-bar">
+        <label
+          >Conversation<select
+            data-testid="copilot-target"
+            .value=${this.targetChoice}
+            ?disabled=${this.busy}
+            @change=${(event: Event) => {
+              void this.chooseTarget((event.target as HTMLSelectElement).value);
+            }}
+          >
+            <option value="copilot">Farm Co-Pilot</option>
+            <option value="agent">New native session</option>
+            <option value="run">Start a run…</option>
+            <option value="terminal">Regular terminal…</option>
+          </select></label
+        ><span
+          >${this.targetChoice === 'agent'
+            ? 'Choose a target'
+            : (runtime?.status ?? 'Connecting')}</span
         >
-          <div class="cp-resize-handle" title="Resize chat" @pointerdown=${this.startResize}></div>
-          <div class="cp-header">
-            <span class="cp-title">Co-Pilot</span>${this.experiencePicker()}
-            <button class="cp-new-btn" @click=${this.toggleFullscreen}>
-              ${this.fullscreen ? 'Restore size' : 'Expand'}
-            </button>
-            <button
-              class="cp-close-btn"
-              aria-label="Close Copilot"
-              @click=${() => this.dispatchEvent(new CustomEvent('close', { bubbles: true }))}
+        <a href="#runs">Runs</a><a href="#fleet">Fleet</a><a href="#native">Launch an agent</a
+        ><a href="#terminal">Terminals</a>
+        ${this.targetChoice === 'copilot'
+          ? html`<button
+              data-testid="copilot-settings"
+              @click=${() => {
+                this.settings = !this.settings;
+              }}
             >
-              ×
-            </button>
-          </div>
-          <native-session-view></native-session-view>
-        </div>`;
-
-    const activeSessionId = this.activeSessionId();
-    const view = chatPanelViewModel({
-      sending: this.sending,
-      streamingText: this.streamingText,
-      streamingError: this.streamingError,
-      activeSessionId,
-      sessionSummaries: this.sessionSummaries,
-    });
-    const runtimeStatus = this.runtime?.status ?? 'unavailable';
-    const runtimeStatusLabel = copilotRuntimeStatusLabel(runtimeStatus);
-
-    return html`
-      ${renderChatPanelStyles()}
-      <div
-        class="cp-drawer ${this.fullscreen ? 'fullscreen' : ''}"
-        style="--cp-height:${this.fullscreen ? '100vh' : `${this.drawerHeight}px`}"
-        @action-confirm=${this.onActionConfirm}
-      >
-        <div class="cp-resize-handle" title="Resize chat" @pointerdown=${this.startResize}></div>
-        <div class="cp-header">
-          <span class="cp-title">Co-Pilot</span>${this.experiencePicker()}
-          <div
-            class="cp-session"
-            title="One Co-Pilot chat per browser. Current screen context is attached to every message you send."
-          >
-            <span class="cp-session-kicker">Chat</span>
-            <span class="cp-session-label"
-              >${chatSessionDisplayName(activeSessionId)}${view.activePinned
-                ? ''
-                : ' · ephemeral'}</span
+              Settings
+            </button>`
+          : nothing}
+        ${!active && runtime?.nativeSession
+          ? html`<button
+              data-testid="copilot-restart"
+              ?disabled=${disabled}
+              @click=${() => this.act(() => this.start())}
             >
-            ${view.canPin
-              ? html`
-                  <button
-                    class="cp-new-btn"
-                    title="Save this chat so it persists after refresh / restart"
-                    ?disabled=${this.pinningActive}
-                    @click=${this.pinActiveSession}
-                  >
-                    ${this.pinningActive ? 'Saving…' : 'Save chat'}
-                  </button>
-                `
-              : ''}
-            <button class="cp-new-btn" title="Open chat history" @click=${this.openHistory}>
-              History${view.historyCount ? ` (${view.historyCount})` : ''}
-            </button>
-          </div>
-          ${this.observerNotifications.length
-            ? html`
-                <details
-                  class="cp-observer"
-                  title=${this.observerNotifications[0]?.summary ?? 'Recent observer notifications'}
-                >
-                  <summary>Alerts ${this.observerNotifications.length}</summary>
-                  <div class="cp-observer-list">
-                    ${this.observerNotifications.map(
-                      (item) => html`
-                        <div class="cp-observer-item">
-                          <span class="cp-observer-meta"
-                            >${item.severity.toUpperCase()} · ${item.type} · ${item.ts}</span
-                          >
-                          <span>${item.summary}</span>
-                        </div>
-                      `,
-                    )}
-                  </div>
-                </details>
-              `
-            : ''}
-          ${this.sending
-            ? html`<button class="cp-stop-btn" @click=${this.handleStop} title="Stop generation">
-                ■ Stop
-              </button>`
-            : ''}
-          <button
-            class="cp-icon-btn"
-            @click=${this.toggleFullscreen}
-            title=${this.fullscreen ? 'Restore chat size' : 'Expand chat'}
-            aria-label=${this.fullscreen ? 'Restore chat size' : 'Expand chat'}
-          >
-            ${this.fullscreen ? '□' : '⛶'}
-          </button>
-          <button class="cp-new-btn" @click=${this.toggleUsage} title="Show chat context usage">
-            Usage
-          </button>
-          <button
-            class="cp-new-btn"
-            @click=${this.createManualSession}
-            title="Create a new manual chat"
-          >
-            New chat
-          </button>
-          <button
-            class="cp-new-btn"
-            @click=${this.handleNew}
-            title="Save a memory note, then clear this chat"
-          >
-            Save & clear
-          </button>
-          <button
-            class="cp-close-btn"
-            @click=${() => this.dispatchEvent(new CustomEvent('close', { bubbles: true }))}
-          >
-            ×
-          </button>
-        </div>
-        ${this.memorySavedToast ? html`<div class="cp-toast">${this.memorySavedToast}</div>` : ''}
-        ${this.sessionCost > 0.5
-          ? html`
-              <div class="cp-cost-warning">
-                Session cost: $${this.sessionCost.toFixed(2)} — consider Save & clear
-              </div>
-            `
-          : ''}
-        ${this.usageOpen
-          ? html`
-              <div class="cp-usage-panel">
-                <div class="cp-usage-head">
-                  <span class="cp-usage-meta">
-                    ${this.usageContext
-                      ? `generated ${this.usageContext.generatedAt} · ${this.usageContext.model.runtimeIdentity}`
-                      : this.usageLoading
-                        ? 'loading'
-                        : 'not loaded'}
-                  </span>
-                  ${this.usageQuery.state.status === 'stale'
-                    ? html`<span class="cp-usage-meta"
-                        >Saved
-                        usage${this.usageQuery.state.observedAt
-                          ? ` from ${new Date(this.usageQuery.state.observedAt).toLocaleString()}`
-                          : ''}.
-                        Waiting for a current read.</span
-                      >`
-                    : ''}
-                  <button
-                    class="cp-new-btn"
-                    @click=${this.loadUsageContext}
-                    ?disabled=${this.usageLoading}
-                  >
-                    Refresh
-                  </button>
-                </div>
-                ${this.usageError
-                  ? html`<div class="cp-usage-error">${this.usageError}</div>`
-                  : this.usageContext
-                    ? html`
-                        <div class="cp-usage-grid">
-                          <div class="cp-usage-card">
-                            <div class="cp-usage-label">LATEST INPUT</div>
-                            <div class="cp-usage-value">
-                              ${formatChatInt(this.usageContext.usage.lastInputTokens)} tokens
-                            </div>
-                          </div>
-                          <div class="cp-usage-card">
-                            <div class="cp-usage-label">EST. REMAINING</div>
-                            <div class="cp-usage-value">
-                              ${formatChatInt(this.usageContext.contextWindow.remainingInputTokens)}
-                              tokens
-                            </div>
-                          </div>
-                          <div class="cp-usage-card">
-                            <div class="cp-usage-label">WINDOW USED</div>
-                            <div class="cp-usage-value">
-                              ${this.usageContext.contextWindow.lastInputPct ?? 'unknown'}%
-                            </div>
-                          </div>
-                          <div class="cp-usage-card">
-                            <div class="cp-usage-label">MESSAGES</div>
-                            <div class="cp-usage-value">
-                              ${this.usageContext.messages.total}
-                              (${this.usageContext.messages.user} user)
-                            </div>
-                          </div>
-                          <div class="cp-usage-card">
-                            <div class="cp-usage-label">TOTAL OUTPUT</div>
-                            <div class="cp-usage-value">
-                              ${formatChatInt(this.usageContext.usage.totalOutputTokens)} tokens
-                            </div>
-                          </div>
-                          <div class="cp-usage-card">
-                            <div class="cp-usage-label">SESSION COST</div>
-                            <div class="cp-usage-value">
-                              ${formatChatUsd(this.usageContext.usage.totalCostUsd)}
-                            </div>
-                          </div>
-                          <div class="cp-usage-card">
-                            <div class="cp-usage-label">COMPACTION</div>
-                            <div class="cp-usage-value">${this.usageContext.compaction.status}</div>
-                          </div>
-                          <div class="cp-usage-card">
-                            <div class="cp-usage-label">JUMPS LEFT</div>
-                            <div class="cp-usage-value">
-                              ${this.usageContext.compaction.jumpsUntilCompact ?? 'not tracked'}
-                            </div>
-                          </div>
-                        </div>
-                        <div class="cp-usage-note">${this.usageContext.contextWindow.note}</div>
-                        <div class="cp-usage-note">${this.usageContext.compaction.note}</div>
-                      `
-                    : html``}
-              </div>
-            `
-          : ''}
-        <section
-          class="cp-runtime ${runtimeStatus === 'running' && !this.runtimeDetailsOpen
-            ? 'compact'
-            : ''}"
-          data-testid="copilot-runtime-card"
-        >
-          <div class="cp-runtime-head">
-            <span class="cp-runtime-status ${runtimeStatus}">${runtimeStatusLabel}</span>
-            <span>${this.runtimeNotice}</span>
-            <span class="cp-runtime-pressure ${this.runtime?.workload.severity ?? 'normal'}">
-              Pressure ${this.runtime?.workload.severity ?? 'unknown'}
-              ${this.runtime ? `· ${this.runtime.workload.totals.total} activities` : ''}
-            </span>
-            ${runtimeStatus === 'running'
-              ? html`<button
-                  class="cp-new-btn"
-                  data-testid="copilot-details-toggle"
-                  @click=${() => (this.runtimeDetailsOpen = !this.runtimeDetailsOpen)}
-                >
-                  ${this.runtimeDetailsOpen ? 'Hide details' : 'Details'}
-                </button>`
-              : ''}
-          </div>
-          ${this.runtime
-            ? html`
-                <div class="cp-runtime-grid">
-                  <span>Runner</span><strong>${this.runtime.runner}</strong> <span>Model</span
-                  ><strong>${this.runtime.model}</strong> <span>Tier</span
-                  ><strong>${this.runtime.safetyTier}</strong> <span>tmux</span
-                  ><strong>${this.runtime.tmuxTarget}</strong> <span>Checkout</span
-                  ><strong>${this.runtime.checkout.path}</strong> <span>Branch</span
-                  ><strong>${this.runtime.checkout.branch}</strong> <span>Dirty</span
-                  ><strong>${this.runtime.checkout.dirtyFileCount}</strong> <span>Delivery</span
-                  ><strong
-                    >${this.runtime.lastDelivery.state
-                      .slice(0, 1)
-                      .toUpperCase()}${this.runtime.lastDelivery.state.slice(1)}</strong
-                  >
-                </div>
-                ${this.runtime.workload.warning
-                  ? html`<div class="cp-runtime-warning">${this.runtime.workload.warning}</div>`
-                  : ''}
-                ${this.runtime.terminalReason
-                  ? html`<div class="cp-runtime-reason">${this.runtime.terminalReason}</div>`
-                  : ''}
-                <div class="cp-runtime-config">
-                  <review-dispatch-picker
-                    .viewModel=${this.runtimePicker}
-                    .disabled=${this.runtimeLoading ||
-                    !this.runtimeQuery.ready ||
-                    runtimeStatus === 'running'}
-                    @review-dispatch-change=${() => this.requestUpdate()}
-                  ></review-dispatch-picker>
-                  <label class="cp-runtime-autostart">
-                    <input
-                      type="checkbox"
-                      .checked=${this.runtimeAutostart}
-                      ?disabled=${this.runtimeLoading || !this.runtimeQuery.ready}
-                      @change=${(event: Event) => {
-                        if (event.target instanceof HTMLInputElement)
-                          this.runtimeAutostart = event.target.checked;
-                      }}
-                    />
-                    Start automatically with the Gateway
-                  </label>
-                  <button
-                    class="cp-new-btn"
-                    data-testid="copilot-save-config"
-                    ?disabled=${this.runtimeLoading || !this.runtimeQuery.ready}
-                    @click=${() => this.saveRuntimeConfig()}
-                  >
-                    Save configuration
-                  </button>
-                </div>
-              `
-            : html`<div class="cp-runtime-reason">Runtime status unavailable.</div>`}
-          ${this.runtimeQuery.state.status === 'stale'
-            ? html`<div class="cp-runtime-reason">
-                Saved
-                status${this.runtimeQuery.state.observedAt
-                  ? ` from ${new Date(this.runtimeQuery.state.observedAt).toLocaleString()}`
-                  : ''}.
-                Waiting for a current read.
-              </div>`
-            : ''}
-          ${this.runtimeQuery.state.error
-            ? html`<div class="cp-runtime-error">${this.runtimeQuery.state.error.message}</div>`
-            : ''}
-          ${this.runtimeError ? html`<div class="cp-runtime-error">${this.runtimeError}</div>` : ''}
-          <div class="cp-runtime-actions">
-            ${runtimeStatus === 'running'
-              ? html`
-                  <button
-                    class="cp-new-btn"
-                    data-testid="copilot-reconnect"
-                    ?disabled=${this.runtimeLoading || !this.runtimeQuery.ready}
-                    @click=${() => this.startRuntime('reconnect')}
-                  >
-                    Reconnect
-                  </button>
-                  <button
-                    class="cp-stop-btn"
-                    data-testid="copilot-stop"
-                    ?disabled=${this.runtimeLoading || !this.runtimeQuery.ready}
-                    @click=${this.stopRuntime}
-                  >
-                    Stop runtime
-                  </button>
-                `
-              : html`
-                  <button
-                    class="cp-new-btn"
-                    data-testid="copilot-start-sandboxed"
-                    ?disabled=${this.runtimeLoading || !this.runtimeQuery.ready}
-                    @click=${() => this.startRuntime('start')}
-                  >
-                    Start Sandboxed
-                  </button>
-                  <button
-                    class="cp-stop-btn"
-                    data-testid="copilot-start-dangerous"
-                    ?disabled=${this.runtimeLoading || !this.runtimeQuery.ready || !this.runtime}
-                    @click=${this.openDangerousConfirmation}
-                  >
-                    Start Dangerous
-                  </button>
-                `}
-          </div>
-          ${this.dangerousConfirmationOpen && this.runtime
-            ? html`
-                <div class="cp-dangerous" data-testid="copilot-dangerous-confirmation">
-                  <strong>Dangerous same-user execution</strong>
-                  <p>${this.runtime.dangerousLaunch.warning}</p>
-                  <p>Bound to ${dangerousLaunchSummary(this.runtime.dangerousLaunch)}</p>
-                  <label>
-                    Type ${this.runtime.dangerousLaunch.typedPhrase}
-                    <input
-                      .value=${this.dangerousTypedPhrase}
-                      @input=${(event: InputEvent) => {
-                        if (event.target instanceof HTMLInputElement)
-                          this.dangerousTypedPhrase = event.target.value;
-                      }}
-                    />
-                  </label>
-                  <div class="cp-runtime-actions">
-                    <button
-                      class="cp-new-btn"
-                      data-testid="copilot-dangerous-cancel"
-                      @click=${() => (this.dangerousConfirmationOpen = false)}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      class="cp-stop-btn"
-                      data-testid="copilot-dangerous-confirm"
-                      ?disabled=${this.dangerousTypedPhrase !==
-                        this.runtime.dangerousLaunch.typedPhrase ||
-                      this.runtimeLoading ||
-                      !this.runtimeQuery.ready}
-                      @click=${this.startDangerousRuntime}
-                    >
-                      Launch dangerous
-                    </button>
-                  </div>
-                </div>
-              `
-            : ''}
-        </section>
-        ${runtimeStatus === 'running'
-          ? html`
-              <div class="cp-terminal" data-testid="copilot-terminal">
-                ${this.streamingError
-                  ? html`<div class="cp-runtime-error" data-testid="copilot-send-error">
-                      ${this.streamingError}
-                    </div>`
-                  : ''}
-                ${this.runtimeWorkerRefJson
-                  ? html`<terminal-view
-                      .workerRefJson=${this.runtimeWorkerRefJson}
-                      compact
-                    ></terminal-view>`
-                  : html`<div class="cp-terminal-loading">
-                      <span>Co-Pilot terminal unavailable.</span>
-                      <button
-                        class="cp-new-btn"
-                        ?disabled=${this.runtimeLoading || gateway.connectionState !== 'connected'}
-                        @click=${() => this.loadRuntime()}
-                      >
-                        ${this.runtimeLoading ? 'Checking…' : 'Retry'}
-                      </button>
-                    </div>`}
-              </div>
-            `
-          : html`
-              <div class="cp-messages">
-                ${this.messages.length === 0 && !view.isStreaming
-                  ? html`<div class="cp-empty">Start the runtime to ask about your fleet.</div>`
-                  : this.messages.map((msg) => html`<chat-message .message=${msg}></chat-message>`)}
-                ${view.isStreaming
-                  ? html`
-                      <div class="cp-streaming">
-                        <div class="cp-streaming-status ${this.streamingError ? 'error' : ''}">
-                          ${this.streamingStatus || 'Working…'}
-                        </div>
-                        <div class="cp-streaming-body ${this.streamingError ? 'error' : ''}">
-                          ${this.streamingError || this.streamingText || 'Working…'}
-                        </div>
-                      </div>
-                    `
-                  : ''}
-                <div class="cp-messages-end"></div>
-              </div>
-            `}
+              Start Co-Pilot
+            </button>`
+          : nothing}
+        ${active || (runtime?.status === 'failed' && runtime.nativeSession)
+          ? html`<button
+              data-testid="copilot-stop"
+              ?disabled=${disabled}
+              @click=${() =>
+                this.act(async () => {
+                  this.ownerGuard();
+                  const result = await gateway.request<CopilotStopResult>(Methods.COPILOT_STOP, {
+                    reason: 'operator-requested',
+                  });
+                  this.runtime = result.session;
+                })}
+            >
+              Stop Co-Pilot
+            </button>`
+          : nothing}
       </div>
-      ${this.historyOpen
-        ? html`
-            <chat-history-modal
-              .sessions=${view.historySessions}
-              .activeSessionId=${activeSessionId}
-              @close=${this.closeHistory}
-              @select=${this.onHistorySelect}
-              @delete=${this.onHistoryDelete}
-              @pin=${this.onHistoryPin}
-            ></chat-history-modal>
-          `
-        : ''}
-    `;
+      <div class="copilot-notice" role="status">
+        ${this.error ||
+        (this.targetChoice === 'copilot' ? this.runtimeQuery.state.error?.message : '') ||
+        runtime?.terminalReason ||
+        'Opening this view starts no agent.'}
+      </div>
+      ${this.settings && this.targetChoice === 'copilot'
+        ? html`<section class="copilot-settings">
+            <review-dispatch-picker
+              .viewModel=${this.picker}
+              .disabled=${disabled || active}
+              @review-dispatch-change=${() => this.requestUpdate()}
+            ></review-dispatch-picker>
+            <label
+              ><input
+                type="checkbox"
+                .checked=${this.autostart}
+                ?disabled=${disabled}
+                @change=${(event: Event) => {
+                  this.autostart = (event.target as HTMLInputElement).checked;
+                }}
+              />Start automatically with the gateway</label
+            >
+            <button
+              data-testid="copilot-save-config"
+              ?disabled=${disabled}
+              @click=${() => this.act(() => this.configure())}
+            >
+              Save configuration
+            </button>
+            ${!active
+              ? html`<button
+                    data-testid="copilot-start"
+                    ?disabled=${disabled}
+                    @click=${() =>
+                      this.act(async () => {
+                        await this.configure();
+                        await this.start();
+                      })}
+                  >
+                    Start sandboxed
+                  </button>
+                  <button
+                    data-testid="copilot-start-dangerous"
+                    ?disabled=${disabled}
+                    @click=${() => this.act(() => this.showDangerous())}
+                  >
+                    Dangerous start…
+                  </button>`
+              : nothing}
+            <label
+              >Saved conversations
+              <select
+                data-testid="copilot-archive"
+                .value=${this.archiveId}
+                @change=${(event: Event) => {
+                  this.archiveId = (event.target as HTMLSelectElement).value;
+                }}
+              >
+                <option value="">Current Co-Pilot</option>
+                ${(this.archives.state.data?.sessions ?? []).map(
+                  (session) =>
+                    html`<option value=${session.id}>${session.title || session.id}</option>`,
+                )}
+              </select></label
+            >
+          </section>`
+        : nothing}
+      ${this.dangerous && runtime
+        ? html`<section class="copilot-warning">
+            <p>${runtime.dangerousLaunch.warning}</p>
+            <p>${dangerousLaunchSummary(runtime.dangerousLaunch)}</p>
+            <label
+              >Type ${runtime.dangerousLaunch.typedPhrase}<input
+                data-testid="copilot-dangerous-phrase"
+                .value=${this.phrase}
+                @input=${(event: Event) => {
+                  this.phrase = (event.target as HTMLInputElement).value;
+                }}
+            /></label>
+            <button
+              data-testid="copilot-confirm-dangerous"
+              ?disabled=${disabled || !dangerousStartParams(runtime.dangerousLaunch, this.phrase)}
+              @click=${() =>
+                this.act(async () => {
+                  const params = dangerousStartParams(
+                    this.runtimeQuery.requireReady().session.dangerousLaunch,
+                    this.phrase,
+                  );
+                  if (params) await this.start(params);
+                })}
+            >
+              Confirm dangerous start
+            </button>
+          </section>`
+        : nothing}
+      ${this.archiveId && this.targetChoice === 'copilot'
+        ? html`<section class="copilot-archive" aria-label="Saved conversation">
+            <p>Saved conversation, read-only. ${this.archiveError}</p>
+            ${(this.archive?.messages ?? []).map(
+              (message) =>
+                html`<chat-message
+                  .message=${{ ...message, suggestedActions: [] }}
+                ></chat-message>`,
+            )}
+          </section>`
+        : this.targetChoice === 'agent'
+          ? keyed(
+              'agent',
+              html`<native-session-view
+                @native-command-readiness=${() => this.deliverHandoff()}
+                navigationRoute="copilot"
+                .initialSessionId=${hashParams().get('sessionId') ?? ''}
+                .initialExecutionNodeId=${hashParams().get('executionNodeId') ?? ''}
+              ></native-session-view>`,
+            )
+          : runtime
+            ? keyed(
+                'copilot',
+                html`<native-session-view
+                  fixedTarget
+                  @native-command-readiness=${() => this.deliverHandoff()}
+                  navigationRoute="copilot"
+                  .ensureSession=${this.ensureSession}
+                  .initialSessionId=${runtime.nativeSession?.sessionId ?? ''}
+                  .initialExecutionNodeId=${runtime.nativeSession?.executionNodeId ?? 'local'}
+                ></native-session-view>`,
+              )
+            : nothing}`;
   }
 }
-
 declare global {
   interface HTMLElementTagNameMap {
     'chat-panel': ChatPanel;

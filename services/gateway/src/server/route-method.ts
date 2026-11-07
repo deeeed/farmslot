@@ -28,7 +28,6 @@ import {
   type BacklogSpecGetParams,
   type BacklogUpcomingParams,
   type BacklogUpdateParams,
-  type ChatAbortParams,
   type ChatClearParams,
   type ChatConfirmActionParams,
   type ChatHistoryParams,
@@ -37,7 +36,6 @@ import {
   type ChatObserverEvidenceParams,
   type ChatSaveMemoryParams,
   type ChatScreenEvidenceParams,
-  type ChatSendParams,
   type ChatSessionContextParams,
   type ChatSessionCreateParams,
   type ChatSessionDeleteParams,
@@ -297,17 +295,15 @@ import {
   backlogUpdate,
 } from '../methods/backlog.js';
 import {
-  chatAbort,
+  chatArchive,
   chatClear,
   chatConfirmAction,
   chatContext,
-  chatHistory,
   chatListActions,
   chatNew,
   chatObserverEvidence,
   chatSaveMemory,
   chatScreenEvidence,
-  chatSend,
   chatSessionContext,
   chatSessionCreate,
   chatSessionDelete,
@@ -575,6 +571,7 @@ import { metroSubscribe, metroUnsubscribe } from '../methods/workspace.js';
 import { gatewayPerformance } from '../observability/performance.js';
 import { getAllThumbnails, subscribeThumbnails } from '../observability/thumbnail-cache.js';
 import { farmslotRoot } from '../projects/repo-root.js';
+import { nativeConversations } from '../resources/native-conversations.js';
 import { nativeObservations } from '../resources/native-observations.js';
 import { upstreamObservers } from '../resources/upstream-observers.js';
 import { rememberNativeExecutionNode } from '../runners/native/execution-nodes.js';
@@ -768,6 +765,15 @@ async function routeAuthorizedMethod(
     ...state,
     ...(state.authentication ? { authentication: { ...state.authentication } } : {}),
   };
+  const authorizeInteractiveCommand = () => {
+    if (
+      !isActiveClient(state) ||
+      state.clientKind !== attestationSession.clientKind ||
+      JSON.stringify(state.authentication) !== JSON.stringify(attestationSession.authentication)
+    )
+      throw new GatewayMethodError('AUTH_FORBIDDEN', 'The command connection changed');
+    authorizeGatewayMethod(authRuntime, attestationSession, method);
+  };
   const runRoute = await routeRunMethod(method, p, {
     authorizeReviewBudgetExtension: () =>
       authorizeGatewayMethod(authRuntime, attestationSession, Methods.RUN_EXTEND_REVIEW_BUDGET),
@@ -783,6 +789,25 @@ async function routeAuthorizedMethod(
   if (runRoute.handled) return runRoute.value;
 
   switch (method) {
+    case Methods.NATIVE_SESSION_SUBSCRIBE:
+      return nativeConversations.subscribe(
+        state,
+        p,
+        () => authorizeGatewayMethod(authRuntime, state, method),
+        emit,
+      );
+    case Methods.NATIVE_SESSION_UNSUBSCRIBE: {
+      if (
+        !p ||
+        typeof p !== 'object' ||
+        !('subscriptionId' in p) ||
+        typeof p.subscriptionId !== 'string' ||
+        Object.keys(p).some((key) => key !== 'subscriptionId')
+      )
+        throw new GatewayMethodError('INVALID_PARAMS', 'Conversation subscription id required');
+      nativeConversations.unsubscribe(state, p.subscriptionId);
+      return { ok: true };
+    }
     case Methods.NATIVE_SESSION_CREATE:
     case Methods.NATIVE_SESSION_ENSURE:
     case Methods.NATIVE_SESSION_READ:
@@ -1187,7 +1212,35 @@ async function routeAuthorizedMethod(
       state.workerSessionHistorySubscribeSeq.set(key, mySeq);
       state.workerSessionHistoryHandlers.get(key)?.();
       state.workerSessionHistoryHandlers.delete(key);
-      const { result, unsubscribe } = await workerSessionHistorySubscribe(sub, emit);
+      const original = authorizeGatewayMethod(authRuntime, state, method);
+      let close: (() => void) | undefined;
+      let denied = false;
+      const current = () => {
+        const reader = authorizeGatewayMethod(authRuntime, state, method);
+        if (reader.id !== original.id || (reader.generation ?? 0) !== (original.generation ?? 0))
+          throw new GatewayMethodError('AUTH_FORBIDDEN', 'Legacy history reader changed');
+      };
+      const { result, unsubscribe } = await workerSessionHistorySubscribe(sub, (event, payload) => {
+        try {
+          current();
+        } catch {
+          denied = true;
+          close?.();
+          return;
+        }
+        if (isActiveClient(state)) emit(event, payload);
+      });
+      close = unsubscribe;
+      try {
+        current();
+      } catch (error) {
+        unsubscribe();
+        throw error;
+      }
+      if (denied) {
+        unsubscribe();
+        throw new GatewayMethodError('AUTH_FORBIDDEN', 'Legacy history reader changed');
+      }
       if (state.workerSessionHistorySubscribeSeq.get(key) === mySeq && isActiveClient(state)) {
         state.workerSessionHistoryHandlers.set(key, unsubscribe);
       } else {
@@ -1375,6 +1428,8 @@ async function routeAuthorizedMethod(
             }
           : undefined;
       const previousNativeNode = getNode(machine);
+      if (previousNativeNode && previousNativeNode.ws !== state.ws)
+        nativeConversations.disconnectNode(previousNativeNode.ws);
       registerNode(
         machine,
         pid,
@@ -1388,6 +1443,7 @@ async function routeAuthorizedMethod(
         {
           ...(observationCapabilities?.workers === 1 ? { workers: 1 as const } : {}),
           ...(observationCapabilities?.files === 1 ? { files: 1 as const } : {}),
+          ...(observationCapabilities?.fileAppends === 1 ? { fileAppends: 1 as const } : {}),
           ...(observationCapabilities?.workspace === 1 ? { workspace: 1 as const } : {}),
         },
         () => {
@@ -1412,6 +1468,7 @@ async function routeAuthorizedMethod(
         conditionalWrites === true,
         terminalInputSequence === true,
       );
+      nativeConversations.reconcile();
       nativeObservations.registrationChanged(
         machine,
         nativeSessions?.ownerPrincipalId,
@@ -1820,10 +1877,8 @@ async function routeAuthorizedMethod(
       return { machines: getAllMachineHealth() } satisfies NodeHealthAllResult;
 
     // Co-Pilot Chat
-    case Methods.CHAT_SEND:
-      return chatSend(p as ChatSendParams, emit);
-    case Methods.CHAT_HISTORY:
-      return chatHistory(p as ChatHistoryParams);
+    case Methods.CHAT_ARCHIVE:
+      return chatArchive(p as ChatHistoryParams);
     case Methods.CHAT_CLEAR:
       return chatClear(p as ChatClearParams);
     case Methods.CHAT_NEW:
@@ -1848,8 +1903,6 @@ async function routeAuthorizedMethod(
       return chatConfirmAction(p as ChatConfirmActionParams, emit);
     case Methods.CHAT_LIST_ACTIONS:
       return chatListActions(p as ChatListActionsParams);
-    case Methods.CHAT_ABORT:
-      return chatAbort(p as ChatAbortParams);
     case Methods.CHAT_CONTEXT:
       return chatContext();
     case Methods.CHAT_SESSION_CONTEXT:
@@ -1857,11 +1910,11 @@ async function routeAuthorizedMethod(
     case Methods.COPILOT_STATUS:
       return copilotStatus();
     case Methods.COPILOT_CONFIGURE:
-      return copilotConfigure(p as CopilotConfigureParams);
+      return copilotConfigure(p as CopilotConfigureParams, authorizeInteractiveCommand);
     case Methods.COPILOT_START:
-      return copilotStart(p as CopilotStartParams);
+      return copilotStart(p as CopilotStartParams, authorizeInteractiveCommand);
     case Methods.COPILOT_STOP:
-      return copilotStop(p as CopilotStopParams);
+      return copilotStop(p as CopilotStopParams, authorizeInteractiveCommand);
     // Improvement
     case Methods.IMPROVEMENT_CHAT:
       return improvementChat(p as ImprovementChatParams, emit);

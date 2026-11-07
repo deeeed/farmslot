@@ -82,6 +82,7 @@ export interface NativeSessionEnsureParams extends Omit<
 
 /** Opt-in declaration made by an authenticated node, not a client-supplied account claim. */
 export interface NativeExecutionNodeDeclaration {
+  conversationStreaming?: 1;
   /** The node forwards standalone approval settings without dropping them. */
   supportsApprovalMode?: boolean;
   /** The runtime persists server-derived standalone requester attribution. */
@@ -149,6 +150,12 @@ export interface NativeCommandReceipt {
   /** `cancelled`: removed from the queue by `native.session.cancel` before submission. */
   outcome?: 'completed' | 'failed' | 'interrupted' | 'cancelled';
   structuredResult?: NativeStructuredResult;
+}
+
+/** Passive command metadata, without a transcript page or prompt text. */
+export interface NativeCommandObservation {
+  session: NativeSessionInfo;
+  receipt?: NativeCommandReceipt;
 }
 
 export interface NativeSessionResponse {
@@ -425,3 +432,64 @@ export interface NativeWorkspaceDiffResult {
   path: string;
   diff: string;
 }
+
+/** A durable source boundary. Worker pins never follow a successor lease. */
+export interface NativeConversationCursor extends NativeSessionTargetParams {
+  executionNodeId: string;
+  /** A new detached host cannot splice a previous host's feed. */
+  hostGeneration: string;
+  generation: string;
+  sequence: number;
+}
+export interface NativeSessionSubscribeParams extends NativeSessionTargetParams {
+  after?: NativeConversationCursor;
+}
+export interface NativeConversationOmission {
+  /** Projection row retaining the prefix. All omitted bytes remain in the authorized journal. */
+  anchorSequence: number;
+  after: number;
+  through: number;
+}
+export interface NativeConversationPage extends NativeSessionReadResult {
+  /** Metadata exceeding the stream budget remains available through an explicit
+   * native.session.read of this same authorized target. Never auto-poll it. */
+  metadataOmitted?: { commands: number; pendingRequests: number };
+}
+export interface NativeConversationReset extends NativeConversationPage {
+  omissions?: NativeConversationOmission[];
+  /** Read older original events with native.session.read, up to this boundary. */
+  historyBefore: number;
+  truncated: boolean;
+  /** An oversized active segment continues in authorized journal pages after this sequence. */
+  activePrefixAfter?: number;
+}
+export interface NativeConversationDeltaPage {
+  events: NativeSessionEvent[];
+  cursor: number;
+  session?: NativeSessionInfo;
+  commands?: NativeCommandReceipt[];
+  pendingRequests?: NativeSessionEvent[];
+  scope?: NativeWorkerHistoryScope;
+  /** Null clears a previous omission notice. */
+  metadataOmitted?: NativeConversationPage['metadataOmitted'] | null;
+}
+export type NativeConversationUpdate =
+  | { kind: 'reset'; cursor: NativeConversationCursor; snapshot: NativeConversationReset }
+  | { kind: 'replay'; cursor: NativeConversationCursor; page: NativeConversationPage }
+  | { kind: 'delta'; cursor: NativeConversationCursor; page: NativeConversationDeltaPage }
+  | { kind: 'terminal'; reason: 'resync-required' | 'source-unavailable' | 'access-denied' };
+export type NativeConversationInitial = Exclude<NativeConversationUpdate, { kind: 'delta' }>;
+export type NativeSessionSubscribeResult = NativeConversationInitial & { subscriptionId: string };
+export type NativeSessionDeltaPayload = NativeConversationUpdate & { subscriptionId: string };
+export interface NativeSessionUnsubscribeParams {
+  subscriptionId: string;
+}
+
+export const NATIVE_CONVERSATION_LIMITS = {
+  projectionRows: 400,
+  projectionBytes: 832 * 1024,
+  replayEvents: 128,
+  frameBytes: 1024 * 1024,
+  textBytes: 64 * 1024,
+  flushMs: 50,
+} as const;

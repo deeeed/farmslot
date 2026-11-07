@@ -99,7 +99,8 @@ export async function startPlanningRaceProxy({
     'backlog.enqueue': 0,
     'backlog.autoDispatchTick': 0,
     'run.create': 0,
-    'chat.send': 0,
+    'native.session.create': 0,
+    'native.session.send': 0,
     'chat.new': 0,
     'chat.confirmAction': 0,
   };

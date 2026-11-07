@@ -999,6 +999,10 @@ async function actualProducerFixture(t: import('node:test').TestContext) {
       resume: true,
     },
   };
+  // A streaming host commits metadata independently of transcript bodies.
+  writeFileSync(join(sessions, 'metadata.json'), JSON.stringify({ revision: randomUUID() }), {
+    mode: 0o600,
+  });
   const journal = join(sessions, `${info.id}.journal`);
   writeFileSync(
     journal,

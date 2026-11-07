@@ -1,0 +1,1 @@
+- Publish bounded native conversation deltas from committed journals and observe durable metadata without polling or starting missing hosts.

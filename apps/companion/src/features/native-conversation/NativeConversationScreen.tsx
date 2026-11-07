@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -20,6 +21,7 @@ import {
   nativeFollowLabel,
   nativeFollowScrolled,
   nativePlanOpen,
+  nativeTimeline,
   nativeWatchTools,
 } from '@farmslot/protocol/client-cache';
 
@@ -90,6 +92,64 @@ export function NativeConversationScreen({
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={100}
     >
+      <Modal
+        transparent
+        visible={Boolean(vm.history)}
+        animationType="none"
+        onRequestClose={actions.dismissSaved}
+      >
+        <View style={styles.historyShade}>
+          <View style={styles.historyDialog}>
+            <Pressable
+              testID="companion-native-history-close"
+              accessibilityRole="button"
+              style={styles.button}
+              onPress={actions.dismissSaved}
+            >
+              <Text style={styles.buttonText}>Close saved output</Text>
+            </Pressable>
+            <Text style={styles.muted}>
+              {vm.history?.loading
+                ? 'Reading saved page…'
+                : vm.history?.error || 'Saved output, read-only'}
+            </Text>
+            <ScrollView>
+              {vm.history?.page
+                ? nativeTimeline(vm.history.page.events).map((entry) => (
+                    <View key={entry.key} style={styles.card}>
+                      <Text style={styles.muted}>{entry.kind}</Text>
+                      <Text style={styles.text}>{entry.text}</Text>
+                    </View>
+                  ))
+                : null}
+            </ScrollView>
+            {vm.history?.page?.hasMore ? (
+              <Pressable
+                accessibilityRole="button"
+                style={styles.button}
+                onPress={() => void actions.readSaved(vm.history?.page?.cursor)}
+              >
+                <Text style={styles.buttonText}>Next saved page</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+      <View style={styles.historyNotice}>
+        <Text numberOfLines={1} style={[styles.muted, { flex: 1 }]}>
+          {vm.historyNotice}
+        </Text>
+        {vm.historyNotice ? (
+          <Pressable
+            testID="companion-native-history-open"
+            accessibilityRole="button"
+            style={styles.button}
+            onPress={() => void actions.readSaved()}
+          >
+            <Text style={styles.buttonText}>Saved output</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <View style={styles.content}>
         <Text style={styles.heading}>{vm.workerLabel ?? 'Native conversations'}</Text>
         <View style={styles.row}>

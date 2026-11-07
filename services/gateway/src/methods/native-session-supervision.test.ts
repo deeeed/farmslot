@@ -76,6 +76,7 @@ mock.module('../runners/native/node.js', {
           ownerPrincipalId: ownerId,
           executionNodeId: params.executionNodeId,
           workerLeaseId: params.leaseId,
+          generation: params.generation,
           workerManaged: true,
         },
         scope: { leaseId: params.leaseId },

@@ -16,12 +16,14 @@ import { promisify } from 'node:util';
 
 import {
   type NativeApprovalMode,
+  type NativeCommandObservation,
   type NativeCommandReceipt,
   type NativeProfileInfo,
   type NativeSessionCreateParams,
   type NativeSessionEnsureParams,
   type NativeSessionEvent,
   type NativeSessionInfo,
+  type NativeSessionReadResult,
   type NativeSessionRequester,
   type NativeSessionResponse,
   type NativeSessionSendResult,
@@ -35,6 +37,7 @@ import {
   requireNativeProfile,
 } from './account-profiles.js';
 import { NATIVE_CHECKPOINT_WAIT_MS, NativeCheckpoints, withinMs } from './checkpoint.js';
+import { NativeConversationJournal, splitNativeText } from './conversation.js';
 import { effectiveModelQuestions } from './model-questions.js';
 import { NativeRequestRefused } from './process.js';
 import { journalProcesses, type ProcessIdentity } from './process-tree.js';
@@ -221,6 +224,7 @@ interface JournalEntry {
 interface SessionRecord {
   processes?: ProcessIdentity[];
   workerHistory: NativeWorkerHistory;
+  conversations: Map<string, NativeConversationJournal>;
   info: NativeSessionInfo;
   events: NativeSessionEvent[];
   adapter?: NativeAdapterSession;
@@ -250,6 +254,7 @@ interface SessionRecord {
 /** Runs only inside the local host. Synchronous fsync orders intent before native input. */
 export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
+  private readonly conversationGeneration = randomUUID();
   private readonly processObservations: ProcessMetadataCache = new Map();
   /** Responses being delivered, by request ID. A resolution outside delivery has no known decision. */
   private readonly delivering = new Map<string, NativeSessionResponse>();
@@ -281,6 +286,7 @@ export class NativeSessionManager {
       const commands = new Map<string, StoredCommand>();
       const events: NativeSessionEvent[] = [];
       const workerHistory = new NativeWorkerHistory();
+      const conversations = new Map<string, NativeConversationJournal>();
       for (const entry of entries) {
         workerHistory.observe(entry);
         info = entry.info ?? info;
@@ -288,12 +294,26 @@ export class NativeSessionManager {
         pending = entry.pending ?? pending;
         for (const command of entry.commands ?? []) commands.set(command.commandId, command);
         if (entry.event) events.push(entry.event);
+        if (info)
+          this.updateConversation(
+            {
+              info,
+              events,
+              commands,
+              pendingRequests: new Map(pending.map((event) => [event.request!.id, event])),
+              workerHistory,
+              conversations,
+            },
+            entry.event,
+            Boolean(entry.info || entry.commands || entry.pending),
+          );
       }
       if (!info || !context) throw new Error('Native journal has no durable session identity');
       if (info.executionNodeId !== executionNodeId)
         throw new Error('Native journal belongs to another execution node');
       const record: SessionRecord = {
         workerHistory,
+        conversations,
         info,
         context,
         processes,
@@ -323,6 +343,7 @@ export class NativeSessionManager {
         });
       }
     }
+    durableWrite(join(this.root, 'metadata.json'), { revision: randomUUID() });
   }
   private persist(record: SessionRecord, event?: NativeSessionEvent): void {
     const previous = this.persisted.get(record) ?? { commands: new Map<string, string>() };
@@ -369,6 +390,9 @@ export class NativeSessionManager {
       previous.commands.set(command.commandId, JSON.stringify(command));
     this.persisted.set(record, { info, context, pending, processes, commands: previous.commands });
     record.workerHistory.observe(entry);
+    if (entry.info || entry.commands || entry.pending)
+      durableWrite(join(this.root, 'metadata.json'), { revision: randomUUID() });
+    this.updateConversation(record, event, Boolean(entry.info || entry.commands || entry.pending));
   }
   create(
     owner: string,
@@ -669,6 +693,7 @@ export class NativeSessionManager {
     };
     const record: SessionRecord = {
       workerHistory: previous?.workerHistory ?? new NativeWorkerHistory(),
+      conversations: previous?.conversations ?? new Map(),
       info,
       events: previous?.events ?? [],
       commands: previous?.commands ?? new Map(),
@@ -1106,6 +1131,14 @@ export class NativeSessionManager {
   }
 
   private append(record: SessionRecord, event: NativeEventInput): void {
+    if (
+      event.type === 'text.delta' &&
+      event.text &&
+      Buffer.byteLength(JSON.stringify(event.text)) > 60 * 1024
+    ) {
+      for (const text of splitNativeText(event.text)) this.append(record, { ...event, text });
+      return;
+    }
     event = compactEventDiagnostics(event);
     const structuredResult =
       event.type === 'turn.completed' &&
@@ -1208,14 +1241,72 @@ export class NativeSessionManager {
     }
   }
 
-  private owned(owner: string, id: string, observations?: ProcessMetadataCache): SessionRecord {
+  private sessionRecord(owner: string, id: string): SessionRecord {
     const record = this.sessions.get(id);
     if (!record || record.info.ownerPrincipalId !== owner)
       throw Object.assign(new Error('Native session not found for this principal'), {
         code: 'NOT_FOUND',
       });
+    return record;
+  }
+  private owned(owner: string, id: string, observations?: ProcessMetadataCache): SessionRecord {
+    const record = this.sessionRecord(owner, id);
     this.reconcileMissingProcess(record, observations);
     return record;
+  }
+  inspect(owner: string, id: string): NativeSessionInfo {
+    return this.snapshot(this.sessionRecord(owner, id));
+  }
+
+  commandStatus(owner: string, id: string, commandId: string): NativeCommandObservation {
+    const record = this.sessionRecord(owner, id);
+    const command = record.commands.get(commandId);
+    if (!command) return { session: this.snapshot(record) };
+    const { text: _text, leaseId: _lease, ...receipt } = command;
+    return { session: this.snapshot(record), receipt: structuredClone(receipt) };
+  }
+
+  /** Command acceptance observes receipt metadata, never a transcript read or a retry. */
+  waitCommandStatus(
+    owner: string,
+    id: string,
+    commandId: string,
+    signal: AbortSignal,
+  ): Promise<NativeCommandObservation> {
+    const journal = this.conversation(owner, id);
+    return new Promise((resolve, reject) => {
+      let stopped = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let unlisten = () => {};
+      const cleanup = () => {
+        stopped = true;
+        unlisten();
+        if (timer) clearTimeout(timer);
+        signal.removeEventListener('abort', abort);
+      };
+      const abort = () => {
+        cleanup();
+        reject(new Error('Native command observation connection closed'));
+      };
+      const sample = (deadline = false) => {
+        if (stopped) return;
+        const observed = this.commandStatus(owner, id, commandId);
+        if (
+          deadline ||
+          observed.receipt?.accepted ||
+          ['failed', 'unknown'].includes(observed.receipt?.state ?? '') ||
+          ['closed', 'failed'].includes(observed.session.state)
+        ) {
+          cleanup();
+          resolve(observed);
+        }
+      };
+      unlisten = journal.listen(() => sample());
+      signal.addEventListener('abort', abort, { once: true });
+      timer = setTimeout(() => sample(true), 30_000);
+      if (signal.aborted) abort();
+      else sample();
+    });
   }
 
   private reconcileMissingProcess(
@@ -1309,7 +1400,14 @@ export class NativeSessionManager {
       pendingRequests: [...record.pendingRequests.values()],
     };
   }
-  readWorker(owner: string, id: string, leaseId: string, after?: number, limit?: number) {
+  readWorker(
+    owner: string,
+    id: string,
+    leaseId: string,
+    after?: number,
+    limit?: number,
+    generation?: string,
+  ) {
     const record = this.owned(owner, id, this.processObservations);
     if (record.workerLeaseError) throw record.workerLeaseError;
     const result = record.workerHistory.read(
@@ -1318,6 +1416,7 @@ export class NativeSessionManager {
       [...record.pendingRequests.values()],
       after,
       limit,
+      generation,
     );
     return { ...result, session: this.snapshot({ info: result.session }) };
   }
@@ -1356,6 +1455,132 @@ export class NativeSessionManager {
     } finally {
       record.configuring = false;
     }
+  }
+
+  private updateConversation(
+    record: Pick<
+      SessionRecord,
+      'info' | 'events' | 'commands' | 'pendingRequests' | 'workerHistory' | 'conversations'
+    >,
+    event?: NativeSessionEvent,
+    metadataChanged = true,
+  ): void {
+    if (!event && !metadataChanged) return;
+    const lease = record.info.workerLeaseId ?? '';
+    const key = lease ? JSON.stringify([lease, record.info.generation]) : '';
+    if (!record.conversations.has(key))
+      record.conversations.set(key, new NativeConversationJournal(this.conversationGeneration));
+    for (const [identity, journal] of record.conversations) {
+      const previous = journal.metadata;
+      if (identity !== key) {
+        if (!journal.listenerCount) {
+          record.conversations.delete(identity);
+          continue;
+        }
+        // A resumed process can keep its lease. Freeze its predecessor before publishing
+        // successor events, just as a released task lease freezes its journal window.
+        if (previous && !journal.released)
+          journal.commit({
+            ...previous,
+            events: [],
+            pendingRequests: [],
+            ...(previous.scope ? { scope: { ...previous.scope, released: true } } : {}),
+          });
+        continue;
+      }
+      if (event && !metadataChanged && previous) {
+        journal.commit({
+          ...previous,
+          events: [event],
+          cursor: event.sequence,
+          ...(previous.scope ? { scope: { ...previous.scope, endAt: event.sequence } } : {}),
+        });
+        continue;
+      }
+      const page: NativeSessionReadResult = lease
+        ? record.workerHistory.read(
+            lease,
+            record.events,
+            [...record.pendingRequests.values()],
+            journal.sequence || undefined,
+            1,
+          )
+        : {
+            session: this.snapshot(record),
+            events: [],
+            cursor: record.events.length,
+            hasMore: false,
+            commands: [...record.commands.values()]
+              .slice(-100)
+              .map(({ text: _text, leaseId: _lease, ...receipt }) => receipt),
+            pendingRequests: [...record.pendingRequests.values()],
+          };
+      page.session = this.snapshot({ info: page.session });
+      page.events =
+        event &&
+        event.sequence > (page.scope?.startAfter ?? 0) &&
+        event.sequence <= (page.scope?.endAt ?? page.cursor)
+          ? [event]
+          : [];
+      page.cursor = page.scope?.endAt ?? record.events.length;
+      page.hasMore = false;
+      journal.commit(page);
+    }
+  }
+
+  /** Observation is passive: it neither creates nor resumes the runner. */
+  conversation(
+    owner: string,
+    id: string,
+    leaseId?: string,
+    generation?: string,
+  ): NativeConversationJournal {
+    const record = this.sessionRecord(owner, id);
+    if (
+      Boolean(record.info.workerManaged) !== Boolean(leaseId) ||
+      Boolean(leaseId) !== Boolean(generation)
+    )
+      throw new Error('Worker conversations require their pinned history lease and generation');
+    if (record.workerLeaseError) throw record.workerLeaseError;
+    const key = leaseId ? JSON.stringify([leaseId, generation]) : '';
+    let journal = record.conversations.get(key);
+    if (!journal && leaseId && generation) {
+      const metadata = record.workerHistory.read(
+        leaseId,
+        record.events,
+        [],
+        undefined,
+        1,
+        generation,
+      );
+      const end = metadata.scope!.endAt;
+      let start = end,
+        bytes = 0;
+      while (start > metadata.scope!.startAfter && end - start < 128) {
+        const size = Buffer.byteLength(JSON.stringify(record.events[start - 1]));
+        if (bytes + size > 512 * 1024) break;
+        bytes += size;
+        start--;
+      }
+      const page = record.workerHistory.read(
+        leaseId,
+        record.events,
+        [...record.pendingRequests.values()],
+        start,
+        128,
+        generation,
+      );
+      journal = new NativeConversationJournal(this.conversationGeneration);
+      journal.reset({
+        ...page,
+        session: this.snapshot({ info: page.session }),
+        historyBefore: start,
+        truncated: start > metadata.scope!.startAfter,
+      });
+      record.conversations.set(key, journal);
+    }
+    if (!journal) throw new Error('Native conversation history generation is unknown');
+    return journal;
   }
 
   private assertAccountCurrent(record: SessionRecord): void {

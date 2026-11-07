@@ -28,6 +28,7 @@ export interface WorkerSessionHistoryMessage {
 }
 
 export interface WorkerSessionHistoryCursor {
+  fileIdentity?: string;
   path: string;
   offset: number;
   mtimeMs?: number;

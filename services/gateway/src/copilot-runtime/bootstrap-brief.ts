@@ -5,6 +5,7 @@ import {
   type CopilotCheckoutIdentity,
   type CopilotWorkloadSnapshot,
   GLOBAL_CHAT_SESSION_ID,
+  type NativeSessionTargetParams,
   type OperatorSnapshotResult,
   type Run,
 } from '@farmslot/protocol';
@@ -22,7 +23,12 @@ import { redactCopilotValue } from './session-store.js';
 
 export interface CopilotBootstrapInput {
   generatedAt: string;
-  runtime: { runner: string; model: string; safetyTier: string; tmuxTarget: string };
+  runtime: {
+    runner: string;
+    model: string;
+    safetyTier: string;
+    nativeSession?: NativeSessionTargetParams;
+  };
   checkout: CopilotCheckoutIdentity;
   operator: OperatorSnapshotResult;
   screenEvidence: unknown;
@@ -156,7 +162,7 @@ export async function buildLiveCopilotBootstrapBrief(input: {
     roadmap: roadmap.slice(0, 40_000),
     cadence: {
       resourcePoll: 'gateway configured interval',
-      tmuxTranscriptPollMs: 750,
+      conversations: 'native journal subscription; no transcript polling',
       operatorRefresh: 'client controlled',
       activeDevServers: devServers,
     },

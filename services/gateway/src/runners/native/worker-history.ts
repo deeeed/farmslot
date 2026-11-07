@@ -27,7 +27,7 @@ export const NATIVE_WORKER_READ_METHODS: readonly string[] = [
   Methods.NATIVE_SESSION_TURN_DIFF,
 ];
 
-function readTarget(value: unknown): NativeWorkerControlTarget {
+export function readNativeWorkerTarget(value: unknown): NativeWorkerControlTarget {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new GatewayMethodError(
       'INVALID_PARAMS',
@@ -94,7 +94,7 @@ export async function authorizeNativeWorkerHistory(
   method: string,
   params: Record<string, unknown>,
 ) {
-  const target = readTarget(params.worker);
+  const target = readNativeWorkerTarget(params.worker);
   const archived = getRun(target.runId)
     ? undefined
     : (await getAllRunsWithArchived()).find((run) => run.id === target.runId);
@@ -125,7 +125,7 @@ export async function authorizeNativeWorkerHistory(
 }
 
 export async function routeNativeWorkerRead(method: string, params: Record<string, unknown>) {
-  const target = readTarget(params.worker);
+  const target = readNativeWorkerTarget(params.worker);
   const current = () => authorizeNativeWorkerHistory(method, params);
   const { binding } = await current();
   const nativeParams = {
@@ -133,6 +133,7 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
     sessionId: binding.sessionId,
     executionNodeId: binding.executionNodeId,
     leaseId: binding.leaseId,
+    generation: binding.generation,
   };
   if (method !== Methods.NATIVE_SESSION_READ) {
     const result = await routeNativeExecution(binding.ownerPrincipalId, method, {
@@ -152,18 +153,30 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
     !result.scope ||
     result.scope.leaseId !== binding.leaseId ||
     result.session.workerLeaseId !== binding.leaseId ||
+    result.session.generation !== binding.generation ||
     result.session.ownerPrincipalId !== binding.ownerPrincipalId ||
     result.session.id !== binding.sessionId ||
     result.session.executionNodeId !== binding.executionNodeId
   )
     throw new GatewayMethodError('NATIVE_SESSION_ERROR', 'Native worker history scope changed');
-  const context = run.agentContexts?.find((item) => item.id === target.contextId);
-  if (!nativeWorkerRecordsAcceptance(run, context)) return result;
-  // Removal and steering are refused here, so a client must not offer them.
+  return {
+    ...result,
+    session: nativeWorkerEffectiveSession(run, target.contextId, result.session),
+  };
+}
+
+/** Stream metadata and explicit reads must expose the command route's exact worker policy. */
+export function nativeWorkerEffectiveSession(
+  run: Run,
+  contextId: string,
+  session: NativeSessionReadResult['session'],
+): NativeSessionReadResult['session'] {
+  const context = run.agentContexts?.find((item) => item.id === contextId);
+  if (!nativeWorkerRecordsAcceptance(run, context)) return session;
   const {
     cancelQueued: _cancelWithheld,
     steer: _steerWithheld,
     ...capabilities
-  } = result.session.capabilities;
-  return { ...result, session: { ...result.session, capabilities } };
+  } = session.capabilities;
+  return { ...session, capabilities };
 }

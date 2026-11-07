@@ -33,8 +33,8 @@ import {
 import { describeModel } from '../llm/index.js';
 
 import {
+  chatArchive,
   chatClear,
-  chatHistory,
   chatNew,
   chatObserverEvidence,
   chatScreenEvidence,
@@ -242,8 +242,8 @@ await test('chat histories are isolated by session ID', () => {
   appendMessage(runSession, testMessage(`run-msg-${suffix}`, 'run-only'));
   appendMessage(slotSession, testMessage(`slot-msg-${suffix}`, 'slot-only'));
 
-  const runHistory = chatHistory({ sessionId: runSession }).messages;
-  const slotHistory = chatHistory({ sessionId: slotSession }).messages;
+  const runHistory = chatArchive({ sessionId: runSession }).messages;
+  const slotHistory = chatArchive({ sessionId: slotSession }).messages;
   assert(
     runHistory.some((message) => message.content === 'run-only'),
     'run session missing run message',
@@ -301,12 +301,12 @@ await test('first user message autotitles a new session summary', () => {
   );
 });
 
-await test('chatHistory does not materialize missing sessions', () => {
+await test('chatArchive does not materialize missing sessions', () => {
   const sessionId = `missing-history-${Date.now()}`;
   assert(getSession(sessionId) === null, 'test session already existed');
-  const history = chatHistory({ sessionId }).messages;
+  const history = chatArchive({ sessionId }).messages;
   assert(history.length === 0, `expected empty history, got ${history.length}`);
-  assert(getSession(sessionId) === null, 'chatHistory created a ghost session');
+  assert(getSession(sessionId) === null, 'chatArchive created a ghost session');
 });
 
 await test('chatClear without sessionId warns and preserves shared chat', () => {
@@ -368,7 +368,7 @@ await test('observer notifications do not append chat system messages', () => {
     'observer notification was not broadcast as typed event',
   );
   assert(
-    !broadcasts.some((item) => item.event === Events.CHAT_RESPONSE),
+    !broadcasts.some((item) => item.event === 'chat.response'),
     'observer notification used chat response channel',
   );
 });

@@ -195,7 +195,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       execCancellation: true,
       conditionalWrites: true,
       terminalInputSequence: tmuxKeepsPaneOptions(tmux.TMUX_VERSION),
-      observationCapabilities: { workers: 1, files: 1, workspace: 1 },
+      observationCapabilities: { workers: 1, files: 1, fileAppends: 1, workspace: 1 },
     });
     if (ws !== socket) {
       // Superseded while awaiting: the newer socket runs its own handshake and
@@ -436,6 +436,61 @@ async function handleRequest(
         sendResponse(frame.id, true, await sources.status(), undefined, undefined, socket);
         break;
       }
+      case 'native.conversation.subscribe': {
+        const id = requireString(params, 'subscriptionId');
+        const stream = await nativeSessions.subscribe(
+          id,
+          requireString(params, 'owner'),
+          requireString(params, 'sessionId'),
+          params.after as import('@farmslot/protocol').NativeConversationCursor | undefined,
+          (update) => {
+            if (ws !== socket || socket.readyState !== WebSocket.OPEN) {
+              nativeSessions.unsubscribe(id);
+              return;
+            }
+            const frame = JSON.stringify({
+              type: 'event',
+              event: 'node.native.conversation',
+              payload: { ...update, subscriptionId: id },
+            });
+            if (socket.bufferedAmount + Buffer.byteLength(frame) > 1024 * 1024) {
+              nativeSessions.unsubscribe(id);
+              const terminal = JSON.stringify({
+                type: 'event',
+                event: 'node.native.conversation',
+                payload: { subscriptionId: id, kind: 'terminal', reason: 'resync-required' },
+              });
+              if (socket.bufferedAmount + Buffer.byteLength(terminal) > 1024 * 1024)
+                socket.close(1013, 'Conversation resync required');
+              else socket.send(terminal);
+              return;
+            }
+            socket.send(frame);
+          },
+          typeof params.leaseId === 'string' ? params.leaseId : undefined,
+          typeof params.generation === 'string' ? params.generation : undefined,
+        );
+        if (ws !== socket || socket.readyState !== WebSocket.OPEN) {
+          nativeSessions.unsubscribe(id);
+          return;
+        }
+        const initialBytes =
+          Buffer.byteLength(
+            JSON.stringify({ type: 'res', id: frame.id, ok: true, payload: stream.initial }),
+          ) + 64;
+        if (socket.bufferedAmount + initialBytes > 1024 * 1024) {
+          nativeSessions.unsubscribe(id);
+          socket.close(1013, 'Conversation resync required');
+          return;
+        }
+        sendResponse(frame.id, true, stream.initial, undefined, undefined, socket);
+        stream.activate();
+        break;
+      }
+      case 'native.conversation.unsubscribe':
+        nativeSessions.unsubscribe(requireString(params, 'subscriptionId'));
+        sendResponse(frame.id, true, { ok: true }, undefined, undefined, socket);
+        break;
       case 'native.session.metadata': {
         sendResponse(frame.id, true, nativeSessions.metadata(requireString(params, 'owner')));
         break;
@@ -785,6 +840,7 @@ async function handleRequest(
           break;
         }
         const observations = params.observations === 1;
+        const notificationsOnly = params.notificationsOnly === 1;
         const sendChange = (payload: NodeFsChangedPayload) => {
           if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
           socket.send(
@@ -800,8 +856,9 @@ async function handleRequest(
           frame.id,
           { path: watchPath },
           (content) => sendChange({ ...identity, content }),
-          observations
+          observations || notificationsOnly
             ? {
+                notificationsOnly,
                 onUnavailable: (observation) =>
                   sendChange({ ...identity, content: '' as const, ...observation }),
               }
@@ -829,7 +886,12 @@ async function handleRequest(
         sendResponse(
           frame.id,
           true,
-          { watching: true, observations: 1, initial },
+          {
+            watching: true,
+            observations: 1,
+            ...(notificationsOnly ? { notificationsOnly: 1 } : {}),
+            initial,
+          },
           undefined,
           undefined,
           socket,
