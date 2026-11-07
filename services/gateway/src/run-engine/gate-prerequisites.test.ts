@@ -35,6 +35,7 @@ const {
   collectRunGateReadiness,
   projectRunGateActions,
   refreshRunGateReadiness,
+  reviewsWithValidResults,
 } = await import('./gate-prerequisites.js');
 const { makeRun, makeReadyGatePackage, deleteTestRunIfPresent } =
   await import('./test-fixtures.js');
@@ -1998,4 +1999,82 @@ test('a refresh and the resolve-time assertion apply a recorded base conflict (F
       mergeConflicts,
     );
   }
+});
+
+test('revalidation repairs a recorded round-nine advisory verdict without changing its artifact or earlier rounds', async () => {
+  const { reviewRoundAdmissionId } = await import('../review/review-round-budget.js');
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+  });
+  const startedAt = '2026-11-07T06:08:44.510Z';
+  const id = 'pipeline-review';
+  const admission = reviewRoundAdmissionId(id, 2, startedAt);
+  const issue = {
+    file: 'artifacts/provenance.json',
+    description: 'Follow up on baseline identity',
+    severity: 'minor' as const,
+  };
+  const review: ReviewStatus = {
+    id,
+    source: 'dispatch',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    reviewerSessionId: 'session-9',
+    artifactPaths: ['artifacts/pipeline-review/review-loop-2/review-result.json'],
+    reviewedHeadSha: prepared.headSha,
+    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+    reviewSnapshot: prepared.reviewSnapshot,
+    issues: [issue],
+    attempts: [
+      {
+        mode: 'cold',
+        loopNumber: 2,
+        startedAt,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        issues: [issue],
+        artifactPaths: ['artifacts/pipeline-review/review-loop-2/review-result.json'],
+        reviewSnapshot: prepared.reviewSnapshot,
+      },
+    ],
+  };
+  const run = {
+    ...makeRun({ engineState: { publishGate: { reviews: [review] } } }),
+    ...recordedReviewRounds([...Array.from({ length: 8 }, (_, i) => `prior-${i}`), admission]),
+  };
+  const raw = JSON.stringify({
+    schemaVersion: 1,
+    verdict: 'pass',
+    recommendation: 'APPROVE',
+    issues: [issue],
+  });
+  const before = structuredClone(run);
+  const read = async () => raw;
+  const validated = await reviewsWithValidResults(run, read);
+  assert.equal(validated[0]?.verdict, 'pass');
+  assert.equal(validated[0]?.unresolvedCount, 0);
+  assert.deepEqual(validated[0]?.issues, [issue]);
+  assert.equal(validated[0]?.attempts?.[0].verdict, 'pass');
+  const assessment = await collectRunGateAssessment(run, prepared, {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewResult: read,
+    reviewedInputsAwaitingReview: async () => null,
+  });
+  assert.equal(assessment.readiness.state, 'ready', JSON.stringify(assessment.readiness.reasons));
+  assert.equal(assessment.reviews?.[0].verdict, 'pass');
+  assert.deepEqual(run, before, 'raw history and artifacts remain immutable');
+  const firstRound = { ...run, ...recordedReviewRounds([admission]) };
+  assert.equal((await reviewsWithValidResults(firstRound, read))[0]?.verdict, 'issues');
+  const major = JSON.stringify({
+    schemaVersion: 1,
+    verdict: 'pass',
+    recommendation: 'APPROVE',
+    issues: [{ ...issue, severity: 'major' }],
+  });
+  assert.equal((await reviewsWithValidResults(run, async () => major))[0]?.verdict, 'issues');
 });

@@ -103,3 +103,75 @@ test('legacy advisory line comments participate in policy before a stale gate ca
     assert.equal(result.recommendation, expected);
   }
 });
+
+test('round-nine APPROVE retains its minor as a non-blocking follow-up', () => {
+  const result = parseStructuredReviewFeedback(
+    JSON.stringify({
+      schemaVersion: 1,
+      verdict: 'pass',
+      recommendation: 'APPROVE',
+      issues: [issue],
+    }),
+    'review-result.json',
+    undefined,
+    undefined,
+    9,
+  );
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.recommendation, 'APPROVE');
+  assert.deepEqual(result.issues, [issue]);
+});
+
+test('only admitted round-3+ advisories relax verdicts; malformed and serious findings stay strict', () => {
+  const parse = (
+    round: number | undefined,
+    severity: string | undefined,
+    verdict = 'issues',
+    recommendation = 'COMMENT',
+  ) =>
+    parseStructuredReviewFeedback(
+      JSON.stringify({
+        schemaVersion: 1,
+        verdict,
+        recommendation,
+        reviewRound: 9,
+        issues: Array.from({ length: 5 }, () => ({ ...issue, severity })),
+      }),
+      'review-result.json',
+      undefined,
+      undefined,
+      round,
+    );
+  for (const round of [undefined, 1, 2]) {
+    assert.equal(parse(round, 'minor').verdict, 'issues');
+    assert.equal(parse(round, 'nit').verdict, 'issues');
+  }
+  for (const round of [3, 9]) {
+    for (const severity of ['minor', 'nit']) {
+      for (const recommendation of ['APPROVE', 'COMMENT', 'REQUEST_CHANGES']) {
+        const result = parse(round, severity, 'issues', recommendation);
+        assert.equal(result.verdict, 'pass');
+        assert.equal(result.recommendation, 'APPROVE');
+        assert.equal(result.issues.length, 5);
+        assert.equal(result.recommendationCorrection?.read, 'APPROVE');
+      }
+    }
+    for (const severity of ['major', 'blocker', undefined])
+      assert.equal(parse(round, severity, 'pass', 'APPROVE').verdict, 'issues');
+    for (const severity of ['invalid', 'minor'])
+      assert.equal(parse(round, severity, 'pass', 'LGTM').incomplete, true);
+    const result = parseStructuredReviewFeedback(
+      JSON.stringify({
+        schemaVersion: 1,
+        verdict: 'pass',
+        recommendation: 'APPROVE',
+        issues: [issue],
+      }),
+      'review-result.json',
+      undefined,
+      [{ ...issue, severity: 'major' }],
+      round,
+    );
+    assert.equal(result.incomplete, true);
+  }
+});

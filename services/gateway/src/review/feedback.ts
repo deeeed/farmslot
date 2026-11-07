@@ -16,6 +16,7 @@ import { shellQuote } from '../core/tmux.js';
 import {
   loadReviewApprovalPolicy,
   normalizeReviewRecommendation,
+  reviewAdvisoriesAreNonBlocking,
   stricterReviewRecommendation,
 } from './approval-policy.js';
 import { parseReviewIssueBullets } from './issues.js';
@@ -42,6 +43,7 @@ export function parseStructuredReviewFeedback(
   resultRelPath: string,
   policy?: Partial<ReviewApprovalPolicy>,
   additionalIssues?: ReviewIssue[],
+  reviewRound?: number,
 ): ReviewAgentResult {
   let parsed: unknown;
   try {
@@ -117,12 +119,43 @@ export function parseStructuredReviewFeedback(
           ),
       ),
     ];
-    const required = reviewRecommendation(findings, policy);
+    // The task's round-3+ rule keeps minor/nit follow-ups visible but non-blocking.
+    // Only gateway-owned admission metadata supplies the round, never result JSON.
+    const advisoryRound =
+      typeof reviewRound === 'number' && Number.isSafeInteger(reviewRound) && reviewRound >= 3;
+    const blockingFindings = advisoryRound
+      ? findings.filter((issue) => issue.severity !== 'minor' && issue.severity !== 'nit')
+      : findings;
+    const required = reviewRecommendation(blockingFindings, policy);
+    if (reviewAdvisoriesAreNonBlocking(findings, reviewRound)) {
+      if (
+        candidate.recommendation !== undefined &&
+        !normalizeReviewRecommendation(candidate.recommendation)
+      )
+        throw new Error('Review recommendation must be APPROVE, COMMENT or REQUEST_CHANGES');
+      return {
+        verdict: 'pass',
+        issues: normalizedIssues,
+        recommendation: 'APPROVE',
+        ...(verdict !== 'pass' ||
+        (candidate.recommendation !== undefined && candidate.recommendation !== 'APPROVE')
+          ? {
+              recommendationCorrection: {
+                verdict,
+                ...(candidate.recommendation === undefined
+                  ? {}
+                  : { recommendation: String(candidate.recommendation) }),
+                read: 'APPROVE',
+              },
+            }
+          : {}),
+      };
+    }
     try {
       const recommendation =
         candidate.recommendation === undefined
           ? required
-          : assertReviewRecommendation(findings, candidate.recommendation, policy);
+          : assertReviewRecommendation(blockingFindings, candidate.recommendation, policy);
       if ((verdict === 'pass') !== (required === 'APPROVE'))
         throw new ReviewApprovalPolicyError(required);
       return {
@@ -182,7 +215,7 @@ export function logRecommendationCorrection(reviewerId: string, feedback: Review
   const correction = feedback.recommendationCorrection;
   if (!correction) return;
   console.warn(
-    `[review] ${reviewerId}: verdict ${correction.verdict}${correction.recommendation === undefined ? '' : ` / ${correction.recommendation}`} conflicts with its findings; read as issues / ${correction.read}`,
+    `[review] ${reviewerId}: verdict ${correction.verdict}${correction.recommendation === undefined ? '' : ` / ${correction.recommendation}`} conflicts with its findings; read as ${feedback.verdict} / ${correction.read}`,
   );
 }
 
@@ -191,6 +224,7 @@ export async function readReviewFeedback(
   taskDir: string,
   feedbackRelPath = 'artifacts/review-feedback.md',
   resultRelPath?: string | null,
+  reviewRound?: number,
 ): Promise<ReviewAgentResult> {
   if (resultRelPath) {
     const resultPath = `${vars.remoteRepo}/${taskDir}/${resultRelPath}`;
@@ -209,6 +243,8 @@ export async function readReviewFeedback(
       raw,
       resultRelPath,
       await loadReviewApprovalPolicy(vars.projectName),
+      undefined,
+      reviewRound,
     );
   }
 

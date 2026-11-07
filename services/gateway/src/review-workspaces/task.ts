@@ -27,6 +27,7 @@ import {
   type RunSubtaskMetrics,
   type WorkerSignal,
   type WorkerTerminalContractDocument,
+  workspaceReviewRoundAdmissionId,
 } from '@farmslot/protocol';
 import {
   isReviewSeverity,
@@ -57,8 +58,12 @@ import {
 import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { collectSupportFiles } from '../node-support/files.js';
+import {
+  normalizeReviewRecommendation,
+  reviewAdvisoriesAreNonBlocking,
+} from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
-import { nextReviewBudgetScopeBrief } from '../review/review-round-budget.js';
+import { nextReviewBudgetScopeBrief, reviewPolicyRound } from '../review/review-round-budget.js';
 import { STATIC_REVIEW_EXECUTION_RULE } from '../review/static-review-execution.js';
 import {
   appendReviewFindingBodies,
@@ -660,17 +665,14 @@ export async function readReviewWorkspaceCompletion(
     await confinedRead(io, taskDir, 'artifacts/line-comments.json'),
   ) as { comments?: unknown };
   const commentInput = resolveStaticReviewLineComments('pass', [], commentArtifact.comments);
-  const feedback = parseStructuredReviewFeedback(
-    raw,
-    RESULT,
-    policy,
-    commentInput.map((comment) => ({
-      file: comment.path,
-      line: comment.line,
-      description: comment.body,
-      severity: comment.severity,
-    })),
-  );
+  const reviewRound = reviewPolicyRound(run, workspaceReviewRoundAdmissionId(run));
+  const commentFindings = commentInput.map((comment) => ({
+    file: comment.path,
+    line: comment.line,
+    description: comment.body,
+    severity: comment.severity,
+  }));
+  const feedback = parseStructuredReviewFeedback(raw, RESULT, policy, commentFindings, reviewRound);
   if (feedback.incomplete && !feedback.recommendation)
     throw new GatewayMethodError(
       'REVIEW_OUTPUT_INVALID',
@@ -737,8 +739,12 @@ export async function readReviewWorkspaceCompletion(
   if (!recommendation) throw new Error('Static review recommendation could not be validated');
   if (recommendation === 'APPROVE' && (blocked || feedback.verdict !== 'pass'))
     throw new Error('Review recommendation conflicts with findings or incomplete evidence');
+  const markdownRecommendation = reviewRecommendationFromMarkdown(reviewMd);
+  const advisoryRecommendation =
+    reviewAdvisoriesAreNonBlocking([...issues, ...commentFindings], reviewRound) &&
+    normalizeReviewRecommendation(markdownRecommendation) !== null;
   if (
-    reviewRecommendationFromMarkdown(reviewMd) !== recommendation ||
+    (!advisoryRecommendation && markdownRecommendation !== recommendation) ||
     reviewCommitFromMarkdown(reviewMd) !== snapshot.subject.headSha
   )
     throw new Error('Static review Markdown verdict or commit disagrees with its typed result');

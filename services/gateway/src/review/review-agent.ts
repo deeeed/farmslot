@@ -73,7 +73,7 @@ import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 import { finishReviewCleanup } from './cleanup.js';
 import { logRecommendationCorrection, readReviewFeedback } from './feedback.js';
 import { startProgressWatcher } from './progress.js';
-import { reviewContextRoundId } from './review-round-budget.js';
+import { reviewContextPolicyRound, reviewContextRoundId } from './review-round-budget.js';
 import { reviewPRIdentity, WarmReviewRefusal } from './session-mode.js';
 import {
   debugReviewLog,
@@ -1009,7 +1009,13 @@ async function recoverRunningReviewAgent(params: {
       signalBasename,
     );
     const feedback = applyTerminalReviewSignal(
-      await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath, resultRelPath),
+      await readReviewFeedback(
+        params.vars,
+        params.taskDir,
+        feedbackRelPath,
+        resultRelPath,
+        reviewContextPolicyRound(getRun(params.runId), context),
+      ),
       terminalSignal,
     );
     logRecommendationCorrection(context.id, feedback);
@@ -1237,7 +1243,16 @@ export async function waitForReviewCompletion(
       return failCompletion(`${resultRelPath} is missing`);
     }
     if (resultRelPath) {
-      const feedback = await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath);
+      const feedback = await readReviewFeedback(
+        vars,
+        taskDir,
+        feedbackRelPath,
+        resultRelPath,
+        reviewContextPolicyRound(
+          getRun(runId),
+          getRun(runId)?.agentContexts?.find((context) => context.id === reviewContextId),
+        ),
+      );
       if (feedback.terminalInvalidReason) {
         return failCompletion(feedback.terminalInvalidReason);
       }

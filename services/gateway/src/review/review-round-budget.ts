@@ -4,6 +4,7 @@ import {
   isTerminalRunStatus,
   type Principal,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
+  type ReviewAttempt,
   type ReviewBudgetExtension,
   reviewRoundAdmissionId,
   reviewRoundAdmissionIds,
@@ -13,6 +14,7 @@ import {
   reviewRoundBudgetForRun,
   type ReviewRoundSettlement,
   reviewRoundSettlementsForRun,
+  type ReviewStatus,
   type Run,
   type RunExtendReviewBudgetParams,
   workspaceReviewRoundAdmissionId,
@@ -72,6 +74,52 @@ export function reviewContextRoundId(
       context.startedAt,
     )
   );
+}
+
+/** Historical policy uses this admission's spent prefix, never today's total or local loop. */
+export function reviewPolicyRound(
+  run: Run | undefined,
+  admissionId: string | undefined,
+): number | undefined {
+  if (!run || !admissionId) return undefined;
+  const admissions = reviewRoundAdmissionsInScope(run);
+  const index = admissions.indexOf(admissionId);
+  if (index < 0) return undefined;
+  return (
+    reviewRoundBudgetForRun({ ...run, reviewRoundAdmissions: admissions.slice(0, index) }).used + 1
+  );
+}
+
+export function reviewContextPolicyRound(
+  run: Run | undefined,
+  context: AgentContext | undefined,
+): number | undefined {
+  return reviewPolicyRound(run, context && reviewContextRoundId(context));
+}
+
+/** Revalidation binds an individual retained attempt to its launch receipt. */
+export function reviewAttemptPolicyRound(
+  run: Run,
+  review: ReviewStatus,
+  attempt: ReviewAttempt = review.attempts?.at(-1) ?? review,
+): number | undefined {
+  const lineage = attempt.session?.reviewId ?? review.session?.reviewId ?? review.id;
+  if (!attempt.startedAt) return undefined;
+  const direct = reviewPolicyRound(
+    run,
+    reviewRoundAdmissionId(lineage, attempt.loopNumber, attempt.startedAt),
+  );
+  if (direct !== undefined) return direct;
+  // Legacy attempt timestamps can reflect the mark start. Only an exact matching
+  // context can recover the immutable launch, including after a WARM session reuse.
+  const contexts = (run.agentContexts ?? []).filter(
+    (context) =>
+      context.role === 'review' &&
+      (context.reviewId ?? context.id) === lineage &&
+      (context.reviewLoopNumber ?? 1) === attempt.loopNumber &&
+      [context.startedAt, context.attemptStartedAt].includes(attempt.startedAt),
+  );
+  return contexts.length === 1 ? reviewContextPolicyRound(run, contexts[0]) : undefined;
 }
 
 function scopedRuns(run: Run, stored: readonly Run[]): Run[] {

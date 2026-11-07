@@ -38,9 +38,11 @@ import {
   nextReviewBudgetScopeBrief,
   prepareReviewRoundAvailabilityCheck,
   recordReviewRoundVerdict,
+  reviewAttemptPolicyRound,
   reviewBudgetScopeBrief,
   reviewLaunchStartedAt,
   reviewNoVerdictCapReason,
+  reviewPolicyRound,
   reviewRoundAdmissionId,
   runReviewRoundBudget,
   settleReviewRoundNoVerdict,
@@ -863,4 +865,47 @@ test('a closed native session releases pending capacity despite a stale working 
   });
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 4);
   await admitReviewRound(run.id, 'replacement-for-closed');
+});
+
+test('policy round binds the retained attempt to the spent admission prefix, not the local loop or current total', (t) => {
+  const run = fixture(t);
+  const early = reviewRoundAdmissionId('review', 1, '2026-11-07T00:00:00Z');
+  const ninth = reviewRoundAdmissionId('review', 2, '2026-11-07T06:08:44.510Z');
+  const admissions = [early, ...Array.from({ length: 7 }, (_, i) => `other-${i}`), ninth];
+  const snapshot = { ...run, ...recordedRounds(admissions) };
+  const review: ReviewStatus = {
+    id: 'review',
+    mode: 'warm',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    attempts: [
+      {
+        mode: 'cold',
+        loopNumber: 1,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        startedAt: '2026-11-07T00:00:00Z',
+      },
+      {
+        mode: 'warm',
+        loopNumber: 2,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        startedAt: '2026-11-07T06:08:44.510Z',
+      },
+    ],
+  };
+  assert.equal(reviewAttemptPolicyRound(snapshot, review), 9);
+  assert.equal(reviewAttemptPolicyRound(snapshot, review, review.attempts![0]), 1);
+  assert.equal(reviewPolicyRound(snapshot, 'unknown'), undefined);
+  assert.equal(reviewPolicyRound(run, ninth), undefined);
+  snapshot.reviewRoundSettlements!['other-0'] = { at: '2026-11-07T01:00:00Z', reason: 'No result' };
+  assert.equal(reviewPolicyRound(snapshot, ninth), 8, 'a refunded launch is not a policy round');
+  snapshot.reviewRoundSettlements!['other-1'] = {
+    at: '2026-11-07T01:00:00Z',
+    kind: 'pending',
+    reason: 'Not yet returned',
+  };
+  assert.equal(reviewPolicyRound(snapshot, ninth), 7, 'a reservation is not a spent round');
 });

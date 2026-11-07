@@ -20,6 +20,7 @@ import { checklistMarkerCommand, targetForChecklistBasename } from '../tasks/che
 
 import { readReviewFeedback } from './feedback.js';
 import { withNativeReviewMutation, withNativeReviewOperation } from './native-review-operation.js';
+import { reviewContextPolicyRound } from './review-round-budget.js';
 import { reviewerFeedbackRelPath } from './template-paths.js';
 
 interface CompletionInput {
@@ -146,6 +147,7 @@ export async function continueNativeReviewCompletion(
     taskDir,
     reviewerFeedbackRelPath(context.id),
     context.reviewResultFile,
+    reviewContextPolicyRound(run, context),
   );
   current();
   // Only valid findings qualify. Invalid nonterminal artifacts retain the

@@ -6,6 +6,7 @@ import {
   DEFAULT_TASK_DIR,
   type PlanningContextProjection,
   type RunArtifactBundleRef,
+  workspaceReviewRoundAdmissionId,
 } from '@farmslot/protocol';
 import {
   normalizeReviewSeverity,
@@ -22,9 +23,11 @@ import { slotCopyDir, slotFileExists, slotListDir } from '../core/slot-io.js';
 import {
   loadReviewApprovalPolicy,
   normalizeReviewRecommendation,
+  reviewAdvisoriesAreNonBlocking,
   stricterReviewRecommendation,
 } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
+import { reviewPolicyRound } from '../review/review-round-budget.js';
 import { appendReviewFindingBodies } from '../review-publication/validate-comments.js';
 import { mirrorWorkerSubtasks } from '../run-completion/artifact-mirror.js';
 import {
@@ -337,16 +340,21 @@ export async function readReviewArtifacts(
         'Review requires artifacts/review-result.json with every finding and its severity',
       );
     const policy = await loadReviewApprovalPolicy(run.project);
+    const reviewRound = run.reviewWorkspaceSubject
+      ? reviewPolicyRound(run, workspaceReviewRoundAdmissionId(run))
+      : undefined;
+    const lineFindings = result.lineComments.map((comment) => ({
+      file: comment.path,
+      line: comment.line,
+      description: comment.body,
+      severity: normalizeReviewSeverity(comment.severity),
+    }));
     const feedback = parseStructuredReviewFeedback(
       rawResult,
       'artifacts/review-result.json',
       policy,
-      result.lineComments.map((comment) => ({
-        file: comment.path,
-        line: comment.line,
-        description: comment.body,
-        severity: normalizeReviewSeverity(comment.severity),
-      })),
+      lineFindings,
+      reviewRound,
     );
     if (feedback.incomplete) {
       if (feedback.recommendation) throw new ReviewApprovalPolicyError(feedback.recommendation);
@@ -357,6 +365,11 @@ export async function readReviewArtifacts(
       result.lineComments,
       result.reviewMd,
     );
+    if (
+      reviewAdvisoriesAreNonBlocking([...feedback.issues, ...lineFindings], reviewRound) &&
+      normalizeReviewRecommendation(result.recommendation)
+    )
+      result.recommendation = feedback.recommendation!;
     if (!feedback.recommendation || feedback.recommendation !== result.recommendation)
       throw new ReviewApprovalPolicyError(feedback.recommendation ?? 'COMMENT');
   }

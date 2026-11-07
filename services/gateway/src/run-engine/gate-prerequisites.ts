@@ -41,9 +41,13 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { evalWorkerBlockedReason } from '../evals/blocked-first-output.js';
 import { assertQaCompletion } from '../qa/completion.js';
-import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
+import {
+  loadReviewApprovalPolicy,
+  reviewAdvisoriesAreNonBlocking,
+} from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import {
+  reviewAttemptPolicyRound,
   reviewBudgetExtensionRefusal,
   runReviewRoundBudget,
 } from '../review/review-round-budget.js';
@@ -469,6 +473,7 @@ export async function reviewsWithValidResults(
     run.engineState?.publishGate?.reviews ?? [],
   )) {
     const input = acceptedReviewFixPredecessor(review) ?? review;
+    const reviewRound = reviewAttemptPolicyRound(run, review, input === review ? undefined : input);
     const artifact = reviewResultArtifactPath(input);
     const raw = artifact ? await readReviewResult(run, artifact) : undefined;
     if (raw) {
@@ -476,11 +481,50 @@ export async function reviewsWithValidResults(
         raw,
         artifact!,
         await loadReviewApprovalPolicy(run.project),
+        undefined,
+        reviewRound,
       );
-      if (!result.incomplete && result.verdict === input.verdict) valid.push(review);
+      if (result.incomplete) continue;
+      if (result.verdict === input.verdict) valid.push(review);
+      else if (
+        input.verdict === 'issues' &&
+        result.verdict === 'pass' &&
+        reviewAdvisoriesAreNonBlocking(result.issues, reviewRound)
+      ) {
+        // Re-read old mapper output from its exact artifact. Keep the original
+        // artifact and earlier attempts; the current projection follows policy.
+        if (input !== review) valid.push(review);
+        else
+          valid.push({
+            ...review,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            issues: result.issues,
+            recoveryContinuationPending: false,
+            maxRetriesExhausted: false,
+            ...(review.attempts?.length
+              ? {
+                  attempts: review.attempts.map((attempt, index) =>
+                    index === review.attempts!.length - 1
+                      ? { ...attempt, verdict: 'pass', unresolvedCount: 0, issues: result.issues }
+                      : attempt,
+                  ),
+                }
+              : {}),
+          });
+      }
     }
   }
   return valid;
+}
+
+/** Only artifact-validated rows can replace recorded policy projections. */
+export function applyValidatedReviewResults(
+  reviews: ReviewStatus[],
+  validated: ReviewStatus[],
+): ReviewStatus[] {
+  const byId = new Map(validated.map((review) => [review.id, review]));
+  return reviews.map((review) => byId.get(review.id) ?? review);
 }
 
 /**
@@ -512,7 +556,13 @@ async function acceptableHeadFindings(
     );
     const raw = artifact ? await source.reviewResult(run, artifact) : undefined;
     const result = raw
-      ? parseStructuredReviewFeedback(raw, artifact!, await loadReviewApprovalPolicy(run.project))
+      ? parseStructuredReviewFeedback(
+          raw,
+          artifact!,
+          await loadReviewApprovalPolicy(run.project),
+          undefined,
+          reviewAttemptPolicyRound(run, review, entry === review ? undefined : entry),
+        )
       : undefined;
     if (!result || result.incomplete || result.verdict !== 'issues' || result.issues.length < count)
       return undefined;
@@ -594,6 +644,26 @@ export async function collectRunGateAssessment(
       });
     }
   }
+  // Read once, before deriving blockers, so legacy minor-only ISSUES rows use
+  // the same exact-round policy as fresh completion and publication validation.
+  let validInputs =
+    !publicationFulfilled && preparedPackage
+      ? await reviewsWithValidResults(run, source.reviewResult)
+      : [];
+  if (validInputs.length)
+    run = {
+      ...run,
+      engineState: {
+        ...run.engineState,
+        publishGate: {
+          ...run.engineState?.publishGate,
+          reviews: applyValidatedReviewResults(
+            run.engineState?.publishGate?.reviews ?? [],
+            validInputs,
+          ),
+        },
+      },
+    };
   const reviewBlock =
     !publicationFulfilled &&
     (preparedPackage || requiresPublicationApproval(run)) &&
@@ -642,11 +712,6 @@ export async function collectRunGateAssessment(
       actionId: 'hold',
     });
   }
-  // One structured-result read serves the review prerequisite and `review` claims.
-  let validInputs =
-    !publicationFulfilled && preparedPackage
-      ? await reviewsWithValidResults(run, source.reviewResult)
-      : [];
   let projected: AcceptanceStatusLedger | undefined;
   let acceptance = await source.acceptance(artifactRun);
   if (acceptance.error) {

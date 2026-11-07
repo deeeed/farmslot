@@ -51,6 +51,7 @@ import {
 } from '../review/review-agent.js';
 import {
   recordReviewRoundVerdict,
+  reviewContextPolicyRound,
   reviewContextRoundId,
   settleReviewRoundNoVerdict,
 } from '../review/review-round-budget.js';
@@ -896,6 +897,7 @@ async function ingestRecoveredReviewer(
     taskDir,
     reviewerFeedbackRelPath(ctx.id),
     ctx.reviewResultFile,
+    reviewContextPolicyRound(getRun(runId), ctx),
   );
   if (options.shouldAbort?.()) return null;
   const completedContextIsFresh = completedReviewerContextIsFresh(ctx, signal);
