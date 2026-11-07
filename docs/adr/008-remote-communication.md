@@ -253,3 +253,31 @@ The original design left exec timeout hardcoded at 30s in the gateway and ignore
 - OpenClaw node pairing: `/Users/deeeed/dev/openclaw/src/infra/node-pairing.ts`
 - OpenClaw device identity: `/Users/deeeed/dev/openclaw/src/infra/device-pairing.ts`
 - OpenClaw pending work: `/Users/deeeed/dev/openclaw/src/gateway/node-pending-work.ts`
+
+## Amendment 3: Persistent typed node link, 2026-11-07
+
+**Status:** Accepted by Arthur, 2026-11-07. Node-link implementation waits for the 0.79 cohort to be live.
+
+### Context
+
+ADR-008 already chooses a persistent node-initiated WebSocket; RPC, exec output and native conversation streams already use it. Finish the remaining bypasses and contracts through that service, not another daemon or link. For execution targets, this supersedes ADR-046/ADR-009's gateway-local execution/file exception. Gateway orchestration state and client replicas keep their existing owners.
+
+### Decision
+
+1. Each enrolled node maintains one current outbound authenticated WebSocket, including the co-located node. Reuse node credentials, execution ownership, requester attribution, leases, generations and capability gates. Use TLS outside loopback or an explicitly protected transport. Provider calls stay on nodes; workers do not become gateway clients. Tmux remains the default for CLIs without ACP. Building a native harness is excluded.
+2. Reference Amendment 2 and `docs/reference/node-worker-cli-health.md#peer-version-compatibility` as the single compatibility policy. Its request and success reply fields are `protocolVersion`, `minimumProtocolVersion`, `runtimeVersion`, `minimumRuntimeVersion`. Do not add version-equality checks or infer a break from missing old declarations. Existing feature and retained-input gates remain authoritative.
+3. The shared protocol owns validated node operations for dispatch, prepare, capture/inspect, file access, signals, release, browser/device/dev-server control and tools. Gateway messages name typed operations and scoped grants. Hooks resolve from frozen project/source bundles on the node. Exec is policy-checked process/argv or script-reference execution with cwd, approval and limits, not an unrestricted gateway shell string. Adapter mechanics remain local.
+4. Requests carry correlation, an authority-bound idempotency key, deadline and cancellation. The node durably records admission and terminal outcomes. Changed arguments under the same key are refused. Disconnect/timeouts do not establish failure; reconnect queries the receipt and resumes the same authorized operation. Unknown/expired outcomes require reconciliation, not automatic replay. Cancellation acknowledgment is distinct from confirmed process/resource closeout; retain ownership while uncertain.
+5. Each command audits requester, executor, operation, scoped target, identifiers, approval and outcome. Preserve existing approval/bypass, worker safety, review/publication identity and provenance. Diagnostic counters contain no secrets or private payloads. A future native loop uses the same node tool approval/audit path.
+6. Use ACP for the agent-facing session/update, message, tool call/result, permission and diff contract where it fits. Do not invent a parallel agent protocol. Reuse existing native projections for CC/Companion and map ACP into them through the shared adapter. Node-link infrastructure commands and offset envelopes remain distinct from ACP. Core shared types contain no tmux pane or CLI transcript fields; existing non-ACP transports keep their supported paths.
+7. Streams carry identity, source incarnation and monotonic offsets, with bounded indexed replay and acknowledgments. Resume from the last contiguous applied offset; deduplicate delivery. Gaps, replaced sources and expired windows produce explicit resync plus a bounded snapshot, never a whole-journal rescan. Offsets do not imply exactly-once side effects or authorize an old lease.
+8. Bound per-stream queues, frame/chunk size and total in-flight bytes. Prioritize control/interactive work over bulk logs/files; chunk transfers with integrity and resume identity. Slow consumers pause or receive explicit resync, without unbounded buffers or silent loss. Measure TCP head-of-line effects under bulk load; priority queues alone do not prove responsiveness.
+9. Keep one reconnect chain with exponential backoff and jitter; retire old socket generations and restore only authorized subscriptions/receipts. SSH is for node bootstrap/upgrade or explicit audited operator fallback, never automatic per-action failover. New work on an unavailable node reports unavailable and preserves ownership.
+
+### Public contract and proof
+
+`@farmslot/protocol` owns versioned envelopes, operation types and validation. The existing node owns local execution/retention; the gateway owns admission/routing. Existing CLI, SDK and harness entry points retain their argument mapping. No new public flag/export is allocated by this draft.
+
+Before implementation, specify fields, errors, limits, receipt/replay retention, state transitions, consumers and the default-off pilot flag in `docs/reference/node-link-protocol.md`, referencing Amendment 2 and ACP rather than copying either. Conformance covers socket/lease authority, duplicate/changed keys, uncertain outcomes, cancellation/closeout, offset replay/reset, revocation, queue/bulk fairness and compatible/breaking peer pairs. Every adapter must preserve these semantics.
+
+After 0.79 LIVE, run the [baseline measurement plan](../plans/node-link-measurements.md) with F366/F412 active. After amendment/spec acceptance, implement on one idle flagged node, repeat measurements and then roll out/read back across nodes. Keep the existing publisher/activation owner; this is not a second 0.79 activation. For AC-3, zero SSH means the farm's node-control transport; git/VCS and tools an agent runs that use SSH stay allowed and are counted separately.
