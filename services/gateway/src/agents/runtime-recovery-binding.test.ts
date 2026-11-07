@@ -16,6 +16,8 @@ let run: Run;
 let processStarted: number | null;
 let sessionExists: boolean;
 let paneSession: string;
+let paneInventory: string | undefined;
+let runnerPanePid: string | undefined;
 let observed: typeof original | null = original;
 let runnerAlive: boolean;
 let hasSessionExit: number;
@@ -43,7 +45,7 @@ mock.module('../core/exec.js', {
       return {
         exitCode: 0,
         stdout: command.includes('list-panes')
-          ? `${paneSession}\t1\tdev\t1\t%1\t101\tbash\t/repo\n`
+          ? (paneInventory ?? `${paneSession}\t1\tdev\t1\t%1\t101\tbash\t/repo\n`)
           : '',
         stderr: '',
       };
@@ -76,10 +78,10 @@ mock.module('../runners/session-process.js', {
     ...sessions,
     readPaneProcessStartedAtMs: async () => processStarted,
     isRunnerAliveUnderPane: async () => runnerAlive,
-    probeRunnerDescendantPid: async () =>
+    probeRunnerDescendantPid: async (_vars: unknown, panePid: string) =>
       processProbe
         ? { state: processProbe, code: 'probe-failed', reason: 'probe timed out' }
-        : runnerAlive
+        : runnerAlive && (!runnerPanePid || runnerPanePid === panePid)
           ? { state: 'present', pid: '202' }
           : { state: 'absent' },
     resolveRunnerSessionBinding: async (
@@ -133,6 +135,8 @@ function fixture(corrupt = false): void {
   commands.length = 0;
   launches.length = 0;
   runnerAlive = true;
+  paneInventory = undefined;
+  runnerPanePid = undefined;
   hasSessionExit = 0;
   listPanesExit = 0;
   processProbe = undefined;
@@ -186,6 +190,65 @@ function launchingWorker(): AgentContext {
   run.agentContexts = [{ ...run.agentContexts![0]!, status: 'launching' }];
   return run.agentContexts[0]!;
 }
+
+test('recovery never adopts the log pane after boot failed before a pi worker launched', async () => {
+  const worker = launchingWorker();
+  worker.runner = 'pi';
+  worker.target = null;
+  worker.runnerSessionId = null;
+  worker.runnerSessionPath = null;
+  runnerAlive = false;
+  observed = null;
+  paneInventory = 'slot-1\t2\tdevserver-log\t1\t%250\t88042\ttail\t/repo\n';
+
+  await reconcileRunAgentRuntime(run);
+
+  assert.equal(run.agentContexts![0]!.target, null);
+  assert.deepEqual(lookups, [], 'a log pane grants no session discovery authority');
+});
+
+test('recovery excludes the log pane even when its process probe reports a runner', async () => {
+  const worker = launchingWorker();
+  worker.runner = 'pi';
+  worker.target = null;
+  paneInventory = 'slot-1\t2\tdevserver-log\t1\t%250\t88042\ttail\t/repo\n';
+
+  await reconcileRunAgentRuntime(run);
+
+  assert.equal(run.agentContexts![0]!.target, null);
+});
+
+test('recovery records the pi pane it proved live beside an idle shell and log pane', async () => {
+  const worker = launchingWorker();
+  worker.runner = 'pi';
+  worker.target = null;
+  runnerPanePid = '103';
+  paneInventory = [
+    'slot-1\t2\tdevserver-log\t1\t%250\t88042\ttail\t/repo',
+    'slot-1\t1\tdev\t1\t%1\t101\tzsh\t/repo',
+    'slot-1\t1\tdev\t2\t%3\t103\tnode\t/repo',
+  ].join('\n');
+
+  await reconcileRunAgentRuntime(run);
+
+  assert.equal(run.agentContexts![0]!.target?.window, 'dev');
+  assert.equal(run.agentContexts![0]!.target?.paneId, '%3');
+  assert.deepEqual(lookups, ['%3']);
+});
+
+test('recovery does not record an idle shell when dispatch never launched a worker', async () => {
+  const worker = launchingWorker();
+  worker.target = null;
+  worker.runnerSessionId = null;
+  worker.runnerSessionPath = null;
+  runnerAlive = false;
+  observed = null;
+
+  await reconcileRunAgentRuntime(run);
+
+  assert.equal(run.agentContexts![0]!.target, null);
+  assert.deepEqual(lookups, []);
+});
 
 test('a read that timed out says nothing: the worker stays launching', async () => {
   const unknownReads: Array<[string, () => void]> = [

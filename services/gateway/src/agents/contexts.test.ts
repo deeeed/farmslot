@@ -305,6 +305,31 @@ test('upsertAgentContext keeps independent role contexts across rapid updates', 
   assert.deepEqual(roles, ['ci-fix', 'fix-bug', 'review']);
 });
 
+test('agent context writes reject a dev-server log target before persisting it', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-browser-farm',
+    ticketOrPr: 'LOG-TARGET',
+    slotId: 'runner-browser-1',
+    runner: 'pi',
+  });
+  t.after(() => cleanupRun(run.id));
+  const before = structuredClone(getRun(run.id)?.agentContexts);
+  await assert.rejects(
+    () =>
+      upsertAgentContext(run.id, 'dev', {
+        target: {
+          session: 'mme-1',
+          window: 'devserver-log',
+          paneId: '%250',
+          target: 'mme-1:devserver-log',
+        },
+      }),
+    /devserver-log.*worker/,
+  );
+  assert.deepEqual(getRun(run.id)?.agentContexts, before);
+});
+
 test('a new CI-fix attempt clears the previous prompt boundary', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

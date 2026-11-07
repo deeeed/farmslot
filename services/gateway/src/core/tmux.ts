@@ -14,6 +14,9 @@ import { execOnSlot } from './exec.js';
 // and fall back to the configured session, not fail the pipeline.
 const TMUX_DISCOVERY_TIMEOUT_MS = 15_000;
 
+/** Passive slot infrastructure, never an agent window. */
+export const DEVSERVER_LOG_WINDOW_NAME = 'devserver-log';
+
 export function tmuxDiscoveryFailedResult(err: unknown): ExecResult | null {
   const message = err instanceof Error ? err.message : String(err);
   if (

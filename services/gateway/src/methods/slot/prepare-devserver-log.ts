@@ -6,7 +6,12 @@ import {
   type RawProjectJson,
   type SlotVars,
 } from '../../core/index.js';
-import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import {
+  DEVSERVER_LOG_WINDOW_NAME,
+  resolveTmuxSession,
+  shellQuote,
+  tmuxShellSnippet,
+} from '../../core/tmux.js';
 
 import { buildPrepareKillWindowsByNameCommand } from './prepare-command.js';
 
@@ -23,7 +28,7 @@ import { buildPrepareKillWindowsByNameCommand } from './prepare-command.js';
  * repo) — the framework never hardcodes `metro.log`. Mobile farm points it at
  * Metro, the extension farm at Webpack, and so on.
  */
-export const DEVSERVER_LOG_WINDOW_NAME = 'devserver-log';
+export { DEVSERVER_LOG_WINDOW_NAME } from '../../core/tmux.js';
 
 const TMUX_CMD_TIMEOUT_MS = 10_000;
 

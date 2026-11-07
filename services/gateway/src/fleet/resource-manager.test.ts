@@ -132,6 +132,7 @@ test('resource.control gives dev-server boots the project preparation budget', a
     for (const [prepare, compile] of [
       [600, undefined],
       [undefined, 480],
+      [undefined, 5400],
       [undefined, undefined],
     ]) {
       prepareSeconds = prepare;
@@ -143,7 +144,7 @@ test('resource.control gives dev-server boots the project preparation budget', a
       });
       assert.equal(result.ok, true, result.detail);
     }
-    assert.deepEqual(controlTimeouts, [600_000, 480_000, 900_000]);
+    assert.deepEqual(controlTimeouts, [600_000, 900_000, 5_400_000, 900_000]);
   } finally {
     prepareSeconds = 600;
     compileSeconds = undefined;

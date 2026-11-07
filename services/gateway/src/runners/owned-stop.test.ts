@@ -121,6 +121,30 @@ mock.module('./session-lifecycle.js', {
 
 const { exitClosedRunUnrecordedWorker, stopRunOwnedTmuxWorkers } = await import('./owned-stop.js');
 
+test('a historical dev-server log record is never inspected or stopped as a worker', async () => {
+  for (const paneId of ['%250', undefined]) {
+    setup();
+    run.agentContexts = [
+      {
+        id: 'dev',
+        role: 'dev',
+        label: 'Dev',
+        status: 'complete',
+        runner: 'pi',
+        target: {
+          session: 'mmt-3',
+          window: 'devserver-log',
+          paneId,
+          target: 'mmt-3:devserver-log',
+        },
+      },
+    ];
+    commands = [];
+    assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+    assert.deepEqual(commands, []);
+  }
+});
+
 /** TAT-4091's shape: a dev worker whose conversation id was never captured, plus a reviewer. */
 type Publication = 'published_ready' | 'published_draft';
 

@@ -22,6 +22,7 @@ import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core
 import { execOnSlot, type ExecResult } from '../core/exec.js';
 import { readSlotRow, SLOT_PHASE_RELEASING } from '../core/index.js';
 import {
+  DEVSERVER_LOG_WINDOW_NAME,
   resolveTmuxSession,
   respawnTmuxWindowWithCommand,
   shellQuote,
@@ -228,7 +229,7 @@ async function readTargetPanes(
       .split('\n')
       .map((line) => parseTmuxPaneRuntime(line))
       .filter((pane): pane is TmuxPaneRuntime => Boolean(pane))
-      .filter((pane) => pane.session === session),
+      .filter((pane) => pane.session === session && pane.windowName !== DEVSERVER_LOG_WINDOW_NAME),
   };
 }
 
@@ -362,29 +363,30 @@ async function inspectContextRuntime(run: Run, ctx: AgentContext): Promise<Runti
   }
 
   const runner = ctx.runner ?? run.metrics.runner;
-  let runnerAlive = false;
+  let livePane: TmuxPaneRuntime | undefined;
   let unknownProbe: string | undefined;
   for (const pane of panes) {
     if (!pane.panePid) continue;
     const probe = await probeRunnerDescendantPid(vars, pane.panePid, runner);
     if (probe.state === 'present') {
-      runnerAlive = true;
+      livePane = pane;
       break;
     }
     if (probe.state === 'unknown') unknownProbe = probe.reason;
   }
-  if (!runnerAlive && unknownProbe)
+  if (!livePane && unknownProbe)
     return {
       state: 'unknown',
       panes,
       runnerAlive: false,
       detail: `runner under ${target} could not be probed: ${unknownProbe}`,
     };
-  const binding = await sessionBindingForContext(vars, run, ctx, panes[0]?.paneId);
+  const runnerAlive = livePane !== undefined;
+  const binding = await sessionBindingForContext(vars, run, ctx, livePane?.paneId);
   const base = {
     panes,
     runnerAlive,
-    target: workerRefFromPane(vars, panes[0]!),
+    ...(livePane ? { target: workerRefFromPane(vars, livePane) } : {}),
     runnerSessionId: binding?.runnerSessionId ?? ctx.runnerSessionId ?? null,
     runnerSessionPath: binding?.runnerSessionPath ?? ctx.runnerSessionPath ?? null,
   };

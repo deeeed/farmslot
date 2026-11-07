@@ -421,6 +421,7 @@ export async function upsertAgentContext(
       };
       if ((context.nativeSession || context.nativeSessionOwner) && context.target)
         throw new Error('A native agent context cannot also have a tmux target');
+      if (context.target) canonicalAgentContextTarget(context.target);
       if (
         context.nativeSessionOwner &&
         !resolveNativeContext({ agentContexts: [...contexts, context] }, context)

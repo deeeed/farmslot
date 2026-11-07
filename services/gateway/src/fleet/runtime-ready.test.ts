@@ -296,8 +296,8 @@ for (const field of ['prepare', 'compile'])
     else compileSeconds = 600;
     await ready();
     assert.deepEqual(bootTimeouts, [
-      field === 'prepare' ? 3_600_000 : 600_000,
-      field === 'prepare' ? 3_600_000 : 600_000,
+      field === 'prepare' ? 3_600_000 : 900_000,
+      field === 'prepare' ? 3_600_000 : 900_000,
     ]);
   });
 

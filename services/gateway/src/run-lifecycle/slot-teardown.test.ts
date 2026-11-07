@@ -49,6 +49,7 @@ let tmuxInventory = '';
 /** The pane process's own command line, as `ps` reports it. */
 let paneLaunch = '';
 let runnerProbe: RunnerDescendantPidProbe = { state: 'absent' };
+let runnerProbePids: string[] = [];
 let runUpdates: Partial<Run>[] = [];
 let slotAgentKills: string[] = [];
 let slotAgentKillError: Error | null = null;
@@ -246,7 +247,13 @@ mock.module('../core/tmux.js', {
   namedExports: { ...realTmux, resolveTmuxSession: async () => 'mmt-1' },
 });
 mock.module('../runners/session-process.js', {
-  namedExports: { ...realSessionProcess, probeRunnerDescendantPid: async () => runnerProbe },
+  namedExports: {
+    ...realSessionProcess,
+    probeRunnerDescendantPid: async (_vars: unknown, panePid: string) => {
+      runnerProbePids.push(panePid);
+      return runnerProbe;
+    },
+  },
 });
 
 mock.module('../runs/store.js', {
@@ -489,6 +496,7 @@ beforeEach(() => {
   run.agentContexts = [];
   run.taskFile = null;
   runnerProbe = { state: 'absent' };
+  runnerProbePids = [];
   slotProcesses = [];
   daemonRecords = [];
   onDaemonCensus = null;
@@ -900,6 +908,44 @@ test('a reused configured slot session accepts its unrecorded idle shell', async
   rawProcessCensus = '111 1 111 Fri Oct 9 01:00:00 2026 /bin/zsh\n';
   cwdProcessCensus = 'p111\nn/slot\n';
   assert.equal(await slotTeardownBlocker(run), null);
+});
+
+test('boot failure before worker launch releases a slot whose only pane tails the dev-server log', async () => {
+  run.status = 'failed';
+  run.agentContexts = [
+    {
+      id: 'dev',
+      role: 'dev',
+      label: 'Dev',
+      status: 'working',
+      runner: 'pi',
+      target: null,
+    },
+  ];
+  tmuxInventory = 'mmt-1\t%250\t88042\t/slot\t/slot\t$2\t1791363049\tdevserver-log\n';
+  rawProcessCensus = '88042 1 88042 Fri Oct 9 01:00:00 2026 /usr/bin/tail\n';
+  cwdProcessCensus = 'p88042\nn/slot\n';
+
+  const result = await releaseCompletedRunSlot(run);
+
+  assert.equal(result.released, true, result.skipped);
+  assert.equal(slotRow?.phase, null);
+  assert.equal(slotRow?.current_run_id, null);
+  assert.equal(slotRow?.cleanup_run_id, null);
+  assert.equal(run.agentContexts[0]!.target, null);
+  assert.deepEqual(runnerProbePids, [], 'no worker probe waits on the log pane');
+});
+
+test('a dev-server log name grants no authority over a foreign pane or another process', async () => {
+  for (const [session, command] of [
+    ['foreign', '/usr/bin/tail'],
+    ['mmt-1', 'node'],
+  ]) {
+    tmuxInventory = `${session}\t%250\t88042\t/slot\t/slot\t$2\t1791363049\tdevserver-log\n`;
+    rawProcessCensus = `88042 1 88042 Fri Oct 9 01:00:00 2026 ${command}\n`;
+    cwdProcessCensus = 'p88042\nn/slot\n';
+    assert.ok(await slotTeardownBlocker(run));
+  }
 });
 
 test('a foreign controller and a different session origin remain protected', async () => {

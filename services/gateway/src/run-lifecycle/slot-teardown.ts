@@ -24,7 +24,7 @@ import {
   updateSlotStatusIf,
 } from '../core/index.js';
 import { slotRealpath } from '../core/slot-io.js';
-import { resolveTmuxSession, tmuxShellSnippet } from '../core/tmux.js';
+import { DEVSERVER_LOG_WINDOW_NAME, resolveTmuxSession, tmuxShellSnippet } from '../core/tmux.js';
 import { isActiveSlotHolder, slotPinIsRequestOnly } from '../methods/dispatch/slot-scoring.js';
 import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import {
@@ -177,7 +177,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   const listed = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      "list-panes -a -F '#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_path}\t#{session_path}\t#{session_id}\t#{session_created}'",
+      "list-panes -a -F '#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_path}\t#{session_path}\t#{session_id}\t#{session_created}\t#{window_name}'",
     ),
     { cwd: '/' },
   );
@@ -193,6 +193,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
     if (
       (context.slotId ?? run.slotId) !== run.slotId ||
       !context.target ||
+      context.target.window === DEVSERVER_LOG_WINDOW_NAME ||
       context.nativeSession ||
       context.nativeSessionOwner ||
       contextPaneId(context.target)
@@ -204,11 +205,13 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
     for (const paneId of historical) ownedPanes.add(paneId);
   }
   const ownedShells = new Set<string>();
+  const logPanes = new Set<string>();
   let slotSession: string | undefined;
   const sessionOrigins = new Map<string, string>();
   for (const line of listed.stdout.split('\n')) {
-    const [session, paneId, panePid, cwd, origin, sessionId, createdAt] = line.split('\t');
-    if (ownedPanes.has(paneId)) {
+    const [session, paneId, panePid, cwd, origin, sessionId, createdAt, windowName] =
+      line.split('\t');
+    if (ownedPanes.has(paneId) && windowName !== DEVSERVER_LOG_WINDOW_NAME) {
       const worker = await probeRunnerDescendantPid(vars, panePid);
       if (worker.state !== 'absent')
         return `Worker ownership in pane ${paneId} is not quiescent; slot teardown was skipped`;
@@ -228,6 +231,12 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
         sessionOrigins.set(origin, (await slotRealpath(vars, origin)).replace(/\/$/, ''));
       if (sessionOrigins.get(origin) !== repo)
         return `Tmux session ${session} was started outside this slot checkout; cleanup deferred`;
+      // Preparation's log reader owns no worker. Verify its process below
+      // instead of requiring this infrastructure pane to become an idle shell.
+      if (windowName === DEVSERVER_LOG_WINDOW_NAME) {
+        logPanes.add(panePid);
+        continue;
+      }
       // A slot session survives its runs. Its unrecorded idle shells own no
       // conversation, but a live or unknown worker still blocks cleanup unless
       // it is provably this closed run's own worker, which closing ends (F315).
@@ -252,6 +261,18 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   if (processes.exitCode !== 0)
     return 'Workspace process identity census is unavailable; slot teardown was skipped';
   const censusRows = parseProcessCensus(processes.stdout);
+  for (const panePid of logPanes) {
+    const root = censusRows.find((row) => row.pid === panePid);
+    if (!root) {
+      logPanes.delete(panePid);
+      continue;
+    }
+    if (
+      root.command.split('/').at(-1) !== 'tail' ||
+      censusRows.some((row) => row.parent === panePid)
+    )
+      return `Dev-server log pane process ${panePid} is still occupied; cleanup deferred`;
+  }
   for (const panePid of ownedShells) {
     const root = censusRows.find((row) => row.pid === panePid);
     if (!root) continue; // A preserved dead pane has no process left to classify.
@@ -338,6 +359,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       isWithinPath(repo, cwd) &&
       livePids.has(pid) &&
       !ownedShells.has(pid) &&
+      !logPanes.has(pid) &&
       !passive.has(pid) &&
       !ownedProviders.has(pid)
     )
