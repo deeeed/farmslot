@@ -1,0 +1,1 @@
+- Complete gate-free comparison runs with unreviewed claims retained for separate review, while preserving evidence integrity and publication checks.
