@@ -338,7 +338,7 @@ test('TAT-4146 v2: a refused publish package on a delivered result needs a decis
   assert.equal(run.steps.find((step) => step.name === S.COMPLETE)?.status, 'failed');
   const payload = heldPayload();
   assert.equal(payload.stoppedAt, 'complete');
-  assert.equal(payload.reason, 'COMPLETE was refused.');
+  assert.equal(payload.reason, v2Refusal);
   assert.deepEqual(payload.refusal, { message: v2Refusal, reasons: [] });
   assert.deepEqual(payload.delivered, {
     reportPath: 'artifacts/pr-description.md',

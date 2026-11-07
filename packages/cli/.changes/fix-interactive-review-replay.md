@@ -1,0 +1,1 @@
+- Show a completion refusal once when its reason already contains the full refusal message.

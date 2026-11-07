@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import {
   type AgentContext,
+  isInteractiveDevRun,
   isPipelineRepairVisualReviewInput,
   isRecord,
   isTerminalRunStatus,
@@ -261,8 +262,17 @@ type BroadcastFn = (event: string, payload: unknown) => void;
 export function shouldSkipForDisabledReviewConfig(
   config: { enabled: boolean },
   options: Pick<ReviewOptions, 'publicationReview'> & { evalJudge?: boolean } = {},
+  run?: Pick<Run, 'flowType' | 'mode' | 'devInteractiveProfile'>,
 ): boolean {
-  return !config.enabled && options.publicationReview !== true && !options.evalJudge;
+  // Reviewed interactive dev is an operator opt-in; enabled controls automatic review.
+  const explicitlyReviewed =
+    run && isInteractiveDevRun(run) && run.devInteractiveProfile === 'reviewed';
+  return (
+    !config.enabled &&
+    options.publicationReview !== true &&
+    !options.evalJudge &&
+    !explicitlyReviewed
+  );
 }
 
 /** Extra-review auto-fix budget. Restart/resume must not raise this past project max_retries. */
@@ -386,7 +396,7 @@ async function executeOwnedReview(
 
   const config = await getReviewConfig(run.project);
   const requestedEffort = options.effort === undefined ? (config.effort ?? null) : options.effort;
-  if (shouldSkipForDisabledReviewConfig(config, { ...options, evalJudge })) {
+  if (shouldSkipForDisabledReviewConfig(config, { ...options, evalJudge }, run)) {
     debugReviewLog(`[review] run ${runId.slice(0, 8)} — disabled for project ${run.project}`);
     return { skipped: true, reason: 'disabled-for-project', retryCount: 0 };
   }
