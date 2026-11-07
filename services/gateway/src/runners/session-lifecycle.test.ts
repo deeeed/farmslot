@@ -499,11 +499,14 @@ test('stopRunnerForPark reports still-running with the probes it actually comple
   assert.equal(result.ok === false && result.probes, RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES);
 });
 
-test('stopRunnerForPark stops waiting at the hard deadline even below the probe floor', async () => {
+test('stopRunnerForPark stops waiting at the hard deadline even below the probe floor', async (t) => {
   // The probe floor exists so a host whose probes are slower than the nominal
   // budget still gets enough observations. It must not become an unbounded
   // wait: a stop whose probes never finish has to end at the hard deadline.
   let probes = 0;
+  let now = 0;
+  // Real timers may fire before their nominal delay; advance the observed clock explicitly.
+  t.mock.method(Date, 'now', () => now);
   const startedAt = Date.now();
   const result = await stopRunnerForPark(
     { vars, recoveryHandle: handle, timeoutMs: 0, maxTimeoutMs: 120 },
@@ -515,7 +518,7 @@ test('stopRunnerForPark stops waiting at the hard deadline even below the probe 
       findRunnerPid: async () => '202',
       probeRunnerPid: async () => {
         probes += 1;
-        await new Promise((resolve) => setTimeout(resolve, 60));
+        now += 60;
         return { state: 'present', pid: '202' };
       },
       verifyLiveBinding: verifyPersistedLiveBinding,
@@ -531,7 +534,7 @@ test('stopRunnerForPark stops waiting at the hard deadline even below the probe 
     probes < RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES,
     `hard deadline must cut the probe floor short, saw ${probes} probes`,
   );
-  assert.ok(elapsed < 2_000, `stop must not outlive its hard deadline, took ${elapsed}ms`);
+  assert.equal(elapsed, 120, 'stop must not outlive its hard deadline');
 });
 
 test('stopRunnerForPark keeps waiting through a momentarily unreadable pane', async () => {
