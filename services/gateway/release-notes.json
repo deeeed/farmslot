@@ -1,11 +1,8 @@
 {
-  "version": "0.36.0",
+  "version": "0.37.0",
   "date": "2026-11-07",
   "items": [
-    "Register Claude Code ACP for native sessions and refuse native-only agents on terminal launch paths",
-    "Allow same-head re-review of repaired ignored evidence for pipeline reviews using the recorded review-input receipt",
-    "Apply the existing round-3+ advisory policy consistently to completed and refreshed reviews, retaining minor and nit findings without blocking approval",
-    "Keep hosted recipe execution and discovery on the assigned iOS or Android slot platform while preserving web/headless project adapter selection and explicit target overrides",
-    "Honor explicitly reviewed interactive runs when automatic project review is disabled, and show the actual package refusal in completion decisions"
+    "Route pilot task transfers and terminal streams over the enrolled node link, preserving command ownership and uncertain outcomes",
+    "Resolve completion handoffs to the recorded worker attempt and canonical pane identity, so empty legacy role placeholders do not keep idle or exited workers unconfirmed"
   ]
 }

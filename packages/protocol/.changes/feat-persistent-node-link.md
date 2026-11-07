@@ -1,1 +1,0 @@
-- Define capability-gated persistent node commands, durable outcomes and bounded resumable streams without changing peer compatibility rules.
