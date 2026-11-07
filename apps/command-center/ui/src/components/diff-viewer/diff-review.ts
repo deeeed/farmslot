@@ -1,4 +1,4 @@
-import { html as diff2html } from 'diff2html';
+import { html as diff2html, parse } from 'diff2html';
 import { ColorSchemeType } from 'diff2html/lib-esm/types';
 import { html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -18,6 +18,8 @@ type ViewMode = 'side-by-side' | 'line-by-line';
 export class DiffReview extends LitElement {
   @property() diff = '';
   @property() filename = '';
+  /** Provider edits know file creation without claiming a Git mode or rename. */
+  @property({ type: Boolean }) newFile = false;
   @state() private _viewMode: ViewMode = 'side-by-side';
   private readonly displayChoices = new ViewStateBindings(this, [
     viewBinding(
@@ -43,7 +45,10 @@ export class DiffReview extends LitElement {
 
   private _renderDiff(): string {
     if (!this.diff) return '<div class="dr-empty">No diff to display</div>';
-    return diff2html(this.diff, {
+    const diff = this.newFile
+      ? parse(this.diff).map((file) => ({ ...file, isNew: true }))
+      : this.diff;
+    return diff2html(diff, {
       outputFormat: this._viewMode === 'side-by-side' ? 'side-by-side' : 'line-by-line',
       drawFileList: false,
       matching: 'lines',

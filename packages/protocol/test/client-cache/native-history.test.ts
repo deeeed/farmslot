@@ -957,3 +957,17 @@ test('a newer read while a turn streams refuses an answer on the old snapshot, n
   assert(!nativeHistoryCanSend(newer, rendered, false, now));
   assert(!nativeHistoryCanSend(read({ ...newer.data, hasMore: true }), rendered, true, now));
 });
+
+test('automatic ACP permissions have a known audited resolution without a pending prompt', () => {
+  const resolved: NativeSessionEvent = {
+    ...event(1, ''),
+    type: 'approval.resolved',
+    nativeId: 'number:71',
+    request: { id: 'request', title: 'Write note.txt' },
+    data: { decision: 'approve', automatic: true, approvalMode: 'bypass' },
+  };
+  const rows = nativeTimeline([resolved]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, 'resolution');
+  assert.equal(rows[0].text, 'Automatically approved (bypass): Write note.txt');
+});

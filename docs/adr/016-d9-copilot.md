@@ -154,11 +154,7 @@ inspected reference handler publishes completed assistant blocks.
 ### Approved implementation proof scope, 2026-11-07
 
 Live proof covers the six installed runners: Claude, Codex, Cursor, Grok, OpenCode
-and Pi, including its DeepSeek provider. Kiro, FX, Antigravity, Muse/MSP and ACP
-registry agents are not installed. Their transport contracts receive adapter tests;
-installation and runtime proof remain an open question for Arthur. Do not install
-or authenticate additional CLIs as part of F412. These rows do not block the six-runner
-implementation and are not claimed as live parity.
+and Pi, including its DeepSeek provider. Arthur removed Kiro, FX, Antigravity and Muse/MSP from planned parity on 2026-11-07. ACP remains the next approved extension: use the shared client and prove one existing agent through its ACP adapter, beginning with Claude Code. Only that adapter is authorised for installation in this scope. Contract tests do not establish live parity.
 
 ### Rationale
 

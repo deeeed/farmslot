@@ -3,17 +3,21 @@ import { randomUUID } from 'node:crypto';
 import type {
   NativeSessionCapabilities,
   NativeSessionTool,
+  NativeToolDiff,
   NativeToolKind,
 } from '@farmslot/protocol';
 
 import { type AcpPendingRequest, acpPermission } from './acp-requests.js';
 import {
   type AcpAuthMethod,
+  acpConfigChoices,
   type AcpObject,
   acpObject,
   AcpRpc,
+  acpSessionConfigOptions,
   acpString,
   selectAcpAuthMethod,
+  setAcpConfigOption,
 } from './acp-rpc.js';
 import { nativeChecklist } from './plan.js';
 import type { NativeAdapter, NativeAdapterOptions, NativeEventInput } from './types.js';
@@ -64,10 +68,36 @@ function acpToolKind(
   };
 }
 
+/** Keep standard file edits in the shared tool contract; renderers never decode ACP. */
+function acpToolDiffs(content: unknown): NativeToolDiff[] | undefined {
+  if (content === undefined) return undefined;
+  if (!Array.isArray(content)) throw new Error('Invalid ACP tool content');
+  const diffs: NativeToolDiff[] = [];
+  for (const item of content) {
+    const block = acpObject(item);
+    if (block.type !== 'diff') continue;
+    if (block.oldText !== undefined && block.oldText !== null && typeof block.oldText !== 'string')
+      throw new Error('Invalid ACP previous file text');
+    diffs.push({
+      path: acpString(block.path),
+      oldText: block.oldText ?? null,
+      newText: acpString(block.newText),
+    });
+  }
+  return diffs.length ? diffs : undefined;
+}
+
 export interface AcpAdapterConfig {
   args(options: NativeAdapterOptions): string[];
-  authMethod: AcpAuthMethod;
+  /** Omit only for an agent that uses its existing provider login at session start. */
+  authMethod?: AcpAuthMethod;
+  /** Existing bindings may retain their proven legacy model command. */
+  modelConfiguration?: 'advertised' | 'legacy';
+  /** Apply explicit effort through the advertised thought-level option. */
+  effortConfig?: boolean;
   clientCapabilities?: AcpObject;
+  /** Agent-specific session policy stays at the registered adapter boundary. */
+  sessionMetadata?: (options: NativeAdapterOptions) => AcpObject | undefined;
   configureModel?: (
     sessionId: string,
     session: AcpObject,
@@ -166,8 +196,26 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
             // ACP has no portable live tool-policy setter. Keep the runner asking and grant
             // each tool request here, so returning to ask works without replacing its process.
             // Questions and plan decisions still require their own human response.
-            if (approvalMode === 'bypass' && method === 'session/request_permission') {
-              rpc.write({ id: message.id, result: request.response({ decision: 'approve' }) });
+            const workerApproval =
+              options.approvalMode === undefined && options.approvalPolicy === 'never';
+            if (
+              (approvalMode === 'bypass' || workerApproval) &&
+              method === 'session/request_permission'
+            ) {
+              const result = request.response({ decision: 'approve' });
+              // The host journals this decision before the grant. No pending request reaches
+              // either client, so a bypass tool cannot flash an approval prompt.
+              publish({
+                type: 'approval.resolved',
+                nativeId: `${typeof message.id}:${message.id}`,
+                request: { ...request.event.request!, id: `${typeof message.id}:${message.id}` },
+                data: {
+                  decision: 'approve',
+                  automatic: true,
+                  ...(workerApproval ? { policy: 'worker-launch' } : { approvalMode: 'bypass' }),
+                },
+              });
+              rpc.write({ id: message.id, result });
               return;
             }
             const key = `${typeof message.id}:${message.id}`;
@@ -203,24 +251,54 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
             accept();
             const id = acpString(update.toolCallId);
             const previous = tools.get(id);
+            const blocks =
+              update.content === undefined
+                ? undefined
+                : (() => {
+                    if (!Array.isArray(update.content)) throw new Error('Invalid ACP tool content');
+                    return update.content.map(acpObject);
+                  })();
+            const diffs = acpToolDiffs(blocks);
+            const content = diffs
+              ? blocks?.filter((block) => block.type !== 'diff')
+              : update.content;
+            const output =
+              update.rawOutput ?? (Array.isArray(content) && !content.length ? undefined : content);
+            const details = diffs
+              ? {
+                  ...update,
+                  // Old/new text is stored once in tool.diffs; retain other provider metadata.
+                  content: blocks?.map((block) => {
+                    if (block.type !== 'diff') return block;
+                    const { oldText: _old, newText: _new, ...metadata } = block;
+                    return metadata;
+                  }),
+                }
+              : update;
             const tool = {
               ...previous,
               name:
                 typeof update.title === 'string' ? update.title : (previous?.name ?? 'Runner tool'),
               ...acpToolKind(update, previous),
               ...(update.rawInput !== undefined ? { input: update.rawInput } : {}),
-              ...(update.rawOutput !== undefined || update.content !== undefined
-                ? { output: update.rawOutput ?? update.content }
+              ...(output !== undefined ? { output } : {}),
+              ...(diffs
+                ? {
+                    diffs,
+                    paths: [
+                      ...new Set([...(previous?.paths ?? []), ...diffs.map((diff) => diff.path)]),
+                    ],
+                  }
                 : {}),
               ...(typeof update.status === 'string' ? { status: update.status } : {}),
             };
-            if (!previous) publish({ type: 'tool.started', nativeId: id, tool, data: update });
+            if (!previous) publish({ type: 'tool.started', nativeId: id, tool, data: details });
             tools.set(id, tool);
             if (
               (update.status === 'completed' || update.status === 'failed') &&
               previous?.status !== update.status
             ) {
-              publish({ type: 'tool.completed', nativeId: id, tool, data: update });
+              publish({ type: 'tool.completed', nativeId: id, tool, data: details });
               // Retain the final tool to avoid duplicating terminal updates.
             }
           }
@@ -246,17 +324,21 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
         );
         if (result.protocolVersion !== 1) throw new Error('Unsupported ACP protocol version');
         const supported = acpObject(result.agentCapabilities);
-        const authMethod = selectAcpAuthMethod(result.authMethods, config.authMethod);
-        if (!authMethod)
-          throw new Error('Runner did not advertise the required native login method');
-        await rpc.request('authenticate', { methodId: authMethod, _meta: { headless: true } });
+        if (config.authMethod !== undefined) {
+          const authMethod = selectAcpAuthMethod(result.authMethods, config.authMethod);
+          if (!authMethod)
+            throw new Error('Runner did not advertise the required native login method');
+          await rpc.request('authenticate', { methodId: authMethod, _meta: { headless: true } });
+        }
         sessionCapabilities = { ...capabilities, resume: supported.loadSession === true };
         if (options.resumeSessionId && !sessionCapabilities.resume)
           throw new Error('Runner does not support saved-session loading');
+        const sessionMetadata = config.sessionMetadata?.(options);
         const session = acpObject(
           await rpc.request(options.resumeSessionId ? 'session/load' : 'session/new', {
             cwd: options.cwd,
             mcpServers: [],
+            ...(sessionMetadata ? { _meta: sessionMetadata } : {}),
             ...(options.resumeSessionId ? { sessionId: options.resumeSessionId } : {}),
           }),
         );
@@ -280,17 +362,49 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
             throw new Error('Runner did not advertise the requested execution mode');
           await rpc.request('session/set_mode', { sessionId: nativeSessionId, modeId });
         }
-        // Set the exact requested model through the native session API, never silently fall back.
+        // Apply advertised configuration and confirm it before admitting the first prompt.
+        let configuration = session;
+        const configure = async (option: AcpObject, value: string) => {
+          const id = acpString(option.id);
+          if (!acpConfigChoices(configuration, id)?.includes(value))
+            throw new Error(`ACP agent did not advertise ${id} ${JSON.stringify(value)}`);
+          const configOptions = await setAcpConfigOption(
+            (method, params) => rpc.request(method, params),
+            nativeSessionId,
+            id,
+            value,
+            'ACP agent',
+          );
+          if (configOptions.find((entry) => entry.id === id)?.currentValue !== value)
+            throw new Error(`ACP agent did not confirm ${id} ${JSON.stringify(value)}`);
+          configuration = { ...configuration, configOptions };
+        };
         if (options.model) {
           if (config.configureModel)
             await config.configureModel(nativeSessionId, session, options.model, (method, params) =>
               rpc.request(method, params),
             );
-          else
-            await rpc.request('session/set_model', {
-              sessionId: nativeSessionId,
-              modelId: options.model,
-            });
+          else {
+            const model =
+              config.modelConfiguration === 'legacy'
+                ? undefined
+                : acpSessionConfigOptions(configuration).find(
+                    (option) => option.category === 'model' || option.id === 'model',
+                  );
+            if (model) await configure(model, options.model);
+            else
+              await rpc.request('session/set_model', {
+                sessionId: nativeSessionId,
+                modelId: options.model,
+              });
+          }
+        }
+        if (config.effortConfig && options.effort && options.effort !== 'auto') {
+          const effort = acpSessionConfigOptions(configuration).find(
+            (option) => option.category === 'thought_level',
+          );
+          if (!effort) throw new Error('ACP agent did not advertise an effort setting');
+          await configure(effort, options.effort);
         }
         initialized = true;
         publish({

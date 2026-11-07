@@ -1,4 +1,3 @@
-import { createTwoFilesPatch } from 'diff';
 import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
@@ -19,7 +18,7 @@ import {
   improvementApplyOutcome,
   Methods,
 } from '@farmslot/protocol';
-import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
+import { createTextDiff, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { evidenceOnlyDecisionIds, isResultDecision } from '@farmslot/review-dispatch';
 
 import '../diff-viewer/diff-review.js';
@@ -43,15 +42,7 @@ import { assertInboxDecisionReady, resolveInboxDecision } from './decision-inbox
 import { decisionInboxStyles } from './decision-inbox-styles.js';
 
 function toUnifiedDiff(change: ImprovementFileChange): string {
-  return createTwoFilesPatch(
-    change.filePath,
-    change.filePath,
-    change.before,
-    change.after,
-    '',
-    '',
-    { context: 3 },
-  );
+  return createTextDiff(change.filePath, change.filePath, change.before, change.after);
 }
 
 function typeLabel(type: DecisionType | string): string {

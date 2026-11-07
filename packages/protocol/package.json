@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "dependencies": {
-    "@noble/hashes": "1.4.0"
+    "@noble/hashes": "1.4.0",
+    "diff": "^9.0.0"
   },
   "exports": {
     ".": {

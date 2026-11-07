@@ -121,7 +121,10 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
         key: event.sequence,
         kind: 'resolution',
         event,
-        text: nativeResolutionText(event.request, event.response),
+        text:
+          event.data?.automatic === true && event.data?.decision === 'approve'
+            ? `Automatically approved${event.data.approvalMode === 'bypass' ? ' (bypass)' : ''}: ${event.request.title}`
+            : nativeResolutionText(event.request, event.response),
       });
     } else if (['turn.completed', 'session.closed', 'error'].includes(event.type)) {
       entries.push({
@@ -1056,4 +1059,9 @@ export function nativeFoldWatched(
   watched: ReadonlySet<number>,
 ): boolean {
   return row.tools.some((key) => watched.has(key));
+}
+
+/** Tool disclosure is a display choice shared by the web and mobile view-state owners. */
+export function nativeToolDisclosureKey(sequence: number): string {
+  return `tool:${sequence}`;
 }

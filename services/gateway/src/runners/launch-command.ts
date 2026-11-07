@@ -39,6 +39,7 @@ import { shellQuote } from '../core/tmux.js';
 import { withBlindTrialBoundary } from '../evals/blind-git.js';
 
 import {
+  assertRunnerTransport,
   assertSafeRunnerArgumentValue,
   getRunnerDefinition,
   normalizeRunner,
@@ -406,6 +407,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
 }): string | null {
   const runnerId = options.runner.trim();
   if (!runnerId) return null;
+  assertRunnerTransport(runnerId, 'tmux');
   const binary = interactiveRunnerExecutable(options);
   const questionsArgs = modelQuestionsArgs(runnerId, options.modelQuestions);
   const modelFlag = options.model?.trim() ? ` --model ${shellQuote(options.model.trim())}` : '';
@@ -541,6 +543,7 @@ export function buildRunnerSessionReloadCommand(
   opts: RunnerSessionReloadOptions = {},
 ): string {
   const runner = normalizeRunner(runnerId);
+  assertRunnerTransport(runner, 'tmux');
   const repo = opts.repo ?? vars.remoteRepo;
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
   const quotedSessionId = shellQuote(sessionId);
@@ -943,6 +946,7 @@ export function buildLaunchCommand(
   opts: BuildLaunchOptions = {},
 ): string {
   const runner = normalizeRunner(runnerId);
+  assertRunnerTransport(runner, 'tmux');
   const repo = opts.repo ?? vars.remoteRepo;
   const hasDispatchCmd = Boolean(vars.dispatchCmd);
   const cmdIsRunnerAware = dispatchCmdIsRunnerAware(vars.dispatchCmd, runner);

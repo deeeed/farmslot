@@ -319,6 +319,7 @@ try {
   const models: Record<string, string> = {
     codex: 'gpt-6-luna',
     claude: 'haiku',
+    'claude-acp': 'haiku',
     pi: process.env.FARMSLOT_PI_PROOF_MODEL ?? 'litellm/DeepSeek-V4-Flash',
     cursor: 'auto',
     opencode: process.env.FARMSLOT_OPENCODE_PROOF_MODEL ?? 'litellm/DeepSeek-V4-Flash',

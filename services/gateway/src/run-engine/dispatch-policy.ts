@@ -1,6 +1,6 @@
 import type { DispatchPreviewParams, FlowType, Run } from '@farmslot/protocol';
 
-import { assertNativeRunner, normalizeRunner, runnerDefaultModel } from '../runners/registry.js';
+import { assertRunnerTransport, normalizeRunner, runnerDefaultModel } from '../runners/registry.js';
 
 export function buildDispatchPreviewParamsForRun(
   run: Pick<
@@ -105,9 +105,9 @@ export function assertNativeRunForSlot(
   run: Pick<Run, 'transport' | 'metrics'>,
   slotRunner: string | undefined,
 ): void {
-  if (run.transport !== 'native') return;
-  assertNativeRunner(
+  assertRunnerTransport(
     resolveRunDispatchRunnerModel(run, { runner: slotRunner ?? '', model: '' }).runner,
+    run.transport ?? 'tmux',
   );
 }
 export function resolveCIWatchChainFlowType(dispatchAction?: string | null): FlowType | null {

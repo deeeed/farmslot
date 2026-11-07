@@ -1,0 +1,1 @@
+- Document the shared ACP client, first registered binding and approved provider parity scope.

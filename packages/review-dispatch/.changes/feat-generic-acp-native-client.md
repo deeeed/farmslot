@@ -1,0 +1,1 @@
+- Use registered native-agent effort choices in the shared launch picker.

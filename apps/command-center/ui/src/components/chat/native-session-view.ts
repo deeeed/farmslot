@@ -61,6 +61,8 @@ import {
   type NativeTimelineEntry,
   type NativeTimelineRow,
   nativeTimelineRows,
+  nativeToolDiffText,
+  nativeToolDisclosureKey,
   type NativeTranscript,
   nativeWatchTools,
   type NativeWork,
@@ -332,7 +334,7 @@ export class NativeSessionView extends LitElement {
   };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
-  /** Long messages the reader expanded, by command, so a send keeps its state once confirmed. */
+  /** Expanded message/command and tool keys, shared with the URL display-choice owner. */
   @state() private expandedMessages = new Set<string>();
   /** The proposed plan last copied, by entry key, and whether the copy worked. */
   @state() private planCopy?: { key: number; copied: boolean };
@@ -684,14 +686,27 @@ export class NativeSessionView extends LitElement {
       ?hidden=${hidden}
     >
       ${entry.kind === 'tool'
-        ? html`<details>
+        ? html`<details
+            .open=${this.expandedMessages.has(nativeToolDisclosureKey(entry.key))}
+            @toggle=${(event: Event) => {
+              const details = event.currentTarget as HTMLDetailsElement;
+              const key = nativeToolDisclosureKey(entry.key);
+              if (details.open === this.expandedMessages.has(key)) return;
+              const next = new Set(this.expandedMessages);
+              if (details.open) next.add(key);
+              else next.delete(key);
+              this.expandedMessages = next;
+            }}
+          >
             <summary>
               ${entry.text} ·
               ${entry.event.type === 'tool.started'
                 ? 'Started'
                 : (entry.event.tool?.status ?? 'Finished')}
             </summary>
-            ${this.renderToolBody(entry.event.tool)}
+            ${this.expandedMessages.has(nativeToolDisclosureKey(entry.key))
+              ? this.renderToolBody(entry.event.tool)
+              : nothing}
           </details>`
         : entry.kind === 'plan'
           ? this.renderPlan(entry, planOpen)
@@ -886,13 +901,30 @@ ${JSON.stringify(
       )}</pre
     >`;
     const command = nativeCommandText(tool);
+    const diffs = this.testFilter.split(
+      (tool?.diffs ?? []).map((diff) => ({ diff, path: diff.path, additions: 0, deletions: 0 })),
+    );
+    const changes = tool?.diffs?.length
+      ? html`<section data-testid="native-tool-diffs">
+          ${this.testFilter.renderControls(diffs.summary)}
+          ${diffs.visible.map(
+            ({ diff }) =>
+              html`<diff-review
+                .filename=${diff.path}
+                .diff=${nativeToolDiffText(diff)}
+                .newFile=${diff.oldText === null}
+              ></diff-review>`,
+          )}
+        </section>`
+      : nothing;
     return command
       ? html`<pre>${command}</pre>
+          ${changes}
           <details>
             <summary>Raw input and output</summary>
             ${raw}
           </details>`
-      : raw;
+      : html`${changes}${raw}`;
   }
 
   /** `full` renders the whole text; a collapsed preview is always plain text. */
