@@ -557,6 +557,7 @@ export async function executePublishGateReviewPlan(
         launchSnapshot.engineState?.publishGate?.reviews ?? [],
         slotId,
         source === 'human-gate' ? await readPreparedPackage(launchSnapshot) : undefined,
+        launchSnapshot,
       );
     } catch (error) {
       const rejection = publicationReviewLaunchRejectionFromError(error);

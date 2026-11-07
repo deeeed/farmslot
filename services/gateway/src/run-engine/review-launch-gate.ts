@@ -7,17 +7,26 @@ import {
   reviewFindingIsSettled,
   reviewFixRetriesExhausted,
   type ReviewStatus,
+  type Run,
 } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
+import { readReviewedInputs, type ReviewedInputsFingerprint } from '../review/reviewed-inputs.js';
 
 import { publicationReviewSubjectOnlyDrifted, reviewNeedsContinuation } from './gate-policy.js';
 
 type GitExecutor = (command: string) => Promise<ExecResult>;
 type LaunchPackage = Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'>;
+
+interface ReviewEvidenceInputs {
+  reviewed: string;
+  current: ReviewedInputsFingerprint;
+}
+
+type EvidenceInputsReader = () => Promise<ReviewEvidenceInputs | null>;
 
 function isRecoverableReviewLaunchCode(
   code: string,
@@ -105,8 +114,17 @@ async function refreshedEvidenceAnswersFindings(
   review: ReviewStatus,
   preparedPackage: LaunchPackage | undefined,
   executeGit: GitExecutor,
+  readEvidenceInputs?: EvidenceInputsReader,
 ): Promise<boolean> {
-  if (!preparedPackage || !publicationReviewSubjectOnlyDrifted(review, preparedPackage))
+  if (!preparedPackage) return false;
+  const subjectDrift = publicationReviewSubjectOnlyDrifted(review, preparedPackage);
+  const reviewedHead = review.reviewSnapshot?.headSha ?? review.reviewedHeadSha;
+  if (
+    !subjectDrift &&
+    (review.reviewedReviewSubjectHash ||
+      preparedPackage.headSha !== reviewedHead ||
+      !readEvidenceInputs)
+  )
     return false;
   const open = (review.issues ?? []).filter(
     (issue) => !reviewFindingIsSettled(review, review, issue),
@@ -119,9 +137,19 @@ async function refreshedEvidenceAnswersFindings(
     `check-ignore -- ${files.map(shellQuote).join(' ')}`,
     'git check-ignore',
   );
-  // check-ignore prints one line per ignored path.
+  // check-ignore prints one line per ignored path. Reject source findings before scanning evidence.
+  if (
+    ignored.exitCode !== 0 ||
+    ignored.stdout.split(/\r?\n/u).filter(Boolean).length !== files.length
+  )
+    return false;
+  if (subjectDrift) return true;
+  // Pipeline reviews precede packaging; use their last-issues input receipt.
+  const inputs = await readEvidenceInputs?.();
   return (
-    ignored.exitCode === 0 && ignored.stdout.split(/\r?\n/u).filter(Boolean).length === files.length
+    !!inputs &&
+    inputs.current.fingerprint !== inputs.reviewed &&
+    inputs.current.legacyFingerprint !== inputs.reviewed
   );
 }
 
@@ -134,6 +162,7 @@ export async function assertReviewLaunchState(
   reviews: readonly ReviewStatus[],
   executeGit: GitExecutor,
   preparedPackage?: LaunchPackage,
+  readEvidenceInputs?: EvidenceInputsReader,
 ): Promise<void> {
   const [status, head] = await Promise.all([
     executeGitProbe(executeGit, 'status --porcelain=v1 --untracked-files=all', 'git status'),
@@ -182,7 +211,12 @@ export async function assertReviewLaunchState(
     reviewedCommit === headSha &&
     !reviewNeedsContinuation(priorReview) &&
     !reviewFixRetriesExhausted(priorReview) &&
-    !(await refreshedEvidenceAnswersFindings(priorReview, preparedPackage, executeGit))
+    !(await refreshedEvidenceAnswersFindings(
+      priorReview,
+      preparedPackage,
+      executeGit,
+      readEvidenceInputs,
+    ))
   ) {
     const feedbackPath =
       priorReview.artifactPaths?.find((artifactPath) =>
@@ -211,6 +245,7 @@ export async function assertReviewLaunchStateForSlot(
   reviews: readonly ReviewStatus[],
   slotId: string,
   preparedPackage?: LaunchPackage,
+  run?: Run,
 ): Promise<void> {
   try {
     const vars = await loadSlotVars(slotId);
@@ -219,6 +254,14 @@ export async function assertReviewLaunchStateForSlot(
       (command) =>
         execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
       preparedPackage,
+      run
+        ? async () => {
+            const reviewed = run.engineState?.reviewedInputs?.rerunFor;
+            if (!reviewed || reviewed !== run.engineState?.reviewInputsAtLaunch) return null;
+            const current = await readReviewedInputs(run);
+            return current ? { reviewed, current } : null;
+          }
+        : undefined,
     );
   } catch (error) {
     if (error instanceof GatewayMethodError && isRecoverableReviewLaunchCode(error.code)) {
