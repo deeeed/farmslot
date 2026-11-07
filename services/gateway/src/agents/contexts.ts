@@ -28,7 +28,10 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { updateSlotStatus, updateSlotStatusIf } from '../core/state.js';
 import { resolveTmuxSession } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
+import {
+  canonicalAgentContextTarget,
+  isDevServerLogTarget,
+} from '../methods/dispatch/role-target.js';
 import { getRun, listRuns, updateRunAgentContexts } from '../runs/store.js';
 import { resolveReviewWorkspaceOwner } from '../security/native-worker-owner.js';
 
@@ -131,7 +134,9 @@ export function getAgentContexts(run: Run): AgentContext[] {
 }
 
 export function selectAgentContext(run: Run, selector?: AgentContextSelector): AgentContext | null {
-  const contexts = getAgentContexts(run);
+  const contexts = getAgentContexts(run).filter(
+    (ctx) => !ctx.target || !isDevServerLogTarget(ctx.target),
+  );
   if (selector?.contextId) {
     return contexts.find((ctx) => ctx.id === selector.contextId) ?? null;
   }
@@ -261,13 +266,7 @@ export async function resolveAgentTarget(
     }
     const role = selector.role;
     const canonicalTarget = canonicalExplicitTarget(target);
-    const context = run
-      ? (getAgentContexts(run).find(
-          (candidate) =>
-            candidate.target != null &&
-            canonicalAgentContextTarget(candidate.target) === canonicalTarget,
-        ) ?? null)
-      : null;
+    const context = run ? selectAgentContext(run, { target: canonicalTarget }) : null;
     return {
       target,
       session: targetSession,
@@ -421,6 +420,7 @@ export async function upsertAgentContext(
       };
       if ((context.nativeSession || context.nativeSessionOwner) && context.target)
         throw new Error('A native agent context cannot also have a tmux target');
+      if (context.target) canonicalAgentContextTarget(context.target);
       if (
         context.nativeSessionOwner &&
         !resolveNativeContext({ agentContexts: [...contexts, context] }, context)

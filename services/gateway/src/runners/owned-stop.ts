@@ -4,6 +4,7 @@ import { type AgentContext, isTerminalRunStatus, type Run } from '@farmslot/prot
 
 import { execOnSlot, loadSlotVars, ownsRunSlotCleanup, readSlotRow } from '../core/index.js';
 import {
+  DEVSERVER_LOG_WINDOW_NAME,
   resolveExactTmuxWindowPane,
   shellQuote,
   tmuxSendTextCommand,
@@ -221,7 +222,13 @@ export async function stopRunOwnedTmuxWorkers(
   const expectedGeneration = run.engineState?.generation;
   const contexts = structuredClone(run.agentContexts ?? []);
   for (const context of contexts) {
-    if (context.nativeSession || context.nativeSessionOwner || !context.target) continue;
+    if (
+      context.nativeSession ||
+      context.nativeSessionOwner ||
+      !context.target ||
+      context.target.window === DEVSERVER_LOG_WINDOW_NAME
+    )
+      continue;
     const slotId = context.slotId ?? run.slotId;
     const slot = slotId ? await readSlotRow(slotId) : null;
     if (slot && !ownsRunSlotCleanup(slot, run.id)) continue;

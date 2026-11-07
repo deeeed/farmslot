@@ -16,6 +16,7 @@ import { makeVars } from './test-fixtures.js';
 
 const vars = makeVars();
 const target = 'test-1:dev';
+let windowInventory = '1 rev-codex\n2 review\n3 dev\n';
 const message = 'Read and execute TASK.md in /tmp/repo/tasks/foo';
 
 let activityReading: ObservabilityReading<RunnerActivity> | null = {
@@ -286,7 +287,7 @@ mock.module('../core/exec.js', {
         return { exitCode: 0, stdout: paneText, stderr: '' };
       }
       if (cmd.includes('list-windows')) {
-        return { exitCode: 0, stdout: '1 rev-codex\n2 review\n3 dev\n', stderr: '' };
+        return { exitCode: 0, stdout: windowInventory, stderr: '' };
       }
       if (cmd.includes("python3 - <<'PY'")) {
         callOrder.push('python:write');
@@ -590,6 +591,17 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
 test('resolvePrimaryWorkerTarget skips reviewer windows when falling back to session scan', async () => {
   const workerTarget = await resolvePrimaryWorkerTarget(vars);
   assert.equal(workerTarget, 'test-1:3');
+});
+
+test('primary worker discovery skips dev-server logs and fails when no worker window exists', async () => {
+  try {
+    windowInventory = '1 devserver-log\n2 rev-codex\n3 dev\n';
+    assert.equal(await resolvePrimaryWorkerTarget(vars), 'test-1:3');
+    windowInventory = '1 devserver-log\n2 rev-codex\n';
+    await assert.rejects(() => resolvePrimaryWorkerTarget(vars), /no worker window/);
+  } finally {
+    windowInventory = '1 rev-codex\n2 review\n3 dev\n';
+  }
 });
 
 test('structured post-launch sends require exact prompt evidence by default', async () => {

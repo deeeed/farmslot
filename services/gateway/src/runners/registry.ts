@@ -46,7 +46,7 @@ import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { slotWriteFiles } from '../core/slot-io.js';
 import {
-  firstWindowTarget,
+  DEVSERVER_LOG_WINDOW_NAME,
   pasteTmuxText,
   resolveTmuxPaneId,
   resolveTmuxSession,
@@ -4331,36 +4331,24 @@ export function runnerSignalShowsCompletion(signalText: string): boolean {
 export async function resolvePrimaryWorkerTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
 ): Promise<string> {
-  try {
-    const session = await resolveTmuxSession(vars.slotId, vars);
-    const out = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `list-windows -t ${shellQuote(session)} -F '#{window_index} #{window_name}' 2>/dev/null`,
-        ),
-      )
-    ).stdout.trim();
-    const lines = out
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    for (const line of lines) {
-      const [index, ...rest] = line.split(/\s+/);
-      const name = rest.join(' ');
-      if (index && !isReviewerWindowName(name)) {
-        return `${session}:${index}`;
-      }
-    }
-  } catch {
-    // Fall through to legacy target
-  }
   const session = await resolveTmuxSession(vars.slotId, vars);
-  // base-index-1 hosts (mini.local etc.) have no `${session}:0`, so the
-  // legacy fallback would hand the caller a non-existent target. Resolve the
-  // actual first window via the shared helper — same pattern dispatch and
-  // killAgentInSession use.
-  return firstWindowTarget(vars, session);
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `list-windows -t ${shellQuote(`=${session}`)} -F '#{window_index} #{window_name}' 2>/dev/null`,
+    ),
+  );
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Cannot inspect worker windows in ${session}: ${result.stderr || `exit ${result.exitCode}`}`,
+    );
+  for (const line of result.stdout.split('\n')) {
+    const [index, ...rest] = line.trim().split(/\s+/);
+    const name = rest.join(' ');
+    if (index && name !== DEVSERVER_LOG_WINDOW_NAME && !isReviewerWindowName(name))
+      return `${session}:${index}`;
+  }
+  throw new Error(`Tmux session ${session} has no worker window`);
 }
 
 export function stripRunnerNoise(content: string, runnerId?: string | null): string {

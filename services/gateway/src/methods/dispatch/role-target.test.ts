@@ -1,7 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { canonicalAgentContextTarget } from './role-target.js';
+import { canonicalAgentContextTarget, parseCapturedAgentPaneTarget } from './role-target.js';
+
+test('dispatch refuses to record the dev-server log pane as its worker', () => {
+  assert.throws(
+    () => parseCapturedAgentPaneTarget('mmt-3', 'mmt-3:2.1|devserver-log|%250'),
+    /devserver-log.*worker/,
+  );
+});
+
+test('a persisted dev-server log pane cannot be adopted for worker input', () => {
+  assert.throws(
+    () =>
+      canonicalAgentContextTarget({
+        session: 'mmt-3',
+        window: 'devserver-log',
+        paneId: '%250',
+        target: 'mmt-3:devserver-log',
+      }),
+    /devserver-log.*worker/,
+  );
+});
 
 test('an exact pane id wins over the role window when routing input', () => {
   // Rediscovery proves which pane owns the session. A window can hold several

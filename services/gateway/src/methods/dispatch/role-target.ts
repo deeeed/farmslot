@@ -2,6 +2,8 @@
 
 import type { AgentContextTarget } from '@farmslot/protocol';
 
+import { DEVSERVER_LOG_WINDOW_NAME } from '../../core/tmux.js';
+
 export { buildDispatchRoleShellCommand } from '../../core/tmux.js';
 
 export function parseCapturedAgentPaneTarget(session: string, raw: string): AgentContextTarget {
@@ -10,6 +12,7 @@ export function parseCapturedAgentPaneTarget(session: string, raw: string): Agen
     : [session, null, null];
   const match = rawTarget.match(/^[^:]+:(\d+)(?:\.(\d+))?$/);
   const window = windowName?.trim() || match?.[1] || null;
+  assertWorkerWindow(window);
   // Named windows are stable across reordered indices; numeric targets drift when
   // metro/recipe windows are added and the original dev pane moves or disappears.
   const target =
@@ -35,6 +38,8 @@ export function parseCapturedAgentPaneTarget(session: string, raw: string): Agen
  * over a persisted numeric tmux target.
  */
 export function canonicalAgentContextTarget(target: AgentContextTarget): string {
+  if (isDevServerLogTarget(target))
+    throw new Error(`${DEVSERVER_LOG_WINDOW_NAME} cannot be used as a worker target`);
   const paneId = target.paneId?.trim();
   if (paneId && /^%\d+$/.test(paneId)) return paneId;
   const session = target.session?.trim();
@@ -43,4 +48,16 @@ export function canonicalAgentContextTarget(target: AgentContextTarget): string 
     return `${session}:${window}`;
   }
   return target.target;
+}
+
+export function isDevServerLogTarget(target: AgentContextTarget): boolean {
+  return (
+    target.window === DEVSERVER_LOG_WINDOW_NAME ||
+    target.target.split(':')[1]?.replace(/^=/, '').split('.')[0] === DEVSERVER_LOG_WINDOW_NAME
+  );
+}
+
+function assertWorkerWindow(window: string | null | undefined): void {
+  if (window === DEVSERVER_LOG_WINDOW_NAME)
+    throw new Error(`${DEVSERVER_LOG_WINDOW_NAME} cannot be used as a worker target`);
 }
