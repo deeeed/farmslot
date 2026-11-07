@@ -300,3 +300,30 @@ test('a generic resume of the stopped session cannot create a second co-pilot', 
   assert.notEqual(fresh.session.nativeSession?.sessionId, id);
   await controller.stop();
 });
+
+test('a restored stopped singleton with an unavailable host cannot reject gateway initialization', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-stopped-unavailable-'));
+  const first = testController({ home, checkout: process.cwd() });
+  await first.controller.start();
+  await first.controller.stop();
+  await first.controller.dispose();
+  class UnavailableNative extends FakeCopilotNative {
+    override async inspect(): Promise<never> {
+      throw Object.assign(new Error('Native host unavailable'), {
+        code: 'NATIVE_SOURCE_UNAVAILABLE',
+      });
+    }
+  }
+  const native = new UnavailableNative();
+  const { controller } = testController({ home, checkout: process.cwd(), native });
+  t.after(async () => {
+    await controller.dispose();
+    await rm(home, { recursive: true, force: true });
+  });
+  await controller.initialize();
+  assert.equal(controller.currentSession()?.status, 'failed');
+  assert.match(controller.currentSession()?.terminalReason ?? '', /Native host unavailable/);
+  await assert.rejects(() => controller.start(), /Native host unavailable/);
+  assert.equal(native.launches, 0);
+  assert.equal(native.sends.size, 0);
+});

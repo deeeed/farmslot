@@ -861,3 +861,63 @@ for (const delayedLock of [false, true])
       await next.dispose('network');
     },
   );
+
+test(
+  'pre-refusal saves waiting behind a write cannot restore the deleted history',
+  { timeout: 2000 },
+  async (t) => {
+    const base = new ResourceCacheConformanceTransport({
+      gatewayUrl: 'ws://late-save',
+      principalId: 'reader',
+      principalGeneration: 0,
+    });
+    base.setConnection({
+      id: 1,
+      connected: true,
+      capabilities: { ...base.connection.capabilities!, conversationStreaming: 1 },
+    });
+    let receive!: (frame: NativeSessionDeltaPayload) => void;
+    const transport = Object.assign(base, {
+      conversations: {
+        subscribe: async () => ({ ...initial, subscriptionId: 'subscription' }),
+        unsubscribe: async () => undefined,
+        onDelta(listener: (frame: NativeSessionDeltaPayload) => void) {
+          receive = listener;
+          return () => undefined;
+        },
+      },
+    });
+    const store = createMemoryResourceStore();
+    const cache = createGatewayResourceCache({ transport, store });
+    const stop = cache.conversations!.observe(target, () => undefined);
+    await settle();
+    let release!: () => void, entered!: () => void;
+    const lock = new Promise<void>((r) => {
+      release = r;
+    });
+    const blocked = new Promise<void>((r) => {
+      entered = r;
+    });
+    t.after(release);
+    store.withWriteLock = async (write) => {
+      entered();
+      await lock;
+      return write();
+    };
+    const reset = { ...initial, subscriptionId: 'subscription' };
+    receive(reset);
+    await blocked;
+    receive(reset);
+    receive({ kind: 'terminal', reason: 'access-denied', subscriptionId: 'subscription' });
+    release();
+    await settle();
+    assert.equal(cache.conversations!.read(target).data, undefined);
+    assert.equal(await store.getQuery(nativeConversationStorageId(target)), undefined);
+    assert.equal(
+      await store.getQuery(nativeHistoryStorageId(nativeHistoryQuery(target, 'reader'))),
+      undefined,
+    );
+    stop();
+    await cache.dispose('network');
+  },
+);

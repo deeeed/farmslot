@@ -1,0 +1,1 @@
+- Recognize native conversation launch and send actions in planning validation.

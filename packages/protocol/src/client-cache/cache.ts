@@ -792,6 +792,7 @@ export function createGatewayResourceCache(
     }
   }
 
+  const conversationDenials = new Map<string, number>();
   conversations = createNativeConversationCache(
     transport.conversations,
     {
@@ -819,11 +820,14 @@ export function createGatewayResourceCache(
           };
         }),
       async save(target, snapshot) {
+        const id = nativeConversationStorageId(target);
+        const denial = conversationDenials.get(id);
         const owner = hydrationOwnerVersion;
         await barrier;
         if (
           (disposed && !conversationFlush) ||
           owner !== hydrationOwnerVersion ||
+          denial !== conversationDenials.get(id) ||
           !canPersist(connection)
         )
           return;
@@ -832,6 +836,7 @@ export function createGatewayResourceCache(
         const current = () =>
           (!disposed || conversationFlush) &&
           owner === hydrationOwnerVersion &&
+          denial === conversationDenials.get(id) &&
           incarnation === storeVersion &&
           writingStore === store &&
           !writingStore.deleted;
@@ -839,7 +844,6 @@ export function createGatewayResourceCache(
         const bytes = encoder.encode(serialized).byteLength;
         if (bytes > 1024 * 1024) return;
         await updateStore(writingStore, current, async () => {
-          const id = nativeConversationStorageId(target);
           const rows = (await writingStore.listQueries())
             .filter((row) => row.id.startsWith(NATIVE_CONVERSATION_STORAGE_PREFIX) && row.id !== id)
             .sort((a, b) => b.observedAt - a.observedAt);
@@ -858,6 +862,9 @@ export function createGatewayResourceCache(
         });
       },
       forget(target) {
+        const id = nativeConversationStorageId(target);
+        // Invalidate saves already awaiting a barrier or a cross-tab write lock.
+        conversationDenials.set(id, (conversationDenials.get(id) ?? 0) + 1);
         const deletingStore = store;
         const incarnation = storeVersion;
         // Enqueue an accepted refusal before any observer can close the profile.

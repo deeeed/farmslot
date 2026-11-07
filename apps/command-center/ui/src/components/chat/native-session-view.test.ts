@@ -295,6 +295,7 @@ test('native Default sends the selected node model after switching execution nod
   Object.defineProperty(view, 'isConnected', { value: true });
   Object.assign(view, {
     requestUpdate: () => undefined,
+    dispatchEvent: () => true,
     executionPicker: picker,
     executionNodeId: 'mini',
     connected: true,

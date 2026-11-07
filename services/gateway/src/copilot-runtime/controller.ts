@@ -697,26 +697,26 @@ export class CopilotRuntimeController {
     }
     if (this.isStopping()) return;
     const expected = session.nativeSession.sessionId;
-    if (this.persisted!.stoppedNativeSessionId === expected) {
-      const resumed = await this.retiredNativeResumed(
-        this.persisted!.nativeOwnerPrincipalId!,
-        expected,
-      );
-      if (
-        this.disposed ||
-        this.isStopping() ||
-        this.persisted?.session.nativeSession?.sessionId !== expected
-      )
-        return;
-      session.status = resumed ? 'failed' : 'stopped';
-      if (resumed) session.terminalReason = this.resumedReason();
-      await this.persist();
-      this.emitRuntime();
-      return;
-    }
-    if (this.persisted!.nativeOwnerPrincipalId)
-      this.watchNative(this.persisted!.nativeOwnerPrincipalId);
     try {
+      if (this.persisted!.stoppedNativeSessionId === expected) {
+        const resumed = await this.retiredNativeResumed(
+          this.persisted!.nativeOwnerPrincipalId!,
+          expected,
+        );
+        if (
+          this.disposed ||
+          this.isStopping() ||
+          this.persisted?.session.nativeSession?.sessionId !== expected
+        )
+          return;
+        session.status = resumed ? 'failed' : 'stopped';
+        if (resumed) session.terminalReason = this.resumedReason();
+        await this.persist();
+        this.emitRuntime();
+        return;
+      }
+      if (this.persisted!.nativeOwnerPrincipalId)
+        this.watchNative(this.persisted!.nativeOwnerPrincipalId);
       const owner = this.owner();
       if (owner !== this.persisted!.nativeOwnerPrincipalId)
         throw new Error('Co-Pilot native execution owner changed');
@@ -740,7 +740,7 @@ export class CopilotRuntimeController {
         this.persisted.session.status === 'stopping'
       )
         return;
-      session.status = 'reconnecting';
+      session.status = this.hasStopIntent(expected) ? 'failed' : 'reconnecting';
       session.terminalReason = (error as Error).message;
     }
     await this.persist();
