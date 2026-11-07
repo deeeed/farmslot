@@ -283,6 +283,8 @@ export async function inspectWorktreeWithRetry(
  *              the monitor step instead.
  */
 export function completionVerificationMode(run: Run): 'push' | 'commit' | 'none' {
+  // Artifact-only output is the retained working-tree diff, not a published commit.
+  if (run.completionPolicy === 'artifact-only') return 'none';
   if (WORKER_OWNED_PUSH_FLOWS.has(run.flowType)) return 'push';
   if (!WORKER_OWNED_COMMIT_FLOWS.has(run.flowType)) return 'none';
   return isInteractiveDevRun(run) ? 'none' : 'commit';
@@ -356,7 +358,7 @@ export async function verifyWorkerPushedBranch(
 ): Promise<PushVerificationResult> {
   const run = getRun(runId);
   const branch = run?.branch;
-  if (run) await assertRunCommitSignatures(run);
+  if (run && run.completionPolicy !== 'artifact-only') await assertRunCommitSignatures(run);
   const mode = run ? completionVerificationMode(run) : 'none';
   if (!run || !branch || mode === 'none') {
     return { verified: true };

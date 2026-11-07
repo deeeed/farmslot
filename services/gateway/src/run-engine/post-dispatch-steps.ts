@@ -203,7 +203,7 @@ export interface PostDispatchStepContext {
   ) => Promise<PublishGateReviewPlanResult>;
   executeReadyGate: (runId: string, options?: { generation?: number }) => Promise<string>;
   executeReviewGate: (runId: string, stepGeneration?: number) => Promise<void>;
-  getDiffStat: (run: Run, options?: { fresh?: boolean }) => Promise<DiffStat>;
+  getDiffStat: (run: Run, options?: { fresh?: boolean; required?: boolean }) => Promise<DiffStat>;
   interactiveLightweightSkipOutputs: (step: string) => StepIO;
   isHumanGateEnabled: (
     project: string,
@@ -1787,6 +1787,11 @@ export async function executeCompleteStep(
   if (runSupersededSince(getRun(runId), generation))
     throw new Error('Completion was superseded during gate validation');
   const artifactOnly = isArtifactOnlyRun(current);
+  // Artifact-only workers deliberately leave a local diff. Snapshot it before
+  // the completion pipeline retains the artifact manifest, without committing it.
+  const artifactOnlyDiff = artifactOnly
+    ? await getDiffStat(current, { fresh: true, required: true })
+    : undefined;
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
     flowType: current.flowType,
@@ -1843,6 +1848,7 @@ export async function executeCompleteStep(
     acceptanceIdentity,
     skipRetrospective,
     suppressPrMutation: noCodeDisposition || artifactOnly,
+    requireArtifactMirror: artifactOnly,
     inheritedAcceptance,
   });
   await refreshRunLinks(runId);
@@ -1858,7 +1864,7 @@ export async function executeCompleteStep(
   }
 
   // diffStat needs the slot's git tree; runs before slotRelease below.
-  const diffStat = await getDiffStat(getRun(runId) ?? current);
+  const diffStat = artifactOnlyDiff ?? (await getDiffStat(getRun(runId) ?? current));
   const finalizedEvalPackage = await finalizeEvalResultPackageForRun(getRun(runId) ?? current);
   let slotDisposition: 'ci-watch' | 'released' | 'release-deferred' | 'kept-shared-slot';
 

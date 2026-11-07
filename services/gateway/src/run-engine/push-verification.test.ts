@@ -8,8 +8,6 @@ import test, { type TestContext } from 'node:test';
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import type { ExecResult, Run } from '@farmslot/protocol';
 
-import { runContractSection } from '../tasks/run-contract.js';
-
 import {
   completionVerificationMode,
   inspectWorktreePublishState,
@@ -32,12 +30,13 @@ test('autonomous dev requires a commit but not a push', () => {
   assert.equal(completionVerificationMode(shape({ flowType: 'dev' })), 'commit');
 });
 
-test('an artifact-only dev run that must commit is told to commit', () => {
-  // Stability run ef32f8e7 (validation lane, artifact-only) got no commit rule in
-  // TASK.md, followed its skill's "commit only when requested", and was blocked here.
-  const run = shape({ flowType: 'dev', completionPolicy: 'artifact-only', lane: 'validation' });
-  assert.equal(completionVerificationMode(run), 'commit');
-  assert.match(runContractSection(run, 'temp/tasks/t') ?? '', /Commit the change locally/);
+test('artifact-only output is retained without commit or publication verification', () => {
+  // a65e9a6a followed the comparison guardrails and left four tracked edits.
+  for (const flowType of ['dev', 'fix-bug', 'pr-complete', 'update-branch'] as const)
+    for (const lane of ['comparison', 'validation', 'production'] as const) {
+      const run = shape({ flowType, completionPolicy: 'artifact-only', lane });
+      assert.equal(completionVerificationMode(run), 'none', `${flowType}/${lane}`);
+    }
 });
 
 test('interactive dev is operator-owned and verified elsewhere', () => {

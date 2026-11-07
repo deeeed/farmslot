@@ -57,6 +57,7 @@ let signatures = 0;
 let inspections = 0;
 // A pr-complete run whose remote never answers and whose local refs show 1 unpushed.
 let pushRun = false;
+let artifactOnly = false;
 const execute = async (_vars: SlotVars, command: string) => {
   commands.push(command);
   const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
@@ -87,7 +88,12 @@ const store = await import('../runs/store.js');
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
-    getRun: () => (pushRun ? { ...run, flowType: 'pr-complete' as const } : run),
+    getRun: () =>
+      artifactOnly
+        ? { ...run, completionPolicy: 'artifact-only' as const }
+        : pushRun
+          ? { ...run, flowType: 'pr-complete' as const }
+          : run,
   },
 });
 const contexts = await import('../agents/contexts.js');
@@ -108,6 +114,13 @@ beforeEach(() => {
   signatures = 0;
   inspections = 0;
   pushRun = false;
+  artifactOnly = false;
+});
+
+test('artifact-only completion accepts its retained diff without inspecting or nudging commits', async () => {
+  artifactOnly = true;
+  assert.deepEqual(await verifyWorkerPushedBranch(run.id, vars.slotId), { verified: true });
+  assert.deepEqual(commands, []);
 });
 
 test('completion rejects unsigned commits before accepting a complete signal', async () => {

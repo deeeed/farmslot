@@ -673,8 +673,11 @@ export async function captureRunDiffSnapshot(
 ): Promise<FamilyDiffProvenance & { diffText?: string }> {
   const diffKind = options.kind ?? diffKindForFlow(run.flowType);
   if (!run.slotId) return unavailableDiff('missing-slot', diffKind);
-  if (!run.branch) return unavailableDiff('missing-branch', diffKind);
-  const runBranch = run.branch;
+  if (!run.branch && run.completionPolicy !== 'artifact-only')
+    return unavailableDiff('missing-branch', diffKind);
+  // Diff commands read the checkout's actual HEAD. Artifact-only completion must
+  // retain that output even when its branch name has not been recorded yet.
+  const runBranch = run.branch ?? 'HEAD';
 
   let vars: Awaited<ReturnType<typeof loadSlotVars>>;
   try {

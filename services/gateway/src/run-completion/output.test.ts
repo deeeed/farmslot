@@ -774,3 +774,44 @@ test('a reviewer or refresh capture keeps the artifact-only output review COMPLE
   await captureRunOutput(run.id);
   assert.equal(getRun(run.id)!.output?.workerFinished, false, 'a review fix worker is running');
 });
+
+test('artifact-only output retains the working diff bytes independently of the worker tree', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'working-output-diff-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(path.join(dir, 'artifacts'));
+  const patch =
+    'diff --git a/source.js b/source.js\n--- a/source.js\n+++ b/source.js\n@@ -1 +1 @@\n-before\n+after\n';
+  await writeFile(path.join(dir, 'artifacts/diff.txt'), patch);
+  await writeFile(
+    path.join(dir, 'artifacts/diff-stat.json'),
+    JSON.stringify({ source: 'artifact', available: true, files: 1, additions: 1, deletions: 1 }),
+  );
+  await writeFile(path.join(dir, 'artifacts/report.md'), '# Completed output\n');
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'working-output',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    }
+  });
+  updateRun(run.id, {
+    taskFile: path.join(dir, 'TASK.md'),
+    completionPolicy: 'artifact-only',
+    lane: 'comparison',
+  });
+  await captureRunOutput(run.id, false, true);
+  const captured = getRun(run.id)!;
+  assert.ok(captured.output?.artifactBundle);
+  assert.ok(
+    captured.output?.artifactManifest.some(
+      ({ path: file, sha256 }) => file === 'artifacts/diff.txt' && sha256,
+    ),
+  );
+  await writeFile(path.join(dir, 'artifacts/diff.txt'), 'later worker changes');
+  const retained = path.join(await retainedRunTaskDirectory(captured), 'artifacts/diff.txt');
+  assert.equal(await fsPromises.readFile(retained, 'utf8'), patch);
+});

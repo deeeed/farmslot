@@ -39,10 +39,16 @@ export async function readTaskInputText(
   return readOptionalRetainedRunText(matching[0]!, `inputs/${filename}`);
 }
 
-export async function getDiffStat(run: Run, options: { fresh?: boolean } = {}): Promise<DiffStat> {
+export async function getDiffStat(
+  run: Run,
+  options: { fresh?: boolean; required?: boolean } = {},
+): Promise<DiffStat> {
   const snapshot = await captureRunDiffArtifacts(run, {
     forceRecapture: options.fresh,
   });
+  if (options.required && snapshot.source === 'unavailable') {
+    throw new Error(`Required working-tree diff capture failed: ${snapshot.missingReason}`);
+  }
   // COMPLETE step output keeps only the legacy numeric diffStat shape; full
   // provenance remains durable in artifacts/diff-stat.json and is re-read by
   // family observability for kind/filter/refs/SHAs/missing reasons.
