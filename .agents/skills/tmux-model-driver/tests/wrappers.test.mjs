@@ -41,3 +41,41 @@ for (const [file, args, input, expected, status] of [
     }
   });
 }
+
+test('wrapper resolves source aliases from its checkout, not the caller config', () => {
+  const caller = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-source-alias-'));
+  try {
+    const checkout = path.join(caller, 'checkout');
+    const driver = path.join(checkout, '.agents/skills/tmux-model-driver/scripts');
+    const gateway = path.join(checkout, 'services/gateway');
+    fs.mkdirSync(driver, { recursive: true });
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(checkout, 'package.json'), '{"type":"module"}');
+    fs.symlinkSync(
+      path.resolve(scripts, '../../../../node_modules'),
+      path.join(checkout, 'node_modules'),
+    );
+    fs.copyFileSync(path.join(scripts, 'run-driver.sh'), path.join(driver, 'run-driver.sh'));
+    fs.writeFileSync(path.join(gateway, 'source.ts'), "export const owner = 'checkout';\n");
+    fs.writeFileSync(
+      path.join(gateway, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: { paths: { '@driver-test/source': ['./source.ts'] } },
+      }),
+    );
+    fs.writeFileSync(path.join(caller, 'tsconfig.json'), '{}');
+    fs.writeFileSync(
+      path.join(driver, 'driver.mjs'),
+      "import { owner } from '@driver-test/source'; process.stdout.write(owner);\n",
+    );
+    const result = spawnSync('bash', [path.join(driver, 'run-driver.sh'), 'state'], {
+      cwd: caller,
+      env: { ...process.env, TSX_TSCONFIG_PATH: path.join(caller, 'tsconfig.json') },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'checkout');
+  } finally {
+    fs.rmSync(caller, { recursive: true });
+  }
+});
