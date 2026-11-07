@@ -5,7 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import { type AgentContext, PipelineSteps as PS } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  type ExecutionTemplateReference,
+  PipelineSteps as PS,
+} from '@farmslot/protocol';
 
 // mock.module replaces a module wholesale, so a partial namedExports map silently
 // deletes every export the subject's import graph still needs. These namespace
@@ -16,10 +20,14 @@ import { type AgentContext, PipelineSteps as PS } from '@farmslot/protocol';
 import * as realConfig from '../../core/config.js';
 import * as realCoreIndex from '../../core/index.js';
 import * as realOutput from '../../run-completion/output.js';
+import * as realRetained from '../../run-completion/retained-artifacts.js';
 import * as realOrchestrator from '../../run-engine/orchestrator.js';
+import * as realContract from '../../tasks/worker-terminal-contract.js';
 
 let workspace = '';
 let orchestratorTaskRoot = '';
+let capturedHandoff: string | undefined;
+let afterContractRead: (() => void) | undefined;
 
 mock.module('../../core/config.js', {
   namedExports: {
@@ -83,12 +91,119 @@ mock.module('../../run-completion/output.js', {
   namedExports: { ...realOutput, captureRunOutput: async () => 0 },
 });
 
+mock.module('../../run-completion/retained-artifacts.js', {
+  namedExports: {
+    ...realRetained,
+    readRetainedRunText: (...args: Parameters<typeof realRetained.readRetainedRunText>) =>
+      capturedHandoff === undefined
+        ? realRetained.readRetainedRunText(...args)
+        : Promise.resolve(capturedHandoff),
+  },
+});
+
+mock.module('../../tasks/worker-terminal-contract.js', {
+  namedExports: {
+    ...realContract,
+    readFrozenWorkerTerminalContractForRun: async (
+      run: Parameters<typeof realContract.readFrozenWorkerTerminalContractForRun>[0],
+    ) => {
+      const result = await realContract.readFrozenWorkerTerminalContractForRun(run);
+      afterContractRead?.();
+      return result;
+    },
+  },
+});
+
 const { runReplayStep } = await import('./replay-step.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../../runs/store.js');
 const { CHECKLIST_TARGET_BY_AGENT_ROLE, CHECKLIST_TARGET_MANIFEST } =
   await import('../../tasks/checklist-target.js');
 const { resolveWorkerTerminalContract } = await import('../../tasks/worker-terminal-contract.js');
 const { buildHandoffMetadata, ensureTaskRuntime } = await import('@farmslot/agent-runtime');
+
+test('completion refuses a mirror capture replaced while the original contract is read', async (t) => {
+  workspace = await mkdtemp(path.join(os.tmpdir(), 'replay-completed-capture-'));
+  orchestratorTaskRoot = path.join(workspace, 'orchestrator-tasks');
+  const original = path.join(orchestratorTaskRoot, 'fix/original/TASK.md');
+  const regenerated = path.join(orchestratorTaskRoot, 'fix/regenerated/TASK.md');
+  const run = createRun({ flowType: 'fix-bug', project: 'farmslot-farm', ticketOrPr: 'PROJ-1884' });
+  t.after(async () => {
+    capturedHandoff = undefined;
+    afterContractRead = undefined;
+    await rm(workspace, { recursive: true, force: true });
+    if (getRun(run.id)) await deleteRun(run.id);
+  });
+  const executionTemplate: ExecutionTemplateReference = {
+    id: 'fix-bug/default',
+    sourceId: 'project:farmslot-farm',
+    flow: 'fix-bug',
+    relativePath: 'fix-bug.md',
+    platforms: ['*'],
+    labels: [],
+    sha256: 'a'.repeat(64),
+  };
+  capturedHandoff = JSON.stringify({
+    attemptId: run.id,
+    project: run.project,
+    flow: run.flowType,
+    executionTemplate,
+  });
+  await mkdir(path.join(path.dirname(original), 'inputs'), { recursive: true });
+  await writeFile(path.join(path.dirname(original), 'inputs/handoff.json'), capturedHandoff);
+  await writeFile(
+    path.join(path.dirname(original), 'inputs/worker-terminal-contract.json'),
+    JSON.stringify({
+      ...resolveWorkerTerminalContract(null, run.flowType),
+      recordedEvidenceContractVersion: run.recordedEvidenceContractVersion,
+    }),
+  );
+  const bundle = {
+    storeId: 'retained-fixture',
+    taskKey: run.id,
+    bundleDigest: 'b'.repeat(64),
+    manifestDigest: 'c'.repeat(64),
+  };
+  updateRun(run.id, {
+    status: 'failed',
+    taskFile: regenerated,
+    artifactBundle: bundle,
+    output: {
+      workerFinished: true,
+      capturedAt: new Date().toISOString(),
+      artifactManifest: [],
+      manifestDigest: bundle.manifestDigest,
+    },
+    engineState: {
+      generation: 1,
+      taskExecution: { taskFile: original, startedAt: new Date().toISOString() },
+    },
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        runId: run.id,
+        slotId: 'macwork-ff-replay-checklist',
+        role: 'fix-bug',
+        label: 'Worker',
+        runner: 'scripted',
+        status: 'failed',
+        taskFile: 'tasks/fix/original/TASK.md',
+      },
+    ],
+  });
+  let captures = 0;
+  afterContractRead = () => {
+    captures++;
+    updateRun(run.id, { artifactBundle: { ...bundle, bundleDigest: 'd'.repeat(64) } });
+  };
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: PS.COMPLETE }, () => {}),
+    /Run changed while restoring its completed task/,
+  );
+  assert.equal(captures, 1);
+  assert.equal(getRun(run.id)?.taskFile, regenerated);
+  assert.equal(getRun(run.id)?.engineState?.taskInit, undefined);
+  assert.equal(getRun(run.id)?.artifactBundle?.bundleDigest, 'd'.repeat(64));
+});
 
 for (const [stepName, retainedFix] of [
   [PS.MONITOR, false],

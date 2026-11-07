@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { readTaskProvenance } from '@farmslot/agent-runtime';
 import {
@@ -1002,6 +1003,9 @@ export async function runReplayStep(
         assertRunNotArchiving(current.id);
         assertReplayOutsideTerminalCleanup(current);
         if (current.transport === 'native') assertNativeRunOwner(current);
+        const expectedTask = current.taskFile;
+        const expectedGeneration = current.engineState?.generation;
+        const expectedBundle = current.artifactBundle ? { ...current.artifactBundle } : undefined;
         const binding = await readCompletedTaskReplayBinding(current, params.stepName, {
           taskRoot: async (run) => {
             const { getOrchestratorTaskRoot, loadProjectVars } =
@@ -1024,10 +1028,10 @@ export async function runReplayStep(
           const latest = getRun(current.id);
           if (
             !latest ||
-            latest.taskFile !== current.taskFile ||
-            latest.engineState?.generation !== current.engineState?.generation ||
+            latest.taskFile !== expectedTask ||
+            latest.engineState?.generation !== expectedGeneration ||
             completedTaskReplayAnchor(latest, params.stepName) !== binding.taskFile ||
-            latest.artifactBundle?.bundleDigest !== current.artifactBundle?.bundleDigest
+            !isDeepStrictEqual(latest.artifactBundle, expectedBundle)
           )
             throw new Error('Run changed while restoring its completed task.');
           assertRunNotArchiving(current.id);
