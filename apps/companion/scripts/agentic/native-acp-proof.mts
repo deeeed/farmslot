@@ -72,6 +72,32 @@ const ensure = async (id: string) => {
   }
   throw Error('Missing real device control: ' + id);
 };
+const pressLabel = async (label: string) => {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const snapshot = await device.capture.snapshot(selection);
+    const node = snapshot.nodes.find((node) => node.label?.trim() === label);
+    if (node?.rect) {
+      await device.interactions.press({
+        ...selection,
+        x: Math.round(node.rect.x + node.rect.width / 2),
+        y: Math.round(node.rect.y + node.rect.height / 2),
+      });
+      return;
+    }
+    await device.interactions.scroll({ ...selection, direction: 'down', pixels: 500 });
+  }
+  throw Error('Missing visible diff control: ' + label);
+};
+const openDiff = async () => {
+  await pressLabel('Review diff');
+  await wait(
+    async () =>
+      (await device.capture.snapshot(selection)).nodes.some(
+        (node) => node.label?.trim() === 'File diff',
+      ),
+    'foreground file diff viewer',
+  );
+};
 const send = async (text: string) => {
   const after = (await read()).cursor;
   await ensure('companion-native-draft');
@@ -179,6 +205,7 @@ try {
       x: Math.round(detail.rect.x + detail.rect.width / 2),
       y: Math.round(detail.rect.y + detail.rect.height / 2),
     });
+    await openDiff();
     await wait(async () => {
       const nodes = (await device.capture.snapshot(selection)).nodes;
       return ['prefix', 'hello ACP', 'suffix'].every((text) =>
@@ -186,6 +213,7 @@ try {
       );
     }, 'retained full-file diff');
     await shot('retained-full-file-diff');
+    await pressLabel('Close');
     result.retainedWholeFileDiff = true;
   } else {
     let after = await send(
@@ -250,6 +278,7 @@ try {
       x: Math.round(detail.rect.x + detail.rect.width / 2),
       y: Math.round(detail.rect.y + detail.rect.height / 2),
     });
+    await openDiff();
     await wait(
       async () =>
         (await device.capture.snapshot(selection)).nodes.some((n) =>
@@ -258,6 +287,7 @@ try {
       'rendered mobile diff',
     );
     await shot('diff');
+    await pressLabel('Close');
     result.diffVisible = true;
     const denied = 'mobile-denied-' + crypto.randomUUID().slice(0, 8) + '.txt';
     after = await send(

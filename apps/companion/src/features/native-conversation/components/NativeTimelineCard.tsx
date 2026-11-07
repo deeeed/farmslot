@@ -121,8 +121,6 @@ export function NativeTimelineCard({
                   title={diff.path}
                   diffText={nativeToolDiffText(diff)}
                   initialPath={diff.path}
-                  maxHeight={280}
-                  allowFullscreen={false}
                 />
               ))
             : null}
