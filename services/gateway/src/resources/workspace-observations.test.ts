@@ -38,16 +38,16 @@ test('panels share a single source; changes during I/O, failure, recovery and re
   await a();
   await b();
   changed();
-  await assert.rejects(a(), /changed during/);
+  await assert.rejects(a(), { code: 'RESOURCE_OBSERVATION_CHANGED' });
   assert.equal(publications.length, 1);
   const after = await owner.capture(binding);
   fail(new Error('watch lost'));
-  await assert.rejects(after(), /changed during/);
+  await assert.rejects(after(), { code: 'RESOURCE_OBSERVATION_UNAVAILABLE' });
   const recovered = await owner.capture(binding);
   assert.equal(arms, 2);
   await recovered();
   current = false;
-  await assert.rejects(recovered(), /changed during/);
+  await assert.rejects(recovered(), { code: 'RESOURCE_OBSERVATION_UNAVAILABLE' });
   owner.release('same');
   assert.ok(stops >= 2);
 });
@@ -220,4 +220,41 @@ test('live failure closes its owned watcher before publishing invalidation', asy
   fail(new Error('lost source'));
   assert.deepEqual(published, [true]);
   owner.release('live');
+});
+
+test('a watcher failure during async identity validation remains unavailable', async () => {
+  const owner = new WorkspaceObservations(() => {});
+  let fail!: (error: Error) => void;
+  let release!: () => void;
+  let entered!: () => void;
+  let hold = false;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const paused = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const confirm = await owner.capture({
+    root: '/owned',
+    sourceId: 'async-source',
+    keys: [key],
+    current: async () => {
+      if (hold) {
+        entered();
+        await paused;
+      }
+      return true;
+    },
+    arm: async (_changed, failed) => {
+      fail = failed;
+      return () => {};
+    },
+  });
+  hold = true;
+  const confirming = confirm();
+  await waiting;
+  fail(new Error('watcher connection lost'));
+  release();
+  await assert.rejects(confirming, { code: 'RESOURCE_OBSERVATION_UNAVAILABLE' });
+  owner.release('async-source');
 });

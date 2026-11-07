@@ -137,8 +137,14 @@ export class WorkspaceObservations {
         this.release(binding.sourceId);
         throw error;
       }
-      if (captured.revision !== revision)
+      // Identity checks can await I/O; source loss during that await is not supersession.
+      if (this.sources.get(binding.sourceId) !== captured || captured.failure)
         throw this.unavailable('Workspace source or identity changed during the read');
+      if (captured.revision !== revision)
+        throw new GatewayMethodError(
+          'RESOURCE_OBSERVATION_CHANGED',
+          'Workspace contents changed during the read',
+        );
     };
   }
   /** Reuse derived reads only while their existing workspace source stays current. */
