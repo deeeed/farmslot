@@ -1789,10 +1789,9 @@ export async function executeCompleteStep(
   const artifactOnly = isArtifactOnlyRun(current);
   // Artifact-only workers deliberately leave a local diff. Snapshot it before
   // the completion pipeline retains the artifact manifest, without committing it.
-  const artifactOnlyDiff =
-    artifactOnly && current.branch
-      ? await getDiffStat(current, { fresh: true, required: true })
-      : undefined;
+  const artifactOnlyDiff = artifactOnly
+    ? await getDiffStat(current, { fresh: true, required: true })
+    : undefined;
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
     flowType: current.flowType,

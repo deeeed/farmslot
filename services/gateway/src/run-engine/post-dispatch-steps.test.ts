@@ -3154,37 +3154,39 @@ for (const mode of ['autonomous', 'interactive'] as const)
     );
   });
 
-test('artifact-only completion captures its working diff before the completion mirror', async (t) => {
-  const run = createRun({
-    flowType: 'dev',
-    project: 'generic-project',
-    ticketOrPr: 'artifact-output',
-  });
-  t.after(() => deleteTestRunIfPresent(run.id));
-  updateRun(run.id, {
-    status: 'completing',
-    completionPolicy: 'artifact-only',
-    lane: 'comparison',
-    slotId: 'artifact-output-slot',
-    branch: 'feature/artifact-output',
-  });
-  const captured = new Error('Diff captured before completion side effects');
-  const calls: string[] = [];
-  await assert.rejects(
-    executeCompleteStep(run.id, {
-      ...restartReplayContext(),
-      assertGatePrerequisites: async (current) => ({
-        state: 'ready',
-        identity: { runId: current.id, generation: current.engineState?.generation ?? 0 },
-        reasons: [],
+for (const branch of ['feature/artifact-output', null]) {
+  test(`artifact-only completion captures its working diff before the completion mirror with branch ${branch}`, async (t) => {
+    const run = createRun({
+      flowType: 'dev',
+      project: 'generic-project',
+      ticketOrPr: 'artifact-output',
+    });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    updateRun(run.id, {
+      status: 'completing',
+      completionPolicy: 'artifact-only',
+      lane: 'comparison',
+      slotId: 'artifact-output-slot',
+      branch,
+    });
+    const captured = new Error('Diff captured before completion side effects');
+    const calls: string[] = [];
+    await assert.rejects(
+      executeCompleteStep(run.id, {
+        ...restartReplayContext(),
+        assertGatePrerequisites: async (current) => ({
+          state: 'ready',
+          identity: { runId: current.id, generation: current.engineState?.generation ?? 0 },
+          reasons: [],
+        }),
+        getDiffStat: async (current, options) => {
+          calls.push(current.id);
+          assert.deepEqual(options, { fresh: true, required: true });
+          throw captured;
+        },
       }),
-      getDiffStat: async (current, options) => {
-        calls.push(current.id);
-        assert.deepEqual(options, { fresh: true, required: true });
-        throw captured;
-      },
-    }),
-    (error) => error === captured,
-  );
-  assert.deepEqual(calls, [run.id]);
-});
+      (error) => error === captured,
+    );
+    assert.deepEqual(calls, [run.id]);
+  });
+}
