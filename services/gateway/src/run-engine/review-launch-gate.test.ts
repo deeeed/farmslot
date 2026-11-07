@@ -219,6 +219,15 @@ test('changed pipeline evidence cannot clear a source finding or a different-hea
     ),
     /prior issues review already examined commit abc123/u,
   );
+  await assert.rejects(
+    assertReviewLaunchState(
+      [pipelineEvidenceReview()],
+      gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
+      { ...refreshedPackage(), reviewSubjectHash: undefined },
+      readInputs,
+    ),
+    /prior issues review already examined commit abc123/u,
+  );
   assert.equal(probes, 0, 'ineligible findings must not scan the evidence');
 });
 

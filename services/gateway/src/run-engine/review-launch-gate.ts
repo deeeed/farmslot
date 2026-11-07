@@ -116,7 +116,7 @@ async function refreshedEvidenceAnswersFindings(
   executeGit: GitExecutor,
   readEvidenceInputs?: EvidenceInputsReader,
 ): Promise<boolean> {
-  if (!preparedPackage) return false;
+  if (!preparedPackage?.reviewSubjectHash?.trim()) return false;
   const subjectDrift = publicationReviewSubjectOnlyDrifted(review, preparedPackage);
   const reviewedHead = review.reviewSnapshot?.headSha ?? review.reviewedHeadSha;
   if (
