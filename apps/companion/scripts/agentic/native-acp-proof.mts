@@ -177,12 +177,18 @@ try {
   );
   result.askApproved = true;
   await ensure('companion-native-work-fold');
-  await device.interactions.press({ ...selection, selector: 'id="companion-native-work-fold"' });
-  const snapshot = await device.capture.snapshot(selection);
-  const detail = snapshot.nodes.find(
-    (n) => (n.label ?? '').includes('Details') && (n.label ?? '').includes(name),
+  const folded = (await device.capture.snapshot(selection)).nodes.find(
+    (node) => node.identifier === 'companion-native-work-fold',
   );
-  assert(detail?.rect, 'Real tool disclosure');
+  if (!(folded?.label ?? '').includes('▾'))
+    await device.interactions.press({ ...selection, selector: 'id="companion-native-work-fold"' });
+  let detail: { rect?: { x: number; y: number; width: number; height: number } } | undefined;
+  await wait(async () => {
+    const snapshot = await device.capture.snapshot(selection);
+    detail = snapshot.nodes.find((node) => (node.label ?? '').includes('Details'));
+    return Boolean(detail?.rect);
+  }, 'real tool disclosure');
+  assert(detail?.rect);
   await device.interactions.press({
     ...selection,
     x: Math.round(detail.rect.x + detail.rect.width / 2),
