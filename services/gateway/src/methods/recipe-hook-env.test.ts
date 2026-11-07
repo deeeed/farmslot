@@ -221,6 +221,8 @@ require('node:fs').writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(pro
           ]
         : []),
       ...(hook === 'recipe_doctor' ? [] : ['--raw']),
+      '--platform',
+      'web',
       '--project',
       'fixture-project',
       '--slot',
