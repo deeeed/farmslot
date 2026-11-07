@@ -398,9 +398,10 @@ function storeScreenshotCopilotRuntime(
   return {
     runtimeId: 'store-screenshot-copilot',
     status: 'running',
-    tmuxTarget: worker.ref.target,
-    terminalWorker: worker.ref,
-    transcriptId: 'global',
+    nativeSession: {
+      sessionId: 'store-screenshot-native-copilot',
+      executionNodeId: worker.ref.nodeId,
+    },
     runner: 'codex',
     model: 'gpt-5.6-sol',
     autostart: true,

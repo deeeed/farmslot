@@ -132,8 +132,7 @@ for (const [name, actual, expected] of [
     ChatMethods,
     {
       operatorSnapshot: Methods.OPERATOR_SNAPSHOT,
-      send: Methods.CHAT_SEND,
-      history: Methods.CHAT_HISTORY,
+      archive: Methods.CHAT_ARCHIVE,
       clear: Methods.CHAT_CLEAR,
       newSession: Methods.CHAT_NEW,
       sessions: Methods.CHAT_SESSIONS,
@@ -146,7 +145,6 @@ for (const [name, actual, expected] of [
       saveMemory: Methods.CHAT_SAVE_MEMORY,
       confirmAction: Methods.CHAT_CONFIRM_ACTION,
       listActions: Methods.CHAT_LIST_ACTIONS,
-      abort: Methods.CHAT_ABORT,
       context: Methods.CHAT_CONTEXT,
       sessionContext: Methods.CHAT_SESSION_CONTEXT,
     },

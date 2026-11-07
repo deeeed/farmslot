@@ -834,10 +834,18 @@ test('lease variants share one durable session entry but cannot hydrate each oth
   assert.equal(nativeHistoryStorageId(first), nativeHistoryStorageId(second));
   const saved = {
     ...page([]),
-    session: { ...session, workerLeaseId: 'first' },
+    session: { ...session, workerManaged: true, workerLeaseId: 'first' },
     scope: { leaseId: 'first', startAfter: 0, endAt: 0, released: true },
   };
   assert(storedNativeHistoryMatches({ ...target, worker }, saved));
+  assert(
+    !storedNativeHistoryMatches(target, saved),
+    'Managed history cannot hydrate a standalone target',
+  );
+  assert(
+    !storedNativeHistoryMatches({ ...target, worker }, page([])),
+    'Standalone history cannot hydrate a managed target',
+  );
   assert(
     !storedNativeHistoryMatches({ ...target, worker: { ...worker, leaseId: 'second' } }, saved),
   );

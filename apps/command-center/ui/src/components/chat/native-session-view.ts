@@ -19,6 +19,7 @@ import {
   type NativeSessionReadResult,
   type NativeSessionResponse,
   type NativeSessionSendResult,
+  type NativeSessionTargetParams,
   type NativeSessionTool,
   type NativeSessionTurnDiffResult,
   type NativeWorkerHistoryScope,
@@ -30,6 +31,8 @@ import {
   NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
   nativeCommandText,
+  nativeConversationOmissionNotice,
+  type NativeConversationState,
   nativeDeliveryLabel,
   nativeEntryPreview,
   nativeFoldWatched,
@@ -64,7 +67,6 @@ import {
   nativeWork,
   type ResourceQuery,
   resourceQuery,
-  type ResourceQueryState,
   SUPERSEDED_READ_GRACE_MS,
 } from '@farmslot/protocol/client-cache';
 import {
@@ -84,6 +86,7 @@ import './native-workspace.js';
 import './native-profiles.js';
 
 import { gateway } from '../../gateway-client.js';
+import { GatewayRequestTimeoutError } from '../../gateway-request-timeout.js';
 import {
   getResourceCache,
   getResourceNativeOwnerId,
@@ -102,7 +105,10 @@ import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-cont
 import { draftWithContext, takeNativeChatContext } from './native-chat-context.js';
 import type { NativeProfileSelection } from './native-profiles.js';
 import { renderNativeSessionHeader } from './native-session-header.js';
-import { observeNativeResource } from './native-session-observation.js';
+import {
+  observeNativeConversationResource,
+  observeNativeResource,
+} from './native-session-observation.js';
 import { renderNativeSessionRequest } from './native-session-request.js';
 import { nativeSessionStyles } from './native-session-styles.js';
 import {
@@ -154,10 +160,20 @@ export class NativeSessionView extends LitElement {
   /** Fixture reads are supplied before connection; production always follows gateway authentication. */
   @property({ attribute: false }) fixture?: NativeSessionFixture;
   @property({ attribute: false }) worker?: NativeWorkerViewTarget;
+  /** A configured singleton uses this launch policy, with the same composer and receipts. */
+  @property({ attribute: false }) ensureSession?: () => Promise<NativeSessionInfo>;
+  @property({ type: Boolean }) fixedTarget = false;
   @property() initialSessionId = '';
-  @property() navigationRoute: 'native' | 'terminal' = 'native';
+  @property() navigationRoute: 'native' | 'terminal' | 'copilot' = 'native';
   @property() initialExecutionNodeId = '';
   private catalogCurrent = false;
+  private creatingAttempt?: { token: symbol; target?: string };
+  private recoveredFirstPrompt?: {
+    sessionId: string;
+    text: string;
+    previous: string;
+    visible: string;
+  };
   @state() private catalog?: NativeSessionCatalogResult;
   @state() private sessions: NativeSessionInfo[] = [];
   @state() private session?: NativeSessionInfo;
@@ -310,7 +326,8 @@ export class NativeSessionView extends LitElement {
   private inventoryStops: Array<() => void> = [];
   private ownerStop?: () => void;
   private historyQuery?: ResourceQuery<NativeSessionReadResult>;
-  @state() private historyObservation: ResourceQueryState<NativeSessionReadResult> = {
+  private historyTarget?: NativeSessionTargetParams;
+  @state() private historyObservation: NativeConversationState = {
     status: 'loading',
   };
   private timelineEvents?: NativeSessionEvent[];
@@ -438,90 +455,103 @@ export class NativeSessionView extends LitElement {
     }
   }
 
-  protected updated(changed: PropertyValues) {
-    this.renderedRevision = this.revision;
-    if (
-      !this.fixture &&
-      parseHashRoute().route === this.navigationRoute &&
-      !this.worker &&
-      !this.selectedId &&
-      this.catalog &&
-      !this.launchUrlRestored
-    ) {
-      this.launchUrlRestored = true;
-      const params = hashParams();
-      const requestedRunner = params.get('runner');
-      if (requestedRunner && this.catalog.runners.some((entry) => entry.runner === requestedRunner))
-        this.runner = requestedRunner;
-      const requestedModel = params.get('model');
-      const runner = this.executionPicker.catalog.runners.find((entry) => entry.id === this.runner);
-      if (requestedModel) this.model = nativeLaunchModel(runner, requestedModel);
-      this.mode = params.get('mode') === 'plan' ? 'plan' : 'default';
-      this.approvalMode = params.get('approvalMode') === 'bypass' ? 'bypass' : 'ask';
-      const effort = params.get('effort');
-      const row = this.executionPicker.rows[0];
-      if (effort && row && runner?.efforts.includes(effort))
-        this.executionPicker.setEffort(row.id, effort);
-    }
-
-    if (
-      changed.has('initialSessionId') &&
-      changed.get('initialSessionId') &&
-      !this.initialSessionId &&
-      this.connected &&
-      !this.worker
-    )
-      this.select('');
-    if (
-      (changed.has('initialSessionId') || changed.has('initialExecutionNodeId')) &&
-      this.initialSessionId &&
-      this.initialExecutionNodeId &&
-      this.connected &&
-      !this.worker &&
-      (this.selectedId !== this.initialSessionId ||
-        this.selectedNodeId !== this.initialExecutionNodeId)
-    )
-      this.select(this.initialSessionId, this.initialExecutionNodeId);
-    if (
-      (changed.has('profile') || changed.has('catalog') || changed.has('executionNodeId')) &&
-      this.catalog
-    ) {
-      this.executionPicker.setCatalog(
-        catalogForNativeRunners(
-          this.catalog.runners.filter(
-            (runner) => !this.profile || runner.runner === this.profile.runner,
-          ),
-          undefined,
-          this.executionNodeId,
-        ),
-      );
-      // Another node may not list the previous model or saved global default.
-      const row = this.executionPicker.rows[0];
+  protected override updated(changed: PropertyValues): void {
+    try {
+      this.renderedRevision = this.revision;
       if (
-        changed.has('executionNodeId') &&
-        row?.selection.model &&
-        !nativeLaunchModelSelection(
-          this.executionPicker.catalog.runners.find((option) => option.id === row.selection.runner),
-          row.selection.model,
-          true,
-        )
+        !this.fixture &&
+        parseHashRoute().route === this.navigationRoute &&
+        !this.worker &&
+        !this.selectedId &&
+        this.catalog &&
+        !this.launchUrlRestored
       ) {
+        this.launchUrlRestored = true;
+        const params = hashParams();
+        const requestedRunner = params.get('runner');
+        if (
+          requestedRunner &&
+          this.catalog.runners.some((entry) => entry.runner === requestedRunner)
+        )
+          this.runner = requestedRunner;
+        const requestedModel = params.get('model');
         const runner = this.executionPicker.catalog.runners.find(
-          (option) => option.id === row.selection.runner,
+          (entry) => entry.id === this.runner,
         );
-        this.executionPicker.setModel(row.id, runner?.defaultModel ?? null);
+        if (requestedModel) this.model = nativeLaunchModel(runner, requestedModel);
+        this.mode = params.get('mode') === 'plan' ? 'plan' : 'default';
+        this.approvalMode = params.get('approvalMode') === 'bypass' ? 'bypass' : 'ask';
+        const effort = params.get('effort');
+        const row = this.executionPicker.rows[0];
+        if (effort && row && runner?.efforts.includes(effort))
+          this.executionPicker.setEffort(row.id, effort);
       }
+
+      if (
+        changed.has('initialSessionId') &&
+        changed.get('initialSessionId') &&
+        !this.initialSessionId &&
+        this.connected &&
+        !this.worker
+      )
+        this.select('');
+      if (
+        (changed.has('initialSessionId') || changed.has('initialExecutionNodeId')) &&
+        this.initialSessionId &&
+        this.initialExecutionNodeId &&
+        this.connected &&
+        !this.worker &&
+        (this.selectedId !== this.initialSessionId ||
+          this.selectedNodeId !== this.initialExecutionNodeId)
+      )
+        this.select(this.initialSessionId, this.initialExecutionNodeId);
+      if (
+        (changed.has('profile') || changed.has('catalog') || changed.has('executionNodeId')) &&
+        this.catalog
+      ) {
+        this.executionPicker.setCatalog(
+          catalogForNativeRunners(
+            this.catalog.runners.filter(
+              (runner) => !this.profile || runner.runner === this.profile.runner,
+            ),
+            undefined,
+            this.executionNodeId,
+          ),
+        );
+        // Another node may not list the previous model or saved global default.
+        const row = this.executionPicker.rows[0];
+        if (
+          changed.has('executionNodeId') &&
+          row?.selection.model &&
+          !nativeLaunchModelSelection(
+            this.executionPicker.catalog.runners.find(
+              (option) => option.id === row.selection.runner,
+            ),
+            row.selection.model,
+            true,
+          )
+        ) {
+          const runner = this.executionPicker.catalog.runners.find(
+            (option) => option.id === row.selection.runner,
+          );
+          this.executionPicker.setModel(row.id, runner?.defaultModel ?? null);
+        }
+      }
+      if (!changed.has('worker') || !this.isConnected) return;
+      const previous = changed.get('worker') as NativeWorkerViewTarget | undefined;
+      if (
+        this.worker &&
+        (!previous || nativeWorkerViewKey(previous) !== nativeWorkerViewKey(this.worker))
+      )
+        this.select(this.worker.binding.sessionId, this.worker.binding.executionNodeId);
+      else if (this.worker && previous?.binding.generation !== this.worker.binding.generation)
+        this.schedule(0);
+      else if (!this.worker && previous) void this.connect();
+    } finally {
+      this.dispatchEvent(
+        new CustomEvent('native-command-readiness', { bubbles: true, composed: true }),
+      );
     }
-    if (!changed.has('worker') || !this.isConnected) return;
-    const previous = changed.get('worker') as NativeWorkerViewTarget | undefined;
-    if (
-      this.worker &&
-      (!previous || nativeWorkerViewKey(previous) !== nativeWorkerViewKey(this.worker))
-    )
-      this.select(this.worker.binding.sessionId, this.worker.binding.executionNodeId);
-    else if (this.worker && previous?.binding.generation !== this.worker.binding.generation)
-      this.schedule(0);
-    else if (!this.worker && previous) void this.connect();
   }
 
   private get workerControl() {
@@ -539,7 +569,7 @@ export class NativeSessionView extends LitElement {
 
   private get historyCurrent() {
     if (this.fixture) return this.caughtUp;
-    const state = this.historyQuery && getResourceCache()?.read(this.historyQuery);
+    const state = this.historyObservation;
     return (
       nativeHistoryCanAct(state, this.historyObservation.data, this.connected) &&
       state?.data?.session === this.session
@@ -550,20 +580,19 @@ export class NativeSessionView extends LitElement {
     this.historyStop?.();
     this.historyStop = undefined;
     this.historyQuery = undefined;
+    this.historyTarget = undefined;
     if (!this.selectedId || this.fixture) return;
     const owner = getResourceNativeOwnerId();
     if (!owner) return;
     const revision = this.revision;
-    const query = nativeHistoryQuery(
-      {
-        sessionId: this.selectedId,
-        executionNodeId: this.selectedNodeId,
-        ...(this.worker ? { worker: nativeWorkerViewPin(this.worker) } : {}),
-      },
-      owner,
-    );
-    this.historyQuery = query;
-    this.historyStop = observeNativeResource(query, (state) => {
+    const target: NativeSessionTargetParams = {
+      sessionId: this.selectedId,
+      executionNodeId: this.selectedNodeId,
+      ...(this.worker ? { worker: nativeWorkerViewPin(this.worker) } : {}),
+    };
+    this.historyTarget = target;
+    this.historyQuery = nativeHistoryQuery(target, owner);
+    this.historyStop = observeNativeConversationResource(target, (state) => {
       if (!this.isConnected || revision !== this.revision) return;
       const before = this.timeline().length;
       this.historyObservation = state;
@@ -975,7 +1004,7 @@ ${JSON.stringify(
   }
 
   private key(suffix: string) {
-    return `farmslot-native:${this.storageScope}:${suffix}`;
+    return `${this.fixedTarget ? 'farmslot-copilot' : 'farmslot-native'}:${this.storageScope}:${suffix}`;
   }
 
   private sessionKey(suffix: string) {
@@ -997,6 +1026,9 @@ ${JSON.stringify(
     const scope = this.fixture ? 'fixture' : (getResourceWorkspaceKey() ?? '');
     if (scope !== this.storageScope) {
       this.storageScope = scope;
+      this.creatingAttempt = undefined;
+      this.recoveredFirstPrompt = undefined;
+      this.busy = false;
       this.readUnavailableSince = undefined;
       this.inventoryCurrent = false;
       this.inventoryUnsupported = false;
@@ -1016,6 +1048,13 @@ ${JSON.stringify(
       this.requests = [];
       this.receipts = [];
       this.loadLocal();
+    }
+    if (this.fixedTarget) {
+      if (this.selectedId !== this.initialSessionId)
+        this.select(this.initialSessionId, this.initialExecutionNodeId || 'local');
+      if (!this.selectedId) this.creating = true;
+      this.observeHistory();
+      return;
     }
     if (this.worker) {
       this.select(this.worker.binding.sessionId, this.worker.binding.executionNodeId);
@@ -1078,9 +1117,29 @@ ${JSON.stringify(
           'Saved delivery receipt could not be read. Use another session to avoid duplicate delivery.';
       }
     }
+    if (this.fixedTarget && this.selectedId && !this.localCommand) {
+      const pending = safeLsGet(this.key('new-prompt'));
+      if (pending) {
+        const previous = this.draft;
+        this.draft = previous ? `${previous}\n\n${pending}` : pending;
+        this.recoveredFirstPrompt = {
+          sessionId: this.selectedId,
+          text: pending,
+          previous,
+          visible: this.draft,
+        };
+        this.prompt = '';
+        if (safeLsSet(this.sessionKey(`draft:${this.selectedId}`), this.draft))
+          safeLsRemove(this.key('new-prompt'));
+      }
+    }
   }
 
   private async refreshSessions() {
+    if (this.fixedTarget) {
+      this.observeHistory();
+      return;
+    }
     if (!this.fixture) {
       this.inventoryStops.forEach((stop) => stop());
       this.inventoryStops = [];
@@ -1353,12 +1412,27 @@ ${JSON.stringify(
     this.error = '';
     this.pollError = '';
     this.readUnavailableSince = undefined;
-    this.busy = false;
+    if (this.fixedTarget && this.creatingAttempt && id) {
+      this.creatingAttempt.target ??= id;
+      if (this.creatingAttempt.target !== id) this.creatingAttempt = undefined;
+    }
+    this.busy = this.fixedTarget && Boolean(this.creatingAttempt);
     if (!this.worker) {
       safeLsSet(this.key('selected'), id);
       safeLsSet(this.key('selected-node'), executionNodeId);
     }
     this.loadLocal();
+    if (this.fixedTarget && parseHashRoute().route === 'copilot') {
+      const params = hashParams();
+      if (id) {
+        params.set('sessionId', id);
+        params.set('executionNodeId', executionNodeId);
+      } else {
+        params.delete('sessionId');
+        params.delete('executionNodeId');
+      }
+      navigateHash(buildHash('copilot', params), 'replace');
+    }
     this.schedule(0);
   }
 
@@ -1385,6 +1459,8 @@ ${JSON.stringify(
   }
 
   private renderApprovalMode(session?: NativeSessionInfo) {
+    if (this.fixedTarget)
+      return html`<span class="meta">Tool policy follows the Co-Pilot launch confirmation.</span>`;
     if (this.worker) return nothing;
     const pending = session?.approvalModePending;
     const selected = pending ?? session?.approvalMode ?? this.approvalMode;
@@ -1432,16 +1508,18 @@ ${JSON.stringify(
   private async create(resume?: NativeSessionInfo) {
     if (this.busy) return;
     const firstPrompt = resume ? '' : this.prompt.trim();
-    if (!resume && (!firstPrompt || !this.launchReady)) return;
+    if (this.fixedTarget && resume) return;
+    if (!resume && (!firstPrompt || (!this.ensureSession && !this.launchReady))) return;
     if (
       this.worker ||
       !this.connected ||
       (resume && !this.historyCurrent) ||
-      (!resume && !this.fixture && !this.catalogCurrent)
+      (!resume && !this.ensureSession && !this.fixture && !this.catalogCurrent)
     )
       return;
     if (
       !resume &&
+      !this.ensureSession &&
       (!this.profileReady || (this.profile && this.profileNodeId !== this.executionNodeId))
     ) {
       this.error = 'Select a ready account profile for this node';
@@ -1454,9 +1532,13 @@ ${JSON.stringify(
       this.error = target.unavailableReason;
       return;
     }
+    const attempt = { token: Symbol('native first-message intent') };
+    this.creatingAttempt = attempt;
     this.busy = true;
     this.error = '';
     let revision = this.revision;
+    const creatingScope = this.storageScope;
+    const creatingConnection = this.fixture ? undefined : gateway.resourceConnectionId;
     const params: NativeSessionCreateParams = resume
       ? {
           executionNodeId: resume.executionNodeId,
@@ -1483,12 +1565,31 @@ ${JSON.stringify(
             : {}),
         };
     try {
-      const result = await this.api.request<{ session: NativeSessionInfo }>(
-        Methods.NATIVE_SESSION_CREATE,
-        params,
-      );
-      if (revision !== this.revision || !this.isConnected) return;
-      this.selectRouted(result.session.id, result.session.executionNodeId);
+      const result = this.ensureSession
+        ? { session: await this.ensureSession() }
+        : await this.api.request<{ session: NativeSessionInfo }>(
+            Methods.NATIVE_SESSION_CREATE,
+            params,
+          );
+      if (
+        !this.isConnected ||
+        creatingScope !== this.storageScope ||
+        (!this.fixture && creatingConnection !== gateway.resourceConnectionId)
+      )
+        return;
+      // The singleton's status may bind this exact target before ensure's continuation.
+      // That is the same creation, not permission to replay into another view or account.
+      if (
+        revision !== this.revision &&
+        !(
+          this.fixedTarget &&
+          this.selectedId === result.session.id &&
+          this.selectedNodeId === result.session.executionNodeId
+        )
+      )
+        return;
+      if (this.fixedTarget) this.select(result.session.id, result.session.executionNodeId);
+      else this.selectRouted(result.session.id, result.session.executionNodeId);
       revision = this.revision;
       this.session = result.session;
       this.busy = true;
@@ -1507,16 +1608,83 @@ ${JSON.stringify(
           return;
         }
         this.localCommand = command;
+        const recovered = this.recoveredFirstPrompt;
+        if (
+          recovered?.sessionId === command.sessionId &&
+          recovered.text === firstPrompt &&
+          this.draft === recovered.visible
+        ) {
+          this.draft = recovered.previous;
+          if (this.draft) safeLsSet(this.sessionKey(`draft:${command.sessionId}`), this.draft);
+          else safeLsRemove(this.sessionKey(`draft:${command.sessionId}`));
+          this.recoveredFirstPrompt = undefined;
+        }
         this.prompt = '';
         safeLsRemove(this.key('new-prompt'));
         await this.deliver(command);
       }
       await this.refreshSessions();
-    } catch {
-      if (revision === this.revision)
-        this.error = 'Session start was not confirmed. Check Sessions before trying again.';
+    } catch (cause) {
+      if (
+        this.creatingAttempt === attempt &&
+        this.isConnected &&
+        creatingScope === this.storageScope &&
+        (this.fixture || creatingConnection === gateway.resourceConnectionId)
+      ) {
+        revision = this.revision;
+        this.error =
+          cause instanceof GatewayRequestTimeoutError || !(cause instanceof Error)
+            ? 'Session start was not confirmed. Check Sessions before trying again.'
+            : cause.message;
+      }
     } finally {
-      if (revision === this.revision) this.busy = false;
+      if (this.creatingAttempt === attempt) {
+        this.creatingAttempt = undefined;
+        if (revision === this.revision) this.busy = false;
+      }
+    }
+  }
+
+  /** Move only unsent composer text when the operator changes launch targets. */
+  public takeUnsentDraft(): string {
+    const text = this.selectedId ? this.draft : this.prompt;
+    if (this.selectedId) {
+      this.draft = '';
+      safeLsRemove(this.sessionKey(`draft:${this.selectedId}`));
+    } else {
+      this.prompt = '';
+      safeLsRemove(this.key('new-prompt'));
+    }
+    return text;
+  }
+  public prepareUnsentDraft(text: string): void {
+    if (!text) return;
+    if (this.selectedId) {
+      this.draft = text;
+      safeLsSet(this.sessionKey(`draft:${this.selectedId}`), text);
+    } else {
+      this.prompt = text;
+      safeLsSet(this.key('new-prompt'), text);
+    }
+  }
+
+  /** Explicit caller intent, through the same persisted command path as the composer. */
+  public get canSubmitPrompt(): boolean {
+    return this.selectedId
+      ? Boolean(this.session && this.canSend)
+      : Boolean(this.connected && !this.busy && (this.ensureSession || this.launchReady));
+  }
+
+  public async submitPrompt(text: string): Promise<void> {
+    if (!text.trim()) return;
+    if (this.session && this.selectedId) {
+      this.draft = text;
+      safeLsSet(this.sessionKey(`draft:${this.selectedId}`), text);
+      await this.send();
+    } else {
+      this.prompt = text;
+      safeLsSet(this.key('new-prompt'), text);
+      await this.create();
     }
   }
 
@@ -1739,6 +1907,48 @@ ${JSON.stringify(
     });
   }
 
+  private readSavedPage(after?: number): void {
+    if (!this.historyTarget) return;
+    const data = this.historyObservation.data;
+    const start =
+      after ??
+      data?.omissions?.[0]?.after ??
+      Math.max(data?.scope?.startAfter ?? 0, (data?.historyBefore ?? 200) - 200);
+    void getResourceCache()
+      ?.conversations?.readPage(this.historyTarget, start)
+      .catch((error) => {
+        this.error = error instanceof Error ? error.message : String(error);
+      });
+  }
+  private renderSavedPage() {
+    const history = this.historyObservation.history;
+    if (!history) return nothing;
+    return html`<dialog open class="saved-native-page" aria-label="Saved journal page">
+      <button
+        @click=${() =>
+          this.historyTarget &&
+          getResourceCache()?.conversations?.dismissHistory(this.historyTarget)}
+      >
+        Close saved output
+      </button>
+      <p>${history.loading ? 'Reading saved page…' : history.error || 'Saved output, read-only'}</p>
+      ${history.page
+        ? nativeTimeline(history.page.events).map(
+            (entry) =>
+              html`<article>
+                <small>${entry.kind}</small>
+                <pre>${entry.text}</pre>
+              </article>`,
+          )
+        : nothing}
+      ${history.page?.hasMore
+        ? html`<button @click=${() => this.readSavedPage(history.page!.cursor)}>
+            Next saved page
+          </button>`
+        : nothing}
+    </dialog>`;
+  }
+
   render() {
     const session = this.session;
     this.implementKey =
@@ -1755,14 +1965,45 @@ ${JSON.stringify(
       : this.receipts.at(-1);
     const canResume =
       !this.worker &&
+      !this.fixedTarget &&
       session &&
       session.capabilities.resume &&
       session.nativeSessionId &&
       ['closed', 'failed'].includes(session.state) &&
       (!session.processPid || session.processStopped);
     return html`
+      <style>
+        .saved-native-page {
+          position: fixed;
+          inset: 24px;
+          z-index: 1000;
+          overflow: auto;
+          max-height: calc(100vh - 48px);
+          max-width: calc(100vw - 48px);
+          background: var(--fs-bg-surface, #181818);
+          color: inherit;
+        }
+        .saved-native-page pre {
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+        }
+        .native-history-notice {
+          min-height: 26px;
+          max-height: 26px;
+          overflow: hidden;
+          font-size: 12px;
+        }
+      </style>
+      ${this.renderSavedPage()}
+      <div class="native-history-notice" role="status">
+        ${nativeConversationOmissionNotice(this.historyObservation.data)}
+        ${nativeConversationOmissionNotice(this.historyObservation.data)
+          ? html`<button @click=${() => this.readSavedPage()}>Read saved output</button>`
+          : nothing}
+      </div>
       ${renderNativeSessionHeader({
         worker: this.worker,
+        fixedTarget: this.fixedTarget,
         sessions: this.sessions,
         selectedId: this.selectedId,
         selectedNodeId: this.selectedNodeId,
@@ -1797,12 +2038,14 @@ ${JSON.stringify(
           const cache = getResourceCache();
           const owner = getResourceNativeOwnerId();
           if (!cache || !owner) return;
-          const queries = this.historyQuery
-            ? [this.historyQuery]
-            : [
-                nativeObservationQuery(Methods.NATIVE_SESSION_LIST, {}, owner),
-                nativeObservationQuery(Methods.NATIVE_SESSION_CATALOG, {}, owner),
-              ];
+          if (this.historyTarget) {
+            cache.conversations?.retry(this.historyTarget);
+            return;
+          }
+          const queries = [
+            nativeObservationQuery(Methods.NATIVE_SESSION_LIST, {}, owner),
+            nativeObservationQuery(Methods.NATIVE_SESSION_CATALOG, {}, owner),
+          ];
           void Promise.all(
             queries.filter((query) => cache.read(query).error).map((query) => cache.retry(query)),
           ).catch((cause) => {
@@ -1844,151 +2087,160 @@ ${JSON.stringify(
                 }}
               ></textarea>
             </label>
-            <div class="launch-controls">
-              <label
-                >Where to run<choice-picker
-                  overlay
-                  data-testid="native-context"
-                  .value=${this.launchSelectionKey}
-                  placeholder="Choose where to run"
-                  ?disabled=${this.busy}
-                  @change=${(event: Event) =>
-                    this.chooseLaunch((event.target as HTMLElement & { value: string }).value)}
-                >
-                  ${this.launchChoices.map(
-                    (context, index, choices) =>
-                      html` ${index === 0 ||
-                        choices[index - 1].kind !== context.kind ||
-                        choices[index - 1].project !== context.project ||
-                        choices[index - 1].executionNodeId !== context.executionNodeId
-                          ? html`<option disabled value=${`group:${index}`}>
-                              ${context.kind === 'custom'
-                                ? 'Custom directories'
-                                : (context.project ?? 'Workspaces')}
-                              · ${context.executionNodeId}
-                            </option>`
-                          : nothing}
-                        <option
-                          value=${context.key}
-                          ?disabled=${Boolean(context.unavailableReason)}
-                        >
-                          ${context.label} ·
-                          ${context.cwd}${context.unavailableReason ||
-                          this.unavailableNodes.some(
-                            (node) => node.executionNodeId === context.executionNodeId,
-                          )
-                            ? ' · Unavailable'
-                            : ''}
-                        </option>`,
-                  )}
-                </choice-picker></label
-              >
-              ${this.customCwd
-                ? html`<label
-                    >Directory on ${this.executionNodeId}<input
-                      data-testid="native-cwd"
-                      .value=${this.cwd}
-                      ?disabled=${this.busy}
-                      @input=${(event: Event) => {
-                        this.cwd = (event.target as HTMLInputElement).value;
+            ${this.fixedTarget
+              ? nothing
+              : html`<div class="launch-controls">
+                    <label
+                      >Where to run<choice-picker
+                        overlay
+                        data-testid="native-context"
+                        .value=${this.launchSelectionKey}
+                        placeholder="Choose where to run"
+                        ?disabled=${this.busy}
+                        @change=${(event: Event) =>
+                          this.chooseLaunch(
+                            (event.target as HTMLElement & { value: string }).value,
+                          )}
+                      >
+                        ${this.launchChoices.map(
+                          (context, index, choices) =>
+                            html` ${index === 0 ||
+                              choices[index - 1].kind !== context.kind ||
+                              choices[index - 1].project !== context.project ||
+                              choices[index - 1].executionNodeId !== context.executionNodeId
+                                ? html`<option disabled value=${`group:${index}`}>
+                                    ${context.kind === 'custom'
+                                      ? 'Custom directories'
+                                      : (context.project ?? 'Workspaces')}
+                                    · ${context.executionNodeId}
+                                  </option>`
+                                : nothing}
+                              <option
+                                value=${context.key}
+                                ?disabled=${Boolean(context.unavailableReason)}
+                              >
+                                ${context.label} ·
+                                ${context.cwd}${context.unavailableReason ||
+                                this.unavailableNodes.some(
+                                  (node) => node.executionNodeId === context.executionNodeId,
+                                )
+                                  ? ' · Unavailable'
+                                  : ''}
+                              </option>`,
+                        )}
+                      </choice-picker></label
+                    >
+                    ${this.customCwd
+                      ? html`<label
+                          >Directory on ${this.executionNodeId}<input
+                            data-testid="native-cwd"
+                            .value=${this.cwd}
+                            ?disabled=${this.busy}
+                            @input=${(event: Event) => {
+                              this.cwd = (event.target as HTMLInputElement).value;
+                              this.error = '';
+                              this.syncLaunchUrl();
+                            }}
+                        /></label>`
+                      : nothing}
+                    <review-dispatch-picker
+                      .viewModel=${this.executionPicker}
+                      .discover=${false}
+                      .disabled=${this.busy}
+                      @review-dispatch-change=${() => {
+                        this.mode = 'default';
                         this.error = '';
                         this.syncLaunchUrl();
+                        this.requestUpdate();
                       }}
-                  /></label>`
-                : nothing}
-              <review-dispatch-picker
-                .viewModel=${this.executionPicker}
-                .discover=${false}
-                .disabled=${this.busy}
-                @review-dispatch-change=${() => {
-                  this.mode = 'default';
-                  this.error = '';
-                  this.syncLaunchUrl();
-                  this.requestUpdate();
-                }}
-              ></review-dispatch-picker>
-            </div>
+                    ></review-dispatch-picker>
+                  </div>
 
-            ${this.renderApprovalMode()}
-            <details class="launch-advanced" data-testid="native-advanced">
-              <summary>Advanced</summary>
-              ${this.catalog?.contexts.some(
-                (context) =>
-                  (context.executionNodeId ?? 'local') === this.executionNodeId &&
-                  context.supportsProfiles,
-              )
-                ? keyed(
-                    this.revision,
-                    html`<native-profiles
-                      .api=${this.api}
-                      .executionNodeId=${this.executionNodeId}
-                      .runner=${this.runner}
-                      .disabled=${this.busy || !this.connected}
-                      @native-profile-change=${(event: CustomEvent<NativeProfileSelection>) => {
-                        const selected = event.detail;
-                        if (selected.executionNodeId !== this.executionNodeId) return;
-                        this.error = '';
-                        this.profile = selected.profile;
-                        this.profileReady = selected.ready;
-                        this.profileNodeId = selected.executionNodeId;
-                        if (selected.profile && selected.profile.runner !== this.runner) {
-                          this.runner = selected.profile.runner;
-                          this.model =
-                            this.catalog?.runners.find((option) => option.runner === this.runner)
-                              ?.defaultModel ?? '';
-                          this.mode = 'default';
-                        }
-                      }}
-                    ></native-profiles>`,
-                  )
-                : nothing}
-              <label
-                >Interaction mode<choice-picker
-                  overlay
-                  data-testid="native-mode"
-                  .value=${this.mode}
-                  ?disabled=${this.busy}
-                  @change=${(e: Event) => {
-                    this.mode =
-                      (e.target as HTMLElement & { value: string }).value === 'plan'
-                        ? 'plan'
-                        : 'default';
-                    this.error = '';
-                    this.syncLaunchUrl();
-                  }}
-                >
-                  ${(
-                    this.catalog?.runners.find((option) => option.runner === this.runner)?.modes ??
-                    []
-                  ).map(
-                    (mode) =>
-                      html`<option value=${mode} .selected=${mode === this.mode}>
-                        ${mode === 'plan' ? 'Plan' : 'Default'}
-                      </option>`,
-                  )}
-                </choice-picker></label
-              >
-            </details>
+                  ${this.renderApprovalMode()}
+                  <details class="launch-advanced" data-testid="native-advanced">
+                    <summary>Advanced</summary>
+                    ${this.catalog?.contexts.some(
+                      (context) =>
+                        (context.executionNodeId ?? 'local') === this.executionNodeId &&
+                        context.supportsProfiles,
+                    )
+                      ? keyed(
+                          this.revision,
+                          html`<native-profiles
+                            .api=${this.api}
+                            .executionNodeId=${this.executionNodeId}
+                            .runner=${this.runner}
+                            .disabled=${this.busy || !this.connected}
+                            @native-profile-change=${(
+                              event: CustomEvent<NativeProfileSelection>,
+                            ) => {
+                              const selected = event.detail;
+                              if (selected.executionNodeId !== this.executionNodeId) return;
+                              this.error = '';
+                              this.profile = selected.profile;
+                              this.profileReady = selected.ready;
+                              this.profileNodeId = selected.executionNodeId;
+                              if (selected.profile && selected.profile.runner !== this.runner) {
+                                this.runner = selected.profile.runner;
+                                this.model =
+                                  this.catalog?.runners.find(
+                                    (option) => option.runner === this.runner,
+                                  )?.defaultModel ?? '';
+                                this.mode = 'default';
+                              }
+                            }}
+                          ></native-profiles>`,
+                        )
+                      : nothing}
+                    <label
+                      >Interaction mode<choice-picker
+                        overlay
+                        data-testid="native-mode"
+                        .value=${this.mode}
+                        ?disabled=${this.busy}
+                        @change=${(e: Event) => {
+                          this.mode =
+                            (e.target as HTMLElement & { value: string }).value === 'plan'
+                              ? 'plan'
+                              : 'default';
+                          this.error = '';
+                          this.syncLaunchUrl();
+                        }}
+                      >
+                        ${(
+                          this.catalog?.runners.find((option) => option.runner === this.runner)
+                            ?.modes ?? []
+                        ).map(
+                          (mode) =>
+                            html`<option value=${mode} .selected=${mode === this.mode}>
+                              ${mode === 'plan' ? 'Plan' : 'Default'}
+                            </option>`,
+                        )}
+                      </choice-picker></label
+                    >
+                  </details>`}
             <div>
               <button
                 class="primary"
                 data-testid="native-create"
-                ?disabled=${Boolean(
-                  this.catalog?.executionNodes?.find(
-                    (node) => node.executionNodeId === this.executionNodeId,
-                  )?.unavailableReason,
-                ) ||
-                !this.connected ||
-                (!this.fixture && !this.catalogCurrent) ||
-                this.busy ||
-                !this.launchReady ||
-                !this.prompt.trim() ||
-                !this.cwd.trim() ||
-                !this.runner ||
-                !this.profileReady}
+                ?disabled=${this.fixedTarget
+                  ? !this.connected || this.busy || !this.prompt.trim() || !this.ensureSession
+                  : Boolean(
+                      this.catalog?.executionNodes?.find(
+                        (node) => node.executionNodeId === this.executionNodeId,
+                      )?.unavailableReason,
+                    ) ||
+                    !this.connected ||
+                    (!this.fixture && !this.catalogCurrent) ||
+                    this.busy ||
+                    !this.launchReady ||
+                    !this.prompt.trim() ||
+                    !this.cwd.trim() ||
+                    !this.runner ||
+                    !this.profileReady}
                 @click=${() => this.create()}
               >
-                ${this.busy ? 'Starting…' : 'Start session'}
+                ${this.busy ? 'Starting…' : this.fixedTarget ? 'Send to Co-Pilot' : 'Start session'}
               </button>
             </div>
           </section>`

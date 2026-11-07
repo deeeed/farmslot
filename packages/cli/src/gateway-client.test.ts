@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import http from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
+import type { Duplex } from 'node:stream';
 import test, { type TestContext } from 'node:test';
 
 import { WebSocketServer } from 'ws';
@@ -319,3 +320,36 @@ test('only a reload-shaped failure before the socket opens is worth waiting for'
   ] as const)
     assert.equal(connectionFailed(cause, beforeOpen).reconnectable, reconnectable, String(cause));
 });
+
+test(
+  'a cancelled persistent handshake closes its socket without waiting for timeout or reconnect',
+  { timeout: 5000 },
+  async (t) => {
+    const server = http.createServer();
+    const aborted = new AbortController();
+    let socket: Duplex | undefined;
+    let closed: Promise<unknown[]> | undefined;
+    server.on('upgrade', (_req, incoming) => {
+      socket = incoming;
+      closed = once(incoming, 'close');
+      incoming.on('end', () => incoming.end());
+      incoming.resume();
+      aborted.abort(new Error('Proof cancelled'));
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(() => {
+      socket?.destroy();
+      server.close();
+    });
+    const address = server.address();
+    assert(address && typeof address !== 'string');
+    const client = new GatewayClient({
+      url: `ws://127.0.0.1:${address.port}`,
+      timeout: 60_000,
+      reconnectWindowMs: 90_000,
+    });
+    await assert.rejects(client.connect(aborted.signal), /Proof cancelled/);
+    await closed;
+  },
+);

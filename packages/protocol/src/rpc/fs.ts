@@ -173,6 +173,8 @@ export interface NodeFsReadChunkParams extends NodeFsPathParams {
 }
 
 export interface NodeFsReadChunkResult {
+  /** File incarnation for append readers; replacement is never a continuation. */
+  fileIdentity?: string;
   content: string;
   size: number;
   offset: number;

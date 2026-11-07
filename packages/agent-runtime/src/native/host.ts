@@ -2,6 +2,7 @@ import { chmodSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 
+import { NativeConversationSubscription } from './conversation.js';
 import { authenticated, decodeRequest, type HostIdentity, object } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
 import { privateDirectory, readJson } from './storage.js';
@@ -48,6 +49,12 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
     input += chunk;
     if (Buffer.byteLength(input) > 1024 * 1024) socket.destroy();
   });
+  const commandObservation = new AbortController();
+  let subscription: NativeConversationSubscription | undefined;
+  socket.on('close', () => {
+    subscription?.stop();
+    commandObservation.abort();
+  });
   socket.on('end', () => {
     void (async () => {
       try {
@@ -55,10 +62,53 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
         if (!authenticated(envelope.token, identity.token))
           throw new Error('Native IPC authentication failed');
         const p = decodeRequest(envelope.request);
+        if (p.method === 'subscribe') {
+          socket.setTimeout(0);
+          const journal = manager.conversation(p.owner, p.id, p.leaseId, p.generation);
+          const write = (value: unknown) => {
+            if (socket.destroyed) return;
+            const encoded = JSON.stringify({ value }) + '\n';
+            if (socket.writableLength + Buffer.byteLength(encoded) > 1024 * 1024) {
+              subscription?.stop();
+              const terminal =
+                JSON.stringify({ value: { kind: 'terminal', reason: 'resync-required' } }) + '\n';
+              if (socket.writableLength + Buffer.byteLength(terminal) > 1024 * 1024)
+                socket.destroy();
+              else socket.end(terminal);
+              return;
+            }
+            socket.write(encoded);
+          };
+          subscription = new NativeConversationSubscription(journal, p.after, (update) => {
+            write(update);
+            if (update.kind === 'terminal') socket.end();
+          });
+          // Node's stream preserves write order; the client sees this result before any live frame.
+          write(subscription.initial);
+          subscription.start();
+          if (subscription.initial.kind === 'terminal') {
+            subscription.stop();
+            socket.end();
+          }
+          return;
+        }
         let value: unknown;
         switch (p.method) {
+          case 'commandStatus':
+            value = p.waitForAcceptance
+              ? await manager.waitCommandStatus(
+                  p.owner,
+                  p.id,
+                  p.commandId,
+                  commandObservation.signal,
+                )
+              : manager.commandStatus(p.owner, p.id, p.commandId);
+            break;
+          case 'inspect':
+            value = manager.inspect(p.owner, p.id);
+            break;
           case NATIVE_WORKER_READ:
-            value = manager.readWorker(p.owner, p.id, p.leaseId, p.after, p.limit);
+            value = manager.readWorker(p.owner, p.id, p.leaseId, p.after, p.limit, p.generation);
             break;
           case 'setApprovalMode':
             value = await manager.setApprovalMode(p.owner, p.id, p.approvalMode);

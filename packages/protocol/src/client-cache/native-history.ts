@@ -1,5 +1,6 @@
 import type {
   NativeCommandReceipt,
+  NativeConversationPage,
   NativePlanStep,
   NativeSessionCreateParams,
   NativeSessionEvent,
@@ -11,6 +12,7 @@ import type {
   NativeSessionTool,
   NativeToolKind,
   NativeTurnChanges,
+  NativeWorkerControlTarget,
 } from '../rpc/native-session.js';
 import { Methods } from '../rpc/registry.js';
 
@@ -491,23 +493,39 @@ export function nativeObservationDependencies(method: string, params: unknown, o
 export function nativeHistoryParams(value: unknown): NativeSessionTargetParams {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Native history requires a target.');
-  const target = value as NativeSessionTargetParams;
-  if (Object.keys(value).some((key) => !['sessionId', 'executionNodeId', 'worker'].includes(key)))
+  const target = value as Record<string, unknown>;
+  if (Object.keys(target).some((key) => !['sessionId', 'executionNodeId', 'worker'].includes(key)))
     throw new Error('Native history observations cannot contain cursors or page limits.');
-  if (!target.sessionId || typeof target.sessionId !== 'string')
+  if (typeof target.sessionId !== 'string' || !target.sessionId)
     throw new Error('Native history requires sessionId.');
-  if (
-    target.worker &&
-    ['runId', 'contextId', 'generation', 'leaseId'].some(
-      (key) =>
-        typeof Reflect.get(target.worker!, key) !== 'string' || !Reflect.get(target.worker!, key),
-    )
-  )
-    throw new Error('Native worker history requires the complete pinned binding.');
+  const node = target.executionNodeId;
+  if (node !== undefined && (typeof node !== 'string' || !node))
+    throw new Error('Native history requires an execution node string.');
+  let worker: NativeWorkerControlTarget | undefined;
+  if (target.worker !== undefined) {
+    if (!target.worker || typeof target.worker !== 'object' || Array.isArray(target.worker))
+      throw new Error('Invalid native worker history binding.');
+    const pin = target.worker as Record<string, unknown>;
+    const keys = ['runId', 'contextId', 'generation', 'leaseId'];
+    if (Object.keys(pin).some((key) => !keys.includes(key)))
+      throw new Error('Unexpected native worker history binding field.');
+    const part = (key: string): string => {
+      const field = pin[key];
+      if (typeof field !== 'string' || !field)
+        throw new Error('Native worker history requires the complete pinned binding.');
+      return field;
+    };
+    worker = {
+      runId: part('runId'),
+      contextId: part('contextId'),
+      generation: part('generation'),
+      leaseId: part('leaseId'),
+    };
+  }
   return {
     sessionId: target.sessionId,
-    executionNodeId: target.executionNodeId ?? 'local',
-    ...(target.worker ? { worker: target.worker } : {}),
+    executionNodeId: node ?? 'local',
+    ...(worker ? { worker } : {}),
   };
 }
 
@@ -529,6 +547,7 @@ export function storedNativeHistoryMatches(
   return (
     page.session?.id === target.sessionId &&
     page.session.executionNodeId === (target.executionNodeId ?? 'local') &&
+    Boolean(page.session.workerManaged) === Boolean(target.worker) &&
     Array.isArray(page.events) &&
     Number.isSafeInteger(page.cursor) &&
     (!target.worker ||
@@ -544,11 +563,15 @@ function nativeHistoryCurrent(
   connected: boolean,
   now: number,
 ): observation is ResourceQueryState<NativeSessionReadResult> & { data: NativeSessionReadResult } {
+  const data: NativeConversationPage | undefined = observation?.data;
   return (
-    !!observation?.resourceState &&
+    !!observation &&
+    !!(observation.resourceState || observation.conversation) &&
+    (!observation.conversation || observation.status === 'ready') &&
     canActOn(observation, connected, now) &&
     !!observation.data &&
-    !observation.data.hasMore
+    !observation.data.hasMore &&
+    !data?.metadataOmitted?.pendingRequests
   );
 }
 

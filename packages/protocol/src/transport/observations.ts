@@ -4,6 +4,7 @@ import type { NodeTmuxPane } from '../rpc/tmux.js';
 export interface NodeObservationCapabilities {
   workers?: 1;
   files?: 1;
+  fileAppends?: 1;
   workspace?: 1;
 }
 

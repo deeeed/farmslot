@@ -22,6 +22,7 @@ export const HISTOGRAM_METRICS = {
   farmslot_event_loop_lag_seconds: DURATION_BUCKETS,
   farmslot_client_cached_paint_seconds: DURATION_BUCKETS,
   farmslot_client_visible_read_seconds: DURATION_BUCKETS,
+  farmslot_native_text_render_seconds: DURATION_BUCKETS,
   farmslot_client_background_refresh_seconds: DURATION_BUCKETS,
   farmslot_client_blocking_refresh_seconds: DURATION_BUCKETS,
   farmslot_client_cache_age_seconds: AGE_BUCKETS,

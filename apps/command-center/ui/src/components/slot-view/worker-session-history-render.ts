@@ -5,5 +5,9 @@ export function workerHistoryShowsMessages(source: WorkerSessionHistorySource): 
 }
 
 export function workerHistorySourceLabel(source: WorkerSessionHistorySource): string {
-  return source === 'transcript-archive' ? 'archived' : source;
+  return source === 'transcript-archive'
+    ? 'archived completed messages'
+    : source === 'transcript'
+      ? 'completed messages'
+      : source;
 }

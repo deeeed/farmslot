@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   isNativeResultSchema,
   type NativeApprovalMode,
+  type NativeConversationCursor,
   type NativeSessionCreateParams,
   type NativeSessionEnsureParams,
   type NativeSessionRequester,
@@ -32,6 +33,7 @@ import {
 
 export interface HostIdentity {
   supportsApprovalMode?: boolean;
+  conversationStreaming?: 1;
   supportsStandaloneDelegation?: boolean;
   executionNodeId?: string;
   supportsEnsure?: boolean;
@@ -48,10 +50,19 @@ export interface HostIdentity {
 export type HostRequest =
   | { method: 'setApprovalMode'; owner: string; id: string; approvalMode: NativeApprovalMode }
   | {
+      method: 'subscribe';
+      owner: string;
+      id: string;
+      leaseId?: string;
+      generation?: string;
+      after?: NativeConversationCursor;
+    }
+  | {
       method: typeof NATIVE_WORKER_READ;
       owner: string;
       id: string;
       leaseId: string;
+      generation?: string;
       after?: number;
       limit?: number;
     }
@@ -133,6 +144,14 @@ export type HostRequest =
       response: NativeSessionResponse;
     }
   | { method: 'list'; owner: string }
+  | {
+      method: 'commandStatus';
+      owner: string;
+      id: string;
+      commandId: string;
+      waitForAcceptance?: boolean;
+    }
+  | { method: 'inspect'; owner: string; id: string }
   | { method: 'read'; owner: string; id: string; after?: number; limit?: number }
   | { method: 'send' | 'steer'; owner: string; id: string; commandId: string; text: string }
   | { method: 'cancelCommand'; owner: string; id: string; commandId: string }
@@ -238,11 +257,44 @@ export function decodeRequest(value: unknown): HostRequest {
     return { method, owner, params, requester: parseNativeSessionRequester(p.requester) };
   }
   const id = string(p, 'id');
+  if (method === 'commandStatus')
+    return {
+      method,
+      owner,
+      id,
+      commandId: string(p, 'commandId'),
+      ...(p.waitForAcceptance === true ? { waitForAcceptance: true } : {}),
+    };
+  if (method === 'inspect') return { method, owner, id };
   if (method === 'setApprovalMode') {
     if (p.approvalMode !== 'ask' && p.approvalMode !== 'bypass')
       throw new Error('Unknown native approval mode');
     return { method, owner, id, approvalMode: p.approvalMode };
   }
+  if (method === 'subscribe') {
+    let after: NativeConversationCursor | undefined;
+    if (p.after !== undefined) {
+      const cursor = object(p.after);
+      if (!Number.isSafeInteger(cursor.sequence) || Number(cursor.sequence) < 0)
+        throw new Error('Invalid native conversation cursor');
+      after = {
+        hostGeneration: string(cursor, 'hostGeneration'),
+        executionNodeId: string(cursor, 'executionNodeId'),
+        sessionId: string(cursor, 'sessionId'),
+        generation: string(cursor, 'generation'),
+        sequence: Number(cursor.sequence),
+      };
+    }
+    return {
+      method,
+      owner,
+      id,
+      after,
+      ...(p.leaseId !== undefined ? { leaseId: string(p, 'leaseId') } : {}),
+      ...(p.generation !== undefined ? { generation: string(p, 'generation') } : {}),
+    };
+  }
+
   if (method === NATIVE_WORKER_CANCEL)
     return {
       method,
@@ -290,7 +342,15 @@ export function decodeRequest(value: unknown): HostRequest {
     )
       throw new Error('Invalid cursor/limit');
     if (method === NATIVE_WORKER_READ)
-      return { method, owner, id, leaseId: string(p, 'leaseId'), after: p.after, limit: p.limit };
+      return {
+        method,
+        owner,
+        id,
+        leaseId: string(p, 'leaseId'),
+        after: p.after,
+        limit: p.limit,
+        ...(p.generation !== undefined ? { generation: string(p, 'generation') } : {}),
+      };
     return { method, owner, id, after: p.after, limit: p.limit };
   }
   if (method === 'send' || method === 'steer')

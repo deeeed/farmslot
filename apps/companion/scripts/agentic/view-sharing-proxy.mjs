@@ -47,7 +47,6 @@ const mutationMethods = new Set([
   'terminal.worker.input',
   'terminal.input',
   'terminal.send',
-  'chat.send',
   'copilot.start',
   'copilot.configure',
   'copilot.stop',

@@ -157,7 +157,7 @@ async function stopNativeStack(fixture: ReturnType<typeof setup>): Promise<void>
 test('a supervisor whose home is removed stops its host instead of running on', async () => {
   const fixture = setup();
   try {
-    await new NativeSessionClient(fixture.root).list('owner');
+    await new NativeSessionClient(fixture.root).warm();
     const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
     const host = readJson<{ pid: number }>(join(fixture.root, 'worker.json')).pid;
     rmSync(fixture.root, { recursive: true, force: true });
@@ -185,7 +185,7 @@ test('a reboot that leaves the stopped supervisor and host PIDs to other process
     write('lock/owner.json', { pid: process.pid, identity: 'the stopped supervisor start' });
     write('worker.json', { pid: standIn.pid, identity: 'the stopped host start' });
     write('cleanup.json', { hostPid: standIn.pid, state: 'pending' });
-    await new NativeSessionClient(fixture.root).list('owner');
+    await new NativeSessionClient(fixture.root).warm();
     const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
     assert.notEqual(supervisor, process.pid);
     assert.equal(readJson<RecordedProcess>(join(fixture.root, 'lock/owner.json')).pid, supervisor);
@@ -215,7 +215,7 @@ test('a supervisor that cannot read its own start identity leaves no lock behind
     );
     assert.notEqual(failed.status, 0);
     assert.equal(existsSync(join(fixture.root, 'lock')), false, 'no lock without an owner');
-    await new NativeSessionClient(fixture.root).list('owner');
+    await new NativeSessionClient(fixture.root).warm();
     assert.ok(existsSync(join(fixture.root, 'host.json')), 'the next start owns the host');
   } finally {
     await stopNativeStack(fixture);
@@ -527,6 +527,11 @@ test('worker launch keeps environment private and transfers only an idle task le
     const session = await manager.ensure('owner', params, launch);
     assert.equal(session.workerManaged, true);
     assert.equal(session.workerLeaseId, launch.leaseId);
+    const firstStream = manager
+      .conversation('owner', session.id, launch.leaseId, session.generation)
+      .resume();
+    assert(firstStream.kind === 'reset');
+    assert.equal(firstStream.snapshot.session.capabilities.cancelQueued, true);
     const started = readJson<{
       params: { approvalPolicy: string; sandbox: string };
       env: Record<string, string>;
@@ -1389,10 +1394,10 @@ test('local host survives caller exit, authenticates IPC, replays once and clean
   const client = new NativeSessionClient(root);
   try {
     // Two independent clients race the first daemon launch.
-    assert.deepEqual(
-      await Promise.all([client.list('owner'), new NativeSessionClient(root).list('owner')]),
-      [[], []],
-    );
+    assert.deepEqual(await Promise.all([client.warm(), new NativeSessionClient(root).warm()]), [
+      undefined,
+      undefined,
+    ]);
     const host = readJson<HostIdentity>(join(root, 'host.json'));
     assert.ok(Buffer.byteLength(host.socket) < 104);
     assert.equal(statSync(host.socket).mode & 0o777, 0o600);

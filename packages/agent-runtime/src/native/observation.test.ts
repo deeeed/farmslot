@@ -17,12 +17,16 @@ import {
   NativeSourceUnavailable,
   sameNativeSource,
 } from './observation.js';
-import { alive, appendDurable, readJson } from './storage.js';
+import { alive, appendDurable, durableWrite, readJson } from './storage.js';
 
 function setup() {
   const home = mkdtempSync(join(tmpdir(), 'native-source-'));
   const root = join(home, 'host');
   mkdirSync(join(root, 'sessions'), { recursive: true, mode: 0o700 });
+  let revision = 0;
+  const commitMetadata = () =>
+    durableWrite(join(root, 'sessions', 'metadata.json'), { revision: String(++revision) });
+  commitMetadata();
   const notices: unknown[] = [];
   const source = new NativeHostObservation(
     new NativeSessionClient(root),
@@ -36,6 +40,7 @@ function setup() {
     home,
     root,
     notices,
+    commitMetadata,
     close() {
       source.stop();
       rmSync(home, { recursive: true, force: true });
@@ -50,7 +55,9 @@ test(
     const fixture = setup();
     let supervisorPid: number | undefined;
     try {
-      assert.deepEqual(await new NativeSessionClient(fixture.root).list('A'), []);
+      const client = new NativeSessionClient(fixture.root);
+      await client.warm();
+      assert.deepEqual(await client.list('A'), []);
       const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json'));
       supervisorPid = supervisor.pid;
       const worker = readJson<{ pid: number }>(join(fixture.root, 'worker.json'));
@@ -87,6 +94,7 @@ test('armed source sees real journal appends before fs.watch callback; no comman
       { info: { id: 'session', ownerPrincipalId: 'A', state: 'closed' } },
     ])
       appendDurable(join(fixture.root, 'sessions', 'session.journal'), entry);
+    fixture.commitMetadata();
     const after = await fixture.source.fence();
     assert.equal(after.ready, true);
     assert.ok(after.revision > before.revision);
@@ -119,6 +127,7 @@ test('healthy journal append supersedes a held read without revoking source admi
     });
     await reading;
     appendDurable(join(fixture.root, 'sessions', 's.journal'), { pending: [] });
+    fixture.commitMetadata();
     release();
     await assert.rejects(pending, { code: 'RESOURCE_OBSERVATION_CHANGED' });
     assert.equal(fixture.source.current().ready, true);
@@ -141,7 +150,7 @@ test('healthy journal append supersedes a held read without revoking source admi
   }
 });
 
-test('partial append revokes admission without truncation; fresh armed receipt recovers', async (t) => {
+test('uncommitted journal bytes do not invalidate metadata; a corrupt receipt revokes admission', async (t) => {
   const fixture = setup();
   const logs: unknown[][] = [];
   t.mock.method(console, 'warn', (...args: unknown[]) => logs.push(args));
@@ -150,12 +159,13 @@ test('partial append revokes admission without truncation; fresh armed receipt r
     const old = fixture.source.current();
     const journal = join(fixture.root, 'sessions', 's.journal');
     writeFileSync(journal, '{', { mode: 0o600 });
+    assert.equal((await fixture.source.fence()).revision, old.revision);
+    writeFileSync(join(fixture.root, 'sessions', 'metadata.json'), '{', { mode: 0o600 });
     await assert.rejects(() => fixture.source.fence(), NativeSourceUnavailable);
-    assert.ok(
-      logs.some((args) => String(args[1]).includes('"reason":"incomplete-journal-append"')),
-    );
+    assert.ok(logs.some((args) => String(args[1]).includes('scan-failed')));
     assert.equal(fixture.source.current().ready, false);
     writeFileSync(journal, '{}\n', { mode: 0o600 });
+    fixture.commitMetadata();
     await fixture.source.start();
     assert.equal(fixture.source.current().ready, true);
     assert.notEqual(old.incarnation, fixture.source.current().incarnation);
@@ -329,7 +339,7 @@ test('marked profile readers reuse one real capability sample and preserve its o
   }
 });
 
-test('unchanged journal fences reuse bytes and a same-size rewrite still changes the source', async (t) => {
+test('metadata fences never read journal bodies, including rewritten token files', async (t) => {
   const f = setup();
   const journal = join(f.root, 'sessions', 'cache.journal');
   writeFileSync(journal, '{"value":1}\n', { mode: 0o600 });
@@ -354,8 +364,10 @@ test('unchanged journal fences reuse bytes and a same-size rewrite still changes
     assert.equal(reads, warmed, 'Unchanged fences read journal contents again');
     writeFileSync(journal, '{"value":2}\n', { mode: 0o600 });
     const after = await f.source.fence();
-    assert.ok(reads > warmed, 'Same-size rewrite bypassed the fingerprint');
-    assert.ok(after.revision > before.revision);
+    assert.equal(reads, 0, 'A metadata fence read the conversation journal');
+    assert.equal(after.revision, before.revision, 'Text alone invalidated metadata');
+    f.commitMetadata();
+    assert.ok((await f.source.fence()).revision > before.revision);
   } finally {
     t.mock.restoreAll();
     syncBuiltinESMExports();
@@ -365,7 +377,8 @@ test('unchanged journal fences reuse bytes and a same-size rewrite still changes
 
 test('a fresh fence queues behind an older active scan rather than inheriting its prefix', async (t) => {
   const f = setup();
-  const journal = join(f.root, 'sessions', 'held.journal');
+  const journal = join(f.root, 'sessions', 'metadata.json');
+  let armed = false;
   let entered!: () => void;
   const opened = new Promise<void>((resolve) => {
     entered = resolve;
@@ -378,7 +391,7 @@ test('a fresh fence queues behind an older active scan rather than inheriting it
   let intercepted = false;
   t.mock.method(fsPromises, 'open', async (...args: Parameters<typeof open>) => {
     const file = await open(...args);
-    if (args[0] === journal && !intercepted) {
+    if (armed && args[0] === journal && !intercepted) {
       intercepted = true;
       entered();
       await held;
@@ -388,11 +401,11 @@ test('a fresh fence queues behind an older active scan rather than inheriting it
   syncBuiltinESMExports();
   try {
     await f.source.start();
-    writeFileSync(journal, '{"value":1}\n', { mode: 0o600 });
+    armed = true;
     const before = f.source.fence();
     assert.ok(before instanceof Promise);
     await opened;
-    appendDurable(journal, { value: 2 });
+    f.commitMetadata();
     const after = f.source.fence();
     await new Promise((resolve) => setImmediate(resolve));
     release();

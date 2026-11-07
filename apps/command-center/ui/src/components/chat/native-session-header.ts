@@ -11,6 +11,7 @@ import type { NativeWorkerViewTarget } from './native-worker-target.js';
 
 interface NativeSessionHeaderContext {
   worker?: NativeWorkerViewTarget;
+  fixedTarget?: boolean;
   sessions: NativeSessionInfo[];
   selectedId: string;
   selectedNodeId: string;
@@ -47,62 +48,64 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
   };
   return html`
     <div class="bar">
-      ${ctx.worker
-        ? html`<strong data-testid="native-worker-label">${ctx.worker.label}</strong>
-            <a href=${`#run/${ctx.worker.runId}`}>Task controls</a>`
-        : html`<label class="inline"
-              >Sessions<choice-picker
-                overlay
-                data-testid="native-session-select"
-                @change=${(e: Event) => {
-                  const value = (e.target as HTMLElement & { value: string }).value;
-                  const selected = ctx.sessions.find((item) => ctx.sessionChoice(item) === value);
-                  if (selected) ctx.select(selected.id, selected.executionNodeId);
-                  else if (!value) ctx.select('');
-                }}
-                .value=${ctx.selectedId
-                  ? ctx.sessionChoice({ id: ctx.selectedId, executionNodeId: ctx.selectedNodeId })
-                  : ''}
-              >
-                <option value="" .selected=${!ctx.selectedId}>Existing sessions</option>
-                ${ctx.selectedId &&
-                !ctx.sessions.some(
-                  (item) =>
-                    item.id === ctx.selectedId && item.executionNodeId === ctx.selectedNodeId,
-                )
-                  ? html`<option
-                      .selected=${true}
-                      value=${ctx.sessionChoice({
-                        id: ctx.selectedId,
-                        executionNodeId: ctx.selectedNodeId,
-                      })}
-                    >
-                      ${ctx.selectedNodeId} · ${ctx.selectedId.slice(0, 8)} · Unavailable
-                    </option>`
-                  : nothing}
-                ${ctx.sessions.map(
-                  (item) =>
-                    html`<option
-                      value=${ctx.sessionChoice(item)}
-                      .selected=${item.id === ctx.selectedId &&
-                      item.executionNodeId === ctx.selectedNodeId}
-                    >
-                      ${item.runner} · ${item.model ?? 'default'} · ${item.cwd.split('/').at(-1)} ·
-                      ${item.executionNodeId} · ${item.profileId ?? 'node default'} ·
-                      ${item.id.slice(0, 8)} · ${item.state}
-                    </option>`,
-                )}
-              </choice-picker></label
-            >
-            ${session
-              ? html`<button
-                  data-testid="native-new"
-                  ?disabled=${ctx.busy}
-                  @click=${() => ctx.select('')}
+      ${ctx.fixedTarget
+        ? html`<strong>Co-Pilot</strong><a href="#native">Launch another agent</a>`
+        : ctx.worker
+          ? html`<strong data-testid="native-worker-label">${ctx.worker.label}</strong>
+              <a href=${`#run/${ctx.worker.runId}`}>Task controls</a>`
+          : html`<label class="inline"
+                >Sessions<choice-picker
+                  overlay
+                  data-testid="native-session-select"
+                  @change=${(e: Event) => {
+                    const value = (e.target as HTMLElement & { value: string }).value;
+                    const selected = ctx.sessions.find((item) => ctx.sessionChoice(item) === value);
+                    if (selected) ctx.select(selected.id, selected.executionNodeId);
+                    else if (!value) ctx.select('');
+                  }}
+                  .value=${ctx.selectedId
+                    ? ctx.sessionChoice({ id: ctx.selectedId, executionNodeId: ctx.selectedNodeId })
+                    : ''}
                 >
-                  New session
-                </button>`
-              : nothing} `}
+                  <option value="" .selected=${!ctx.selectedId}>Existing sessions</option>
+                  ${ctx.selectedId &&
+                  !ctx.sessions.some(
+                    (item) =>
+                      item.id === ctx.selectedId && item.executionNodeId === ctx.selectedNodeId,
+                  )
+                    ? html`<option
+                        .selected=${true}
+                        value=${ctx.sessionChoice({
+                          id: ctx.selectedId,
+                          executionNodeId: ctx.selectedNodeId,
+                        })}
+                      >
+                        ${ctx.selectedNodeId} · ${ctx.selectedId.slice(0, 8)} · Unavailable
+                      </option>`
+                    : nothing}
+                  ${ctx.sessions.map(
+                    (item) =>
+                      html`<option
+                        value=${ctx.sessionChoice(item)}
+                        .selected=${item.id === ctx.selectedId &&
+                        item.executionNodeId === ctx.selectedNodeId}
+                      >
+                        ${item.runner} · ${item.model ?? 'default'} · ${item.cwd.split('/').at(-1)}
+                        · ${item.executionNodeId} · ${item.profileId ?? 'node default'} ·
+                        ${item.id.slice(0, 8)} · ${item.state}
+                      </option>`,
+                  )}
+                </choice-picker></label
+              >
+              ${session
+                ? html`<button
+                    data-testid="native-new"
+                    ?disabled=${ctx.busy}
+                    @click=${() => ctx.select('')}
+                  >
+                    New session
+                  </button>`
+                : nothing} `}
       ${session && ctx.workspaceAllowed
         ? html`<button
             aria-pressed=${ctx.workspace}

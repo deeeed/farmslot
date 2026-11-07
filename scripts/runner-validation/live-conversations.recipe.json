@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Live conversations and Co-Pilot home",
+  "description": "Run from the login GUI/Aqua context with the six existing providers authenticated and isolated Agent Chrome open on FARMSLOT_CDP_PORT. Creates only disposable gateway identities, native sessions and reviewer fixtures. No runner installation, production gateway, node, pool, publication or device change. The home flow uses real clicks and persisted receipts. Additional uninstalled providers have adapter contract tests only.",
+  "workflow": {
+    "entry": "standalone-and-home",
+    "nodes": {
+      "standalone-and-home": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_STREAM_PROOF_HOME=1 node --import tsx scripts/runner-validation/gateway/live-conversations.mts \"${FARMSLOT_CONVERSATION_PROOF_OUTPUT:-/tmp/live-conversations-proof}/standalone\"",
+        "intent": "Prove all six providers stream committed text to the real web view before turn completion, then verify draft-only handoff, singleton first-send receipt, reload and explicit stop.",
+        "timeout_ms": 1200000,
+        "next": "managed"
+      },
+      "managed": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_STREAM_PROOF_MANAGED=1 node --import tsx scripts/runner-validation/gateway/live-conversations.mts \"${FARMSLOT_CONVERSATION_PROOF_OUTPUT:-/tmp/live-conversations-proof}/managed\"",
+        "intent": "Prove the same six native reviewer streams through authenticated run/context/lease pins and the shipped Terminals view; close only owned proof sessions and shells.",
+        "timeout_ms": 1200000,
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

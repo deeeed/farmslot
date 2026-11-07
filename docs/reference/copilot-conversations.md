@@ -1,7 +1,7 @@
 # Copilot and live conversations
 
-Status: Proposed under [ADR-016 Amendment 1](../adr/016-d9-copilot.md#amendment-1-copilot-entry-and-live-conversations-2026-11-05).
-Nothing in this specification is implemented by this documentation change.
+Status: Accepted for implementation under [ADR-016 Amendment 1](../adr/016-d9-copilot.md#amendment-1-copilot-entry-and-live-conversations-2026-11-05).
+Arthur approved implementation on 2026-11-06. The completion checks below remain release gates.
 This is ADR-016's owning normative reference, maintained with that ADR. A separate
 file is needed because no existing reference owns the copilot conversation contract.
 [Agent runtime](agent-runtime.md) continues to own execution and delivery mechanics.
@@ -69,11 +69,11 @@ alone are insufficient; the links identify actual event handlers.
 | ACP registry                  | [Registry adapter](https://github.com/pingdotgg/t3code/blob/67eebaca23f8f7bc46e8817434087fc9c5acf8e3/packages/provider-acp-registry/src/server/adapter.ts#L291) uses the shared ACP driver.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Shared ACP exists; registry discovery/launch integration is missing. Match configured providers through the adapter/catalog boundary.                                                                |
 
 Abbreviated Farmslot `native/` paths above are under `packages/agent-runtime/src/`.
-A missing implementation or account in a proof environment MUST be reported as an
-unproved requirement, not as evidence of a provider limitation. No streaming
-exception is accepted by this specification. A later exception MUST identify the
-same pinned reference provider and its failing or absent stream path, and require
-approval. Absence of arbitrary-TUI attachment in this audit establishes no such gap.
+Arthur's approved implementation scope, recorded 2026-11-07, requires live proof
+for the six installed runners. Kiro, FX, Antigravity, Muse/MSP and ACP registry
+rows remain “not installed, transport supported by contract” with adapter tests.
+Do not install additional CLIs. Runtime setup/proof for those rows remains an open
+question for Arthur and does not block F412. Contract tests are not live parity.
 
 T3 [thread subscriptions](https://github.com/pingdotgg/t3code/blob/67eebaca23f8f7bc46e8817434087fc9c5acf8e3/apps/server/src/ws.ts#L845)
 use WebSocket RPC. Its [bounded replay](https://github.com/pingdotgg/t3code/blob/67eebaca23f8f7bc46e8817434087fc9c5acf8e3/apps/server/src/orchestration-v2/ThreadStream.ts#L18)
@@ -248,7 +248,7 @@ ADR-048 packets and ADR-056 archive retention.
 
 The implementation MUST supply these results before it is called complete:
 
-1. Live gateway proof for every matrix provider, in copilot/standalone and managed
+1. Live gateway proof for each of the six installed providers, in copilot/standalone and managed
    worker/reviewer roles where that role exists. Record executable/provider version,
    source event, normalized delta and visible text before turn completion. Existing
    unit adapters or a declared `streaming: true` alone do not prove parity. Missing

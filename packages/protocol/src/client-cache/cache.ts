@@ -13,6 +13,7 @@ import {
   verifyResourceContentInSlices,
 } from './content.js';
 import {
+  canonicalResourceJson,
   isKnownResourceFamily,
   RESOURCE_PUBLISH_INTERVAL_MS,
   RESOURCE_REREAD_INTERVAL_MS,
@@ -21,6 +22,15 @@ import {
   type ResourceReadStamp,
 } from './keys.js';
 import {
+  createNativeConversationCache,
+  NATIVE_CONVERSATION_STORAGE_PREFIX,
+  type NativeConversationSnapshot,
+  nativeConversationStorageId,
+} from './native-conversation.js';
+import {
+  nativeHistoryParams,
+  nativeHistoryQuery,
+  type NativeHistorySnapshot,
   nativeHistoryStorageId,
   readNativeHistory,
   storedNativeHistoryMatches,
@@ -211,6 +221,7 @@ export function createGatewayResourceCache(
     else metrics.increment('farmslot_client_unknown_age_total', labels);
   }
 
+  let conversations: ReturnType<typeof createNativeConversationCache> | undefined;
   let store = options.store ?? createMemoryResourceStore();
   let metadata: ResourceStoreMetadata | undefined;
   let startupStore: ResourceStore | undefined;
@@ -219,6 +230,7 @@ export function createGatewayResourceCache(
   let connection = normalizeConnection(transport.getConnection());
   let usable = false;
   let disposed = false;
+  let conversationFlush = false;
   let version = 0;
   let storeVersion = 0;
   let hydrationOwnerVersion = 0;
@@ -346,6 +358,7 @@ export function createGatewayResourceCache(
   function storeDeleted(): void {
     if (disposed || retiringStore) return;
     usable = false;
+    conversations?.connectionChanged(true, false);
     updateCollectors();
     residentContent.clear();
     hydrationOwnerVersion++;
@@ -618,6 +631,7 @@ export function createGatewayResourceCache(
       forgetRunList();
     }
     connection = next;
+    conversations?.connectionChanged(revoke || scopeChanged || authorityChanged);
     usable = false;
     refreshDetailTargets();
     updateCollectors();
@@ -744,6 +758,7 @@ export function createGatewayResourceCache(
       transport.resynchronize();
       return;
     }
+    conversations?.resourcesChanged(payload);
     for (const change of payload.changes) {
       if (!Number.isSafeInteger(change.revision) || change.revision < 0) {
         usable = false;
@@ -776,6 +791,115 @@ export function createGatewayResourceCache(
       }
     }
   }
+
+  const conversationDenials = new Map<string, number>();
+  conversations = createNativeConversationCache(
+    transport.conversations,
+    {
+      load: (target) =>
+        readStoredContent(async (source) => {
+          const saved = await source.getQuery<NativeConversationSnapshot>(
+            nativeConversationStorageId(target),
+          );
+          if (saved?.data) return saved.data;
+          // Old cached native facts have no host cursor. They remain readable offline,
+          // but cannot grant action authority or request replay before a live reset.
+          const legacyId = nativeHistoryStorageId(
+            nativeHistoryQuery(target, connection.scope.principalId ?? ''),
+          );
+          const previous = await source.getQuery<NativeHistorySnapshot>(legacyId);
+          if (!previous || !storedNativeHistoryMatches(target, previous.data)) return undefined;
+          return {
+            ...previous.data,
+            historyBefore: 0,
+            truncated: false,
+            retainedBytes: previous.data.events.reduce(
+              (total, event) => total + encoder.encode(JSON.stringify(event)).byteLength,
+              0,
+            ),
+          };
+        }),
+      async save(target, snapshot) {
+        const id = nativeConversationStorageId(target);
+        const denial = conversationDenials.get(id);
+        const owner = hydrationOwnerVersion;
+        await barrier;
+        if (
+          (disposed && !conversationFlush) ||
+          owner !== hydrationOwnerVersion ||
+          denial !== conversationDenials.get(id) ||
+          !canPersist(connection)
+        )
+          return;
+        const writingStore = store;
+        const incarnation = storeVersion;
+        const current = () =>
+          (!disposed || conversationFlush) &&
+          owner === hydrationOwnerVersion &&
+          denial === conversationDenials.get(id) &&
+          incarnation === storeVersion &&
+          writingStore === store &&
+          !writingStore.deleted;
+        const serialized = JSON.stringify(snapshot);
+        const bytes = encoder.encode(serialized).byteLength;
+        if (bytes > 1024 * 1024) return;
+        await updateStore(writingStore, current, async () => {
+          const rows = (await writingStore.listQueries())
+            .filter((row) => row.id.startsWith(NATIVE_CONVERSATION_STORAGE_PREFIX) && row.id !== id)
+            .sort((a, b) => b.observedAt - a.observedAt);
+          for (const row of rows.slice(9)) {
+            if (!current()) return;
+            await writingStore.deleteQuery(row.id);
+          }
+          if (current())
+            await writingStore.putQuery({
+              id,
+              data: JSON.parse(serialized),
+              bytes,
+              observedAt: Date.now(),
+              accessedAt: Date.now(),
+            });
+        });
+      },
+      forget(target) {
+        const id = nativeConversationStorageId(target);
+        // Invalidate saves already awaiting a barrier or a cross-tab write lock.
+        conversationDenials.set(id, (conversationDenials.get(id) ?? 0) + 1);
+        const deletingStore = store;
+        const incarnation = storeVersion;
+        // Enqueue an accepted refusal before any observer can close the profile.
+        // Privacy deletion bypasses cross-tab budget admission, as generic refusals do.
+        const deleting = updateStore(
+          deletingStore,
+          () => deletingStore === store && incarnation === storeVersion && !deletingStore.deleted,
+          async () => {
+            await deletingStore.deleteQuery(nativeConversationStorageId(target));
+            const legacyId = nativeHistoryStorageId(
+              nativeHistoryQuery(target, connection.scope.principalId ?? ''),
+            );
+            const previous = await deletingStore.getQuery(legacyId);
+            if (previous && storedNativeHistoryMatches(target, previous.data))
+              await deletingStore.deleteQuery(legacyId);
+          },
+          false,
+        );
+        const wanted = nativeHistoryParams(target);
+        for (const entry of entries.values()) {
+          if (
+            entry.query.method === Methods.NATIVE_SESSION_READ &&
+            canonicalResourceJson(nativeHistoryParams(entry.query.params)) ===
+              canonicalResourceJson(wanted)
+          ) {
+            invalidate(entry, true);
+            notify(entry);
+          }
+        }
+        return deleting;
+      },
+    },
+    () => connection,
+    { performance: metrics, afterPaint: options.afterPaint },
+  );
 
   // Listen before any metadata hydration or query read can start.
   const unsubscribeChanges = transport.onResourceChanged(changedResources);
@@ -815,8 +939,13 @@ export function createGatewayResourceCache(
   function takeStartupQuery(query: ResourceQuery): StoredResourceQuery | undefined {
     if (startupStore !== store || startupOwnerVersion !== hydrationOwnerVersion) return undefined;
     const id = nativeHistoryStorageId(query);
-    const saved = startupQueries.get(id);
+    const legacyId =
+      query.method === Methods.CHAT_ARCHIVE
+        ? `chat.history:${canonicalResourceJson(query.params)}`
+        : undefined;
+    const saved = startupQueries.get(id) ?? (legacyId ? startupQueries.get(legacyId) : undefined);
     startupQueries.delete(id);
+    if (legacyId) startupQueries.delete(legacyId);
     return saved;
   }
 
@@ -860,7 +989,10 @@ export function createGatewayResourceCache(
         const saved = query.persisted
           ? (takeStartupQuery(query) ??
             (isRunListView(query) ? await storedRunListView(query, readingStore) : undefined) ??
-            (await readingStore.getQuery(nativeHistoryStorageId(query))))
+            (await readingStore.getQuery(nativeHistoryStorageId(query))) ??
+            (query.method === Methods.CHAT_ARCHIVE
+              ? await readingStore.getQuery(`chat.history:${canonicalResourceJson(query.params)}`)
+              : undefined))
           : undefined;
         if (
           !disposed &&
@@ -1287,7 +1419,13 @@ export function createGatewayResourceCache(
                 total -= oldest.bytes;
               }
             }
-            if (current()) await writingStore.putQuery(row);
+            if (current()) {
+              await writingStore.putQuery(row);
+              if (entry.query.method === Methods.CHAT_ARCHIVE && current())
+                await writingStore.deleteQuery(
+                  `chat.history:${canonicalResourceJson(entry.query.params)}`,
+                );
+            }
           });
         }
         if (store.persistent && entry.query.method === Methods.RUN_LIST) {
@@ -1336,7 +1474,13 @@ export function createGatewayResourceCache(
               evictingStore === store &&
               evictingIncarnation === storeVersion &&
               !evictingStore.deleted,
-            () => evictingStore.deleteQuery(nativeHistoryStorageId(entry.query)),
+            async () => {
+              await evictingStore.deleteQuery(nativeHistoryStorageId(entry.query));
+              if (entry.query.method === Methods.CHAT_ARCHIVE)
+                await evictingStore.deleteQuery(
+                  `chat.history:${canonicalResourceJson(entry.query.params)}`,
+                );
+            },
             // Refusals must not wait for another tab's admission lock before enqueueing deletion.
             false,
           );
@@ -1567,6 +1711,7 @@ export function createGatewayResourceCache(
   }
 
   return {
+    conversations: conversations.api,
     observedKey(match) {
       for (const entry of entries.values())
         if (entry.listeners.size && entry.query.dependencies.some(match)) return true;
@@ -1715,6 +1860,10 @@ export function createGatewayResourceCache(
       if (reason && reason !== 'network' && reason !== 'background' && reason !== 'token-refresh')
         metrics?.resetScope();
       if (disposed) return;
+      conversationFlush = true;
+      const flushingConversations = conversations?.dispose(
+        Boolean(reason && deletionReasons.has(reason)),
+      );
       const withdrawing = collectors.close();
       disposed = true;
       residentContent.clear();
@@ -1730,6 +1879,8 @@ export function createGatewayResourceCache(
         entry.listeners.clear();
       }
       entries.clear();
+      await flushingConversations;
+      conversationFlush = false;
       await barrier;
       try {
         if (reason && deletionReasons.has(reason)) await store.deleteAll();

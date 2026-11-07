@@ -96,6 +96,7 @@ import {
   getDeletedDraftCount,
   getEditorDrafts,
   getEditorDraftScopeId,
+  getResourceIsGlobalAdmin,
   getResourceWorkspaceAccess,
   getResourceWorkspaceKey,
   subscribeResourceCache,
@@ -120,6 +121,7 @@ import {
   unpinWorkspace,
 } from '../utils/pinned-slots.js';
 import {
+  buildHash,
   hashParams,
   navigateHash,
   type NavigationLinkState,
@@ -148,6 +150,7 @@ import { renderAppShellAuthStyles, renderAppShellStyles } from './app-shell-styl
 type Route =
   | 'onboarding'
   | 'native'
+  | 'copilot'
   | 'fleet'
   | 'terminal'
   | 'devices'
@@ -192,6 +195,7 @@ interface ImportMetaWithEnv extends ImportMeta {
 
 const NAV_ITEMS: NavItem[] = [
   { route: 'onboarding', icon: '*', label: 'Setup' },
+  { route: 'copilot', icon: '✦', label: 'Co-Pilot' },
   { route: 'fleet', icon: '#', label: 'Fleet' },
   { route: 'terminal', icon: '>', label: 'Terminals' },
   { route: 'devices', icon: '=', label: 'Devices' },
@@ -304,8 +308,6 @@ export class FarmApp extends LitElement {
       }
     },
   );
-  @state() private chatOpen = false;
-  @state() private chatUnread = 0;
   @state() private _sidebarExpanded = false;
   @state() private _sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
   @state() private _sidebarResizing = false;
@@ -774,21 +776,21 @@ export class FarmApp extends LitElement {
     }
     if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      this.toggleChat();
+      this.openCopilot();
     }
   };
 
-  private toggleChat() {
-    this.chatOpen = !this.chatOpen;
-    if (this.chatOpen) this.chatUnread = 0;
+  private openCopilot() {
+    navigateHash('#copilot?copilotTarget=copilot');
+    this.parseHash();
   }
 
   private onCopilotPromptRequest = (event: CustomEvent<CopilotPromptRequestDetail>) => {
     if (gateway.workspaceAccess !== 'farm') return;
     const detail = event.detail;
     if (!detail?.prompt) return;
-    this.chatOpen = true;
-    this.chatUnread = 0;
+    navigateHash('#copilot?copilotTarget=copilot');
+    this.parseHash();
     void this.updateComplete.then(() => {
       const panel = this.querySelector('chat-panel') as ChatPanel | null;
       const contextOverride: Partial<ChatClientContext> = {
@@ -859,9 +861,18 @@ export class FarmApp extends LitElement {
     this.nativeNodeParam = selection.get('executionNodeId') ?? '';
     const access = this.shownWorkspaceAccess;
     if (access !== 'farm') {
-      if (access === 'native') this.route = 'native';
+      if (access === 'native') {
+        this.route = 'native';
+        if (!location.hash || location.hash === '#' || location.hash.startsWith('#?'))
+          navigateHash(buildHash('native', selection), 'replace');
+      }
       return;
     }
+    if (
+      (!location.hash || location.hash === '#' || location.hash.startsWith('#?')) &&
+      this.defaultRouteForEmptyHash() === 'copilot'
+    )
+      navigateHash(buildHash('copilot', selection), 'replace');
     const raw = location.hash.replace('#', '') || this.defaultRouteForEmptyHash();
     const hash = raw.split('?')[0];
     this.terminalRunParam = hash === 'terminal' ? (selection.get('run') ?? '') : '';
@@ -925,6 +936,7 @@ export class FarmApp extends LitElement {
     const valid: Route[] = [
       'onboarding',
       'native',
+      'copilot',
       'fleet',
       'terminal',
       'devices',
@@ -954,6 +966,11 @@ export class FarmApp extends LitElement {
   }
 
   private defaultRouteForEmptyHash(): Route {
+    if (
+      gateway.isGlobalAdmin ||
+      (gateway.connectionState !== 'connected' && getResourceIsGlobalAdmin())
+    )
+      return 'copilot';
     if (isDesktopClient()) return 'fleet';
     const env = (import.meta as ImportMetaWithEnv).env;
     const source = resolveGatewayConnectionSource(
@@ -2006,6 +2023,8 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
     switch (this.route) {
       case 'onboarding':
         return this.renderOnboardingScreen();
+      case 'copilot':
+        return html`<chat-panel open></chat-panel>`;
       case 'native':
         return html`<native-session-view
           .initialSessionId=${this.nativeSessionParam}
@@ -2568,19 +2587,6 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         <div class="fa-sidebar-resize" @pointerdown=${this.onSidebarResizeStart}></div>
         <div style="flex:1"></div>
         ${this.renderAccountControl()} ${this.renderDraftNotice()} ${this.renderVersionFooter()}
-        <button
-          class="fa-nav-btn ${this.chatOpen ? 'active' : ''}"
-          title="Co-Pilot (Cmd+K)"
-          style="position:relative"
-          @click=${this.toggleChat}
-        >
-          ✦${this.chatUnread > 0 && !this.chatOpen
-            ? html`<span
-                style="position:absolute;top:2px;right:2px;background:#ff4444;color:#fff;border-radius:50%;width:14px;height:14px;font-size:9px;display:flex;align-items:center;justify-content:center;line-height:1"
-                >${this.chatUnread > 9 ? '9+' : this.chatUnread}</span
-              >`
-            : ''}
-        </button>
         ${location.hostname === 'localhost'
           ? html`
               <a
@@ -2610,16 +2616,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         <global-filter-bar .slots=${this.fleetSlots}> </global-filter-bar>
         ${this.renderMainContent()}
       </div>
-      <chat-panel
-        .open=${this.chatOpen}
-        @close=${() => {
-          this.chatOpen = false;
-          this.chatUnread = 0;
-        }}
-        @notification=${() => {
-          if (!this.chatOpen) this.chatUnread++;
-        }}
-      ></chat-panel>
+
       ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()} ${this.renderWhatsNewModal()}
       <file-transfer-progress-banner></file-transfer-progress-banner>
     `;

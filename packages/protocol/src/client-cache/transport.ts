@@ -6,6 +6,7 @@ import type {
 } from '../rpc/resource-observers.js';
 import { Events } from '../transport/events.js';
 
+import type { NativeConversationTransport } from './native-conversation.js';
 import { resourceReadIsLive, type ResourceReadMethod } from './registry.js';
 import { type ResourceStoreIdentity, resourceStoreScopeId } from './store.js';
 import type {
@@ -16,6 +17,7 @@ import type {
 } from './types.js';
 
 export interface ResourceClientConnection {
+  readonly conversations?: NativeConversationTransport;
   readonly performance?: PerformanceRecorder;
   readonly resourceConnectionReason?: ResourceConnectionReason;
   requestResource<T>(
@@ -106,6 +108,7 @@ export function createResourceCacheTransport(
     };
   }
   return {
+    conversations: client.conversations,
     getConnection,
     performance: client.performance,
     onConnectionChange: (listener) =>

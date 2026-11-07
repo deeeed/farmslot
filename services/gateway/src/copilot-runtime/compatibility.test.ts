@@ -1,92 +1,65 @@
 import assert from 'node:assert/strict';
-import { appendFile, mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { Events, GLOBAL_CHAT_SESSION_ID } from '@farmslot/protocol';
+import { appendMessage, getSessionMessages } from '../chat/chat-store.js';
 
-import { getSession, getSessionMessages } from '../chat/chat-store.js';
-import { readLastScreenEvidence } from '../chat/screen-evidence.js';
-import {
-  chatAbort,
-  chatHistory,
-  chatSend,
-  chatSessionCreate,
-  chatSessionDelete,
-  chatSessionsBulkDelete,
-} from '../methods/chat.js';
+import { COPILOT_TMUX_SESSION } from './launcher.js';
+import { CopilotRuntimeStore } from './session-store.js';
+import { FakeCopilotTmux, testController } from './test-helpers.js';
 
-import { setCopilotRuntimeForTests } from './controller.js';
-import { testController } from './test-helpers.js';
-
-test('existing chat entry points use one tmux runtime and preserve streaming/history/session APIs', async () => {
-  process.env.NODE_ENV = 'test';
-  const home = await mkdtemp(path.join(tmpdir(), 'copilot-compatibility-'));
-  const emitted: Array<{ event: string; payload: unknown }> = [];
-  let deliveredInstruction = '';
-  const { controller, tmux } = testController({
-    home,
-    checkout: process.cwd(),
-    emit: (event, payload) => emitted.push({ event, payload }),
-    sendInstruction: async (_vars, _target, _runner, instruction) => {
-      deliveredInstruction = instruction;
-      return true;
-    },
+test('opening or starting never adopts/replaces an active TUI; explicit stop preserves its history', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-legacy-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const seed = testController({ home, checkout: home });
+  await seed.controller.status();
+  const store = new CopilotRuntimeStore(home);
+  const record = (await store.load())!;
+  record.session.status = 'running';
+  await store.save(record);
+  const tmux = new FakeCopilotTmux();
+  tmux.sessions.add(COPILOT_TMUX_SESSION);
+  const { controller, native } = testController({ home, checkout: home, tmux });
+  const archive = `legacy-${path.basename(home)}`;
+  appendMessage(archive, {
+    id: 'old-message',
+    role: 'assistant',
+    content: 'immutable old response',
+    timestamp: '2026-11-05T00:00:00Z',
   });
-  setCopilotRuntimeForTests(controller);
+  const before = structuredClone(getSessionMessages(archive));
+  const status = await controller.status();
+  assert.equal(status.session.nativeSession, undefined);
+  assert.equal(native.launches, 0);
+  await assert.rejects(controller.start(), /legacy Co-Pilot terminal/);
+  assert.equal(tmux.killCount, 0);
+  assert.deepEqual(getSessionMessages(archive), before);
+  await controller.stop();
+  assert.equal(tmux.killCount, 1);
+  assert.deepEqual(getSessionMessages(archive), before);
+  await controller.start();
+  assert.equal(native.launches, 1);
+  await controller.stop();
+});
 
-  await controller.start({ runner: 'cursor', model: 'test-model' });
-  const contextual = chatSessionCreate({ title: 'Contextual Ask Co-Pilot' }).session;
-  const sent = await chatSend(
-    {
-      sessionId: contextual.id,
-      message: 'Explain the selected run',
-      intent: 'general',
-      clientContext: { route: 'run-detail', selectedRunId: 'run-1' },
-    },
-    () => undefined,
-  );
-  assert.equal(sent.delivery?.state, 'accepted');
-  assert.match(deliveredInstruction, /Explain the selected run/);
-  assert.match(deliveredInstruction, /Current Command Center View/);
-  assert.match(deliveredInstruction, /"route": "run-detail"/);
-  assert.match(deliveredInstruction, /"selectedRunId": "run-1"/);
-  assert.equal(readLastScreenEvidence(GLOBAL_CHAT_SESSION_ID)?.selectedRunId, 'run-1');
-  assert.equal(tmux.launchCount, 1);
-  assert.deepEqual(chatHistory({ sessionId: contextual.id }).messages, []);
-  assert.equal(chatHistory({ sessionId: GLOBAL_CHAT_SESSION_ID }).messages.at(-1)?.content, 'Explain the selected run');
-  assert.equal((await controller.status()).session.transcriptId, GLOBAL_CHAT_SESSION_ID);
-  assert.ok(emitted.some(({ event }) => event === Events.CHAT_RESPONSE));
-  assert.ok(
-    emitted.some(
-      ({ event, payload }) =>
-        event === Events.CHAT_RESPONSE &&
-        (payload as { sessionId?: string }).sessionId === GLOBAL_CHAT_SESSION_ID,
-    ),
-  );
-  assert.deepEqual(await chatAbort({ sessionId: contextual.id }), { ok: true });
-
-  const deleted = await chatSessionDelete({ sessionId: contextual.id });
-  assert.deepEqual(deleted, { ok: true, deleted: true });
-  await appendFile(tmux.transcriptPath, 'RUNNER_OUTPUT_AFTER_SINGLE_DELETE\n');
-  await (controller as unknown as { pollTranscript(): Promise<void> }).pollTranscript();
-  assert.equal(getSession(contextual.id), null);
-
-  const bulkContext = chatSessionCreate({ title: 'Bulk contextual Ask Co-Pilot' }).session;
-  await chatSend({ sessionId: bulkContext.id, message: 'Explain another run' }, () => undefined);
-  assert.deepEqual(await chatSessionsBulkDelete({ sessionIds: [bulkContext.id] }), { deleted: 1 });
-  await appendFile(tmux.transcriptPath, 'RUNNER_OUTPUT_AFTER_BULK_DELETE\n');
-  await (controller as unknown as { pollTranscript(): Promise<void> }).pollTranscript();
-  assert.equal(getSession(bulkContext.id), null);
-  assert.equal(getSessionMessages(GLOBAL_CHAT_SESSION_ID).at(-1)?.content, 'RUNNER_OUTPUT_AFTER_BULK_DELETE');
-  assert.equal(tmux.launchCount, 1);
-
-  await controller.stop({ reason: 'compatibility-test' });
-  await assert.rejects(
-    () => chatSend({ sessionId: 'global', message: 'must not fall back' }, () => undefined),
-    /start or reconnect it before sending/,
-  );
-  assert.equal(tmux.launchCount, 1);
-  setCopilotRuntimeForTests(null);
+test('passive status never launches, resumes or sends, including when a bound host is unavailable', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-passive-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  let now = 0;
+  const { controller, native } = testController({ home, checkout: home, now: () => new Date(now) });
+  await controller.status();
+  assert.equal(native.launches, 0);
+  assert.equal(native.sends.size, 0);
+  await controller.start();
+  native.inspect = async () => {
+    throw new Error('Host unavailable; refresh in login context');
+  };
+  now += 5_001;
+  const status = await controller.status();
+  assert.equal(status.session.status, 'reconnecting');
+  assert.match(status.session.terminalReason ?? '', /Host unavailable/);
+  assert.equal(native.launches, 1);
+  assert.equal(native.sends.size, 1);
 });

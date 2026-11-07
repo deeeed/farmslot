@@ -70,25 +70,23 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## chat.\*
 
-| Method                    | Surface | CLI command | TUI | Note                                  |
-| ------------------------- | ------- | ----------- | --- | ------------------------------------- |
-| `chat.send`               | na      |             |     | Command Center chat surface (web UI). |
-| `chat.history`            | na      |             |     | Command Center chat surface (web UI). |
-| `chat.clear`              | na      |             |     | Command Center chat surface (web UI). |
-| `chat.new`                | na      |             |     | Command Center chat surface (web UI). |
-| `chat.sessions`           | na      |             |     | Command Center chat surface (web UI). |
-| `chat.sessionCreate`      | na      |             |     | Command Center chat surface (web UI). |
-| `chat.sessionDelete`      | na      |             |     | Command Center chat surface (web UI). |
-| `chat.sessionsBulkDelete` | na      |             |     | Command Center chat surface (web UI). |
-| `chat.sessionPin`         | na      |             |     | Command Center chat surface (web UI). |
-| `chat.screenEvidence`     | na      |             |     | Command Center chat surface (web UI). |
-| `chat.observerEvidence`   | na      |             |     | Command Center chat surface (web UI). |
-| `chat.saveMemory`         | na      |             |     | Command Center chat surface (web UI). |
-| `chat.confirmAction`      | na      |             |     | Command Center chat surface (web UI). |
-| `chat.listActions`        | na      |             |     | Command Center chat surface (web UI). |
-| `chat.abort`              | na      |             |     | Command Center chat surface (web UI). |
-| `chat.context`            | na      |             |     | Command Center chat surface (web UI). |
-| `chat.sessionContext`     | na      |             |     | Command Center chat surface (web UI). |
+| Method                    | Surface  | CLI command | TUI | Note                                                                       |
+| ------------------------- | -------- | ----------- | --- | -------------------------------------------------------------------------- |
+| `chat.archive`            | rpc-only |             |     | Read immutable pre-native conversations through the scoped archive reader. |
+| `chat.clear`              | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.new`                | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.sessions`           | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.sessionCreate`      | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.sessionDelete`      | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.sessionsBulkDelete` | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.sessionPin`         | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.screenEvidence`     | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.observerEvidence`   | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.saveMemory`         | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.confirmAction`      | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.listActions`        | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.context`            | na       |             |     | Command Center chat surface (web UI).                                      |
+| `chat.sessionContext`     | na       |             |     | Command Center chat surface (web UI).                                      |
 
 ## config.\*
 
@@ -291,6 +289,8 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `native.profile.remove`            | rpc-only |             |     | Retire a configuration after session cleanup; native files stay on the execution node.             |
 | `native.session.ensure`            | rpc-only |             |     | Idempotent native session creation under a caller-reserved UUID; authenticated ownership required. |
 | `native.session.read`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.session.subscribe`         | rpc-only |             |     | Follow the selected native conversation with farmslot rpc --follow.                                |
+| `native.session.unsubscribe`       | rpc-only |             |     | Release a connection-scoped native conversation subscription.                                      |
 | `native.session.setApprovalMode`   | rpc-only |             |     | Change an idle standalone session tool policy through farmslot rpc native.session.setApprovalMode. |
 | `native.session.list`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
 | `native.session.send`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |

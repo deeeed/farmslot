@@ -9,6 +9,7 @@ import type {
   WorkerSessionHistorySubscribeResult,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
+import { applyLegacyConversationDelta } from '@farmslot/protocol/client-cache';
 
 import '../chat/chat-message.js';
 
@@ -35,6 +36,11 @@ export class WorkerSessionHistoryElement extends LitElement {
 
   private unsubscribeEvent?: () => void;
   private subscriptionKey = '';
+  private snapshotKey = '';
+  private subscriptionEpoch = 0;
+  private stopConnection?: () => void;
+  private stopNode?: () => void;
+  private subscriptionConnection?: number | string;
   private subscriptionTarget: ReturnType<WorkerSessionHistoryElement['targetParams']> | null = null;
 
   protected override createRenderRoot() {
@@ -43,12 +49,33 @@ export class WorkerSessionHistoryElement extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.stopConnection = gateway.onConnectionChange((status) => {
+      if (status === 'connected') void this.resubscribe(true);
+      else this.pauseHistory();
+    });
+    this.stopNode = gateway.subscribe(Events.NODE_CONNECTED, () => {
+      void this.resubscribe(true);
+    });
+    document.addEventListener('visibilitychange', this.visibilityChanged);
     void this.resubscribe();
+  }
+  private readonly visibilityChanged = () => {
+    if (document.visibilityState === 'hidden') this.pauseHistory();
+    else void this.resubscribe(true);
+  };
+  private pauseHistory(): void {
+    this.subscriptionEpoch++;
+    void this.teardownSubscription().catch((error) => {
+      this.error = (error as Error).message;
+    });
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    void this.teardownSubscription();
+    this.stopConnection?.();
+    this.stopNode?.();
+    document.removeEventListener('visibilitychange', this.visibilityChanged);
+    this.pauseHistory();
   }
 
   override updated(changed: Map<string, unknown>): void {
@@ -93,83 +120,96 @@ export class WorkerSessionHistoryElement extends LitElement {
     this.unsubscribeEvent?.();
     this.unsubscribeEvent = undefined;
     const target = this.subscriptionTarget;
-    if (!this.subscriptionKey || (!target?.slotId && !target?.runId)) return;
-    try {
-      await gateway.request(Methods.WORKER_SESSION_HISTORY_UNSUBSCRIBE, target, 5_000);
-    } catch (err) {
-      console.warn(`[worker-history] unsubscribe failed: ${(err as Error).message}`);
-    }
+    const key = this.subscriptionKey;
+    const connection = this.subscriptionConnection;
     this.subscriptionKey = '';
     this.subscriptionTarget = null;
+    this.subscriptionConnection = undefined;
+    // The old socket's close handler withdraws its subscriptions; a replacement socket must
+    // never unsubscribe a new owner's view using this view's old target.
+    if (!key || !target || connection !== gateway.resourceConnectionId) return;
+    try {
+      await gateway.request(Methods.WORKER_SESSION_HISTORY_UNSUBSCRIBE, target, 5_000);
+    } catch (error) {
+      if (connection !== gateway.resourceConnectionId || gateway.connectionState !== 'connected')
+        return;
+      throw error;
+    }
   }
 
-  private async resubscribe(): Promise<void> {
+  private async resubscribe(force = false): Promise<void> {
     if (this.snapshotOverride) {
       this.snapshot = this.snapshotOverride;
       this.loading = false;
       this.error = '';
       return;
     }
-    if (!this.isConnected || (!this.slotId && !this.runId)) return;
+    if (!this.isConnected || document.visibilityState === 'hidden' || (!this.slotId && !this.runId))
+      return;
     const nextKey = this.makeKey();
-    if (nextKey === this.subscriptionKey) return;
-    await this.teardownSubscription();
-    this.loading = true;
+    if (!force && nextKey === this.subscriptionKey) return;
+    const epoch = ++this.subscriptionEpoch;
+    const connection = gateway.resourceConnectionId;
+    try {
+      await this.teardownSubscription();
+    } catch (error) {
+      if (epoch === this.subscriptionEpoch) this.error = (error as Error).message;
+      return;
+    }
+    if (
+      !this.isConnected ||
+      epoch !== this.subscriptionEpoch ||
+      connection !== gateway.resourceConnectionId
+    )
+      return;
+    this.loading = this.snapshot === null;
     this.error = '';
-    this.snapshot = null;
+    if (this.snapshotKey !== nextKey) this.snapshot = null;
+    this.snapshotKey = nextKey;
     this.subscriptionKey = nextKey;
-    this.subscriptionTarget = this.targetParams();
+    const target = this.targetParams();
+    this.subscriptionTarget = target;
+    this.subscriptionConnection = connection;
     this.unsubscribeEvent = gateway.subscribe<WorkerSessionHistoryDeltaPayload>(
       Events.WORKER_SESSION_HISTORY_DELTA,
-      (payload) => this.applyDelta(payload),
+      (payload) => {
+        if (epoch === this.subscriptionEpoch && connection === gateway.resourceConnectionId)
+          this.applyDelta(payload);
+      },
     );
     try {
       const result = await gateway.request<WorkerSessionHistorySubscribeResult>(
         Methods.WORKER_SESSION_HISTORY_SUBSCRIBE,
-        { ...this.targetParams(), limit: 300 },
+        { ...target, limit: 300 },
         20_000,
       );
-      if (!this.isConnected || this.makeKey() !== nextKey) return;
+      if (
+        !this.isConnected ||
+        epoch !== this.subscriptionEpoch ||
+        this.makeKey() !== nextKey ||
+        connection !== gateway.resourceConnectionId
+      ) {
+        if (
+          result.subscribed &&
+          this.subscriptionKey !== nextKey &&
+          connection === gateway.resourceConnectionId
+        )
+          await gateway.request(Methods.WORKER_SESSION_HISTORY_UNSUBSCRIBE, target, 5_000);
+        return;
+      }
       this.snapshot = result.snapshot;
     } catch (err) {
-      if (!this.isConnected || this.makeKey() !== nextKey) return;
+      if (!this.isConnected || epoch !== this.subscriptionEpoch || this.makeKey() !== nextKey)
+        return;
       this.error = (err as Error).message;
     } finally {
-      if (this.makeKey() === nextKey) this.loading = false;
+      if (epoch === this.subscriptionEpoch && this.makeKey() === nextKey) this.loading = false;
     }
   }
 
   private applyDelta(payload: WorkerSessionHistoryDeltaPayload): void {
-    if (!this.snapshot) return;
-    if (this.slotId && payload.slotId !== this.slotId) return;
-    if (this.runId && (payload.runId ?? '') !== this.runId) return;
-    const retargetedSlotRun =
-      payload.reset === true &&
-      !this.runId &&
-      (payload.runId ?? '') !== (this.snapshot.runId ?? '');
-    if (!retargetedSlotRun) {
-      if ((payload.runId ?? '') !== (this.snapshot.runId ?? '')) return;
-      if ((payload.role ?? '') !== (this.snapshot.role ?? '')) return;
-      if ((payload.contextId ?? '') !== (this.snapshot.contextId ?? '')) return;
-    }
-
-    const messages = payload.reset
-      ? payload.messages
-      : [...this.snapshot.messages, ...payload.messages].slice(-300);
-    this.snapshot = {
-      ...this.snapshot,
-      runId: payload.runId,
-      role: payload.role,
-      contextId: payload.contextId,
-      runner: payload.runner,
-      model: payload.model ?? this.snapshot.model,
-      runnerSessionPath: payload.runnerSessionPath ?? this.snapshot.runnerSessionPath,
-      source: payload.source,
-      messages,
-      cursor: payload.cursor,
-      degradedReason: payload.degradedReason,
-      generatedAt: payload.generatedAt,
-    };
+    if (this.snapshot)
+      this.snapshot = applyLegacyConversationDelta(this.snapshot, payload, this.targetParams());
   }
 
   private short(value: string | null | undefined, length = 8): string {
@@ -218,7 +258,7 @@ export class WorkerSessionHistoryElement extends LitElement {
     if (this.loading) return html`<div class="wsh-empty">Loading transcript...</div>`;
     if (this.error) return html`<div class="wsh-empty error">${this.error}</div>`;
     if (!this.snapshot) return html`<div class="wsh-empty">No transcript snapshot.</div>`;
-    if (!workerHistoryShowsMessages(this.snapshot.source)) {
+    if (!workerHistoryShowsMessages(this.snapshot.source) && !this.snapshot.messages.length) {
       return html`
         <div class="wsh-empty">
           ${this.snapshot.degradedReason ?? 'Worker transcript is unavailable for this runner.'}

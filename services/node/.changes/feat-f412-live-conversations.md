@@ -1,0 +1,1 @@
+- Forward bounded native conversation subscriptions and notification-only file appends over the existing node connection.

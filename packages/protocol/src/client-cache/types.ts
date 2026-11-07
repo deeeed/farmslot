@@ -1,6 +1,7 @@
 import type { ReviewDiffSnapshot } from '../contracts/runs.js';
 import type { PerformanceActionClass, PerformanceRecorder } from '../performance/index.js';
 import type { GatewayAuthConnectResult, GatewayAuthMode } from '../rpc/auth.js';
+import type { NativeConversationCursor } from '../rpc/native-session.js';
 import type {
   ResourceObserversReplaceParams,
   ResourceObserversReplaceResult,
@@ -10,6 +11,10 @@ import type { RunListProjection } from '../runs/run-list-filter.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
 import type { ResourceKey, ResourceReadStamp } from './keys.js';
+import type {
+  NativeConversationCache,
+  NativeConversationTransport,
+} from './native-conversation.js';
 import type { ResourceQuery, ResourceReadMethod } from './registry.js';
 import type {
   ContentKey,
@@ -33,6 +38,8 @@ export interface ResourceQueryState<T = unknown> {
   observedAt?: number;
   sourceObservation?: UpstreamObservation;
   resourceState?: ResourceReadStamp;
+  /** Authority is current only while the exact observation-only stream remains attached. */
+  conversation?: NativeConversationCursor;
   error?: ResourceQueryError;
   storageNotice?: string;
 }
@@ -71,6 +78,7 @@ export type ResourceConnectionReason =
   | 'profile-change';
 
 export interface ResourceCacheTransport {
+  readonly conversations?: NativeConversationTransport;
   readonly performance?: PerformanceRecorder;
   getConnection(): ResourceCacheConnection;
   onConnectionChange(
@@ -134,6 +142,7 @@ export interface ResourceQueryPlacement extends ResourceContentPlacement {
 }
 
 export interface GatewayResourceCache {
+  readonly conversations?: NativeConversationCache;
   observe<T>(query: ResourceQuery<T>, listener: (state: ResourceQueryState<T>) => void): () => void;
   read<T>(query: ResourceQuery<T>): ResourceQueryState<T>;
   /** Waits only for local hydration, then refreshes in the background. Optional for test doubles. */

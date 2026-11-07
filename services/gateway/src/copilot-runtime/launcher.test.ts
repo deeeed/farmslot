@@ -1,94 +1,29 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
 
-import { buildLaunchCommand } from '../runners/launch-command.js';
+import { getRunnerDefinition } from '../runners/registry.js';
 
-import {
-  buildCopilotLaunch,
-  COPILOT_TMUX_TARGET,
-  createCopilotRunnerVars,
-  resolveOperatorCheckout,
-} from './launcher.js';
-import { CopilotRuntimeStore } from './session-store.js';
+import { resolveCopilotRunner, resolveOperatorCheckout } from './launcher.js';
 
-test('launcher uses configured operator checkout and buildLaunchCommand tier flags', async () => {
-  const checkout = '/configured/operator/farmslot';
-  const home = await mkdtemp(path.join(tmpdir(), 'copilot-launcher-'));
-  const launched = buildCopilotLaunch({
-    checkout,
-    runner: 'cursor',
-    model: 'test-model',
-    safetyTier: 'sandboxed',
-    bootstrapPrompt: 'read bootstrap',
-    store: new CopilotRuntimeStore(home),
-    runtimeDir: '.sandbox/farmslot-farm/agent',
-  });
-  assert.equal(launched.vars.remoteRepo, checkout);
-  assert.equal(launched.vars.slotId, 'gateway-copilot');
-  assert.match(launched.command, /cd '\/configured\/operator\/farmslot'/);
-  assert.match(launched.command, /--sandbox enabled/);
-  assert.doesNotMatch(launched.command, /dangerously|sandbox disabled/);
-  assert.equal(COPILOT_TMUX_TARGET, 'farmslot-copilot:agent.0');
-
-  const hooked = buildCopilotLaunch({
-    checkout,
-    runner: 'claude',
-    model: 'opus',
-    safetyTier: 'sandboxed',
-    bootstrapPrompt: 'read bootstrap',
-    store: new CopilotRuntimeStore(home),
-    runtimeDir: '.sandbox/farmslot-farm/agent',
-  });
-  assert.match(hooked.command, /\.sandbox\/farmslot-farm\/agent/);
-  assert.equal(hooked.bootstrapOnLaunch, true);
-  assert.match(hooked.command, /'read bootstrap'$/);
-  const ordinary = buildLaunchCommand(hooked.vars, 'claude', 'opus', 'read bootstrap');
-  assert.doesNotMatch(
-    ordinary,
-    /'read bootstrap'/,
-    'Ordinary dispatch must retain its post-launch delivery policy',
-  );
+test('all installed copilot runners select the shared native capability', () => {
+  for (const runner of ['claude', 'codex', 'cursor', 'grok', 'pi', 'opencode']) {
+    const selected = resolveCopilotRunner({ runner });
+    assert.equal(selected.runner, runner);
+    assert.ok(getRunnerDefinition(runner).nativeTransport);
+  }
 });
-
-test('operator checkout resolves from gateway configuration without a user path', () => {
+test('operator checkout resolves from configuration', () => {
   const previous = process.env.FARMSLOT_OPERATOR_CHECKOUT;
   process.env.FARMSLOT_OPERATOR_CHECKOUT = '/gateway/configured/root';
   try {
     assert.equal(resolveOperatorCheckout(), '/gateway/configured/root');
-    assert.equal(
-      createCopilotRunnerVars('/gateway/configured/root').repo,
-      '/gateway/configured/root',
-    );
   } finally {
     if (previous === undefined) delete process.env.FARMSLOT_OPERATOR_CHECKOUT;
     else process.env.FARMSLOT_OPERATOR_CHECKOUT = previous;
   }
 });
-
-test('local tmux launch normalizes host-specific base indexes before using agent.0', async () => {
-  const source = await readFile(new URL('./launcher.ts', import.meta.url), 'utf8');
-  assert.match(source, /pane-base-index/);
-  assert.match(source, /move-window/);
-  assert.match(source, /base-index/);
-  assert.match(source, /configureTranscript\(target, transcriptPath\)/);
-});
-
-test('Copilot low effort leaves the ordinary worker default unchanged', async () => {
-  const home = await mkdtemp(path.join(tmpdir(), 'copilot-effort-'));
-  const launch = buildCopilotLaunch({
-    checkout: '/configured/operator/farmslot',
-    runner: 'codex',
-    model: 'gpt-6-astra',
-    effort: 'low',
-    safetyTier: 'sandboxed',
-    bootstrapPrompt: 'read bootstrap',
-    store: new CopilotRuntimeStore(home),
-  });
-  assert.match(launch.command, /--model gpt-6-astra/);
-  assert.match(launch.command, /model_reasoning_effort.*low/);
-  const worker = buildLaunchCommand(launch.vars, 'codex', 'gpt-6-astra', 'ordinary worker');
-  assert.match(worker, /model_reasoning_effort.*high/);
+test('copilot selects low effort without mutating ordinary runner defaults', () => {
+  const ordinary = getRunnerDefinition('codex');
+  assert.equal(resolveCopilotRunner({ runner: 'codex', model: 'gpt-6-astra' }).effort, 'low');
+  assert.equal(getRunnerDefinition('codex'), ordinary);
 });

@@ -14,6 +14,6 @@ test('history renders live and archived transcripts, not degraded sources', () =
 });
 
 test('archived source uses a short operator label', () => {
-  assert.equal(workerHistorySourceLabel('transcript-archive'), 'archived');
-  assert.equal(workerHistorySourceLabel('transcript'), 'transcript');
+  assert.equal(workerHistorySourceLabel('transcript-archive'), 'archived completed messages');
+  assert.equal(workerHistorySourceLabel('transcript'), 'completed messages');
 });

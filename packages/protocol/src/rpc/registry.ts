@@ -146,6 +146,8 @@ export const Methods = {
   NATIVE_PROFILE_REMOVE: 'native.profile.remove',
   NATIVE_SESSION_ENSURE: 'native.session.ensure',
   NATIVE_SESSION_READ: 'native.session.read',
+  NATIVE_SESSION_SUBSCRIBE: 'native.session.subscribe',
+  NATIVE_SESSION_UNSUBSCRIBE: 'native.session.unsubscribe',
   NATIVE_SESSION_SET_APPROVAL_MODE: 'native.session.setApprovalMode',
   NATIVE_SESSION_LIST: 'native.session.list',
   NATIVE_SESSION_SEND: 'native.session.send',
@@ -432,8 +434,7 @@ export const Methods = {
 
   // Co-Pilot Chat
   OPERATOR_SNAPSHOT: 'operator.snapshot',
-  CHAT_SEND: 'chat.send',
-  CHAT_HISTORY: 'chat.history',
+  CHAT_ARCHIVE: 'chat.archive',
   CHAT_CLEAR: 'chat.clear',
   CHAT_NEW: 'chat.new',
   CHAT_SESSIONS: 'chat.sessions',
@@ -446,7 +447,6 @@ export const Methods = {
   CHAT_SAVE_MEMORY: 'chat.saveMemory',
   CHAT_CONFIRM_ACTION: 'chat.confirmAction',
   CHAT_LIST_ACTIONS: 'chat.listActions',
-  CHAT_ABORT: 'chat.abort',
   CHAT_CONTEXT: 'chat.context',
   CHAT_SESSION_CONTEXT: 'chat.sessionContext',
   COPILOT_FORMAT_INSTRUCTION: 'copilot.formatInstruction',

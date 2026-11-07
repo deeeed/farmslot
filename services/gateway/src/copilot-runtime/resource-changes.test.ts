@@ -23,7 +23,7 @@ test('owning runtime initialization, start, reconnect and stop publish already r
   delete process.env.FARMSLOT_COPILOT_DANGEROUS_AUTOSTART;
   let nowMs = Date.parse('2026-10-26T00:00:00.000Z');
   const now = () => new Date(nowMs);
-  const { controller, tmux } = testController({ home, checkout: home, now });
+  const { controller, native } = testController({ home, checkout: home, now });
   const controllers = [controller];
   let activeController = controller;
   const store = new CopilotRuntimeStore(home);
@@ -79,7 +79,7 @@ test('owning runtime initialization, start, reconnect and stop publish already r
   assert(resourceRevisions.revision(runtimeKey) > before);
   assert(published.slice(startIndex).some((session) => session.status === 'starting'));
   assert.equal(published.at(-1)?.status, 'running');
-  assert.equal(tmux.launchCount, 1);
+  assert.equal(native.launches, 1);
 
   nowMs += 1;
   before = resourceRevisions.revision(runtimeKey);
@@ -87,10 +87,11 @@ test('owning runtime initialization, start, reconnect and stop publish already r
   assert.equal(reconnected.reused, true);
   assert(resourceRevisions.revision(runtimeKey) > before);
   assert.equal(published.at(-1)?.reconnectedAt, now().toISOString());
-  assert.equal(tmux.launchCount, 1, 'Explicit reconnect reuses the fake runtime');
+  assert.equal(native.launches, 1, 'Explicit reconnect reuses the fake runtime');
 
   nowMs += 1;
-  const restored = testController({ home, checkout: home, tmux, now }).controller;
+  await controller.dispose();
+  const restored = testController({ home, checkout: home, native, now }).controller;
   controllers.push(restored);
   activeController = restored;
   before = resourceRevisions.revision(runtimeKey);
@@ -99,7 +100,7 @@ test('owning runtime initialization, start, reconnect and stop publish already r
   assert.equal(restored.currentSession()?.status, 'running');
   assert.equal(published.at(-1)?.reconnectedAt, now().toISOString());
   assert.equal(published.at(-1)?.runtimeId, started.session.runtimeId);
-  assert.equal(tmux.launchCount, 1, 'Persisted initialization must not launch another runtime');
+  assert.equal(native.launches, 1, 'Persisted initialization must not launch another runtime');
 
   nowMs += 1;
   before = resourceRevisions.revision(runtimeKey);
@@ -110,7 +111,7 @@ test('owning runtime initialization, start, reconnect and stop publish already r
   assert.equal(published.at(-1)?.status, 'stopped');
   assert.equal(published.at(-1)?.terminalReason, 'operator-requested');
   assert.equal((await store.load())?.session.status, 'stopped');
-  assert.equal(tmux.killCount, 1);
+  assert.equal([...native.sessions.values()][0].state, 'closed');
 });
 
 test('readable runtime configuration publishes while read timestamps do not cause a refetch loop', async (t) => {

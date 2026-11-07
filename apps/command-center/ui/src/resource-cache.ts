@@ -182,8 +182,11 @@ function suspendForNavigation(): void {
   // Retire observations before stopping the worker. Chromium can otherwise
   // destroy its OPFS remotes while a queued synchronous write is still running.
   const retiring = owner.dispose();
-  closeBrowserResourceStores();
-  void retiring.catch(reportCloseError);
+  void retiring
+    .then(() => {
+      if (suspended) closeBrowserResourceStores();
+    })
+    .catch(reportCloseError);
 }
 
 function resumeFromNavigation(event: PageTransitionEvent): void {
@@ -272,11 +275,23 @@ export async function disposeResourceCache(): Promise<void> {
   networkEvents = undefined;
   suspended = false;
   const retiring = owner.dispose();
-  closeBrowserResourceStores();
-  await retiring;
+  try {
+    await retiring;
+  } finally {
+    closeBrowserResourceStores();
+  }
 }
 
 /** Last verified owner for native query dependencies, also available during cold offline render. */
 export function getResourceNativeOwnerId(): string | undefined {
   return owner.renderMetadata?.scope.principalId;
+}
+
+/** Restores the administrator's implicit landing view while offline; commands still need live authority. */
+export function getResourceIsGlobalAdmin(): boolean {
+  return (
+    owner.renderMetadata?.authority.roles.some(
+      (binding) => binding.role === 'admin' && binding.scope.kind === 'global',
+    ) ?? false
+  );
 }

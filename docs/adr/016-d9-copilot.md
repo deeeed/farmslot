@@ -116,7 +116,7 @@ Default: `anthropic/sonnet`. Override via `COPILOT_PROVIDER` / `COPILOT_MODEL` i
 
 ## Amendment 1: copilot entry and live conversations, 2026-11-05
 
-**Status:** Proposed. Requires approval before implementation. The base ADR remains Accepted.
+**Status:** Accepted. Arthur approved implementation, recorded by Lead on 2026-11-06 at 22:50 HKT. The base ADR remains Accepted.
 
 ### Decision
 
@@ -151,6 +151,15 @@ that the same reference provider has the same limitation. None is accepted here.
 Farmslot's existing Claude text-delta support remains required even where the
 inspected reference handler publishes completed assistant blocks.
 
+### Approved implementation proof scope, 2026-11-07
+
+Live proof covers the six installed runners: Claude, Codex, Cursor, Grok, OpenCode
+and Pi, including its DeepSeek provider. Kiro, FX, Antigravity, Muse/MSP and ACP
+registry agents are not installed. Their transport contracts receive adapter tests;
+installation and runtime proof remain an open question for Arthur. Do not install
+or authenticate additional CLIs as part of F412. These rows do not block the six-runner
+implementation and are not claimed as live parity.
+
 ### Rationale
 
 The native host already owns launch, command receipts, journals and runner-specific
@@ -183,7 +192,7 @@ migration is part of this decision.
 The cost is adapter parity work, an incremental journal feed and one consumer
 cutover. Offline history uses the existing scoped client store; reconnect resumes
 reads only. No new memory, search, voice, autonomous execution or identity system is
-approved. This proposal ships no code.
+approved. Implementation follows the approved order: live conversations first, then the copilot entry.
 
 ### Public surface
 
