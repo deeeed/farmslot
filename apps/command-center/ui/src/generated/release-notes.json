@@ -1,8 +1,5 @@
 {
-  "version": "0.34.0",
-  "date": "2026-11-06",
-  "items": [
-    "Choose native approval settings and browse Files outside Git repositories.",
-    "Keep loaded review pages and refresh requests when preparation takes longer."
-  ]
+  "version": "0.35.0",
+  "date": "2026-11-07",
+  "items": ["Follow native conversations as they stream and resume them from Co-Pilot."]
 }

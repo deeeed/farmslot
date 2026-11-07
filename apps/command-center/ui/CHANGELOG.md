@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.0 - 2026-11-07
+
+- Use the shared live native conversation stream for native sessions and the Co-Pilot home, with an explicit launcher and saved conversation history.
+
 ## 0.34.0 - 2026-11-06
 
 - Keep review refresh pending until the gateway responds and preserve the operator page across development-stack restarts.

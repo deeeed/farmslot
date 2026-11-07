@@ -246,6 +246,18 @@ The original design left exec timeout hardcoded at 30s in the gateway and ignore
 - SSH exec path (`slotExecStreaming`) deleted — node handles all remote execution
 - `execLocalStreaming`, `execViaAgent`, `SlotStreamingOpts`, `StreamingExecOptions` deleted
 
+## Amendment 2: Declared peer version compatibility, 2026-11-07
+
+**Status:** Proposed. Arthur approved the policy and ADR owner; implementation review is pending.
+
+Gateway, node and selected worker runtime admission use the shared [peer-version contract](../reference/node-worker-cli-health.md#peer-version-compatibility), not version equality. Each peer declares its release version and oldest supported peer version for the protocol and service runtime. Both declared lower bounds must be satisfied; a higher minor version alone is not a break. A failed bound names both versions and the declared minimum before worker launch. Existing feature-capability and retained-input checks remain authoritative.
+
+The initial declared floors are protocol `0.76.0` and runtime `0.42.0`, the latter preserving the asynchronous cleanup API boundary. Change a floor only for an identified incompatible contract. Missing legacy declarations do not invent a break; malformed declarations remain explicit configuration errors. This policy adds no command, transport, retry or source-repair authority.
+
+### Public surface
+
+`@farmslot/protocol` owns the shared comparison, protocol version/floor and optional `node.connect` request/reply and node-inventory fields. `@farmslot/agent-runtime` supplies its installed package version and runtime floor. The gateway, node handshake and generated worker probe consume the same comparison. These additive declarations ship in the coordinated protocol/runtime minor release; harnesses retain their pinned tooling and inherit admission without a new flag.
+
 ## References
 
 - OpenClaw NodeRegistry: `/Users/deeeed/dev/openclaw/src/gateway/node-registry.ts`

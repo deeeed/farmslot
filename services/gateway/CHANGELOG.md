@@ -6,6 +6,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.0 - 2026-11-07
+
+- Share authorized native and terminal conversation streams and bind the configured Co-Pilot to one durable native session.
+- Retry completion from the original verified task after an earlier recovery wrote a replacement task, preserving the completed checks, evidence and checkout.
+
 ## 0.34.0 - 2026-11-06
 
 - Correct invalid static-review output once in the same reviewer session, fail stopped reviewers explicitly, and refuse unrecoverable saved-review replays with accurate archive guidance.

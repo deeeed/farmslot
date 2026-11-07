@@ -9,3 +9,15 @@ A dev deployment atomically records its worker verification result at the dev no
 ## Public surface
 
 Existing `node.health`, `node.health.all` and `fleet.status` responses gain optional `WorkerCliHealth` diagnostics through `@farmslot/protocol` types. The private node sampler produces them; gateway fleet and pressure readers consume them. No new RPC, provider contract or harness flag is introduced. `scripts/deploy-node.sh --instance dev` writes the receipt using the dev instance's existing home selection.
+
+## Peer version compatibility
+
+Proposed under [ADR-008 Amendment 2](../adr/008-remote-communication.md#amendment-2-declared-peer-version-compatibility-2026-11-07).
+
+Each new `node.connect` request and successful reply MUST declare `protocolVersion`, `minimumProtocolVersion`, `runtimeVersion` and `minimumRuntimeVersion`. Versions are published numeric `major.minor.patch` releases. `minimumProtocolVersion` and `minimumRuntimeVersion` name the oldest peer releases that side supports. The installed runtime package manifest supplies `runtimeVersion`; task pins are not rewritten.
+
+For each protocol/runtime pair, admission MUST accept exactly when neither supplied version is below the other side's declared minimum. It MUST NOT infer a break from a different minor or major number. The initial floors are protocol `0.76.0` and runtime `0.42.0`. A missing legacy version or floor is unverified, not an invented incompatibility. A malformed supplied declaration is an explicit configuration error.
+
+The gateway handshake, node handshake and worker source preflight MUST consume one shared comparison. A declared break MUST refuse before worker launch with the component, actual version and unmet minimum. Incompatible registration MUST NOT mark the node online. `nodes.list` MUST expose the declarations and report `versionMatch` as compatibility, not equality. Feature capabilities, retained source hashes, frozen task contracts and publication gates MUST remain unchanged.
+
+Regressions MUST accept node `0.77.0` with gateway `0.76.0` and the reverse when both floors allow it, and refuse either direction when a declared floor excludes the other peer. Worker-probe coverage MUST preserve retained-provenance checks for compatible newer versions.
