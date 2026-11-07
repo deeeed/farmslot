@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
@@ -8,9 +9,11 @@ import test from 'node:test';
 import {
   checkPiProviderAuth,
   deadlinePiFetch,
-  fetchOpenAiModelIds,
+  fetchOpenAiModels,
   listPiProviderSources,
   openaiBaseUrl,
+  PiProviderConfigurationError,
+  providerReasoningFetch,
   resolvePiProviderCatalog,
   unavailablePiAuth,
 } from './pi-farmslot-providers.mjs';
@@ -224,11 +227,484 @@ test('resolvePiProviderCatalog registers fetched models and skips empty endpoint
   );
 });
 
-test('fetchOpenAiModelIds returns empty on timeout or throw', async () => {
-  const ids = await fetchOpenAiModelIds('http://127.0.0.1:9/v1', 'k', {
+test('fetchOpenAiModels returns empty on timeout or throw', async () => {
+  const ids = await fetchOpenAiModels('http://127.0.0.1:9/v1', 'k', {
     fetchImpl: async () => {
       throw new Error('down');
     },
   });
   assert.deepEqual(ids, []);
+});
+
+test('router discovery keeps a server-reported 1M context and output budget', async () => {
+  const [provider] = await resolvePiProviderCatalog(
+    {
+      FARMSLOT_PI_OLLAMA: '0',
+      FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1',
+    },
+    {
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'DeepSeek-V4.1-Flash-1017',
+              context_length: 1_048_576,
+              max_output_tokens: 32_768,
+            },
+          ],
+        }),
+      }),
+    },
+  );
+  assert.equal(provider.models[0].contextWindow, 1_048_576);
+  assert.equal(provider.models[0].maxTokens, 32_768);
+  assert.equal(provider.models[0].reasoning, true);
+});
+
+test('id-only router discovery uses configured limits and defaults reasoning on', async () => {
+  const [provider] = await resolvePiProviderCatalog(
+    {
+      FARMSLOT_PI_OLLAMA: '0',
+      FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1',
+      FARMSLOT_PI_ROUTER_CONTEXT: '1048576',
+      FARMSLOT_PI_ROUTER_MAX_TOKENS: '32768',
+    },
+    {
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ data: [{ id: 'DeepSeek-V4.1-Flash-1017' }] }),
+      }),
+    },
+  );
+  assert.equal(provider.models[0].contextWindow, 1_048_576);
+  assert.equal(provider.models[0].maxTokens, 32_768);
+  assert.equal(provider.models[0].reasoning, true);
+});
+
+const routerEnv = { FARMSLOT_PI_OLLAMA: '0', FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1' };
+const modelsFetch = (row) => async () => ({ ok: true, json: async () => ({ data: [row] }) });
+
+test('endpoint metadata takes precedence and source configuration only fills missing fields', async () => {
+  for (const contextField of [
+    'context_length',
+    'max_model_len',
+    'context_window',
+    'contextWindow',
+  ]) {
+    const [provider] = await resolvePiProviderCatalog(
+      {
+        ...routerEnv,
+        FARMSLOT_PI_ROUTER_CONTEXT: '128000',
+        FARMSLOT_PI_ROUTER_MAX_TOKENS: '16384',
+      },
+      {
+        fetchImpl: modelsFetch({
+          id: 'model',
+          [contextField]: 1_048_576,
+          max_output_tokens: 32768,
+        }),
+      },
+    );
+    assert.equal(provider.models[0].contextWindow, 1_048_576);
+    assert.equal(provider.models[0].maxTokens, 32768);
+  }
+  for (const outputField of [
+    'max_output_tokens',
+    'max_completion_tokens',
+    'max_tokens',
+    'maxTokens',
+  ]) {
+    const [provider] = await resolvePiProviderCatalog(routerEnv, {
+      fetchImpl: modelsFetch({ id: 'model', [outputField]: 65536 }),
+    });
+    assert.equal(provider.models[0].maxTokens, 65536);
+  }
+});
+
+test('unknown limits retain defaults and LiteLLM/Ollama can configure the same fields', async () => {
+  const [unknown] = await resolvePiProviderCatalog({}, { fetchImpl: modelsFetch({ id: 'model' }) });
+  assert.equal(unknown.models[0].contextWindow, 128000);
+  assert.equal(unknown.models[0].maxTokens, 8192);
+  assert.equal(unknown.models[0].reasoning, false);
+  for (const source of ['OLLAMA', 'LITELLM']) {
+    const env =
+      source === 'OLLAMA' ? {} : { FARMSLOT_PI_OLLAMA: '0', LITELLM_URL: 'http://litellm.test' };
+    const [provider] = await resolvePiProviderCatalog(
+      {
+        ...env,
+        [`FARMSLOT_PI_${source}_CONTEXT`]: '1048576',
+        [`FARMSLOT_PI_${source}_MAX_TOKENS`]: '32768',
+        [`FARMSLOT_PI_${source}_REASONING`]: 'true',
+      },
+      { fetchImpl: modelsFetch({ id: 'model' }) },
+    );
+    assert.equal(provider.models[0].contextWindow, 1_048_576);
+    assert.equal(provider.models[0].maxTokens, 32768);
+    assert.equal(provider.models[0].reasoning, true);
+  }
+});
+
+test('invalid configured or reported limits refuse instead of using defaults', async () => {
+  for (const value of ['0', '-1', '1.5', '1e6', '9007199254740992', 'bad', '']) {
+    for (const key of ['FARMSLOT_PI_ROUTER_CONTEXT', 'FARMSLOT_PI_ROUTER_MAX_TOKENS'])
+      await assert.rejects(
+        resolvePiProviderCatalog(
+          { ...routerEnv, [key]: value },
+          {
+            fetchImpl: modelsFetch({ id: 'model' }),
+          },
+        ),
+        { name: 'Error', message: `${key} must be a positive safe integer` },
+      );
+  }
+  for (const row of [
+    { context_length: 'bad' },
+    { max_output_tokens: -1 },
+    { max_model_len: [1] },
+    { reasoning: 'maybe' },
+  ])
+    await assert.rejects(
+      resolvePiProviderCatalog(routerEnv, {
+        fetchImpl: modelsFetch({ id: 'model', ...row }),
+      }),
+      PiProviderConfigurationError,
+    );
+  await assert.rejects(
+    resolvePiProviderCatalog(
+      { ...routerEnv, FARMSLOT_PI_ROUTER_REASONING: 'maybe' },
+      {
+        fetchImpl: modelsFetch({ id: 'model' }),
+      },
+    ),
+    PiProviderConfigurationError,
+  );
+});
+
+test('router models cannot silently register as non-reasoning', async () => {
+  for (const [env, row] of [
+    [{ ...routerEnv, FARMSLOT_PI_ROUTER_REASONING: 'false' }, { id: 'model' }],
+    [routerEnv, { id: 'model', supports_reasoning: false }],
+  ])
+    await assert.rejects(
+      resolvePiProviderCatalog(env, { fetchImpl: modelsFetch(row) }),
+      /requires reasoning/,
+    );
+});
+
+test('router wire guard records actual effort and refuses an off or missing effort before sending', async () => {
+  const [router] = await resolvePiProviderCatalog(
+    {
+      ...routerEnv,
+      FARMSLOT_PI_ROUTER_CONTEXT: '1048576',
+      FARMSLOT_PI_ROUTER_MAX_TOKENS: '32768',
+    },
+    { fetchImpl: modelsFetch({ id: 'DeepSeek-V4.1-Flash-1017' }) },
+  );
+  let requests = 0;
+  const records = [];
+  const fetch = providerReasoningFetch(
+    async (_input, options) => {
+      requests++;
+      assert.equal(JSON.parse(options.body).reasoning_effort, 'medium');
+      return new Response('OK');
+    },
+    [router],
+    (record) => records.push(record),
+  );
+  const body = { model: 'DeepSeek-V4.1-Flash-1017', reasoning_effort: 'medium', max_tokens: 32768 };
+  assert.equal(
+    await (
+      await fetch('http://router.test/v1/chat/completions', { body: JSON.stringify(body) })
+    ).text(),
+    'OK',
+  );
+  assert.deepEqual(records, [
+    {
+      provider: 'router',
+      model: body.model,
+      contextWindow: 1048576,
+      maxTokens: 32768,
+      requestedMaxTokens: 32768,
+      reasoning: true,
+      effort: 'medium',
+    },
+  ]);
+  for (const effort of [undefined, 'off', 'none', '']) {
+    await assert.rejects(
+      fetch('http://router.test/v1/chat/completions', {
+        body: JSON.stringify({ ...body, reasoning_effort: effort }),
+      }),
+      /refusing a non-reasoning request/,
+    );
+  }
+  assert.equal(requests, 1);
+  assert.equal(records.length, 1);
+});
+
+test('router guard leaves other providers unchanged and accepts Request inputs', async () => {
+  const [router] = await resolvePiProviderCatalog(routerEnv, {
+    fetchImpl: modelsFetch({ id: 'model' }),
+  });
+  let requests = 0;
+  const upstream = async () => {
+    requests++;
+    return new Response('OK');
+  };
+  const fetch = providerReasoningFetch(upstream, [router]);
+  await fetch('http://native.test/v1/chat/completions', { body: 'unrelated' });
+  await fetch(
+    new Request('http://router.test/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'model', reasoning_effort: 'high' }),
+    }),
+  );
+  assert.equal(requests, 2);
+  assert.equal(providerReasoningFetch(upstream, undefined), upstream);
+});
+
+test('LiteLLM model info supplies real DeepSeek limits and reasoning', async () => {
+  const fetchImpl = async (url) => ({
+    ok: true,
+    json: async () => ({
+      data: String(url).endsWith('/model/info')
+        ? [
+            {
+              model_name: 'deepseek-v4p1-flash',
+              model_info: {
+                max_input_tokens: 1048576,
+                max_output_tokens: 393216,
+                supports_reasoning: true,
+              },
+            },
+          ]
+        : [{ id: 'deepseek-v4p1-flash' }, { id: 'unrelated' }],
+    }),
+  });
+  const [provider] = await resolvePiProviderCatalog(
+    { FARMSLOT_PI_OLLAMA: '0', LITELLM_URL: 'http://litellm.test/v1' },
+    { fetchImpl },
+  );
+  assert.equal(provider.models[0].contextWindow, 1048576);
+  assert.equal(provider.models[0].maxTokens, 393216);
+  assert.equal(provider.models[0].reasoning, true);
+  assert.equal(provider.models[1].contextWindow, 128000);
+});
+
+test('model-specific comparison limits cap DeepSeek without changing other LiteLLM models', async () => {
+  const fetchImpl = async (url) => ({
+    ok: true,
+    json: async () => ({
+      data: String(url).endsWith('/model/info')
+        ? [
+            {
+              model_name: 'deepseek-v4p1-flash',
+              model_info: {
+                max_input_tokens: 1048576,
+                max_output_tokens: 393216,
+                supports_reasoning: true,
+              },
+            },
+          ]
+        : [{ id: 'deepseek-v4p1-flash' }, { id: 'unrelated' }],
+    }),
+  });
+  const [provider] = await resolvePiProviderCatalog(
+    {
+      FARMSLOT_PI_OLLAMA: '0',
+      LITELLM_URL: 'http://litellm.test/v1',
+      FARMSLOT_PI_LITELLM_MODEL_LIMITS: JSON.stringify({
+        'deepseek-v4p1-flash': { contextWindow: 1048576, maxTokens: 32768, reasoning: true },
+      }),
+    },
+    { fetchImpl },
+  );
+  assert.equal(provider.models[0].contextWindow, 1048576);
+  assert.equal(provider.models[0].maxTokens, 32768);
+  assert.equal(provider.models[0].reasoning, true);
+  assert.equal(provider.models[1].maxTokens, 8192);
+  assert.equal(provider.models[1].reasoning, false);
+});
+
+test('model-specific fallback survives unavailable LiteLLM info and never inflates reported limits', async () => {
+  const env = {
+    FARMSLOT_PI_OLLAMA: '0',
+    LITELLM_URL: 'http://litellm.test/v1',
+    FARMSLOT_PI_LITELLM_MODEL_LIMITS: JSON.stringify({
+      'deepseek-v4p1-flash': { contextWindow: 1048576, maxTokens: 32768, reasoning: true },
+    }),
+  };
+  const [provider] = await resolvePiProviderCatalog(env, {
+    fetchImpl: async (url) =>
+      String(url).endsWith('/model/info')
+        ? { ok: false }
+        : {
+            ok: true,
+            json: async () => ({ data: [{ id: 'deepseek-v4p1-flash' }] }),
+          },
+  });
+  assert.equal(provider.models[0].contextWindow, 1048576);
+  assert.equal(provider.models[0].maxTokens, 32768);
+  assert.equal(provider.models[0].reasoning, true);
+  const [smaller] = await resolvePiProviderCatalog(env, {
+    fetchImpl: modelsFetch({
+      id: 'deepseek-v4p1-flash',
+      context_length: 262144,
+      max_output_tokens: 16384,
+    }),
+  });
+  assert.equal(smaller.models[0].contextWindow, 262144);
+  assert.equal(smaller.models[0].maxTokens, 16384);
+});
+
+test('model-specific configuration rejects malformed JSON, unknown fields and invalid values', async () => {
+  for (const value of [
+    'bad',
+    '[]',
+    'null',
+    '{"model":false}',
+    '{"model":{"context_length":1048576}}',
+    '{"model":{"maxTokens":0}}',
+    '{"model":{"reasoning":"maybe"}}',
+  ])
+    await assert.rejects(
+      resolvePiProviderCatalog(
+        { ...routerEnv, FARMSLOT_PI_ROUTER_MODEL_LIMITS: value },
+        { fetchImpl: modelsFetch({ id: 'model' }) },
+      ),
+      PiProviderConfigurationError,
+    );
+});
+
+test('reasoning-enabled LiteLLM requests have the same wire guard and record as router requests', async () => {
+  const [provider] = await resolvePiProviderCatalog(
+    { FARMSLOT_PI_OLLAMA: '0', LITELLM_URL: 'http://litellm.test/v1' },
+    {
+      fetchImpl: modelsFetch({ id: 'model', reasoning: true }),
+    },
+  );
+  let sent = 0;
+  const records = [];
+  const fetch = providerReasoningFetch(
+    async () => {
+      sent++;
+      return new Response('OK');
+    },
+    [provider],
+    (record) => records.push(record),
+  );
+  await assert.rejects(
+    fetch('http://litellm.test/v1/chat/completions', {
+      body: JSON.stringify({ model: 'model', reasoning_effort: 'none' }),
+    }),
+    /refusing a non-reasoning request/,
+  );
+  await fetch('http://litellm.test/v1/chat/completions', {
+    body: JSON.stringify({
+      model: 'model',
+      reasoning_effort: 'medium',
+      max_completion_tokens: 32768,
+    }),
+  });
+  assert.equal(sent, 1);
+  assert.equal(records[0].provider, 'litellm');
+  assert.equal(records[0].effort, 'medium');
+  assert.equal(records[0].reasoning, true);
+  assert.equal(records[0].requestedMaxTokens, 32768);
+});
+
+async function checkExtensionReload(extensionUrl) {
+  const assert = (await import('node:assert/strict')).default;
+  const { default: install } = await import(extensionUrl);
+  const originalEnv = process.env;
+  const originalFetch = globalThis.fetch;
+  process.env = {
+    ...originalEnv,
+    FARMSLOT_PI_OLLAMA: '0',
+    FARMSLOT_PI_REQUEST_TIMEOUT_MS: '300000',
+  };
+  for (const key of Object.keys(process.env))
+    if (
+      key.startsWith('FARMSLOT_PI_ROUTER_') ||
+      key === 'LITELLM_URL' ||
+      key === 'LITELLM_BASE_URL'
+    )
+      delete process.env[key];
+  process.env.FARMSLOT_PI_ROUTER_URL = 'http://router.test/v1';
+  console.error = () => {};
+  let sent = 0;
+  const baseFetch = async (input) => {
+    if (String(input).endsWith('/models'))
+      return Response.json({
+        data: [{ id: 'model', context_length: 1048576, max_output_tokens: 32768 }],
+      });
+    sent++;
+    return new Response('OK');
+  };
+  globalThis.fetch = baseFetch;
+  const load = async () => {
+    const events = new Map();
+    const records = [];
+    const runtime = { active: true };
+    await install({
+      on: (event, handler) => events.set(event, handler),
+      appendEntry: (_type, record) => {
+        if (!runtime.active) throw new Error('Extension runtime was invalidated by reload');
+        records.push(record);
+      },
+    });
+    return { events, records, runtime };
+  };
+  const request = () =>
+    globalThis.fetch('http://router.test/v1/chat/completions', {
+      body: JSON.stringify({
+        model: 'model',
+        reasoning_effort: 'medium',
+        max_completion_tokens: 32768,
+      }),
+    });
+  try {
+    const before = await load();
+    assert.equal(await (await request()).text(), 'OK');
+    const previousFetch = globalThis.fetch;
+    await before.events.get('session_shutdown')?.({ reason: 'reload' });
+    before.runtime.active = false;
+    const after = await load();
+    assert.equal(await (await request()).text(), 'OK');
+    assert.equal(before.records.length, 1);
+    assert.equal(after.records.length, 1, 'only the current extension records the request');
+    // SDK clients may retain the previous fetch function across a reload.
+    assert.equal(
+      await (
+        await previousFetch('http://router.test/v1/chat/completions', {
+          body: JSON.stringify({ model: 'model', reasoning_effort: 'medium' }),
+        })
+      ).text(),
+      'OK',
+    );
+    assert.equal(before.records.length, 1);
+    assert.equal(after.records.length, 1);
+    assert.equal(sent, 3);
+    await after.events.get('session_shutdown')?.({ reason: 'exit' });
+    assert.equal(globalThis.fetch, baseFetch);
+  } finally {
+    process.env = originalEnv;
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test('extension reload retires the old fetch recorder before its runtime is invalidated', () => {
+  // The supported Node floor needs explicit type stripping; a fresh process also
+  // isolates the extension's fetch and environment ownership from other tests.
+  const extensionUrl = new URL('./pi-farmslot-observability.ts', import.meta.url).href;
+  execFileSync(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      '--input-type=module',
+      '--eval',
+      `await (${checkExtensionReload.toString()})(${JSON.stringify(extensionUrl)});`,
+    ],
+    { stdio: 'pipe', timeout: 4000 },
+  );
 });

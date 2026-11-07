@@ -67,3 +67,33 @@ built-in preferences. Other principals' files do not need to change.
 Runner-validation scripts may intentionally pin a model for reproducible transport
 checks. Such explicit test selections are not application defaults and do not
 change when an operator saves a preference.
+
+## Pi compatible-provider limits
+
+Discovered model metadata supplies context and output limits. LiteLLM also uses
+`/v1/model/info` for limits and reasoning support, with one bounded metadata request
+per source rather than per model. When fields are absent,
+set `FARMSLOT_PI_ROUTER_CONTEXT`, `FARMSLOT_PI_ROUTER_MAX_TOKENS` and
+`FARMSLOT_PI_ROUTER_REASONING` in the execution node's pool environment.
+The same suffixes work with `FARMSLOT_PI_LITELLM` and `FARMSLOT_PI_OLLAMA`.
+Limits must be positive safe integers; reasoning accepts `true`/`false` or `1`/`0`.
+Invalid values refuse configuration rather than reverting to defaults. Only unknown
+limits keep the previous 128000-context and 8192-output defaults.
+
+Router models require reasoning for code work and default to reasoning enabled.
+The worker's thinking level supplies the provider's reasoning effort. An off or
+missing wire effort is refused before the request reaches the router. Provider
+registration logs show each model's limits; router request logs and Pi session
+entries record the actual effort and requested output budget, without prompts or keys.
+
+For a comparison budget on a shared provider, use `FARMSLOT_PI_LITELLM_MODEL_LIMITS`,
+a JSON object keyed by exact model ID, for example:
+
+```json
+{ "comparison-model": { "contextWindow": 1048576, "maxTokens": 32768, "reasoning": true } }
+```
+
+The same `_MODEL_LIMITS` suffix works for router and Ollama sources. A model-specific
+budget caps reported limits; it cannot enlarge them. When metadata is unavailable,
+these values supply the missing limits without affecting other models. Reasoning
+requests on LiteLLM use the same wire check and session record as router requests.

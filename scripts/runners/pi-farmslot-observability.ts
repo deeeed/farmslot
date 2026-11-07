@@ -5,7 +5,12 @@ import path from 'node:path';
 import { Type } from 'typebox';
 
 import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-hook-writer.mjs';
-import { deadlinePiFetch, resolvePiProviderCatalog } from './pi-farmslot-providers.mjs';
+import {
+  deadlinePiFetch,
+  PiProviderConfigurationError,
+  providerReasoningFetch,
+  resolvePiProviderCatalog,
+} from './pi-farmslot-providers.mjs';
 import {
   deliverTaskOnce,
   farmslotStatusLine,
@@ -42,6 +47,7 @@ function toolResult(text: string, isError = false) {
 export default async function (pi: {
   on: (event: string, handler: (...args: never[]) => unknown) => void;
   registerProvider?: (id: string, provider: Record<string, unknown>) => void;
+  appendEntry?: (type: string, data: Record<string, unknown>) => void;
   registerTool?: (tool: Record<string, unknown>) => void;
   registerCommand?: (name: string, spec: Record<string, unknown>) => void;
   sendUserMessage?: (text: string) => void;
@@ -51,15 +57,28 @@ export default async function (pi: {
     throw new Error('FARMSLOT_PI_REQUEST_TIMEOUT_MS must be a positive integer');
   let timeoutFailure: string | null = null;
   let abortOperation: (() => void) | undefined;
-  const boundedFetch = deadlinePiFetch(globalThis.fetch, timeoutMs, () => {
+  const originalFetch = globalThis.fetch;
+  const boundedFetch = deadlinePiFetch(originalFetch, timeoutMs, () => {
     if (abortOperation) {
       timeoutFailure = `Pi model request timed out after ${timeoutMs}ms and one retry`;
       abortOperation();
     }
   });
-  globalThis.fetch = boundedFetch;
+  let requestFetch: typeof globalThis.fetch = boundedFetch;
+  const ownedFetch: typeof globalThis.fetch = (input, options) => requestFetch(input, options);
+  globalThis.fetch = ownedFetch;
+  pi.on('session_shutdown', async () => {
+    // Cached SDK clients may retain this fetch function after Pi invalidates the
+    // old extension runtime. Retire its recorder even when another wrapper owns global fetch.
+    requestFetch = originalFetch;
+    if (globalThis.fetch === ownedFetch) globalThis.fetch = originalFetch;
+  });
   try {
     const catalog = await resolvePiProviderCatalog(process.env);
+    requestFetch = providerReasoningFetch(boundedFetch, catalog, (configuration) => {
+      console.error('[farmslot-pi] request', JSON.stringify(configuration));
+      pi.appendEntry?.('farmslot-model-request', configuration);
+    });
     for (const source of catalog) {
       pi.registerProvider?.(source.id, {
         name: source.name,
@@ -68,8 +87,20 @@ export default async function (pi: {
         api: 'openai-completions',
         models: source.models,
       });
+      for (const model of source.models)
+        console.error(
+          '[farmslot-pi] registered',
+          JSON.stringify({
+            provider: source.id,
+            model: model.id,
+            contextWindow: model.contextWindow,
+            maxTokens: model.maxTokens,
+            reasoning: model.reasoning,
+          }),
+        );
     }
   } catch (error) {
+    if (error instanceof PiProviderConfigurationError) throw error;
     // Optional local/router discovery must not block xAI/Grok launch.
     if (process.env.FARMSLOT_PI_PROVIDERS_DEBUG) {
       console.error('[farmslot-pi] provider discovery failed', error);

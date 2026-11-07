@@ -1,4 +1,4 @@
-// OpenAI-compatible PI providers (Ollama, LiteLLM, custom router). Fail open.
+// OpenAI-compatible Pi providers: optional discovery, validated model configuration.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -105,10 +105,10 @@ export function listPiProviderSources(env = process.env) {
   return sources.filter((source) => source.baseUrl);
 }
 
-export async function fetchOpenAiModelIds(
+export async function fetchOpenAiModels(
   baseUrl,
   apiKey,
-  { fetchImpl = globalThis.fetch, timeoutMs = 400 } = {},
+  { fetchImpl = globalThis.fetch, timeoutMs = 400, endpoint = 'models', idField = 'id' } = {},
 ) {
   if (typeof fetchImpl !== 'function') return [];
   const controller = new AbortController();
@@ -116,11 +116,14 @@ export async function fetchOpenAiModelIds(
   try {
     const headers = {};
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-    const response = await fetchImpl(`${baseUrl}/models`, { headers, signal: controller.signal });
+    const response = await fetchImpl(`${baseUrl}/${endpoint}`, {
+      headers,
+      signal: controller.signal,
+    });
     if (!response.ok) return [];
     const body = await response.json();
     const rows = Array.isArray(body?.data) ? body.data : [];
-    return rows.map((row) => (typeof row?.id === 'string' ? row.id : '')).filter(Boolean);
+    return rows.filter((row) => typeof row?.[idField] === 'string' && row[idField].trim());
   } catch {
     return [];
   } finally {
@@ -128,15 +131,109 @@ export async function fetchOpenAiModelIds(
   }
 }
 
-function modelEntry(id) {
+export class PiProviderConfigurationError extends Error {}
+
+function positiveInteger(value, name) {
+  if (value === undefined || value === null) return undefined;
+  if (
+    (typeof value !== 'number' && typeof value !== 'string') ||
+    (typeof value === 'string' && !/^[1-9]\d*$/.test(value)) ||
+    !Number.isSafeInteger(Number(value)) ||
+    Number(value) <= 0
+  )
+    throw new PiProviderConfigurationError(`${name} must be a positive safe integer`);
+  return Number(value);
+}
+
+function reasoningSetting(value, name) {
+  if (value === undefined || value === null) return undefined;
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  throw new PiProviderConfigurationError(`${name} must be true, false, 1 or 0`);
+}
+
+function configuredModelLimits(raw, name) {
+  if (raw === undefined) return new Map();
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new PiProviderConfigurationError(`${name} must be a JSON object keyed by model id`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new PiProviderConfigurationError(`${name} must be a JSON object keyed by model id`);
+  return new Map(
+    Object.entries(parsed).map(([id, settings]) => {
+      if (
+        !settings ||
+        typeof settings !== 'object' ||
+        Array.isArray(settings) ||
+        Object.keys(settings).some(
+          (key) => !['contextWindow', 'maxTokens', 'reasoning'].includes(key),
+        )
+      )
+        throw new PiProviderConfigurationError(
+          `${name}/${id} must contain contextWindow, maxTokens or reasoning`,
+        );
+      return [
+        id,
+        {
+          contextWindow: positiveInteger(settings.contextWindow, `${name}/${id} contextWindow`),
+          maxTokens: positiveInteger(settings.maxTokens, `${name}/${id} maxTokens`),
+          reasoning: reasoningSetting(settings.reasoning, `${name}/${id} reasoning`),
+        },
+      ];
+    }),
+  );
+}
+
+function modelLimit(reported, cap, fallback, name) {
+  const real = positiveInteger(reported, name);
+  return cap === undefined ? (real ?? fallback) : Math.min(real ?? cap, cap);
+}
+
+function modelEntry(row, source, defaults, info = {}, configured = {}) {
+  const context =
+    row.context_length ??
+    row.max_model_len ??
+    row.context_window ??
+    row.contextWindow ??
+    info.max_input_tokens;
+  const output =
+    row.max_output_tokens ??
+    row.max_completion_tokens ??
+    row.max_tokens ??
+    row.maxTokens ??
+    info.max_output_tokens;
+  const reasoning =
+    reasoningSetting(
+      row.reasoning ?? row.supports_reasoning ?? info.supports_reasoning,
+      `${source}/${row.id} reasoning`,
+    ) ??
+    configured.reasoning ??
+    defaults.reasoning;
+  if ((source === 'router' || configured.reasoning === true) && !reasoning)
+    throw new PiProviderConfigurationError(
+      `Model ${source}/${row.id} requires reasoning for code work`,
+    );
   return {
-    id,
-    name: id,
-    reasoning: false,
+    id: row.id,
+    name: row.id,
+    reasoning,
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 8192,
+    contextWindow: modelLimit(
+      context,
+      configured.contextWindow,
+      defaults.contextWindow,
+      `${source}/${row.id} context`,
+    ),
+    maxTokens: modelLimit(
+      output,
+      configured.maxTokens,
+      defaults.maxTokens,
+      `${source}/${row.id} maxTokens`,
+    ),
   };
 }
 
@@ -144,12 +241,86 @@ export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
   const sources = listPiProviderSources(env);
   const resolved = await Promise.all(
     sources.map(async (source) => {
-      const ids = await fetchOpenAiModelIds(source.baseUrl, source.apiKey, opts);
-      if (ids.length === 0) return null;
-      return { ...source, models: ids.map(modelEntry) };
+      const prefix = `FARMSLOT_PI_${source.id.toUpperCase()}`;
+      const defaults = {
+        contextWindow: positiveInteger(env[`${prefix}_CONTEXT`], `${prefix}_CONTEXT`) ?? 128000,
+        maxTokens: positiveInteger(env[`${prefix}_MAX_TOKENS`], `${prefix}_MAX_TOKENS`) ?? 8192,
+        reasoning:
+          reasoningSetting(env[`${prefix}_REASONING`], `${prefix}_REASONING`) ??
+          source.id === 'router',
+      };
+      const overrides = configuredModelLimits(
+        env[`${prefix}_MODEL_LIMITS`],
+        `${prefix}_MODEL_LIMITS`,
+      );
+      const fetchOptions = { timeoutMs: source.id === 'litellm' ? 5000 : 400, ...opts };
+      const [rows, infos] = await Promise.all([
+        fetchOpenAiModels(source.baseUrl, source.apiKey, fetchOptions),
+        source.id === 'litellm'
+          ? fetchOpenAiModels(source.baseUrl, source.apiKey, {
+              ...fetchOptions,
+              endpoint: 'model/info',
+              idField: 'model_name',
+            })
+          : [],
+      ]);
+      if (rows.length === 0) return null;
+      const infoById = new Map(infos.map((entry) => [entry.model_name, entry.model_info]));
+      return {
+        ...source,
+        models: rows.map((row) =>
+          modelEntry(row, source.id, defaults, infoById.get(row.id) ?? {}, overrides.get(row.id)),
+        ),
+      };
     }),
   );
   return resolved.filter(Boolean);
+}
+
+/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effort: string, requestedMaxTokens?: number }} PiModelRequestConfiguration */
+
+/**
+ * Refuse a reasoning-enabled request that Pi downgraded to non-reasoning; record actual wire effort.
+ * @param {(configuration: PiModelRequestConfiguration) => void} [onRequest]
+ */
+export function providerReasoningFetch(fetchImpl, providers = [], onRequest) {
+  const byUrl = new Map(
+    providers
+      .filter((source) => ['router', 'litellm'].includes(source.id))
+      .map((source) => [`${source.baseUrl}/chat/completions`, source]),
+  );
+  if (byUrl.size === 0) return fetchImpl;
+  return async (input, options = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const provider = byUrl.get(url);
+    if (provider) {
+      const raw = options.body ?? (input instanceof Request ? await input.clone().text() : '');
+      const payload = JSON.parse(raw);
+      const model = provider.models.find((entry) => entry.id === payload.model);
+      if (model && (provider.id === 'router' || model.reasoning)) {
+        const effort = payload.reasoning_effort;
+        if (
+          !model.reasoning ||
+          typeof effort !== 'string' ||
+          !effort.trim() ||
+          ['off', 'none'].includes(effort)
+        )
+          throw new PiProviderConfigurationError(
+            `Model ${provider.id}/${model.id} requires a reasoning effort; refusing a non-reasoning request`,
+          );
+        onRequest?.({
+          provider: provider.id,
+          model: model.id,
+          contextWindow: model.contextWindow,
+          maxTokens: model.maxTokens,
+          requestedMaxTokens: payload.max_completion_tokens ?? payload.max_tokens,
+          reasoning: true,
+          effort,
+        });
+      }
+    }
+    return fetchImpl(input, options);
+  };
 }
 
 /** Native auth excludes extensions; their authenticated model discovery is the admission check. */

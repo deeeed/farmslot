@@ -459,8 +459,9 @@ test('CDP compositor probe retries when the page context navigates before evalua
   assert.equal(evaluationAttempt, 2);
 });
 
-test('CDP compositor probe reports sustained navigation churn as suspended', async () => {
-  const report = await probeCdpCompositorInteractivity(
+test('CDP compositor probe reports sustained navigation churn as suspended', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 });
+  const pending = probeCdpCompositorInteractivity(
     {
       async call() {
         throw new Error('Inspected target navigated or closed');
@@ -469,6 +470,11 @@ test('CDP compositor probe reports sustained navigation churn as suspended', asy
     10,
   );
 
+  // Let the rejected evaluation schedule its retry, then exhaust that budget
+  // before the outer 10ms deadline without depending on host timer precision.
+  await Promise.resolve();
+  t.mock.timers.tick(9);
+  const report = await pending;
   assert.equal(report.status, 'suspended');
   assert.match(report.reason ?? '', /Inspected target navigated or closed/u);
 });
