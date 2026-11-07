@@ -294,3 +294,54 @@ test('a product Ruby file does not invent a pack Ruby requirement', async (t) =>
   );
   assert.deepEqual(actual.tools.ruby, {});
 });
+
+function preMergeObservation(): ToolchainObservation {
+  const value = observation();
+  value.requirements = [
+    { tool: 'node', range: '24.16.0', source: '.nvmrc' },
+    { tool: 'node', range: '^24.16.0', source: 'package.json engines.node' },
+    { tool: 'node', range: '24.22.1', source: '.tool-versions' },
+    { tool: 'node', range: '24.22.1', source: 'selected pack toolchain pins' },
+    { tool: 'yarn', range: '^4.14.1', source: 'package.json engines.yarn' },
+  ];
+  return value;
+}
+
+test('pr-complete can launch the verified pack runtime before updating an old branch pin', () => {
+  const result = checkToolchainObservation(preMergeObservation(), 'slot', true, 'pr-complete');
+  assert.equal(result.status, 'verified');
+  assert.match(result.detail, /\.nvmrc.*deferred.*pr-complete/i);
+});
+
+test('ordinary development and launches without an explicit bootstrap Node still enforce the branch pin', () => {
+  assert.equal(
+    checkToolchainObservation(preMergeObservation(), 'slot', true, 'dev').status,
+    'mismatch',
+  );
+  const legacy = checkToolchainObservation(preMergeObservation(), 'slot', false, 'pr-complete');
+  assert.equal(legacy.status, 'unverified');
+  assert.equal(legacy.retry, false);
+  assert.match(legacy.detail, /\.nvmrc.*deferred/);
+  const noPackNode = preMergeObservation();
+  noPackNode.requirements = noPackNode.requirements.filter(
+    (entry) => entry.source !== 'selected pack toolchain pins' && entry.source !== '.tool-versions',
+  );
+  assert.equal(
+    checkToolchainObservation(noPackNode, 'slot', true, 'pr-complete').status,
+    'mismatch',
+  );
+});
+
+test('pre-merge admission still refuses an incompatible engine, pack Node, or package-manager child', () => {
+  for (const kind of ['engine', 'pack', 'child']) {
+    const value = preMergeObservation();
+    if (kind === 'engine') value.requirements[1].range = '<24.20.0';
+    if (kind === 'pack') value.requirements[3].range = '24.13.0';
+    if (kind === 'child') value.tools.packageManagerNode.version = '24.13.0';
+    assert.equal(
+      checkToolchainObservation(value, 'slot', true, 'pr-complete').status,
+      'mismatch',
+      kind,
+    );
+  }
+});

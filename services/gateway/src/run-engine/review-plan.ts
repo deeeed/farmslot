@@ -4,7 +4,9 @@ import {
   type AgentContext,
   effectiveRequiredReviewCount,
   isQualifyingReview,
+  isRecord,
   parseGitHubRef,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   qualifyingPassingReviews,
   type ReviewLineageOption,
   type ReviewPolicy,
@@ -529,4 +531,15 @@ export function assertPrimaryReviewContext(
       'pr-mismatch',
       'the requested review lineage belongs to a different repository/PR',
     );
+}
+
+/** The recorded admission refusal, not an invented reviewer verdict. */
+export function reviewBudgetStopReason(run: Pick<Run, 'steps'>): string | undefined {
+  const rejection = run.steps.find((step) => step.name === 'review')?.outputs
+    ?.reviewLaunchRejection;
+  return isRecord(rejection) &&
+    rejection.code === PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached &&
+    typeof rejection.message === 'string'
+    ? rejection.message
+    : undefined;
 }

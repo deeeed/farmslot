@@ -786,6 +786,7 @@ async function routeAuthorizedMethod(
     case Methods.NATIVE_SESSION_CREATE:
     case Methods.NATIVE_SESSION_ENSURE:
     case Methods.NATIVE_SESSION_READ:
+    case Methods.NATIVE_SESSION_SET_APPROVAL_MODE:
     case Methods.NATIVE_SESSION_LIST:
     case Methods.NATIVE_SESSION_SEND:
     case Methods.NATIVE_SESSION_RESPOND:

@@ -61,6 +61,7 @@ function piTool(name: string, args: unknown): NativeSessionTool {
 export const piNativeAdapter: NativeAdapter = {
   capabilities: {
     modes: ['default'],
+    approvalModes: ['ask', 'bypass'],
     streaming: true,
     tools: true,
     approvals: false,
@@ -207,6 +208,10 @@ export const piNativeAdapter: NativeAdapter = {
     return {
       nativeSessionId,
       capabilities: piNativeAdapter.capabilities,
+      // Pi's native tools never ask; the advertised approvals=false remains authoritative.
+      async setApprovalMode() {
+        if (command) throw new Error('Wait for the current turn before changing approvals');
+      },
       async send(text, id) {
         if (closed) throw new Error('Pi session is closed');
         if (command) throw new Error('Pi turn is still active');

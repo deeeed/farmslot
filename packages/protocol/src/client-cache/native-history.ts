@@ -211,6 +211,7 @@ export function nativeImplementSession(session: NativeSessionInfo): NativeSessio
     runner: session.runner,
     cwd: session.cwd,
     mode: 'default',
+    ...(session.approvalMode ? { approvalMode: session.approvalMode } : {}),
     ...(session.model ? { model: session.model } : {}),
     ...(session.effort ? { effort: session.effort } : {}),
     ...(session.profileId

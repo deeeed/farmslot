@@ -15,6 +15,7 @@ import {
 } from '@farmslot/protocol';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { cloneStoreSnapshot } from '../core/store-snapshot.js';
 import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import {
@@ -186,8 +187,12 @@ export class PRMonitorStore {
   }
 
   /** Scheduler access only. Network methods must use the principal-filtered list/get paths. */
-  snapshot(): PRMonitorStoreData {
-    return structuredClone(this.data);
+  snapshot(): PRMonitorStoreData;
+  snapshot<Result>(select: (data: Readonly<PRMonitorStoreData>) => Result): Result;
+  snapshot<Result>(
+    select?: (data: Readonly<PRMonitorStoreData>) => Result,
+  ): PRMonitorStoreData | Result {
+    return cloneStoreSnapshot(this.data, select);
   }
 
   get(id: string, ownerId: string): PRMonitor {

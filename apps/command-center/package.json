@@ -1,9 +1,9 @@
 {
   "name": "@farmslot/command-center",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"bash ../../scripts/dev-gateway.sh\" \"yarn --cwd ui dev\" \"bash ../../scripts/dev-node.sh\"",
+    "dev": "concurrently \"bash ../../scripts/dev-gateway.sh\" \"bash ../../scripts/dev-ui.sh\" \"bash ../../scripts/dev-node.sh\"",
     "farmdev": "bash ../../scripts/dev.sh",
     "dev:gateway": "yarn workspace @farmslot/gateway dev",
     "dev:ui": "yarn --cwd ui dev",

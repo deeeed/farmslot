@@ -26,6 +26,8 @@ import {
   type NativeInterest,
 } from './native-observations.js';
 
+const { onNativeSessionChange } = await import('./native-session-changes.js');
+
 const a: Principal = {
   id: 'producer-owner-a',
   subject: { type: 'person', displayName: 'A' },
@@ -510,6 +512,7 @@ test('authorized collection recovery notifies an observer whose initial source r
 async function partialFixture(
   t: import('node:test').TestContext,
   publish?: (key: NativeInterest['key']) => void,
+  localClient?: (home: string) => import('@farmslot/agent-runtime/native').NativeSessionClient,
 ) {
   const { mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
@@ -561,7 +564,7 @@ async function partialFixture(
   const source = new GatewayNativeObservations((key) => {
     published.push(key);
     publish?.(key);
-  });
+  }, localClient?.(home));
   const connection = {};
   source.attachClient(connection, () => owner);
   const receipt = {
@@ -1108,7 +1111,7 @@ async function actualProducerFixture(t: import('node:test').TestContext) {
     changeAccount(observedAt: string) {
       status = { ...status, account: { ...status.account, login: 'signed-out', observedAt } };
     },
-    sampledAt: () => producer.profileStatus(profile.id).account.observedAt,
+    sampledAt: async () => (await producer.profileStatus(profile.id)).account.observedAt,
   };
 }
 
@@ -1119,7 +1122,7 @@ test('actual native manager recovery and queued cancellation publish exact histo
   assert.equal(manager.read(f.owner.id, f.info.id).session.state, 'failed');
   assert.notEqual(f.journal(), before);
   assert.match(f.journal(), /session.closed/);
-  f.producer.fence(); // Sync scan also covers commits before fs.watch delivers its callback.
+  await f.producer.fence(); // The fence covers commits before fs.watch delivers its callback.
   await f.publication(f.history.map((interest) => interest.key));
   const recovered = f.journal();
   await manager.close(f.owner.id, f.info.id);
@@ -1128,7 +1131,7 @@ test('actual native manager recovery and queued cancellation publish exact histo
   assert.equal(receipt.state, 'failed');
   assert.equal(receipt.outcome, 'interrupted');
   assert.equal(receipt.submitted, false);
-  f.producer.fence();
+  await f.producer.fence();
   await f.publication(f.history.map((interest) => interest.key));
   assert.equal(f.probes(), 1, 'Journal activity must not start another account probe');
 });
@@ -1140,7 +1143,7 @@ test('actual native account sampling publishes only profile keys without journal
   const observedAt = '2026-10-24T00:01:00.000Z';
   f.changeAccount(observedAt);
   t.mock.timers.tick(60_000); // Existing source collector, not a panel-read timer.
-  for (let turn = 0; f.sampledAt() !== observedAt; turn++) {
+  for (let turn = 0; (await f.sampledAt()) !== observedAt; turn++) {
     assert(turn < 100, 'Shared structured account sample did not complete');
     await Promise.resolve();
   }
@@ -1185,4 +1188,143 @@ test('a native catalog observer counts as interest in the node model catalogs', 
     () => ({}),
   );
   assert.equal(source.hasCatalogInterest(), true);
+});
+
+test('admitted native source changes wake internal readers without any client interest', (t) => {
+  const machine = `completion-${randomUUID()}`;
+  const socket = { readyState: WebSocket.OPEN } as WebSocket;
+  const source = new GatewayNativeObservations(() => undefined);
+  let changes = 0;
+  const unsubscribe = onNativeSessionChange(machine, a.id, () => {
+    changes++;
+  });
+  registerNode(
+    machine,
+    1,
+    socket,
+    undefined,
+    undefined,
+    { ownerPrincipalId: a.id, supportsObservations: true },
+    { principalId: 'completion-node', valid: () => true },
+  );
+  t.after(() => {
+    unsubscribe();
+    source.dispose();
+    unregisterByWs(socket);
+  });
+  const receipt = {
+    version: 1 as const,
+    nodeId: machine,
+    ownerId: a.id,
+    incarnation: 'first',
+    revision: 0,
+    ready: true,
+  };
+  assert.throws(() => source.acceptRemote({}, receipt, () => true), { code: 'AUTH_FORBIDDEN' });
+  assert.throws(() => source.acceptRemote(socket, receipt, () => false), {
+    code: 'AUTH_FORBIDDEN',
+  });
+  assert.equal(changes, 0);
+  source.acceptRemote(socket, receipt, () => true);
+  assert.equal(changes, 1);
+  source.acceptRemote(socket, { ...receipt, revision: 1, changed: ['profiles'] }, () => true);
+  assert.equal(changes, 1);
+  source.acceptRemote(socket, { ...receipt, revision: 2, changed: ['native-session'] }, () => true);
+  assert.equal(changes, 2);
+  unsubscribe();
+  source.acceptRemote(socket, { ...receipt, revision: 3 }, () => true);
+  assert.equal(changes, 2);
+});
+
+for (const change of ['advance', 'disconnect', 'assignment'] as const)
+  test(`final aggregate fence rejects earlier remote ${change} during the last local scan`, async (t) => {
+    const { NativeHostObservation } = await import('@farmslot/agent-runtime/native/observation');
+    const { NativeSessionClient } = await import('@farmslot/agent-runtime/native');
+    const f = await partialFixture(
+      t,
+      undefined,
+      (home) => new NativeSessionClient(join(home, 'local-source'), 'local'),
+    );
+    await f.source.startLocal(f.owner.id);
+    const fence = NativeHostObservation.prototype.fence;
+    let entered!: () => void;
+    const scanning = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let scans = 0;
+    t.mock.method(
+      NativeHostObservation.prototype,
+      'fence',
+      async function (this: InstanceType<typeof NativeHostObservation>) {
+        if (++scans === 2) {
+          entered();
+          await held;
+        }
+        return fence.call(this);
+      },
+    );
+    const pending = f.source.read(
+      f.connection,
+      [f.interest],
+      async () => ({
+        sessions: [],
+        unavailableExecutionNodes: [f.offline, f.old].map((executionNodeId) => ({
+          executionNodeId,
+        })),
+      }),
+      () => ({}),
+    );
+    const rejected = assert.rejects(pending, {
+      code: change === 'advance' ? 'RESOURCE_OBSERVATION_CHANGED' : 'NATIVE_SOURCE_UNAVAILABLE',
+    });
+    try {
+      await scanning;
+      if (change === 'advance')
+        f.source.acceptRemote(f.socket, { ...f.receipt, revision: 1 }, () => true);
+      else if (change === 'disconnect') unregisterByWs(f.socket);
+      else {
+        const { loadCredentialStore } = await import('../security/credential-store.js');
+        const principal = f.issued.get(f.healthy)!;
+        for (const credential of loadCredentialStore().credentials.filter(
+          (item) => item.principalId === principal,
+        ))
+          f.writer.revokeCredential(credential.id);
+        f.writer.retirePrincipals([principal]);
+      }
+      release();
+      await rejected;
+    } finally {
+      release();
+    }
+  });
+
+test('a revoked disconnected assignment stays unavailable while healthy hosts remain readable', async (t) => {
+  const f = await partialFixture(t);
+  const { loadCredentialStore } = await import('../security/credential-store.js');
+  const disconnected = f.issued.get(f.offline)!;
+  for (const credential of loadCredentialStore().credentials.filter(
+    (item) => item.principalId === disconnected,
+  ))
+    f.writer.revokeCredential(credential.id);
+  let read = false;
+  const unavailableExecutionNodes = [f.offline, f.old, 'local'].map((executionNodeId) => ({
+    executionNodeId,
+  }));
+  const result = await f.source.read(
+    f.connection,
+    [f.interest],
+    async () => {
+      read = true;
+      const { admitNativeCollectionNode } = await import('./native-observations.js');
+      admitNativeCollectionNode(f.healthy);
+      return { sessions: [], unavailableExecutionNodes };
+    },
+    () => ({}),
+  );
+  assert.equal(read, true);
+  assert.deepEqual(result.payload.unavailableExecutionNodes, unavailableExecutionNodes);
 });

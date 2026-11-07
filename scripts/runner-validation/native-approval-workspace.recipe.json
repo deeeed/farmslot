@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Standalone native approvals and non-Git workspace",
+  "description": "Run from macOS GUI/Aqua with the isolated Agent Chrome profile on FARMSLOT_CDP_PORT and Claude, Codex and Pi authenticated. Uses a private gateway and native host, no farm runs or production service changes. Haiku, Luna and DeepSeek run tiny read-only tools. FARMSLOT_NATIVE_PROOF_REUSE may name this proof's retained result to reuse its closed tool evidence without replay.",
+  "workflow": {
+    "entry": "native-approval-workspace",
+    "nodes": {
+      "native-approval-workspace": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-approval-workspace.mts \"${FARMSLOT_NATIVE_APPROVAL_OUTPUT:-/tmp/native-approval-workspace-proof}\"",
+        "intent": "Verify native tool bypass, policy change, requester attribution, non-Git Changes and Files through authenticated gateway and real Command Center clicks.",
+        "timeout_ms": 600000,
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

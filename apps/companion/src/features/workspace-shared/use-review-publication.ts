@@ -185,7 +185,8 @@ export function useReviewPublication(
       } else {
         setRefreshState({ identity: refreshIdentity, pending: true, error: null });
         const result = await refreshReviewGateView(
-          () => client.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, { runId: run.id }),
+          () =>
+            client.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, { runId: run.id }, null),
           async () => {
             if (!current() || !query) throw new Error('The review view changed during refresh.');
             const state = await getResourceCache()?.retry(query);

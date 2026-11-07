@@ -84,6 +84,7 @@ rmSync(join(root, 'ready.json'), { force: true });
 const socket = join(socketDirectory(root), 's');
 privateDirectory(socketDirectory(root));
 durableWrite(join(root, 'host.json'), {
+  supportsApprovalMode: true,
   supportsStandaloneDelegation: true,
   supportsEnsure: true,
   supportsWorkers: true,
@@ -215,8 +216,13 @@ async function cleanup(): Promise<void> {
     }
   };
   attempt(() => rmSync(join(root, 'ready.json'), { force: true }));
-  if (tree) attempt(() => tree!.stop());
-  else if (hostReleased) errors.push(new Error('Released native host has no process census'));
+  if (tree) {
+    try {
+      await tree.stop();
+    } catch (error) {
+      errors.push(error);
+    }
+  } else if (hostReleased) errors.push(new Error('Released native host has no process census'));
   const sessions = join(root, 'sessions');
   const records: Array<{ path: string; info: import('@farmslot/protocol').NativeSessionInfo }> = [];
   // A census failure must not skip the independently recorded runner groups.
@@ -239,13 +245,13 @@ async function cleanup(): Promise<void> {
         }
       });
     }
-  const stopped = () =>
-    (!tree || tree.empty()) && records.every(({ info }) => !alive(-info.processPid!));
+  const stopped = async () =>
+    (!tree || (await tree.empty())) && records.every(({ info }) => !alive(-info.processPid!));
   const deadline = Date.now() + 5_000;
-  let confirmedStopped = stopped();
+  let confirmedStopped = await stopped();
   while (!confirmedStopped && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25));
-    confirmedStopped = stopped();
+    confirmedStopped = await stopped();
   }
   if (!confirmedStopped)
     errors.push(new Error('Native descendants remain alive; replacement owner is blocked'));

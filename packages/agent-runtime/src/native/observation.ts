@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, type FSWatcher, lstatSync, readdirSync, readFileSync, watch } from 'node:fs';
+import { constants, existsSync, type FSWatcher, type Stats, watch } from 'node:fs';
+import { lstat, open, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { Methods, type NativeProfileStatusResult } from '@farmslot/protocol';
 
-import { listNativeProfiles, providerAccountsConfigPath } from './account-profiles.js';
+import { listNativeProfilesAsync, providerAccountsConfigPath } from './account-profiles.js';
 import type { NativeSessionClient } from './client.js';
 import type { HostIdentity } from './ipc.js';
 import { routeNativeProfile } from './profile-service.js';
-import { alive, readJson } from './storage.js';
+import { alive, readJsonAsync } from './storage.js';
 
 /** Private node transport metadata. Never contains session IDs, paths or account data. */
 export interface NativeSourceReceipt {
@@ -96,6 +97,10 @@ export class NativeHostObservation {
   private recovering?: Promise<void>;
   private arming = false;
   private retrying?: Promise<void>;
+  private scanTail: Promise<unknown> = Promise.resolve();
+  private queuedScan?: Promise<SourceSnapshot>;
+  private queuedScanGeneration = -1;
+  private readonly journals = new Map<string, { stamp: string; digest: string }>();
 
   constructor(
     private readonly client: NativeSessionClient,
@@ -104,7 +109,7 @@ export class NativeHostObservation {
     private readonly home?: string,
     private readonly observeAccounts: () => Promise<NativeProfileStatusResult[]> = async () => {
       const statuses: NativeProfileStatusResult[] = [];
-      for (const profile of listNativeProfiles(home)) {
+      for (const profile of await listNativeProfilesAsync(home)) {
         if (profile.state === 'active')
           statuses.push(
             (await routeNativeProfile(client, ownerId, Methods.NATIVE_PROFILE_STATUS, {
@@ -139,15 +144,20 @@ export class NativeHostObservation {
     const generation = this.generation;
     try {
       this.arm();
+      const before = await this.scan();
+      if (generation !== this.generation || this.stopped) return;
       const change = this.changes;
-      const before = this.scan();
       // A failed profile sample affects only profile reads (ADR-057 Amendment 11).
       const accounts = await this.observeAccounts().catch((error: unknown) =>
         this.sampleFailed(error),
       );
+      // Watcher delivery fences the account sample; the async scan fences the durable bytes.
+      const sampleChanged = change !== this.changes;
       if (generation !== this.generation || this.stopped) return;
-      const after = this.scan();
-      if (this.failed || change !== this.changes || before.digest !== after.digest)
+      const after = await this.scan();
+      if (generation !== this.generation || this.stopped) return;
+      if (this.failed) throw new NativeSourceUnavailable('arming-source-changed');
+      if (sampleChanged || before.digest !== after.digest)
         throw new NativeSourceUnavailable('arming-source-changed');
       this.setAccounts(accounts);
       this.snapshot = after;
@@ -161,8 +171,8 @@ export class NativeHostObservation {
       };
       this.publish(this.current());
     } catch (error) {
-      if (generation === this.generation)
-        this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'arming-failed');
+      if (generation !== this.generation || this.stopped) return;
+      this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'arming-failed');
       if (error instanceof NativeSourceUnavailable) throw error;
       throw new NativeSourceUnavailable('arming-failed');
     } finally {
@@ -192,12 +202,16 @@ export class NativeHostObservation {
     if (this.receipt.ready) this.fail('source-stopped');
   }
 
-  /** Sync rescan closes the fs.watch delivery window before and after each actual read. */
-  fence(): NativeSourceReceipt {
+  /** Fresh scans close the fs.watch delivery window without blocking other RPCs. */
+  async fence(): Promise<NativeSourceReceipt> {
     if (!this.receipt.ready || this.stopped)
       throw new NativeSourceUnavailable(this.stopped ? 'source-stopped' : 'source-not-ready');
+    const generation = this.generation;
     try {
-      const current = this.scan();
+      const current = await this.scan();
+      if (generation !== this.generation || this.stopped)
+        throw new NativeSourceUnavailable('source-stopped');
+      if (!this.receipt.ready) throw new NativeSourceUnavailable('source-not-ready');
       if (current.host !== this.snapshot?.host || current.accounts !== this.snapshot?.accounts) {
         throw new NativeSourceUnavailable(
           current.host !== this.snapshot?.host ? 'host-changed' : 'profiles-changed',
@@ -209,14 +223,22 @@ export class NativeHostObservation {
       }
       return this.current();
     } catch (error) {
-      this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'scan-failed');
+      if (generation === this.generation) {
+        this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'scan-failed');
+        // A fence can see a registration change before its watcher delivers it.
+        if (
+          error instanceof NativeSourceUnavailable &&
+          (error.reason === 'host-changed' || error.reason === 'profiles-changed')
+        )
+          this.recover();
+      }
       if (error instanceof NativeSourceUnavailable) throw error;
       throw new NativeSourceUnavailable('scan-failed');
     }
   }
 
   async read<T>(read: () => Promise<T>): Promise<{ value: T; nativeSource: NativeSourceReceipt }> {
-    const before = this.fence();
+    const before = await this.fence();
     let value!: T;
     let failure: unknown;
     let rejected = false;
@@ -226,7 +248,7 @@ export class NativeHostObservation {
       rejected = true;
       failure = error;
     }
-    const after = this.fence();
+    const after = await this.fence();
     assertNativeSourceCurrent(before, after, 'node-read');
     if (rejected) throw failure;
     return { value, nativeSource: before };
@@ -234,8 +256,8 @@ export class NativeHostObservation {
 
   /** Marked profile reads consume the one shared structured account sample, with its original age.
    * Imperative profile/status retains its existing on-demand probe outside this source. */
-  profileStatus(profileId: string): NativeProfileStatusResult {
-    this.fence();
+  async profileStatus(profileId: string): Promise<NativeProfileStatusResult> {
+    await this.fence();
     if (!this.accountsAvailable)
       throw Object.assign(
         new Error(
@@ -307,14 +329,14 @@ export class NativeHostObservation {
     targets.set(configParent, targets.get(configParent) ?? false);
 
     for (const [path, recursive] of targets) {
-      const watcher = watch(path, { recursive }, () => this.changed());
+      const watcher = watch(path, { recursive }, () => void this.changed());
       watcher.on('error', () => {
         this.fail('watcher-error');
       });
       this.watchers.push(watcher);
     }
   }
-  private changed(): void {
+  private async changed(): Promise<void> {
     if (this.stopped) return;
     this.changes++;
     if (this.arming) return;
@@ -322,13 +344,15 @@ export class NativeHostObservation {
       this.recover();
       return;
     }
+    const generation = this.generation;
     try {
       this.arm();
-      if (this.receipt.ready) this.fence();
+      if (this.receipt.ready) await this.fence();
       // Registration changes fail the account fingerprint fence and re-arm the owner.
       // Provider login/keychain state has no reliable subscribed feed. Its one structured
       // collector runs at >=60s; journal activity never starts additional account probes.
     } catch (error) {
+      if (generation !== this.generation || this.stopped) return;
       this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'watcher-rescan-failed');
       // A filesystem lifecycle event can reattach the one owner to a replacement host.
       this.recover();
@@ -352,22 +376,24 @@ export class NativeHostObservation {
     this.refreshing = true;
     const generation = this.generation;
     const wasReady = !this.failed && Boolean(this.snapshot);
-    const change = this.changes;
+    let change: number;
 
     let before: SourceSnapshot;
     void Promise.resolve()
       .then(async () => {
-        before = this.scan();
+        before = await this.scan();
+        change = this.changes;
         return this.observeAccounts().catch((error: unknown) => this.sampleFailed(error));
       })
-      .then((accounts) => {
+      .then(async (accounts) => {
         if (generation !== this.generation || this.stopped) return;
         if (change !== this.changes) {
           this.queued = true;
           return;
         }
         const digest = accountsDigest(accounts);
-        const after = this.scan();
+        const after = await this.scan();
+        if (generation !== this.generation || this.stopped) return;
         if (after.accounts !== before.accounts) {
           this.queued = true;
           return;
@@ -406,11 +432,35 @@ export class NativeHostObservation {
     }, 60_000);
     this.timer.unref();
   }
-  private scan(): SourceSnapshot {
+  /** At most one active scan and one queued batch. A fence never joins an older active scan. */
+  private scan(): Promise<SourceSnapshot> {
+    if (!this.queuedScan || this.queuedScanGeneration !== this.generation) {
+      const generation = this.generation;
+      let scan: Promise<SourceSnapshot>;
+      const run = () => {
+        if (this.queuedScan === scan) this.queuedScan = undefined;
+        if (generation !== this.generation) throw new NativeSourceUnavailable('source-stopped');
+        return this.scanFiles(generation);
+      };
+      scan = this.scanTail.then(run, run);
+      this.queuedScan = scan;
+      this.queuedScanGeneration = generation;
+      this.scanTail = scan;
+    }
+    return this.queuedScan;
+  }
+  private async scanFiles(generation: number): Promise<SourceSnapshot> {
+    const deadline = Date.now() + 30_000;
+    const check = () => {
+      if (generation !== this.generation || this.stopped)
+        throw new NativeSourceUnavailable('source-stopped');
+      if (Date.now() >= deadline) throw new NativeSourceUnavailable('scan-deadline');
+    };
+    check();
     const parts: string[] = [];
     let host = 'absent';
-    if (existsSync(this.client.root)) {
-      const stat = lstatSync(this.client.root);
+    const stat = await statIfPresent(this.client.root);
+    if (stat) {
       if (
         !stat.isDirectory() ||
         stat.isSymbolicLink() ||
@@ -419,24 +469,24 @@ export class NativeHostObservation {
       )
         throw new NativeSourceUnavailable('unsafe-source-root');
       parts.push(`${stat.dev}:${stat.ino}`);
-      if (existsSync(join(this.client.root, 'host.json'))) {
-        const identity = readJson<HostIdentity>(join(this.client.root, 'host.json'));
-        const worker = readJson<{ pid: number }>(join(this.client.root, 'worker.json'));
-        const ready = readJson<{ pid: number }>(join(this.client.root, 'ready.json'));
+      if (await statIfPresent(join(this.client.root, 'host.json'))) {
+        const identity = await readJsonAsync<HostIdentity>(join(this.client.root, 'host.json'));
+        const worker = await readJsonAsync<{ pid: number }>(join(this.client.root, 'worker.json'));
+        const ready = await readJsonAsync<{ pid: number }>(join(this.client.root, 'ready.json'));
         if (
           (identity.executionNodeId ?? 'local') !== this.client.executionNodeId ||
           // host.json identifies the supervisor; readiness belongs to its registered child.
           ready.pid !== worker.pid ||
           !alive(identity.pid) ||
           !alive(worker.pid) ||
-          !lstatSync(identity.socket).isSocket()
+          !(await lstat(identity.socket)).isSocket()
         )
           throw new NativeSourceUnavailable('host-identity-invalid');
         host = hash(JSON.stringify([identity, worker.pid]));
       }
       const sessions = join(this.client.root, 'sessions');
-      if (existsSync(sessions)) {
-        const directory = lstatSync(sessions);
+      const directory = await statIfPresent(sessions);
+      if (directory) {
         if (
           !directory.isDirectory() ||
           directory.isSymbolicLink() ||
@@ -445,11 +495,13 @@ export class NativeHostObservation {
         )
           throw new NativeSourceUnavailable('unsafe-session-directory');
       }
-      if (existsSync(sessions))
-        for (const file of readdirSync(sessions).sort()) {
+      const retained = new Set<string>();
+      if (directory)
+        for (const file of (await readdir(sessions)).sort()) {
+          check();
           if (!file.endsWith('.journal')) continue;
           const path = join(sessions, file);
-          const stat = lstatSync(path);
+          const stat = await lstat(path);
           if (
             !stat.isFile() ||
             stat.isSymbolicLink() ||
@@ -457,17 +509,51 @@ export class NativeHostObservation {
             stat.mode & 0o077
           )
             throw new NativeSourceUnavailable('unsafe-journal');
-          const bytes = readFileSync(path);
-          // Incomplete append is uncertain, not a committed new revision. Never truncate here.
-          if (bytes.length && bytes.at(-1) !== 10)
-            throw new NativeSourceUnavailable('incomplete-journal-append');
-          parts.push(file, `${stat.dev}:${stat.ino}`, hash(bytes));
+          const stamp = journalStamp(stat);
+          retained.add(file);
+          const cached = this.journals.get(file);
+          let digest = cached?.stamp === stamp ? cached.digest : undefined;
+          if (digest === undefined) {
+            const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+            try {
+              const hash = createHash('sha256');
+              const buffer = Buffer.allocUnsafe(64 * 1024);
+              let position = 0;
+              let lastByte: number | undefined;
+              while (position < stat.size) {
+                check();
+                const { bytesRead } = await handle.read(
+                  buffer,
+                  0,
+                  Math.min(buffer.length, stat.size - position),
+                  position,
+                );
+                if (!bytesRead) throw new NativeSourceUnavailable('journal-changed-during-scan');
+                hash.update(buffer.subarray(0, bytesRead));
+                lastByte = buffer[bytesRead - 1];
+                position += bytesRead;
+              }
+              // Observe a committed prefix, never truncate or consume an incomplete append.
+              if (position && lastByte !== 10)
+                throw new NativeSourceUnavailable('incomplete-journal-append');
+              digest = hash.digest('hex');
+              const after = await handle.stat();
+              check();
+              if (!after.isFile() || after.uid !== process.getuid?.() || after.mode & 0o077)
+                throw new NativeSourceUnavailable('unsafe-journal');
+              if (journalStamp(after) === stamp) this.journals.set(file, { stamp, digest });
+            } finally {
+              await handle.close();
+            }
+          }
+          parts.push(file, `${stat.dev}:${stat.ino}`, digest);
         }
+      for (const file of this.journals.keys()) if (!retained.has(file)) this.journals.delete(file);
     }
     host = hash([host, parts[0] ?? 'absent'].join('\n'));
     let profiles: unknown;
     try {
-      profiles = listNativeProfiles(this.home);
+      profiles = await listNativeProfilesAsync(this.home);
     } catch {
       // An unreadable profile file fails the profile sample, not session observation.
       profiles = 'unreadable';
@@ -477,6 +563,18 @@ export class NativeHostObservation {
     parts.push(host, accounts);
     return { host, accounts, digest: hash(parts.join('\n')) };
   }
+}
+async function statIfPresent(file: string) {
+  try {
+    return await lstat(file);
+  } catch (error) {
+    // Missing host/session directories are an observed source state, not an I/O failure.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+function journalStamp(stat: Stats): string {
+  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
 }
 function nearestDirectory(path: string): string {
   let current = path;

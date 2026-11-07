@@ -1,0 +1,1 @@
+- Keep review refresh pending until the gateway responds or disconnects.

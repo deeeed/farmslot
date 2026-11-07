@@ -142,6 +142,13 @@ Restart, replay, archive and retirement MUST retain ownership metadata wherever
 admission history survives. A later update-branch run gets its own two rounds.
 Existing review and publication checks still apply.
 
+When pipeline REVIEW exhausts its budget, the run MUST wait at the existing result decision
+with its slot, checkout and worker retained. A budget refusal is not a reviewer
+verdict. The operator may extend the budget, accept the captured result with a
+written reason without publishing it, or close it. Extensions keep their existing eligibility rules. A grant enables review to
+resume on the same run; it does not start work by itself. Named-slot re-binding
+remains only a fallback for historical failed runs that already lost ownership.
+
 ### Scoped extension
 
 **Status:** Accepted (lead, 2026-10-15) under ADR-063 Amendment 1.
@@ -192,7 +199,7 @@ An extension MUST NOT make stale reviews or an old package publishable.
 
 Each admitted reviewer attempt settles once, through the admission owner, when
 it ends. An attempt that returned its required result for the reviewed head with
-a pass or issues verdict is counted and records nothing. These ends are
+a pass or issues verdict is counted and records `kind: verdict`. These ends are
 no-verdict and spend no round; `Run.reviewRoundSettlements` records the reason
 and time against the receipt:
 
@@ -206,17 +213,18 @@ and time against the receipt:
   restart that re-enters DISPATCH at the same generation keeps its receipt, and
   a monitor-only replay still settles the attempt its DISPATCH admitted.
 
-A receipt without a settlement counts, so in-flight, older and rolled-back
-receipts fail closed. A launch or delivery with an uncertain outcome still
-counts, because its reviewer may be running, and so does a legacy tmux reviewer.
+A receipt without a recorded verdict spends no round. New admissions record
+`kind: pending` and reserve concurrent launch capacity while the reviewer is in
+flight. Uncertain delivery does not count as a completed verdict. Retained
+validated contexts and recorded result rows preserve historical verdict charges.
 Admitting a receipt again (a reattach) keeps its settlement. When a settled
 attempt's pass or issues verdict arrives later, through restart recovery or a
-workspace monitor replay that records it, the settlement is cleared and the
+workspace monitor replay that records it, its disposition becomes `verdict` and the
 attempt counts, except for the farm-caused replacement below.
 
 Settlements MUST be merged across the admission scope and copied to every live
-run in it. Rounds used are admissions minus no-verdict settlements;
-`ReviewRoundBudget.noVerdict` counts the settlements against `noVerdictLimit`
+run in it. Rounds used count only admissions with a recorded reviewer verdict;
+`ReviewRoundBudget.noVerdict` counts only ended no-verdict outcomes against `noVerdictLimit`
 (default 3).
 
 Below the cap, run behaviour is unchanged. At the cap, these automatic launches
@@ -436,3 +444,11 @@ An admitted continuation stays protected until it finishes, even
 when its predecessor's deadline passes. Deletion and review admission share a
 storage fence and revalidate PR activity before deleting. Unknown identity,
 unavailable storage or unconfirmed process closure leaves the files intact.
+
+## Verdict-based charging
+
+ADR-063 Amendment 11 separates admission from budget consumption. Before dispatch, the serialized admission owner persists `kind: pending` in the existing round-disposition map. This reserves capacity but increases neither rounds used nor the no-verdict count. An accepted prompt, a live session or a recovered startup acknowledgement MUST NOT charge a round.
+
+Only validated reviewer-result ingestion records `kind: verdict`, in the same durable snapshot as the result or after its verified persistence. That transition spends one round and is idempotent. Recovery reconciles a persisted validated context before skipping an already-ingested result. A failed, cancelled, missing-signal or unstarted reviewer spends none, including when its failure settlement is missing. Ended failures retain the existing no-verdict disposition and automatic-launch cap. The established infrastructure-fallback refund remains free.
+
+Existing recorded verdicts seed retained histories through their validated reviewer contexts or recorded result rows. A historical failed/cancelled attempt or an admission alone is not verdict evidence. Receipt identities, PR/update-branch scopes, extensions and history deduplication are unchanged. Dispositions survive retirement of an earlier run. Pending live launches still reserve the last available capacity. A context-free startup reservation belongs to its current gateway and engine generation; an orphan from an earlier gateway does not pin capacity. Saved live reviewer contexts retain their reservations across restart. A confirmed terminal reviewer without a verdict releases capacity.

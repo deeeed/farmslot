@@ -211,3 +211,17 @@ test('observations survive restart, failed reads preserve facts and stale reads 
   assert.deepEqual(readFileSync(file), bytes);
   assert.equal((await PRMonitorStore.load(file)).get(monitor.id, 'owner').lifecycle, 'paused');
 });
+
+test('snapshot projection filters before copying and keeps monitor state private', async (t) => {
+  const { store } = await fixture(t);
+  const wanted = await store.subscribe('owner', config);
+  await store.subscribe('other-owner', { ...config, pr: { ...config.pr, number: 43 } });
+  const selected = store.snapshot((data) =>
+    data.monitors.filter((monitor) => monitor.id === wanted.id),
+  );
+  assert.deepEqual(selected, [wanted]);
+  selected[0].config.project = 'Outside mutation';
+  selected.pop();
+  assert.equal(store.get(wanted.id, 'owner').config.project, config.project);
+  assert.equal(store.snapshot().monitors.length, 2);
+});

@@ -11,6 +11,7 @@ test('node native execution rejects other owners and conflicting execution ident
   assert.deepEqual(service.declaration, {
     ownerPrincipalId: 'owner',
     supportsStandaloneDelegation: true,
+    supportsApprovalMode: true,
     supportsEnsure: true,
     supportsWorkers: true,
     supportsProfiles: true,

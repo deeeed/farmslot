@@ -1006,13 +1006,13 @@ if (process.argv[2] === 'serve') {
         clearTimeout(timer);
       }
     };
-    const waitStopped = async (alive: () => boolean) => {
+    const waitStopped = async (alive: () => boolean | Promise<boolean>) => {
       const deadline = Date.now() + 3_000;
-      while (alive() && Date.now() < deadline) await pause(50);
-      if (alive()) throw new Error('Owned proof process did not stop');
+      while ((await alive()) && Date.now() < deadline) await pause(50);
+      if (await alive()) throw new Error('Owned proof process did not stop');
     };
     try {
-      nativeTree?.capture();
+      await nativeTree?.capture();
     } catch (error) {
       failures.push(error);
     }
@@ -1045,8 +1045,8 @@ if (process.argv[2] === 'serve') {
       failures.push(error);
     }
     try {
-      if (nativeTree && !nativeTree.empty()) nativeTree.stop();
-      if (nativeTree) await waitStopped(() => !nativeTree!.empty());
+      if (nativeTree && !(await nativeTree.empty())) await nativeTree.stop();
+      if (nativeTree) await waitStopped(async () => !(await nativeTree!.empty()));
     } catch (error) {
       failures.push(error);
     }
@@ -1056,7 +1056,7 @@ if (process.argv[2] === 'serve') {
       const host = JSON.parse(readFileSync(hostFile, 'utf8'));
       stopped = stopped && !matchesProcess(host.pid, native.root);
     }
-    stopped = stopped && (!nativeTree || nativeTree.empty());
+    stopped = stopped && (!nativeTree || (await nativeTree.empty()));
     try {
       writeFileSync(path.join(out, 'gateway.log'), logs.join(''));
       if (stopped) rmSync(scratch, { recursive: true, force: true });

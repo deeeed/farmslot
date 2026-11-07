@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -41,38 +43,42 @@ function setup() {
   };
 }
 
-test('source admits the actual supervisor and its separately registered ready host', async () => {
-  const fixture = setup();
-  let supervisorPid: number | undefined;
-  try {
-    assert.deepEqual(await new NativeSessionClient(fixture.root).list('A'), []);
-    const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json'));
-    supervisorPid = supervisor.pid;
-    const worker = readJson<{ pid: number }>(join(fixture.root, 'worker.json'));
-    const ready = readJson<{ pid: number }>(join(fixture.root, 'ready.json'));
-    assert.notEqual(supervisor.pid, worker.pid);
-    assert.equal(ready.pid, worker.pid);
-    await fixture.source.start();
-    assert.equal(fixture.source.fence().ready, true);
-    writeFileSync(join(fixture.root, 'ready.json'), JSON.stringify({ pid: supervisor.pid }));
-    assert.throws(() => fixture.source.fence(), NativeSourceUnavailable);
-  } finally {
-    fixture.source.stop();
-    if (supervisorPid && alive(supervisorPid)) process.kill(supervisorPid, 'SIGTERM');
-    const deadline = Date.now() + 4000;
-    while (existsSync(join(fixture.root, 'lock')) && Date.now() < deadline) await delay(20);
-    assert.equal(existsSync(join(fixture.root, 'lock')), false, 'Private native owner must stop');
-    rmSync(socketDirectory(fixture.root), { recursive: true, force: true });
-    fixture.close();
-  }
-});
+test(
+  'source admits the actual supervisor and its separately registered ready host',
+  { skip: process.env.NATIVE_OBSERVATION_LIVE !== '1' },
+  async () => {
+    const fixture = setup();
+    let supervisorPid: number | undefined;
+    try {
+      assert.deepEqual(await new NativeSessionClient(fixture.root).list('A'), []);
+      const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json'));
+      supervisorPid = supervisor.pid;
+      const worker = readJson<{ pid: number }>(join(fixture.root, 'worker.json'));
+      const ready = readJson<{ pid: number }>(join(fixture.root, 'ready.json'));
+      assert.notEqual(supervisor.pid, worker.pid);
+      assert.equal(ready.pid, worker.pid);
+      await fixture.source.start();
+      assert.equal((await fixture.source.fence()).ready, true);
+      writeFileSync(join(fixture.root, 'ready.json'), JSON.stringify({ pid: supervisor.pid }));
+      await assert.rejects(() => fixture.source.fence(), NativeSourceUnavailable);
+    } finally {
+      fixture.source.stop();
+      if (supervisorPid && alive(supervisorPid)) process.kill(supervisorPid, 'SIGTERM');
+      const deadline = Date.now() + 4000;
+      while (existsSync(join(fixture.root, 'lock')) && Date.now() < deadline) await delay(20);
+      assert.equal(existsSync(join(fixture.root, 'lock')), false, 'Private native owner must stop');
+      rmSync(socketDirectory(fixture.root), { recursive: true, force: true });
+      fixture.close();
+    }
+  },
+);
 
 test('armed source sees real journal appends before fs.watch callback; no command or host launch', async () => {
   const fixture = setup();
   try {
-    assert.throws(() => fixture.source.fence(), NativeSourceUnavailable);
+    await assert.rejects(() => fixture.source.fence(), NativeSourceUnavailable);
     await fixture.source.start();
-    const before = fixture.source.fence();
+    const before = await fixture.source.fence();
     for (const entry of [
       { info: { id: 'session', ownerPrincipalId: 'A', state: 'idle' } },
       { event: { sequence: 1, type: 'message.delta', text: 'fragment' } },
@@ -81,7 +87,7 @@ test('armed source sees real journal appends before fs.watch callback; no comman
       { info: { id: 'session', ownerPrincipalId: 'A', state: 'closed' } },
     ])
       appendDurable(join(fixture.root, 'sessions', 'session.journal'), entry);
-    const after = fixture.source.fence();
+    const after = await fixture.source.fence();
     assert.equal(after.ready, true);
     assert.ok(after.revision > before.revision);
     assert.equal(sameNativeSource(before, after), false);
@@ -102,10 +108,16 @@ test('healthy journal append supersedes a held read without revoking source admi
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let began!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      began = resolve;
+    });
     const pending = fixture.source.read(async () => {
+      began();
       await held;
       return { text: 'old' };
     });
+    await reading;
     appendDurable(join(fixture.root, 'sessions', 's.journal'), { pending: [] });
     release();
     await assert.rejects(pending, { code: 'RESOURCE_OBSERVATION_CHANGED' });
@@ -138,7 +150,7 @@ test('partial append revokes admission without truncation; fresh armed receipt r
     const old = fixture.source.current();
     const journal = join(fixture.root, 'sessions', 's.journal');
     writeFileSync(journal, '{', { mode: 0o600 });
-    assert.throws(() => fixture.source.fence(), NativeSourceUnavailable);
+    await assert.rejects(() => fixture.source.fence(), NativeSourceUnavailable);
     assert.ok(
       logs.some((args) => String(args[1]).includes('"reason":"incomplete-journal-append"')),
     );
@@ -189,8 +201,10 @@ test('a failed profile sample keeps sessions observable; profile reads recover o
   );
   try {
     await source.start();
-    assert.equal(source.fence().ready, true);
-    assert.throws(() => source.profileStatus('profile'), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
+    assert.equal((await source.fence()).ready, true);
+    await assert.rejects(() => source.profileStatus('profile'), {
+      code: 'NATIVE_PROFILES_UNAVAILABLE',
+    });
     assert.match(JSON.stringify(warnings), /Account capability unavailable/);
     fail = false;
     const before = receipts.length;
@@ -199,8 +213,8 @@ test('a failed profile sample keeps sessions observable; profile reads recover o
     for (let i = 0; i < 50 && receipts.length === before; i++)
       await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(receipts.at(-1)?.changed, ['profiles']);
-    assert.equal(source.profileStatus('profile').account.login, 'authenticated');
-    assert.equal(source.fence().ready, true);
+    assert.equal((await source.profileStatus('profile')).account.login, 'authenticated');
+    assert.equal((await source.fence()).ready, true);
   } finally {
     source.stop();
     fixture.close();
@@ -208,7 +222,10 @@ test('a failed profile sample keeps sessions observable; profile reads recover o
 });
 
 test('an unreadable profile file leaves sessions observable until it is repaired', async (t) => {
-  t.mock.method(console, 'warn', () => undefined);
+  const warnings: unknown[][] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => {
+    warnings.push(args);
+  });
   const fixture = setup();
   try {
     const file = join(fixture.home, 'provider-accounts.json');
@@ -221,22 +238,28 @@ test('an unreadable profile file leaves sessions observable until it is repaired
     );
     try {
       await source.start();
-      assert.equal(source.fence().ready, true);
-      assert.throws(() => source.profileStatus('profile'), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
+      assert.equal((await source.fence()).ready, true);
+      await assert.rejects(() => source.profileStatus('profile'), {
+        code: 'NATIVE_PROFILES_UNAVAILABLE',
+      });
       // The repaired file re-arms the source through its watcher; profile reads come back.
       // The ceiling only reports a hang: a loaded host re-arms in more than 2 s.
       writeFileSync(file, JSON.stringify({ version: 1, accounts: {} }), { mode: 0o600 });
       for (let i = 0; i < 500; i++) {
         try {
-          source.profileStatus('profile');
+          await source.profileStatus('profile');
         } catch (error) {
           // Re-arming briefly reports the whole source unavailable, then profiles return.
           if ((error as { code?: string }).code === 'NOT_FOUND') break;
         }
         await delay(20);
       }
-      assert.throws(() => source.profileStatus('profile'), { code: 'NOT_FOUND' });
-      assert.equal(source.fence().ready, true);
+      await assert.rejects(
+        () => source.profileStatus('profile'),
+        { code: 'NOT_FOUND' },
+        JSON.stringify(warnings),
+      );
+      assert.equal((await source.fence()).ready, true);
     } finally {
       source.stop();
     }
@@ -290,12 +313,95 @@ test('marked profile readers reuse one real capability sample and preserve its o
   );
   try {
     await source.start();
-    assert.equal(source.profileStatus('profile').account.observedAt, status.account.observedAt);
-    assert.equal(source.profileStatus('profile').account.observedAt, status.account.observedAt);
+    assert.equal(
+      (await source.profileStatus('profile')).account.observedAt,
+      status.account.observedAt,
+    );
+    assert.equal(
+      (await source.profileStatus('profile')).account.observedAt,
+      status.account.observedAt,
+    );
     assert.equal(probes, 1);
-    assert.throws(() => source.profileStatus('deleted'), { code: 'NOT_FOUND' });
+    await assert.rejects(() => source.profileStatus('deleted'), { code: 'NOT_FOUND' });
   } finally {
     source.stop();
     fixture.close();
+  }
+});
+
+test('unchanged journal fences reuse bytes and a same-size rewrite still changes the source', async (t) => {
+  const f = setup();
+  const journal = join(f.root, 'sessions', 'cache.journal');
+  writeFileSync(journal, '{"value":1}\n', { mode: 0o600 });
+  let reads = 0;
+  const read = fs.readFileSync;
+  const open = fsPromises.open;
+  t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof read>) => {
+    if (args[0] === journal) reads++;
+    return read(...args);
+  });
+  t.mock.method(fsPromises, 'open', (...args: Parameters<typeof open>) => {
+    if (args[0] === journal) reads++;
+    return open(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await f.source.start();
+    const before = await f.source.fence();
+    const warmed = reads;
+    await f.source.fence();
+    await f.source.fence();
+    assert.equal(reads, warmed, 'Unchanged fences read journal contents again');
+    writeFileSync(journal, '{"value":2}\n', { mode: 0o600 });
+    const after = await f.source.fence();
+    assert.ok(reads > warmed, 'Same-size rewrite bypassed the fingerprint');
+    assert.ok(after.revision > before.revision);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    f.close();
+  }
+});
+
+test('a fresh fence queues behind an older active scan rather than inheriting its prefix', async (t) => {
+  const f = setup();
+  const journal = join(f.root, 'sessions', 'held.journal');
+  let entered!: () => void;
+  const opened = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const open = fsPromises.open;
+  let intercepted = false;
+  t.mock.method(fsPromises, 'open', async (...args: Parameters<typeof open>) => {
+    const file = await open(...args);
+    if (args[0] === journal && !intercepted) {
+      intercepted = true;
+      entered();
+      await held;
+    }
+    return file;
+  });
+  syncBuiltinESMExports();
+  try {
+    await f.source.start();
+    writeFileSync(journal, '{"value":1}\n', { mode: 0o600 });
+    const before = f.source.fence();
+    assert.ok(before instanceof Promise);
+    await opened;
+    appendDurable(journal, { value: 2 });
+    const after = f.source.fence();
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    const [a, b] = await Promise.all([before, after]);
+    assert.ok(b.revision > a.revision, 'Post-append fence reused a pre-append active scan');
+  } finally {
+    release();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    f.close();
   }
 });

@@ -40,12 +40,12 @@ async function json(file: string, value: unknown) {
 async function stopTree(tree: NativeProcessTree) {
   const stopped = async () => {
     const deadline = Date.now() + 3_000;
-    while (!tree.empty() && Date.now() < deadline) await pause(50);
-    return tree.empty();
+    while (!(await tree.empty()) && Date.now() < deadline) await pause(50);
+    return await tree.empty();
   };
-  tree.stop();
+  await tree.stop();
   if (!(await stopped())) {
-    tree.terminate();
+    await tree.terminate();
     if (!(await stopped())) throw new Error('Owned proof process did not stop');
   }
 }

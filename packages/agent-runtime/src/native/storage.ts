@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import {
   closeSync,
+  constants,
   fsyncSync,
   ftruncateSync,
   lstatSync,
@@ -8,8 +9,10 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  type Stats,
   writeFileSync,
 } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { ProcessIdentity } from './process-tree.js';
@@ -53,12 +56,23 @@ export function durableWrite(path: string, value: unknown): void {
     closeSync(directory);
   }
 }
-export function readJson<T>(path: string): T {
-  const stat = lstatSync(path);
+function assertPrivateFile(stat: Stats): void {
   if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0)
     throw new Error('Native state file must be private and owned by this OS user');
+}
+export function readJson<T>(path: string): T {
+  assertPrivateFile(lstatSync(path));
   // Only trusted, private runtime files use this decoder. IPC validates its input separately.
   return JSON.parse(readFileSync(path, 'utf8')) as T;
+}
+export async function readJsonAsync<T>(path: string): Promise<T> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    assertPrivateFile(await file.stat());
+    return JSON.parse(await file.readFile('utf8')) as T;
+  } finally {
+    await file.close();
+  }
 }
 export function alive(pid: number): boolean {
   try {

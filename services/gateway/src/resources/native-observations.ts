@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+import type { NativeSessionClient } from '@farmslot/agent-runtime/native';
 import {
   assertNativeSourceCurrent,
   NativeHostObservation,
@@ -43,6 +44,7 @@ import {
   type NativeCatalogSourceReceipt,
   NativeCatalogSourceUnavailable,
 } from './native-catalog-changes.js';
+import { publishNativeSessionChange } from './native-session-changes.js';
 import { resourceRevisions } from './revisions.js';
 
 /** Matches the parent's explicit private collection/detail union. No wildcard identities. */
@@ -144,8 +146,23 @@ export interface NativeReadAuthority {
   nodes: string[];
   owners?: Readonly<Record<string, string>>;
 }
+const authorityGuards = new WeakMap<NativeReadAuthority, () => void>();
 function sourceOwner(authority: NativeReadAuthority, node: string): string {
   return authority.owners?.[node] ?? authority.ownerId;
+}
+
+function supportsNativeSource(authority: NativeReadAuthority, node: string): boolean {
+  const registered = node === 'local' ? undefined : getNode(node);
+  const validOwner =
+    !authority.owners ||
+    isGenerationZeroPrincipal(loadCredentialStore().principals, sourceOwner(authority, node));
+  return (
+    validOwner &&
+    (node === 'local' ||
+      (registered?.nativeSessions?.ownerPrincipalId === sourceOwner(authority, node) &&
+        (registered.nativeSessions as { supportsObservations?: boolean }).supportsObservations ===
+          true))
+  );
 }
 
 /** Used unchanged for read admission, stamping and event/key filtering. Authentication is resolved
@@ -189,7 +206,8 @@ export async function authorizeNativeObservation(
         );
       if (key.family !== 'native-session' || !key.workerId)
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Pinned native history key required');
-      const { binding } = await authorizeNativeWorkerHistory(interest.method, interest.params);
+      const worker = await authorizeNativeWorkerHistory(interest.method, interest.params);
+      const { binding } = worker;
       const target = interest.params.worker as { runId?: string };
       if (
         target.runId !== key.workerId ||
@@ -200,7 +218,15 @@ export async function authorizeNativeObservation(
             interest.session.workerLeaseId !== binding.leaseId))
       )
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native history binding changed');
-      return { ownerId: binding.ownerPrincipalId, nodes: [binding.executionNodeId] };
+      const ownerId = binding.ownerPrincipalId;
+      const authority = { ownerId, nodes: [binding.executionNodeId] };
+      authorityGuards.set(authority, () =>
+        runWithSessionOriginator(reader, () => {
+          if (worker.revalidate().binding.ownerPrincipalId !== ownerId)
+            throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native worker owner changed');
+        }),
+      );
+      return authority;
     }
     const ownerId = isStandaloneAdmin(reader)
       ? standaloneOwner(reader, key.nodeId)
@@ -259,7 +285,10 @@ export class GatewayNativeObservations {
     return [...this.clients.values()].some((client) => client.catalogInterest !== undefined);
   }
 
-  constructor(private readonly invalidate: (key: NativeObservationKey) => void) {
+  constructor(
+    private readonly invalidate: (key: NativeObservationKey) => void,
+    private readonly localClient: NativeSessionClient = nativeSessionManager,
+  ) {
     this.stopCatalogNotices = nativeCatalogChanges.subscribe((change) =>
       this.catalogChanged(change),
     );
@@ -352,7 +381,7 @@ export class GatewayNativeObservations {
     if (!ownsLocalNativeProfile(ownerId))
       throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native local source is unavailable');
     this.local?.stop();
-    this.local = new NativeHostObservation(nativeSessionManager, ownerId, (receipt) => {
+    this.local = new NativeHostObservation(this.localClient, ownerId, (receipt) => {
       this.localReceipt = receipt;
       this.invalidateSource(receipt.nodeId, receipt.ownerId, receipt.changed);
     });
@@ -443,12 +472,14 @@ export class GatewayNativeObservations {
     const client = this.clients.get(connection);
     if (!client) throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native read connection ended');
     const reader = client.principal();
+    const readerMetadata = JSON.stringify(reader);
     client.standaloneAdmin = isStandaloneAdmin(reader);
     let collectionOwners: Readonly<Record<string, string>> | undefined;
     const sources = new Map<string, NativeSourceReceipt>();
     let catalogBefore: NativeCatalogSourceReceipt | undefined;
     const poolCatalogBefore = this.poolCatalogRevision;
     const metadata = new Map<NativeInterest, NativeCollectionMetadata>();
+    const authorities = new Map<NativeInterest, NativeReadAuthority>();
     let admitted: Set<string> | undefined;
     const skipped = new Set<string>();
     const skippedReceipts = new Map<string, string | undefined>();
@@ -457,6 +488,7 @@ export class GatewayNativeObservations {
       if (!NATIVE_OBSERVED_READS.has(interest.method))
         throw new GatewayMethodError('INVALID_PARAMS', 'Native commands cannot enter the cache');
       const authority = await authorizeNativeObservation(reader, interest);
+      authorities.set(interest, authority);
       // An authorized collection must hear recovery even when its initial source
       // is unavailable. Detail aliases still require the route's exact session identity.
       if (!('sessionId' in interest.key) || !interest.key.sessionId)
@@ -508,7 +540,7 @@ export class GatewayNativeObservations {
         try {
           if (node === 'local' && this.local && !this.local.current().ready)
             await this.local.retry();
-          sources.set(node, this.fence(node, sourceOwner(authority, node)));
+          sources.set(node, await this.fence(node, sourceOwner(authority, node)));
           if (partialList) admitted!.add(node);
         } catch (error) {
           // Only source/transport unavailability is a partial-inventory outcome.
@@ -526,6 +558,59 @@ export class GatewayNativeObservations {
         }
       }
     }
+    const aggregateFence = () => {
+      if (
+        this.clients.get(connection) !== client ||
+        JSON.stringify(client.principal()) !== readerMetadata
+      )
+        throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native read authority changed');
+      for (const [interest, authority] of authorities) {
+        authorityGuards.get(authority)?.();
+        const beforeMetadata = metadata.get(interest);
+        if (
+          beforeMetadata &&
+          !sameCollectionMetadata(
+            beforeMetadata,
+            collectionMetadata(authority.ownerId, authority.nodes, authority.owners),
+          )
+        )
+          throw new NativeSourceUnavailable();
+        if (interest.method === 'native.session.catalog') continue;
+        for (const node of authority.nodes) {
+          if (skipped.has(node)) {
+            if (
+              skippedReceipts.get(node) !==
+              JSON.stringify(node === 'local' ? this.localReceipt : this.remote.get(node)?.receipt)
+            )
+              throw new NativeSourceUnavailable();
+            let recovered = false;
+            try {
+              if (supportsNativeSource(authority, node)) {
+                this.cachedFence(node, sourceOwner(authority, node));
+                recovered = true;
+              }
+            } catch (error) {
+              if (
+                !(
+                  error instanceof NativeSourceUnavailable || isNodeTransportUnavailableError(error)
+                )
+              )
+                throw error;
+            }
+            if (recovered) throw new NativeSourceUnavailable();
+          } else {
+            const before = sources.get(node);
+            if (!before) throw new NativeSourceUnavailable('gateway-read-receipt-missing');
+            assertNativeSourceCurrent(
+              before,
+              this.cachedFence(node, sourceOwner(authority, node)),
+              'gateway-read',
+            );
+          }
+        }
+      }
+    };
+    aggregateFence();
     const resourceState = sample();
     let payload!: T;
     let failure: unknown;
@@ -542,6 +627,7 @@ export class GatewayNativeObservations {
     for (const interest of interests) {
       const verified = { ...interest, ...(session ? { session } : {}) };
       const authority = await authorizeNativeObservation(client.principal(), verified);
+      authorities.set(interest, authority);
       if (
         client.principal().id !== reader.id ||
         (client.principal().generation ?? 0) !== (reader.generation ?? 0)
@@ -573,23 +659,10 @@ export class GatewayNativeObservations {
           )
             throw new NativeSourceUnavailable();
           // Recovery during a held page changes its availability projection. Refetch it.
-          const registered = node === 'local' ? undefined : getNode(node);
-          const validOwner =
-            !authority.owners ||
-            isGenerationZeroPrincipal(
-              loadCredentialStore().principals,
-              sourceOwner(authority, node),
-            );
-          const supportsSource =
-            validOwner &&
-            (node === 'local' ||
-              (registered?.nativeSessions?.ownerPrincipalId === sourceOwner(authority, node) &&
-                (registered.nativeSessions as { supportsObservations?: boolean })
-                  .supportsObservations === true));
           let recovered = false;
           try {
-            if (supportsSource) {
-              this.fence(node, sourceOwner(authority, node));
+            if (supportsNativeSource(authority, node)) {
+              await this.fence(node, sourceOwner(authority, node));
               recovered = true;
             }
           } catch (error) {
@@ -606,11 +679,13 @@ export class GatewayNativeObservations {
         if (!before) throw new NativeSourceUnavailable('gateway-read-receipt-missing');
         assertNativeSourceCurrent(
           before,
-          this.fence(node, sourceOwner(authority, node)),
+          await this.fence(node, sourceOwner(authority, node)),
           'gateway-read',
         );
       }
     }
+    // No await follows this aggregate check: an earlier source cannot go stale behind a later scan.
+    aggregateFence();
     if (!rejected && admitted)
       validatePartialNativeList(payload, admitted, skipped, reader.id, collectionOwners);
     if (catalogBefore) {
@@ -667,11 +742,21 @@ export class GatewayNativeObservations {
     this.remote.clear();
   }
 
-  private fence(nodeId: string, ownerId: string): NativeSourceReceipt {
+  private async fence(nodeId: string, ownerId: string): Promise<NativeSourceReceipt> {
     if (nodeId === 'local') {
       if (!this.local || this.localReceipt?.ownerId !== ownerId)
         throw new NativeSourceUnavailable();
       return this.local.fence();
+    }
+    return this.cachedFence(nodeId, ownerId);
+  }
+  private cachedFence(nodeId: string, ownerId: string): NativeSourceReceipt {
+    if (nodeId === 'local') {
+      if (!this.local || this.localReceipt?.ownerId !== ownerId || !ownsLocalNativeProfile(ownerId))
+        throw new NativeSourceUnavailable();
+      const receipt = this.local.current();
+      if (!receipt.ready) throw new NativeSourceUnavailable();
+      return receipt;
     }
     const source = this.remote.get(nodeId);
     const node = resolveNativeExecutionNode(ownerId, nodeId);
@@ -690,6 +775,7 @@ export class GatewayNativeObservations {
     ownerId: string,
     families: readonly string[] = ['native-session', 'profiles'],
   ): void {
+    if (families.includes('native-session')) publishNativeSessionChange(nodeId, ownerId);
     // Keys remain private even here. The server must call canReadKey again before sending.
     const keys = new Map<string, NativeObservationKey>();
     for (const client of this.clients.values())

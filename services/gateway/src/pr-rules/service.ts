@@ -145,7 +145,7 @@ export class PRRuleService {
     this.sweep = runWithSystemOriginator(async () => {
       await this.reconcileQaAfterReviews();
       await this.reconcileReviewPublications();
-      const snapshot = this.store.snapshot();
+      const snapshot = this.store.snapshot(({ teams, rules }) => ({ teams, rules }));
       await this.checkpoints?.prune(
         snapshot.rules.flatMap((rule) => {
           const team = snapshot.teams.find((team) => team.id === rule.config.teamId);
@@ -168,7 +168,7 @@ export class PRRuleService {
           continue;
         await runWithPrincipalOwner(rule, () => this.scan(rule.ownerId, rule.id));
       }
-      for (const submission of this.store.snapshot().submissions ?? []) {
+      for (const submission of this.store.snapshot((data) => data.submissions ?? [])) {
         if (await automaticQaSource(submission)) continue;
         if (
           submission.cancelledAt ||
@@ -790,7 +790,11 @@ export class PRRuleService {
     this.notifyChanges();
     return result;
   }
-  private canReadNotification(action: PRRuleActionRecord, principalId: string): boolean {
+  private canReadNotification(
+    action: PRRuleActionRecord,
+    principalId: string,
+    teams?: PRTeamProfile[],
+  ): boolean {
     if (
       action.kind !== 'notify' ||
       action.status !== 'applied' ||
@@ -799,7 +803,9 @@ export class PRRuleService {
     )
       return false;
     if (principalId === action.ownerId) return matchesPrincipalOwner(action, principalId);
-    const team = this.store.snapshot().teams.find((item) => item.id === action.teamId);
+    const team = (teams ?? this.store.snapshot((data) => data.teams)).find(
+      (item) => item.id === action.teamId,
+    );
     return (
       !!team?.config.notificationPrincipalIds.includes(principalId) &&
       (team.notificationPrincipalGenerations?.[principalId] ?? 0) ===
@@ -812,11 +818,15 @@ export class PRRuleService {
   list(principalId: string): PRRulesListResult {
     if (!this.authorized(principalId))
       return { teams: [], rules: [], intents: [], actions: [], notifications: [] };
-    const snapshot = this.store.snapshot();
+    const snapshot = this.store.snapshot(({ actions, rules, teams }) => ({
+      actions,
+      rules,
+      teams,
+    }));
     return {
       ...this.store.list(principalId),
       notifications: (snapshot.actions ?? [])
-        .filter((action) => this.canReadNotification(action, principalId))
+        .filter((action) => this.canReadNotification(action, principalId, snapshot.teams))
         .map((action) => {
           const rule = snapshot.rules.find((item) => item.id === action.ruleId);
           return {
@@ -846,7 +856,7 @@ export class PRRuleService {
   }
 
   private notificationAudience(
-    teams: PRTeamProfile[] = this.store.snapshot().teams,
+    teams: PRTeamProfile[] = this.store.snapshot((data) => data.teams),
   ): Map<string, PrincipalOwner> {
     return new Map(
       teamNotificationAudience(teams).map((owner) => [principalOwnerKey(owner), owner]),

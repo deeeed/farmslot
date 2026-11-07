@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import type { NativeSessionTool, NativeToolKind } from '@farmslot/protocol';
+import type {
+  NativeSessionCapabilities,
+  NativeSessionTool,
+  NativeToolKind,
+} from '@farmslot/protocol';
 
 import { type AcpPendingRequest, acpPermission } from './acp-requests.js';
 import {
@@ -87,8 +91,9 @@ export function acpRunsToolsUnasked(options: NativeAdapterOptions): boolean {
 
 /** Common ACP v1 flow, confirmed against the installed Cursor and Grok servers. */
 export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
-  const capabilities = {
+  const capabilities: NativeSessionCapabilities = {
     modes: config.modes,
+    approvalModes: ['ask', 'bypass'],
     streaming: true,
     tools: true,
     approvals: true,
@@ -101,6 +106,7 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
     async start(options, emit) {
       if (!config.modes.includes(options.mode ?? 'default'))
         throw new Error('Unsupported ACP mode');
+      let approvalMode = options.approvalMode ?? 'ask';
       let nativeSessionId = '';
       let command:
         | { id: string; turnId: string; text: string; accepted: boolean; started: boolean }
@@ -157,6 +163,13 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
               return;
             }
             accept();
+            // ACP has no portable live tool-policy setter. Keep the runner asking and grant
+            // each tool request here, so returning to ask works without replacing its process.
+            // Questions and plan decisions still require their own human response.
+            if (approvalMode === 'bypass' && method === 'session/request_permission') {
+              rpc.write({ id: message.id, result: request.response({ decision: 'approve' }) });
+              return;
+            }
             const key = `${typeof message.id}:${message.id}`;
             if (requests.has(key)) throw new Error('Duplicate ACP request ID');
             requests.set(key, { id: message.id, request });
@@ -293,6 +306,10 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
       return {
         nativeSessionId,
         capabilities: sessionCapabilities,
+        async setApprovalMode(mode) {
+          if (command) throw new Error('Wait for the current turn before changing approvals');
+          approvalMode = mode;
+        },
         async send(text, id) {
           if (closed || closing) throw new Error('ACP session is closed');
           if (command) throw new Error('ACP turn is still active');

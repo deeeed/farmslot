@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.0 - 2026-11-06
+
+- Keep the operator UI mounted across stack restarts without disabling hot reload in isolated worker stacks.
+
 ## 0.18.0 - 2026-11-06
 
 - Add a read-only browser probe for the family session-usage panel.

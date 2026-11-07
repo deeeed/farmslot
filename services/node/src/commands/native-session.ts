@@ -30,6 +30,7 @@ export class NativeNodeSessions {
       this.declaration = {
         ownerPrincipalId: owner.trim(),
         supportsStandaloneDelegation: true,
+        supportsApprovalMode: true,
         supportsEnsure: true,
         supportsWorkers: true,
         supportsWorkerStopAttestation: true,

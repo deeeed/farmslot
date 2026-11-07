@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { satisfies, valid, validRange } from 'semver';
 
-import { isRecord } from '@farmslot/protocol';
+import { isRecord, type Run } from '@farmslot/protocol';
 
 import { shellQuote } from '../core/tmux.js';
 
@@ -143,9 +143,26 @@ export function checkToolchainObservation(
   observation: ToolchainObservation,
   slotId: string,
   packDeclarationVerified = true,
+  branchUpdateFlow?: Run['flowType'],
 ): LaunchProbeResult {
+  // A branch-update worker must start before merging main changes its exact Node pin.
+  const deferBranchNode =
+    branchUpdateFlow === 'pr-complete' &&
+    observation.requirements.some(
+      (entry) => entry.tool === 'node' && entry.source === '.nvmrc' && valid(entry.range),
+    ) &&
+    observation.requirements.some(
+      (entry) =>
+        entry.tool === 'node' &&
+        (entry.source === '.tool-versions' || entry.source === 'selected pack toolchain pins') &&
+        valid(entry.range),
+    );
+  const deferredDetail = deferBranchNode
+    ? ' Branch .nvmrc is deferred until pr-complete updates the branch.'
+    : '';
   const unverified: string[] = [];
   for (const requirement of observation.requirements) {
+    if (deferBranchNode && requirement.tool === 'node' && requirement.source === '.nvmrc') continue;
     const tools: LaunchTool[] =
       requirement.tool === 'node'
         ? observation.packageManager
@@ -197,7 +214,8 @@ export function checkToolchainObservation(
     return {
       status: 'unverified',
       detail:
-        'Product toolchains match; this legacy task has no bound pack toolchain declaration. Retained inputs were preserved.',
+        'Product toolchains match; this legacy task has no bound pack toolchain declaration. Retained inputs were preserved.' +
+        deferredDetail,
       retry: false,
     };
   return unverified.length
@@ -205,7 +223,8 @@ export function checkToolchainObservation(
     : {
         status: 'verified',
         detail: observation.requirements.length
-          ? 'Declared Node, selected package-manager/child Node and Ruby versions match the launch shell.'
+          ? 'Declared launch Node, selected package-manager/child Node and Ruby versions match the launch shell.' +
+            deferredDetail
           : 'No toolchain versions declared.',
       };
 }

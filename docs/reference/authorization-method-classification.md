@@ -170,6 +170,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `native.session.read`                   | native-owner         |                                                                                    |
 | `native.session.respond`                | native-owner         |                                                                                    |
 | `native.session.send`                   | native-owner         |                                                                                    |
+| `native.session.setApprovalMode`        | native-owner         |                                                                                    |
 | `native.session.turn.diff`              | native-owner         |                                                                                    |
 | `native.session.workspace.changes`      | native-owner         |                                                                                    |
 | `native.session.workspace.diff`         | native-owner         |                                                                                    |

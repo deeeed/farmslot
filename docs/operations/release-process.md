@@ -126,6 +126,10 @@ branch. Merge required installation fixes before installing the release.
    Restart through its existing supervisor so the new checkout supplies the gateway
    version, protocol and release notes. Restarting an unchanged checkout keeps the
    old gateway. Restarting only the gateway does not upgrade a detached native host.
+   The shared `farmdev` UI disables automatic source/reconnect reloads so open
+   review actions survive a stack restart. Reload the browser manually to load new
+   UI code. Isolated stacks retain HMR; `FARMSLOT_DEV_UI_HMR=1` explicitly enables
+   it, and `0` disables it for a directly started UI dev server.
 5. Using each deployment's configured CLI/profile, check `gateway.status` and
    `farmslot node status --json`: gateway version and release-note version must
    match the cut. For each dev/prod profile, `gatewayProtocolVersion` must equal

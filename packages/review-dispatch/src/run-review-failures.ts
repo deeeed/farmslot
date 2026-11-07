@@ -1,10 +1,16 @@
-import type { AgentContext, Run, RunStep } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  isReviewRoundNoVerdictSettlement,
+  type Run,
+  type RunStep,
+} from '@farmslot/protocol';
 
 export const recoveredReviewFailureColor = '#f59e0b';
 
 export function reviewAttemptFailureReason(run: Run, context: AgentContext): string | null {
   if (context.error) return context.error;
-  const settled = Object.entries(run.reviewRoundSettlements ?? {}).find(([key]) => {
+  const settled = Object.entries(run.reviewRoundSettlements ?? {}).find(([key, value]) => {
+    if (!isReviewRoundNoVerdictSettlement(value)) return false;
     const identity: unknown = JSON.parse(key);
     return (
       Array.isArray(identity) &&

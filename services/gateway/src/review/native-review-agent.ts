@@ -67,6 +67,7 @@ import {
   withNativeReviewMutation,
   withNativeReviewOperation,
 } from './native-review-operation.js';
+import { watchNativeReviewCompletion } from './native-review-wake.js';
 import { refuseReviewerApprovals } from './native-reviewer-approvals.js';
 import {
   capturePipelineVisualInput,
@@ -96,7 +97,7 @@ import {
 } from './review-agent.js';
 import {
   admitReviewRound,
-  clearReviewRoundSettlement,
+  recordReviewRoundVerdict,
   reviewLaunchStartedAt,
   reviewRoundAdmissionId,
   settleReviewRoundNoVerdict,
@@ -391,6 +392,7 @@ async function runNativeReviewAttempt(
   const roundId = resumeFailure?.roundId ?? reviewRoundAdmissionId(lineage, loopNumber, startedAt);
   let resultSchema = context?.nativeSession?.resultSchema;
   let progress: { stop(): void | Promise<void> } | undefined;
+  let completionWake: ReturnType<typeof watchNativeReviewCompletion> | undefined;
   let activeTaskSet = false;
   let primaryFailure: unknown;
   let measuredUsage: RunnerSessionUsage | undefined;
@@ -786,6 +788,12 @@ async function runNativeReviewAttempt(
     }
     context = getRun(runId)!.agentContexts!.find((candidate) => candidate.id === contextId)!;
     let reviewBinding = context.nativeSession!;
+    completionWake = watchNativeReviewCompletion({
+      runId,
+      slotId: vars.slotId,
+      contextId,
+      binding: reviewBinding,
+    });
     progress = startProgressWatcher(vars, `${vars.remoteRepo}/${taskMdPath}`, runId, 'Review', {
       contextId,
       role: 'review',
@@ -810,7 +818,7 @@ async function runNativeReviewAttempt(
         deferredSince = Date.now();
         console.warn(`[review] ${runId.slice(0, 8)}: reviewer reads deferred: ${error.message}`);
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await completionWake!.wait(500);
     };
     const recordProgress = (at: string) => {
       const timestamp = Date.parse(at);
@@ -819,6 +827,7 @@ async function runNativeReviewAttempt(
       lastProgressAt = Math.max(lastProgressAt, Math.min(Date.now(), timestamp));
     };
     while (true) {
+      completionWake.beforeRead();
       const latest = admit().agentContexts?.find((candidate) => candidate.id === contextId);
       if (
         !latest ||
@@ -955,7 +964,7 @@ async function runNativeReviewAttempt(
             `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,
         );
       }
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      await completionWake.wait(pollMs);
     }
     admit();
     const terminal = await readTerminalReviewSignal(vars, taskDir, target.signal);
@@ -1077,7 +1086,7 @@ async function runNativeReviewAttempt(
     );
     await persistRunNow(getRun(runId)!, 'native reviewer result validated');
     if (feedback.incomplete) await settleReviewRoundNoVerdict(runId, roundId, 'no-feedback-file');
-    else await clearReviewRoundSettlement(runId, roundId, context);
+    else await recordReviewRoundVerdict(runId, roundId, context);
     await stopSettledReviewer(runId, contextId);
 
     if (retained && context.runnerSessionId !== retained.runnerSessionId)
@@ -1282,6 +1291,7 @@ async function runNativeReviewAttempt(
     }
     throw primaryFailure;
   } finally {
+    completionWake?.stop();
     await finishReviewCleanup(primaryFailure, [
       () => progress?.stop(),
       () => unwatchContext(vars.slotId, contextId, { expectedRunId: runId }),

@@ -6,6 +6,11 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.34.0 - 2026-11-06
+
+- Keep review refresh pending until the gateway responds and preserve the operator page across development-stack restarts.
+- Choose ask or bypass tool approvals at native launch or between turns; keep non-Git Files and Changes usable.
+
 ## 0.33.0 - 2026-11-06
 
 - Show every family session, canonical token and known-cost totals, model and runner breakdowns, cumulative run accounting and review/fix timing, with explicit missing history, pricing and round-cost boundaries.
