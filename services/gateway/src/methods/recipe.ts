@@ -638,7 +638,8 @@ export function buildHostedRecipeCommand(
   const command =
     hook === 'recipe_doctor' ? ['doctor'] : ['recipe', hook === 'recipe_run' ? 'run' : 'actions'];
   const args = [...command, '--target', target];
-  let platform = slotVars.platform;
+  // Native targets need a platform; web/headless providers keep their project adapter.
+  let platform = ['ios', 'android'].includes(slotVars.platform) ? slotVars.platform : undefined;
   if (params.conformance) {
     if (hook !== 'recipe_doctor') throw new Error('Conformance requires the doctor command.');
     const check = params.conformance;
@@ -689,7 +690,7 @@ export function buildHostedRecipeCommand(
       platform = selected?.platform ?? platform;
     }
   }
-  args.push('--platform', shellQuote(platform));
+  if (platform) args.push('--platform', shellQuote(platform));
   args.push(
     '--project',
     shellQuote(projectVars.projectName),

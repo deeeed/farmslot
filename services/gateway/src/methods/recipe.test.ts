@@ -1551,7 +1551,7 @@ test('hosted recipe paths preserve node-support remapping and reject artifact es
   })!;
   assert.match(command, /farmslot-recipe ~\/farmslot-node recipe run/);
   assert.match(command, /--artifacts-dir '\.task\/artifacts'/);
-  for (const platform of ['ios', 'android', 'web'] as const) {
+  for (const platform of ['ios', 'android'] as const) {
     for (const hook of ['recipe_run', 'recipe_doctor', 'recipe_action_manifest'] as const) {
       const selected = buildHostedRecipeCommand(
         hook,
@@ -1563,6 +1563,30 @@ test('hosted recipe paths preserve node-support remapping and reject artifact es
         },
       )!;
       assert.match(selected, new RegExp(`--platform '${platform}'`));
+    }
+  }
+  for (const platform of ['web', 'cli'] as const) {
+    const configured = {
+      ...project,
+      projectJson: {
+        ...project.projectJson,
+        recipe: {
+          ...project.projectJson.recipe,
+          adapter: platform === 'cli' ? 'core' : 'terminal',
+        },
+      },
+    };
+    for (const hook of ['recipe_run', 'recipe_doctor', 'recipe_action_manifest'] as const) {
+      const selected = buildHostedRecipeCommand(
+        hook,
+        configured,
+        { ...slot, platform },
+        {
+          recipePath: '~/repos/product/.task/recipe.json',
+          artifactsDir: '~/repos/product/.task/artifacts',
+        },
+      )!;
+      assert.doesNotMatch(selected, /--platform /);
     }
   }
   const doctor = buildHostedRecipeCommand('recipe_doctor', project, slot)!;
