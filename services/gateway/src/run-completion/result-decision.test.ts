@@ -880,7 +880,7 @@ test('the decision states why the run stopped in one line', async () => {
   await heldQa();
   assert.equal(
     pending().payload.reason,
-    'COMPLETE was refused: A declared deterministic check has no current passing receipt.',
+    'A declared deterministic check has no current passing receipt.',
   );
 });
 

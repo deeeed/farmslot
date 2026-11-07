@@ -171,9 +171,7 @@ function decisionReason(
   const unmet = refused?.reasons.length ?? 0;
   return unmet
     ? `${step} was refused: ${plural(unmet, 'prerequisite')} not met.`
-    : refused?.message
-      ? `${step} was refused: ${refused.message}`
-      : `${step} was refused.`;
+    : (refused?.message ?? `${step} was refused.`);
 }
 
 /** One result decision on the run's current state. */
