@@ -121,6 +121,7 @@ export function NativeTimelineCard({
                   title={diff.path}
                   diffText={nativeToolDiffText(diff)}
                   initialPath={diff.path}
+                  fullscreenChoiceId={`native-diff:${entry.key}:${diff.path}:${index}`}
                 />
               ))
             : null}

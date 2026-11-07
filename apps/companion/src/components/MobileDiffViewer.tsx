@@ -38,6 +38,8 @@ interface MobileDiffViewerProps {
   fullHeight?: boolean;
   fetchHeaders?: ArtifactHttpHeaders;
   allowFullscreen?: boolean;
+  /** Separate fullscreen ownership when a screen renders multiple file diffs. */
+  fullscreenChoiceId?: string;
   onOpenEvidence?: () => void;
 }
 
@@ -61,6 +63,7 @@ export function MobileDiffViewer({
   fullHeight = false,
   fetchHeaders = EMPTY_FETCH_HEADERS,
   allowFullscreen = true,
+  fullscreenChoiceId = 'diff-fullscreen',
   onOpenEvidence,
 }: MobileDiffViewerProps) {
   const insets = useSafeAreaInsets();
@@ -83,7 +86,7 @@ export function MobileDiffViewer({
   const [viewMode, setViewMode] = useViewChoice(
     viewChoiceField<'unified' | 'compact'>('mobileDiffMode', 'unified', ['unified', 'compact']),
   );
-  const [fullscreenOpen, setFullscreenOpen] = useViewToggle('diff-fullscreen');
+  const [fullscreenOpen, setFullscreenOpen] = useViewToggle(fullscreenChoiceId);
   const appliedInitialPathRef = useRef('');
   const topInset = Math.max(
     insets.top,
@@ -309,6 +312,7 @@ export function MobileDiffViewer({
               fullHeight
               fetchHeaders={fetchHeaders}
               allowFullscreen={false}
+              fullscreenChoiceId={fullscreenChoiceId}
               onOpenEvidence={onOpenEvidence}
             />
           </View>
