@@ -83,7 +83,10 @@ try {
         },
       },
     ),
-    /closed|Native runner exited/,
+    (error: unknown) =>
+      error instanceof Error &&
+      (('code' in error && error.code === 'EPIPE') ||
+        /closed|Native runner exited/.test(error.message)),
   );
   const child = JSON.parse(await readFile(marker, 'utf8'));
   const result = await poll(
