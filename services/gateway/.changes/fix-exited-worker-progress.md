@@ -1,1 +1,0 @@
-- Resolve completion handoffs to the recorded worker attempt and canonical pane identity, so empty legacy role placeholders do not keep idle or exited workers unconfirmed.
