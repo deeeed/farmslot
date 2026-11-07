@@ -277,7 +277,7 @@ def heartbeat(config, read_only=False):
             info["missing_nodes"] = sorted(set(project.get("expected_nodes", [])) - names)
             version = nodes.get("gatewayProtocolVersion") if isinstance(nodes, dict) else None
             if version:
-                info["version_mismatches"] = [node["machine"] for node in actual if node.get("protocolVersion") != version]
+                info["version_mismatches"] = [node["machine"] for node in actual if node.get("versionMatch") is False]
         result["projects"][repo] = info
     states = {}
     for path in (Path(config["state_dir"]) / "reviews").glob("*/state.json"):

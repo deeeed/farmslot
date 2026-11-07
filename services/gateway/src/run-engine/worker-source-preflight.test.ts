@@ -22,13 +22,13 @@ test('selected CLI package mismatch warns without retrying or refusing launch', 
   });
 });
 
-test('actual protocol and wire versions are checked through the selected CLI resolver', async () => {
+test('the selected CLI reports its actual wire declaration for gateway comparison', async () => {
   const value = await expected();
   value.cliVersion = '0.0.0-fixture';
-  value.wireVersion = '0.0.0-fixture';
   const result = await probe(value);
-  assert.equal(result.status, 'mismatch');
-  assert.match(result.detail, /node wire protocol resolved .*expected 0.0.0-fixture/);
+  assert.notEqual(result.status, 'mismatch');
+  assert.equal(typeof result.peerVersions?.protocolVersion, 'string');
+  assert.equal(typeof result.peerVersions?.minimumProtocolVersion, 'string');
 });
 
 test('a legacy task with no retained source binding remains explicitly unverified', async () => {
@@ -39,7 +39,7 @@ test('a legacy task with no retained source binding remains explicitly unverifie
 });
 
 for (const validReceipt of [true, false]) {
-  test(`protocol 0.73.2 versus 0.73.1 warns and still checks ${validReceipt ? 'valid' : 'invalid'} retained provenance`, async (t) => {
+  test(`protocol 0.77.2 versus 0.77.1 warns and still checks ${validReceipt ? 'valid' : 'invalid'} retained provenance`, async (t) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'worker-source-version-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const protocol = path.join(root, 'node_modules/@farmslot/protocol');
@@ -57,13 +57,24 @@ for (const validReceipt of [true, false]) {
       path.join(protocol, 'package.json'),
       JSON.stringify({
         name: '@farmslot/protocol',
-        version: '0.73.2',
+        version: '0.77.2',
         type: 'module',
         main: 'index.js',
       }),
     );
-    await writeFile(path.join(protocol, 'index.js'), "export const PROTOCOL_VERSION = '0.63.0';\n");
-    await writeFile(path.join(runtime, 'package.json'), JSON.stringify({ type: 'module' }));
+    await writeFile(
+      path.join(protocol, 'index.js'),
+      "export const PROTOCOL_VERSION = '0.77.2'; export const MINIMUM_PROTOCOL_VERSION = '0.76.0';\n",
+    );
+    await writeFile(
+      path.join(runtime, 'package.json'),
+      JSON.stringify({
+        name: '@farmslot/agent-runtime',
+        version: '0.42.0',
+        minimumRuntimeVersion: '0.42.0',
+        type: 'module',
+      }),
+    );
     await writeFile(
       path.join(runtime, 'dist/index.js'),
       `
@@ -82,8 +93,7 @@ export function verifyTaskExecutionProvenance(taskDir, binding) {
     const value = await expected();
     Object.assign(value, {
       cliVersion: '0.3.0',
-      protocolVersion: '0.73.1',
-      wireVersion: '0.63.0',
+      protocolVersion: '0.77.1',
       taskDir,
       runtimeScript: path.join(runtime, 'scripts/task-init-cli.mjs'),
     });
@@ -92,10 +102,9 @@ export function verifyTaskExecutionProvenance(taskDir, binding) {
       JSON.parse(await readFile(path.join(taskDir, 'verified.json'), 'utf8')),
       identity,
     );
-    assert.match(result.detail, /protocol package resolved 0.73.2; expected 0.73.1/);
+    assert.match(result.detail, /protocol package resolved 0.77.2; expected 0.77.1/);
     if (validReceipt) {
-      assert.equal(result.status, 'unverified');
-      assert.equal(result.retry, false);
+      assert.equal(result.status, 'verified');
       assert.match(result.detail, /retained pack\/template\/library bytes match/);
     } else {
       assert.equal(result.status, 'mismatch');

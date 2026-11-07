@@ -1,0 +1,1 @@
+- Show declared node compatibility instead of treating a newer peer as a version mismatch.

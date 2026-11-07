@@ -1,9 +1,9 @@
 {
-  "version": "0.34.0",
-  "date": "2026-11-06",
+  "version": "0.35.0",
+  "date": "2026-11-07",
   "items": [
-    "Choose Ask or Bypass for native conversations and browse non-Git folders.",
-    "Keep native history reads responsive during cleanup and journal scans.",
-    "Preserve review refreshes, verdict accounting and operator recovery decisions."
+    "Stream native conversations and keep Co-Pilot settings stable.",
+    "Accept mutually supported node/runtime releases; explain declared breaks before launch.",
+    "Restore the verified completed task before gate recovery."
   ]
 }

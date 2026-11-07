@@ -1,0 +1,1 @@
+- Refresh the generated gateway API reference for the coordinated native conversation and peer compatibility release.

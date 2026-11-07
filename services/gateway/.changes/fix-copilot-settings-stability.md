@@ -1,1 +1,0 @@
-- Treat workspace changes during a read as retryable supersession while retaining errors for lost sources or changed ownership.

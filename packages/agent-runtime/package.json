@@ -1,6 +1,7 @@
 {
   "name": "@farmslot/agent-runtime",
-  "version": "0.42.0",
+  "version": "0.43.0",
+  "minimumRuntimeVersion": "0.42.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,6 +9,10 @@
     "farmslot-agent": "./bin/farmslot-agent.mjs"
   },
   "exports": {
+    "./version": {
+      "types": "./dist/version.d.ts",
+      "import": "./dist/version.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",

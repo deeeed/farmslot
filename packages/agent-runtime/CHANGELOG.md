@@ -4,6 +4,11 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.43.0 - 2026-11-07
+
+- Publish bounded native conversation deltas from committed journals and observe durable metadata without polling or starting missing hosts.
+- Expose the installed runtime release and its oldest supported peer for shared admission checks.
+
 ## 0.42.0 - 2026-11-06
 
 - Support ask/bypass tool approvals on standalone native sessions and show non-Git workspaces without a Git error.

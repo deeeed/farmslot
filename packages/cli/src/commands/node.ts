@@ -18,10 +18,11 @@ function formatNodeStatus(result: NodesListResult): string {
   }
 
   // Header
-  const cols = ['MACHINE', 'PID', 'VERSION', 'MATCH', 'CONNECTED', 'UPTIME'];
+  const cols = ['MACHINE', 'PID', 'VERSION', 'COMPATIBILITY', 'CONNECTED', 'UPTIME'];
   const rows = result.nodes.map((a) => {
     const uptimeStr = a.uptime != null ? formatUptime(a.uptime) : '-';
-    const matchStr = a.versionMatch == null ? '-' : a.versionMatch ? '✓' : '✗ MISMATCH';
+    const matchStr =
+      a.versionMatch == null ? 'UNVERIFIED' : a.versionMatch ? '✓ COMPATIBLE' : '✗ INCOMPATIBLE';
     return [
       a.machine,
       String(a.pid),
@@ -39,10 +40,10 @@ function formatNodeStatus(result: NodesListResult): string {
   lines.push(dim(widths.map((w) => '─'.repeat(w)).join('  ')));
 
   for (const row of rows) {
-    const mismatch = row[3].includes('MISMATCH');
+    const mismatch = row[3].includes('INCOMPATIBLE');
     const colored = row.map((c, i) => {
       const padded = c.padEnd(widths[i]);
-      if (i === 3 && c === '✓') return green(padded);
+      if (i === 3 && c.startsWith('✓')) return green(padded);
       if (i === 3 && mismatch) return yellow(padded);
       if (i === 4) return dim(padded);
       return padded;

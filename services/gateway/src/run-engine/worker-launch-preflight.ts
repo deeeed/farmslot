@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   isRecord,
   Methods,
-  PROTOCOL_VERSION,
+  type PeerVersionDeclaration,
   type Run,
   type SubStepRecord,
 } from '@farmslot/protocol';
@@ -36,7 +36,11 @@ import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
 import { isTerminalTeardownInFlight } from './terminal-teardown-registry.js';
 import { inspectWorkerLaunchLeftovers } from './worker-leftovers-preflight.js';
 import { type LaunchProbeResult, runLaunchPreflight } from './worker-preflight.js';
-import { workerSourceProbeCommand } from './worker-source-preflight.js';
+import {
+  workerSourceCompatibility,
+  workerSourceProbeCommand,
+  type WorkerSourceProbeResult,
+} from './worker-source-preflight.js';
 import {
   checkToolchainObservation,
   parseToolchainObservation,
@@ -44,7 +48,7 @@ import {
   toolchainProbeCommand,
 } from './worker-toolchain-preflight.js';
 
-function probeResult(raw: string): LaunchProbeResult {
+function probeResult(raw: string): WorkerSourceProbeResult {
   const value: unknown = JSON.parse(raw);
   if (
     !isRecord(value) ||
@@ -52,9 +56,33 @@ function probeResult(raw: string): LaunchProbeResult {
     (value.status !== 'verified' && value.status !== 'mismatch' && value.status !== 'unverified')
   )
     return { status: 'unverified', detail: 'Probe response is unavailable or invalid.' };
+  let peerVersions: PeerVersionDeclaration | undefined;
+  if (value.peerVersions !== undefined) {
+    const facts = value.peerVersions;
+    if (
+      !isRecord(facts) ||
+      ['protocolVersion', 'minimumProtocolVersion', 'runtimeVersion', 'minimumRuntimeVersion'].some(
+        (field) => facts[field] !== undefined && typeof facts[field] !== 'string',
+      )
+    )
+      return {
+        status: 'mismatch',
+        detail: 'Selected worker source has malformed peer version declarations.',
+      };
+    peerVersions = {
+      protocolVersion:
+        typeof facts.protocolVersion === 'string' ? facts.protocolVersion : undefined,
+      minimumProtocolVersion:
+        typeof facts.minimumProtocolVersion === 'string' ? facts.minimumProtocolVersion : undefined,
+      runtimeVersion: typeof facts.runtimeVersion === 'string' ? facts.runtimeVersion : undefined,
+      minimumRuntimeVersion:
+        typeof facts.minimumRuntimeVersion === 'string' ? facts.minimumRuntimeVersion : undefined,
+    };
+  }
   return {
     status: value.status,
     detail: value.detail,
+    ...(peerVersions ? { peerVersions } : {}),
     ...(value.retry === false ? { retry: false } : {}),
   };
 }
@@ -205,7 +233,9 @@ export async function admitWorkerLaunch(
           if (node?.versionMatch === false)
             return {
               status: 'mismatch',
-              detail: `${input.vars.machine} node wire ${node.protocolVersion}; expected ${PROTOCOL_VERSION}. Update the selected node through the supported route, then retry.`,
+              detail:
+                node.compatibilityReason ??
+                `${input.vars.machine} node declares an incompatible protocol/runtime peer. Update the peer below its supported minimum, then retry.`,
             };
           const sources = currentProjectSources() ?? project.sourceContext;
           if (sources) {
@@ -226,12 +256,13 @@ export async function admitWorkerLaunch(
           const command = workerSourceProbeCommand({
             cliVersion: await packageVersion('cli'),
             protocolVersion: await packageVersion('protocol'),
-            wireVersion: PROTOCOL_VERSION,
             runtimeScript: await agentRuntimeScriptForSlot(input.vars, 'task-init-cli.mjs'),
             taskDir: workerTaskDir(initial, input.vars, project),
           });
           const result = await execute(command, signal, timeout);
-          return typeof result === 'string' ? probeResult(result) : result;
+          return typeof result === 'string'
+            ? workerSourceCompatibility(probeResult(result))
+            : result;
         },
       },
       {

@@ -1631,6 +1631,20 @@ if (phase === 'fleet-store-web') {
     assert(dependency, 'The node inventory must carry its collection read stamp');
     return dependency.revision;
   };
+  const initialNodePid = process.pid;
+  const replacementNodePid = process.pid + 1;
+  const { PROTOCOL_VERSION, MINIMUM_PROTOCOL_VERSION } = await import(
+    path.join(root, 'packages/protocol/dist/index.js')
+  );
+  const { RUNTIME_VERSION, MINIMUM_RUNTIME_VERSION } = await import(
+    path.join(root, 'packages/agent-runtime/dist/version.js')
+  );
+  const peerVersions = {
+    protocolVersion: PROTOCOL_VERSION,
+    minimumProtocolVersion: MINIMUM_PROTOCOL_VERSION,
+    runtimeVersion: RUNTIME_VERSION,
+    minimumRuntimeVersion: MINIMUM_RUNTIME_VERSION,
+  };
   let nodePeer, nodePrincipalId, nodeCredentialId, failure;
   const cleanup = [];
   try {
@@ -1690,18 +1704,16 @@ if (phase === 'fleet-store-web') {
     nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
     await nodePeer.read('node.connect', {
       machine,
-      pid: process.pid,
-      protocolVersion: 'inventory-proof-v1',
+      pid: initialNodePid,
+      ...peerVersions,
       capabilities: [],
     });
     const connected = await until(
       (value) =>
         value.nodeFreshness === 'ready' &&
         value.nodesCanonical &&
-        value.nodes.some(
-          (node) => node.machine === machine && node.protocolVersion === 'inventory-proof-v1',
-        ) &&
-        value.nodeBadges.some((text) => text?.includes('inventory-proof-v1')),
+        value.nodes.some((node) => node.machine === machine && node.pid === initialNodePid) &&
+        !value.nodeBadges.some((text) => text?.includes('INCOMPATIBLE')),
       'Node registration must update the canonical open node inventory',
     );
     assert(
@@ -1713,20 +1725,21 @@ if (phase === 'fleet-store-web') {
       (value) =>
         value.versionsOpen &&
         value.versionsNodesCanonical &&
-        value.versionsRendered?.includes('inventory-proof-v1'),
+        value.versionsRendered?.includes(String(initialNodePid)),
       'Version details and fleet must observe the same canonical node collection',
     );
     const oldPeer = nodePeer;
     nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
     await nodePeer.read('node.connect', {
       machine,
-      pid: process.pid,
-      protocolVersion: 'inventory-proof-v2',
+      pid: replacementNodePid,
+      ...peerVersions,
       capabilities: [],
     });
     await until(
       (value) =>
-        value.versionsNodesCanonical && value.versionsRendered?.includes('inventory-proof-v2'),
+        value.versionsNodesCanonical &&
+        value.versionsRendered?.includes(String(replacementNodePid)),
       'Open version details must follow a node replacement without Refresh',
     );
     await cdp('screenshot', 'fleet', path.join(artifacts, 'node-version-replacement.png'));
@@ -1735,10 +1748,8 @@ if (phase === 'fleet-store-web') {
       (value) =>
         value.nodeFreshness === 'ready' &&
         value.nodesCanonical &&
-        value.nodes.some(
-          (node) => node.machine === machine && node.protocolVersion === 'inventory-proof-v2',
-        ) &&
-        value.nodeBadges.some((text) => text?.includes('inventory-proof-v2')),
+        value.nodes.some((node) => node.machine === machine && node.pid === replacementNodePid) &&
+        !value.nodeBadges.some((text) => text?.includes('INCOMPATIBLE')),
       'A replacement node must update the same inventory and rendered version without Refresh',
     );
     assert(replaced.nodeObservedAt >= connected.nodeObservedAt);
@@ -1749,9 +1760,7 @@ if (phase === 'fleet-store-web') {
     await oldPeer.closeAndWait();
     const oldClosed = await cdp('eval', 'fleet', '--file', probe);
     assert(
-      oldClosed.nodes.some(
-        (node) => node.machine === machine && node.protocolVersion === 'inventory-proof-v2',
-      ),
+      oldClosed.nodes.some((node) => node.machine === machine && node.pid === replacementNodePid),
       'A retired transport cannot remove its current replacement',
     );
     await nodePeer.closeAndWait();
@@ -1768,8 +1777,8 @@ if (phase === 'fleet-store-web') {
     nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
     await nodePeer.read('node.connect', {
       machine,
-      pid: process.pid,
-      protocolVersion: 'inventory-proof-v2',
+      pid: replacementNodePid,
+      ...peerVersions,
       capabilities: [],
     });
     await until(
@@ -1796,8 +1805,8 @@ if (phase === 'fleet-store-web') {
     nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
     await nodePeer.read('node.connect', {
       machine,
-      pid: process.pid,
-      protocolVersion: 'inventory-proof-v2',
+      pid: replacementNodePid,
+      ...peerVersions,
       capabilities: [],
     });
     await until(
@@ -1849,9 +1858,7 @@ if (phase === 'fleet-store-web') {
       assert(
         cold.nodesCanonical &&
           cold.nodeStale &&
-          cold.nodes.some(
-            (node) => node.machine === machine && node.protocolVersion === 'inventory-proof-v2',
-          ),
+          cold.nodes.some((node) => node.machine === machine && node.pid === replacementNodePid),
         'Cold offline startup must restore the saved node inventory with its age',
       );
       await cdp('click', 'fleet', 'farm-app .fa-version-footer');
@@ -1859,7 +1866,7 @@ if (phase === 'fleet-store-web') {
         (value) =>
           value.versionsOpen &&
           value.versionsNodesCanonical &&
-          value.versionsRendered?.includes('inventory-proof-v2') &&
+          value.versionsRendered?.includes(String(replacementNodePid)) &&
           value.versionsRendered?.includes('Saved nodes'),
         'Offline version details must render the same saved node inventory and its age',
       );

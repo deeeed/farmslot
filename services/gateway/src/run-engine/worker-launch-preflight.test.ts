@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { isRecord, type Run, type RunStep } from '@farmslot/protocol';
 
 import type { ProjectVars } from '../core/config.js';
+import { gatewayPeerVersions } from '../fleet/peer-versions.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 import type { ToolchainObservation } from './worker-toolchain-preflight.js';
@@ -154,7 +155,11 @@ mock.module('../core/exec.js', {
                   ruby: {},
                 },
               })
-            : { status: 'verified', detail: 'fixture retained inputs match' },
+            : {
+                status: 'verified',
+                detail: 'fixture retained inputs match',
+                peerVersions: gatewayPeerVersions,
+              },
         ),
       };
     },

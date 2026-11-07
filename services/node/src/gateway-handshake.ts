@@ -1,11 +1,16 @@
 import WebSocket from 'ws';
 
+import { MINIMUM_RUNTIME_VERSION, RUNTIME_VERSION } from '@farmslot/agent-runtime/version';
 import {
   type Frame,
   type GatewayAuthConnectResult,
   Methods,
+  MINIMUM_PROTOCOL_VERSION,
   type NativeExecutionNodeDeclaration,
   type NodeObservationCapabilities,
+  type NodeRegistrationResult,
+  peerVersionCompatibility,
+  type PeerVersionDeclaration,
   PROTOCOL_VERSION,
   type RecipeRuntimeCapabilityDeclaration,
   type RequestFrame,
@@ -50,6 +55,7 @@ const DETERMINISTIC_REJECTION_CODES = new Set([
   'AUTH_RECONNECT_REQUIRED',
   'AUTH_INVALID_CLIENT',
   'INVALID_PARAMS',
+  'PROTOCOL_INCOMPATIBLE',
 ]);
 
 export function isDeterministicHandshakeRejection(error: unknown): boolean {
@@ -200,26 +206,29 @@ export interface NodeRegisterOptions {
   timeoutMs?: number;
 }
 
-export interface NodeRegistrationResult {
-  registered: boolean;
-}
+const nodePeerVersions: PeerVersionDeclaration = {
+  protocolVersion: PROTOCOL_VERSION,
+  minimumProtocolVersion: MINIMUM_PROTOCOL_VERSION,
+  runtimeVersion: RUNTIME_VERSION,
+  minimumRuntimeVersion: MINIMUM_RUNTIME_VERSION,
+};
 
 /**
  * Step two: register the machine. The gateway only lists a node after this
  * ACK, so callers must not report "connected" before it resolves — the
  * native-owner and machine-assignment checks run here, not in auth.connect.
  */
-export function registerNode(
+export async function registerNode(
   socket: WebSocket,
   options: NodeRegisterOptions,
 ): Promise<NodeRegistrationResult> {
-  return sendGatewayRequest<NodeRegistrationResult>(
+  const result = await sendGatewayRequest<NodeRegistrationResult>(
     socket,
     'node.connect',
     {
       machine: options.machine,
       pid: options.pid,
-      protocolVersion: PROTOCOL_VERSION,
+      ...nodePeerVersions,
       capabilities: options.capabilities,
       ...(options.observationCapabilities
         ? { observationCapabilities: options.observationCapabilities }
@@ -232,6 +241,16 @@ export function registerNode(
     },
     { timeoutMs: options.timeoutMs },
   );
+  const compatibility = peerVersionCompatibility(nodePeerVersions, result, 'node', 'gateway');
+  if (compatibility.compatible === false) {
+    socket.close();
+    throw new GatewayRequestError(
+      compatibility.status === 'invalid' ? 'INVALID_PARAMS' : 'PROTOCOL_INCOMPATIBLE',
+      compatibility.reason!,
+      'Update the peer whose version is below the declared supported minimum.',
+    );
+  }
+  return result;
 }
 
 /**

@@ -6,6 +6,11 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.79.0 - 2026-11-07
+
+- Define bounded live conversation subscriptions and share their cache, replay, ownership fences and paint measurements across clients.
+- Declare peer versions and oldest supported peers; accept mutually supported protocol/runtime releases without exact-version equality.
+
 ## 0.78.0 - 2026-11-06
 
 - Choose standalone native tool approvals separately from planning, preserve launch choices in shared links, and identify non-Git Changes views.
