@@ -15,7 +15,13 @@ const execFileAsync = promisify(execFile);
 
 import type { NodeInfo, NodeLinkAuthority } from '../../../packages/protocol/src/index.js';
 import { GatewayClient } from '../../../packages/cli/src/gateway-client.js';
-import { cleanupOnExit, poll, startReaper, stopProcess } from '../lib/isolated-stack.mjs';
+import {
+  cleanupOnExit,
+  listProcesses,
+  poll,
+  startReaper,
+  stopProcess,
+} from '../lib/isolated-stack.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const evidence = path.resolve(process.argv[2] ?? path.join(source, 'temp/node-link-conformance'));
@@ -99,10 +105,30 @@ let webSockets:
     >
   | undefined;
 let ownedTmux = false;
+let ownedEffectPid: number | undefined;
+let ownedEffectMarker: string | undefined;
+async function stopOwnedEffect(): Promise<void> {
+  if (!ownedEffectPid) return;
+  const row = listProcesses().find((entry) => entry.pid === ownedEffectPid);
+  if (!row) {
+    ownedEffectPid = undefined;
+    return;
+  }
+  if (!ownedEffectMarker || !row.command.includes(ownedEffectMarker))
+    throw new Error('Owned effect PID changed; refusing to signal it');
+  process.kill(-ownedEffectPid, 'SIGTERM');
+  await poll(
+    'owned effect closeout',
+    async () => !listProcesses().some((entry) => entry.pid === ownedEffectPid) || undefined,
+    5000,
+  );
+  ownedEffectPid = undefined;
+}
 let client: Awaited<ReturnType<GatewayClient['connect']>> | undefined;
 const cleanup = cleanupOnExit(async () => {
   client?.close();
   await stopProcess(nodeProcess);
+  await stopOwnedEffect();
   if (ownedTmux) await execFileAsync('tmux', ['kill-server'], { env: process.env });
   for (const peer of webSockets?.clients ?? []) peer.terminate();
   if (webSockets) await new Promise<void>((resolve) => webSockets!.close(() => resolve()));
@@ -299,6 +325,80 @@ try {
   );
   assert.equal(processResult.state, 'completed');
   assert.equal(output, 'REAL_STREAM');
+  // A hard daemon crash does not prove an effect's result. Boot journals failed(unknown),
+  // releases its command fence and leaves any deliberate retry to the domain recovery path.
+  ownedEffectMarker = path.join(root, `interrupted-effect-${operator.id}.json`);
+  const crashInvocation = {
+    ...invocation,
+    commandId: `crash-effect:${operator.id}`,
+    authority: { ...authority, grantId: 'crash-policy' },
+    timeoutMs: 10_000,
+  };
+  const crashRequest = {
+    operation: 'process.run' as const,
+    input: {
+      argv: [
+        process.execPath,
+        '-e',
+        'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({pid:process.pid}));setInterval(()=>{},1000)',
+        ownedEffectMarker,
+      ],
+      cwd: root,
+      timeoutMs: 10_000,
+      maxOutputBytes: 1024,
+    },
+  };
+  const interrupted = invokeNodeLink(crashRequest, crashInvocation).then(
+    (receipt) => ({ ok: true, receipt }) as const,
+    (error: unknown) => ({ ok: false, error }) as const,
+  );
+  ownedEffectPid = await poll(
+    'owned effect admitted before crash',
+    async () => {
+      try {
+        return JSON.parse(await readFile(ownedEffectMarker!, 'utf8')).pid || undefined;
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+        throw error;
+      }
+    },
+    5000,
+  );
+  const stopped = once(nodeProcess!, 'exit');
+  process.kill(nodeProcess!.pid!, 'SIGKILL');
+  await stopped;
+  const uncertain = await interrupted;
+  assert.equal(uncertain.ok, false);
+  await stopOwnedEffect();
+  await poll('crashed node disconnect', async () => !getNode(machine) || undefined, 10_000);
+  startNode();
+  registered = await poll(
+    'node restarted after interrupted admission',
+    async () => getNode(machine),
+    30_000,
+  );
+  assert(registered.nodePrincipal);
+  const failedUnknown = await invokeNodeLink(crashRequest, crashInvocation);
+  assert.equal(failedUnknown.state, 'failed');
+  assert.equal(failedUnknown.error?.code, 'OUTCOME_UNKNOWN');
+  assert.equal(failedUnknown.closeoutConfirmed, false);
+  const replay = await invokeNodeLink(
+    {
+      operation: 'file.write',
+      input: {
+        root,
+        relPath: `domain-replay-${operator.id}`,
+        content: 'explicit replay',
+        expectedHash: null,
+      },
+    },
+    {
+      ...invocation,
+      commandId: `explicit-domain-replay:${operator.id}`,
+      authority: { ...authority, grantId: 'domain-replay-policy' },
+    },
+  );
+  assert.equal(replay.state, 'completed');
   // The shortened, private TMUX_TMPDIR belongs only to this fixture.
   // A raw-input fixture records received bytes, independent of shell echo/redraw timing.
   const inputFile = path.join(root, `pty-input-${operator.id}.txt`);
@@ -413,6 +513,8 @@ fs.writeFileSync(process.argv[3],JSON.stringify({pid:process.pid}));`,
         changedKeyRefused: true,
         realStream: output,
         restartKeptOriginalOutcome: true,
+        interruptedAdmissionFailedUnknown: true,
+        domainReplayFenceReleased: true,
         nodeOwnedPty: true,
         numberedInputOnce: true,
         detachPreservedWorkerSession: true,

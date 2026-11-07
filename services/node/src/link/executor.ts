@@ -111,6 +111,7 @@ export class NodeLinkExecutor {
 
   bind(value: unknown): { granted: true } {
     this.assertCurrent();
+    this.pruneGrants();
     const grant = grantValue(value);
     if (
       grant.target.nodeId !== this.nodeId ||
@@ -156,15 +157,29 @@ export class NodeLinkExecutor {
   }
 
   release(command: NodeLinkCommand): void {
-    const grant = this.authorize(command);
+    this.authorizeCloseout(command);
     const key = this.grantKey(command.target.resourceId, command.authority.grantId);
-    if (this.grants.get(key) === grant) this.grants.delete(key);
+    const grant = this.grants.get(key);
     if (
-      ![...this.grants.values()].some(
-        (current) => current.target.resourceId === command.target.resourceId,
-      )
+      grant &&
+      (!equal(command.target, grant.target) || !equal(command.authority, grant.authority))
     )
-      this.resourceOwners.delete(command.target.resourceId);
+      throw new NodeLinkFailure('STALE_AUTHORITY', 'Release cannot change another grant.');
+    this.grants.delete(key);
+    this.dropUnusedOwner(command.target.resourceId);
+  }
+
+  private dropUnusedOwner(resourceId: string): void {
+    if (![...this.grants.values()].some((current) => current.target.resourceId === resourceId))
+      this.resourceOwners.delete(resourceId);
+  }
+
+  private pruneGrants(): void {
+    for (const [key, grant] of this.grants) {
+      if (grant.expiresAt > Date.now()) continue;
+      this.grants.delete(key);
+      this.dropUnusedOwner(grant.target.resourceId);
+    }
   }
 
   private grantKey(resourceId: string, grantId: string): string {
@@ -283,6 +298,7 @@ export class NodeLinkExecutor {
           requestScoped: true,
           timeout: Math.min(typed.input.timeoutMs, Math.max(1, typed.expiresAt - Date.now())),
           maxBuffer: typed.input.maxOutputBytes,
+          closeoutTimeoutMs: typed.input.closeoutTimeoutMs,
           ...(typed.input.environment ? { environment: typed.input.environment } : {}),
         },
         (stream, text, deliverySignal) =>

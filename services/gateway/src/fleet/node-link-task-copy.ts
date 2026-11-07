@@ -20,6 +20,7 @@ import { isWorkerMirrorEntry, TASK_ROOT_SIDECARS } from '../tasks/sidecars.js';
 
 import { getNode } from './machine-registry.js';
 import { invokeNodeLink } from './node-link.js';
+import { invokeNodeLinkAttempt } from './node-link-attempt.js';
 
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const rowFence = (row: Readonly<Record<string, unknown>>) =>
@@ -60,6 +61,7 @@ export async function createNodeLinkTaskStager(
     throw new NodeLinkFailure('STALE_AUTHORITY', 'Task staging cannot replace another run owner.');
   const expected = rowFence(row);
   const taskFile = source.taskFile;
+  const runGeneration = source.runId ? (getRun(source.runId)?.engineState?.generation ?? 0) : 0;
   const identity = source.runId ?? hash(path.resolve(taskFile));
   const leaseOwner =
     typeof row.current_run_id === 'string'
@@ -98,9 +100,8 @@ export async function createNodeLinkTaskStager(
     if (
       (source.runId &&
         (!current ||
-          current.slotId !== vars.slotId ||
           current.taskFile !== taskFile ||
-          ['cancelled', 'failed', 'done'].includes(current.status))) ||
+          (current.engineState?.generation ?? 0) !== runGeneration)) ||
       !actual ||
       rowFence(actual) !== expected
     )
@@ -120,9 +121,9 @@ export async function createNodeLinkTaskStager(
     await assertCurrent();
     const commandId = readOnly
       ? randomUUID()
-      : hash(JSON.stringify([identity, epoch, authority.requester, authority.executor, request]));
+      : hash(JSON.stringify([vars.machine, vars.slotId, epoch, runGeneration, 'task-copy']));
     const receipt = await trackCleanupCommand(
-      invokeNodeLink(request, {
+      (readOnly ? invokeNodeLink : invokeNodeLinkAttempt)(request, {
         commandId,
         target: { nodeId: vars.machine, resourceId: vars.slotId },
         authority,

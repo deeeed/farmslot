@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import type { NodeLinkCommand } from '@farmslot/protocol';
+import { type NodeLinkCommand, NodeLinkFailure } from '@farmslot/protocol';
 
 import { NodeLinkCommands } from './commands.js';
 
@@ -198,5 +198,142 @@ test('cancellation intent cannot admit a successor until confirmed closeout', as
   assert.equal(
     (await broker.execute({ ...input, commandId: 'successor' })).closeoutConfirmed,
     true,
+  );
+});
+
+test('expired settled receipts reclaim capacity but cannot replay after restart', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'node-link-retention-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let effects = 0;
+  const owner = {
+    authorize: () => undefined,
+    execute: async () => {
+      effects++;
+      return null;
+    },
+  };
+  const broker = new NodeLinkCommands(root, owner, 4);
+  const first = { ...command(), expiresAt: Date.now() + 60_000 };
+  await broker.execute(first);
+  const { createHash } = await import('node:crypto');
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const file = path.join(
+    root,
+    createHash('sha256').update(first.commandId).digest('hex') + '.json',
+  );
+  const receipt = JSON.parse(await readFile(file, 'utf8'));
+  // Keep the command identity expired beyond the documented reconciliation window.
+  receipt.expiresAt = Date.now() - 24 * 60 * 60_000;
+  receipt.settledAt = receipt.expiresAt;
+  await writeFile(file, JSON.stringify(receipt));
+  for (const id of ['second', 'third', 'fourth', 'fifth'])
+    await broker.execute({ ...command(), commandId: id });
+  assert.equal(effects, 5);
+  const restarted = new NodeLinkCommands(root, owner, 4);
+  await assert.rejects(restarted.execute({ ...first, expiresAt: receipt.expiresAt }), {
+    code: 'COMMAND_EXPIRED',
+  });
+  assert.equal(effects, 5);
+});
+
+test('post-admission refusal settles as failed without leaving an unknown resource', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'node-link-admission-refusal-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let admissionChecks = 0;
+  let effects = 0;
+  const broker = new NodeLinkCommands(root, {
+    authorize: () => {
+      if (++admissionChecks === 2)
+        throw new NodeLinkFailure('STALE_AUTHORITY', 'Lease changed during admission');
+    },
+    execute: async () => {
+      effects++;
+      return null;
+    },
+  });
+  const first = command();
+  const receipt = await broker.execute(first);
+  assert.equal(receipt.state, 'failed');
+  assert.equal(receipt.closeoutConfirmed, true);
+  assert.equal(effects, 0);
+  assert.equal((await broker.execute({ ...first, commandId: 'successor' })).state, 'completed');
+  assert.equal(effects, 1);
+});
+
+test('boot recovery journals interrupted admission as failed unknown and releases only its fence', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'node-link-boot-unknown-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let effects = 0;
+  const executor = {
+    authorize: () => undefined,
+    execute: async () => {
+      effects++;
+      return null;
+    },
+  };
+  const broker = new NodeLinkCommands(root, executor);
+  const original = command();
+  await broker.execute(original);
+  const { createHash } = await import('node:crypto');
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const file = path.join(
+    root,
+    createHash('sha256').update(original.commandId).digest('hex') + '.json',
+  );
+  const interrupted = {
+    ...JSON.parse(await readFile(file, 'utf8')),
+    state: 'running',
+    closeoutConfirmed: false,
+  };
+  delete interrupted.result;
+  delete interrupted.settledAt;
+  await writeFile(file, JSON.stringify(interrupted));
+  await writeFile(
+    path.join(root, 'pending.json'),
+    JSON.stringify([
+      [original.commandId, JSON.stringify([original.target.nodeId, original.target.resourceId])],
+    ]),
+  );
+  const restarted = new NodeLinkCommands(root, executor);
+  await restarted.recoverInterrupted();
+  const failed = await restarted.receipt(original);
+  assert.equal(failed.state, 'failed');
+  assert.equal(failed.error?.code, 'OUTCOME_UNKNOWN');
+  assert.equal(failed.closeoutConfirmed, false);
+  assert.equal((await restarted.execute(original)).error?.code, 'OUTCOME_UNKNOWN');
+  assert.equal(effects, 1, 'Reading the original effect never retries it');
+  assert.equal(
+    (await restarted.execute({ ...original, commandId: 'domain-replay' })).state,
+    'completed',
+  );
+  assert.equal(effects, 2);
+});
+
+test('restart between admission publication and index publication still fails unknown and releases the fence', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'node-link-index-recovery-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const executor = { authorize: () => undefined, execute: async () => null };
+  const first = new NodeLinkCommands(root, executor);
+  const input = command();
+  await first.execute(input);
+  const { createHash } = await import('node:crypto');
+  const { readFile, writeFile, unlink } = await import('node:fs/promises');
+  const file = path.join(
+    root,
+    createHash('sha256').update(input.commandId).digest('hex') + '.json',
+  );
+  const value = {
+    ...JSON.parse(await readFile(file, 'utf8')),
+    state: 'admitted',
+    closeoutConfirmed: false,
+  };
+  await writeFile(file, JSON.stringify(value));
+  await unlink(path.join(root, 'pending.json'));
+  const restarted = new NodeLinkCommands(root, executor);
+  await restarted.recoverInterrupted();
+  assert.equal((await restarted.receipt(input)).error?.code, 'OUTCOME_UNKNOWN');
+  assert.equal(
+    (await restarted.execute({ ...input, commandId: 'explicit-replay' })).state,
+    'completed',
   );
 });

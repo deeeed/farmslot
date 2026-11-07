@@ -45,7 +45,7 @@ interface OwedCloseout {
 }
 const owedCloseouts = new Map<string, OwedCloseout>();
 
-function awaitOwedCloseout(id: string, socket: WebSocket): Promise<void> {
+export function awaitOwedCloseout(id: string, socket: WebSocket): Promise<void> {
   return new Promise((confirm) => owedCloseouts.set(id, { socket, confirm }));
 }
 

@@ -68,7 +68,15 @@ export function parseNodeLinkTerminalSize(value: unknown): NodeLinkTerminalSize 
 
 export function parseNodeLinkProcess(value: unknown): NodeLinkProcessInput {
   if (!object(value)) invalid('Invalid process input.');
-  fields(value, ['argv', 'cwd', 'timeoutMs', 'maxOutputBytes', 'environment', 'terminal']);
+  fields(value, [
+    'argv',
+    'cwd',
+    'timeoutMs',
+    'closeoutTimeoutMs',
+    'maxOutputBytes',
+    'environment',
+    'terminal',
+  ]);
   if (
     !Array.isArray(value.argv) ||
     value.argv.length < 1 ||
@@ -79,6 +87,7 @@ export function parseNodeLinkProcess(value: unknown): NodeLinkProcessInput {
     value.cwd.includes('\0') ||
     !integer(value.timeoutMs, 24 * 60 * 60 * 1000, 1) ||
     !integer(value.maxOutputBytes, 32 * 1024 * 1024, 1) ||
+    (value.closeoutTimeoutMs !== undefined && !integer(value.closeoutTimeoutMs, 60_000, 1)) ||
     (value.environment !== undefined &&
       value.environment !== 'service' &&
       value.environment !== 'login')
@@ -89,6 +98,9 @@ export function parseNodeLinkProcess(value: unknown): NodeLinkProcessInput {
     cwd: value.cwd,
     timeoutMs: value.timeoutMs,
     maxOutputBytes: value.maxOutputBytes,
+    ...(typeof value.closeoutTimeoutMs === 'number'
+      ? { closeoutTimeoutMs: value.closeoutTimeoutMs }
+      : {}),
     ...(value.environment === 'login' || value.environment === 'service'
       ? { environment: value.environment }
       : {}),

@@ -235,13 +235,11 @@ async function handshake(socket: WebSocket): Promise<void> {
       socket.close();
       return;
     }
-    if (nodeLinkEnabled) {
-      if (registered.nodeLink?.commands !== 1)
-        throw new GatewayRequestError(
-          'NODE_LINK_UNSUPPORTED',
-          'Gateway did not negotiate the enabled node-link feature.',
-          'Stage matching node-link readers or disable the pilot after its drain.',
-        );
+    if (nodeLinkEnabled && registered.nodeLink?.commands !== 1)
+      console.warn(
+        'Persistent node-link capability is unavailable on this gateway; legacy node services remain connected.',
+      );
+    if (nodeLinkEnabled && registered.nodeLink?.commands === 1) {
       const principal = authentication.principal;
       if (!principal || principal.subjectKind !== 'node' || principal.generation === undefined)
         throw new GatewayRequestError(

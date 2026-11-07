@@ -44,7 +44,6 @@ export async function openNodeLinkTerminal(
     rows: input.terminal.rows,
   });
   const deliveryAbort = new AbortController();
-  let bytes = 0;
   let tail = '';
   let reason: string | undefined;
   let stopped = false;
@@ -74,8 +73,7 @@ export async function openNodeLinkTerminal(
     timeout.unref();
     const data = client.onData((text) => {
       if (stopped) return;
-      bytes += Buffer.byteLength(text);
-      if (bytes > input.maxOutputBytes) {
+      if (Buffer.byteLength(text) > input.maxOutputBytes) {
         stop('Terminal output limit reached.');
         return;
       }

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, open, readdir, rename } from 'node:fs/promises';
+import { link, mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -9,6 +9,7 @@ import {
   isNodeLinkReceipt,
   isNodeLinkTerminal,
   NODE_LINK_LIMITS,
+  NODE_LINK_RECEIPT_RETENTION_MS,
   type NodeLinkCommand,
   NodeLinkFailure,
   type NodeLinkReceipt,
@@ -62,6 +63,7 @@ const missing = (error: unknown) =>
 export class NodeLinkCommands {
   private readonly active = new Map<string, ActiveCommand>();
   private accepting = true;
+  private lastPrune = 0;
   private pendingIndex?: Promise<Map<string, string>>;
   private indexWrites: Promise<{ ok: true } | { ok: false; error: unknown }> = Promise.resolve({
     ok: true,
@@ -72,6 +74,49 @@ export class NodeLinkCommands {
     private readonly executor: NodeLinkCommandExecutor,
     private readonly capacity = 4096,
   ) {}
+
+  /** Boot recovery records uncertainty as a failed effect. Only domain replay may retry it. */
+  async recoverInterrupted(): Promise<void> {
+    await mkdir(this.root, { recursive: true, mode: 0o700 });
+    let index: Map<string, string>;
+    try {
+      index = await this.index();
+    } catch (error) {
+      if (!(error instanceof NodeLinkFailure && error.code === 'RECEIPT_INDEX_MISSING'))
+        throw error;
+      index = new Map<string, string>();
+      for (const entry of await readdir(this.root)) {
+        if (!/^[a-f0-9]{64}\.json$/.test(entry)) continue;
+        const value: unknown = JSON.parse(await readFile(path.join(this.root, entry), 'utf8'));
+        if (!isNodeLinkReceipt(value))
+          throw new NodeLinkFailure('RECEIPT_CORRUPT', 'Interrupted receipt failed validation.');
+        if (!isNodeLinkTerminal(value.state)) index.set(value.commandId, this.resource(value));
+      }
+      this.pendingIndex = Promise.resolve(index);
+      await this.write(path.join(this.root, 'pending.json'), [...index]);
+    }
+    for (const id of [...index.keys()]) {
+      const receipt = await this.read(id);
+      if (!receipt) throw new NodeLinkFailure('RECEIPT_CORRUPT', 'Interrupted receipt is missing.');
+      if (isNodeLinkTerminal(receipt.state)) {
+        await this.indexReceipt(receipt);
+        continue;
+      }
+      const failed: NodeLinkReceipt = {
+        ...receipt,
+        state: 'failed',
+        settledAt: Date.now(),
+        closeoutConfirmed: false,
+        error: {
+          code: 'OUTCOME_UNKNOWN',
+          message:
+            'Node restarted before the effect outcome was confirmed. The owning run step failed; use its existing replay action to retry.',
+        },
+      };
+      await this.write(this.file(id), failed);
+      await this.indexReceipt(failed);
+    }
+  }
 
   execute(request: NodeLinkCommand): Promise<NodeLinkReceipt> {
     return this.executeMode(request, false);
@@ -135,7 +180,7 @@ export class NodeLinkCommands {
   }
 
   async receipt(command: NodeLinkCommand): Promise<NodeLinkReceipt> {
-    await this.executor.authorize(command);
+    await this.authorizeCloseout(command);
     const stored = await this.read(command.commandId);
     if (!stored)
       throw new NodeLinkFailure(
@@ -248,7 +293,7 @@ export class NodeLinkCommands {
         'RESULT_TOO_LARGE',
         'Result requires a bounded stream or explicit range read.',
       );
-    const temporary = create ? file : `${file}.${randomUUID()}.tmp`;
+    const temporary = `${file}.${randomUUID()}.tmp`;
     const handle = await open(temporary, 'wx', 0o600);
     try {
       await handle.writeFile(bytes);
@@ -256,7 +301,13 @@ export class NodeLinkCommands {
     } finally {
       await handle.close();
     }
-    if (!create) await rename(temporary, file);
+    if (create) {
+      try {
+        await link(temporary, file);
+      } finally {
+        await unlink(temporary);
+      }
+    } else await rename(temporary, file);
     const directory = await open(this.root, constants.O_RDONLY);
     try {
       await directory.sync();
@@ -326,7 +377,11 @@ export class NodeLinkCommands {
     const write = this.indexWrites.then(async (previous) => {
       if (!previous.ok) throw previous.error;
       const index = await this.index();
-      if (isNodeLinkTerminal(receipt.state) && receipt.closeoutConfirmed)
+      if (
+        isNodeLinkTerminal(receipt.state) &&
+        (receipt.closeoutConfirmed ||
+          (receipt.state === 'failed' && receipt.error?.code === 'OUTCOME_UNKNOWN'))
+      )
         index.delete(receipt.commandId);
       else index.set(receipt.commandId, this.resource(receipt));
       await this.write(path.join(this.root, 'pending.json'), [...index]);
@@ -374,6 +429,30 @@ export class NodeLinkCommands {
     }
   }
 
+  /** Expired terminal envelopes cannot execute again; uncertain receipts are never evicted. */
+  private async pruneSettled(force: boolean): Promise<void> {
+    const now = Date.now();
+    if (!force && now - this.lastPrune < 30_000) return;
+    this.lastPrune = now;
+    for (const entry of await readdir(this.root)) {
+      if (!/^[a-f0-9]{64}\.json$/.test(entry)) continue;
+      const file = path.join(this.root, entry);
+      const value: unknown = JSON.parse(await readFile(file, 'utf8'));
+      if (!isNodeLinkReceipt(value))
+        throw new NodeLinkFailure('RECEIPT_CORRUPT', 'Cannot prune an invalid receipt.');
+      if (
+        this.active.has(value.commandId) ||
+        !isNodeLinkTerminal(value.state) ||
+        !value.closeoutConfirmed ||
+        !value.settledAt ||
+        Math.max(value.expiresAt, value.settledAt) + NODE_LINK_RECEIPT_RETENTION_MS >= now
+      )
+        continue;
+      await this.indexReceipt(value);
+      await unlink(file);
+    }
+  }
+
   private async run(
     command: NodeLinkCommand,
     digest: string,
@@ -400,7 +479,14 @@ export class NodeLinkCommands {
         throw new NodeLinkFailure('COMMAND_EXPIRED', 'Command expired before admission.', {
           admitted: false,
         });
-      if ((await readdir(this.root)).length >= this.capacity)
+      await this.pruneSettled(
+        (await readdir(this.root)).filter((entry) => /^[a-f0-9]{64}\.json$/.test(entry)).length >=
+          this.capacity,
+      );
+      if (
+        (await readdir(this.root)).filter((entry) => /^[a-f0-9]{64}\.json$/.test(entry)).length >=
+        this.capacity
+      )
         throw new NodeLinkFailure(
           'CAPACITY',
           'Receipt capacity reached; uncertain keys are never evicted.',
@@ -478,6 +564,22 @@ export class NodeLinkCommands {
       await this.persist(held);
       return held.receipt;
     } catch (error) {
+      // No executor started on this outer path. A persisted admission can close definitively.
+      if (held.receipt && held.receipt.state === 'admitted') {
+        held.receipt = {
+          ...held.receipt,
+          state: held.cancelRequested ? 'cancelled' : 'failed',
+          closeoutConfirmed: true,
+          settledAt: Date.now(),
+          error: {
+            code: error instanceof NodeLinkFailure ? error.code : 'ADMISSION_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
+        await this.persist(held);
+        held.confirmAdmission();
+        return held.receipt;
+      }
       held.failAdmission(error);
       throw error;
     }

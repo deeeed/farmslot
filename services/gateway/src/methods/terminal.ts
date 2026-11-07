@@ -477,6 +477,13 @@ async function terminalInputLanding(params: TerminalInputParams): Promise<InputL
   const key = terminalKey({ ...params, role: resolved.role, contextId: resolved.contextId });
   const machine = await resolveMachine(params.slotId);
   if (machine && usesNodeLink(machine)) {
+    await assertInteractiveTargetReady(
+      params.slotId,
+      resolved.target,
+      resolved.session,
+      resolved.role,
+      params,
+    );
     const worker = { nodeId: machine, session: resolved.session, target: resolved.target };
     return {
       typesOnce: workerNodeTypesInputOnce(worker),

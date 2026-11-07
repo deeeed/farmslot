@@ -30,12 +30,29 @@ mock.module('../runtime/pty-stream.js', {
 });
 const contexts = await import('../agents/contexts.js');
 let beforeResolve = async (_slotId: string) => {};
+let pilotInput = false;
+let retiredRole = false;
+let pilotWrites = 0;
+const policy = await import('../fleet/node-link-policy.js');
+mock.module('../fleet/node-link-policy.js', {
+  namedExports: { ...policy, usesNodeLink: () => pilotInput },
+});
+const workerWriter = await import('../runtime/worker-terminal-stream.js');
+mock.module('../runtime/worker-terminal-stream.js', {
+  namedExports: {
+    ...workerWriter,
+    workerNodeTypesInputOnce: () => true,
+    sendWorkerTerminalInput: async () => {
+      pilotWrites++;
+    },
+  },
+});
 mock.module('../agents/contexts.js', {
   namedExports: {
     ...contexts,
     resolveAgentTarget: async (slotId: string) => {
       await beforeResolve(slotId);
-      return { target: slotId, session: slotId };
+      return { target: retiredRole ? `${slotId}:retired-review` : slotId, session: slotId };
     },
   },
 });
@@ -106,6 +123,8 @@ mock.module('../core/exec.js', {
   namedExports: {
     ...(await import('../core/exec.js')),
     execOnSlot: async (_vars: unknown, command: string) => {
+      if (command.includes('#{window_name}'))
+        return { exitCode: 0, stdout: 'worker\n', stderr: '' };
       const read = new RegExp(`show-options -pqv -t ${quoted} (${quoted})`).exec(command);
       if (read)
         return { exitCode: 0, stdout: slotHost.options.get(unquote(read[1]!)) ?? '', stderr: '' };
@@ -132,7 +151,7 @@ mock.module('../runtime/workspace-terminal.js', {
       await workspaceBeforeResolve(params.runId);
       return {
         key: workspace.workspaceTerminalKey(params.runId),
-        run: { id: params.runId },
+        run: { id: params.runId, reviewWorkspace: { machine: 'workspace-input-fixture' } },
         session: `review-shell-${params.runId}`,
       };
     },
@@ -360,5 +379,25 @@ test('authenticated RPC arrival order is reserved before a delayed native access
     assert.deepEqual(sent, ['unrelated', 'a', 'b']);
   } finally {
     first.resolve();
+  }
+});
+
+test('pilot numbered input refuses a retired role instead of typing into the current worker window', async () => {
+  pilotInput = true;
+  retiredRole = true;
+  pilotWrites = 0;
+  try {
+    await assert.rejects(
+      terminalInput({
+        slotId: 'routing',
+        data: 'dangerous keys',
+        seq: { stream: 'retired-role-pilot', n: 1 },
+      }),
+      /no longer|unavailable|retired|not running|no live|not available/i,
+    );
+    assert.equal(pilotWrites, 0);
+  } finally {
+    pilotInput = false;
+    retiredRole = false;
   }
 });

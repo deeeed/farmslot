@@ -42,6 +42,7 @@ export interface NodeLinkProcessInput {
   argv: string[];
   cwd: string;
   timeoutMs: number;
+  closeoutTimeoutMs?: number;
   maxOutputBytes: number;
   environment?: 'service' | 'login';
   /** Node-owned PTY attachment. Input uses the existing sequenced terminal command. */

@@ -18,7 +18,7 @@ Use TLS outside loopback or an explicitly protected transport. Credentials are e
 
 ## Commands
 
-A PTY process emits a structured `started` frame, then ordered output. Its receipt remains unsettled until the attached client exits. `node.link.terminal.resize` checks the original command authority and bounded dimensions. Input uses the existing numbered terminal writer; attachment and reconnect never replay keys. Detaching a tmux client leaves its worker and conversation running.
+A PTY process emits a structured `started` frame, then ordered output. Its receipt remains unsettled until the attached client exits. `node.link.terminal.resize` checks the original command authority and bounded dimensions. Input uses the existing numbered terminal writer; attachment and reconnect never replay keys. Output retention is a bounded rolling screen projection, not a cumulative terminal transcript. A 24-hour attachment deadline closes the observer, preserving the tmux worker; a viewer may explicitly attach again. Detaching a tmux client leaves its worker and conversation running.
 
 Carry commands inside the existing `req`/`res` frames. The outer request ID correlates one network exchange; it is not the idempotency identity.
 
@@ -69,13 +69,13 @@ Before side effects, persist an admission receipt atomically. Serialize competin
 
 Receipts distinguish `admitted`, `running`, `cancel-requested`, `completed`, `failed`, `cancelled`, and `unknown`. A terminal receipt includes outcome and confirmed closeout evidence. A definite refusal before admission is distinct from a failure after admission. Persist terminal outcome before acknowledging it.
 
-On disconnect or timeout, the caller has an uncertain outcome. Query the same receipt after reconnect. Do not send a replacement command or replay an admitted operation. A process restart that finds unfinished admission marks it unknown until its original process/resource owner reconciles it. Missing or expired retained outcomes also require reconciliation; absence is not proof that execution never happened.
+On disconnect or timeout, the caller has an uncertain outcome. Query the same receipt after reconnect. Do not send a replacement command or replay an admitted operation. On node-process restart, journal an unfinished admission as `failed` with `OUTCOME_UNKNOWN` and `closeoutConfirmed: false`, and release its command fence. Surface this failure to the owning run step. Only the existing domain recovery action, such as `run.replayStep`, decides whether to attempt the work again. The link never retries that original command. Missing retained outcomes remain uncertain, not proof that execution never happened.
 
 Cancellation acknowledgment means intent is durable. It does not mean the process, descendants, file transfer or provider resource stopped. Signal the original execution identity, wait for its authored teardown and record closeout. Keep its lease while closeout is unknown. Repeated cancellation cannot signal a reused PID or a successor's resource. An expired or replaced effect grant does not revoke cleanup of its exact already-admitted command: the current enrolled peer must still match the original command digest and executor identity. That closeout path cannot admit another effect.
 
 Reject a new admission after its fixed deadline. Check expiry again immediately before starting a queued operation. Use a local monotonic timer once admitted. If clock uncertainty prevents establishing a valid admission deadline, refuse admission rather than extending it on reconnect.
 
-Retain command keys and outcomes through their declared validity and reconciliation windows. The pilot retains at most 4,096 receipt-directory entries and fails closed when that store is full. Settled keys are not silently evicted to make another admission fit. Never evict an uncertain command or reuse its key to reclaim capacity. Expiry cleanup may remove settled payloads only when their keys can no longer admit execution; keep sufficient tombstone/expiry evidence to prevent replay.
+Retain command keys and outcomes through their declared validity and reconciliation windows. Retain settled receipts and gateway intents for five minutes past both their admission deadline and settlement time, then prune them. Expired original envelopes remain inadmissible. The pilot holds at most 4,096 receipt files and fails closed at capacity; interrupted unknown-outcome journals remain retained. Attempt references are deleted only after confirmed settlement. A new task copy gets a fresh domain-attempt key after its predecessor settles; a pending uncertain attempt is not silently replaced. Never evict an uncertain command or reuse its key to reclaim capacity. Expiry cleanup may remove settled payloads only when their keys can no longer admit execution; keep sufficient tombstone/expiry evidence to prevent replay.
 
 ## Streams and transfers
 
@@ -91,7 +91,7 @@ File transfers additionally bind source identity, expected length and content ha
 
 Negotiate finite limits during registration. Each sender enforces the lower accepted bound before queuing bytes; the receiver enforces it before dispatch. Keep metadata and bulk credit separate.
 
-The pilot ceilings are one MiB per wire frame, 64 KiB per bulk chunk, eight MiB queued per connection, 32 admitted in-flight operations, and 256 KiB queued per stream. Reserve eight operation slots for control and interactive work. These are ceilings, not permission to buffer an entire artifact. Apply smaller existing operation limits where required. Report refusals and dropped/resync counters without private payloads.
+The pilot uses the fixed version-1 ceilings below on both peers. Per-peer limit negotiation is not advertised by `commands: 1` or `streams: 1`; it requires its own capability before use. The ceilings are one MiB per wire frame, 64 KiB per bulk chunk, eight MiB queued per connection, 32 admitted in-flight operations, and 256 KiB queued per stream. Reserve eight operation slots for control and interactive work. These are ceilings, not permission to buffer an entire artifact. Apply smaller existing operation limits where required. Report refusals and dropped/resync counters without private payloads.
 
 Schedule cancellation, acknowledgments and control ahead of bulk. Yield between bulk chunks. A slow consumer exhausts its own credit, then receives an explicit reset or backpressure refusal; it cannot grow an unbounded queue or stall unrelated controls. Bound output from processes and capture producers too.
 

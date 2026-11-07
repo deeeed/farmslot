@@ -1,3 +1,5 @@
+export const NODE_LINK_RECEIPT_RETENTION_MS = 5 * 60_000;
+
 /** ADR-008 Amendment 3. Infrastructure identity is independent of runner transport. */
 export const NODE_LINK_LIMITS = {
   frameBytes: 1024 * 1024,

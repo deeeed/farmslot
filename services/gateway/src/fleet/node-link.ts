@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -10,7 +10,9 @@ import {
   isNodeLinkCommand,
   isNodeLinkGrant,
   isNodeLinkReceipt,
+  NODE_EXEC_CLOSEOUT_MS,
   NODE_LINK_LIMITS,
+  NODE_LINK_RECEIPT_RETENTION_MS,
   type NodeLinkAuthority,
   type NodeLinkCommand,
   type NodeLinkCursor,
@@ -28,6 +30,7 @@ import { currentSessionOriginator } from '../security/work-originator.js';
 import { type ConnectedNode, getNode } from './machine-registry.js';
 import { usesNodeLink } from './node-link-policy.js';
 import {
+  awaitOwedCloseout,
   NodeExecUnconfirmedError,
   NodeTransportUnavailableError,
   retireBoundNodeRequest,
@@ -154,6 +157,19 @@ async function invokeUnqueued(
       );
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    const retained = (await readdir(path.dirname(file))).filter((name) =>
+      /^[a-f0-9]{64}\.json$/.test(name),
+    );
+    await pruneSettledIntents(path.dirname(file), file, retained.length >= 4096);
+    if (
+      (await readdir(path.dirname(file))).filter((name) => /^[a-f0-9]{64}\.json$/.test(name))
+        .length >= 4096
+    )
+      throw new NodeLinkFailure(
+        'CAPACITY',
+        'Gateway intent capacity reached; uncertain outcomes are retained.',
+      );
     const expiresAt = Date.now() + (invocation.timeoutMs ?? 60_000);
     const command: NodeLinkCommand = {
       commandId: invocation.commandId,
@@ -205,6 +221,7 @@ async function invokeUnqueued(
           intent.command.commandId,
           error instanceof NodeTransportUnavailableError ? error.reason : 'timeout',
           node.ws,
+          requestId ? awaitOwedCloseout(requestId, node.ws) : undefined,
         );
       const abort = () => {
         if (!dispatched || cancelling) return;
@@ -222,7 +239,12 @@ async function invokeUnqueued(
               return await Promise.race([
                 response!,
                 new Promise<never>((_resolve, reject) => {
-                  timer = setTimeout(() => reject(unconfirmed(undefined)), 5000);
+                  timer = setTimeout(
+                    () => reject(unconfirmed(undefined)),
+                    (request.operation === 'process.run'
+                      ? (request.input.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS)
+                      : 0) + 5000,
+                  );
                 }),
               ]);
             } finally {
@@ -240,7 +262,12 @@ async function invokeUnqueued(
         await assertCurrent();
         invocation.signal?.throwIfAborted();
         response = sendNodeRequest(node, 'node.link.command', intent.command, {
-          timeout: invocation.timeoutMs ?? 60_000,
+          timeout:
+            (invocation.timeoutMs ?? 60_000) +
+            (request.operation === 'process.run'
+              ? (request.input.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS)
+              : 0) +
+            5000,
           requireSameConnection: true,
           onRequestId: (id) => {
             dispatched = true;
@@ -259,6 +286,16 @@ async function invokeUnqueued(
         if (!dispatched || refused) {
           // A definitive refusal may retry this same key. Ambiguous delivery never can.
           intent.sent = false;
+          try {
+            await sendNodeRequest(node, 'node.link.release', intent.command, {
+              timeout: 5000,
+              requireSameConnection: true,
+            });
+          } catch (cleanup) {
+            if (!(cleanup instanceof NodeTransportUnavailableError))
+              throw new AggregateError([error, cleanup], 'Refused operation grant cleanup failed.');
+            intent.observationReleasePending = true;
+          }
           await writeIntent(file, intent);
           throw error;
         }
@@ -291,8 +328,12 @@ async function invokeUnqueued(
     if (!acknowledged.ok) pending.deliveryError = acknowledged.error;
   }
   await writeIntent(file, intent);
-  if (!receipt.closeoutConfirmed)
+  if (
+    !receipt.closeoutConfirmed &&
+    !(receipt.state === 'failed' && receipt.error?.code === 'OUTCOME_UNKNOWN')
+  )
     throw new NodeExecUnconfirmedError(node.machine, intent.command.commandId, 'timeout', node.ws);
+  await pruneSettledIntents(path.dirname(file), file);
   // Observation cleanup has its own durable status; it cannot change a known execution outcome.
   try {
     if (getNode(node.machine) !== node || !node.observationAuthority?.())
@@ -307,7 +348,11 @@ async function invokeUnqueued(
     });
     intent.observationReleasePending = false;
   } catch (error) {
-    if (!(error instanceof NodeTransportUnavailableError)) throw error;
+    if (
+      !(error instanceof NodeTransportUnavailableError) &&
+      !(error instanceof Error && 'code' in error && error.code === 'STALE_AUTHORITY')
+    )
+      throw error;
     intent.observationReleasePending = true;
   }
   await writeIntent(file, intent);
@@ -357,6 +402,96 @@ async function invokeUnqueued(
     };
   }
   return receipt;
+}
+
+const intentPrunes = new Map<string, number>();
+async function pruneSettledIntents(
+  directory: string,
+  currentFile: string,
+  force = false,
+): Promise<void> {
+  const now = Date.now();
+  if (!force && now - (intentPrunes.get(directory) ?? 0) < 30_000) return;
+  intentPrunes.set(directory, now);
+  for (const entry of await readdir(directory)) {
+    const file = path.join(directory, entry);
+    if (file === currentFile || !/^[a-f0-9]{64}\.json$/.test(entry)) continue;
+    const value: unknown = JSON.parse(await readFile(file, 'utf8'));
+    if (!isIntent(value))
+      throw new NodeLinkFailure('INTENT_CORRUPT', 'Cannot prune an invalid intent.');
+    const receipt = value.receipt;
+    if (
+      !receipt?.closeoutConfirmed ||
+      !receipt.settledAt ||
+      Math.max(value.command.expiresAt, receipt.settledAt) + NODE_LINK_RECEIPT_RETENTION_MS >=
+        now ||
+      pendingInvocations.has(
+        invocationKey({ commandId: value.command.commandId, target: value.command.target }),
+      )
+    )
+      continue;
+    await unlink(file);
+  }
+}
+
+/** A deliberate new domain attempt must settle its predecessor before choosing another key. */
+export async function reconcileNodeLinkIntent(nodeId: string, commandId: string): Promise<void> {
+  const file = path.join(
+    farmslotHome(),
+    'node-link-intents',
+    encodeURIComponent(nodeId),
+    `${sha256(commandId)}.json`,
+  );
+  let intent: NodeLinkIntent;
+  try {
+    const value: unknown = JSON.parse(await readFile(file, 'utf8'));
+    if (!isIntent(value))
+      throw new NodeLinkFailure('INTENT_CORRUPT', 'Attempt outcome requires reconciliation.');
+    intent = value;
+  } catch (error) {
+    // Attempt refs precede intent creation, and only expired settled intents are pruned.
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+    throw error;
+  }
+  if (!intent.sent || intent.receipt?.closeoutConfirmed) return;
+  if (intent.receipt?.state === 'failed' && intent.receipt.error?.code === 'OUTCOME_UNKNOWN')
+    throw new NodeLinkFailure('OUTCOME_UNKNOWN', intent.receipt.error.message);
+  const node = getNode(nodeId);
+  if (
+    !node ||
+    !node.observationAuthority?.() ||
+    !node.nodePrincipal ||
+    !isDeepStrictEqual(node.nodePrincipal, intent.command.authority.executor)
+  )
+    throw new NodeExecUnconfirmedError(nodeId, commandId, 'not-connected', node?.ws);
+  await sendNodeRequest(
+    node,
+    'node.link.authorize',
+    { ...intent.grant, expiresAt: Date.now() + 60_000 },
+    { timeout: 5000, requireSameConnection: true },
+  );
+  const receipt = await sendNodeRequest(node, 'node.link.receipt', intent.command, {
+    timeout: 5000,
+    requireSameConnection: true,
+  });
+  if (
+    isNodeLinkReceipt(receipt) &&
+    receipt.commandId === commandId &&
+    receipt.state === 'failed' &&
+    receipt.error?.code === 'OUTCOME_UNKNOWN'
+  ) {
+    intent.receipt = receipt;
+    await writeIntent(file, intent);
+    throw new NodeLinkFailure('OUTCOME_UNKNOWN', receipt.error.message);
+  }
+  if (!isNodeLinkReceipt(receipt) || receipt.commandId !== commandId || !receipt.closeoutConfirmed)
+    throw new NodeExecUnconfirmedError(nodeId, commandId, 'timeout', node.ws);
+  intent.receipt = receipt;
+  await writeIntent(file, intent);
+  await sendNodeRequest(node, 'node.link.release', intent.command, {
+    timeout: 5000,
+    requireSameConnection: true,
+  });
 }
 
 function isIntent(value: unknown): value is NodeLinkIntent {
@@ -570,13 +705,16 @@ function applyNodeLinkStream(socket: WebSocket, value: unknown): boolean {
     if (!candidate.deliveryError) {
       const limit =
         candidate.request.operation === 'process.run' ? candidate.request.input.maxOutputBytes : 0;
-      candidate.output.bytes += Buffer.byteLength(data.text);
+      const terminal =
+        candidate.request.operation === 'process.run' &&
+        candidate.request.input.terminal !== undefined;
+      if (!terminal) candidate.output.bytes += Buffer.byteLength(data.text);
       if (candidate.output.bytes > limit)
         candidate.deliveryError = new NodeLinkFailure(
           'RESULT_TOO_LARGE',
           'Output exceeded its approved bound.',
         );
-      else candidate.output[data.stream].push(data.text);
+      else if (!terminal) candidate.output[data.stream].push(data.text);
       try {
         if ('kind' in data && data.kind === 'started') {
           if (!candidate.command) return false;

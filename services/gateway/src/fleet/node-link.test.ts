@@ -101,6 +101,7 @@ async function linkedNode(
   machine: string,
   dropCommandReply = false,
   fileReadFixture?: string,
+  replyDelayMs = 0,
 ) {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -141,6 +142,8 @@ async function linkedNode(
         frame.method === 'fs.read' && fileReadFixture !== undefined
           ? { content: fileReadFixture }
           : await agent.handle(frame.method, frame.params);
+      if (replyDelayMs && frame.method === 'node.link.command')
+        await new Promise<void>((resolve) => setTimeout(resolve, replyDelayMs));
       if (!dropCommandReply || frame.method !== 'node.link.command')
         nodeSocket.send(JSON.stringify({ type: 'res', id: frame.id, ok: true, payload }));
     } catch (error) {
@@ -661,3 +664,251 @@ test('explicit account import uses the connected pilot node without reading real
     [{ root: '~', relPath: '.openclaw/agents/main/agent/auth-profiles.json' }],
   );
 });
+
+test('repeated task staging applies A to B to A rather than reusing an old completed receipt', async (t) => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-task-generations-')));
+  const previousHome = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = root;
+  const machine = 'node-link-task-generations';
+  await linkedNode(t, root, machine);
+  t.after(async () => {
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
+    await rm(root, { recursive: true, force: true });
+  });
+  const { makeVars } = await import('../runners/test-fixtures.js');
+  const { createNodeLinkTaskStager } = await import('./node-link-task-copy.js');
+  const slotId = 'staging-generation-slot';
+  await writeFile(
+    path.join(suiteRoot, 'status.json'),
+    JSON.stringify({ slots: [{ slot: slotId, slot_epoch: 1 }] }),
+  );
+  const task = path.join(root, 'source');
+  const workspace = path.join(root, 'workspace');
+  await mkdir(task);
+  await mkdir(workspace);
+  const source = path.join(task, 'TASK.md');
+  const vars = makeVars({
+    slotId,
+    machine,
+    host: 'remote.invalid',
+    repo: workspace,
+    remoteRepo: workspace,
+  });
+  for (const content of ['A', 'B', 'A']) {
+    await writeFile(source, content);
+    const stager = await createNodeLinkTaskStager(
+      { taskFile: source },
+      vars,
+      task,
+      path.join(workspace, 'tasks/task'),
+    );
+    await stager.upload(source, 'TASK.md', false);
+    assert.equal(await readFile(path.join(workspace, 'tasks/task/TASK.md'), 'utf8'), content);
+  }
+});
+
+test('a process timeout returns its confirmed result after teardown rather than a transport timeout', async (t) => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-deadline-')));
+  const previousHome = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = root;
+  const machine = 'node-link-deadline';
+  const { principal } = await linkedNode(t, root, machine);
+  t.after(async () => {
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
+    await rm(root, { recursive: true, force: true });
+  });
+  const receipt = await invokeNodeLink(
+    {
+      operation: 'process.run',
+      input: {
+        argv: [process.execPath, '-e', 'setInterval(()=>{},1000)'],
+        cwd: root,
+        timeoutMs: 100,
+        maxOutputBytes: 1024,
+      },
+    },
+    {
+      commandId: 'process-deadline',
+      target: { nodeId: machine, resourceId: 'process' },
+      authority: {
+        requester: { principalId: 'operator', generation: 1 },
+        executor: principal,
+        grantId: 'policy',
+        approvalId: 'approval',
+        approval: 'framework',
+      },
+      assertCurrent: () => undefined,
+      timeoutMs: 100,
+    },
+  );
+  assert.equal(receipt.closeoutConfirmed, true);
+  assert(receipt.result && typeof receipt.result === 'object' && 'exitCode' in receipt.result);
+  assert.equal(receipt.result.exitCode, 124);
+});
+
+test('historical completed task can stage artifacts after an explicit destination claim', async (t) => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-historical-bind-')));
+  const previousHome = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = root;
+  const machine = 'node-link-historical-bind';
+  await linkedNode(t, root, machine);
+  t.after(async () => {
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
+    await rm(root, { recursive: true, force: true });
+  });
+  const { createRun, updateRun } = await import('../runs/store.js');
+  const { makeVars } = await import('../runners/test-fixtures.js');
+  const { copyTaskThroughNodeLink } = await import('./node-link-task-copy.js');
+  const task = path.join(root, 'source');
+  const destination = path.join(root, 'destination');
+  await mkdir(path.join(task, 'artifacts'), { recursive: true });
+  await mkdir(destination);
+  await writeFile(path.join(task, 'TASK.md'), 'Historical task');
+  await writeFile(path.join(task, 'artifacts/report.md'), 'Retained proof');
+  const run = createRun(
+    {
+      project: 'fixture',
+      flowType: 'dev',
+      ticketOrPr: 'Historical bind',
+      slotId: 'original-slot',
+      taskFile: path.join(task, 'TASK.md'),
+      runner: 'codex',
+      completionPolicy: 'artifact-only',
+      pipelineReview: 'none',
+    },
+    { deferBackgroundPersist: true },
+  );
+  updateRun(run.id, { status: 'done' });
+  const vars = makeVars({
+    slotId: 'destination-slot',
+    machine,
+    host: 'remote.invalid',
+    repo: destination,
+    remoteRepo: destination,
+  });
+  await writeFile(
+    path.join(suiteRoot, 'status.json'),
+    JSON.stringify({ slots: [{ slot: vars.slotId, slot_epoch: 1, current_run_id: run.id }] }),
+  );
+  await copyTaskThroughNodeLink(run, vars, task, path.join(destination, 'tasks/task'), true);
+  assert.equal(
+    await readFile(path.join(destination, 'tasks/task/artifacts/report.md'), 'utf8'),
+    'Retained proof',
+  );
+  await assert.rejects(readFile(path.join(destination, 'tasks/task/TASK.md')), { code: 'ENOENT' });
+  await writeFile(
+    path.join(suiteRoot, 'status.json'),
+    JSON.stringify({
+      slots: [{ slot: vars.slotId, slot_epoch: 1, current_run_id: 'another-run' }],
+    }),
+  );
+  await assert.rejects(
+    copyTaskThroughNodeLink(run, vars, task, path.join(destination, 'tasks/task'), true),
+    { code: 'STALE_AUTHORITY' },
+  );
+});
+
+test(
+  'authored process cancellation retains its thirty-second cleanup budget',
+  { timeout: 15_000 },
+  async (t) => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-long-closeout-')));
+    const previousHome = process.env.FARMSLOT_HOME;
+    process.env.FARMSLOT_HOME = root;
+    const machine = 'node-link-long-closeout';
+    const { principal } = await linkedNode(t, root, machine);
+    const controller = new AbortController();
+    t.after(() => controller.abort());
+    t.after(async () => {
+      if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+      else process.env.FARMSLOT_HOME = previousHome;
+      await rm(root, { recursive: true, force: true });
+    });
+    const cleanup = path.join(root, 'cleanup-complete');
+    const receipt = await invokeNodeLink(
+      {
+        operation: 'process.run',
+        input: {
+          argv: [
+            process.execPath,
+            '-e',
+            'const fs=require("node:fs");process.on("SIGTERM",()=>setTimeout(()=>{fs.writeFileSync(process.argv[1],"closed");process.exit(0)},6000));process.stdout.write("READY");setInterval(()=>{},1000)',
+            cleanup,
+          ],
+          cwd: root,
+          timeoutMs: 10000,
+          closeoutTimeoutMs: 30_000,
+          maxOutputBytes: 1024,
+        },
+      },
+      {
+        commandId: 'long-closeout',
+        target: { nodeId: machine, resourceId: 'recipe' },
+        authority: {
+          requester: { principalId: 'operator', generation: 1 },
+          executor: principal,
+          grantId: 'policy',
+          approvalId: 'approval',
+          approval: 'framework',
+        },
+        assertCurrent: () => undefined,
+        timeoutMs: 10000,
+        signal: controller.signal,
+        onOutput: () => controller.abort(),
+      },
+    );
+    assert.equal(receipt.state, 'cancelled');
+    assert.equal(receipt.closeoutConfirmed, true);
+    assert.equal(await readFile(cleanup, 'utf8'), 'closed');
+  },
+);
+
+test(
+  'a late original response resolves the unconfirmed closeout on the same socket',
+  { timeout: 9000 },
+  async (t) => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-late-closeout-')));
+    const previousHome = process.env.FARMSLOT_HOME;
+    process.env.FARMSLOT_HOME = root;
+    const machine = 'node-link-late-closeout';
+    const { principal } = await linkedNode(t, root, machine, false, undefined, 5500);
+    t.after(async () => {
+      if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+      else process.env.FARMSLOT_HOME = previousHome;
+      await rm(root, { recursive: true, force: true });
+    });
+    const { NodeExecUnconfirmedError } = await import('./node-rpc.js');
+    let unconfirmed: InstanceType<typeof NodeExecUnconfirmedError> | undefined;
+    try {
+      await invokeNodeLink(
+        {
+          operation: 'file.write',
+          input: { root, relPath: 'once', content: 'written', expectedHash: null },
+        },
+        {
+          commandId: 'late-closeout',
+          target: { nodeId: machine, resourceId: 'workspace' },
+          root,
+          timeoutMs: 100,
+          authority: {
+            requester: { principalId: 'operator', generation: 1 },
+            executor: principal,
+            grantId: 'policy',
+            approvalId: 'approval',
+            approval: 'framework',
+          },
+          assertCurrent: () => undefined,
+        },
+      );
+      assert.fail('Expected the deliberately delayed exchange to time out');
+    } catch (error) {
+      assert(error instanceof NodeExecUnconfirmedError);
+      unconfirmed = error;
+    }
+    await unconfirmed.closeout;
+    assert.equal(await readFile(path.join(root, 'once'), 'utf8'), 'written');
+  },
+);

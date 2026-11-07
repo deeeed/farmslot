@@ -51,6 +51,7 @@ export async function execThroughNodeLink(
           argv,
           cwd: options.cwd ?? vars.remoteRepo,
           timeoutMs,
+          ...(options.closeoutTimeoutMs ? { closeoutTimeoutMs: options.closeoutTimeoutMs } : {}),
           maxOutputBytes: options.maxBuffer ?? 8 * 1024 * 1024,
           environment,
         },

@@ -46,6 +46,7 @@ interface ProcessStream {
   tail: string;
   omitted: number;
   state?: NodeLinkReceipt['state'];
+  settledAt?: number;
   waiters: Array<{ offset: number; resolve(): void; reject(error: unknown): void }>;
 }
 
@@ -79,6 +80,7 @@ export class NodeLinkAgent {
   private readonly pending = new Map<string, PendingCommand>();
   private flush?: ReturnType<typeof setTimeout>;
   private retired = false;
+  private recovery?: Promise<void>;
 
   constructor(
     root: string,
@@ -98,8 +100,12 @@ export class NodeLinkAgent {
 
   async handle(method: string, value: unknown): Promise<unknown> {
     if (this.retired) throw new NodeLinkFailure('STALE_SOCKET', 'Node link is retired.');
+    await (this.recovery ??= this.executor.commands.recoverInterrupted());
     if (method === 'node.link.status') return { ready: true, capabilities: this.capabilities };
-    if (method === 'node.link.authorize') return this.executor.bind(value);
+    if (method === 'node.link.authorize') {
+      this.pruneStreams();
+      return this.executor.bind(value);
+    }
     if (method === 'node.link.terminal.resize') {
       if (
         !value ||
@@ -118,6 +124,7 @@ export class NodeLinkAgent {
     if (!isNodeLinkCommand(value) && method !== 'node.link.resume' && method !== 'node.link.ack')
       throw new NodeLinkFailure('INVALID_PARAMS', 'Invalid node link command.');
     if (method === 'node.link.command') {
+      this.pruneStreams();
       const command = parseNodeLinkOperation(value);
       this.executor.authorize(command);
       const previous = this.pending.get(command.commandId);
@@ -156,20 +163,35 @@ export class NodeLinkAgent {
       let receipt: NodeLinkReceipt;
       try {
         receipt = await pending.result;
+      } catch (error) {
+        if (error instanceof NodeLinkFailure && error.details?.admitted === false)
+          this.executor.release(command);
+        throw error;
       } finally {
         if (this.pending.get(command.commandId) === pending) this.pending.delete(command.commandId);
       }
 
-      const stream = command.operation === 'process.run' ? this.source(command) : undefined;
+      const stream = this.streams.get(command.commandId);
       if (stream) {
         stream.state = receipt.state;
+        if (receipt.closeoutConfirmed) stream.settledAt = Date.now();
         this.drain(stream);
       }
       return receipt;
     }
     if (method === 'node.link.release' && isNodeLinkCommand(value)) {
-      const receipt = await this.executor.commands.receipt(value);
-      if (!receipt.closeoutConfirmed)
+      let receipt: NodeLinkReceipt;
+      try {
+        receipt = await this.executor.commands.receipt(value);
+      } catch (error) {
+        if (!(error instanceof NodeLinkFailure && error.code === 'RECEIPT_UNKNOWN')) throw error;
+        this.executor.release(value);
+        return { released: true };
+      }
+      if (
+        !receipt.closeoutConfirmed &&
+        !(receipt.state === 'failed' && receipt.error?.code === 'OUTCOME_UNKNOWN')
+      )
         throw new NodeLinkFailure('OUTCOME_UNKNOWN', 'Cannot release an unsettled command.');
       this.streams.delete(value.commandId);
       this.executor.release(value);
@@ -237,6 +259,19 @@ export class NodeLinkAgent {
     if (this.flush) clearTimeout(this.flush);
     await closeout;
     this.streams.clear();
+  }
+
+  private pruneStreams(): void {
+    for (const [id, stream] of this.streams) {
+      if (
+        !stream.settledAt ||
+        (this.streams.size < NODE_LINK_LIMITS.inFlight && Date.now() - stream.settledAt < 60_000) ||
+        stream.waiters.length
+      )
+        continue;
+      this.streams.delete(id);
+      this.executor.release(stream.command);
+    }
   }
 
   private source(command: NodeLinkCommand): ProcessStream {
