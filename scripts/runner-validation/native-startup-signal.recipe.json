@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native startup signal retains cleanup ownership",
+  "description": "Drive the managed native worker API with an owned stdio fixture. Deliver an actual SIGTERM during its child spawn. The initialization must fail, while the managed journal confirms processStopped and fresh OS metadata proves the child absent. No provider or live farm session is used.",
+  "workflow": {
+    "entry": "startup-signal",
+    "nodes": {
+      "startup-signal": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-startup-signal.mts",
+        "timeout_ms": 30000,
+        "intent": "The real native worker manager records failed startup with confirmed process cleanup when SIGTERM arrives during spawn.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
