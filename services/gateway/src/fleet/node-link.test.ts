@@ -958,3 +958,71 @@ test('pruned gateway intents cannot renew an expired command key and repeat its 
   await assert.rejects(invokeNodeLink(request, invocation), { code: 'COMMAND_EXPIRED' });
   assert.equal(await readFile(path.join(root, 'once'), 'utf8'), 'first');
 });
+
+test(
+  'expired definitely-unsent intents reclaim capacity even after thousands of refusals',
+  { timeout: 30_000 },
+  async (t) => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-refused-intents-')));
+    const previousHome = process.env.FARMSLOT_HOME;
+    process.env.FARMSLOT_HOME = root;
+    const machine = 'node-link-refused-intents';
+    const { principal } = await linkedNode(t, root, machine);
+    t.after(async () => {
+      if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+      else process.env.FARMSLOT_HOME = previousHome;
+      await rm(root, { recursive: true, force: true });
+    });
+    const { createHash } = await import('node:crypto');
+    const { createNodeLinkCommandId } = await import('./node-link.js');
+    const directory = path.join(root, 'node-link-intents', machine);
+    await mkdir(directory, { recursive: true });
+    const expiresAt = Date.now() - 10 * 60_000;
+    const authority = {
+      requester: { principalId: 'operator', generation: 1 },
+      executor: principal,
+      grantId: 'expired-refusal',
+      approvalId: 'expired-refusal',
+      approval: 'framework' as const,
+    };
+    const target = { nodeId: machine, resourceId: 'workspace' };
+    for (let start = 0; start < 4096; start += 32) {
+      await Promise.all(
+        Array.from({ length: 32 }, (_, offset) => {
+          const commandId = `nl1:${expiresAt}:refused-${start + offset}`;
+          return writeFile(
+            path.join(directory, createHash('sha256').update(commandId).digest('hex') + '.json'),
+            JSON.stringify({
+              command: {
+                commandId,
+                operation: 'file.write',
+                input: { root, relPath: 'never-admitted', content: 'no' },
+                target,
+                authority,
+                expiresAt,
+              },
+              grant: { target, authority, expiresAt, operations: ['file.write'], root },
+              sent: false,
+            }),
+          );
+        }),
+      );
+    }
+    const receipt = await invokeNodeLink(
+      {
+        operation: 'file.write',
+        input: { root, relPath: 'after-refusals', content: 'ok', expectedHash: null },
+      },
+      {
+        commandId: createNodeLinkCommandId(),
+        target,
+        authority,
+        root,
+        assertCurrent: () => undefined,
+      },
+    );
+    assert.equal(receipt.state, 'completed');
+    assert.equal(await readFile(path.join(root, 'after-refusals'), 'utf8'), 'ok');
+    await assert.rejects(readFile(path.join(root, 'never-admitted')), { code: 'ENOENT' });
+  },
+);

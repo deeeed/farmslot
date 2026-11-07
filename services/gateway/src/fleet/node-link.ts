@@ -434,9 +434,9 @@ async function pruneSettledIntents(
     const receipt = value.receipt;
     if (
       nodeLinkCommandDeadline(value.command.commandId) !== value.command.expiresAt ||
-      !receipt?.closeoutConfirmed ||
-      !receipt.settledAt ||
-      Math.max(value.command.expiresAt, receipt.settledAt) + NODE_LINK_RECEIPT_RETENTION_MS >=
+      (value.sent && !receipt?.closeoutConfirmed) ||
+      Math.max(value.command.expiresAt, receipt?.settledAt ?? value.command.expiresAt) +
+        NODE_LINK_RECEIPT_RETENTION_MS >=
         now ||
       pendingInvocations.has(
         invocationKey({ commandId: value.command.commandId, target: value.command.target }),

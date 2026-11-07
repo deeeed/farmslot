@@ -79,23 +79,18 @@ export class NodeLinkCommands {
   /** Boot recovery records uncertainty as a failed effect. Only domain replay may retry it. */
   async recoverInterrupted(): Promise<void> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
-    let index: Map<string, string>;
-    try {
-      index = await this.index();
-    } catch (error) {
-      if (!(error instanceof NodeLinkFailure && error.code === 'RECEIPT_INDEX_MISSING'))
-        throw error;
-      index = new Map<string, string>();
-      for (const entry of await readdir(this.root)) {
-        if (!/^[a-f0-9]{64}\.json$/.test(entry)) continue;
-        const value: unknown = JSON.parse(await readFile(path.join(this.root, entry), 'utf8'));
-        if (!isNodeLinkReceipt(value))
-          throw new NodeLinkFailure('RECEIPT_CORRUPT', 'Interrupted receipt failed validation.');
-        if (!isNodeLinkTerminal(value.state)) index.set(value.commandId, this.resource(value));
-      }
-      this.pendingIndex = Promise.resolve(index);
-      await this.write(path.join(this.root, 'pending.json'), [...index]);
+    // The prior index may exist but predate the last atomic admission. Rebuild once
+    // at boot from the bounded receipt set so that an unindexed admission is not lost.
+    const index = new Map<string, string>();
+    for (const entry of await readdir(this.root)) {
+      if (!/^[a-f0-9]{64}\.json$/.test(entry)) continue;
+      const value: unknown = JSON.parse(await readFile(path.join(this.root, entry), 'utf8'));
+      if (!isNodeLinkReceipt(value))
+        throw new NodeLinkFailure('RECEIPT_CORRUPT', 'Interrupted receipt failed validation.');
+      if (!isNodeLinkTerminal(value.state)) index.set(value.commandId, this.resource(value));
     }
+    this.pendingIndex = Promise.resolve(index);
+    await this.write(path.join(this.root, 'pending.json'), [...index]);
     for (const id of [...index.keys()]) {
       const receipt = await this.read(id);
       if (!receipt) throw new NodeLinkFailure('RECEIPT_CORRUPT', 'Interrupted receipt is missing.');

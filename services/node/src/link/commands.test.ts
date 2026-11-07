@@ -330,3 +330,60 @@ test('restart between admission publication and index publication still fails un
     'completed',
   );
 });
+
+for (const indexedOther of [false, true]) {
+  test(`boot recovery finds an admitted orphan beside an existing valid ${indexedOther ? 'nonempty' : 'empty'} index`, async (t) => {
+    const { createHash } = await import('node:crypto');
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const root = await mkdtemp(path.join(tmpdir(), 'node-link-stale-valid-index-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const input: NodeLinkCommand = {
+      commandId: 'orphan',
+      operation: 'fixture.write',
+      target: { nodeId: 'fixture', resourceId: 'workspace' },
+      expiresAt: Date.now() + 60_000,
+      input: {},
+      authority: {
+        requester: { principalId: 'operator', generation: 1 },
+        executor: { principalId: 'node', generation: 0 },
+        grantId: 'grant',
+        approvalId: 'approval',
+        approval: 'framework',
+      },
+    };
+    const executor = { authorize: () => undefined, execute: async () => null };
+    const original = new NodeLinkCommands(root, executor);
+    await original.execute(input);
+    const file = path.join(
+      root,
+      createHash('sha256').update(input.commandId).digest('hex') + '.json',
+    );
+    const admitted = {
+      ...JSON.parse(await readFile(file, 'utf8')),
+      state: 'admitted',
+      closeoutConfirmed: false,
+    };
+    delete admitted.result;
+    delete admitted.settledAt;
+    await writeFile(file, JSON.stringify(admitted));
+    if (indexedOther) {
+      await original.execute({ ...input, commandId: 'indexed-other' });
+      await writeFile(
+        path.join(root, 'pending.json'),
+        JSON.stringify([
+          ['indexed-other', JSON.stringify([input.target.nodeId, input.target.resourceId])],
+        ]),
+      );
+    }
+    assert.equal(
+      JSON.parse(await readFile(path.join(root, 'pending.json'), 'utf8')).length,
+      indexedOther ? 1 : 0,
+    );
+    const restarted = new NodeLinkCommands(root, executor);
+    await restarted.recoverInterrupted();
+    const outcome = await restarted.receipt(input);
+    assert.equal(outcome.state, 'failed');
+    assert.equal(outcome.error?.code, 'OUTCOME_UNKNOWN');
+    assert.equal(outcome.closeoutConfirmed, false);
+  });
+}

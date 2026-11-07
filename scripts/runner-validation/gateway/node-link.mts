@@ -26,6 +26,7 @@ import {
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const evidence = path.resolve(process.argv[2] ?? path.join(source, 'temp/node-link-conformance'));
 await mkdir(evidence, { recursive: true, mode: 0o700 });
+await rm(path.join(evidence, 'PASS.json'), { force: true });
 const metadata = path.join(evidence, 'owned-root.json');
 let fixture: string;
 try {
@@ -348,6 +349,8 @@ try {
       maxOutputBytes: 1024,
     },
   };
+  const interruptedIndex = path.join(nodeRoot, 'home', 'node-link', machine, 'pending.json');
+  const preAdmissionIndex = await readFile(interruptedIndex);
   const interrupted = invokeNodeLink(crashRequest, crashInvocation).then(
     (receipt) => ({ ok: true, receipt }) as const,
     (error: unknown) => ({ ok: false, error }) as const,
@@ -370,6 +373,9 @@ try {
   const uncertain = await interrupted;
   assert.equal(uncertain.ok, false);
   await stopOwnedEffect();
+  // Fault injection only in this stopped owned fixture: model loss of the index
+  // publication while preserving the actual daemon's durable admitted receipt.
+  await writeFile(interruptedIndex, preAdmissionIndex);
   await poll('crashed node disconnect', async () => !getNode(machine) || undefined, 10_000);
   startNode();
   registered = await poll(
@@ -514,6 +520,7 @@ fs.writeFileSync(process.argv[3],JSON.stringify({pid:process.pid}));`,
         realStream: output,
         restartKeptOriginalOutcome: true,
         interruptedAdmissionFailedUnknown: true,
+        staleValidIndexRecovered: true,
         domainReplayFenceReleased: true,
         nodeOwnedPty: true,
         numberedInputOnce: true,
