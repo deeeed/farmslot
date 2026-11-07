@@ -155,10 +155,7 @@ function pipelineEvidenceReview(file = EVIDENCE_POINTER): ReviewStatus {
   };
 }
 
-const changedEvidenceInputs = async () => ({
-  reviewed: 'a'.repeat(64),
-  current: { fingerprint: 'b'.repeat(64), legacyFingerprint: 'c'.repeat(64) },
-});
+const changedEvidenceInputs = async () => true;
 
 test('same-head pipeline evidence repair uses the last issues input receipt without a package hash', async () => {
   await assert.doesNotReject(
@@ -171,28 +168,16 @@ test('same-head pipeline evidence repair uses the last issues input receipt with
   );
 });
 
-test('pipeline evidence repair refuses unchanged or missing input receipts', async () => {
-  for (const readInputs of [
-    async () => null,
-    async () => ({
-      reviewed: 'a'.repeat(64),
-      current: { fingerprint: 'a'.repeat(64), legacyFingerprint: 'c'.repeat(64) },
-    }),
-    async () => ({
-      reviewed: 'a'.repeat(64),
-      current: { fingerprint: 'b'.repeat(64), legacyFingerprint: 'a'.repeat(64) },
-    }),
-  ]) {
-    await assert.rejects(
-      assertReviewLaunchState(
-        [pipelineEvidenceReview()],
-        gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
-        refreshedPackage(),
-        readInputs,
-      ),
-      /prior issues review already examined commit abc123/u,
-    );
-  }
+test('pipeline evidence repair refuses when its receipt owner reports no change', async () => {
+  await assert.rejects(
+    assertReviewLaunchState(
+      [pipelineEvidenceReview()],
+      gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
+      refreshedPackage(),
+      async () => false,
+    ),
+    /prior issues review already examined commit abc123/u,
+  );
 });
 
 test('changed pipeline evidence cannot clear a source finding or a different-head package', async () => {

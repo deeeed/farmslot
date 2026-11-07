@@ -120,6 +120,18 @@ export async function recordReviewedInputs(
   });
 }
 
+function fingerprintDiffers(current: ReviewedInputsFingerprint, recorded: string): boolean {
+  return current.fingerprint !== recorded && current.legacyFingerprint !== recorded;
+}
+
+/** Read-only evidence change since the last issues result, not an older passing review. */
+export async function lastIssuesReviewInputsChanged(run: Run): Promise<boolean> {
+  const reviewed = run.engineState?.reviewedInputs?.rerunFor;
+  if (!reviewed || reviewed !== run.engineState?.reviewInputsAtLaunch) return false;
+  const current = await readReviewedInputs(run);
+  return !!current && fingerprintDiffers(current, reviewed);
+}
+
 /**
  * The current fingerprint when it differs from what the last passing review
  * judged, else null. A run with no record, or a slot that cannot be read,
@@ -132,9 +144,7 @@ async function changedReviewedInputs(run: Run): Promise<string | null> {
   if (!recorded) return null;
   const current = await readReviewedInputs(run);
   if (!current) return null;
-  return current.fingerprint !== recorded && current.legacyFingerprint !== recorded
-    ? current.fingerprint
-    : null;
+  return fingerprintDiffers(current, recorded) ? current.fingerprint : null;
 }
 
 export async function reviewedInputsChanged(run: Run): Promise<boolean> {

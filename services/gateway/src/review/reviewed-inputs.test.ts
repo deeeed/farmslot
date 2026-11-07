@@ -25,6 +25,7 @@ import { getRun, updateRun } from '../runs/store.js';
 
 import { recordedReviewRounds } from './recorded-review-rounds.test-support.js';
 import {
+  lastIssuesReviewInputsChanged,
   noteReviewInputsAtLaunch,
   readReviewedInputs,
   recordReviewedInputs,
@@ -467,6 +468,21 @@ test('same-head pipeline evidence launch reads the last issues receipt without m
   const current = getRun(run.id)!;
   const before = structuredClone(current.engineState);
   assert(current.slotId);
+  const receipt = current.engineState?.reviewedInputs;
+  const fingerprints = await readReviewedInputs(current);
+  assert(receipt && fingerprints);
+  assert.equal(
+    await lastIssuesReviewInputsChanged({
+      ...current,
+      engineState: {
+        ...current.engineState,
+        reviewInputsAtLaunch: fingerprints.legacyFingerprint,
+        reviewedInputs: { ...receipt, rerunFor: fingerprints.legacyFingerprint },
+      },
+    }),
+    false,
+    'a matching legacy fingerprint remains unchanged',
+  );
   await assert.rejects(
     assertReviewLaunchStateForSlot([review], current.slotId, prepared, current),
     /prior issues review already examined commit/u,
