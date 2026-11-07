@@ -147,6 +147,75 @@ test('independent publication re-review allows the same HEAD after an evidence-o
   );
 });
 
+function pipelineEvidenceReview(file = EVIDENCE_POINTER): ReviewStatus {
+  return {
+    ...warmEvidenceFindingReview(file),
+    source: 'pipeline',
+    reviewedReviewSubjectHash: undefined,
+  };
+}
+
+const changedEvidenceInputs = async () => true;
+
+test('same-head pipeline evidence repair uses the last issues input receipt without a package hash', async () => {
+  await assert.doesNotReject(
+    assertReviewLaunchState(
+      [pipelineEvidenceReview()],
+      gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
+      refreshedPackage(),
+      changedEvidenceInputs,
+    ),
+  );
+});
+
+test('pipeline evidence repair refuses when its receipt owner reports no change', async () => {
+  await assert.rejects(
+    assertReviewLaunchState(
+      [pipelineEvidenceReview()],
+      gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
+      refreshedPackage(),
+      async () => false,
+    ),
+    /prior issues review already examined commit abc123/u,
+  );
+});
+
+test('changed pipeline evidence cannot clear a source finding or a different-head package', async () => {
+  let probes = 0;
+  const readInputs = async () => {
+    probes++;
+    return changedEvidenceInputs();
+  };
+  await assert.rejects(
+    assertReviewLaunchState(
+      [pipelineEvidenceReview('app/source.ts')],
+      gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
+      refreshedPackage(),
+      readInputs,
+    ),
+    /prior issues review already examined commit abc123/u,
+  );
+  await assert.rejects(
+    assertReviewLaunchState(
+      [pipelineEvidenceReview()],
+      gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
+      { ...refreshedPackage(), headSha: 'other-head' },
+      readInputs,
+    ),
+    /prior issues review already examined commit abc123/u,
+  );
+  await assert.rejects(
+    assertReviewLaunchState(
+      [pipelineEvidenceReview()],
+      gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
+      { ...refreshedPackage(), reviewSubjectHash: undefined },
+      readInputs,
+    ),
+    /prior issues review already examined commit abc123/u,
+  );
+  assert.equal(probes, 0, 'ineligible findings must not scan the evidence');
+});
+
 test('independent publication re-review refuses the same HEAD when a finding names versioned source', async () => {
   await assert.rejects(
     assertReviewLaunchState(

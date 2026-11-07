@@ -19,11 +19,13 @@ import type { PrepareCompletionPackageResult } from '../run-completion/orchestra
 import { collectRunGateReadiness } from '../run-engine/gate-prerequisites.js';
 import { rerunReviewIfReviewedInputsChanged } from '../run-engine/post-dispatch-steps.js';
 import type { PublishGateReviewPlanDependencies } from '../run-engine/ready-gate.js';
+import { assertReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
 import { makeReadyGatePackage } from '../run-engine/test-fixtures.js';
 import { getRun, updateRun } from '../runs/store.js';
 
 import { recordedReviewRounds } from './recorded-review-rounds.test-support.js';
 import {
+  lastIssuesReviewInputsChanged,
   noteReviewInputsAtLaunch,
   readReviewedInputs,
   recordReviewedInputs,
@@ -436,6 +438,72 @@ test('a cold pipeline recheck keeps its runner without borrowing the gate review
   await writeFile(path.join(artifacts, 'on-after.png'), 'png-v2');
   await rerunReviewIfReviewedInputsChanged(run.id, context);
   assert.deepEqual(plans, [[row]]);
+});
+
+test('same-head pipeline evidence launch reads the last issues receipt without mutating it', async (t) => {
+  const { run, repo, artifacts } = await slotWithTask(t);
+  await writeFile(path.join(repo, '.git/info/exclude'), '.sandbox/\n');
+  const head = (await execFileAsync('git', ['-C', repo, 'rev-parse', 'HEAD'])).stdout.trim();
+  await reviewPasses(run.id);
+  await recordReviewedInputs(run.id, 'issues');
+  const review: ReviewStatus = {
+    id: 'pipeline-evidence-review',
+    source: 'pipeline',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    feedbackSent: false,
+    recoveryContinuationPending: false,
+    reviewedHeadSha: head,
+    issues: [
+      {
+        file: path.relative(repo, path.join(artifacts, 'evidence-manifest.json')),
+        severity: 'minor',
+        description: 'Repair the evidence label.',
+      },
+    ],
+  };
+  const prepared = makeReadyGatePackage({ headSha: head, reviewSubjectHash: 'repaired-subject' });
+  const current = getRun(run.id)!;
+  const before = structuredClone(current.engineState);
+  assert(current.slotId);
+  const receipt = current.engineState?.reviewedInputs;
+  const fingerprints = await readReviewedInputs(current);
+  assert(receipt && fingerprints);
+  assert.equal(
+    await lastIssuesReviewInputsChanged({
+      ...current,
+      engineState: {
+        ...current.engineState,
+        reviewInputsAtLaunch: fingerprints.legacyFingerprint,
+        reviewedInputs: { ...receipt, rerunFor: fingerprints.legacyFingerprint },
+      },
+    }),
+    false,
+    'a matching legacy fingerprint remains unchanged',
+  );
+  await assert.rejects(
+    assertReviewLaunchStateForSlot([review], current.slotId, prepared, current),
+    /prior issues review already examined commit/u,
+  );
+  await writeFile(path.join(artifacts, 'evidence-manifest.json'), '{"before_after_pairs":[]}');
+  await assert.doesNotReject(
+    assertReviewLaunchStateForSlot([review], current.slotId, prepared, current),
+  );
+  await assert.rejects(
+    assertReviewLaunchStateForSlot([review], current.slotId, prepared, {
+      ...current,
+      engineState: { ...current.engineState, reviewInputsAtLaunch: undefined },
+    }),
+    /prior issues review already examined commit/u,
+  );
+  assert.deepEqual(
+    getRun(run.id)!.engineState,
+    before,
+    'admission must not mark evidence reviewed',
+  );
+  assert.equal(review.verdict, 'issues');
 });
 
 test('the re-run continues the lineage of the row the pipeline review ran, WARM', async (t) => {
