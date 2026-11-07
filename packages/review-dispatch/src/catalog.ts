@@ -236,8 +236,11 @@ export function catalogForNativeRunners(
         id: native.runner,
         allowCustomModels: option?.allowCustomModels ?? true,
         defaultModel: nativeRunnerDefaultModel(native, executionNodeId) || null,
-        defaultEffort: option?.defaultEffort ?? null,
-        efforts: option?.efforts ?? [],
+        defaultEffort:
+          native.defaultEffort !== undefined
+            ? native.defaultEffort
+            : (option?.defaultEffort ?? null),
+        efforts: native.efforts ?? option?.efforts ?? [],
         models: nativeRunnerModels(native, executionNodeId).map((id) => {
           const group = runnerModelProviderLabel(id);
           return (

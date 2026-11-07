@@ -237,11 +237,20 @@ export const NativeSessionEventTypes = {
 
 /** What a tool call does, normalized by the runner adapter. Absent: an older host, or unknown. */
 export type NativeToolKind = 'command' | 'file-edit' | 'file-read' | 'search' | 'web' | 'other';
+/** Generic file-edit content, normalized by the adapter rather than either renderer. */
+export interface NativeToolDiff {
+  path: string;
+  /** Null means the tool created the file. */
+  oldText: string | null;
+  newText: string;
+}
+
 export interface NativeSessionTool {
   /** The runner's own tool name, such as Bash or commandExecution. */
   name: string;
   input?: unknown;
   output?: unknown;
+  diffs?: NativeToolDiff[];
   status?: string;
   kind?: NativeToolKind;
   /** The command line a `command` tool runs. */
@@ -355,6 +364,8 @@ export interface NativeRunnerOption {
    */
   nodeModels?: Record<string, string[]>;
   defaultModel: string;
+  efforts?: string[];
+  defaultEffort?: string | null;
   modes: Array<'default' | 'plan'>;
   /** Task dispatch and leased recovery are available in addition to standalone chat. */
   supportsWorkers?: boolean;

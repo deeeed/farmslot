@@ -3,7 +3,13 @@ import test from 'node:test';
 
 import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL, DEFAULT_PI_MODEL } from '@farmslot/protocol';
 
-import { getRunnerDefinition, runnerSupportsNativeTaskReuse } from './registry.js';
+import { buildInteractiveRefinementRunnerCommand } from './launch-command.js';
+import {
+  getRunnerDefinition,
+  isKnownRunner,
+  runnerSupportsEffort,
+  runnerSupportsNativeTaskReuse,
+} from './registry.js';
 
 test('additional native sessions preserve terminal defaults and support native worker execution', () => {
   for (const [runner, terminalModel, transport] of [
@@ -43,4 +49,31 @@ test('Pi and OpenCode run natively while their terminal launches stay as they we
 
   for (const runner of ['pi', 'opencode'])
     assert.equal(runnerSupportsNativeTaskReuse(runner), true);
+});
+
+test('Claude Code ACP uses the common native lifecycle with explicit model, effort and interaction modes', () => {
+  assert.equal(isKnownRunner('claude-acp'), true);
+  const definition = getRunnerDefinition('claude-acp');
+  assert.equal(definition.nativeTransport, 'acp');
+  assert.equal(definition.mobileKeyProfile, null);
+  assert.equal(definition.sessionReload, 'none');
+  assert.equal(definition.gracefulExit, null);
+  assert.equal(definition.observabilityScope, 'none');
+  assert.deepEqual(definition.nativeChoices?.modes, ['default', 'plan']);
+  assert.deepEqual(definition.nativeChoices?.efforts, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(runnerSupportsEffort('claude-acp', 'haiku', 'low'), true);
+  assert.equal(runnerSupportsNativeTaskReuse('claude-acp'), true);
+  assert.equal(getRunnerDefinition('claude').nativeTransport, 'claude-stream-json');
+});
+
+test('a native-only agent is refused before constructing a terminal command', () => {
+  assert.throws(
+    () =>
+      buildInteractiveRefinementRunnerCommand({
+        runner: 'claude-acp',
+        repo: '/private/proof',
+        promptPath: '/private/prompt',
+      }),
+    /requires native transport/,
+  );
 });

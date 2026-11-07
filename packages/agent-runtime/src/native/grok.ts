@@ -23,6 +23,7 @@ export function grokAuthMethod(methods: AcpObject[]): string | undefined {
 
 export const grokNativeAdapter = createAcpAdapter({
   authMethod: grokAuthMethod,
+  modelConfiguration: 'legacy',
   args: (options) => [
     '--no-auto-update',
     '--permission-mode',

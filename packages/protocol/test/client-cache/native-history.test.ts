@@ -957,3 +957,48 @@ test('a newer read while a turn streams refuses an answer on the old snapshot, n
   assert(!nativeHistoryCanSend(newer, rendered, false, now));
   assert(!nativeHistoryCanSend(read({ ...newer.data, hasMore: true }), rendered, true, now));
 });
+
+test('automatic ACP permissions have a known audited resolution without a pending prompt', () => {
+  const resolved: NativeSessionEvent = {
+    ...event(1, ''),
+    type: 'approval.resolved',
+    nativeId: 'number:71',
+    request: { id: 'request', title: 'Write note.txt' },
+    data: { decision: 'approve', automatic: true, approvalMode: 'bypass' },
+  };
+  const rows = nativeTimeline([resolved]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, 'resolution');
+  assert.equal(rows[0].text, 'Automatically approved (bypass): Write note.txt');
+});
+
+test('a journaled final tool correction updates the existing timeline card', () => {
+  const started: NativeSessionEvent = {
+    ...event(1, ''),
+    type: 'tool.started',
+    nativeId: 'edit',
+    tool: {
+      name: 'Edit',
+      status: 'in_progress',
+      diffs: [{ path: 'note.txt', oldText: 'before', newText: 'optimistic' }],
+    },
+  };
+  const completed: NativeSessionEvent = {
+    ...started,
+    sequence: 2,
+    type: 'tool.completed',
+    tool: { ...started.tool!, status: 'completed' },
+  };
+  const corrected: NativeSessionEvent = {
+    ...completed,
+    sequence: 3,
+    tool: {
+      ...completed.tool!,
+      diffs: [{ path: 'note.txt', oldText: 'whole before', newText: 'whole after' }],
+    },
+  };
+  const rows = nativeTimeline([started, completed, corrected]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].key, 1);
+  assert.deepEqual(rows[0].event.tool?.diffs, corrected.tool?.diffs);
+});

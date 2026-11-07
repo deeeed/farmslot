@@ -90,7 +90,7 @@ import {
 } from '../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import {
-  assertNativeRunner,
+  assertRunnerTransport,
   assertSupportedRunnerSpelling,
   normalizeRunner,
   runnerDefaultModel,
@@ -905,7 +905,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
   if (transport !== undefined && transport !== 'tmux' && transport !== 'native')
     throw new Error('Unknown worker transport');
   // Refuse before a slot is found or prepared.
-  if (transport === 'native' && params.runner) assertNativeRunner(normalizeRunner(params.runner));
+  if (params.runner) assertRunnerTransport(normalizeRunner(params.runner), transport ?? 'tmux');
   const nativeOwnerPrincipalId =
     transport === 'native' || (transport === 'tmux' && params.reviewWorkspaceTarget)
       ? (params.reviewWorkspaceTarget ? resolveReviewWorkspaceOwner : resolveNativeWorkerOwner)(

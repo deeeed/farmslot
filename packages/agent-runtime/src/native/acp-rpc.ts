@@ -31,11 +31,16 @@ export function selectAcpAuthMethod(
   return methods.some((method) => method.id === wanted) ? wanted : undefined;
 }
 
+/** Structured options are optional on older agents, but malformed declarations are errors. */
+export function acpSessionConfigOptions(session: AcpObject): AcpObject[] {
+  if (session.configOptions === undefined) return [];
+  if (!Array.isArray(session.configOptions)) throw new Error('Invalid ACP session configuration');
+  return session.configOptions.map(acpObject);
+}
+
 /** The values a session config option offers, or undefined when the runner has no such option. */
 export function acpConfigChoices(session: AcpObject, id: string): string[] | undefined {
-  const options = ((session.configOptions as AcpObject[] | undefined) ?? []).find(
-    (option) => option.id === id,
-  )?.options;
+  const options = acpSessionConfigOptions(session).find((option) => option.id === id)?.options;
   return Array.isArray(options)
     ? options.map((option) => acpString(acpObject(option).value))
     : undefined;

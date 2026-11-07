@@ -13,6 +13,7 @@ import { observeOpenCodeAccount, opencodeProfileEnvironment } from './account-op
 import { observePiAccount, piProfileEnvironment } from './account-pi.js';
 import type { NativeAccountObservation, NativeAccountProbeOptions } from './account-types.js';
 import { claudeNativeAdapter } from './claude.js';
+import { claudeAcpBinary, claudeAcpNativeAdapter, observeClaudeAcpAccount } from './claude-acp.js';
 import { codexNativeAdapter } from './codex.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
@@ -235,5 +236,19 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
       loginArgs: [],
       observe: observePiAccount,
     },
+  },
+};
+
+// ACP is a separate registration: existing SDK sessions keep their adapter and identity.
+nativeRunnerDefinitions['claude-acp'] = {
+  ...nativeRunnerDefinitions.claude,
+  adapter: claudeAcpNativeAdapter,
+  get binary() {
+    return claudeAcpBinary();
+  },
+  account: {
+    ...nativeRunnerDefinitions.claude.account,
+    loginArgs: ['--cli', 'auth', 'login'],
+    observe: observeClaudeAcpAccount,
   },
 };

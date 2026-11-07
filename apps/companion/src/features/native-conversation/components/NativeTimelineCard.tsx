@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
-import type { NativeSessionPlan } from '@farmslot/protocol';
+import { type NativeSessionPlan, viewToggleField } from '@farmslot/protocol';
 import {
   nativeCommandText,
   nativeEntryPreview,
@@ -12,10 +12,13 @@ import {
   nativePlanCopyLabel,
   nativePlanStepMark,
   type NativeTimelineEntry,
+  nativeToolDiffText,
+  nativeToolDisclosureKey,
 } from '@farmslot/protocol/client-cache';
 
 import { FormattedDocument } from '../../../components/FormattedDocument';
-import { useViewToggle } from '../../../components/view-state';
+import { MobileDiffViewer } from '../../../components/MobileDiffViewer';
+import { useViewChoice, useViewToggle } from '../../../components/view-state';
 import { formatDocument } from '../../../lib/document-format';
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
@@ -39,9 +42,10 @@ export function NativeTimelineCard({
   /** Implement is starting its session. */
   implementing?: boolean;
 }) {
-  const [expanded, setExpanded] = useViewToggle(
-    `native-entry:${entry.key}`,
-    entry.kind === 'plan' && planOpen,
+  const [expanded, setExpanded] = useViewChoice(
+    entry.kind === 'tool'
+      ? viewToggleField('messages', nativeToolDisclosureKey(entry.key), false)
+      : viewToggleField('panels', `native-entry:${entry.key}`, entry.kind === 'plan' && planOpen),
   );
   const [raw, setRaw] = useViewToggle(`native-raw:${entry.key}`);
   const toggle = () => {
@@ -110,6 +114,17 @@ export function NativeTimelineCard({
               </Pressable>
             </>
           ) : null}
+          {expanded
+            ? entry.event.tool?.diffs?.map((diff, index) => (
+                <MobileDiffViewer
+                  key={`${diff.path}:${index}`}
+                  title={diff.path}
+                  diffText={nativeToolDiffText(diff)}
+                  initialPath={diff.path}
+                  fullscreenChoiceId={`native-diff:${entry.key}:${diff.path}:${index}`}
+                />
+              ))
+            : null}
           {expanded && (!command || raw) ? (
             <ScrollView nestedScrollEnabled style={styles.detail}>
               <Text selectable style={styles.code}>

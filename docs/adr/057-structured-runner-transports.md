@@ -661,3 +661,21 @@ coordinated package release, node rollout and host refresh. No harness flag is a
 `NativeWorkspaceChangesResult.repository: false` identifies a non-Git working
 directory. Changes shows a quiet empty state; Files still browses it. Other read
 failures remain errors.
+
+## Amendment 16: shared ACP client and registered agents, 2026-11-07
+
+**Status:** Proposed. Arthur approved implementation of the ACP client and its full session controls.
+
+Reuse the common ACP transport for registered native agents, with Claude Code's ACP adapter as the first new binding. Existing native session APIs, launch/model picker, ownership and worker policies remain authoritative. Do not replace the Claude SDK path or add a second conversation client.
+
+An existing provider login does not require an advertised or interactive authentication method. Negotiate model and effort from the agent's structured configuration; confirm selected values and reject unsupported choices without a fallback. A registered agent supplies its normal interaction mode explicitly, so an inherited auto/bypass mode cannot weaken Ask. Default/Plan, cwd, model/effort, Ask/approve/deny, per-session Bypass, resume, interrupt and close use the existing native lifecycle.
+
+ACP permission requests use the existing `approvalMode` from Amendment 15. Bypass answers each permission with an operation-scoped approval, journaling its request, automatic decision and policy before the grant. It never presents a transient approval prompt. Changing back to Ask restores permission requests on the same idle session; managed worker approval policy remains separate.
+
+Normalize standard ACP file-diff content in the adapter. Optional `NativeSessionTool.diffs` carries generic path and old/new text, independent of Git. CC and Companion use one shared formatter and their existing diff viewers. Keep the existing journal batching, omission pointers and explicit history reads; no body poller or filesystem scan is added.
+
+### Public surface and validation
+
+`@farmslot/protocol` owns `NativeToolDiff`, the optional tool field and shared text-diff helpers consumed by CC, Companion and the existing decision preview. Arthur approved moving the existing `diff@9` dependency from CC UI into that package without adding a library or version. Runner registration, command/profile mechanics and ACP negotiation stay in the capability/adapter layer. No new launch RPC or owner-delegation parameter is introduced.
+
+The first binding uses only the pinned `@agentclientprotocol/claude-agent-acp@0.101.0` adapter and an existing Claude login. Live proof requires CC and a real Companion device: streaming, a tool call and diff, approve/deny, one automatic Bypass write without a prompt, Bypass on/off, selected model/effort/cwd, resume and stop. Additional CLIs or a native model/tool loop are outside this scope. Publication and activation remain coordinated with the held cohort.
