@@ -8,6 +8,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## 0.34.2 - 2026-11-08
 
+- Warn once when an opaque runtime suppresses the recipe HUD, including a stronger warning for explicit `--hud show`, and retain its unavailability in the run summary and trace.
 - Republish against protocol 0.82.2 and the current package set, so consumers load one copy of each Farmslot package.
 
 ## 0.34.1 - 2026-11-08

@@ -1,1 +1,0 @@
-- Warn once when an opaque runtime suppresses the recipe HUD, including a stronger warning for explicit `--hud show`, and retain its unavailability in the run summary and trace.

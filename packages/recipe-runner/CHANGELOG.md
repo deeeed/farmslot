@@ -8,6 +8,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.46.8 - 2026-11-08
 
+- Retain host-reported HUD unavailability in summary and trace metadata without changing the run outcome or action counts.
 - Republish against protocol 0.82.2 and the current package set, so consumers load one copy of each Farmslot package.
 
 ## 0.46.7 - 2026-11-08
