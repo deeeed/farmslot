@@ -82,6 +82,7 @@ import {
   validateRunRecipeStatic,
 } from '../src/harness/index.js';
 import { startRunNetworkObservation } from '../src/harness/network-observation.js';
+import { isRecord } from '../src/harness/parse-args.js';
 import {
   emitHealViolation,
   executeWithHealBounds,
@@ -2440,6 +2441,79 @@ describe('run', () => {
     assert.deepEqual(await policy('api', ['--hud', 'show']), [false]);
   });
 
+  for (const command of ['run', 'call'] as const) {
+    for (const hud of [undefined, 'show', 'hide'] as const) {
+      test(`${command} reports opaque-runtime HUD suppression with --hud ${hud ?? 'default'}`, async () => {
+        const registry = createAdapterRegistry();
+        registry.register(shopAdapter('web', calls, { run: { autoHud: () => false } }));
+        configureHarnessAdapters(registry);
+        const target = checkout();
+        const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+        const args = [
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--json',
+          ...(hud ? ['--hud', hud] : []),
+        ];
+        const result = await capture(() =>
+          command === 'run'
+            ? handleRun([recipe, ...args], runOptions)
+            : handleCall(['shop.ping', 'mode=fast', ...args], callOptions),
+        );
+        assert.equal(result.value, 0, result.stderr.join('\n'));
+        assert.deepEqual([...new Set(calls.autoHud)], [false]);
+        const warnings = result.stderr.filter((line) => line.includes('HUD unavailable'));
+        assert.equal(warnings.length, 1, 'one warning despite multiple preflights');
+        assert.match(warnings[0]!, /opaque-runtime/);
+        if (hud === 'show') assert.match(warnings[0]!, /--hud show.*cannot be honored/);
+        else assert.doesNotMatch(warnings[0]!, /cannot be honored/);
+        const output = lastJson(result.stdout);
+        const paths = command === 'run' ? output.result : output;
+        assert.ok(isRecord(paths));
+        const summary = JSON.parse(fs.readFileSync(String(paths.summaryPath), 'utf8'));
+        const trace = JSON.parse(fs.readFileSync(String(paths.tracePath), 'utf8'));
+        const unavailable = { state: 'unavailable', reason: 'opaque-runtime' };
+        assert.deepEqual(summary.hud, unavailable);
+        assert.deepEqual(trace.metadata.hud, unavailable);
+        assert.equal(trace.metadata.runner.git_ref, 'a'.repeat(40));
+        assert.equal(summary.total, trace.entries.length, 'HUD metadata is not an action');
+      });
+    }
+  }
+
+  test('a supported HUD and read-only planning do not warn about HUD suppression', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const args = [recipe, '--adapter', 'api', '--target', target, '--heal', 'off', '--json'];
+    const result = await capture(() => handleRun([...args, '--hud', 'show'], runOptions));
+    assert.equal(result.value, 0, result.stderr.join('\n'));
+    assert.equal(
+      result.stderr.some((line) => line.includes('HUD unavailable')),
+      false,
+    );
+    const output = lastJson(result.stdout);
+    const paths = output.result;
+    assert.ok(isRecord(paths));
+    assert.equal(JSON.parse(fs.readFileSync(String(paths.summaryPath), 'utf8')).hud, undefined);
+    assert.equal(
+      JSON.parse(fs.readFileSync(String(paths.tracePath), 'utf8')).metadata.hud,
+      undefined,
+    );
+    const registry = createAdapterRegistry();
+    registry.register(shopAdapter('api', calls, { run: { autoHud: () => false } }));
+    configureHarnessAdapters(registry);
+    const plan = await capture(() => handleRun([...args, '--plan', '--hud', 'show'], runOptions));
+    assert.equal(plan.value, 0, plan.stderr.join('\n'));
+    assert.equal(
+      plan.stderr.some((line) => line.includes('HUD unavailable')),
+      false,
+    );
+  });
+
   test('--runtime-dir selects the runtime directory before the slot resolves, for run and call', async () => {
     const seen: Array<string | undefined> = [];
     const registry = createAdapterRegistry();
@@ -3427,51 +3501,65 @@ describe('call', () => {
     });
   }
 
-  test('a call to app.hud drives the HUD itself: no automatic updates redraw what it clears', async () => {
-    const target = checkout();
-    const manifestPath = path.join(target, 'hud.action-manifest.json');
-    fs.writeFileSync(
-      manifestPath,
-      JSON.stringify({
-        ...CORE_ACTIONS,
-        actions: {
-          ...CORE_ACTIONS.actions,
-          'shop.ping': PING_ACTION,
-          'app.hud': {
-            description: 'Show or clear the recipe HUD.',
-            execution_capabilities: ['host-read-export'],
-            examples: [{ action: 'app.hud', clear: true, intent: 'Clear the HUD.', next: 'done' }],
-            schema: {
-              type: 'object',
-              properties: { clear: { type: 'boolean' } },
-              additionalProperties: false,
+  for (const suppressed of [false, true]) {
+    test(`a call to app.hud retains explicit show intent with suppression ${suppressed}`, async () => {
+      if (suppressed) {
+        const registry = createAdapterRegistry();
+        registry.register(shopAdapter('web', calls, { run: { autoHud: () => false } }));
+        configureHarnessAdapters(registry);
+      }
+      const target = checkout();
+      const manifestPath = path.join(target, 'hud.action-manifest.json');
+      fs.writeFileSync(
+        manifestPath,
+        JSON.stringify({
+          ...CORE_ACTIONS,
+          actions: {
+            ...CORE_ACTIONS.actions,
+            'shop.ping': PING_ACTION,
+            'app.hud': {
+              description: 'Show or clear the recipe HUD.',
+              execution_capabilities: ['host-read-export'],
+              examples: [
+                { action: 'app.hud', clear: true, intent: 'Clear the HUD.', next: 'done' },
+              ],
+              schema: {
+                type: 'object',
+                properties: { clear: { type: 'boolean' } },
+                additionalProperties: false,
+              },
             },
           },
-        },
-      }),
-    );
-    calls.autoHud = [];
-    const call = await capture(() =>
-      handleCall(
-        [
-          'app.hud',
-          'clear=true',
-          '--adapter',
-          'web',
-          '--target',
-          target,
-          '--heal',
-          'off',
-          '--action-manifest',
-          manifestPath,
-          '--json',
-        ],
-        callOptions,
-      ),
-    );
-    assert.equal(call.value, 0, call.stderr.join('\n'));
-    assert.deepEqual([...new Set(calls.autoHud)], [false]);
-  });
+        }),
+      );
+      calls.autoHud = [];
+      const call = await capture(() =>
+        handleCall(
+          [
+            'app.hud',
+            'clear=true',
+            '--hud',
+            'show',
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--heal',
+            'off',
+            '--action-manifest',
+            manifestPath,
+            '--json',
+          ],
+          callOptions,
+        ),
+      );
+      assert.equal(call.value, 0, call.stderr.join('\n'));
+      assert.deepEqual([...new Set(calls.autoHud)], [false]);
+      const warnings = call.stderr.filter((line) => line.includes('HUD unavailable'));
+      assert.equal(warnings.length, suppressed ? 1 : 0);
+      if (suppressed) assert.match(warnings[0]!, /--hud show.*cannot be honored/);
+    });
+  }
 
   test('never loads a trusted mutation from its command line: funded mutations run through run', async () => {
     const target = checkout();

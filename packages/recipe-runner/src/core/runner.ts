@@ -434,7 +434,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const runFileOffsets = await collectRunFileOffsets(runLogPaths, projectRoot);
 
     const artifactWriter = new JsonArtifactWriter(artifactsDir);
-    const traceWriter = new JsonTraceWriter(artifactsDir, this.#runnerProvenance);
+    const traceWriter = new JsonTraceWriter(artifactsDir, this.#runnerProvenance, request.hud);
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     let outputs: ReadonlyMap<string, unknown> = new Map();
     const recipePath = await artifactWriter.copyRecipe(recipe);
@@ -968,6 +968,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       ...(libraryResolution
         ? { recipeLibraries: buildRecipeLibrarySummary(libraryResolution) }
         : {}),
+      ...(request.hud ? { hud: request.hud } : {}),
       ...(request.selection ? { recipeSelection: request.selection } : {}),
       ...(request.taskActions?.length ? { taskActions: request.taskActions } : {}),
       ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
@@ -988,6 +989,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryFields = new Set([
       ...Object.keys(summary),
       'runner',
+      'hud',
       'recipeLibraries',
       'recipeSelection',
       'taskActions',

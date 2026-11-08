@@ -18,7 +18,15 @@ import type {
 export type RecipeRunStatus = 'pass' | 'fail' | 'unknown';
 export type RecipeVideoRecordingMode = 'off' | 'full-run';
 
+/** A trusted host cannot display the recipe HUD on this runtime. */
+export interface RecipeHudUnavailable {
+  state: 'unavailable';
+  reason: 'opaque-runtime';
+}
+
 export interface RecipeRunRequest {
+  /** Host-reported HUD suppression retained in the summary and trace metadata. */
+  hud?: RecipeHudUnavailable;
   /** Contained original packages retained by the engine for explicit comparisons. */
   comparisonDependencies?: readonly string[];
   /** Frozen review identity supplied by the trusted host, never recipe parameters. */
@@ -434,6 +442,7 @@ export interface TraceWriter {
 }
 
 export interface SummaryDocument {
+  hud?: RecipeHudUnavailable;
   recipeRunId?: string;
   /** Digest of the retained, redacted execution inputs when recorded. */
   invocationDigest?: string;
