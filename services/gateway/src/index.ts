@@ -139,7 +139,7 @@ import { initReview } from './review/orchestrator.js';
 import { roadmapRoot, setRoadmapObservationGuard } from './roadmap/store.js';
 import { watchRoadmapItems } from './roadmap/watcher.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
-import { runBundleStore } from './run-completion/retained-artifacts.js';
+import { initializeRunBundleStore } from './run-completion/retained-artifacts.js';
 import {
   initRunEngine,
   rearmPublicationReviewRecoveryForRun,
@@ -480,7 +480,7 @@ async function main(): Promise<void> {
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();
   await backfillMissingRunLinks(getAllRuns());
-  if (!process.env.FARMSLOT_SANDBOX_HOME) await runBundleStore(true);
+  await initializeRunBundleStore();
   startRunRetention(observedBroadcast);
   const prMonitoring = await initPRMonitoring(
     gatewayAuthRuntime,

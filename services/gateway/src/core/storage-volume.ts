@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { expandTilde } from '@farmslot/capabilities/fs-watch';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
-import { resolveRunsDir } from '@farmslot/run-bundle';
+import { resolveRunsDir, runBundleRetentionSettings } from '@farmslot/run-bundle';
 import { farmslotRoot } from '@farmslot/slot-config';
 
 /** Resolve existing ancestors and dangling links without creating a replacement store. */
@@ -104,7 +104,7 @@ export function gatewayStorageRoots(): string[] {
   const home = farmslotHome();
   return [
     home,
-    path.join(home, 'run-bundles'),
+    runBundleRetentionSettings(home).storeRoot ?? path.join(home, 'run-bundles'),
     resolveRunsDir(farmslotRoot),
     process.env.FARMSLOT_RUN_ARCHIVE_ROOT ?? path.join(home, 'run-archive'),
   ];

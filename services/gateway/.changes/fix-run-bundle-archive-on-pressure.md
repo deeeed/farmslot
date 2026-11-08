@@ -1,0 +1,2 @@
+- Move retained evidence to the run archive before capacity blocks new proof, and publish capacity and archive warnings to the board health feed.
+- Configure the retained store independently of the gateway home, pause capture on unavailable storage while runs continue, and migrate stores with a verified local operator command that retains the backup.

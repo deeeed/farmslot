@@ -25,7 +25,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
 import {
   type AcquisitionTaskDirToken,
-  DEFAULT_RUN_BUNDLE_RETENTION,
+  archiveRunBundleMedia,
   forgetAcquisitionFootprints,
   isRunBundleMedia,
   type MaterializedRunBundle,
@@ -40,14 +40,22 @@ import {
   runBundleAdmissionUsage,
   RunBundleCapacityError,
   runBundleHousekeepingPaths,
+  type RunBundleMediaArchiveResult,
   runBundleRefs,
+  runBundleRetentionSettings,
+  type RunBundleStore,
   withRunBundleStoreLock,
 } from '@farmslot/run-bundle';
 
 import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { EVAL_TASK_FLOW, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { sha256File } from '../core/file-hash.js';
-import { assertConfiguredRootPresent, assertHeavyWriteRoom } from '../core/heavy-write-room.js';
+import {
+  assertConfiguredRootPresent,
+  assertHeavyWriteRoom,
+  assertHeavyWriteRootPresent,
+  HeavyWriteRefusedError,
+} from '../core/heavy-write-room.js';
 import { inferArtifactPurpose } from '../core/index.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { GatewayMethodError } from '../core/method-error.js';
@@ -151,25 +159,62 @@ export function runBundleHome(): string {
         : farmslotHome();
 }
 
-export function runBundleStore(create = false) {
+export async function runBundleStore(create = false) {
   if (create && process.env.FARMSLOT_SANDBOX_HOME)
     throw new Error('Sandbox gateways may only read the owning gateway retained bundle store.');
   const home = runBundleHome();
-  assertStorageVolumePresent(path.join(home, 'run-bundles'));
-  assertStorageVolumePresent(runsDirectory());
-  const open = () =>
-    openRunBundleStore({
-      runsDir: runsDirectory(),
-      home,
-      create: create && !process.env.FARMSLOT_SANDBOX_HOME,
-    });
-  // Opening for writes creates the home and the runs directory, so both roots are checked first.
-  return create
-    ? Promise.all([
+  const configured = runBundleRetentionSettings(home).storeRoot;
+  const root = configured ?? path.join(home, 'run-bundles');
+  try {
+    if (configured) await assertHeavyWriteRootPresent(root, 'runBundleRetention.storeRoot');
+    assertStorageVolumePresent(root);
+    assertStorageVolumePresent(runsDirectory());
+    const open = () =>
+      openRunBundleStore({
+        runsDir: runsDirectory(),
+        home,
+        create: create && !process.env.FARMSLOT_SANDBOX_HOME,
+      });
+    // Opening for writes creates the home and the runs directory, so both roots are checked first.
+    if (create) {
+      await Promise.all([
         assertConfiguredRootPresent(home),
         assertConfiguredRootPresent(runsDirectory()),
-      ]).then(open)
-    : open();
+      ]);
+    }
+    return await open();
+  } catch (error) {
+    if (error instanceof HeavyWriteRefusedError)
+      reportGatewayWarning(
+        'run-bundle.capacity',
+        `Retained capture paused; runs continue. ${error.message}`,
+      );
+    throw error;
+  }
+}
+
+/** A disconnected store pauses capture without preventing the gateway from running. */
+export async function initializeRunBundleStore(): Promise<void> {
+  if (process.env.FARMSLOT_SANDBOX_HOME) return;
+  try {
+    await runBundleStore(true);
+  } catch (error) {
+    // Store opening already published the capacity warning; only storage refusal is recoverable.
+    if (!(error instanceof HeavyWriteRefusedError)) throw error;
+  }
+}
+
+async function assertRunBundleWriteRoom(root: string, copyBytes = 0): Promise<void> {
+  try {
+    await assertHeavyWriteRoom(root, process.env, copyBytes);
+  } catch (error) {
+    if (error instanceof HeavyWriteRefusedError)
+      reportGatewayWarning(
+        'run-bundle.capacity',
+        `Retained capture paused; runs continue. ${error.message}`,
+      );
+    throw error;
+  }
 }
 
 export function retainedRunBundleRef(
@@ -244,7 +289,7 @@ export async function retainedRunArtifactManifest(
         const file = key.slice(prefix.length);
         let state: ArtifactRef['availability'] = pruned.has(key) ? 'pruned' : 'available';
         try {
-          await stat(path.join(directory, key));
+          await stat(availability.archivedPaths?.[key] ?? path.join(directory, key));
         } catch (error) {
           if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
             state = pruned.has(key) ? 'pruned' : 'missing';
@@ -326,27 +371,7 @@ export async function readRetainedEvidencePackage(
 }
 
 async function retentionPolicy(): Promise<RunBundleRetentionPolicy> {
-  const store = await runBundleStore();
-  try {
-    const value: unknown = JSON.parse(
-      await readFile(path.join(path.dirname(store.root), 'run-bundle-retention.json'), 'utf8'),
-    );
-    if (!isRecord(value) || !isRecord(value.runBundleRetention))
-      throw new Error('Invalid runBundleRetention settings.');
-    const policy = { ...DEFAULT_RUN_BUNDLE_RETENTION };
-    for (const key of Object.keys(policy) as Array<keyof RunBundleRetentionPolicy>) {
-      const setting = value.runBundleRetention[key];
-      if (setting !== undefined) {
-        if (typeof setting !== 'number') throw new Error(`Invalid runBundleRetention.${key}`);
-        policy[key] = setting;
-      }
-    }
-    return policy;
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
-      return { ...DEFAULT_RUN_BUNDLE_RETENTION };
-    throw error;
-  }
+  return runBundleRetentionSettings(runBundleHome()).policy;
 }
 
 const RETAINED_TASK_INPUTS = [
@@ -367,7 +392,7 @@ export async function qualifyRetainedRunMetadata(run: Run): Promise<void> {
 }
 
 /** Release admission reservations by archiving them, with the package owner selecting safe paths. */
-export async function archiveRunArtifactHousekeeping(): Promise<void> {
+export async function archiveRunArtifactHousekeeping(includeReferencedMedia = true): Promise<void> {
   if (process.env.FARMSLOT_SANDBOX_HOME) return;
   const {
     runArchiveRoot,
@@ -399,6 +424,25 @@ export async function archiveRunArtifactHousekeeping(): Promise<void> {
       );
     }
   }
+  if (includeReferencedMedia)
+    reportRunMediaArchive(
+      await archiveRunBundleMedia({
+        store,
+        farmslotRoot,
+        archiveRoot: root,
+        assertArchiveWriteRoom: assertRunBundleWriteRoom,
+        policy: await retentionPolicy(),
+        acquisitionTaskDirs: acquisitionTaskDirToken,
+      }),
+    );
+}
+
+function reportRunMediaArchive(result: RunBundleMediaArchiveResult): void {
+  if (!result.archivedPaths.length) return;
+  reportGatewayWarning(
+    result.pressure ? 'run-bundle.archive-pressure' : 'run-bundle.archive-age',
+    `Archived ${result.archivedPaths.length} retained media files (${gib(result.reclaimedBytes)}); admission charges ${gib(result.chargedBytesAfter)} after archival. Evidence remains readable from the run archive.`,
+  );
 }
 
 // Warn the farm well before capture admission refuses retained media at the store cap.
@@ -495,7 +539,7 @@ export async function warnRunBundleCapacity(): Promise<void> {
     if (runBundleNearCapacity(usage.total, policy))
       reportGatewayWarning(
         'run-bundle.capacity',
-        `Run-bundle admission charges ${gib(usage.total)} of its ${gib(policy.maxStoreBytes)} cap (bundles ${gib(usage.store)}, reservations ${gib(usage.reservations)}, task trees ${gib(usage.acquisition)}); gates refuse retained media before the cap. Free storage or raise maxStoreBytes in run-bundle-retention.json.`,
+        `Run-bundle admission charges ${gib(usage.total)} of its ${gib(policy.maxStoreBytes)} cap (bundles ${gib(usage.store)}, reservations ${gib(usage.reservations)}, task trees ${gib(usage.acquisition)}). Old unpinned media archives at 85% toward 70%; check archive storage and pinned bundles if pressure persists.`,
       );
   } catch (error) {
     console.error(`[run-retention] run-bundle capacity check failed: ${(error as Error).message}`);
@@ -503,9 +547,9 @@ export async function warnRunBundleCapacity(): Promise<void> {
 }
 
 /** Cleanup failure cannot discard a new run's report or bypass its normal capacity checks. */
-async function tryArchiveRunArtifactHousekeeping(): Promise<void> {
+async function tryArchiveRunArtifactHousekeeping(includeReferencedMedia = true): Promise<void> {
   try {
-    await archiveRunArtifactHousekeeping();
+    await archiveRunArtifactHousekeeping(includeReferencedMedia);
   } catch (error) {
     console.error(
       `[run-retention] housekeeping unavailable; bytes retained and normal capacity checks continue: ${(error as Error).message}`,
@@ -517,7 +561,15 @@ export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   // Completed dispatch is durable admission evidence, including pre-reservation runs.
   // Monitoring/review must consume existing work without another cold admission scan.
   if (run.steps.some((step) => step.name === 'dispatch' && step.status === 'done')) return;
-  const store = await runBundleStore(true);
+  let store: RunBundleStore;
+  try {
+    store = await runBundleStore(true);
+  } catch (error) {
+    // The store's capacity warning explains why capture is paused. Execution keeps its source
+    // evidence and can proceed while the operator reconnects or frees the heavy-data volume.
+    if (error instanceof HeavyWriteRefusedError) return;
+    throw error;
+  }
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
   const reserve = () =>
@@ -548,8 +600,9 @@ export async function retainCapturedRunArtifacts(input: {
 }): Promise<MaterializedRunBundle> {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
-  await assertHeavyWriteRoom(store.root);
-  await tryArchiveRunArtifactHousekeeping();
+  await assertRunBundleWriteRoom(store.root);
+  // The materializer protects this run and its source snapshot while moving referenced media.
+  await tryArchiveRunArtifactHousekeeping(false);
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.
   // The materializer checks containment and hashes each file while copying it.
@@ -599,6 +652,9 @@ export async function retainCapturedRunArtifacts(input: {
     store,
     farmslotRoot,
     acquisitionTaskDirs: acquisitionTaskDirToken,
+    archiveRoot: (await import('../runs/storage-archive.js')).runArchiveRoot(),
+    assertArchiveWriteRoom: assertRunBundleWriteRoom,
+    onMediaArchived: reportRunMediaArchive,
     run: input.run,
     artifacts,
     taskDir,
