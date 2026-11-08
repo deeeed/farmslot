@@ -161,6 +161,28 @@ test('worker templates keep the generated TASK.md out and name the explicit cand
   }
 });
 
+test('each project ships the static review template that request-review loads', () => {
+  for (const name of PROJECTS) {
+    const content = readFileSync(
+      join(pack, 'projects', name, 'templates/worker/review.md'),
+      'utf8',
+    );
+    assert.match(content, /\{\{TASK_DIR\}\}\/\{\{REVIEW_FEEDBACK\}\}/);
+    // The gateway scopes findings to `## Issues`; without it every bullet is a finding.
+    assert.match(content, /^ {2}## Issues\n {2}- \*\*file:line\*\* — description$/m);
+    // The gateway accepts only PASS and ISSUES verdicts.
+    assert.doesNotMatch(content, /APPROVE/);
+    assert.match(
+      content,
+      name === PROJECTS[0]
+        ? /after run used `\{\{REPO\}\}\/bin\/mm-harness`, both with the same `--library perps=` retained library/
+        : /both runs used the published harness; .* after run selected `--library perps=\{\{REPO\}\}`/,
+    );
+    assert.match(content, /`artifacts\/after-fix`, or `artifacts\/candidate` for QA/);
+    assert.doesNotMatch(content, / run <recipe>/);
+  }
+});
+
 test('every template passes dispatch admission for the project smoke and proof resource', () => {
   for (const name of PROJECTS) {
     const project = readProject(name);
