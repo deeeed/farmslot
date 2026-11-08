@@ -202,6 +202,7 @@ test('signingKeyFormat treats ssh literals and key paths as ssh, anything else a
     '/home/signer/.ssh/id_ed25519',
     '~/.ssh/id_ed25519',
     'keys/signing',
+    'signing.pub',
     'ssh-ed25519 AAAA test@example.com',
     'key::ssh-ed25519 AAAA test@example.com',
   ]) {
@@ -220,6 +221,7 @@ test('loadGitIdentity accepts an ssh private key path and an explicit x509 forma
   const { root } = await fixture(t);
   for (const identity of [
     { 'user.signingkey': '/home/signer/.ssh/id_ed25519', 'gpg.format': 'ssh' },
+    { 'user.signingkey': 'signing.pub', 'gpg.format': 'ssh' },
     { 'user.signingkey': 'A41FEC143503D502', 'gpg.format': 'x509' },
   ]) {
     await writeFile(path.join(root, 'git-identity.json'), JSON.stringify(identity));

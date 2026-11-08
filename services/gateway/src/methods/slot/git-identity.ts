@@ -34,11 +34,12 @@ export function gitIdentityConfigPath(home = farmslotHome()): string {
 }
 
 /**
- * The signing format a key implies: ssh key literals and key file paths (public or
- * private) are ssh; OpenPGP ids, fingerprints and user ids never contain a slash.
+ * The signing format a key implies: ssh key literals, key file paths (public or
+ * private) and bare .pub names are ssh; OpenPGP ids, fingerprints and user ids
+ * never contain a slash.
  */
 export function signingKeyFormat(key: string): 'ssh' | 'openpgp' {
-  return /^(ssh-|key::|~)|\//.test(key) ? 'ssh' : 'openpgp';
+  return /^(ssh-|key::|~)|\/|\.pub$/.test(key) ? 'ssh' : 'openpgp';
 }
 
 /** Only ssh and openpgp are inferred; another explicit format (x509) is taken as given. */
