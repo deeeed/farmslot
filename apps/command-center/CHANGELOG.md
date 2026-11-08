@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.1 - 2026-11-08
+
+- Add a repeatable browser check for offline-storage failure notices and recovery after reconnecting.
+
 ## 0.20.0 - 2026-11-07
 
 - Recognize native conversation launch and send actions in planning validation.

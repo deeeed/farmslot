@@ -1,1 +1,0 @@
-- Reduce run setup time by staging task sidecars once, initializing and verifying tasks without a CLI process on nodes that advertise task runtime support, and honoring scripted runners' zero settle delay during fix relaunch. Older nodes retain CLI initialization and verification during mixed-version deployments.

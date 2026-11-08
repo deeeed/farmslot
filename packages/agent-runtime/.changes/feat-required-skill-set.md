@@ -1,1 +1,0 @@
-- Select, freeze and check the one required skill set: `selectRequiredSkills`, `freezeRequiredSkills`, `checkRequiredSkills`. Task init records it in `inputs/handoff.json` `requiredSkills` and lists its files in TASK.md.

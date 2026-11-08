@@ -6,6 +6,11 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.1 - 2026-11-08
+
+- Map proof-eval candidates to QA execution and preserve their frozen QA selection in queued cells.
+- Show the actual offline-storage notice and its failure reason.
+
 ## 0.36.0 - 2026-11-07
 
 - Use registered ACP agents with the native model and effort picker, audited tool approvals and file diffs.
