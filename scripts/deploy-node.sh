@@ -597,6 +597,19 @@ while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   [[ -d "$PKG_SRC/scripts" ]] && rsync -a --delete "$PKG_SRC/scripts/" "${RSYNC_PREFIX}$PKG_DEST/scripts/"
   [[ -d "$PKG_SRC/bin" ]] && rsync -a --delete "$PKG_SRC/bin/" "${RSYNC_PREFIX}$PKG_DEST/bin/"
   rsync -a "$PKG_SRC/package.json" "${RSYNC_PREFIX}$PKG_DEST/package.json"
+  # Resolve published files from the package root, retaining their relative paths.
+  published_files=$(python3 - "$PKG_SRC" <<'PY'
+import glob, json, os, sys
+os.chdir(sys.argv[1])
+with open('package.json') as manifest:
+    for pattern in json.load(manifest).get('files', []):
+        for entry in glob.glob(pattern, recursive=True):
+            print(entry)
+PY
+)
+  if [[ -n "$published_files" ]]; then
+    rsync -ar --files-from=- "$PKG_SRC/" "${RSYNC_PREFIX}$PKG_DEST/" <<< "$published_files"
+  fi
   echo "  → $pkg_name"
 done <<< "$FARMSLOT_DEPS"
 

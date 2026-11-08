@@ -444,6 +444,91 @@ elif command.startswith('test -d '): sys.exit(1)
   }
 });
 
+for (const mode of ['local', 'remote']) {
+  test(`deploy-node syncs published package files to a ${mode} destination`, (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-package-files-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const write = (relative, content) => {
+      const file = path.join(root, relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, content);
+    };
+    const destination = 'node/node_modules/@farmslot/protocol';
+    const files = {
+      'recipe-shape.mjs': 'export const shape = {};\n',
+      'recipe-shape.d.mts': 'export declare const shape: {};\n',
+      'schemas/recipe.json': '{"type":"object"}\n',
+      'schemas/nested/action.json': '{"type":"string"}\n',
+      'helpers/nested/run.cjs': 'module.exports = {};\n',
+      'assets/default.txt': 'default asset\n',
+    };
+    write(
+      'packages/protocol/package.json',
+      JSON.stringify({
+        name: '@farmslot/protocol',
+        files: [
+          'recipe-shape.mjs',
+          'recipe-shape.d.mts',
+          'schemas/**/*.json',
+          'helpers/nested/run.cjs',
+          'assets',
+          'missing/*.mjs',
+        ],
+      }),
+    );
+    for (const directory of ['src', 'dist', 'scripts', 'bin']) {
+      files[`${directory}/current.js`] = `${directory}\n`;
+      write(`${destination}/${directory}/stale.js`, 'removed upstream\n');
+    }
+    for (const [relative, content] of Object.entries(files))
+      write(`packages/protocol/${relative}`, content);
+    write('packages/protocol/schemas/private.txt', 'unpublished\n');
+    write('packages/source-only/package.json', '{"name":"@farmslot/source-only"}\n');
+    write('packages/source-only/src/index.ts', 'export {};\n');
+    write('packages/source-only/private.txt', 'unpublished\n');
+    // Run rsync's remote server locally; the test never connects to a host.
+    write('ssh', '#!/bin/sh\nshift\nexec "$@"\n');
+    fs.chmodSync(path.join(root, 'ssh'), 0o755);
+
+    const deploy = fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8');
+    const start = deploy.indexOf('echo "[deploy] syncing workspace packages..."');
+    const end = deploy.indexOf('\n# Task files rendered for remote slots', start);
+    assert.ok(start > 0 && end > start);
+    execFileSync('bash', ['-euc', `run() { bash -euc "$1"; }\n${deploy.slice(start, end)}`], {
+      env: {
+        ...process.env,
+        PACKAGES_DIR: path.join(root, 'packages'),
+        REMOTE_DIR: path.join(root, 'node'),
+        RSYNC_PREFIX: mode === 'remote' ? 'fixture-node:' : '',
+        RSYNC_RSH: path.join(root, 'ssh'),
+        FARMSLOT_DEPS: '@farmslot/protocol\tprotocol\t0\n@farmslot/source-only\tsource-only\t0',
+      },
+      stdio: 'pipe',
+      timeout: 4000,
+    });
+    for (const [relative, content] of Object.entries(files))
+      assert.equal(fs.readFileSync(path.join(root, destination, relative), 'utf8'), content);
+    for (const directory of ['src', 'dist', 'scripts', 'bin'])
+      assert.equal(fs.existsSync(path.join(root, destination, directory, 'stale.js')), false);
+    assert.equal(fs.existsSync(path.join(root, destination, 'schemas/private.txt')), false);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(root, destination, 'package.json'), 'utf8')),
+      JSON.parse(fs.readFileSync(path.join(root, 'packages/protocol/package.json'), 'utf8')),
+    );
+    assert.equal(
+      fs.readFileSync(
+        path.join(root, 'node/node_modules/@farmslot/source-only/src/index.ts'),
+        'utf8',
+      ),
+      'export {};\n',
+    );
+    assert.equal(
+      fs.existsSync(path.join(root, 'node/node_modules/@farmslot/source-only/private.txt')),
+      false,
+    );
+  });
+}
+
 test('node project sync updates templates and checklists without deleting unrelated data', (t) => {
   const deploy = fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8');
   const start = deploy.indexOf('for proj_dir in "$REPO_ROOT"/projects/*/; do');
