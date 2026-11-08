@@ -125,6 +125,11 @@ function wireRequest() {
   );
   return file;
 }
+// The source CLI transpiles its whole module graph on every start (TSX_DISABLE_CACHE in
+// bin/farmslot.mjs): 1.6-4.1 s per start on CI runners. These deadlines catch hangs,
+// not slowness, so they sit above that range.
+const SPAWN = 15_000;
+const CASE = 20_000;
 function cliRun(args: string[], environment: NodeJS.ProcessEnv = env) {
   const started = performance.now();
   const result = spawnSync(
@@ -134,7 +139,7 @@ function cliRun(args: string[], environment: NodeJS.ProcessEnv = env) {
       env: environment,
       cwd: checkout,
       encoding: 'utf8',
-      timeout: 4000,
+      timeout: SPAWN,
       maxBuffer: 8 * 1024 * 1024,
     },
   );
@@ -189,10 +194,10 @@ function parityCase<Fixture>(
   verify: (t: import('node:test').TestContext, fixture: Fixture) => Promise<void>,
 ) {
   let fixture: { value: Fixture } | undefined;
-  test(`${name}: CLI baseline`, { timeout: 5000 }, async () => {
+  test(`${name}: CLI baseline`, { timeout: CASE }, async () => {
     fixture = { value: await baseline() };
   });
-  test(`${name}: thread parity`, { timeout: 5000 }, async (t) => {
+  test(`${name}: thread parity`, { timeout: CASE }, async (t) => {
     assert(fixture, 'CLI baseline completed');
     await verify(t, fixture.value);
   });
@@ -412,7 +417,7 @@ test('task threads keep machine providers, pack roots and module environment iso
 
 let providerDirectory = '';
 let providerReceipt: unknown;
-test('project-bound init records its selected provider receipt', { timeout: 5000 }, async () => {
+test('project-bound init records its selected provider receipt', { timeout: CASE }, async () => {
   const pack = path.join(root, 'projects/provider');
   fs.mkdirSync(path.join(pack, 'templates/worker'), { recursive: true });
   fs.writeFileSync(
@@ -576,7 +581,7 @@ for (const source of ['state', 'env-file'] as const) {
 
 test(
   'cancellation during provider work closes its subprocess before confirming',
-  { timeout: 5000 },
+  { timeout: CASE },
   async (t) => {
     const fakeCli = path.join(root, 'environment-cli');
     const marker = path.join(root, 'running-child.json');
@@ -619,7 +624,7 @@ test(
 
 test(
   'forced child closeout reaps the process before its thread exits',
-  { timeout: 5000 },
+  { timeout: CASE },
   async (t) => {
     const fakeCli = path.join(root, 'environment-cli');
     const marker = path.join(root, 'term-resistant-child.json');
@@ -673,7 +678,7 @@ test(
 
 test(
   'closed child groups are forgotten before a later cancellation',
-  { timeout: 5000 },
+  { timeout: CASE },
   async (t) => {
     const fakeCli = path.join(root, 'environment-cli');
     const marker = path.join(root, 'closed-child.json');
@@ -726,7 +731,7 @@ test(
 
 test(
   'acknowledged closeout has a final bound when an escaped descendant holds a pipe',
-  { timeout: 5000 },
+  { timeout: CASE },
   async (t) => {
     const fakeCli = path.join(root, 'environment-cli');
     const ready = path.join(root, 'escaped-descendant.json');
