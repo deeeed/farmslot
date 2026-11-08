@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
 import type { Run } from '../../../packages/protocol/src/index.js';
 
 import { fullflowCloseAction, fullflowFailure, fullflowGateFailure, fullflowNativeFailure, fullflowSummary, fullflowTerminal, fullflowTimings } from './fullflow-outcome.js';
