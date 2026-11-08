@@ -271,3 +271,46 @@ Minimum acceptance tests:
 - graph-linked backlog item remains one WorkNode and rolls up candidate state
 - UI can create/edit a 3-candidate plan and queue it without direct state injection
 - dev-harness/mock-data route renders a baseline plus two comparison candidates with exact, pool, and spread slot policies
+
+## Amendment 1 (2026-11-08): Backlog items carry the full run shape
+
+**Status:** Proposed (amendment; the lead approves once both paired reviews pass).
+
+### Decision
+
+A backlog item may declare the run shape it dispatches, so a scheduled or standing job (for
+example a nightly scripted command reused through one `multiPr` manual item) runs exactly as a
+direct `run.create` would. Three fields join the existing dispatch settings (`runner`, `scripted`,
+`allowedSlots`, `mode`, `prepareProfile`, `waitPolicy`):
+
+```ts
+interface BacklogItem {
+  completionPolicy?: RunCompletionPolicy; // 'default' | 'artifact-only'
+  pipelineReview?: RunPipelineReviewPolicy; // 'default' | 'none'
+  skipPrepare?: boolean;
+}
+```
+
+Rules:
+
+- Same values and meaning as on `run.create`. `backlog.create` and `backlog.update` validate them,
+  including the existing `pipelineReviewPolicyError` rule (`none` needs `artifact-only`, a dev or
+  fix-bug flow, and no review sequence or policy); `null` on update clears a field.
+- Enqueue copies them onto the dispatch queue item, and the queued `run.create` sends them
+  unchanged. The queue item gains `pipelineReview` (it already carried `completionPolicy` and
+  `skipPrepare`); `dispatch.queue.add` validates it the same way.
+- They persist with the item across gateway restarts. A command-mode `scripted` config now
+  persists too; before this amendment it was dropped on reload.
+- Launch-plan candidates inherit the item's run shape; candidates do not override it.
+
+### Public surface
+
+- RPC: `backlog.create` / `backlog.update` accept `completionPolicy`, `pipelineReview`,
+  `skipPrepare`; `dispatch.queue.add` accepts `pipelineReview`. No new CLI flags. `@farmslot/protocol` gains the type fields (`BacklogItem`,
+  `BacklogCreateInput`, `BacklogUpdateInput`, `QueueItem`, `DispatchQueueAddParams`) and the value guards
+  `isRunCompletionPolicy` / `isRunPipelineReviewPolicy`, shared by `pipelineReviewPolicyError` and the
+  backlog validation.
+- Consumer: the nightly device build's 04:00 trigger enqueues its standing manual item instead of
+  calling `run.create` with a ticket it cannot have. `multiPr` returns the item to `ready` after a
+  good night; after a failed or blocked one the trigger calls `backlog.markReady` first, because
+  `backlog.enqueue` takes only a `ready` item.

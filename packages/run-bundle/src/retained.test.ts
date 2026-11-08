@@ -337,7 +337,7 @@ test('concurrent identical captures serialize the reference commit and reuse one
   assert.ok(Number.isFinite(scan.durationMs) && scan.durationMs >= 0);
 });
 
-test('GC preserves pending media, prunes expired completed media, and leaves report/manifest bytes unchanged', async (t) => {
+test('GC preserves pending media, archives expired completed media, and leaves report/manifest bytes unchanged', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);
   const initialAvailability = await readRunBundleAvailability(f.store, result.ref, f.run.id);
@@ -365,12 +365,25 @@ test('GC preserves pending media, prunes expired completed media, and leaves rep
   };
   await writeFile(path.join(f.store.runsDir, `${pending.id}.json`), JSON.stringify(pending));
   const future = Date.now() + 31 * 86_400_000;
-  assert.equal((await collectRunBundleGarbage(f.store, undefined, future)).reclaimedBytes, 0);
+  const archiveRoot = path.join(f.root, 'media-archive');
+  await mkdir(archiveRoot);
+  assert.equal(
+    (
+      await collectRunBundleGarbage(f.store, undefined, future, {
+        archiveRoot,
+        farmslotRoot: f.root,
+      })
+    ).reclaimedBytes,
+    0,
+  );
   pending.decisions[0]!.resolvedAt = f.run.createdAt;
   await writeFile(path.join(f.store.runsDir, `${pending.id}.json`), JSON.stringify(pending));
-  const swept = await collectRunBundleGarbage(f.store, undefined, future);
+  const swept = await collectRunBundleGarbage(f.store, undefined, future, {
+    archiveRoot,
+    farmslotRoot: f.root,
+  });
   assert.ok(swept.reclaimedBytes > 0);
-  assert.deepEqual(swept.prunedPaths, [`tasks/${f.run.id}/artifacts/capture.mp4`]);
+  assert.deepEqual(swept.prunedPaths, []);
   const report = await resolveRunBundleEntry({
     store: f.store,
     ref: result.ref,
@@ -379,15 +392,13 @@ test('GC preserves pending media, prunes expired completed media, and leaves rep
   });
   assert.equal(await readFile(report.path, 'utf8'), '<h1>Retained report</h1>');
   assert.deepEqual(await readFile(path.join(bundle.directory, 'manifest.json')), originalManifest);
-  await assert.rejects(
-    resolveRunBundleEntry({
-      store: f.store,
-      ref: result.ref,
-      runId: f.run.id,
-      path: 'artifacts/capture.mp4',
-    }),
-    { code: 'ENOENT' },
-  );
+  const archived = await resolveRunBundleEntry({
+    store: f.store,
+    ref: result.ref,
+    runId: f.run.id,
+    path: 'artifacts/capture.mp4',
+  });
+  assert.equal(await readFile(archived.path, 'utf8'), 'video bytes');
   const pruned = await readRunBundleAvailability(f.store, result.ref, f.run.id);
   assert.equal(pruned.revision, initialAvailability.revision + 1);
   const restored = await materializeRunBundle({
@@ -397,10 +408,7 @@ test('GC preserves pending media, prunes expired completed media, and leaves rep
   });
   assert.deepEqual(restored.ref, result.ref);
   assert.deepEqual(restored.missingData, []);
-  assert.deepEqual(await readRunBundleAvailability(f.store, result.ref, f.run.id), {
-    revision: initialAvailability.revision + 2,
-    prunedPaths: [],
-  });
+  assert.deepEqual(await readRunBundleAvailability(f.store, result.ref, f.run.id), pruned);
   assert.deepEqual(await readFile(path.join(bundle.directory, 'manifest.json')), originalManifest);
 });
 

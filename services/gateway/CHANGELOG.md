@@ -6,6 +6,18 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.1 - 2026-11-08
+
+- Backlog items can declare `completionPolicy`, `pipelineReview` and `skipPrepare`, and every run they dispatch gets exactly that shape; a command-mode `scripted` config now survives a gateway restart.
+- Evaluate recipes against an immutable supplied implementation, retain failed or missing cases as measurements, and judge the frozen proof output once.
+- The launch Code drift probe rechecks the task's frozen required skills; a missing or changed file refuses launch.
+- Admit fix-bug before evidence captured on the ticket's marker-only child of the baseline, retaining verified Git ownership with the evidence package. Dirty, unrelated, and after-evidence commits remain refused.
+- Preserve requested xhigh and max thinking levels for router models instead of letting Pi round them down to high.
+- Start proof-only QA trials through their frozen QA source instead of the dev/fix-bug comparison start-ref admission path.
+- Re-probe restored repos before selecting slots reclaimed from cancelled runs.
+- `git-identity.json` accepts a `"projects": {"<projectId>": {<git config keys>}}` map over the farm defaults, so prepare, signing checks and publication use the slot project's identity. Prepare writes a matching `gpg.format` with every signing key, inferring `ssh` for `ssh-`/`key::` literals, key file paths (public or private) and bare `.pub` names, and `openpgp` otherwise; an explicit `x509` is kept; contradictory formats fail at load, and signing failures give format-specific fixes.
+- Reduce run setup time by staging task sidecars once, initializing and verifying tasks without a CLI process on nodes that advertise task runtime support, and honoring scripted runners' zero settle delay during fix relaunch. Older nodes retain CLI initialization and verification during mixed-version deployments.
+
 ## 0.38.0 - 2026-11-08
 
 - Preserve core quality grades while presenting fresh advisory recipe-shape feedback and portable catalog context.

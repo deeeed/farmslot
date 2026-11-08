@@ -50,6 +50,22 @@ const isWritableDirectory = async (dir: string) =>
     () => false,
   ));
 
+/** A separately configured heavy-data root follows the same missing-volume rule as the home. */
+export async function assertHeavyWriteRootPresent(
+  root: string,
+  name = 'storage root',
+): Promise<void> {
+  try {
+    assertStorageVolumePresent(root);
+  } catch (error) {
+    throw new HeavyWriteRefusedError((error as Error).message, { cause: error });
+  }
+  if (!(await isDirectory(root)) && !(await isWritableDirectory(path.dirname(root))))
+    throw new HeavyWriteRefusedError(
+      `Refusing to write ${root}: ${name} ${root} is missing and cannot be created in its parent (is its volume mounted?)`,
+    );
+}
+
 /**
  * Refuses a write into `dir` when a configured root holding it cannot exist where it was
  * configured: the root is missing and its parent is missing or not writable. `mkdir -p` would
@@ -65,10 +81,7 @@ export async function assertConfiguredRootPresent(
   const target = path.resolve(dir);
   for (const { name, root } of configuredRoots(env)) {
     if (target !== root && !target.startsWith(`${root}${path.sep}`)) continue;
-    if (!(await isDirectory(root)) && !(await isWritableDirectory(path.dirname(root))))
-      throw new HeavyWriteRefusedError(
-        `Refusing to write ${target}: ${name} ${root} is missing and cannot be created in its parent (is its volume mounted?)`,
-      );
+    await assertHeavyWriteRootPresent(root, name);
   }
 }
 
@@ -79,6 +92,7 @@ export async function assertConfiguredRootPresent(
 export async function assertHeavyWriteRoom(
   dir: string,
   env: NodeJS.ProcessEnv = process.env,
+  requiredBytes = 0,
 ): Promise<void> {
   await assertConfiguredRootPresent(dir, env);
   const target = path.resolve(dir);
@@ -97,8 +111,8 @@ export async function assertHeavyWriteRoom(
     }
   }
   const floor = heavyWriteFloorBytes(env);
-  if (free < floor)
+  if (free - requiredBytes < floor)
     throw new HeavyWriteRefusedError(
-      `Refusing to write ${target}: its volume has ${gb(free)} GB free, under the ${gb(floor)} GB floor (FARMSLOT_HEAVY_WRITE_FLOOR_GB)`,
+      `Refusing to write ${target}: its volume has ${gb(free)} GB free${requiredBytes ? ` before a ${gb(requiredBytes)} GB copy` : ''}, under the ${gb(floor)} GB floor (FARMSLOT_HEAVY_WRITE_FLOOR_GB)`,
     );
 }

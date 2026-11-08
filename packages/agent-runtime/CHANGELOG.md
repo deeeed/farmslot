@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.2 - 2026-11-08
+
+- Select, freeze and check the one required skill set: `selectRequiredSkills`, `freezeRequiredSkills`, `checkRequiredSkills`. Task init records it in `inputs/handoff.json` `requiredSkills` and lists its files in TASK.md.
+
 ## 0.45.1 - 2026-11-08
 
 - Let a frozen proof-trial terminal contract record failed or missing measurements without inventing passing acceptance verdicts.

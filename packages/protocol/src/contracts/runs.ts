@@ -1931,6 +1931,10 @@ export interface RunMetrics {
 }
 
 export type RunCompletionPolicy = 'default' | 'artifact-only';
+
+export function isRunCompletionPolicy(value: unknown): value is RunCompletionPolicy {
+  return value === 'default' || value === 'artifact-only';
+}
 /** One parking of an artifact-only run's own branch commits (see `Run.parkedCommits`). */
 export interface ParkedRunCommits {
   slotId: string;
@@ -1945,6 +1949,10 @@ export interface ParkedRunCommits {
 
 /** `none`: the REVIEW step's pipeline code review does not run. Only for artifact-only dev runs. */
 export type RunPipelineReviewPolicy = 'default' | 'none';
+
+export function isRunPipelineReviewPolicy(value: unknown): value is RunPipelineReviewPolicy {
+  return value === 'default' || value === 'none';
+}
 
 /** Flows whose artifact-only run closes on its retained output and never pushes. */
 const PIPELINE_REVIEW_OFF_FLOWS: readonly FlowType[] = ['dev', 'fix-bug'];
@@ -1975,7 +1983,7 @@ export function pipelineReviewPolicyError(params: {
 }): string | null {
   const policy = params.pipelineReview;
   if (policy === undefined || policy === 'default') return null;
-  if (policy !== 'none')
+  if (!isRunPipelineReviewPolicy(policy))
     return `pipelineReview must be 'default' or 'none', not ${JSON.stringify(policy)}.`;
   if (params.completionPolicy !== 'artifact-only')
     return 'pipelineReview none is only for artifact-only runs: set completionPolicy artifact-only.';

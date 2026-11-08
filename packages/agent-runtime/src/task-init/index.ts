@@ -14,6 +14,7 @@ import {
   type ExecutionTemplateReference,
   type ExecutionTemplateRunMode,
   renderTemplatePlaceholders,
+  type RequiredSkillSet,
   type TemplateProvenance,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
@@ -38,6 +39,7 @@ import {
   type TaskExecutionProvenance,
   type TaskRepinDocuments,
 } from './execution-provenance.js';
+import { requiredSkillsTaskSection } from './required-skills.js';
 import { installedTaskCommands, retainedMarkCommand } from './runtime-command.js';
 import {
   buildBranchUpdateGuardCommand,
@@ -71,6 +73,7 @@ export {
   type TaskRetainedInput,
   verifyTaskExecutionProvenance,
 } from './execution-provenance.js';
+export * from './required-skills.js';
 export * from './task-document.js';
 export * from './write.js';
 // The renderer lives in protocol; re-exported so CLI wrappers reach it through the runtime entry.
@@ -152,6 +155,8 @@ export interface TaskInitSpec {
   taskDocumentAdditions?: string;
   artifactOnlyReplay?: ArtifactOnlyReplay;
   authored?: Pick<WriteTaskDirInput, 'taskMarkdown' | 'checklistMarkdown' | 'handoff'>;
+  /** ADR-049 Amendment 3: the frozen required skill set (see `freezeRequiredSkills`). */
+  requiredSkills?: RequiredSkillSet;
 }
 
 export interface TaskInitResult extends WrittenTaskDir {
@@ -261,6 +266,14 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     taskMarkdown = taskMarkdown.replace(/^(#.+\n)/, `$1\n${spec.modePreamble}\n`);
   if (spec.taskDocumentAdditions)
     taskMarkdown = `${taskMarkdown.trimEnd()}${spec.taskDocumentAdditions.startsWith('\n') ? '' : '\n\n'}${spec.taskDocumentAdditions}`;
+  // Frozen once: an authored task keeps the set its handoff already carries.
+  const frozenRequiredSkills = spec.authored?.handoff.requiredSkills
+    ? undefined
+    : spec.requiredSkills;
+  const requiredSkillsSection = frozenRequiredSkills
+    ? requiredSkillsTaskSection(frozenRequiredSkills)
+    : '';
+  if (requiredSkillsSection) taskMarkdown = `${taskMarkdown.trimEnd()}\n\n${requiredSkillsSection}`;
   if (spec.artifactOnlyReplay) {
     if (checklistMarkdown !== null)
       checklistMarkdown = applyArtifactOnlyTaskPolicy(
@@ -302,6 +315,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     });
 
   if (!handoffMetadata.executionTemplate) handoffMetadata.executionTemplate = executionTemplate;
+  if (frozenRequiredSkills) handoffMetadata.requiredSkills = frozenRequiredSkills;
 
   const executionProvenance = spec.execution
     ? retainTaskExecution(spec.taskDir, spec.execution, [templateRoot])

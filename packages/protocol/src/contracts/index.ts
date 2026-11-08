@@ -29,6 +29,7 @@ export * from './qa.js';
 export * from './readiness.js';
 export * from './recipe-conformance.js';
 export * from './recipes.js';
+export * from './required-skills.js';
 export * from './resource-posture.js';
 export * from './resources.js';
 export * from './review-publication.js';

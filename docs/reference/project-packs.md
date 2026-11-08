@@ -115,6 +115,29 @@ optional-default runtime is deployed; third-party defaults remain supported.
 The shared protocol, schema, gateway and clients implement this selection contract.
 Pack default removal follows deployment of the compatible runtime.
 
+## Required skills
+
+[ADR-049 Amendment 3](../adr/049-agent-execution-template-selection.md#amendment-3-one-required-skill-set-2026-11-08) gives a dev task and its review one frozen required skill set. A pack declares it with optional `required_skills`:
+
+```json
+"required_skills": {
+  "root": ".agents/skills",
+  "rules": [
+    { "id": "mobile-testing", "when": { "flows": ["dev", "fix-bug"] },
+      "skills": [{ "name": "mms-mobile-testing", "files": ["SKILL.md", "references/layers.md"] }] }
+  ]
+}
+```
+
+- `root` MUST be a checkout-relative directory of installed skills. `name` is a directory under it; `files` are relative to that directory.
+- A rule matches when every present `when` key matches: `flows` (task flow), `platforms` (slot platform) and `domains` (effective run domain). An absent key matches anything. Path-based rules wait for a task-path source at task init; none is declared yet. Selection MUST be the union of matching rules in pack order, each skill once. There is no model-based or fuzzy selection.
+- Node task init MUST resolve the rules against the slot checkout before writing the task. A missing file MUST refuse initialization with `REQUIRED_SKILL_MISSING`, naming the skill, rule and path, so preparation stops before dispatch. Repository docs never substitute.
+- Task init MUST freeze the set into `inputs/handoff.json` as `requiredSkills`: selection inputs, matched rule ids, and each file's path and sha256. Digests identify the installed bytes; installed copies carry no source revision, so none is recorded. The gateway cannot supply or override the set. TASK.md lists the frozen files; CHECKLIST.md is unchanged. An authored (imported) task whose handoff has no set receives the node-selected one and its TASK.md section; a handoff that already carries a set keeps it.
+- A pipeline review reads the dev task's handoff, so it reads the same set. The set is never recomputed for review.
+- ADR-065's Code drift probe MUST recheck the frozen digests before every dev, fix and recovery worker launch that runs it. A missing or changed file, or an invalid record, is a mismatch and refuses launch. A runtime that cannot check a frozen set reports unverified. Review launches do not run that probe; the reviewer's checklist step checks the same set with the pack harness and stops on a non-zero exit. No launch check is added.
+
+Public surface: `RequiredSkillsConfig`, `RequiredSkillSet`, `parseRequiredSkillsConfig` and `isRequiredSkillSet` in `@farmslot/protocol`. `selectRequiredSkills`, `freezeRequiredSkills`, `checkRequiredSkills`, `RequiredSkillsError` and `REQUIRED_SKILLS_REPAIR` in `@farmslot/agent-runtime`. The consumer is the MetaMask harness `mm-harness skills required`. All are additive; no CLI command, flag or RPC is added. Static review-pr keeps its own `static_review.support` bundle.
+
 ## Required fixture sources
 
 Fixture planning is owned by `@farmslot/slot-config` and consumed by

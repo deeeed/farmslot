@@ -1,1 +1,0 @@
-- Show the actual offline-storage notice and its failure reason.

@@ -44,7 +44,7 @@ test('normalizeStartRefRequest returns null when startRef is omitted', () => {
 });
 
 test('normalizeStartRefRequest rejects every non-implementation flow type', () => {
-  for (const flowType of ['review-pr', 'pr-complete', 'update-branch'] satisfies FlowType[]) {
+  for (const flowType of ['qa', 'review-pr', 'pr-complete', 'update-branch'] satisfies FlowType[]) {
     assert.throws(
       () => normalizeStartRefRequest({ ...validParams, flowType }),
       StartRefPolicyError,

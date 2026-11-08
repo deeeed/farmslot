@@ -22,6 +22,7 @@ import {
   ReviewQaConfigurationError,
   type Run,
   type RunCreateParams,
+  type SafetyTier,
   type SlotStatus,
   validateSourceSelections,
 } from '@farmslot/protocol';
@@ -643,6 +644,7 @@ export function addItem(
     allowedSlots: normalizeAllowedSlots(params.allowedSlots),
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
+    pipelineReview: params.pipelineReview,
     startRef,
     reviewPolicy: params.reviewPolicy,
     reviewMode: params.reviewMode,
@@ -1120,6 +1122,68 @@ function cloneQueueRecord(record: QueueRecord): QueueRecord {
   const clone: QueueRecord = structuredClone(record);
   if (record.originator) setQueueOriginator(clone, record.originator);
   return clone;
+}
+
+/** The run.create request a dispatched queue item makes: everything the item carries, nothing more. */
+export function queuedRunCreateParams(
+  item: QueueItem,
+  safetyTier: SafetyTier | undefined,
+): RunCreateParams {
+  return {
+    transport: item.transport,
+    nativeProfile: item.nativeProfile,
+    skipPrepare: item.skipPrepare,
+    flowType: item.flowType,
+    project: item.project,
+    ticketOrPr: item.ticketOrPr,
+    familyId: item.familyId,
+    parentRunId: item.parentRunId ?? undefined,
+    familyRootTicketOrPr: item.familyRootTicketOrPr,
+    lane: item.lane,
+    variant: item.variant ?? undefined,
+    taskTemplate: item.taskTemplate ? { ...item.taskTemplate } : undefined,
+    executionTemplateId: item.executionTemplateId,
+    sourceSelections: item.sourceSelections,
+    domain: item.domain,
+    app: item.app,
+    prepareProfile: item.prepareProfile,
+    waitPolicy: item.waitPolicy,
+    slotId: item.slotId,
+    reviewWorkspaceTarget: item.reviewWorkspaceTarget,
+    allowedSlots: item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
+    branch: item.branch ?? undefined,
+    completionPolicy: item.completionPolicy,
+    pipelineReview: item.pipelineReview,
+    startRef: item.startRef?.requestedRef,
+    startRefSource: item.startRef?.source,
+    model: item.model,
+    runner: item.runner,
+    scripted: item.scripted,
+    effort: item.effort,
+    mode: item.mode,
+    devInteractiveProfile: item.devInteractiveProfile,
+    tags: item.tags,
+    initialContext: item.initialContext,
+    ticketData: item.ticketData,
+    backlogItemId: item.backlogItemId,
+    workGraphId: item.workGraphId,
+    workNodeId: item.workNodeId,
+    launchPlanId: item.launchPlanId,
+    launchCandidateId: item.launchCandidateId,
+    launchGroupId: item.launchGroupId,
+    launchSlotPolicy: item.launchSlotPolicy,
+    launchAttempt: item.launchAttempt,
+    devChecklist: item.devChecklist,
+    reviewPolicy: item.reviewPolicy,
+    reviewMode: item.reviewMode,
+    reviewValidationDepth: item.reviewValidationDepth,
+    qaProfileId: item.qaProfileId,
+    qaInputs: item.qaInputs,
+    reviewSequence: item.reviewSequence,
+    reviewSequenceContext: item.reviewSequenceContext,
+    reviewContext: item.reviewContext,
+    safetyTier,
+  };
 }
 
 export function buildQueuePreviewParams(item: QueueItem) {

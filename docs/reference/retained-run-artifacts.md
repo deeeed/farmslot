@@ -133,8 +133,7 @@ mandatory report/lightweight-metadata capacity before admitting work/capture;
 media MUST NOT consume that reservation. Count in-progress copy reservations and
 mirror staging in the same budget. Recorder/transcode limits stay unchanged.
 
-The owning gateway reads overrides from `run-bundle-retention.json` beside its
-`run-bundles` directory, normally `${FARMSLOT_HOME}/run-bundle-retention.json`:
+The owning gateway reads overrides from `${FARMSLOT_HOME}/run-bundle-retention.json`:
 
 ```json
 {
@@ -153,6 +152,33 @@ budget against their full physical size and available disk headroom. Historical
 copies remain charged, including preserved unique media of deleted runs. Do not
 exclude legacy bytes to create apparent capacity. Admission reserves all selected
 media for a capture together; it does not rescan those trees for each media file.
+
+Optional `runBundleRetention.storeRoot` selects an absolute store path, expanding
+`~`. Unset, it keeps `<FARMSLOT_HOME>/run-bundles` and existing pairings. The Run
+store binding compares configured roots by realpath and refuses a different store.
+Missing volumes pause capture with a board capacity warning while runs continue;
+heavy writes must leave the existing free-space floor.
+
+Use the local operator CLI to move an existing store, with explicit owning roots:
+
+```sh
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/scripts/run-bundle-migrate.ts --home <home> --runs-dir <runs-dir> --target <absolute-root>
+```
+
+Under the store lock it copies the whole tree, verifies manifest entries and
+recorded bytes, then switches configuration and binding through a durable journal.
+Openers finish an interrupted verified switch before using either setting. Repeat
+the same command to resume a partial copy or report the completed migration.
+Active media transfers or staged archives, missing target volumes, unrelated target data and copies
+that would cross the free-space floor are refused. The old tree is never deleted;
+the command prints its retained backup path.
+
+At 85% of charged admission bytes, archive oldest unpinned media toward 70%.
+Age retention also archives media. Keep metadata and manifests in place; record
+verified archive locations in availability's `archivedPaths` before removing source
+media and updating recorded bytes. Readers and exports fall back to these locations
+and check size and digest. Missing archives preserve source bytes. Capacity and
+archival events reach the existing `monitor.violation` board and health stream.
 
 Capture and commit the report, manifests, ledger, trace/timeline and review
 metadata before media admission. Review metadata includes the result artifact

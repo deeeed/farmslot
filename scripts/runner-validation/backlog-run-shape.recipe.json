@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "A standing backlog item dispatches exactly the run shape it declares",
+  "description": "On an isolated gateway, node, pool, project, runs, backlog and private tmux server, create a nightly-shaped manual backlog item (multiPr, scripted command, artifact-only, pipelineReview none, skipPrepare, one pinned slot), restart the gateway once the item is on disk, then mark it ready and enqueue it as a nightly trigger does. The queue dispatches a run that carries that shape: PREPARE records operator-skip, REVIEW records pipeline-review-off with no reviewer, the run finishes and the item returns to ready. The node's codex and claude are fixtures that refuse, so no model is reached.",
+  "workflow": {
+    "entry": "backlog-run-shape",
+    "nodes": {
+      "backlog-run-shape": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/backlog-run-shape.mts",
+        "timeout_ms": 900000,
+        "intent": "A backlog item's completionPolicy, pipelineReview, skipPrepare and scripted config survive a gateway restart and reach the run it dispatches.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
