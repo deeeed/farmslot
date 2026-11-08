@@ -123,7 +123,10 @@ async function slotCheckWithSources(
       emitStep(emit, branchStep);
       let signingStep: CheckStep;
       try {
-        signingStep = await checkCommitSigning(slotVars, loadGitIdentity());
+        signingStep = await checkCommitSigning(
+          slotVars,
+          loadGitIdentity(undefined, slotVars.projectName),
+        );
       } catch (err) {
         signingStep = { name: 'git.signing', status: 'fail', detail: (err as Error).message };
       }

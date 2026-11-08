@@ -37,7 +37,10 @@ export async function assertCommitSignatures(
   fetchMissingBranch?: string,
 ): Promise<void> {
   const identity = await readGitIdentity(vars);
-  if (!isGitTrue(loadGitIdentity()?.['commit.gpgsign']) && !isGitTrue(identity['commit.gpgsign']))
+  if (
+    !isGitTrue(loadGitIdentity(undefined, vars.projectName)?.['commit.gpgsign']) &&
+    !isGitTrue(identity['commit.gpgsign'])
+  )
     return;
   if (fetchMissingBranch) {
     const git = `git -C ${shellQuote(vars.remoteRepo)}`;
