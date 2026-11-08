@@ -724,6 +724,59 @@ test('same-run clean baseline freezes as before evidence without supplying head 
   await assert.rejects(verifyFrozenPublicationEvidence(f.run, inventory, keys), /hash mismatch/);
 });
 
+test('before evidence admits a verified ticket marker baseline without waiving clean provenance', async (t) => {
+  const f = await baselineFixture(t);
+  const markerSha = 'b'.repeat(40);
+  f.run.flowType = 'fix-bug';
+  const file = `artifacts/${f.baselineRoot}/product-provenance.json`;
+  const bytes = JSON.stringify({ ...f.provenance, git_ref: markerSha });
+  await writeFile(path.join(f.taskDir, file), bytes);
+  f.inventory.find((entry) => entry.path === file)!.sha256 = digest(Buffer.from(bytes));
+  const receiptPath = `artifacts/baseline-marker-verification/${f.provenance.git_ref}-${markerSha}.json`;
+  const receipt = JSON.stringify({
+    version: 1,
+    runId: f.run.id,
+    ticket: f.run.ticketOrPr,
+    baseSha: f.provenance.git_ref,
+    markerSha,
+  });
+  await mkdir(path.dirname(path.join(f.taskDir, receiptPath)), { recursive: true });
+  await writeFile(path.join(f.taskDir, receiptPath), receipt);
+  f.inventory.push({
+    path: receiptPath,
+    purpose: 'evidence-dependency',
+    sha256: digest(Buffer.from(receipt)),
+  });
+  await retainRunFixture(f.run);
+  const baseline = publicationBaselineContext(f.run);
+  const resolved = await resolvePublicationManifest(f.taskDir, undefined, undefined, 1, baseline);
+  assert.equal(resolved?.manifest.before_after_pairs?.[0]?.before, `${f.baselineRoot}/proof.png`);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    resolved!.manifest,
+    1,
+    baseline,
+  );
+  assert.ok(inventory.some((entry) => entry.path === receiptPath && entry.sha256));
+  const { readFrozenPublicationRecipeSources } =
+    await import('../run-engine/recorded-evidence-sources.js');
+  const keys = [`artifacts/${f.baselineRoot}/proof.png`, `artifacts/${f.headRoot}/proof.png`];
+  await retainRunFixture(f.run);
+  const frozen = await readFrozenPublicationRecipeSources(f.run, inventory, keys);
+  assert.equal(frozen.length, 1, 'marker baseline supplies before captures, not head claims');
+  for (const bad of [{ dirty: true }, { branch: 'other-ticket' }]) {
+    const changed = JSON.stringify({ ...f.provenance, git_ref: markerSha, ...bad });
+    await writeFile(path.join(f.taskDir, file), changed);
+    f.inventory.find((entry) => entry.path === file)!.sha256 = digest(Buffer.from(changed));
+    await retainRunFixture(f.run);
+    await assert.rejects(
+      resolvePublicationManifest(f.taskDir, undefined, undefined, 1, baseline),
+      /git_ref|dirty|branch/,
+    );
+  }
+});
+
 test('before evidence keeps its full-review base after dispatch replay advances HEAD', async (t) => {
   const f = await baselineFixture(t);
   const headSha = 'b'.repeat(40);
