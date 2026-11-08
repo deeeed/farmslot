@@ -318,6 +318,8 @@ Public surface: no new CLI commands, flags, SDK exports or harness interfaces; n
 
 **Status:** Accepted (lead, 2026-11-08). Normative rules: [project packs: Required skills](../reference/project-packs.md#required-skills).
 
+**Implementation scope (2026-11-08):** rules select by flow, platform and declared domain. Path selection and scope-change detection wait for a task-path source at task init. Digests identify the installed bytes; installed copies carry no source revision, so none is recorded. Task init verifies the dev context; the shared dev task's handoff carries the set into review, whose pack checklist step checks it with the harness.
+
 ### Decision
 
 Pack configuration deterministically selects required skills/rules by changed or declared task paths, platform, flow and declared domain. Preserve the template selector. No model-based selection or fuzzy fallback.
