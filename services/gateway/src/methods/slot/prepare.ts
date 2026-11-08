@@ -511,7 +511,7 @@ async function slotPrepareInner(
 
   // Prove signing in the slot's tmux context before touching refs or installing
   // dependencies. A healthy node shell does not prove its tmux agent can sign.
-  const identity = loadGitIdentity();
+  const identity = loadGitIdentity(undefined, vars.projectName);
   step(
     'git-identity',
     identity
