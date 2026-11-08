@@ -2324,6 +2324,19 @@ test('dispatch.queue.add rejects removed review choices before project lookup', 
   assert(!getQueueSnapshot().some((item) => item.ticketOrPr === 'PROJ-invalid-review'));
 });
 
+test('dispatch.queue.add refuses pipelineReview none without artifact-only before project lookup', async () => {
+  await assert.rejects(
+    dispatchQueueAdd({
+      flowType: 'dev',
+      project: 'no-such-project-needed',
+      ticketOrPr: 'PROJ-pipeline-review-off',
+      pipelineReview: 'none',
+    }),
+    /pipelineReview none is only for artifact-only runs/,
+  );
+  assert(!getQueueSnapshot().some((item) => item.ticketOrPr === 'PROJ-pipeline-review-off'));
+});
+
 test('dispatch.queue.update preserves ordered WARM/COLD selections and effort', async (t) => {
   const initial: ReviewSelection = {
     runner: 'codex',
