@@ -54,6 +54,10 @@ mock.module('../core/config.js', {
     // A localhost pool may name a sibling checkout relative to the farm root.
     loadSlotVars: async (slotId: string) =>
       slotId === 'sibling' ? { ...vars, slotId, remoteRepo: '/farm/slots/sibling' } : vars,
+    loadProjectVars: async () => ({ projectJson: {} }),
+    resolveProjectRuntimeDir: async () => '.runtime',
+    resolveProjectTaskDirName: () => 'tasks',
+    getOrchestratorTaskRoot: () => '/farm/tasks',
     loadMachineSlots: async () => [
       { id: 'owned', repo: '/owned', session: 'owned' },
       { id: 'sibling', repo: './slots/sibling', session: 'sibling' },
@@ -119,6 +123,9 @@ mock.module('../runs/store.js', {
       if (failPersist) throw new Error('simulated restart');
     },
   },
+});
+mock.module('../tasks/agent-runtime-script.js', {
+  namedExports: { farmslotDirectoryForSlot: async () => '/farm' },
 });
 // Avoid the package-store -> core/index import graph: its text digest is the only dependency here.
 mock.module('./package-store.js', {

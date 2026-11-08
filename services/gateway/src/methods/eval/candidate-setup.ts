@@ -10,6 +10,8 @@ import {
   type EvalExperimentCreateParams,
   type EvalPackageAxes,
   type EvalPackageAxisRef,
+  type EvalProofInput,
+  evalTaskProfileFlow,
   type EvalTrialStartParams,
   type ExecutionTemplateReference,
   type ExecutionTemplateRunMode,
@@ -104,6 +106,7 @@ export async function resolveCandidateTemplateProvenance(
   project: string,
   taskProfile: EvalExperimentCreateParams['taskProfile'],
   axes: EvalPackageAxes,
+  proof?: EvalProofInput,
 ): Promise<{
   axes: EvalPackageAxes;
   provenance?: TemplateProvenance;
@@ -113,6 +116,47 @@ export async function resolveCandidateTemplateProvenance(
   mode?: ExecutionTemplateRunMode;
   missingData: string[];
 }> {
+  if (taskProfile === 'proof') {
+    if (!proof) throw new Error('Proof trial is missing its admitted input.');
+    const frozen = proof.executionTemplate;
+    const expected: EvalPackageAxisRef = {
+      name: frozen.id,
+      path: frozen.relativePath,
+      hash: frozen.sha256,
+      ref: frozen.sourceRevision,
+      version: frozen.version,
+    };
+    if (
+      axes.template &&
+      Object.entries(axes.template).some(
+        ([key, value]) =>
+          value !== undefined && value !== expected[key as keyof EvalPackageAxisRef],
+      )
+    )
+      throw new Error('Proof template axis cannot override the admitted QA snapshot.');
+    const vars = await loadProjectVars(project);
+    const snapshot = readConfiguredExecutionTemplateSnapshot(vars, { ...frozen, flow: 'qa' });
+    if (snapshot.entry.sourceKind !== 'project')
+      throw new Error('Proof trials require a farm-owned QA template.');
+    const provenance = await buildTemplateProvenance({
+      flowType: 'qa',
+      project,
+      templatePath: snapshot.entry.path,
+      templateName: snapshot.entry.relativePath,
+      templateContent: snapshot.markdown,
+      templateVariant: null,
+      templateIsDefault: true,
+      role: 'eval-candidate',
+    });
+    return {
+      axes: { ...axes, template: expected },
+      provenance: { ...provenance, taskProfile },
+      templateContent: snapshot.markdown,
+      executionTemplate: frozen,
+      mode: 'autonomous',
+      missingData: [],
+    };
+  }
   const missingData: string[] = [];
   const projectVars = await loadProjectVars(project);
   const catalog = projectUsesExecutionTemplateCatalog(projectVars);
@@ -166,7 +210,7 @@ export async function resolveCandidateTemplateProvenance(
     templateContent = await readFile(templatePath, 'utf-8');
   }
   const provenance = await buildTemplateProvenance({
-    flowType: taskProfile,
+    flowType: evalTaskProfileFlow(taskProfile),
     project,
     templatePath,
     templateName: fileName,
@@ -180,9 +224,12 @@ export async function resolveCandidateTemplateProvenance(
     executionTemplate,
     mode: executionTemplate
       ? resolveRunCreateMode({
-          flowType: taskProfile,
+          flowType: evalTaskProfileFlow(taskProfile),
           taskTemplateFileName: fileName,
-          templateOptions: await listWorkerTemplateOptions(projectVars, taskProfile),
+          templateOptions: await listWorkerTemplateOptions(
+            projectVars,
+            evalTaskProfileFlow(taskProfile),
+          ),
         })
       : undefined,
     templateContent,

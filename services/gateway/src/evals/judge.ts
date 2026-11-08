@@ -14,6 +14,8 @@ import type { ReviewResult } from '../review/orchestrator.js';
 import { type FrozenReviewContribution, parseReviewSnapshotArtifact } from '../review/snapshots.js';
 import { atomicWriteTextFile, sha256Text } from '../run-engine/diff-artifact-utils.js';
 
+import { readProofOutput } from './proof-output.js';
+
 export interface EvalJudgeReceipt {
   contextId?: string;
   completedAt: string;
@@ -34,6 +36,7 @@ export async function readEvalReviewContribution(run: Run): Promise<FrozenReview
   const diffText = await readFile(first.diffPath, 'utf8');
   if (sha256Text(diffText) !== first.diffSha256)
     throw new Error('The frozen eval contribution changed');
+  await readProofOutput(run);
   return {
     snapshot: {
       source: 'local-git',
@@ -115,12 +118,14 @@ export async function readEvalJudgeReceipt(run: Run): Promise<EvalJudgeReceipt |
     value.runId !== run.id ||
     value.headSha !== first.headSha ||
     value.diffSha256 !== first.diffSha256 ||
+    (blind.proof && value.proofSha256 !== first.proofPackage?.sha256) ||
     typeof value.completedAt !== 'string' ||
     !Number.isFinite(Date.parse(value.completedAt)) ||
     !nullableString(value.contextId) ||
     !isRecord(value.result)
   )
     throw new Error('Eval judge receipt differs from its frozen first output');
+  await readProofOutput(run);
   const raw = value.result;
   if (!isRecord(raw.reviewSnapshot)) throw new Error('Eval judge snapshot is missing');
   const snapshot = parseReviewSnapshotArtifact(JSON.stringify(raw.reviewSnapshot));
@@ -204,6 +209,7 @@ export async function recordEvalJudgeResult(
     result.retryCount !== 0
   )
     throw new Error('Eval judge did not review the frozen first output');
+  await readProofOutput(run);
   const existing = await readEvalJudgeReceipt(run);
   if (existing) {
     const facts = (review: ReviewResult) =>
@@ -228,6 +234,7 @@ export async function recordEvalJudgeResult(
       runId: run.id,
       headSha: first.headSha,
       diffSha256: first.diffSha256,
+      ...(first.proofPackage ? { proofSha256: first.proofPackage.sha256 } : {}),
       contextId,
       completedAt: attempt?.completedAt ?? new Date().toISOString(),
       artifactPaths: attempt?.artifactPaths ?? [],

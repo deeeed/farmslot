@@ -116,6 +116,11 @@ export function parseQaResult(value: unknown, run: Run, headSha: string): QaResu
     value.source.headSha === headSha,
     'executed source does not match the prepared checkout HEAD',
   );
+  if (run.engineState?.evalExperiment?.blind?.proof)
+    requireProof(
+      value.source.baseSha === run.engineState.evalExperiment.blind.proof.source.baseSha,
+      'executed source differs from the frozen proof base',
+    );
   if (run.qaSource)
     requireProof(
       value.source.headSha === run.qaSource.headSha,
@@ -190,6 +195,7 @@ export function validateQaSuite(
   result: unknown,
   summaries: Record<string, unknown>,
   smoke: QaResult['smoke'],
+  measurement = false,
 ) {
   const validation = validateRecipeSuitePackage({ scope, result, summaries });
   requireProof(validation.status === 'valid', validation.findings.map((f) => f.message).join('; '));
@@ -201,7 +207,7 @@ export function validateQaSuite(
     record(result) && Array.isArray(result.resolutions),
     'suite result has no resolutions',
   );
-  requireSuiteCoverage(result.resolutions);
+  if (!measurement) requireSuiteCoverage(result.resolutions);
   requireProof(
     result.resolutions.some((entry) => entry.id === smoke.caseId),
     'smoke case was not executed',
@@ -223,6 +229,7 @@ export function validateQaPackage(
   bundle: QaPackage,
   startedAt: string,
   smokeProofTarget?: string,
+  measurement = false,
 ): string {
   const checked = validateRecipeArtifactPackage(bundle);
   requireProof(
@@ -232,9 +239,10 @@ export function validateQaPackage(
       .map((f) => f.message)
       .join('; ') || 'invalid recipe package',
   );
-  requireProof(record(bundle.summary) && bundle.summary.status === 'pass', 'recipe did not pass');
+  requireProof(record(bundle.summary), 'recipe summary is missing');
+  if (!measurement) requireProof(bundle.summary.status === 'pass', 'recipe did not pass');
   requireProof(
-    bundle.summary.stopAfterNode === undefined,
+    measurement || bundle.summary.stopAfterNode === undefined,
     `recipe ran partially (stop-after-node ${String(bundle.summary.stopAfterNode)}); rerun the full graph for proof`,
   );
   requireProof(
@@ -245,6 +253,9 @@ export function validateQaPackage(
       Date.parse(bundle.summary.endedAt) >= Date.parse(bundle.summary.startedAt),
     'recipe evidence predates this execution or has invalid timestamps',
   );
+  // A failed or interrupted proof attempt is data. Package integrity and source
+  // binding still apply; it cannot become a passing QA result.
+  if (measurement) return digestRecipeDocument(bundle.recipe);
   const rawTrace = Array.isArray(bundle.trace)
     ? bundle.trace
     : record(bundle.trace)
@@ -377,7 +388,7 @@ export function validateQaPackage(
 }
 
 interface QaCompletionIO {
-  read(name: string): Promise<unknown>;
+  read(name: string, optional?: boolean): Promise<unknown>;
   file(name: string, nonempty?: boolean): Promise<string>;
   head(): Promise<string>;
   base(sha: string): Promise<void>;
@@ -419,8 +430,11 @@ async function workerQaCompletionIO(run: Run): Promise<QaCompletionIO> {
     );
     return full;
   }
-  const read = async (name: string): Promise<unknown> =>
-    JSON.parse(await slotReadFile(vars, await file(name)));
+  const read = async (name: string, optional = false): Promise<unknown> => {
+    relative(name);
+    if (optional && !(await slotFileExists(vars, path.join(root, name)))) return undefined;
+    return JSON.parse(await slotReadFile(vars, await file(name)));
+  };
   return {
     read,
     file,
@@ -444,7 +458,15 @@ async function retainedQaCompletionIO(run: Run): Promise<QaCompletionIO> {
   const ref = run.output?.artifactBundle ?? retainedRunBundleRef(run);
   const store = await runBundleStore();
   return {
-    read: async (name) => JSON.parse(await readRetainedRunText(run, `artifacts/${name}`, ref)),
+    read: async (name, optional = false) => {
+      try {
+        return JSON.parse(await readRetainedRunText(run, `artifacts/${name}`, ref));
+      } catch (error) {
+        if (optional && error instanceof Error && 'code' in error && error.code === 'ENOENT')
+          return undefined;
+        throw error;
+      }
+    },
     file: async (name, nonempty = true) => {
       relative(name);
       const entry = await resolveRunBundleEntry({
@@ -475,6 +497,7 @@ async function readQaCompletion(
     run.flowType === 'qa' && run.slotId && run.taskFile && run.qa,
     'QA run has no admitted preset, task or slot',
   );
+  const measurement = Boolean(run.engineState?.evalExperiment?.blind?.proof);
   const generation = run.engineState?.generation ?? 0;
   const capturedDigest = retained
     ? (run.output?.artifactBundle?.bundleDigest ?? run.artifactBundle?.bundleDigest)
@@ -484,7 +507,9 @@ async function readQaCompletion(
   const head = await io.head();
   let result: QaResult;
   try {
-    result = parseQaResult(await read('qa-result.json'), run, head);
+    const raw = await read('qa-result.json', measurement);
+    if (raw === undefined && measurement) return { packages: [], headSha: head };
+    result = parseQaResult(raw, run, head);
   } catch (error) {
     if (error instanceof BlockedRunError) throw error;
     throw new BlockedRunError(`QA evidence incomplete: ${String(error)}`, 'qa-runtime-evidence');
@@ -505,11 +530,15 @@ async function readQaCompletion(
   const summaries: Record<string, unknown> = {};
   const selections: Array<{ path: string; summary: unknown; smokeProofTarget?: string }> = [];
   requireProof(
-    Object.keys(result.packages).length === suiteResult.resolutions.length,
+    Object.keys(result.packages).length ===
+      suiteResult.resolutions.filter(
+        (entry: unknown) => !measurement || (record(entry) && entry.kind === 'verdict'),
+      ).length,
     'recipe package locations do not match the suite cases',
   );
-  requireSuiteCoverage(suiteResult.resolutions, result.packages);
+  if (!measurement) requireSuiteCoverage(suiteResult.resolutions, result.packages);
   for (const resolution of suiteResult.resolutions) {
+    if (measurement && record(resolution) && resolution.kind === 'not_executed') continue;
     requireProof(
       record(resolution) && typeof resolution.id === 'string',
       'suite has failing, unknown or unexecuted coverage',
@@ -530,7 +559,7 @@ async function readQaCompletion(
         : {}),
     });
   }
-  validateQaSuite(scope, suiteResult, summaries, result.smoke);
+  validateQaSuite(scope, suiteResult, summaries, result.smoke, measurement);
   for (const item of selections) {
     const get = (name: string) => read(`${item.path}/${name}`);
     const [recipe, summary, trace, manifest, recipeResolution] = await Promise.all(
@@ -579,6 +608,28 @@ async function readQaCompletion(
       );
       artifactPaths.add(artifact.path);
     }
+    if (measurement) {
+      const provenance = await get('execution-provenance.json');
+      const expected = run.engineState?.evalExperiment?.blind?.proof?.source.headSha;
+      requireProof(
+        record(provenance) &&
+          provenance.schemaVersion === 1 &&
+          provenance.valid === true &&
+          Array.isArray(provenance.drift) &&
+          provenance.drift.length === 0 &&
+          Array.isArray(provenance.snapshots) &&
+          provenance.snapshots.length > 0,
+        'proof execution source provenance is missing or records drift',
+      );
+      for (const snapshot of provenance.snapshots)
+        requireProof(
+          record(snapshot) &&
+            record(snapshot.product) &&
+            snapshot.product.head === expected &&
+            snapshot.product.status === '',
+          'proof recipe executed different or temporarily modified product source',
+        );
+    }
     const digest = validateQaPackage(
       {
         recipe,
@@ -591,6 +642,7 @@ async function readQaCompletion(
       },
       qaEvidenceStartedAt(run),
       item.smokeProofTarget,
+      measurement,
     );
     packages.push({ path: item.path, digest });
   }

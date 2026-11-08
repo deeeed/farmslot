@@ -26,6 +26,7 @@ import {
   INTERACTIVE_HANDOFF_EXTEND_ACTION,
   interactiveHandoffAllowsExtend,
   isAllowedRunDecisionAction,
+  isEvalProofInput,
   isEvidencePolicyReason,
   isGateParkInFlightOrFreed,
   isHeldForResultDecision,
@@ -486,6 +487,15 @@ export async function planRunCreation(
       );
     }
   }
+  const proof = params.engineState?.evalExperiment?.blind?.proof;
+  if (
+    proof &&
+    (!isEvalProofInput(proof) ||
+      params.flowType !== 'qa' ||
+      params.lane !== 'comparison' ||
+      params.completionPolicy !== 'artifact-only')
+  )
+    throw new Error('Proof eval metadata requires a valid artifact-only comparison QA run.');
   // Gateway-internal — clients must not forge HEAD verification.
   delete params.startRefSkipPrepareVerified;
   if ('expectedQa' in params)

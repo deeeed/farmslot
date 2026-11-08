@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { readTaskProvenance } from '@farmslot/agent-runtime';
@@ -10,6 +10,7 @@ import {
   type EvalMedia,
   type EvalPackageAxes,
   type EvalPackageSource,
+  type EvalProofInput,
   type EvalTaskProfile,
   type FamilyDiffProvenance,
   type FamilyObservabilityArtifact,
@@ -109,6 +110,7 @@ export function computeExperimentKey(input: {
   project: string;
   source: EvalPackageSource;
   taskProfile: EvalTaskProfile;
+  proof?: EvalProofInput;
   objectiveHash: string;
   rubricId: string;
   rubricVersion: string;
@@ -123,6 +125,7 @@ export function computeExperimentKey(input: {
   return sha256Text(
     stableJson({
       kind: 'eval-experiment-key-v1',
+      proof: input.proof,
       project: input.project,
       source: canonicalSource(input.source),
       taskProfile: input.taskProfile,
@@ -380,6 +383,7 @@ export async function readTaskDiffProvenance(
 export async function scanResultPackageArtifacts(
   taskDir: string,
   run: Pick<Run, 'id' | 'familyId'>,
+  strict = false,
 ): Promise<FamilyObservabilityArtifact[]> {
   const artifactsDir = path.join(taskDir, 'artifacts');
   if (!existsSync(artifactsDir)) return [];
@@ -389,13 +393,24 @@ export async function scanResultPackageArtifacts(
     if (
       refs.length >= MAX_RESULT_PACKAGE_ARTIFACT_SCAN_FILES ||
       depth > MAX_RESULT_PACKAGE_ARTIFACT_SCAN_DEPTH
-    )
+    ) {
+      if (strict) throw new Error('Proof artifact inventory exceeds its bounded manifest');
       return;
+    }
     const entries = (await readdir(dir)).sort((a, b) => a.localeCompare(b));
     for (const name of entries) {
-      if (refs.length >= MAX_RESULT_PACKAGE_ARTIFACT_SCAN_FILES) return;
+      if (refs.length >= MAX_RESULT_PACKAGE_ARTIFACT_SCAN_FILES) {
+        if (strict) throw new Error('Proof artifact inventory exceeds its bounded manifest');
+        return;
+      }
       const full = path.join(dir, name);
-      const s = await stat(full);
+      const s = await (strict ? lstat(full) : stat(full));
+      if (
+        strict &&
+        (s.isSymbolicLink() ||
+          !(await realpath(full)).startsWith((await realpath(artifactsDir)) + path.sep))
+      )
+        throw new Error('Proof artifact escapes its task');
       if (s.isDirectory()) {
         await walk(full, `${prefix}${name}/`, depth + 1);
         continue;
@@ -590,6 +605,9 @@ async function captureEvalPackage(
   return {
     ...currentPackage,
     comparisonEligibility: blindTrialEligibility(link.blind),
+    ...(link.blind?.firstOutput?.proofPackage
+      ? { proofOutputSha256: link.blind.firstOutput.proofPackage.sha256 }
+      : {}),
     status: 'final',
     finalizedAt: new Date().toISOString(),
     runId: run.id,
@@ -634,11 +652,17 @@ export async function readFrozenEvalFirstOutputPackage(
   const file = firstOutputPackagePath(run);
   if (!(await fileExists(file))) return null;
   const snapshot = await readResultPackageManifest(file);
+  if (run.engineState?.evalExperiment?.blind?.proof) {
+    const { readProofOutput } = await import('./proof-output.js');
+    await readProofOutput(run);
+  }
   const first = run.engineState?.evalExperiment?.blind?.firstOutput;
   if (
     !first ||
     snapshot.runId !== run.id ||
     snapshot.diff.headSha !== first.headSha ||
+    (run.engineState?.evalExperiment?.blind?.proof &&
+      snapshot.proofOutputSha256 !== first.proofPackage?.sha256) ||
     snapshot.diff.baseSha !== first.diff.baseSha ||
     snapshot.packageHash !== computePackageHash(snapshot)
   )

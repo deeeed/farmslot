@@ -19,6 +19,7 @@ import { execOnSlot } from '../core/exec.js';
 import { slotFileExists } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { readEvalReviewContribution, recordEvalJudgeResult } from '../evals/judge.js';
+import { readProofOutput } from '../evals/proof-output.js';
 import {
   isNodeTransportUnavailableError,
   resolveAfterNodeReconnect,
@@ -592,9 +593,11 @@ async function runNativeReviewAttempt(
                 deltaUnavailable: delta?.deltaUnavailable,
                 priorIssues: input.rereview!.priorIssues,
               }) + template
-            : (original.engineState?.evalExperiment
-                ? `Review the frozen first-output patch in ${taskDir}/${snapshot.snapshot.diffPath}, including its uncommitted and untracked source.\n\n`
-                : `## COLD review range\n\nReview the complete PR diff ${snapshot.snapshot.baseSha}..${snapshot.snapshot.headSha} in ${taskDir}/${snapshot.snapshot.diffPath}.\n\n`) +
+            : (original.engineState?.evalExperiment?.blind?.proof
+                ? `Judge the frozen proof output below against every ordered AC. The implementation is supplied input, not the worker's contribution. Read its exact QA base..head context and the recorded evidence files under ${taskDir}. Judge recipe quality, evidence fit, failures, missing coverage and each AC. Read recorded CI/receipts only. Never run tests, builds, recipes, installs or probes, and never request a product fix or worker retry.\n\nFrozen proof package:\n${await readProofOutput(original)}\n\n`
+                : original.engineState?.evalExperiment
+                  ? `Review the frozen first-output patch in ${taskDir}/${snapshot.snapshot.diffPath}, including its uncommitted and untracked source.\n\n`
+                  : `## COLD review range\n\nReview the complete PR diff ${snapshot.snapshot.baseSha}..${snapshot.snapshot.headSha} in ${taskDir}/${snapshot.snapshot.diffPath}.\n\n`) +
               template;
         admit();
         await writeTextFileOnSlot(

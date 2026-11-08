@@ -43,6 +43,7 @@ import {
   freezeEvalFirstOutputPackage,
   readFrozenEvalFirstOutputPackage,
 } from '../evals/package-store.js';
+import { readProofOutput } from '../evals/proof-output.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
@@ -678,6 +679,7 @@ export async function executeMonitorStep(
         failRunOutputCapture(runId, error, true);
       }
       if (!canSettle()) return retiredResult();
+      if (after.engineState?.evalExperiment?.blind?.proof) await assertQaCompletion(after);
       await freezeBlindTrialFirstOutput(runId);
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     }
@@ -714,7 +716,8 @@ export async function executeMonitorStep(
       };
     }
     if (
-      workerSignal?.status === 'blocked' &&
+      (workerSignal?.status === 'blocked' ||
+        (workerSignal?.status === 'failed' && after.engineState?.evalExperiment?.blind?.proof)) &&
       getRun(runId)?.engineState?.evalExperiment?.blind?.firstOutput
     ) {
       // A self-blocked first output is a measurement too: it is judged by nobody
@@ -1709,7 +1712,8 @@ export async function executeCompleteStep(
   }
   if (!current.slotId) throw new Error('No slot assigned');
   // Record the verified Git result independently of acceptance/publication approval.
-  if (current.acceptanceRegistration?.units.some(({ result }) => !result)) {
+  const proofMeasurement = Boolean(current.engineState?.evalExperiment?.blind?.proof);
+  if (!proofMeasurement && current.acceptanceRegistration?.units.some(({ result }) => !result)) {
     const { continuePRCompletionStep } = await import('../methods/run/replay-step.js');
     const continuation = await continuePRCompletionStep(
       runId,
@@ -1731,7 +1735,7 @@ export async function executeCompleteStep(
   if (noCodeDisposition || ['blocked', 'failed'].includes(current.metrics.disposition ?? ''))
     await abandonBranchMaintenance(current);
   else await completeBranchMaintenance(current);
-  if (!shouldPrepareLocalFirstPackage(current)) {
+  if (!proofMeasurement && !shouldPrepareLocalFirstPackage(current)) {
     // A restart can stop a capture's media transfer after its report committed. Resume
     // it from the source before the gate reads that capture; what stays missing refuses.
     if (current.output?.artifactBundle)
@@ -1783,7 +1787,8 @@ export async function executeCompleteStep(
   }
   // Revalidate on completion/replay so a checklist or force-skipped monitor cannot supply QA proof.
   if (!current.slotId) throw new Error('No slot assigned');
-  if (current.flowType === 'qa') await assertQaCompletion(current);
+  if (current.engineState?.evalExperiment?.blind?.proof) await readProofOutput(current);
+  else if (current.flowType === 'qa') await assertQaCompletion(current);
   if (runSupersededSince(getRun(runId), generation))
     throw new Error('Completion was superseded during gate validation');
   const artifactOnly = isArtifactOnlyRun(current);

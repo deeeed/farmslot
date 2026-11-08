@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   type CandidateStrategy,
@@ -12,11 +13,13 @@ import {
   type EvalExperimentSource,
   type EvalPackageAxes,
   type EvalPackageSource,
+  type EvalProofInput,
   type EvalRubricManifest,
   type EvalSuiteCapGetParams,
   type EvalSuiteCapGetResult,
   type EvalSuiteCapUpdateParams,
   type EvalSuiteCapUpdateResult,
+  evalTaskProfileFlow,
   type EvalTrialResultGetParams,
   type EvalTrialResultGetResult,
   type EvalTrialStartParams,
@@ -64,6 +67,7 @@ import {
   writeJsonFile,
   writeResultPackageManifest,
 } from '../evals/package-store.js';
+import { resolveProofInput } from '../evals/proof-profile.js';
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
 import { buildSmartBranch, ticketSlug } from '../intelligence/engine.js';
 import { resolveProjectSourceDiffFilter } from '../run-engine/diff-artifacts.js';
@@ -146,8 +150,9 @@ function packagedReferenceBase(referencePackage: ResultPackageManifest): string 
 function candidateStartRefForReferencePackage(
   params: Pick<EvalTrialStartParams, 'startRef'>,
   referencePackage: ResultPackageManifest,
+  proof?: EvalProofInput,
 ): { requestedRef: string; source: RunStartRefSource; auto: boolean } {
-  const base = packagedReferenceBase(referencePackage);
+  const base = proof?.source.headSha ?? packagedReferenceBase(referencePackage);
   if (!base || !FULL_COMMIT.test(base))
     throw new Error("A blind trial requires the reference package's verified full base commit.");
   if (params.startRef?.trim() && params.startRef.trim() !== base)
@@ -185,6 +190,7 @@ function buildReferencePackage(input: {
   familyId: string;
   objectiveHash: string;
   taskProfile: EvalExperimentCreateParams['taskProfile'];
+  proof?: EvalProofInput;
   experimentKey: string;
   resolved: ResolvedEvalSource;
   contextArtifacts: FamilyObservabilityArtifact[];
@@ -201,6 +207,7 @@ function buildReferencePackage(input: {
       familyId: input.familyId,
       objectiveHash: input.objectiveHash,
       taskProfile: input.taskProfile,
+      ...(input.proof ? { proof: input.proof } : {}),
       baseline: input.existingPackage.baseline ?? commitMetadataFromDiff(input.resolved.diff),
       head: input.existingPackage.head,
       validationEvidence: [...input.contextArtifacts, ...input.existingPackage.validationEvidence],
@@ -226,6 +233,7 @@ function buildReferencePackage(input: {
     familyId: input.familyId,
     objectiveHash: input.objectiveHash,
     taskProfile: input.taskProfile,
+    ...(input.proof ? { proof: input.proof } : {}),
     source: input.resolved.source,
     role: 'reference',
     ...(commitMetadata ? { baseline: commitMetadata } : {}),
@@ -267,13 +275,36 @@ export async function evalExperimentCreate(
 ): Promise<EvalExperimentCreateResult> {
   if (!params.project) throw new Error('Missing required field: project');
   if (!params.source) throw new Error('Missing required field: source');
-  if (params.taskProfile !== 'dev' && params.taskProfile !== 'fix-bug')
-    throw new Error('taskProfile must be dev or fix-bug');
+  if (!['dev', 'fix-bug', 'proof'].includes(params.taskProfile))
+    throw new Error('taskProfile must be dev, fix-bug or proof');
+  if (
+    params.taskProfile !== 'proof' &&
+    (params.acceptanceCriteria !== undefined ||
+      params.qaProfileId !== undefined ||
+      params.qaInputs !== undefined)
+  )
+    throw new Error('acceptanceCriteria and QA selection are only valid for proof evals.');
 
   const { resolved, package: existingPackage } = await resolveEvalSource(
     params.project,
     params.source,
   );
+  const proofResolution =
+    params.taskProfile === 'proof'
+      ? await resolveProofInput(params, resolved, existingPackage)
+      : undefined;
+  const proof = proofResolution?.proof;
+  if (proofResolution) {
+    resolved.diffText = proofResolution.diffText;
+    resolved.diff = {
+      ...resolved.diff,
+      available: true,
+      source: 'artifact',
+      baseSha: proofResolution.proof.source.baseSha,
+      headSha: proofResolution.proof.source.headSha,
+      artifactPath: 'inputs/reference-diff.txt',
+    };
+  }
   const rubricId = params.rubricId ?? DEFAULT_RUBRIC_ID;
   const rubricVersion = params.rubricVersion ?? DEFAULT_RUBRIC_VERSION;
   const objectiveHash =
@@ -291,6 +322,7 @@ export async function evalExperimentCreate(
     objectiveHash,
     rubricId,
     rubricVersion,
+    proof,
     datasetId: params.datasetId,
     datasetItemId: params.datasetItemId,
   });
@@ -362,6 +394,7 @@ export async function evalExperimentCreate(
       familyId,
       objectiveHash,
       taskProfile: params.taskProfile,
+      proof,
       experimentKey,
       resolved,
       contextArtifacts,
@@ -384,6 +417,7 @@ export async function evalExperimentCreate(
       caseId: evalCaseId,
       source: resolved.source,
       taskProfile: params.taskProfile,
+      ...(proof ? { proof } : {}),
       objectiveHash,
       problemStatement: params.objective?.trim() || undefined,
       referencePackageId: referencePackage.packageId,
@@ -581,12 +615,14 @@ async function writeCandidateInputs(input: {
   }
 }
 
-function buildBlindTicketData(problem: string): RunTicketData {
+function buildBlindTicketData(problem: string, acceptanceCriteria?: string[]): RunTicketData {
   return {
     source: 'manual',
     title: problem.split('\n')[0].slice(0, 200),
     description: problem,
-    acceptanceCriteria: ['Satisfy the supplied problem statement and retain local artifacts.'],
+    acceptanceCriteria: acceptanceCriteria
+      ? [...acceptanceCriteria]
+      : ['Satisfy the supplied problem statement and retain local artifacts.'],
     affectedArea: 'eval',
     stepsToReproduce: [],
     screenshots: [],
@@ -617,12 +653,32 @@ export async function evalTrialStart(
     );
   const evalCase = experimentManifest.case;
   const referencePackage = await readResultPackageManifest(evalCase.referencePackagePath);
-  const candidateStartRef = candidateStartRefForReferencePackage(params, referencePackage);
+  const proof = evalCase.proof;
+  if (evalCase.taskProfile === 'proof') {
+    if (!proof || !isDeepStrictEqual(proof, referencePackage.proof))
+      throw new Error('Frozen proof admission differs from its reference input.');
+    if (params.source)
+      throw new Error('Proof trials cannot override the supplied implementation source.');
+    const expected = computeExperimentKey({
+      project: experimentManifest.project,
+      source: evalCase.source,
+      taskProfile: evalCase.taskProfile,
+      proof,
+      objectiveHash: evalCase.objectiveHash,
+      rubricId: experimentManifest.rubric.rubricId,
+      rubricVersion: experimentManifest.rubric.rubricVersion,
+      datasetItemId: experimentManifest.datasetItemId,
+    });
+    if (expected !== experimentManifest.experimentKey)
+      throw new Error('Frozen proof experiment input identity changed.');
+  }
+  const candidateStartRef = candidateStartRefForReferencePackage(params, referencePackage, proof);
   const axesDefaults = axesWithExecutionDefaults(params.axes, params);
   const templateResolution = await resolveCandidateTemplateProvenance(
     params.project,
     evalCase.taskProfile,
     axesDefaults,
+    proof,
   );
   const axes = templateResolution.axes;
   if (!isEvalPackageAxes(axes)) throw new Error('Invalid candidate axes: expected EvalPackageAxes');
@@ -658,18 +714,26 @@ export async function evalTrialStart(
   if (dedupedResult) return dedupedResult;
 
   const evalRoot = path.dirname(path.dirname(params.experimentManifestPath));
+  const allowed = proof
+    ? [proof.source.baseSha, proof.source.headSha].flatMap((sha) => [sha, sha.slice(0, 7)])
+    : [];
   const markers = referenceInputMarkers(
     referencePackage,
     params.experimentManifestPath,
     evalCase.referencePackagePath,
-  );
+  ).filter((marker) => !allowed.includes(marker));
   const problem = assertBlindProblem(evalCase.problemStatement, markers);
   const { sourceFilter } = await resolveProjectSourceDiffFilter(params.project);
+  const rawDiff = await referenceDiffText(referencePackage, evalRoot);
+  if (proof && sha256Text(rawDiff) !== proof.source.diffSha256)
+    throw new Error('Supplied implementation diff changed after proof admission.');
   const referencePatchId = await stablePatchId(
-    sourceComparisonDiff(await referenceDiffText(referencePackage, evalRoot), sourceFilter),
+    proof ? rawDiff : sourceComparisonDiff(rawDiff, sourceFilter),
   );
-  const commits = referenceCommits(referencePackage);
-  if (!referencePatchId || commits.length === 0)
+  const commits = referenceCommits(referencePackage).filter(
+    (sha) => !proof || ![proof.source.baseSha, proof.source.headSha].includes(sha),
+  );
+  if (!referencePatchId || (!proof && commits.length === 0))
     throw new Error('A blind trial requires a nonempty reference patch and head identity.');
   const blind: EvalBlindTrial = {
     version: 1,
@@ -678,6 +742,7 @@ export async function evalTrialStart(
     referenceCommits: commits,
     referencePatchId,
     forbiddenInputs: markers,
+    ...(proof ? { proof } : {}),
   };
   const candidateDir = path.join(
     evalRoot,
@@ -706,6 +771,7 @@ export async function evalTrialStart(
     familyId: experimentManifest.familyId,
     objectiveHash: evalCase.objectiveHash,
     taskProfile: evalCase.taskProfile,
+    ...(proof ? { proof } : {}),
     source: candidateSource ?? referencePackage.source,
     productRef: {
       requestedRef: candidateStartRef.requestedRef,
@@ -740,7 +806,7 @@ export async function evalTrialStart(
     templateProvenance: templateResolution.provenance,
   });
 
-  const flowType = evalCase.taskProfile;
+  const flowType = evalTaskProfileFlow(evalCase.taskProfile);
   const ticketOrPr = syntheticEvalTicket(experimentManifest.experimentKey);
   const branch = buildSmartBranch(
     flowType,
@@ -749,7 +815,7 @@ export async function evalTrialStart(
     undefined,
     variant,
   );
-  const ticketData = buildBlindTicketData(problem);
+  const ticketData = buildBlindTicketData(problem, proof?.acceptanceCriteria);
   const evalEngineState = {
     evalExperiment: {
       blind,
@@ -767,6 +833,7 @@ export async function evalTrialStart(
   const result = await runCreate(
     {
       flowType,
+      ...(proof ? { qaProfileId: proof.qa.profile.id, qaInputs: proof.qa.inputs } : {}),
       project: params.project,
       ticketOrPr,
       familyId: experimentManifest.familyId,
@@ -794,9 +861,19 @@ export async function evalTrialStart(
     },
     emit,
     {
+      ...(proof
+        ? {
+            expectedQa: {
+              profileId: proof.qa.profile.id,
+              templateId: proof.qa.profile.template_id,
+              inputs: proof.qa.inputs,
+            },
+          }
+        : {}),
       expectedExecutionTemplate: params.slotId ? templateResolution.executionTemplate : undefined,
       beforeCreate: options.beforeCreate,
       afterCreateSync: (run) => {
+        if (proof) run.qaSource = { baseSha: proof.source.baseSha, headSha: proof.source.headSha };
         // A queued trial has no slot yet. Retain the selected snapshot so final
         // admission and task writing can reject a changed template later.
         if (templateResolution.executionTemplate)

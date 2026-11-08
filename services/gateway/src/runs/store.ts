@@ -204,9 +204,14 @@ export function normalizeRunClassification(
   return { lane, variant };
 }
 
-function stepsForFlow(flowType: FlowType, acceptanceContractVersion?: 1): RunStep[] {
+function stepsForFlow(
+  flowType: FlowType,
+  acceptanceContractVersion?: 1,
+  engineState?: Run['engineState'],
+): RunStep[] {
   const steps =
-    pipelineStepsForRun({ flowType, acceptanceContractVersion }) ?? FLOW_STEPS['fix-bug'];
+    pipelineStepsForRun({ flowType, acceptanceContractVersion, engineState }) ??
+    FLOW_STEPS['fix-bug'];
   return steps.map((name) => ({ name, status: 'pending' as RunStepStatus }));
 }
 
@@ -1149,7 +1154,11 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
     launchSlotPolicy: params.launchSlotPolicy,
     launchAttempt: params.launchAttempt,
     taskFile: params.taskFile ?? null,
-    steps: stepsForFlow(params.flowType, params.flowType === 'pr-complete' ? 1 : undefined),
+    steps: stepsForFlow(
+      params.flowType,
+      params.flowType === 'pr-complete' ? 1 : undefined,
+      params.engineState,
+    ),
     decisions: [],
     metrics: {
       nudgeCount: 0,

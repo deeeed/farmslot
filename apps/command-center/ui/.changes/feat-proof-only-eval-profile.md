@@ -1,0 +1,1 @@
+- Map proof-eval candidates to QA execution and preserve their frozen QA selection in queued cells.

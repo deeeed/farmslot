@@ -136,6 +136,10 @@ export function blindTrialEligibility(
     candidatePatchId: blind.firstOutput.patchId,
     referencePatchId: blind.referencePatchId,
   };
+  if (blind.proof)
+    return blind.firstOutput.proofPackage
+      ? { ...identity, status: 'eligible' }
+      : { ...identity, status: 'invalid', reason: 'Frozen proof output is missing.' };
   return blind.firstOutput.patchId && blind.firstOutput.patchId === blind.referencePatchId
     ? { ...identity, status: 'contaminated', reason: 'First output matches the reference patch.' }
     : { ...identity, status: 'eligible' };

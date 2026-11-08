@@ -1,4 +1,5 @@
 import {
+  evalTaskProfileFlow,
   FLOW_STEPS,
   type FlowType,
   PipelineSteps,
@@ -115,12 +116,18 @@ export async function normalizeEvalReplayForTaskWrite(runId: string, current: Ru
     current.flowType !== taskProfile ||
     (isSyntheticEvalTicket(current.ticketOrPr) && !existingTaskFile);
   const nextBranch = shouldRegenerateTask
-    ? buildSmartBranch(taskProfile, nextTicketOrPr, undefined, undefined, current.variant)
+    ? buildSmartBranch(
+        evalTaskProfileFlow(taskProfile),
+        nextTicketOrPr,
+        undefined,
+        undefined,
+        current.variant,
+      )
     : current.branch;
   const startRefChanged =
     current.startRef?.requestedRef !== nextStartRef.requestedRef ||
     current.startRef?.source?.kind !== nextStartRef.source?.kind;
-  const nextSteps = evalReplayStepsForFlow(taskProfile, current.steps);
+  const nextSteps = evalReplayStepsForFlow(evalTaskProfileFlow(taskProfile), current.steps);
   const stepsChanged = !sameStepNames(current.steps, nextSteps);
   if (
     !shouldRegenerateTask &&
@@ -132,7 +139,7 @@ export async function normalizeEvalReplayForTaskWrite(runId: string, current: Ru
     return current;
   }
   const normalized = updateRun(runId, {
-    flowType: taskProfile,
+    flowType: evalTaskProfileFlow(taskProfile),
     ticketOrPr: nextTicketOrPr,
     familyRootTicketOrPr: nextTicketOrPr,
     ticketData: nextTicketData,
