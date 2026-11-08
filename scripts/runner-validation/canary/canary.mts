@@ -1,6 +1,8 @@
 #!/usr/bin/env tsx
 import { RECOVERY_CASES, runRecoveryMatrix } from './recovery.mjs';
 import { runPerformanceCanary } from './performance.mjs';
+import { FULLFLOW_CASES, runFullflow } from './fullflow.mjs';
+import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
 // Farmslot canary profiles.
 //
 //   canary   after every dev gateway update; zero inference, a few minutes. Against the deployed
@@ -20,12 +22,17 @@ import { runPerformanceCanary } from './performance.mjs';
 //
 //   recovery  seven concurrent recovery cases on disposable slots, zero inference.
 //             Hard ceiling 120 s including cleanup; cases over 5 s print step attribution.
+//   fullflow  isolated only: real farmslot-farm fix-bug and QA templates on a tiny Node repo.
+//             Pi LiteLLM DeepSeek workers (150 turns), Luna low reviewers; 25/15 min per case.
+//             --model haiku selects Claude instead, for hosts with an existing valid login.
+//             Refreshes package prep, holds publication, cancels, verifies retention, then releases.
+//             Baseline/acceptance refusals fail normally; never publish, post or push.
 //
 // Every model a case would use must be on config.json's allowlist, or the canary stops before
 // dispatching anything. Known failures (config.json) report as KNOWN; one that passes fails the
 // canary until its entry is removed.
 //
-// Run: node --import tsx scripts/runner-validation/canary/canary.mts --profile canary|nightly|recovery
+// Run: node --import tsx scripts/runner-validation/canary/canary.mts --profile canary|nightly|recovery|fullflow
 //   [--target live|isolated] [--with-review] [--only lifecycle,f324,…]
 //   [--fast-scripted] (isolated lifecycle only; skips unused prepare work and timer windows)
 //   [--survive-steps dispatch,monitor,…] [--budget step=seconds]…
@@ -58,7 +65,7 @@ import { report, type Verdict } from './report.mjs';
 const argv = process.argv.slice(2);
 if (argv.includes('--help')) {
   console.log(`Usage: node --import tsx scripts/runner-validation/canary/canary.mts
-  --profile canary|nightly|recovery --target live|isolated
+  --profile canary|nightly|recovery|fullflow --target live|isolated
   [--only case,...] [--evidence <dir>] [--results <file>]
 Recovery cases: ${RECOVERY_CASES.join(', ')}`);
   process.exit(0);
@@ -73,13 +80,13 @@ const expand = (value: string) => value.replace(/^~(?=\/|$)/, homedir());
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const profile = arg('profile') ?? 'canary';
-if (profile !== 'canary' && profile !== 'nightly' && profile !== 'recovery')
-  throw new Error('--profile must be canary, nightly or recovery');
+if (!['canary', 'nightly', 'recovery', 'fullflow'].includes(profile))
+  throw new Error('--profile must be canary, nightly, recovery or fullflow');
 const target = arg('target') ?? (profile === 'canary' ? 'live' : 'isolated');
 if (target !== 'live' && target !== 'isolated')
   throw new Error('--target must be live or isolated');
-if ((profile === 'nightly' || profile === 'recovery') && target === 'live')
-  throw new Error('The nightly and recovery profiles run isolated only');
+if (profile !== 'canary' && target === 'live')
+  throw new Error('The nightly, recovery and fullflow profiles run isolated only');
 const withReview = argv.includes('--with-review');
 const fastScripted = argv.includes('--fast-scripted');
 if (fastScripted && (target !== 'isolated' || profile !== 'canary'))
@@ -114,6 +121,7 @@ for (const entry of args('budget')) {
 
 // ---------------------------------------------------------------- the cases this run makes
 const CASES = [
+  ...FULLFLOW_CASES,
   ...RECOVERY_CASES,
   'performance',
   'lifecycle',
@@ -130,7 +138,9 @@ if (fastScripted && only!.some((name) => name !== 'lifecycle'))
 for (const name of only ?? [])
   if (!(CASES as readonly string[]).includes(name)) throw new Error(`Unknown case ${name}`);
 const available: readonly string[] =
-  profile === 'recovery'
+  profile === 'fullflow'
+    ? FULLFLOW_CASES
+    : profile === 'recovery'
     ? RECOVERY_CASES
     : profile === 'canary'
       ? ['lifecycle', 'f324', 'native-check', 'monitor']
@@ -181,7 +191,12 @@ const reviews =
   plan.review ||
   plan.reviewPastWait ||
   plan.survive.some((step) => step === 'review' || step === 'review-fix');
-const models = ['scripted', ...(reviews ? [REVIEWER.model] : [])];
+const fullflowWorker = arg('model') === 'haiku'
+  ? { runner: 'claude', model: 'haiku' }
+  : FULLFLOW_MODEL;
+if (profile === 'fullflow' && arg('model') && !['haiku', FULLFLOW_MODEL.model].includes(arg('model')!))
+  throw new Error('--model for fullflow must be haiku or litellm/deepseek-v4p1-flash');
+const models = profile === 'fullflow' ? [fullflowWorker.model, REVIEWER.model] : ['scripted', ...(reviews ? [REVIEWER.model] : [])];
 const refused = models.filter((model) => !config.modelAllowlist.includes(model));
 
 await mkdir(evidence, { recursive: true });
@@ -228,7 +243,9 @@ const finish = () =>
       checks[index] = applyKnownFailures(check, config.knownFailures);
     return report({
       profile:
-        profile === 'canary'
+        profile === 'fullflow'
+          ? 'canary-fullflow'
+          : profile === 'canary'
           ? 'canary'
           : profile === 'recovery'
             ? 'canary-recovery'
@@ -264,6 +281,16 @@ try {
   const onCheck = (check: CheckResult) => {
     checks.push(check);
   };
+  if (profile === 'fullflow')
+    await runFullflow({
+      root, evidence, log, reaper, onCheck,
+      worker: fullflowWorker,
+      cases: only as (typeof FULLFLOW_CASES)[number][] | undefined,
+      ownerTag: process.env.CANARY_STAMP ?? String(process.pid),
+      cliSnapshots: expand(arg('cli-snapshots') ?? path.join(evidence, 'cli-snapshots')),
+      ...(arg('cli-snapshot') ? { cliSnapshot: expand(arg('cli-snapshot')!) } : {}),
+      onCleanup: (stop) => { stopStack = stop; },
+    });
   if (profile === 'recovery')
     await runRecoveryMatrix({
       cases: only as (typeof RECOVERY_CASES)[number][] | undefined,
@@ -306,7 +333,7 @@ try {
       },
     });
   if (
-    profile !== 'recovery' &&
+    (profile === 'canary' || profile === 'nightly') &&
     (plan.nativeCheck ||
       plan.lifecycle ||
       plan.f324 ||

@@ -252,13 +252,14 @@ export function outcomeObservations(baseline: RunOutcome, observed: RunOutcome):
       ];
 }
 
-/** Seconds each step took, from the run's own step records. */
-export function stepTimings(run: Run): Record<string, number> {
+/** Seconds each step took; an interruption end time also includes unfinished steps. */
+export function stepTimings(run: Pick<Run, 'steps'>, endedAt?: number): Record<string, number> {
   const timings: Record<string, number> = {};
   for (const step of run.steps) {
-    if (!step.startedAt || !step.completedAt) continue;
+    const completedAt = step.completedAt ? Date.parse(step.completedAt) : endedAt;
+    if (!step.startedAt || completedAt === undefined) continue;
     timings[step.name] =
-      Math.round((Date.parse(step.completedAt) - Date.parse(step.startedAt)) / 100) / 10;
+      Math.round((completedAt - Date.parse(step.startedAt)) / 100) / 10;
   }
   return timings;
 }

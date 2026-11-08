@@ -68,6 +68,8 @@ export interface RemoteNodeStackOptions {
   root: string;
   evidence: string;
   gatewayEnv?: NodeJS.ProcessEnv;
+  /** Explicit provider environment for this disposable node; never loaded from credential files. */
+  nodeEnv?: NodeJS.ProcessEnv;
   /** Exercise the default-off node link in this owned fixture only. */
   nodeLink?: boolean;
   machine: string;
@@ -748,6 +750,7 @@ export async function startRemoteNodeStack(
       GATEWAY_URL: nodeGatewayUrl,
       MACHINE_NAME: machine,
       SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen-control.sock'),
+      ...options.nodeEnv,
     });
 
     const startGateway = async () => {

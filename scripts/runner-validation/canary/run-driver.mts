@@ -29,6 +29,8 @@ export type DecisionAction = { resolve: string } | { replay: string };
 export interface RunShape {
   project: string;
   create(slotId: string): Record<string, unknown>;
+  /** Public intake may create the run asynchronously, e.g. backlog.enqueue. */
+  start?(call: Call, slotId: string): Promise<Run>;
   /** What the test does with an open decision, or undefined to leave it for a person. */
   decide(decision: Decision, run: Run, state: { replayedAt?: string }): DecisionAction | undefined;
   /** Extra reads each poll makes, as a client would (F324: the inbox refreshes gate readiness). */
@@ -151,7 +153,9 @@ export async function driveRun(options: {
   await mkdir(dir, { recursive: true });
   const started = Date.now();
   const seconds = () => Math.round((Date.now() - started) / 100) / 10;
-  const { run: created } = await call<{ run: Run }>('run.create', shape.create(slotId));
+  const created = shape.start
+    ? await shape.start(call, slotId)
+    : (await call<{ run: Run }>('run.create', shape.create(slotId))).run;
   const runId = created.id;
   let revision = 0;
   let wake: (() => void) | undefined;
