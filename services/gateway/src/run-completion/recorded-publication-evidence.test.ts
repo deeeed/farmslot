@@ -759,6 +759,21 @@ test('before evidence admits a verified ticket marker baseline without waiving c
     baseline,
   );
   assert.ok(inventory.some((entry) => entry.path === receiptPath && entry.sha256));
+  // Run 7af1a9af: approval reads the retained inventory, whose entries name their bundle,
+  // and every package refresh retains the run again. The receipt must not read as changed.
+  const retained = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory.map((entry) => ({
+      ...entry,
+      availability: 'available' as const,
+      retentionRevision: 2,
+      bundleDigest: '2'.repeat(64),
+    })),
+    resolved!.manifest,
+    1,
+    baseline,
+  );
+  assert.deepEqual(retained, inventory);
   const { readFrozenPublicationRecipeSources } =
     await import('../run-engine/recorded-evidence-sources.js');
   const keys = [`artifacts/${f.baselineRoot}/proof.png`, `artifacts/${f.headRoot}/proof.png`];
