@@ -4,6 +4,7 @@
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PACKAGE = '@deeeed/metamask-harness';
 
@@ -33,7 +34,7 @@ export function resolvePublishedHarness(env, checkout) {
   return command;
 }
 
-const invokedDirectly = process.argv[1] && realpathSync(process.argv[1]) === realpathSync(new URL(import.meta.url).pathname);
+const invokedDirectly = process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
 if (invokedDirectly) {
   const flag = process.argv.indexOf('--published');
   const checkout = flag >= 0 ? process.argv[flag + 1] : undefined;

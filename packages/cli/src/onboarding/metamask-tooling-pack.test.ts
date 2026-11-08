@@ -1,13 +1,28 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { type RawProjectJson, validateRuntimeCapabilitiesConfig } from '@farmslot/slot-config';
+import {
+  expandTemplate,
+  type ProjectVars,
+  type RawProjectJson,
+  type SlotVars,
+  validateRuntimeCapabilitiesConfig,
+} from '@farmslot/slot-config';
 
 import { projectName, projectShortName, validatePackDir } from './pack.js';
 
@@ -17,7 +32,7 @@ const { lintWorkerTemplateStructure } = createRequire(import.meta.url)(
 
 const pack = fileURLToPath(new URL('../../../../packs/metamask-tooling/', import.meta.url));
 const PROJECTS = ['metamask-harness-farm', 'metamask-recipe-perps-farm'] as const;
-const SHARED_FILES = ['scripts/tooling.sh', 'scripts/resolve-harness.mjs', 'setup/ios.sh'];
+const NODE22 = process.versions.node.split('.')[0] === '22';
 
 function readProject(name: string): RawProjectJson {
   return JSON.parse(readFileSync(join(pack, 'projects', name, 'project.json'), 'utf8'));
@@ -71,7 +86,7 @@ test('project commands use the support root every lifecycle path expands', () =>
     assert.doesNotMatch(text, /node_support_dir/i);
     assert.match(
       text,
-      new RegExp(`\\{\\{farmslot_dir\\}\\}/projects/${name}/scripts/tooling\\.sh`),
+      /\{\{farmslot_dir\}\}\/projects\/metamask-harness-farm\/scripts\/tooling\.sh/,
     );
   }
 });
@@ -85,13 +100,16 @@ test('marking and runtimes use the published provider and a pinned library, not 
   }
 });
 
-test('the shared lifecycle scripts are identical in both projects', () => {
-  for (const file of SHARED_FILES) {
-    const [first, second] = PROJECTS.map((name) =>
-      readFileSync(join(pack, 'projects', name, file), 'utf8'),
-    );
-    assert.equal(second, first, file);
-  }
+test('the pack keeps one lifecycle implementation that the second project reuses', () => {
+  const perps = join(pack, 'projects', PROJECTS[1]);
+  assert.equal(existsSync(join(perps, 'scripts')), false);
+  assert.match(
+    readFileSync(join(perps, 'setup/ios.sh'), 'utf8'),
+    /^shared=.*\/metamask-harness-farm\/setup\/ios\.sh"\n[\s\S]*^exec bash "\$shared" .* recipe-perps$/m,
+  );
+  const support = readProject(PROJECTS[1]).node_support?.paths ?? [];
+  assert.ok(support.includes('projects/metamask-harness-farm/scripts'), support.join(', '));
+  assert.ok(support.includes('projects/metamask-harness-farm/setup'), support.join(', '));
 });
 
 test('worker templates keep the generated TASK.md out and name the explicit candidate', () => {
@@ -103,12 +121,70 @@ test('worker templates keep the generated TASK.md out and name the explicit cand
       );
       assert.deepEqual(lintWorkerTemplateStructure(content), [], `${name} ${flow}`);
       assert.match(content, /\[DETERMINISTIC: ci\.local_check\]/);
-      assert.match(content, /\{\{MOBILE_REPO\}\}/);
+      // MOBILE_REPO is blanked by a gateway-local existence check; the project var is not.
+      assert.doesNotMatch(content, /\{\{MOBILE_REPO\}\}/);
+      assert.match(content, /--target "\{\{OWNED_MOBILE_REPO\}\}"/);
+      assert.match(content, /retained-library [a-z-]+ \{\{REPO\}\} \{\{TASK_DIR\}\}/);
+      assert.match(content, /"\$PUBLISHED" run <recipe> --library perps="\$RETAINED"/);
+      for (const run of content.match(/ run <recipe>[^`]*/g) ?? [])
+        assert.match(run, /--library perps=/, `${name} ${flow}: ${run}`);
       assert.match(
         content,
-        name === PROJECTS[0] ? /\{\{REPO\}\}\/bin\/mm-harness run/ : /--library perps=\{\{REPO\}\}/,
+        name === PROJECTS[0]
+          ? /\{\{REPO\}\}\/bin\/mm-harness run <recipe> --library perps="\$RETAINED"/
+          : /"\$PUBLISHED" run <recipe> --library perps=\{\{REPO\}\}/,
       );
     }
+  }
+});
+
+test('the owned Mobile target renders for a checkout that exists only on the execution node', () => {
+  for (const name of PROJECTS) {
+    const projectJson = readProject(name);
+    const slotVars: SlotVars = {
+      slotId: 'mini-x-1',
+      machine: 'mini',
+      platform: 'ios',
+      host: 'mini.example',
+      sshUser: 'farm',
+      osType: 'darwin',
+      claudePath: '',
+      codexPath: '',
+      opencodePath: '',
+      cursorPath: '',
+      grokPath: '',
+      dispatchCmd: '',
+      recycleCmd: '',
+      // Absent on the machine running this test, as a remote node's checkout is to the gateway.
+      repo: '/remote-only/farm/repos/x-1',
+      session: 'x-1',
+      slotMode: 'dispatch',
+      slotEnabled: true,
+      sshTarget: 'farm@mini.example',
+      remoteRepo: '/remote-only/farm/repos/x-1',
+      projectName: name,
+      resourceVars: {},
+    };
+    const projectVars: ProjectVars = {
+      projectName: name,
+      projectConfig: join(pack, 'projects', name, 'project.json'),
+      projectFixturesDir: '',
+      projectTemplatesDir: '',
+      projectJson,
+      runtimeDir: 'temp/farmslot/runtime',
+      artifactDir: 'temp/farmslot/tasks',
+    };
+    assert.equal(existsSync('/remote-only'), false);
+    // The task writer renders project vars with this expansion and no existence check.
+    const rendered = expandTemplate(
+      String(projectJson.vars?.owned_mobile_repo),
+      slotVars,
+      projectVars,
+    );
+    // The reference-repo placeholder, which hooks also use, not the task writer's MOBILE_REPO.
+    assert.equal(projectJson.vars?.owned_mobile_repo, '{{mobile_repo}}');
+    const localName = projectJson.reference_repos?.mobile?.local_name;
+    assert.equal(rendered, `/remote-only/farm/repos/${localName}`);
   }
 });
 
@@ -152,6 +228,7 @@ test('lifecycle commands refuse a missing, unexpanded or self-referencing Mobile
     tooling(['mobile-boot', 'harness', repo, mobile, '9400', 'mmh-1', 'slot', root], env);
   if (major !== '22') {
     assert.match(boot(join(root, 'mmh-mobile')).stderr, /Node 22 is required/);
+    t.skip('the remaining refusals need Node 22');
     return;
   }
   assert.match(boot('').stderr, /no owned Mobile checkout/);
@@ -164,8 +241,51 @@ test('lifecycle commands refuse a missing, unexpanded or self-referencing Mobile
   assert.match(boot(join(root, 'other')).stderr, /is not a MetaMask Mobile checkout/);
 });
 
+test('Mobile dependency setup installs locked dependencies before setup:expo on a fresh checkout', (t) => {
+  const root = scratch(t, 'mt-mobile-deps-');
+  const repo = join(root, 'mmh-1');
+  mkdirSync(join(repo, '.git'), { recursive: true });
+  const mobile = join(root, 'mmh-mobile');
+  mkdirSync(mobile);
+  writeFileSync(join(mobile, 'package.json'), JSON.stringify({ name: 'metamask' }));
+  // A stand-in for the configured Mobile Node: Yarn refuses `run` without install
+  // state, exactly as it does on a fresh clone, and an install creates that state.
+  const bin = join(root, 'mobile-node');
+  mkdirSync(bin);
+  symlinkSync(process.execPath, join(bin, 'node'));
+  const calls = join(root, 'calls.log');
+  writeFileSync(
+    join(bin, 'corepack'),
+    `#!/bin/sh
+echo "$*" >> "${calls}"
+case "$*" in
+  "yarn install --immutable") mkdir -p node_modules && : > node_modules/.yarn-state.yml ;;
+  "yarn setup:expo") [ -f node_modules/.yarn-state.yml ] || { echo "Couldn't find the node_modules state file" >&2; exit 1; } ;;
+  *) exit 3 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  const deps = () =>
+    tooling(['mobile-deps', 'harness', repo, mobile, 'mini-mmh-1'], { MOBILE_NODE_BIN: bin });
+  const fresh = deps();
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), [
+    'yarn install --immutable',
+    'yarn setup:expo',
+  ]);
+  // An existing install is reused; setup runs again without a second install.
+  rmSync(calls);
+  const prepared = deps();
+  assert.equal(prepared.status, 0, prepared.stderr);
+  assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), ['yarn setup:expo']);
+});
+
 test('a second slot of the same project cannot claim or stop another slot Mobile checkout', (t) => {
-  if (process.versions.node.split('.')[0] !== '22') return;
+  if (!NODE22) {
+    t.skip('needs Node 22');
+    return;
+  }
   const root = scratch(t, 'mt-owner-');
   const repo = join(root, 'mmh-2');
   mkdirSync(join(repo, '.git'), { recursive: true });
@@ -176,8 +296,9 @@ test('a second slot of the same project cannot claim or stop another slot Mobile
     join(mobile, 'temp/recipe/runtime/farmslot-owner'),
     'metamask-harness-farm/mini-mmh-1\n',
   );
-  const fixture = join(root, 'wallet-fixture.json');
-  writeFileSync(fixture, '{}');
+  // The private wallet input lives in the owned checkout, never in pack sources.
+  mkdirSync(join(mobile, 'temp/recipe/private'), { recursive: true });
+  writeFileSync(join(mobile, 'temp/recipe/private/wallet-fixture.json'), '{}');
   const bin = join(root, 'bin');
   mkdirSync(bin);
   symlinkSync(process.execPath, join(bin, 'node'));
@@ -190,12 +311,26 @@ test('a second slot of the same project cannot claim or stop another slot Mobile
   );
   writeFileSync(join(harness, 'bin/mm-harness'), '#!/bin/sh\necho ran "$@"\n', { mode: 0o755 });
   const env = { FARMSLOT_NODE22_BIN: bin, MM_HARNESS_PACKAGE_ROOT: harness };
-  const fixtureRun = tooling(
-    ['mobile-fixture', 'harness', repo, mobile, fixture, 'mini-mmh-2'],
-    env,
-  );
+  const fixtureRun = tooling(['mobile-fixture', 'harness', repo, mobile, 'mini-mmh-2'], env);
   assert.equal(fixtureRun.status, 1);
   assert.match(fixtureRun.stderr, /owned by metamask-harness-farm\/mini-mmh-1/);
+  // Dependency setup would run Yarn in the owner's checkout; it refuses before Yarn.
+  const deps = tooling(['mobile-deps', 'harness', repo, mobile, 'mini-mmh-2'], {
+    ...env,
+    MOBILE_NODE_BIN: bin,
+  });
+  assert.equal(deps.status, 1);
+  assert.match(deps.stderr, /owned by metamask-harness-farm\/mini-mmh-1/);
+  assert.equal(existsSync(join(mobile, 'node_modules')), false);
+  const ownerFixture = tooling(['mobile-fixture', 'harness', repo, mobile, 'mini-mmh-1'], env);
+  assert.equal(ownerFixture.status, 0, ownerFixture.stderr);
+  assert.match(
+    ownerFixture.stdout,
+    new RegExp(
+      `^ran fixtures init --from ${realpathSync(mobile)}/temp/recipe/private/wallet-fixture\\.json`,
+      'm',
+    ),
+  );
   const stop = tooling(['mobile-stop', 'harness', repo, mobile, '9400', 'sim', 'mini-mmh-2'], env);
   assert.equal(stop.status, 0, stop.stderr);
   assert.match(stop.stdout, /nothing to stop/);
@@ -203,6 +338,40 @@ test('a second slot of the same project cannot claim or stop another slot Mobile
   const owner = tooling(['mobile-stop', 'harness', repo, mobile, '9400', 'sim', 'mini-mmh-1'], env);
   assert.equal(owner.status, 0, owner.stderr);
   assert.match(owner.stdout, /^ran stop --adapter mobile --port 9400/m);
+});
+
+test('the baseline library is the retained copy from a receipt the installed CLI verified', (t) => {
+  const root = scratch(t, 'mt-retained-');
+  const repo = join(root, 'mmrp-1');
+  const task = join(repo, 'temp/farmslot/tasks/qa/T-1');
+  mkdirSync(join(repo, '.git'), { recursive: true });
+  mkdirSync(task, { recursive: true });
+  const receipt = {
+    bindingIdentity: {
+      libraries: [
+        { name: 'perps', path: '/pins/abc/inputs/37/experimental-metamask-recipe-perps' },
+        { name: 'metamask', path: '/published/library' },
+      ],
+    },
+  };
+  const cli = (name: string, body: string) => {
+    const file = join(root, name);
+    writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    return file;
+  };
+  const verified = cli(
+    'farmslot-ok',
+    `[ "$1 $2 $3 $4" = "task verify ${task} --json" ] || exit 9\ncat <<'JSON'\n${JSON.stringify(receipt)}\nJSON`,
+  );
+  const ok = tooling(['retained-library', 'recipe-perps', repo, task], { FARMSLOT_CLI: verified });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(ok.stdout, '/pins/abc/inputs/37/experimental-metamask-recipe-perps\n');
+  // A task whose tooling no longer verifies yields no library, never a fallback.
+  const refused = cli('farmslot-refuse', 'echo "retained input changed" >&2; exit 1');
+  const bad = tooling(['retained-library', 'recipe-perps', repo, task], { FARMSLOT_CLI: refused });
+  assert.equal(bad.status, 1);
+  assert.equal(bad.stdout, '');
+  assert.match(bad.stderr, /did not verify/);
 });
 
 test('teardown without an owned Mobile checkout stops nothing and succeeds', (t) => {

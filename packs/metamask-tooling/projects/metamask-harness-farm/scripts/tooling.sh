@@ -4,8 +4,9 @@
 # Mobile checkout, simulator and Metro port, driven by the published harness
 # package. Mutable tooling under test never marks tasks or manages runtimes.
 #
-# This file is shared byte-for-byte by every project in the metamask-tooling
-# pack; a pack test enforces that.
+# This is the pack's single implementation. metamask-recipe-perps-farm calls it
+# through {{farmslot_dir}}/projects/metamask-harness-farm/scripts, the existing
+# cross-project pack reference that source locks and node support follow.
 set -euo pipefail
 
 usage() {
@@ -17,9 +18,10 @@ Usage: tooling.sh <command> <kind> <repo> [args...]
   ready         <kind> <repo>                 Tooling readiness; prints "ready"
   published     <kind> <repo>                 Print the published harness executable
   candidate     <kind> <repo>                 Print the explicit after-fix selection
-  mobile-deps    <kind> <repo> <mobile-repo>  Mobile's own minimal JS setup
+  retained-library <kind> <repo> <task-dir>   Print the verified retained Perps library
+  mobile-deps    <kind> <repo> <mobile-repo> <slot>  Locked install if needed, then setup:expo
   mobile-client  <kind> <repo> <mobile-repo> <port> <simulator> <slot>
-  mobile-fixture <kind> <repo> <mobile-repo> <fixture> <slot>
+  mobile-fixture <kind> <repo> <mobile-repo> <slot>   Reads <mobile>/temp/recipe/private/wallet-fixture.json
   mobile-boot    <kind> <repo> <mobile-repo> <port> <simulator> <slot> <farmslot-dir>
   mobile-health  <kind> <repo> <mobile-repo> <port> <simulator>
   mobile-stop    <kind> <repo> <mobile-repo> <port> <simulator> <slot>
@@ -37,6 +39,9 @@ case "$kind" in
 esac
 # The harness default runtime directory, ignored by Mobile's own .gitignore.
 mobile_runtime_dir=temp/recipe/runtime
+# Node-local private wallet input inside the owned checkout, also ignored by
+# Mobile. It never lives in pack sources, which may be read-only source locks.
+mobile_wallet_input=temp/recipe/private/wallet-fixture.json
 
 fail() {
   echo "metamask-tooling: $1" >&2
@@ -165,15 +170,40 @@ case "$command" in
       printf 'RECIPE_LIBRARY_CANDIDATE=perps=%s\n' "$repo"
     fi
     ;;
-  mobile-deps)
+  retained-library)
     [ "$#" -ge 1 ] || usage
     require_repo
+    task_dir="$1"
+    [ -d "$task_dir" ] || fail "task directory not found: $task_dir"
+    # The installed CLI verifies the retained tooling before its receipt is
+    # trusted; the library path comes from that verified output only.
+    cli="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"
+    [ -x "$cli" ] || fail "installed farmslot CLI not found at $cli" "set FARMSLOT_CLI to the installed CLI"
+    receipt="$("$cli" task verify "$task_dir" --json)" || fail "task tooling did not verify: $task_dir"
+    printf '%s' "$receipt" | node -e '
+      let text = ""; process.stdin.on("data", (c) => (text += c)).on("end", () => {
+        const libs = JSON.parse(text).bindingIdentity?.libraries ?? [];
+        const perps = libs.find((l) => l.name === "perps");
+        if (!perps?.path) { console.error("metamask-tooling: the task retains no perps library"); process.exit(1); }
+        process.stdout.write(perps.path + "\n");
+      });'
+    ;;
+  mobile-deps)
+    [ "$#" -ge 2 ] || usage
+    require_repo
     mobile="$(require_mobile "$1")"
+    claim_mobile "$mobile" "$2"
     # Mobile declares its own Node; MOBILE_NODE_BIN selects it for this process.
     [ -x "${MOBILE_NODE_BIN:-}/node" ] || fail "MOBILE_NODE_BIN does not contain node" \
       "set MOBILE_NODE_BIN in the pool env to the Node version Mobile declares"
     export PATH="$MOBILE_NODE_BIN:$PATH"
     cd "$mobile"
+    # Yarn refuses `yarn <script>` until an install has written its state file,
+    # so a fresh checkout installs from its lockfile first, as Mobile's own
+    # dependency prepare does. setup:expo is Mobile's supported minimal setup.
+    if [ ! -f node_modules/.yarn-state.yml ]; then
+      LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 corepack yarn install --immutable
+    fi
     LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 corepack yarn setup:expo
     ;;
   mobile-client)
@@ -188,13 +218,14 @@ case "$command" in
       --device "$simulator" --watcher-port "$port" --runtime-dir "$mobile_runtime_dir" --json
     ;;
   mobile-fixture)
-    [ "$#" -ge 3 ] || usage
+    [ "$#" -ge 2 ] || usage
     require_repo
     activate_node
-    mobile="$(require_mobile "$1")"; fixture="$2"
-    claim_mobile "$mobile" "$3"
+    mobile="$(require_mobile "$1")"
+    claim_mobile "$mobile" "$2"
+    fixture="$mobile/$mobile_wallet_input"
     [ -f "$fixture" ] || fail "approved testnet wallet fixture not found: $fixture" \
-      "copy fixtures/runtime/wallet-fixture.json.sample to fixtures/runtime/wallet-fixture.json in the registered project and fill the approved testnet wallet"
+      "fill the pack's fixtures/runtime/wallet-fixture.json.sample with the approved testnet wallet and save it on this node as $fixture"
     harness_bin="$(published_harness)"
     exec "$harness_bin" fixtures init --from "$fixture" --force --adapter mobile --target "$mobile" --json
     ;;

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# One-time bootstrap for a MetaMask tooling slot: verify the tooling checkout,
+# One-time bootstrap for every MetaMask tooling slot in this pack: verify the tooling checkout,
 # Node 22 and the published harness, then create this slot's own simulator.
 # Called by: bash scripts/setup-slot.sh <slot-id> [branch]
 set -euo pipefail
 
-SLOT_ID="${1:?Usage: ios.sh <slot-id> [branch]}"
+SLOT_ID="${1:?Usage: ios.sh <slot-id> [branch] [kind]}"
 BRANCH="${2:-main}"
+# The pack's other projects delegate here with their own kind.
+KIND="${3:-harness}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -14,8 +16,6 @@ POOL_DIR="${FARMSLOT_DIR}/pool"
 source "${FARMSLOT_DIR}/scripts/lib/slot-common.sh"
 load_slot_vars "$SLOT_ID"
 
-KIND="$(basename "$PROJECT_DIR")"
-KIND="${KIND#metamask-}"; KIND="${KIND%-farm}"
 
 [ -d "${REPO}/.git" ] || { echo "FAIL: slot repo not found at ${REPO}"; exit 1; }
 git -C "$REPO" checkout --quiet "$BRANCH"
