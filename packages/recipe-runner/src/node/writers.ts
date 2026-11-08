@@ -193,9 +193,12 @@ export class JsonTraceWriter implements TraceWriter {
   readonly #entries: TraceEntry[] = [];
   readonly #runner: RecipeRunnerProvenance | undefined;
 
-  constructor(artifactsDir: string, runner?: RecipeRunnerProvenance) {
+  readonly #hud: SummaryDocument['hud'];
+
+  constructor(artifactsDir: string, runner?: RecipeRunnerProvenance, hud?: SummaryDocument['hud']) {
     this.#artifactsDir = artifactsDir;
     this.#runner = runner;
+    this.#hud = hud;
   }
 
   record(entry: TraceEntry): void {
@@ -210,7 +213,15 @@ export class JsonTraceWriter implements TraceWriter {
     return writeJsonWithinRoot(
       this.#artifactsDir,
       'trace.json',
-      this.#runner ? { metadata: { runner: this.#runner }, entries: this.list() } : this.list(),
+      this.#runner || this.#hud
+        ? {
+            metadata: {
+              ...(this.#runner ? { runner: this.#runner } : {}),
+              ...(this.#hud ? { hud: this.#hud } : {}),
+            },
+            entries: this.list(),
+          }
+        : this.list(),
     );
   }
 }
