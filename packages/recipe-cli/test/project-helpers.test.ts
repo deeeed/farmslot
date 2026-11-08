@@ -103,7 +103,13 @@ function fixture(t: TestContext) {
   return { root, pack, checkout, installed, taskDir, options };
 }
 
-for (const providerSelection of ['pool', 'ambient', 'environment', 'environment-module'] as const)
+for (const providerSelection of [
+  'pool',
+  'ambient',
+  'environment',
+  'environment-module',
+  'retained',
+] as const)
   test(`a task recorded with harness 0.94.1 resumes on ${providerSelection} 0.94.6 with a warning`, async (t) => {
     const f = fixture(t);
     const providerSource = fs.readFileSync(path.join(f.pack, 'provider.mjs'), 'utf8');
@@ -171,7 +177,7 @@ for (const providerSelection of ['pool', 'ambient', 'environment', 'environment-
       path.join(f.taskDir, 'artifacts/harness-provenance.json'),
     );
     if (providerSelection === 'pool' || providerSelection === 'ambient') writePool(providers[1]!);
-    else {
+    else if (providerSelection !== 'retained') {
       options.authorizedProviders = [
         providerSelection === 'environment-module'
           ? path.join(providers[1]!, 'provider.mjs')
@@ -183,6 +189,27 @@ for (const providerSelection of ['pool', 'ambient', 'environment', 'environment-
         if (previous === undefined) delete process.env.FIXTURE_HARNESS_ROOT;
         else process.env.FIXTURE_HARNESS_ROOT = previous;
       });
+    }
+    if (providerSelection === 'retained') {
+      fs.unlinkSync(path.join(pool, 'local.json'));
+      const previous = process.env.FIXTURE_HARNESS_ROOT;
+      process.env.FIXTURE_HARNESS_ROOT = providers[1]!;
+      t.after(() => {
+        if (previous === undefined) delete process.env.FIXTURE_HARNESS_ROOT;
+        else process.env.FIXTURE_HARNESS_ROOT = previous;
+      });
+      await withTaskProjectHost(options, f.taskDir, async (host) => {
+        assert.deepEqual((await host.provider.runtime.runtimeStatus(f.checkout)).reasons, [
+          '0.94.1',
+        ]);
+        assert.notEqual(host.context.project?.provider.root, providers[1]);
+      });
+      assert.equal(fs.existsSync(path.join(f.taskDir, 'artifacts/provider-execution.json')), false);
+      assert.deepEqual(
+        fs.readFileSync(path.join(f.taskDir, 'artifacts/harness-provenance.json')),
+        originalReceipt,
+      );
+      return;
     }
     if (providerSelection === 'ambient') {
       const previous = process.env.FIXTURE_HARNESS_ROOT;

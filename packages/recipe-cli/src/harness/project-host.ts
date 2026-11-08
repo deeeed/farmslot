@@ -33,18 +33,12 @@ import { withHarnessInvocation } from './harness-cli.js';
 import {
   configureHarnessHost,
   harnessHost,
-  validateRelativeRecipePath,
   withRecipeCleanup,
   withRecipeExecutionSignal,
   withRecipeSignals,
 } from './host.js';
 import { deferCommandOutput } from './json-stream.js';
-import {
-  applyRuntimeDirOption,
-  type CliOptions,
-  optionString,
-  type ParsedArgs,
-} from './parse-args.js';
+import { applyRuntimeDirOption, type CliOptions, type ParsedArgs } from './parse-args.js';
 import { recipeOutputRoots } from './paths.js';
 import { isRecipeExecution } from './project-command.js';
 import { withTaskProjectHost } from './project-helpers.js';
@@ -187,23 +181,13 @@ export function withProjectRecipeHostContext<T>(
               'register the project or select each library with --library name=path',
             );
           const execution = options.command === 'run' || options.command === 'call';
-          const explicitArtifacts = optionString(options.options ?? {}, 'artifactsDir');
-          const runArtifacts =
-            explicitArtifacts === undefined
-              ? undefined
-              : path.resolve(
-                  binding.checkoutRoot,
-                  path.isAbsolute(explicitArtifacts)
-                    ? explicitArtifacts
-                    : validateRelativeRecipePath('artifact directory', explicitArtifacts),
-                );
           const resolvedOptions: CliOptions = {
             target: context.target.value,
             runtimeDir: binding.runtimeDir,
             ...(execution
-              ? runArtifacts === undefined
+              ? binding.executionArtifactsDir === undefined
                 ? {}
-                : { artifactsDir: runArtifacts }
+                : { artifactsDir: binding.executionArtifactsDir }
               : { artifactsDir: path.join(binding.checkoutRoot, binding.artifactDir) }),
             ...(binding.manifest && !options.options?.actionManifest
               ? { actionManifest: binding.manifest }

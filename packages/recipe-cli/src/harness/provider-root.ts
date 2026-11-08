@@ -20,7 +20,7 @@ export function resolveProviderModule(declaration: ProviderDeclaration, root: st
       : fs.realpathSync(path.resolve(root, declaration.module));
   } catch (error) {
     const code = error instanceof Error && 'code' in error ? error.code : undefined;
-    if (code !== 'ENOENT' && code !== 'MODULE_NOT_FOUND') throw error;
+    if (code !== 'ENOENT' && code !== 'ENOTDIR' && code !== 'MODULE_NOT_FOUND') throw error;
     throw new ProjectBindingError(
       'PROVIDER_MISSING',
       `Provider ${declaration.module} is not available.`,
@@ -45,5 +45,5 @@ export function providerEnvironmentRoot(
       authorized.includes(resolveProviderModule(declaration, supplied)))
   )
     return supplied;
-  return options.poolEnv?.[variable] ?? supplied;
+  return options.poolEnv?.[variable];
 }

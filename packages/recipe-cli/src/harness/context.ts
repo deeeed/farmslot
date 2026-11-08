@@ -60,7 +60,7 @@ import {
   validateRelativeRecipePath,
 } from './host.js';
 import { gitLibraryProvenance } from './library-provenance.js';
-import type { CliOptions, ParsedArgs } from './parse-args.js';
+import { type CliOptions, optionString, type ParsedArgs } from './parse-args.js';
 import {
   DEFAULT_RECIPE_RUNTIME_DIR,
   isPathWithin as within,
@@ -581,6 +581,7 @@ export interface ConfiguredRecipeProject {
 export interface ResolveProjectContextOptions extends ResolveHarnessContextOptions {
   authorizedProviders?: LoadProjectProviderOptions['authorizedProviders'];
   command?: LoadProjectProviderOptions['command'];
+  options?: LoadProjectProviderOptions['options'];
   /** Supplied by the farm's shared, attested binding resolver. Harnesses never resolve refs. */
   resolveSourceBinding?: (selection: SourceEntryRef) => {
     root: string;
@@ -823,16 +824,28 @@ export async function resolveProjectContext(
       ? undefined
       : optionValues(options.tokens, '--artifacts-dir').at(-1)) ?? config.paths.artifactDir,
   );
+  const executionArtifacts =
+    options.command === 'run' || options.command === 'call'
+      ? (optionString(options.options ?? {}, 'artifactsDir') ??
+        optionValues(options.tokens, '--artifacts-dir').at(-1))
+      : undefined;
   const outputPaths = {
     checkoutRoot,
     runtimeDir,
     artifactDir,
     farmRuntimeDir: validateRelativeRecipePath('farm runtime directory', config.paths.runtimeDir),
+    ...(executionArtifacts === undefined
+      ? {}
+      : {
+          executionArtifactsDir: path.resolve(
+            checkoutRoot,
+            path.isAbsolute(executionArtifacts)
+              ? executionArtifacts
+              : validateRelativeRecipePath('artifact directory', executionArtifacts),
+          ),
+        }),
   };
   const excludedRoots = recipeOutputRoots(target, outputPaths);
-  const executionArtifacts = optionValues(options.tokens, '--artifacts-dir').at(-1);
-  if ((options.command === 'run' || options.command === 'call') && executionArtifacts)
-    excludedRoots.push(path.resolve(checkoutRoot, executionArtifacts));
   const environment = { ...pool?.env, ...(options.load?.env ?? process.env) };
   const existingSourceRoot = (value: string, label = value): string => {
     try {
@@ -874,11 +887,11 @@ export async function resolveProjectContext(
       );
     const value = ref.env
       ? poolSelected
-        ? providerEnvironmentRoot(recipe.provider, {
+        ? (providerEnvironmentRoot(recipe.provider, {
             env: options.load?.env ?? process.env,
             poolEnv: pool?.env,
             authorizedProviders: options.authorizedProviders,
-          })
+          }) ?? environment[ref.env])
         : environment[ref.env]
       : path.resolve(options.resolveSourceBinding ? root : checkoutRoot, ref.projectPath!);
     if (!value)

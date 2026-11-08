@@ -210,6 +210,97 @@ try {
       provider: provider.provider.version,
     });
   }
+  // A provider action must recheck the same source identity after writing run outputs.
+  const local = path.join(root, 'local-provider');
+  const localPack = path.join(root, 'projects', 'local-proof');
+  fs.mkdirSync(local);
+  fs.mkdirSync(localPack);
+  fs.writeFileSync(
+    path.join(local, 'package.json'),
+    JSON.stringify({
+      name: 'fixture-provider',
+      version: '0.3.0',
+      type: 'module',
+      exports: { './provider': './provider.mjs' },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(local, 'provider.mjs'),
+    fs
+      .readFileSync(path.join(providers[1]!, 'provider.mjs'), 'utf8')
+      .replace(
+        'semantic:[],',
+        "semantic:['example.ping'],adapters:async()=>[{action:'example.ping',execute:async()=>({output:{pong:true}})}],",
+      ),
+  );
+  const localManifest = JSON.parse(
+    fs.readFileSync(path.join(providers[1]!, 'actions.json'), 'utf8'),
+  );
+  localManifest.actions['example.ping'] = {
+    description: 'Read provider state.',
+    execution_capabilities: ['host-read-export'],
+    examples: [{ action: 'example.ping', intent: 'Read provider state.', next: 'done' }],
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+  };
+  fs.writeFileSync(path.join(local, 'actions.json'), JSON.stringify(localManifest));
+  const localConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  localConfig.name = 'local-proof';
+  fs.writeFileSync(path.join(localPack, 'project.json'), JSON.stringify(localConfig));
+  const localRecipe = path.join(root, 'provider-action.recipe.json');
+  fs.writeFileSync(
+    localRecipe,
+    JSON.stringify({
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      title: 'Provider source integrity',
+      description: 'Execute after writing explicit run outputs.',
+      workflow: {
+        entry: 'ping',
+        nodes: {
+          ping: { action: 'example.ping', intent: 'Read provider state.', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    }),
+  );
+  const localResult = spawnSync(
+    process.execPath,
+    [
+      cli,
+      'recipe',
+      'run',
+      localRecipe,
+      '--project',
+      'local-proof',
+      '--target',
+      local,
+      '--authorize-provider',
+      providerRef,
+      '--artifacts-dir',
+      path.join(local, 'execution-output'),
+      '--heal',
+      'off',
+      '--json',
+    ],
+    {
+      cwd: local,
+      env: {
+        ...process.env,
+        FARMSLOT_PROJECTS_DIR: path.dirname(pack),
+        FARMSLOT_POOL_DIR: pool,
+        FIXTURE_PROVIDER_ROOT: local,
+      },
+      encoding: 'utf8',
+      timeout: 30_000,
+    },
+  );
+  fs.writeFileSync(path.join(output, 'provider-action.stdout'), localResult.stdout);
+  fs.writeFileSync(path.join(output, 'provider-action.stderr'), localResult.stderr);
+  assert.equal(localResult.status, 0, localResult.stderr);
+  const localResponse = JSON.parse(localResult.stdout.slice(localResult.stdout.indexOf('{')));
+  assert.equal(localResponse.status, 'pass');
+  fs.cpSync(path.join(local, 'execution-output'), path.join(output, 'provider-action'), {
+    recursive: true,
+  });
   fs.cpSync(task, path.join(output, 'task'), { recursive: true });
   fs.writeFileSync(
     path.join(output, 'PASS.json'),
@@ -218,6 +309,7 @@ try {
         pass: true,
         runs,
         originalReceiptUnchanged: true,
+        providerActionWithExplicitOutputs: localResponse.status,
         actualCli: true,
         realEngine: true,
         liveFarmActions: 0,
