@@ -84,6 +84,7 @@ import { selectAgentContext } from '../agents/contexts.js';
 import { digest, RUBRIC_VERSION } from '../assessment/failure-triage/packet.js';
 import { assessmentRecord } from '../assessment/store.js';
 import {
+  isMultiPrBacklogHandoff,
   isValidManualBacklogRunHandoff,
   linkDirectRunToMatchingBacklog,
 } from '../backlog/store.js';
@@ -249,6 +250,12 @@ import { normalizeRunCreateMode } from './run-create-mode.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
+function multiPrHandoffItemId(params: RunCreateParams): string | undefined {
+  return isMultiPrBacklogHandoff(params.backlogItemId, params.ticketOrPr, params.project)
+    ? params.backlogItemId
+    : undefined;
+}
+
 export function assertDuplicateRunAllowed(
   params: Pick<
     RunCreateParams,
@@ -264,13 +271,23 @@ export function assertDuplicateRunAllowed(
     | 'startRefSource'
   >,
   existing: Run[],
+  multiPrItemId?: string,
 ): void {
   const sameTicket = existing.filter(
     (r) => r.ticketOrPr === params.ticketOrPr && r.project === params.project,
   );
   if (sameTicket.length === 0) return;
+  // A multi-PR item's handoff starts its next run once all of that item's runs are terminal.
+  if (
+    multiPrItemId &&
+    sameTicket.every(
+      (run) => run.backlogItemId === multiPrItemId && isTerminalRunStatus(run.status),
+    )
+  )
+    return;
   if (params.lane !== 'comparison') {
-    const duplicate = sameTicket[0];
+    // Name a live run first: that one needs cancelling, not archiving.
+    const duplicate = sameTicket.find((run) => !isTerminalRunStatus(run.status)) ?? sameTicket[0];
     throw new Error(
       `Active run already exists for ${params.ticketOrPr}: ${duplicate.id.slice(0, 8)} (status=${duplicate.status}). ${isTerminalRunStatus(duplicate.status) ? 'Archive it first.' : 'Cancel it first.'}`,
     );
@@ -806,6 +823,7 @@ export async function planRunCreation(
   assertDuplicateRunAllowed(
     params,
     existing.filter((run) => run.id !== options.replanningRunId),
+    multiPrHandoffItemId(params),
   );
 
   // Branch-affinity nudge guardrail: nudgeReuse only makes sense when the operator already
@@ -899,7 +917,11 @@ async function runCreateWithSources(
   const createRecord = (): Run => {
     options.beforeCreate?.();
     // The ticket read awaited after the planner's duplicate check.
-    assertDuplicateRunAllowed(params, listRuns({ active: true }).runs);
+    assertDuplicateRunAllowed(
+      params,
+      listRuns({ active: true }).runs,
+      multiPrHandoffItemId(params),
+    );
     if (plan.workspaceAdmission) assertReviewWorkspaceAdmitted(plan.workspaceAdmission);
     assertExpectedQaSelection(plan.reviewQa, expectedQa);
     // Defer background persist on the claim handoff path so the Run file cannot

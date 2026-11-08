@@ -314,3 +314,15 @@ Rules:
   calling `run.create` with a ticket it cannot have. `multiPr` returns the item to `ready` after a
   good night; after a failed or blocked one the trigger calls `backlog.markReady` first, because
   `backlog.enqueue` takes only a `ready` item.
+
+## Amendment 2 (2026-11-09): A multi-PR item starts its next run without archiving the last
+
+`run.create` refuses a second non-archived run on the same ticket. A `multiPr` item runs one ticket
+again and again (slices, or a standing nightly item), so every run after the first was refused until
+the previous one was archived by hand.
+
+A run created by a `multiPr` item's own handoff (`backlogItemId` set by the dispatcher, the item in
+`queued`, `dispatching` or `running`, same project and source ref) may now start when every
+non-archived run on that ticket belongs to the item and is terminal. A run still going, a run of
+another item or none, and any item that is not `multiPr` are refused as before. Earlier runs stay in
+history and in the default run views; the item still advances only through its currently linked run.

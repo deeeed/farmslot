@@ -21,6 +21,7 @@ import {
   type Run,
   type RunCreateParams,
   type RunDecision,
+  type RunStatus,
   SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
@@ -1714,6 +1715,37 @@ test('production duplicate runs are rejected', () => {
         [makeRun()],
       ),
     /Active run already exists/,
+  );
+});
+
+test('a standing multi-PR backlog item starts a new run once its earlier runs are terminal', () => {
+  // The nightly reuses one MANUAL item; each night was refused until the last run was archived.
+  const params = {
+    ticketOrPr: 'MANUAL-000185',
+    project: 'example-mobile-farm',
+    flowType: 'dev',
+    backlogItemId: 'item-1',
+  } as const;
+  const earlier = (status: RunStatus, backlogItemId = 'item-1'): Run => ({
+    ...makeRun({ ticketOrPr: params.ticketOrPr, project: params.project, status }),
+    backlogItemId,
+  });
+  assert.doesNotThrow(() =>
+    assertDuplicateRunAllowed(params, [earlier('done'), earlier('failed')], 'item-1'),
+  );
+  assert.throws(
+    () => assertDuplicateRunAllowed(params, [earlier('done'), earlier('monitoring')], 'item-1'),
+    /Active run already exists for MANUAL-000185: .*status=monitoring\)\. Cancel it first/,
+  );
+  assert.throws(
+    () => assertDuplicateRunAllowed(params, [earlier('done', 'item-2')], 'item-1'),
+    /Archive it first/,
+    'a run of another item still blocks',
+  );
+  assert.throws(
+    () => assertDuplicateRunAllowed(params, [earlier('done')]),
+    /Archive it first/,
+    'without a standing handoff the terminal run still blocks',
   );
 });
 

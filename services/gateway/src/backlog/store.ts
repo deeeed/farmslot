@@ -2400,6 +2400,25 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
   });
 }
 
+/**
+ * A multi-PR item in handoff runs again and again on one ticket, so run.create
+ * lets it start once every earlier run of that item is terminal.
+ */
+export function isMultiPrBacklogHandoff(
+  backlogItemId: string | undefined,
+  ticketOrPr: string,
+  project: string,
+): boolean {
+  const item = backlogItemId ? items.find((candidate) => candidate.id === backlogItemId) : null;
+  return Boolean(
+    item?.multiPr &&
+    item.project === project &&
+    item.sourceRef ===
+      (item.sourceKind === 'manual' ? normalizeManualRef(ticketOrPr) : ticketOrPr) &&
+    HANDOFF_ACTIVE_STATUSES.has(item.status),
+  );
+}
+
 export function isValidManualBacklogRunHandoff(
   backlogItemId: string | undefined,
   ticketOrPr: string,

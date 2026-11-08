@@ -1,0 +1,1 @@
+- A multi-PR backlog item starts its next run once all of its earlier runs on the ticket are terminal; they no longer have to be archived first. A run still going, a run of another item, or an item that is not multi-PR is refused as before.

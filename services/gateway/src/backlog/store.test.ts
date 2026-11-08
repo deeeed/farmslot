@@ -1193,6 +1193,52 @@ test('manual backlog run handoff normalizes manual refs', async () => {
   );
 });
 
+test('only a multi-PR item in handoff names a standing backlog run', async () => {
+  const { backlog } = await freshStores();
+  const create = (multiPr: boolean) =>
+    backlog.createBacklogItem(
+      {
+        project: 'farmslot-farm',
+        title: multiPr ? 'Nightly device build' : 'One-off fix',
+        sourceKind: 'manual',
+        flowType: 'dev',
+        status: 'ready',
+        ...(multiPr ? { multiPr: true } : {}),
+      },
+      { kind: 'system' },
+    );
+  const standing = (await create(true)).item;
+  const oneOff = (await create(false)).item;
+  for (const item of [standing, oneOff])
+    backlog.mutateBacklogItemForTests(item.id, (current) => {
+      current.status = 'queued';
+    });
+  assert.equal(
+    backlog.isMultiPrBacklogHandoff(standing.id, standing.sourceRef, 'farmslot-farm'),
+    true,
+  );
+  assert.equal(
+    backlog.isMultiPrBacklogHandoff(oneOff.id, oneOff.sourceRef, 'farmslot-farm'),
+    false,
+  );
+  assert.equal(
+    backlog.isMultiPrBacklogHandoff(standing.id, oneOff.sourceRef, 'farmslot-farm'),
+    false,
+  );
+  assert.equal(
+    backlog.isMultiPrBacklogHandoff(standing.id, standing.sourceRef, 'other-project'),
+    false,
+  );
+  backlog.mutateBacklogItemForTests(standing.id, (current) => {
+    current.status = 'ready';
+  });
+  assert.equal(
+    backlog.isMultiPrBacklogHandoff(standing.id, standing.sourceRef, 'farmslot-farm'),
+    false,
+    'only a dispatching item hands off',
+  );
+});
+
 test('archived and adopted historical publication observations preserve ordinary and multi-PR successor ownership', async () => {
   const { backlog } = await freshStores();
   for (const multiPr of [false, true]) {
