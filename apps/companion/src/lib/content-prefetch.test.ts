@@ -293,6 +293,7 @@ mock.module('@farmslot/local-store/native', {
       const memory = createMemoryResourceStore();
       // Like the SQLite store, a deleted scope takes its files with it.
       const store: ResourceStore = Object.assign(Object.create(memory) as ResourceStore, {
+        persistent: true,
         async deleteAll() {
           await options.deleteFiles?.(resourceStoreScopeId(options.scope));
           await memory.deleteAll();
@@ -588,7 +589,7 @@ for (const online of [false, true])
     }
   });
 
-test('a gateway without capabilities.batchedContent gets no prefetch', async () => {
+test('a gateway without capabilities.batchedContent gets no content prefetch', async () => {
   const { initializeNativeResourceCache } = await import('./resource-cache');
   const client = new FakeClient(auth(false));
   const fetched = fetches.length;
@@ -598,8 +599,9 @@ test('a gateway without capabilities.batchedContent gets no prefetch', async () 
     await flush();
     assert.equal(prefetchers.at(-1)?.stopped, false, 'the prefetcher exists but stays idle');
     assert.deepEqual(
-      client.calls.filter(({ method }) => method === 'run.get' || method === 'git.show'),
+      client.calls.filter(({ method }) => method === 'git.diff' || method === 'git.show'),
       [],
+      'Run-detail metadata synchronization is allowed; content prefetch must stay idle',
     );
     assert.ok(client.calls.some(({ method }) => method === 'run.list'));
     assert.equal(fetches.length, fetched);
