@@ -19,7 +19,21 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
 - [ ] **3. Read the diff** - `git -C {{REPO}} diff origin/{{DEFAULT_BRANCH}}...HEAD`, every changed file in full. Check root cause, minimality, no duplicated logic, no edits under `node_modules`, and a `CHANGELOG.md` Unreleased entry for user-visible changes.
 - [ ] **4. Inspect recorded validation** - read `{{TASK_DIR}}/artifacts/deterministic-checks/` receipts and logs and existing CI results. Missing evidence is a finding.
 - [ ] **5. Audit the proof** - the before (baseline) run used the published harness and the after run used `{{REPO}}/bin/mm-harness`, both with the same `--library perps=` retained library; both identities are recorded. Open the screenshots under `artifacts/before-fix` (or `baseline`) and `artifacts/after-fix` and confirm they show the claimed state. An unproven claim is a finding.
-- [ ] **6. Write `{{TASK_DIR}}/{{REVIEW_FEEDBACK}}`** - `## Verdict: PASS` or `## Verdict: ISSUES`, a short summary, findings with `file:line`, recorded validation and unchecked areas. Any blocking issue or cheap introduced nit is `ISSUES`.
+- [ ] **6. Write `{{TASK_DIR}}/{{REVIEW_FEEDBACK}}`** - use `## Verdict: ISSUES` when any blocking issue or cheap introduced nit remains. Only findings go under `## Issues`:
+  ```markdown
+  # Review: {{TICKET}}
+
+  ## Verdict: PASS
+
+  ## Summary
+  <what changed and whether it is correct>
+
+  ## Validation
+  - <recorded CI results, receipts, proof identities and unchecked areas>
+
+  ## Issues
+  - **file:line** — description
+  ```
 - [ ] **7. Complete** - `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} complete --mark-last`. Do not change source, commits, branches or GitHub.
 
 **Round 3 and later:** block only on blocker or major findings (a real defect in the delta, or an unmet AC). Minors and nits are listed as follow-ups and do not block; with no blocker or major, the verdict is APPROVE.

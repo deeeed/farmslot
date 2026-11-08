@@ -168,6 +168,8 @@ test('each project ships the static review template that request-review loads', 
       'utf8',
     );
     assert.match(content, /\{\{TASK_DIR\}\}\/\{\{REVIEW_FEEDBACK\}\}/);
+    // The gateway scopes findings to `## Issues`; without it every bullet is a finding.
+    assert.match(content, /^ {2}## Issues\n {2}- \*\*file:line\*\* — description$/m);
     assert.doesNotMatch(content, / run <recipe>/);
   }
 });
