@@ -1,7 +1,14 @@
-'use strict';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
-const { sha256 } = require('@noble/hashes/sha256');
-const { bytesToHex, utf8ToBytes } = require('@noble/hashes/utils');
+import {
+  filterWorkerAcceptanceCriteria,
+  registeredAcceptanceCriteria,
+} from './scripts/acceptance.mjs';
+import {
+  BUILT_IN_RECIPE_PLATFORMS,
+  recipeFileIdentity,
+} from './scripts/recipe-library-identity.mjs';
 const POLICY = {
   short: {
     good: 8,
@@ -27,6 +34,7 @@ const STRUCTURAL = new Set([
   'cases',
   'default',
   'proves',
+  'claimBindings',
   'ref',
   'review',
   'id',
@@ -187,11 +195,12 @@ function globRegex(pattern) {
   }
   return new RegExp(result + '$', 's');
 }
-function sameToken(token, pattern) {
+function sameToken(token, pattern, patterns) {
+  if (pattern.includes('*') && !patterns.has(pattern)) patterns.set(pattern, globRegex(pattern));
   return (
     token === pattern ||
     (!pattern.includes('|') && token.split('|')[0] === pattern) ||
-    (pattern.includes('*') && globRegex(pattern).test(token))
+    (pattern.includes('*') && patterns.get(pattern).test(token))
   );
 }
 function roundScore(value) {
@@ -218,12 +227,16 @@ function scoreRecipeShape(input) {
   inspected.order.forEach((id) => nodeValues(nodes[id], id, values));
   const positions = new Set(),
     duplicates = [];
+  const patterns = new Map();
   for (const block of blocks) {
-    if (block.ref && calls.includes(block.ref)) continue;
     const signature = block.sig ?? block.tokens ?? [];
     if (!signature.length) continue;
     for (let start = 0; start <= inspected.tokens.length - signature.length; start++) {
-      if (!signature.every((token, offset) => sameToken(inspected.tokens[start + offset], token)))
+      if (
+        !signature.every((token, offset) =>
+          sameToken(inspected.tokens[start + offset], token, patterns),
+        )
+      )
         continue;
       const span = Array.from({ length: signature.length }, (_, offset) => start + offset);
       if (span.every((index) => positions.has(index))) continue;
@@ -259,11 +272,18 @@ function scoreRecipeShape(input) {
       ?.filter((criterion) => criterion.proofMode === 'review' || declaredReview.has(criterion.id))
       .map((criterion) => criterion.id) ?? [];
   const proved = new Set(
-    inspected.reachable.flatMap((id) => (Array.isArray(nodes[id].proves) ? nodes[id].proves : [])),
+    inspected.reachable.flatMap((id) => [
+      ...(Array.isArray(nodes[id].proves) ? nodes[id].proves : []),
+      ...(nodes[id].action === 'call' && record(nodes[id].claimBindings)
+        ? Object.values(nodes[id].claimBindings)
+        : []),
+    ]),
   );
   const covered = expected.filter((id) => proved.has(id) && !reviewOnly.includes(id));
   const missing = expected.filter((id) => !covered.includes(id));
-  const unexpected = [...proved].filter((id) => !expected.includes(id));
+  const unexpected = [...proved].filter(
+    (id) => !expected.includes(id) && !(input.nonLocalCriteria ?? []).includes(id),
+  );
   const hints = [];
   if (parameterized < POLICY.positive.parameterized)
     values.literals.forEach((field) =>
@@ -357,12 +377,20 @@ function scoreRecipeShape(input) {
     hints,
   };
 }
-function recipeShapeLibraryRef(name, relativePath, platforms = []) {
-  const parts = relativePath.replaceAll('\\', '/').split('/');
-  if (platforms.includes(parts[0])) parts.shift();
-  const id = parts.join('.').replace(/(?:\.recipe)?\.json$/, '');
-  return name ? `${name}.${id}` : id;
+function recipeShapeLibraryRef(name, relativePath, platforms = [], adapter) {
+  const portable = relativePath.replaceAll('\\', '/').replace(/^recipes\//, '');
+  // Offline catalogs may include every platform; a bound worker supplies its active adapter.
+  const inferred =
+    adapter ??
+    [...BUILT_IN_RECIPE_PLATFORMS, ...platforms].find(
+      (platform) =>
+        portable.startsWith(platform + '/') || portable.endsWith('.' + platform + '.recipe.json'),
+    );
+  const identity = recipeFileIdentity(portable, inferred, platforms);
+  if (!identity || 'error' in identity) return null;
+  return name ? `${name}.${identity.ref}` : identity.ref;
 }
+
 function recipeShapeBlock(ref, recipe) {
   const inspected = inspectRecipeShape(recipe);
   const generic = new Set(['call', 'switch', 'wait', 'end', 'command']);
@@ -395,10 +423,6 @@ function processShapeRequest(request) {
     );
   if (request.operation === 'digest') return stableDigest(request.value);
   if (request.operation === 'criteria') {
-    const {
-      registeredAcceptanceCriteria,
-      filterWorkerAcceptanceCriteria,
-    } = require('./scripts/acceptance.mjs');
     return filterWorkerAcceptanceCriteria(
       registeredAcceptanceCriteria(request.criteria ?? [], request.registration),
       request.registration,
@@ -490,18 +514,18 @@ function isRecipeShapeFeedback(value) {
     )
   );
 }
-module.exports = {
-  recipeShapeSelector,
-  processShapeRequest,
-  recipeShapeLibraryRef,
-  recipeShapeBlock,
-  isRecipeShapeFeedback,
-  POLICY_VERSION,
-  RECIPE_SHAPE_POLICY: POLICY,
-  stableDigest,
+export {
   inspectRecipeShape,
-  recipeShapeNodeToken,
-  recipeShapeSignature,
+  isRecipeShapeFeedback,
   isRecipeShapeObservation,
+  POLICY_VERSION,
+  processShapeRequest,
+  POLICY as RECIPE_SHAPE_POLICY,
+  recipeShapeBlock,
+  recipeShapeLibraryRef,
+  recipeShapeNodeToken,
+  recipeShapeSelector,
+  recipeShapeSignature,
   scoreRecipeShape,
+  stableDigest,
 };

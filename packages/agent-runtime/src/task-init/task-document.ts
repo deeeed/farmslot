@@ -233,8 +233,7 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     );
   }
   const shapeFeedbackEnabled =
-    vars.FARM_RECIPE_SHAPE_FEEDBACK === '1' &&
-    ['dev', 'fix-bug', 'qa', 'review-fix', 'ci-fix'].includes(input.flowType);
+    vars.FARM_RECIPE_SHAPE_FEEDBACK === '1' && ['dev', 'fix-bug', 'qa'].includes(input.flowType);
   if (normalizeAcceptanceCriteria(input.acceptanceCriteria).length > 0) {
     const defaults = installedTaskCommands();
     const acceptance = vars.AC_CMD?.trim() || defaults.AC_CMD;
@@ -244,7 +243,7 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
       '## Recipe proof + acceptance review',
       '',
       `Prefix every task proof invocation with \`RECIPE_TASK_DIR="$(cd "${taskDir}" && pwd)"\` in the same shell call as the configured recipe command. A separate export does not survive a later shell call. Direct host invocations must use a fresh directory under \`${taskDir}/artifacts/recipe-runs/\`; fixed or diagnostic output directories do not select task proof. Independent diagnostics must omit task binding.`,
-      `Inspect registered criteria with \`${acceptance} list --task-dir "${taskDir}"\`. Declare their IDs and claims in the recipe's \`proofTargets\` and bind qualifying assertion nodes through \`proves\`. Run the recipe through the configured command and inspect its retained results. Recipe execution produces normal verdicts; never set a proven verdict by hand or edit acceptance ledger rows. Retain unresolved results. When the captured completion contract permits human review, mark complete with them: the run gate presents them to an authorized person, who may record an untestable override with a reason. ${shapeFeedbackEnabled ? 'Completion follows the captured run policy: artifact-only comparisons may retain unresolved claims without granting approval.' : 'Without that gate, completion still refuses.'}`,
+      `Inspect registered criteria with \`${acceptance} list --task-dir "${taskDir}"\`. Declare their IDs and claims in the recipe's \`proofTargets\` and bind qualifying assertion nodes through \`proves\`. Run the recipe through the configured command and inspect its retained results. Recipe execution produces normal verdicts; never set a proven verdict by hand or edit acceptance ledger rows. Retain unresolved results. When the captured completion contract permits human review, mark complete with them: the run gate presents them to an authorized person, who may record an untestable override with a reason. Without that gate, completion still refuses.`,
       'A criterion about the change itself (diff size, revertability, commits, branch, or PR title or labels) gets proof mode `review` and no `proves` node: the code review checks it, and only a new commit clears a review finding. Anything observable in the running product keeps `state`, `visual` or `mixed`.',
       ...(shapeFeedbackEnabled
         ? [

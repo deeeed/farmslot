@@ -1,5 +1,5 @@
-import { isRecipeShapeFeedback, type RecipeShapeFeedback } from '../../recipe-shape.cjs';
-export type { RecipeShapeFeedback } from '../../recipe-shape.cjs';
+import { isRecipeShapeFeedback, type RecipeShapeFeedback } from '../../recipe-shape.mjs';
+export type { RecipeShapeFeedback } from '../../recipe-shape.mjs';
 
 import type { FlowType } from './runs.js';
 

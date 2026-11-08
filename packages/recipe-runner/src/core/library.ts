@@ -7,6 +7,11 @@ import {
   type RecipeSourceProvenance,
   validateRecipeDocument,
 } from '@farmslot/protocol';
+import {
+  BUILT_IN_RECIPE_PLATFORMS,
+  recipeFileIdentity,
+} from '@farmslot/protocol/scripts/recipe-library-identity.mjs';
+export { BUILT_IN_RECIPE_PLATFORMS } from '@farmslot/protocol/scripts/recipe-library-identity.mjs';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { isRecord } from './json.js';
@@ -31,9 +36,6 @@ import type {
 
 const LIBRARY_RECIPES_DIR = 'recipes';
 const RECIPE_FILE_SUFFIX = '.recipe.json';
-
-/** Platforms whose variant folders every library recognizes without declaring them. */
-export const BUILT_IN_RECIPE_PLATFORMS: readonly string[] = ['core', 'extension', 'mobile'];
 
 /** Platform variant folders a library recognizes: the built-in set plus its declared platforms. */
 export async function listRecipeLibraryPlatforms(root: string): Promise<string[]> {
@@ -460,40 +462,12 @@ function recipeIdentity(
   adapter: string | undefined,
   adapters: ReadonlySet<string>,
 ): { ref: string; adapter?: string } | undefined {
-  const portable = relativeFile.split(path.sep).join('/');
-  if (!portable.endsWith(RECIPE_FILE_SUFFIX)) return undefined;
-  const libraryFile = `${LIBRARY_RECIPES_DIR}/${portable}`;
-  const base = portable.slice(0, -RECIPE_FILE_SUFFIX.length);
-  const firstSeparator = base.indexOf('/');
-  const firstDirectory = firstSeparator < 0 ? undefined : base.slice(0, firstSeparator);
-  const directoryAdapter =
-    firstDirectory && adapters.has(firstDirectory) ? firstDirectory : undefined;
-  const directoryScope = firstDirectory === 'shared' ? firstDirectory : directoryAdapter;
-  const suffix = base.slice(base.lastIndexOf('.') + 1);
-  const filenameAdapter = BUILT_IN_PLATFORM_SET.has(suffix) ? suffix : undefined;
-  if (directoryScope && filenameAdapter) {
-    throw new RecipeResolutionError(
-      'RECIPE_LIBRARY_ADAPTER_DECLARATION_CONFLICT',
-      `Library recipe ${libraryFile} declares ${directoryScope} scope in its directory and ${filenameAdapter} adapter in its filename.`,
-      'declare the adapter once using recipes/<adapter>/.../*.recipe.json, or use recipes/shared/.../*.recipe.json without an adapter suffix',
-    );
+  const identity = recipeFileIdentity(relativeFile, adapter, [...adapters]);
+  if (identity && 'error' in identity) {
+    const { code, message, recovery } = identity.error;
+    throw new RecipeResolutionError(code, message, recovery);
   }
-  const declaredAdapter = directoryAdapter ?? filenameAdapter;
-  const idPath = directoryScope
-    ? base.slice(directoryScope.length + 1)
-    : filenameAdapter
-      ? base.slice(0, -(filenameAdapter.length + 1))
-      : base;
-  if ((directoryScope || declaredAdapter) && !idPath.trim()) {
-    throw new RecipeResolutionError(
-      'RECIPE_LIBRARY_RECIPE_INVALID',
-      `Library recipe ${libraryFile} declares ${declaredAdapter ? `adapter ${declaredAdapter}` : 'shared scope'} but has no recipe id.`,
-      `move it to recipes/${directoryScope ?? declaredAdapter}/<name>.recipe.json`,
-    );
-  }
-  if (declaredAdapter && declaredAdapter !== adapter) return undefined;
-  const ref = idPath.replaceAll('/', '.').trim();
-  return ref ? { ref, ...(declaredAdapter ? { adapter: declaredAdapter } : {}) } : undefined;
+  return identity;
 }
 
 /**

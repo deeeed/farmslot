@@ -6,7 +6,7 @@ import {
   type RecipeShapeFeedback,
   scoreRecipeShape,
   stableDigest,
-} from '@farmslot/protocol/recipe-shape.cjs';
+} from '@farmslot/protocol/recipe-shape.mjs';
 import {
   filterWorkerAcceptanceCriteria,
   registeredAcceptanceCriteria,
@@ -105,6 +105,7 @@ export async function readRecipeShapeFeedback(
   try {
     recipe = JSON.parse(input.recipeJson);
   } catch {
+    // Structural evaluation reports malformed recipe JSON; shape adds no verdict.
     return undefined;
   }
   if (!isRecord(recipe) || !isRecord(recipe.workflow) || !isRecord(recipe.workflow.nodes))

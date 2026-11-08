@@ -365,7 +365,7 @@ this does not create labels or automatically promote claims.
 
 ### Public surface
 
-- `@farmslot/protocol/recipe-shape.cjs`: browser-safe versioned scoring module, consumed by
+- `@farmslot/protocol/recipe-shape.mjs`: browser-safe versioned scoring module, consumed by
   Farm quality and the Python dataset tool through one Node JSON-lines adapter.
   Shared declarations describe its inputs and feedback. This is additive; there
   is no new action, RPC or evidence approval.

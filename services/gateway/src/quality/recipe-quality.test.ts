@@ -645,7 +645,7 @@ test('loadRecipeQualityEvaluation follows switch default branches when computing
 });
 
 test('shape feedback survives worker-core fallback without changing the structural grade', async () => {
-  const { scoreRecipeShape } = await import('@farmslot/protocol/recipe-shape.cjs');
+  const { scoreRecipeShape } = await import('@farmslot/protocol/recipe-shape.mjs');
   const { buildRecipeQualityArtifact } = await import('@farmslot/agent-runtime');
   const recipe = {
     $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',

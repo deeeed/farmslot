@@ -308,14 +308,16 @@ test('Farm-only shape guidance uses its supplied task helper and never changes s
     hasTicketData: true,
   };
   assert.doesNotMatch(buildTaskDocument(input), /advisory shape\/AC feedback/);
-  assert.doesNotMatch(
-    buildTaskDocument({
-      ...input,
-      flowType: 'review',
-      vars: { ...input.vars, FARM_RECIPE_SHAPE_FEEDBACK: '1' },
-    }),
-    /advisory shape\/AC feedback/,
-  );
+  for (const flowType of ['review', 'review-pr', 'ci-fix', 'review-fix']) {
+    assert.doesNotMatch(
+      buildTaskDocument({
+        ...input,
+        flowType,
+        vars: { ...input.vars, FARM_RECIPE_SHAPE_FEEDBACK: '1' },
+      }),
+      /advisory shape\/AC feedback/,
+    );
+  }
   const document = buildTaskDocument({
     ...input,
     vars: {
@@ -329,6 +331,7 @@ test('Farm-only shape guidance uses its supplied task helper and never changes s
     document,
     /node \/retained\/runtime\/farmslot-agent\.mjs recipe-quality feedback --task "\.task\/proof"/,
   );
+  assert.match(document, /Without that gate, completion still refuses/);
   assert.match(document, /parameterized ≥0\.7/);
   assert.match(document, /record which target cannot be reached and why/);
 });

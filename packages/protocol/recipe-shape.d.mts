@@ -82,7 +82,8 @@ export function recipeShapeLibraryRef(
   name: string | null,
   relativePath: string,
   platforms?: string[],
-): string;
+  adapter?: string,
+): string | null;
 export function recipeShapeBlock(ref: string, recipe: unknown): RecipeShapeBlock | null;
 export function processShapeRequest(request: Record<string, unknown>): unknown;
 

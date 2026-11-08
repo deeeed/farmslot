@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const shape = require('@farmslot/protocol/recipe-shape.cjs');
+const shape = require('@farmslot/protocol/recipe-shape.mjs');
 const {
   workerAcceptanceCriteria,
   requireHandoffAcceptanceCriteria,
@@ -56,7 +56,7 @@ function catalogForSources(libraries, local = []) {
         path.relative(root, file),
         meta.platforms ?? [],
       );
-      const block = shape.recipeShapeBlock(ref, recipe);
+      const block = ref ? shape.recipeShapeBlock(ref, recipe) : null;
       if (block) catalog.blocks.push(block);
     }
   }
@@ -70,7 +70,7 @@ function catalogForSources(libraries, local = []) {
     });
     for (const { relativePath, recipe } of local) {
       const ref = shape.recipeShapeLibraryRef(null, relativePath);
-      const block = shape.recipeShapeBlock(ref, recipe);
+      const block = ref ? shape.recipeShapeBlock(ref, recipe) : null;
       if (block) catalog.blocks.push(block);
     }
   }

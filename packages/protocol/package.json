@@ -403,9 +403,13 @@
       "import": "./dist/performance/index.js",
       "default": "./dist/performance/index.js"
     },
-    "./recipe-shape.cjs": {
-      "types": "./recipe-shape.d.cts",
-      "default": "./recipe-shape.cjs"
+    "./recipe-shape.mjs": {
+      "types": "./recipe-shape.d.mts",
+      "default": "./recipe-shape.mjs"
+    },
+    "./scripts/recipe-library-identity.mjs": {
+      "types": "./scripts/recipe-library-identity.d.mts",
+      "default": "./scripts/recipe-library-identity.mjs"
     }
   },
   "scripts": {
@@ -458,8 +462,10 @@
     "scripts/acceptance.d.mts",
     "scripts/review-approval-policy.cjs",
     "scripts/review-approval-policy.d.cts",
-    "recipe-shape.cjs",
-    "recipe-shape.d.cts"
+    "recipe-shape.mjs",
+    "recipe-shape.d.mts",
+    "scripts/recipe-library-identity.mjs",
+    "scripts/recipe-library-identity.d.mts"
   ],
   "publishConfig": {
     "access": "public"
