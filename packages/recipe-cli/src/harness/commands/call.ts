@@ -462,7 +462,9 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     signal: commandOptions.signal,
     ...requestedRuntimeOptions,
     claims,
-    ...(resolvedAction === 'app.hud' ? { autoHud: false } : {}),
+    ...(resolvedAction === 'app.hud'
+      ? { autoHud: false, requestedAutoHud: requestedRuntimeOptions.autoHud }
+      : {}),
     librarySources,
     suppressLibraryResolutionLogs: true,
     stdoutIsMachineContract: json,

@@ -19,6 +19,7 @@ import {
   loneCaptureInterruption,
   readRunTraceEntries,
   type RecipeArtifactFinalization,
+  type RecipeHudUnavailable,
   type RecipeLibrarySource,
   type RecipeRunner,
   type RecipeRunRequest,
@@ -82,6 +83,8 @@ export type RecipeEngineRunOptions = RecipeRunOptions & {
   /** Gateway repair scope bound to its separate task-owned repair recipe. */
   repairScope?: RecipeRunRequest['repairScope'];
   signal?: AbortSignal;
+  /** Preserve explicit HUD intent when app.hud disables automatic updates. */
+  requestedAutoHud?: boolean;
   // The engine's trusted mutation reads its own flags from it; `run` passes it,
   // `call` does not.
   cli?: CommandOptions;
@@ -147,6 +150,13 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
       preExecuteDrift,
     );
     throw new ProvenanceDriftError(provenancePath, preExecuteDrift);
+  }
+  if (runRequest.hud) {
+    const explicitShow = (runtimeOptions.requestedAutoHud ?? runtimeOptions.autoHud) === true;
+    const prefix = explicitShow ? 'WARNING: --hud show cannot be honored. ' : 'Warning: ';
+    console.error(
+      `${prefix}HUD unavailable: ${runRequest.hud.reason}. This runtime cannot display the recipe HUD.`,
+    );
   }
   const diagnosticBaseline = await beginRunDiagnostics(adapter, projectRoot);
   let evidence: RecipeRunEvidence | undefined;
@@ -292,6 +302,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     mutation && !runtimeOptions.readOnly ? await mutation.load(mutationInput) : undefined;
   const surface = harnessAdapter(adapter);
   const suppressAutoHud = surface.run?.autoHud?.() === false;
+  const hud: RecipeHudUnavailable | undefined = suppressAutoHud
+    ? { state: 'unavailable', reason: 'opaque-runtime' }
+    : undefined;
   const runnerOptions = {
     captureHudEvidence: !suppressAutoHud && !surface.headless,
     quietStdout: runtimeOptions.stdoutIsMachineContract === true,
@@ -310,6 +323,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   // the plan gets none; only an authorized mutation reaches execution.
   let runner = await engine.createRunner(adapter, manifest, runnerOptions);
   const runRequest: RecipeRunRequest = {
+    ...(hud ? { hud } : {}),
     signal: runtimeOptions.signal,
     ...(recipeDocument !== undefined
       ? { recipeDocument }
