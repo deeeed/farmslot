@@ -125,6 +125,11 @@ function wireRequest() {
   );
   return file;
 }
+// The source CLI transpiles its whole module graph on every start (TSX_DISABLE_CACHE in
+// packages/cli/bin/farmslot.mjs), which on a slow CI runner passed 4 s (run 42513053470).
+// These deadlines catch hangs, not slowness.
+const SPAWN = 15_000;
+const CASE = 20_000;
 function cliRun(args: string[], environment: NodeJS.ProcessEnv = env) {
   const started = performance.now();
   const result = spawnSync(
@@ -134,7 +139,7 @@ function cliRun(args: string[], environment: NodeJS.ProcessEnv = env) {
       env: environment,
       cwd: checkout,
       encoding: 'utf8',
-      timeout: 4000,
+      timeout: SPAWN,
       maxBuffer: 8 * 1024 * 1024,
     },
   );
@@ -189,10 +194,10 @@ function parityCase<Fixture>(
   verify: (t: import('node:test').TestContext, fixture: Fixture) => Promise<void>,
 ) {
   let fixture: { value: Fixture } | undefined;
-  test(`${name}: CLI baseline`, { timeout: 5000 }, async () => {
+  test(`${name}: CLI baseline`, { timeout: CASE }, async () => {
     fixture = { value: await baseline() };
   });
-  test(`${name}: thread parity`, { timeout: 5000 }, async (t) => {
+  test(`${name}: thread parity`, { timeout: CASE }, async (t) => {
     assert(fixture, 'CLI baseline completed');
     await verify(t, fixture.value);
   });
@@ -412,7 +417,7 @@ test('task threads keep machine providers, pack roots and module environment iso
 
 let providerDirectory = '';
 let providerReceipt: unknown;
-test('project-bound init records its selected provider receipt', { timeout: 5000 }, async () => {
+test('project-bound init records its selected provider receipt', { timeout: CASE }, async () => {
   const pack = path.join(root, 'projects/provider');
   fs.mkdirSync(path.join(pack, 'templates/worker'), { recursive: true });
   fs.writeFileSync(
