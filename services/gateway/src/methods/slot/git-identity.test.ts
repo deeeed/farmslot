@@ -13,6 +13,7 @@ import {
   type GitIdentity,
   loadGitIdentity,
   readGitIdentity,
+  signingKeyFormat,
   syncGitIdentity,
 } from './git-identity.js';
 
@@ -195,19 +196,45 @@ test('checkCommitSigning reports an ssh format paired with an OpenPGP key before
   assert.doesNotMatch(step.detail, /import key/);
 });
 
-test('syncGitIdentity infers ssh formats even when only the format needs updating', async (t) => {
-  const { repo } = await fixture(t);
-  for (const [index, key] of [
+test('signingKeyFormat treats ssh literals and key paths as ssh, anything else as openpgp', () => {
+  for (const key of [
     '/home/signer/.ssh/signing.pub',
+    '/home/signer/.ssh/id_ed25519',
+    '~/.ssh/id_ed25519',
+    'keys/signing',
     'ssh-ed25519 AAAA test@example.com',
     'key::ssh-ed25519 AAAA test@example.com',
-  ].entries()) {
-    const slot = repo(`ssh-${index}`, { 'user.signingkey': key, 'gpg.format': 'openpgp' });
-    const identity: GitIdentity = { 'user.signingkey': key };
-    assert.equal(await syncGitIdentity(slot, identity), 'Git identity written: gpg.format');
-    assert.deepEqual(await readGitIdentity(slot, 'local'), { ...identity, 'gpg.format': 'ssh' });
-    assert.equal(await syncGitIdentity(slot, identity), 'Git identity up to date');
+  ]) {
+    assert.equal(signingKeyFormat(key), 'ssh', key);
   }
+  for (const key of [
+    'A41FEC143503D502',
+    '6DADC9450892C679EAED32F2A41FEC143503D502',
+    'Slot Signer <signer@example.com>',
+  ]) {
+    assert.equal(signingKeyFormat(key), 'openpgp', key);
+  }
+});
+
+test('loadGitIdentity accepts an ssh private key path and an explicit x509 format', async (t) => {
+  const { root } = await fixture(t);
+  for (const identity of [
+    { 'user.signingkey': '/home/signer/.ssh/id_ed25519', 'gpg.format': 'ssh' },
+    { 'user.signingkey': 'A41FEC143503D502', 'gpg.format': 'x509' },
+  ]) {
+    await writeFile(path.join(root, 'git-identity.json'), JSON.stringify(identity));
+    assert.deepEqual(loadGitIdentity(root), identity);
+  }
+});
+
+test('syncGitIdentity infers ssh formats even when only the format needs updating', async (t) => {
+  const { repo } = await fixture(t);
+  const key = '/home/signer/.ssh/signing.pub';
+  const slot = repo('ssh-0', { 'user.signingkey': key, 'gpg.format': 'openpgp' });
+  const identity: GitIdentity = { 'user.signingkey': key };
+  assert.equal(await syncGitIdentity(slot, identity), 'Git identity written: gpg.format');
+  assert.deepEqual(await readGitIdentity(slot, 'local'), { ...identity, 'gpg.format': 'ssh' });
+  assert.equal(await syncGitIdentity(slot, identity), 'Git identity up to date');
 });
 
 test('syncGitIdentity writes missing or different keys into the local config once', async (t) => {

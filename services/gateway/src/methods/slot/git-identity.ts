@@ -33,9 +33,17 @@ export function gitIdentityConfigPath(home = farmslotHome()): string {
   return path.join(home, 'git-identity.json');
 }
 
-function signingKeyFormat(key: string): 'ssh' | 'openpgp' {
-  return /^(ssh-|key::)|\.pub$/.test(key) ? 'ssh' : 'openpgp';
+/**
+ * The signing format a key implies: ssh key literals and key file paths (public or
+ * private) are ssh; OpenPGP ids, fingerprints and user ids never contain a slash.
+ */
+export function signingKeyFormat(key: string): 'ssh' | 'openpgp' {
+  return /^(ssh-|key::|~)|\//.test(key) ? 'ssh' : 'openpgp';
 }
+
+/** Only ssh and openpgp are inferred; another explicit format (x509) is taken as given. */
+const formatContradicts = (format: string, key: string) =>
+  (format === 'ssh' || format === 'openpgp') && format !== signingKeyFormat(key);
 
 function validateGitIdentity(data: unknown, filePath: string): GitIdentity {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -57,7 +65,7 @@ function validateGitIdentity(data: unknown, filePath: string): GitIdentity {
   const identity = data as GitIdentity;
   const key = identity['user.signingkey'];
   const format = identity['gpg.format'];
-  if (key !== undefined && format !== undefined && format !== signingKeyFormat(key)) {
+  if (key !== undefined && format !== undefined && formatContradicts(format, key)) {
     throw new Error(
       `Invalid ${filePath}: gpg.format=${format} contradicts user.signingkey=${key} (${signingKeyFormat(key)} key)`,
     );
@@ -217,7 +225,7 @@ export async function checkCommitSigning(
   }
 
   const format = identity['gpg.format'] ?? 'openpgp';
-  if (identity['user.signingkey'] && format !== signingKeyFormat(key)) {
+  if (identity['user.signingkey'] && formatContradicts(format, key)) {
     const farmKey = farmIdentity?.['user.signingkey'];
     const farmFormat =
       farmIdentity?.['gpg.format'] ?? (farmKey !== undefined ? signingKeyFormat(farmKey) : format);
