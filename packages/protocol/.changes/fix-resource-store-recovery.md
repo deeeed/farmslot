@@ -1,1 +1,0 @@
-- Retry persistent caching on reconnect after temporary store failures, retaining readable data and clearing the storage notice after recovery.

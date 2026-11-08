@@ -6,6 +6,7 @@ import type {
   ResultPackageManifest,
 } from '../contracts/evals.js';
 import type { Run, SafetyTier } from '../contracts/index.js';
+import type { QaInput } from '../contracts/qa.js';
 
 import { Methods } from './registry.js';
 
@@ -35,6 +36,10 @@ export interface EvalExperimentCreateParams {
   project: string;
   source: EvalExperimentSource;
   taskProfile: EvalTaskProfile;
+  /** Required ordered task criteria for proof trials; no synthetic AC is added. */
+  acceptanceCriteria?: string[];
+  qaProfileId?: string;
+  qaInputs?: Record<string, QaInput>;
   rubricId?: string;
   rubricVersion?: string;
   familyId?: string;

@@ -1,0 +1,1 @@
+- Evaluate recipes against an immutable supplied implementation, retain failed or missing cases as measurements, and judge the frozen proof output once.

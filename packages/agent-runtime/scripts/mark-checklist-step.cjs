@@ -6,6 +6,8 @@ const { spawnSync } = require('node:child_process');
 const { validateEvidenceManifest, evidenceManifestArtifacts } = require('./evidence-manifest.cjs');
 const {
   expandedArtifactsForCommand,
+  isProofMeasurementContract,
+  isProofMeasurementTask,
   resolveWorkerTerminalContract,
   resolveWorkerTerminalArtifactPath,
   deterministicChecks,
@@ -593,14 +595,29 @@ function assertNoOpenSubtasks(command) {
   process.exit(1);
 }
 
+// A proof trial records incomplete work as a measurement; it does not request a repair.
+const proofMeasurement =
+  terminalCommand !== 'blocked' &&
+  Boolean(terminalCommand && isProofMeasurementContract(loadTerminalContract(taskDir, taskPath)));
 // `blocked` stays available while a child is open: the run is blocked either way.
-if (terminalCommand === 'complete' || terminalCommand === 'no-change') {
+const proofJudge = Boolean(
+  terminalCommand &&
+  terminalCommand !== 'blocked' &&
+  loadTerminalContract(taskDir, taskPath)?.flowType === 'review' &&
+  isProofMeasurementTask(taskDir),
+);
+if (
+  !proofMeasurement &&
+  !proofJudge &&
+  (terminalCommand === 'complete' || terminalCommand === 'no-change')
+) {
   assertNoOpenSubtasks(terminalCommand);
 }
 if (
   terminalCommand &&
   (terminalCommand === 'complete' || terminalCommand === 'no-change') &&
   opts['mark-last'] &&
+  !proofMeasurement &&
   !opts['skip-checklist']
 ) {
   assertChecklistComplete(taskPath, { allowOneUnchecked: true });

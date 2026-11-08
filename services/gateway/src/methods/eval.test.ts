@@ -63,6 +63,24 @@ function makeReferencePackage(): ResultPackageManifest {
   };
 }
 
+test('proof profile requires a committed QA source instead of starting without the implementation', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-proof-admission-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const packagePath = path.join(root, 'reference.result-package.json');
+  await writeResultPackageManifest(packagePath, makeReferencePackage());
+  await assert.rejects(
+    evalExperimentCreate({
+      project: 'farmslot-farm',
+      taskProfile: 'proof',
+      source: { kind: 'package', packagePath },
+      objective: 'Validate the supplied implementation and retain proof.',
+      acceptanceCriteria: ['The supplied behavior is observed.'],
+      qaProfileId: 'pr',
+    }),
+    /proof.*committed|committed.*proof/i,
+  );
+});
+
 test('evalExperimentCreate is idempotent for a package source', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-create-'));
   const evalRoots = new Set<string>();

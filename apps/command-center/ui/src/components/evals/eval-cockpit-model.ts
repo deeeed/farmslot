@@ -4,13 +4,15 @@ import type {
   EvalPackageAxes,
   EvalTaskProfile,
   EvalTrialStartResult,
+  FlowType,
+  QaInput,
   QueueItem,
   ResultPackageManifest,
   ResultPackageProjection,
   Run,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
-import { isTerminalRunStatus } from '@farmslot/protocol';
+import { evalTaskProfileFlow, isTerminalRunStatus } from '@farmslot/protocol';
 import { defaultModelForRunner, modelsForRunner } from '@farmslot/review-dispatch';
 
 import {
@@ -414,7 +416,7 @@ export function candidateTemplateChoices(
   options: readonly WorkerTemplateOption[],
 ): CandidateTemplateChoice[] {
   const dynamic = options
-    .filter((option) => option.flowType === taskProfile)
+    .filter((option) => option.flowType === evalTaskProfileFlow(taskProfile))
     .map((option) => ({
       path: `templates/worker/${option.fileName}`,
       label: option.isDefault ? `${taskProfile} default` : (option.variant ?? option.fileName),
@@ -463,7 +465,12 @@ export function generatedCandidateLabel(
   choices: readonly CandidateTemplateChoice[],
 ): string {
   const option = choices.find((entry) => entry.path === row.templatePath);
-  const profile = primaryCase?.taskProfile === 'dev' ? 'Dev replay' : 'Bugfix replay';
+  const profile =
+    primaryCase?.taskProfile === 'proof'
+      ? 'Proof eval'
+      : primaryCase?.taskProfile === 'dev'
+        ? 'Dev replay'
+        : 'Bugfix replay';
   const template =
     option?.promptName === primaryCase?.taskProfile
       ? ''
@@ -521,7 +528,7 @@ export interface EvalTrialStartParamsModel {
 export interface EvalCellQueueRequestModel {
   queueKind: 'eval-cell';
   label: string;
-  flowType: EvalTaskProfile;
+  flowType: FlowType;
   project: string;
   ticketOrPr: string;
   familyId: string;
@@ -533,6 +540,9 @@ export interface EvalCellQueueRequestModel {
   model?: string;
   mode: 'validation';
   priority: 10;
+  qaProfileId?: string;
+  qaInputs?: Record<string, QaInput>;
+  executionTemplateId?: string;
   evalCell: {
     capGroupId: string;
     suiteId: string;
@@ -579,8 +589,15 @@ export function buildEvalCellQueueRequest(input: {
   };
   return {
     queueKind: 'eval-cell',
+    ...(input.evalResult.referencePackage.proof
+      ? {
+          qaProfileId: input.evalResult.referencePackage.proof.qa.profile.id,
+          qaInputs: input.evalResult.referencePackage.proof.qa.inputs,
+          executionTemplateId: input.evalResult.referencePackage.proof.executionTemplate.id,
+        }
+      : {}),
     label: `${input.selectedCase.label} / ${label}`,
-    flowType: input.selectedCase.taskProfile,
+    flowType: evalTaskProfileFlow(input.selectedCase.taskProfile),
     project,
     ticketOrPr: ticket,
     familyId: input.evalResult.familyId,

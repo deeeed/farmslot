@@ -8,6 +8,7 @@ export const GATEWAY_OWNED_DIFF_ARTIFACTS = [
 ] as const;
 export const GATEWAY_OWNED_RUN_ARTIFACTS = ['session-metrics.json'] as const;
 export const PUBLICATION_SELECTION_DIR = 'pr-package-evidence';
+export const BASELINE_MARKER_DIR = 'baseline-marker-verification';
 export const GATEWAY_OWNED_EVAL_ARTIFACTS = [
   'experiment-manifest.json',
   'packages/reference.result-package.json',
@@ -26,6 +27,7 @@ export const WORKER_ARTIFACT_COPY_EXCLUDES = [
   // like they contain dozens of intentional evidence items.
   'screenshots',
   ...GATEWAY_OWNED_DIFF_ARTIFACTS,
+  BASELINE_MARKER_DIR,
 ] as const;
 
 export const REVIEW_GATE_ARTIFACT_COPY_EXCLUDES = [
@@ -82,7 +84,8 @@ export function isGatewayOwnedArtifactMirrorEntry(name: string): boolean {
     /^pr-package\.(json|md)$/.test(name) ||
     name === 'workflow.mmd' ||
     name === 'publication-packages' ||
-    name === PUBLICATION_SELECTION_DIR
+    name === PUBLICATION_SELECTION_DIR ||
+    name === BASELINE_MARKER_DIR
   );
 }
 
@@ -94,6 +97,7 @@ export function isGatewayOwnedArtifactPath(artifactPath: string): boolean {
   if (rest.length > 0)
     return (
       topLevel === PUBLICATION_SELECTION_DIR ||
+      topLevel === BASELINE_MARKER_DIR ||
       topLevel === 'publication-packages' ||
       isGatewayOwnedReviewDirName(topLevel)
     );

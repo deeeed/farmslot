@@ -91,5 +91,10 @@
   },
   "devDependencies": {
     "esbuild": "0.28.0"
+  },
+  "dependenciesMeta": {
+    "@siteed/sherpa-onnx.rn": {
+      "built": false
+    }
   }
 }

@@ -368,6 +368,7 @@ RUN_ENV=(
 )
 
 assert_android_identity_matches_expo_config "${RUN_ENV[@]}"
+node "${SCRIPT_DIR}/../install-sherpa-prebuilts.mjs"
 ensure_android_native_identity "${RUN_ENV[@]}"
 
 RUN_ENV+=(ANDROID_SERIAL="${ANDROID_TARGET}" ADB_SERIAL="${ANDROID_TARGET}")

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { primaryRoleForFlow, type Run } from '@farmslot/protocol';
+import { type EvalProofSource, primaryRoleForFlow, type Run } from '@farmslot/protocol';
 
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 
@@ -15,6 +15,14 @@ export interface BlindGitSpec {
   branch: string;
   baseSha: string;
   referenceCommits: string[];
+  proof?: EvalProofSource;
+  /** Captured from the admitted project/task, never from worker arguments. */
+  proofBoundary?: {
+    taskRoot: string;
+    currentTask: string;
+    runtimeRoots: string[];
+    deniedRoots: string[];
+  };
 }
 
 const script = readFileSync(new URL('./blind-git.py', import.meta.url), 'utf8');

@@ -28,6 +28,7 @@ import {
 } from '../core/index.js';
 import { ghRequest } from '../integrations/github-client.js';
 
+import { markerBaselineVerifier } from './baseline-debug-marker.js';
 import { withPublicationProvenance } from './evidence-attestation.js';
 import {
   autoDetectEvidenceManifest,
@@ -827,6 +828,8 @@ export interface ResolvedPublicationManifest {
 /** Existing run capture authority, separate from the selected head's claims. */
 export interface PublicationBaselineContext {
   baseSha?: string;
+  /** Verified marker-only baseline; never waives dirty, branch or after-evidence checks. */
+  markerBaseline?: ReturnType<typeof markerBaselineVerifier>;
   /** Full comparison captured for this publication, never a warm review delta. */
   comparison?: ReviewDiffSnapshot;
   /** Undefined permits capture admission; null records an unavailable publication head. */
@@ -890,6 +893,7 @@ export function publicationBaselineContext(
       ? snapshot.baseSha
       : undefined;
   return {
+    markerBaseline: markerBaselineVerifier(run, inventory),
     baseSha: fullReviewBase ?? run.worktreeHeadAtDispatch ?? undefined,
     comparison,
     branch: run.branch,
@@ -1084,15 +1088,27 @@ export async function assertPublicationManifestOwnership(
               admittedBeforeAttemptAttestations(baseline.attestations, (root) =>
                 root === directory ? manifestDigest : undefined,
               ).length > 0;
+            const markerBaseline =
+              beforeOnly &&
+              !attested &&
+              expectedSha &&
+              typeof provenance.git_ref === 'string' &&
+              provenance.git_ref !== expectedSha &&
+              provenance.dirty === false &&
+              (!baseline?.branch ||
+                provenance.branch === baseline.branch ||
+                provenance.branch === 'detached') &&
+              (await baseline?.markerBaseline?.(provenance.git_ref, expectedSha, io, artifactsDir));
             const invalidProvenanceField =
               !attested &&
-              (((!expectedSha || provenance.git_ref !== expectedSha) && 'git_ref') ||
+              (((!expectedSha || (provenance.git_ref !== expectedSha && !markerBaseline)) &&
+                'git_ref') ||
                 (provenance.dirty !== false && 'dirty') ||
                 (baseline?.branch &&
                   provenance.branch !== baseline.branch &&
                   provenance.branch !== 'detached' &&
                   'branch'));
-            // Before evidence recorded off the base is admitted only by an operator's attestation.
+            // Unverified off-base evidence still requires an operator attestation.
             if (beforeOnly && invalidProvenanceField && directory.startsWith('recipe-runs/')) {
               const recorded =
                 invalidProvenanceField === 'git_ref'

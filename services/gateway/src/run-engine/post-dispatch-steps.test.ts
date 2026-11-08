@@ -18,7 +18,7 @@ import {
 } from '@farmslot/protocol';
 import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
-import { firstOutputFixture } from '../evals/first-output.test-support.js';
+import { firstOutputFixture, proofInputFixture } from '../evals/first-output.test-support.js';
 import {
   finalizeEvalResultPackageForRun,
   readFrozenEvalFirstOutputPackage,
@@ -3190,3 +3190,50 @@ for (const branch of ['feature/artifact-output', null]) {
     assert.deepEqual(calls, [run.id]);
   });
 }
+
+test('proof-only completion keeps failed coverage as output and never requests an acceptance repair or gate', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'eval-proof-completion-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'artifact-output',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const fixture = await firstOutputFixture(root, getRun(run.id)!);
+  const blind = fixture.engineState!.evalExperiment!.blind!;
+  blind.proof = proofInputFixture();
+  const { freezeProofOutput } = await import('../evals/proof-output.js');
+  blind.firstOutput!.proofPackage = await freezeProofOutput(fixture);
+  updateRun(run.id, {
+    status: 'completing',
+    flowType: 'qa',
+    qa: blind.proof.qa,
+    taskFile: fixture.taskFile,
+    engineState: fixture.engineState,
+    completionPolicy: 'artifact-only',
+    lane: 'comparison',
+    slotId: 'artifact-output-slot',
+  });
+  const captured = new Error('Measured output passed completion admission');
+  await assert.rejects(
+    executeCompleteStep(run.id, {
+      ...restartReplayContext(),
+      assertGatePrerequisites: async () =>
+        assert.fail('Proof measurements never enter the publication/ordinary QA gate'),
+      getDiffStat: async () => {
+        throw captured;
+      },
+    }),
+    (error) => error === captured,
+  );
+  await writeFile(path.join(root, 'task/artifacts/report.md'), 'changed later');
+  await assert.rejects(
+    executeCompleteStep(run.id, {
+      ...restartReplayContext(),
+      assertGatePrerequisites: async () => assert.fail('No gate'),
+      getDiffStat: async () => assert.fail('Corrupt frozen output cannot reach completion'),
+    }),
+    /Frozen proof artifact changed/,
+  );
+});

@@ -1,0 +1,1 @@
+- Align the generated gateway API reference with protocol 0.82.1.

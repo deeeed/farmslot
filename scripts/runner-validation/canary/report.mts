@@ -3,6 +3,7 @@
 import { publishIfAbsent, writeAtomic, writeJson } from '../lib/isolated-stack.mjs';
 
 import type { CheckResult } from './outcome.mjs';
+import { fullflowSummary } from './fullflow-outcome.js';
 
 const BLOCKING = new Set(['fail', 'xpass', 'unverified']);
 
@@ -84,6 +85,8 @@ export async function report(options: {
   extra: Record<string, unknown>;
 }): Promise<Verdict> {
   const result = verdict(options.checks, options.setupError, options.cleanupErrors);
+  if (options.profile === 'canary-fullflow')
+    result.summary = fullflowSummary(options.checks, result.summary);
   const finishedAt = new Date();
   const wallMs = finishedAt.getTime() - options.startedAt.getTime();
   const slowest = [...options.checks].sort((a, b) => (b.durationS ?? 0) - (a.durationS ?? 0))[0];

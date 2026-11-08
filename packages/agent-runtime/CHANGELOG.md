@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.45.1 - 2026-11-08
+
+- Let a frozen proof-trial terminal contract record failed or missing measurements without inventing passing acceptance verdicts.
+
 ## 0.45.0 - 2026-11-08
 
 - Show Farm workers advisory shape and registered-AC feedback before completion through task-local helpers, without changing standalone skill defaults.
