@@ -17,12 +17,20 @@ const SENSITIVE_FILE_NAMES = new Set([
 ]);
 const SENSITIVE_FILE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
 
+export function isRunBundleMedia(file: string): boolean {
+  return /\.(?:png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|wav)$/iu.test(file);
+}
+
 export function shouldSkipBundleFilesystemEntry(name: string, isDirectory: boolean): boolean {
   if (isDirectory) return SKIP_DIR_NAMES.has(name);
   if (SENSITIVE_FILE_NAMES.has(name)) return true;
   const lower = name.toLowerCase();
   if (SENSITIVE_FILE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) return true;
-  if (lower.includes('credential') || lower.includes('secret') || lower.includes('token')) {
+  // A name like evidence-ac3-token-format.png describes what media shows, not a secret file.
+  if (
+    !isRunBundleMedia(lower) &&
+    (lower.includes('credential') || lower.includes('secret') || lower.includes('token'))
+  ) {
     return true;
   }
   return false;

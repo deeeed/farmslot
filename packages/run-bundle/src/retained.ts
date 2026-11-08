@@ -44,7 +44,7 @@ import {
 } from '@farmslot/protocol/runs/portable-bundle';
 
 import { loadAllRunRecords } from './collect.js';
-import { shouldSkipBundleFilesystemEntry } from './copy-tree.js';
+import { isRunBundleMedia, shouldSkipBundleFilesystemEntry } from './copy-tree.js';
 import {
   captureDecisionHistoryPrefix,
   decisionHistoryFile,
@@ -757,9 +757,7 @@ export function parseRunBundleMissingData(entry: string): { reason: string; path
     : { reason: entry.slice(0, split), path: entry.slice(split + 1) };
 }
 
-export function isRunBundleMedia(file: string): boolean {
-  return /\.(?:png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|wav)$/iu.test(file);
-}
+export { isRunBundleMedia };
 
 // One awaited stat at a time cost ~5 ms each inside a busy gateway, so a walk over
 // ~50k historical task files held run completion for 30+ minutes. Keep a bounded
