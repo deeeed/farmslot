@@ -1,0 +1,1 @@
+- Preserve requested xhigh and max thinking levels for router models instead of letting Pi round them down to high.
