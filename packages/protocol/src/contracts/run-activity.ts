@@ -95,7 +95,17 @@ export interface ProcessBaselineRun {
 
 export type ProcessMarkTarget =
   | { action: 'step'; stepNumber: number }
-  | { action: 'start' | 'complete' | 'block' | 'fail' | 'subtask' | 'unknown' };
+  | {
+      action:
+        | 'start'
+        | 'wait'
+        | 'resume'
+        | 'complete'
+        | 'blocked'
+        | 'no-change'
+        | 'subtask'
+        | 'unknown';
+    };
 
 export interface ProcessMarkCall {
   at: string;

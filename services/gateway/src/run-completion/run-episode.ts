@@ -14,9 +14,9 @@ import {
   isTerminalRunStatus,
   PipelineSteps,
   type Run,
-  type RunProcessActivity,
   type RunArtifactBundleRef,
   type RunBundleEntryMeta,
+  type RunProcessActivity,
 } from '@farmslot/protocol';
 import {
   isRunBundleMedia,
@@ -26,8 +26,8 @@ import {
 } from '@farmslot/run-bundle';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
-import { runsDirectory } from '../runs/store.js';
 import { activityForRun } from '../runs/process-activity.js';
+import { runsDirectory } from '../runs/store.js';
 
 export const RUN_EPISODE_SCHEMA = 'farmslot-episode-v1';
 /** The first retry pass after an upgrade covers runs that ended this long before it. */

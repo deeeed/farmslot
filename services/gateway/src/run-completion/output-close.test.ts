@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { isSuccessfulRun } from '@farmslot/protocol';
 
+import { activityForRun } from '../runs/process-activity.js';
 import { archiveRun, createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import { captureRunOutput } from './output.js';
@@ -47,7 +48,10 @@ test('closing retained partial output preserves gaps and history, and retries on
   const decision = captured.decisions.find((d) => !d.resolvedAt)!;
   assert.equal(captured.output?.reportPath, 'artifacts/report.html');
   const originalSteps = structuredClone(captured.steps);
-  const originalMetrics = structuredClone(captured.metrics);
+  const originalMetrics = {
+    ...structuredClone(captured.metrics),
+    activity: activityForRun(captured),
+  };
   // Bind only a nonexistent fixture slot; the injected release cannot reach a runtime.
   updateRun(run.id, { slotId: 'output-close-test-slot' });
   let failCleanup = true;

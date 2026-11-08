@@ -26,8 +26,8 @@ import { farmslotRoot } from '../fleet/state.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import { checklistTimingContext, checklistTimingForAttempt } from '../tasks/checklist-timing.js';
 
-import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
 import { activityForRun } from './process-activity.js';
+import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
 
 // Append-only analytics sink, decoupled from the prunable run-history store.
 // One record per terminal run, written before the run JSON can be deleted/archived.

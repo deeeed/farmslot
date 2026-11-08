@@ -36,8 +36,10 @@ const { activityForRun } = await import('../runs/process-activity.js');
 const { buildAnalyticsRecord, emitAnalyticsForTerminalRun, readAllAnalyticsRecords } =
   await import('../runs/analytics.js');
 const { buildRunEpisode } = await import('./run-episode.js');
-const { captureRunOutput } = await import('./output.js');
+const { captureRunOutput, verifyRunOutputReview, acknowledgeRunOutput } =
+  await import('./output.js');
 const { runBundleStore } = await import('./retained-artifacts.js');
+const { closeRunOutput } = await import('./output-close.js');
 const { readRetainedRunBundle } = await import('@farmslot/run-bundle');
 
 function workerSnapshot(run: Run, document: string): CapturedProcessActivity {
@@ -181,14 +183,39 @@ test('successful output freezes one projection and retains its original document
       },
     ],
   });
+  updateRun(run.id, {
+    flowType: 'qa',
+    completionPolicy: 'artifact-only',
+    metrics: { ...getRun(run.id)!.metrics, outcome: 'success' },
+  });
   pendingCapture = workerSnapshot(getRun(run.id)!, document);
   await captureRunOutput(run.id, false, true);
+  const review = getRun(run.id)!.decisions.find(
+    (decision) => decision.payload?.kind === 'output-review',
+  );
+  assert.ok(review);
+  await verifyRunOutputReview(run.id, review.id);
+  const acknowledged = await acknowledgeRunOutput(run.id, review.id);
+  const closeDecision = acknowledged.decisions.find(
+    (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+  );
+  assert.ok(closeDecision);
+  const digest = acknowledged.output!.manifestDigest;
   const first = getRun(run.id)!.metrics.activity!;
   assert.equal(first.process.rootCause.present, true);
   assert.ok(first.process.sourceBundle);
   await writeFile(path.join(root, 'TASK.md.worker'), '# A later review-fix body\n');
   await captureRunOutput(run.id, false, true);
   const latest = getRun(run.id)!;
+  assert.equal(latest.output!.manifestDigest, digest);
+  assert.equal(latest.decisions.find((decision) => !decision.resolvedAt)?.id, closeDecision.id);
+  updateRun(run.id, { status: 'blocked', steps: [{ name: 'monitor', status: 'done' }] });
+  await closeRunOutput(run.id, closeDecision.id, {
+    publish: async (current) => current,
+    releaseSlot: async () => ({ released: true }),
+    slotOwner: async () => run.id,
+  });
+  assert.equal(getRun(run.id)!.output?.closedAt !== undefined, true);
   assert.strictEqual(latest.metrics.activity, first);
   const original = await readRetainedRunBundle(
     await runBundleStore(),

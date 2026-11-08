@@ -101,6 +101,17 @@ test('literal task aliases in real worker commands retain marks without claiming
   );
 });
 
+test('actual blocked and no-change terminal verbs retain their distinct actions', () => {
+  for (const action of ['blocked', 'no-change', 'wait', 'resume'] as const) {
+    const result = projectProcessTools(
+      command(`/repo/.task/current/mark ${action} --reason 'Recorded gap'`),
+      scope,
+    );
+    assert.deepEqual(result.marks[0].target, { action });
+    assert.equal(result.marks[0].status, 'succeeded');
+  }
+});
+
 test('a preverified marker signature excludes only its exact edit, not ordinary logging', () => {
   const before = 'const value = state;\n';
   const after = before + "DevLogger.log('[example] BUG_MARKER: state');\n";

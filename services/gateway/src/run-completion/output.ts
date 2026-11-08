@@ -330,7 +330,6 @@ async function captureRunOutputNow(
       ...artifactsByPath.values(),
     ]);
     bindActivity = capture.bindProcessActivityBundle;
-    for (const artifact of processCapture.artifacts) artifactsByPath.set(artifact.path, artifact);
   }
   const artifacts = [...artifactsByPath.values()];
   if (artifacts.some((artifact) => !artifact.sha256))
@@ -379,7 +378,8 @@ async function captureRunOutputNow(
   };
   const retained = await retainCapturedRunArtifacts({
     run: { ...current, output },
-    artifacts,
+    // Process sidecars are advisory provenance, outside the reviewed output inventory.
+    artifacts: [...artifacts, ...(processCapture?.artifacts ?? [])],
     advisoryPaths: processCapture?.artifacts.map((artifact) => artifact.path),
     acquireMedia: acquisition.acquireMedia,
     manifestDigest: output.manifestDigest,

@@ -176,12 +176,21 @@ function shellSegments(command: string): ShellSegment[] {
 
 function markTarget(args: string[]): ProcessMarkCall['target'] {
   const action = args.find(
-    (arg) => /^\d+$/.test(arg) || ['start', 'complete', 'block', 'fail', 'sub'].includes(arg),
+    (arg) =>
+      /^\d+$/.test(arg) ||
+      ['start', 'wait', 'resume', 'complete', 'blocked', 'no-change', 'sub'].includes(arg),
   );
   if (action && /^\d+$/.test(action) && Number(action) > 0)
     return { action: 'step', stepNumber: Number(action) };
   if (action === 'sub') return { action: 'subtask' };
-  if (action === 'start' || action === 'complete' || action === 'block' || action === 'fail')
+  if (
+    action === 'start' ||
+    action === 'wait' ||
+    action === 'resume' ||
+    action === 'complete' ||
+    action === 'blocked' ||
+    action === 'no-change'
+  )
     return { action };
   return { action: 'unknown' };
 }

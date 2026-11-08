@@ -1,7 +1,7 @@
 import type { WorkerSignalChecklistStepDuration } from '../transport/signal.js';
 
-import type { FlowType, RunLane, RunStatus } from './runs.js';
 import type { RunActivityRecord } from './run-activity.js';
+import type { FlowType, RunLane, RunStatus } from './runs.js';
 
 // ─── Pipeline-ops analytics ───
 //

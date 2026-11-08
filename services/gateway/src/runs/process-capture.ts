@@ -233,6 +233,7 @@ export async function captureOriginalProcessActivity(
       frozenAt: signal.timestamp,
       executionNodeId: node,
     };
+    process.capturedAt = new Date().toISOString();
     process.sources = process.sources.filter((source) => source.id !== 'run-metrics');
     process.checklist = { events: null, expectedSteps: null, complete: null, source: null };
     process.coverage.checklist = {

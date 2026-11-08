@@ -257,6 +257,44 @@ test('process references preserve original metadata without pinning expired old 
   await assert.rejects(stat(oldMedia), { code: 'ENOENT' });
   const live = await readRetainedRunBundle(f.store, current.ref, f.run.id);
   assert.equal(await live.readText('artifacts/capture.mp4'), 'video bytes');
+  const exported = await exportRunsToBundle({
+    farmslotRoot: f.root,
+    runIds: [f.run.id],
+    profile: 'reference',
+    outputPath: path.join(f.root, 'process.farmrun'),
+  });
+  assert.ok(
+    exported.manifest.missingData?.includes(
+      `historical-capture-not-exported:${f.run.id}:${first.ref.bundleDigest}`,
+    ),
+    'Portable output must name the original process sources it does not export',
+  );
+  const target = path.join(f.root, 'imported-process');
+  const store = await openRunBundleStore({
+    runsDir: path.join(target, '.runs'),
+    home: path.join(target, 'home'),
+    create: true,
+  });
+  const result = await importBundle({
+    farmslotRoot: target,
+    bundlePath: path.join(f.root, 'process.farmrun'),
+    mode: 'seed',
+    retentionStore: store,
+  });
+  const imported: Run = JSON.parse(
+    await readFile(path.join(store.runsDir, `${result.importedRunIds[0]}.json`), 'utf8'),
+  );
+  assert.deepEqual(
+    imported.metrics.activity,
+    f.run.metrics.activity,
+    'Transfer never re-derives the frozen labels',
+  );
+  assert.equal(
+    imported.importProvenance?.artifactBundleRefs?.[first.ref.bundleDigest],
+    undefined,
+    'An omitted source never receives an alias to later review-fix bytes',
+  );
+  assert.deepEqual(result.manifest.missingData, exported.manifest.missingData);
 });
 
 test('gateway-written files are retained from their own directory, not the source task', async (t) => {
