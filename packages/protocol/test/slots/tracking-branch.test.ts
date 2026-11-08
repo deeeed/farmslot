@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
+  defaultBranchProbeCommand,
   defaultBranchRepoBlocker,
   DETACHED_HEAD_BRANCH,
   isSlotIdleBranch,
@@ -192,4 +197,32 @@ test('readDefaultBranchProbe gives no verdict when a git read fails', () => {
       .readable,
     false,
   );
+});
+
+test('the repo probe names blind Git isolation before the missing fetch refspec', (t) => {
+  const repo = mkdtempSync(path.join(tmpdir(), 'blind repo-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { env });
+  git('init', '-q', '--template=', '--initial-branch=main');
+  const probe = () => {
+    const result = spawnSync('sh', ['-c', defaultBranchProbeCommand(repo, 'main')], {
+      env,
+      encoding: 'utf8',
+    });
+    return readDefaultBranchProbe(
+      { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 },
+      'main',
+    );
+  };
+  const original = probe();
+  assert.equal(original.readable, true);
+  assert.ok(original.readable && original.blocker?.includes('refspec (none)'));
+  git('config', 'farmslot.blindRun', 'cancelled-blind-run');
+  assert.deepEqual(probe(), {
+    readable: true,
+    blocker: 'isolated for blind trial cancelled-blind-run',
+  });
+  git('config', '--unset', 'farmslot.blindRun');
+  assert.deepEqual(probe(), original, 'repos without blind isolation retain their verdict');
 });

@@ -1,0 +1,1 @@
+- Report blind trial Git isolation in slot repo checks.

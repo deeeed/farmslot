@@ -262,6 +262,17 @@ test('router discovery keeps a server-reported 1M context and output budget', as
   assert.equal(provider.models[0].reasoning, true);
 });
 
+test('router model definitions preserve xhigh and max instead of letting Pi round them down', async () => {
+  const [provider] = await resolvePiProviderCatalog(
+    { FARMSLOT_PI_OLLAMA: '0', FARMSLOT_PI_ROUTER_URL: 'http://router.test/v1' },
+    { fetchImpl: modelsFetch({ id: 'DeepSeek-V4.1-Flash-1017', supports_reasoning: true }) },
+  );
+  assert.equal(provider.models[0].thinkingLevelMap?.xhigh, 'xhigh');
+  assert.equal(provider.models[0].thinkingLevelMap?.max, 'max');
+  const [other] = await resolvePiProviderCatalog({}, { fetchImpl: modelsFetch({ id: 'local' }) });
+  assert.equal(other.models[0].thinkingLevelMap, undefined);
+});
+
 test('id-only router discovery uses configured limits and defaults reasoning on', async () => {
   const [provider] = await resolvePiProviderCatalog(
     {
