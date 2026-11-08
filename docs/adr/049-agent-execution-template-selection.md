@@ -313,3 +313,23 @@ Rationale: ADR-049's general ownership wording can be read as requiring every fa
 Consequences: Keep the current selection, precedence and snapshot contracts. Pack-specific selection gaps are migration work, not a new loader. This amendment authorizes no migration.
 
 Public surface: no new CLI commands, flags, SDK exports or harness interfaces; no version or stability change.
+
+## Amendment 3: one required skill set, 2026-11-08
+
+**Status:** Proposed. This amendment records direction only; implementation requires the normative specification and schema review described below.
+
+### Decision
+
+Pack configuration deterministically selects required skills/rules by changed or declared task paths, platform, flow and declared domain. Preserve the template selector. No model-based selection or fuzzy fallback.
+
+Record the selection, matched pack rules, revisions and digests in ADR-049 task provenance. Dev and review receive the same frozen required set. Static review retains its read-only execution boundary.
+
+Prepare verifies required installed skills, overlays and applicable references in both contexts before dispatch. Missing requirements stop preparation. Dev cannot substitute repository docs for an installed skill review requires. Scope changes require re-preparation.
+
+### Rationale and consequences
+
+Required testing guidance could be absent during development while review required its installed policy. Shared preparation removes that fallback mismatch without claiming saved review rounds. Usage analysis belongs to ADR-032; review-side dynamic checks remain subject to their separate ADR approval.
+
+### Public surface
+
+Extend existing pack requirements and ADR-049 provenance, consumed by shared prepare and dev/review materialization. Shared data types belong to `@farmslot/protocol`; selection stays in `@farmslot/agent-runtime`, and harnesses inherit it. No new selector service, CLI or RPC. Specify additive schema/version changes before implementation.
