@@ -1879,7 +1879,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability'/);
       assert.match(
         cmd,
-        /printf '\{\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
+        /printf '\{"promptSuggestionEnabled":false\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
       );
     });
 
@@ -2597,7 +2597,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     );
     assert.match(
       cmd,
-      /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability' && printf '\{\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
+      /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability' && printf '\{"promptSuggestionEnabled":false\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
     );
   });
 

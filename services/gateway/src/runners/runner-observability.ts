@@ -62,10 +62,10 @@ export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string
 export function buildClaudeObservabilityFallbackCommand(settingsPath: string): string {
   const settingsDir = path.posix.dirname(settingsPath);
   const settingsFile = shellExpressionForRemotePath(settingsPath);
-  const validate = `node -e ${shellQuote(
-    `JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))`,
+  const configure = `node -e ${shellQuote(
+    `const fs = require('node:fs'); const file = process.argv[1]; const settings = JSON.parse(fs.readFileSync(file, 'utf8')); if (!settings || typeof settings !== 'object' || Array.isArray(settings)) process.exit(1); if (settings.promptSuggestionEnabled !== false) { settings.promptSuggestionEnabled = false; fs.writeFileSync(file, JSON.stringify(settings) + '\\n'); }`,
   )} ${settingsFile} >/dev/null 2>&1`;
-  return `${validate} || { mkdir -p ${shellExpressionForRemotePath(settingsDir)} && printf '{}\\n' > ${settingsFile}; }`;
+  return `${configure} || { mkdir -p ${shellExpressionForRemotePath(settingsDir)} && printf '{"promptSuggestionEnabled":false}\\n' > ${settingsFile}; }`;
 }
 
 function farmslotDirForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string {
