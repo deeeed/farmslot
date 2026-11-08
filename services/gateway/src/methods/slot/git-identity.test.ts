@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '../../core/config.js';
-import { execOnSlot } from '../../core/exec.js';
+import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot } from '../../core/exec.js';
 
 import {
   checkCommitSigning,
@@ -87,8 +87,10 @@ const FARM_IDENTITY: GitIdentity = {
 test('loadGitIdentity reads the farm identity and rejects keys it does not copy', async (t) => {
   const { root } = await fixture(t);
   assert.equal(loadGitIdentity(root), null);
+  assert.equal(loadGitIdentity(root, 'farmslot-farm'), null);
   await writeFile(path.join(root, 'git-identity.json'), JSON.stringify(FARM_IDENTITY));
   assert.deepEqual(loadGitIdentity(root), FARM_IDENTITY);
+  assert.deepEqual(loadGitIdentity(root, 'farmslot-farm'), FARM_IDENTITY);
   const file = path.join(root, 'git-identity.json');
   await writeFile(file, JSON.stringify({ 'core.editor': 'vi' }));
   assert.throws(() => loadGitIdentity(root), /unknown key core\.editor \(expected user\.name/);
@@ -103,6 +105,111 @@ test('loadGitIdentity reads the farm identity and rejects keys it does not copy'
   );
 });
 
+test('syncGitIdentity replaces a stale ssh format when the farm uses an OpenPGP key', async (t) => {
+  const { repo } = await fixture(t);
+  const slot = repo('mini-ff-2', {
+    'gpg.format': 'ssh',
+    'user.signingkey': '/home/signer/.ssh/signing.pub',
+  });
+  const identity = {
+    ...FARM_IDENTITY,
+    'user.signingkey': '6DADC9450892C679EAED32F2A41FEC143503D502',
+  };
+  await syncGitIdentity(slot, identity);
+  assert.deepEqual(await readGitIdentity(slot, 'local'), { ...identity, 'gpg.format': 'openpgp' });
+});
+
+test('loadGitIdentity overlays the slot project and keeps defaults for other projects', async (t) => {
+  const { root } = await fixture(t);
+  const projectIdentity: GitIdentity = {
+    'user.name': 'Personal Signer',
+    'user.email': 'signer@users.noreply.github.com',
+    'user.signingkey': '/home/signer/.ssh/signing.pub',
+    'gpg.format': 'ssh',
+  };
+  await writeFile(
+    path.join(root, 'git-identity.json'),
+    JSON.stringify({ ...FARM_IDENTITY, projects: { 'farmslot-farm': projectIdentity } }),
+  );
+  assert.deepEqual(loadGitIdentity(root, 'farmslot-farm'), {
+    ...FARM_IDENTITY,
+    ...projectIdentity,
+  });
+  assert.deepEqual(loadGitIdentity(root, 'other-project'), FARM_IDENTITY);
+  assert.deepEqual(loadGitIdentity(root), FARM_IDENTITY);
+});
+
+test('loadGitIdentity validates all project entries and merged signing formats', async (t) => {
+  const { root } = await fixture(t);
+  const cases = [
+    {
+      config: { ...FARM_IDENTITY, 'gpg.format': 'ssh' },
+      error: /gpg\.format=ssh contradicts.*openpgp key/,
+    },
+    { config: { projects: null }, error: /projects must be an object/ },
+    { config: { projects: [] }, error: /projects must be an object/ },
+    { config: { projects: 'farm' }, error: /projects must be an object/ },
+    { config: { projects: { other: null } }, error: /projects\.other: expected an object/ },
+    { config: { projects: { other: [] } }, error: /projects\.other: expected an object/ },
+    {
+      config: { projects: { other: { 'core.editor': 'vi' } } },
+      error: /projects\.other: unknown key core\.editor/,
+    },
+    {
+      config: { projects: { other: { 'commit.gpgsign': true } } },
+      error: /projects\.other: commit\.gpgsign must be a string/,
+    },
+    {
+      config: { projects: { other: { 'commit.gpgsign': 'treu' } } },
+      error: /projects\.other: commit\.gpgsign must be a git boolean/,
+    },
+    {
+      config: { projects: { other: { ...FARM_IDENTITY, 'gpg.format': 'ssh' } } },
+      error: /projects\.other: gpg\.format=ssh contradicts.*openpgp key/,
+    },
+    {
+      config: {
+        ...FARM_IDENTITY,
+        'gpg.format': 'openpgp',
+        projects: { other: { 'user.signingkey': '/home/signer/.ssh/signing.pub' } },
+      },
+      error: /projects\.other: gpg\.format=openpgp contradicts.*ssh key/,
+    },
+  ];
+  for (const { config, error } of cases) {
+    await writeFile(path.join(root, 'git-identity.json'), JSON.stringify(config));
+    assert.throws(() => loadGitIdentity(root, 'farmslot-farm'), error);
+  }
+});
+
+test('checkCommitSigning reports an ssh format paired with an OpenPGP key before probing', async (t) => {
+  const { repo } = await fixture(t);
+  const slot = repo('mini-ff-2', { ...FARM_IDENTITY, 'gpg.format': 'ssh' });
+  const step = await checkCommitSigning(slot, FARM_IDENTITY, {
+    execute: async () => assert.fail('a mismatched identity must not reach the signing probe'),
+  });
+  assert.equal(step.name, 'git.signing');
+  assert.equal(step.status, 'fail');
+  assert.match(step.detail, /gpg\.format=ssh.*user\.signingkey=A41FEC143503D502.*openpgp/);
+  assert.match(step.detail, /Fix: run `farmslot slot prepare mini-ff-2`/);
+  assert.doesNotMatch(step.detail, /import key/);
+});
+
+test('syncGitIdentity infers ssh formats even when only the format needs updating', async (t) => {
+  const { repo } = await fixture(t);
+  for (const [index, key] of [
+    '/home/signer/.ssh/signing.pub',
+    'ssh-ed25519 AAAA test@example.com',
+    'key::ssh-ed25519 AAAA test@example.com',
+  ].entries()) {
+    const slot = repo(`ssh-${index}`, { 'user.signingkey': key, 'gpg.format': 'openpgp' });
+    const identity: GitIdentity = { 'user.signingkey': key };
+    assert.equal(await syncGitIdentity(slot, identity), 'Git identity written: gpg.format');
+    assert.deepEqual(await readGitIdentity(slot, 'local'), { ...identity, 'gpg.format': 'ssh' });
+    assert.equal(await syncGitIdentity(slot, identity), 'Git identity up to date');
+  }
+});
+
 test('syncGitIdentity writes missing or different keys into the local config once', async (t) => {
   const { repo, gpg } = await fixture(t);
   const slot = repo('mini-mmt-1', { 'commit.gpgsign': 'false', 'user.name': 'Slot Signer' });
@@ -110,9 +217,9 @@ test('syncGitIdentity writes missing or different keys into the local config onc
 
   assert.equal(
     await syncGitIdentity(slot, identity),
-    'Git identity written: user.email, user.signingkey, commit.gpgsign, gpg.program',
+    'Git identity written: user.email, user.signingkey, commit.gpgsign, gpg.format, gpg.program',
   );
-  assert.deepEqual(await readGitIdentity(slot, 'local'), identity);
+  assert.deepEqual(await readGitIdentity(slot, 'local'), { ...identity, 'gpg.format': 'openpgp' });
   assert.equal(await syncGitIdentity(slot, identity), 'Git identity up to date');
 });
 
@@ -177,6 +284,38 @@ test('checkCommitSigning fails when a test signature from the slot repo fails', 
   assert.match(step.detail, /Fix: import key A41FEC143503D502 on .* and unlock its gpg-agent/);
 });
 
+test('checkCommitSigning reports the default openpgp format paired with an ssh key', async (t) => {
+  const { repo } = await fixture(t);
+  const slot = repo('slot', {
+    ...FARM_IDENTITY,
+    'user.signingkey': '/home/signer/.ssh/signing.pub',
+  });
+  for (const identity of [null, { 'user.email': 'signer@example.com' }]) {
+    const step = await checkCommitSigning(slot, identity, {
+      execute: async () => assert.fail('a mismatched identity must not reach the signing probe'),
+    });
+    assert.equal(step.status, 'fail');
+    assert.match(step.detail, /gpg\.format=openpgp.*user\.signingkey=.*signing\.pub.*ssh key/);
+    assert.match(step.detail, /Fix: set matching user\.signingkey and gpg\.format/);
+    assert.doesNotMatch(step.detail, /import key/);
+  }
+});
+
+test('checkCommitSigning gives ssh key and agent fixes for failed and timed-out probes', async (t) => {
+  const { repo } = await fixture(t);
+  const key = '/home/signer/.ssh/signing.pub';
+  const slot = repo('slot', { ...FARM_IDENTITY, 'user.signingkey': key, 'gpg.format': 'ssh' });
+  for (const exitCode of [1, EXEC_TIMEOUT_EXIT_CODE]) {
+    const step = await checkCommitSigning(slot, null, {
+      execute: async () => ({ exitCode, stdout: "Couldn't load public key", stderr: '' }),
+    });
+    assert.equal(step.status, 'fail');
+    assert.ok(step.detail.includes(`public key file ${key}`));
+    assert.ok(step.detail.includes(`private key or ssh-agent on ${slot.machine}`));
+    assert.doesNotMatch(step.detail, /import key|gpg-agent|pinentry/);
+  }
+});
+
 test('checkCommitSigning passes when the slot repo signs', async (t) => {
   const { repo, gpg } = await fixture(t);
   const slot = repo('slot', { ...FARM_IDENTITY, 'gpg.program': await gpg('gpg-signs', GPG_SIGNS) });
@@ -203,12 +342,12 @@ test('checkCommitSigning fails on a missing user.email before probing the key', 
 });
 
 test('checkCommitSigning names a gpg-agent that does not answer in time', async (t) => {
-  const { repo, gpg } = await fixture(t);
-  const slot = repo('slot', {
-    ...FARM_IDENTITY,
-    'gpg.program': await gpg('gpg-waits', '#!/bin/sh\nsleep 5\n'),
+  const { repo } = await fixture(t);
+  const slot = repo('slot', FARM_IDENTITY);
+  const step = await checkCommitSigning(slot, FARM_IDENTITY, {
+    probeTimeoutMs: 300,
+    execute: async () => ({ exitCode: EXEC_TIMEOUT_EXIT_CODE, stdout: '', stderr: '' }),
   });
-  const step = await checkCommitSigning(slot, FARM_IDENTITY, { probeTimeoutMs: 300 });
   assert.equal(step.status, 'fail');
   assert.match(
     step.detail,

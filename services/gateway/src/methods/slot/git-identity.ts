@@ -10,8 +10,8 @@ import { shellQuote } from '../../core/tmux.js';
 import type { CheckStep } from './shared.js';
 
 /**
- * Git config every slot commits with: one GitHub identity signed with one key,
- * farm-wide. A slot left on its node's defaults pushed unsigned commits (or had
+ * Git config slots commit with: a project identity over farm-wide defaults.
+ * A slot left on its node's defaults pushed unsigned commits (or had
  * no user.email) and branch rules requiring signatures rejected them (GH013).
  */
 export const GIT_IDENTITY_KEYS = [
@@ -33,20 +33,11 @@ export function gitIdentityConfigPath(home = farmslotHome()): string {
   return path.join(home, 'git-identity.json');
 }
 
-/**
- * The farm's git identity from `<FARMSLOT_HOME>/git-identity.json`, keyed by git
- * config name (`{"user.email": "...", "commit.gpgsign": "true", ...}`). Null
- * when the file is absent: prepare then copies nothing.
- */
-export function loadGitIdentity(home = farmslotHome()): GitIdentity | null {
-  const filePath = gitIdentityConfigPath(home);
-  if (!existsSync(filePath)) return null;
-  let data: unknown;
-  try {
-    data = JSON.parse(readFileSync(filePath, 'utf8'));
-  } catch (err) {
-    throw new Error(`Invalid ${filePath}: ${(err as Error).message}`);
-  }
+function signingKeyFormat(key: string): 'ssh' | 'openpgp' {
+  return /^(ssh-|key::)|\.pub$/.test(key) ? 'ssh' : 'openpgp';
+}
+
+function validateGitIdentity(data: unknown, filePath: string): GitIdentity {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error(`Invalid ${filePath}: expected an object of git config values`);
   }
@@ -63,7 +54,49 @@ export function loadGitIdentity(home = farmslotHome()): GitIdentity | null {
       throw new Error(`Invalid ${filePath}: commit.gpgsign must be a git boolean, got ${value}`);
     }
   }
-  return data as GitIdentity;
+  const identity = data as GitIdentity;
+  const key = identity['user.signingkey'];
+  const format = identity['gpg.format'];
+  if (key !== undefined && format !== undefined && format !== signingKeyFormat(key)) {
+    throw new Error(
+      `Invalid ${filePath}: gpg.format=${format} contradicts user.signingkey=${key} (${signingKeyFormat(key)} key)`,
+    );
+  }
+  return identity;
+}
+
+/**
+ * The farm's `<FARMSLOT_HOME>/git-identity.json` keys, overlaid by `projects[projectId]`.
+ * Signing keys imply ssh for ssh-/key:: literals or .pub paths, otherwise openpgp;
+ * an explicit gpg.format must agree. Null when absent: prepare copies nothing.
+ */
+export function loadGitIdentity(home = farmslotHome(), projectId?: string): GitIdentity | null {
+  const filePath = gitIdentityConfigPath(home);
+  if (!existsSync(filePath)) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch (err) {
+    throw new Error(`Invalid ${filePath}: ${(err as Error).message}`);
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(`Invalid ${filePath}: expected an object of git config values`);
+  }
+  const { projects, ...defaults } = data as Record<string, unknown>;
+  const identity = validateGitIdentity(defaults, filePath);
+  let selected = identity;
+  if (projects !== undefined) {
+    if (!projects || typeof projects !== 'object' || Array.isArray(projects)) {
+      throw new Error(`Invalid ${filePath}: projects must be an object of project git identities`);
+    }
+    for (const [project, values] of Object.entries(projects)) {
+      const context = `${filePath} projects.${project}`;
+      const override = validateGitIdentity(values, context);
+      const merged = validateGitIdentity({ ...identity, ...override }, context);
+      if (project === projectId) selected = merged;
+    }
+  }
+  return selected;
 }
 
 /**
@@ -101,6 +134,12 @@ export async function readGitIdentity(
  * host-specific. Returns a one-line summary for the prepare step.
  */
 export async function syncGitIdentity(vars: SlotVars, identity: GitIdentity): Promise<string> {
+  if (identity['user.signingkey'] !== undefined) {
+    identity = {
+      ...identity,
+      'gpg.format': identity['gpg.format'] ?? signingKeyFormat(identity['user.signingkey']),
+    };
+  }
   const current = await readGitIdentity(vars, 'local');
   const changed = GIT_IDENTITY_KEYS.filter(
     (key) => identity[key] !== undefined && identity[key] !== current[key],
@@ -177,6 +216,26 @@ export async function checkCommitSigning(
     };
   }
 
+  const format = identity['gpg.format'] ?? 'openpgp';
+  if (identity['user.signingkey'] && format !== signingKeyFormat(key)) {
+    const farmKey = farmIdentity?.['user.signingkey'];
+    const farmFormat =
+      farmIdentity?.['gpg.format'] ?? (farmKey !== undefined ? signingKeyFormat(farmKey) : format);
+    const fix =
+      farmIdentity && farmFormat === signingKeyFormat(farmKey ?? key)
+        ? prepareFix
+        : 'set matching user.signingkey and gpg.format in the farm git identity and run slot prepare';
+    return {
+      name,
+      status: 'fail',
+      detail: `Signing identity mismatch: gpg.format=${format}, but user.signingkey=${key} is an ${signingKeyFormat(key)} key in ${vars.remoteRepo}. Fix: ${fix}`,
+    };
+  }
+  const fix = identity['user.signingkey']
+    ? format === 'ssh'
+      ? `check public key file ${key} and its matching private key or ssh-agent on ${vars.machine}`
+      : `import key ${key} on ${vars.machine} and unlock its gpg-agent`
+    : 'set user.signingkey in the farm git identity and run slot prepare';
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const timeoutMs = options.probeTimeoutMs ?? SIGNING_PROBE_TIMEOUT_MS;
   const probe = await execute(
@@ -184,10 +243,12 @@ export async function checkCommitSigning(
     timeoutMs,
   );
   if (probe.exitCode === EXEC_TIMEOUT_EXIT_CODE) {
+    const agent = format === 'ssh' ? 'ssh-agent' : 'gpg-agent';
+    const cause = format === 'ssh' ? '' : ' (likely a pinentry waiting for a passphrase)';
     return {
       name,
       status: 'fail',
-      detail: `Commits are signed, but gpg-agent did not answer within ${timeoutMs / 1000} s on ${vars.machine} for key ${key} (likely a pinentry waiting for a passphrase). Fix: unlock the key in gpg-agent on ${vars.machine}`,
+      detail: `Commits are signed, but ${agent} did not answer within ${timeoutMs / 1000} s on ${vars.machine} for key ${key}${cause}. Fix: ${format === 'ssh' ? fix : `unlock the key in gpg-agent on ${vars.machine}`}`,
     };
   }
   if (probe.exitCode !== 0) {
@@ -197,9 +258,6 @@ export async function checkCommitSigning(
       .filter(Boolean)
       .slice(0, 2)
       .join(' | ');
-    const fix = identity['user.signingkey']
-      ? `import key ${key} on ${vars.machine} and unlock its gpg-agent`
-      : 'set user.signingkey in the farm git identity and run slot prepare';
     return {
       name,
       status: 'fail',
