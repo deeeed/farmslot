@@ -35,7 +35,7 @@ function own(t: TestContext, child: ChildProcess): number {
   return pid;
 }
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, shell: string) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-detached-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const identity = path.join(root, 'preflight.identity');
@@ -81,55 +81,61 @@ async function fixture(t: TestContext) {
   assert.ok(descendant > 1);
   const reap = (expectedScope = scope, extraEnv: NodeJS.ProcessEnv = {}) =>
     spawnSync(
-      '/bin/sh',
-      ['-c', buildPrepareIdentityReapCommand(identity, { expectedScope, awaitExit: true })],
+      shell,
+      [
+        ...(shell.endsWith('zsh') ? ['-f'] : []),
+        '-c',
+        buildPrepareIdentityReapCommand(identity, { expectedScope, awaitExit: true }),
+      ],
       { encoding: 'utf8', timeout: 2500, env: { ...process.env, ...extraEnv } },
     );
   return { root, identity, scope, child, descendant, borrowed, reap };
 }
 
-test('prepare cleanup stops detached groups and preserves a borrowed group', async (t) => {
-  const f = await fixture(t);
-  const result = f.reap();
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(running(f.descendant), false, 'detached preflight descendant survived release');
-  assert.equal(running(f.borrowed.pid!), true, 'borrowed resource must survive');
-  assert.equal(existsSync(f.identity), false);
-});
+for (const shell of ['/bin/sh', '/bin/zsh'].filter((candidate) => existsSync(candidate))) {
+  test(`prepare cleanup stops detached groups and preserves a borrowed group (${shell})`, async (t) => {
+    const f = await fixture(t, shell);
+    const result = f.reap();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(running(f.descendant), false, 'detached preflight descendant survived release');
+    assert.equal(running(f.borrowed.pid!), true, 'borrowed resource must survive');
+    assert.equal(existsSync(f.identity), false);
+  });
 
-test('prepare cleanup stops group members after their detached leader exits', async (t) => {
-  const f = await fixture(t);
-  const exited = once(f.child, 'exit');
-  f.child.kill('SIGKILL');
-  await exited;
-  assert.equal(running(f.descendant), true);
-  const result = f.reap();
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(running(f.descendant), false, 'dead leader must not hide live group members');
-});
+  test(`prepare cleanup stops group members after their detached leader exits (${shell})`, async (t) => {
+    const f = await fixture(t, shell);
+    const exited = once(f.child, 'exit');
+    f.child.kill('SIGKILL');
+    await exited;
+    assert.equal(running(f.descendant), true);
+    const result = f.reap();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(running(f.descendant), false, 'dead leader must not hide live group members');
+  });
 
-test('prepare cleanup preserves a successor scope and its detached groups', async (t) => {
-  const f = await fixture(t);
-  const before = readFileSync(f.identity, 'utf8');
-  const result = f.reap('b'.repeat(32));
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(running(f.descendant), true);
-  assert.equal(readFileSync(f.identity, 'utf8'), before);
-});
+  test(`prepare cleanup preserves a successor scope and its detached groups (${shell})`, async (t) => {
+    const f = await fixture(t, shell);
+    const before = readFileSync(f.identity, 'utf8');
+    const result = f.reap('b'.repeat(32));
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(running(f.descendant), true);
+    assert.equal(readFileSync(f.identity, 'utf8'), before);
+  });
 
-test('prepare cleanup retains ownership and refuses release when its census fails', async (t) => {
-  const f = await fixture(t);
-  const before = readFileSync(f.identity, 'utf8');
-  const bin = path.join(f.root, 'bin');
-  mkdirSync(bin);
-  writeFileSync(
-    path.join(bin, 'ps'),
-    '#!/bin/sh\nif [ "$1" = axeww ]; then exit 1; fi\nexec /bin/ps "$@"\n',
-    { mode: 0o755 },
-  );
-  const result = f.reap(f.scope, { PATH: bin + path.delimiter + process.env.PATH });
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /Prepare process census unavailable/);
-  assert.equal(running(f.descendant), true);
-  assert.equal(readFileSync(f.identity, 'utf8'), before);
-});
+  test(`prepare cleanup retains ownership and refuses release when its census fails (${shell})`, async (t) => {
+    const f = await fixture(t, shell);
+    const before = readFileSync(f.identity, 'utf8');
+    const bin = path.join(f.root, 'bin');
+    mkdirSync(bin);
+    writeFileSync(
+      path.join(bin, 'ps'),
+      '#!/bin/sh\nif [ "$1" = axeww ]; then exit 1; fi\nexec /bin/ps "$@"\n',
+      { mode: 0o755 },
+    );
+    const result = f.reap(f.scope, { PATH: bin + path.delimiter + process.env.PATH });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Prepare process census unavailable/);
+    assert.equal(running(f.descendant), true);
+    assert.equal(readFileSync(f.identity, 'utf8'), before);
+  });
+}

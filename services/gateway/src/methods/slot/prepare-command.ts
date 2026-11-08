@@ -352,18 +352,18 @@ export function buildPrepareIdentityReapCommand(
     '  if $valid; then',
     '    groups=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
     '  fi',
-    '  if $matched; then groups="$groups $pgid"; fi',
+    '  if $matched; then groups=$(printf "%s\\n%s\\n" "$groups" "$pgid" | sort -un); fi',
     '  self_group=$(ps -p $$ -o pgid= | tr -d "[:space:]")',
-    '  for group in $groups; do',
+    '  for group in $(printf "%s\\n" "$groups"); do',
     '    if [ "$group" = "$self_group" ]; then echo "Prepare cleanup cannot signal its own group" >&2; exit 1; fi',
     '  done',
-    '  for group in $groups; do kill -TERM -"$group" 2>/dev/null || true; done',
+    '  for group in $(printf "%s\\n" "$groups"); do kill -TERM -"$group" 2>/dev/null || true; done',
     '  if [ -n "$groups" ]; then echo "killed verified preflight group ($groups)"; fi',
   ];
   const awaitExit = opts.awaitExit
     ? [
         `    ${PREPARE_GROUP_ALIVE_FN}`,
-        '    for group in $groups; do',
+        '    for group in $(printf "%s\\n" "$groups"); do',
         '      n=0; while group_alive "$group" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
         // A live scoped member anchors the group even after its leader exits.
         '      if group_alive "$group"; then',
