@@ -670,7 +670,11 @@ export async function retainCapturedRunArtifacts(input: {
       input.run.engineState?.generation,
       input.manifestDigest,
       ...artifacts
-        .filter((artifact) => artifact.path.startsWith('task-actions/'))
+        .filter(
+          (artifact) =>
+            artifact.path.startsWith('task-actions/') ||
+            input.advisoryPaths?.includes(artifact.path),
+        )
         .sort((a, b) => a.path.localeCompare(b.path))
         .map(({ path, sha256 }) => [path, sha256]),
     ]),

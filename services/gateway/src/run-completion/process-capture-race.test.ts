@@ -188,8 +188,16 @@ test('successful output freezes one projection and retains its original document
     completionPolicy: 'artifact-only',
     metrics: { ...getRun(run.id)!.metrics, outcome: 'success' },
   });
+  await captureRunOutput(run.id, false, false);
+  const running = getRun(run.id)!.output!;
   pendingCapture = workerSnapshot(getRun(run.id)!, document);
   await captureRunOutput(run.id, false, true);
+  assert.equal(getRun(run.id)!.output!.manifestDigest, running.manifestDigest);
+  assert.notEqual(
+    getRun(run.id)!.metrics.activity!.process.sourceBundle?.bundleDigest,
+    running.artifactBundle?.bundleDigest,
+    'New frozen sources need a distinct retained capture, outside the reviewed digest',
+  );
   const review = getRun(run.id)!.decisions.find(
     (decision) => decision.payload?.kind === 'output-review',
   );

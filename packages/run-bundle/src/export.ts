@@ -179,8 +179,12 @@ export async function exportRunsToBundle(
           }
         }
         for (const { ref: pinned } of runBundleRefs(run)) {
-          if (pinned && !entry.artifactBundleDigests.includes(pinned.bundleDigest))
-            missingData.push(`historical-capture-not-exported:${run.id}:${pinned.bundleDigest}`);
+          const omission = `historical-capture-not-exported:${run.id}:${pinned.bundleDigest}`;
+          if (
+            !entry.artifactBundleDigests.includes(pinned.bundleDigest) &&
+            !missingData.includes(omission)
+          )
+            missingData.push(omission);
         }
       } else {
         missingData.push(`retention-missing:${run.id}`);
