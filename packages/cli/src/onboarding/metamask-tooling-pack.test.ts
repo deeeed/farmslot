@@ -161,6 +161,17 @@ test('worker templates keep the generated TASK.md out and name the explicit cand
   }
 });
 
+test('each project ships the static review template that request-review loads', () => {
+  for (const name of PROJECTS) {
+    const content = readFileSync(
+      join(pack, 'projects', name, 'templates/worker/review.md'),
+      'utf8',
+    );
+    assert.match(content, /\{\{TASK_DIR\}\}\/\{\{REVIEW_FEEDBACK\}\}/);
+    assert.doesNotMatch(content, / run <recipe>/);
+  }
+});
+
 test('every template passes dispatch admission for the project smoke and proof resource', () => {
   for (const name of PROJECTS) {
     const project = readProject(name);
