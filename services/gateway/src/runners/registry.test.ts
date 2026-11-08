@@ -2692,6 +2692,14 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
     assert.equal(runnerPaneComposerDraftState('❯ hello ctx:45%\n', 'claude'), 'draft');
   });
 
+  it('treats the dim suggestion as empty for the hook-only pre-send guard', () => {
+    const rule = '─'.repeat(40);
+    const pane = `${rule}\n❯ \x1b[2mOpen the task PR.\x1b[0m\n${rule}\n  farm status`;
+    assert.equal(isRunnerPaneRetired('claude'), true);
+    assert.equal(runnerPaneComposerDraftState(pane, 'claude'), 'empty');
+    assert.equal(runnerPaneComposerDraftState(pane.replace('\x1b[2m', ''), 'claude'), 'draft');
+  });
+
   it('does NOT misread a draft that begins with a ctx token as empty', () => {
     // Regression (finding #1): the old `^ctx:\\d+%` prefix test treated real draft text starting
     // with `ctx:N%` as an empty composer → a fresh type would concatenate onto it.

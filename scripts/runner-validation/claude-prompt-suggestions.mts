@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runnerRuntimeDir } from '../lib/runner-runtime.cjs';
+import { runnerPaneComposerDraftState } from '../../services/gateway/src/runners/registry.js';
 import { normalizeInstructionText } from '../../services/gateway/src/runners/observability-prompt-digest.js';
 import { buildClaudeObservabilityFallbackCommand } from '../../services/gateway/src/runners/runner-observability.js';
 
@@ -121,6 +122,8 @@ try {
     });
     const suggestion = visibleSuggestion(ansi);
     assert(suggestion?.includes('\x1b[2m'), 'Proof needs the real dim suggestion still visible');
+    const gatewayGuard = runnerPaneComposerDraftState(ansi, 'claude');
+    assert.equal(gatewayGuard, 'empty');
     const before = baselineRoot ? observe(baselineRoot, pane) : null;
     if (before) {
       assert.equal(before.state, 'claude');
@@ -144,7 +147,7 @@ try {
       suggestion,
       'Observation must leave the real suggestion untouched',
     );
-    rows.push({ pane, before, after, dimSuggestionRemainedVisible: true });
+    rows.push({ pane, before, after, dimSuggestionRemainedVisible: true, gatewayGuard });
   }
   const result = {
     pass: true,
