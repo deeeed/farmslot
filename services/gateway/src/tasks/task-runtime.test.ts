@@ -126,8 +126,8 @@ function wireRequest() {
   return file;
 }
 // The source CLI transpiles its whole module graph on every start (TSX_DISABLE_CACHE in
-// bin/farmslot.mjs): 1.6-4.1 s per start on CI runners. These deadlines catch hangs,
-// not slowness, so they sit above that range.
+// packages/cli/bin/farmslot.mjs), which on a slow CI runner passed 4 s (run 42513053470).
+// These deadlines catch hangs, not slowness.
 const SPAWN = 15_000;
 const CASE = 20_000;
 function cliRun(args: string[], environment: NodeJS.ProcessEnv = env) {
@@ -581,7 +581,7 @@ for (const source of ['state', 'env-file'] as const) {
 
 test(
   'cancellation during provider work closes its subprocess before confirming',
-  { timeout: CASE },
+  { timeout: 5000 },
   async (t) => {
     const fakeCli = path.join(root, 'environment-cli');
     const marker = path.join(root, 'running-child.json');
@@ -624,7 +624,7 @@ test(
 
 test(
   'forced child closeout reaps the process before its thread exits',
-  { timeout: CASE },
+  { timeout: 5000 },
   async (t) => {
     const fakeCli = path.join(root, 'environment-cli');
     const marker = path.join(root, 'term-resistant-child.json');
@@ -678,7 +678,7 @@ test(
 
 test(
   'closed child groups are forgotten before a later cancellation',
-  { timeout: CASE },
+  { timeout: 5000 },
   async (t) => {
     const fakeCli = path.join(root, 'environment-cli');
     const marker = path.join(root, 'closed-child.json');
@@ -731,7 +731,7 @@ test(
 
 test(
   'acknowledged closeout has a final bound when an escaped descendant holds a pipe',
-  { timeout: CASE },
+  { timeout: 5000 },
   async (t) => {
     const fakeCli = path.join(root, 'environment-cli');
     const ready = path.join(root, 'escaped-descendant.json');
