@@ -1883,6 +1883,8 @@ export interface RunSubtaskMetrics {
 }
 
 export interface RunMetrics {
+  /** Frozen original-worker observations shared with analytics and episodes. */
+  activity?: import('./run-activity.js').RunActivityRecord;
   durationMs?: number;
   nudgeCount: number;
   /** ADR-032 Phase 1: tmux nudges that timed out waiting for runner busy-clear. */

@@ -41,7 +41,7 @@ const PI_TOOL_KINDS: Record<string, NativeToolKind> = {
   find: 'search',
   ls: 'search',
 };
-function piTool(name: string, args: unknown): NativeSessionTool {
+export function piTool(name: string, args: unknown): NativeSessionTool {
   const input = args && typeof args === 'object' ? (args as PiRecord) : {};
   const kind = Object.hasOwn(PI_TOOL_KINDS, name) ? PI_TOOL_KINDS[name] : 'other';
   const path = piString(input.path);

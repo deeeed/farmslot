@@ -1,6 +1,7 @@
 import type { WorkerSignalChecklistStepDuration } from '../transport/signal.js';
 
 import type { FlowType, RunLane, RunStatus } from './runs.js';
+import type { RunActivityRecord } from './run-activity.js';
 
 // ─── Pipeline-ops analytics ───
 //
@@ -14,7 +15,7 @@ import type { FlowType, RunLane, RunStatus } from './runs.js';
 // hardcoded table; it is deferred to a later cost lane.
 
 /** Bumped when the on-disk record shape changes in a non-additive way. */
-export const ANALYTICS_RECORD_SCHEMA_VERSION = 2;
+export const ANALYTICS_RECORD_SCHEMA_VERSION = 3;
 
 /**
  * Normalized cause for a non-`done` terminal run. `operator-cancelled` describes a cancelled
@@ -72,6 +73,8 @@ export interface AnalyticsStepRecord {
 /** One emitted record per terminal run. */
 export interface RunAnalyticsRecord {
   schemaVersion: number;
+  /** ADR-032 shared activity; absent on older records, never inferred as zero. */
+  activity?: RunActivityRecord;
   /** Terminal-transition timestamp (when the record was emitted). */
   ts: string;
   runId: string;

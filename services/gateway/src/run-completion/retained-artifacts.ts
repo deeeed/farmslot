@@ -588,6 +588,7 @@ export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
 export async function retainCapturedRunArtifacts(input: {
   run: Run;
   artifacts: readonly ArtifactRef[];
+  advisoryPaths?: readonly string[];
   manifestDigest: string;
   allowChanged?: boolean;
   existingRef?: RunArtifactBundleRef;
@@ -657,6 +658,7 @@ export async function retainCapturedRunArtifacts(input: {
     onMediaArchived: reportRunMediaArchive,
     run: input.run,
     artifacts,
+    advisoryPaths: input.advisoryPaths,
     taskDir,
     gatewayFiles: input.gatewayFiles && {
       taskDir: path.dirname(input.run.taskFile),

@@ -121,6 +121,144 @@ test('retained report survives source mutation/removal and cold store reopen wit
   assert.equal(retried.manifest.bundleId, result.manifest.bundleId);
 });
 
+test('advisory process metadata cannot displace proof media or refuse a capture', async (t) => {
+  const f = await fixture(t);
+  const document = 'worker annotations\n'.repeat(2000);
+  await writeFile(path.join(f.taskDir, 'TASK.md.worker'), document);
+  const diagnostic: ArtifactRef = {
+    path: 'TASK.md.worker',
+    purpose: 'task-input',
+    sha256: createHash('sha256').update(document).digest('hex'),
+    sizeBytes: Buffer.byteLength(document),
+  };
+  const result = await materializeRunBundle({
+    ...f.request,
+    artifacts: [...f.artifacts, diagnostic],
+    advisoryPaths: [diagnostic.path],
+    policy: {
+      maxBundleBytes: 12_000,
+      maxStoreBytes: 1_000_000,
+      metadataReserveBytes: 32_000,
+      mediaRetentionDays: 30,
+    },
+  });
+  assert.deepEqual(result.missingData, ['excluded:TASK.md.worker']);
+  const retained = await readRetainedRunBundle(f.store, result.ref, f.run.id);
+  assert.equal(await retained.readText('artifacts/capture.mp4'), 'video bytes');
+  assert.equal(await retained.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+});
+
+test('changed advisory sidecars are gaps while required captured metadata stays strict', async (t) => {
+  const f = await fixture(t);
+  const original = '# Worker\n';
+  const diagnostic: ArtifactRef = {
+    path: 'TASK.md.worker',
+    purpose: 'task-input',
+    sha256: createHash('sha256').update(original).digest('hex'),
+    sizeBytes: original.length,
+  };
+  await writeFile(path.join(f.taskDir, diagnostic.path), '# A later worker revision\n');
+  const result = await materializeRunBundle({
+    ...f.request,
+    artifacts: [...f.artifacts, diagnostic],
+    advisoryPaths: [diagnostic.path],
+  });
+  assert.ok(result.missingData.includes('excluded:TASK.md.worker'));
+  const retained = await readRetainedRunBundle(f.store, result.ref, f.run.id);
+  assert.equal(await retained.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+});
+
+test('process references preserve original metadata without pinning expired old media', async (t) => {
+  const f = await fixture(t);
+  const now = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const document = '## Root Cause\nThe callback captured stale state.\n';
+  await writeFile(path.join(f.taskDir, 'TASK.md.worker'), document);
+  const digest = createHash('sha256').update(document).digest('hex');
+  const diagnostic: ArtifactRef = {
+    path: 'TASK.md.worker',
+    purpose: 'task-input',
+    sha256: digest,
+    sizeBytes: document.length,
+  };
+  const first = await materializeRunBundle({
+    ...f.request,
+    run: { ...f.run, engineState: { generation: 1 } },
+    artifacts: [...f.artifacts, diagnostic],
+    advisoryPaths: [diagnostic.path],
+  });
+  const missing = { status: 'unavailable' as const, reason: 'not captured' };
+  const unknown = { value: null, reason: 'not captured', references: [] };
+  f.run.metrics.activity = {
+    schemaVersion: 1,
+    process: {
+      schemaVersion: 1,
+      capturedAt: new Date(now).toISOString(),
+      attempt: {
+        runId: f.run.id,
+        contextId: 'primary',
+        attemptId: 'original',
+        role: 'primary',
+        engineGeneration: 1,
+        startedAt: null,
+        frozenAt: new Date(now).toISOString(),
+        executionNodeId: 'node',
+      },
+      sourceBundle: first.ref,
+      sources: [
+        {
+          id: 'document',
+          kind: 'task-artifact',
+          contextId: 'primary',
+          executionNodeId: 'node',
+          clockId: 'node:node',
+          path: diagnostic.path,
+          sha256: digest,
+        },
+      ],
+      checklist: { events: null, expectedSteps: null, complete: null, source: null },
+      commits: null,
+      firstProductEdit: null,
+      firstBaselineRun: null,
+      markCalls: null,
+      rootCause: { present: true, source: { sourceId: 'document' } },
+      coverage: {
+        checklist: missing,
+        commits: missing,
+        productEdits: missing,
+        baseline: missing,
+        markCalls: missing,
+        rootCause: { status: 'complete', reason: 'frozen document' },
+      },
+      labels: { skipped_checklist: unknown, fix_before_baseline: unknown },
+    },
+  };
+  t.mock.timers.tick(1000);
+  f.run.status = 'monitoring';
+  f.run.engineState = { generation: 2 };
+  const current = await materializeRunBundle({
+    ...f.request,
+    run: f.run,
+    captureKey: 'generation-2',
+  });
+  await writeFile(
+    path.join(f.store.runsDir, `${f.run.id}.json`),
+    JSON.stringify({ ...f.run, artifactBundle: current.ref }),
+  );
+  const archiveRoot = path.join(f.root, 'archive');
+  await mkdir(archiveRoot);
+  await collectRunBundleGarbage(f.store, undefined, now + 31 * 86_400_000, {
+    archiveRoot,
+    farmslotRoot: f.root,
+  });
+  const original = await readRetainedRunBundle(f.store, first.ref, f.run.id);
+  assert.equal(await original.readText(diagnostic.path), document);
+  const oldMedia = path.join(original.directory, 'tasks', f.run.id, 'artifacts/capture.mp4');
+  await assert.rejects(stat(oldMedia), { code: 'ENOENT' });
+  const live = await readRetainedRunBundle(f.store, current.ref, f.run.id);
+  assert.equal(await live.readText('artifacts/capture.mp4'), 'video bytes');
+});
+
 test('gateway-written files are retained from their own directory, not the source task', async (t) => {
   const f = await fixture(t);
   const gatewayDir = path.join(f.root, 'gateway-task');

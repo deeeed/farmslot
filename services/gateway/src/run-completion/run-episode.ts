@@ -14,6 +14,7 @@ import {
   isTerminalRunStatus,
   PipelineSteps,
   type Run,
+  type RunProcessActivity,
   type RunArtifactBundleRef,
   type RunBundleEntryMeta,
 } from '@farmslot/protocol';
@@ -26,6 +27,7 @@ import {
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { runsDirectory } from '../runs/store.js';
+import { activityForRun } from '../runs/process-activity.js';
 
 export const RUN_EPISODE_SCHEMA = 'farmslot-episode-v1';
 /** The first retry pass after an upgrade covers runs that ended this long before it. */
@@ -41,6 +43,8 @@ export interface RunEpisodeFile {
 }
 
 export interface RunEpisode {
+  /** The same frozen original-worker projection as RunAnalyticsRecord.activity.process. */
+  process?: RunProcessActivity;
   schema: typeof RUN_EPISODE_SCHEMA;
   runId: string;
   capturedAt: string;
@@ -247,6 +251,7 @@ export function buildRunEpisode(
       : undefined;
   return {
     schema: RUN_EPISODE_SCHEMA,
+    process: activityForRun(run).process,
     runId: run.id,
     capturedAt,
     runUpdatedAt: run.updatedAt,

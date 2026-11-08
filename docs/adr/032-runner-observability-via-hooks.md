@@ -474,3 +474,17 @@ Skill selection, the proof-model dataset and cost/speed reports consume this pro
 ### Public surface
 
 Add optional activity data to `RunAnalyticsRecord` in `@farmslot/protocol`; version its analytics schema. `@farmslot/agent-runtime` normalizes events; gateway analytics aggregates them. Existing readers/exports and harnesses inherit the projection. No new CLI, RPC, repository hook or accounting API. Normative spec and schema review precede implementation.
+
+## Amendment 4: process observations in the shared activity record, 2026-11-08
+
+**Status:** Proposed. This bounded process slice does not adopt the remaining skill, tool or cost attribution work in Amendment 3.
+
+### Decision and rationale
+
+Retain original-worker checklist chronology, commit order and times, product-edit and baseline observations, Root Cause presence and normalized mark calls in `RunAnalyticsRecord.activity.process`. Episodes and offline datasets copy that same projection. Final checklist counts cannot distinguish work marked in order from ticks added after the work.
+
+Freeze source identity, attempt boundaries and coverage during existing worker-output acquisition, before terminal analytics, review reuse or teardown. Persist the projection with the generation-fenced output commit and retain its existing worker sidecars through the ordinary bundle owner. Neither episode recapture nor a later review-fix may replace it. A run without a frozen source records unavailable fields rather than zeros.
+
+### Consequences and public surface
+
+The normative contract is [Run episodes: shared process activity](../reference/run-episodes.md#shared-process-activity). Add optional activity data to the existing analytics and run metrics types, advancing analytics schema to 3 while accepting older rows. Runtime owns structured event normalization; Gateway owns attribution and capture. Only `skipped_checklist` and `fix_before_baseline` are derived, with unknown values where coverage does not support a conclusion. These observations never control admission, completion, review or publication. No additional recorder, telemetry sink, command, RPC or run gate is introduced.
