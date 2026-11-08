@@ -94,6 +94,7 @@ import {
 import { resolveDispatchTargetBranch } from '../methods/dispatch/target-branch.js';
 import {
   assertSlotNotOperatorRoot,
+  probeDefaultBranch,
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
@@ -784,6 +785,22 @@ async function describeSlotClaimBlocker(
   return `slot remains occupied${since}: ${blocker.detail}; release it with \`farmslot slot release ${slotId}\``;
 }
 
+/** Reclaim can restore a blind trial's Git; the saved repo verdict predates that restore. */
+async function reclaimCancelledSlotForSelection(
+  slotId: string,
+  requestingRunId: string,
+): Promise<boolean> {
+  if (!(await reclaimCancelledSlot(slotId, requestingRunId))) return false;
+  const vars = await loadSlotVars(slotId);
+  const { projectJson } = await loadProjectVars(vars.projectName);
+  const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
+  const probe = await probeDefaultBranch(vars, defaultBranch);
+  if (!probe.readable)
+    throw new Error(`Slot ${slotId}: cannot re-probe reclaimed repo: ${probe.error}`);
+  await updateSlotStatus(slotId, { repo_blocker: probe.blocker });
+  return true;
+}
+
 /**
  * Preview an explicit slot pick once the slot can be claimed. Explicit picks
  * land right after the previous run on that slot ended, and its teardown runs
@@ -817,7 +834,7 @@ export async function previewWhenSlotClaimable<T>(
     now = Date.now,
     sleep = delay,
     timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
-    reclaimCancelled = reclaimCancelledSlot,
+    reclaimCancelled = reclaimCancelledSlotForSelection,
     wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
   } = deps;
   const assertRunUnchanged = () => {
@@ -1626,10 +1643,12 @@ async function findSlotAttempt(
         phase: null,
         currentRunId: null,
         agent: 'idle' as const,
+        // Cleanup may restore the repo. Its current verdict is checked after reclaim.
+        repoBlocker: undefined,
       };
       const selected = optionsFor(available);
       if (!selected || validateSlotForDispatch(available, fleet.slots, selected)) continue;
-      if (await reclaimCancelledSlot(slot.slot, runId)) {
+      if (await reclaimCancelledSlotForSelection(slot.slot, runId)) {
         // Selection and source/pressure admission must use the post-cleanup fleet.
         return executeFindSlotStep(runId, getRun(runId) ?? run, generation, context);
       }
