@@ -11,6 +11,8 @@ export interface BlindGitSpec {
   capsule: string;
   /** Other slot checkouts on the node, which the worker sandbox cannot read. */
   siblingRepos?: string[];
+  /** The node's farm configuration (its slot pool), which the worker sandbox cannot write. */
+  farmConfigRoots?: string[];
   runId: string;
   branch: string;
   baseSha: string;

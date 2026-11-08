@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -66,12 +74,17 @@ for (const linked of [false, true])
     writeFileSync(path.join(sibling, 'answer.txt'), 'reference\n');
     if (linked) git(source, 'worktree', 'add', '-q', '--detach', repo, 'main');
     writeFileSync(path.join(repo, 'private-input.txt'), 'preserved\n');
+    const farmPool = path.join(root, 'farm/pool');
+    mkdirSync(farmPool, { recursive: true });
+    writeFileSync(path.join(farmPool, 'node.json'), 'live pool\n');
+    symlinkSync(path.join(farmPool, 'node.json'), path.join(root, 'pool-link.json'));
     const spec: BlindGitSpec = {
       slotId: 'fixture-slot',
       slotEpoch: 1,
       repo,
       capsule: path.join(root, '.farmslot-blind-evals/fixture-slot/trial-1-1'),
       siblingRepos: [sibling],
+      farmConfigRoots: [farmPool],
       runId: 'trial-1',
       branch: 'eval/trial-1',
       baseSha: base,
@@ -153,6 +166,11 @@ module['boundary'](json.loads(sys.argv[2]))
             '! gh pr list --repo owner/reference',
             '! printf "protocol=https\\nhost=github.com\\n\\n" | git credential fill',
             '! git ls-remote ssh://git@github.com/owner/reference.git',
+            // The node's live pool is not writable, directly or through a link.
+            `test "$(cat ${q(path.join(farmPool, 'node.json'))})" = 'live pool'`,
+            `! sh -c 'printf x > ${path.join(farmPool, 'node.json')}'`,
+            `! sh -c 'printf x > ${path.join(root, 'pool-link.json')}'`,
+            `! touch ${q(path.join(farmPool, 'new.json'))}`,
           ].join(' && '),
           spec.capsule,
         ),
@@ -164,6 +182,7 @@ module['boundary'](json.loads(sys.argv[2]))
       },
     );
     assert.equal(worker.status, 0, worker.stderr);
+    assert.equal(readFileSync(path.join(farmPool, 'node.json'), 'utf8'), 'live pool\n');
     const attempts = readFileSync(path.join(spec.capsule, 'boundary/attempts.log'), 'utf8');
     assert.match(attempts, /^gh pr list --repo owner\/reference\ncredential get github.com\n/u);
     // Git may first probe the SSH variant; the transport attempt itself is recorded either way.

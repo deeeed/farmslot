@@ -276,6 +276,7 @@ test('the worker boundary denies sibling checkouts at the path their own slot re
   };
   assert.equal(spec('isolate').siblingRepos, undefined);
   assert.deepEqual(spec('boundary').siblingRepos, ['/farm/slots/sibling']);
+  assert.deepEqual(spec('boundary').farmConfigRoots, ['/farm/pool']);
 });
 
 test('a recorded GitHub access attempt makes the frozen first output invalid', async (t) => {
@@ -354,6 +355,8 @@ test('proof dispatch preserves the sibling restrictions installed during prepare
     .filter((command) => command.includes('"action":"boundary"'))
     .map((command) => JSON.parse(command.slice(command.indexOf("'") + 1, command.indexOf("' <<"))));
   assert.equal(boundaries.length, 2);
-  for (const boundary of boundaries)
+  for (const boundary of boundaries) {
     assert.deepEqual(boundary.siblingRepos, ['/farm/slots/sibling']);
+    assert.deepEqual(boundary.farmConfigRoots, ['/farm/pool']);
+  }
 });

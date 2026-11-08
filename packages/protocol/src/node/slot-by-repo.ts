@@ -133,8 +133,8 @@ export async function findSlotByRepo<P extends SlotPoolFile = SlotPoolFile>(
       const expanded = repo.startsWith('~/') ? path.join(homedir(), repo.slice(2)) : repo;
       if (!path.isAbsolute(expanded)) continue;
       const real = await realpath(expanded).catch((err: NodeJS.ErrnoException) => {
-        // A pool entry pointing at a missing checkout is a normal non-match.
-        if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
+        // A missing checkout, or one a sandboxed caller may not read, is a normal non-match.
+        if (['ENOENT', 'ENOTDIR', 'EPERM', 'EACCES'].includes(err.code ?? '')) return null;
         throw err;
       });
       if (real !== realTarget) continue;
