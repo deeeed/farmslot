@@ -88,6 +88,19 @@ test('each project owns a distinct sibling Mobile checkout and never names a pro
   }
 });
 
+test('the wallet is applied only by its explicit operator action, never on acquire or reuse', () => {
+  for (const name of PROJECTS) {
+    const project = readProject(name);
+    const { slot_actions: actions, ...rest } = project;
+    assert.doesNotMatch(JSON.stringify(rest), /mobile-fixture|fixtures (init|set)/);
+    const command = String(actions?.['mobile-wallet-fixture']?.command);
+    assert.match(
+      command,
+      /mobile-fixture [a-z-]+ "\{\{repo\}\}" "\{\{mobile_repo\}\}" "\{\{slot_id\}\}" "\{\{port\}\}" "\{\{simulator\}\}"$/,
+    );
+  }
+});
+
 test('project commands use the support root every lifecycle path expands', () => {
   // Onboarding's bash lifecycle, resources and slot actions expand farmslot_dir;
   // gateway prepare remaps it to the node bundle. node_support_dir is not expanded there.
@@ -402,11 +415,25 @@ test('a second slot of the same project cannot claim or stop another slot Mobile
     join(harness, 'package.json'),
     JSON.stringify({ name: '@deeeed/metamask-harness', bin: { 'mm-harness': 'bin/mm-harness' } }),
   );
-  writeFileSync(join(harness, 'bin/mm-harness'), '#!/bin/sh\necho ran "$@"\n', { mode: 0o755 });
+  // Records every published-harness call; doctor's liveness gate follows LIVE.
+  const calls = join(root, 'harness-calls.log');
+  writeFileSync(
+    join(harness, 'bin/mm-harness'),
+    `#!/bin/sh\necho "$*" >> "${calls}"\necho ran "$@"\n[ "$1" != doctor ] || [ "$LIVE" = 1 ]\n`,
+    { mode: 0o755 },
+  );
   const env = { FARMSLOT_NODE22_BIN: bin, MM_HARNESS_PACKAGE_ROOT: harness };
-  const fixtureRun = tooling(['mobile-fixture', 'harness', repo, mobile, 'mini-mmh-2'], env);
+  const harnessCalls = () =>
+    existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [];
+  const applyWallet = (slot: string, live: boolean) =>
+    tooling(['mobile-fixture', 'harness', repo, mobile, slot, '9400', 'sim-1'], {
+      ...env,
+      LIVE: live ? '1' : '0',
+    });
+  const fixtureRun = applyWallet('mini-mmh-2', true);
   assert.equal(fixtureRun.status, 1);
   assert.match(fixtureRun.stderr, /owned by metamask-harness-farm\/mini-mmh-1/);
+  assert.deepEqual(harnessCalls(), []);
   // Dependency setup would run Yarn in the owner's checkout; it refuses before Yarn.
   const deps = tooling(['mobile-deps', 'harness', repo, mobile, 'mini-mmh-2'], {
     ...env,
@@ -415,15 +442,24 @@ test('a second slot of the same project cannot claim or stop another slot Mobile
   assert.equal(deps.status, 1);
   assert.match(deps.stderr, /owned by metamask-harness-farm\/mini-mmh-1/);
   assert.equal(existsSync(join(mobile, 'node_modules')), false);
-  const ownerFixture = tooling(['mobile-fixture', 'harness', repo, mobile, 'mini-mmh-1'], env);
-  assert.equal(ownerFixture.status, 0, ownerFixture.stderr);
-  assert.match(
-    ownerFixture.stdout,
-    new RegExp(
-      `^ran fixtures init --from ${realpathSync(mobile)}/temp/recipe/private/wallet-fixture\\.json`,
-      'm',
-    ),
-  );
+  // The owner's app is not running: refuse after the liveness check, before any write.
+  const notLive = applyWallet('mini-mmh-1', false);
+  assert.equal(notLive.status, 1);
+  assert.match(notLive.stderr, /boot this slot's dev-server resource/);
+  const wallet = `${realpathSync(mobile)}/temp/recipe/private/wallet-fixture.json`;
+  const target = `--adapter mobile --target ${realpathSync(mobile)}`;
+  const doctor = `doctor ${target} --watcher-port 9400 --runtime-dir temp/recipe/runtime --device sim-1 --expect-live`;
+  assert.deepEqual(harnessCalls(), [doctor]);
+  // Live: stage the private input, then apply it to the running app, in that order.
+  rmSync(calls);
+  const applied = applyWallet('mini-mmh-1', true);
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.deepEqual(harnessCalls(), [
+    doctor,
+    `fixtures init --from ${wallet} --force ${target} --json`,
+    `fixtures set ${target} --device sim-1 --json`,
+  ]);
+  rmSync(calls);
   const stop = tooling(['mobile-stop', 'harness', repo, mobile, '9400', 'sim', 'mini-mmh-2'], env);
   assert.equal(stop.status, 0, stop.stderr);
   assert.match(stop.stdout, /nothing to stop/);

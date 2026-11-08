@@ -21,7 +21,9 @@ Usage: tooling.sh <command> <kind> <repo> [args...]
   retained-library <kind> <repo> <task-dir>   Print the verified retained Perps library
   mobile-deps    <kind> <repo> <mobile-repo> <slot>  Locked install if needed, then setup:expo
   mobile-client  <kind> <repo> <mobile-repo> <port> <simulator> <slot>
-  mobile-fixture <kind> <repo> <mobile-repo> <slot>   Reads <mobile>/temp/recipe/private/wallet-fixture.json
+  mobile-fixture <kind> <repo> <mobile-repo> <slot> <port> <simulator>
+                 One-time operator action: stage <mobile>/temp/recipe/private/wallet-fixture.json
+                 and apply it to the running owned app. Never run on acquire or reuse.
   mobile-boot    <kind> <repo> <mobile-repo> <port> <simulator> <slot> <farmslot-dir>
   mobile-health  <kind> <repo> <mobile-repo> <port> <simulator>
   mobile-stop    <kind> <repo> <mobile-repo> <port> <simulator> <slot>
@@ -218,16 +220,24 @@ case "$command" in
       --device "$simulator" --watcher-port "$port" --runtime-dir "$mobile_runtime_dir" --json
     ;;
   mobile-fixture)
-    [ "$#" -ge 2 ] || usage
+    [ "$#" -ge 4 ] || usage
     require_repo
     activate_node
-    mobile="$(require_mobile "$1")"
-    claim_mobile "$mobile" "$2"
+    mobile="$(require_mobile "$1")"; slot="$2"; port="$3"; simulator="$4"
+    claim_mobile "$mobile" "$slot"
+    require_simulator "$simulator"
     fixture="$mobile/$mobile_wallet_input"
     [ -f "$fixture" ] || fail "approved testnet wallet fixture not found: $fixture" \
       "fill the pack's fixtures/runtime/wallet-fixture.json.sample with the approved testnet wallet and save it on this node as $fixture"
     harness_bin="$(published_harness)"
-    exec "$harness_bin" fixtures init --from "$fixture" --force --adapter mobile --target "$mobile" --json
+    # `fixtures set` writes into the running app, so the owned runtime must be live.
+    "$harness_bin" doctor --adapter mobile --target "$mobile" --watcher-port "$port" \
+      --runtime-dir "$mobile_runtime_dir" --device "$simulator" --expect-live \
+      || fail "the owned Mobile app is not running on port $port" \
+        "boot this slot's dev-server resource (owned Metro and dev client), then run this action again"
+    # Stage the canonical fixture, then apply it to the app; init alone applies nothing.
+    "$harness_bin" fixtures init --from "$fixture" --force --adapter mobile --target "$mobile" --json
+    exec "$harness_bin" fixtures set --adapter mobile --target "$mobile" --device "$simulator" --json
     ;;
   mobile-boot)
     [ "$#" -ge 5 ] || usage

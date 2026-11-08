@@ -310,11 +310,12 @@
     },
     "mobile-wallet-fixture": {
       "label": "Apply approved testnet wallet fixture",
-      "description": "Install the approved testnet wallet that the operator saved on this node at <owned Mobile checkout>/temp/recipe/private/wallet-fixture.json.",
-      "command": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" mobile-fixture harness \"{{repo}}\" \"{{mobile_repo}}\" \"{{slot_id}}\"",
+      "description": "One-time operator action. Requires this slot's dev-server resource to be booted. Stages the approved testnet wallet saved on this node at <owned Mobile checkout>/temp/recipe/private/wallet-fixture.json, then applies it to the running app.",
+      "command": "bash \"{{farmslot_dir}}/projects/metamask-harness-farm/scripts/tooling.sh\" mobile-fixture harness \"{{repo}}\" \"{{mobile_repo}}\" \"{{slot_id}}\" \"{{port}}\" \"{{simulator}}\"",
       "refresh": [
         "resources"
-      ]
+      ],
+      "timeoutMs": 300000
     },
     "tooling-candidate": {
       "label": "Show after-fix candidate",

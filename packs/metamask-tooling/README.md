@@ -26,8 +26,11 @@ The `mobile-proof` runtime capability acquires that fixture only when proof need
 Provision once per slot, after registration:
 
 1. Clone `MetaMask/metamask-mobile` to the sibling path.
-2. Run the slot actions: **Install owned Mobile dependencies** (with `MOBILE_NODE_BIN`: `yarn install --immutable` when the checkout has no install state, then Mobile's own `yarn setup:expo`, which builds nothing native), then **Install Mobile dev client** (the published harness's `provision runway ios`).
-3. Fill `metamask-harness-farm/fixtures/runtime/wallet-fixture.json.sample` with the approved testnet wallet and save it on the node as `<owned Mobile checkout>/temp/recipe/private/wallet-fixture.json` (mode 600; Mobile ignores `temp/`). Then run **Apply approved testnet wallet fixture**. Private input never lives in pack sources, which may be read-only source locks.
+2. Provision the approved private Mobile runtime environment (`.js.env` and the other env files Mobile reads) into the owned checkout on the node. It stays node-local and never enters Git or the pack. The example env that Mobile's setup writes does not authorize the testnet RPC, so `launch --verify` refuses it.
+3. Run the slot actions **Install owned Mobile dependencies** (with `MOBILE_NODE_BIN`: `yarn install --immutable` when the checkout has no install state, then Mobile's own `yarn setup:expo`, which builds nothing native) and **Install Mobile dev client** (the published harness's `provision runway ios`).
+4. Fill `metamask-harness-farm/fixtures/runtime/wallet-fixture.json.sample` with the approved testnet wallet and save it on the node as `<owned Mobile checkout>/temp/recipe/private/wallet-fixture.json` (mode 600; Mobile ignores `temp/`). Private input never lives in pack sources, which may be read-only source locks.
+5. Boot this slot's `dev-server` resource (owned Metro and dev client).
+6. Run **Apply approved testnet wallet fixture** once. It refuses another slot's checkout, refuses unless the owned app is live (`doctor --expect-live`), then runs the published `fixtures init` and `fixtures set` against the running app. Acquire, reuse and review fixes never reseed the wallet.
 
 ## Checks and Node
 
