@@ -342,6 +342,7 @@ function scoreRecipeShape(input) {
       recipe: stableDigest(recipe),
       criteria: stableDigest({ criteria, nonLocalCriteria: input.nonLocalCriteria ?? [] }),
       catalog: stableDigest({
+        adapter: catalog.adapter ?? null,
         available: catalog.available,
         blocks: catalog.blocks ?? [],
         sources: catalog.sources ?? [],

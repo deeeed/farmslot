@@ -34,6 +34,7 @@ function parseCatalog(text: string | null): RecipeShapeCatalog | null {
   if (
     !isRecord(data) ||
     typeof data.available !== 'boolean' ||
+    (data.adapter !== undefined && data.adapter !== null && typeof data.adapter !== 'string') ||
     !Array.isArray(data.blocks) ||
     data.blocks.length > 2048 ||
     !Array.isArray(data.sources)
@@ -75,7 +76,12 @@ function parseCatalog(text: string | null): RecipeShapeCatalog | null {
       return null;
     sources.push({ name: source.name, revision: source.revision, fingerprint: source.fingerprint });
   }
-  return { available: data.available, blocks, sources };
+  return {
+    available: data.available,
+    blocks,
+    sources,
+    adapter: typeof data.adapter === 'string' ? data.adapter : null,
+  };
 }
 function receiptSources(text: string | null) {
   if (!text) return null;
@@ -95,7 +101,10 @@ function receiptSources(text: string | null) {
       fingerprint: typeof library.sourceFingerprint === 'string' ? library.sourceFingerprint : null,
     });
   }
-  return result.sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    sources: result.sort((a, b) => a.name.localeCompare(b.name)),
+    adapter: typeof data.bindingIdentity.adapter === 'string' ? data.bindingIdentity.adapter : null,
+  };
 }
 export async function readRecipeShapeFeedback(
   input: ShapeReadInput,
@@ -154,7 +163,10 @@ export async function readRecipeShapeFeedback(
   const declared = catalog.sources
     .filter((source) => source.name !== 'task-local')
     .sort((a, b) => a.name.localeCompare(b.name));
-  if (stableDigest(sources) !== stableDigest(declared))
+  if (
+    stableDigest(sources.sources) !== stableDigest(declared) ||
+    sources.adapter !== (catalog.adapter ?? null)
+  )
     return unavailable(
       'Shape catalog sources do not match the frozen binding receipt; run feedback again.',
     );

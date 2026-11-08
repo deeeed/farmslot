@@ -739,3 +739,41 @@ test('shape feedback survives worker-core fallback without changing the structur
   assert.equal(missing.artifact.shape?.status, 'unavailable');
   assert.equal(missing.artifact.verdict, 'pass');
 });
+
+test('shape catalog active adapter must match the frozen binding receipt', async () => {
+  const { scoreRecipeShape } = await import('@farmslot/protocol/recipe-shape.mjs');
+  const { buildRecipeQualityArtifact } = await import('@farmslot/agent-runtime');
+  const recipe = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Observe state',
+    workflow: {
+      entry: 'read',
+      nodes: {
+        read: { action: 'command', cmd: 'true', intent: 'Read state', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  };
+  const catalog = { available: true, blocks: [], sources: [], adapter: 'terminal' };
+  const shape = scoreRecipeShape({ recipe, criteria: [], catalog });
+  const artifact = buildRecipeQualityArtifact({
+    verdict: 'pass',
+    reasons: ['Existing core quality'],
+    producer: 'worker',
+    shape,
+  });
+  const evaluation = await loadRecipeQualityEvaluation({
+    run: makeRun({ taskFile: null }),
+    recipeJson: JSON.stringify(recipe),
+    recipeQualityArtifact: artifact,
+    recipeQualityArtifactIsStale: true,
+    readShapeTexts: async () => ({
+      catalog: JSON.stringify(catalog),
+      binding: JSON.stringify({ bindingIdentity: { libraries: [], adapter: 'mobile' } }),
+    }),
+  });
+  assert.equal(evaluation.artifact.verdict, 'pass');
+  assert.equal(evaluation.artifact.shape?.status, 'unavailable');
+  assert.equal(evaluation.artifact.shape?.eligibleForImitation, false);
+  assert.match(evaluation.artifact.shape?.hints[0]?.message ?? '', /frozen binding receipt/);
+});

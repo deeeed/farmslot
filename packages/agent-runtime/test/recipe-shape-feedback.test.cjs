@@ -7,6 +7,35 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { collectShapeCatalog } = require('../scripts/recipe-shape-feedback.cjs');
 
+test('configured and task-local catalogs use the frozen custom adapter without a manifest', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'farm-shape-adapter-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const task = path.join(root, 'task'),
+    lib = path.join(root, 'library');
+  const write = (file, value) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(value));
+  };
+  const recipe = {
+    workflow: {
+      entry: 'go',
+      nodes: {
+        go: { action: 'app.navigate', route: 'state', next: 'check' },
+        check: { action: 'assert_output', contains: 'ready' },
+      },
+    },
+  };
+  write(path.join(task, 'inputs/recipe-binding.json'), {
+    identity: { adapter: 'terminal', libraries: [{ name: 'proof', path: lib }] },
+  });
+  write(path.join(lib, 'recipes/terminal/observe.recipe.json'), recipe);
+  write(path.join(lib, 'recipes/mobile/foreign.recipe.json'), recipe);
+  write(path.join(task, 'artifacts/recipe-library/recipes/terminal/ac/ac1.recipe.json'), recipe);
+  const catalog = collectShapeCatalog(task);
+  assert.equal(catalog.adapter, 'terminal');
+  assert.deepEqual(catalog.blocks.map((block) => block.ref).sort(), ['ac.ac1', 'proof.observe']);
+});
+
 test('Farm feedback teaches parameterization before completion and preserves core quality', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'farm-shape-feedback-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

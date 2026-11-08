@@ -35,8 +35,13 @@ function collectDocuments(directory) {
   }
   return documents;
 }
-function catalogForSources(libraries, local = []) {
-  const catalog = { available: Array.isArray(libraries), blocks: [], sources: [] };
+function catalogForSources(libraries, local = [], adapter) {
+  const catalog = {
+    available: Array.isArray(libraries),
+    blocks: [],
+    sources: [],
+    adapter: adapter ?? null,
+  };
   if (!Array.isArray(libraries)) return catalog;
   for (const library of libraries) {
     catalog.sources.push({
@@ -55,6 +60,7 @@ function catalogForSources(libraries, local = []) {
         library.name,
         path.relative(root, file),
         meta.platforms ?? [],
+        adapter,
       );
       const block = ref ? shape.recipeShapeBlock(ref, recipe) : null;
       if (block) catalog.blocks.push(block);
@@ -69,7 +75,7 @@ function catalogForSources(libraries, local = []) {
       ),
     });
     for (const { relativePath, recipe } of local) {
-      const ref = shape.recipeShapeLibraryRef(null, relativePath);
+      const ref = shape.recipeShapeLibraryRef(null, relativePath, [], adapter);
       const block = ref ? shape.recipeShapeBlock(ref, recipe) : null;
       if (block) catalog.blocks.push(block);
     }
@@ -83,15 +89,18 @@ function catalogForSources(libraries, local = []) {
 function collectShapeCatalog(taskDir) {
   const binding = optionalJson(path.join(taskDir, 'inputs/recipe-binding.json'));
   const receipt = optionalJson(path.join(taskDir, 'artifacts/harness-provenance.json'));
-  const libraries = (receipt?.bindingIdentity ?? binding?.identity)?.libraries;
+  const identity = receipt?.bindingIdentity ?? binding?.identity;
+  const libraries = identity?.libraries;
+  const adapter = identity?.adapter;
   const localRoot = path.join(taskDir, 'artifacts/recipe-library');
   const local = collectDocuments(localRoot).map(({ file, recipe }) => ({
     relativePath: path.relative(localRoot, file),
     recipe,
   }));
-  if (!Array.isArray(libraries)) return catalogForSources(libraries, local);
+  if (!Array.isArray(libraries)) return catalogForSources(libraries, local, adapter);
   const cacheKey = shape.stableDigest({
     policy: shape.POLICY_VERSION,
+    adapter: adapter ?? null,
     libraries: libraries.map((lib) => [
       lib.name,
       lib.head ?? null,
@@ -109,7 +118,7 @@ function collectShapeCatalog(taskDir) {
     cached.available
   )
     return cached;
-  return { ...catalogForSources(libraries, local), cacheKey };
+  return { ...catalogForSources(libraries, local, adapter), cacheKey };
 }
 function writeIfChanged(file, text) {
   let current;

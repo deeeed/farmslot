@@ -15,6 +15,7 @@ export interface RecipeShapeSource {
   fingerprint: string | null;
 }
 export interface RecipeShapeCatalog {
+  adapter?: string | null;
   available: boolean;
   blocks: RecipeShapeBlock[];
   sources: RecipeShapeSource[];
