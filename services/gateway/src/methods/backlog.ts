@@ -18,6 +18,7 @@ import {
 } from '@farmslot/protocol';
 
 import { getBacklogRefinementSession, startBacklogRefinement } from '../backlog/refinement.js';
+import { archiveFailedRunsBeforeEnqueue } from '../backlog/standing-rerun.js';
 import {
   archiveBacklogItem,
   autoDispatchBacklogReady,
@@ -55,8 +56,14 @@ export const backlogMarkReady = async (params: BacklogMarkReadyParams) => {
 };
 export const backlogArchive = (params: BacklogArchiveParams) =>
   archiveBacklogItem(params, currentSessionOriginator());
-export const backlogEnqueue = (params: BacklogEnqueueParams) =>
-  enqueueBacklogItem(params, {}, currentSessionOriginator());
+export const backlogEnqueue = async (
+  params: BacklogEnqueueParams,
+  emit: (event: string, payload: unknown) => void,
+) => {
+  // A multi-PR item's failed runs hold its ticket and slot until archived (ADR-044 Amendment 2).
+  const archivedPriorRunIds = await archiveFailedRunsBeforeEnqueue(params.itemId, emit);
+  return enqueueBacklogItem(params, { archivedPriorRunIds }, currentSessionOriginator());
+};
 export const backlogDequeue = (params: BacklogDequeueParams) =>
   dequeueBacklogItem(params, currentSessionOriginator());
 export const backlogAutoDispatchTick = (params: BacklogAutoDispatchTickParams = {}) =>

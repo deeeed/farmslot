@@ -314,3 +314,27 @@ Rules:
   calling `run.create` with a ticket it cannot have. `multiPr` returns the item to `ready` after a
   good night; after a failed or blocked one the trigger calls `backlog.markReady` first, because
   `backlog.enqueue` takes only a `ready` item.
+
+## Amendment 2 (2026-11-09): A multi-PR item starts again after a failed run
+
+A failed, unarchived run counts as active (`isActiveListRun`). It keeps its ticket, because
+`run.create` refuses a second active run on it, and its slot, because the fleet refresh re-holds an
+active run's slot. Only a run that completed and released its slot, or archive, frees them. A
+`multiPr` item runs one ticket again and again (slices, or a standing nightly item), so after a
+failed run it could not start until someone archived that run by hand. A done or cancelled run
+blocks nothing.
+
+When a `multiPr` item is enqueued for its next run (`backlog.enqueue`, the only way a `multiPr`
+item is queued: auto-dispatch and work graphs refuse them), it first archives that item's failed,
+unarchived runs on the ticket through the supported archive path (slot-release guards, history kept
+in the run archive). This has to happen before the queue row exists: the dispatcher picks a slot
+before it calls `run.create`, and a failed run still holds its slot. The ids ride on the queue item
+(`QueueItem.archivedPriorRunIds`) and the dispatcher records them on the new run
+(`Run.archivedPriorRunIds`), so a failed night stays traceable from the next one. Nothing is archived
+when any other active run is on the ticket, a live run or another item's run: the next run then waits
+or is refused as before. Any item that is not `multiPr` is unchanged.
+
+Archived runs cannot be replayed, but a done earlier run can. `run.replayStep` refuses any run of a
+`multiPr` item except the one the item currently links with no queue link
+(`supersededMultiPrRunReplayRefusal`): replaying an earlier run would put a second live run on the
+ticket, and its later observations could take the item back. Start a new run from the item instead.

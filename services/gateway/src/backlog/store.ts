@@ -2021,7 +2021,7 @@ function reserveCandidateAttempt(item: BacklogItem, queueItem: QueueItem): void 
 
 async function buildBacklogQueueParams(
   item: BacklogItem,
-  options: { workGraphId?: string; workNodeId?: string },
+  options: { workGraphId?: string; workNodeId?: string; archivedPriorRunIds?: string[] },
   candidate?: BacklogLaunchCandidate,
   baselineRun?: Run,
 ): Promise<InternalDispatchQueueAddParams> {
@@ -2032,6 +2032,7 @@ async function buildBacklogQueueParams(
     backlogItemId: item.id,
     workGraphId: options.workGraphId,
     workNodeId: options.workNodeId,
+    archivedPriorRunIds: options.archivedPriorRunIds,
     launchPlanId: item.launchPlan?.id,
     launchCandidateId: candidate?.id,
     launchGroupId: item.launchPlanState?.launchGroupId,
@@ -2102,6 +2103,8 @@ export async function enqueueBacklogItem(
     workGraphId?: string;
     workNodeId?: string;
     dispatchOriginator?: WorkOriginator;
+    /** Failed runs of this multi-PR item archived just before (standing-rerun.ts). */
+    archivedPriorRunIds?: string[];
   } = {},
   originator?: WorkOriginator,
 ): Promise<BacklogEnqueueResult> {
@@ -2398,6 +2401,23 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
     }
     await applyRunStartToItem(item, run, 'run-started');
   });
+}
+
+/**
+ * A multi-PR item advances only through its linked run. Its other runs stay unarchived
+ * between nights, and replaying one would put a second live run on the ticket.
+ */
+export function supersededMultiPrRunReplayRefusal(
+  run: Pick<Run, 'id' | 'backlogItemId'>,
+): string | null {
+  const item = run.backlogItemId
+    ? items.find((candidate) => candidate.id === run.backlogItemId)
+    : undefined;
+  if (!item?.multiPr || (item.runId === run.id && !item.queuedQueueItemId)) return null;
+  return (
+    `Run ${run.id.slice(0, 8)} is an earlier run of multi-PR backlog item ${item.sourceRef}; ` +
+    'replaying it would start a second run on the ticket. Start a new run from the item instead.'
+  );
 }
 
 export function isValidManualBacklogRunHandoff(

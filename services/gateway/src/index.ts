@@ -699,6 +699,9 @@ async function main(): Promise<void> {
         beforeCreate,
         afterCreateSync: (created) => {
           if (item.prWork) created.prWork = structuredClone(item.prWork);
+          // A failed night stays traceable from the next one (ADR-044 Amendment 2).
+          if (item.archivedPriorRunIds?.length)
+            created.archivedPriorRunIds = [...item.archivedPriorRunIds];
           // The dispatch-queue wait becomes the first step's queue time.
           created.queuedAt = item.createdAt;
           stampQueueItemRunId(item.id, created.id);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -1190,6 +1190,142 @@ test('manual backlog run handoff normalizes manual refs', async () => {
   assert.equal(
     backlog.isValidManualBacklogRunHandoff(created.item.id, 'manual-000001', 'other-project'),
     false,
+  );
+});
+
+async function standingNightFixture(t: import('node:test').TestContext) {
+  const { backlog, runStore } = await freshStores();
+  const { archiveFailedRunsBeforeEnqueue } = await import('./standing-rerun.js');
+  const item = (
+    await backlog.createBacklogItem(
+      {
+        project: 'farmslot-farm',
+        title: 'Nightly device build',
+        sourceKind: 'manual',
+        // Runs outlive freshStores, so other tests' MANUAL-000001 runs would collide.
+        sourceRef: `manual-${100000 + Math.floor(Math.random() * 800000)}`,
+        flowType: 'dev',
+        status: 'ready',
+        multiPr: true,
+      },
+      { kind: 'system' },
+    )
+  ).item;
+  const runs: string[] = [];
+  t.after(async () => {
+    for (const id of runs) {
+      if (!runStore.getRun(id)) continue;
+      runStore.updateRun(id, { status: 'done', completedAt: new Date().toISOString() });
+      await runStore.deleteRun(id);
+    }
+  });
+  const earlierNight = (status: 'done' | 'failed' | 'monitoring', backlogItemId = item.id) => {
+    const run = runStore.createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: item.sourceRef,
+    });
+    runs.push(run.id);
+    runStore.updateRun(run.id, { status, backlogItemId });
+    return run.id;
+  };
+  // Tonight's enqueue of the standing item (backlog.enqueue), from a ready item.
+  const ready = () =>
+    backlog.mutateBacklogItemForTests(item.id, (current) => {
+      current.status = 'ready';
+      delete current.runId;
+      delete current.queuedQueueItemId;
+    });
+  const handoff = () => {
+    ready();
+    return archiveFailedRunsBeforeEnqueue(item.id, () => {});
+  };
+  // Archive moves the record out of the live store into runs/archive: history kept.
+  const archived = (id: string) =>
+    !runStore.getRun(id) &&
+    existsSync(path.join(runStore.runsDirectory(), 'archive', `${id}.json`));
+  return { backlog, runStore, item, earlierNight, ready, handoff, archived };
+}
+
+test('the next night archives the failed nights of its own item, and only those', async (t) => {
+  const { earlierNight, handoff, archived } = await standingNightFixture(t);
+  const good = earlierNight('done');
+  const bad = [earlierNight('failed'), earlierNight('failed')];
+  const ids = await handoff();
+  assert.deepEqual([...ids].sort(), [...bad].sort());
+  assert.ok(bad.every(archived), 'the failed nights are archived, history kept');
+  assert.equal(archived(good), false, 'a done night blocks nothing and stays as it is');
+  assert.deepEqual(await handoff(), [], 'nothing is left to archive');
+});
+
+test('backlog.enqueue archives the failed night and carries its id to the queued run', async (t) => {
+  const { item, earlierNight, ready, archived } = await standingNightFixture(t);
+  const { backlogEnqueue } = await import('../methods/backlog.js');
+  const { getQueueSnapshot } = await import('./dispatch-queue.js');
+  const failed = earlierNight('failed');
+  ready();
+  const { queueItem } = await backlogEnqueue({ itemId: item.id }, () => {});
+  assert.ok(archived(failed));
+  assert.deepEqual(queueItem.archivedPriorRunIds, [failed]);
+  assert.deepEqual(getQueueSnapshot().find((row) => row.id === queueItem.id)?.archivedPriorRunIds, [
+    failed,
+  ]);
+});
+
+test('a live night or another item on the ticket archives nothing', async (t) => {
+  const { earlierNight, handoff, archived } = await standingNightFixture(t);
+  const failed = earlierNight('failed');
+  const live = earlierNight('monitoring');
+  assert.deepEqual(await handoff(), []);
+  assert.equal(archived(failed), false);
+  assert.equal(archived(live), false);
+  t.diagnostic('run.create then refuses as before, naming the run to cancel');
+});
+
+test('a failed run of another item on the ticket is never archived', async (t) => {
+  const { earlierNight, handoff, archived } = await standingNightFixture(t);
+  const ours = earlierNight('failed');
+  const theirs = earlierNight('failed', 'another-item');
+  assert.deepEqual(await handoff(), []);
+  assert.equal(archived(ours), false);
+  assert.equal(archived(theirs), false);
+});
+
+test('only a multi-PR item archives its failed runs on enqueue', async (t) => {
+  const { backlog, item, earlierNight, handoff, archived } = await standingNightFixture(t);
+  const failed = earlierNight('failed');
+  backlog.mutateBacklogItemForTests(item.id, (current) => {
+    delete current.multiPr;
+  });
+  assert.deepEqual(await handoff(), []);
+  assert.equal(archived(failed), false);
+});
+
+test('an earlier night of a standing item cannot be replayed into a second live run', async (t) => {
+  const { backlog, item, earlierNight } = await standingNightFixture(t);
+  const { runReplayStep } = await import('../methods/run/replay-step.js');
+  const lastNight = earlierNight('failed');
+  const tonightRun = earlierNight('done');
+  backlog.mutateBacklogItemForTests(item.id, (current) => {
+    current.status = 'running';
+    current.runId = tonightRun;
+  });
+  await assert.rejects(
+    runReplayStep({ runId: lastNight, stepName: 'dispatch' }, () => {}),
+    /earlier run of multi-PR backlog item MANUAL-\d+.*Start a new run from the item instead/,
+  );
+  assert.equal(
+    backlog.supersededMultiPrRunReplayRefusal({ id: tonightRun, backlogItemId: item.id }),
+    null,
+  );
+  backlog.mutateBacklogItemForTests(item.id, (current) => {
+    current.status = 'ready';
+    delete current.runId;
+  });
+  assert.match(
+    backlog.supersededMultiPrRunReplayRefusal({ id: tonightRun, backlogItemId: item.id }) ?? '',
+    /Start a new run from the item/,
+    'a ready item holds no run: its last night is not replayed either',
   );
 });
 

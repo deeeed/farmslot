@@ -3122,6 +3122,11 @@ export interface Run {
   /** Internal backlog handoff link, persisted so backlog delete/reconcile can find runs. */
   backlogItemId?: string;
   /**
+   * Failed runs of this run's multi-PR backlog item that its handoff archived before creating it
+   * (ADR-044 Amendment 2), so a failed night stays traceable from the next one.
+   */
+  archivedPriorRunIds?: string[];
+  /**
    * Durable write-ahead marker for an operator-requested backlog/run repair.
    * Startup clears it after the backlog projection is persisted.
    */
