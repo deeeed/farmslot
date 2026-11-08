@@ -324,7 +324,7 @@ Pack configuration deterministically selects required skills/rules by changed or
 
 Record the selection, matched pack rules, revisions and digests in ADR-049 task provenance. Dev and review receive the same frozen required set. Static review retains its read-only execution boundary.
 
-Prepare verifies required installed skills, overlays and applicable references in both contexts before dispatch. Missing requirements stop preparation. Dev cannot substitute repository docs for an installed skill review requires. Scope changes require re-preparation.
+Prepare verifies required installed skills, overlays and applicable references in both contexts before dispatch. Missing requirements stop preparation. Dev cannot substitute repository docs for an installed skill review requires. Scope changes require re-preparation. This extends ADR-065's existing Code drift check with the shared required set; it adds no launch check or second verifier.
 
 ### Rationale and consequences
 
@@ -332,4 +332,4 @@ Required testing guidance could be absent during development while review requir
 
 ### Public surface
 
-Extend existing pack requirements and ADR-049 provenance, consumed by shared prepare and dev/review materialization. Shared data types belong to `@farmslot/protocol`; selection stays in `@farmslot/agent-runtime`, and harnesses inherit it. No new selector service, CLI or RPC. Specify additive schema/version changes before implementation.
+Add pack skill requirements and extend ADR-049 provenance, consumed by shared prepare and dev/review materialization. Shared data types belong to `@farmslot/protocol`; selection stays in `@farmslot/agent-runtime`, and harnesses inherit it. No new selector service, CLI or RPC. Specify additive schema/version changes before implementation.

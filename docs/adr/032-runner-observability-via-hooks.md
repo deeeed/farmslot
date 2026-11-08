@@ -453,7 +453,7 @@ No public command, flag, SDK export, package version or harness extension change
 
 **Status:** Proposed. This amendment records direction only; implementation requires the normative specification and schema review described below.
 
-### Context
+### Context and rationale
 
 Hooks, normalized tool events, history/archive readers, `sessionUsage`, pipeline/checklist timing and `RunAnalyticsRecord` already exist under ADRs 032, 047, 056 and 057. The gap is their common activity attribution across runners, roles and steps.
 
