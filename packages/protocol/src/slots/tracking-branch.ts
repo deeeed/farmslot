@@ -117,6 +117,7 @@ export function defaultBranchProbeCommand(repo: string, defaultBranch: string): 
   const git = `git -C ${shellArg(repo)}`;
   const { local, remote } = defaultBranchRefs(defaultBranch);
   return [
+    `out=$(${git} config --get farmslot.blindRun); printf 'blind-run=%s\\n' "$out"`,
     `out=$(${git} config --get-all remote.origin.fetch); printf 'fetch-exit=%s\\n' "$?"`,
     `printf '%s\\n' "$out" | sed '/^$/d; s/^/fetch=/'`,
     `out=$(${git} for-each-ref --format='%(refname)' ${shellArg(local)} ${shellArg(remote)}); printf 'refs-exit=%s\\n' "$?"`,
@@ -142,10 +143,12 @@ export function readDefaultBranchProbe(
   const state: DefaultBranchRepoState = { fetchRefspecs: [], refs: [] };
   let fetchExit: string | undefined;
   let refsExit: string | undefined;
+  let blindRun: string | undefined;
   let done = false;
   for (const line of output.stdout.split('\n')) {
     const trimmed = line.trim();
     if (trimmed === 'probe=done') done = true;
+    else if (trimmed.startsWith('blind-run=')) blindRun = trimmed.slice('blind-run='.length);
     else if (trimmed.startsWith('fetch-exit=')) fetchExit = trimmed.slice('fetch-exit='.length);
     else if (trimmed.startsWith('refs-exit=')) refsExit = trimmed.slice('refs-exit='.length);
     else if (trimmed.startsWith('fetch=')) state.fetchRefspecs.push(trimmed.slice('fetch='.length));
@@ -162,7 +165,12 @@ export function readDefaultBranchProbe(
   if (fetchExit !== '0' && fetchExit !== '1')
     return failure(`git config remote.origin.fetch exited ${fetchExit ?? '(no status)'}`);
   if (refsExit !== '0') return failure(`git for-each-ref exited ${refsExit ?? '(no status)'}`);
-  return { readable: true, blocker: defaultBranchRepoBlocker(state, defaultBranch) };
+  return {
+    readable: true,
+    blocker: blindRun
+      ? `isolated for blind trial ${blindRun}`
+      : defaultBranchRepoBlocker(state, defaultBranch),
+  };
 }
 
 export interface SlotTrackingProjectConfig {

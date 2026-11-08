@@ -44,6 +44,8 @@ mock.module('../core/config.js', {
   namedExports: {
     ...config,
     loadSlotVars: async (id: string) => {
+      if (id === cancelledHolder?.slotId)
+        return { slotId: id, projectName: project, remoteRepo: '/fixture/repo' };
       const app = slotApps.get(id);
       return app ? { slotId: id, resourceVars: { app } } : config.loadSlotVars(id);
     },
@@ -129,6 +131,9 @@ const refreshedSlots: string[] = [];
 let cancelledHolder: Run | undefined;
 const originalSlots = structuredClone(slots);
 const reclaims: string[] = [];
+const repoProbes: string[] = [];
+let repoAfterReclaim: string | null = null;
+let repoProbeError: string | undefined;
 let prHead = branch;
 const claims: string[] = [];
 const freshTeardowns: string[] = [];
@@ -234,11 +239,16 @@ mock.module('../core/index.js', {
         : null;
     },
     claimSlotStatusIf: claim,
-    updateSlotStatus: async () => {},
-    loadProjectVars: async (...args: Parameters<typeof core.loadProjectVars>) =>
-      projectApps
-        ? { projectName: args[0], projectJson: projectApps }
-        : core.loadProjectVars(...args),
+    updateSlotStatus: async (id: string, fields: Record<string, unknown>) => {
+      if (!('repo_blocker' in fields)) return;
+      liveRows.set(id, { ...liveRows.get(id), ...fields });
+      const slot = slots.find((entry) => entry.slot === id)!;
+      slot.repoBlocker = typeof fields.repo_blocker === 'string' ? fields.repo_blocker : undefined;
+    },
+    loadProjectVars: async (...args: Parameters<typeof core.loadProjectVars>) => {
+      const projectJson = projectApps ?? (cancelledHolder ? { default_branch: 'main' } : undefined);
+      return projectJson ? { projectName: args[0], projectJson } : core.loadProjectVars(...args);
+    },
   },
 });
 mock.module('../methods/dispatch/branch-checkout.js', {
@@ -333,6 +343,10 @@ mock.module('../methods/dispatch.js', {
               options?.automaticLoadPinned ?? isPinnedSlotSelection(params),
             ),
           });
+      if (run.slotId && selected) {
+        const blocker = scoring.validateSlotForDispatch(selected, slots, params);
+        if (blocker) throw new Error(`Slot ${selected.slot}: ${blocker}`);
+      }
       assert.equal(selected?.slot, expectedSlot);
       return {
         preview: { slotId: selected!.slot, runner: 'codex', model: 'gpt-6.1-sol' },
@@ -342,13 +356,34 @@ mock.module('../methods/dispatch.js', {
   },
 });
 const policy = await import('./dispatch-policy.js');
+const tracking = await import('../methods/slot/slot-tracking.js');
+mock.module('../methods/slot/slot-tracking.js', {
+  namedExports: {
+    ...tracking,
+    probeDefaultBranch: async (vars: { slotId: string }, defaultBranch: string) => {
+      assert.ok(reclaims.includes(vars.slotId), 'probe must follow reclaim and Git restore');
+      assert.equal(slots.find((slot) => slot.slot === vars.slotId)?.lifecycle, 'ready');
+      assert.equal(defaultBranch, 'main');
+      repoProbes.push(vars.slotId);
+      if (repoProbeError) return { readable: false, error: repoProbeError };
+      return { readable: true, blocker: repoAfterReclaim };
+    },
+  },
+});
 const reclaim = await import('../run-lifecycle/cancelled-slot-reclaim.js');
 mock.module('../run-lifecycle/cancelled-slot-reclaim.js', {
   namedExports: {
     ...reclaim,
     reclaimCancelledSlot: async (id: string, requester: string) => {
       const slot = slots.find((entry) => entry.slot === id);
-      if (!slot?.currentRunId || slot.currentRunId !== cancelledHolder?.id) return false;
+      if (
+        !slot?.currentRunId ||
+        !cancelledHolder ||
+        slot.currentRunId !== cancelledHolder?.id ||
+        cancelledHolder.status !== 'cancelled' ||
+        cancelledHolder.slotId !== id
+      )
+        return false;
       assert.equal(requester, run.id);
       reclaims.push(id);
       slot.lifecycle = 'ready';
@@ -429,6 +464,9 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   slots.splice(0, slots.length, ...structuredClone(originalSlots));
   cancelledHolder = undefined;
   reclaims.length = 0;
+  repoProbes.length = 0;
+  repoAfterReclaim = null;
+  repoProbeError = undefined;
   finishedReclaims.length = 0;
   finishedRefusal = undefined;
   slotSelection = undefined;
@@ -563,6 +601,26 @@ test('an unresolved PR head asks only when every free candidate has local work',
   assert.deepEqual(claims, []);
 });
 
+function heldCancelledRepo(pinned: boolean): SlotStatus {
+  const slot = slots[0]!;
+  cancelledHolder = makeRun({
+    id: 'cancelled-blind-holder',
+    project,
+    slotId: slot.slot,
+    status: 'cancelled',
+  });
+  slot.lifecycle = 'held';
+  slot.phase = 'occupied';
+  slot.currentRunId = cancelledHolder.id;
+  slot.dispatchable = false;
+  slot.repoBlocker =
+    "origin fetch refspec (none) does not fetch default branch 'main' into refs/remotes/origin/main (single-branch clone?)";
+  liveRows.set(slot.slot, { repo_blocker: slot.repoBlocker });
+  run.allowedSlots = [slot.slot];
+  if (pinned) run.slotId = slot.slot;
+  return slot;
+}
+
 for (const pinned of [true, false]) {
   test(`production find-slot reclaims a cancelled holder for a ${pinned ? 'pinned' : 'capacity-limited unpinned'} run`, async () => {
     reset('fix-bug', 'TAT-4137');
@@ -583,7 +641,66 @@ for (const pinned of [true, false]) {
     assert.deepEqual(reclaims, [slot.slot], 'one demand cleanup');
     assert.deepEqual(claims, [slot.slot], 'claim uses the post-cleanup fleet');
   });
+
+  test(`production find-slot re-probes a reclaimed blind repo with a stale blocker for a ${pinned ? 'pinned' : 'capacity-limited unpinned'} run`, async () => {
+    reset('fix-bug', 'TAT-4137');
+    const slot = heldCancelledRepo(pinned);
+
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+
+    assert.equal(result.outputs?.selectedSlot, slot.slot);
+    assert.deepEqual(reclaims, [slot.slot]);
+    assert.deepEqual(repoProbes, [slot.slot]);
+    assert.equal(liveRows.get(slot.slot)?.repo_blocker, null);
+    assert.deepEqual(claims, [slot.slot]);
+  });
+
+  test(`production find-slot refuses a real repo blocker after reclaim for a ${pinned ? 'pinned' : 'capacity-limited unpinned'} run`, async () => {
+    reset('fix-bug', 'TAT-4137');
+    const slot = heldCancelledRepo(pinned);
+    repoAfterReclaim = "repo has no default branch 'main'";
+
+    await assert.rejects(
+      executeFindSlotStep(run.id, run, 0, context),
+      pinned
+        ? /Slot repo cannot prepare: repo has no default branch/
+        : /unexpected all_stale slot picker/,
+    );
+
+    assert.deepEqual(reclaims, [slot.slot]);
+    assert.deepEqual(repoProbes, [slot.slot]);
+    assert.equal(liveRows.get(slot.slot)?.repo_blocker, repoAfterReclaim);
+    assert.deepEqual(claims, []);
+    if (!pinned) {
+      assert.ok(pickerPayload?.kind === 'slot_picker');
+      assert.deepEqual(pickerPayload.candidates, []);
+    }
+  });
 }
+
+test('a failed repo re-probe after reclaim leaves the stored blocker and refuses selection', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const slot = heldCancelledRepo(true);
+  repoProbeError = 'probe output ended early';
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, context),
+    /cannot re-probe reclaimed repo/,
+  );
+  assert.equal(liveRows.get(slot.slot)?.repo_blocker, slot.repoBlocker);
+  assert.deepEqual(claims, []);
+});
+
+test('a repo blocker on a slot that was never reclaimed is refused without re-probing', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const slot = slots[0]!;
+  slot.repoBlocker = 'unrepaired repo';
+  run.slotId = slot.slot;
+  await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /unrepaired repo/);
+  assert.equal(slot.repoBlocker, 'unrepaired repo');
+  assert.deepEqual(repoProbes, []);
+  assert.deepEqual(reclaims, []);
+  assert.deepEqual(claims, []);
+});
 
 test('a selected finished checkout is released before claim and write-task', async () => {
   reset('fix-bug', 'TAT-4137');
