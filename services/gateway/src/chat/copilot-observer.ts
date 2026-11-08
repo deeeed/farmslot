@@ -256,6 +256,16 @@ function dispatch(type: string, payload: unknown): void {
 /** A farm condition the gateway detected that an operator should act on before it breaks runs. */
 export function reportGatewayWarning(type: string, summary: string): void {
   observe(type, 'warn', summary);
+  // The board's health feed subscribes to monitor violations, not observer notifications.
+  const violation: MonitorViolation = {
+    slotId: 'gateway',
+    target: type,
+    type: 'budget',
+    message: summary,
+    nudgeSent: null,
+    timestamp: new Date().toISOString(),
+  };
+  _broadcast?.(Events.MONITOR_VIOLATION, { violation });
 }
 
 // ─── Core log + notify ───

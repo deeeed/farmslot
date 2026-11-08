@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createWriteStream, existsSync } from 'node:fs';
+import { constants, createWriteStream, existsSync, readFileSync, type Stats } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -14,6 +14,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -24,6 +25,7 @@ import {
   type ArtifactRef,
   decisionArtifactBundleRef,
   isActiveListRun,
+  isRecord,
   type Run,
   RUN_BUNDLE_VERSION,
   type RunArtifactBundleRef,
@@ -62,6 +64,54 @@ export const DEFAULT_RUN_BUNDLE_RETENTION: Readonly<RunBundleRetentionPolicy> = 
   metadataReserveBytes: 512 * 1024 ** 2,
   mediaRetentionDays: 30,
 };
+
+export interface RunBundleRetentionSettings {
+  policy: RunBundleRetentionPolicy;
+  storeRoot?: string;
+}
+
+function absoluteStoreRoot(root: string): string {
+  const expanded =
+    root === '~' ? homedir() : root.startsWith('~/') ? path.join(homedir(), root.slice(2)) : root;
+  if (!path.isAbsolute(expanded)) throw new Error('runBundleRetention.storeRoot must be absolute.');
+  return path.resolve(expanded);
+}
+
+function retentionDocument(home: string): Record<string, unknown> {
+  let raw: string;
+  try {
+    raw = readFileSync(path.join(home, 'run-bundle-retention.json'), 'utf8');
+  } catch (error) {
+    if (hasCode(error, 'ENOENT')) return { runBundleRetention: {} };
+    throw error;
+  }
+  const value: unknown = JSON.parse(raw);
+  if (!isRecord(value) || !isRecord(value.runBundleRetention))
+    throw new Error('Invalid runBundleRetention settings.');
+  return value;
+}
+
+/** Configuration stays in the owning home even when the heavy store lives on another volume. */
+export function runBundleRetentionSettings(home: string): RunBundleRetentionSettings {
+  const document = retentionDocument(home);
+  const settings = document.runBundleRetention;
+  if (!isRecord(settings)) throw new Error('Invalid runBundleRetention settings.');
+  const policy = { ...DEFAULT_RUN_BUNDLE_RETENTION };
+  for (const key of Object.keys(policy) as Array<keyof RunBundleRetentionPolicy>) {
+    const value = settings[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'number') throw new Error(`Invalid runBundleRetention.${key}`);
+    policy[key] = value;
+  }
+  if (settings.storeRoot !== undefined && typeof settings.storeRoot !== 'string')
+    throw new Error('Invalid runBundleRetention.storeRoot.');
+  return {
+    policy,
+    ...(settings.storeRoot === undefined
+      ? {}
+      : { storeRoot: absoluteStoreRoot(settings.storeRoot) }),
+  };
+}
 
 export interface RunBundleStore {
   version: 1;
@@ -106,6 +156,9 @@ export interface MaterializeRunBundleRequest {
   stagingBytes?: number;
   /** Builds the classifier that lets settled task dirs be charged their kept footprint. */
   acquisitionTaskDirs?: AcquisitionTaskDirClassifier;
+  /** Owning gateway's run archive root; media is moved here before capacity can defer it. */
+  archiveRoot?: string;
+  onMediaArchived?: (result: RunBundleMediaArchiveResult) => void;
   /** Inventory is frozen before metadata commits; media transport writes only admitted bytes. */
   acquireMedia?: (
     artifact: ArtifactRef,
@@ -146,7 +199,30 @@ export type AcquisitionTaskDirClassifier = () => Promise<AcquisitionTaskDirToken
 export interface RunBundleAvailability {
   revision: number;
   prunedPaths: string[];
+  /** Manifest entry key to a verified, durable archive file; older records omit this map. */
+  archivedPaths?: Record<string, string>;
 }
+
+export interface RunBundleMediaArchiveResult {
+  reclaimedBytes: number;
+  archivedPaths: string[];
+  pressure: boolean;
+  chargedBytesBefore: number;
+  chargedBytesAfter: number;
+}
+
+export interface RunBundleMediaArchiveRequest {
+  store: RunBundleStore;
+  farmslotRoot: string;
+  archiveRoot: string;
+  policy?: RunBundleRetentionPolicy;
+  acquisitionTaskDirs?: AcquisitionTaskDirClassifier;
+  now?: number;
+}
+
+// Start above the 70% warning, with a 15-point gap to leave capture headroom and avoid churn.
+const RUN_BUNDLE_ARCHIVE_HIGH_RATIO = 0.85;
+const RUN_BUNDLE_ARCHIVE_LOW_RATIO = 0.7;
 
 export interface ResolvedRunBundleEntry {
   path: string;
@@ -202,16 +278,23 @@ async function atomicJson(file: string, value: unknown): Promise<void> {
 export async function openRunBundleStore(input: {
   runsDir: string;
   home: string;
+  storeRoot?: string;
   create?: boolean;
 }): Promise<RunBundleStore> {
   await mkdir(input.runsDir, { recursive: true });
   const runsDir = await realpath(input.runsDir);
+  await recoverRunBundleMigration(runsDir);
+  const configured =
+    input.storeRoot === undefined
+      ? runBundleRetentionSettings(input.home).storeRoot
+      : absoluteStoreRoot(input.storeRoot);
   const bindingPath = path.join(runsDir, 'bundle-store.json');
   let raw = await readOptional(bindingPath);
   if (!raw) {
     if (!input.create)
       throw new Error('Run bundle store pairing is missing; start the owning gateway.');
-    const root = path.resolve(input.home, 'run-bundles');
+    if (configured) await assertStoreRootParent(configured);
+    const root = configured ?? path.resolve(input.home, 'run-bundles');
     await mkdir(root, { recursive: true });
     const binding: RunBundleStore = {
       version: 1,
@@ -236,12 +319,20 @@ export async function openRunBundleStore(input: {
     !path.isAbsolute(binding.root)
   )
     throw new Error('Run bundle store pairing does not match the canonical Run store.');
+  if (configured) {
+    const expected = await realpath(configured);
+    const actual = configured === binding.root ? expected : await realpath(binding.root);
+    if (expected !== actual)
+      throw new Error(
+        'Run bundle store pairing does not match the configured root; use the migration command.',
+      );
+  }
   const ownerPath = path.join(binding.root, 'store.json');
   let owner = await readOptional(ownerPath);
   if (
     !owner &&
     input.create &&
-    binding.root === path.join(await realpath(input.home), 'run-bundles')
+    binding.root === (await realpath(configured ?? path.join(input.home, 'run-bundles')))
   ) {
     try {
       await writeFile(ownerPath, `${JSON.stringify(binding)}\n`, { flag: 'wx', mode: 0o600 });
@@ -253,6 +344,23 @@ export async function openRunBundleStore(input: {
   if (!owner || JSON.stringify(JSON.parse(owner)) !== JSON.stringify(binding))
     throw new Error('Run bundle root belongs to a different Run store.');
   return binding;
+}
+
+async function assertStoreRootParent(root: string): Promise<void> {
+  try {
+    if ((await stat(root)).isDirectory()) return;
+    throw new Error(`Run bundle configured root is not a directory: ${root}`);
+  } catch (error) {
+    if (!hasCode(error, 'ENOENT')) throw error;
+  }
+  try {
+    if ((await stat(path.dirname(root))).isDirectory()) return;
+  } catch (error) {
+    if (!hasCode(error, 'ENOENT')) throw error;
+  }
+  throw new Error(
+    `Run bundle configured root ${root} has a missing parent; is its volume mounted?`,
+  );
 }
 
 const STORE_LOCK = 'bundle-store.lock';
@@ -322,6 +430,7 @@ async function withBundleLock<T>(
   name: string,
   hold: BundleLockHold,
   fn: () => Promise<T>,
+  checkPairing = true,
 ): Promise<T> {
   const options = bundleLockOptions(store, name);
   const enqueuedAt = Date.now();
@@ -355,6 +464,15 @@ async function withBundleLock<T>(
       );
     bundleLockHolders.set(options.lockfilePath, holder);
     try {
+      if (checkPairing && name === STORE_LOCK) {
+        const migration = await readMigration(store.runsDir);
+        if (migration?.phase === 'verified') await finishRunBundleMigration(migration);
+        const current: RunBundleStore = JSON.parse(
+          await readFile(path.join(store.runsDir, 'bundle-store.json'), 'utf8'),
+        );
+        if (current.id !== store.id || current.root !== store.root)
+          throw new Error('Run bundle store pairing changed; reopen the store.');
+      }
       return await fn();
     } finally {
       if (bundleLockHolders.get(options.lockfilePath) === holder)
@@ -382,6 +500,246 @@ async function withBundleLock<T>(
 
 function bundleLockOptions(store: RunBundleStore, name: string) {
   return { lockfilePath: path.join(store.runsDir, name), realpath: false, stale: 30_000 };
+}
+
+interface RunBundleMigration {
+  version: 1;
+  phase: 'copying' | 'verified' | 'complete';
+  home: string;
+  backupRoot: string;
+  store: RunBundleStore;
+  verifiedBundles: number;
+  settings?: Record<string, unknown>;
+}
+
+export interface RunBundleMigrationResult {
+  store: RunBundleStore;
+  backupRoot: string;
+  verifiedBundles: number;
+}
+
+export interface RunBundleMigrationRequest {
+  home: string;
+  runsDir: string;
+  targetRoot: string;
+  assertWriteRoom(root: string, copyBytes: number): Promise<void>;
+}
+
+function migrationFile(runsDir: string): string {
+  return path.join(runsDir, 'bundle-store-migration.json');
+}
+
+async function readMigration(runsDir: string): Promise<RunBundleMigration | undefined> {
+  const raw = await readOptional(migrationFile(runsDir));
+  if (!raw) return undefined;
+  const journal: RunBundleMigration = JSON.parse(raw);
+  if (journal.version !== 1 || journal.store.runsDir !== runsDir || !path.isAbsolute(journal.home))
+    throw new Error('Invalid run bundle migration journal.');
+  return journal;
+}
+
+async function finishRunBundleMigration(journal: RunBundleMigration): Promise<void> {
+  if (!journal.settings) throw new Error('Verified run bundle migration has no settings.');
+  const owner = await readFile(path.join(journal.store.root, 'store.json'), 'utf8');
+  if (JSON.stringify(JSON.parse(owner)) !== JSON.stringify(journal.store))
+    throw new Error('Migrated run bundle store pairing changed.');
+  // Two files cannot share a rename. The flushed journal is the commit point: every opener
+  // rolls a verified transaction forward under the same lock before reading either file.
+  await atomicJson(path.join(journal.home, 'run-bundle-retention.json'), journal.settings);
+  await atomicJson(path.join(journal.store.runsDir, 'bundle-store.json'), journal.store);
+  await atomicJson(migrationFile(journal.store.runsDir), { ...journal, phase: 'complete' });
+}
+
+async function recoverRunBundleMigration(runsDir: string): Promise<void> {
+  const journal = await readMigration(runsDir);
+  if (journal?.phase !== 'verified') return;
+  await withBundleLock(
+    journal.store,
+    STORE_LOCK,
+    { label: 'bundle migration recovery' },
+    async () => {
+      const current = await readMigration(runsDir);
+      if (current?.phase === 'verified') await finishRunBundleMigration(current);
+    },
+    false,
+  );
+}
+
+/** Retry partial copies, reusing identical files and removing only obsolete migration output. */
+async function copyStoreTree(source: string, target: string): Promise<void> {
+  await mkdir(target, { recursive: true });
+  if ((await realpath(target)) !== target)
+    throw new Error(`Run bundle migration target is redirected: ${target}`);
+  const entries = await readdir(source, { withFileTypes: true });
+  // Retention finishes these moves outside the store lock. Leave the backup untouched by
+  // waiting for that work to finish before taking a snapshot of the remaining store.
+  if (entries.some(({ name }) => name.startsWith('.retention-')))
+    throw new Error('Run bundle archive is staged; finish retention before retrying migration.');
+  const names = new Set(entries.map(({ name }) => name));
+  for (const name of await readdir(target))
+    if (!names.has(name)) await rm(path.join(target, name), { recursive: true, force: true });
+  for (const entry of entries) {
+    const from = path.join(source, entry.name);
+    const to = path.join(target, entry.name);
+    if (entry.isSymbolicLink() || (await realpath(from)) !== from)
+      throw new Error(`Run bundle migration refuses redirected paths: ${from}`);
+    let existing: Stats | undefined;
+    try {
+      existing = await lstat(to);
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT')) throw error;
+    }
+    if (existing?.isSymbolicLink())
+      throw new Error(`Run bundle migration target is redirected: ${to}`);
+    if (entry.isDirectory()) {
+      if (existing && !existing.isDirectory())
+        throw new Error(`Run bundle migration target differs: ${to}`);
+      await copyStoreTree(from, to);
+    } else if (entry.isFile()) {
+      const bytes = (await stat(from)).size;
+      const original = await copyHashed(from, null, bytes);
+      if (
+        existing?.isFile() &&
+        existing.size === bytes &&
+        (await copyHashed(to, null, bytes)).sha256 === original.sha256
+      )
+        continue;
+      const partial = `${to}.${randomUUID()}.tmp`;
+      await copyFile(from, partial, constants.COPYFILE_FICLONE);
+      await syncPath(partial);
+      const copied = await copyHashed(partial, null, bytes);
+      if (copied.bytes !== bytes || copied.sha256 !== original.sha256)
+        throw new Error(`Run bundle migration copy verification failed: ${from}`);
+      await rename(partial, to);
+    } else throw new Error(`Unsupported run bundle store entry: ${from}`);
+  }
+  await syncPath(target);
+}
+
+async function verifyMigratedBundles(store: RunBundleStore): Promise<number> {
+  let count = 0;
+  const digests = await readdir(path.join(store.root, 'sha256')).catch((error: unknown) => {
+    if (hasCode(error, 'ENOENT')) return [];
+    throw error;
+  });
+  for (const digest of digests) {
+    if (!BUNDLE_DIGEST.test(digest)) continue;
+    const { directory, manifest } = await readRetainedManifest(store, digest);
+    const raw = await readOptional(path.join(store.root, 'availability', `${digest}.json`));
+    const availability: RunBundleAvailability = raw
+      ? JSON.parse(raw)
+      : { revision: 0, prunedPaths: [] };
+    for (const [key, meta] of Object.entries(manifest.entries)) {
+      let file = resolvePathInsideRoot(directory, key);
+      if (!existsSync(file)) {
+        const archived = availability.archivedPaths?.[key];
+        if (archived) file = archived;
+        else if (
+          availability.prunedPaths.includes(key) ||
+          manifest.missingData?.some((value) =>
+            key.endsWith(`/${parseRunBundleMissingData(value).path}`),
+          )
+        )
+          continue;
+        else throw new Error(`Run bundle migration verification missing entry: ${key}`);
+      }
+      if ((await realpath(file)) !== file || !(await lstat(file)).isFile())
+        throw new Error(`Run bundle migration verification redirected entry: ${key}`);
+      const actual = await copyHashed(file, null, meta.bytes);
+      if (actual.bytes !== meta.bytes || actual.sha256 !== meta.sha256)
+        throw new Error(`Run bundle migration entry verification failed: ${key}`);
+    }
+    const recorded = await readBundleRecord(store, digest);
+    if (
+      (recorded === undefined && existsSync(bundleUsagePath(store, digest))) ||
+      (recorded !== undefined && recorded !== (await physicalBytes(directory)))
+    )
+      throw new Error(`Run bundle migration recorded bytes differ: ${digest}`);
+    count++;
+  }
+  return count;
+}
+
+/** Offline operator command and gateway writes share the Run store's cross-process lock. */
+export async function migrateRunBundleStore(
+  input: RunBundleMigrationRequest,
+): Promise<RunBundleMigrationResult> {
+  const source = await openRunBundleStore(input);
+  const requested = absoluteStoreRoot(input.targetRoot);
+  await assertStoreRootParent(requested);
+  const targetRoot = await realpath(requested).catch(async (error: unknown) => {
+    if (!hasCode(error, 'ENOENT')) throw error;
+    return path.join(await realpath(path.dirname(requested)), path.basename(requested));
+  });
+  return withRunBundleStoreLock(
+    source,
+    async () => {
+      let journal = await readMigration(source.runsDir);
+      if (source.root === targetRoot) {
+        if (journal?.phase !== 'complete' || journal.store.root !== targetRoot)
+          throw new Error('Run bundle store already uses the target without a migration backup.');
+        return {
+          store: journal.store,
+          backupRoot: journal.backupRoot,
+          verifiedBundles: journal.verifiedBundles,
+        };
+      }
+      if (
+        targetRoot.startsWith(source.root + path.sep) ||
+        source.root.startsWith(targetRoot + path.sep)
+      )
+        throw new Error('Run bundle migration roots must not overlap.');
+      const resuming =
+        journal?.phase === 'copying' &&
+        journal.store.root === targetRoot &&
+        journal.backupRoot === source.root &&
+        journal.home === path.resolve(input.home);
+      if (journal?.phase === 'copying' && !resuming)
+        throw new Error('A different run bundle migration is incomplete; resume its target first.');
+      if (!resuming && existsSync(targetRoot) && (await readdir(targetRoot)).length)
+        throw new Error('Run bundle migration target must be empty; unrelated data retained.');
+      // Repairs transfer into staging outside the global lock. Do not snapshot a live transfer.
+      for (const name of await readdir(source.runsDir)) {
+        if (!/^bundle-repair-[a-f0-9]{64}\.lock$/u.test(name)) continue;
+        const options = bundleLockOptions(source, name);
+        if (await lockfile.check(options.lockfilePath, options))
+          throw new Error(
+            'Run bundle media transfer is active; retry migration after capture finishes.',
+          );
+      }
+      // Charge the whole copy conservatively even on retries or clone-capable filesystems.
+      await input.assertWriteRoom(targetRoot, await physicalBytes(source.root));
+      journal = {
+        version: 1,
+        phase: 'copying',
+        home: path.resolve(input.home),
+        backupRoot: source.root,
+        store: { ...source, root: targetRoot },
+        verifiedBundles: 0,
+      };
+      await atomicJson(migrationFile(source.runsDir), journal);
+      await copyStoreTree(source.root, targetRoot);
+      journal.verifiedBundles = await verifyMigratedBundles(journal.store);
+      const settings = retentionDocument(input.home);
+      const retention = settings.runBundleRetention;
+      if (!isRecord(retention)) throw new Error('Invalid runBundleRetention settings.');
+      journal.settings = {
+        ...settings,
+        runBundleRetention: { ...retention, storeRoot: targetRoot },
+      };
+      await atomicJson(path.join(targetRoot, 'store.json'), journal.store);
+      await syncPath(path.dirname(targetRoot));
+      journal.phase = 'verified';
+      await atomicJson(migrationFile(source.runsDir), journal);
+      await finishRunBundleMigration(journal);
+      return {
+        store: journal.store,
+        backupRoot: journal.backupRoot,
+        verifiedBundles: journal.verifiedBundles,
+      };
+    },
+    { label: 'run bundle store migration', holdLimitMs: 24 * 60 * 60_000 },
+  );
 }
 
 function repairLockName(digest: string): string {
@@ -960,6 +1318,7 @@ async function assertStorePairing(store: RunBundleStore): Promise<void> {
   const binding = await openRunBundleStore({
     runsDir: store.runsDir,
     home: path.dirname(store.root),
+    storeRoot: store.root,
   });
   if (binding.id !== store.id || binding.root !== store.root)
     throw new Error('Run bundle store pairing changed.');
@@ -994,11 +1353,18 @@ async function retainedPayloadsByContent(
       throw error;
     }
     const { directory, manifest } = retained;
+    const availabilityRaw = await readOptional(
+      path.join(store.root, 'availability', `${digest}.json`),
+    );
+    const availability: RunBundleAvailability | undefined = availabilityRaw
+      ? JSON.parse(availabilityRaw)
+      : undefined;
     // A deferred payload may be listed without being stored (or stored by a later repair):
     // every listed entry is a candidate, and cloning skips one that isn't on disk.
     for (const [key, meta] of Object.entries(manifest.entries)) {
       const candidates = payloads.get(payloadKey(meta)) ?? [];
       candidates.push(resolvePathInsideRoot(directory, key));
+      if (availability?.archivedPaths?.[key]) candidates.push(availability.archivedPaths[key]);
       payloads.set(payloadKey(meta), candidates);
     }
   }
@@ -1049,16 +1415,25 @@ async function completeRetainedPayloads(
     );
   });
   const restored = new Set<string>();
+  const availability = await readRunBundleAvailability(request.store, ref, request.run.id);
   try {
     const pending: Array<[string, RunBundleManifest['entries'][string]]> = [];
+    const localKeys = new Set<string>();
     for (const [key, meta] of Object.entries(manifest.entries)) {
       if (!key.startsWith(prefix)) continue;
       const target = resolvePathInsideRoot(directory, key);
       try {
         await stat(target);
+        localKeys.add(key);
         continue;
       } catch (error) {
         if (!hasCode(error, 'ENOENT')) throw error;
+      }
+      if (availability.archivedPaths?.[key]) {
+        // Replaying a capture uses its verified archive instead of downloading it again.
+        const retained = await readRetainedRunBundle(request.store, ref, request.run.id);
+        await retained.resolveEntry(key.slice(prefix.length));
+        continue;
       }
       pending.push([key, meta]);
     }
@@ -1069,11 +1444,15 @@ async function completeRetainedPayloads(
       if (!pending.length) return selected;
       // The presence check above already says which manifest entries are on disk, so the
       // bundle's bytes follow from the manifest; this also corrects a record a crash left stale.
-      const pendingKeys = new Set(pending.map(([key]) => key));
       let present = (await stat(path.join(directory, 'manifest.json'))).size;
       for (const [key, meta] of Object.entries(manifest.entries))
-        if (!pendingKeys.has(key)) present += meta.bytes;
+        if (!key.startsWith(prefix) || localKeys.has(key)) present += meta.bytes;
       await recordBundleBytes(request.store, ref.bundleDigest, present);
+      await archiveCaptureMedia(
+        request,
+        acquisitionSize,
+        pending.reduce((bytes, [, meta]) => bytes + meta.bytes, 0) + policy.metadataReserveBytes,
+      );
       let storeAvailable =
         policy.maxStoreBytes - (await chargedCaptureBytes(request, acquisitionSize));
       let bundleAvailable = policy.maxBundleBytes - present;
@@ -1081,6 +1460,10 @@ async function completeRetainedPayloads(
         const relative = key.slice(prefix.length);
         const reserve = isRunBundleMedia(relative) ? policy.metadataReserveBytes : 0;
         if (meta.bytes > Math.min(storeAvailable - reserve, bundleAvailable)) {
+          if (request.archiveRoot)
+            throw new RunBundleCapacityError(
+              `Cannot retain media-capacity:${relative}; pinned media or metadata still occupies capacity. Source retained; retry after freeing capacity.`,
+            );
           missing.push(`media-capacity:${relative}`);
           continue;
         }
@@ -1114,10 +1497,9 @@ async function completeRetainedPayloads(
       }
       remaining = next;
     };
-    const retainedElsewhere =
-      request.acquireMedia && admitted.length
-        ? await retainedPayloadsByContent(request.store, request.run, ref.bundleDigest)
-        : new Map<string, string[]>();
+    const retainedElsewhere = admitted.length
+      ? await retainedPayloadsByContent(request.store, request.run, ref.bundleDigest)
+      : new Map<string, string[]>();
     for (const [key, meta] of admitted) {
       const relative = key.slice(prefix.length);
       const target = resolvePathInsideRoot(directory, key);
@@ -1186,6 +1568,7 @@ async function completeRetainedPayloads(
         ? JSON.parse(prior)
         : { revision: 0, prunedPaths: [] };
       await atomicJson(file, {
+        ...availability,
         revision: availability.revision + 1,
         prunedPaths: availability.prunedPaths.filter((key) => !restored.has(key)),
       });
@@ -1201,16 +1584,18 @@ async function completeRetainedPayloads(
 async function commitRetainedPayloads(
   request: MaterializeRunBundleRequest,
   ref: RunArtifactBundleRef,
-  directory: string,
   manifest: RunBundleManifest,
 ): Promise<string[]> {
-  await readRetainedRunBundle(request.store, ref, request.run.id);
+  const retained = await readRetainedRunBundle(request.store, ref, request.run.id);
+  const availability = await readRunBundleAvailability(request.store, ref, request.run.id);
   const prefix = `tasks/${ref.taskKey}/`;
   const unavailable = [...(manifest.missingData ?? [])];
   for (const key of Object.keys(manifest.entries)) {
     if (!key.startsWith(prefix)) continue;
     try {
-      await stat(resolvePathInsideRoot(directory, key));
+      await stat(
+        availability.archivedPaths?.[key] ?? resolvePathInsideRoot(retained.directory, key),
+      );
     } catch (error) {
       if (!hasCode(error, 'ENOENT')) throw error;
       unavailable.push(`missing:${key.slice(prefix.length)}`);
@@ -1285,29 +1670,44 @@ export async function readRetainedRunBundle(
       throw new Error(
         `Artifact was not retained: ${relativePath}. Run farmslot runs bundle retain ${runId}.`,
       );
-    const file = resolvePathInsideRoot(directory, key);
+    let file = resolvePathInsideRoot(directory, key);
+    let archivePath: string | undefined;
     let real: string;
     try {
       real = await realpath(file);
     } catch (error) {
       if (!hasCode(error, 'ENOENT')) throw error;
-      // The capture declared why it kept no payload; name it instead of a bare ENOENT.
-      const declared = (retainedManifest.missingData ?? [])
-        .map(parseRunBundleMissingData)
-        .find((entry) => entry.path === relativePath);
-      throw Object.assign(
-        new Error(
-          declared
-            ? `Artifact not retained (${declared.reason}): ${relativePath}`
-            : `Retained artifact is missing, pruned or changed: ${relativePath}`,
-        ),
-        { code: 'ENOENT' },
+      const raw = await readOptional(
+        path.join(store.root, 'availability', `${ref.bundleDigest}.json`),
       );
+      const availability: RunBundleAvailability | undefined = raw ? JSON.parse(raw) : undefined;
+      archivePath = availability?.archivedPaths?.[key];
+      if (archivePath) {
+        if (!path.isAbsolute(archivePath) || !isRunBundleMedia(key))
+          throw new Error('Invalid retained media archive path.');
+        file = archivePath;
+        real = await realpath(file);
+      } else {
+        // The capture declared why it kept no payload; name it instead of a bare ENOENT.
+        const declared = (retainedManifest.missingData ?? [])
+          .map(parseRunBundleMissingData)
+          .find((entry) => entry.path === relativePath);
+        throw Object.assign(
+          new Error(
+            declared
+              ? `Artifact not retained (${declared.reason}): ${relativePath}`
+              : `Retained artifact is missing, pruned or changed: ${relativePath}`,
+          ),
+          { code: 'ENOENT' },
+        );
+      }
     }
     if (real !== file) throw new Error('Retained bundle contains a redirected path.');
     const info = await lstat(file);
     if (!info.isFile() || info.size !== meta.bytes)
       throw new Error(`Retained artifact is missing, pruned or changed: ${relativePath}`);
+    if (archivePath && (await copyHashed(file, null, meta.bytes)).sha256 !== meta.sha256)
+      throw new Error(`Retained archive bytes changed: ${relativePath}`);
     return { path: file, sha256: meta.sha256, bytes: meta.bytes };
   };
   return {
@@ -1352,13 +1752,14 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
       for (const { ref, decision } of runBundleRefs(run))
         retain(
           ref,
-          decision
-            ? !decision.resolvedAt ||
+          active ||
+            (decision
+              ? !decision.resolvedAt ||
                 (decision.payload?.kind === 'ready' &&
                   ['published_draft', 'published_ready'].includes(
                     decision.payload.prPackage?.publicationStatus ?? '',
                   ))
-            : active,
+              : false),
         );
       // Retired approvals/attestations remain audit dependencies after replay removes the card.
       for (const decision of readDecisionHistoryFile(
@@ -1450,6 +1851,192 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
   return { cleanup, archivable, referenced, pinned, committedIntents };
 }
 
+/** Store lock held throughout selection, verified copy, location journal and source removal. */
+async function archiveRunBundleMediaLocked(
+  input: RunBundleMediaArchiveRequest,
+  acquisitionSize: number,
+  requiredBytes = 0,
+  capturing?: MaterializeRunBundleRequest,
+): Promise<RunBundleMediaArchiveResult> {
+  const { store } = input;
+  let archiveRoot = input.archiveRoot;
+  const policy = input.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
+  const now = input.now ?? Date.now();
+  const charged = async () =>
+    (await chargedStoreBytes(store)) + (await reservedMetadataBytes(store)) + acquisitionSize;
+  const chargedBytesBefore = await charged();
+  const pressure =
+    chargedBytesBefore >= policy.maxStoreBytes * RUN_BUNDLE_ARCHIVE_HIGH_RATIO ||
+    chargedBytesBefore + requiredBytes > policy.maxStoreBytes;
+  const result: RunBundleMediaArchiveResult = {
+    reclaimedBytes: 0,
+    archivedPaths: [],
+    pressure,
+    chargedBytesBefore,
+    chargedBytesAfter: chargedBytesBefore,
+  };
+  if (capturing && !pressure) return result;
+  const { pinned, referenced } = await runBundleHousekeepingInventory(store, now);
+  const candidates = [];
+  for (const digest of await readdir(path.join(store.root, 'sha256'))) {
+    if (!BUNDLE_DIGEST.test(digest) || pinned.has(digest) || !referenced.has(digest)) continue;
+    const { directory, manifest } = await readRetainedManifest(store, digest);
+    if (
+      capturing &&
+      (manifest.runs.some(({ originalRunId }) => originalRunId === capturing.run.id) ||
+        capturing.taskDir.startsWith(directory + path.sep))
+    )
+      continue;
+    candidates.push({ digest, directory, manifest });
+  }
+  candidates.sort(
+    (a, b) =>
+      Date.parse(a.manifest.exportedAt) - Date.parse(b.manifest.exportedAt) ||
+      a.digest.localeCompare(b.digest),
+  );
+  let checkedRoot = false;
+  for (const { digest, directory, manifest } of candidates) {
+    const expired = now - Date.parse(manifest.exportedAt) >= policy.mediaRetentionDays * 86_400_000;
+    const availabilityFile = path.join(store.root, 'availability', `${digest}.json`);
+    const raw = await readOptional(availabilityFile);
+    const availability: RunBundleAvailability = raw
+      ? JSON.parse(raw)
+      : { revision: 0, prunedPaths: [] };
+    // A crash after unlink but before accounting leaves an overcharge, never uncharged payload.
+    if (availability.archivedPaths)
+      await recordBundleBytes(store, digest, await physicalBytes(directory));
+    for (const [key, meta] of Object.entries(manifest.entries)) {
+      if (!isRunBundleMedia(key)) continue;
+      if (
+        !expired &&
+        (!pressure ||
+          (result.chargedBytesAfter <= policy.maxStoreBytes * RUN_BUNDLE_ARCHIVE_LOW_RATIO &&
+            result.chargedBytesAfter + requiredBytes <= policy.maxStoreBytes))
+      )
+        break;
+      const source = resolvePathInsideRoot(directory, key);
+      try {
+        if (!(await lstat(source)).isFile() || (await realpath(source)) !== source)
+          throw new Error('Retained archive source is redirected.');
+      } catch (error) {
+        if (hasCode(error, 'ENOENT')) continue; // Already archived, or never retained.
+        throw error;
+      }
+      if (!checkedRoot) {
+        if (
+          !path.isAbsolute(archiveRoot) ||
+          !(await lstat(archiveRoot)).isDirectory() ||
+          archiveRoot === store.root ||
+          archiveRoot.startsWith(store.root + path.sep) ||
+          store.root.startsWith(archiveRoot + path.sep)
+        )
+          throw new Error('Run media archive must be an existing, separate absolute directory.');
+        archiveRoot = await realpath(archiveRoot);
+        if (
+          archiveRoot === store.root ||
+          archiveRoot.startsWith(store.root + path.sep) ||
+          store.root.startsWith(archiveRoot + path.sep)
+        )
+          throw new Error('Run media archive overlaps the bundle store.');
+        checkedRoot = true;
+      }
+      // The bundle equivalent of storage-archive's staged cross-volume move: flush and verify
+      // a partial copy, publish it, journal its location, then remove the original. Retries
+      // reuse the deterministic destination, including after a crash before journaling it.
+      const destination = path.join(
+        archiveRoot,
+        'run-bundle-media',
+        store.id,
+        digest,
+        sha256Text(key),
+      );
+      const parent = path.dirname(destination);
+      await mkdir(parent, { recursive: true });
+      if ((await realpath(parent)) !== parent) throw new Error('Run media archive is redirected.');
+      if (!(await readOptionalArchiveIdentity(destination, meta))) {
+        const partial = `${destination}.copy`;
+        await rm(partial, { force: true });
+        const copied = await copyHashed(source, partial, meta.bytes);
+        const verified = await copyHashed(partial, null, meta.bytes);
+        const unchanged = await copyHashed(source, null, meta.bytes);
+        if (
+          [copied, verified, unchanged].some(
+            ({ sha256, bytes }) => sha256 !== meta.sha256 || bytes !== meta.bytes,
+          )
+        )
+          throw new Error(`Run media archive verification failed; source retained: ${key}`);
+        await rename(partial, destination);
+      }
+      for (let dir = parent; dir !== path.dirname(archiveRoot); dir = path.dirname(dir))
+        await syncPath(dir);
+      availability.archivedPaths = { ...availability.archivedPaths, [key]: destination };
+      availability.prunedPaths = availability.prunedPaths.filter((file) => file !== key);
+      availability.revision++;
+      await atomicJson(availabilityFile, availability);
+      await rm(source);
+      await syncPath(path.dirname(source));
+      await recordBundleBytes(store, digest, await physicalBytes(directory));
+      result.reclaimedBytes += meta.bytes;
+      result.archivedPaths.push(key);
+      result.chargedBytesAfter = await charged();
+    }
+  }
+  result.chargedBytesAfter = await charged();
+  return result;
+}
+
+async function readOptionalArchiveIdentity(
+  file: string,
+  expected: RunBundlePayloadIdentity,
+): Promise<boolean> {
+  try {
+    if ((await realpath(file)) !== file) throw new Error('Run media archive is redirected.');
+    const actual = await copyHashed(file, null, expected.bytes);
+    if (actual.bytes !== expected.bytes || actual.sha256 !== expected.sha256)
+      throw new Error(`Run media archive differs; source retained: ${file}`);
+    return true;
+  } catch (error) {
+    if (hasCode(error, 'ENOENT')) return false;
+    throw error;
+  }
+}
+
+export async function archiveRunBundleMedia(
+  input: RunBundleMediaArchiveRequest,
+): Promise<RunBundleMediaArchiveResult> {
+  await assertStorePairing(input.store);
+  assertPolicy(input.policy ?? DEFAULT_RUN_BUNDLE_RETENTION);
+  const acquisition = await acquisitionBytes(
+    input.farmslotRoot,
+    input.acquisitionTaskDirs && { store: input.store, classify: input.acquisitionTaskDirs },
+  );
+  return withRunBundleStoreLock(
+    input.store,
+    () => archiveRunBundleMediaLocked(input, acquisition.bytes),
+    { label: 'run media archival' },
+  );
+}
+
+async function archiveCaptureMedia(
+  request: MaterializeRunBundleRequest,
+  acquisitionSize: number,
+  requiredBytes = 0,
+) {
+  if (!request.archiveRoot) return;
+  const result = await archiveRunBundleMediaLocked(
+    {
+      store: request.store,
+      farmslotRoot: request.farmslotRoot,
+      archiveRoot: request.archiveRoot,
+      policy: request.policy,
+    },
+    acquisitionSize,
+    requiredBytes,
+    request,
+  );
+  if (result.archivedPaths.length) request.onMediaArchived?.(result);
+}
+
 /** Select inactive reservations, abandoned capture scaffolding and superseded bundles without removing bytes. */
 export async function runBundleHousekeepingPaths(
   store: RunBundleStore,
@@ -1464,9 +2051,11 @@ export async function collectRunBundleGarbage(
   store: RunBundleStore,
   policy = DEFAULT_RUN_BUNDLE_RETENTION,
   now = Date.now(),
+  archive?: Pick<RunBundleMediaArchiveRequest, 'archiveRoot' | 'farmslotRoot'>,
 ): Promise<{ reclaimedBytes: number; prunedPaths: string[] }> {
   await assertStorePairing(store);
   assertPolicy(policy);
+  const acquisition = archive ? (await acquisitionBytes(archive.farmslotRoot)).bytes : 0;
   return withBundleLock(store, STORE_LOCK, { label: 'bundle garbage collection' }, async () => {
     const { cleanup, referenced, pinned, committedIntents } = await runBundleHousekeepingInventory(
       store,
@@ -1495,42 +2084,19 @@ export async function collectRunBundleGarbage(
         manifestCache.delete(`${store.id}:${digest}`);
         continue;
       }
-      const manifest = parseManifest(directory);
-      if (now - Date.parse(manifest.exportedAt) < policy.mediaRetentionDays * 86_400_000) continue;
-      const removed: string[] = [];
-      let prunedBytes = 0;
-      const recorded = await readBundleRecord(store, digest);
-      for (const [key, meta] of Object.entries(manifest.entries)) {
-        if (!isRunBundleMedia(key)) continue;
-        const file = resolvePathInsideRoot(directory, key);
-        try {
-          await rm(file);
-          reclaimedBytes += meta.bytes;
-          prunedBytes += meta.bytes;
-          removed.push(key);
-        } catch (error) {
-          if (!hasCode(error, 'ENOENT')) throw error;
-        }
-      }
-      if (removed.length) {
-        await recordBundleBytes(
+    }
+    if (archive) {
+      const moved = await archiveRunBundleMediaLocked(
+        {
           store,
-          digest,
-          recorded === undefined
-            ? await physicalBytes(directory)
-            : Math.max(0, recorded - prunedBytes),
-        );
-        const record = path.join(store.root, 'availability', `${digest}.json`);
-        const prior = await readOptional(record);
-        const availability: { revision: number; prunedPaths: string[] } = prior
-          ? JSON.parse(prior)
-          : { revision: 0, prunedPaths: [] };
-        await atomicJson(record, {
-          revision: availability.revision + 1,
-          prunedPaths: [...new Set([...availability.prunedPaths, ...removed])],
-        });
-        prunedPaths.push(...removed);
-      }
+          archiveRoot: archive.archiveRoot,
+          farmslotRoot: archive.farmslotRoot,
+          policy,
+          now,
+        },
+        acquisition,
+      );
+      reclaimedBytes += moved.reclaimedBytes;
     }
     return { reclaimedBytes, prunedPaths };
   });
@@ -1566,6 +2132,7 @@ export async function materializeRunBundle(
   const acquisitionSize = acquisitionScan.bytes;
   const capture = { label: `capture of run ${run.id}` };
   const captured = await withBundleLock(store, STORE_LOCK, capture, async () => {
+    await archiveCaptureMedia(request, acquisitionSize);
     const taskKey = run.id;
     const intentPath = path.join(
       store.runsDir,
@@ -1641,12 +2208,7 @@ export async function materializeRunBundle(
         await syncPath(path.dirname(destination));
       }
       const retained = await readRetainedRunBundle(store, ref, run.id);
-      const missingData = await commitRetainedPayloads(
-        request,
-        ref,
-        retained.directory,
-        retained.manifest,
-      );
+      const missingData = await commitRetainedPayloads(request, ref, retained.manifest);
       intent.committed = false;
       intent.runJson = '';
       await atomicJson(intentPath, intent);
@@ -1754,13 +2316,30 @@ export async function materializeRunBundle(
             ? { ...artifact, sha256: (await copyHashed(source, null, size)).sha256 }
             : artifact;
         // Keep manifest overhead and the protected report/metadata reserve ahead of media.
-        const available = Math.min(
+        let available = Math.min(
           policy.maxBundleBytes - bundleBytes - manifestReserve,
           policy.maxStoreBytes -
             storeBytes -
             manifestReserve -
             (media ? policy.metadataReserveBytes : 0),
         );
+        if (media && size > available && request.archiveRoot) {
+          const before = await chargedCaptureBytes(request, acquisitionSize);
+          await archiveCaptureMedia(
+            request,
+            acquisitionSize,
+            storeBytes - before + size + manifestReserve + policy.metadataReserveBytes,
+          );
+          storeBytes += (await chargedCaptureBytes(request, acquisitionSize)) - before;
+          available = Math.min(
+            policy.maxBundleBytes - bundleBytes - manifestReserve,
+            policy.maxStoreBytes - storeBytes - manifestReserve - policy.metadataReserveBytes,
+          );
+          if (size > available)
+            throw new RunBundleCapacityError(
+              `Cannot retain media-capacity:${artifact.path}; pinned media or metadata still occupies capacity. Source retained; retry after freeing capacity.`,
+            );
+        }
         if (size > available) {
           if (!media)
             throw new Error(
@@ -1814,7 +2393,7 @@ export async function materializeRunBundle(
         taskKey,
         manifestDigest: request.manifestDigest,
       };
-      const remaining = await commitRetainedPayloads(request, ref, destination, manifest);
+      const remaining = await commitRetainedPayloads(request, ref, manifest);
       intent.committed = false;
       intent.runJson = '';
       await atomicJson(intentPath, intent);

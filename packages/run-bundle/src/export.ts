@@ -160,8 +160,18 @@ export async function exportRunsToBundle(
         );
         for (const [key] of Object.entries(retained.manifest.entries)) {
           const prefix = `tasks/${ref.taskKey}/`;
-          if (key.startsWith(prefix) && !entries[`${taskBundleDir}/${key.slice(prefix.length)}`])
-            missingData.push(`retained-payload-missing:${run.id}:${key.slice(prefix.length)}`);
+          if (!key.startsWith(prefix)) continue;
+          const relative = key.slice(prefix.length);
+          const targetKey = `${taskBundleDir}/${relative}`;
+          if (entries[targetKey]) continue;
+          try {
+            const archived = await retained.resolveEntry(relative);
+            addFileEntry(bundleDir, targetKey, archived.path, entries);
+          } catch (error) {
+            if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+              throw error;
+            missingData.push(`retained-payload-missing:${run.id}:${relative}`);
+          }
         }
         for (const decision of run.decisions) {
           const pinned =

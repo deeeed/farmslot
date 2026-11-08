@@ -1,0 +1,2 @@
+- Archive old unpinned evidence under storage pressure or expiry, preserve its verified location for reads and exports, and retry media admission without dropping proof.
+- Support configured store roots and resumable verified migration, preserving the old tree as a backup and recovering interrupted configuration switches.

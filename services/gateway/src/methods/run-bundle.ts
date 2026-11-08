@@ -9,9 +9,14 @@ import type {
   RunBundleListParams,
   RunBundleListResult,
 } from '@farmslot/protocol';
-import { exportRunsToBundle, importBundle, listBundle } from '@farmslot/run-bundle';
+import {
+  exportRunsToBundle,
+  importBundle,
+  listBundle,
+  runBundleRetentionSettings,
+} from '@farmslot/run-bundle';
 
-import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
+import { assertHeavyWriteRoom, assertHeavyWriteRootPresent } from '../core/heavy-write-room.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import { runBundleHome } from '../run-completion/retained-artifacts.js';
 import { captureRunEpisode } from '../run-completion/run-episode.js';
@@ -43,11 +48,13 @@ export async function runBundleImport(
     throw new Error('Invalid run.bundle.import params: missing bundlePath');
   // An import extracts in the temp directory, restores task payloads under the checkout, and
   // writes run records and their media into the gateway's stores. Each may be its own volume.
+  const configured = runBundleRetentionSettings(runBundleHome()).storeRoot;
+  if (configured) await assertHeavyWriteRootPresent(configured, 'runBundleRetention.storeRoot');
   for (const dir of [
     tmpdir(),
     farmslotRoot,
     runsDirectory(),
-    path.join(runBundleHome(), 'run-bundles'),
+    configured ?? path.join(runBundleHome(), 'run-bundles'),
   ])
     await assertHeavyWriteRoom(dir);
   const result = await importBundle({
