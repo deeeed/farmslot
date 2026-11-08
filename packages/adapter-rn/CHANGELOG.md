@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.4 - 2026-11-08
+
+- Republish against protocol 0.82.2 and the current package set, so consumers load one copy of each Farmslot package.
+
 ## 0.31.3 - 2026-11-06
 
 - Align the published runtime pin with task lifecycle status so installed harnesses retain one runtime copy.

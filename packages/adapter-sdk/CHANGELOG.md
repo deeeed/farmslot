@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.26.4 - 2026-11-08
+
+- Republish against protocol 0.82.2 and the current package set, so consumers load one copy of each Farmslot package.
+
 ## 0.26.3 - 2026-11-04
 
 - Align published dependencies with the native delegation and recording-tail release cohort.

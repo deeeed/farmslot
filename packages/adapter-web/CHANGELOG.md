@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.1 - 2026-11-08
+
+- Republish against protocol 0.82.2 and the current package set, so consumers load one copy of each Farmslot package.
+
 ## 0.19.0 - 2026-11-06
 
 - Web-dapp wallet accounts: a mnemonic entry yields every account its `count` names (`names[]`, else dev1, dev2, ...), and `--account` selects one by name or address. A host can add named derivations of a fixture secret at a higher HD index through `RECIPE_WALLET_DERIVED_ACCOUNTS`; a declared address that does not match is refused. `browser.json` records the account's fixture secret name and index.
