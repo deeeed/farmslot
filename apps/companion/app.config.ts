@@ -223,6 +223,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         },
       ],
       '@siteed/sherpa-onnx.rn',
+      './plugins/withSherpaPrebuilts.cjs',
       // Android writes this into generated native files at prebuild time; rerun prebuild if
       // changing METRO_PORT for Android. iOS gets the port dynamically via RCT_METRO_PORT.
       ['./plugins/withMetroPort.cjs', { port: metroPort, usesCleartextTraffic: true }],
