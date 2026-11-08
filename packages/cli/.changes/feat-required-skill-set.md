@@ -1,0 +1,1 @@
+- Hosted task init freezes the pack's required skill set against the slot checkout and refuses with `REQUIRED_SKILL_MISSING` when a listed file is not installed.
