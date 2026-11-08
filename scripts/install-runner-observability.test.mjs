@@ -159,6 +159,7 @@ for (const runner of ['claude', 'pi']) {
 test('claude install registers hooks in Farmslot runtime without modifying repository settings', () => {
   const { repo, claudeSettingsPath } = installToTempDir('claude');
   const settings = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8'));
+  assert.equal(settings.promptSuggestionEnabled, false);
   const registered = Object.keys(settings.hooks).sort();
   assert.deepEqual(registered, [
     'Notification',

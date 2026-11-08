@@ -1,0 +1,1 @@
+- Keep empty prompt suggestions out of the native delivery draft guard and disable suggestions in farm-scoped session settings, preserving typed drafts and native acceptance checks.

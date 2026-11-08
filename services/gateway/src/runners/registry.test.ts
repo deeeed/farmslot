@@ -1879,7 +1879,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability'/);
       assert.match(
         cmd,
-        /printf '\{\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
+        /printf '\{"promptSuggestionEnabled":false\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
       );
     });
 
@@ -2597,7 +2597,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     );
     assert.match(
       cmd,
-      /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability' && printf '\{\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
+      /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability' && printf '\{"promptSuggestionEnabled":false\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
     );
   });
 
@@ -2690,6 +2690,14 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
     assert.equal(runnerPaneComposerDraftState('❯\n', 'claude'), 'empty');
     assert.equal(runnerPaneComposerDraftState('❯ ctx:12%\n', 'claude'), 'empty');
     assert.equal(runnerPaneComposerDraftState('❯ hello ctx:45%\n', 'claude'), 'draft');
+  });
+
+  it('treats the dim suggestion as empty for the hook-only pre-send guard', () => {
+    const rule = '─'.repeat(40);
+    const pane = `${rule}\n❯ \x1b[2mOpen the task PR.\x1b[0m\n${rule}\n  farm status`;
+    assert.equal(isRunnerPaneRetired('claude'), true);
+    assert.equal(runnerPaneComposerDraftState(pane, 'claude'), 'empty');
+    assert.equal(runnerPaneComposerDraftState(pane.replace('\x1b[2m', ''), 'claude'), 'draft');
   });
 
   it('does NOT misread a draft that begins with a ctx token as empty', () => {

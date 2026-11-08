@@ -973,6 +973,7 @@ function mergeClaudeSettings(settingsPath, markerPath, hookCommand, statusComman
   backupOnce(settingsPath, markerPath);
   const settings = readJsonObject(settingsPath);
   removeFarmslotHooks(settings);
+  settings.promptSuggestionEnabled = false;
 
   settings.hooks =
     settings.hooks && typeof settings.hooks === 'object' && !Array.isArray(settings.hooks)

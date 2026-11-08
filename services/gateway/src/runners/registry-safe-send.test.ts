@@ -36,6 +36,7 @@ let sessionDeliveryReading: ObservabilityReading<RunnerSessionDeliveryState> | n
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
 let paneCaptureCount = 0;
+const paneCaptureCommands: string[] = [];
 let paneClearsAfterSubmit = true;
 let paneTextByCapture: string[] | null = null;
 let paneTextAfterLiteralSend: string | null = null;
@@ -72,6 +73,7 @@ let sendDelayMs = 0;
 const deliveryBudgetMs = 10_000;
 beforeEach(() => {
   sendDelayMs = 0;
+  paneCaptureCommands.length = 0;
   foregroundCommand = 'claude';
   foregroundRunnerPresent = true;
   exitAfterLiteralSend = false;
@@ -273,6 +275,7 @@ mock.module('../core/exec.js', {
       }
       if (cmd.includes('capture-pane')) {
         callOrder.push('pane:capture');
+        paneCaptureCommands.push(cmd);
         paneCaptureCount += 1;
         const scriptedPane = paneTextByCapture?.[paneCaptureCount - 1];
         if (scriptedPane !== undefined) {
@@ -1809,6 +1812,33 @@ test('claude (hook-only) hook-idle with an EMPTY composer proves-empty then type
     callOrder.includes('tmux:send-literal'),
     `an empty composer must get the message typed; order=${callOrder.join(',')}`,
   );
+});
+
+test('hook-only idle preserves ANSI before ignoring a dim prompt suggestion', async () => {
+  acknowledgePromptInput = true;
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  paneTextAfterLiteralSend = '❯\nctx:12%\n';
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  const rule = '─'.repeat(40);
+  paneText = `${rule}\n❯ \x1b[2mOpen the task PR.\x1b[0m\n${rule}\n  farm status`;
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20);
+    assert.equal(sent, true);
+    assert.ok(paneCaptureCommands.some((cmd) => cmd.includes('capture-pane -p -e')));
+    assert.ok(callOrder.includes('tmux:send-literal'));
+    assert.ok(callOrder.includes('obs:promptAccepted'));
+  } finally {
+    paneClearsAfterSubmit = true;
+    paneTextAfterLiteralSend = null;
+  }
 });
 
 test('claude (hook-only) hook-idle with a BUFFERED composer submits it without retyping (no concat)', async () => {

@@ -208,13 +208,15 @@ test('Claude observability fallback replaces corrupt runtime settings', () => {
 
     execFileSync('/bin/bash', ['-c', buildClaudeObservabilityFallbackCommand(settingsPath)]);
 
-    assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), {});
+    assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), {
+      promptSuggestionEnabled: false,
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('Claude observability fallback preserves valid runtime settings', () => {
+test('Claude observability fallback disables suggestions and preserves valid runtime settings', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'farmslot-claude-settings-'));
   try {
     const settingsPath = path.join(root, '.agent', '.observability', 'claude-settings.json');
@@ -224,7 +226,10 @@ test('Claude observability fallback preserves valid runtime settings', () => {
 
     execFileSync('/bin/bash', ['-c', buildClaudeObservabilityFallbackCommand(settingsPath)]);
 
-    assert.equal(readFileSync(settingsPath, 'utf8'), settings);
+    assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), {
+      ...JSON.parse(settings),
+      promptSuggestionEnabled: false,
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -243,7 +248,9 @@ test('successful stale installer still materializes the required Claude settings
 
     execFileSync('/bin/bash', ['-c', command]);
 
-    assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), {});
+    assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), {
+      promptSuggestionEnabled: false,
+    });
     assert.equal(readFileSync(launchedPath, 'utf8'), 'launched');
   } finally {
     rmSync(root, { recursive: true, force: true });

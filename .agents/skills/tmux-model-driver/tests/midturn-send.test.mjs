@@ -774,6 +774,49 @@ test('an idle Claude pane gets one Enter and proves the human prompt in its tran
   );
 });
 
+test('a dim suggestion cannot block a native-proved interactive prompt', async (t) => {
+  const f = claudeFixture(t, 'idle');
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeBox('\x1b[2mOpen the task PR.\x1b[0m');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    assert.equal(key, 'Enter');
+    f.record({
+      type: 'user',
+      promptId: 'suggestion-cleared',
+      message: { role: 'user', content: pasted },
+    });
+    return claudeBox('');
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.submitted, true);
+  assert.equal(result.evidence.source, 'native-session');
+  assert.equal(result.evidence.turn_token, 'suggestion-cleared');
+  assert.equal(
+    f.keys.some((args) => args.includes('Tab')),
+    false,
+  );
+});
+
+test('ANSI capture keeps suggestions separate from actual input', (t) => {
+  const f = claudeFixture(t, 'idle');
+  const raw = claudeBox('\x1b[2mOpen the task PR.\x1b[0m');
+  delete process.env.TMUX_PANE_STATE_TAIL_CAPTURE;
+  const previous = childProcess.execFileSync;
+  const captures = [];
+  t.mock.method(childProcess, 'execFileSync', (command, args, options) => {
+    if (command === 'tmux' && args[0] === 'capture-pane') {
+      captures.push(args);
+      return args.includes('-e') ? raw : raw.replace(/\x1b\[[0-9;]*m/g, '');
+    }
+    return previous(command, args, options);
+  });
+  syncBuiltinESMExports();
+  const state = paneState('%1', 'claude');
+  assert.equal(state.queued, false);
+  assert.equal(captures.length, 1);
+  assert.equal(captures[0].includes('-e'), true);
+  assert.equal(f.keys.length, 0);
+});
+
 test('a fresh Claude session proves its first prompt once the transcript appears', async (t) => {
   const f = claudeFixture(t, 'idle', 2, true);
   assert.equal(paneState('%1', 'claude').session_id, 'claude-session');

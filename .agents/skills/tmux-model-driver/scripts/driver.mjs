@@ -12,7 +12,10 @@ import {
   readPaneStateFromCapture,
 } from '../../../../services/gateway/src/runners/pane-state-script.ts';
 import { runnerLaunchBlockerAutoActionKey } from '../../../../services/gateway/src/runners/registry.ts';
-import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
+import {
+  runnerPaneBufferedInstruction,
+  runnerPaneWithoutPromptSuggestion,
+} from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
 import {
   acceptedPrompt,
@@ -370,9 +373,10 @@ export function paneState(pane, expectedRunner, selection) {
   const state = processState(meta);
   const runner = expectedRunner || state;
   const capturedAt = Date.now();
-  const tail =
+  const tail = runnerPaneWithoutPromptSuggestion(
     process.env.TMUX_PANE_STATE_TAIL_CAPTURE ??
-    tmux(['capture-pane', '-p', '-t', pane, '-S', '-40']);
+      tmux(['capture-pane', '-p', '-e', '-t', pane, '-S', '-40']),
+  );
   const safety = paneSafety(tail, runner);
   const files = paths(meta, selection);
   const { obs } = files;
