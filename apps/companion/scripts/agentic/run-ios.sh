@@ -197,6 +197,8 @@ RUN_ENV=(
   EXPO_PACKAGER_PROXY_URL="http://${COMPANION_PACKAGER_HOSTNAME}:${METRO_PORT}"
 )
 
+node "${SCRIPT_DIR}/../install-sherpa-prebuilts.mjs"
+
 set +e
 bash scripts/doctor/ios-build.sh
 doctor_status=$?

@@ -21,10 +21,6 @@ permissions:
   contents: read
   pull-requests: read
 
-env:
-  SKIP_SHERPA_DOWNLOAD: '1'
-  SITEED_SHERPA_ONNX_ALLOW_MISSING_PREBUILTS: '1'
-
 jobs:
   # Every job in this repo's workflows runs on ubuntu-24.04, not ubuntu-latest. ubuntu-26.04 (latest
   # from 2026-10-30) breaks CI twice: its uutils mkdir is not exclusive under concurrency, so the

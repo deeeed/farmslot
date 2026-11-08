@@ -1,0 +1,1 @@
+- Workspace installs leave Sherpa downloads to Companion's native build hooks. Prebuild, local Android/iOS builds and EAS fetch and validate the native libraries before compilation.

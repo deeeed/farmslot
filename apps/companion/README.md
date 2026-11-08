@@ -63,6 +63,8 @@ The source must sit in the run's task-dir `artifacts/` outside dot-directories, 
 does not list. When Companion is paired with a gateway other than the slot sandbox, set
 `FARMSLOT_GATEWAY` and `FARMSLOT_GATEWAY_PROFILE` so the recipe reads the run back from that gateway.
 
+Workspace installs skip Sherpa's native-binary download. `yarn prebuild`, local `yarn ios` / `yarn android`, and EAS native builds fetch and validate those prebuilts explicitly. A download outage stops that native build, while install, Metro, OTA and quality checks do not invoke the downloader.
+
 ## Scripts
 
 Use `package.json` commands as stable entrypoints. Helper files under `scripts/`
