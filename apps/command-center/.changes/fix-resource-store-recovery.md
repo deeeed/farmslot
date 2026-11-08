@@ -1,0 +1,1 @@
+- Add a repeatable browser check for offline-storage failure notices and recovery after reconnecting.
