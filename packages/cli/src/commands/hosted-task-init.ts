@@ -6,8 +6,10 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   executionTemplateCatalogFlow,
   type ExecutionTemplateSource,
+  freezeRequiredSkills,
   type HandoffMetadata,
   projectWorkerTemplateSource,
+  RequiredSkillsError,
   resolveConfiguredExecutionTemplateSources,
   type ResolveConfiguredExecutionTemplateSourcesOptions,
   type SelectedExecutionTemplate,
@@ -22,6 +24,8 @@ import {
   isExecutionTemplateReference,
   isRecord,
   isTemplateProvenance,
+  parseRequiredSkillsConfig,
+  type RequiredSkillSet,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
 import {
@@ -399,6 +403,31 @@ export function hostedTaskRecipeHostOptions(
   });
 }
 
+/**
+ * ADR-049 Amendment 3: freeze the pack's required skill set against the slot
+ * checkout. A missing file refuses task init, so preparation stops before dispatch.
+ */
+export function hostedRequiredSkills(
+  projectJson: { required_skills?: unknown },
+  repoRoot: string,
+  task: { flow: string; platform: string; domain?: string },
+): RequiredSkillSet | undefined {
+  if (projectJson.required_skills === undefined) return undefined;
+  try {
+    return freezeRequiredSkills(repoRoot, parseRequiredSkillsConfig(projectJson.required_skills), {
+      flow: task.flow,
+      platform: task.platform,
+      ...(task.domain ? { domain: task.domain } : {}),
+    });
+  } catch (error) {
+    if (!(error instanceof RequiredSkillsError)) throw error;
+    throw Object.assign(refusal(error.message, error.code), {
+      userAction:
+        "Refresh the slot's skills (the pack skills seed and its prepare deps phase), then prepare this run again.",
+    });
+  }
+}
+
 export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResult> {
   const file = path.resolve(inputFile);
   if (!/^\.task-init-[0-9a-f-]{36}\.json$/.test(path.basename(file)))
@@ -508,10 +537,12 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
         mode: request.task.runMode,
       }),
     );
+    const requiredSkills = hostedRequiredSkills(project.projectJson, slot.remoteRepo, request.task);
     const installation = cliInstallation();
     const produce = async (execution: import('@farmslot/agent-runtime').TaskExecutionInput) =>
       taskInit({
         ...request.task,
+        ...(requiredSkills ? { requiredSkills } : {}),
         terminalContract: terminal,
         taskDir,
         taskDirLabel: path.relative(slot.remoteRepo, taskDir),

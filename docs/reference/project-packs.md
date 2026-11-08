@@ -115,6 +115,30 @@ optional-default runtime is deployed; third-party defaults remain supported.
 The shared protocol, schema, gateway and clients implement this selection contract.
 Pack default removal follows deployment of the compatible runtime.
 
+## Required skills
+
+[ADR-049 Amendment 3](../adr/049-agent-execution-template-selection.md#amendment-3-one-required-skill-set-2026-11-08) gives a dev task and its review one frozen required skill set. A pack declares it with optional `required_skills`:
+
+```json
+"required_skills": {
+  "root": ".agents/skills",
+  "rules": [
+    { "id": "mobile-testing", "when": { "flows": ["dev", "fix-bug"] },
+      "skills": [{ "name": "mms-mobile-testing", "files": ["SKILL.md", "references/layers.md"] }] }
+  ]
+}
+```
+
+- `root` MUST be a checkout-relative directory of installed skills. `name` is a directory under it; `files` are relative to that directory.
+- A rule matches when every present `when` key matches: `flows` (task flow), `platforms` (slot platform), `domains` (effective run domain) and `paths` (anchored `*`/`**`/`?` globs over task paths). An absent key matches anything. Selection MUST be the union of matching rules in pack order, each skill once. There is no model-based or fuzzy selection.
+- Node task init MUST resolve the rules against the slot checkout before writing the task. A missing file MUST refuse initialization with `REQUIRED_SKILL_MISSING`, naming the skill, rule and path, so preparation stops before dispatch. Repository docs never substitute.
+- Task init MUST freeze the set into `inputs/handoff.json` as `requiredSkills`: selection inputs, matched rule ids, each file's path and sha256, and the rules as declared. The gateway cannot supply or override it. TASK.md lists the frozen files; CHECKLIST.md is unchanged.
+- A pipeline review reads the dev task's handoff, so it checks against the same bytes. The set is never recomputed for review.
+- ADR-065's Code drift probe MUST recheck the frozen digests before every worker launch. A missing or changed file is a mismatch and refuses launch. A runtime that cannot check a frozen set reports unverified.
+- Harness commands MAY read the frozen set (`checkRequiredSkills` in `@farmslot/agent-runtime`). A path rule that the current diff matches, but whose skill is outside the frozen set, is a scope change. The task MUST then be prepared again.
+
+Public surface: `RequiredSkillsConfig`, `RequiredSkillSet`, `parseRequiredSkillsConfig` and `isRequiredSkillSet` in `@farmslot/protocol`. `selectRequiredSkills`, `freezeRequiredSkills`, `checkRequiredSkills` and `RequiredSkillsError` in `@farmslot/agent-runtime`. The consumer is the MetaMask harness `mm-harness skills required`. All are additive; no CLI command, flag or RPC is added. Static review-pr keeps its own `static_review.support` bundle.
+
 ## Required fixture sources
 
 Fixture planning is owned by `@farmslot/slot-config` and consumed by

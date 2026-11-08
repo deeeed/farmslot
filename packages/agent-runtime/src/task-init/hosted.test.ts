@@ -78,3 +78,31 @@ test('operator plan remains CHECKLIST while selected template remains TASK', asy
   assert.match(await readFile(result.taskDocument, 'utf8'), /# Worker/);
   assert.match(await readFile(result.taskDocument, 'utf8'), /Control-plane context/);
 });
+
+test('the frozen required skill set lands in the handoff and TASK.md, never the checklist', async (t) => {
+  const input = await spec(t);
+  const requiredSkills = {
+    schemaVersion: 1 as const,
+    selection: { flow: 'dev', platform: 'core', domain: '', paths: [] },
+    rules: ['testing'],
+    skills: [
+      {
+        name: 'mms-mobile-testing',
+        rules: ['testing'],
+        files: [{ path: '.agents/skills/mms-mobile-testing/SKILL.md', sha256: 'a'.repeat(64) }],
+      },
+    ],
+    config: {
+      root: '.agents/skills',
+      rules: [{ id: 'testing', skills: [{ name: 'mms-mobile-testing', files: ['SKILL.md'] }] }],
+    },
+  };
+  const result = await taskInit({ ...input, requiredSkills });
+  const handoff: unknown = JSON.parse(await readFile(result.handoff, 'utf8'));
+  assert.deepEqual((handoff as { requiredSkills?: unknown }).requiredSkills, requiredSkills);
+  assert.match(
+    await readFile(result.taskDocument, 'utf8'),
+    /## Required skills\n\n.*\n\n- `mms-mobile-testing` \(rule `testing`\): `\.agents\/skills\/mms-mobile-testing\/SKILL\.md`/,
+  );
+  assert.doesNotMatch(await readFile(result.checklist!, 'utf8'), /Required skills/);
+});

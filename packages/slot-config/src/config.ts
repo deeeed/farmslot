@@ -14,6 +14,7 @@ import {
   isRuntimeCapabilityClaimScope,
   isValidDomainName,
   normalizeProjectWorkflowDefaults,
+  parseRequiredSkillsConfig,
   PHYSICAL_DEVICE_SLOT_POLICIES,
   type PhysicalDeviceSlotPolicy,
   type PoolSlotMode,
@@ -27,6 +28,7 @@ import {
   type ProjectQaConfig,
   type ProjectSlotSelectionConfig,
   type ProjectWorkflowDefaults,
+  type RequiredSkillsConfig,
   type ReviewMode,
   type ReviewWorkspaceSupportConfig,
   RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS,
@@ -282,6 +284,8 @@ export interface RawProjectJson {
     };
     review_input_timeout_ms?: number;
   };
+  /** ADR-049 Amendment 3: pack rules selecting the one required skill set for dev and review. */
+  required_skills?: RequiredSkillsConfig;
   static_review?: {
     workspace?: { retention_days?: number; root?: string };
     domain?: string;
@@ -897,6 +901,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateRuntimeCapabilitiesConfig(projectJson, projectConfig);
   validateCommandEnvConfig(projectJson, projectConfig);
   validateExecutionTemplatesConfig(projectJson, projectConfig);
+  validateRequiredSkillsConfig(projectJson, projectConfig);
   normalizeRawStaticReview(projectJson.static_review, projectConfig, projectJson.reference_repos);
   normalizeProjectWorkflowDefaults(projectJson.workflow_defaults);
   if (projectJson.qa !== undefined) validateQaConfig(projectJson.qa);
@@ -1188,6 +1193,18 @@ function validateSafeRelativePath(value: string, field: string, projectConfig: s
     value.split(/[\\/]/).some((part) => part === '..')
   ) {
     throw new Error(`${projectConfig}: ${field} must be a safe relative path`);
+  }
+}
+
+export function validateRequiredSkillsConfig(
+  projectJson: RawProjectJson,
+  projectConfig: string,
+): void {
+  if (projectJson.required_skills === undefined) return;
+  try {
+    parseRequiredSkillsConfig(projectJson.required_skills);
+  } catch (error) {
+    throw new Error(`${projectConfig}: ${(error as Error).message}`);
   }
 }
 

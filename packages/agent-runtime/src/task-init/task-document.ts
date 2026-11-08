@@ -14,6 +14,7 @@ import {
   DEFAULT_BRANCH,
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
+  type RequiredSkillSet,
   type TemplateProvenance,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
@@ -351,6 +352,8 @@ export interface HandoffMetadata {
   executionTemplate?: HandoffExecutionTemplate;
   /** Control-plane provenance (repo revisions, selection source); never carries the reference twice. */
   templateProvenance?: Omit<TemplateProvenance, 'executionTemplate'>;
+  /** ADR-049 Amendment 3: the one required skill set, frozen at task init; dev and review read it. */
+  requiredSkills?: RequiredSkillSet;
 }
 
 export function buildHandoffMetadata(input: {
@@ -370,6 +373,7 @@ export function buildHandoffMetadata(input: {
   startedAt?: string;
   executionTemplate?: HandoffExecutionTemplate;
   templateProvenance?: Omit<TemplateProvenance, 'executionTemplate'>;
+  requiredSkills?: RequiredSkillSet;
 }): HandoffMetadata {
   const complete = input.terminalContract.commands.complete;
   const ticket = input.ticket?.trim();
@@ -396,6 +400,7 @@ export function buildHandoffMetadata(input: {
     learnings: 'artifacts/learnings.md',
     ...(input.executionTemplate ? { executionTemplate: input.executionTemplate } : {}),
     ...(input.templateProvenance ? { templateProvenance: input.templateProvenance } : {}),
+    ...(input.requiredSkills ? { requiredSkills: input.requiredSkills } : {}),
   };
 }
 

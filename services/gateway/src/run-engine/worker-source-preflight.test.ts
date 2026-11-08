@@ -112,3 +112,112 @@ export function verifyTaskExecutionProvenance(taskDir, binding) {
     }
   });
 }
+
+// ADR-049 Amendment 3: the Code drift probe re-checks the frozen required skill set.
+async function requiredSkillsFixture(
+  t: import('node:test').TestContext,
+  options: { runtimeChecks: boolean; requiredSkills?: unknown; check?: unknown },
+) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'worker-source-skills-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runtime = path.join(root, 'runtime');
+  const taskDir = path.join(root, 'repo/temp/tasks/dev/run');
+  for (const dir of [
+    path.join(runtime, 'dist'),
+    path.join(taskDir, 'artifacts'),
+    path.join(taskDir, 'inputs'),
+  ])
+    await mkdir(dir, { recursive: true });
+  const real = await expected();
+  await writeFile(
+    path.join(runtime, 'package.json'),
+    JSON.stringify({
+      name: '@farmslot/agent-runtime',
+      version: '0.45.0',
+      minimumRuntimeVersion: '0.42.0',
+      type: 'module',
+    }),
+  );
+  await writeFile(
+    path.join(runtime, 'dist/index.js'),
+    `import { writeFileSync } from 'node:fs';
+export function verifyTaskExecutionProvenance() {}
+${options.runtimeChecks ? `export function checkRequiredSkills(repo, set) { writeFileSync(${JSON.stringify(path.join(root, 'checked.json'))}, JSON.stringify({ repo, set })); return ${JSON.stringify(options.check)}; }` : ''}
+`,
+  );
+  await writeFile(
+    path.join(taskDir, 'artifacts/harness-provenance.json'),
+    JSON.stringify({ bindingIdentity: null }),
+  );
+  await writeFile(
+    path.join(taskDir, 'inputs/handoff.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      ...(options.requiredSkills ? { requiredSkills: options.requiredSkills } : {}),
+    }),
+  );
+  const value = {
+    ...real,
+    taskDir,
+    repoRoot: path.join(root, 'repo'),
+    runtimeScript: path.join(runtime, 'scripts/task-init-cli.mjs'),
+  };
+  return { root, value };
+}
+
+const frozenSet = { schemaVersion: 1, skills: [{ name: 'mms-mobile-testing' }] };
+
+test('a removed required skill file is a code mismatch that refuses launch', async (t) => {
+  const { root, value } = await requiredSkillsFixture(t, {
+    runtimeChecks: true,
+    requiredSkills: frozenSet,
+    check: {
+      status: 'missing',
+      missing: [
+        {
+          skill: 'mms-mobile-testing',
+          path: '.agents/skills/mms-mobile-testing/SKILL.md',
+          reason: 'missing',
+        },
+      ],
+      scopeChanged: [],
+    },
+  });
+  const result = await probe(value);
+  assert.equal(result.status, 'mismatch');
+  assert.match(
+    result.detail,
+    /Required skill mms-mobile-testing: \.agents\/skills\/mms-mobile-testing\/SKILL\.md is missing/,
+  );
+  assert.deepEqual(JSON.parse(await readFile(path.join(root, 'checked.json'), 'utf8')), {
+    repo: value.repoRoot,
+    set: frozenSet,
+  });
+});
+
+test('frozen required skills that still match their digests verify', async (t) => {
+  const { value } = await requiredSkillsFixture(t, {
+    runtimeChecks: true,
+    requiredSkills: frozenSet,
+    check: { status: 'pass', missing: [], scopeChanged: [] },
+  });
+  const result = await probe(value);
+  assert.equal(result.status, 'verified');
+});
+
+test('an older runtime that cannot check a frozen required set stays unverified', async (t) => {
+  const { value } = await requiredSkillsFixture(t, {
+    runtimeChecks: false,
+    requiredSkills: frozenSet,
+  });
+  const result = await probe(value);
+  assert.equal(result.status, 'unverified');
+  assert.equal(result.retry, false);
+  assert.match(result.detail, /cannot check the frozen required skill set/);
+});
+
+test('a task without a required skill set verifies as before', async (t) => {
+  const { value } = await requiredSkillsFixture(t, { runtimeChecks: false });
+  const plain = await probe(value);
+  assert.equal(plain.status, 'verified', plain.detail);
+});

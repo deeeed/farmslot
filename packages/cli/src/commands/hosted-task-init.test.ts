@@ -8,6 +8,7 @@ import test, { type TestContext } from 'node:test';
 import { fixture } from '../../test/helpers/project-doctor.js';
 
 import {
+  hostedRequiredSkills,
   type HostedTaskInitRequest,
   hostedTaskRecipeHostOptions,
   type HostedTaskTemplateCatalog,
@@ -357,4 +358,41 @@ test('hosted PR completion preserves run acceptance projections without weakenin
       /invalid or forbidden/,
     );
   }
+});
+
+test('hosted task init freezes the pack required skill set or refuses a missing one', (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-required-skills-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const projectJson = {
+    required_skills: {
+      root: '.agents/skills',
+      rules: [
+        {
+          id: 'mobile-testing',
+          when: { flows: ['dev', 'fix-bug'] },
+          skills: [{ name: 'mms-mobile-testing', files: ['SKILL.md'] }],
+        },
+      ],
+    },
+  };
+  const task = { flow: 'dev', platform: 'ios', domain: 'perps' };
+  assert.equal(hostedRequiredSkills({}, repo, task), undefined);
+  assert.throws(
+    () => hostedRequiredSkills(projectJson, repo, task),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as Error & { code?: string }).code === 'REQUIRED_SKILL_MISSING' &&
+      /Required skill mms-mobile-testing \(rule mobile-testing\) is not installed: missing \.agents\/skills\/mms-mobile-testing\/SKILL\.md/.test(
+        error.message,
+      ),
+  );
+  fs.mkdirSync(path.join(repo, '.agents/skills/mms-mobile-testing'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.agents/skills/mms-mobile-testing/SKILL.md'), '# testing\n');
+  const frozen = hostedRequiredSkills(projectJson, repo, task);
+  assert.deepEqual(frozen?.rules, ['mobile-testing']);
+  assert.deepEqual(frozen?.selection, { flow: 'dev', platform: 'ios', domain: 'perps', paths: [] });
+  assert.deepEqual(
+    hostedRequiredSkills(projectJson, repo, { ...task, flow: 'ci-fix' })?.skills,
+    [],
+  );
 });

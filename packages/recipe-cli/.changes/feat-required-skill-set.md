@@ -1,0 +1,1 @@
+- Export `changedFiles`, the changed-file list `domain` classification uses, for harness required-skill scope checks.

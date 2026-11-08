@@ -316,7 +316,7 @@ Public surface: no new CLI commands, flags, SDK exports or harness interfaces; n
 
 ## Amendment 3: one required skill set, 2026-11-08
 
-**Status:** Proposed. This amendment records direction only; implementation requires the normative specification and schema review described below.
+**Status:** Accepted (lead, 2026-11-08). Normative rules: [project packs: Required skills](../reference/project-packs.md#required-skills).
 
 ### Decision
 
