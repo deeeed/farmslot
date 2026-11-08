@@ -160,7 +160,7 @@
         "shutdown": "xcrun simctl shutdown '{{simulator}}'"
       }
     },
-    "mobile-runtime": {
+    "dev-server": {
       "type": "dev-server",
       "label": "Owned Mobile Metro and dev client",
       "streamable": false,
@@ -193,7 +193,7 @@
               "scope": "slot"
             },
             {
-              "id": "mobile-runtime",
+              "id": "dev-server",
               "kind": "process",
               "access": "exclusive",
               "scope": "slot"
@@ -203,23 +203,23 @@
         "actions": {
           "acquire": {
             "kind": "resource",
-            "resource_id": "mobile-runtime",
+            "resource_id": "dev-server",
             "action": "boot"
           },
           "health": {
             "kind": "resource",
-            "resource_id": "mobile-runtime",
+            "resource_id": "dev-server",
             "action": "health"
           },
           "release": {
             "kind": "resource",
-            "resource_id": "mobile-runtime",
+            "resource_id": "dev-server",
             "action": "shutdown"
           }
         },
         "affected_resources": [
           {
-            "resource_id": "mobile-runtime",
+            "resource_id": "dev-server",
             "ownership": "capability",
             "release_effect": "stop"
           },

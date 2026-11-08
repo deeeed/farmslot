@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -27,6 +28,13 @@ import {
 } from '@farmslot/slot-config';
 
 import { projectName, projectShortName, validatePackDir } from './pack.js';
+import {
+  defaultDevServerResource,
+  defaultResources,
+  generatePool,
+  registerSlot,
+  writePool,
+} from './pool-config.js';
 
 const { lintWorkerTemplateStructure } = createRequire(import.meta.url)(
   '@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs',
@@ -76,7 +84,7 @@ test('each project owns a distinct sibling Mobile checkout and never names a pro
   for (const name of PROJECTS) {
     const text = readFileSync(join(pack, 'projects', name, 'project.json'), 'utf8');
     assert.doesNotMatch(text, /metamask-mobile-farm|metamask-mobile-\d|-mm-\d/);
-    assert.match(text, /"mobile-runtime"[\s\S]*\{\{mobile_repo\}\}/);
+    assert.match(text, /"dev-server"[\s\S]*\{\{mobile_repo\}\}/);
   }
 });
 
@@ -158,6 +166,69 @@ test('every template passes dispatch admission for the project smoke and proof r
       assert.equal(proof.requirements[0]?.mode, 'visual', `${name} ${flow}`);
     }
   }
+});
+
+test('the proof capability is available on slots allocated by project add', (t) => {
+  const root = scratch(t, 'mt-catalog-');
+  const pool = generatePool({ machine: 'mini', os: 'darwin', sshUser: 'farm', runnerPaths: {} });
+  const result = validatePackDir(pack, join(root, 'no-pool'));
+  assert.deepEqual(result.errors, []);
+  // The same allocation projectAdd performs for each declared slot.
+  for (const entry of result.pack!.projects) {
+    const short = projectShortName(entry);
+    registerSlot(pool, {
+      id: `mini-${short}-1`,
+      project: projectName(entry),
+      platform: entry.platform,
+      repo: join(root, 'repos', `${short}-1`),
+      session: `${short}-1`,
+      branch: 'main',
+      resources: {
+        'dev-server': defaultDevServerResource(pool),
+        ...defaultResources(entry.platform, short, 1, pool),
+      },
+    });
+    mkdirSync(join(root, 'repos', `${short}-1`, '.git'), { recursive: true });
+  }
+  mkdirSync(join(root, 'pool'));
+  writePool(join(root, 'pool', 'mini.json'), pool);
+  cpSync(join(pack, 'projects'), join(root, 'projects'), { recursive: true });
+  // The gateway's own catalog evaluator decides availability before dispatch.
+  const child = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--experimental-test-module-mocks',
+      '--conditions=development',
+      fileURLToPath(new URL('./test/metamask-tooling-catalog.mts', import.meta.url)),
+      ...pool.slots.map((slot) => slot.id),
+    ],
+    {
+      // Resolve gateway workspace packages as the gateway itself does.
+      cwd: fileURLToPath(new URL('../../../../services/gateway/', import.meta.url)),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        FARMSLOT_POOL_DIR: join(root, 'pool'),
+        FARMSLOT_PROJECTS_DIR: join(root, 'projects'),
+        FARMSLOT_HOME: join(root, 'home'),
+      },
+      timeout: 60000,
+    },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  const catalogs: Array<{
+    slotId: string;
+    capabilities: Array<{ id: string; availability: { state: string; reason?: string } }>;
+  }> = JSON.parse(child.stdout.trim().split('\n').at(-1)!);
+  assert.deepEqual(
+    catalogs.map((catalog) => [catalog.slotId, catalog.capabilities]),
+    pool.slots.map((slot) => [
+      slot.id,
+      [{ id: 'mobile-proof', availability: { state: 'available' } }],
+    ]),
+  );
 });
 
 test('the owned Mobile target renders for a checkout that exists only on the execution node', () => {
