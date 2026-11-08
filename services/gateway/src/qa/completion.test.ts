@@ -518,3 +518,36 @@ test('QA binds retained change scope, reported revisions and declared suite', ()
   assert.throws(() => validateQaScope(result, { ...source, files: [] }, suite), /scope digest/);
   assert.throws(() => validateQaScope(result, source, { ...suite, cases: [] }), /suite differs/);
 });
+
+test('proof measurements retain valid failed attempts without granting passing QA', () => {
+  const value = bundle();
+  assert.ok(value.summary && typeof value.summary === 'object' && !Array.isArray(value.summary));
+  Object.assign(value.summary, {
+    status: 'fail',
+    passed: 2,
+    failed: 1,
+    cause_counts: { subject: 1, harness: 0, environment: 0, unknown: 0 },
+  });
+  assert.ok(value.manifest && typeof value.manifest === 'object' && !Array.isArray(value.manifest));
+  Object.assign(value.manifest, { runStatus: 'fail' });
+  assert.ok(Array.isArray(value.trace));
+  Object.assign(value.trace[1], {
+    ok: false,
+    cause_class: 'subject',
+    error: 'Observed behavior differed',
+  });
+  assert.throws(() => validateQaPackage(value, startedAt), /recipe did not pass/);
+  assert.equal(
+    validateQaPackage(value, startedAt, undefined, true),
+    digestRecipeDocument(value.recipe),
+  );
+  assert.ok(
+    value.recipeResolution &&
+      typeof value.recipeResolution === 'object' &&
+      !Array.isArray(value.recipeResolution),
+  );
+  Object.assign(value.recipeResolution, {
+    root: { ref: 'smoke', digest: 'sha256:' + 'f'.repeat(64) },
+  });
+  assert.throws(() => validateQaPackage(value, startedAt, undefined, true), /digest/);
+});

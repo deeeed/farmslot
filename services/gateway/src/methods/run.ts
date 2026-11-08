@@ -26,6 +26,7 @@ import {
   INTERACTIVE_HANDOFF_EXTEND_ACTION,
   interactiveHandoffAllowsExtend,
   isAllowedRunDecisionAction,
+  isEvalProofInput,
   isEvidencePolicyReason,
   isGateParkInFlightOrFreed,
   isHeldForResultDecision,
@@ -44,6 +45,7 @@ import {
   primaryRoleForFlow,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type QaInput,
+  type QaProfileSelection,
   type QueueItem,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
@@ -339,6 +341,7 @@ export interface QueuedQaExpectation {
   profileId: string;
   templateId: string;
   inputs: Record<string, QaInput>;
+  profile?: QaProfileSelection['profile'];
 }
 
 /** Internal handoff metadata is captured from the validated queue row, never RPC input. */
@@ -366,7 +369,8 @@ export function assertExpectedQaSelection(
     current?.flowType !== 'qa' ||
     current.qa.profile.id !== expected.profileId ||
     current.qa.profile.template_id !== expected.templateId ||
-    !isDeepStrictEqual(current.qa.inputs, expected.inputs)
+    !isDeepStrictEqual(current.qa.inputs, expected.inputs) ||
+    (expected.profile !== undefined && !isDeepStrictEqual(current.qa.profile, expected.profile))
   )
     throw new ReviewQaConfigurationError(
       'QA selection changed while queued; review the current profile and inputs, then requeue',
@@ -486,6 +490,15 @@ export async function planRunCreation(
       );
     }
   }
+  const proof = params.engineState?.evalExperiment?.blind?.proof;
+  if (
+    proof &&
+    (!isEvalProofInput(proof) ||
+      params.flowType !== 'qa' ||
+      params.lane !== 'comparison' ||
+      params.completionPolicy !== 'artifact-only')
+  )
+    throw new Error('Proof eval metadata requires a valid artifact-only comparison QA run.');
   // Gateway-internal — clients must not forge HEAD verification.
   delete params.startRefSkipPrepareVerified;
   if ('expectedQa' in params)

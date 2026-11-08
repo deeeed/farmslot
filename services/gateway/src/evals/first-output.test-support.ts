@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { EvalExperimentManifest, Run } from '@farmslot/protocol';
+import type { EvalExperimentManifest, EvalProofInput, Run } from '@farmslot/protocol';
 
 import { makeEvalResultPackage } from '../run-engine/test-fixtures.js';
 
@@ -130,6 +130,29 @@ export async function firstOutputFixture(root: string, run: Run): Promise<Run> {
           },
         },
       },
+    },
+  };
+}
+
+export function proofInputFixture(): EvalProofInput {
+  return {
+    version: 1,
+    source: {
+      baseSha: 'b'.repeat(40),
+      headSha: 'a'.repeat(40),
+      treeSha: 'c'.repeat(40),
+      diffSha256: 'd'.repeat(64),
+    },
+    acceptanceCriteria: ['Observe the supplied behavior'],
+    qa: { profile: { id: 'pr', title: 'PR QA', template_id: 'qa/default' }, inputs: {} },
+    executionTemplate: {
+      id: 'qa/default',
+      sourceId: 'project:fixture',
+      flow: 'qa',
+      platforms: ['cli'],
+      labels: [],
+      relativePath: 'qa.md',
+      sha256: 'e'.repeat(64),
     },
   };
 }

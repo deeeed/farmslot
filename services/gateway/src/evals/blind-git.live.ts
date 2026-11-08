@@ -216,3 +216,83 @@ module['restore'](json.loads(sys.argv[2]))
     );
     assert.equal(command('restore', spec).status, 'restored');
   });
+
+// Outside the default suite: this checks the real macOS worker sandbox.
+test('proof Git admits both source snapshots and keeps product and pinned inputs read-only', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'proof-git-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'repo');
+  mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(repo, '.gitignore'), 'tasks/\n.runtime/\n');
+  writeFileSync(path.join(repo, 'value.txt'), 'before\n');
+  const baseSha = commit(repo, 'before');
+  writeFileSync(path.join(repo, 'value.txt'), 'supplied\n');
+  const headSha = commit(repo, 'implementation');
+  const treeSha = git(repo, 'rev-parse', 'HEAD^{tree}');
+  writeFileSync(path.join(repo, 'golden.json'), 'hidden proof');
+  const golden = commit(repo, 'golden');
+  git(repo, 'checkout', '-q', headSha);
+  const task = path.join(repo, 'tasks/current');
+  mkdirSync(path.join(task, 'inputs'), { recursive: true });
+  mkdirSync(path.join(task, 'artifacts'));
+  writeFileSync(path.join(task, 'inputs/qa.json'), '{}');
+  const runtime = path.join(repo, '.runtime');
+  mkdirSync(runtime);
+  const spec: BlindGitSpec = {
+    slotId: 'proof-slot',
+    slotEpoch: 1,
+    repo,
+    capsule: path.join(root, '.farmslot-blind-evals/trial'),
+    runId: 'trial',
+    branch: 'eval/proof',
+    baseSha: headSha,
+    referenceCommits: [golden],
+    proof: { baseSha, headSha, treeSha, diffSha256: 'a'.repeat(64) },
+  };
+  assert.equal(command('isolate', spec).status, 'isolated');
+  assert.equal(git(repo, 'cat-file', '-t', baseSha), 'commit');
+  assert.match(git(repo, 'diff', baseSha, headSha), /supplied/);
+  assert.notEqual(spawnSync('git', ['-C', repo, 'cat-file', '-e', golden], { env }).status, 0);
+  const priorTask = path.join(repo, 'tasks/prior');
+  mkdirSync(priorTask);
+  writeFileSync(path.join(priorTask, 'answer.json'), 'golden');
+  const gatewayTask = path.join(root, 'gateway-tasks');
+  mkdirSync(gatewayTask);
+  writeFileSync(path.join(gatewayTask, 'answer.json'), 'golden');
+  spec.proofBoundary = {
+    taskRoot: path.join(repo, 'tasks'),
+    currentTask: task,
+    runtimeRoots: [runtime],
+    deniedRoots: [gatewayTask],
+  };
+  assert.equal(command('boundary', spec).status, 'isolated');
+  const worker = spawnSync(
+    'bash',
+    [
+      '-c',
+      withBlindTrialBoundary(
+        [
+          `! sh -c 'echo changed > "${repo}/value.txt"'`,
+          `! sh -c 'echo changed > "${repo}/.git/HEAD"'`,
+          `! sh -c 'echo changed > "${task}/inputs/qa.json"'`,
+          `! cat '${priorTask}/answer.json'`,
+          `! cat '${gatewayTask}/answer.json'`,
+          `cat '${task}/inputs/qa.json'`,
+          `git -C '${repo}' diff ${baseSha} ${headSha} >/dev/null`,
+          `echo captured > '${task}/artifacts/output.txt'`,
+          `echo cache > '${runtime}/cache'`,
+        ].join(' && '),
+        spec.capsule,
+      ),
+    ],
+    { env, encoding: 'utf8' },
+  );
+  assert.equal(worker.status, 0, worker.stderr);
+  assert.equal(command('verify', spec).status, 'isolated');
+  writeFileSync(path.join(repo, 'value.txt'), 'tampered\n');
+  assert.throws(() => command('verify', spec), /implementation changed/);
+  writeFileSync(path.join(repo, 'value.txt'), 'supplied\n');
+  writeFileSync(path.join(task, 'inputs/qa.json'), '{"tampered":true}');
+  assert.throws(() => command('verify', spec), /input.*changed/);
+});

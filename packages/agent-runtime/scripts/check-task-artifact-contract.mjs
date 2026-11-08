@@ -8,6 +8,8 @@ const require = createRequire(import.meta.url);
 const { evidenceManifestArtifacts, normalizeArtifactPath } = require('./evidence-manifest.cjs');
 const {
   expandedArtifactsForCommand,
+  isProofMeasurementContract,
+  isProofMeasurementTask,
   resolveWorkerTerminalArtifactPath,
   deterministicChecks,
 } = require('./worker-terminal-contract.cjs');
@@ -495,12 +497,13 @@ if (contractPath && terminalCommand && existsSync(contractPath)) {
   }
 }
 const isReviewTerminal = terminalContract?.flowType === 'review';
+const proofMeasurement = isProofMeasurementContract(terminalContract);
 const hasRecipe = fileExists('artifacts/recipe.json');
 
 // A reviewer must be able to report ISSUES when worker-owned proof is invalid.
 // Its terminal gate validates only the reviewer-owned feedback artifact below;
 // contribution and fix flows still validate the complete proof package.
-if (!isReviewTerminal) {
+if (!isReviewTerminal && !proofMeasurement) {
   const hasRecipeDecision = fileExists('artifacts/recipe-decision.json');
   const recipeDecisionText = readText('artifacts/recipe-decision.json');
   if (hasRecipeDecision) {
@@ -581,7 +584,11 @@ if (!isReviewTerminal) {
 
 // A registered child unit is part of the parent's proof: the parent cannot
 // report success while a child checklist is still running or blocked.
-if (fileExists(SUBTASK_INDEX_REL)) {
+if (
+  fileExists(SUBTASK_INDEX_REL) &&
+  !proofMeasurement &&
+  !(isReviewTerminal && isProofMeasurementTask(taskDir))
+) {
   for (const { unit, status } of openSubtaskUnits(taskDir)) {
     issues.push(
       `${unit.checklist}: subtask ${unit.id} is not settled (status ${status ?? 'no signal'}) — ` +
@@ -594,8 +601,9 @@ if (fileExists(SUBTASK_INDEX_REL)) {
 // init registered in inputs/handoff.json needs a verdict, and `weak` / `missing`
 // fails unless the flow's terminal contract waives it.
 if (
-  flags.has('--require-acceptance-status') ||
-  (terminalCommand === 'complete' && !isReviewTerminal)
+  !proofMeasurement &&
+  (flags.has('--require-acceptance-status') ||
+    (terminalCommand === 'complete' && !isReviewTerminal))
 ) {
   const owningFlow =
     readJsonArtifact('inputs/handoff.json', 'handoff')?.flow ?? terminalContract?.flowType;
@@ -675,7 +683,7 @@ if (terminalCommand !== 'blocked') {
   for (const checklist of checklists) {
     try {
       const result = deterministicChecks.evaluate(taskDir, checklist);
-      issues.push(...result.issues);
+      if (!proofMeasurement) issues.push(...result.issues);
       deterministicResults.push(...result.checks);
     } catch (error) {
       issues.push(`Deterministic checks cannot be validated: ${error.message}`);

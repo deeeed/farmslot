@@ -1,4 +1,5 @@
 import type { ExecutionTemplateReference } from './execution-templates.js';
+import { type QaProfileSelection, validateQaConfig } from './qa.js';
 import {
   type FamilyDiffProvenance,
   type FamilyInputCommitMetadata,
@@ -27,7 +28,69 @@ export interface EvalMedia {
 }
 
 export type EvalPackageSourceKind = 'merged-pr' | 'prior-run' | 'package' | 'git-ref';
-export type EvalTaskProfile = 'fix-bug' | 'dev';
+export type EvalTaskProfile = 'fix-bug' | 'dev' | 'proof';
+
+export function evalTaskProfileFlow(profile: EvalTaskProfile): FlowType {
+  return profile === 'proof' ? 'qa' : profile;
+}
+
+export interface EvalProofSource {
+  baseSha: string;
+  headSha: string;
+  treeSha: string;
+  diffSha256: string;
+  recordedDiffSha256?: string;
+}
+
+/** Frozen proof input; the implementation is supplied, not the candidate answer. */
+export interface EvalProofInput {
+  version: 1;
+  source: EvalProofSource;
+  acceptanceCriteria: string[];
+  qa: QaProfileSelection;
+  executionTemplate: ExecutionTemplateReference;
+}
+
+export function isEvalProofInput(value: unknown): value is EvalProofInput {
+  if (!isPlainRecord(value) || value.version !== 1 || !isPlainRecord(value.source)) return false;
+  const source = value.source;
+  if (
+    !['baseSha', 'headSha', 'treeSha'].every(
+      (key) =>
+        typeof source[key] === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(source[key]),
+    )
+  )
+    return false;
+  if (typeof source.diffSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(source.diffSha256))
+    return false;
+  if (
+    source.recordedDiffSha256 !== undefined &&
+    (typeof source.recordedDiffSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(source.recordedDiffSha256))
+  )
+    return false;
+  if (
+    !Array.isArray(value.acceptanceCriteria) ||
+    value.acceptanceCriteria.length === 0 ||
+    value.acceptanceCriteria.some((item) => typeof item !== 'string' || !item.trim())
+  )
+    return false;
+  if (
+    !isPlainRecord(value.qa) ||
+    !isPlainRecord(value.qa.profile) ||
+    !isPlainRecord(value.qa.inputs) ||
+    !isExecutionTemplateReference(value.executionTemplate)
+  )
+    return false;
+  try {
+    validateQaConfig({ profiles: [value.qa.profile] });
+    validateQaConfig({ profiles: [{ ...value.qa.profile, inputs: value.qa.inputs }] });
+  } catch {
+    // Invalid frozen input is rejected by the wire validator, not normalized.
+    return false;
+  }
+  return value.qa.profile.template_id === value.executionTemplate.id;
+}
 
 export interface TaskTemplateSelection {
   /** Project-owned worker template basename, e.g. fix-bug.md or fix-bug-v2.md. */
@@ -270,6 +333,8 @@ export interface EvalBlindTrial {
   invalidReason?: string;
   referenceCommits: string[];
   referencePatchId: string;
+  /** Proof trials supply this patch as input and never compare it as an answer. */
+  proof?: EvalProofInput;
   forbiddenInputs: string[];
   isolation?: {
     slotId: string;
@@ -284,6 +349,7 @@ export interface EvalBlindTrial {
     diffSha256: string;
     patchId: string;
     diff: FamilyDiffProvenance;
+    proofPackage?: { path: string; sha256: string };
   };
 }
 
@@ -322,6 +388,8 @@ export interface ResultPackageManifest {
   familyId: string;
   objectiveHash: string;
   taskProfile: EvalTaskProfile;
+  proof?: EvalProofInput;
+  proofOutputSha256?: string;
   source: EvalPackageSource;
   productRef?: EvalProductRef;
   runId?: string;
@@ -353,6 +421,7 @@ export interface EvalCase {
   caseId: string;
   source: EvalPackageSource;
   taskProfile: EvalTaskProfile;
+  proof?: EvalProofInput;
   objectiveHash: string;
   /** Explicit ticket/problem text, separate from the gateway-only reference answer. */
   problemStatement?: string;
@@ -611,7 +680,7 @@ function isEvalProductRef(value: unknown): value is EvalProductRef {
 }
 
 function isEvalTaskProfile(value: unknown): value is EvalTaskProfile {
-  return value === 'fix-bug' || value === 'dev';
+  return value === 'fix-bug' || value === 'dev' || value === 'proof';
 }
 
 function isEvalPackageRole(value: unknown): value is EvalPackageRole {
@@ -869,6 +938,15 @@ export function isResultPackageManifest(value: unknown): value is ResultPackageM
   )
     return false;
   if (!isEvalTaskProfile(value.taskProfile) || !isEvalPackageSource(value.source)) return false;
+  if (value.taskProfile === 'proof' ? !isEvalProofInput(value.proof) : value.proof != null)
+    return false;
+  if (
+    value.proofOutputSha256 !== undefined &&
+    (value.taskProfile !== 'proof' ||
+      typeof value.proofOutputSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(value.proofOutputSha256))
+  )
+    return false;
   if (value.productRef != null && !isEvalProductRef(value.productRef)) return false;
   if (!isFamilyDiffProvenance(value.diff) || !isEvalPackageAxes(value.axes)) return false;
   if (value.axes.template?.path != null && !isPortableRelativePath(value.axes.template.path))
@@ -928,6 +1006,7 @@ function isEvalCase(value: unknown): value is EvalCase {
     typeof value.caseId === 'string' &&
     isEvalPackageSource(value.source) &&
     isEvalTaskProfile(value.taskProfile) &&
+    (value.taskProfile === 'proof' ? isEvalProofInput(value.proof) : value.proof == null) &&
     typeof value.objectiveHash === 'string' &&
     typeof value.referencePackageId === 'string' &&
     typeof value.referencePackageHash === 'string' &&

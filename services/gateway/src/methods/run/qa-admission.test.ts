@@ -248,3 +248,19 @@ test('ambiguous QA without a profile refuses with choices before creating a Run'
     before,
   );
 });
+
+test('proof admission refuses full-profile drift even when IDs and effective inputs match', () => {
+  const f = fixture();
+  const selected = resolveReviewQaDispatch(f.params, qa)!;
+  assert.equal(selected.flowType, 'qa');
+  if (selected.flowType !== 'qa') assert.fail('Expected admitted QA');
+  assertExpectedQaSelection(selected, { ...f.expected, profile: selected.qa.profile });
+  assert.throws(
+    () =>
+      assertExpectedQaSelection(selected, {
+        ...f.expected,
+        profile: { ...selected.qa.profile, title: 'Changed after admission' },
+      }),
+    /changed while queued/,
+  );
+});

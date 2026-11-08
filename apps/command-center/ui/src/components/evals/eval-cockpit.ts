@@ -10,7 +10,7 @@ import type {
   ResultPackageManifest,
   Run,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { evalTaskProfileFlow, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { defaultModelForRunner } from '@farmslot/review-dispatch';
 
@@ -598,7 +598,7 @@ export class EvalCockpit extends EvalCockpitState {
       !this.mock && project
         ? resourceQuery<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
             project,
-            flowType: taskProfile,
+            flowType: evalTaskProfileFlow(taskProfile),
           })
         : undefined,
     );

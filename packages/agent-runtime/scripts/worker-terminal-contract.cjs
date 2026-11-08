@@ -51,6 +51,7 @@ const { atomicWrite } = require('./mark-io.cjs');
  * @typedef {object} WorkerTerminalContractDocument
  * @property {1} schemaVersion
  * @property {string} flowType
+ * @property {true} [proofMeasurement] Gateway-owned QA measurement policy.
  * @property {string} [mode]
  * @property {boolean} requireSignal
  * @property {number} [recordedEvidenceContractVersion] Gateway-owned run version projection.
@@ -217,13 +218,16 @@ function normalizeCommandLayer(layer) {
 /**
  * @param {WorkerTerminalProjectConfig | null | undefined} projectConfig
  * @param {string} flowType
- * @param {{ mode?: string | null, now?: string }} [options]
+ * @param {{ mode?: string | null, now?: string, proofMeasurement?: true }} [options]
  * @returns {WorkerTerminalContractDocument}
  */
 function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
   const mode = options.mode ?? undefined;
   const now = options.now ?? new Date().toISOString();
   const flowKey = String(flowType || '').trim() || 'unknown';
+  const proofMeasurement = options.proofMeasurement === true;
+  if (proofMeasurement && flowKey !== 'qa')
+    throw new Error('Proof measurements require the QA flow');
 
   const defaultsLayer = normalizeCommandLayer({
     complete: projectConfig?.complete,
@@ -279,11 +283,14 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
   return {
     schemaVersion: 1,
     flowType: flowKey,
+    ...(proofMeasurement ? { proofMeasurement: true } : {}),
     ...(mode ? { mode } : {}),
     requireSignal,
-    ...(acceptance && Object.keys(acceptance).length > 0 ? { acceptance } : {}),
-    commands,
-    whenPresent,
+    ...(!proofMeasurement && acceptance && Object.keys(acceptance).length > 0
+      ? { acceptance }
+      : {}),
+    commands: proofMeasurement ? { ...commands, complete: { artifacts: [] } } : commands,
+    whenPresent: proofMeasurement ? [] : whenPresent,
     resolvedAt: now,
     source: projectConfig ? 'project' : 'builtin',
   };
@@ -795,8 +802,26 @@ const deterministicChecks = {
   evaluate: evaluateDeterministicChecks,
 };
 
+/** Only a frozen gateway QA contract selects measurement completion. */
+function isProofMeasurementContract(contract) {
+  return contract?.flowType === 'qa' && contract.proofMeasurement === true;
+}
+
+/** The root policy also lets its static judge inspect unfinished worker subtasks. */
+function isProofMeasurementTask(taskDir) {
+  const file = path.join(taskDir, 'inputs/worker-terminal-contract.json');
+  try {
+    return isProofMeasurementContract(JSON.parse(fs.readFileSync(file, 'utf8')));
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 module.exports = {
   TERMINAL_COMMANDS,
+  isProofMeasurementContract,
+  isProofMeasurementTask,
   BUILTIN_FLOW_COMMANDS,
   resolveWorkerTerminalContract,
   lintWorkerTemplateAgainstContract,

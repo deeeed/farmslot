@@ -1351,6 +1351,7 @@ export async function writeTaskFile(
   );
   const terminalContract = resolveWorkerTerminalContract(workerTerminalConfig, run.flowType, {
     mode: run.mode ?? undefined,
+    ...(run.engineState?.evalExperiment?.blind?.proof ? { proofMeasurement: true } : {}),
   });
   if (
     run.flowType === 'review-pr' &&

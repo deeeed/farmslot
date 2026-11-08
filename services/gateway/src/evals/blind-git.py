@@ -1,4 +1,5 @@
 """Gateway-owned Git isolation for one blind trial; sent to the node on stdin."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -75,9 +76,95 @@ def sandbox_profile(spec, capsule):
     capsules = {path.parent / '.farmslot-blind-evals' for path in [repo] + checkouts}
     denied += sorted(capsules) + [(Path.home() / '.config' / 'gh').resolve()]
     quote = lambda path: json.dumps(str(path), ensure_ascii=False)
-    return '\n'.join(['(version 1)', '(allow default)',
+    rules = ['(version 1)', '(allow default)',
                       '(deny file-read* ' + ' '.join('(subpath %s)' % quote(path) for path in denied) + ')',
-                      '(allow file-read* (subpath %s))' % quote((capsule / 'boundary').resolve()), ''])
+                      '(allow file-read* (subpath %s))' % quote((capsule / 'boundary').resolve())]
+    if spec.get('proofBoundary'):
+        scope = proof_scope(spec)
+        rules += ['(deny file-read* ' + ' '.join('(subpath %s)' % quote(p) for p in scope['denied']) + ')',
+                  '(allow file-read* (subpath %s))' % quote(scope['task']),
+                  '(deny file-write* (subpath %s))' % quote(repo)]
+        rules += ['(allow file-write* (subpath %s))' % quote(p) for p in [scope['task']] + scope['runtime']]
+        rules += ['(deny file-write* (subpath %s))' % quote(p) for p in scope['pinned']]
+    return '\n'.join(rules + [''])
+
+
+def inside(path, root):
+    return path == root or root in path.parents
+
+
+def proof_scope(spec):
+    repo = Path(spec['repo']).resolve()
+    scope = spec['proofBoundary']
+    task = Path(scope['currentTask']).resolve()
+    task_root = Path(scope['taskRoot']).resolve()
+    if task == task_root or not inside(task, task_root) or not inside(task, repo):
+        raise RuntimeError('Proof task layout overlaps product or hidden inputs')
+    denied = [task_root] + [Path(p).resolve() for p in scope['deniedRoots'] if Path(p).exists()]
+    if any(inside(task, p) or inside(p, task) for p in denied[1:]):
+        raise RuntimeError('Proof task overlaps gateway reference material')
+    pinned = [repo / '.git', task / 'inputs', task / 'assets', task / 'TASK.md', task / 'mark']
+    provenance = task / 'artifacts/harness-provenance.json'
+    if provenance.exists():
+        receipt = json.loads(provenance.read_text())
+        pin = Path(receipt['pin']).resolve()
+        if inside(task, pin) or inside(pin, task) or inside(repo, pin):
+            raise RuntimeError('Proof task pin overlaps a writable root')
+        pinned += [pin, provenance]
+    runtime = [Path(p).resolve() for p in scope['runtimeRoots']]
+    tracked = [repo / p.decode() for p in git(repo, 'ls-files', '-z').stdout.split(b'\0') if p]
+    for root in [task] + runtime:
+        if root == repo or not inside(root, repo) or any(inside(p, root) or inside(root, p) for p in tracked + [repo / '.git']):
+            raise RuntimeError('Proof writable root overlaps tracked product or Git inputs')
+        if git(repo, 'check-ignore', '--quiet', '--no-index', str(root.relative_to(repo)) + '/', check=False).returncode:
+            raise RuntimeError('Proof writable root must be a gitignored task or runtime cache')
+    if any(inside(p, root) or inside(root, p) for root in runtime for p in pinned + [task_root]):
+        raise RuntimeError('Proof runtime cache overlaps pinned or task inputs')
+    return {'task': task, 'runtime': runtime, 'denied': denied, 'pinned': pinned}
+
+
+def input_digests(roots):
+    result = {}
+    for name in roots:
+        root = Path(name)
+        if not root.exists():
+            result[name] = None
+            continue
+        files = sorted(root.rglob('*')) if root.is_dir() else [root]
+        for file in files:
+            if file.is_symlink():
+                raise RuntimeError('Proof input symbolic links are forbidden')
+            if file.is_file():
+                result[str(file)] = hashlib.sha256(file.read_bytes()).hexdigest()
+    return result
+
+
+def freeze_proof_inputs(spec):
+    scope = proof_scope(spec)
+    # Pinned executable bytes are already verified by task init. The sandbox
+    # denies their entire pin, while these small admitted task inputs are rehashed.
+    roots = [str(p) for p in scope['pinned'] if p != Path(spec['repo']).resolve() / '.git'
+             and (inside(p, scope['task']))]
+    file = Path(spec['capsule']) / 'proof-inputs.json'
+    frozen = {'roots': roots, 'inputs': input_digests(roots), 'scope': spec['proofBoundary']}
+    if file.exists():
+        if json.loads(file.read_text()) != frozen:
+            raise RuntimeError('Proof input identity changed')
+    else:
+        save(file, frozen)
+
+
+def verify_proof_source(spec):
+    repo, proof = Path(spec['repo']), spec['proof']
+    for sha in [proof['baseSha'], proof['headSha']]:
+        git(repo, 'cat-file', '-e', sha + '^{commit}')
+    if (spec['baseSha'] != proof['headSha']
+            or git(repo, 'rev-parse', 'HEAD').stdout.decode().strip() != proof['headSha']
+            or git(repo, 'rev-parse', 'HEAD^{tree}').stdout.decode().strip() != proof['treeSha']
+            or git(repo, 'diff', '--cached', '--quiet', 'HEAD', '--', check=False).returncode
+            or git(repo, 'diff', '--quiet', '--', check=False).returncode
+            or git(repo, 'ls-files', '--others', '--exclude-standard').stdout.strip()):
+        raise RuntimeError('Proof implementation changed')
 
 
 def prepare_boundary(spec, capsule):
@@ -89,6 +176,8 @@ def prepare_boundary(spec, capsule):
     for name in ['gh', 'deny']:
         (root / 'bin' / name).write_text(script)
         (root / 'bin' / name).chmod(0o700)
+    if spec.get('proofBoundary'):
+        freeze_proof_inputs(spec)
     (root / 'sandbox.sb').write_text(sandbox_profile(spec, capsule))
     checked = subprocess.run([SANDBOX, '-f', str(root / 'sandbox.sb'), '/usr/bin/true'], capture_output=True)
     if checked.returncode:
@@ -127,12 +216,20 @@ def verify(spec, worker_boundary=True):
         raise RuntimeError('Blind trial requires an independent Git directory')
     if (repo / '.git/objects/info/alternates').exists():
         raise RuntimeError('Blind trial Git alternates are forbidden')
-    if (repo / '.git/shallow').read_text().strip() != spec['baseSha']:
+    allowed = {spec['baseSha']} | ({spec['proof']['baseSha']} if spec.get('proof') else set())
+    if set((repo / '.git/shallow').read_text().split()) != allowed:
         raise RuntimeError('Blind trial shallow base changed')
     if git(repo, 'config', '--get-regexp', r'^remote\..*\.url$', check=False).returncode == 0:
         raise RuntimeError('Blind trial remote URLs are forbidden')
     if git(repo, 'config', '--get', 'protocol.allow').stdout.decode().strip() != 'never':
         raise RuntimeError('Blind trial fetch is not disabled')
+    if spec.get('proof'):
+        verify_proof_source(spec)
+        receipt = Path(spec['capsule']) / 'proof-inputs.json'
+        if receipt.exists():
+            frozen = json.loads(receipt.read_text())
+            if frozen['inputs'] != input_digests(frozen['roots']):
+                raise RuntimeError('Proof input bytes changed')
     for commit in spec['referenceCommits']:
         if git(repo, 'cat-file', '-e', commit + '^{commit}', check=False).returncode == 0:
             raise RuntimeError('Reference objects are available in the blind trial')
@@ -162,7 +259,7 @@ def isolate(spec):
     journal = capsule / 'state.json'
     if journal.exists():
         state = json.loads(journal.read_text())
-        if any(state.get(key) != spec.get(key) for key in ['runId', 'repo', 'baseSha', 'branch', 'slotId', 'slotEpoch', 'referenceCommits']):
+        if any(state.get(key) != spec.get(key) for key in ['runId', 'repo', 'baseSha', 'branch', 'slotId', 'slotEpoch', 'referenceCommits', 'proof']):
             raise RuntimeError('Blind trial capsule belongs to another execution')
         if state['phase'] != 'isolated':
             raise RuntimeError('Blind trial capsule requires restoration before preparation')
@@ -178,8 +275,8 @@ def isolate(spec):
     if git(repo, 'show-ref', '--verify', '--quiet', 'refs/heads/' + spec['branch'], check=False).returncode == 0:
         raise RuntimeError('Blind trial branch already exists')
     for commit in spec['referenceCommits']:
-        if commit == spec['baseSha'] or git(repo, 'merge-base', '--is-ancestor', commit,
-                                           spec['baseSha'], check=False).returncode == 0:
+        if not spec.get('proof') and (commit == spec['baseSha'] or git(repo, 'merge-base', '--is-ancestor', commit,
+                                           spec['baseSha'], check=False).returncode == 0):
             raise RuntimeError('Blind trial base contains the reference answer')
     capsule.mkdir(parents=True, mode=0o700)
     prepared, original = capsule / 'prepared.git', capsule / 'original.entry'
@@ -192,14 +289,15 @@ def isolate(spec):
     git(repo, 'init', '-q', '--bare', '--template=', '--object-format=' + ('sha256' if len(spec['baseSha']) == 64 else 'sha1'), str(prepared))
     objects = capsule / 'base.objects'
     objects.write_bytes(git(repo, 'rev-list', '--objects', '--no-object-names', '--no-walk',
-                            spec['baseSha']).stdout)
+                            spec['baseSha'], *([spec['proof']['baseSha']] if spec.get('proof') else [])).stdout)
     pack_into(repo, prepared, [], objects)
     git(repo, 'config', 'core.bare', 'false', git_dir=prepared)
     git(repo, 'config', 'core.worktree', str(repo), git_dir=prepared)
     git(repo, 'config', 'protocol.allow', 'never', git_dir=prepared)
     git(repo, 'config', 'farmslot.blindRun', spec['runId'], git_dir=prepared)
     copy_local_commit_settings(repo, original_directory, prepared)
-    (prepared / 'shallow').write_text(spec['baseSha'] + '\n')
+    snapshots = sorted({spec['baseSha']} | ({spec['proof']['baseSha']} if spec.get('proof') else set()))
+    (prepared / 'shallow').write_text('\n'.join(snapshots) + '\n')
     git(repo, 'update-ref', 'refs/heads/' + spec['branch'], spec['baseSha'], git_dir=prepared)
     git(repo, 'symbolic-ref', 'HEAD', 'refs/heads/' + spec['branch'], git_dir=prepared)
     git(repo, 'read-tree', spec['baseSha'], git_dir=prepared)
@@ -232,7 +330,7 @@ def restore(spec):
             raise RuntimeError('Blind trial restoration record is missing')
         return {'status': 'absent'}
     state = json.loads(journal.read_text())
-    if any(state.get(key) != spec.get(key) for key in ['runId', 'repo', 'baseSha', 'branch', 'slotId', 'slotEpoch', 'referenceCommits']):
+    if any(state.get(key) != spec.get(key) for key in ['runId', 'repo', 'baseSha', 'branch', 'slotId', 'slotEpoch', 'referenceCommits', 'proof']):
         raise RuntimeError('Blind trial restoration owner does not match')
     if state['phase'] == 'restored':
         return {'status': 'restored', 'runId': spec['runId']}

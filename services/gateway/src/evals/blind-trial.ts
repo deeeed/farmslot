@@ -10,12 +10,21 @@ import {
 } from '@farmslot/protocol';
 
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
-import { loadMachineSlots, loadSlotVars, type SlotVars } from '../core/config.js';
+import {
+  getOrchestratorTaskRoot,
+  loadMachineSlots,
+  loadProjectVars,
+  loadSlotVars,
+  resolveProjectRuntimeDir,
+  resolveProjectTaskDirName,
+  type SlotVars,
+} from '../core/config.js';
 import { execLocal, execOnSlot } from '../core/exec.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
 import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import { captureRunDiffSnapshot } from '../run-engine/diff-artifacts.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { farmslotDirectoryForSlot } from '../tasks/agent-runtime-script.js';
 
 import { type BlindGitSpec, buildBlindGitCommand } from './blind-git.js';
 import {
@@ -25,6 +34,7 @@ import {
   stablePatchId,
 } from './blind-inputs.js';
 import { sha256Text } from './package-store.js';
+import { freezeProofOutput, readProofOutput } from './proof-output.js';
 
 function blindFor(run: Run): EvalBlindTrial {
   const blind = run.engineState?.evalExperiment?.blind;
@@ -69,6 +79,7 @@ function gitSpec(
     branch: run.branch,
     baseSha: blind.baseSha,
     referenceCommits: blind.referenceCommits,
+    ...(blind.proof ? { proof: blind.proof.source } : {}),
   };
 }
 
@@ -106,6 +117,14 @@ function updateBlind(runId: string, blind: EvalBlindTrial): Run {
   });
 }
 
+async function resolvedSiblingRepos(vars: SlotVars): Promise<string[]> {
+  return Promise.all(
+    (await loadMachineSlots(vars.machine))
+      .filter((slot) => slot.id !== vars.slotId)
+      .map(async (slot) => (await loadSlotVars(slot.id)).remoteRepo),
+  );
+}
+
 export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal): Promise<void> {
   const run = getRun(runId);
   if (!run?.engineState?.evalExperiment) return;
@@ -130,11 +149,7 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   const spec = gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath);
   await executeGit('isolate', vars, spec, signal);
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
-  const siblingRepos = await Promise.all(
-    (await loadMachineSlots(vars.machine))
-      .filter((slot) => slot.id !== vars.slotId)
-      .map(async (slot) => (await loadSlotVars(slot.id)).remoteRepo),
-  );
+  const siblingRepos = await resolvedSiblingRepos(vars);
   await executeGit('boundary', vars, { ...spec, siblingRepos }, signal);
   await ownedEpoch(run, epoch);
   await persistRunNow(
@@ -187,10 +202,35 @@ async function verifyBlindTrialGit(run: Run): Promise<string | undefined> {
 
 export async function verifyBlindTrialForDispatch(run: Run, retained = false): Promise<void> {
   if (!run.engineState?.evalExperiment) return;
+  const blind = blindFor(run);
+  if (blind.proof) {
+    if (!run.taskFile || !blind.isolation) throw new Error('Proof task isolation is missing.');
+    const vars = await loadSlotVars(blind.isolation.slotId);
+    const project = await loadProjectVars(run.project);
+    const taskRoot = path.join(vars.remoteRepo, resolveProjectTaskDirName(project.projectJson));
+    const currentTask = path.join(
+      taskRoot,
+      path.basename(path.dirname(path.dirname(run.taskFile))),
+      path.basename(path.dirname(run.taskFile)),
+    );
+    await executeGit('boundary', vars, {
+      ...gitSpec(run, vars, blind, blind.isolation.slotEpoch, blind.isolation.capsulePath),
+      siblingRepos: await resolvedSiblingRepos(vars),
+      proofBoundary: {
+        taskRoot,
+        currentTask,
+        runtimeRoots: [path.join(vars.remoteRepo, await resolveProjectRuntimeDir(run.project))],
+        deniedRoots: [
+          getOrchestratorTaskRoot(run.project, project.projectJson),
+          path.join(await farmslotDirectoryForSlot(vars), 'projects', run.project, 'tasks'),
+          path.join(await farmslotDirectoryForSlot(vars), '.runs'),
+        ],
+      },
+    });
+  }
   await verifyBlindTrialGit(run);
   // The same retained worker may have candidate commits; isolation still applies.
   if (retained) return;
-  const blind = blindFor(run);
   const vars = await loadSlotVars(blind.isolation!.slotId);
   const checkout = await execOnSlot(vars, `git rev-parse HEAD && git status --porcelain`, {
     timeout: 30_000,
@@ -220,6 +260,7 @@ async function captureFirstOutput(runId: string): Promise<void> {
       blind.firstOutput.diffSha256
     )
       throw new Error('Frozen first-output diff changed.');
+    await readProofOutput(run);
     return;
   }
   const isolation = blind.isolation;
@@ -264,6 +305,10 @@ async function captureFirstOutput(runId: string): Promise<void> {
       output.diffSha256 !== sha256Text(checkpoint.diffText) ||
       typeof output.patchId !== 'string' ||
       output.patchId !== (await stablePatchId(checkpoint.diffText)) ||
+      (blind.proof &&
+        (!isRecord(output.proofPackage) ||
+          typeof output.proofPackage.path !== 'string' ||
+          typeof output.proofPackage.sha256 !== 'string')) ||
       !isFamilyDiffProvenance(output.diff) ||
       output.diff.baseSha !== blind.baseSha ||
       output.diff.headSha !== output.headSha ||
@@ -277,7 +322,13 @@ async function captureFirstOutput(runId: string): Promise<void> {
       diffSha256: output.diffSha256,
       patchId: output.patchId,
       diff: output.diff,
+      ...(isRecord(output.proofPackage) &&
+      typeof output.proofPackage.path === 'string' &&
+      typeof output.proofPackage.sha256 === 'string'
+        ? { proofPackage: { path: output.proofPackage.path, sha256: output.proofPackage.sha256 } }
+        : {}),
     };
+    await readProofOutput(run, firstOutput.proofPackage);
     diffText = checkpoint.diffText;
     invalidReason = checkpoint.invalidReason;
   } else {
@@ -305,6 +356,7 @@ async function captureFirstOutput(runId: string): Promise<void> {
       patchId: await stablePatchId(diffText),
       diff,
     };
+    if (blind.proof) firstOutput.proofPackage = await freezeProofOutput(run);
     await assertOwner();
     // One atomic checkpoint binds bytes and provenance before the run JSON write.
     // A restart reuses this exact first output rather than recapturing a later fix.

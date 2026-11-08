@@ -3567,9 +3567,15 @@ export type BranchUpdateStrategy = 'rebase' | 'merge' | 'project-default';
 
 /** The flow owns its pipeline; acceptance evidence never adds a reviewer. */
 export function pipelineStepsForRun(
-  run: Pick<Run, 'flowType' | 'acceptanceContractVersion'>,
+  run: Pick<Run, 'flowType' | 'acceptanceContractVersion'> & Partial<Pick<Run, 'engineState'>>,
 ): PipelineStep[] {
-  return FLOW_STEPS[run.flowType];
+  const steps = FLOW_STEPS[run.flowType];
+  if (run.flowType === 'qa' && run.engineState?.evalExperiment?.blind?.proof) {
+    const measured = [...steps];
+    measured.splice(measured.indexOf(PipelineSteps.MONITOR) + 1, 0, PipelineSteps.REVIEW);
+    return measured;
+  }
+  return steps;
 }
 
 export const BRANCH_UPDATE_STRATEGIES: readonly BranchUpdateStrategy[] = [

@@ -58,6 +58,8 @@ export interface WorkerTerminalContractDocument {
   publicationReview?: boolean;
   /** Projection of the gateway-owned run contract, never a project/worker option. */
   recordedEvidenceContractVersion?: number;
+  /** Gateway-owned proof trial completion records outcomes without requiring a passing verdict. */
+  proofMeasurement?: true;
   schemaVersion: 1;
   flowType: string;
   mode?: string;
