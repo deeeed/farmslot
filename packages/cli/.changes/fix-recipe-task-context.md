@@ -1,0 +1,1 @@
+- Clarify per-execution artifact directory selection for recipes whose task and app checkouts differ.

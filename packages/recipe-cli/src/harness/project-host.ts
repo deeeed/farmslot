@@ -78,7 +78,10 @@ export function withProjectRecipeHost<T>(
   options: ProjectRecipeHostOptions,
   invoke: (host: ProjectRecipeHost) => Promise<T>,
 ): Promise<T> {
-  const taskDir = process.env.RECIPE_TASK_DIR;
+  const configuredTask = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
+  const taskDir = configuredTask
+    ? path.resolve(options.cwd ?? process.cwd(), configuredTask)
+    : undefined;
   const receipt = taskDir ? path.join(taskDir, 'artifacts/harness-provenance.json') : undefined;
   if (options.command !== 'task' && taskDir && receipt && fs.existsSync(receipt)) {
     const value: unknown = JSON.parse(fs.readFileSync(receipt, 'utf8'));
@@ -110,6 +113,8 @@ export function withProjectRecipeHostContext<T>(
       const previousContext = harnessContext();
       const previousAdapters = harnessAdapters();
       const previousEnv = { ...process.env };
+      if (!process.env.RECIPE_TASK_DIR && process.env.FARMSLOT_TASK_DIR)
+        process.env.RECIPE_TASK_DIR = process.env.FARMSLOT_TASK_DIR;
       const hostHints = {
         supportsLast: false,
         doctorHint: 'farmslot doctor --conformance --json',
@@ -175,13 +180,15 @@ export function withProjectRecipeHostContext<T>(
               'Discovered recipe libraries are not authorized executable sources.',
               'register the project or select each library with --library name=path',
             );
+          const execution = options.command === 'run' || options.command === 'call';
           const resolvedOptions: CliOptions = {
             target: context.target.value,
             runtimeDir: binding.runtimeDir,
-            ...((options.command !== 'run' && options.command !== 'call') ||
-            options.options?.artifactsDir !== undefined
-              ? { artifactsDir: path.join(binding.checkoutRoot, binding.artifactDir) }
-              : {}),
+            ...(execution
+              ? binding.executionArtifactsDir === undefined
+                ? {}
+                : { artifactsDir: binding.executionArtifactsDir }
+              : { artifactsDir: path.join(binding.checkoutRoot, binding.artifactDir) }),
             ...(binding.manifest && !options.options?.actionManifest
               ? { actionManifest: binding.manifest }
               : {}),

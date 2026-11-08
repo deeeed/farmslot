@@ -392,7 +392,7 @@ Options:
   --runtime-dir <path>           Target-relative recipe runtime directory
   --library <name=path>          Override a recipe library (default: [])
   --target <path>                Checkout to execute against
-  --artifacts-dir <path>         Checkout-relative artifact directory
+  --artifacts-dir <path>         Artifact directory for this execution
   --action-manifest <path>       Select an action manifest
   --heal <policy>                Healing policy (choices: "off", "infra-only", "auto")
   --hud <mode>                   Evidence HUD (choices: "show", "hide")
@@ -572,7 +572,7 @@ Options:
   --runtime-dir <path>           Target-relative recipe runtime directory
   --library <name=path>          Override a recipe library (default: [])
   --target <path>                Checkout to execute against
-  --artifacts-dir <path>         Checkout-relative artifact directory
+  --artifacts-dir <path>         Artifact directory for this execution
   --action-manifest <path>       Select an action manifest
   --heal <policy>                Healing policy (choices: "off", "infra-only", "auto")
   --hud <mode>                   Evidence HUD (choices: "show", "hide")

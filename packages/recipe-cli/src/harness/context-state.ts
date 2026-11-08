@@ -106,6 +106,8 @@ export interface ResolvedProjectBinding {
   runtimeDir: string;
   farmRuntimeDir: string;
   artifactDir: string;
+  /** Absolute destination selected for this run/call, independent of task storage. */
+  executionArtifactsDir?: string;
   provider: {
     ref: string;
     module: string;

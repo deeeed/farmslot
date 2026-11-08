@@ -841,8 +841,14 @@ export async function evalTrialStart(
       branch,
       ticketData,
       engineState: evalEngineState,
-      startRef: candidateStartRef.requestedRef,
-      startRefSource: candidateStartRef.source,
+      // QA prepare derives its checkout ref from the frozen qaSource below;
+      // caller startRef is reserved for dev/fix-bug comparison admission.
+      ...(proof
+        ? {}
+        : {
+            startRef: candidateStartRef.requestedRef,
+            startRefSource: candidateStartRef.source,
+          }),
       completionPolicy: 'artifact-only',
       lane: 'comparison',
       variant,
