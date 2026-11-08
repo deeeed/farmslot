@@ -76,3 +76,96 @@ Prefer state/log assertions for non-visual claims. For visual claims, wait for t
 - A passing run emits exact dependency evidence in `recipe-resolution.json`.
 
 If a recipe does not reduce inference, improve safety, or encode a reusable proof contract, keep it task-local.
+
+## Shared shape feedback
+
+ADR-026 Amendment 3 defines the shared advisory scorer. The policy is versioned;
+run-time recipe quality and the dataset MUST call the same implementation.
+
+### Inputs and results
+
+Inputs are a Recipe v1 document, expected registered worker criteria and the
+available declared-library block catalog. Expected criteria use the protocol
+registered-acceptance projection over handoff plus acceptance-registration inputs. A caller MUST use the task's declared sources, rather than
+an unrelated mutable checkout, and identify the recipe and catalog it scored.
+When comparing runtime and offline results, use the same policy and inputs.
+Offline block mining is a retrieval/repair aid, not permission to alter a recorded
+run's comparison catalog.
+
+The catalog is bounded to 2,048 blocks and 8 MiB of serialized block metadata.
+Its identity is a digest of ordered block IDs/content and declared source
+fingerprints/revisions. A missing or oversized catalog is unavailable; do not
+truncate it and report full composition. `recipe-resolution.json` alone is not
+the complete catalog. `end` nodes do not count; `call` nodes do. With no counted
+values, the parameterized score is 1, while executable-node/AC requirements still
+apply.
+
+Scores retain the dataset's existing rules:
+
+| Dimension     | Definition                                                                               | Target |
+| ------------- | ---------------------------------------------------------------------------------------- | ------ |
+| Short         | 1 through 8 executable nodes, decreasing linearly to 0 at 40                             | ≥ 0.6  |
+| Composed      | 1 minus the share of executable nodes duplicating available blocks                       | ≥ 0.8  |
+| Parameterized | Templated values divided by templated plus literal values, under the shared field policy | ≥ 0.7  |
+
+An empty executable graph is not good shape. Shared field classification and block
+matching belong to the scorer, not a Python or gateway copy. Results include the
+policy version, input identities, raw counters, scores, threshold warnings and
+concrete improvement hints. Hints name literal node fields to lift into typed
+`paramsSchema`/`params` and node sequences to replace with a named shared block.
+They MUST NOT change the recipe or invent a matching block.
+
+Static AC feedback lists registered worker IDs missing from reachable proving
+nodes. Derived criteria use their registered modes. Existing qualified inherited
+parent evidence is separate from fresh worker obligations and is not a child
+proving node. Review-mode fresh obligations are listed separately and remain
+uncovered for recipe imitation eligibility; adding `proves` to them is invalid.
+A recipe-declared review mode cannot waive an original obligation. Empty or unavailable expected criteria cannot produce an AC-bearing
+imitation candidate. A shape-qualified task-proof candidate needs nonempty,
+complete static AC coverage; execution success and accepted evidence remain
+separate labels. A diagnostic recipe cannot substitute its own smaller target set
+for the task's registered ACs.
+
+### Worker loop and artifact
+
+After the task recipe passes, Farm-generated TASK.md guidance requests
+`RECIPE_QUALITY_FEEDBACK_CMD` resolved to the installed task-local
+`farmslot-agent recipe-quality feedback --task <task>` helper. Read the scores and AC hints
+before completing. Improve and rerun the recipe until the targets are reached, or
+record the specific remaining limitation and why. A graph change requires fresh
+proof; editing a quality artifact is not a rerun.
+
+The Farm generator adds the advisory instruction in TASK.md's existing proof
+section only. It does not edit library-owned CHECKLIST.md, and standalone/org
+skill generation does not opt in by default.
+
+Feedback is retained in the optional `shape` field of
+`artifacts/recipe-quality.json`. The slot helper computes it from bound inputs,
+including recipe/registered-criteria/catalog identities. Store the portable
+catalog separately at `artifacts/recipe-shape-catalog.json`, retained through the
+existing portable artifact lists. `shape` carries only digests, counters, scores,
+coverage and hints; never embed the up-to-8-MiB catalog in a gate decision or
+family snapshot. Preserve existing core artifact fields. If absent, the existing
+builder creates a worker-source advisory placeholder; the helper must not stamp
+it as gateway-produced. The gateway derives its core verdict as before and
+independently recomputes/merges only a matching shape contribution. Recompute the catalog digest and compare declared source identities with the
+frozen `artifacts/harness-provenance.json` binding receipt. Mark a matching
+snapshot worker-supplied/self-consistent; this is not proof of catalog completeness.
+The dataset must independently reconstruct the catalog from verified frozen
+declared sources for imitation selection; absent that, eligibility is unknown.
+Unavailable source identity is explicit and never certified.
+A changed recipe, criterion registration, policy or catalog invalidates that contribution;
+show stale/unavailable and request feedback again, never reuse an old passing
+shape. No remote checkout reads or full-library scans happen on gateway reads. Existing version-1 artifacts remain
+readable. The command prints the same feedback it writes. It reads only the bound
+recipe, registration and declared libraries; it MUST NOT run validation, contact
+model providers or scan unrelated repositories.
+
+Shape and static-coverage deficiencies are warnings inside `shape`; the core
+verdict, semantic grade and leaderboard score remain unchanged. Historical
+artifacts without shape retain their existing structural grade. There is no
+background rewrite. These are advisory warnings. They MUST NOT add a
+completion or publication block, alter acceptance verdicts, waive evidence rules or
+create another gate. Malformed input remains an explicit input error; missing
+context is reported as unavailable, not scored as a pass. The existing structural
+validator remains authoritative for structural failures.

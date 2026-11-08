@@ -41,6 +41,8 @@ type FamilyArtifactKey =
   | 'task-actions'
   | 'recipe-library'
   | 'recipe-quality'
+  | 'recipe-shape-catalog'
+  | 'shape-binding-receipt'
   | 'recipe-coverage'
   | 'evidence-package';
 
@@ -145,6 +147,18 @@ const FAMILY_ARTIFACT_SPECS: readonly FamilyArtifactSpec[] = [
     materializedRelativePath: 'inputs/inherited/recipe-quality.json',
   },
   {
+    key: 'recipe-shape-catalog',
+    label: 'Recipe shape catalog',
+    sourceRelativePath: 'artifacts/recipe-shape-catalog.json',
+    materializedRelativePath: 'inputs/inherited/recipe-shape-catalog.json',
+  },
+  {
+    key: 'shape-binding-receipt',
+    label: 'Shape source binding receipt',
+    sourceRelativePath: 'artifacts/harness-provenance.json',
+    materializedRelativePath: 'inputs/inherited/harness-provenance.json',
+  },
+  {
     key: 'recipe-coverage',
     label: 'Recipe coverage',
     sourceRelativePath: 'artifacts/recipe-coverage.md',
@@ -157,6 +171,8 @@ const RECIPE_PACKAGE_STATIC_FILES = [
   'recipe-resolution.json',
   'artifact-manifest.json',
   'recipe-quality.json',
+  'recipe-shape-catalog.json',
+  'harness-provenance.json',
   'recipe-coverage.md',
   'report.md',
   'learnings.md',

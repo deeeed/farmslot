@@ -10,11 +10,13 @@ import {
   type RecipeQualityArtifactSource,
   type RecipeQualityEvidenceMode,
   type RecipeQualityVerdict,
+  type RecipeShapeFeedback,
 } from '@farmslot/protocol';
 
 type RecipeQualityFallbackSource = Exclude<RecipeQualityArtifactSource, 'worker' | 'gateway'>;
 
 export interface RecipeQualityArtifactBuilderInput {
+  shape?: RecipeShapeFeedback;
   verdict: RecipeQualityVerdict;
   reasons: string[];
   betterVersionGuidance?: string[];
@@ -41,6 +43,7 @@ const COMPACT_VERDICT_BY_VERDICT: Record<RecipeQualityVerdict, 'PASS' | 'WARN' |
 };
 
 const CORE_ARTIFACT_KEYS = new Set([
+  'shape',
   'version',
   'verdict',
   'compact',
@@ -206,6 +209,7 @@ export function buildRecipeQualityArtifact(
   }
   const artifact: BuiltRecipeQualityArtifact = {
     ...(input.extra ?? {}),
+    ...(input.shape ? { shape: input.shape } : {}),
     version: RECIPE_QUALITY_ARTIFACT_VERSION,
     verdict: input.verdict,
     compact: {

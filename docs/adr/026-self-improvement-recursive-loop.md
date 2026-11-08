@@ -288,3 +288,108 @@ Existing `run.proposeImprovement` and retrospective actions remain unchanged.
 Gateway-internal curation and additive local-ledger records introduce no CLI,
 RPC or SDK export. Harnesses inherit this policy through their configured
 knowledge destination; no per-harness implementation or library writer is added.
+
+## Amendment 3 (2026-11-08): Shared proof-shape feedback before completion
+
+**Status:** Proposed. Scope approved by Arthur, 2026-11-08; review of this amendment precedes implementation.
+
+### Context and decision
+
+The proof dataset and the run-time quality artifact currently disagree: a passing
+recipe can receive a quality PASS while its parameterization score is zero.
+A retained recipe from an observed production run is such a case. Offline
+selection also admits diagnostic recipes without task ACs. Workers discover
+these defects too late, after completion, if at all.
+
+One deterministic implementation owns shortness, composition and parameterization
+scores, their thresholds, and static task-AC coverage. Run-time quality and the
+offline dataset call it; neither keeps a second scoring formula. The contract is
+specified in [recipe composition quality](../reference/recipe-composition-quality.md#shared-shape-feedback).
+
+The scorer accepts the recipe, expected registered worker criteria and available
+declared library blocks. It returns scores, uncovered ACs and actionable hints identifying literal
+fields and duplicated node sequences. Its output records a policy version and
+input identities. Equivalent inputs produce equivalent output in both consumers.
+Historical mining may suggest new blocks, but cannot silently change the catalog
+used to compare a recorded run's shape with its dataset label.
+
+After a task recipe passes, the Farm worker obtains the feedback before terminal
+completion, improves the recipe and reruns its proof, or records why a target was
+not reached. Shared Farm-generated TASK.md guidance carries this advisory step for recipe-producing
+flows, including artifact-only comparison runs. Project checklists may reference
+the same guidance without being rewritten. MetaMask/skills and Consensys/skills behavior stays unchanged.
+
+The existing `artifacts/recipe-quality.json` holds an optional `shape` section.
+The task-local Farm runtime helper computes it on the slot, using a bounded
+snapshot of declared catalog blocks, stored separately as
+`artifacts/recipe-shape-catalog.json`. Only digests, counters, scores and hints
+travel in `shape`; the bounded catalog is retained as a normal artifact, not
+embedded in gate/leaderboard payloads. It preserves existing core artifact fields;
+if no artifact exists, the existing builder creates a worker-source advisory
+placeholder, not a gateway quality judgment. The gateway continues deriving the
+core quality verdict itself, ignoring worker-authored core judgments as before,
+but separately recomputes/merges matching shape inputs. Recipe, registered-criteria,
+policy and catalog digests must match; mismatches yield stale/unavailable feedback.
+The gateway compares source identities against the frozen task binding/receipt
+`artifacts/harness-provenance.json`. This verifies identity and self-consistency,
+not the completeness of a worker-supplied catalog. Label it worker-supplied and
+self-consistent, never certified. The dataset independently reconstructs the
+catalog from verified frozen declared sources before imitation selection; if
+that is unavailable, eligibility is unknown, not a positive. Portable snapshot
+reads use the existing artifact lists; the gateway never reads a remote checkout
+as though it were local. Shape warnings stay inside `shape` and
+never lower the top-level verdict, semantic grade or leaderboard score. Historical
+artifacts without shape remain readable with their prior structural grade; there
+is no background catalog rescan or retrospective rewrite. A weak shape or missing static AC binding produces a warning,
+not a completion/publication refusal. Existing structural, evidence, deterministic
+CI and publication requirements retain their authority. Shape coverage means
+that a proving node names each registered AC; it never means that execution or
+human judgment proved the AC. Missing criteria or catalog input is explicit,
+never a fabricated passing coverage result.
+
+Expected worker criteria come from the existing registered-acceptance projection
+of handoff plus acceptance-registration inputs, not from the recipe's own list.
+Derived/fresh obligations and inherited qualified parent evidence retain their
+existing protocol ownership. Inherited and review-only obligations are reported
+separately, never credited as local proving nodes. A recipe cannot exempt an
+original criterion by declaring it review-only. Review claims must not gain
+`proves` nodes; a task with such locally unprovable obligations gets an explicit
+limitation, not fabricated complete coverage.
+
+The dataset uses the same scorer and requires a nonempty, completely locally
+covered worker AC set for a task-proof imitation candidate. This conservative
+label does not count review-only fresh obligations as recipe-proven; it does not
+change their acceptance or completion policy. A passing diagnostic with zero ACs
+cannot qualify. Historical runs remain available as reference and repair data;
+this does not create labels or automatically promote claims.
+
+### Public surface
+
+- `@farmslot/protocol/recipe-shape.mjs`: browser-safe versioned scoring module, consumed by
+  Farm quality and the Python dataset tool through one Node JSON-lines adapter.
+  Shared declarations describe its inputs and feedback. This is additive; there
+  is no new action, RPC or evidence approval.
+- `RecipeQualityArtifact` gains optional structured shape feedback. Version-1
+  artifacts without it remain readable. The artifact is still the shared store
+  for workers, retrospective views and offline extraction.
+- `farmslot-agent recipe-quality feedback --task <task>`: internal Farm task helper that
+  reads the bound task recipe, registered ACs and declared library sources,
+  writes only the shape contribution to the existing quality artifact and prints the same advice.
+  Threshold warnings exit successfully. It does not execute recipes or tests.
+- `installedTaskCommands()` exposes overridable `RECIPE_QUALITY_FEEDBACK_CMD`.
+  Only Farm generation opts into the advisory line in TASK.md's existing
+  “Recipe proof + acceptance review” section. Library-owned CHECKLIST.md bytes and
+  their template provenance remain unchanged; the root recipe CLI gains no alias.
+- The named offline consumer is the private 12-model-bench `tools/proof_dataset.py`,
+  migrated to call the shared module in the same rollout and validated for parity.
+- Project harnesses and org skills need no new implementation. The Farm command
+  consumes their existing task binding; standalone recipe-quality build remains
+  compatible. No org skill is regenerated or changed by this amendment.
+
+### Validation and rollout
+
+First reproduce an observed retained recipe's low score and fix hints in a failing test.
+Check dataset/runtime equivalence, missing ACs and diagnostic exclusion. Then use
+one authorized Farm run on macpro or mini to observe feedback before completion,
+parameterization above 0.7 and a nonempty covered AC set. Preserve its before/after
+artifacts. This does not authorize a bulk run, a new hard gate or publication.

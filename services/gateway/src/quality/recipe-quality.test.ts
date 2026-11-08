@@ -643,3 +643,137 @@ test('loadRecipeQualityEvaluation follows switch default branches when computing
     /unreachable-nodes/i,
   );
 });
+
+test('shape feedback survives worker-core fallback without changing the structural grade', async () => {
+  const { scoreRecipeShape } = await import('@farmslot/protocol/recipe-shape.mjs');
+  const { buildRecipeQualityArtifact } = await import('@farmslot/agent-runtime');
+  const recipe = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Observe the command result.',
+    proofTargets: [{ id: 'AC-1', claim: 'The state is observed', proofMode: 'state' }],
+    workflow: {
+      entry: 'read',
+      nodes: {
+        read: {
+          action: 'command',
+          cmd: 'printf ready',
+          intent: 'Read the current state',
+          next: 'check',
+        },
+        check: {
+          action: 'assert_exit_code',
+          source: 'read',
+          code: 0,
+          intent: 'Check successful response',
+          proves: ['AC-1'],
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  };
+  const criteria = [{ id: 'AC-1', text: 'The state is observed' }];
+  const catalog = { available: true, blocks: [], sources: [] };
+  const shape = scoreRecipeShape({ recipe, criteria, catalog });
+  const stored = buildRecipeQualityArtifact({
+    verdict: 'fail',
+    reasons: ['Legacy worker judgment is not authoritative'],
+    producer: 'worker',
+    shape,
+  });
+  const run = makeRun({
+    taskFile: null,
+    ticketData: {
+      source: 'manual',
+      title: 'Observed state',
+      description: 'Read state',
+      affectedArea: '',
+      acceptanceCriteria: ['The state is observed'],
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+    },
+  });
+  let reads = 0;
+  const evaluation = await loadRecipeQualityEvaluation({
+    run,
+    recipeJson: JSON.stringify(recipe),
+    recipeQualityArtifact: stored,
+    recipeQualityArtifactIsStale: true,
+    readShapeTexts: async () => {
+      reads++;
+      return {
+        catalog: JSON.stringify(catalog),
+        binding: JSON.stringify({ bindingIdentity: { libraries: [] } }),
+      };
+    },
+  });
+  assert.equal(evaluation.artifact.verdict, 'pass');
+  assert.equal(evaluation.signal.semantic, 'good');
+  assert.equal(evaluation.artifact.shape?.parameterized, 0);
+  assert.equal(evaluation.artifact.shape?.status, 'warn');
+  assert.equal(evaluation.artifact.shape?.acCoverage.complete, true);
+  assert.ok(evaluation.artifact.shape?.hints.some((hint) => hint.field === 'check.code'));
+  assert.equal(reads, 1);
+  const changed = { ...recipe, description: 'The recipe inputs changed' };
+  const stale = await loadRecipeQualityEvaluation({
+    run,
+    recipeJson: JSON.stringify(changed),
+    recipeQualityArtifact: stored,
+    recipeQualityArtifactIsStale: true,
+    readShapeTexts: async () => ({
+      catalog: JSON.stringify(catalog),
+      binding: JSON.stringify({ bindingIdentity: { libraries: [] } }),
+    }),
+  });
+  assert.equal(stale.artifact.verdict, 'pass');
+  assert.equal(stale.artifact.shape?.status, 'unavailable');
+  assert.equal(stale.artifact.shape?.eligibleForImitation, false);
+  assert.match(stale.artifact.shape?.hints[0]?.message ?? '', /changed/);
+  const missing = await loadRecipeQualityEvaluation({
+    run,
+    recipeJson: JSON.stringify(recipe),
+    recipeQualityArtifact: stored,
+    recipeQualityArtifactIsStale: true,
+  });
+  assert.equal(missing.artifact.shape?.status, 'unavailable');
+  assert.equal(missing.artifact.verdict, 'pass');
+});
+
+test('shape catalog active adapter must match the frozen binding receipt', async () => {
+  const { scoreRecipeShape } = await import('@farmslot/protocol/recipe-shape.mjs');
+  const { buildRecipeQualityArtifact } = await import('@farmslot/agent-runtime');
+  const recipe = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Observe state',
+    workflow: {
+      entry: 'read',
+      nodes: {
+        read: { action: 'command', cmd: 'true', intent: 'Read state', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  };
+  const catalog = { available: true, blocks: [], sources: [], adapter: 'terminal' };
+  const shape = scoreRecipeShape({ recipe, criteria: [], catalog });
+  const artifact = buildRecipeQualityArtifact({
+    verdict: 'pass',
+    reasons: ['Existing core quality'],
+    producer: 'worker',
+    shape,
+  });
+  const evaluation = await loadRecipeQualityEvaluation({
+    run: makeRun({ taskFile: null }),
+    recipeJson: JSON.stringify(recipe),
+    recipeQualityArtifact: artifact,
+    recipeQualityArtifactIsStale: true,
+    readShapeTexts: async () => ({
+      catalog: JSON.stringify(catalog),
+      binding: JSON.stringify({ bindingIdentity: { libraries: [], adapter: 'mobile' } }),
+    }),
+  });
+  assert.equal(evaluation.artifact.verdict, 'pass');
+  assert.equal(evaluation.artifact.shape?.status, 'unavailable');
+  assert.equal(evaluation.artifact.shape?.eligibleForImitation, false);
+  assert.match(evaluation.artifact.shape?.hints[0]?.message ?? '', /frozen binding receipt/);
+});

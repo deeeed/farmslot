@@ -18,6 +18,16 @@ function acceptanceCriterionId(index) {
   return `AC-${index + 1}`;
 }
 
+function filterWorkerAcceptanceCriteria(criteria, registration, flow) {
+  if (flow !== 'pr-complete') return [...criteria];
+  const derived = new Set(
+    (isRecord(registration) && Array.isArray(registration.derived) ? registration.derived : []).map(
+      (row) => row.id,
+    ),
+  );
+  return criteria.filter((row) => derived.has(row.id));
+}
+
 function registeredAcceptanceCriteria(criteria, registration) {
   const original = criteria
     .filter((text) => String(text).trim().length > 0)
@@ -311,6 +321,7 @@ export {
   acceptanceCriterionId,
   acceptanceRowExecution,
   acceptanceVerdictLabel,
+  filterWorkerAcceptanceCriteria,
   INHERITED_ACCEPTANCE_INPUT,
   registeredAcceptanceCriteria,
   renderAcceptanceCoverage,

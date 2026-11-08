@@ -642,6 +642,16 @@ async function loadContextFromInheritedInputs(run: Run): Promise<LiveRecipeConte
             recipeJson,
             recipeCoverage,
             recipeQualityArtifact: storedRecipeQualityArtifact,
+            readShapeTexts: async () => {
+              const [catalog, binding] = await Promise.all([
+                readPortableTextIfExists(
+                  run,
+                  path.join(inheritedRoot, 'recipe-shape-catalog.json'),
+                ),
+                readPortableTextIfExists(run, path.join(inheritedRoot, 'harness-provenance.json')),
+              ]);
+              return { catalog, binding };
+            },
             recipeQualityArtifactIsStale: portableWorkerQualityArtifactIsStale(
               storedRecipeQualityArtifact,
               Boolean(recipeJson || recipeCoverage),
@@ -750,6 +760,13 @@ export async function loadContextFromArtifactRoot({
             recipeJson,
             recipeCoverage,
             recipeQualityArtifact: storedRecipeQualityArtifact,
+            readShapeTexts: async () => {
+              const [catalog, binding] = await Promise.all([
+                readText(path.join(artifactRoot, 'recipe-shape-catalog.json')),
+                readText(path.join(artifactRoot, 'harness-provenance.json')),
+              ]);
+              return { catalog, binding };
+            },
             recipeQualityArtifactIsStale: portableWorkerQualityArtifactIsStale(
               storedRecipeQualityArtifact,
               Boolean(recipeJson || recipeCoverage),

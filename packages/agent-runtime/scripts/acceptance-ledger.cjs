@@ -26,6 +26,7 @@ const {
   acceptanceCriteriaMatch,
   acceptanceRowExecution,
   registeredAcceptanceCriteria,
+  filterWorkerAcceptanceCriteria,
   validateAcceptanceStatusLedger,
   acceptanceCriteriaView,
   summarizeAcceptanceStatus,
@@ -119,10 +120,10 @@ function requireHandoffAcceptanceCriteria(taskDir) {
 /** PR completion checks worker-derived requirements; original ACs remain evidence. */
 function workerAcceptanceCriteria(taskDir) {
   const criteria = requireHandoffAcceptanceCriteria(taskDir);
-  if (readJson(path.join(taskDir, HANDOFF_INPUT)).flow !== 'pr-complete') return criteria;
+  const flow = readJson(path.join(taskDir, HANDOFF_INPUT)).flow;
+  if (flow !== 'pr-complete') return criteria;
   const { registration } = readJson(path.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT));
-  const derived = new Set((registration?.derived ?? []).map(({ id }) => id));
-  return criteria.filter(({ id }) => derived.has(id));
+  return filterWorkerAcceptanceCriteria(criteria, registration, flow);
 }
 
 /** One message shape for a handoff the acceptance rule cannot read. */

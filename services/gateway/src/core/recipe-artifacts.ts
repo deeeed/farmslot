@@ -15,6 +15,7 @@ const EXACT_ARTIFACT_PURPOSES = new Map<string, string>([
   ['line-comments.json', 'line-comments'],
   ['recipe.json', 'recipe'],
   ['recipe-quality.json', 'recipe-quality'],
+  ['recipe-shape-catalog.json', 'other'],
   ['recipe-coverage.md', 'recipe-coverage'],
   ['learnings.md', 'learnings'],
   ['artifact-manifest.json', 'artifact-manifest'],

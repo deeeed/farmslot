@@ -280,6 +280,10 @@ async function runtimeFiles() {
         'inputs/runtime/node_modules/@farmslot/protocol/scripts',
       ),
       collectSupportFiles(
+        path.join(protocol, 'recipe-shape.mjs'),
+        'inputs/runtime/node_modules/@farmslot/protocol/recipe-shape.mjs',
+      ),
+      collectSupportFiles(
         path.join(protocol, 'package.json'),
         'inputs/runtime/node_modules/@farmslot/protocol/package.json',
       ),

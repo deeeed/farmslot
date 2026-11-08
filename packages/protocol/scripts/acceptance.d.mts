@@ -30,3 +30,9 @@ export function validateAcceptanceStatusLedger(value: unknown): string[];
 export function acceptanceCriteriaView(criteria: readonly unknown[], ledger: unknown): unknown[];
 export function summarizeAcceptanceStatus(ledger: unknown, criteria?: readonly unknown[]): unknown;
 export function renderAcceptanceCoverage(ledger: unknown, criteria?: readonly unknown[]): string;
+
+export function filterWorkerAcceptanceCriteria<T extends { id: string }>(
+  criteria: readonly T[],
+  registration: unknown,
+  flow: string,
+): T[];

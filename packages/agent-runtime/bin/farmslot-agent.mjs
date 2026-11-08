@@ -19,6 +19,7 @@ function usage(exitCode = 0) {
     '  ac <list | render> [--task-dir path]',
     '  task init <task-dir> --flow f --platform p --template id --title t [--run-mode m] [options]',
     '  recipe-quality build [--input input.json] [--output artifacts/recipe-quality.json]',
+    '  recipe-quality feedback --task <task-dir> [--json] (Farm advisory; does not execute proof)',
     '    (flags override top-level input fields; training fields are merged)',
     '  contract resolve --flow <flow> [--project-config path] [--mode mode]',
     '  execution-template <list|materialize|lint|new> [options]',
@@ -60,6 +61,7 @@ function pushFlagValue(target, key, value) {
 }
 
 const RECIPE_QUALITY_INPUT_KEYS = new Set([
+  'shape',
   'verdict',
   'reasons',
   'compact',
@@ -348,6 +350,7 @@ function normalizeRecipeQualityInput(input) {
       input.artifactRequired ?? input.artifact_required ?? input.meta?.artifact_required,
     sourceSignals: input.sourceSignals ?? input.source_signals ?? input.meta?.source_signals,
     extra: input.extra,
+    shape: input.shape,
   };
 }
 
@@ -436,6 +439,31 @@ async function main() {
     runNode(path.join(packageRoot, 'scripts', 'task-init-cli.mjs'), rest);
   } else if (command === 'contract' && subcommand === 'resolve') {
     resolveContract(rest);
+  } else if (command === 'recipe-quality' && subcommand === 'feedback') {
+    const taskIndex = rest.indexOf('--task');
+    if (
+      taskIndex < 0 ||
+      !rest[taskIndex + 1] ||
+      rest.some((arg, index) => index !== taskIndex && index !== taskIndex + 1 && arg !== '--json')
+    )
+      throw new Error('usage: farmslot-agent recipe-quality feedback --task <task-dir> [--json]');
+    const runtime = await import(pathToFileURL(path.join(packageRoot, 'dist/index.js')).href);
+    const protocol = await import('@farmslot/protocol');
+    const { feedbackForTask } = require('./../scripts/recipe-shape-feedback.cjs');
+    const feedback = feedbackForTask(path.resolve(rest[taskIndex + 1]), {
+      buildArtifact: runtime.buildRecipeQualityArtifact,
+      isArtifact: protocol.isRecipeQualityArtifact,
+    });
+    if (rest.includes('--json')) console.log(JSON.stringify(feedback, null, 2));
+    else {
+      console.log(
+        `Recipe shape (${feedback.status}): short ${feedback.short}, composed ${feedback.composed ?? 'unavailable'}, parameterized ${feedback.parameterized}; ACs ${feedback.acCoverage.covered.length}/${feedback.acCoverage.expected.length}`,
+      );
+      for (const hint of feedback.hints) console.log(`- ${hint.message}`);
+      console.log(
+        'Advisory only; the catalog is self-consistent, not certified complete. Improve and rerun proof, or record the remaining limitation before completion.',
+      );
+    }
   } else if (command === 'recipe-quality' && subcommand === 'build') {
     await buildRecipeQuality(rest);
   } else if (command === 'execution-template') {

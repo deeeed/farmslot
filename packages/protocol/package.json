@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/protocol",
-  "version": "0.81.0",
+  "version": "0.82.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -402,6 +402,14 @@
       "types": "./dist/performance/index.d.ts",
       "import": "./dist/performance/index.js",
       "default": "./dist/performance/index.js"
+    },
+    "./recipe-shape.mjs": {
+      "types": "./recipe-shape.d.mts",
+      "default": "./recipe-shape.mjs"
+    },
+    "./scripts/recipe-library-identity.mjs": {
+      "types": "./scripts/recipe-library-identity.d.mts",
+      "default": "./scripts/recipe-library-identity.mjs"
     }
   },
   "scripts": {
@@ -410,7 +418,7 @@
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --fix",
-    "test": "yarn build && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json test",
+    "test": "yarn build && node --test test/recipe-shape.test.cjs && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json test",
     "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" \"test/**/*.ts\" && tsc --noEmit --project tsconfig.json && yarn test",
     "build": "rm -rf dist && tsc --project tsconfig.json",
     "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/protocol && yarn workspace @farmslot/protocol build",
@@ -453,7 +461,11 @@
     "scripts/acceptance.d.cts",
     "scripts/acceptance.d.mts",
     "scripts/review-approval-policy.cjs",
-    "scripts/review-approval-policy.d.cts"
+    "scripts/review-approval-policy.d.cts",
+    "recipe-shape.mjs",
+    "recipe-shape.d.mts",
+    "scripts/recipe-library-identity.mjs",
+    "scripts/recipe-library-identity.d.mts"
   ],
   "publishConfig": {
     "access": "public"
