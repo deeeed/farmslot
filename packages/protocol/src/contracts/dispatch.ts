@@ -10,6 +10,7 @@ import type {
   ReviewValidationDepth,
   RunCompletionPolicy,
   RunLane,
+  RunPipelineReviewPolicy,
   RunStartRefProvenance,
 } from './runs.js';
 import type { ProfileFitSuggestion } from './validation-plan.js';
@@ -110,7 +111,7 @@ export interface QueueItem {
   /** Completion safety policy persisted through queue dispatch handoff. */
   completionPolicy?: RunCompletionPolicy;
   /** As on run.create; persisted through queue dispatch handoff. */
-  pipelineReview?: import('./runs.js').RunPipelineReviewPolicy;
+  pipelineReview?: RunPipelineReviewPolicy;
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
   /** Fix-bug publication review depth requested when the queue item was created. */

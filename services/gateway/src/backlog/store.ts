@@ -34,6 +34,8 @@ import {
   Events,
   isResourcePostureWaitPolicy,
   isReviewMode,
+  isRunCompletionPolicy,
+  isRunPipelineReviewPolicy,
   isSuccessfulRun,
   isTerminalRunStatus,
   normalizeRunTags,
@@ -308,11 +310,10 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-/** ADR-054 dispatch preset. `project-default` is not a policy — omit it instead. */
 // Run shape an item hands to every run it dispatches (same values as on run.create).
 function normalizeCompletionPolicy(value: unknown): RunCompletionPolicy | undefined {
   if (value === undefined || value === null) return undefined;
-  if (value === 'default' || value === 'artifact-only') return value;
+  if (isRunCompletionPolicy(value)) return value;
   throw new Error(
     `completionPolicy must be 'default' or 'artifact-only', not ${JSON.stringify(value)}`,
   );
@@ -320,7 +321,7 @@ function normalizeCompletionPolicy(value: unknown): RunCompletionPolicy | undefi
 
 function normalizePipelineReview(value: unknown): RunPipelineReviewPolicy | undefined {
   if (value === undefined || value === null) return undefined;
-  if (value === 'default' || value === 'none') return value;
+  if (isRunPipelineReviewPolicy(value)) return value;
   throw new Error(`pipelineReview must be 'default' or 'none', not ${JSON.stringify(value)}`);
 }
 
@@ -345,6 +346,7 @@ function normalizePersistedScripted(value: unknown): ScriptedRunnerConfig | unde
   };
 }
 
+/** ADR-054 dispatch preset. `project-default` is not a policy — omit it instead. */
 function normalizeWaitPolicy(value: unknown): ResourcePostureWaitPolicy | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') throw new Error('waitPolicy must be a string');

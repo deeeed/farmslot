@@ -223,7 +223,11 @@ test('backlog run shape persists across reload and reaches the queued run.create
 
   await backlog.markBacklogItemReady({ itemId: created.item.id });
   const { queueItem } = await backlog.enqueueBacklogItem({ itemId: created.item.id });
-  const params = queue.queuedRunCreateParams(queueItem, 'sandboxed');
+  await queue.persistQueueNow();
+  await queue.loadQueue();
+  const reloadedQueueItem = queue.getQueueSnapshot().find((entry) => entry.id === queueItem.id);
+  assert.ok(reloadedQueueItem, 'the queue item survives a queue reload');
+  const params = queue.queuedRunCreateParams(reloadedQueueItem, 'sandboxed');
   assert.equal(params.ticketOrPr, created.item.sourceRef);
   assert.equal(params.backlogItemId, created.item.id);
   assert.equal(params.runner, 'scripted');
@@ -247,13 +251,24 @@ test('backlog run shape is validated on create and update, and clearable', async
   );
   await assert.rejects(
     backlog.createBacklogItem(
-      { ...base, completionPolicy: 'publish' as never },
+      {
+        ...base,
+        // @ts-expect-error 'publish' is not a RunCompletionPolicy; the gateway refuses it at runtime too.
+        completionPolicy: 'publish',
+      },
       { kind: 'system' },
     ),
     /completionPolicy must be 'default' or 'artifact-only'/,
   );
   await assert.rejects(
-    backlog.createBacklogItem({ ...base, skipPrepare: 'yes' as never }, { kind: 'system' }),
+    backlog.createBacklogItem(
+      {
+        ...base,
+        // @ts-expect-error skipPrepare is a boolean; the gateway refuses a string at runtime too.
+        skipPrepare: 'yes',
+      },
+      { kind: 'system' },
+    ),
     /skipPrepare must be a boolean/,
   );
   const created = await backlog.createBacklogItem(
@@ -264,6 +279,12 @@ test('backlog run shape is validated on create and update, and clearable', async
     backlog.updateBacklogItem({ itemId: created.item.id, completionPolicy: null }),
     /pipelineReview none is only for artifact-only runs/,
   );
+  const unchanged = backlog.getBacklogItemSnapshot(created.item.id);
+  assert.deepEqual(
+    [unchanged?.completionPolicy, unchanged?.pipelineReview, unchanged?.skipPrepare],
+    ['artifact-only', 'none', true],
+    'a refused update leaves the item as it was',
+  );
   const cleared = await backlog.updateBacklogItem({
     itemId: created.item.id,
     completionPolicy: null,
@@ -273,6 +294,24 @@ test('backlog run shape is validated on create and update, and clearable', async
   assert.equal(cleared.item.completionPolicy, undefined);
   assert.equal(cleared.item.pipelineReview, undefined);
   assert.equal(cleared.item.skipPrepare, undefined);
+});
+
+test('an explicit skipPrepare false reaches the queued run.create', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Prepare on purpose',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      skipPrepare: false,
+    },
+    { kind: 'system' },
+  );
+  assert.equal(created.item.skipPrepare, false);
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+  const { queueItem } = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(queue.queuedRunCreateParams(queueItem, 'sandboxed').skipPrepare, false);
 });
 
 test('backlog review selections preserve mode and effort through enqueue', async () => {
