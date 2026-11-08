@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.8 - 2026-11-08
+
+- Retain host-reported HUD unavailability in summary and trace metadata without changing the run outcome or action counts.
+
 ## 0.46.7 - 2026-11-08
 
 - Share recipe-file identity with shape feedback so replacement hints use resolvable references.

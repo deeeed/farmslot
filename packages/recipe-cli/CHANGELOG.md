@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.34.2 - 2026-11-08
+
+- Warn once when an opaque runtime suppresses the recipe HUD, including a stronger warning for explicit `--hud show`, and retain its unavailability in the run summary and trace.
+
 ## 0.34.1 - 2026-11-08
 
 - Keep recipe acceptance artifacts bound to the task when execution targets a separate app checkout, and honor explicitly authorized provider environment roots without changing retained task receipts.
