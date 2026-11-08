@@ -39,6 +39,23 @@ test('a marker-only commit admits the real guarded, multiline diagnostic shape',
   assert.equal(await isTicketMarkerCommit(output, base, marker, ticket), true);
 });
 
+test('a marker-only diagnostic admits interpolated measurements with the literal ticket prefix', async () => {
+  const interpolated = output.replace(
+    "'[MANUAL-000180] BUG_MARKER: viewport query measured an ancestor surrogate'",
+    '`[MANUAL-000180] BUG_MARKER: measured ${rect.width}x${rect.height}`',
+  );
+  assert.equal(await isTicketMarkerCommit(interpolated, base, marker, ticket), true);
+  assert.equal(
+    await isTicketMarkerCommit(
+      interpolated.replace('${rect.width}', '${rect.width = 1}'),
+      base,
+      marker,
+      ticket,
+    ),
+    false,
+  );
+});
+
 for (const [name, changed] of [
   ['wrong parent', output.replace(`\0${base}\0`, `\0${'c'.repeat(40)}\0`)],
   ['merge commit', output.replace(`\0${base}\0`, `\0${base} ${'c'.repeat(40)}\0`)],

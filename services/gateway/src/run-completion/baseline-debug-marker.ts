@@ -65,12 +65,14 @@ export async function isTicketMarkerCommit(
       )
         return false;
       const message = call.arguments[0];
-      if (
-        !message ||
-        !ts.isStringLiteral(message) ||
-        !message.text.startsWith(`[${ticket}] BUG_MARKER:`) ||
-        call.arguments.some(writesValue)
-      )
+      const prefix =
+        message &&
+        (ts.isStringLiteralLike(message)
+          ? message.text
+          : ts.isTemplateExpression(message)
+            ? message.head.text
+            : undefined);
+      if (!prefix?.startsWith(`[${ticket}] BUG_MARKER:`) || call.arguments.some(writesValue))
         return false;
       markers += 1;
       return true;
