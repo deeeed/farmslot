@@ -223,6 +223,7 @@ const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: '
 const reaper = startReaper();
 let stopStack: (() => Promise<string[]>) | undefined;
 let stopLive: (() => Promise<string[]>) | undefined;
+let markerContract: Promise<void> | undefined;
 const checks: CheckResult[] = [];
 const cleanupErrors: string[] = [];
 let setupError: string | undefined;
@@ -269,6 +270,11 @@ const finish = () =>
   })());
 const cleanup = cleanupOnExit(async () => {
   cleaning = true;
+  try {
+    await markerContract;
+  } catch (error) {
+    cleanupErrors.push(`marker-contract: ${String(error)}`);
+  }
   cleanupErrors.push(...((await stopLive?.()) ?? []));
   const stackErrors = (await stopStack?.()) ?? [];
   cleanupErrors.push(...stackErrors);
@@ -286,8 +292,10 @@ try {
   const onCheck = (check: CheckResult) => {
     checks.push(check);
   };
-  if (profile === 'fullflow' && wants('marker-contract'))
-    onCheck(await runMarkerContract(evidence));
+  if (profile === 'fullflow' && wants('marker-contract')) {
+    markerContract = runMarkerContract(evidence).then(onCheck);
+    await markerContract;
+  }
   if (fullflowModels)
     await runFullflow({
       root, evidence, log, reaper, onCheck,
@@ -374,7 +382,7 @@ try {
         stopStack = stop;
       },
     });
-  completed = true;
+  completed = !cleaning;
 } catch (error) {
   // During a signal's cleanup the calls in flight fail; the report says it was interrupted.
   if (!cleaning) {

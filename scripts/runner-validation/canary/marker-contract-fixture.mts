@@ -21,7 +21,18 @@ export function markerTemplateStep(text: string): string {
     || !marker[2]!.includes('[<ticket>] BUG_MARKER:')
     || !/baseline/i.test(draft[2]!) || !/recorded baseline/i.test(recorded[2]!))
     throw new Error('Recipe Cook mobile step 8 must commit the marker alone as debug(<ticket>): add reproduction marker before baseline steps 9 and 10.');
+  markerDiagnosticStatement(marker[0]);
   return marker[0];
+}
+
+function markerDiagnosticStatement(step: string): string {
+  const statements = [...step.matchAll(/`([^`\n]+)`/g)]
+    .map((match) => match[1]!)
+    .filter((statement) => /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(.*\);?$/.test(statement)
+      && statement.includes('[<ticket>] BUG_MARKER: <condition>'));
+  if (statements.length !== 1)
+    throw new Error('Recipe Cook mobile step 8 must prescribe one backticked marker diagnostic call.');
+  return statements[0]!.replaceAll('<ticket>', MARKER_TICKET).replaceAll('<condition>', 'sum subtracts');
 }
 
 export function fixtureGit(repo: string, ...args: string[]): string {
@@ -31,7 +42,8 @@ export function fixtureGit(repo: string, ...args: string[]): string {
   return execFileSync('git', ['-C', repo, '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', ...args], { env, encoding: 'utf8', stdio: 'pipe' }).trimEnd();
 }
 
-export async function createMarkerRepo(repo: string) {
+export async function createMarkerRepo(repo: string, step: string) {
+  const statement = markerDiagnosticStatement(step);
   await mkdir(repo, { recursive: true });
   fixtureGit(repo, 'init', '-q', '-b', 'marker-contract');
   fixtureGit(repo, 'config', 'user.name', 'Fixture');
@@ -40,7 +52,7 @@ export async function createMarkerRepo(repo: string) {
   fixtureGit(repo, 'add', 'source.mjs');
   fixtureGit(repo, 'commit', '-qm', 'test: seed buggy base');
   const baseSha = fixtureGit(repo, 'rev-parse', 'HEAD');
-  await writeFile(path.join(repo, 'source.mjs'), source.replace('  return', `  DevLogger.log('[${MARKER_TICKET}] BUG_MARKER: sum subtracts');\n  return`));
+  await writeFile(path.join(repo, 'source.mjs'), source.replace('  return', `  ${statement}\n  return`));
   fixtureGit(repo, 'commit', '-qam', `debug(${MARKER_TICKET}): add reproduction marker`);
   const markerSha = fixtureGit(repo, 'rev-parse', 'HEAD');
   const patch = fixtureGit(repo, '--no-replace-objects', 'show', '--format=%H%x00%P%x00%s%x00', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=0', markerSha, '--');
@@ -53,10 +65,10 @@ export async function fixMarkerRepo(repo: string): Promise<string> {
   return fixtureGit(repo, 'rev-parse', 'HEAD');
 }
 
-export async function recordMarkerEvidence(repo: string, taskDir: string) {
+export async function recordMarkerEvidence(repo: string, taskDir: string, step: string) {
   const { createRecipeRunner, createStandardCoreAdapters, readRecordedEvidencePackage } = await import('@farmslot/recipe-runner');
   const { RECIPE_ACTION_MANIFEST_SCHEMA_URL } = await import('@farmslot/protocol');
-  const topology = await createMarkerRepo(repo);
+  const topology = await createMarkerRepo(repo, step);
   const runner = createRecipeRunner({
     actionManifest: {
       $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,

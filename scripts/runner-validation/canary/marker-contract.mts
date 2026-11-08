@@ -29,7 +29,7 @@ export async function runMarkerContract(evidence: string): Promise<CheckResult> 
     fixture = await mkdtemp(path.join(tmpdir(), 'marker-contract-'));
     const repo = path.join(fixture, 'repo');
     const taskDir = path.join(fixture, 'task');
-    const f = await recordMarkerEvidence(repo, taskDir);
+    const f = await recordMarkerEvidence(repo, taskDir, step);
     await writeJson(path.join(dir, 'fixture.json'), { ...f, step, ticket: MARKER_TICKET, flowType: 'fix-bug', syntheticMedia: true });
     await cp(path.join(taskDir, 'artifacts'), path.join(dir, 'artifacts'), { recursive: true });
     const { resolvePublicationManifest } = await import('../../../services/gateway/src/run-completion/publication-artifacts.js');
