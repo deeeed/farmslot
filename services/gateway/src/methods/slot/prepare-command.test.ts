@@ -225,7 +225,7 @@ test('buildPrepareWrappedCommand persists an opaque prepare scope through an exa
 
 test('buildPrepareWrappedCommand reaps the prior exact identity before replacing it', () => {
   const identityPath = '/tmp/runtime/preflight.identity';
-  const reapCommand = buildPrepareIdentityReapCommand(identityPath);
+  const reapCommand = buildPrepareIdentityReapCommand(identityPath, { awaitExit: true });
   const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep', {
     prepareScope: {
       token: '22222222222222222222222222222222',

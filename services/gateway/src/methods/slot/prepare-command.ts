@@ -342,12 +342,40 @@ export function buildPrepareIdentityReapCommand(
   const expected = opts.expectedScope
     ? [`  if [ "$scope" != ${shellQuote(opts.expectedScope)} ]; then valid=false; foreign=true; fi`]
     : [];
+  // Filter on the node: only numeric group IDs leave this census, never environments.
+  const detachedGroups = [
+    '  scoped_groups() {',
+    '    (ps axeww -o pgid= -o stat= -o command= 2>/dev/null || echo __prepare_census_failed__) |',
+    `      awk -v scope="$scope" '$0 == "__prepare_census_failed__" { failed = 1; exit } $1 > 1 && $2 !~ /^Z/ { for (i = 3; i <= NF; i++) if ($i == "FARMSLOT_PREPARE_SCOPE=" scope) groups[$1] = 1 } END { if (failed) exit 1; for (g in groups) print g }'`,
+    '  }',
+    '  groups=""',
+    '  if $valid; then',
+    '    groups=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
+    '  fi',
+    '  if $matched; then groups=$(printf "%s\\n%s\\n" "$groups" "$pgid" | sort -un); fi',
+    '  self_group=$(ps -p $$ -o pgid= | tr -d "[:space:]")',
+    '  for group in $(printf "%s\\n" "$groups"); do',
+    '    if [ "$group" = "$self_group" ]; then echo "Prepare cleanup cannot signal its own group" >&2; exit 1; fi',
+    '  done',
+    '  for group in $(printf "%s\\n" "$groups"); do kill -TERM -"$group" 2>/dev/null || true; done',
+    '  if [ -n "$groups" ]; then echo "killed verified preflight group ($groups)"; fi',
+  ];
   const awaitExit = opts.awaitExit
     ? [
         `    ${PREPARE_GROUP_ALIVE_FN}`,
-        '    n=0; while group_alive "$pgid" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
-        '    if group_alive "$pgid"; then kill -KILL -"$pgid" 2>/dev/null; sleep 0.2; fi',
-        '    if group_alive "$pgid"; then echo "preflight group $pgid survived SIGKILL" >&2; exit 1; fi',
+        '    for group in $(printf "%s\\n" "$groups"); do',
+        '      n=0; while group_alive "$group" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
+        // A live scoped member anchors the group even after its leader exits.
+        '      if group_alive "$group"; then',
+        '        live_groups=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
+        '        if ! printf "%s\\n" "$live_groups" | grep -Fxq -- "$group"; then echo "preflight group $group lost its ownership identity" >&2; exit 1; fi',
+        '        kill -KILL -"$group" 2>/dev/null || true',
+        '      fi',
+        '      n=0; while group_alive "$group" && [ "$n" -lt 10 ]; do sleep 0.1; n=$((n+1)); done',
+        '      if group_alive "$group"; then echo "preflight group $group survived SIGKILL" >&2; exit 1; fi',
+        '    done',
+        '    remaining=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
+        '    if [ -n "$remaining" ]; then echo "preflight groups still running: $remaining" >&2; exit 1; fi',
       ]
     : [];
   return [
@@ -375,8 +403,8 @@ export function buildPrepareIdentityReapCommand(
     `    if $marker_ok && $scope_ok; then matched=true; fi`,
     `  fi`,
     // No `--` before the group: dash rejects `kill -- -PGID` as an illegal number.
-    `  if $matched && kill -TERM -"$pgid" 2>/dev/null; then`,
-    `    echo "killed verified preflight group ($pgid)"`,
+    ...detachedGroups,
+    `  if $valid; then`,
     ...awaitExit,
     `  fi`,
     `fi`,
@@ -479,7 +507,7 @@ export function buildPrepareWrappedCommand(
   const prepareScopeSetup = opts?.prepareScope
     ? [
         `mkdir -p ${shellQuote(path.dirname(opts.prepareScope.identityPath))}`,
-        buildPrepareIdentityReapCommand(opts.prepareScope.identityPath),
+        buildPrepareIdentityReapCommand(opts.prepareScope.identityPath, { awaitExit: true }),
         `export FARMSLOT_PREPARE_SCOPE=${shellQuote(opts.prepareScope.token)}`,
         `nohup sh -c ${shellQuote('while :; do sleep 86400; done')} ${PREPARE_SCOPE_SENTINEL_MARKER} ${shellQuote(opts.prepareScope.token)} >/dev/null 2>&1 &`,
         'FARMSLOT_PREPARE_SENTINEL_PID=$!',
