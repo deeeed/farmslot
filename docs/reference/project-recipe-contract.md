@@ -19,6 +19,8 @@ There MUST be one resolved binding shared by direct and hosted commands. There M
 
 Resolution order MUST be explicit flags, checkout runtime binding, pool slot, unique detection, then configured default. Resolution begins at the checkout Git root and then selects the declared app. Ambiguous project, app, runtime or target selection MUST refuse with candidates or a concrete repair instruction.
 
+A retained task's checkout and its run/call application target are separate. An explicit application `--target` MAY name a sibling checkout without changing the recorded project, independently retained libraries or original task receipt. The invocation MUST report the actual application target. `RECIPE_TASK_DIR`, or its `FARMSLOT_TASK_DIR` fallback, binds acceptance artifacts to the task independently of that application target. An absolute task directory MUST NOT be discarded because it is outside the application checkout. Relative task paths retain the task-checkout boundary. Successful attempts remain contained by the task's existing artifact-selection rules.
+
 The binding MUST include project, app/domain, runtime and requested platform, target checkout, selected pool slot when any, device/ports, provider and library references, and runtime/artifact directories. Explicit device or port inputs MUST NOT silently select a different leased target. Device mutation MUST never broadcast to all discovered targets.
 
 Executable providers and library plugins MUST be configured or explicitly authorized before import. Metadata discovery alone MUST NOT authorize executable code. A declared repository library MUST name its owner and exact revision. Bundled libraries inherit their provider's identity. Local overrides MUST be explicit and visible in provenance.
@@ -469,6 +471,8 @@ Before deletion, compare old/new static and selected-attempt rendering, authored
 ### Pool-selected runtime providers
 
 ADR-068 Amendment 6 supersedes the provider-version freeze above. When a configured runtime provider is selected through the slot pool, new tasks and retained tasks MUST use that pool selection. Pool provider values MUST win over a stale ambient gateway environment. The recorded harness version is advisory: a difference MUST emit a warning and continue, without an exact-version refusal, receipt upgrade or operator exception.
+
+An explicit `--authorize-provider` for the declared provider permits that invocation to select its declared environment root ahead of the pool default. Without that authorization, stale ambient values MUST NOT override the selected pool. This uses the existing authorization option; it does not change the task's retained libraries or rewrite its recorded provider recommendation.
 
 The host MUST preserve the original task receipt and evidence. It MUST record the provider package/version, module, root and source fingerprint actually used in `artifacts/provider-execution.json`; mismatches include the recorded recommendation and warning. Recipe execution retains its existing before/after source-integrity checks. Other retained inputs, task identities, terminal contracts and operator gates retain their current policies. A provider's bundled libraries follow that provider; independently retained canonical libraries retain their original selection.
 

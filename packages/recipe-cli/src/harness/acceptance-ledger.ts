@@ -39,13 +39,15 @@ export function acceptanceIdForProofTarget(target: string): string | null {
 export function runTaskDir(target: string, ignoreOutside = false): string | null {
   const configured = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
   if (!configured) return null;
-  const task = path.resolve(target, configured);
   const context = harnessContext();
   // App execution and checkout-level task storage have different boundaries.
   const checkoutRoot =
     context?.target.value === path.resolve(target)
       ? (context.project?.checkoutRoot ?? target)
       : target;
+  const task = path.resolve(checkoutRoot, configured);
+  // An explicitly bound task owns its artifacts independently of the app checkout.
+  if (path.isAbsolute(configured)) return task;
   const relative = path.relative(path.resolve(checkoutRoot), task);
   if (relative === '..' || relative.startsWith(`..${path.sep}`)) {
     if (ignoreOutside) return null;

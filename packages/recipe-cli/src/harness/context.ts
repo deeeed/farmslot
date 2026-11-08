@@ -8,7 +8,6 @@
 // and funding flags) are never part of the context: they stay explicit.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -61,7 +60,7 @@ import {
   validateRelativeRecipePath,
 } from './host.js';
 import { gitLibraryProvenance } from './library-provenance.js';
-import type { CliOptions, ParsedArgs } from './parse-args.js';
+import { type CliOptions, optionString, type ParsedArgs } from './parse-args.js';
 import {
   DEFAULT_RECIPE_RUNTIME_DIR,
   isPathWithin as within,
@@ -69,6 +68,7 @@ import {
   recipeRuntimeDir,
 } from './paths.js';
 import { parseProjectInvocation, type ProjectCommandInvocation } from './project-command.js';
+import { providerEnvironmentRoot, resolveProviderModule } from './provider-root.js';
 import type { RecipeEngine } from './run-engine.js';
 
 export interface ResolveHarnessContextOptions {
@@ -579,6 +579,9 @@ export interface ConfiguredRecipeProject {
 }
 
 export interface ResolveProjectContextOptions extends ResolveHarnessContextOptions {
+  authorizedProviders?: LoadProjectProviderOptions['authorizedProviders'];
+  command?: LoadProjectProviderOptions['command'];
+  options?: LoadProjectProviderOptions['options'];
   /** Supplied by the farm's shared, attested binding resolver. Harnesses never resolve refs. */
   resolveSourceBinding?: (selection: SourceEntryRef) => {
     root: string;
@@ -774,10 +777,12 @@ export async function resolveProjectContext(
       apps,
     );
   }
-  const target = app
-    ? path.join(checkoutRoot, validateRelativeRecipePath('--app', app))
-    : checkoutRoot;
-  if (!fs.existsSync(target) || !within(checkoutRoot, target)) {
+  const target = options.runtimeTarget
+    ? path.resolve(cwd, options.runtimeTarget)
+    : app
+      ? path.join(checkoutRoot, validateRelativeRecipePath('--app', app))
+      : checkoutRoot;
+  if (!fs.existsSync(target) || (!options.runtimeTarget && !within(checkoutRoot, target))) {
     throw new ProjectBindingError(
       'TARGET_INCOMPATIBLE',
       `Target ${target} is outside or missing from this checkout.`,
@@ -815,13 +820,30 @@ export async function resolveProjectContext(
   );
   const artifactDir = validateRelativeRecipePath(
     'artifact directory',
-    optionValues(options.tokens, '--artifacts-dir').at(-1) ?? config.paths.artifactDir,
+    (options.command === 'run' || options.command === 'call'
+      ? undefined
+      : optionValues(options.tokens, '--artifacts-dir').at(-1)) ?? config.paths.artifactDir,
   );
+  const executionArtifacts =
+    options.command === 'run' || options.command === 'call'
+      ? (optionString(options.options ?? {}, 'artifactsDir') ??
+        optionValues(options.tokens, '--artifacts-dir').at(-1))
+      : undefined;
   const outputPaths = {
     checkoutRoot,
     runtimeDir,
     artifactDir,
     farmRuntimeDir: validateRelativeRecipePath('farm runtime directory', config.paths.runtimeDir),
+    ...(executionArtifacts === undefined
+      ? {}
+      : {
+          executionArtifactsDir: path.resolve(
+            checkoutRoot,
+            path.isAbsolute(executionArtifacts)
+              ? executionArtifacts
+              : validateRelativeRecipePath('artifact directory', executionArtifacts),
+          ),
+        }),
   };
   const excludedRoots = recipeOutputRoots(target, outputPaths);
   const environment = { ...pool?.env, ...(options.load?.env ?? process.env) };
@@ -864,7 +886,13 @@ export async function resolveProjectContext(
         'register the project before resolving provider or library root references',
       );
     const value = ref.env
-      ? ((poolSelected ? pool?.env?.[ref.env] : undefined) ?? environment[ref.env])
+      ? poolSelected
+        ? (providerEnvironmentRoot(recipe.provider, {
+            env: options.load?.env ?? process.env,
+            poolEnv: pool?.env,
+            authorizedProviders: options.authorizedProviders,
+          }) ?? environment[ref.env])
+        : environment[ref.env]
       : path.resolve(options.resolveSourceBinding ? root : checkoutRoot, ref.projectPath!);
     if (!value)
       throw new ProjectBindingError(
@@ -1228,20 +1256,7 @@ function resolveProvider(
   excludedRoots: string[] = [],
   attestedCommit?: string,
 ): ResolvedProjectBinding['provider'] {
-  let file: string;
-  try {
-    file = declaration.package
-      ? createRequire(path.join(declaredRoot ?? root, 'package.json')).resolve(declaration.module)
-      : fs.realpathSync(path.resolve(declaredRoot ?? root, declaration.module));
-  } catch (error) {
-    if (!missing(error) && (error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND')
-      throw error;
-    throw new ProjectBindingError(
-      'PROVIDER_MISSING',
-      `Provider ${declaration.module} is not available.`,
-      'install the configured provider or correct recipe.provider.module',
-    );
-  }
+  const file = resolveProviderModule(declaration, declaredRoot ?? root);
   const packageRoot = declaration.package
     ? recipePackageRoot(file)
     : (declaredRoot ?? (within(root, file) ? root : path.dirname(file)));
