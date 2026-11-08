@@ -503,6 +503,55 @@ test('the baseline library is the retained copy from a receipt the installed CLI
   assert.match(bad.stderr, /did not verify/);
 });
 
+test('Mobile resource health uses the published live gate and its exit status', (t) => {
+  if (!NODE22) {
+    t.skip('needs Node 22');
+    return;
+  }
+  const root = scratch(t, 'mt-health-');
+  const repo = join(root, 'mmh-1');
+  mkdirSync(join(repo, '.git'), { recursive: true });
+  const mobile = join(root, 'mmh-mobile');
+  mkdirSync(mobile);
+  writeFileSync(join(mobile, 'package.json'), JSON.stringify({ name: 'metamask' }));
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  symlinkSync(process.execPath, join(bin, 'node'));
+  // Published 0.95.2 on a healthy owned runtime: --print-ready exits 1 while the
+  // live gate (--expect-live --json) exits 0. LIVE=0 models an offline bridge.
+  const harness = join(root, 'published');
+  mkdirSync(join(harness, 'bin'), { recursive: true });
+  writeFileSync(
+    join(harness, 'package.json'),
+    JSON.stringify({ name: '@deeeed/metamask-harness', bin: { 'mm-harness': 'bin/mm-harness' } }),
+  );
+  const calls = join(root, 'calls.log');
+  writeFileSync(
+    join(harness, 'bin/mm-harness'),
+    `#!/bin/sh
+echo "$*" >> "${calls}"
+case " $* " in
+  *" --print-ready "*) echo "not-ready mobile ready (healthy)"; exit 1 ;;
+  *" --expect-live "*) [ "$LIVE" = 1 ] ;;
+  *) exit 3 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  const health = (live: boolean) =>
+    tooling(['mobile-health', 'harness', repo, mobile, '9380', 'mmh-1'], {
+      FARMSLOT_NODE22_BIN: bin,
+      MM_HARNESS_PACKAGE_ROOT: harness,
+      LIVE: live ? '1' : '0',
+    });
+  const healthy = health(true);
+  assert.equal(healthy.status, 0, healthy.stdout + healthy.stderr);
+  assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), [
+    `doctor --adapter mobile --target ${realpathSync(mobile)} --watcher-port 9380 --runtime-dir temp/recipe/runtime --device mmh-1 --expect-live --json`,
+  ]);
+  assert.notEqual(health(false).status, 0);
+});
+
 test('teardown without an owned Mobile checkout stops nothing and succeeds', (t) => {
   const root = scratch(t, 'mt-teardown-');
   const repo = join(root, 'mmrp-1');

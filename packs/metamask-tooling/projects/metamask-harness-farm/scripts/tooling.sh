@@ -264,8 +264,10 @@ case "$command" in
     mobile="$(require_mobile "$1")"; port="$2"; simulator="$3"
     require_simulator "$simulator"
     harness_bin="$(published_harness)"
+    # Resource health reads the exit status of the published live gate. --print-ready
+    # is the slot health_check mode and refuses a healthy owned Mobile runtime.
     exec "$harness_bin" doctor --adapter mobile --target "$mobile" --watcher-port "$port" \
-      --runtime-dir "$mobile_runtime_dir" --device "$simulator" --print-ready
+      --runtime-dir "$mobile_runtime_dir" --device "$simulator" --expect-live --json
     ;;
   mobile-stop)
     [ "$#" -ge 3 ] || usage
